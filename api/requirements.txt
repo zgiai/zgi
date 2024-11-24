@@ -1,0 +1,26 @@
+fastapi
+uvicorn
+python-dotenv
+starlette
+wasabi
+aiohttp
+requests
+pypdf
+spacy
+python-docx
+weaviate-client
+openai
+pydantic
+python-multipart
+numpy
+weaviate
+scikit-learn
+DBUtils==3.0.3
+
+# Potential additions:
+# jsonresponse (if not part of FastAPI)
+# uuid (if using a non-standard version)
+pydantic_settings
+pymysql
+qiniu
+chardet
