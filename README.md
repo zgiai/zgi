@@ -1,6 +1,6 @@
 # ZGI - All-in-One AI Chat Interface
 
-**ZGI** is an intuitive, all-in-one AI chat platform that supports multiple LLM providers, integrates various plugins, and provides a personalized AI assistant experience.
+**ZGI** is an intuitive llm platform that supports multiple LLM providers, integrates various plugins, and provides a personalized AI assistant experience.
 
 
 
