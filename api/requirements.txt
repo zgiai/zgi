@@ -15,12 +15,12 @@ python-multipart
 numpy
 weaviate
 scikit-learn
+pydantic_settings
+pymysql
+qiniu
+chardet
 DBUtils==3.0.3
 
 # Potential additions:
 # jsonresponse (if not part of FastAPI)
 # uuid (if using a non-standard version)
-pydantic_settings
-pymysql
-qiniu
-chardet

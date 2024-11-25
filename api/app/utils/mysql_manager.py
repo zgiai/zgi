@@ -33,7 +33,7 @@ class MySQLManager:
             blocking=True,
             maxusage=None,
             setsession=[],
-            host=os.getenv('MYSQL_HOST'),
+            host='db',
             user=os.getenv('MYSQL_USER'),
             password=os.getenv('MYSQL_PASSWORD'),
             database=os.getenv('MYSQL_DATABASE'),
