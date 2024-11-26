@@ -43,5 +43,8 @@ services:
       MYSQL_USER: ${MYSQL_USER} # 从.env文件获取数据库用户名
       MYSQL_PASSWORD: ${MYSQL_PASSWORD} # 从.env文件获取数据库密码
     volumes:
-      - /var/lib/data:/var/lib/mysql
+      - db_data:/var/lib/mysql # 使用卷来持久化数据
       - ./api/init.sql:/docker-entrypoint-initdb.d/init.sql # 挂载初始化脚本
+
+volumes:
+  db_data: {} # 定义db_data卷
