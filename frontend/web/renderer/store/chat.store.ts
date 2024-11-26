@@ -1,6 +1,5 @@
-import { API_CONFIG, token } from "@/lib/http";
 import { getStorageAdapter } from "@/lib/storageAdapter";
-import { handleChatStream, streamChatCompletions } from "@/server/chat.server";
+import { streamChatCompletions } from "@/server/chat.server";
 import type { ChatHistory, ChatMessage } from "@/types/chat";
 import { debounce } from "lodash";
 import { create } from "zustand";
