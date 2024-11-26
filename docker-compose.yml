@@ -1,3 +1,5 @@
+version: '3.8' # 指定 Docker Compose 文件的版本
+
 services:
   backend:
     build:
@@ -7,12 +9,12 @@ services:
       - ./api:/app
     ports:
       - '8088:8088'
-      - '7007:7007'
+      - '7001:7001'
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY} # 从.env文件获取OpenAI API密钥
       - WEAVIATE_URL=${WEAVIATE_URL} # 从.env文件获取Weaviate URL
       - WEAVIATE_API_KEY=${WEAVIATE_API_KEY} # 从.env文件获取Weaviate API密钥
-      - WEAVIATE_LOCAL_URL=${WEAVIATE_LOCAL_URL} # 从.env文件获取Weaviate本地URL
+      - WEAVIATE_LOCAL_URL=weaviate # 从.env文件获取Weaviate本地URL
       - WEAVIATE_LOCAL_API_KEY=${WEAVIATE_LOCAL_API_KEY} # 从.env文件获取Weaviate本地API密钥
       - OPENAI_BASE_URL=${OPENAI_BASE_URL} # 从.env文件获取OpenAI基础URL
       - OPENAI_API_BASE=${OPENAI_API_BASE} # 从.env文件获取OpenAI API基础URL
@@ -31,6 +33,7 @@ services:
 
     depends_on:
       - db
+      - weaviate
 
   db:
     image: mysql:5.7
@@ -46,5 +49,18 @@ services:
       - db_data:/var/lib/mysql # 使用卷来持久化数据
       - ./api/init.sql:/docker-entrypoint-initdb.d/init.sql # 挂载初始化脚本
 
+  weaviate:
+    image: semitechnologies/weaviate
+    ports:
+      - '8080:8080'
+      - '50051:50051'
+    volumes:
+      - weaviate_data:/var/lib/weaviate # 使用 Docker 卷持久化数据
+    environment:
+      - QUERY_DEFAULTS_LIMIT=25 # 设置默认查询限制
+      - AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED='true' # 启用匿名访问
+      - ENABLE_MODULES='text2vec-openai' # 启用 OpenAI 模块
+
 volumes:
   db_data: {} # 定义db_data卷
+  weaviate_data: {} # 定义 weaviate_data 卷
