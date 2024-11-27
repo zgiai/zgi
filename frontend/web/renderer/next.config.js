@@ -6,15 +6,15 @@ module.exports = {
 	images: {
 		unoptimized: true,
 	},
-	async redirects() {
-		return [
-			{
-				source: "/",
-				destination: "/chat",
-				permanent: true,
-			},
-		];
-	},
+	// async redirects() {
+	// 	return [
+	// 		{
+	// 			source: "/",
+	// 			destination: "/chat",
+	// 			permanent: true,
+	// 		},
+	// 	];
+	// },
 	webpack: (config) => {
 		return config;
 	},
