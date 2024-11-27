@@ -32,24 +32,32 @@
 
 ### Installation
 
-1. **Clone the repository:**
+1. **Clone the repository and navigate to the project directory:**
     ```bash
     git clone https://github.com/zgiai/zgi.git
     cd zgi
     ```
-2. **Install dependencies:**
+2. **Run the backend using Docker:**
+    ```bash
+    docker-compose up -d
+    ```
+3. **Navigate to the frontend directory:**
+    ```bash
+    cd zgi/frontend/web
+    ```
+4. **Install dependencies using yarn:**
     ```bash
     yarn install
     # or
     bun install
     ```
-3. **Start the development server:**
+5. **Run the development server using yarn:**
     ```bash
     yarn dev
     # or
     bun dev
     ```
-4. **Open your browser and navigate to:** [http://localhost:3000](http://localhost:3000).
+6. **Open your browser and navigate to:** [http://localhost:8888](http://localhost:8888).
 
 ## 📦 Deployment
 
