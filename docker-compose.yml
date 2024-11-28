@@ -61,6 +61,7 @@ services:
       - ENABLE_MODULES='text2vec-openai' # Enable OpenAI module
 
   web:
+    image: e-web:latest
     build:
       context: .
       dockerfile: docker/Dockerfile.web

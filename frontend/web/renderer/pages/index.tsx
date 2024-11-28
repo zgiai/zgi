@@ -8,5 +8,5 @@ export default function Home() {
 		router.replace("/chat");
 	}, [router]);
 
-	return null; // 或者可以返回一个加载提示
+	return null;
 }
