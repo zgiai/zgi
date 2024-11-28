@@ -1,6 +1,6 @@
 {
 	"private": true,
-	"name": "my-nextron-app",
+	"name": "my-app",
 	"description": "My application description",
 	"version": "1.0.1",
 	"author": "Yoshihide Shiono <shiono.yoshihide@gmail.com>",
