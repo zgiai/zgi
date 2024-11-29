@@ -19,6 +19,7 @@ pydantic_settings
 pymysql
 qiniu
 chardet
+PyMuPDF
 DBUtils==3.0.3
 
 # Potential additions:

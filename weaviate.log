@@ -1,21 +1,466 @@
-2024-11-26 00:11:32,859 - httpx - INFO - HTTP Request: GET https://kukk8fout66ghwantufrga.c0.asia-southeast1.gcp.weaviate.cloud/v1/meta "HTTP/1.1 200 OK"
-2024-11-26 00:11:33,675 - httpx - INFO - HTTP Request: GET https://kukk8fout66ghwantufrga.c0.asia-southeast1.gcp.weaviate.cloud/v1/meta "HTTP/1.1 200 OK"
-2024-11-26 00:11:33,676 - app.services.rag_service - INFO - Initializing OpenAI client with base_url: https://api.agicto.cn/v1
-2024-11-26 00:11:33,676 - app.services.rag_service - INFO - Initializing OpenAI client with OPENAI_API_KEY: sk-3fFCwcUTwnzo6xRfAuazZ8DJgPfDQigroNc21fGFmgel77W6
-2024-11-26 00:11:33,677 - app.services.rag_service - INFO - OPENAI_API_BASE: https://api.agicto.cn/v1
-2024-11-26 00:11:33,677 - app.services.rag_service - INFO - OPENAI_API_KEY: sk-3f...l77W6
-2024-11-26 00:11:34,720 - httpx - INFO - HTTP Request: GET https://kukk8fout66ghwantufrga.c0.asia-southeast1.gcp.weaviate.cloud/v1/meta "HTTP/1.1 200 OK"
-2024-11-26 00:11:34,789 - __main__ - INFO - OPENAI_API_KEY is set
-2024-11-26 00:11:39,642 - httpx - INFO - HTTP Request: GET https://kukk8fout66ghwantufrga.c0.asia-southeast1.gcp.weaviate.cloud/v1/meta "HTTP/1.1 200 OK"
-2024-11-26 00:11:40,496 - httpx - INFO - HTTP Request: GET https://kukk8fout66ghwantufrga.c0.asia-southeast1.gcp.weaviate.cloud/v1/meta "HTTP/1.1 200 OK"
-2024-11-26 00:11:40,498 - app.services.rag_service - INFO - Initializing OpenAI client with base_url: https://api.agicto.cn/v1
-2024-11-26 00:11:40,498 - app.services.rag_service - INFO - Initializing OpenAI client with OPENAI_API_KEY: sk-3fFCwcUTwnzo6xRfAuazZ8DJgPfDQigroNc21fGFmgel77W6
-2024-11-26 00:11:40,498 - app.services.rag_service - INFO - OPENAI_API_BASE: https://api.agicto.cn/v1
-2024-11-26 00:11:40,498 - app.services.rag_service - INFO - OPENAI_API_KEY: sk-3f...l77W6
-2024-11-26 00:11:41,396 - httpx - INFO - HTTP Request: GET https://kukk8fout66ghwantufrga.c0.asia-southeast1.gcp.weaviate.cloud/v1/meta "HTTP/1.1 200 OK"
-2024-11-26 00:11:41,442 - __mp_main__ - INFO - OPENAI_API_KEY is set
-2024-11-26 00:11:41,499 - main - INFO - OPENAI_API_KEY is set
-2024-11-26 00:11:42,342 - httpx - INFO - HTTP Request: GET https://kukk8fout66ghwantufrga.c0.asia-southeast1.gcp.weaviate.cloud/v1/meta "HTTP/1.1 200 OK"
-2024-11-26 00:11:42,352 - main - INFO - Successfully connected to Weaviate
-2024-11-26 00:11:44,107 - app.services.rag_service - INFO - Connections closed.
-2024-11-26 00:11:44,108 - main - INFO - Successfully closed all connections
+2024-11-29 23:15:25,578 - httpx - INFO - HTTP Request: POST https://api.agicto.cn/v1/embeddings "HTTP/1.1 200 OK"
+2024-11-29 23:15:25,580 - root - INFO - Successfully embedded 16 chunks
+2024-11-29 23:15:27,771 - httpx - INFO - HTTP Request: POST http://localhost:8080/v1/objects "HTTP/1.1 422 Unprocessable Entity"
+2024-11-29 23:15:27,772 - app.utils.weaviate_manager - ERROR - Error adding object to Weaviate: Object was not added! Unexpected status code: 422, with response body: {'error': [{'message': 'invalid object: failed to execute query: leader not found'}]}.
+2024-11-29 23:15:27,772 - root - ERROR - Error storing vectors: Object was not added! Unexpected status code: 422, with response body: {'error': [{'message': 'invalid object: failed to execute query: leader not found'}]}.
+2024-11-29 23:15:27,772 - root - ERROR - Vector storage failed: Object was not added! Unexpected status code: 422, with response body: {'error': [{'message': 'invalid object: failed to execute query: leader not found'}]}.
+2024-11-29 23:15:27,773 - root - ERROR - Validation error: Failed to store vectors: Object was not added! Unexpected status code: 422, with response body: {'error': [{'message': 'invalid object: failed to execute query: leader not found'}]}.
+2024-11-29 23:18:20,035 - app.services.rag_service - INFO - Connections closed.
+2024-11-29 23:18:20,036 - main - INFO - Successfully closed all connections
+2024-11-29 23:33:08,872 - app.utils.weaviate_manager - ERROR - Failed to connect to Weaviate: Could not connect to Weaviate:Connection to Weaviate failed. Details: .
+2024-11-29 23:43:04,333 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:43:04,335 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:43:04,338 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:43:04,378 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:43:04,379 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:43:04,381 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:43:04,382 - app.services.rag_service - INFO - Initializing OpenAI client with base_url: https://api.agicto.cn/v1
+2024-11-29 23:43:04,382 - app.services.rag_service - INFO - Initializing OpenAI client with OPENAI_API_KEY: sk-3fFCwcUTwnzo6xRfAuazZ8DJgPfDQigroNc21fGFmgel77W6
+2024-11-29 23:43:04,382 - app.services.rag_service - INFO - OPENAI_API_BASE: https://api.agicto.cn/v1
+2024-11-29 23:43:04,382 - app.services.rag_service - INFO - OPENAI_API_KEY: sk-3f...l77W6
+2024-11-29 23:43:04,502 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:43:04,503 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:43:04,507 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:43:04,542 - __main__ - INFO - OPENAI_API_KEY is set
+2024-11-29 23:43:07,777 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:43:07,778 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:43:07,781 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:43:07,825 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:43:07,826 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:43:07,829 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:43:07,830 - app.services.rag_service - INFO - Initializing OpenAI client with base_url: https://api.agicto.cn/v1
+2024-11-29 23:43:07,830 - app.services.rag_service - INFO - Initializing OpenAI client with OPENAI_API_KEY: sk-3fFCwcUTwnzo6xRfAuazZ8DJgPfDQigroNc21fGFmgel77W6
+2024-11-29 23:43:07,830 - app.services.rag_service - INFO - OPENAI_API_BASE: https://api.agicto.cn/v1
+2024-11-29 23:43:07,830 - app.services.rag_service - INFO - OPENAI_API_KEY: sk-3f...l77W6
+2024-11-29 23:43:07,948 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:43:07,950 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:43:07,954 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:43:07,983 - __mp_main__ - INFO - OPENAI_API_KEY is set
+2024-11-29 23:43:08,042 - main - INFO - OPENAI_API_KEY is set
+2024-11-29 23:43:08,075 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:43:08,076 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:43:08,079 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:43:08,091 - main - INFO - Successfully connected to Weaviate
+2024-11-29 23:43:38,400 - root - INFO - start upload
+2024-11-29 23:43:38,401 - root - INFO - File saved to: uploads/hell word222的副本20241129234338.txt
+2024-11-29 23:43:38,658 - root - INFO - File saved to database
+2024-11-29 23:43:38,658 - root - INFO - Starting to process file: hell word222的副本.txt
+2024-11-29 23:43:38,658 - root - INFO - Detected encoding: ascii
+2024-11-29 23:43:38,666 - root - ERROR - Unexpected error: expected str, bytes or os.PathLike object, not UploadFile
+Traceback (most recent call last):
+  File "/Users/mrd/item/zgi/zgi/api/app/services/file_service.py", line 126, in process_and_vectorize_file
+    document = read_file(file)
+               ^^^^^^^^^^^^^^^
+  File "/Users/mrd/item/zgi/zgi/api/app/services/file_service.py", line 27, in read_file
+    mime_type, _ = mimetypes.guess_type(file)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/Cellar/python@3.12/3.12.7/Frameworks/Python.framework/Versions/3.12/lib/python3.12/mimetypes.py", line 310, in guess_type
+    return _db.guess_type(url, strict)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/Cellar/python@3.12/3.12.7/Frameworks/Python.framework/Versions/3.12/lib/python3.12/mimetypes.py", line 122, in guess_type
+    url = os.fspath(url)
+          ^^^^^^^^^^^^^^
+TypeError: expected str, bytes or os.PathLike object, not UploadFile
+2024-11-29 23:45:14,321 - app.services.rag_service - INFO - Connections closed.
+2024-11-29 23:45:14,322 - main - INFO - Successfully closed all connections
+2024-11-29 23:45:19,027 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:45:19,029 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:45:19,033 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:45:19,074 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:45:19,075 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:45:19,079 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:45:19,079 - app.services.rag_service - INFO - Initializing OpenAI client with base_url: https://api.agicto.cn/v1
+2024-11-29 23:45:19,080 - app.services.rag_service - INFO - Initializing OpenAI client with OPENAI_API_KEY: sk-3fFCwcUTwnzo6xRfAuazZ8DJgPfDQigroNc21fGFmgel77W6
+2024-11-29 23:45:19,080 - app.services.rag_service - INFO - OPENAI_API_BASE: https://api.agicto.cn/v1
+2024-11-29 23:45:19,080 - app.services.rag_service - INFO - OPENAI_API_KEY: sk-3f...l77W6
+2024-11-29 23:45:19,224 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:45:19,226 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:45:19,231 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:45:19,269 - __mp_main__ - INFO - OPENAI_API_KEY is set
+2024-11-29 23:45:19,339 - main - INFO - OPENAI_API_KEY is set
+2024-11-29 23:45:19,370 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:45:19,370 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:45:19,373 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:45:19,383 - main - INFO - Successfully connected to Weaviate
+2024-11-29 23:45:20,525 - root - INFO - start upload
+2024-11-29 23:45:20,526 - root - INFO - File saved to: uploads/hell word222的副本20241129234520.txt
+2024-11-29 23:45:20,751 - root - INFO - File saved to database
+2024-11-29 23:45:20,751 - root - INFO - Starting to process file: hell word222的副本.txt
+2024-11-29 23:45:20,751 - root - INFO - Detected encoding: ascii
+2024-11-29 23:45:20,756 - root - ERROR - Unexpected error: [Errno 2] No such file or directory: 'hell word222的副本.txt'
+Traceback (most recent call last):
+  File "/Users/mrd/item/zgi/zgi/api/app/services/file_service.py", line 126, in process_and_vectorize_file
+    document = read_file(file)
+               ^^^^^^^^^^^^^^^
+  File "/Users/mrd/item/zgi/zgi/api/app/services/file_service.py", line 41, in read_file
+    with open(file.filename, 'r', encoding='utf-8') as file:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'hell word222的副本.txt'
+2024-11-29 23:45:37,799 - app.services.rag_service - INFO - Connections closed.
+2024-11-29 23:45:37,800 - main - INFO - Successfully closed all connections
+2024-11-29 23:45:41,942 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:45:41,943 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:45:41,945 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:45:41,980 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:45:41,981 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:45:41,983 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:45:41,984 - app.services.rag_service - INFO - Initializing OpenAI client with base_url: https://api.agicto.cn/v1
+2024-11-29 23:45:41,984 - app.services.rag_service - INFO - Initializing OpenAI client with OPENAI_API_KEY: sk-3fFCwcUTwnzo6xRfAuazZ8DJgPfDQigroNc21fGFmgel77W6
+2024-11-29 23:45:41,984 - app.services.rag_service - INFO - OPENAI_API_BASE: https://api.agicto.cn/v1
+2024-11-29 23:45:41,985 - app.services.rag_service - INFO - OPENAI_API_KEY: sk-3f...l77W6
+2024-11-29 23:45:42,097 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:45:42,098 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:45:42,101 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:45:42,135 - __mp_main__ - INFO - OPENAI_API_KEY is set
+2024-11-29 23:45:42,200 - main - INFO - OPENAI_API_KEY is set
+2024-11-29 23:45:42,228 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:45:42,229 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:45:42,231 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:45:42,238 - main - INFO - Successfully connected to Weaviate
+2024-11-29 23:45:49,620 - app.services.rag_service - INFO - Connections closed.
+2024-11-29 23:45:49,620 - main - INFO - Successfully closed all connections
+2024-11-29 23:45:54,043 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:45:54,043 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:45:54,046 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:45:54,079 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:45:54,079 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:45:54,082 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:45:54,083 - app.services.rag_service - INFO - Initializing OpenAI client with base_url: https://api.agicto.cn/v1
+2024-11-29 23:45:54,083 - app.services.rag_service - INFO - Initializing OpenAI client with OPENAI_API_KEY: sk-3fFCwcUTwnzo6xRfAuazZ8DJgPfDQigroNc21fGFmgel77W6
+2024-11-29 23:45:54,083 - app.services.rag_service - INFO - OPENAI_API_BASE: https://api.agicto.cn/v1
+2024-11-29 23:45:54,083 - app.services.rag_service - INFO - OPENAI_API_KEY: sk-3f...l77W6
+2024-11-29 23:45:54,202 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:45:54,204 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:45:54,207 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:45:54,236 - __mp_main__ - INFO - OPENAI_API_KEY is set
+2024-11-29 23:45:54,289 - main - INFO - OPENAI_API_KEY is set
+2024-11-29 23:45:54,319 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:45:54,320 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:45:54,323 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:45:54,329 - main - INFO - Successfully connected to Weaviate
+2024-11-29 23:46:15,070 - app.services.rag_service - INFO - Connections closed.
+2024-11-29 23:46:15,071 - main - INFO - Successfully closed all connections
+2024-11-29 23:46:19,319 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:46:19,320 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:46:19,324 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:46:19,359 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:46:19,360 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:46:19,363 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:46:19,364 - app.services.rag_service - INFO - Initializing OpenAI client with base_url: https://api.agicto.cn/v1
+2024-11-29 23:46:19,364 - app.services.rag_service - INFO - Initializing OpenAI client with OPENAI_API_KEY: sk-3fFCwcUTwnzo6xRfAuazZ8DJgPfDQigroNc21fGFmgel77W6
+2024-11-29 23:46:19,364 - app.services.rag_service - INFO - OPENAI_API_BASE: https://api.agicto.cn/v1
+2024-11-29 23:46:19,365 - app.services.rag_service - INFO - OPENAI_API_KEY: sk-3f...l77W6
+2024-11-29 23:46:19,474 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:46:19,476 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:46:19,479 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:46:19,513 - __mp_main__ - INFO - OPENAI_API_KEY is set
+2024-11-29 23:46:19,675 - main - INFO - OPENAI_API_KEY is set
+2024-11-29 23:46:19,703 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:46:19,704 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:46:19,707 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:46:19,712 - main - INFO - Successfully connected to Weaviate
+2024-11-29 23:46:28,717 - app.services.rag_service - INFO - Connections closed.
+2024-11-29 23:46:28,718 - main - INFO - Successfully closed all connections
+2024-11-29 23:46:32,665 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:46:32,666 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:46:32,670 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:46:32,705 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:46:32,706 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:46:32,709 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:46:32,710 - app.services.rag_service - INFO - Initializing OpenAI client with base_url: https://api.agicto.cn/v1
+2024-11-29 23:46:32,710 - app.services.rag_service - INFO - Initializing OpenAI client with OPENAI_API_KEY: sk-3fFCwcUTwnzo6xRfAuazZ8DJgPfDQigroNc21fGFmgel77W6
+2024-11-29 23:46:32,710 - app.services.rag_service - INFO - OPENAI_API_BASE: https://api.agicto.cn/v1
+2024-11-29 23:46:32,710 - app.services.rag_service - INFO - OPENAI_API_KEY: sk-3f...l77W6
+2024-11-29 23:46:32,824 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:46:32,825 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:46:32,828 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:46:32,862 - __mp_main__ - INFO - OPENAI_API_KEY is set
+2024-11-29 23:46:32,927 - main - INFO - OPENAI_API_KEY is set
+2024-11-29 23:46:32,956 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:46:32,957 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:46:32,959 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:46:32,965 - main - INFO - Successfully connected to Weaviate
+2024-11-29 23:46:42,028 - app.services.rag_service - INFO - Connections closed.
+2024-11-29 23:46:42,028 - main - INFO - Successfully closed all connections
+2024-11-29 23:46:47,044 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:46:47,045 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:46:47,051 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:46:47,091 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:46:47,092 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:46:47,095 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:46:47,095 - app.services.rag_service - INFO - Initializing OpenAI client with base_url: https://api.agicto.cn/v1
+2024-11-29 23:46:47,095 - app.services.rag_service - INFO - Initializing OpenAI client with OPENAI_API_KEY: sk-3fFCwcUTwnzo6xRfAuazZ8DJgPfDQigroNc21fGFmgel77W6
+2024-11-29 23:46:47,096 - app.services.rag_service - INFO - OPENAI_API_BASE: https://api.agicto.cn/v1
+2024-11-29 23:46:47,096 - app.services.rag_service - INFO - OPENAI_API_KEY: sk-3f...l77W6
+2024-11-29 23:46:47,224 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:46:47,225 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:46:47,228 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:46:47,264 - __mp_main__ - INFO - OPENAI_API_KEY is set
+2024-11-29 23:46:47,335 - main - INFO - OPENAI_API_KEY is set
+2024-11-29 23:46:47,368 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:46:47,369 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:46:47,372 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:46:47,379 - main - INFO - Successfully connected to Weaviate
+2024-11-29 23:46:47,383 - root - INFO - start upload
+2024-11-29 23:46:47,384 - root - INFO - File saved to: uploads/hell word222的副本20241129234647.txt
+2024-11-29 23:46:47,600 - root - INFO - File saved to database
+2024-11-29 23:46:47,601 - root - INFO - Starting to process file: hell word222的副本.txt
+2024-11-29 23:46:47,601 - root - INFO - Detected encoding: ascii
+2024-11-29 23:46:47,605 - root - ERROR - Unexpected error: expected str, bytes or os.PathLike object, not UploadFile
+Traceback (most recent call last):
+  File "/Users/mrd/item/zgi/zgi/api/app/services/file_service.py", line 126, in process_and_vectorize_file
+    document = read_file(file)
+               ^^^^^^^^^^^^^^^
+  File "/Users/mrd/item/zgi/zgi/api/app/services/file_service.py", line 41, in read_file
+    with open(file, 'r', encoding='utf-8') as file:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: expected str, bytes or os.PathLike object, not UploadFile
+2024-11-29 23:47:18,531 - app.services.rag_service - INFO - Connections closed.
+2024-11-29 23:47:18,532 - main - INFO - Successfully closed all connections
+2024-11-29 23:47:22,214 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:47:22,215 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:47:22,219 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:47:22,253 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:47:22,253 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:47:22,256 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:47:22,257 - app.services.rag_service - INFO - Initializing OpenAI client with base_url: https://api.agicto.cn/v1
+2024-11-29 23:47:22,257 - app.services.rag_service - INFO - Initializing OpenAI client with OPENAI_API_KEY: sk-3fFCwcUTwnzo6xRfAuazZ8DJgPfDQigroNc21fGFmgel77W6
+2024-11-29 23:47:22,257 - app.services.rag_service - INFO - OPENAI_API_BASE: https://api.agicto.cn/v1
+2024-11-29 23:47:22,257 - app.services.rag_service - INFO - OPENAI_API_KEY: sk-3f...l77W6
+2024-11-29 23:47:22,372 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:47:22,373 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:47:22,377 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:47:22,408 - __mp_main__ - INFO - OPENAI_API_KEY is set
+2024-11-29 23:47:22,456 - main - INFO - OPENAI_API_KEY is set
+2024-11-29 23:47:22,487 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:47:22,488 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:47:22,490 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:47:22,497 - main - INFO - Successfully connected to Weaviate
+2024-11-29 23:47:23,096 - root - INFO - start upload
+2024-11-29 23:47:23,097 - root - INFO - File saved to: uploads/hell word222的副本20241129234723.txt
+2024-11-29 23:47:23,267 - root - INFO - File saved to database
+2024-11-29 23:47:23,267 - root - INFO - Starting to process file: hell word222的副本.txt
+2024-11-29 23:47:23,267 - root - INFO - Detected encoding: ascii
+2024-11-29 23:47:23,270 - root - ERROR - Unexpected error: [Errno 2] No such file or directory: 'hell word222的副本.txt'
+Traceback (most recent call last):
+  File "/Users/mrd/item/zgi/zgi/api/app/services/file_service.py", line 126, in process_and_vectorize_file
+    document = read_file(file)
+               ^^^^^^^^^^^^^^^
+  File "/Users/mrd/item/zgi/zgi/api/app/services/file_service.py", line 41, in read_file
+    with open(file.filename, 'r', encoding='utf-8') as file:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'hell word222的副本.txt'
+2024-11-29 23:48:15,195 - app.services.rag_service - INFO - Connections closed.
+2024-11-29 23:48:15,209 - main - INFO - Successfully closed all connections
+2024-11-29 23:48:18,615 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:48:18,616 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:48:18,619 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:48:18,653 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:48:18,654 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:48:18,657 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:48:18,658 - app.services.rag_service - INFO - Initializing OpenAI client with base_url: https://api.agicto.cn/v1
+2024-11-29 23:48:18,658 - app.services.rag_service - INFO - Initializing OpenAI client with OPENAI_API_KEY: sk-3fFCwcUTwnzo6xRfAuazZ8DJgPfDQigroNc21fGFmgel77W6
+2024-11-29 23:48:18,658 - app.services.rag_service - INFO - OPENAI_API_BASE: https://api.agicto.cn/v1
+2024-11-29 23:48:18,658 - app.services.rag_service - INFO - OPENAI_API_KEY: sk-3f...l77W6
+2024-11-29 23:48:18,777 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:48:18,778 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:48:18,782 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:48:18,824 - __mp_main__ - INFO - OPENAI_API_KEY is set
+2024-11-29 23:48:18,875 - main - INFO - OPENAI_API_KEY is set
+2024-11-29 23:48:18,907 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:48:18,907 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:48:18,910 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:48:18,920 - main - INFO - Successfully connected to Weaviate
+2024-11-29 23:48:21,851 - app.services.rag_service - INFO - Connections closed.
+2024-11-29 23:48:21,852 - main - INFO - Successfully closed all connections
+2024-11-29 23:48:25,522 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:48:25,523 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:48:25,527 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:48:25,613 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:48:25,614 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:48:25,619 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:48:25,620 - app.services.rag_service - INFO - Initializing OpenAI client with base_url: https://api.agicto.cn/v1
+2024-11-29 23:48:25,620 - app.services.rag_service - INFO - Initializing OpenAI client with OPENAI_API_KEY: sk-3fFCwcUTwnzo6xRfAuazZ8DJgPfDQigroNc21fGFmgel77W6
+2024-11-29 23:48:25,621 - app.services.rag_service - INFO - OPENAI_API_BASE: https://api.agicto.cn/v1
+2024-11-29 23:48:25,621 - app.services.rag_service - INFO - OPENAI_API_KEY: sk-3f...l77W6
+2024-11-29 23:48:25,775 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:48:25,776 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:48:25,779 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:48:25,811 - __mp_main__ - INFO - OPENAI_API_KEY is set
+2024-11-29 23:48:25,868 - main - INFO - OPENAI_API_KEY is set
+2024-11-29 23:48:25,904 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:48:25,905 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:48:25,908 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:48:25,918 - main - INFO - Successfully connected to Weaviate
+2024-11-29 23:48:25,921 - root - INFO - start upload
+2024-11-29 23:48:25,922 - root - INFO - File saved to: uploads/hell word222的副本20241129234825.txt
+2024-11-29 23:48:26,089 - root - INFO - File saved to database
+2024-11-29 23:48:26,089 - root - INFO - Starting to process file: hell word222的副本.txt
+2024-11-29 23:48:26,090 - root - INFO - Detected encoding: ascii
+2024-11-29 23:48:26,093 - root - ERROR - Unexpected error: expected str, bytes or os.PathLike object, not SpooledTemporaryFile
+Traceback (most recent call last):
+  File "/Users/mrd/item/zgi/zgi/api/app/services/file_service.py", line 126, in process_and_vectorize_file
+    document = read_file(file)
+               ^^^^^^^^^^^^^^^
+  File "/Users/mrd/item/zgi/zgi/api/app/services/file_service.py", line 41, in read_file
+    with open(file.file, 'r', encoding='utf-8') as file:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: expected str, bytes or os.PathLike object, not SpooledTemporaryFile
+2024-11-29 23:51:53,331 - app.services.rag_service - INFO - Connections closed.
+2024-11-29 23:51:53,333 - main - INFO - Successfully closed all connections
+2024-11-29 23:52:01,825 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:52:01,825 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:52:01,828 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:52:01,867 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:52:01,867 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:52:01,870 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:52:01,871 - app.services.rag_service - INFO - Initializing OpenAI client with base_url: https://api.agicto.cn/v1
+2024-11-29 23:52:01,871 - app.services.rag_service - INFO - Initializing OpenAI client with OPENAI_API_KEY: sk-3fFCwcUTwnzo6xRfAuazZ8DJgPfDQigroNc21fGFmgel77W6
+2024-11-29 23:52:01,871 - app.services.rag_service - INFO - OPENAI_API_BASE: https://api.agicto.cn/v1
+2024-11-29 23:52:01,871 - app.services.rag_service - INFO - OPENAI_API_KEY: sk-3f...l77W6
+2024-11-29 23:52:01,984 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:52:01,985 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:52:01,987 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:52:02,022 - __mp_main__ - INFO - OPENAI_API_KEY is set
+2024-11-29 23:52:02,093 - main - INFO - OPENAI_API_KEY is set
+2024-11-29 23:52:02,122 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:52:02,123 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:52:02,126 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:52:02,131 - main - INFO - Successfully connected to Weaviate
+2024-11-29 23:52:05,867 - app.services.rag_service - INFO - Connections closed.
+2024-11-29 23:52:05,886 - main - INFO - Successfully closed all connections
+2024-11-29 23:52:09,202 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:52:09,203 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:52:09,205 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:52:09,239 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:52:09,239 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:52:09,242 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:52:09,243 - app.services.rag_service - INFO - Initializing OpenAI client with base_url: https://api.agicto.cn/v1
+2024-11-29 23:52:09,243 - app.services.rag_service - INFO - Initializing OpenAI client with OPENAI_API_KEY: sk-3fFCwcUTwnzo6xRfAuazZ8DJgPfDQigroNc21fGFmgel77W6
+2024-11-29 23:52:09,243 - app.services.rag_service - INFO - OPENAI_API_BASE: https://api.agicto.cn/v1
+2024-11-29 23:52:09,243 - app.services.rag_service - INFO - OPENAI_API_KEY: sk-3f...l77W6
+2024-11-29 23:52:09,371 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:52:09,372 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:52:09,375 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:52:09,403 - __mp_main__ - INFO - OPENAI_API_KEY is set
+2024-11-29 23:52:09,485 - main - INFO - OPENAI_API_KEY is set
+2024-11-29 23:52:09,522 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:52:09,523 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:52:09,528 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:52:09,540 - main - INFO - Successfully connected to Weaviate
+2024-11-29 23:53:01,594 - app.services.rag_service - INFO - Connections closed.
+2024-11-29 23:53:01,595 - main - INFO - Successfully closed all connections
+2024-11-29 23:53:04,760 - app.utils.weaviate_manager - ERROR - Failed to connect to Weaviate: Could not connect to Weaviate:Connection to Weaviate failed. Details: .
+2024-11-29 23:54:25,674 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:54:25,675 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:54:25,678 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:54:25,712 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:54:25,713 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:54:25,716 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:54:25,717 - app.services.rag_service - INFO - Initializing OpenAI client with base_url: https://api.agicto.cn/v1
+2024-11-29 23:54:25,717 - app.services.rag_service - INFO - Initializing OpenAI client with OPENAI_API_KEY: sk-3fFCwcUTwnzo6xRfAuazZ8DJgPfDQigroNc21fGFmgel77W6
+2024-11-29 23:54:25,717 - app.services.rag_service - INFO - OPENAI_API_BASE: https://api.agicto.cn/v1
+2024-11-29 23:54:25,718 - app.services.rag_service - INFO - OPENAI_API_KEY: sk-3f...l77W6
+2024-11-29 23:54:25,833 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:54:25,834 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:54:25,837 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:54:25,871 - __main__ - INFO - OPENAI_API_KEY is set
+2024-11-29 23:54:28,871 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:54:28,871 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:54:28,875 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:54:28,906 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:54:28,907 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:54:28,910 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:54:28,911 - app.services.rag_service - INFO - Initializing OpenAI client with base_url: https://api.agicto.cn/v1
+2024-11-29 23:54:28,911 - app.services.rag_service - INFO - Initializing OpenAI client with OPENAI_API_KEY: sk-3fFCwcUTwnzo6xRfAuazZ8DJgPfDQigroNc21fGFmgel77W6
+2024-11-29 23:54:28,911 - app.services.rag_service - INFO - OPENAI_API_BASE: https://api.agicto.cn/v1
+2024-11-29 23:54:28,911 - app.services.rag_service - INFO - OPENAI_API_KEY: sk-3f...l77W6
+2024-11-29 23:54:29,022 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:54:29,023 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:54:29,026 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:54:29,055 - __mp_main__ - INFO - OPENAI_API_KEY is set
+2024-11-29 23:54:29,110 - main - INFO - OPENAI_API_KEY is set
+2024-11-29 23:54:29,139 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:54:29,140 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:54:29,143 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:54:29,147 - main - INFO - Successfully connected to Weaviate
+2024-11-29 23:54:34,423 - root - INFO - start upload
+2024-11-29 23:54:34,424 - root - INFO - File saved to: uploads/hell word222的副本20241129235434.txt
+2024-11-29 23:54:34,608 - root - INFO - File saved to database
+2024-11-29 23:54:34,608 - root - INFO - Starting to process file: hell word222的副本.txt
+2024-11-29 23:54:34,608 - root - INFO - Detected encoding: ascii
+2024-11-29 23:54:34,612 - root - ERROR - Validation error: File content is empty
+2024-11-29 23:56:02,375 - app.services.rag_service - INFO - Connections closed.
+2024-11-29 23:56:02,376 - main - INFO - Successfully closed all connections
+2024-11-29 23:56:09,457 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:56:09,458 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:56:09,460 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:56:09,501 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:56:09,501 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:56:09,504 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:56:09,505 - app.services.rag_service - INFO - Initializing OpenAI client with base_url: https://api.agicto.cn/v1
+2024-11-29 23:56:09,505 - app.services.rag_service - INFO - Initializing OpenAI client with OPENAI_API_KEY: sk-3fFCwcUTwnzo6xRfAuazZ8DJgPfDQigroNc21fGFmgel77W6
+2024-11-29 23:56:09,505 - app.services.rag_service - INFO - OPENAI_API_BASE: https://api.agicto.cn/v1
+2024-11-29 23:56:09,505 - app.services.rag_service - INFO - OPENAI_API_KEY: sk-3f...l77W6
+2024-11-29 23:56:09,637 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:56:09,638 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:56:09,642 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:56:09,676 - __mp_main__ - INFO - OPENAI_API_KEY is set
+2024-11-29 23:56:09,744 - main - INFO - OPENAI_API_KEY is set
+2024-11-29 23:56:09,773 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:56:09,773 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:56:09,776 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:56:09,781 - main - INFO - Successfully connected to Weaviate
+2024-11-29 23:56:26,618 - app.services.rag_service - INFO - Connections closed.
+2024-11-29 23:56:26,619 - main - INFO - Successfully closed all connections
+2024-11-29 23:56:33,487 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:56:33,488 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:56:33,490 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:56:33,525 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:56:33,526 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:56:33,528 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:56:33,529 - app.services.rag_service - INFO - Initializing OpenAI client with base_url: https://api.agicto.cn/v1
+2024-11-29 23:56:33,529 - app.services.rag_service - INFO - Initializing OpenAI client with OPENAI_API_KEY: sk-3fFCwcUTwnzo6xRfAuazZ8DJgPfDQigroNc21fGFmgel77W6
+2024-11-29 23:56:33,529 - app.services.rag_service - INFO - OPENAI_API_BASE: https://api.agicto.cn/v1
+2024-11-29 23:56:33,529 - app.services.rag_service - INFO - OPENAI_API_KEY: sk-3f...l77W6
+2024-11-29 23:56:33,674 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:56:33,675 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:56:33,677 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:56:33,709 - __mp_main__ - INFO - OPENAI_API_KEY is set
+2024-11-29 23:56:33,776 - main - INFO - OPENAI_API_KEY is set
+2024-11-29 23:56:33,808 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:56:33,809 - app.utils.weaviate_manager - INFO - Successfully connected to local Weaviate
+2024-11-29 23:56:33,812 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2024-11-29 23:56:33,817 - main - INFO - Successfully connected to Weaviate
+2024-11-29 23:56:38,711 - root - INFO - start upload
+2024-11-29 23:56:38,712 - root - INFO - File saved to: uploads/hell word222的副本20241129235638.txt
+2024-11-29 23:56:38,865 - root - INFO - File saved to database
+2024-11-29 23:56:38,865 - root - INFO - Starting to process file: hell word222的副本.txt
+2024-11-29 23:56:38,871 - root - INFO - File read successfully. Content length: 16
+2024-11-29 23:56:38,871 - root - INFO - Starting chunking process
+2024-11-29 23:56:38,871 - root - INFO - Generated 1 chunks
+2024-11-29 23:56:38,871 - root - INFO - Starting embedding process
+2024-11-29 23:56:41,889 - httpx - INFO - HTTP Request: POST https://api.agicto.cn/v1/embeddings "HTTP/1.1 200 OK"
+2024-11-29 23:56:41,896 - root - INFO - Successfully embedded 1 chunks
+2024-11-29 23:56:44,095 - httpx - INFO - HTTP Request: POST http://localhost:8080/v1/objects "HTTP/1.1 422 Unprocessable Entity"
+2024-11-29 23:56:44,097 - app.utils.weaviate_manager - ERROR - Error adding object to Weaviate: Object was not added! Unexpected status code: 422, with response body: {'error': [{'message': 'invalid object: failed to execute query: leader not found'}]}.
+2024-11-29 23:56:44,097 - root - ERROR - Error storing vectors: Object was not added! Unexpected status code: 422, with response body: {'error': [{'message': 'invalid object: failed to execute query: leader not found'}]}.
+2024-11-29 23:56:44,097 - root - ERROR - Vector storage failed: Object was not added! Unexpected status code: 422, with response body: {'error': [{'message': 'invalid object: failed to execute query: leader not found'}]}.
+2024-11-29 23:56:44,097 - root - ERROR - Validation error: Failed to store vectors: Object was not added! Unexpected status code: 422, with response body: {'error': [{'message': 'invalid object: failed to execute query: leader not found'}]}.
+2024-11-29 23:57:19,988 - root - INFO - start upload
+2024-11-29 23:57:19,989 - root - INFO - File saved to: uploads/未命名1_加水印20241129235719.pdf
+2024-11-29 23:57:20,107 - root - INFO - File saved to database
+2024-11-29 23:57:20,108 - root - INFO - Starting to process file: 未命名1_加水印.pdf
+2024-11-29 23:57:20,154 - root - INFO - File read successfully. Content length: 21
+2024-11-29 23:57:20,154 - root - INFO - Starting chunking process
+2024-11-29 23:57:20,154 - root - INFO - Generated 1 chunks
+2024-11-29 23:57:20,154 - root - INFO - Starting embedding process
+2024-11-29 23:57:25,038 - httpx - INFO - HTTP Request: POST https://api.agicto.cn/v1/embeddings "HTTP/1.1 200 OK"
+2024-11-29 23:57:25,041 - root - INFO - Successfully embedded 1 chunks
+2024-11-29 23:57:27,220 - httpx - INFO - HTTP Request: POST http://localhost:8080/v1/objects "HTTP/1.1 422 Unprocessable Entity"
+2024-11-29 23:57:27,221 - app.utils.weaviate_manager - ERROR - Error adding object to Weaviate: Object was not added! Unexpected status code: 422, with response body: {'error': [{'message': 'invalid object: failed to execute query: leader not found'}]}.
+2024-11-29 23:57:27,221 - root - ERROR - Error storing vectors: Object was not added! Unexpected status code: 422, with response body: {'error': [{'message': 'invalid object: failed to execute query: leader not found'}]}.
+2024-11-29 23:57:27,221 - root - ERROR - Vector storage failed: Object was not added! Unexpected status code: 422, with response body: {'error': [{'message': 'invalid object: failed to execute query: leader not found'}]}.
+2024-11-29 23:57:27,222 - root - ERROR - Validation error: Failed to store vectors: Object was not added! Unexpected status code: 422, with response body: {'error': [{'message': 'invalid object: failed to execute query: leader not found'}]}.
+2024-11-29 23:57:43,062 - app.services.rag_service - INFO - Connections closed.
+2024-11-29 23:57:43,063 - main - INFO - Successfully closed all connections

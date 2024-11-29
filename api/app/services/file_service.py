@@ -9,25 +9,37 @@ from pathlib import Path
 import chardet
 from . import qiniu_service
 from . import db_service
+import mimetypes
+import fitz  # PyMuPDF
 
 vectorClient = VectorStore()
 
-def read_file(file: UploadFile) -> Document:
-    content = file.file.read()
-    
-    # 自动检测编码
-    detected = chardet.detect(content)
-    encoding = detected['encoding']
-    logging.info(f"Detected encoding: {encoding}")
+def read_file(file: UploadFile,file_path) -> Document:
     
     try:
-        decoded_content = content.decode(encoding or 'utf-8')
+         # 判断文件类型
+        mime_type, _ = mimetypes.guess_type(file.filename)
+        
+        decoded_content = ""
+
+        if mime_type == 'application/pdf':
+            # 如果是 PDF 文件，使用 PyMuPDF 获取内容
+            with fitz.open(file_path) as pdf:
+                # 读取每一页的内容
+                for page_num in range(pdf.page_count):
+                    page = pdf.load_page(page_num)
+                    text = page.get_text()
+                    decoded_content += text + "\n"  # 将每页内容添加到 decoded_content 中
+        elif mime_type == 'text/plain':
+            decoded_content = file.file.read()
+        else:
+            raise ValueError("Uploaded file is neither a PDF nor a TXT.")
     except UnicodeDecodeError:
         # 如果自动检测失败，尝试常用编码
         decoded_content = None  # 初始化变量
         for enc in ['utf-8', 'gbk', 'gb2312', 'gb18030', 'big5','latin1']:
             try:
-                decoded_content = content.decode(enc)
+                decoded_content = file.file.read().decode(enc)
                 break
             except UnicodeDecodeError:
                 continue
@@ -47,7 +59,7 @@ async def upload_file(file: UploadFile, saveToData: bool = False):
     if saveToData:
         # 保存到数据库
         logging.info(f"File saved to database")
-        await process_and_vectorize_file(file)
+        await process_and_vectorize_file(file,file_path["local"])
         
     return {
         "filename": file.filename,
@@ -85,7 +97,7 @@ async def ensure_upload_directory(file: UploadFile, directory: str = "uploads"):
         "cdn": cdnPath
     }
 
-async def process_and_vectorize_file(file: UploadFile):
+async def process_and_vectorize_file(file: UploadFile,file_path):
     logging.info(f"Starting to process file: {file.filename}")
     
     try:
@@ -103,7 +115,7 @@ async def process_and_vectorize_file(file: UploadFile):
         await file.seek(0)  # 重置文件指针
         
         # 2. 读取文件内容
-        document = read_file(file)
+        document = read_file(file,file_path)
         if not document.content.strip():
             raise ValueError("File content is empty")
         logging.info(f"File read successfully. Content length: {len(document.content)}")
