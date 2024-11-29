@@ -1,0 +1,51 @@
+# Exclude all node_modules directories
+**/node_modules
+node_modules
+
+# Exclude build and cache directories
+**/.next/cache
+**/dist
+**/.cache
+
+# Exclude version control related
+**/.git
+**/.gitignore
+**/.svn
+**/.hg
+
+# Exclude development and test files
+**/*.test.*
+**/__tests__
+**/tests
+**/*.md
+**/README.md
+
+# Exclude environment and config files
+**/.env*
+**/.DS_Store
+
+# Exclude log files
+**/*.log
+
+# Exclude IDE configurations
+**/.idea
+**/.vscode
+**/.vs
+
+# Exclude electron related directories and files
+**/electron
+**/app/background.js
+**/main
+**/preload.ts
+**/preload.d.ts
+**/electron-builder.json
+**/electron.vite.config.ts
+# Exclude frontend web app and dist directories
+frontend/web/app
+frontend/web/dist
+
+# Keep necessary configuration files
+!frontend/web/tsconfig.json
+!frontend/web/next.config.js
+!frontend/web/postcss.config.js
+!frontend/web/tailwind.config.js
