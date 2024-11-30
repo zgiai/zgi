@@ -5,58 +5,59 @@ WORKDIR /app
 # Set proxy environment variables
 ARG HTTP_PROXY
 ARG HTTPS_PROXY
+ARG WEB_PORT=80
+
 ENV HTTP_PROXY=${HTTP_PROXY}
 ENV HTTPS_PROXY=${HTTPS_PROXY}
 ENV npm_config_proxy=${HTTP_PROXY}
 ENV npm_config_https_proxy=${HTTPS_PROXY}
+ENV WEB_PORT=${WEB_PORT}
 
-# Copy package.json and script first
-COPY frontend/web/package.json ./package.json
-COPY frontend/web/prepare-web-package.js ./prepare-web-package.js
-COPY frontend/web/tsconfig.json ./tsconfig.json
+# Verify proxy settings using wget (pre-installed in Alpine)
+RUN echo "HTTP_PROXY: ${HTTP_PROXY}" && \
+  echo "HTTPS_PROXY: ${HTTPS_PROXY}" && \
+  echo "npm_config_proxy: ${npm_config_proxy}" && \
+  echo "npm_config_https_proxy: ${npm_config_https_proxy}" && \
+  wget -q --spider --no-check-certificate https://registry.npmjs.org/
+
+# Install debugging tools
+RUN apk add --no-cache curl vim procps
+
+# Copy package files first
+COPY frontend/web/package*.json ./
+COPY frontend/web/prepare-web-package.js ./
+COPY frontend/web/tsconfig.json ./
 
 # Run script to prepare web package.json
 RUN node prepare-web-package.js && \
   mv package.web.json package.json && \
   rm prepare-web-package.js
 
-# Install dependencies
-RUN npm install --legacy-peer-deps
+# Install dependencies with verbose output
+RUN echo "Starting npm installation..." && \
+  npm config set loglevel verbose && \
+  npm install --verbose && \
+  echo "npm installation completed"
 
 # Copy source code
 COPY frontend/web .
 
-# Build application and verify output
-RUN npm run build:web && \
-  echo "Build completed, checking output:" && \
-  ls -la && \
-  echo "Checking app directory:" && \
-  ls -la app/ || echo "app directory not found"
+# Build application with verbose output
+RUN echo "Starting build process..." && \
+  npm run build:web --verbose && \
+  echo "Build completed"
 
 # Production stage
 FROM nginx:alpine
 
-# Install debugging tools
-RUN apk add --no-cache curl vim procps
-
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 
-# Create directory for the app
-RUN mkdir -p /usr/share/nginx/html
-
-# Copy the entire app directory
+# Create directory and copy built files
 COPY --from=builder /app/app/ /usr/share/nginx/html/
 
-# Verify the copy
-RUN echo "Checking nginx html directory:" && \
-  ls -la /usr/share/nginx/html/
-
-ENV PORT=80
-EXPOSE ${PORT}
-
-# Add healthcheck
+# Update healthcheck
 HEALTHCHECK --interval=30s --timeout=3s \
-  CMD curl -f http://localhost:80/ || exit 1
+  CMD wget -q --spider http://localhost:${WEB_PORT}/ || exit 1
 
-# Start Nginx with environment variable substitution
-CMD ["/bin/sh", "-c", "envsubst '$$PORT' < /etc/nginx/conf.d/default.conf > /etc/nginx/conf.d/default.conf.tmp && mv /etc/nginx/conf.d/default.conf.tmp /etc/nginx/conf.d/default.conf && nginx -g 'daemon off; error_log /dev/stdout debug;'"]
+# Start Nginx
+CMD ["/bin/sh", "-c", "envsubst '$$WEB_PORT' < /etc/nginx/conf.d/default.conf > /etc/nginx/conf.d/default.conf.tmp && mv /etc/nginx/conf.d/default.conf.tmp /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]

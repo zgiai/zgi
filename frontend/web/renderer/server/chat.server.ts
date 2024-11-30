@@ -1,6 +1,5 @@
 import { API_KEY } from "@/constants";
-import { http, API_CONFIG } from "@/lib/http";
-import type { ChatMessage, Role } from "@/types/chat";
+import { API_CONFIG } from "@/lib/http";
 
 /**
  * Send messages and get real-time response stream

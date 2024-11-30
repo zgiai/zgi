@@ -5,7 +5,7 @@ import axios, { type AxiosInstance, type AxiosRequestConfig } from "axios";
 export const API_CONFIG = {
 	ADMIN: "https://api.zgi.ai",
 	CLIENT: "https://api.zgi.ai",
-	COMMON: "https://api.agicto.cn",
+	COMMON: "http://localhost:8088",
 } as const;
 
 // Type for API endpoints
