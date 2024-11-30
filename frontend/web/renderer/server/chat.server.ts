@@ -33,7 +33,7 @@ export const streamChatCompletions = async (
 		},
 		body: JSON.stringify({
 			...options,
-			model: options?.model || "gpt-4-vision-preview",
+			model: options?.model || "gpt-4o",
 			messages,
 			stream: true,
 			temperature: options?.temperature || 1,

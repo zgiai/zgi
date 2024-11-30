@@ -437,7 +437,6 @@ export const useChatStore = create<ChatStore>()((set, get) => {
 				// If this is not a message to skip AI response, send request
 				if (!message.skipAIResponse) {
 					const reader = await streamChatCompletions({
-						model: "gpt-4-vision-preview", // Use the model that supports images
 						messages: [...messagesToSend, currentMessageToSend],
 						stream: true,
 						temperature: 1,
