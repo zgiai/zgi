@@ -11,7 +11,7 @@ ENV HTTP_PROXY=${HTTP_PROXY}
 ENV HTTPS_PROXY=${HTTPS_PROXY}
 ENV npm_config_proxy=${HTTP_PROXY}
 ENV npm_config_https_proxy=${HTTPS_PROXY}
-ENV WEB_PORT=${WEB_PORT}
+ENV WEB_PORT=${WEB_PORT:-80}
 
 # Verify proxy settings using wget (pre-installed in Alpine)
 RUN echo "HTTP_PROXY: ${HTTP_PROXY}" && \
@@ -59,5 +59,5 @@ COPY --from=builder /app/app/ /usr/share/nginx/html/
 HEALTHCHECK --interval=30s --timeout=3s \
   CMD wget -q --spider http://localhost:${WEB_PORT}/ || exit 1
 
-# Start Nginx
+# Start Nginx with environment variable substitution
 CMD ["/bin/sh", "-c", "envsubst '$$WEB_PORT' < /etc/nginx/conf.d/default.conf > /etc/nginx/conf.d/default.conf.tmp && mv /etc/nginx/conf.d/default.conf.tmp /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]
