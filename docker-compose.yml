@@ -1,4 +1,4 @@
-version: "3.8"
+version: '3.8'
 
 services:
   backend:
@@ -8,8 +8,8 @@ services:
     volumes:
       - ./api:/app
     ports:
-      - "8088:8088"
-      - "7001:7001"
+      - '8088:8088'
+      - '7001:7001'
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY} # OpenAI API Key
       - WEAVIATE_URL=${WEAVIATE_URL} # Weaviate URL
@@ -38,7 +38,7 @@ services:
     image: mysql:5.7
     restart: always
     ports:
-      - "3306:3306"
+      - '3306:3306'
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD} # Database root password
       MYSQL_DATABASE: ${MYSQL_DATABASE} # Database name
@@ -51,8 +51,8 @@ services:
   weaviate:
     image: semitechnologies/weaviate
     ports:
-      - "8080:8080"
-      - "50051:50051"
+      - '8080:8080'
+      - '50051:50051'
     volumes:
       - weaviate_data:/var/lib/weaviate # Use Docker volume for data persistence
     environment:
@@ -60,20 +60,20 @@ services:
       - AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED='true' # Enable anonymous access
       - ENABLE_MODULES='text2vec-openai' # Enable OpenAI module
 
-  web:
-    image: e-web:latest
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.web
-      args:
-        - HTTP_PROXY=${DOCKER_HTTP_PROXY}
-        - HTTPS_PROXY=${DOCKER_HTTPS_PROXY}
-    ports:
-      - "${WEB_PORT:-80}:80"
-    environment:
-      - PORT=80
-      - HTTP_PROXY=${DOCKER_HTTP_PROXY}
-      - HTTPS_PROXY=${DOCKER_HTTPS_PROXY}
+  # web:
+  #   image: e-web:latest
+  #   build:
+  #     context: .
+  #     dockerfile: docker/Dockerfile.web
+  #     args:
+  #       - HTTP_PROXY=${DOCKER_HTTP_PROXY}
+  #       - HTTPS_PROXY=${DOCKER_HTTPS_PROXY}
+  #   ports:
+  #     - "${WEB_PORT:-80}:80"
+  #   environment:
+  #     - PORT=80
+  #     - HTTP_PROXY=${DOCKER_HTTP_PROXY}
+  #     - HTTPS_PROXY=${DOCKER_HTTPS_PROXY}
 
 volumes:
   db_data: {} # Define db_data volume
