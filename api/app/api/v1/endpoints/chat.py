@@ -92,7 +92,8 @@ async def chat_completions(request: ChatCompletionRequest):
     sys_message = next((m for m in request.messages if m.role == "system"), None) 
     user_message = next((m for m in request.messages if m.role == "user"), None)  # 查找用户消息
     if user_message:  # 确保找到了用户消息
-        results = await vector_service.query_vector_store(user_message.content)  # 使用用户消息的 content 进行查询
+        # results = await vector_service.query_vector_store(user_message.content)  # 使用用户消息的 content 进行查询
+        results = None
         print(results, '>>>>>>>results')
         if results:  # 检查 results 是否存在数据
             # 提取相关内容
@@ -117,8 +118,7 @@ async def chat_completions(request: ChatCompletionRequest):
         else:  # 如果 results 没有数据
             print("No results found, using original messages.")
             messages = request.messages  # 使用原始请求的 messages
-
-        
+            
         print(messages, '>>>>>>>new_message')
     try:
         if request.stream:
