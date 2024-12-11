@@ -1,0 +1,602 @@
+{
+	"info": {
+		"_postman_id": "b5e9c8d2-3f4a-4b5c-9d8e-1a2b3c4d5e6f",
+		"name": "用户认证系统API",
+		"description": "用户认证系统的API集合，包含注册、登录、用户信息获取、API密钥管理和团队空间管理等功能。",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "认证",
+			"description": "用户认证相关的API端点",
+			"item": [
+				{
+					"name": "用户注册",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"email\": \"user@example.com\",\n    \"username\": \"testuser\",\n    \"password\": \"password123\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/v1/auth/register",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"v1",
+								"auth",
+								"register"
+							]
+						},
+						"description": "注册新用户并返回访问令牌"
+					},
+					"response": [
+						{
+							"name": "成功响应",
+							"originalRequest": {
+								"method": "POST",
+								"header": [],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n    \"email\": \"user@example.com\",\n    \"username\": \"testuser\",\n    \"password\": \"password123\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/v1/auth/register",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"v1",
+										"auth",
+										"register"
+									]
+								}
+							},
+							"status": "Created",
+							"code": 201,
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "Content-Type",
+									"value": "application/json"
+								}
+							],
+							"body": "{\n    \"access_token\": \"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...\",\n    \"token_type\": \"bearer\"\n}"
+						}
+					]
+				},
+				{
+					"name": "用户登录",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"email\": \"user@example.com\",\n    \"password\": \"password123\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/v1/auth/login",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"v1",
+								"auth",
+								"login"
+							]
+						},
+						"description": "用户登录并获取访问令牌"
+					},
+					"response": [
+						{
+							"name": "成功响应",
+							"originalRequest": {
+								"method": "POST",
+								"header": [],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n    \"email\": \"user@example.com\",\n    \"password\": \"password123\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/v1/auth/login",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"v1",
+										"auth",
+										"login"
+									]
+								}
+							},
+							"status": "OK",
+							"code": 200,
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "Content-Type",
+									"value": "application/json"
+								}
+							],
+							"body": "{\n    \"access_token\": \"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...\",\n    \"token_type\": \"bearer\"\n}"
+						}
+					]
+				},
+				{
+					"name": "获取当前用户信息",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/v1/auth/me",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"v1",
+								"auth",
+								"me"
+							]
+						},
+						"description": "获取当前已认证用户的详细信息"
+					},
+					"response": [
+						{
+							"name": "成功响应",
+							"originalRequest": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "Authorization",
+										"value": "Bearer {{access_token}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/v1/auth/me",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"v1",
+										"auth",
+										"me"
+									]
+								}
+							},
+							"status": "OK",
+							"code": 200,
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "Content-Type",
+									"value": "application/json"
+								}
+							],
+							"body": "{\n    \"id\": 1,\n    \"email\": \"user@example.com\",\n    \"username\": \"testuser\",\n    \"created_at\": \"2024-12-10T21:49:43Z\",\n    \"updated_at\": \"2024-12-10T21:49:43Z\"\n}"
+						}
+					]
+				}
+			]
+		},
+		{
+			"name": "API密钥管理",
+			"description": "API密钥管理相关的API端点",
+			"item": [
+				{
+					"name": "创建API密钥",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"provider\": \"openai\",\n    \"key_name\": \"OpenAI Production\",\n    \"key_value\": \"sk-xxx\",\n    \"is_active\": true\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/v1/client/api-keys",
+							"host": ["{{base_url}}"],
+							"path": ["v1", "client", "api-keys"]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "获取API密钥列表",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/v1/client/api-keys",
+							"host": ["{{base_url}}"],
+							"path": ["v1", "client", "api-keys"]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "获取API密钥详情",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/v1/client/api-keys/1",
+							"host": ["{{base_url}}"],
+							"path": ["v1", "client", "api-keys", "1"]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "更新API密钥",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"key_name\": \"OpenAI GPT-4\",\n    \"is_active\": false\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/v1/client/api-keys/1",
+							"host": ["{{base_url}}"],
+							"path": ["v1", "client", "api-keys", "1"]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "删除API密钥",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/v1/client/api-keys/1",
+							"host": ["{{base_url}}"],
+							"path": ["v1", "client", "api-keys", "1"]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "团队空间管理",
+			"description": "团队空间管理相关的API端点",
+			"item": [
+				{
+					"name": "创建团队",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"name\": \"My Team\",\n    \"description\": \"This is my team\",\n    \"max_members\": 10,\n    \"allow_member_invite\": true,\n    \"default_member_role\": \"member\",\n    \"isolated_data\": true,\n    \"shared_api_keys\": false\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/v1/client/teams",
+							"host": ["{{base_url}}"],
+							"path": ["v1", "client", "teams"]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "获取团队列表",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/v1/client/teams",
+							"host": ["{{base_url}}"],
+							"path": ["v1", "client", "teams"]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "获取团队详情",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/v1/client/teams/1",
+							"host": ["{{base_url}}"],
+							"path": ["v1", "client", "teams", "1"]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "更新团队",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"name\": \"Updated Team Name\",\n    \"description\": \"Updated team description\",\n    \"max_members\": 15,\n    \"allow_member_invite\": false\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/v1/client/teams/1",
+							"host": ["{{base_url}}"],
+							"path": ["v1", "client", "teams", "1"]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "删除团队",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/v1/client/teams/1",
+							"host": ["{{base_url}}"],
+							"path": ["v1", "client", "teams", "1"]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "添加团队成员",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"user_id\": 2,\n    \"role\": \"member\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/v1/client/teams/1/members",
+							"host": ["{{base_url}}"],
+							"path": ["v1", "client", "teams", "1", "members"]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "移除团队成员",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/v1/client/teams/1/members/2",
+							"host": ["{{base_url}}"],
+							"path": ["v1", "client", "teams", "1", "members", "2"]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "创建团队邀请",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"invitee_email\": \"newuser@example.com\",\n    \"role\": \"member\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/v1/client/teams/1/invitations",
+							"host": ["{{base_url}}"],
+							"path": ["v1", "client", "teams", "1", "invitations"]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "控制台团队管理",
+			"description": "控制台团队管理相关的API端点",
+			"item": [
+				{
+					"name": "创建团队",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"name\": \"Test Team\",\n    \"description\": \"Test Team Description\",\n    \"max_members\": 10,\n    \"allow_member_invite\": true,\n    \"default_member_role\": \"member\",\n    \"isolated_data\": true,\n    \"shared_api_keys\": false\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/v1/console/teams",
+							"host": ["{{base_url}}"],
+							"path": ["v1", "console", "teams"]
+						},
+						"description": "创建新团队（仅管理员）"
+					},
+					"response": [
+						{
+							"name": "成功响应",
+							"originalRequest": {
+								"method": "POST",
+								"header": [],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n    \"name\": \"Test Team\",\n    \"description\": \"Test Team Description\",\n    \"max_members\": 10,\n    \"allow_member_invite\": true,\n    \"default_member_role\": \"member\",\n    \"isolated_data\": true,\n    \"shared_api_keys\": false\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/v1/console/teams"
+								}
+							},
+							"status": "OK",
+							"code": 200,
+							"_postman_previewlanguage": "json",
+							"header": [],
+							"cookie": [],
+							"body": "{\n    \"id\": 1,\n    \"name\": \"Test Team\",\n    \"description\": \"Test Team Description\",\n    \"max_members\": 10,\n    \"allow_member_invite\": true,\n    \"default_member_role\": \"member\",\n    \"isolated_data\": true,\n    \"shared_api_keys\": false,\n    \"created_at\": \"2024-12-10T22:51:51Z\",\n    \"updated_at\": \"2024-12-10T22:51:51Z\"\n}"
+						}
+					]
+				}
+			]
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:8080",
+			"type": "string",
+			"description": "API基础URL"
+		},
+		{
+			"key": "access_token",
+			"value": "",
+			"type": "string",
+			"description": "用户访问令牌"
+		}
+	]
+}

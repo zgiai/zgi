@@ -1,0 +1,216 @@
+{
+  "info": {
+    "name": "RAG API",
+    "description": "Collection for testing RAG (Retrieval-Augmented Generation) API endpoints",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Document Management",
+      "item": [
+        {
+          "name": "Upload Document",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "/path/to/document.pdf"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/rag/upload",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "rag", "upload"]
+            },
+            "description": "Upload a document for RAG processing"
+          }
+        },
+        {
+          "name": "List Documents",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/rag/documents?page=1&page_size=10",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "rag", "documents"],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "page_size",
+                  "value": "10"
+                }
+              ]
+            },
+            "description": "List uploaded documents"
+          }
+        },
+        {
+          "name": "Get Document",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/rag/documents/{{document_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "rag", "documents", "{{document_id}}"]
+            },
+            "description": "Get document details"
+          }
+        },
+        {
+          "name": "Delete Document",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/rag/documents/{{document_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "rag", "documents", "{{document_id}}"]
+            },
+            "description": "Delete a document"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Search and Generate",
+      "item": [
+        {
+          "name": "Search Documents",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"What is RAG?\",\n  \"document_ids\": [{{document_id}}],\n  \"top_k\": 3,\n  \"min_score\": 0.5\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/rag/search",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "rag", "search"]
+            },
+            "description": "Search for relevant text chunks"
+          }
+        },
+        {
+          "name": "Generate Response",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"Explain RAG and its benefits\",\n  \"context_chunks\": [],\n  \"temperature\": 0.7\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/rag/generate",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "rag", "generate"]
+            },
+            "description": "Generate response using context chunks"
+          }
+        },
+        {
+          "name": "Combined Query",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"What are the main benefits of RAG?\",\n  \"document_ids\": [{{document_id}}],\n  \"top_k\": 3,\n  \"temperature\": 0.7\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/rag/query",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "rag", "query"]
+            },
+            "description": "Combined search and generate functionality"
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "your_auth_token_here",
+      "type": "string"
+    },
+    {
+      "key": "document_id",
+      "value": "1",
+      "type": "string"
+    }
+  ]
+}

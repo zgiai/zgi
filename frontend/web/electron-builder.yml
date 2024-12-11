@@ -1,0 +1,46 @@
+appId: com.example.nextron
+productName: My Nextron App
+copyright: Copyright © 2018 Yoshihide Shiono
+directories:
+  output: dist
+  buildResources: resources
+files:
+  - from: .
+    filter:
+      - package.json
+      - app
+publish: null
+
+
+mac:
+  target:
+    - dmg
+    - zip
+  icon: resources/icon.icns
+  # 应用的分类，可选的分类参考文档：https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/LaunchServicesKeys.html#//apple_ref/doc/uid/TP40009250-SW8
+  category: public.app-category.developer-tools
+  # 管理macOS应用程序的安全保护和资源访问。https://developer.apple.com/documentation/security/hardened_runtime
+  hardenedRuntime: true
+  # Key-value pairs that grant an executable permission to use a service or technology.
+  # https://developer.apple.com/documentation/bundleresources/entitlements
+  # https://developer.apple.com/documentation/security/hardened_runtime
+  entitlements: resources/entitlements.mac.plist
+  # Info.plist的额外条目。https://developer.apple.com/documentation/bundleresources/information_property_list
+  extendInfo: 
+    NSMicrophoneUsageDescription: 请允许访问您的麦克风
+    NSCameraUsageDescription: 请允许访问您的摄像头
+win:
+  target:
+    - target: nsis
+      # arch:
+      #   - ia32
+  icon: resources/icon.ico
+  artifactName: ${productName}_${version}.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: true
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+  displayLanguageSelector: false

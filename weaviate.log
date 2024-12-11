@@ -1,0 +1,21 @@
+2024-11-26 00:11:32,859 - httpx - INFO - HTTP Request: GET https://kukk8fout66ghwantufrga.c0.asia-southeast1.gcp.weaviate.cloud/v1/meta "HTTP/1.1 200 OK"
+2024-11-26 00:11:33,675 - httpx - INFO - HTTP Request: GET https://kukk8fout66ghwantufrga.c0.asia-southeast1.gcp.weaviate.cloud/v1/meta "HTTP/1.1 200 OK"
+2024-11-26 00:11:33,676 - app.services.rag_service - INFO - Initializing OpenAI client with base_url: https://api.agicto.cn/v1
+2024-11-26 00:11:33,676 - app.services.rag_service - INFO - Initializing OpenAI client with OPENAI_API_KEY: sk-3fFCwcUTwnzo6xRfAuazZ8DJgPfDQigroNc21fGFmgel77W6
+2024-11-26 00:11:33,677 - app.services.rag_service - INFO - OPENAI_API_BASE: https://api.agicto.cn/v1
+2024-11-26 00:11:33,677 - app.services.rag_service - INFO - OPENAI_API_KEY: sk-3f...l77W6
+2024-11-26 00:11:34,720 - httpx - INFO - HTTP Request: GET https://kukk8fout66ghwantufrga.c0.asia-southeast1.gcp.weaviate.cloud/v1/meta "HTTP/1.1 200 OK"
+2024-11-26 00:11:34,789 - __main__ - INFO - OPENAI_API_KEY is set
+2024-11-26 00:11:39,642 - httpx - INFO - HTTP Request: GET https://kukk8fout66ghwantufrga.c0.asia-southeast1.gcp.weaviate.cloud/v1/meta "HTTP/1.1 200 OK"
+2024-11-26 00:11:40,496 - httpx - INFO - HTTP Request: GET https://kukk8fout66ghwantufrga.c0.asia-southeast1.gcp.weaviate.cloud/v1/meta "HTTP/1.1 200 OK"
+2024-11-26 00:11:40,498 - app.services.rag_service - INFO - Initializing OpenAI client with base_url: https://api.agicto.cn/v1
+2024-11-26 00:11:40,498 - app.services.rag_service - INFO - Initializing OpenAI client with OPENAI_API_KEY: sk-3fFCwcUTwnzo6xRfAuazZ8DJgPfDQigroNc21fGFmgel77W6
+2024-11-26 00:11:40,498 - app.services.rag_service - INFO - OPENAI_API_BASE: https://api.agicto.cn/v1
+2024-11-26 00:11:40,498 - app.services.rag_service - INFO - OPENAI_API_KEY: sk-3f...l77W6
+2024-11-26 00:11:41,396 - httpx - INFO - HTTP Request: GET https://kukk8fout66ghwantufrga.c0.asia-southeast1.gcp.weaviate.cloud/v1/meta "HTTP/1.1 200 OK"
+2024-11-26 00:11:41,442 - __mp_main__ - INFO - OPENAI_API_KEY is set
+2024-11-26 00:11:41,499 - main - INFO - OPENAI_API_KEY is set
+2024-11-26 00:11:42,342 - httpx - INFO - HTTP Request: GET https://kukk8fout66ghwantufrga.c0.asia-southeast1.gcp.weaviate.cloud/v1/meta "HTTP/1.1 200 OK"
+2024-11-26 00:11:42,352 - main - INFO - Successfully connected to Weaviate
+2024-11-26 00:11:44,107 - app.services.rag_service - INFO - Connections closed.
+2024-11-26 00:11:44,108 - main - INFO - Successfully closed all connections

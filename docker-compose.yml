@@ -1,0 +1,50 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.server
+    volumes:
+      - ./api:/app
+    ports:
+      - '8088:8088'
+      - '7007:7007'
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY} # 从.env文件获取OpenAI API密钥
+      - WEAVIATE_URL=${WEAVIATE_URL} # 从.env文件获取Weaviate URL
+      - WEAVIATE_API_KEY=${WEAVIATE_API_KEY} # 从.env文件获取Weaviate API密钥
+      - WEAVIATE_LOCAL_URL=${WEAVIATE_LOCAL_URL} # 从.env文件获取Weaviate本地URL
+      - WEAVIATE_LOCAL_API_KEY=${WEAVIATE_LOCAL_API_KEY} # 从.env文件获取Weaviate本地API密钥
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL} # 从.env文件获取OpenAI基础URL
+      - OPENAI_API_BASE=${OPENAI_API_BASE} # 从.env文件获取OpenAI API基础URL
+      - ENVIRONMENT=${ENVIRONMENT} # 从.env文件获取环境设置
+      - MYSQL_MIN_CONNECTIONS=${MYSQL_MIN_CONNECTIONS} # 从.env文件获取MySQL最小连接数
+      - MYSQL_MAX_CONNECTIONS=${MYSQL_MAX_CONNECTIONS} # 从.env文件获取MySQL最大连接数
+      - QINIU_BASEURL=${QINIU_BASEURL}
+      - QINIU_SK=${QINIU_SK}
+      - QINIU_AK=${QINIU_AK}
+      - QINIU_BUCKET=${QINIU_BUCKET}
+      - MYSQL_HOST=db
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+      - MYSQL_PORT=${MYSQL_PORT}
+
+    depends_on:
+      - db
+
+  db:
+    image: mysql:5.7
+    restart: always
+    ports:
+      - '3306:3306'
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD} # 从.env文件获取数据库根密码
+      MYSQL_DATABASE: ${MYSQL_DATABASE} # 从.env文件获取数据库名称
+      MYSQL_USER: ${MYSQL_USER} # 从.env文件获取数据库用户名
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD} # 从.env文件获取数据库密码
+    volumes:
+      - db_data:/var/lib/mysql # 使用卷来持久化数据
+      - ./api/init.sql:/docker-entrypoint-initdb.d/init.sql # 挂载初始化脚本
+
+volumes:
+  db_data: {} # 定义db_data卷

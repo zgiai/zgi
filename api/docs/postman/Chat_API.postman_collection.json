@@ -1,0 +1,202 @@
+{
+  "info": {
+    "name": "Chat API",
+    "description": "Collection for testing chat API endpoints",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "File Upload",
+      "item": [
+        {
+          "name": "Upload PDF File",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "/path/to/document.pdf"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/chat/sessions/{{session_id}}/upload",
+              "host": ["{{base_url}}"],
+              "path": ["api", "chat", "sessions", "{{session_id}}", "upload"]
+            },
+            "description": "Upload a PDF file to be used as context in the chat session"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Prompt Management",
+      "item": [
+        {
+          "name": "Create Prompt",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Text Summarizer\",\n  \"content\": \"Summarize the following text: {text}\",\n  \"scenario\": \"summarization\",\n  \"description\": \"Generates concise summaries\",\n  \"metadata\": {\n    \"tags\": [\"summary\", \"concise\"]\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/chat/prompts",
+              "host": ["{{base_url}}"],
+              "path": ["api", "chat", "prompts"]
+            },
+            "description": "Create a new chat prompt template"
+          },
+          "response": []
+        },
+        {
+          "name": "List Prompts",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/chat/prompts?scenario=summarization&page=1&page_size=20",
+              "host": ["{{base_url}}"],
+              "path": ["api", "chat", "prompts"],
+              "query": [
+                {
+                  "key": "scenario",
+                  "value": "summarization"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "page_size",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "List available prompts with filtering and pagination"
+          },
+          "response": []
+        },
+        {
+          "name": "Preview Prompt",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"prompt_id\": 1,\n  \"variables\": {\n    \"text\": \"Sample text to summarize\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/chat/prompts/preview",
+              "host": ["{{base_url}}"],
+              "path": ["api", "chat", "prompts", "preview"]
+            },
+            "description": "Preview the output of a prompt with the chat model"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Prompt",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Updated Title\",\n  \"content\": \"Updated content with {variable}\",\n  \"scenario\": \"new_scenario\",\n  \"description\": \"Updated description\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/chat/prompts/{{prompt_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "chat", "prompts", "{{prompt_id}}"]
+            },
+            "description": "Update an existing prompt"
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Prompt",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/chat/prompts/{{prompt_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "chat", "prompts", "{{prompt_id}}"]
+            },
+            "description": "Delete a prompt"
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "your_auth_token_here",
+      "type": "string"
+    }
+  ]
+}

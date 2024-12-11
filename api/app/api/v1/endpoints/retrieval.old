@@ -1,0 +1,22 @@
+# File operations API endpoints
+
+from fastapi import APIRouter, UploadFile, File
+from fastapi.responses import JSONResponse
+from app.services import file_service
+from app.services.rag_service import rag_service
+from app.services.retrieval_service import RetrievalService
+
+router = APIRouter()
+retrieval_service = RetrievalService()
+
+@router.get("/search")
+async def search_similar(query: str, limit: int = 5):
+    try:
+        results = await retrieval_service.search_vectors(query, limit)
+        return JSONResponse(content={"results": results})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e), "details": "An error occurred during the search process"})
+
+@router.get("/test")
+async def test():
+    return {"message": "Test successful"}
