@@ -1,0 +1,108 @@
+{
+	"info": {
+		"_postman_id": "zgi-api-collection",
+		"name": "ZGI API",
+		"description": "Collection for testing ZGI API endpoints",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Auth",
+			"item": [
+				{
+					"name": "Register First Admin",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"email\": \"admin@example.com\",\n    \"password\": \"Admin@123456\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "http://localhost:7001/v1/auth/register",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "7001",
+							"path": ["v1", "auth", "register"]
+						},
+						"description": "Register the first user (becomes admin)"
+					}
+				},
+				{
+					"name": "Register Normal User",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"email\": \"user@example.com\",\n    \"password\": \"User123!\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "http://localhost:7001/v1/auth/register",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "7001",
+							"path": ["v1", "auth", "register"]
+						},
+						"description": "Register a normal user"
+					}
+				},
+				{
+					"name": "Login",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"email\": \"admin@example.com\",\n    \"password\": \"Admin@123456\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "http://localhost:7001/v1/auth/login",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "7001",
+							"path": ["v1", "auth", "login"]
+						},
+						"description": "Login to get access token"
+					}
+				},
+				{
+					"name": "Get Current User",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "http://localhost:7001/v1/auth/me",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "7001",
+							"path": ["v1", "auth", "me"]
+						},
+						"description": "Get current user information"
+					}
+				}
+			]
+		}
+	]
+}

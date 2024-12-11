@@ -23,7 +23,8 @@ class Team(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
     # Relationships
-    members = relationship("TeamMember", back_populates="team", cascade="all, delete-orphan")
+    members = relationship("TeamMember", back_populates="team", cascade="all, delete-orphan", overlaps="teams,users")
+    users = relationship("User", secondary="team_members", back_populates="teams", overlaps="members,team_members,teams")
     invitations = relationship("TeamInvitation", back_populates="team", cascade="all, delete-orphan")
     creator = relationship("User", foreign_keys=[created_by])
 
@@ -39,8 +40,8 @@ class TeamMember(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
     # Relationships
-    team = relationship("Team", back_populates="members")
-    user = relationship("User")
+    team = relationship("Team", back_populates="members", overlaps="users,teams,users")
+    user = relationship("User", back_populates="team_members", overlaps="users,teams,team_members")
 
 class TeamInvitation(Base):
     """Team invitation model"""
@@ -59,4 +60,4 @@ class TeamInvitation(Base):
 
     # Relationships
     team = relationship("Team", back_populates="invitations")
-    inviter = relationship("User", foreign_keys=[created_by])
+    inviter = relationship("User", foreign_keys=[created_by], back_populates="invitations_sent")

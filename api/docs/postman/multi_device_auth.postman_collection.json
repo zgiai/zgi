@@ -1,0 +1,118 @@
+{
+  "info": {
+    "name": "Multi-Device Auth API Collection",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Register User",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"email\": \"admin@example.com\",\n    \"username\": \"admin\",\n    \"password\": \"Test@123456\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/v1/auth/register",
+          "host": ["{{base_url}}"],
+          "path": ["v1", "auth", "register"]
+        },
+        "description": "Register a new user. The first registered user will automatically become an admin."
+      }
+    },
+    {
+      "name": "Login (Device 1)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "device-id",
+            "value": "device_1"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"email\": \"admin@example.com\",\n    \"password\": \"Test@123456\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/v1/auth/login",
+          "host": ["{{base_url}}"],
+          "path": ["v1", "auth", "login"]
+        },
+        "description": "Login from first device/browser"
+      }
+    },
+    {
+      "name": "Login (Device 2)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "device-id",
+            "value": "device_2"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"email\": \"admin@example.com\",\n    \"password\": \"Test@123456\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/v1/auth/login",
+          "host": ["{{base_url}}"],
+          "path": ["v1", "auth", "login"]
+        },
+        "description": "Login from second device/browser"
+      }
+    },
+    {
+      "name": "Get Current User (Device 1)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token_device1}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/v1/auth/me",
+          "host": ["{{base_url}}"],
+          "path": ["v1", "auth", "me"]
+        },
+        "description": "Get current user information using token from first device"
+      }
+    },
+    {
+      "name": "Get Current User (Device 2)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token_device2}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/v1/auth/me",
+          "host": ["{{base_url}}"],
+          "path": ["v1", "auth", "me"]
+        },
+        "description": "Get current user information using token from second device"
+      }
+    }
+  ]
+}

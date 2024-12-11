@@ -29,10 +29,15 @@ class AuthService:
                 detail="Username already taken"
             )
         
+        # Check if this is the first user
+        is_first_user = self.db.query(User).count() == 0
+        
         # Create new user
         db_user = User(
             email=user.email,
-            username=user.username
+            username=user.username,
+            role='admin' if is_first_user else 'user',
+            is_first_user=is_first_user
         )
         db_user.password = user.password  # This will hash the password
         

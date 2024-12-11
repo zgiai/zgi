@@ -52,11 +52,11 @@ class Settings(BaseSettings):
         )
 
     class Config:
-        env_file = os.path.join(ROOT_DIR, ".env")
+        env_file = os.path.join(ROOT_DIR, ".env.test" if os.getenv("TESTING") else ".env")
         env_file_encoding = "utf-8"
         extra = "allow"  # 允许额外的字段
 
 settings = Settings()
 
 # 打印 .env 文件的路径（仅用于调试，之后请删除）
-print(f"Loading .env from: {os.path.join(ROOT_DIR, '.env')}")
+print(f"Loading .env from: {os.path.join(ROOT_DIR, '.env' if not os.getenv('TESTING') else '.env.test')}")

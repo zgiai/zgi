@@ -1,203 +1,266 @@
 from datetime import datetime, timedelta
-from typing import Optional
-import logging
-from sqlalchemy.orm import Session
+from typing import Optional, Dict, Any
 from fastapi import HTTPException, status
-from jose import jwt
+from jose import JWTError, jwt
 from passlib.context import CryptContext
-from app.core.security import create_access_token
-from app.core.config import settings
-from app.models import User
-from app.features.auth.client.models import APIKey
-from app.features.auth.client.schemas import UserCreate, Token
+from sqlalchemy.orm import Session
+import logging
+import time
 
-logging.basicConfig(level=logging.INFO)
+from app.models import User
+from app.core.config import settings
+
 logger = logging.getLogger(__name__)
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 class AuthClientService:
+    """Service for handling authentication operations"""
+    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+    
     def __init__(self, db: Session):
         self.db = db
-
-    def create_access_token(self, data: dict) -> str:
-        to_encode = data.copy()
-        expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-        to_encode.update({"exp": expire})
-        encoded_jwt = jwt.encode(
-            to_encode, 
-            settings.SECRET_KEY, 
-            algorithm=settings.ALGORITHM
-        )
-        return encoded_jwt
-
-    def verify_password(self, plain_password: str, hashed_password: str) -> bool:
-        return pwd_context.verify(plain_password, hashed_password)
-
-    def get_password_hash(self, password: str) -> str:
-        return pwd_context.hash(password)
-
+    
     def get_user_by_email(self, email: str) -> Optional[User]:
+        """Get a user by email"""
         return self.db.query(User).filter(User.email == email).first()
 
     def get_user_by_id(self, user_id: int) -> Optional[User]:
+        """Get a user by their ID"""
         return self.db.query(User).filter(User.id == user_id).first()
 
-    def register(self, user_data: UserCreate) -> Token:
+    def verify_password(self, plain_password: str, hashed_password: str) -> bool:
+        """Verify a password against its hash"""
+        return self.pwd_context.verify(plain_password, hashed_password)
+
+    def get_password_hash(self, password: str) -> str:
+        """Hash a password"""
+        return self.pwd_context.hash(password)
+
+    def create_access_token(
+        self,
+        data: Dict[str, Any],
+        expires_delta: Optional[timedelta] = None
+    ) -> str:
+        """Create a JWT access token"""
+        to_encode = data.copy()
+        if expires_delta:
+            expire = datetime.utcnow() + expires_delta
+        else:
+            expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        to_encode.update({
+            "exp": expire.timestamp(),  # Use timestamp() for expiration
+            "nonce": str(time.time())  # Add a nonce to ensure uniqueness
+        })
+        encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+        return encoded_jwt
+
+    def verify_token(self, token: str) -> Dict[str, Any]:
+        """Verify a JWT token"""
         try:
-            # Check if user exists
-            db_user = self.get_user_by_email(user_data.email)
-            if db_user:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Email already registered"
-                )
-
-            # Create new user
-            hashed_password = self.get_password_hash(user_data.password)
-            db_user = User(
-                email=user_data.email,
-                username=user_data.username,
-                hashed_password=hashed_password
-            )
+            # First decode without verification to get the expiration time
+            unverified_payload = jwt.get_unverified_claims(token)
+            exp_timestamp = unverified_payload.get("exp")
             
-            self.db.add(db_user)
-            self.db.commit()
-            self.db.refresh(db_user)
-
-            # Create access token
-            access_token = self.create_access_token(
-                data={"sub": str(db_user.id)}
-            )
+            # Check if token has expired
+            if exp_timestamp and time.time() > exp_timestamp:
+                raise jwt.ExpiredSignatureError()
             
-            logger.info(f"Successfully registered user with email: {user_data.email}")
-            return Token(access_token=access_token)
-        except Exception as e:
-            logger.error(f"Error registering user: {str(e)}")
+            # Now verify the token
+            payload = jwt.decode(
+                token,
+                settings.SECRET_KEY,
+                algorithms=[settings.ALGORITHM]
+            )
+            return payload
+        except jwt.ExpiredSignatureError:
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=str(e)
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token has expired"
+            )
+        except jwt.JWTError:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Could not validate credentials"
             )
 
-    def login(self, email: str, password: str) -> Token:
+    def get_current_user(self, token: str) -> User:
+        """Get the current user from a JWT token"""
         try:
-            # Get user
+            payload = self.verify_token(token)
+            email = payload.get("sub")
+            if email is None:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Could not validate credentials"
+                )
+            user = self.get_user_by_email(email)
+            if user is None:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="User not found"
+                )
+            return user
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error in get_current_user: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Could not validate credentials"
+            )
+
+    def validate_password(self, password: str) -> None:
+        """
+        Validate password strength
+        
+        Args:
+            password: Password to validate
+            
+        Raises:
+            HTTPException: If password doesn't meet requirements
+        """
+        if not password:
+            raise HTTPException(
+                status_code=400,
+                detail="Password cannot be empty"
+            )
+        
+        if len(password) < 8:
+            raise HTTPException(
+                status_code=400,
+                detail="Password must be at least 8 characters long"
+            )
+        
+        if not any(char.isdigit() for char in password):
+            raise HTTPException(
+                status_code=400,
+                detail="Password must contain at least one number"
+            )
+        
+        if not any(char.isalpha() for char in password):
+            raise HTTPException(
+                status_code=400,
+                detail="Password must contain at least one letter"
+            )
+
+    def login(self, email: str, password: str) -> Dict[str, str]:
+        """Authenticate a user and return an access token"""
+        try:
             user = self.get_user_by_email(email)
             if not user:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Incorrect email or password"
                 )
-
-            # Verify password
+            
+            if not user.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Inactive user"
+                )
+                
             if not self.verify_password(password, user.hashed_password):
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Incorrect email or password"
                 )
 
-            # Create access token
-            access_token = self.create_access_token(
-                data={"sub": str(user.id)}
-            )
-            
-            logger.info(f"Successfully logged in user with email: {email}")
-            return Token(access_token=access_token)
+            access_token = self.create_access_token(data={"sub": user.email})
+            return {"access_token": access_token, "token_type": "bearer"}
+        except HTTPException:
+            raise
         except Exception as e:
-            logger.error(f"Error logging in user: {str(e)}")
+            logger.error(f"Error in login: {str(e)}")
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=str(e)
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Could not validate credentials"
             )
 
-    def authenticate_api_key(self, api_key: str):
-        """Authenticate a client using API key"""
+    def refresh_token(self, token: str) -> str:
+        """Create a new token with a new expiration time"""
         try:
-            api_key_obj = self.db.query(APIKey).filter(APIKey.key == api_key).first()
-            if not api_key_obj or not api_key_obj.is_active:
+            # Verify the old token is valid
+            payload = self.verify_token(token)
+            email = payload.get("sub")
+            if email is None:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid API key"
+                    detail="Could not validate credentials"
                 )
-            logger.info(f"Successfully authenticated API key: {api_key}")
-            return api_key_obj
+            
+            # Create new token with a forced new expiration time
+            return self.create_access_token(
+                data={"sub": email},
+                expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+            )
         except Exception as e:
-            logger.error(f"Error authenticating API key: {str(e)}")
+            logger.error(f"Error in refresh_token: {str(e)}")
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=str(e)
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Could not refresh token"
             )
 
-    def create_api_key(self, name: str, key: str):
-        """Create a new API key"""
+    def register_user(self, email: str, username: str, password: str) -> User:
+        """Register a new user"""
         try:
-            api_key = APIKey(name=name, key=key)
-            self.db.add(api_key)
-            self.db.commit()
-            self.db.refresh(api_key)
-            logger.info(f"Successfully created API key: {name}")
-            return api_key
-        except Exception as e:
-            logger.error(f"Error creating API key: {str(e)}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=str(e)
-            )
-
-    def get_api_key(self, api_key_id: int):
-        """Get API key by ID"""
-        try:
-            api_key = self.db.query(APIKey).filter(APIKey.id == api_key_id).first()
-            if not api_key:
+            # Validate password
+            self.validate_password(password)
+            
+            # Check if email already exists
+            if self.get_user_by_email(email):
                 raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="API key not found"
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Email already registered"
                 )
-            logger.info(f"Successfully retrieved API key: {api_key_id}")
-            return api_key
-        except Exception as e:
-            logger.error(f"Error retrieving API key: {str(e)}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=str(e)
+            
+            # Check if username already exists
+            if self.db.query(User).filter(User.username == username).first():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Username already taken"
+                )
+            
+            # Create new user
+            user = User(
+                email=email,
+                username=username,
+                hashed_password=self.get_password_hash(password),
+                is_active=True,
+                is_superuser=False
             )
-
-    def delete_api_key(self, api_key_id: int):
-        """Delete an API key"""
-        try:
-            api_key = self.get_api_key(api_key_id)
-            self.db.delete(api_key)
+            self.db.add(user)
             self.db.commit()
-            logger.info(f"Successfully deleted API key: {api_key_id}")
-            return True
+            self.db.refresh(user)
+            return user
+        except HTTPException:
+            raise
         except Exception as e:
-            logger.error(f"Error deleting API key: {str(e)}")
+            logger.error(f"Error in register_user: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=str(e)
+                detail="Could not register user"
             )
 
-    def list_api_keys(self, skip: int = 0, limit: int = 100):
-        """List all API keys"""
+    def change_password(self, user: User, old_password: str, new_password: str) -> None:
+        """Change a user's password"""
         try:
-            return self.db.query(APIKey).offset(skip).limit(limit).all()
+            # Verify old password
+            if not self.verify_password(old_password, user.hashed_password):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Incorrect password"
+                )
+            
+            # Validate new password
+            self.validate_password(new_password)
+            
+            # Update password
+            user.hashed_password = self.get_password_hash(new_password)
+            self.db.commit()
+        except HTTPException:
+            raise
         except Exception as e:
-            logger.error(f"Error listing API keys: {str(e)}")
+            logger.error(f"Error in change_password: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=str(e)
-            )
-
-    def create_access_token_for_api_key(self, api_key: APIKey):
-        """Create access token for API key"""
-        try:
-            return {
-                "access_token": create_access_token(str(api_key.id)),
-                "token_type": "bearer"
-            }
-        except Exception as e:
-            logger.error(f"Error creating access token for API key: {str(e)}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=str(e)
+                detail="Could not change password"
             )

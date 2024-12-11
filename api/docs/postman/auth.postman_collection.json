@@ -1,0 +1,150 @@
+{
+  "info": {
+    "name": "Auth API Collection",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Register User",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"email\": \"admin@example.com\",\n    \"username\": \"admin\",\n    \"password\": \"Test@123456\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/v1/auth/register",
+          "host": ["{{base_url}}"],
+          "path": ["v1", "auth", "register"]
+        },
+        "description": "Register a new user. The first registered user will automatically become an admin."
+      }
+    },
+    {
+      "name": "Register User (Duplicate Email)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"email\": \"admin@example.com\",\n    \"username\": \"admin2\",\n    \"password\": \"Test@123456\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/v1/auth/register",
+          "host": ["{{base_url}}"],
+          "path": ["v1", "auth", "register"]
+        },
+        "description": "Try to register a user with an email that already exists. Should return a 400 error."
+      }
+    },
+    {
+      "name": "Login Success",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"email\": \"admin@example.com\",\n    \"password\": \"Test@123456\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/v1/auth/login",
+          "host": ["{{base_url}}"],
+          "path": ["v1", "auth", "login"]
+        },
+        "description": "Login with correct credentials. Returns an access token."
+      }
+    },
+    {
+      "name": "Login Wrong Password",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"email\": \"admin@example.com\",\n    \"password\": \"wrongpassword\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/v1/auth/login",
+          "host": ["{{base_url}}"],
+          "path": ["v1", "auth", "login"]
+        },
+        "description": "Try to login with wrong password. Should return a 401 error."
+      }
+    },
+    {
+      "name": "Get Current User",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/v1/auth/me",
+          "host": ["{{base_url}}"],
+          "path": ["v1", "auth", "me"]
+        },
+        "description": "Get current user information. Requires valid access token."
+      }
+    },
+    {
+      "name": "Get Current User (Invalid Token)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer invalid_token"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/v1/auth/me",
+          "host": ["{{base_url}}"],
+          "path": ["v1", "auth", "me"]
+        },
+        "description": "Try to get user information with invalid token. Should return a 401 error."
+      }
+    },
+    {
+      "name": "Protected Resource",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/v1/auth/protected-resource",
+          "host": ["{{base_url}}"],
+          "path": ["v1", "auth", "protected-resource"]
+        },
+        "description": "Access a protected resource. Requires valid access token."
+      }
+    }
+  ]
+}

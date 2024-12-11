@@ -1,9 +1,10 @@
-from app.models.users import User
+from app.features.users.models import User
 from app.models.security import APIKey, IPWhitelist, APILog, SecurityAuditLog
-from app.models.applications import Application
 from app.models.teams import Team, TeamMember, TeamInvitation, TeamRole
-from app.models.resource_usage import ResourceUsage
+from app.models.applications import Application
+from app.models.chat import ChatSession, ChatFile
 from app.models.prompts import PromptTemplate, PromptScenario
+from app.models.usage import ResourceUsage
 
 __all__ = [
     'User',
@@ -11,12 +12,14 @@ __all__ = [
     'IPWhitelist',
     'APILog',
     'SecurityAuditLog',
-    'Application',
     'Team',
     'TeamMember',
     'TeamInvitation',
     'TeamRole',
-    'ResourceUsage',
+    'Application',
+    'ChatSession',
+    'ChatFile',
     'PromptTemplate',
-    'PromptScenario'
+    'PromptScenario',
+    'ResourceUsage'
 ]

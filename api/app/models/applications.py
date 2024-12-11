@@ -21,3 +21,4 @@ class Application(Base):
     api_keys = relationship("APIKey", back_populates="application", cascade="all, delete-orphan")
     resource_usage = relationship("ResourceUsage", back_populates="application", cascade="all, delete-orphan")
     prompt_templates = relationship("PromptTemplate", back_populates="application", cascade="all, delete-orphan")
+    chat_sessions = relationship("ChatSession", back_populates="application", cascade="all, delete-orphan")
