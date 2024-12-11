@@ -1,37 +1,43 @@
-import sys
-import os
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.v1.router import router as api_v1_router  # Fixed import path
-from app.utils.weaviate_manager import WeaviateManager  # Fixed import path
-from dotenv import load_dotenv
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+from sqlalchemy.exc import SQLAlchemyError
+import traceback
 import logging
-from app.core.config import settings  # Fixed import path
-from app.services.rag_service import rag_service  # Fixed import path
-from app.utils.mysql_manager import mysql_manager
+from app.core.security.ip_whitelist import IPWhitelistMiddleware
+from app.core.logging.api_logger import APILoggingMiddleware
 
-# Configure logging
+from app.features.auth.client.router import router as auth_router
+from app.features.auth.console.router import router as auth_console_router
+from app.features.api_keys.client.router import router as api_keys_router
+from app.features.teams.client.router import router as teams_router
+from app.features.teams.console.router import router as teams_console_router
+from app.features.applications.console.router import router as applications_console_router
+from app.features.teams.console.member_management.router import router as member_management_router
+from app.features.usage.router import router as usage_router
+
+# 配置日志
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Load environment variables
-load_dotenv()
+app = FastAPI(
+    title="ZGI API",
+    description="ZGI API Documentation",
+    version="1.0.0"
+)
 
-# Get OPENAI_API_KEY from environment
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-if not OPENAI_API_KEY:
-    logger.error("OPENAI_API_KEY is not set in the environment")
-    raise ValueError("OPENAI_API_KEY is required")
-
-app = FastAPI(title=settings.PROJECT_NAME)
+# Security middleware
+app.add_middleware(IPWhitelistMiddleware)
+app.add_middleware(APILoggingMiddleware)
 
 # Define all allowed origins
 origins = [
     "http://localhost:3000",
+    "http://localhost:7001",
     "http://localhost:8000",
     "https://www.zgi.app",
     "https://zgi.app",
-    # 添加其他需要的域名
 ]
 
 # Update CORS middleware with more specific configuration
@@ -45,27 +51,89 @@ app.add_middleware(
     max_age=3600,  # Cache preflight requests for 1 hour
 )
 
-app.include_router(api_v1_router, prefix="/v1")
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """处理请求验证错误"""
+    logger.error(f"Validation error: {exc.errors()}")
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": "Invalid request",
+            "errors": exc.errors()
+        }
+    )
 
-weaviate_manager = WeaviateManager()
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """处理HTTP异常"""
+    logger.error(f"HTTP error {exc.status_code}: {exc.detail}")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail}
+    )
 
-@app.on_event("startup")
-async def startup_event():
+@app.exception_handler(SQLAlchemyError)
+async def sqlalchemy_exception_handler(request: Request, exc: SQLAlchemyError):
+    """处理数据库异常"""
+    logger.error(f"Database error: {str(exc)}")
+    logger.error(traceback.format_exc())
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Database error occurred"}
+    )
+
+@app.middleware("http")
+async def catch_exceptions_middleware(request: Request, call_next):
+    """全局异常处理中间件"""
     try:
-        weaviate_manager.connect()
-        mysql_manager.initialize_pool()
-        mysql_manager.connect()
-        logger.info("Successfully connected to Weaviate")
-    except Exception as e:
-        logger.error(f"Failed to connect to Weaviate: {str(e)}")
-        raise
+        response = await call_next(request)
+        return response
+    except Exception as exc:
+        logger.error(f"Unhandled error: {str(exc)}")
+        logger.error(traceback.format_exc())
+        
+        # 如果是已知的HTTP异常，保持原状态码
+        if isinstance(exc, HTTPException):
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"detail": exc.detail}
+            )
+        
+        # 如果是数据库异常，返回500但不暴露具体错误
+        if isinstance(exc, SQLAlchemyError):
+            return JSONResponse(
+                status_code=500,
+                content={"detail": "Database error occurred"}
+            )
+        
+        # 其他未知异常
+        return JSONResponse(
+            status_code=500,
+            content={
+                "detail": "Internal server error",
+                "type": exc.__class__.__name__
+            }
+        )
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    try:
-        weaviate_manager.close()
-        await rag_service.close()
-        mysql_manager.disconnect()
-        logger.info("Successfully closed all connections")
-    except Exception as e:
-        logger.error(f"Failed to close connections: {str(e)}") 
+# API routes
+app.include_router(auth_router, prefix="/v1")
+app.include_router(api_keys_router, prefix="/v1")
+app.include_router(teams_router, prefix="/v1")
+app.include_router(member_management_router, prefix="/v1")
+
+# Console routes
+app.include_router(auth_console_router, prefix="/v1/console")
+app.include_router(teams_console_router, prefix="/v1/console")
+app.include_router(applications_console_router, prefix="/v1/console")
+app.include_router(usage_router)
+
+@app.get("/")
+def root():
+    """
+    根路径，返回API基本信息
+    """
+    return {
+        "message": "欢迎使用用户认证系统API",
+        "version": "1.0.0",
+        "documentation": "/docs"
+    }
