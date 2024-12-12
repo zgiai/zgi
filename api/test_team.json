@@ -1,9 +1,0 @@
-{
-    "name": "Test Team",
-    "description": "A test team",
-    "max_members": 10,
-    "allow_member_invite": true,
-    "default_member_role": "member",
-    "isolated_data": true,
-    "shared_api_keys": false
-}
