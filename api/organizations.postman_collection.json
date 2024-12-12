@@ -1,0 +1,114 @@
+{
+  "info": {
+    "name": "organizations",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "https://api.zgi.ai"
+    },
+    {
+      "key": "common_header",
+      "value": "application/json"
+    },
+    {
+      "key": "auth_token",
+      "value": "YOUR_JWT_TOKEN"
+    }
+  ],
+  "item": [
+    {
+      "name": "Create Organization",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "{{common_header}}"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{auth_token}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Test Organization\",\n  \"description\": \"Test Description\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/v1/organizations/",
+          "host": ["{{base_url}}"],
+          "path": ["v1", "organizations", ""]
+        }
+      }
+    },
+    {
+      "name": "List Organizations",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "{{common_header}}"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{auth_token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/v1/organizations/",
+          "host": ["{{base_url}}"],
+          "path": ["v1", "organizations", ""]
+        }
+      }
+    },
+    {
+      "name": "Get Organization",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "{{common_header}}"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{auth_token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/v1/organizations/{org_id}",
+          "host": ["{{base_url}}"],
+          "path": ["v1", "organizations", "{org_id}"]
+        }
+      }
+    },
+    {
+      "name": "Update Organization",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "{{common_header}}"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{auth_token}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Updated Organization Name\",\n  \"description\": \"Updated Description\",\n  \"is_active\": true\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/v1/organizations/{org_id}",
+          "host": ["{{base_url}}"],
+          "path": ["v1", "organizations", "{org_id}"]
+        }
+      }
+    }
+  ]
+}

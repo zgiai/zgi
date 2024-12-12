@@ -50,7 +50,7 @@ async def get_current_user(
 
 def require_super_admin(current_user: User = Depends(get_current_user)):
     """检查用户是否是超级管理员"""
-    if not current_user.is_superadmin:
+    if not current_user.is_superuser:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Super admin privileges required"

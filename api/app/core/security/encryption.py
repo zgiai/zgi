@@ -30,24 +30,6 @@ class Encryptor:
         except Exception:
             return None
 
-class APIKeyHasher:
-    """Handle API key hashing and verification"""
-    
-    @staticmethod
-    def hash_key(api_key: str) -> str:
-        """Hash an API key for storage"""
-        from passlib.hash import pbkdf2_sha256
-        return pbkdf2_sha256.hash(api_key)
-
-    @staticmethod
-    def verify_key(api_key: str, hashed_key: str) -> bool:
-        """Verify an API key against its hash"""
-        from passlib.hash import pbkdf2_sha256
-        try:
-            return pbkdf2_sha256.verify(api_key, hashed_key)
-        except Exception:
-            return False
-
 class SecureTokenGenerator:
     """Generate secure tokens and API keys"""
     

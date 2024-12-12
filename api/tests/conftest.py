@@ -17,7 +17,6 @@ from app.core.database import Base, get_db
 from app.core.config import settings
 from app.features.users.models import User
 from app.models.team import Team, TeamMember, TeamInvitation
-from app.models.api_key import APIKey
 from app.models.application import Application
 
 def get_test_db():
@@ -117,8 +116,7 @@ def test_application(test_db, test_user):
     app = Application(
         name="Test App",
         description="Test application",
-        owner_id=test_user.id,
-        api_key="test-api-key"
+        owner_id=test_user.id
     )
     test_db.add(app)
     test_db.commit()

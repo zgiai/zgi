@@ -1,5 +1,4 @@
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Float
-from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from app.core.database import Base
@@ -14,11 +13,3 @@ class ResourceUsage(Base):
     endpoint = Column(String(255))  # API endpoint for api_calls
     model = Column(String(100))  # Model name for token usage
     timestamp = Column(DateTime, server_default=func.now(), nullable=False, index=True)
-
-    # Relationships
-    application = relationship("Application", back_populates="resource_usage")
-
-# Update Application model relationship in models.py
-from app.models.usage import ResourceUsage  # Add this import to models.py
-# Add this line to Application class:
-# resource_usage = relationship("ResourceUsage", back_populates="application", cascade="all, delete-orphan")

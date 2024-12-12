@@ -4,7 +4,6 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from app.core.database import Base
-from app.models.security import APIKey
 from app.features.users import models as user_models
 
 class Team(Base):
@@ -17,7 +16,6 @@ class Team(Base):
     allow_member_invite = Column(Boolean, default=False)
     default_member_role = Column(String(50), default="member")
     isolated_data = Column(Boolean, default=True)
-    shared_api_keys = Column(Boolean, default=False)
     owner_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -25,7 +23,6 @@ class Team(Base):
     # Relationships
     team_members = relationship("TeamMember", back_populates="team", overlaps="members,teams")
     members = relationship("User", secondary="team_members", back_populates="teams", overlaps="team_members")
-    api_keys = relationship("APIKey", back_populates="team", cascade="all, delete-orphan")
     invitations = relationship("TeamInvitation", back_populates="team", cascade="all, delete-orphan")
     applications = relationship("Application", back_populates="team", cascade="all, delete-orphan")
 

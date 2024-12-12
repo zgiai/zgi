@@ -1,0 +1,324 @@
+{
+  "info": {
+    "_postman_id": "e5a9f9b0-5f1a-4b1c-9b1a-5f1a4b1c9b1a",
+    "name": "Team Management API",
+    "description": "API collection for team management functionality",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Teams",
+      "item": [
+        {
+          "name": "Create Team",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"My Team\",\n  \"description\": \"My team description\",\n  \"max_members\": 10,\n  \"allow_member_invite\": true,\n  \"default_member_role\": \"member\",\n  \"isolated_data\": false,\n  \"shared_api_keys\": false\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/teams",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "teams"]
+            },
+            "description": "Create a new team"
+          }
+        },
+        {
+          "name": "List Teams",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/teams",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "teams"]
+            },
+            "description": "List all teams for current user"
+          }
+        },
+        {
+          "name": "Get Team Details",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/teams/{{team_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "teams", "{{team_id}}"]
+            },
+            "description": "Get detailed information about a specific team"
+          }
+        },
+        {
+          "name": "Update Team",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Updated Team Name\",\n  \"description\": \"Updated team description\",\n  \"allow_member_invite\": true,\n  \"default_member_role\": \"member\",\n  \"isolated_data\": false,\n  \"shared_api_keys\": false\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/teams/{{team_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "teams", "{{team_id}}"]
+            },
+            "description": "Update team information"
+          }
+        },
+        {
+          "name": "Delete Team",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/teams/{{team_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "teams", "{{team_id}}"]
+            },
+            "description": "Delete a team"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Team Members",
+      "item": [
+        {
+          "name": "Add Team Member",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": 123,\n  \"role\": \"member\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/teams/{{team_id}}/members",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "teams", "{{team_id}}", "members"]
+            },
+            "description": "Add a new member to the team"
+          }
+        },
+        {
+          "name": "Remove Team Member",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/teams/{{team_id}}/members/{{member_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "teams", "{{team_id}}", "members", "{{member_id}}"]
+            },
+            "description": "Remove a member from the team"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Team Invitations",
+      "item": [
+        {
+          "name": "Create Team Invitation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"invitee_email\": \"user@example.com\",\n  \"role\": \"member\",\n  \"message\": \"Please join our team\",\n  \"expires_at\": \"2024-12-19T16:44:29Z\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/teams/{{team_id}}/invitations",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "teams", "{{team_id}}", "invitations"]
+            },
+            "description": "Create a new team invitation"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Console API",
+      "item": [
+        {
+          "name": "List Team Members (Admin)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/console/teams/{{team_id}}/members?role=member&search=john&skip=0&limit=100",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "console", "teams", "{{team_id}}", "members"],
+              "query": [
+                {
+                  "key": "role",
+                  "value": "member"
+                },
+                {
+                  "key": "search",
+                  "value": "john"
+                },
+                {
+                  "key": "skip",
+                  "value": "0"
+                },
+                {
+                  "key": "limit",
+                  "value": "100"
+                }
+              ]
+            },
+            "description": "List all members of a team with filtering options (Admin only)"
+          }
+        },
+        {
+          "name": "Get Team Member Statistics (Admin)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/console/teams/{{team_id}}/stats",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "console", "teams", "{{team_id}}", "stats"]
+            },
+            "description": "Get comprehensive statistics about team members and invitations (Admin only)"
+          }
+        },
+        {
+          "name": "Update Member Role (Admin)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"role\": \"admin\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/console/teams/{{team_id}}/members/{{member_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "console", "teams", "{{team_id}}", "members", "{{member_id}}"]
+            },
+            "description": "Update a team member's role (Admin only)"
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "your-auth-token",
+      "type": "string"
+    },
+    {
+      "key": "team_id",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "member_id",
+      "value": "1",
+      "type": "string"
+    }
+  ]
+}

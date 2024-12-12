@@ -31,10 +31,3 @@ class IntegrationStatus(BaseModel):
     last_sync: datetime
     error_message: Optional[str]
     metrics: dict
-
-class APIKeyRotation(BaseModel):
-    key_id: str
-    rotation_period: int = Field(default=90, description="Rotation period in days")
-    last_rotated: datetime
-    next_rotation: datetime
-    auto_rotate: bool = True

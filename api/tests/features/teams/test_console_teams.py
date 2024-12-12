@@ -78,7 +78,6 @@ def test_team(test_db: Session, test_user: dict) -> dict:
         allow_member_invite=True,
         default_member_role="member",
         isolated_data=False,
-        shared_api_keys=False,
         owner_id=test_user["id"]
     )
     test_db.add(team)
@@ -127,8 +126,7 @@ def test_create_team(client: TestClient, test_db: Session, test_user: dict, over
             "max_members": 5,
             "allow_member_invite": True,
             "default_member_role": "member",
-            "isolated_data": False,
-            "shared_api_keys": False
+            "isolated_data": False
         }
     )
     
@@ -140,7 +138,6 @@ def test_create_team(client: TestClient, test_db: Session, test_user: dict, over
     assert data["allow_member_invite"] is True
     assert data["default_member_role"] == "member"
     assert data["isolated_data"] is False
-    assert data["shared_api_keys"] is False
     assert data["owner_id"] == test_user["id"]
     assert len(data["members"]) == 1
     assert data["members"][0]["user_id"] == test_user["id"]
@@ -188,8 +185,7 @@ def test_update_team(client: TestClient, test_db: Session, test_user: dict, test
             "max_members": 10,
             "allow_member_invite": False,
             "default_member_role": "viewer",
-            "isolated_data": True,
-            "shared_api_keys": True
+            "isolated_data": True
         }
     )
     
@@ -202,7 +198,6 @@ def test_update_team(client: TestClient, test_db: Session, test_user: dict, test
     assert data["allow_member_invite"] is False
     assert data["default_member_role"] == "viewer"
     assert data["isolated_data"] is True
-    assert data["shared_api_keys"] is True
     assert data["owner_id"] == test_team["owner_id"]
 
 def test_delete_team(client: TestClient, test_db: Session, test_user: dict, test_team: dict, override_get_db):

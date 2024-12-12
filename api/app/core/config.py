@@ -48,9 +48,9 @@ class Settings(BaseSettings):
     EMAILS_FROM_EMAIL: Optional[str] = None
     EMAILS_FROM_NAME: Optional[str] = None
 
-    # API
-    MAX_API_KEYS_PER_USER: int = 5
-    MAX_APPLICATIONS_PER_USER: int = 10
+    # User settings
+    MAX_APPLICATIONS_PER_USER: int = 5
+    MAX_TEAMS_PER_USER: int = 5
 
     # Cache
     CACHE_EXPIRE_MINUTES: int = 60 * 24  # 24 hours

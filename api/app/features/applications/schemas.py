@@ -1,50 +1,47 @@
+from pydantic import BaseModel, Field
+from typing import Optional
 from datetime import datetime
-from typing import Optional, List
-from enum import Enum
-from pydantic import BaseModel
 
-class ApplicationType(str, Enum):
-    CONVERSATIONAL = "conversational"  # 对话式应用
-    GENERATIVE = "generative"         # 生成式应用
-    FUNCTION = "function"             # 函数式应用
-    WORKFLOW = "workflow"             # 工作流应用
-
-class AccessLevel(str, Enum):
-    PRIVATE = "private"      # 仅创建者可访问
-    TEAM = "team"           # 团队内可访问
-    PUBLIC = "public"       # 公开访问
-
+# Base Schema
 class ApplicationBase(BaseModel):
-    name: str
-    description: Optional[str] = None
-    type: ApplicationType
-    access_level: AccessLevel = AccessLevel.PRIVATE
-    team_id: Optional[int] = None  # 如果是团队应用，关联到团队
+    name: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = Field(None, max_length=1000)
+    api_key_prefix: str = Field(..., min_length=1, max_length=50)
+    max_tokens: Optional[int] = Field(default=1000, ge=0)
+    max_requests_per_day: Optional[int] = Field(default=1000, ge=0)
+    is_active: Optional[bool] = True
 
+# Create Schema
 class ApplicationCreate(ApplicationBase):
     pass
 
+# Update Schema
 class ApplicationUpdate(BaseModel):
-    name: Optional[str] = None
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
     description: Optional[str] = None
-    type: Optional[ApplicationType] = None
-    access_level: Optional[AccessLevel] = None
-    team_id: Optional[int] = None
+    api_key_prefix: Optional[str] = Field(None, min_length=1, max_length=50)
+    max_tokens: Optional[int] = Field(None, ge=0)
+    max_requests_per_day: Optional[int] = Field(None, ge=0)
+    is_active: Optional[bool] = None
 
-class Application(ApplicationBase):
+# Response Schema
+class ApplicationResponse(ApplicationBase):
     id: int
-    created_by: int
+    owner_id: int
     created_at: datetime
     updated_at: datetime
-    is_active: bool = True
-    
-    class Config:
-        orm_mode = True
 
-class ApplicationDetail(Application):
-    # 这里可以添加更多详细信息，比如使用统计、配置等
-    total_requests: int = 0
-    average_latency: float = 0.0
-    
     class Config:
-        orm_mode = True
+        from_attributes = True
+
+# List Schema
+class ApplicationList(BaseModel):
+    id: int
+    name: str
+    description: Optional[str]
+    owner_id: int
+    is_active: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
