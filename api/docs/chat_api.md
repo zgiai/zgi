@@ -62,7 +62,7 @@ Each line starts with "data: " followed by the token content. The stream ends wi
 #### cURL
 
 ```bash
-curl -X POST http://localhost:8000/v1/chat/stream \
+curl -X POST http://localhost:7001/v1/chat/stream \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -84,7 +84,7 @@ import aiohttp
 import asyncio
 
 async def stream_chat():
-    url = "http://localhost:8000/v1/chat/stream"
+    url = "http://localhost:7001/v1/chat/stream"
     headers = {
         "Authorization": "Bearer YOUR_ACCESS_TOKEN",
         "Content-Type": "application/json"
@@ -179,7 +179,7 @@ Requires Bearer token authentication.
 
 ```bash
 # Stream chat with session
-curl -X POST http://localhost:8000/v1/chat/stream \
+curl -X POST http://localhost:7001/v1/chat/stream \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -194,7 +194,7 @@ curl -X POST http://localhost:8000/v1/chat/stream \
   }'
 
 # Switch model
-curl -X POST http://localhost:8000/v1/chat/switch-model \
+curl -X POST http://localhost:7001/v1/chat/switch-model \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -210,7 +210,7 @@ import aiohttp
 import asyncio
 
 async def switch_model():
-    url = "http://localhost:8000/v1/chat/switch-model"
+    url = "http://localhost:7001/v1/chat/switch-model"
     headers = {
         "Authorization": "Bearer YOUR_ACCESS_TOKEN",
         "Content-Type": "application/json"
@@ -321,15 +321,15 @@ Requires Bearer token authentication.
 
 ```bash
 # Get chat history
-curl -X GET "http://localhost:8000/v1/chat/history?page=1&page_size=10" \
+curl -X GET "http://localhost:7001/v1/chat/history?page=1&page_size=10" \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 
 # Get history with filters
-curl -X GET "http://localhost:8000/v1/chat/history?model=gpt-4&start_date=2024-01-01T00:00:00Z" \
+curl -X GET "http://localhost:7001/v1/chat/history?model=gpt-4&start_date=2024-01-01T00:00:00Z" \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 
 # Delete a chat session
-curl -X DELETE "http://localhost:8000/v1/chat/sessions/123" \
+curl -X DELETE "http://localhost:7001/v1/chat/sessions/123" \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
 
@@ -341,7 +341,7 @@ import asyncio
 from datetime import datetime, timedelta
 
 async def get_chat_history():
-    url = "http://localhost:8000/v1/chat/history"
+    url = "http://localhost:7001/v1/chat/history"
     headers = {
         "Authorization": "Bearer YOUR_ACCESS_TOKEN"
     }
@@ -411,7 +411,7 @@ Upload a PDF file to be used as context in the chat session.
 curl -X POST \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -F "file=@document.pdf" \
-  http://localhost:8000/api/chat/sessions/123/upload
+  http://localhost:7001/api/chat/sessions/123/upload
 ```
 
 **Notes:**
@@ -468,7 +468,7 @@ curl -X POST \
     "scenario": "summarization",
     "description": "Generates concise summaries"
   }' \
-  http://localhost:8000/api/chat/prompts
+  http://localhost:7001/api/chat/prompts
 ```
 
 ### List Prompts
@@ -510,7 +510,7 @@ List available prompts with filtering and pagination.
 ```bash
 curl -X GET \
   -H "Authorization: Bearer YOUR_TOKEN" \
-  "http://localhost:8000/api/chat/prompts?scenario=summarization&page=1&page_size=20"
+  "http://localhost:7001/api/chat/prompts?scenario=summarization&page=1&page_size=20"
 ```
 
 ### Preview Prompt
@@ -557,7 +557,7 @@ curl -X POST \
       "text": "Sample text to summarize"
     }
   }' \
-  http://localhost:8000/api/chat/prompts/preview
+  http://localhost:7001/api/chat/prompts/preview
 ```
 
 ### Update Prompt
@@ -589,7 +589,7 @@ curl -X PUT \
     "title": "Updated Title",
     "content": "Updated content"
   }' \
-  http://localhost:8000/api/chat/prompts/1
+  http://localhost:7001/api/chat/prompts/1
 ```
 
 ### Delete Prompt
@@ -611,7 +611,7 @@ Delete a prompt.
 ```bash
 curl -X DELETE \
   -H "Authorization: Bearer YOUR_TOKEN" \
-  http://localhost:8000/api/chat/prompts/1
+  http://localhost:7001/api/chat/prompts/1
 ```
 
 ## Error Responses

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Configuration
-API_URL="http://localhost:8000/v1/rag"
+API_URL="http://localhost:7001/v1/rag"
 TOKEN="YOUR_AUTH_TOKEN"  # Replace with actual token
 AUTH_HEADER="Authorization: Bearer $TOKEN"
 

@@ -98,13 +98,13 @@ Or use the start script:
 ./start.sh
 ```
 
-The API will be available at `http://localhost:8000`
+The API will be available at `http://localhost:7001`
 
 ## API Documentation
 
 Once the application is running, you can access:
-- Swagger UI documentation: `http://localhost:8000/docs`
-- ReDoc documentation: `http://localhost:8000/redoc`
+- Swagger UI documentation: `http://localhost:7001/docs`
+- ReDoc documentation: `http://localhost:7001/redoc`
 
 ## Testing
 

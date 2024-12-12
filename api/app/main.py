@@ -40,9 +40,7 @@ app.add_middleware(APILoggingMiddleware)
 
 # Define all allowed origins
 origins = [
-    "http://localhost:3000",
     "http://localhost:7001",
-    "http://localhost:8000",
     "https://www.zgi.app",
     "https://zgi.app",
 ]

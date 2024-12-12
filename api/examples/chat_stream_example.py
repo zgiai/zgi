@@ -5,7 +5,7 @@ import json
 async def stream_chat():
     """Example of using the streaming chat API"""
     # Your API endpoint
-    url = "http://localhost:8000/v1/chat/stream"
+    url = "http://localhost:7001/v1/chat/stream"
     
     # Your authentication token (get this by logging in)
     headers = {
