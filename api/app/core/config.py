@@ -18,15 +18,15 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "production"
 
     # Database Settings
-    DATABASE_HOST: str = os.getenv("DATABASE_HOST", "127.0.0.1")
-    DATABASE_PORT: int = int(os.getenv("DATABASE_PORT", "3306"))
-    DATABASE_USER: str = os.getenv("DATABASE_USER", "root")
-    DATABASE_PASSWORD: str = os.getenv("DATABASE_PASSWORD", "")
-    DATABASE_NAME: str = os.getenv("DATABASE_NAME", "zgi")
+    DB_HOST: str = os.getenv("DB_HOST", "127.0.0.1")
+    DB_PORT: int = int(os.getenv("DB_PORT", "3306"))
+    DB_USER: str = os.getenv("DB_USER", "root")
+    DB_PASSWORD: str = os.getenv("DB_PASSWORD", "")
+    DB_DATABASE: str = os.getenv("DB_DATABASE", "zgi")
     
     @property
     def SQLALCHEMY_DATABASE_URL(self) -> str:
-        return f"mysql://{self.DATABASE_USER}:{self.DATABASE_PASSWORD}@{self.DATABASE_HOST}:{self.DATABASE_PORT}/{self.DATABASE_NAME}?charset=utf8mb4&collation=utf8mb4_unicode_ci"
+        return f"mysql+pymysql://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_DATABASE}?charset=utf8mb4&collation=utf8mb4_unicode_ci"
 
     # Redis
     REDIS_HOST: str = os.getenv("REDIS_HOST", "127.0.0.1")

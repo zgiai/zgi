@@ -28,6 +28,7 @@ email-validator
 sentence-transformers==2.2.2
 pinecone-client==3.0.0
 PyPDF2==3.0.1
+alembic
 
 # Potential additions:
 # jsonresponse (if not part of FastAPI)

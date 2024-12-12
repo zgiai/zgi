@@ -17,6 +17,23 @@ sys.path.append(api_dir)
 from app.core.config import settings
 from app.core.database import Base
 
+import os
+import importlib
+from pathlib import Path
+
+# Import all features models
+def import_all_models():
+    features_dir = Path(__file__).parent.parent / 'app' / 'features'
+    for feature_dir in features_dir.iterdir():
+        if feature_dir.is_dir() and (feature_dir / 'models.py').exists():
+            module_path = f"app.features.{feature_dir.name}.models"
+            try:
+                importlib.import_module(module_path)
+            except ImportError as e:
+                print(f"Warning: Could not import {module_path}: {e}")
+
+import_all_models()
+
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config

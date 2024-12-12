@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 logger.info(f"Connecting to database: {settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_DATABASE}")
 logger.info(f"Database URL: {settings.SQLALCHEMY_DATABASE_URL}")
 
-SQLALCHEMY_DATABASE_URL = settings.SQLALCHEMY_DATABASE_URL.replace('mysql://', 'mysql+pymysql://')
+SQLALCHEMY_DATABASE_URL = settings.SQLALCHEMY_DATABASE_URL
 
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
