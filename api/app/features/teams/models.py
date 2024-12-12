@@ -27,6 +27,7 @@ class Team(Base):
     users = relationship("User", secondary="team_members", back_populates="teams", overlaps="members,team_members,teams")
     invitations = relationship("TeamInvitation", back_populates="team", cascade="all, delete-orphan")
     creator = relationship("User", foreign_keys=[created_by])
+    applications = relationship("app.features.applications.models.Application", back_populates="team")
 
 class TeamMember(Base):
     """Team member model"""
@@ -49,15 +50,14 @@ class TeamInvitation(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
-    email = Column(String(255), nullable=False)
+    inviter_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"))
+    invitee_email = Column(String(255), nullable=False)
     role = Column(Enum(TeamRole), nullable=False, default=TeamRole.MEMBER)
-    token = Column(String(255), unique=True, nullable=False)
-    expires_at = Column(DateTime, nullable=False)
-    is_accepted = Column(Boolean, default=False)
-    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"))
+    message = Column(String(1000))
+    status = Column(String(20), default="pending")
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
-
+    expires_at = Column(DateTime, nullable=False)
+    
     # Relationships
     team = relationship("Team", back_populates="invitations")
-    inviter = relationship("User", foreign_keys=[created_by], back_populates="invitations_sent")
+    inviter = relationship("User", foreign_keys=[inviter_id])

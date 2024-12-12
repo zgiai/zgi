@@ -4,7 +4,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.cache import Cache
-from app.models.user import User
+from app.features.users.models import User
 from app.models.knowledge_base import Document
 from app.features.analytics.schemas import (
     TimeRange,

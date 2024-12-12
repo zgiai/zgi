@@ -1,11 +1,14 @@
 import os
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import Optional
 
 # 获取项目根目录的路径
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "ZGI AI App"  # 添加项目名称设置
+    VERSION: str = "0.1.0"
+    API_V1_STR: str = "/v1/console"
     OPENAI_MODEL: str = "gpt-4o"
     WEAVIATE_URL: str
     OPENAI_API_KEY: str
@@ -14,20 +17,52 @@ class Settings(BaseSettings):
     OPENAI_BASE_URL: str = "https://api.agicto.cn"
     ENVIRONMENT: str = "production"
 
-    # JWT Settings
-    SECRET_KEY: str = "your-secret-key-here"  # 请在生产环境中更改此密钥
-    ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
-
     # Database Settings
-    DB_CONNECTION: str
-    DB_HOST: str
-    DB_PORT: int
-    DB_DATABASE: str
-    DB_USERNAME: str
-    DB_PASSWORD: str
-    DB_CHARSET: str
-    DB_COLLATION: str
+    DATABASE_HOST: str = os.getenv("DATABASE_HOST", "127.0.0.1")
+    DATABASE_PORT: int = int(os.getenv("DATABASE_PORT", "3306"))
+    DATABASE_USER: str = os.getenv("DATABASE_USER", "root")
+    DATABASE_PASSWORD: str = os.getenv("DATABASE_PASSWORD", "")
+    DATABASE_NAME: str = os.getenv("DATABASE_NAME", "zgi")
+    
+    @property
+    def SQLALCHEMY_DATABASE_URL(self) -> str:
+        return f"mysql://{self.DATABASE_USER}:{self.DATABASE_PASSWORD}@{self.DATABASE_HOST}:{self.DATABASE_PORT}/{self.DATABASE_NAME}?charset=utf8mb4&collation=utf8mb4_unicode_ci"
+
+    # Redis
+    REDIS_HOST: str = os.getenv("REDIS_HOST", "127.0.0.1")
+    REDIS_PORT: int = int(os.getenv("REDIS_PORT", "6379"))
+    REDIS_DB: int = int(os.getenv("REDIS_DB", "0"))
+    REDIS_PASSWORD: Optional[str] = os.getenv("REDIS_PASSWORD")
+
+    # JWT Settings
+    SECRET_KEY: str = os.getenv("SECRET_KEY", "your-secret-key-here")  # 请在生产环境中更改此密钥
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
+
+    # Email
+    SMTP_TLS: bool = True
+    SMTP_PORT: Optional[int] = None
+    SMTP_HOST: Optional[str] = None
+    SMTP_USER: Optional[str] = None
+    SMTP_PASSWORD: Optional[str] = None
+    EMAILS_FROM_EMAIL: Optional[str] = None
+    EMAILS_FROM_NAME: Optional[str] = None
+
+    # API
+    MAX_API_KEYS_PER_USER: int = 5
+    MAX_APPLICATIONS_PER_USER: int = 10
+
+    # Cache
+    CACHE_EXPIRE_MINUTES: int = 60 * 24  # 24 hours
+
+    # Logging
+    LOG_LEVEL: str = "INFO"
+    LOG_FORMAT: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+    # Cors
+    CORS_ORIGINS: list = ["*"]
+    CORS_METHODS: list = ["*"]
+    CORS_HEADERS: list = ["*"]
 
     # File upload settings
     UPLOAD_DIR: str = "uploads"
@@ -43,18 +78,11 @@ class Settings(BaseSettings):
     CHUNK_SIZE: int = 1000
     CHUNK_OVERLAP: int = 100
 
-    @property
-    def SQLALCHEMY_DATABASE_URL(self) -> str:
-        return (
-            f"{self.DB_CONNECTION}://{self.DB_USERNAME}:{self.DB_PASSWORD}@"
-            f"{self.DB_HOST}:{self.DB_PORT}/{self.DB_DATABASE}?charset={self.DB_CHARSET}"
-            f"&collation={self.DB_COLLATION}"
-        )
-
     class Config:
         env_file = os.path.join(ROOT_DIR, ".env.test" if os.getenv("TESTING") else ".env")
         env_file_encoding = "utf-8"
         extra = "allow"  # 允许额外的字段
+        case_sensitive = True
 
 settings = Settings()
 

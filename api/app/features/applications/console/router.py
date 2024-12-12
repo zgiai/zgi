@@ -6,7 +6,9 @@ from sqlalchemy import or_
 from app.core.database import get_db
 from app.core.auth import get_current_user
 from app.features.applications import schemas
-from app.models import Application, Team, TeamMember, User
+from app.features.applications.models import Application
+from app.features.teams.models import Team, TeamMember
+from app.features.users.models import User
 
 router = APIRouter(prefix="/v1/console/applications", tags=["applications"])
 

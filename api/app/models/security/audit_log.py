@@ -3,6 +3,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from app.core.database import Base
+from app.features.users.models import User
 
 class SecurityAuditLog(Base):
     """Security-related event logging"""
@@ -19,4 +20,4 @@ class SecurityAuditLog(Base):
     description = Column(Text)
 
     # Relationships
-    user = relationship("User")
+    user = relationship(User)

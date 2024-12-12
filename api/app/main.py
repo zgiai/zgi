@@ -17,6 +17,7 @@ from app.features.teams.console.router import router as teams_console_router
 from app.features.applications.console.router import router as applications_console_router
 from app.features.teams.console.member_management.router import router as member_management_router
 from app.features.usage.router import router as usage_router
+from app.features.users.router import router as users_router
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -128,6 +129,7 @@ app.include_router(teams_console_router, prefix="/v1")
 app.include_router(applications_console_router, prefix="/v1")
 app.include_router(member_management_router, prefix="/v1")
 app.include_router(usage_router, prefix="/v1")
+app.include_router(users_router, prefix="/v1/console")
 
 @app.get("/")
 def root():

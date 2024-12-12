@@ -13,24 +13,23 @@ import threading
 # Add project root directory to Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.main import app
-from app.core.database import Base
-from app.core.database import get_db
+from app.core.database import Base, get_db
+from app.core.config import settings
+from app.features.users.models import User
+from app.models.team import Team, TeamMember, TeamInvitation
+from app.models.api_key import APIKey
+from app.models.application import Application
 
 def get_test_db():
     """Get a database connection"""
-    # Import all models to ensure they are registered with Base.metadata
-    from app.models import User, Team, TeamMember, TeamInvitation, APIKey, Application
-
-    # Create a new engine
+    # Create a new engine using MySQL
     engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
+        settings.SQLALCHEMY_DATABASE_URL,
         echo=True  # Enable SQL logging for debugging
     )
 
     # Create all tables
+    Base.metadata.drop_all(bind=engine)  # 清除所有表
     Base.metadata.create_all(bind=engine)
 
     # Create a new session factory
@@ -71,15 +70,24 @@ def client(test_db):
             test_db.rollback()
             test_db.close()
     
+    from app.main import app
     app.dependency_overrides[get_db] = override_get_db
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
 
+@pytest.fixture(scope="function")
+def db():
+    """Create a test database session"""
+    db = get_test_db()
+    try:
+        yield db
+    finally:
+        db.close()
+
 @pytest.fixture
 def test_user(test_db, test_client):
     """Create a test user and return user info with access token"""
-    from app.models import User
     from app.core.security import get_password_hash
 
     # Create test user
@@ -88,83 +96,70 @@ def test_user(test_db, test_client):
         username="testuser",
         hashed_password=get_password_hash("testpassword"),
         is_active=True,
-        is_superadmin=True
+        is_admin=True,
+        is_superuser=True
     )
     test_db.add(user)
     test_db.commit()
     test_db.refresh(user)
-
-    # Get access token
-    response = test_client.post(
-        "/v1/console/auth/login",
-        json={
-            "email": user.email,
-            "password": "testpassword"
-        }
-    )
-    token_data = response.json()
-
-    test_db.refresh(user)  # Refresh user to get updated data
-    return {
-        "id": user.id,
-        "email": user.email,
-        "username": user.username,
-        "access_token": token_data["access_token"]
-    }
+    yield user
+    test_db.delete(user)
+    test_db.commit()
 
 @pytest.fixture
 def test_user_headers(test_user):
     """Return headers with test user token"""
-    return {"Authorization": f"Bearer {test_user['access_token']}"}
+    return {"Authorization": f"Bearer {test_user.id}"}
 
 @pytest.fixture
 def test_application(test_db, test_user):
     """Create a test application"""
-    from app.models import Application
-    
-    application = Application(
-        name="Test Application",
-        description="Test application for unit tests",
-        owner_id=test_user["id"],
-        is_active=True
+    app = Application(
+        name="Test App",
+        description="Test application",
+        owner_id=test_user.id,
+        api_key="test-api-key"
     )
-    test_db.add(application)
+    test_db.add(app)
     test_db.commit()
-    test_db.refresh(application)
-    return application
+    test_db.refresh(app)
+    yield app
+    test_db.delete(app)
+    test_db.commit()
 
 @pytest.fixture
 def test_prompt_template(test_db, test_application, test_user):
     """Create a test prompt template"""
-    from app.models import PromptTemplate
+    from app.models.prompt_template import PromptTemplate
     
     template = PromptTemplate(
         name="Test Template",
-        description="Test template for unit tests",
-        content="This is a {{test}} template",
-        version="1.0",
-        is_active=True,
+        description="Test template",
+        content="Test content",
         application_id=test_application.id,
-        created_by=test_user["id"]
+        owner_id=test_user.id
     )
     test_db.add(template)
     test_db.commit()
     test_db.refresh(template)
-    return template
+    yield template
+    test_db.delete(template)
+    test_db.commit()
 
 @pytest.fixture
 def test_prompt_scenario(test_db, test_prompt_template, test_user):
     """Create a test prompt scenario"""
-    from app.models import PromptScenario
+    from app.models.prompt_scenario import PromptScenario
     
     scenario = PromptScenario(
         name="Test Scenario",
-        description="Test scenario for unit tests",
-        content={"test": "value"},
-        template_id=test_prompt_template.id,
-        created_by=test_user["id"]
+        description="Test scenario",
+        prompt_template_id=test_prompt_template.id,
+        owner_id=test_user.id
     )
     test_db.add(scenario)
     test_db.commit()
     test_db.refresh(scenario)
-    return scenario
+    yield scenario
+    test_db.delete(scenario)
+    test_db.commit()

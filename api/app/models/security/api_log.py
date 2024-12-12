@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text
+from sqlalchemy import Column, Integer, String, DateTime, Text, Float
 from sqlalchemy.sql import func
 
 from app.core.database import Base
@@ -15,3 +15,8 @@ class APILog(Base):
     path = Column(String(255), nullable=False)
     client_ip = Column(String(45), nullable=False)  # Support for IPv6
     request_data = Column(Text)  # JSON string of request data
+    response_data = Column(Text)  # JSON string of response data
+    status_code = Column(Integer)  # HTTP status code
+    api_key_id = Column(String(255))  # API key ID if used
+    error_message = Column(Text)  # Error message if any
+    duration_ms = Column(Float)  # Request duration in milliseconds

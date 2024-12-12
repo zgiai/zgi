@@ -7,7 +7,8 @@ from fastapi import HTTPException
 
 from app.core.security import get_password_hash
 from app.features.teams import schemas
-from app.models import Team, TeamInvitation, TeamMember, User
+from app.features.users.models import User
+from app.features.teams.models import Team, TeamInvitation, TeamMember, TeamRole
 
 class TeamClientService:
     def __init__(self, db: Session):
