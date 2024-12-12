@@ -15,7 +15,7 @@ import logging
 
 # Import app modules
 from app.core.database import Base
-from app.models.users import User
+from app.features.users.models import User  # Updated import path
 from app.core.security import get_password_hash
 
 # Configure logging

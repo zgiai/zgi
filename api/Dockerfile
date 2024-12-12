@@ -16,6 +16,9 @@ RUN pip install --no-cache-dir -r requirements.txt -v
 # 将源代码复制到工作目录
 COPY . .
 
+# 设置Python路径
+ENV PYTHONPATH=/app
+
 # 暴露应用程序运行的端口（根据您的应用需要更改）
 EXPOSE 7001
 
