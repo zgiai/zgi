@@ -4,9 +4,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.router import router as api_v1_router
-from app.utils.weaviate_manager import WeaviateManager
 from dotenv import load_dotenv
-from wasabi import msg
 import logging
 from app.core.config import settings
 from app.services.rag_service import rag_service
@@ -27,9 +25,14 @@ if not OPENAI_API_KEY:
 
 logger.info(f"OPENAI_API_KEY is {'set' if OPENAI_API_KEY else 'not set'}")
 
-app = FastAPI(title=settings.PROJECT_NAME)
+# Create FastAPI app
+app = FastAPI(
+    title=settings.PROJECT_NAME,
+    openapi_url=f"{settings.API_V1_STR}/openapi.json",
+    version="1.0.0"
+)
 
-# 添加 CORS 中间件配置
+# Configure CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000"],  # 允许本地前端访问
@@ -38,36 +41,35 @@ app.add_middleware(
     allow_headers=["*"],  # 允许所有头
 )
 
+# Include routers
 app.include_router(api_v1_router, prefix="/v1")
-
-weaviate_manager = WeaviateManager()
 
 @app.on_event("startup")
 async def startup_event():
+    """Initialize services on startup"""
     try:
-        weaviate_manager.connect()
-        mysql_manager.initialize_pool()
+        # Initialize database connection
         mysql_manager.connect()
-        logger.info("Successfully connected to Weaviate")
+        logger.info("Successfully connected to database")
     except Exception as e:
-        logger.error(f"Failed to connect to Weaviate: {str(e)}")
+        logger.error(f"Error during startup: {str(e)}")
         raise
 
 @app.on_event("shutdown")
 async def shutdown_event():
+    """Cleanup on shutdown"""
     try:
-        weaviate_manager.close()
-        await rag_service.close()
+        # Close database connection
         mysql_manager.disconnect()
-        logger.info("Successfully closed all connections")
+        await rag_service.close()
+        logger.info("Successfully disconnected from database")
     except Exception as e:
-        logger.error(f"Failed to close connections: {str(e)}") 
+        logger.error(f"Error during shutdown: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
     
-    port = 8088 if os.environ.get("ENVIRONMENT") == "production" else 7001
-    
+    port = 7001  # Always use port 7001 as per requirements
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
