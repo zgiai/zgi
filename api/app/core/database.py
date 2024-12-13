@@ -1,11 +1,11 @@
-from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import SQLAlchemyError
 from fastapi import HTTPException
 import logging
 import os
-import pymysql
+import aiomysql
 
 from app.core.config import settings
 
@@ -19,7 +19,7 @@ logger.info(f"Database URL: {settings.SQLALCHEMY_DATABASE_URL}")
 
 SQLALCHEMY_DATABASE_URL = settings.SQLALCHEMY_DATABASE_URL
 
-engine = create_engine(
+engine = create_async_engine(
     SQLALCHEMY_DATABASE_URL,
     echo=True,
     pool_pre_ping=True,  # Enable connection health checks
@@ -27,42 +27,37 @@ engine = create_engine(
     pool_size=5,         # Set a reasonable pool size
     max_overflow=10      # Allow up to 10 additional connections
 )
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+SessionLocal = sessionmaker(
+    engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+    autocommit=False,
+    autoflush=False
+)
 
 Base = declarative_base()
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    except SQLAlchemyError as e:
-        db.rollback()
-        logger.error(f"Database error: {str(e)}")
-        raise
-    finally:
-        db.close()
+async def get_db():
+    async with SessionLocal() as session:
+        try:
+            yield session
+        except SQLAlchemyError as e:
+            await session.rollback()
+            logger.error(f"Database error: {str(e)}")
+            raise
+        finally:
+            await session.close()
 
-def handle_db_operation(operation):
+async def handle_db_operation(operation):
     """
     Wrapper for database operations with detailed error handling
     
     Usage:
-        result = handle_db_operation(lambda: db.query(User).filter(User.id == user_id).first())
+        result = await handle_db_operation(lambda: db.query(User).filter(User.id == user_id).first())
     """
     try:
-        return operation()
+        return await operation()
     except SQLAlchemyError as e:
-        logger.error(f"Database operation failed: {str(e)}")
-        error_details = {
-            "error_type": e.__class__.__name__,
-            "error_message": str(e),
-            "statement": str(getattr(e, 'statement', '')) if hasattr(e, 'statement') else None,
-            "params": getattr(e, 'params', None) if hasattr(e, 'params') else None
-        }
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "message": "Database operation failed",
-                "details": error_details
-            }
-        )
+        logger.error(f"Database operation error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Database operation failed")

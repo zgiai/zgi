@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     
     @property
     def SQLALCHEMY_DATABASE_URL(self) -> str:
-        return f"mysql+pymysql://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_DATABASE}?charset=utf8mb4&collation=utf8mb4_unicode_ci"
+        return f"mysql+aiomysql://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_DATABASE}?charset=utf8mb4"
 
     # Redis
     REDIS_HOST: str = os.getenv("REDIS_HOST", "127.0.0.1")

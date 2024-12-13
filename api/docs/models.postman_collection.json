@@ -1,0 +1,128 @@
+{
+  "info": {
+    "name": "ZGI Models API",
+    "description": "API collection for managing AI models",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "List Models",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:7001/v1/models?skip=0&limit=100&provider_id=192&type=LLM&supports_streaming=true&search=fast",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "7001",
+          "path": ["v1", "models"],
+          "query": [
+            {
+              "key": "skip",
+              "value": "0"
+            },
+            {
+              "key": "limit",
+              "value": "100"
+            },
+            {
+              "key": "provider_id",
+              "value": "192"
+            },
+            {
+              "key": "type",
+              "value": "LLM"
+            },
+            {
+              "key": "supports_streaming",
+              "value": "true"
+            },
+            {
+              "key": "search",
+              "value": "fast"
+            }
+          ]
+        },
+        "description": "Get a list of all models with optional filtering"
+      }
+    },
+    {
+      "name": "Get Model",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:7001/v1/models/4",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "7001",
+          "path": ["v1", "models", "4"]
+        },
+        "description": "Get a specific model by ID"
+      }
+    },
+    {
+      "name": "Create Model",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"provider_id\": 192,\n  \"model_name\": \"GPT-3.5 Turbo\",\n  \"model_version\": \"0.1\",\n  \"description\": \"Fast and efficient language model\",\n  \"type\": \"LLM\",\n  \"modalities\": {\n    \"text\": true\n  },\n  \"max_context_length\": 4096,\n  \"supports_streaming\": true,\n  \"supports_function_calling\": true,\n  \"price_per_1k_tokens\": 0.002,\n  \"api_call_name\": \"gpt-3.5-turbo\"\n}"
+        },
+        "url": {
+          "raw": "http://localhost:7001/v1/models",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "7001",
+          "path": ["v1", "models"]
+        },
+        "description": "Create a new model"
+      }
+    },
+    {
+      "name": "Update Model",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"description\": \"Updated description\",\n  \"supports_roles\": true\n}"
+        },
+        "url": {
+          "raw": "http://localhost:7001/v1/models/4",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "7001",
+          "path": ["v1", "models", "4"]
+        },
+        "description": "Update an existing model"
+      }
+    },
+    {
+      "name": "Delete Model",
+      "request": {
+        "method": "DELETE",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:7001/v1/models/4",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "7001",
+          "path": ["v1", "models", "4"]
+        },
+        "description": "Soft delete a model"
+      }
+    }
+  ]
+}

@@ -16,13 +16,12 @@ from app.features.projects.router import router as projects_router
 from app.features.usage.router import router as usage_router
 from app.features.applications.console.router import router as applications_router
 from app.features.api_keys.router import router as api_keys_router
+from app.features.providers.router.provider import router as providers_router
+from app.features.providers.router.model import router as models_router
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# Create database tables
-Base.metadata.create_all(bind=engine)
 
 # Create FastAPI app
 app = FastAPI(
@@ -53,6 +52,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.on_event("startup")
+async def startup():
+    # Create tables
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+@app.on_event("shutdown")
+async def shutdown():
+    await engine.dispose()
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
@@ -105,6 +114,8 @@ app.include_router(projects_router, prefix="/v1/projects", tags=["Projects"])
 app.include_router(usage_router, prefix="/v1/usage", tags=["Usage"])
 app.include_router(applications_router, prefix="/v1/applications", tags=["Applications"])
 app.include_router(api_keys_router, prefix="/v1/api-keys", tags=["API Keys"])
+app.include_router(providers_router)
+app.include_router(models_router)
 
 @app.get("/")
 def root():

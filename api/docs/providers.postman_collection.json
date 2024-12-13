@@ -1,0 +1,147 @@
+{
+  "info": {
+    "name": "Providers API",
+    "description": "Collection for Model Providers API endpoints",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "List Providers",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{api_key}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/v1/providers?skip=0&limit=100&enabled_only=false&search=",
+          "host": ["{{base_url}}"],
+          "path": ["v1", "providers"],
+          "query": [
+            {
+              "key": "skip",
+              "value": "0"
+            },
+            {
+              "key": "limit",
+              "value": "100"
+            },
+            {
+              "key": "enabled_only",
+              "value": "false"
+            },
+            {
+              "key": "search",
+              "value": ""
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Create Provider",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{api_key}}",
+            "type": "text"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/v1/providers",
+          "host": ["{{base_url}}"],
+          "path": ["v1", "providers"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"provider_name\": \"OpenAI\",\n  \"enabled\": true,\n  \"api_key\": \"sk-...\",\n  \"org_id\": \"org-...\",\n  \"base_url\": \"https://api.openai.com\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Get Provider",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{api_key}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/v1/providers/1",
+          "host": ["{{base_url}}"],
+          "path": ["v1", "providers", "1"]
+        }
+      }
+    },
+    {
+      "name": "Update Provider",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{api_key}}",
+            "type": "text"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/v1/providers/1",
+          "host": ["{{base_url}}"],
+          "path": ["v1", "providers", "1"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"provider_name\": \"Updated OpenAI\",\n  \"enabled\": false,\n  \"api_key\": \"sk-...\",\n  \"org_id\": \"org-...\",\n  \"base_url\": \"https://api.openai.com\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Delete Provider",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{api_key}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/v1/providers/1",
+          "host": ["{{base_url}}"],
+          "path": ["v1", "providers", "1"]
+        }
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000",
+      "type": "string"
+    },
+    {
+      "key": "api_key",
+      "value": "your-api-key-here",
+      "type": "string"
+    }
+  ]
+}
