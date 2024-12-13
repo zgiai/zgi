@@ -28,8 +28,8 @@ class Organization(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
     # Relationships
-    members = relationship("OrganizationMember", back_populates="organization", cascade="all, delete-orphan")
-    projects = relationship("Project", back_populates="organization", cascade="all, delete-orphan")
+    members = relationship("app.features.organizations.models.OrganizationMember", back_populates="organization", cascade="all, delete-orphan")
+    projects = relationship("app.features.projects.models.Project", back_populates="organization", cascade="all, delete-orphan")
 
 class OrganizationMember(Base):
     """Organization member model"""
@@ -43,5 +43,5 @@ class OrganizationMember(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
     # Relationships
-    organization = relationship("Organization", back_populates="members")
+    organization = relationship("app.features.organizations.models.Organization", back_populates="members")
     user = relationship("app.features.users.models.User", back_populates="organization_members")

@@ -9,7 +9,9 @@ from fastapi import HTTPException, status
 from datetime import datetime
 
 from app.core.config import settings
-from app.models import User, Application, ChatSession
+from app.features.users.models import User
+from app.features.applications.models import Application
+from app.features.chat.models import ChatSession
 from app.features.chat.schemas import ChatMessage, SwitchModelResponse, ChatHistoryParams, ChatHistoryResponse
 
 class ChatService:

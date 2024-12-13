@@ -6,7 +6,8 @@ from typing import Optional, List
 
 from app.core.database import get_db
 from app.core.auth import get_current_user
-from app.models import User, Application
+from app.features.users.models import User
+from app.features.applications.models import Application
 from app.features.chat.schemas import (
     ChatRequest, SwitchModelRequest, SwitchModelResponse,
     ChatHistoryParams, ChatHistoryResponse, TagsUpdateRequest,

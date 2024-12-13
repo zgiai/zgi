@@ -5,7 +5,7 @@ import PyPDF2
 from fastapi import UploadFile, HTTPException
 from sqlalchemy.orm import Session
 
-from app.models.files import ChatFile
+from app.features.chat.models import ChatFile
 from app.features.chat.file_schemas import ChatFileCreate
 from app.core.config import settings
 

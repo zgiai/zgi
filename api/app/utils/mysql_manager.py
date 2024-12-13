@@ -14,30 +14,30 @@ class MySQLManager:
         从环境变量初始化数据库连接池
         
         环境变量:
-            MYSQL_HOST: 数据库主机地址
-            MYSQL_USER: 数据库用户名
-            MYSQL_PASSWORD: 数据库密码
-            MYSQL_DATABASE: 数据库名
-            MYSQL_PORT: 数据库端口号（可选，默认3306）
-            MYSQL_MIN_CONNECTIONS: 最小连接数（可选，默认1）
-            MYSQL_MAX_CONNECTIONS: 最大连接数（可选，默认10）
+            DB_HOST: 数据库主机地址
+            DB_USER: 数据库用户名
+            DB_PASSWORD: 数据库密码
+            DB_DATABASE: 数据库名
+            DB_PORT: 数据库端口号（可选，默认3306）
+            DB_MIN_CONNECTIONS: 最小连接数（可选，默认1）
+            DB_MAX_CONNECTIONS: 最大连接数（可选，默认10）
         """
         load_dotenv()  # 加载 .env 文件中的环境变量
         
         cls._pool = PooledDB(
             creator=pymysql,
-            maxconnections=int(os.getenv('MYSQL_MAX_CONNECTIONS', 10)),
-            mincached=int(os.getenv('MYSQL_MIN_CONNECTIONS', 1)),
-            maxcached=int(os.getenv('MYSQL_MAX_CONNECTIONS', 10)),
-            maxshared=int(os.getenv('MYSQL_MAX_CONNECTIONS', 10)),
+            maxconnections=int(os.getenv('DB_MAX_CONNECTIONS', 10)),
+            mincached=int(os.getenv('DB_MIN_CONNECTIONS', 1)),
+            maxcached=int(os.getenv('DB_MAX_CONNECTIONS', 10)),
+            maxshared=int(os.getenv('DB_MAX_CONNECTIONS', 10)),
             blocking=True,
             maxusage=None,
             setsession=[],
-            host='db',
-            user=os.getenv('MYSQL_USER'),
-            password=os.getenv('MYSQL_PASSWORD'),
-            database=os.getenv('MYSQL_DATABASE'),
-            port=int(os.getenv('MYSQL_PORT', 3306)),
+            host=os.getenv('DB_HOST', 'localhost'),
+            user=os.getenv('DB_USER', 'root'),
+            password=os.getenv('DB_PASSWORD', ''),
+            database=os.getenv('DB_DATABASE', 'zgi'),
+            port=int(os.getenv('DB_PORT', 3306)),
             charset='utf8mb4',
             cursorclass=DictCursor
         )

@@ -29,6 +29,6 @@ class Project(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
     # Relationships
-    organization = relationship("Organization", back_populates="projects")
-    creator = relationship("User", back_populates="created_projects")
-    api_keys = relationship("APIKey", back_populates="project", cascade="all, delete-orphan")
+    organization = relationship("app.features.organizations.models.Organization", back_populates="projects")
+    creator = relationship("app.features.users.models.User", back_populates="created_projects")
+    api_keys = relationship("app.features.api_keys.models.APIKey", back_populates="project", cascade="all, delete-orphan")

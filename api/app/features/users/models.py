@@ -25,10 +25,8 @@ class User(Base):
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
-    organization_members = relationship("OrganizationMember", back_populates="user")
+    organization_members = relationship("app.features.organizations.models.OrganizationMember", back_populates="user")
     applications = relationship("app.features.applications.models.Application", back_populates="owner")
-    owned_teams = relationship("Team", back_populates="owner")
-    team_memberships = relationship("TeamMember", back_populates="user")
-    chat_sessions = relationship("ChatSession", back_populates="user", cascade="all, delete-orphan")
-    created_projects = relationship("Project", back_populates="creator")
+    chat_sessions = relationship("app.features.chat.models.ChatSession", back_populates="user", cascade="all, delete-orphan")
+    created_projects = relationship("app.features.projects.models.Project", back_populates="creator")
     api_keys = relationship("app.features.api_keys.models.APIKey", back_populates="creator")
