@@ -49,9 +49,9 @@ def list_organizations(
     )
     return query.all()
 
-@router.get("/{org_id}", response_model=schemas.Organization)
+@router.get("/{org_uuid}", response_model=schemas.Organization)
 def get_organization(
-    org_id: str,
+    org_uuid: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -60,7 +60,7 @@ def get_organization(
         db.query(Organization)
         .join(OrganizationMember)
         .filter(
-            Organization.id == org_id,
+            Organization.uuid == org_uuid,
             OrganizationMember.user_id == current_user.id
         )
         .first()
@@ -69,30 +69,56 @@ def get_organization(
         raise HTTPException(status_code=404, detail="Organization not found")
     return org
 
-@router.put("/{org_id}", response_model=schemas.Organization)
+@router.put("/{org_uuid}", response_model=schemas.Organization)
 def update_organization(
-    org_id: str,
+    org_uuid: str,
     org_data: schemas.OrganizationUpdate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Update organization details"""
+    # First check if user is a member of the organization
     org = (
         db.query(Organization)
         .join(OrganizationMember)
         .filter(
-            Organization.id == org_id,
-            OrganizationMember.user_id == current_user.id,
-            OrganizationMember.role.in_([OrganizationRole.OWNER, OrganizationRole.ADMIN])
+            Organization.uuid == org_uuid,
+            OrganizationMember.user_id == current_user.id
         )
         .first()
     )
     if not org:
-        raise HTTPException(status_code=404, detail="Organization not found or insufficient permissions")
+        raise HTTPException(status_code=404, detail="Organization not found")
     
-    for field, value in org_data.dict(exclude_unset=True).items():
-        setattr(org, field, value)
+    # Then check if user has permission to update
+    member = (
+        db.query(OrganizationMember)
+        .filter(
+            OrganizationMember.organization_id == org.id,
+            OrganizationMember.user_id == current_user.id
+        )
+        .first()
+    )
+    if member.role not in [OrganizationRole.OWNER, OrganizationRole.ADMIN]:
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
+    
+    # Update organization
+    update_data = org_data.model_dump(exclude_unset=False)
+    if "is_active" not in update_data:
+        update_data["is_active"] = org.is_active
+    
+    # Handle datetime fields separately
+    update_data.pop('created_at', None)
+    update_data.pop('updated_at', None)
+    
+    for field, value in update_data.items():
+        if hasattr(org, field):
+            if isinstance(value, bytes):
+                value = value.decode()
+            setattr(org, field, value)
     
     db.commit()
     db.refresh(org)
-    return org
+    
+    # Convert to Pydantic model for proper serialization
+    return schemas.Organization.model_validate(org)

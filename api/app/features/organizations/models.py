@@ -11,14 +11,15 @@ class OrganizationRole(str, enum.Enum):
     ADMIN = "admin"
     MEMBER = "member"
 
-def generate_org_id():
+def generate_uuid():
     return str(uuid.uuid4())
 
 class Organization(Base):
     """Organization model"""
     __tablename__ = "organizations"
 
-    id = Column(String(36), primary_key=True, index=True, default=generate_org_id)
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    uuid = Column(String(36), unique=True, index=True, default=generate_uuid, nullable=False)
     name = Column(String(255), nullable=False)
     description = Column(String(1000))
     created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"))
@@ -34,7 +35,7 @@ class OrganizationMember(Base):
     __tablename__ = "organization_members"
 
     id = Column(Integer, primary_key=True, index=True)
-    organization_id = Column(String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    organization_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     role = Column(Enum(OrganizationRole), nullable=False, default=OrganizationRole.MEMBER)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)

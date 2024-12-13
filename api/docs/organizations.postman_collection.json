@@ -1,0 +1,189 @@
+{
+    "info": {
+        "name": "Organizations API",
+        "description": "Collection for managing organizations",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "item": [
+        {
+            "name": "Create Organization",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{access_token}}",
+                        "type": "text"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json",
+                        "type": "text"
+                    }
+                ],
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\n    \"name\": \"My Organization\",\n    \"description\": \"A description of my organization\"\n}"
+                },
+                "url": {
+                    "raw": "{{base_url}}/v1/organizations",
+                    "host": ["{{base_url}}"],
+                    "path": ["v1", "organizations"]
+                },
+                "description": "Create a new organization"
+            },
+            "response": [
+                {
+                    "name": "Success",
+                    "originalRequest": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"name\": \"My Organization\",\n    \"description\": \"A description of my organization\"\n}"
+                        }
+                    },
+                    "status": "Created",
+                    "code": 201,
+                    "_postman_previewlanguage": "json",
+                    "header": [],
+                    "cookie": [],
+                    "body": "{\n    \"id\": 1,\n    \"name\": \"My Organization\",\n    \"description\": \"A description of my organization\",\n    \"created_by\": 1,\n    \"is_active\": true,\n    \"created_at\": \"2024-12-13T01:08:00Z\",\n    \"updated_at\": \"2024-12-13T01:08:00Z\"\n}"
+                }
+            ]
+        },
+        {
+            "name": "List Organizations",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{access_token}}",
+                        "type": "text"
+                    }
+                ],
+                "url": {
+                    "raw": "{{base_url}}/v1/organizations",
+                    "host": ["{{base_url}}"],
+                    "path": ["v1", "organizations"]
+                },
+                "description": "List all organizations for current user"
+            },
+            "response": [
+                {
+                    "name": "Success",
+                    "originalRequest": {
+                        "method": "GET",
+                        "header": []
+                    },
+                    "status": "OK",
+                    "code": 200,
+                    "_postman_previewlanguage": "json",
+                    "header": [],
+                    "cookie": [],
+                    "body": "[\n    {\n        \"id\": 1,\n        \"name\": \"My Organization\",\n        \"description\": \"A description of my organization\",\n        \"created_by\": 1,\n        \"is_active\": true,\n        \"created_at\": \"2024-12-13T01:08:00Z\",\n        \"updated_at\": \"2024-12-13T01:08:00Z\"\n    }\n]"
+                }
+            ]
+        },
+        {
+            "name": "Get Organization",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{access_token}}",
+                        "type": "text"
+                    }
+                ],
+                "url": {
+                    "raw": "{{base_url}}/v1/organizations/{{org_id}}",
+                    "host": ["{{base_url}}"],
+                    "path": ["v1", "organizations", "{{org_id}}"]
+                },
+                "description": "Get details of a specific organization"
+            },
+            "response": [
+                {
+                    "name": "Success",
+                    "originalRequest": {
+                        "method": "GET",
+                        "header": []
+                    },
+                    "status": "OK",
+                    "code": 200,
+                    "_postman_previewlanguage": "json",
+                    "header": [],
+                    "cookie": [],
+                    "body": "{\n    \"id\": 1,\n    \"name\": \"My Organization\",\n    \"description\": \"A description of my organization\",\n    \"created_by\": 1,\n    \"is_active\": true,\n    \"created_at\": \"2024-12-13T01:08:00Z\",\n    \"updated_at\": \"2024-12-13T01:08:00Z\"\n}"
+                }
+            ]
+        },
+        {
+            "name": "Update Organization",
+            "request": {
+                "method": "PUT",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{access_token}}",
+                        "type": "text"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json",
+                        "type": "text"
+                    }
+                ],
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\n    \"name\": \"Updated Organization Name\",\n    \"description\": \"Updated organization description\",\n    \"is_active\": true\n}"
+                },
+                "url": {
+                    "raw": "{{base_url}}/v1/organizations/{{org_id}}",
+                    "host": ["{{base_url}}"],
+                    "path": ["v1", "organizations", "{{org_id}}"]
+                },
+                "description": "Update an organization's details"
+            },
+            "response": [
+                {
+                    "name": "Success",
+                    "originalRequest": {
+                        "method": "PUT",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"name\": \"Updated Organization Name\",\n    \"description\": \"Updated organization description\",\n    \"is_active\": true\n}"
+                        }
+                    },
+                    "status": "OK",
+                    "code": 200,
+                    "_postman_previewlanguage": "json",
+                    "header": [],
+                    "cookie": [],
+                    "body": "{\n    \"id\": 1,\n    \"name\": \"Updated Organization Name\",\n    \"description\": \"Updated organization description\",\n    \"created_by\": 1,\n    \"is_active\": true,\n    \"created_at\": \"2024-12-13T01:08:00Z\",\n    \"updated_at\": \"2024-12-13T01:08:00Z\"\n}"
+                }
+            ]
+        }
+    ],
+    "variable": [
+        {
+            "key": "base_url",
+            "value": "http://localhost:8000",
+            "type": "string"
+        },
+        {
+            "key": "access_token",
+            "value": "your_access_token_here",
+            "type": "string"
+        },
+        {
+            "key": "org_id",
+            "value": "1",
+            "type": "string",
+            "description": "Organization ID (integer)"
+        }
+    ]
+}

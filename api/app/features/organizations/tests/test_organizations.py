@@ -108,3 +108,94 @@ def test_list_organizations(client: TestClient, auth_headers: dict, db: Session,
     data = response.json()
     assert len(data) == 1
     assert data[0]["name"] == "Test Org 1"
+
+def test_update_organization(client: TestClient, auth_headers: dict, db: Session, test_user: User):
+    # First create an organization
+    org = Organization(
+        name="Test Org Update",
+        description="Test Description Update",
+        created_by=test_user.id
+    )
+    db.add(org)
+    db.flush()
+    
+    # Add test user as owner
+    member = OrganizationMember(
+        organization_id=org.id,
+        user_id=test_user.id,
+        role=OrganizationRole.OWNER
+    )
+    db.add(member)
+    db.commit()
+    
+    # Update organization
+    update_data = {
+        "name": "Updated Org Name",
+        "description": "Updated Description"
+    }
+    response = client.put(
+        f"/v1/organizations/{org.uuid}",
+        headers=auth_headers,
+        json=update_data
+    )
+    
+    assert response.status_code == 200
+    data = response.json()
+    assert data["name"] == update_data["name"]
+    assert data["description"] == update_data["description"]
+    
+    # Verify database update
+    db.rollback()  # Rollback any pending transaction
+    db.expire_all()  # Expire all objects to force reload
+    org = db.query(Organization).filter(Organization.id == org.id).first()  # Get fresh data
+    assert org.name == update_data["name"]
+    assert org.description == update_data["description"]
+
+def test_update_organization_not_owner(client: TestClient, auth_headers: dict, db: Session, test_user: User, test_user2: User):
+    # Create organization with test_user as owner
+    org = Organization(
+        name="Test Org Update",
+        description="Test Description Update",
+        created_by=test_user.id
+    )
+    db.add(org)
+    db.flush()
+    
+    # Add test_user as owner
+    member = OrganizationMember(
+        organization_id=org.id,
+        user_id=test_user.id,
+        role=OrganizationRole.OWNER
+    )
+    db.add(member)
+    
+    # Add test_user2 as member
+    member2 = OrganizationMember(
+        organization_id=org.id,
+        user_id=test_user2.id,
+        role=OrganizationRole.MEMBER
+    )
+    db.add(member2)
+    db.commit()
+    
+    # Get token for test_user2
+    test_user2_token = create_access_token({"sub": str(test_user2.id)})
+    test_user2_headers = {"Authorization": f"Bearer {test_user2_token}"}
+    
+    # Try to update organization as non-owner
+    update_data = {
+        "name": "Updated By Non-Owner",
+        "description": "This update should fail"
+    }
+    response = client.put(
+        f"/v1/organizations/{org.uuid}",
+        headers=test_user2_headers,
+        json=update_data
+    )
+    
+    assert response.status_code == 403
+    
+    # Verify organization was not updated
+    db.refresh(org)
+    assert org.name == "Test Org Update"
+    assert org.description == "Test Description Update"
