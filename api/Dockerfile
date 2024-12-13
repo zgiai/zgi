@@ -1,11 +1,12 @@
 # Build stage
 FROM python:3.9-slim as builder
 
-# Install build tools
+# Install build tools and dependencies
 RUN apt-get update && apt-get install -y \
     build-essential \
     gcc \
     g++ \
+    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
@@ -17,6 +18,7 @@ COPY requirements.txt .
 # Create virtual environment and install dependencies
 RUN python -m venv /opt/venv && \
     . /opt/venv/bin/activate && \
+    pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
 # Runtime stage
