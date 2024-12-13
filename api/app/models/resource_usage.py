@@ -17,4 +17,4 @@ class ResourceUsage(Base):
     timestamp = Column(DateTime, server_default=func.now(), nullable=False, index=True)
 
     # Relationships
-    application = relationship("Application", back_populates="resource_usage")
+    application = relationship("app.features.applications.models.Application", back_populates="resource_usage")

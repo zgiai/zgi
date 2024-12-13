@@ -7,7 +7,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.models import User
+from app.features.users.models import User
+from app.features.auth.service import AuthService, get_auth_service
 
 # JWT相关配置
 SECRET_KEY = settings.SECRET_KEY
@@ -48,11 +49,16 @@ async def get_current_user(
         raise credentials_exception
     return user
 
-def require_super_admin(current_user: User = Depends(get_current_user)):
-    """检查用户是否是超级管理员"""
-    if not current_user.is_superuser:
+def require_super_admin(
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db)
+) -> User:
+    """Require super admin access"""
+    auth_service = AuthService(db)
+    user = auth_service.get_current_user(token)
+    if not user.is_superuser:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Super admin privileges required"
+            detail="Insufficient permissions. Super admin access required."
         )
-    return current_user
+    return user

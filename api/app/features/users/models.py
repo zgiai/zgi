@@ -24,6 +24,9 @@ class User(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    # 关系
+    # Relationships
     organization_members = relationship("OrganizationMember", back_populates="user")
     applications = relationship("Application", back_populates="owner")
+    owned_teams = relationship("Team", back_populates="owner")
+    team_memberships = relationship("TeamMember", back_populates="user")
+    chat_sessions = relationship("ChatSession", back_populates="user", cascade="all, delete-orphan")

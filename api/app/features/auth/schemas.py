@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 
 class UserBase(BaseModel):
@@ -22,6 +22,13 @@ class UserResponse(UserBase):
     id: int
     created_at: datetime
     updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class UserList(BaseModel):
+    users: List[UserResponse]
+    total: int
 
     class Config:
         from_attributes = True

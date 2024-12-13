@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -6,9 +6,15 @@ import logging
 
 from app.core.database import get_db
 from app.core.auth import require_super_admin
+from app.features.auth.service import AuthService, get_auth_service
+from app.features.auth.schemas import (
+    Token,
+    UserCreate,
+    UserLogin,
+    UserResponse,
+    UserList
+)
 from app.features.users.models import User
-from app.features.auth.schemas import UserResponse, UserLogin, UserRegister, Token
-from app.features.auth.service import AuthService
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -32,47 +38,65 @@ async def login_for_access_token(
     auth_service: AuthService = Depends(get_auth_service)
 ):
     """Login endpoint to get access token"""
-    result = auth_service.authenticate_user(form_data.username, form_data.password)
-    return Token(
-        access_token=result["access_token"],
-        token_type=result["token_type"]
-    )
+    try:
+        result = auth_service.authenticate_user(form_data.username, form_data.password)
+        return Token(
+            access_token=result["access_token"],
+            token_type=result["token_type"]
+        )
+    except HTTPException as e:
+        logger.error(f"Login failed: {e.detail}")
+        raise
 
-@router.post("/login")
+@router.post("/login", response_model=Dict[str, Any])
 def login(
     user_data: UserLogin,
     auth_service: AuthService = Depends(get_auth_service)
 ):
     """Login endpoint"""
-    return auth_service.authenticate_user(user_data.email, user_data.password)
+    try:
+        return auth_service.authenticate_user(user_data.email, user_data.password)
+    except HTTPException as e:
+        logger.error(f"Login failed: {e.detail}")
+        raise
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def register(
-    user_data: UserRegister,
+    user_data: UserCreate,
     auth_service: AuthService = Depends(get_auth_service)
 ):
     """Register a new user"""
     try:
-        logger.info(f"Attempting to register user with email: {user_data.email}")
-        user = auth_service.register_user(user_data.email, user_data.username, user_data.password)
-        logger.info(f"Successfully registered user: {user.email}")
+        user = auth_service.register_user(
+            email=user_data.email,
+            username=user_data.username,
+            password=user_data.password
+        )
         return user
     except HTTPException as e:
-        logger.error(f"Error registering user: {e}")
+        if "Email already registered" in str(e.detail):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered"
+            )
+        elif "Username already taken" in str(e.detail):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Username already taken"
+            )
         raise
-    except Exception as e:
-        logger.error(f"Error registering user: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
+
+@router.get("/me", response_model=UserResponse)
+def get_current_user_info(current_user: User = Depends(get_current_user)):
+    """Get current user information"""
+    return current_user
 
 @router.get("/users", response_model=List[UserResponse])
 def list_users(
     current_user: User = Depends(require_super_admin),
     db: Session = Depends(get_db)
 ):
-    """List all users (Admin only)"""
+    """List all users (admin only)"""
     users = db.query(User).all()
     return users
 
@@ -82,52 +106,39 @@ def get_user(
     current_user: User = Depends(require_super_admin),
     db: Session = Depends(get_db)
 ):
-    """Get user details (Admin only)"""
+    """Get user by ID (admin only)"""
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
     return user
 
-@router.delete("/users/{user_id}")
+@router.delete("/users/{user_id}", response_model=Dict[str, Any])
 def delete_user(
     user_id: int,
     current_user: User = Depends(require_super_admin),
-    db: Session = Depends(get_db)
+    auth_service: AuthService = Depends(get_auth_service)
 ):
     """Delete user (Admin only)"""
     try:
-        # 不允许删除当前用户
+        # Don't allow deleting current user
         if user_id == current_user.id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Cannot delete current user"
             )
         
-        user = db.query(User).filter(User.id == user_id).first()
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-
-        # 删除用户相关的所有数据
-        db.query(User).filter(User.id == user_id).delete()
-        db.commit()
-
-        return {"message": "User deleted successfully"}
+        # Use auth service to delete user
+        deleted_user = auth_service.delete_user(user_id, current_user)
+        return {"message": "User deleted successfully", "id": deleted_user.id}
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        db.rollback()
         logger.error(f"Error deleting user: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error deleting user: {str(e)}"
         )
-
-@router.get("/me")
-def get_current_user_info(current_user: User = Depends(get_current_user)):
-    """Get current user information"""
-    return {
-        "id": current_user.id,
-        "email": current_user.email,
-        "username": current_user.username,
-        "is_active": current_user.is_active,
-        "is_verified": current_user.is_verified,
-        "is_superuser": current_user.is_superuser
-    }

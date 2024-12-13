@@ -183,30 +183,46 @@ def test_get_user_as_admin(client: TestClient, test_user, superuser_headers, db_
     assert data["email"] == TEST_USER_EMAIL
     assert data["username"] == TEST_USER_USERNAME
 
-def test_delete_user_as_admin(client: TestClient, test_user, test_superuser, db_session: Session):
-    """Test delete user as admin"""
-    # 登录为管理员
-    response = client.post(
-        "/v1/login",
-        json={"email": test_superuser.email, "password": "password"}
-    )
+def test_delete_user_as_admin(client: TestClient, test_user, superuser_headers, db_session: Session):
+    """Test deleting a user as admin"""
+    response = client.delete(f"/v1/users/{test_user.id}", headers=superuser_headers)
     assert response.status_code == 200
-    token = response.json()["access_token"]
+    assert response.json()["id"] == test_user.id
     
-    # 删除测试用户
-    response = client.delete(
-        f"/v1/users/{test_user.id}",
-        headers={"Authorization": f"Bearer {token}"}
-    )
-    assert response.status_code == 200
-    assert response.json()["message"] == "User deleted successfully"
-    
-    # 验证用户已被删除
-    response = client.get(
-        f"/v1/users/{test_user.id}",
-        headers={"Authorization": f"Bearer {token}"}
-    )
+    # Verify user is deleted
+    assert db_session.query(User).filter(User.id == test_user.id).first() is None
+
+def test_delete_nonexistent_user_as_admin(client: TestClient, superuser_headers, db_session: Session):
+    """Test deleting a nonexistent user as admin"""
+    response = client.delete("/v1/users/999", headers=superuser_headers)
     assert response.status_code == 404
+    assert "User not found" in response.json()["detail"]
+
+def test_delete_user_as_regular_user(client: TestClient, test_user, auth_service, db_session: Session):
+    """Test deleting a user as a regular user (should fail)"""
+    # Create another user to be deleted
+    target_user = auth_service.register_user(
+        email="target@example.com",
+        username="target",
+        password="testpass123"
+    )
+    
+    # Get token for regular user
+    token = auth_service.create_access_token(test_user.id)
+    headers = {"Authorization": f"Bearer {token}"}
+    
+    response = client.delete(f"/v1/users/{target_user.id}", headers=headers)
+    assert response.status_code == 403
+    assert "Insufficient permissions" in response.json()["detail"]
+    
+    # Verify target user still exists
+    assert db_session.query(User).filter(User.id == target_user.id).first() is not None
+
+def test_delete_user_without_auth(client: TestClient, test_user, db_session: Session):
+    """Test deleting a user without authentication"""
+    response = client.delete(f"/v1/users/{test_user.id}")
+    assert response.status_code == 401
+    assert "Not authenticated" in response.json()["detail"]
 
 def test_token_expiration(client: TestClient, test_user, db_session: Session):
     """Test token expiration"""
