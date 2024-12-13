@@ -1,33 +1,42 @@
-# 使用官方Python镜像作为基础镜像
-FROM python:3.9-slim
+# Build stage
+FROM python:3.9-slim as builder
 
-# 设置工作目录
-WORKDIR /app
-
-# 安装系统依赖和编译工具
+# Install build tools
 RUN apt-get update && apt-get install -y \
     build-essential \
     gcc \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 
-# 复制requirements.txt（如果存在）
+# Set working directory
+WORKDIR /build
+
+# Copy dependencies file
 COPY requirements.txt .
 
-# 更新 pip
-RUN pip install --upgrade pip
+# Create virtual environment and install dependencies
+RUN python -m venv /opt/venv && \
+    . /opt/venv/bin/activate && \
+    pip install --no-cache-dir -r requirements.txt
 
-# 安装项目依赖
-RUN pip install --no-cache-dir -r requirements.txt -v
+# Runtime stage
+FROM python:3.9-slim
 
-# 将源代码复制到工作目录
+# Copy virtual environment
+COPY --from=builder /opt/venv /opt/venv
+
+# Set working directory
+WORKDIR /app
+
+# Copy application code
 COPY . .
 
-# 设置Python路径
+# Set environment variables
 ENV PYTHONPATH=/app
+ENV PATH="/opt/venv/bin:$PATH"
 
-# 暴露应用程序运行的端口（根据您的应用需要更改）
+# Expose port
 EXPOSE 7001
 
-# 定义运行应用程序的命令
+# Run application
 CMD ["python", "main.py"]

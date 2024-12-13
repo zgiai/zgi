@@ -1,0 +1,74 @@
+Global Rules for the AI Editor
+1. Comment Standards
+All comments must be written in English. No Chinese comments or documentation are allowed in the project.
+2. Feature Development Guidelines
+All new features must be developed inside the features directory.
+Each feature should follow this structure:
+bash
+Copy code
+features/
+  └── [feature_name]/
+       ├── tests/      # Test cases
+       ├── models/     # Data models
+       ├── router/     # API routing
+       ├── schemas/    # Data validation/serialization
+       └── service/    # Business logic
+[feature_name] is the name of the feature.
+3. Test Cases and API Documentation
+After completing the development of a feature, ensure the following:
+Write comprehensive test cases that cover the feature's functionality.
+Create API documentation to ensure clarity and accuracy for external users.
+Generate a Postman-compatible documentation file that allows easy import into Postman, adhering to these guidelines:
+Business Folder Naming: Use the folder name organizations for grouping all related APIs.
+Global Variables: Define and use Postman global variables for:
+base_url: The base URL of the API.
+token: Authentication token.
+JSON Parameters: All request parameters must use JSON format (raw mode).
+Save the generated Postman JSON file in the docs/postman directory.
+
+
+postman json rules
+
+Dynamic Business Folder Name
+
+The top-level folder name in the Postman JSON file should dynamically use the business name (e.g., organizations). This business name is a parameter provided during generation.
+Global Variables
+
+The Postman file must include global variables for consistent parameter management:
+base_url: Stores the base URL of the API.
+token: Stores the authentication token.
+All API paths and common parameters should reference these global variables. For example:
+css
+Copy code
+URL: {{base_url}}/path
+Headers: Authorization: Bearer {{token}}
+Request Structure
+
+All API parameters must use Postman global variables.
+All requests should use JSON format for parameters, with the Body set to raw mode:
+json
+Copy code
+"body": {
+    "mode": "raw",
+    "raw": "{...}",
+    "options": {
+        "raw": {
+            "language": "json"
+        }
+    }
+}
+Output Requirements
+
+The generated JSON file must follow the Postman import format.
+The file structure should include:
+info: Defines the collection name and schema.
+variable: Defines global variables like base_url and token.
+item: Contains requests grouped under a folder named after the provided business name.
+File Output Location
+
+The generated Postman JSON file must be saved in the docs/postman directory.
+
+
+The server must always run on port 7001.
+If the server needs to be started, as he will handle the server startup personally.
+Do not attempt to execute or start the server independently.
