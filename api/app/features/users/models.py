@@ -26,8 +26,9 @@ class User(Base):
 
     # Relationships
     organization_members = relationship("OrganizationMember", back_populates="user")
-    applications = relationship("Application", back_populates="owner")
+    applications = relationship("app.features.applications.models.Application", back_populates="owner")
     owned_teams = relationship("Team", back_populates="owner")
     team_memberships = relationship("TeamMember", back_populates="user")
     chat_sessions = relationship("ChatSession", back_populates="user", cascade="all, delete-orphan")
     created_projects = relationship("Project", back_populates="creator")
+    api_keys = relationship("app.features.api_keys.models.APIKey", back_populates="creator")

@@ -1,0 +1,120 @@
+{
+    "info": {
+        "name": "API Keys Management",
+        "description": "Collection for API Keys management endpoints",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "item": [
+        {
+            "name": "Create API Key",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{access_token}}",
+                        "type": "text"
+                    }
+                ],
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\n    \"name\": \"Development API Key\"\n}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                },
+                "url": {
+                    "raw": "{{base_url}}/v1/projects/{{project_uuid}}/api-keys",
+                    "host": ["{{base_url}}"],
+                    "path": ["v1", "projects", "{{project_uuid}}", "api-keys"]
+                },
+                "description": "Create a new API key for a project"
+            },
+            "response": []
+        },
+        {
+            "name": "List API Keys",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{access_token}}",
+                        "type": "text"
+                    }
+                ],
+                "url": {
+                    "raw": "{{base_url}}/v1/projects/{{project_uuid}}/api-keys",
+                    "host": ["{{base_url}}"],
+                    "path": ["v1", "projects", "{{project_uuid}}", "api-keys"]
+                },
+                "description": "List all API keys for a project"
+            },
+            "response": []
+        },
+        {
+            "name": "Disable API Key",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{access_token}}",
+                        "type": "text"
+                    }
+                ],
+                "url": {
+                    "raw": "{{base_url}}/v1/projects/{{project_uuid}}/api-keys/{{key_uuid}}/disable",
+                    "host": ["{{base_url}}"],
+                    "path": ["v1", "projects", "{{project_uuid}}", "api-keys", "{{key_uuid}}", "disable"]
+                },
+                "description": "Disable an API key"
+            },
+            "response": []
+        },
+        {
+            "name": "Delete API Key",
+            "request": {
+                "method": "DELETE",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{access_token}}",
+                        "type": "text"
+                    }
+                ],
+                "url": {
+                    "raw": "{{base_url}}/v1/projects/{{project_uuid}}/api-keys/{{key_uuid}}",
+                    "host": ["{{base_url}}"],
+                    "path": ["v1", "projects", "{{project_uuid}}", "api-keys", "{{key_uuid}}"]
+                },
+                "description": "Soft delete an API key"
+            },
+            "response": []
+        }
+    ],
+    "variable": [
+        {
+            "key": "base_url",
+            "value": "http://localhost:8000",
+            "type": "string"
+        },
+        {
+            "key": "access_token",
+            "value": "your_access_token_here",
+            "type": "string"
+        },
+        {
+            "key": "project_uuid",
+            "value": "your_project_uuid_here",
+            "type": "string"
+        },
+        {
+            "key": "key_uuid",
+            "value": "your_api_key_uuid_here",
+            "type": "string"
+        }
+    ]
+}

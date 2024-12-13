@@ -49,3 +49,24 @@ class APIBase:
                     
             return wrapper
         return decorator
+
+from fastapi import APIRouter
+
+from app.features.api_keys.router import router as api_keys_router
+from app.features.api_keys.router.ip_whitelist import router as ip_whitelist_router
+from app.features.auth.router import router as auth_router
+from app.features.organizations.router import router as organizations_router
+from app.features.projects.router import router as projects_router
+from app.features.usage.router import router as usage_router
+from app.features.users.router import router as users_router
+
+api_router = APIRouter()
+
+# Mount all routers
+api_router.include_router(auth_router, prefix="/auth", tags=["auth"])
+api_router.include_router(users_router, prefix="/users", tags=["users"])
+api_router.include_router(organizations_router, prefix="/organizations", tags=["organizations"])
+api_router.include_router(projects_router, prefix="/projects", tags=["projects"])
+api_router.include_router(api_keys_router, prefix="/api-keys", tags=["api-keys"])
+api_router.include_router(ip_whitelist_router, prefix="/api-keys", tags=["api-keys"])
+api_router.include_router(usage_router, prefix="/usage", tags=["usage"])

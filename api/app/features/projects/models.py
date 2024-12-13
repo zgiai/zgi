@@ -31,3 +31,4 @@ class Project(Base):
     # Relationships
     organization = relationship("Organization", back_populates="projects")
     creator = relationship("User", back_populates="created_projects")
+    api_keys = relationship("APIKey", back_populates="project", cascade="all, delete-orphan")
