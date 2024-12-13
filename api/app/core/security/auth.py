@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Union
 import jwt
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
@@ -20,9 +20,12 @@ def get_password_hash(password: str) -> str:
     """Hash a password"""
     return pwd_context.hash(password)
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+def create_access_token(data: Union[dict, int], expires_delta: Optional[timedelta] = None) -> str:
     """Create a JWT access token"""
-    to_encode = data.copy()
+    if isinstance(data, int):
+        to_encode = {"sub": str(data)}
+    else:
+        to_encode = data.copy()
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
     else:

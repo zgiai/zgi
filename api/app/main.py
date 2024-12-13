@@ -11,8 +11,9 @@ from app.core.database import Base, engine
 from app.core.error_handlers import setup_error_handlers
 
 from app.features.auth.router import router as auth_router
+from app.features.organizations.router import router as org_router
 from app.features.users.router import router as users_router
-from app.features.organizations.router import router as organizations_router
+from app.features.projects.router import router as projects_router
 from app.features.usage.router import router as usage_router
 from app.features.applications.console.router import router as applications_router
 
@@ -102,7 +103,8 @@ async def catch_exceptions_middleware(request: Request, call_next):
 # API routers
 app.include_router(auth_router)
 app.include_router(users_router, prefix="/v1/users", tags=["Users"])
-app.include_router(organizations_router, prefix="/v1/organizations", tags=["Organizations"])
+app.include_router(org_router, prefix="/v1/organizations", tags=["Organizations"])
+app.include_router(projects_router, prefix="/v1/projects", tags=["Projects"])
 app.include_router(usage_router, prefix="/v1/usage", tags=["Usage"])
 app.include_router(applications_router, prefix="/v1/applications", tags=["Applications"])
 

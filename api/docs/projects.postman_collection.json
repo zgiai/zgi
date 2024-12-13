@@ -1,0 +1,155 @@
+{
+    "info": {
+        "name": "Projects API",
+        "description": "Collection for Projects API endpoints",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "item": [
+        {
+            "name": "Create Project",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{access_token}}",
+                        "type": "text"
+                    }
+                ],
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\n    \"name\": \"Sample Project\",\n    \"description\": \"A sample project description\",\n    \"organization_uuid\": \"{{organization_uuid}}\",\n    \"status\": \"active\"\n}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                },
+                "url": {
+                    "raw": "{{base_url}}/v1/projects",
+                    "host": ["{{base_url}}"],
+                    "path": ["v1", "projects"]
+                },
+                "description": "Create a new project in the specified organization"
+            },
+            "response": []
+        },
+        {
+            "name": "List Projects",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{access_token}}",
+                        "type": "text"
+                    }
+                ],
+                "url": {
+                    "raw": "{{base_url}}/v1/projects?organization_uuid={{organization_uuid}}",
+                    "host": ["{{base_url}}"],
+                    "path": ["v1", "projects"],
+                    "query": [
+                        {
+                            "key": "organization_uuid",
+                            "value": "{{organization_uuid}}"
+                        }
+                    ]
+                },
+                "description": "List all projects for an organization"
+            },
+            "response": []
+        },
+        {
+            "name": "Get Project",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{access_token}}",
+                        "type": "text"
+                    }
+                ],
+                "url": {
+                    "raw": "{{base_url}}/v1/projects/{{project_uuid}}",
+                    "host": ["{{base_url}}"],
+                    "path": ["v1", "projects", "{{project_uuid}}"]
+                },
+                "description": "Get details of a specific project"
+            },
+            "response": []
+        },
+        {
+            "name": "Update Project",
+            "request": {
+                "method": "PUT",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{access_token}}",
+                        "type": "text"
+                    }
+                ],
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\n    \"name\": \"Updated Project Name\",\n    \"description\": \"Updated project description\",\n    \"status\": \"active\"\n}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                },
+                "url": {
+                    "raw": "{{base_url}}/v1/projects/{{project_uuid}}",
+                    "host": ["{{base_url}}"],
+                    "path": ["v1", "projects", "{{project_uuid}}"]
+                },
+                "description": "Update an existing project"
+            },
+            "response": []
+        },
+        {
+            "name": "Delete Project",
+            "request": {
+                "method": "DELETE",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{access_token}}",
+                        "type": "text"
+                    }
+                ],
+                "url": {
+                    "raw": "{{base_url}}/v1/projects/{{project_uuid}}",
+                    "host": ["{{base_url}}"],
+                    "path": ["v1", "projects", "{{project_uuid}}"]
+                },
+                "description": "Soft delete a project"
+            },
+            "response": []
+        }
+    ],
+    "variable": [
+        {
+            "key": "base_url",
+            "value": "http://localhost:8000",
+            "type": "string"
+        },
+        {
+            "key": "access_token",
+            "value": "your_access_token_here",
+            "type": "string"
+        },
+        {
+            "key": "organization_uuid",
+            "value": "your_organization_uuid_here",
+            "type": "string"
+        },
+        {
+            "key": "project_uuid",
+            "value": "your_project_uuid_here",
+            "type": "string"
+        }
+    ]
+}

@@ -30,3 +30,4 @@ class User(Base):
     owned_teams = relationship("Team", back_populates="owner")
     team_memberships = relationship("TeamMember", back_populates="user")
     chat_sessions = relationship("ChatSession", back_populates="user", cascade="all, delete-orphan")
+    created_projects = relationship("Project", back_populates="creator")
