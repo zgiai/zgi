@@ -16,7 +16,7 @@ def generate_api_key() -> str:
     """Generate a secure API key"""
     return f"zgi_{secrets.token_urlsafe(32)}"
 
-@router.post("/projects/{project_uuid}/api-keys", response_model=schemas.APIKey)
+@router.post("/projects/{project_uuid}", response_model=schemas.APIKey)
 def create_api_key(
     project_uuid: str,
     api_key_data: schemas.APIKeyCreate,
@@ -45,12 +45,12 @@ def create_api_key(
         key=api_key.key,
         project_uuid=project.uuid,
         created_by=api_key.created_by,
-        is_active=api_key.is_active,
+        status=api_key.status,
         created_at=api_key.created_at,
         updated_at=api_key.updated_at
     )
 
-@router.get("/projects/{project_uuid}/api-keys", response_model=List[schemas.APIKey])
+@router.get("/projects/{project_uuid}", response_model=List[schemas.APIKey])
 def list_api_keys(
     project_uuid: str,
     db: Session = Depends(get_db),
@@ -63,7 +63,7 @@ def list_api_keys(
 
     api_keys = db.query(models.APIKey).filter(
         models.APIKey.project_id == project.id,
-        models.APIKey.deleted_at.is_(None)
+        models.APIKey.status != models.APIKeyStatus.DELETED
     ).all()
 
     return [
@@ -73,13 +73,13 @@ def list_api_keys(
             key=key.key,
             project_uuid=project.uuid,
             created_by=key.created_by,
-            is_active=key.is_active,
+            status=key.status,
             created_at=key.created_at,
             updated_at=key.updated_at
         ) for key in api_keys
     ]
 
-@router.post("/projects/{project_uuid}/api-keys/{key_uuid}/disable")
+@router.post("/projects/{project_uuid}/{key_uuid}/disable")
 def disable_api_key(
     project_uuid: str,
     key_uuid: str,
@@ -94,18 +94,18 @@ def disable_api_key(
     api_key = db.query(models.APIKey).filter(
         models.APIKey.uuid == key_uuid,
         models.APIKey.project_id == project.id,
-        models.APIKey.deleted_at.is_(None)
+        models.APIKey.status != models.APIKeyStatus.DELETED
     ).first()
     if not api_key:
         raise HTTPException(status_code=404, detail="API key not found")
 
-    api_key.is_active = False
+    api_key.status = models.APIKeyStatus.DISABLE
     db.commit()
     db.refresh(api_key)
 
     return {"message": "API key disabled successfully"}
 
-@router.delete("/projects/{project_uuid}/api-keys/{key_uuid}")
+@router.delete("/projects/{project_uuid}/{key_uuid}")
 def delete_api_key(
     project_uuid: str,
     key_uuid: str,
@@ -120,12 +120,12 @@ def delete_api_key(
     api_key = db.query(models.APIKey).filter(
         models.APIKey.uuid == key_uuid,
         models.APIKey.project_id == project.id,
-        models.APIKey.deleted_at.is_(None)
+        models.APIKey.status != models.APIKeyStatus.DELETED
     ).first()
     if not api_key:
         raise HTTPException(status_code=404, detail="API key not found")
 
-    api_key.deleted_at = datetime.utcnow()
+    api_key.status = models.APIKeyStatus.DELETED
     db.commit()
 
     return {"message": "API key deleted successfully"}

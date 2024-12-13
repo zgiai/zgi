@@ -13,9 +13,9 @@ class APIKey(APIKeyBase):
     key: str
     project_uuid: str
     created_by: int
-    is_active: bool
+    status: str
     created_at: datetime
-    updated_at: datetime
+    updated_at: Optional[datetime]
 
     class Config:
         from_attributes = True
