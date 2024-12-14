@@ -1,0 +1,163 @@
+{
+  "info": {
+    "name": "LLM Gateway API",
+    "description": "Unified API for managing and interfacing with multiple AI large language models. Compatible with OpenAI API specification.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:7001",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "your-system-apikey",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Chat Completions",
+      "item": [
+        {
+          "name": "DeepSeek Chat",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/v1/chat/completions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"deepseek-chat\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are a helpful assistant.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Hello!\"\n    }\n  ],\n  \"temperature\": 0.7,\n  \"stream\": false\n}"
+            },
+            "description": "Create a chat completion using the DeepSeek Chat model.\n\nParameters:\n- model: \"deepseek-chat\"\n- messages: Array of message objects with role and content\n- temperature (optional): Sampling temperature (0-1)\n- stream (optional): Whether to stream the response\n- max_tokens (optional): Maximum tokens to generate"
+          }
+        },
+        {
+          "name": "DeepSeek Coder",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/v1/chat/completions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"deepseek-coder\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are an expert programmer.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Write a Python function to calculate Fibonacci numbers.\"\n    }\n  ],\n  \"temperature\": 0.3,\n  \"stream\": false\n}"
+            },
+            "description": "Create a chat completion using the DeepSeek Coder model.\n\nParameters:\n- model: \"deepseek-coder\"\n- messages: Array of message objects with role and content\n- temperature (optional): Sampling temperature (0-1)\n- stream (optional): Whether to stream the response\n- max_tokens (optional): Maximum tokens to generate"
+          }
+        },
+        {
+          "name": "OpenAI GPT-4",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/v1/chat/completions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"gpt-4\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are a helpful assistant.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Hello!\"\n    }\n  ],\n  \"temperature\": 0.7,\n  \"stream\": false\n}"
+            },
+            "description": "Create a chat completion using OpenAI's GPT-4 model.\n\nParameters:\n- model: \"gpt-4\"\n- messages: Array of message objects with role and content\n- temperature (optional): Sampling temperature (0-1)\n- stream (optional): Whether to stream the response\n- max_tokens (optional): Maximum tokens to generate"
+          }
+        },
+        {
+          "name": "OpenAI GPT-3.5 Turbo",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/v1/chat/completions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"gpt-3.5-turbo\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are a helpful assistant.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Hello!\"\n    }\n  ],\n  \"temperature\": 0.7,\n  \"stream\": false\n}"
+            },
+            "description": "Create a chat completion using OpenAI's GPT-3.5 Turbo model.\n\nParameters:\n- model: \"gpt-3.5-turbo\"\n- messages: Array of message objects with role and content\n- temperature (optional): Sampling temperature (0-1)\n- stream (optional): Whether to stream the response\n- max_tokens (optional): Maximum tokens to generate"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Streaming Chat Completions",
+      "item": [
+        {
+          "name": "DeepSeek Chat (Streaming)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/v1/chat/completions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"deepseek-chat\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are a helpful assistant.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Write a short story about a robot.\"\n    }\n  ],\n  \"temperature\": 0.7,\n  \"stream\": true\n}"
+            },
+            "description": "Create a streaming chat completion using DeepSeek Chat. The response will be delivered as Server-Sent Events (SSE).\n\nEach event will be prefixed with 'data: ' and contain a JSON chunk of the response. The stream ends with 'data: [DONE]'."
+          }
+        },
+        {
+          "name": "DeepSeek Coder (Streaming)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/v1/chat/completions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"deepseek-coder\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are an expert programmer.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Write a Python class for managing a cache with LRU policy.\"\n    }\n  ],\n  \"temperature\": 0.3,\n  \"stream\": true\n}"
+            },
+            "description": "Create a streaming chat completion using DeepSeek Coder. The response will be delivered as Server-Sent Events (SSE).\n\nEach event will be prefixed with 'data: ' and contain a JSON chunk of the response. The stream ends with 'data: [DONE]'."
+          }
+        }
+      ]
+    }
+  ]
+}

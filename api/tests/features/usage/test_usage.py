@@ -55,7 +55,7 @@ def test_get_usage_stats(test_db: Session, test_application):
             application_id=test_application.id,
             resource_type="api_call",
             quantity=1.0,
-            endpoint="/v1/chat/completions",
+            endpoint="/v2/chat/completions",
             timestamp=now
         ),
         ResourceUsage(
@@ -86,7 +86,7 @@ def test_get_usage_stats(test_db: Session, test_application):
         "gpt-3.5": 200.0
     }
     assert stats.api_calls_by_endpoint == {
-        "/v1/chat/completions": 1,
+        "/v2/chat/completions": 1,
         "/v1/embeddings": 1
     }
 
@@ -108,7 +108,7 @@ def test_list_usage_with_filters(test_db: Session, test_application):
             application_id=test_application.id,
             resource_type="api_call",
             quantity=1.0,
-            endpoint="/v1/chat/completions",
+            endpoint="/v2/chat/completions",
             timestamp=now
         )
     ]

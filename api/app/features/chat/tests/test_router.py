@@ -29,7 +29,7 @@ async def test_create_chat_completion(async_session, auth_headers):
     
     async with client as client:
         response = await client.post(
-            "/v1/chat/completions",
+            "/v2/chat/completions",
             json=request_data,
             headers=auth_headers
         )
@@ -56,7 +56,7 @@ async def test_create_chat_completion_streaming(async_session, auth_headers):
     
     async with client as client:
         response = await client.post(
-            "/v1/chat/completions",
+            "/v2/chat/completions",
             json=request_data,
             headers=auth_headers
         )
@@ -163,14 +163,14 @@ async def test_get_chat_detail(async_session, auth_headers):
 
 async def test_unauthorized_access(async_session):
     endpoints = [
-        "/v1/chat/completions",
+        "/v2/chat/completions",
         "/v1/chat/history",
         "/v1/chat/detail/1"
     ]
     
     async with client as client:
         for endpoint in endpoints:
-            if endpoint == "/v1/chat/completions":
+            if endpoint == "/v2/chat/completions":
                 response = await client.post(endpoint, json={})
             else:
                 response = await client.get(endpoint)

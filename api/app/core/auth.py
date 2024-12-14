@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from typing import Optional
-from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi import Depends, HTTPException, status, Security
+from fastapi.security import OAuth2PasswordBearer, HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
@@ -16,6 +16,8 @@ ALGORITHM = settings.ALGORITHM
 ACCESS_TOKEN_EXPIRE_MINUTES = settings.ACCESS_TOKEN_EXPIRE_MINUTES
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="v1/console/auth/login")
+
+security = HTTPBearer(auto_error=False)
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
@@ -48,6 +50,24 @@ async def get_current_user(
     if user is None:
         raise credentials_exception
     return user
+
+async def get_api_key(credentials: HTTPAuthorizationCredentials = Security(security)) -> str:
+    """Get API key from Authorization header.
+    
+    Args:
+        credentials: Authorization credentials from request header
+    
+    Returns:
+        The API key string
+        
+    Raises:
+        HTTPException: If no valid API key is found
+    """
+    if not credentials:
+        raise HTTPException(status_code=401, detail="No API key provided")
+    if not credentials.scheme == "Bearer":
+        raise HTTPException(status_code=401, detail="Invalid authentication scheme")
+    return credentials.credentials
 
 def require_super_admin(
     token: str = Depends(oauth2_scheme),

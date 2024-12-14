@@ -1,0 +1,153 @@
+{
+	"info": {
+		"_postman_id": "7e9c2b5f-8b1a-4b2e-9c5a-8f5b7c9e3d2a",
+		"name": "LLM Gateway API",
+		"description": "API collection for the LLM Gateway service",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Chat Completions",
+			"item": [
+				{
+					"name": "Create Chat Completion (DeepSeek)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"model\": \"deepseek-chat\",\n    \"messages\": [\n        {\n            \"role\": \"user\",\n            \"content\": \"Hello, how are you?\"\n        }\n    ],\n    \"temperature\": 0.7\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/v1/chat/completions",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"v1",
+								"chat",
+								"completions"
+							]
+						},
+						"description": "Create a chat completion using DeepSeek model"
+					},
+					"response": []
+				},
+				{
+					"name": "Create Chat Completion (DeepSeek Coder)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"model\": \"deepseek-coder\",\n    \"messages\": [\n        {\n            \"role\": \"user\",\n            \"content\": \"Write a Python function to calculate fibonacci numbers\"\n        }\n    ],\n    \"temperature\": 0.3\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/v1/chat/completions",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"v1",
+								"chat",
+								"completions"
+							]
+						},
+						"description": "Create a chat completion using DeepSeek Coder model"
+					},
+					"response": []
+				},
+				{
+					"name": "Create Chat Completion (GPT-3.5)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"model\": \"gpt-3.5-turbo\",\n    \"messages\": [\n        {\n            \"role\": \"system\",\n            \"content\": \"You are a helpful assistant.\"\n        },\n        {\n            \"role\": \"user\",\n            \"content\": \"What is the capital of France?\"\n        }\n    ],\n    \"temperature\": 0.7,\n    \"max_tokens\": 100\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/v1/chat/completions",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"v1",
+								"chat",
+								"completions"
+							]
+						},
+						"description": "Create a chat completion using GPT-3.5 Turbo model"
+					},
+					"response": []
+				}
+			],
+			"description": "Chat completion endpoints"
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:7001",
+			"type": "string"
+		},
+		{
+			"key": "api_key",
+			"value": "sk-3e5f5d61abc341c584d5c508f618d7f5",
+			"type": "string"
+		}
+	]
+}

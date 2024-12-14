@@ -21,7 +21,7 @@ router = APIRouter(
 )
 security = HTTPBearer()
 
-@router.post("/completions", 
+@router.post("/x", 
     summary="Create a chat completion",
     description="""
     Creates a completion for the chat message. This endpoint mirrors the OpenAI chat completions API.
@@ -76,7 +76,7 @@ async def create_chat_completion(
                 raise HTTPException(status_code=500, detail=response["error"])
             return response
 
-@router.get("/completions/history",
+@router.get("/history",
     response_model=List[ChatHistoryResponse],
     summary="Get chat history",
     description="""
@@ -110,7 +110,7 @@ async def get_chat_history(
     )
     return history
 
-@router.get("/completions/detail/{chat_id}",
+@router.get("/detail/{chat_id}",
     response_model=ChatDetailResponse,
     summary="Get chat detail",
     description="""

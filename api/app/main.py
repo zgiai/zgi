@@ -18,9 +18,10 @@ from app.features.applications.console.router import router as applications_rout
 from app.features.api_keys.router import router as api_keys_router
 from app.features.providers.router.provider import router as providers_router
 from app.features.providers.router.model import router as models_router
+from app.features.llm_gateway.router import router as llm_gateway_router
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 # Create FastAPI app
@@ -116,6 +117,7 @@ app.include_router(applications_router, prefix="/v1/applications", tags=["Applic
 app.include_router(api_keys_router, prefix="/v1/api-keys", tags=["API Keys"])
 app.include_router(providers_router)
 app.include_router(models_router)
+app.include_router(llm_gateway_router, tags=["LLM Gateway"])
 
 @app.get("/")
 def root():
