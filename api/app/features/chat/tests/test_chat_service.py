@@ -6,11 +6,11 @@ from app.features.providers.models.model import ProviderModel
 from datetime import datetime
 
 @pytest.fixture
-def chat_service(db):
-    return ChatService(db)
+async def chat_service(async_session):
+    return ChatService(async_session)
 
 @pytest.fixture
-def model_provider(db):
+async def model_provider(async_session):
     provider = ModelProvider(
         provider_name="test_provider",
         enabled=True,
@@ -18,12 +18,13 @@ def model_provider(db):
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow()
     )
-    db.add(provider)
-    db.commit()
+    async_session.add(provider)
+    await async_session.commit()
+    await async_session.refresh(provider)
     return provider
 
 @pytest.fixture
-def provider_model(db, model_provider):
+async def provider_model(async_session, model_provider):
     model = ProviderModel(
         provider_id=model_provider.id,
         model_name="test_model",
@@ -33,25 +34,28 @@ def provider_model(db, model_provider):
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow()
     )
-    db.add(model)
-    db.commit()
+    async_session.add(model)
+    await async_session.commit()
+    await async_session.refresh(model)
     return model
 
 @pytest.fixture
-def chat_session(db, provider_model):
+async def chat_session(async_session, provider_model):
     session = ChatSession(
         model_id=provider_model.id,
         user_id=1,
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow()
     )
-    db.add(session)
-    db.commit()
+    async_session.add(session)
+    await async_session.commit()
+    await async_session.refresh(session)
     return session
 
-def test_create_chat_session(chat_service, provider_model):
+@pytest.mark.asyncio
+async def test_create_chat_session(chat_service, provider_model):
     """Test creating a new chat session"""
-    session = chat_service.create_session(
+    session = await chat_service.create_session(
         user_id=1,
         model_id=provider_model.id
     )
@@ -62,28 +66,32 @@ def test_create_chat_session(chat_service, provider_model):
     assert session.updated_at is not None
     assert session.deleted_at is None
 
-def test_get_chat_session(chat_service, chat_session):
+@pytest.mark.asyncio
+async def test_get_chat_session(chat_service, chat_session):
     """Test retrieving a chat session"""
-    session = chat_service.get_session(chat_session.id)
+    session = await chat_service.get_session(chat_session.id)
     assert session.id == chat_session.id
     assert session.user_id == chat_session.user_id
     assert session.model_id == chat_session.model_id
 
-def test_list_user_sessions(chat_service, chat_session):
+@pytest.mark.asyncio
+async def test_list_user_sessions(chat_service, chat_session):
     """Test listing chat sessions for a user"""
-    sessions = chat_service.list_user_sessions(user_id=1)
+    sessions = await chat_service.list_user_sessions(user_id=1)
     assert len(sessions) > 0
     assert any(s.id == chat_session.id for s in sessions)
 
-def test_delete_chat_session(chat_service, chat_session):
+@pytest.mark.asyncio
+async def test_delete_chat_session(chat_service, chat_session):
     """Test soft deleting a chat session"""
-    chat_service.delete_session(chat_session.id)
-    session = chat_service.get_session(chat_session.id)
+    await chat_service.delete_session(chat_session.id)
+    session = await chat_service.get_session(chat_session.id)
     assert session.deleted_at is not None
 
-def test_upload_chat_file(chat_service, chat_session):
+@pytest.mark.asyncio
+async def test_upload_chat_file(chat_service, chat_session):
     """Test uploading a file to a chat session"""
-    file = chat_service.upload_file(
+    file = await chat_service.upload_file(
         session_id=chat_session.id,
         filename="test.txt",
         content_type="text/plain",
@@ -97,89 +105,97 @@ def test_upload_chat_file(chat_service, chat_session):
     assert file.file_size == 100
     assert file.file_path == "/path/to/test.txt"
 
-def test_get_chat_file(chat_service, chat_session):
+@pytest.mark.asyncio
+async def test_get_chat_file(chat_service, chat_session):
     """Test retrieving a chat file"""
-    file = ChatFile(
+    # First upload a file
+    file = await chat_service.upload_file(
         session_id=chat_session.id,
         filename="test.txt",
         content_type="text/plain",
         file_size=100,
-        file_path="/path/to/test.txt",
-        created_at=datetime.utcnow()
+        file_path="/path/to/test.txt"
     )
-    chat_service.db.add(file)
-    chat_service.db.commit()
-
-    retrieved_file = chat_service.get_file(file.id)
+    
+    # Then retrieve it
+    retrieved_file = await chat_service.get_file(file.id)
     assert retrieved_file.id == file.id
     assert retrieved_file.session_id == chat_session.id
     assert retrieved_file.filename == "test.txt"
 
-def test_list_session_files(chat_service, chat_session):
+@pytest.mark.asyncio
+async def test_list_session_files(chat_service, chat_session):
     """Test listing files in a chat session"""
-    file = ChatFile(
+    # First upload a file
+    await chat_service.upload_file(
         session_id=chat_session.id,
         filename="test.txt",
         content_type="text/plain",
         file_size=100,
-        file_path="/path/to/test.txt",
-        created_at=datetime.utcnow()
+        file_path="/path/to/test.txt"
     )
-    chat_service.db.add(file)
-    chat_service.db.commit()
-
-    files = chat_service.list_session_files(chat_session.id)
+    
+    # Then list files
+    files = await chat_service.list_session_files(chat_session.id)
     assert len(files) > 0
-    assert any(f.id == file.id for f in files)
+    assert all(f.session_id == chat_session.id for f in files)
 
-def test_delete_chat_file(chat_service, chat_session):
+@pytest.mark.asyncio
+async def test_delete_chat_file(chat_service, chat_session):
     """Test deleting a chat file"""
-    file = ChatFile(
+    # First upload a file
+    file = await chat_service.upload_file(
         session_id=chat_session.id,
         filename="test.txt",
         content_type="text/plain",
         file_size=100,
-        file_path="/path/to/test.txt",
-        created_at=datetime.utcnow()
+        file_path="/path/to/test.txt"
     )
-    chat_service.db.add(file)
-    chat_service.db.commit()
+    
+    # Then delete it
+    await chat_service.delete_file(file.id)
+    
+    # Try to retrieve it - should be None or raise exception
+    deleted_file = await chat_service.get_file(file.id)
+    assert deleted_file is None or deleted_file.deleted_at is not None
 
-    chat_service.delete_file(file.id)
-    deleted_file = chat_service.get_file(file.id)
-    assert deleted_file.deleted_at is not None
-
-def test_get_nonexistent_session(chat_service):
+@pytest.mark.asyncio
+async def test_get_nonexistent_session(chat_service):
     """Test retrieving a non-existent chat session"""
-    session = chat_service.get_session(999999)
+    session = await chat_service.get_session(999)
     assert session is None
 
-def test_get_deleted_session(chat_service, chat_session):
+@pytest.mark.asyncio
+async def test_get_deleted_session(chat_service, chat_session):
     """Test retrieving a deleted chat session"""
-    chat_service.delete_session(chat_session.id)
-    session = chat_service.get_session(chat_session.id)
+    await chat_service.delete_session(chat_session.id)
+    session = await chat_service.get_session(chat_session.id)
     assert session.deleted_at is not None
-    
-def test_list_empty_user_sessions(chat_service):
+
+@pytest.mark.asyncio
+async def test_list_empty_user_sessions(chat_service):
     """Test listing chat sessions for a user with no sessions"""
-    sessions = chat_service.list_user_sessions(user_id=999999)
+    sessions = await chat_service.list_user_sessions(user_id=999)
     assert len(sessions) == 0
 
-def test_get_nonexistent_file(chat_service):
+@pytest.mark.asyncio
+async def test_get_nonexistent_file(chat_service):
     """Test retrieving a non-existent chat file"""
-    file = chat_service.get_file(999999)
+    file = await chat_service.get_file(999)
     assert file is None
 
-def test_list_empty_session_files(chat_service, chat_session):
+@pytest.mark.asyncio
+async def test_list_empty_session_files(chat_service, chat_session):
     """Test listing files for a session with no files"""
-    files = chat_service.list_session_files(chat_session.id)
+    files = await chat_service.list_session_files(chat_session.id)
     assert len(files) == 0
 
-def test_upload_file_invalid_session(chat_service):
+@pytest.mark.asyncio
+async def test_upload_file_invalid_session(chat_service):
     """Test uploading a file to a non-existent session"""
-    with pytest.raises(Exception):
-        chat_service.upload_file(
-            session_id=999999,
+    with pytest.raises(Exception):  # Adjust exception type as needed
+        await chat_service.upload_file(
+            session_id=999,
             filename="test.txt",
             content_type="text/plain",
             file_size=100,

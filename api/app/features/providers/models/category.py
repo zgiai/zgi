@@ -2,7 +2,7 @@ from datetime import datetime
 from sqlalchemy import Column, BigInteger, String, DateTime, ForeignKey, Table
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-from app.db.base_class import Base
+from app.core.database import Base
 
 # Association table for many-to-many relationship between categories and models
 category_model_association = Table(

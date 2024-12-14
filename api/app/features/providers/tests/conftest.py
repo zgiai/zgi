@@ -4,7 +4,7 @@ import asyncio
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
-from app.db.base import Base
+from app.core.database import Base
 from app.core.config import settings
 from app.features.providers.models.provider import ModelProvider
 from app.features.providers.models.model import ProviderModel

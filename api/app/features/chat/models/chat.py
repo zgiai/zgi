@@ -1,10 +1,11 @@
 from sqlalchemy import Column, BigInteger, String, Text, Integer, DECIMAL, DateTime, JSON, SmallInteger, ForeignKey
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
-from app.db.base_class import Base
+from app.core.database import Base
 
 class ChatSession(Base):
     __tablename__ = "chat_sessions"
+    __table_args__ = {'extend_existing': True}
 
     id = Column(BigInteger, primary_key=True, autoincrement=True, index=True, comment="Unique record ID")
     user_id = Column(BigInteger, nullable=False, comment="User ID for distinguishing different users' conversations")

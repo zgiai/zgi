@@ -9,7 +9,7 @@ import time
 import jwt
 
 from app.main import app
-from app.db.base import Base
+from app.core.database import Base
 from app.db.session import get_db
 from app.core.config import settings
 from app.features.auth.client.service import AuthClientService

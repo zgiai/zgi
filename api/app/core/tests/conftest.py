@@ -6,20 +6,20 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
 from app.core.database import Base  
-from app.features.chat.models.chat import ChatSession
 from app.core.config import settings
 
 # Use the same database as development
 TEST_DATABASE_URL = settings.SQLALCHEMY_DATABASE_URL
 
-@pytest.fixture(scope="session")
-async def event_loop():
+@pytest.fixture(scope="function")
+def event_loop():
     """Create an instance of the default event loop for each test case."""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
+    policy = asyncio.get_event_loop_policy()
+    loop = policy.new_event_loop()
     yield loop
     loop.close()
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="function")
 async def engine():
     """Create test database engine"""
     engine = create_async_engine(
@@ -38,7 +38,7 @@ async def engine():
     finally:
         await engine.dispose()
 
-@pytest.fixture
+@pytest.fixture(scope="function")
 async def async_session(engine) -> AsyncGenerator[AsyncSession, None]:
     """Create test database session"""
     async_session_maker = sessionmaker(
@@ -59,13 +59,13 @@ async def async_session(engine) -> AsyncGenerator[AsyncSession, None]:
         finally:
             await session.close()
 
-@pytest.fixture
+@pytest.fixture(scope="function")
 def app():
     """Create test FastAPI application"""
     from app.main import app
     return app
 
-@pytest.fixture
+@pytest.fixture(scope="function")
 async def client(app):
     """Create test HTTP client"""
     from httpx import AsyncClient

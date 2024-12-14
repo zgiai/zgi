@@ -1,7 +1,7 @@
 """API key mapping models"""
 from sqlalchemy import Column, Integer, String, DateTime, Float, JSON
 from sqlalchemy.sql import func
-from app.db.base_class import Base
+from app.core.database import Base
 
 class APIKeyMapping(Base):
     """API key mapping model for storing provider API keys"""

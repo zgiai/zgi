@@ -1,14 +1,14 @@
 """User quota and usage tracking models"""
 from sqlalchemy import Column, Integer, String, DateTime, Float
 from sqlalchemy.sql import func
-from app.db.base_class import Base
+from app.core.database import Base
 
 class UserQuota(Base):
     """User quota model for tracking API usage limits"""
     __tablename__ = "user_quotas"
 
     id = Column(Integer, primary_key=True, index=True)
-    api_key = Column(String, unique=True, index=True, nullable=False)
+    api_key = Column(String(255), unique=True, index=True, nullable=False)
     total_tokens = Column(Integer, default=0)  # Total token limit
     used_tokens = Column(Integer, default=0)   # Used tokens
     reset_date = Column(DateTime, default=func.now())  # Quota reset date
@@ -20,8 +20,8 @@ class UsageLog(Base):
     __tablename__ = "usage_logs"
 
     id = Column(Integer, primary_key=True, index=True)
-    api_key = Column(String, index=True, nullable=False)
-    model = Column(String, nullable=False)
+    api_key = Column(String(255), index=True, nullable=False)
+    model = Column(String(100), nullable=False)
     prompt_tokens = Column(Integer, default=0)
     completion_tokens = Column(Integer, default=0)
     total_tokens = Column(Integer, default=0)

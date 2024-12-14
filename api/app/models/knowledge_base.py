@@ -5,7 +5,7 @@ from typing import Optional, List
 from sqlalchemy import Column, Integer, String, Text, Enum as SQLEnum, ForeignKey, DateTime
 from sqlalchemy.orm import relationship
 
-from app.db.base_class import Base
+from app.core.database import Base
 
 
 class Visibility(str, Enum):

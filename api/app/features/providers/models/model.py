@@ -1,7 +1,7 @@
 from sqlalchemy import Column, Integer, String, ForeignKey, Boolean, JSON, DateTime, Float
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-from app.db.base_class import Base
+from app.core.database import Base
 from app.features.providers.models.category import category_model_association
 
 class ProviderModel(Base):
