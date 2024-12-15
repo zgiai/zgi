@@ -1,284 +1,489 @@
-import { API_CONFIG } from '@/lib/http'
-import { getStorageAdapter } from '@/lib/storageAdapter'
-import { handleChatStream, streamChatCompletions } from '@/server/chat.server'
-import type { ChatHistory, ChatMessage } from '@/types/chat'
-import { debounce } from 'lodash'
-import { create } from 'zustand'
+import { getStorageAdapter } from "@/lib/storageAdapter";
+import { streamChatCompletions } from "@/server/chat.server";
+import type { ChatHistory, ChatMessage } from "@/types/chat";
+import { debounce } from "lodash";
+import { create } from "zustand";
 
 /**
- * 聊天状态管理接口
+ * Chat state management interface
  * @interface ChatStore
  */
 interface ChatStore {
-  currentChatId: string | null // 当前选中的对话ID
-  chatHistories: ChatHistory[] // 所有对话历史记录
-  messageStreamingMap: Record<string, string> // 每个对话的流式消息状态
-  isLoadingMap: Record<string, boolean> // 每个对话的加载状态
-  setCurrentChatId: (id: string | null) => void // 设置当前对话ID
-  createChat: () => void // 创建新对话
-  deleteChat: (id: string) => void // 删除对话
-  updateChatMessages: (chatId: string, messages: ChatMessage[]) => void // 更新对话消息
-  updateChatTitle: (chatId: string, title: string) => void // 更新对话标题
-  clearAllChats: () => void // 清空所有对话
-  loadChatsFromDisk: () => void // 从磁盘加载对话
-  saveChatsToDisk: () => void // 保存对话到磁盘
-  sendMessage: (message: ChatMessage) => void // 发送消息
+	currentChatId: string | null; // Currently selected chat ID
+	chatHistories: ChatHistory[]; // All chat history records
+	messageStreamingMap: Record<string, string>; // Streaming message status for each chat
+	isLoadingMap: Record<string, boolean>; // Loading status for each chat
+	setCurrentChatId: (id: string | null) => void; // Set current chat ID
+	createChat: () => void; // Create new chat
+	deleteChat: (id: string) => void; // Delete chat
+	updateChatMessages: (chatId: string, messages: ChatMessage[]) => void; // Update chat messages
+	updateChatTitle: (chatId: string, title: string) => void; // Update chat title
+	clearAllChats: () => void; // Clear all chats
+	loadChatsFromDisk: () => void; // Load chats from disk
+	saveChatsToDisk: () => void; // Save chats to disk
+	sendMessage: (message: ChatMessage) => void; // Send message
+	updateChatTitleByContent: (chatId: string) => void; // Add new method
+	isFirstOpen: boolean; // Flag indicating if it's first open
+	updateChatTitleByFirstMessage: (chatId: string) => void; // Add new method
 }
 
+// Define the configuration interface for stream response handling
+interface StreamResponseConfig {
+	reader: ReadableStreamDefaultReader<Uint8Array>;
+	chatId: string;
+	messages: ChatMessage[];
+	set: (
+		partial: Partial<ChatStore> | ((state: ChatStore) => Partial<ChatStore>),
+		replace?: boolean,
+	) => void;
+	onError?: (error: Error) => void;
+	onComplete?: (fullMessage: string) => void;
+}
+
+// Refactored helper function with configuration object
+const handleStreamResponse = async ({
+	reader,
+	chatId,
+	messages,
+	set,
+	onError,
+	onComplete,
+}: StreamResponseConfig) => {
+	const decoder = new TextDecoder();
+	let fullMessage = "";
+
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+
+			const chunk = decoder.decode(value);
+			const lines = chunk
+				.split("\n")
+				.filter((line) => line.trim() !== "" && line.trim() !== "data: [DONE]");
+
+			for (const line of lines) {
+				if (line.startsWith("data: ")) {
+					try {
+						const data = JSON.parse(line.slice(6));
+						const content = data.choices[0]?.delta?.content;
+						if (content) {
+							fullMessage += content;
+							// Update streaming message status
+							set((state) => ({
+								messageStreamingMap: {
+									...state.messageStreamingMap,
+									[chatId]: fullMessage,
+								},
+							}));
+						}
+					} catch (error) {
+						console.error("Error parsing JSON:", error);
+						onError?.(error as Error);
+					}
+				}
+			}
+		}
+
+		// Add AI response to message list if we have a complete message
+		if (fullMessage) {
+			const assistantMessage: ChatMessage = {
+				role: "assistant",
+				content: fullMessage,
+				timestamp: new Date().toISOString(),
+			};
+
+			set((state) => ({
+				chatHistories: state.chatHistories.map((chat) => {
+					if (chat.id === chatId) {
+						return {
+							...chat,
+							messages: [...messages, assistantMessage],
+						};
+					}
+					return chat;
+				}),
+				messageStreamingMap: { ...state.messageStreamingMap, [chatId]: "" },
+			}));
+
+			onComplete?.(fullMessage);
+		}
+
+		return fullMessage;
+	} catch (error) {
+		console.error("Error in stream handling:", error);
+		onError?.(error as Error);
+		throw error;
+	}
+};
+
 /**
- * 创建聊天状态管理store
+ * Create chat state management store
  */
 export const useChatStore = create<ChatStore>()((set, get) => {
-  const storageAdapter = getStorageAdapter()
+	const storageAdapter = getStorageAdapter();
 
-  return {
-    // 初始状态
-    currentChatId: null,
-    chatHistories: [],
-    messageStreamingMap: {},
-    isLoadingMap: {},
+	// Add helper function to update chat title based on content
+	const updateChatTitleByContent = (chatId: string) => {
+		const { chatHistories, isFirstOpen } = get();
+		const chat = chatHistories.find((c) => c.id === chatId);
 
-    /**
-     * 设置当前选中的对话ID
-     * @param id 对话ID
-     */
-    setCurrentChatId: (id) => {
-      set({ currentChatId: id })
-      get().saveChatsToDisk()
-    },
+		// Only update title when the software is first opened
+		if (!chat || !chat.messages.length || !isFirstOpen) return;
 
-    /**
-     * 创建新的对话
-     */
-    createChat: () => {
-      const newChat: ChatHistory = {
-        id: Date.now().toString(),
-        title: '新对话',
-        messages: [],
-        createdAt: new Date().toISOString(),
-      }
-      set((state) => ({
-        chatHistories: [newChat, ...state.chatHistories],
-        currentChatId: newChat.id,
-      }))
-      get().saveChatsToDisk()
-    },
+		// Get the first text message
+		const firstTextMessage = chat.messages.find(
+			(msg) => msg.role === "user" && !msg.fileType && msg.content.trim(),
+		);
 
-    /**
-     * 删除指定对话
-     * @param id 要删除的对话ID
-     */
-    deleteChat: (id) => {
-      set((state) => {
-        const newHistories = state.chatHistories.filter((chat) => chat.id !== id)
-        return {
-          chatHistories: newHistories,
-          currentChatId:
-            state.currentChatId === id ? (newHistories[0]?.id ?? null) : state.currentChatId,
-        }
-      })
-      get().saveChatsToDisk()
-    },
+		if (firstTextMessage) {
+			const newTitle =
+				firstTextMessage.content.slice(0, 20) +
+				(firstTextMessage.content.length > 20 ? "..." : "");
 
-    /**
-     * 更新指定对话的消息列表
-     * @param chatId 对话ID
-     * @param messages 新的消息列表
-     */
-    updateChatMessages: (chatId, messages) => {
-      set((state) => ({
-        chatHistories: state.chatHistories.map((chat) =>
-          chat.id === chatId ? { ...chat, messages } : chat,
-        ),
-      }))
-      get().saveChatsToDisk()
-    },
+			set((state) => ({
+				chatHistories: state.chatHistories.map((c) => {
+					if (c.id === chatId) {
+						return {
+							...c,
+							title: newTitle,
+						};
+					}
+					return c;
+				}),
+			}));
 
-    /**
-     * 更新指定对话的标题
-     * @param chatId 对话ID
-     * @param title 新标题
-     */
-    updateChatTitle: (chatId, title) => {
-      set((state) => ({
-        chatHistories: state.chatHistories.map((chat) =>
-          chat.id === chatId ? { ...chat, title } : chat,
-        ),
-      }))
-      get().saveChatsToDisk()
-    },
+			get().saveChatsToDisk();
+		}
+	};
 
-    /**
-     * 清空所有对话
-     */
-    clearAllChats: () => {
-      set({ chatHistories: [], currentChatId: null })
-      get().saveChatsToDisk()
-    },
+	// Add helper function to update chat title based on first text message
+	const updateChatTitleByFirstMessage = (chatId: string) => {
+		const { chatHistories } = get();
+		const chat = chatHistories.find((c) => c.id === chatId);
 
-    /**
-     * 从存储中加载对话历史
-     */
-    loadChatsFromDisk: async () => {
-      try {
-        console.log('开始加载聊天记录...')
-        const data = await storageAdapter.load()
-        console.log('加载到的数据:', data)
-        if (data) {
-          set({
-            chatHistories: data.chatHistories || [],
-            currentChatId: data.currentChatId || null,
-          })
-          console.log('数据已设置到 store')
-        }
-      } catch (error) {
-        console.error('加载聊天记录失败:', error)
-      }
-    },
+		if (!chat || !chat.messages.length) return;
 
-    /**
-     * 保存对话历史到存储
-     * 使用防抖以避免频繁保存
-     */
-    saveChatsToDisk: debounce(() => {
-      const state = get()
-      const data = {
-        chatHistories: state.chatHistories,
-        currentChatId: state.currentChatId,
-      }
-      storageAdapter.save(data)
-    }, 1000),
+		// Find first text message (no fileType)
+		const firstTextMessage = chat.messages.find(
+			(msg) => msg.role === "user" && !msg.fileType && msg.content.trim(),
+		);
 
-    /**
-     * 发送消息并处理AI响应
-     * @param message 用户发送的消息
-     */
-    sendMessage: async (message: ChatMessage) => {
-      const { currentChatId } = get()
+		if (firstTextMessage) {
+			const newTitle =
+				firstTextMessage.content.slice(0, 20) +
+				(firstTextMessage.content.length > 20 ? "..." : "");
 
-      // 如果没有当前对话，创建新对话
-      let chatId = currentChatId
-      if (!chatId) {
-        const newChat = {
-          id: Date.now().toString(),
-          title: message.content.slice(0, 20) || '新对话',
-          messages: [],
-          createdAt: new Date().toISOString(),
-        }
+			set((state) => ({
+				chatHistories: state.chatHistories.map((c) => {
+					if (c.id === chatId) {
+						return {
+							...c,
+							title: newTitle,
+						};
+					}
+					return c;
+				}),
+			}));
 
-        set((state) => ({
-          chatHistories: [newChat, ...state.chatHistories],
-          currentChatId: newChat.id,
-        }))
+			get().saveChatsToDisk();
+		}
+	};
 
-        chatId = newChat.id
-      }
+	return {
+		// Initial state
+		currentChatId: null,
+		chatHistories: [],
+		messageStreamingMap: {},
+		isLoadingMap: {},
+		isFirstOpen: true, // Add first open flag
 
-      // 获取当前对话并验证
-      const currentChat = get().chatHistories.find((chat) => chat.id === chatId)
-      if (!currentChat) return
+		/**
+		 * Set current chat ID
+		 * @param id Chat ID
+		 */
+		setCurrentChatId: (id) => {
+			set({ currentChatId: id });
+			get().saveChatsToDisk();
+		},
 
-      // 添加用户消息并更新状态
-      const newMessages = [...currentChat.messages, message]
-      set((state) => ({
-        chatHistories: state.chatHistories.map((chat) => {
-          if (chat.id === chatId) {
-            return {
-              ...chat,
-              title:
-                chat.messages.length === 0 ? message.content.slice(0, 20) || '新对话' : chat.title,
-              messages: newMessages,
-            }
-          }
-          return chat
-        }),
-        isLoadingMap: { ...state.isLoadingMap, [chatId]: true },
-        messageStreamingMap: { ...state.messageStreamingMap, [chatId]: '' },
-      }))
+		/**
+		 * Create new chat
+		 */
+		createChat: () => {
+			const newChat: ChatHistory = {
+				id: Date.now().toString(),
+				title: "New Chat",
+				messages: [],
+				createdAt: new Date().toISOString(),
+			};
+			set((state) => ({
+				chatHistories: [newChat, ...state.chatHistories],
+				currentChatId: newChat.id,
+			}));
+			get().saveChatsToDisk();
+		},
 
-      try {
-        const token = 'sk-DV7fnAi6a6f5qYN2AqEM6VQiyYOS4NTETYRoZHENptDSHdMI'
-        const response = await fetch(`${API_CONFIG.COMMON}/v1/chat/completions`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: token,
-          },
-          body: JSON.stringify({
-            model: 'gpt-4o',
-            messages: newMessages,
-            stream: true,
-            temperature: 0.7,
-            top_p: 1.0,
-            n: 1,
-            max_tokens: 4096,
-          }),
-        })
+		/**
+		 * Delete specified chat
+		 * @param id Chat ID to delete
+		 */
+		deleteChat: (id) => {
+			set((state) => {
+				const newHistories = state.chatHistories.filter(
+					(chat) => chat.id !== id,
+				);
+				return {
+					chatHistories: newHistories,
+					currentChatId:
+						state.currentChatId === id
+							? (newHistories[0]?.id ?? null)
+							: state.currentChatId,
+				};
+			});
+			get().saveChatsToDisk();
+		},
 
-        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
+		/**
+		 * Update message list for specified chat
+		 * @param chatId Chat ID
+		 * @param messages New message list
+		 */
+		updateChatMessages: (chatId, messages) => {
+			set((state) => ({
+				chatHistories: state.chatHistories.map((chat) =>
+					chat.id === chatId ? { ...chat, messages } : chat,
+				),
+			}));
+			get().saveChatsToDisk();
+		},
 
-        const reader = response.body?.getReader()
-        if (!reader) throw new Error('No reader available')
+		/**
+		 * Update title for specified chat
+		 * @param chatId Chat ID
+		 * @param title New title
+		 */
+		updateChatTitle: (chatId, title) => {
+			set((state) => ({
+				chatHistories: state.chatHistories.map((chat) =>
+					chat.id === chatId ? { ...chat, title } : chat,
+				),
+			}));
+			get().saveChatsToDisk();
+		},
 
-        const decoder = new TextDecoder()
-        let fullMessage = ''
+		/**
+		 * Clear all chats
+		 */
+		clearAllChats: () => {
+			set({ chatHistories: [], currentChatId: null });
+			get().saveChatsToDisk();
+		},
 
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
+		/**
+		 * Load chat history from storage
+		 */
+		loadChatsFromDisk: async () => {
+			try {
+				const data = await storageAdapter.load();
+				if (data) {
+					set({
+						chatHistories: data.chatHistories || [],
+						currentChatId: data.currentChatId || null,
+						isFirstOpen: true, // Reset to true each time loading
+					});
 
-          const chunk = decoder.decode(value)
-          const lines = chunk
-            .split('\n')
-            .filter((line) => line.trim() !== '' && line.trim() !== 'data: [DONE]')
+					// Update titles for all chats after loading
+					if (data.chatHistories) {
+						for (const chat of data.chatHistories) {
+							get().updateChatTitleByFirstMessage(chat.id);
+						}
+					}
+				}
+			} catch (error) {
+				console.error("Failed to load chat history:", error);
+			}
+		},
 
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              try {
-                const data = JSON.parse(line.slice(6))
-                const content = data.choices[0]?.delta?.content
-                if (content) {
-                  fullMessage += content
-                  // 更新流式消息状态
-                  set((state) => ({
-                    messageStreamingMap: { ...state.messageStreamingMap, [chatId]: fullMessage },
-                  }))
-                }
-              } catch (error) {
-                console.error('Error parsing JSON:', error)
-              }
-            }
-          }
-        }
+		/**
+		 * Save chat history to storage
+		 * Using debounce to avoid frequent saves
+		 */
+		saveChatsToDisk: debounce(() => {
+			const state = get();
+			const data = {
+				chatHistories: state.chatHistories,
+				currentChatId: state.currentChatId,
+			};
+			storageAdapter.save(data);
+		}, 1000),
 
-        // 完成后添加完整消息
-        if (fullMessage) {
-          const assistantMessage: ChatMessage = {
-            role: 'assistant',
-            content: fullMessage,
-          }
+		/**
+		 * Send message and handle AI response
+		 * @param message User message
+		 */
+		sendMessage: async (message: ChatMessage) => {
+			const { currentChatId } = get();
+			let chatId = currentChatId;
 
-          set((state) => ({
-            chatHistories: state.chatHistories.map((chat) => {
-              if (chat.id === chatId) {
-                return {
-                  ...chat,
-                  messages: [...newMessages, assistantMessage],
-                }
-              }
-              return chat
-            }),
-            messageStreamingMap: { ...state.messageStreamingMap, [chatId]: '' },
-          }))
-        }
-      } catch (error) {
-        console.error('发送消息失败:', error)
-      } finally {
-        set((state) => ({
-          isLoadingMap: { ...state.isLoadingMap, [chatId]: false },
-        }))
-        get().saveChatsToDisk()
-      }
-    },
-  }
-})
+			// Check if already loading
+			const isLoading = get().isLoadingMap[chatId || ""];
+			if (isLoading) return;
+
+			if (!chatId) {
+				// Don't set title when creating new chat, wait for first message
+				const newChat = {
+					id: Date.now().toString(),
+					title: "New Chat",
+					messages: [],
+					createdAt: new Date().toISOString(),
+				};
+
+				set((state) => ({
+					chatHistories: [newChat, ...state.chatHistories],
+					currentChatId: newChat.id,
+				}));
+
+				chatId = newChat.id;
+			}
+
+			const currentChat = get().chatHistories.find(
+				(chat) => chat.id === chatId,
+			);
+			if (!currentChat) return;
+
+			// Add user message to history
+			const newMessages = [...currentChat.messages, message];
+
+			// Update status immediately
+			set((state) => ({
+				chatHistories: state.chatHistories.map((chat) => {
+					if (chat.id === chatId) {
+						return {
+							...chat,
+							messages: newMessages,
+						};
+					}
+					return chat;
+				}),
+			}));
+
+			// Update chat title if this is a text message
+			if (!message.fileType && message.content.trim()) {
+				get().updateChatTitleByFirstMessage(chatId);
+			}
+
+			// If it's a file message and marked to skip AI response, return
+			if (message.skipAIResponse) {
+				return;
+			}
+
+			// Set loading status
+			set((state) => ({
+				isLoadingMap: { ...state.isLoadingMap, [chatId]: true },
+				messageStreamingMap: { ...state.messageStreamingMap, [chatId]: "" },
+			}));
+
+			try {
+				// Modify the format of the message sent to AI
+				const messagesToSend = currentChat.messages.map((msg) => {
+					if (msg.fileType?.includes("image/")) {
+						// Handle image message
+						let imageUrl = msg.content;
+						if (!msg.content.startsWith("http")) {
+							// If not a URL, convert to base64
+							imageUrl = `data:${msg.fileType};base64,${msg.content}`;
+						}
+
+						return {
+							role: msg.role,
+							content: [
+								{
+									type: "image_url",
+									image_url: {
+										url: imageUrl,
+									},
+								},
+							],
+						};
+					}
+					// Handle normal text message
+					return {
+						role: msg.role,
+						content: msg.content,
+					};
+				});
+
+				// Handle the current message to send
+				const currentMessageToSend = message.fileType?.includes("image/")
+					? {
+							role: message.role,
+							content: [
+								{
+									type: "image_url",
+									image_url: {
+										url: message.content.startsWith("http")
+											? message.content
+											: `data:${message.fileType};base64,${message.content}`,
+									},
+								},
+							],
+						}
+					: {
+							role: message.role,
+							content: message.content,
+						};
+
+				// If this is not a message to skip AI response, send request
+				if (!message.skipAIResponse) {
+					const reader = await streamChatCompletions({
+						model: "gpt-4-vision-preview", // Use the model that supports images
+						messages: [...messagesToSend, currentMessageToSend],
+						stream: true,
+						temperature: 1,
+					});
+
+					await handleStreamResponse({
+						reader,
+						chatId,
+						messages: newMessages,
+						set,
+						onError: (error) => {
+							console.error("Stream handling error:", error);
+							set((state) => ({
+								messageStreamingMap: {
+									...state.messageStreamingMap,
+									[chatId]:
+										"Sorry, an error occurred while processing your message.",
+								},
+							}));
+						},
+						onComplete: (fullMessage) => {
+							// Additional actions after completion if needed
+							get().saveChatsToDisk();
+						},
+					});
+				}
+			} catch (error) {
+				console.error("Failed to send message:", error);
+				set((state) => ({
+					messageStreamingMap: {
+						...state.messageStreamingMap,
+						[chatId]: "Sorry, failed to send message. Please try again later.",
+					},
+				}));
+			} finally {
+				set((state) => ({
+					isLoadingMap: { ...state.isLoadingMap, [chatId]: false },
+				}));
+
+				if (!get().messageStreamingMap[chatId]) {
+					get().saveChatsToDisk();
+				}
+			}
+		},
+
+		updateChatTitleByContent, // Export method
+		updateChatTitleByFirstMessage,
+	};
+});
