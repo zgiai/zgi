@@ -82,7 +82,7 @@ class AuthService:
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="User not found"
                 )
-                
+
             return user
             
         except jwt.exceptions.ExpiredSignatureError:
@@ -156,7 +156,67 @@ class AuthService:
                 full_name=username,  # Set full_name to username by default
                 hashed_password=self.get_password_hash(password),
                 is_active=True,
-                is_verified=True,
+            )
+            self.db.add(user)
+            self.db.commit()
+            self.db.refresh(user)
+            logger.info(f"Successfully registered user: {email}")
+            return user
+
+        except IntegrityError as e:
+            self.db.rollback()
+            logger.error(f"Database integrity error: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="User already exists",
+            )
+        except SQLAlchemyError as e:
+            self.db.rollback()
+            logger.error(f"Database error registering user: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Database error",
+            )
+        except HTTPException:
+            # Re-raise HTTPException directly
+            raise
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Unexpected error registering user: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Internal server error",
+            )
+
+    def register_admin(self, email: str, username: str, password: str) -> User:
+        """Register a new user"""
+        try:
+            # Check if user already exists
+            existing_user = self.db.query(User).filter(
+                (User.email == email) | (User.username == username)
+            ).first()
+
+            if existing_user:
+                if existing_user.email == email:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Email already registered",
+                    )
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Username already taken",
+                    )
+
+            # Create new user
+            user = User(
+                id=1,
+                email=email,
+                username=username,
+                full_name=username,  # Set full_name to username by default
+                hashed_password=self.get_password_hash(password),
+                is_active=True,
+                is_superuser=True,
             )
             self.db.add(user)
             self.db.commit()

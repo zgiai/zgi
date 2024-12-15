@@ -204,7 +204,7 @@ async def list_users(
     email_service=Depends(get_email_service),
 ):
     """获取用户列表（仅管理员）"""
-    if not current_user.is_admin:
+    if not current_user.is_superuser:
         raise HTTPException(status_code=403, detail="没有权限")
     
     service = UserService(db, cache, email_service)
@@ -226,7 +226,7 @@ async def deactivate_user(
     email_service=Depends(get_email_service),
 ):
     """停用用户（仅管理员）"""
-    if not current_user.is_admin:
+    if not current_user.is_superuser:
         raise HTTPException(status_code=403, detail="没有权限")
     
     service = UserService(db, cache, email_service)

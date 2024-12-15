@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db
+from app.features.organizations.models import OrganizationMember
 from app.features.users.models import User
 from app.features.auth.service import AuthService, get_auth_service
 
@@ -49,6 +50,8 @@ async def get_current_user(
     user = db.query(User).filter(User.id == int(user_id)).first()
     if user is None:
         raise credentials_exception
+    if not user.is_active and not user.is_superuser:
+        raise HTTPException(status_code=400, detail="Inactive user")
     return user
 
 async def get_api_key(credentials: HTTPAuthorizationCredentials = Security(security)) -> str:
