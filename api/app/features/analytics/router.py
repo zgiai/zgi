@@ -23,7 +23,7 @@ async def get_usage_metrics(
     cache=Depends(get_cache),
 ):
     """Get usage metrics for a specific time range."""
-    if not current_user.is_admin:
+    if not current_user.is_superuser:
         raise HTTPException(status_code=403, detail="Not authorized")
 
     service = AnalyticsService(db, cache)
@@ -37,7 +37,7 @@ async def get_system_metrics(
     cache=Depends(get_cache),
 ):
     """Get current system metrics."""
-    if not current_user.is_admin:
+    if not current_user.is_superuser:
         raise HTTPException(status_code=403, detail="Not authorized")
 
     service = AnalyticsService(db, cache)
@@ -65,7 +65,7 @@ async def generate_report(
     cache=Depends(get_cache),
 ):
     """Generate analytics report for a specific time range."""
-    if not current_user.is_admin:
+    if not current_user.is_superuser:
         raise HTTPException(status_code=403, detail="Not authorized")
 
     service = AnalyticsService(db, cache)

@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 from pydantic import BaseModel, Field
 
 class APIKeyBase(BaseModel):
@@ -8,14 +8,21 @@ class APIKeyBase(BaseModel):
 class APIKeyCreate(APIKeyBase):
     pass
 
-class APIKey(APIKeyBase):
+class APIKeyResponse(APIKeyBase):
     uuid: str
     key: str
-    project_uuid: str
+    project_id: int
     created_by: int
     status: str
     created_at: datetime
     updated_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+
+class APIKeyList(BaseModel):
+    api_keys: List[APIKeyResponse]
+    total: int
 
     class Config:
         from_attributes = True

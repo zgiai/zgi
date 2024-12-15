@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
@@ -24,11 +24,41 @@ from app.features.llm_gateway.router import router as llm_gateway_router
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
+# Create database tables
+Base.metadata.create_all(bind=engine)
+
+def handle_http_exception(req: Request, exc: Exception) -> JSONResponse:
+    if isinstance(exc, HTTPException):
+        msg = {
+            'status_code': exc.status_code,
+            'status_message': exc.detail['error'] if isinstance(exc.detail, dict) else exc.detail
+        }
+    else:
+        msg = {'status_code': 500, 'status_message': str(exc)}
+    logger.error(f'{req.method} {req.url} {str(exc)}')
+    return JSONResponse(content=msg)
+    # return ORJSONResponse(content=msg)
+
+
+def handle_request_validation_error(req: Request, exc: RequestValidationError) -> JSONResponse:
+    msg = {'status_code': status.HTTP_422_UNPROCESSABLE_ENTITY, 'status_message': exc.errors()}
+    logger.error(f'{req.method} {req.url} {exc.errors()} {exc.body}')
+    return JSONResponse(content=msg)
+    # return ORJSONResponse(content=msg)
+
+
+_EXCEPTION_HANDLERS = {
+    HTTPException: handle_http_exception,
+    RequestValidationError: handle_request_validation_error,
+    Exception: handle_http_exception
+}
+
 # Create FastAPI app
 app = FastAPI(
     title="ZGI API",
     description="ZGI API Documentation",
     version="1.0.0",
+    exception_handlers=_EXCEPTION_HANDLERS,
     debug=True  # Enable debug mode for detailed error messages
 )
 

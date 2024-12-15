@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from app.core.database import Base
 
@@ -23,9 +23,9 @@ class OrganizationUpdate(BaseModel):
         }
     )
 
-class Organization(OrganizationBase):
+class OrganizationResponse(OrganizationBase):
     id: int
-    uuid: str
+    # uuid: str
     created_by: Optional[int]
     is_active: bool = True
     created_at: datetime
@@ -38,3 +38,73 @@ class Organization(OrganizationBase):
             bytes: lambda v: v.decode() if v else None
         }
     )
+
+class OrganizationList(BaseModel):
+    organizations: List[OrganizationResponse]
+    total: int
+
+    class Config:
+        from_attributes = True
+
+class RoleBase(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+class RoleCreate(RoleBase):
+    organization_id: int
+
+class RoleUpdate(RoleBase):
+    pass
+
+class RoleResponseBase(BaseModel):
+    id: int
+    name: str
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_encoders={
+            datetime: lambda v: v.isoformat() if v else None,
+            bytes: lambda v: v.decode() if v else None
+        }
+    )
+
+class RoleResponse(RoleResponseBase):
+    organization_id: int
+    created_by: Optional[int]
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+class RoleList(BaseModel):
+    roles: List[RoleResponse]
+    total: int
+
+    class Config:
+        from_attributes = True
+
+class MemberBase(BaseModel):
+    organization_id: int
+    user_id: int
+
+class MemberResponse(MemberBase):
+    id: int
+    username: str
+    is_admin: bool
+    roles: List[RoleResponseBase]
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_encoders={
+            datetime: lambda v: v.isoformat() if v else None,
+            bytes: lambda v: v.decode() if v else None
+        }
+    )
+
+class MemberList(BaseModel):
+    members: List[MemberResponse]
+    total: int
+
+    class Config:
+        from_attributes = True

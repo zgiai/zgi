@@ -1,19 +1,30 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-from typing import List
+from datetime import datetime, timedelta
 
+from fastapi import APIRouter, Depends, HTTPException, Query, Body
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
+from typing import List, Optional, Annotated
+
+from app.core.auth import require_super_admin
+from app.core.base import resp_200
 from app.core.database import get_db
+from app.core.security import create_access_token, verify_token
 from app.core.security.auth import get_current_user
+from app.core.logging.api_logger import logger
+from app.features.organizations.schemas import OrganizationResponse, OrganizationList, MemberList, RoleResponse, \
+    RoleBase, RoleResponseBase
+from app.features.organizations.service import organization_require_member_admin, organization_require_admin
 from app.features.users.models import User
-from app.features.organizations.models import Organization, OrganizationMember, OrganizationRole
+from app.features.organizations.models import Organization, OrganizationMember, OrganizationRole, Role, \
+    organization_member_roles
 from app.features.organizations import schemas
 
 router = APIRouter(tags=["organizations"])
 
-@router.post("/", response_model=schemas.Organization)
+@router.post("/create")
 def create_organization(
     org_data: schemas.OrganizationCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_super_admin),
     db: Session = Depends(get_db)
 ):
     """Create a new organization"""
@@ -23,85 +34,73 @@ def create_organization(
         created_by=current_user.id
     )
     db.add(org)
-    db.flush()
+    # db.flush()
 
-    # Add creator as owner
-    member = OrganizationMember(
-        organization_id=org.id,
-        user_id=current_user.id,
-        role=OrganizationRole.OWNER
-    )
-    db.add(member)
+    # # Add creator as owner
+    # member = OrganizationMember(
+    #     organization_id=org.id,
+    #     user_id=current_user.id
+    # )
+    # db.add(member)
     db.commit()
     db.refresh(org)
-    return org
+    return resp_200(OrganizationResponse.model_validate(org))
 
-@router.get("/", response_model=List[schemas.Organization])
+@router.get("/list")
 def list_organizations(
+    user_id: Optional[int] = None,
+    page_size: Optional[int] = 10,
+    page_num: Optional[int] = 1,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """List organizations for current user"""
-    query = (
-        db.query(Organization)
-        .join(OrganizationMember)
-        .filter(OrganizationMember.user_id == current_user.id)
-    )
-    return query.all()
+    query = db.query(Organization).filter(Organization.is_active == True)
+    if user_id:
+        query = query.join(OrganizationMember).filter(OrganizationMember.user_id == user_id)
+    total = query.count()
+    if page_size and page_num:
+        query = query.offset((page_num - 1) * page_size).limit(page_size)
+    organization_list = query.all()
+    return resp_200(data=OrganizationList(organizations=organization_list, total=total))
 
-@router.get("/{org_uuid}", response_model=schemas.Organization)
+@router.get("/info")
 def get_organization(
-    org_uuid: str,
+    organization_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Get organization details"""
     org = (
         db.query(Organization)
-        .join(OrganizationMember)
         .filter(
-            Organization.uuid == org_uuid,
-            OrganizationMember.user_id == current_user.id
+            Organization.id == organization_id
         )
         .first()
     )
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
-    return org
+    return resp_200(data=OrganizationResponse.model_validate(org))
 
-@router.put("/{org_uuid}", response_model=schemas.Organization)
+@router.put("/update")
 def update_organization(
-    org_uuid: str,
+    organization_id: int,
     org_data: schemas.OrganizationUpdate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(organization_require_admin),
     db: Session = Depends(get_db)
 ):
     """Update organization details"""
     # First check if user is a member of the organization
     org = (
         db.query(Organization)
-        .join(OrganizationMember)
         .filter(
-            Organization.uuid == org_uuid,
-            OrganizationMember.user_id == current_user.id
+            Organization.id == organization_id
         )
         .first()
     )
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
-    
-    # Then check if user has permission to update
-    member = (
-        db.query(OrganizationMember)
-        .filter(
-            OrganizationMember.organization_id == org.id,
-            OrganizationMember.user_id == current_user.id
-        )
-        .first()
-    )
-    if member.role not in [OrganizationRole.OWNER, OrganizationRole.ADMIN]:
-        raise HTTPException(status_code=403, detail="Insufficient permissions")
-    
+
     # Update organization
     update_data = org_data.model_dump(exclude_unset=False)
     if "is_active" not in update_data:
@@ -121,4 +120,299 @@ def update_organization(
     db.refresh(org)
     
     # Convert to Pydantic model for proper serialization
-    return schemas.Organization.model_validate(org)
+    return resp_200(data=OrganizationResponse.model_validate(org))
+
+@router.delete("/delete")
+def delete_organization(
+        organization_id: int,
+        db: Session = Depends(get_db),
+        current_user: User = Depends(require_super_admin)
+):
+    """Soft delete a project"""
+    org = db.query(Organization).filter(
+        Organization.id == organization_id
+    ).first()
+
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    if not org.is_active:
+        raise HTTPException(status_code=400, detail="Organization is already deleted")
+
+    # Soft delete the Organization
+    org.is_active = False
+
+    try:
+        db.add(org)
+        db.commit()
+        db.refresh(org)
+        return resp_200(data=OrganizationResponse.model_validate(org))
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/set_admins")
+def set_admins(organization_id: Annotated[int, Body(embed=True)],
+               user_ids: Annotated[List[int], Body(embed=True)],
+               db: Session = Depends(get_db),
+               current_user: User = Depends(require_super_admin)):
+    """Set admins for an organization"""
+    for user_id in user_ids:
+        org = db.query(Organization).filter(Organization.id == organization_id).first()
+        if not org:
+            raise HTTPException(status_code=404, detail="Organization not found")
+        if not org.is_active:
+            raise HTTPException(status_code=400, detail="Organization is already deleted")
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail=f"user_id {user_id} not found")
+        member = db.query(OrganizationMember).filter(
+            OrganizationMember.organization_id == organization_id,
+            OrganizationMember.user_id == user_id
+        ).first()
+        if member:
+            member.is_admin = True
+            db.add(member)
+            db.commit()
+        else:
+            new_member = OrganizationMember(
+                organization_id=organization_id,
+                user_id=user_id,
+                is_admin=True
+            )
+            db.add(new_member)
+            db.commit()
+    return resp_200("Admins updated successfully")
+
+@router.post("/set_members")
+def set_members(organization_id: Annotated[int, Body(embed=True)],
+                user_ids: Annotated[List[int], Body(embed=True)],
+                db: Session = Depends(get_db),
+                current_user: User = Depends(organization_require_admin)):
+    """Set members for an organization"""
+    for user_id in user_ids:
+        org = db.query(Organization).filter(Organization.id == organization_id).first()
+        if not org:
+            raise HTTPException(status_code=404, detail="Organization not found")
+        if not org.is_active:
+            raise HTTPException(status_code=400, detail="Organization is already deleted")
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail=f"user_id {user_id} not found")
+        member = db.query(OrganizationMember).filter(
+            OrganizationMember.organization_id == organization_id,
+            OrganizationMember.user_id == user_id
+        ).first()
+        if member:
+            logger.info(f"User {user_id} is already a member of the organization")
+            continue
+        else:
+            new_member = OrganizationMember(
+                organization_id=organization_id,
+                user_id=user_id,
+                is_admin=False
+            )
+            db.add(new_member)
+            db.commit()
+    return resp_200(message="Members updated successfully")
+
+@router.post("/invite")
+def create_invitation(organization_id: Annotated[int, Body(embed=True)],
+                      db: Session = Depends(get_db),
+                      current_user: User = Depends(organization_require_admin)):
+    """Create an invitation for an organization"""
+    expires_delta = timedelta(minutes=30)
+    expires_at = datetime.now() + expires_delta
+    invite_token = create_access_token({'org_id': organization_id}, expires_delta=expires_delta)
+    return resp_200(data={'invite_token': invite_token, 'expires_at': expires_at})
+
+@router.post("/accept_invite")
+def accept_invite(invite_token: Annotated[str, Body(embed=True)],
+                  db: Session = Depends(get_db),
+                  current_user: User = Depends(get_current_user)):
+    decoded_token = verify_token(invite_token)
+    if not decoded_token:
+        raise HTTPException(status_code=400, detail="Invalid invite token")
+    org_id = decoded_token['org_id']
+    member = db.query(OrganizationMember).filter(
+        OrganizationMember.organization_id == org_id,
+        OrganizationMember.user_id == current_user.id).first()
+    if member:
+        raise HTTPException(status_code=400, detail="User already belongs to the organization")
+    new_member = OrganizationMember(
+        organization_id=org_id,
+        user_id=current_user.id,
+        is_admin=False
+    )
+    db.add(new_member)
+    db.commit()
+    return resp_200(message="Invitation accepted successfully")
+
+@router.post("/roles/create")
+def create_role(
+    role_data: schemas.RoleCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(organization_require_admin)
+):
+    """Create a new role"""
+    existing_role = db.query(Role).filter(
+        Role.organization_id == role_data.organization_id,
+        Role.name == role_data.name).first()
+    if existing_role:
+        raise HTTPException(status_code=400, detail=f"Role with this name {role_data.name} already exists")
+    role = Role(
+        organization_id=role_data.organization_id,
+        name=role_data.name,
+        description=role_data.description,
+        created_by=current_user.id
+    )
+    db.add(role)
+    db.commit()
+    db.refresh(role)
+    return resp_200(data=schemas.RoleResponse.model_validate(role))
+
+@router.get("/roles/list")
+def list_roles(
+    organization_id: Optional[int] = None,
+    page_size: Optional[int] = 10,
+    page_num: Optional[int] = 1,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """List roles"""
+    query = db.query(Role).filter(Role.is_active == True)
+    if organization_id:
+        query = query.filter(Role.organization_id == organization_id)
+    total = query.count()
+    if page_size and page_num:
+        query = query.offset((page_num - 1) * page_size).limit(page_size)
+    role_list = query.all()
+    return resp_200(data=schemas.RoleList(roles=role_list, total=total))
+
+@router.get("/roles/info")
+def get_role(
+    role_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get role details"""
+    role = db.query(Role).filter(Role.id == role_id, Role.is_active == True).first()
+    if not role:
+        raise HTTPException(status_code=404, detail="Role not found")
+    return resp_200(data=schemas.RoleResponse.model_validate(role))
+
+@router.put("/roles/update")
+def update_role(
+    role_id: int,
+    role_data: schemas.RoleUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_super_admin)
+):
+    """Update role details"""
+    role = db.query(Role).filter(Role.id == role_id).first()
+    if not role:
+        raise HTTPException(status_code=404, detail="Role not found")
+    existing_role = db.query(Role).filter(
+        Role.organization_id == role.organization_id,
+        Role.name == role_data.name).first()
+    if existing_role and existing_role.id != role_id:
+        raise HTTPException(status_code=400, detail=f"Role with this name {role_data.name} already exists")
+
+    update_data = role_data.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        if value and hasattr(role, field):
+            setattr(role, field, value)
+
+    db.commit()
+    db.refresh(role)
+    return resp_200(data=schemas.RoleResponse.model_validate(role))
+
+@router.delete("/roles/delete")
+def delete_role(
+    role_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_super_admin)
+):
+    """Delete a role"""
+    role = db.query(Role).filter(Role.id == role_id).first()
+    if not role:
+        raise HTTPException(status_code=404, detail="Role not found")
+
+    if not role.is_active:
+        raise HTTPException(status_code=400, detail="Role is already deleted")
+
+    # Soft delete the role
+    role.is_active = False
+
+    try:
+        db.commit()
+        db.refresh(role)
+        return resp_200(message="Role deleted successfully")
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/members/update_roles")
+def bind_role_to_member(member_id: Annotated[int, Body(embed=True)],
+                        role_ids: Annotated[List[int], Body(embed=True)],
+                        db: Session = Depends(get_db),
+                        current_user: User = Depends(organization_require_member_admin)
+):
+    """Bind a role to an organization member"""
+    member = db.query(OrganizationMember).filter(OrganizationMember.id == member_id).first()
+    if not member:
+        raise HTTPException(status_code=404, detail="Organization member not found")
+    all_roles = db.query(Role).filter(
+        Role.organization_id == member.organization_id,
+        Role.is_active == True
+    ).all()
+    all_role_dict = {role.id: role for role in all_roles}
+    role_ids_set = set(role_ids)
+    if not role_ids_set.issubset(all_role_dict):
+        missing_role_ids = role_ids_set - all_role_dict.keys()
+        raise HTTPException(status_code=400,
+                            detail=f"One or more role IDs do not exist in the organization: {missing_role_ids}")
+
+    old_roles_dict = {role.id: role for role in member.roles}
+    need_add_role_id_set = role_ids_set - old_roles_dict.keys()
+    need_delete_role_id_set = old_roles_dict.keys() - role_ids_set
+    for role_id in need_delete_role_id_set:
+        role = old_roles_dict[role_id]
+        member.roles.remove(role)
+    for role_id in need_add_role_id_set:
+        role = all_role_dict[role_id]
+        member.roles.append(role)
+    if need_add_role_id_set or need_delete_role_id_set:
+        db.commit()
+        db.refresh(member)
+    return resp_200(message="Role update to member successfully")
+
+@router.get("/members/list")
+def list_members(
+    organization_id: int,
+    page_size: Optional[int] = 10,
+    page_num: Optional[int] = 1,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)):
+    """List all members for an organization"""
+    org = db.query(Organization).filter(Organization.id == organization_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    query = db.query(OrganizationMember).filter(OrganizationMember.organization_id == organization_id)
+    total = query.count()
+    if page_size and page_num:
+        query = query.offset((page_num - 1) * page_size).limit(page_size)
+    member_list = query.all()
+    response_members = []
+    for member in member_list:
+        response_member = {
+            "id": member.id,
+            "organization_id": member.organization_id,
+            "user_id": member.user_id,
+            "username": member.user.username,
+            "is_admin": member.is_admin,
+            "roles": [RoleResponseBase.model_validate(role) for role in member.roles],
+            "created_at": member.created_at,
+            "updated_at": member.updated_at
+        }
+        response_members.append(response_member)
+    return resp_200(data=MemberList(members=response_members, total=total))
