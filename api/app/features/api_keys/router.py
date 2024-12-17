@@ -4,14 +4,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from datetime import datetime
 
-from app.core.database import get_db
+from app.core.database import get_db, get_sync_db
 from app.core.security import get_current_user
 from app.features.users.models import User
 from app.features.projects.models import Project
 from . import schemas, models
 from .schemas import APIKeyResponse, APIKeyList
-from .service import api_keys_require_project_admin, api_keys_require_project_member, api_keys_require_uuid_member, \
-    api_keys_require_uuid_admin
+from .service import api_keys_params_require_project_admin, api_keys_params_require_project_member, api_keys_params_require_uuid_member, \
+    api_keys_params_require_uuid_admin
 from ...core.base import resp_200
 
 router = APIRouter(tags=["api_keys"])
@@ -24,8 +24,8 @@ def generate_api_key() -> str:
 def create_api_key(
     project_id: int,
     api_key_data: schemas.APIKeyCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(api_keys_require_project_admin)
+    db: Session = Depends(get_sync_db),
+    current_user: User = Depends(api_keys_params_require_project_admin)
 ):
     """Create a new API key for a project"""
     project = db.query(Project).filter(Project.id == project_id).first()
@@ -50,8 +50,8 @@ def list_api_keys(
     project_id: int,
     page_size: Optional[int] = 10,
     page_num: Optional[int] = 1,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(api_keys_require_project_member)
+    db: Session = Depends(get_sync_db),
+    current_user: User = Depends(api_keys_params_require_project_member)
 ):
     """List all API keys for a project"""
     project = db.query(Project).filter(Project.id == project_id).first()
@@ -71,8 +71,8 @@ def list_api_keys(
 @router.get("/projects/info")
 def list_api_keys(
     api_key_uuid: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(api_keys_require_uuid_member)
+    db: Session = Depends(get_sync_db),
+    current_user: User = Depends(api_keys_params_require_uuid_member)
 ):
     """Get API keys"""
     api_key = db.query(models.APIKey).filter(
@@ -87,8 +87,8 @@ def list_api_keys(
 @router.post("/projects/disable")
 def disable_api_key(
     api_key_uuid: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(api_keys_require_uuid_admin)
+    db: Session = Depends(get_sync_db),
+    current_user: User = Depends(api_keys_params_require_uuid_admin)
 ):
     """Disable an API key"""
     api_key = db.query(models.APIKey).filter(
@@ -107,8 +107,8 @@ def disable_api_key(
 @router.post("/projects/enable")
 def disable_api_key(
     api_key_uuid: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(api_keys_require_uuid_admin)
+    db: Session = Depends(get_sync_db),
+    current_user: User = Depends(api_keys_params_require_uuid_admin)
 ):
     """Disable an API key"""
     api_key = db.query(models.APIKey).filter(
@@ -127,8 +127,8 @@ def disable_api_key(
 @router.delete("/projects/delete")
 def delete_api_key(
     api_key_uuid: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(api_keys_require_uuid_admin)
+    db: Session = Depends(get_sync_db),
+    current_user: User = Depends(api_keys_params_require_uuid_admin)
 ):
     """Soft delete an API key"""
     api_key = db.query(models.APIKey).filter(

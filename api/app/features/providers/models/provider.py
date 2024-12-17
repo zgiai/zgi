@@ -1,4 +1,4 @@
-from sqlalchemy import Column, BigInteger, String, Boolean, DateTime, Text
+from sqlalchemy import Column, BigInteger, String, Boolean, DateTime, Text, func
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import text
 from app.core.database import Base
@@ -16,8 +16,8 @@ class ModelProvider(Base):
     base_url = Column(String(255), nullable=True, comment="Custom base URL for this provider")
 
     # Timestamps
-    created_at = Column(DateTime(timezone=True), server_default=text('CURRENT_TIMESTAMP(6)'), nullable=False, comment="Creation timestamp")
-    updated_at = Column(DateTime(timezone=True), server_default=text('CURRENT_TIMESTAMP(6)'), onupdate=text('CURRENT_TIMESTAMP(6)'), nullable=False, comment="Last update timestamp")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, comment="Creation timestamp")
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=text('CURRENT_TIMESTAMP(6)'), nullable=False, comment="Last update timestamp")
     deleted_at = Column(DateTime(timezone=True), nullable=True, comment="Soft delete timestamp (NULL if active)")
 
     # Relationships

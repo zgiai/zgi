@@ -111,6 +111,11 @@ class AuthService:
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Incorrect email or password",
                 )
+            if not user.is_active and not user.is_superuser:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Inactive user"
+                )
             
             access_token = self.create_access_token(user.id)
             return {
@@ -267,8 +272,9 @@ class AuthService:
                     detail="Insufficient permissions"
                 )
             
-            # Delete user
-            self.db.delete(user)
+            # soft Delete user
+            user.is_active = False
+            self.db.add(user)
             self.db.commit()
             
             logger.info(f"Successfully deleted user: {user.email}")

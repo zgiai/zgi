@@ -8,7 +8,7 @@ class ChatSession(Base):
     __table_args__ = {'extend_existing': True}
 
     id = Column(BigInteger, primary_key=True, autoincrement=True, index=True, comment="Unique record ID")
-    user_id = Column(BigInteger, nullable=False, comment="User ID for distinguishing different users' conversations")
+    user_id = Column(Integer, nullable=False, comment="User ID for distinguishing different users' conversations")
     conversation_id = Column(String(100), nullable=False, comment="Unique conversation identifier for multi-turn dialogues")
     request_id = Column(String(100), comment="Unique request identifier for logging and tracing")
     
@@ -47,16 +47,16 @@ class ChatSession(Base):
 
     files = relationship("ChatFile", back_populates="session")
 
-class ChatFile(Base):
-    __tablename__ = "chat_files"
-
-    id = Column(Integer, primary_key=True, index=True)
-    session_id = Column(Integer, ForeignKey("chat_sessions.id"), nullable=False)
-    filename = Column(String(255), nullable=False)
-    content_type = Column(String(100), nullable=False)
-    file_size = Column(Integer, nullable=False)
-    file_path = Column(Text, nullable=False)
-    created_at = Column(DateTime, nullable=False, server_default=func.now())
-    deleted_at = Column(DateTime, nullable=True)
-
-    session = relationship("ChatSession", back_populates="files")
+# class ChatFile(Base):
+#     __tablename__ = "chat_files"
+#
+#     id = Column(Integer, primary_key=True, index=True)
+#     session_id = Column(Integer, ForeignKey("chat_sessions.id"), nullable=False)
+#     filename = Column(String(255), nullable=False)
+#     content_type = Column(String(100), nullable=False)
+#     file_size = Column(Integer, nullable=False)
+#     file_path = Column(Text, nullable=False)
+#     created_at = Column(DateTime, nullable=False, server_default=func.now())
+#     deleted_at = Column(DateTime, nullable=True)
+#
+#     session = relationship("ChatSession", back_populates="files")

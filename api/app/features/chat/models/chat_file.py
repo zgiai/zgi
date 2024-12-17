@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, BigInteger
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 
@@ -10,7 +10,7 @@ class ChatFile(Base):
     __table_args__ = {'extend_existing': True}
 
     id = Column(Integer, primary_key=True, index=True)
-    session_id = Column(Integer, ForeignKey("chat_sessions.id"), nullable=False)
+    session_id = Column(BigInteger, ForeignKey("chat_sessions.id"), nullable=False)
     filename = Column(String(255), nullable=False)
     content_type = Column(String(100), nullable=False)
     file_size = Column(Integer, nullable=False)

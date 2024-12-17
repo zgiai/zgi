@@ -6,7 +6,7 @@ from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.database import get_db
+from app.core.database import get_db, get_sync_db
 from app.features.organizations.models import OrganizationMember
 from app.features.users.models import User
 from app.features.auth.service import AuthService, get_auth_service
@@ -31,7 +31,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     return encoded_jwt
 
 async def get_current_user(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_sync_db),
     token: str = Depends(oauth2_scheme)
 ) -> User:
     credentials_exception = HTTPException(
@@ -74,7 +74,7 @@ async def get_api_key(credentials: HTTPAuthorizationCredentials = Security(secur
 
 def require_super_admin(
     token: str = Depends(oauth2_scheme),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_sync_db)
 ) -> User:
     """Require super admin access"""
     auth_service = AuthService(db)

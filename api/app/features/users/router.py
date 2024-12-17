@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from app.core.deps import get_db, get_current_user
+from app.core.database import get_sync_db
+from app.core.deps import get_current_user
 from app.core.cache import get_cache
 from app.core.email import get_email_service
 from app.core.security import verify_token
@@ -18,7 +19,7 @@ from app.features.users.schemas import (
 from app.features.users.service import UserService
 
 def get_user_service(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_sync_db),
     cache=Depends(get_cache),
     email_service=Depends(get_email_service),
 ) -> UserService:
@@ -30,7 +31,7 @@ router = APIRouter(prefix="/v1", tags=["users"])
 @router.get("/users/me", response_model=UserProfile)
 async def get_current_user_profile(
     current_user=Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_sync_db),
     cache=Depends(get_cache),
     email_service=Depends(get_email_service),
 ):
@@ -46,7 +47,7 @@ async def get_current_user_profile(
 async def update_user_profile(
     update_data: UserProfileUpdate,
     current_user=Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_sync_db),
     cache=Depends(get_cache),
     email_service=Depends(get_email_service),
 ):
@@ -59,7 +60,7 @@ async def update_user_profile(
 async def update_user_preferences(
     preferences: UserPreferences,
     current_user=Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_sync_db),
     cache=Depends(get_cache),
     email_service=Depends(get_email_service),
 ):
@@ -71,7 +72,7 @@ async def update_user_preferences(
 @router.post("/users/reset-password/request")
 async def request_password_reset(
     data: PasswordResetRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_sync_db),
     cache=Depends(get_cache),
     email_service=Depends(get_email_service),
 ):
@@ -86,7 +87,7 @@ async def request_password_reset(
 @router.post("/users/reset-password/confirm")
 async def confirm_password_reset(
     reset_data: PasswordResetConfirm,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_sync_db),
     cache=Depends(get_cache),
     email_service=Depends(get_email_service),
 ):
@@ -162,7 +163,7 @@ async def confirm_password_reset(
 @router.post("/users/verify-email/request")
 async def request_email_verification(
     current_user=Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_sync_db),
     cache=Depends(get_cache),
     email_service=Depends(get_email_service),
 ):
@@ -180,7 +181,7 @@ async def request_email_verification(
 async def confirm_email_verification(
     verification_data: EmailVerificationRequest,
     current_user=Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_sync_db),
     cache=Depends(get_cache),
     email_service=Depends(get_email_service),
 ):
@@ -199,7 +200,7 @@ async def list_users(
     skip: int = Query(0, ge=0),
     limit: int = Query(10, ge=1, le=100),
     current_user=Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_sync_db),
     cache=Depends(get_cache),
     email_service=Depends(get_email_service),
 ):
@@ -221,7 +222,7 @@ async def list_users(
 async def deactivate_user(
     user_id: int,
     current_user=Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_sync_db),
     cache=Depends(get_cache),
     email_service=Depends(get_email_service),
 ):

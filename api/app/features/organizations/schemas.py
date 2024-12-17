@@ -47,8 +47,8 @@ class OrganizationList(BaseModel):
         from_attributes = True
 
 class RoleBase(BaseModel):
-    name: str
-    description: Optional[str] = None
+    name: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = Field(None, max_length=1000)
 
 class RoleCreate(RoleBase):
     organization_id: int

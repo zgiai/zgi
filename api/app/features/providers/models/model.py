@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, Boolean, JSON, DateTime, Float
+from sqlalchemy import Column, Integer, String, ForeignKey, Boolean, JSON, DateTime, Float, BigInteger
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.core.database import Base
@@ -8,8 +8,8 @@ class ProviderModel(Base):
     """Model details table for storing information about each model"""
     __tablename__ = "model_provider_models"
 
-    id = Column(Integer, primary_key=True, index=True)
-    provider_id = Column(Integer, ForeignKey("model_providers.id"), nullable=False, comment="Foreign key to model_providers.id")
+    id = Column(BigInteger, primary_key=True, index=True)
+    provider_id = Column(BigInteger, ForeignKey("model_providers.id"), nullable=False, comment="Foreign key to model_providers.id")
     model_name = Column(String(255), nullable=False, comment="Model name")
     model_version = Column(String(50), nullable=True, comment="Model version")
     description = Column(String(1000), nullable=True, comment="Brief model description")

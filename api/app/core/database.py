@@ -1,3 +1,4 @@
+from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base, declared_attr, DeclarativeBase
 from sqlalchemy.orm import sessionmaker
@@ -28,9 +29,25 @@ engine = create_async_engine(
     max_overflow=10
 )
 
+sync_engine = create_engine(
+    SQLALCHEMY_DATABASE_URL.replace("+aiomysql", "+pymysql"),
+    echo=True,
+    pool_pre_ping=True,
+    pool_recycle=3600,
+    pool_size=5,
+    max_overflow=10
+)
+
 SessionLocal = sessionmaker(
     engine,
     class_=AsyncSession,
+    expire_on_commit=False,
+    autocommit=False,
+    autoflush=False
+)
+
+SyncSessionLocal = sessionmaker(
+    sync_engine,
     expire_on_commit=False,
     autocommit=False,
     autoflush=False
@@ -76,6 +93,18 @@ async def get_db():
         finally:
             await session.close()
 
+def get_sync_db():
+    """Dependency for synchronous database session management"""
+    with SyncSessionLocal() as session:
+        try:
+            yield session
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
 async def handle_db_operation(operation):
     """
     Wrapper for database operations with error handling
@@ -108,6 +137,7 @@ from app.models.knowledge_base import KnowledgeBase
 __all__ = [
     "Base",
     "get_db",
+    "get_sync_db",
     "handle_db_operation",
     "ChatSession",
     "ChatFile",
