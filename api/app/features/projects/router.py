@@ -3,14 +3,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.core.database import get_db
+from app.core.database import get_sync_db
 from app.core.security import get_current_user
 from app.features.users.models import User
 from app.features.organizations.models import Organization
 from . import schemas, models
 from .schemas import ProjectResponse, ProjectList
 from .service import project_require_admin
-from ..organizations.service import organization_require_admin
+from ..organizations.service import organization_body_require_admin
 from ...core.base import resp_200
 
 router = APIRouter(tags=["projects"])
@@ -18,8 +18,8 @@ router = APIRouter(tags=["projects"])
 @router.post("/create")
 def create_project(
     project_data: schemas.ProjectCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(organization_require_admin)
+    db: Session = Depends(get_sync_db),
+    current_user: User = Depends(organization_body_require_admin)
 ):
     """Create a new project"""
     # Get organization by id
@@ -51,7 +51,7 @@ def list_projects(
     organization_id: int,
     page_size: Optional[int] = 10,
     page_num: Optional[int] = 1,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_sync_db),
     current_user: User = Depends(get_current_user)
 ):
     """List all projects for an organization"""
@@ -72,7 +72,7 @@ def list_projects(
 @router.get("/info")
 def get_project(
     project_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_sync_db),
     current_user: User = Depends(get_current_user)
 ):
     """Get a specific project by UUID"""
@@ -90,7 +90,7 @@ def get_project(
 def update_project(
     project_id: int,
     project_data: schemas.ProjectUpdate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_sync_db),
     current_user: User = Depends(project_require_admin)
 ):
     """Update a project"""
@@ -119,7 +119,7 @@ def update_project(
 @router.delete("/delete")
 def delete_project(
     project_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_sync_db),
     current_user: User = Depends(project_require_admin)
 ):
     """Soft delete a project"""

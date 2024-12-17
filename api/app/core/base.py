@@ -3,7 +3,6 @@ from functools import wraps
 
 from pydantic import BaseModel
 
-# 创建泛型变量
 DataT = TypeVar('DataT')
 
 

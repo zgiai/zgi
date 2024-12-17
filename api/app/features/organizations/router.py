@@ -1,19 +1,20 @@
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Body
+from fastapi import APIRouter, Depends, HTTPException, Query, Body, Request
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from typing import List, Optional, Annotated
 
 from app.core.auth import require_super_admin
 from app.core.base import resp_200
-from app.core.database import get_db
+from app.core.database import get_sync_db
 from app.core.security import create_access_token, verify_token
 from app.core.security.auth import get_current_user
 from app.core.logging.api_logger import logger
 from app.features.organizations.schemas import OrganizationResponse, OrganizationList, MemberList, RoleResponse, \
     RoleBase, RoleResponseBase
-from app.features.organizations.service import organization_require_member_admin, organization_require_admin
+from app.features.organizations.service import organization_require_member_admin, organization_body_require_admin, \
+    organization_params_require_admin, role_params_require_admin
 from app.features.users.models import User
 from app.features.organizations.models import Organization, OrganizationMember, OrganizationRole, Role, \
     organization_member_roles
@@ -25,7 +26,7 @@ router = APIRouter(tags=["organizations"])
 def create_organization(
     org_data: schemas.OrganizationCreate,
     current_user: User = Depends(require_super_admin),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_sync_db)
 ):
     """Create a new organization"""
     org = Organization(
@@ -52,7 +53,7 @@ def list_organizations(
     page_size: Optional[int] = 10,
     page_num: Optional[int] = 1,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_sync_db)
 ):
     """List organizations for current user"""
     query = db.query(Organization).filter(Organization.is_active == True)
@@ -68,7 +69,7 @@ def list_organizations(
 def get_organization(
     organization_id: int,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_sync_db)
 ):
     """Get organization details"""
     org = (
@@ -86,8 +87,8 @@ def get_organization(
 def update_organization(
     organization_id: int,
     org_data: schemas.OrganizationUpdate,
-    current_user: User = Depends(organization_require_admin),
-    db: Session = Depends(get_db)
+    current_user: User = Depends(organization_params_require_admin),
+    db: Session = Depends(get_sync_db)
 ):
     """Update organization details"""
     # First check if user is a member of the organization
@@ -125,7 +126,7 @@ def update_organization(
 @router.delete("/delete")
 def delete_organization(
         organization_id: int,
-        db: Session = Depends(get_db),
+        db: Session = Depends(get_sync_db),
         current_user: User = Depends(require_super_admin)
 ):
     """Soft delete a project"""
@@ -153,7 +154,7 @@ def delete_organization(
 @router.post("/set_admins")
 def set_admins(organization_id: Annotated[int, Body(embed=True)],
                user_ids: Annotated[List[int], Body(embed=True)],
-               db: Session = Depends(get_db),
+               db: Session = Depends(get_sync_db),
                current_user: User = Depends(require_super_admin)):
     """Set admins for an organization"""
     for user_id in user_ids:
@@ -186,8 +187,8 @@ def set_admins(organization_id: Annotated[int, Body(embed=True)],
 @router.post("/set_members")
 def set_members(organization_id: Annotated[int, Body(embed=True)],
                 user_ids: Annotated[List[int], Body(embed=True)],
-                db: Session = Depends(get_db),
-                current_user: User = Depends(organization_require_admin)):
+                db: Session = Depends(get_sync_db),
+                current_user: User = Depends(organization_body_require_admin)):
     """Set members for an organization"""
     for user_id in user_ids:
         org = db.query(Organization).filter(Organization.id == organization_id).first()
@@ -217,8 +218,8 @@ def set_members(organization_id: Annotated[int, Body(embed=True)],
 
 @router.post("/invite")
 def create_invitation(organization_id: Annotated[int, Body(embed=True)],
-                      db: Session = Depends(get_db),
-                      current_user: User = Depends(organization_require_admin)):
+                      db: Session = Depends(get_sync_db),
+                      current_user: User = Depends(organization_body_require_admin)):
     """Create an invitation for an organization"""
     expires_delta = timedelta(minutes=30)
     expires_at = datetime.now() + expires_delta
@@ -227,7 +228,7 @@ def create_invitation(organization_id: Annotated[int, Body(embed=True)],
 
 @router.post("/accept_invite")
 def accept_invite(invite_token: Annotated[str, Body(embed=True)],
-                  db: Session = Depends(get_db),
+                  db: Session = Depends(get_sync_db),
                   current_user: User = Depends(get_current_user)):
     decoded_token = verify_token(invite_token)
     if not decoded_token:
@@ -249,11 +250,14 @@ def accept_invite(invite_token: Annotated[str, Body(embed=True)],
 
 @router.post("/roles/create")
 def create_role(
-    role_data: schemas.RoleCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(organization_require_admin)
+    request: Request,
+    role_data: schemas.RoleCreate = Body(...),
+    db: Session = Depends(get_sync_db),
+    current_user: User = Depends(organization_body_require_admin)
 ):
     """Create a new role"""
+    raw_body = request.body()
+    print(f"Received raw body: {raw_body}")
     existing_role = db.query(Role).filter(
         Role.organization_id == role_data.organization_id,
         Role.name == role_data.name).first()
@@ -275,7 +279,7 @@ def list_roles(
     organization_id: Optional[int] = None,
     page_size: Optional[int] = 10,
     page_num: Optional[int] = 1,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_sync_db),
     current_user: User = Depends(get_current_user)
 ):
     """List roles"""
@@ -291,7 +295,7 @@ def list_roles(
 @router.get("/roles/info")
 def get_role(
     role_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_sync_db),
     current_user: User = Depends(get_current_user)
 ):
     """Get role details"""
@@ -304,8 +308,8 @@ def get_role(
 def update_role(
     role_id: int,
     role_data: schemas.RoleUpdate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_super_admin)
+    db: Session = Depends(get_sync_db),
+    current_user: User = Depends(role_params_require_admin)
 ):
     """Update role details"""
     role = db.query(Role).filter(Role.id == role_id).first()
@@ -329,8 +333,8 @@ def update_role(
 @router.delete("/roles/delete")
 def delete_role(
     role_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_super_admin)
+    db: Session = Depends(get_sync_db),
+    current_user: User = Depends(role_params_require_admin)
 ):
     """Delete a role"""
     role = db.query(Role).filter(Role.id == role_id).first()
@@ -354,7 +358,7 @@ def delete_role(
 @router.post("/members/update_roles")
 def bind_role_to_member(member_id: Annotated[int, Body(embed=True)],
                         role_ids: Annotated[List[int], Body(embed=True)],
-                        db: Session = Depends(get_db),
+                        db: Session = Depends(get_sync_db),
                         current_user: User = Depends(organization_require_member_admin)
 ):
     """Bind a role to an organization member"""
@@ -391,7 +395,7 @@ def list_members(
     organization_id: int,
     page_size: Optional[int] = 10,
     page_num: Optional[int] = 1,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_sync_db),
     current_user: User = Depends(get_current_user)):
     """List all members for an organization"""
     org = db.query(Organization).filter(Organization.id == organization_id).first()

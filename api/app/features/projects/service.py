@@ -4,7 +4,7 @@ from fastapi import Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.auth import get_current_user
-from app.core.database import get_db
+from app.core.database import get_db, get_sync_db
 from app.features import Project, APIKey
 from app.features.organizations.models import OrganizationMember
 from app.features.projects.models import ProjectStatus
@@ -13,7 +13,7 @@ from app.features.users.models import User
 def project_require_admin(
         project_id: int,
         current_user: User = Depends(get_current_user),
-        db: Session = Depends(get_db)
+        db: Session = Depends(get_sync_db)
 ) -> User:
     """Require project access"""
     project = db.query(Project).filter(
@@ -37,7 +37,7 @@ def project_require_admin(
 def project_require_member(
         project_id: int,
         current_user: User = Depends(get_current_user),
-        db: Session = Depends(get_db)
+        db: Session = Depends(get_sync_db)
 ) -> User:
     """Require project access"""
     project = db.query(Project).filter(

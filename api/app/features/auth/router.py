@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 import logging
 
 from app.core.base import resp_200
-from app.core.database import get_db
+from app.core.database import get_sync_db
 from app.core.auth import require_super_admin
 from app.features.auth.service import AuthService, get_auth_service
 from app.features.auth.schemas import (
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1", tags=["auth"])
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="v1/token")
 
-def get_auth_service(db: Session = Depends(get_db)) -> AuthService:
+def get_auth_service(db: Session = Depends(get_sync_db)) -> AuthService:
     return AuthService(db)
 
 def get_current_user(
@@ -67,7 +67,7 @@ def login(
 def register(
     user_data: UserCreate,
     auth_service: AuthService = Depends(get_auth_service),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_sync_db)
 ):
     """Register a new user"""
     try:
@@ -111,7 +111,7 @@ def list_users(
                org_id: Annotated[List[int], Query()] = None,
                role_id: Annotated[List[int], Query()] = None,
                current_user: User = Depends(require_super_admin),
-               db: Session = Depends(get_db)
+               db: Session = Depends(get_sync_db)
 ):
     """List all users (admin only)"""
     query = db.query(User)
@@ -129,7 +129,7 @@ def list_users(
 def get_user(
     user_id: int,
     current_user: User = Depends(require_super_admin),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_sync_db)
 ):
     """Get user by ID (admin only)"""
     user = db.query(User).filter(User.id == user_id).first()
