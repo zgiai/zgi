@@ -1,5 +1,5 @@
 # Build stage
-FROM python:3.9-slim as builder
+FROM python:3.11-slim as builder
 
 # Install build tools and dependencies
 RUN apt-get update && apt-get install -y \
@@ -22,7 +22,7 @@ RUN python -m venv /opt/venv && \
     pip install --no-cache-dir -r requirements.txt
 
 # Runtime stage
-FROM python:3.9-slim
+FROM python:3.11-slim
 
 # Copy virtual environment
 COPY --from=builder /opt/venv /opt/venv
@@ -41,4 +41,4 @@ ENV PATH="/opt/venv/bin:$PATH"
 EXPOSE 7001
 
 # Run application
-CMD ["python", "main.py"]
+CMD ["python", "run.py"]
