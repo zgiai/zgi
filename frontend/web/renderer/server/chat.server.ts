@@ -1,6 +1,5 @@
 import { API_KEY } from "@/constants";
-import { http, API_CONFIG } from "@/lib/http";
-import type { ChatMessage, Role } from "@/types/chat";
+import { API_CONFIG } from "@/lib/http";
 
 /**
  * Send messages and get real-time response stream
@@ -34,7 +33,7 @@ export const streamChatCompletions = async (
 		},
 		body: JSON.stringify({
 			...options,
-			model: options?.model || "gpt-4-vision-preview",
+			model: options?.model || "gpt-4o",
 			messages,
 			stream: true,
 			temperature: options?.temperature || 1,

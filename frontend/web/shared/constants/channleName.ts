@@ -1,13 +1,12 @@
-/** 主进程发出的通知事件 */
+/** Notification events emitted by the main process */
 export const INVOKE_CHANNLE = {
-  /** 获取聊天记录 */
-  loadChats: 'load-chats',
-  /** 保存聊天记录 */
-  saveChats: 'save-chats',
-}
+	/** Get chat history */
+	loadChats: "load-chats",
+	/** Save chat history */
+	saveChats: "save-chats",
+};
 
-/** 渲染进程发出的通知，监听回调事件 */
+/** Notifications from the renderer process, listening for callback events */
 export const RECEIVE_CHANNLE = {
-  /** 更新配置文件 */
-  demo: 'demo',
-}
+	demo: "demo",
+};
