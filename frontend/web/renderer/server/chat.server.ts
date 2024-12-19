@@ -1,5 +1,7 @@
 import { API_KEY } from "@/constants";
 import { API_CONFIG } from "@/lib/http";
+import { StreamChatMode } from "@/types/chat";
+import ollama from "ollama/dist/browser";
 
 /**
  * Send messages and get real-time response stream
@@ -24,8 +26,8 @@ export const streamChatCompletions = async (
 	params: StreamChatCompletionsParams,
 ) => {
 	const { messages, ...options } = params;
-
-	const response = await fetch(`${API_CONFIG.COMMON}/v1/chat/completions`, {
+	const fetchUrl = `${API_CONFIG.COMMON}/v1/chat/completions`;
+	const response = await fetch(fetchUrl, {
 		method: "POST",
 		headers: {
 			"Content-Type": "application/json",
@@ -44,6 +46,16 @@ export const streamChatCompletions = async (
 	if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
 	const reader = response.body?.getReader();
 	if (!reader) throw new Error("No reader available");
-
 	return reader;
+};
+
+export const localStreamChatCompletions = async (
+	data: Pick<StreamChatCompletionsParams, "messages" | "model">,
+) => {
+	const response = await ollama.chat({
+		model: data?.model || "llama2-chinese",
+		messages: [{ role: "user", content: "Why is the sky blue?" }],
+		stream: true,
+	});
+	return response;
 };

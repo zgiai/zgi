@@ -1,4 +1,4 @@
-import { useChatStore } from "@/store/chat.store";
+import { useChatStore } from "@/store/chatStore";
 import { Bot, FileText, User } from "lucide-react";
 import { ImageIcon } from "lucide-react";
 import React, { useEffect, useRef } from "react";
