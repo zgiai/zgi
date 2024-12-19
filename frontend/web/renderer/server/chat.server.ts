@@ -1,6 +1,5 @@
 import { API_KEY } from "@/constants";
 import { API_CONFIG } from "@/lib/http";
-import { StreamChatMode } from "@/types/chat";
 import ollama from "ollama/dist/browser";
 
 /**
@@ -54,7 +53,7 @@ export const localStreamChatCompletions = async (
 ) => {
 	const response = await ollama.chat({
 		model: data?.model || "llama2-chinese",
-		messages: [{ role: "user", content: "Why is the sky blue?" }],
+		messages: data?.messages,
 		stream: true,
 	});
 	return response;
