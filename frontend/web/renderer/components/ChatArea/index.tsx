@@ -335,8 +335,7 @@ const MessageItem = ({ message, style }) => {
 
 // Chat area component
 const ChatArea = () => {
-  const { currentChatId, chatHistories, loadChatsFromDisk, messageStreamingMap, isLoadingMap } =
-    useChatStore()
+  const { currentChatId, chatHistories, messageStreamingMap, isLoadingMap } = useChatStore()
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const currentChat = chatHistories.find((chat) => chat.id === currentChatId)
   const streamingMessage = messageStreamingMap[currentChatId || '']
@@ -364,10 +363,6 @@ const ChatArea = () => {
     const { scrollTop, clientHeight, scrollHeight } = messagesEndRef.current || ({} as any)
     setIsAtBottom(scrollTop + clientHeight >= scrollHeight)
   }
-
-  useEffect(() => {
-    loadChatsFromDisk()
-  }, [])
 
   useEffect(() => {
     if (currentChatId || messages.length > 0 || streamingMessage) {

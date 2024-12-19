@@ -1,21 +1,11 @@
 import { useChatStore } from '@/store/chatStore'
-import type { ChatMessage } from '@/types/chat'
-import { ChevronDown, FileText, LayoutGrid, Maximize, Send, Settings } from 'lucide-react'
+import { FileText, LayoutGrid, Maximize, Send, Settings } from 'lucide-react'
 import React from 'react'
 import ModelSelector from '../ModelSelector'
 
 const AreaBottom = () => {
-  const {
-    isLoadingMap,
-    currentChatId,
-    models,
-    selectedModel,
-    setSelectedModel,
-    fileInputRef,
-    inputMessage,
-    attachments,
-    handleSend,
-  } = useChatStore()
+  const { isLoadingMap, currentChatId, fileInputRef, inputMessage, attachments, handleSend } =
+    useChatStore()
 
   const isLoading = currentChatId ? isLoadingMap[currentChatId] : false
 
