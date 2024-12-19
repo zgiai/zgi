@@ -1,47 +1,16 @@
 import { getStorageAdapter } from '@/lib/storageAdapter'
-import { localStreamChatCompletions } from '@/server/chat.server'
+import { localStreamChatCompletions, streamChatCompletions } from '@/server/chat.server'
 import { type ChatHistory, type ChatMessage, StreamChatMode } from '@/types/chat'
 import { debounce } from 'lodash'
 import React from 'react'
 import { create } from 'zustand'
 import { handleStreamResponse } from './handleStreamResponse'
-
-/**
- * Chat state management interface
- * @interface ChatStore
- */
-export interface ChatStore {
-  currentChatId: string | null // Currently selected chat ID
-  chatHistories: ChatHistory[] // All chat history records
-  messageStreamingMap: Record<string, string> // Streaming message status for each chat
-  isLoadingMap: Record<string, boolean> // Loading status for each chat
-  setCurrentChatId: (id: string | null) => void // Set current chat ID
-  createChat: () => void // Create new chat
-  deleteChat: (id: string) => void // Delete chat
-  updateChatMessages: (chatId: string, messages: ChatMessage[]) => void // Update chat messages
-  updateChatTitle: (chatId: string, title: string) => void // Update chat title
-  clearAllChats: () => void // Clear all chats
-  loadChatsFromDisk: () => void // Load chats from disk
-  saveChatsToDisk: () => void // Save chats to disk
-  sendMessage: (message: ChatMessage) => void // Send message
-  updateChatTitleByContent: (chatId: string) => void // Add new method
-  isFirstOpen: boolean // Flag indicating if it's first open
-  updateChatTitleByFirstMessage: (chatId: string) => void // Add new method
-  models: Record<string, any>[] // Array of available models
-  selectedModel: Record<string, any>
-  setSelectedModel: (model: string) => void
-  fileInputRef: React.RefObject<HTMLInputElement>
-  attachments: File[] // New attachment state
-  inputMessage: string // New message state
-  setInputMessage: (msg: string) => void // Function to set message
-  setAttachments: (files: File[]) => void // Function to set attachments
-  handleSend: () => Promise<void> // Function to send message
-}
+import { getLoclOllamaModels } from './ollama'
+import type { ChatStore } from './types'
 
 const models = [
-  { id: 'gpt-4-turbo', name: 'GPT 4-Turbo', usage: '200k', type: 'default' },
-  { id: 'gpt-3.5-turbo', name: 'GPT 3.5-Turbo', usage: '200k', type: 'free' },
-  { id: StreamChatMode.ollama, name: 'ollama', usage: '200k', type: 'free' },
+  { model: 'gpt-4-turbo', name: 'GPT 4-Turbo', usage: '200k', type: 'default' as const },
+  { model: 'gpt-3.5-turbo', name: 'GPT 3.5-Turbo', usage: '200k', type: 'free' as const },
 ]
 
 /**
@@ -122,7 +91,9 @@ export const useChatStore = create<ChatStore>()((set, get) => {
     messageStreamingMap: {},
     isLoadingMap: {},
     isFirstOpen: true, // Add first open flag
+    refreshModelsLoading: false,
     models: models, // Add available models here
+    ollamaModels: [],
     selectedModel: models[0], // Default selected model
     setSelectedModel: (model) => set({ selectedModel: model }), // Function to update selected model
     fileInputRef: React.createRef<HTMLInputElement>(),
@@ -130,6 +101,13 @@ export const useChatStore = create<ChatStore>()((set, get) => {
     inputMessage: '', // Initialize message state
     setInputMessage: (msg) => set({ inputMessage: msg }), // Set message
     setAttachments: (files) => set({ attachments: files }), // Set attachments
+
+    init: async () => {
+      const { loadChatsFromDisk } = get()
+      loadChatsFromDisk()
+      getLoclOllamaModels({ set })
+    },
+
     handleSend: async () => {
       const { inputMessage, attachments, sendMessage, isLoadingMap, currentChatId } = get()
       const isLoading = currentChatId ? isLoadingMap[currentChatId] : false
@@ -310,7 +288,7 @@ export const useChatStore = create<ChatStore>()((set, get) => {
      * @param message User message
      */
     sendMessage: async (message: ChatMessage) => {
-      const { currentChatId } = get()
+      const { currentChatId, selectedModel } = get()
       let chatId = currentChatId
 
       // Check if already loading
@@ -418,19 +396,33 @@ export const useChatStore = create<ChatStore>()((set, get) => {
               role: message.role,
               content: message.content,
             }
-
+        if (!selectedModel) {
+          set((state) => ({
+            messageStreamingMap: {
+              ...state.messageStreamingMap,
+              [chatId]: 'Please select a model.',
+            },
+          }))
+          return
+        }
         // If this is not a message to skip AI response, send request
         if (!message.skipAIResponse) {
-          // const reader = await streamChatCompletions({
-          // 	messages: [...messagesToSend, currentMessageToSend],
-          // 	stream: true,
-          // 	temperature: 1,
-          // });
-          const res = await localStreamChatCompletions({
-            messages: [...messagesToSend, currentMessageToSend],
-          })
+          let reader
+          if (selectedModel?.type === 'local') {
+            reader = await localStreamChatCompletions({
+              model: selectedModel.model,
+              messages: [...messagesToSend, currentMessageToSend],
+            })
+          } else {
+            reader = await streamChatCompletions({
+              messages: [...messagesToSend, currentMessageToSend],
+              stream: true,
+              temperature: 1,
+            })
+          }
+
           await handleStreamResponse({
-            reader: res,
+            reader,
             chatId,
             messages: newMessages,
             set,
@@ -471,5 +463,17 @@ export const useChatStore = create<ChatStore>()((set, get) => {
 
     updateChatTitleByContent, // Export method
     updateChatTitleByFirstMessage,
+
+    onRefreshModels: async () => {
+      const { models } = get()
+      set({
+        refreshModelsLoading: true,
+      })
+      await getLoclOllamaModels({ set })
+      set({
+        refreshModelsLoading: false,
+        selectedModel: models[0],
+      })
+    },
   }
 })

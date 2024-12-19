@@ -32,7 +32,6 @@ const InputArea = () => {
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || [])
     if (files.length > 0) {
-      console.log('Selected files:', files)
       setAttachments((prev) => [...prev, ...files])
     }
     if (fileInputRef.current) {
