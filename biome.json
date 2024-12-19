@@ -1,0 +1,167 @@
+{
+	"formatter": {
+		"enabled": true,
+		"formatWithErrors": false,
+		"indentStyle": "space",
+		"indentWidth": 2,
+		"lineEnding": "lf",
+		"lineWidth": 100,
+		"attributePosition": "auto",
+		"ignore": [
+			"**/*.svg",
+			"**/package.json",
+			"**/.umi",
+			"**/.umi-production",
+			"**/AUTHORS.txt",
+			"**/dist/",
+			"**/coverage/",
+			"**/CNAME",
+			"**/LICENSE",
+			"**/yarn.lock",
+			"**/netlify.toml",
+			"**/yarn-error.log",
+			"**/*.sh",
+			"**/*.snap",
+			"**/.gitignore",
+			"**/.npmignore",
+			"**/.prettierignore",
+			"**/.DS_Store",
+			"**/.editorconfig",
+			"**/.eslintignore",
+			"**/*.yml"
+		]
+	},
+	"linter": {
+		"rules": {
+			"recommended": false,
+			"a11y": {
+				"useKeyWithClickEvents": "off",
+				"useValidAnchor": "off"
+			},
+			"complexity": {
+				"noBannedTypes": "warn",
+				"noExtraBooleanCast": "off",
+				"noMultipleSpacesInRegularExpressionLiterals": "error",
+				"noStaticOnlyClass": "off",
+				"noUselessCatch": "error",
+				"noUselessConstructor": "error",
+				"noUselessTypeConstraint": "off",
+				"noWith": "error",
+				"useLiteralKeys": "warn",
+				"noUselessTernary": "error",
+				"useOptionalChain": "off"
+			},
+			"correctness": {
+				"noUnusedImports": "off",
+				"noConstAssign": "error",
+				"noConstantCondition": "error",
+				"noEmptyCharacterClassInRegex": "error",
+				"noEmptyPattern": "error",
+				"noGlobalObjectCalls": "error",
+				"noInnerDeclarations": "error",
+				"noInvalidConstructorSuper": "error",
+				"noInvalidUseBeforeDeclaration": "error",
+				"noNewSymbol": "error",
+				"noNonoctalDecimalEscape": "error",
+				"noPrecisionLoss": "off",
+				"noSelfAssign": "error",
+				"noSetterReturn": "error",
+				"noUndeclaredVariables": "off",
+				"noUnreachable": "error",
+				"noUnreachableSuper": "error",
+				"noUnsafeFinally": "error",
+				"noUnsafeOptionalChaining": "off",
+				"noUnusedLabels": "error",
+				"noUnusedVariables": "warn",
+				"useExhaustiveDependencies": "off",
+				"useHookAtTopLevel": "error",
+				"useIsNan": "error",
+				"useValidForDirection": "error",
+				"useYield": "error",
+				"noSwitchDeclarations": "off"
+			},
+			"style": {
+				"useImportType": "warn",
+				"noDefaultExport": "off",
+				"noInferrableTypes": "off",
+				"noNamespace": "warn",
+				"noNonNullAssertion": "off",
+				"noParameterAssign": "error",
+				"useAsConstAssertion": "off",
+				"useBlockStatements": "off",
+				"useConsistentArrayType": "error",
+				"useDefaultParameterLast": "warn",
+				"useEnumInitializers": "off",
+				"useForOf": "off",
+				"useFragmentSyntax": "off",
+				"useLiteralEnumMembers": "off",
+				"useShorthandFunctionType": "off"
+			},
+			"suspicious": {
+				"noArrayIndexKey": "warn",
+				"noAsyncPromiseExecutor": "off",
+				"noCatchAssign": "error",
+				"noClassAssign": "error",
+				"noCompareNegZero": "error",
+				"noConfusingVoidType": "off",
+				"noControlCharactersInRegex": "error",
+				"noDebugger": "error",
+				"noDuplicateCase": "error",
+				"noDuplicateClassMembers": "error",
+				"noDuplicateObjectKeys": "error",
+				"noDuplicateParameters": "error",
+				"noEmptyBlockStatements": "error",
+				"noExplicitAny": "off",
+				"noExtraNonNullAssertion": "off",
+				"noFallthroughSwitchClause": "error",
+				"noFunctionAssign": "error",
+				"noGlobalAssign": "error",
+				"noImportAssign": "error",
+				"noMisleadingCharacterClass": "error",
+				"noMisleadingInstantiator": "error",
+				"noPrototypeBuiltins": "warn",
+				"noRedeclare": "error",
+				"noShadowRestrictedNames": "error",
+				"noUnsafeDeclarationMerging": "error",
+				"noUnsafeNegation": "error",
+				"useAwait": "off",
+				"useGetterReturn": "error",
+				"useNamespaceKeyword": "off",
+				"useValidTypeof": "error"
+			}
+		},
+		"ignore": [
+			"node_modules/*",
+			"dist/*",
+			"examples/*",
+			"yarn.lock",
+			"package-lock",
+			"yarn-error.log",
+			".eslintrc.js"
+		]
+	},
+	"javascript": {
+		"jsxRuntime": "reactClassic",
+		"formatter": {
+			"jsxQuoteStyle": "double",
+			"quoteProperties": "asNeeded",
+			"semicolons": "asNeeded",
+			"arrowParentheses": "always",
+			"bracketSpacing": true,
+			"bracketSameLine": false,
+			"quoteStyle": "single",
+			"attributePosition": "auto"
+		},
+		"globals": ["process"]
+	},
+	"json": {
+		"parser": {
+			"allowComments": true
+		}
+	},
+	"overrides": [
+		{
+			"include": [".prettierrc"]
+		}
+	]
+}
