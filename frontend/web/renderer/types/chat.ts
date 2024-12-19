@@ -73,3 +73,8 @@ export interface ChatHistory {
 	/** Favorite status */
 	favorite?: boolean;
 }
+
+export enum StreamChatMode {
+	commonChat = "commonChat",
+	ollama = "ollama",
+}

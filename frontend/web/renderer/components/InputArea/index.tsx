@@ -1,4 +1,4 @@
-import { useChatStore } from "@/store/chat.store";
+import { useChatStore } from "@/store/chatStore";
 import type { ChatMessage } from "@/types/chat";
 import {
 	ChevronDown,

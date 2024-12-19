@@ -1,4 +1,4 @@
-import { useChatStore } from "@/store/chat.store";
+import { useChatStore } from "@/store/chatStore";
 import { debounce } from "lodash";
 import { MessageCircle, Plus, Search } from "lucide-react";
 import type React from "react";
