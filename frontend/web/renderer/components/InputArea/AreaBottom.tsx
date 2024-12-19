@@ -2,6 +2,7 @@ import { useChatStore } from '@/store/chatStore'
 import type { ChatMessage } from '@/types/chat'
 import { ChevronDown, FileText, LayoutGrid, Maximize, Send, Settings } from 'lucide-react'
 import React from 'react'
+import ModelSelector from '../ModelSelector'
 
 const AreaBottom = () => {
   const {
@@ -24,17 +25,6 @@ const AreaBottom = () => {
     fileInputRef.current?.click()
   }
 
-  const getModelDescription = (model: string) => {
-    switch (model) {
-      case 'Chat GPT 3.5':
-        return '适合一般对话和问题解答'
-      case 'Chat GPT 4':
-        return '更强大的对话能力，适合复杂问题'
-      default:
-        return ''
-    }
-  }
-
   return (
     <div className="flex justify-between items-center mt-2 text-sm z-10">
       <div className="flex items-center gap-4">
@@ -49,19 +39,7 @@ const AreaBottom = () => {
         </button>
 
         {/* Model selection dropdown */}
-        <div className="mb-2 relative">
-          <select
-            value={selectedModel}
-            onChange={(e) => setSelectedModel(e.target.value)}
-            className="border border-gray-300 rounded p-2 w-full bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 h-10"
-          >
-            {models.map((model) => (
-              <option key={model} value={model}>
-                {model} - {getModelDescription(model)}
-              </option>
-            ))}
-          </select>
-        </div>
+        <ModelSelector />
 
         {/* Content safety protocol link */}
         <div className="text-gray-400 text-xs">
