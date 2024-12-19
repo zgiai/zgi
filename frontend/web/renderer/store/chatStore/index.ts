@@ -27,8 +27,8 @@ export interface ChatStore {
   updateChatTitleByContent: (chatId: string) => void // Add new method
   isFirstOpen: boolean // Flag indicating if it's first open
   updateChatTitleByFirstMessage: (chatId: string) => void // Add new method
-  models: string[] // Array of available models
-  selectedModel: string
+  models: Record<string, any>[] // Array of available models
+  selectedModel: Record<string, any>
   setSelectedModel: (model: string) => void
   fileInputRef: React.RefObject<HTMLInputElement>
   attachments: File[] // New attachment state
@@ -38,7 +38,11 @@ export interface ChatStore {
   handleSend: () => Promise<void> // Function to send message
 }
 
-// Define the configuration interface for stream response handling
+const models = [
+  { id: 'gpt-4-turbo', name: 'GPT 4-Turbo', usage: '200k', type: 'default' },
+  { id: 'gpt-3.5-turbo', name: 'GPT 3.5-Turbo', usage: '200k', type: 'free' },
+  { id: StreamChatMode.ollama, name: 'ollama', usage: '200k', type: 'free' },
+]
 
 /**
  * Create chat state management store
@@ -118,8 +122,8 @@ export const useChatStore = create<ChatStore>()((set, get) => {
     messageStreamingMap: {},
     isLoadingMap: {},
     isFirstOpen: true, // Add first open flag
-    models: ['gpt-4o', 'gpt-3.5'], // Add available models here
-    selectedModel: 'gpt-4o', // Default model
+    models: models, // Add available models here
+    selectedModel: models[0], // Default selected model
     setSelectedModel: (model) => set({ selectedModel: model }), // Function to update selected model
     fileInputRef: React.createRef<HTMLInputElement>(),
     attachments: [], // Initialize attachment state
@@ -132,7 +136,7 @@ export const useChatStore = create<ChatStore>()((set, get) => {
       if (isLoading) return
 
       // Clear input and attachments immediately after sending
-      set({ inputMessage: '', attachments: [] }) // Clear input and attachments
+      set({ inputMessage: '', attachments: [] })
 
       try {
         const messages: ChatMessage[] = []

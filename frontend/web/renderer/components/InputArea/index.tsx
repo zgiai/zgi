@@ -1,6 +1,7 @@
 import { useChatStore } from '@/store/chatStore'
 import type React from 'react'
 import { useEffect } from 'react'
+import ModelSelector from '../ModelSelector'
 import AreaBottom from './AreaBottom'
 
 // Define allowed file types
