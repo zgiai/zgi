@@ -7,6 +7,7 @@ import logging
 from app.core.base import resp_200
 from app.core.database import get_sync_db
 from app.core.auth import require_super_admin
+from app.core.init_data import init_default_organization_data
 from app.features.auth.service import AuthService, get_auth_service
 from app.features.auth.schemas import (
     Token,
@@ -79,6 +80,7 @@ def register(
                 username=user_data.username,
                 password=user_data.password
             )
+            init_default_organization_data(user.id)
         else:
             user = auth_service.register_user(
                 email=user_data.email,
