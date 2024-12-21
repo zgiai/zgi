@@ -20,5 +20,5 @@ class Application(Base):
 
     # Relationships
     owner = relationship("app.features.users.models.User", back_populates="applications")
-    resource_usage = relationship("app.features.usage.models.ResourceUsage", back_populates="application", cascade="all, delete-orphan")
+    resource_usage = relationship("app.features.usage.models.ResourceUsage", back_populates="application")
     # chat_sessions = relationship("app.features.chat.models.ChatSession", back_populates="application", cascade="all, delete-orphan")

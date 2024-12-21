@@ -128,7 +128,7 @@ async def handle_db_operation(operation):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 # Import all models here so that they are registered with SQLAlchemy
-from app.features.chat.models import ChatSession, ChatFile
+from app.features.chat.models import ChatSession, ChatFile, Conversation, ChatMessage
 from app.features.providers.models import Category, Model, Provider
 from app.features.llm_gateway.models import APIKey, UserQuota
 from app.models.knowledge_base import KnowledgeBase
@@ -141,6 +141,8 @@ __all__ = [
     "handle_db_operation",
     "ChatSession",
     "ChatFile",
+    "Conversation",
+    "ChatMessage",
     "Category",
     "Model",
     "Provider",
