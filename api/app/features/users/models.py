@@ -4,7 +4,6 @@ from sqlalchemy.sql import func
 from datetime import datetime
 
 from app.core.database import Base
-from app.features.chat.models import Conversation
 
 class User(Base):
     """User model for authentication and authorization"""
@@ -30,4 +29,3 @@ class User(Base):
     created_projects = relationship("app.features.projects.models.Project", back_populates="creator")
     api_keys = relationship("app.features.api_keys.models.APIKey", back_populates="creator")
     knowledge_bases = relationship("app.models.knowledge_base.KnowledgeBase", back_populates="owner")
-    conversations = relationship("app.features.chat.models.conversation.Conversation", back_populates="user")
