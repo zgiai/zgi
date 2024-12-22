@@ -1,7 +1,7 @@
 import pytest
 from httpx import AsyncClient
 import json
-from ..providers.deepseek_provider import DeepSeekProvider
+from app.features.gateway.providers.deepseek_provider import DeepSeekProvider
 
 @pytest.mark.asyncio
 async def test_deepseek_chat_completion():

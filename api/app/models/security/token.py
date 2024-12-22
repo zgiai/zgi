@@ -3,7 +3,6 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from app.core.database import Base
-from app.features.users.models import User
 
 class Token(Base):
     """Token model for storing refresh tokens"""
@@ -19,4 +18,4 @@ class Token(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
     # Relationships
-    user = relationship(User)
+    user = relationship("User", lazy="joined")
