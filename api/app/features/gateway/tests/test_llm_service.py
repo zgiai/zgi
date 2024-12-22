@@ -1,8 +1,8 @@
 import pytest
 from unittest.mock import AsyncMock, patch
-from app.features.llm_gateway.service.llm_service import LLMService
-from app.features.llm_gateway.providers.openai_provider import OpenAIProvider
-from app.features.llm_gateway.providers.deepseek_provider import DeepSeekProvider
+from app.features.gateway.service.llm_service import LLMService
+from app.features.gateway.providers.openai_provider import OpenAIProvider
+from app.features.gateway.providers.deepseek_provider import DeepSeekProvider
 
 @pytest.fixture
 def mock_openai_provider():
@@ -60,7 +60,7 @@ def mock_deepseek_provider():
 
 @pytest.mark.asyncio
 async def test_create_chat_completion_openai_success(mock_openai_provider):
-    with patch("app.features.llm_gateway.service.llm_service.get_provider", return_value=mock_openai_provider):
+    with patch("app.features.gateway.service.llm_service.get_provider", return_value=mock_openai_provider):
         params = {
             "model": "gpt-3.5-turbo",
             "messages": [{"role": "user", "content": "Hello"}],
@@ -75,7 +75,7 @@ async def test_create_chat_completion_openai_success(mock_openai_provider):
 
 @pytest.mark.asyncio
 async def test_create_chat_completion_deepseek_success(mock_deepseek_provider):
-    with patch("app.features.llm_gateway.service.llm_service.get_provider", return_value=mock_deepseek_provider):
+    with patch("app.features.gateway.service.llm_service.get_provider", return_value=mock_deepseek_provider):
         params = {
             "model": "deepseek-chat",
             "messages": [{"role": "user", "content": "Hello"}],

@@ -130,7 +130,7 @@ async def handle_db_operation(operation):
 # Import all models here so that they are registered with SQLAlchemy
 from app.features.chat.models import ChatSession, ChatFile, Conversation, ChatMessage
 from app.features.providers.models import Category, Model, Provider
-from app.features.llm_gateway.models import APIKey, UserQuota
+from app.features.gateway.models import APIKey, UserQuota
 from app.models.knowledge_base import KnowledgeBase
 
 # Add all models that should be included in migrations
