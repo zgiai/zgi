@@ -7,7 +7,6 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db, get_sync_db
-from app.features import APIKey
 from app.features.organizations.models import OrganizationMember
 from app.features.users.models import User
 from app.features.auth.service import AuthService, get_auth_service
@@ -55,9 +54,7 @@ async def get_current_user(
         raise HTTPException(status_code=400, detail="Inactive user")
     return user
 
-async def get_api_key(credentials: HTTPAuthorizationCredentials = Security(security),
-                      db: Session = Depends(get_sync_db)
-                      ) -> str:
+async def get_api_key(credentials: HTTPAuthorizationCredentials = Security(security)) -> str:
     """Get API key from Authorization header.
     
     Args:
@@ -69,16 +66,11 @@ async def get_api_key(credentials: HTTPAuthorizationCredentials = Security(secur
     Raises:
         HTTPException: If no valid API key is found
     """
-    # if not credentials:
-    #     raise HTTPException(status_code=401, detail="No API key provided")
-    # if not credentials.scheme == "Bearer":
-    #     raise HTTPException(status_code=401, detail="Invalid authentication scheme")
-    # return credentials.credentials
-    # todo get default key, future get key by user project
-    api_key = db.query(APIKey).filter(APIKey.id == 1).one_or_none()
-    if not api_key:
-        raise HTTPException(status_code=401, detail="No API key found")
-    return api_key.key
+    if not credentials:
+        raise HTTPException(status_code=401, detail="No API key provided")
+    if not credentials.scheme == "Bearer":
+        raise HTTPException(status_code=401, detail="Invalid authentication scheme")
+    return credentials.credentials
 
 def require_super_admin(
     token: str = Depends(oauth2_scheme),
