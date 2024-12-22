@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import patch
 from httpx import AsyncClient
-from app.features.llm_gateway.service.llm_service import LLMService
+from app.features.gateway.service.llm_service import LLMService
 
 @pytest.mark.asyncio
 async def test_create_chat_completion_endpoint(async_client: AsyncClient):
