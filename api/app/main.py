@@ -5,9 +5,11 @@ from fastapi.exceptions import RequestValidationError
 from sqlalchemy.exc import SQLAlchemyError
 import traceback
 import logging
+import uvicorn
 from app.core.logging.api_logger import APILoggingMiddleware
 from app.core.database import Base, engine
 from app.core.error_handlers import setup_error_handlers
+from app.core.config import settings
 
 from app.features.auth.router import router as auth_router
 from app.features.organizations.router import router as org_router
@@ -164,3 +166,11 @@ def root():
         "version": "1.0.0",
         "status": "ok"
     }
+
+if __name__ == "__main__":
+    uvicorn.run(
+        "app.main:app",
+        host=settings.HOST,
+        port=settings.PORT,
+        reload=True
+    )

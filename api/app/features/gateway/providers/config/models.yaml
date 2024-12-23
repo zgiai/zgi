@@ -1,0 +1,171 @@
+gpt-4:
+  name: "GPT-4"
+  provider: "openai"
+  model_name: "gpt-4"
+  context_length: 8192
+  supported_features:
+    - "chat"
+    - "function_calling"
+  metadata:
+    description: "Most capable GPT-4 model"
+    pricing:
+      input: 0.03
+      output: 0.06
+    release_date: "2023-03-14"
+
+gpt-3.5-turbo:
+  name: "GPT-3.5 Turbo"
+  provider: "openai"
+  model_name: "gpt-3.5-turbo"
+  context_length: 4096
+  supported_features:
+    - "chat"
+    - "function_calling"
+  metadata:
+    description: "Most capable GPT-3.5 model"
+    pricing:
+      input: 0.0015
+      output: 0.002
+    release_date: "2022-11-30"
+
+deepseek-chat:
+  name: "DeepSeek Chat"
+  provider: "deepseek"
+  model_name: "deepseek-chat-v1"
+  context_length: 8192
+  supported_features:
+    - "chat"
+  metadata:
+    description: "DeepSeek's chat model"
+    pricing:
+      input: 0.002
+      output: 0.002
+    release_date: "2023-10-01"
+
+deepseek-coder:
+  name: "DeepSeek Coder"
+  provider: "deepseek"
+  model_name: "deepseek-coder-v1"
+  context_length: 8192
+  supported_features:
+    - "chat"
+    - "code"
+  metadata:
+    description: "DeepSeek's code-specialized model"
+    pricing:
+      input: 0.002
+      output: 0.002
+    release_date: "2023-10-01"
+
+claude-3-opus:
+  name: "Claude 3 Opus"
+  provider: "anthropic"
+  model_name: "claude-3-opus-20240229"
+  context_length: 200000
+  supported_features:
+    - "chat"
+    - "function_calling"
+    - "code"
+    - "math"
+    - "vision"
+  metadata:
+    description: "Most capable Claude model, with superior performance across tasks"
+    pricing:
+      input: 0.015
+      output: 0.075
+    release_date: "2024-02-29"
+
+claude-3-sonnet:
+  name: "Claude 3 Sonnet"
+  provider: "anthropic"
+  model_name: "claude-3-sonnet-20240229"
+  context_length: 200000
+  supported_features:
+    - "chat"
+    - "function_calling"
+    - "code"
+    - "math"
+    - "vision"
+  metadata:
+    description: "Balanced model offering strong performance and faster responses"
+    pricing:
+      input: 0.003
+      output: 0.015
+    release_date: "2024-02-29"
+
+claude-3-haiku:
+  name: "Claude 3 Haiku"
+  provider: "anthropic"
+  model_name: "claude-3-haiku-20240229"
+  context_length: 200000
+  supported_features:
+    - "chat"
+    - "function_calling"
+    - "code"
+    - "math"
+    - "vision"
+  metadata:
+    description: "Fastest and most compact Claude model"
+    pricing:
+      input: 0.0005
+      output: 0.0025
+    release_date: "2024-02-29"
+
+claude-2.1:
+  name: "Claude 2.1"
+  provider: "anthropic"
+  model_name: "claude-2.1"
+  context_length: 200000
+  supported_features:
+    - "chat"
+    - "function_calling"
+    - "code"
+    - "math"
+  metadata:
+    description: "Previous generation Claude model"
+    pricing:
+      input: 0.008
+      output: 0.024
+    release_date: "2023-11-21"
+
+claude-2.0:
+  name: "Claude 2.0"
+  provider: "anthropic"
+  model_name: "claude-2.0"
+  context_length: 100000
+  supported_features:
+    - "chat"
+    - "function_calling"
+    - "code"
+    - "math"
+  metadata:
+    description: "Previous generation Claude model"
+    pricing:
+      input: 0.008
+      output: 0.024
+    release_date: "2023-07-11"
+
+claude-instant-1.2:
+  name: "Claude Instant 1.2"
+  provider: "anthropic"
+  model_name: "claude-instant-1.2"
+  context_length: 100000
+  supported_features:
+    - "chat"
+    - "function_calling"
+    - "code"
+  metadata:
+    description: "Fast and cost-effective Claude model"
+    pricing:
+      input: 0.00163
+      output: 0.00551
+    release_date: "2023-08-09"
+
+# Provider configurations
+providers:
+  openai:
+    base_url: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+  anthropic:
+    base_url: ${ANTHROPIC_BASE_URL:-https://api.anthropic.com}
+  deepseek:
+    base_url: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com/v1}

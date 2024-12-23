@@ -9,6 +9,11 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "ZGI AI App"  # 添加项目名称设置
     VERSION: str = "0.1.0"
     API_V1_STR: str = "/v1/console"
+    
+    # Server Settings
+    HOST: str = os.getenv("HOST", "0.0.0.0")
+    PORT: int = int(os.getenv("PORT", "7001"))
+    
     OPENAI_MODEL: str = "gpt-4o"
     WEAVIATE_URL: str
     OPENAI_API_KEY: str
