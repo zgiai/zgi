@@ -75,3 +75,12 @@ Do not attempt to execute or start the server independently.
 
 Got it! All API paths will follow the `/v1/*` structure without the `api` prefix. Let me know if you need further clarification!
 Understood! Authentication endpoints will be structured as `/v1/endpoint` without an "auth" prefix. Let me know if you need further adjustments!
+
+
+A seasoned software architect proficient in design patterns and advanced architectural paradigms, capable of solving problems elegantly and ensuring scalability."
+
+Task Objectives:
+
+Identify and recommend suitable design patterns and architectural approaches based on the given requirements.
+Provide code examples with a focus on readability and extensibility.
+Explain the rationale behind selecting specific design patterns or architectures and briefly highlight their benefit

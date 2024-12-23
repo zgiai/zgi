@@ -1,42 +1,57 @@
-from typing import Dict, Type
+"""Provider registry for managing LLM providers."""
+from typing import Dict, Type, Optional
+from functools import lru_cache
 from .base import BaseProvider
 from .openai_provider import OpenAIProvider
 from .deepseek_provider import DeepSeekProvider
+from .anthropic_provider import AnthropicProvider
 
-# Registry mapping models to their provider implementation
-MODEL_REGISTRY: Dict[str, Dict[str, str | Type[BaseProvider]]] = {
-    # OpenAI Models
-    "gpt-4": {"provider": "openai", "handler": OpenAIProvider},
-    "gpt-3.5-turbo": {"provider": "openai", "handler": OpenAIProvider},
+class ProviderRegistry:
+    """Registry for managing LLM providers."""
     
-    # DeepSeek Models
-    "deepseek-chat": {"provider": "deepseek", "handler": DeepSeekProvider, "model": "deepseek-chat-v1"},
-    "deepseek-coder": {"provider": "deepseek", "handler": DeepSeekProvider, "model": "deepseek-coder-v1"},
-}
+    def __init__(self):
+        """Initialize provider registry."""
+        # Map provider prefixes to provider classes
+        self._provider_mapping = {
+            "gpt": ("openai", OpenAIProvider),
+            "claude": ("anthropic", AnthropicProvider),
+            "deepseek": ("deepseek", DeepSeekProvider)
+        }
+                
+    def get_provider_for_model(self, model_name: str) -> Optional[Dict[str, any]]:
+        """Get provider information for a given model.
+        
+        Args:
+            model_name: Name of the model (e.g., gpt-4, claude-3-opus-20240229)
+            
+        Returns:
+            Provider information if found, None otherwise
+        """
+        # Find matching provider based on model name prefix
+        for prefix, (provider_id, provider_class) in self._provider_mapping.items():
+            if model_name.startswith(prefix):
+                return {
+                    "provider": provider_id,
+                    "class": provider_class
+                }
+        return None
 
-def get_provider(model_name: str, api_key: str, base_url: str | None = None) -> BaseProvider:
-    """
-    Return the appropriate provider handler for a given model name.
+@lru_cache()
+def get_provider_registry() -> ProviderRegistry:
+    """Get singleton instance of provider registry."""
+    return ProviderRegistry()
+
+def get_provider(provider_name: str) -> Optional[Type[BaseProvider]]:
+    """Get provider class by name.
     
     Args:
-        model_name: Name of the model to use
-        api_key: API key for the provider
-        base_url: Optional base URL for the provider API
-    
-    Returns:
-        An instance of the appropriate provider handler
-    
-    Raises:
-        ValueError: If the model is not supported
-    """
-    model_info = MODEL_REGISTRY.get(model_name)
-    if not model_info:
-        raise ValueError(f"Model {model_name} is not supported")
-
-    handler_class = model_info["handler"]
-    
-    # Set default base URL for DeepSeek if not provided
-    if model_info["provider"] == "deepseek" and not base_url:
-        base_url = "https://api.deepseek.com/v1"
+        provider_name: Name of the provider (e.g., openai, anthropic)
         
-    return handler_class(api_key=api_key, base_url=base_url)
+    Returns:
+        Provider class if found, None otherwise
+    """
+    registry = get_provider_registry()
+    for _, (provider_id, provider_class) in registry._provider_mapping.items():
+        if provider_id == provider_name:
+            return provider_class
+    return None
