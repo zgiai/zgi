@@ -1,0 +1,45 @@
+default:  # Default API keys (for development/testing)
+  openai:
+    key_env: "OPENAI_API_KEY"
+    key_prefix: "sk-"
+    key_length: 51
+    validation_rules:
+      - "starts_with:sk-"
+      - "length:51"
+    
+  anthropic:
+    key_env: "ANTHROPIC_API_KEY"
+    key_prefix: "sk-ant-"
+    key_length: 48
+    validation_rules:
+      - "starts_with:sk-ant-"
+      - "length:48"
+    
+  deepseek:
+    key_env: "DEEPSEEK_API_KEY"
+    key_prefix: "sk-"
+    key_length: 32
+    validation_rules:
+      - "starts_with:sk-"
+      - "length:32"
+
+# Example of multiple key configurations for different environments
+environments:
+  production:
+    openai:
+      key_env: "PROD_OPENAI_API_KEY"
+      vault_path: "secrets/prod/openai"  # For HashiCorp Vault or similar
+    anthropic:
+      key_env: "PROD_ANTHROPIC_API_KEY"
+      vault_path: "secrets/prod/anthropic"
+    deepseek:
+      key_env: "PROD_DEEPSEEK_API_KEY"
+      vault_path: "secrets/prod/deepseek"
+      
+  staging:
+    openai:
+      key_env: "STAGING_OPENAI_API_KEY"
+    anthropic:
+      key_env: "STAGING_ANTHROPIC_API_KEY"
+    deepseek:
+      key_env: "STAGING_DEEPSEEK_API_KEY"

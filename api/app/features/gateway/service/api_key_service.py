@@ -1,96 +1,57 @@
 """Service for managing API key mappings"""
 from typing import Dict, Optional
-from sqlalchemy.orm import Session
-from sqlalchemy.future import select
+import os
 import logging
-from ..models.api_key import APIKeyMapping
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 class APIKeyService:
     """Service for managing API key mappings"""
     
     @staticmethod
-    async def get_provider_key(db: Session, api_key: str, provider: str) -> Optional[str]:
-        """Get provider API key for a given user API key and provider.
+    def get_provider_key(provider: str) -> Optional[str]:
+        """Get provider API key from environment variables.
         
         Args:
-            db: Database session
-            api_key: User's API key
-            provider: Provider name (e.g., 'openai', 'deepseek')
+            provider: Provider name (e.g., 'openai', 'anthropic', 'deepseek')
             
         Returns:
             Provider API key if found, None otherwise
-            
-        Raises:
-            ValueError: If API key mapping not found
         """
-        # For testing purposes, return a test key
-        if api_key == "test-key":
-            if provider == "openai":
-                return "sk-openai-test-key"
-            elif provider == "deepseek":
-                return "sk-3e5f5d61abc341c584d5c508f618d7f5"
-                
-        stmt = select(APIKeyMapping).where(APIKeyMapping.api_key == api_key)
-        result = await db.execute(stmt)
-        mapping = result.scalar_one_or_none()
+        env_key = f"{provider.upper()}_API_KEY"
+        api_key = os.getenv(env_key)
         
-        if not mapping:
-            raise ValueError("API key mapping not found")
+        if not api_key:
+            raise ValueError(f"No API key found for provider {provider}. Please set {env_key} in your .env file")
             
-        provider_keys = mapping.provider_keys
-        logging.debug(f"Provider keys: {provider_keys}")
-        logging.debug(f"Looking for provider: {provider}")
-        return provider_keys.get(provider)
+        return api_key
     
     @staticmethod
-    async def create_mapping(
-        db: Session,
+    def create_mapping(
         api_key: str,
         provider_keys: Dict[str, str]
-    ) -> APIKeyMapping:
-        """Create a new API key mapping.
+    ) -> None:
+        """Create a new API key mapping by setting environment variables.
         
         Args:
-            db: Database session
             api_key: User's API key
             provider_keys: Dictionary mapping provider names to their API keys
-            
-        Returns:
-            Created API key mapping
         """
-        mapping = APIKeyMapping(
-            api_key=api_key,
-            provider_keys=provider_keys
-        )
-        db.add(mapping)
-        await db.commit()
-        await db.refresh(mapping)
-        return mapping
+        for provider, key in provider_keys.items():
+            env_key = f"{provider.upper()}_API_KEY"
+            os.environ[env_key] = key
     
     @staticmethod
-    async def update_mapping(
-        db: Session,
-        api_key: str,
+    def update_mapping(
         provider_keys: Dict[str, str]
-    ) -> Optional[APIKeyMapping]:
-        """Update an existing API key mapping.
+    ) -> None:
+        """Update an existing API key mapping by updating environment variables.
         
         Args:
-            db: Database session
-            api_key: User's API key
             provider_keys: Dictionary mapping provider names to their API keys
-            
-        Returns:
-            Updated API key mapping if found, None otherwise
         """
-        stmt = select(APIKeyMapping).where(APIKeyMapping.api_key == api_key)
-        result = await db.execute(stmt)
-        mapping = result.scalar_one_or_none()
-        
-        if not mapping:
-            return None
-            
-        mapping.provider_keys = provider_keys
-        await db.commit()
-        await db.refresh(mapping)
-        return mapping
+        for provider, key in provider_keys.items():
+            env_key = f"{provider.upper()}_API_KEY"
+            os.environ[env_key] = key
