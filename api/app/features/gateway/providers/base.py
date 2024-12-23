@@ -1,6 +1,6 @@
-"""Base provider class for LLM providers."""
+"""Base provider module."""
 from abc import ABC, abstractmethod
-from typing import Dict, Any, AsyncGenerator, Optional
+from typing import Dict, Any, Optional, AsyncGenerator
 import httpx
 import logging
 
@@ -15,12 +15,28 @@ class BaseProvider(ABC):
         
         Args:
             api_key: API key for authentication
-            base_url: Optional base URL override
+            base_url: Optional base URL for the API
         """
         self.api_key = api_key
         self.base_url = base_url
+        self.client = httpx.AsyncClient(timeout=30.0)
         logger.debug(f"Initialized {self.__class__.__name__} with base_url: {base_url}")
         
+    def get_auth_headers(self, user_api_key: Optional[str] = None) -> Dict[str, str]:
+        """Get authentication headers.
+        
+        Args:
+            user_api_key: Optional user-provided API key
+            
+        Returns:
+            Dictionary of authentication headers
+        """
+        api_key = user_api_key or self.api_key
+        return {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+    
     @abstractmethod
     async def create_chat_completion(
         self,
@@ -39,6 +55,6 @@ class BaseProvider(ABC):
                     - stream: Whether to stream the response
                     
         Returns:
-            Chat completion response in unified format
+            Chat completion response
         """
-        raise NotImplementedError("Subclasses must implement create_chat_completion")
+        pass

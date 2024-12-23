@@ -1,40 +1,36 @@
-"""Provider factory for creating LLM providers."""
-import os
-from typing import Dict, Any, Optional
-import logging
-
+"""Provider factory module."""
+from typing import Optional
 from .base import BaseProvider
+from .openai_provider import OpenAIProvider
 from .anthropic_provider import AnthropicProvider
 from .deepseek_provider import DeepSeekProvider
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-
-def create_provider(provider_name: str, api_key: str, base_url: Optional[str] = None) -> BaseProvider:
-    """Create a provider instance based on provider name.
+def create_provider(
+    provider_name: str,
+    api_key: str,
+    base_url: Optional[str] = None
+) -> BaseProvider:
+    """Create a provider instance.
     
     Args:
-        provider_name: Name of the provider (e.g., "anthropic", "deepseek")
-        api_key: API key for the provider
-        base_url: Optional base URL for the provider API
+        provider_name: Name of the provider (e.g., openai, anthropic)
+        api_key: API key for authentication
+        base_url: Optional base URL override
         
     Returns:
         Provider instance
         
     Raises:
-        ValueError: If provider is not supported
+        ValueError: If provider name is invalid
     """
-    logger.debug(f"Creating provider {provider_name} with base_url: {base_url}")
+    providers = {
+        "openai": OpenAIProvider,
+        "anthropic": AnthropicProvider,
+        "deepseek": DeepSeekProvider
+    }
     
-    provider_class = None
-    if provider_name == "anthropic":
-        provider_class = AnthropicProvider
-    elif provider_name == "deepseek":
-        provider_class = DeepSeekProvider
-    
-    if provider_class is None:
-        logger.error(f"Unsupported provider: {provider_name}")
-        raise ValueError(f"Unsupported provider: {provider_name}")
+    provider_class = providers.get(provider_name)
+    if not provider_class:
+        raise ValueError(f"Invalid provider name: {provider_name}")
         
-    logger.debug(f"Using provider class: {provider_class.__name__}")
     return provider_class(api_key=api_key, base_url=base_url)

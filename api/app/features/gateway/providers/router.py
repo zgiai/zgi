@@ -1,123 +1,104 @@
-"""LLM provider router."""
-import os
-from typing import Dict, Any
+"""LLM router module."""
+from typing import Dict, Any, Optional, Type
 import logging
-import re
+from .base import BaseProvider
+from .anthropic_provider import AnthropicProvider
+from .openai_provider import OpenAIProvider
 
-from .factory import create_provider
-
+# Configure logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 class LLMRouter:
-    """Router for LLM requests."""
-    
-    # Default base URLs for providers
-    DEFAULT_BASE_URLS = {
-        "anthropic": "https://api.anthropic.com",
-        "openai": "https://api.openai.com/v1",
-        "deepseek": "https://api.deepseek.com/v1"
-    }
-    
-    # Model patterns for each provider
-    MODEL_PATTERNS = {
-        "anthropic": [
-            r"^claude-\d",  # claude-1, claude-2, claude-3
-            r"^claude-instant",  # claude-instant
-        ],
-        "openai": [
-            r"^gpt-\d",  # gpt-3.5, gpt-4
-        ],
-        "deepseek": [
-            r"^deepseek-chat$",  # deepseek-chat
-            r"^deepseek-coder",  # deepseek-coder
-        ]
-    }
+    """Router for LLM providers."""
     
     def __init__(self):
-        """Initialize the router."""
-        self._provider_cache = {}
+        """Initialize the LLM router."""
+        self._providers = {
+            "anthropic": AnthropicProvider,
+            "openai": OpenAIProvider
+        }
         
-    def get_provider_name(self, model_id: str) -> str:
-        """Get provider name from model ID.
+        self._model_to_provider = {
+            # Anthropic models
+            "claude-3-opus-20240229": "anthropic",
+            "claude-3-sonnet-20240229": "anthropic",
+            "claude-3-haiku-20240229": "anthropic",
+            # OpenAI models
+            "gpt-4-turbo-preview": "openai",
+            "gpt-4": "openai",
+            "gpt-3.5-turbo": "openai"
+        }
+        
+    def get_provider_name(self, model: str) -> str:
+        """Get provider name for a model.
         
         Args:
-            model_id: ID of the model (e.g., "claude-3-opus-20240229")
+            model: Model name
             
         Returns:
-            Provider name (e.g., "anthropic")
+            Provider name
             
         Raises:
-            ValueError: If provider cannot be determined
+            ValueError: If model is not supported
         """
-        logger.debug(f"Getting provider for model: {model_id}")
-        model_id = model_id.lower()
-        logger.debug(f"Lowercase model ID: {model_id}")
+        provider = self._model_to_provider.get(model)
+        if not provider:
+            raise ValueError(f"Unsupported model: {model}")
+        return provider
         
-        # Try to match model ID against each provider's patterns
-        for provider, patterns in self.MODEL_PATTERNS.items():
-            for pattern in patterns:
-                if re.match(pattern, model_id):
-                    logger.debug(f"Model {model_id} matched pattern {pattern} for provider {provider}")
-                    return provider
-                    
-        # If no pattern matches, try exact match with model name
-        if model_id == "deepseek-chat":
-            logger.debug("Model matched exact name 'deepseek-chat'")
-            return "deepseek"
-            
-        logger.error(f"No provider pattern matched for model: {model_id}")
-        raise ValueError(f"Cannot determine provider for model: {model_id}")
-        
-    def get_provider(self, model_id: str):
-        """Get or create provider for a given model.
+    def get_provider_class(self, provider_name: str) -> Type[BaseProvider]:
+        """Get provider class by name.
         
         Args:
-            model_id: ID of the model
+            provider_name: Provider name
             
         Returns:
-            Provider instance
+            Provider class
+            
+        Raises:
+            ValueError: If provider is not supported
         """
-        provider_name = self.get_provider_name(model_id)
-        logger.debug(f"Getting provider instance for: {provider_name}")
+        provider_class = self._providers.get(provider_name)
+        if not provider_class:
+            raise ValueError(f"Unsupported provider: {provider_name}")
+        return provider_class
         
-        if provider_name not in self._provider_cache:
-            api_key_var = f"{provider_name.upper()}_API_KEY"
-            base_url_var = f"{provider_name.upper()}_BASE_URL"
-            
-            api_key = os.environ.get(api_key_var)
-            base_url = os.environ.get(base_url_var, self.DEFAULT_BASE_URLS[provider_name])
-            
-            if not api_key:
-                logger.error(f"Missing API key: {api_key_var}")
-                raise ValueError(f"Missing API key: {api_key_var}")
-                
-            # Check if API key looks valid
-            if len(api_key.strip()) < 10:  # Arbitrary minimum length
-                logger.warning(f"API key for {provider_name} looks suspiciously short")
-                
-            logger.debug(f"Creating provider for {provider_name} with base_url: {base_url}")
-            logger.debug(f"API key length: {len(api_key)}")
-            
-            self._provider_cache[provider_name] = create_provider(
-                provider_name=provider_name,
-                api_key=api_key,
-                base_url=base_url
-            )
-            
-        return self._provider_cache[provider_name]
-        
-    async def route_request(self, request_params: Dict[str, Any]):
+    async def route_request(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Route a request to the appropriate provider.
         
         Args:
-            request_params: Request parameters
-            
+            params: Request parameters including:
+                - model: Model name
+                - api_key: Optional API key
+                - messages: List of messages
+                - temperature: Optional sampling temperature
+                - max_tokens: Optional maximum tokens
+                - stream: Optional streaming flag
+                
         Returns:
             Provider response
+            
+        Raises:
+            ValueError: If request is invalid
         """
-        model_id = request_params["model"]
-        provider = self.get_provider(model_id)
-        
-        logger.debug(f"Routing request to {provider.__class__.__name__} with params: {request_params}")
-        return await provider.create_chat_completion(request_params)
+        try:
+            # Get provider name from model
+            model = params.get("model")
+            if not model:
+                raise ValueError("Model is required")
+                
+            provider_name = self.get_provider_name(model)
+            provider_class = self.get_provider_class(provider_name)
+            
+            # Create provider instance with API key if provided
+            api_key = params.pop("api_key", None)
+            provider = provider_class(api_key=api_key) if api_key else provider_class()
+            
+            # Route request to provider
+            logger.debug(f"Routing request to provider {provider_name}")
+            return await provider.create_chat_completion(params)
+            
+        except Exception as e:
+            logger.error(f"Error routing request: {str(e)}")
+            raise ValueError(f"Error routing request: {str(e)}")

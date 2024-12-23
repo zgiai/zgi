@@ -1,0 +1,30 @@
+# Provider configurations
+providers:
+  anthropic:
+    base_url: "https://api.anthropic.com"
+    auth_type: "bearer"
+    timeout: 30.0
+    endpoints:
+      chat: "/v1/messages"
+      
+  openai:
+    base_url: "https://api.openai.com/v1"
+    auth_type: "bearer"
+    timeout: 30.0
+    endpoints:
+      chat: "/chat/completions"
+      
+  deepseek:
+    base_url: "https://api.deepseek.com/v1"
+    auth_type: "bearer"
+    timeout: 30.0
+    endpoints:
+      chat: "/chat/completions"
+
+# Default settings
+defaults:
+  timeout: 30.0
+  retry:
+    max_attempts: 3
+    initial_delay: 1.0
+    max_delay: 10.0
