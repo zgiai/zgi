@@ -1,9 +1,13 @@
 """Service for handling LLM requests"""
+import uuid
 from typing import Dict, Any, AsyncGenerator
 from sqlalchemy.orm import Session
+from ..schemas.chat import AddChatMessagesRequest
 import logging
 
 from ..providers.router import LLMRouter, get_router
+from ... import User
+from ...chat.models.conversation import Conversation, ChatMessage
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -105,3 +109,34 @@ class LLMService:
         except Exception as e:
             logger.error(f"Chat completion failed: {str(e)}")
             raise
+
+    @staticmethod
+    def add_chat_messages(request: AddChatMessagesRequest, user: User, db: Session):
+        session_id = request.session_id
+        messages = request.messages
+
+        # Retrieve or create conversation
+        if session_id:
+            conversation = db.query(Conversation).filter_by(session_id=session_id).first()
+            if not conversation:
+                raise ValueError(f"Conversation {session_id} not found")
+            if conversation.user_id != user.id:
+                raise ValueError("User does not have access to this conversation")
+        else:
+            session_id = str(uuid.uuid4())
+            conversation = Conversation(session_id=session_id, user_id=user.id)
+            db.add(conversation)
+            db.commit()
+            db.refresh(conversation)
+        print(f"Session ID: {session_id}")
+        print(f"Conversation ID: {conversation.id}")
+        # Save each message to history
+        for msg in messages:
+            message = ChatMessage(
+                conversation_id=conversation.id,
+                role=msg.role,
+                content=msg.content
+            )
+            db.add(message)
+        db.commit()
+        return conversation

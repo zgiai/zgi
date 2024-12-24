@@ -1,5 +1,6 @@
-from pydantic import BaseModel, Field, root_validator
+from pydantic import BaseModel, Field, root_validator, ConfigDict
 from typing import List, Dict, Any, Optional, Union
+from datetime import datetime
 
 class Message(BaseModel):
     """A single message in a chat completion request"""
@@ -89,3 +90,57 @@ class ChatCompletionResponse(BaseModel):
     choices: List[ChatCompletionResponseChoice] = Field(..., description="The list of completion choices")
     usage: Usage = Field(..., description="Token usage information for the request")
     system_fingerprint: Optional[str] = Field(None, description="System fingerprint for the response")
+
+
+class AddChatMessagesRequest(BaseModel):
+    session_id: Optional[str] = Field(None, description="Unique identifier for the chat session")
+    messages: List[Message] = Field(..., description="The list of chat messages")
+
+
+class ConversationResponse(BaseModel):
+    session_id: str = Field(..., description="Unique identifier for the conversation")
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_encoders={
+            datetime: lambda v: v.isoformat() if v else None,
+            bytes: lambda v: v.decode() if v else None
+        }
+    )
+
+
+class MessageResponse(BaseModel):
+    role: str = Field(..., description="The role of the message author (system, user, or assistant)")
+    content: str = Field(..., description="The content of the message")
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_encoders={
+            datetime: lambda v: v.isoformat() if v else None,
+            bytes: lambda v: v.decode() if v else None
+        }
+    )
+
+class ChatMessages(BaseModel):
+    session_id: str = Field(..., description="Unique identifier for the chat session")
+    messages: List[MessageResponse] = Field([], description="The list of chat messages")
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_encoders={
+            datetime: lambda v: v.isoformat() if v else None,
+            bytes: lambda v: v.decode() if v else None
+        }
+    )
+
+
+class ChatMessagesResponse(ChatMessages):
+    total: int
+
+
+class ConversationListResponse(BaseModel):
+    messages: List[ChatMessages]
+    total: int
+
+    class Config:
+        from_attributes = True
