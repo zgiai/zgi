@@ -14,10 +14,12 @@ logger = logging.getLogger(__name__)
 class OpenAIProvider(LLMProvider):
     """OpenAI provider implementation."""
     
-    def __init__(self, provider_name: str = "openai"):
+    SUPPORTED_PREFIXES = ["gpt-3.5", "gpt-4"]
+    
+    def __init__(self, provider_name: str = "openai", api_key: str = None, base_url: str = None):
         """Initialize OpenAI provider."""
-        super().__init__(provider_name)
-        self.base_url = "https://api.openai.com"
+        super().__init__(provider_name, api_key, base_url)
+        self.base_url = base_url or "https://api.openai.com"
         self.headers = {
             "content-type": "application/json",
             "authorization": f"Bearer {self.api_key}"

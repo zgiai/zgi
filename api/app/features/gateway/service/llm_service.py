@@ -3,7 +3,7 @@ from typing import Dict, Any, AsyncGenerator
 from sqlalchemy.orm import Session
 import logging
 
-from ..providers.router import LLMRouter
+from ..providers.router import LLMRouter, get_router
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -17,7 +17,7 @@ class LLMService:
     def get_router(cls) -> LLMRouter:
         """Get or create the LLM router instance."""
         if cls._router is None:
-            cls._router = LLMRouter()
+            cls._router = get_router()
         return cls._router
     
     @classmethod
@@ -25,60 +25,83 @@ class LLMService:
         cls,
         params: Dict[str, Any],
         db: Session
-    ) -> Dict[str, Any] | AsyncGenerator[Dict[str, Any], None]:
-        """
-        Handle a chat completion request.
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Create a chat completion.
         
         Args:
-            params: Dictionary containing request parameters
-                Required:
-                    - model: Name of the model
-                    - messages: List of message objects
-                Optional:
-                    - temperature: Sampling temperature
-                    - max_tokens: Maximum tokens to generate
-                    - stream: Whether to stream the response
+            params: Request parameters
             db: Database session
-        
-        Returns:
-            The chat completion response in unified format
-        
+            
+        Yields:
+            Response chunks
+            
         Raises:
-            ValueError: If required parameters are missing or invalid
+            ValueError: If required parameters are missing
         """
-        logger.debug(f"Processing chat completion request with params: {params}")
+        service = cls()
         
-        # Request validation
-        if "model" not in params:
-            logger.error("Missing required parameter: model")
+        # Extract required parameters
+        messages = params.get("messages")
+        if not messages:
+            raise ValueError("messages parameter is required")
+            
+        model = params.get("model")
+        if not model:
             raise ValueError("model parameter is required")
             
-        if "messages" not in params or not params["messages"]:
-            logger.error("Missing required parameter: messages")
-            raise ValueError("messages parameter is required and cannot be empty")
+        # Extract optional parameters
+        temperature = params.get("temperature", 1.0)
+        max_tokens = params.get("max_tokens")
+        stream = params.get("stream", False)
+        
+        # Remove processed params and pass rest as kwargs
+        known_params = {"messages", "model", "temperature", "max_tokens", "stream", "api_key"}
+        kwargs = {k: v for k, v in params.items() if k not in known_params}
+        
+        async for chunk in service.chat_completion(
+            messages=messages,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            stream=stream,
+            **kwargs
+        ):
+            yield chunk
+    
+    async def chat_completion(
+        self,
+        messages: list[Dict[str, Any]],
+        model: str,
+        temperature: float = 1.0,
+        max_tokens: int = None,
+        stream: bool = False,
+        **kwargs: Any
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Generate chat completion using the appropriate provider.
+        
+        Args:
+            messages: List of messages
+            model: Model name
+            temperature: Temperature value
+            max_tokens: Maximum tokens to generate
+            stream: Whether to stream responses
+            **kwargs: Additional arguments
             
-        # Get router instance
-        router = cls.get_router()
+        Yields:
+            Response chunks
+        """
+        router = self.get_router()
         
         try:
-            # Route request to appropriate provider
-            logger.debug(f"Routing request to provider for model: {params['model']}")
-            if params.get("stream", False):
-                # Return async generator for streaming
-                return router.route_request(params)
-            else:
-                # Collect all responses for non-streaming request
-                response = None
-                async for chunk in router.route_request(params):
-                    response = chunk
-                return response
-            
-        except ValueError as e:
-            # Re-raise provider errors
-            logger.error(f"Provider error: {str(e)}")
-            raise
-            
+            async for chunk in router.chat_completion(
+                messages=messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=stream,
+                **kwargs
+            ):
+                yield chunk
         except Exception as e:
-            # Log unexpected errors
-            logger.error(f"Unexpected error in chat completion: {str(e)}")
-            raise ValueError(f"Error processing request: {str(e)}")
+            logger.error(f"Chat completion failed: {str(e)}")
+            raise

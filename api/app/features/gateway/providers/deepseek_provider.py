@@ -14,10 +14,12 @@ logger = logging.getLogger(__name__)
 class DeepSeekProvider(LLMProvider):
     """DeepSeek provider implementation."""
     
-    def __init__(self, provider_name: str = "deepseek"):
+    SUPPORTED_PREFIXES = ["deepseek-"]
+    
+    def __init__(self, provider_name: str = "deepseek", api_key: str = None, base_url: str = None):
         """Initialize DeepSeek provider."""
-        super().__init__(provider_name)
-        self.base_url = "https://api.deepseek.com"
+        super().__init__(provider_name, api_key, base_url)
+        self.base_url = base_url or "https://api.deepseek.com"
         self.headers = {
             "content-type": "application/json",
             "authorization": f"Bearer {self.api_key}"

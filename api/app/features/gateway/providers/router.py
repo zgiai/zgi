@@ -1,216 +1,130 @@
-"""LLM provider router."""
-import os
-from typing import Dict, Any
+"""LLM provider router for managing and routing LLM requests."""
+from typing import Dict, Type, Optional, Any, List, AsyncGenerator
+from functools import lru_cache
 import logging
-from typing import AsyncGenerator
 
-from .factory import create_provider
+from .base import LLMProvider
+from .openai_provider import OpenAIProvider
+from .deepseek_provider import DeepSeekProvider
+from .anthropic_provider import AnthropicProvider
 from ..config.models import ModelConfig
 from ..exceptions.provider_errors import InvalidAPIKeyError
+from ..utils.provider_utils import (
+    ProviderConfig,
+    get_api_key,
+    get_base_url,
+    is_model_supported,
+    validate_model_config,
+    log_request_info,
+    format_request_data
+)
+from ..utils.message_converter import extract_system_message, filter_messages_by_role
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 class LLMRouter:
-    """Router for LLM requests."""
+    """Router for managing and routing LLM requests."""
     
-    # Default base URLs for providers
-    DEFAULT_BASE_URLS = {
-        "anthropic": "https://api.anthropic.com",
-        "openai": "https://api.openai.com/v1",
-        "deepseek": "https://api.deepseek.com/v1"
-    }
-    
-    # Model prefixes for each provider
-    MODEL_PREFIXES = {
-        "anthropic": ["claude"],
-        "openai": ["gpt"],
-        "deepseek": ["deepseek"]
-    }
-    
-    # Supported models for each provider
-    SUPPORTED_MODELS = {
-        "anthropic": {
-            "claude-3-opus-20240229",
-            "claude-3-sonnet-20240229",
-            "claude-3-haiku-20240307",
-            "claude-2.1",
-            "claude-2.0",
-            "claude-instant-1.2"
-        },
-        "openai": {
-            "gpt-4",
-            "gpt-4-turbo-preview",
-            "gpt-4-0125-preview",
-            "gpt-4-1106-preview",
-            "gpt-4-0613",
-            "gpt-4-32k",
-            "gpt-4-32k-0613",
-            "gpt-3.5-turbo",
-            "gpt-3.5-turbo-0125",
-            "gpt-3.5-turbo-1106",
-            "gpt-3.5-turbo-0613",
-            "gpt-3.5-turbo-16k",
-            "gpt-3.5-turbo-16k-0613"
-        },
-        "deepseek": {
-            "deepseek-chat",
-            "deepseek-coder",
-            "deepseek-coder-instruct",
-            "deepseek-coder-instruct-6.7b",
-            "deepseek-coder-instruct-33b"
-        }
+    PROVIDER_CLASSES = {
+        "openai": OpenAIProvider,
+        "anthropic": AnthropicProvider,
+        "deepseek": DeepSeekProvider
     }
     
     def __init__(self):
-        """Initialize the router."""
-        self._provider_cache = {}
+        """Initialize provider router."""
+        self._provider_instances = {}
         
-        # Debug: Print all environment variables
-        logger.debug("Environment variables:")
-        for key, value in os.environ.items():
-            if any(provider in key.lower() for provider in ["anthropic", "openai", "deepseek"]):
-                logger.debug(f"  {key}: {'*' * min(len(value), 10)}")
-                
-    def get_provider_name(self, model_id: str) -> str:
-        """Get provider name from model ID.
+    def get_provider_for_model(self, model_name: str) -> Optional[Dict[str, Any]]:
+        """Get provider information for a model.
         
         Args:
-            model_id: ID of the model (e.g., "claude-3-opus-20240229")
+            model_name: Name of the model
             
         Returns:
-            Provider name (e.g., "anthropic")
-            
-        Raises:
-            ValueError: If provider cannot be determined
+            Provider information if found, None otherwise
         """
-        return ModelConfig.get_provider_for_model(model_id)
-        
-    def get_provider(self, model_id: str):
-        """Get or create provider for a given model.
+        for provider_id, provider_class in self.PROVIDER_CLASSES.items():
+            if any(model_name.startswith(prefix) 
+                  for prefix in provider_class.get_supported_prefixes()):
+                return {
+                    "provider": provider_id,
+                    "class": provider_class,
+                    "base_url": get_base_url(provider_id)
+                }
+        return None
+    
+    def get_provider(self, provider_name: str) -> Optional[LLMProvider]:
+        """Get or create provider instance.
         
         Args:
-            model_id: ID of the model
+            provider_name: Name of the provider
             
         Returns:
-            Provider instance
+            Provider instance if found, None otherwise
             
         Raises:
-            ValueError: If provider is not properly configured
+            InvalidAPIKeyError: If API key is not found
         """
-        provider_name = self.get_provider_name(model_id)
-        logger.debug(f"Getting provider instance for: {provider_name}")
-        
-        if provider_name not in self._provider_cache:
-            # List all possible environment variable names
-            possible_keys = [
-                f"{provider_name.upper()}_API_KEY",
-                f"{provider_name.upper()}_KEY",
-                f"{provider_name.upper()}_SECRET_KEY"
-            ]
-            possible_urls = [
-                f"{provider_name.upper()}_API_BASE",
-                f"{provider_name.upper()}_BASE_URL",
-                f"{provider_name.upper()}_URL"
-            ]
+        if provider_name not in self._provider_instances:
+            provider_class = self.PROVIDER_CLASSES.get(provider_name)
+            if not provider_class:
+                return None
             
-            # Try to find API key
-            api_key = None
-            for key in possible_keys:
-                api_key = os.environ.get(key)
-                if api_key:
-                    logger.debug(f"Found API key in {key}")
-                    break
-                    
-            # Try to find base URL
-            base_url = None
-            for url in possible_urls:
-                base_url = os.environ.get(url)
-                if base_url:
-                    logger.debug(f"Found base URL in {url}")
-                    break
-                    
-            # Use default base URL if none found
-            base_url = base_url or self.DEFAULT_BASE_URLS[provider_name]
-            
+            api_key = get_api_key(provider_name)
             if not api_key:
-                logger.error(f"Missing API key. Tried: {', '.join(possible_keys)}")
-                raise ValueError(f"Provider {provider_name} is not properly configured: missing API key")
+                raise InvalidAPIKeyError(f"No API key found for {provider_name}")
                 
-            # Check if API key looks valid
-            if len(api_key.strip()) < 10:  # Arbitrary minimum length
-                logger.warning(f"API key for {provider_name} looks suspiciously short")
-                
-            logger.debug(f"Creating provider for {provider_name} with base_url: {base_url}")
-            logger.debug(f"API key length: {len(api_key)}")
+            self._provider_instances[provider_name] = provider_class(
+                provider_name=provider_name,
+                api_key=api_key,
+                base_url=get_base_url(provider_name)
+            )
             
-            try:
-                self._provider_cache[provider_name] = create_provider(
-                    provider_name=provider_name,
-                    base_url=base_url
-                )
-            except Exception as e:
-                logger.error(f"Error creating provider {provider_name}: {str(e)}")
-                raise ValueError(f"Provider {provider_name} initialization failed: {str(e)}")
-            
-        return self._provider_cache[provider_name]
-        
-    async def route_request(self, request_params: Dict[str, Any]) -> AsyncGenerator[Dict[str, Any], None]:
-        """Route a request to the appropriate provider.
+        return self._provider_instances[provider_name]
+    
+    async def route_request(
+        self,
+        params: Dict[str, Any]
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Route request to appropriate provider.
         
         Args:
-            request_params: Request parameters
-            
-        Returns:
-            Provider response
+            params: Request parameters
+                Required:
+                    - model: Model name
+                    - messages: List of messages
+                Optional:
+                    - temperature: Temperature value
+                    - max_tokens: Maximum tokens
+                    - stream: Whether to stream
+                    
+        Yields:
+            Response chunks
             
         Raises:
-            ValueError: If request cannot be routed
-            InvalidAPIKeyError: If no valid API key is found
+            ValueError: If required parameters are missing
         """
+        # Extract parameters
+        model = params.get("model")
+        if not model:
+            raise ValueError("model parameter is required")
+            
+        messages = params.get("messages")
+        if not messages:
+            raise ValueError("messages parameter is required")
+            
+        # Optional parameters
+        temperature = params.get("temperature", 1.0)
+        max_tokens = params.get("max_tokens")
+        stream = params.get("stream", False)
+        
+        # Remove processed params and pass rest as kwargs
+        known_params = {"model", "messages", "temperature", "max_tokens", "stream"}
+        kwargs = {k: v for k, v in params.items() if k not in known_params}
+        
         try:
-            model_id = request_params["model"]
-            provider_name = self.get_provider_name(model_id)
-            logger.debug(f"Routing request for model {model_id} to provider {provider_name}")
-            
-            # Get API key from request or environment
-            api_key = request_params.get("api_key")
-            if not api_key or api_key == "undefined":
-                env_key = os.environ.get(f"{provider_name.upper()}_API_KEY")
-                if not env_key:
-                    raise InvalidAPIKeyError(
-                        f"No API key provided for {provider_name}. Please set the {provider_name.upper()}_API_KEY "
-                        "environment variable or provide the key in the request."
-                    )
-                api_key = env_key
-                logger.debug(f"Using API key from environment variable {provider_name.upper()}_API_KEY")
-            
-            # Get base URL from request or default
-            base_url = request_params.get("base_url") or ModelConfig.get_default_base_url(provider_name)
-            
-            # Create or get cached provider instance
-            cache_key = provider_name
-            if cache_key not in self._provider_cache:
-                self._provider_cache[cache_key] = create_provider(
-                    provider_name=provider_name
-                )
-            
-            provider = self._provider_cache[cache_key]
-            
-            # Extract required parameters
-            model = request_params["model"]
-            messages = request_params["messages"]
-            temperature = request_params.get("temperature", 1.0)
-            max_tokens = request_params.get("max_tokens")
-            stream = request_params.get("stream", False)
-            
-            # Add base_url to kwargs if provided
-            kwargs = {}
-            if base_url:
-                kwargs["base_url"] = base_url
-                
-            # Call chat_completion and yield responses
-            async for response in provider.chat_completion(
+            async for chunk in self.chat_completion(
                 messages=messages,
                 model=model,
                 temperature=temperature,
@@ -218,7 +132,110 @@ class LLMRouter:
                 stream=stream,
                 **kwargs
             ):
-                yield response
+                yield chunk
         except Exception as e:
-            logger.error(f"Error routing request: {str(e)}")
+            logger.error(f"Request routing failed: {str(e)}")
+            raise ValueError(f"Error routing request: {str(e)}")
+    
+    async def chat_completion(
+        self,
+        messages: List[Dict[str, Any]],
+        model: str,
+        temperature: float = 1.0,
+        max_tokens: Optional[int] = None,
+        stream: bool = False,
+        **kwargs: Any
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Route chat completion request to appropriate provider.
+        
+        Args:
+            messages: List of messages
+            model: Model name
+            temperature: Temperature value
+            max_tokens: Maximum tokens to generate
+            stream: Whether to stream responses
+            **kwargs: Additional arguments
+            
+        Yields:
+            Response chunks
+            
+        Raises:
+            ValueError: If provider not found or validation fails
+            InvalidAPIKeyError: If API key is not found
+        """
+        # Get provider for model
+        provider_info = self.get_provider_for_model(model)
+        if not provider_info:
+            raise ValueError(f"No provider found for model: {model}")
+            
+        provider_name = provider_info["provider"]
+        
+        # Validate request
+        self.validate_request(provider_name, model, temperature)
+        
+        # Get provider instance
+        provider = self.get_provider(provider_name)
+        if not provider:
+            raise ValueError(f"Failed to initialize provider: {provider_name}")
+            
+        # Extract system message and filter messages
+        messages, system = extract_system_message(messages)
+        messages = filter_messages_by_role(messages, ["user", "assistant"])
+        
+        # Prepare request data
+        data = format_request_data(
+            messages=messages,
+            model=model,
+            temperature=temperature,
+            stream=stream,
+            max_tokens=max_tokens,
+            system=system,
+            **kwargs
+        )
+        
+        # Log request information
+        log_request_info(
+            data=data,
+            headers=provider.headers,
+            base_url=provider.base_url,
+            endpoint="/v1/chat/completions"
+        )
+        
+        # Route request to provider
+        try:
+            async for chunk in provider.chat_completion(**data):
+                yield chunk
+        except Exception as e:
+            logger.error(f"Provider {provider_name} request failed: {str(e)}")
             raise
+    
+    def validate_request(
+        self,
+        provider: str,
+        model: str,
+        temperature: float,
+        **kwargs: Any
+    ) -> None:
+        """Validate request parameters.
+        
+        Args:
+            provider: Provider name
+            model: Model name
+            temperature: Temperature value
+            **kwargs: Additional arguments
+            
+        Raises:
+            ValueError: If validation fails
+        """
+        errors = validate_model_config(provider, model, temperature)
+        if errors:
+            raise ValueError("\n".join(errors))
+
+@lru_cache()
+def get_router() -> LLMRouter:
+    """Get singleton instance of LLM router.
+    
+    Returns:
+        LLM router instance
+    """
+    return LLMRouter()

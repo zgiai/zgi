@@ -1,12 +1,90 @@
 """HTTP client utilities."""
-from typing import Dict, Any, AsyncGenerator, Optional
+from typing import Dict, Any, AsyncGenerator, Optional, Union
 import httpx
+import json
+import logging
 from contextlib import asynccontextmanager
+from ..exceptions.provider_errors import ProviderError
+
+logger = logging.getLogger(__name__)
+
+class HttpClient:
+    """Generic HTTP client for provider communication."""
+    
+    def __init__(self, base_url: str, headers: Dict[str, str]):
+        """Initialize HTTP client.
+        
+        Args:
+            base_url: Base URL for requests
+            headers: HTTP headers
+        """
+        self.base_url = base_url
+        self.headers = headers
+        self.client = httpx.AsyncClient(timeout=30.0)
+        
+    async def post(
+        self,
+        endpoint: str,
+        data: Dict[str, Any],
+        stream: bool = False
+    ) -> Union[Dict[str, Any], AsyncGenerator[Dict[str, Any], None]]:
+        """Make POST request to provider API.
+        
+        Args:
+            endpoint: API endpoint
+            data: Request data
+            stream: Whether to stream the response
+            
+        Returns:
+            Response data or stream
+            
+        Raises:
+            ProviderError: On API error
+        """
+        url = f"{self.base_url.rstrip('/')}/{endpoint.lstrip('/')}"
+        try:
+            async with self.client as client:
+                response = await client.post(
+                    url,
+                    headers=self.headers,
+                    json=data,
+                    timeout=30.0
+                )
+                response.raise_for_status()
+                
+                if stream:
+                    return self._handle_stream(response)
+                return response.json()
+                
+        except httpx.HTTPError as e:
+            logger.error(f"HTTP error occurred: {str(e)}")
+            raise ProviderError(f"HTTP error: {str(e)}")
+            
+        except Exception as e:
+            logger.error(f"Unexpected error: {str(e)}")
+            raise ProviderError(f"Unexpected error: {str(e)}")
+            
+    async def _handle_stream(self, response: httpx.Response) -> AsyncGenerator[Dict[str, Any], None]:
+        """Handle streaming response.
+        
+        Args:
+            response: HTTP response
+            
+        Yields:
+            Parsed response chunks
+        """
+        async for line in response.aiter_lines():
+            if line:
+                try:
+                    yield json.loads(line)
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse stream chunk: {str(e)}")
+                    continue
 
 @asynccontextmanager
 async def create_http_client(
-    base_url: str,
-    headers: Dict[str, str],
+    base_url: str = "",
+    headers: Optional[Dict[str, str]] = None,
     timeout: float = 30.0,
     follow_redirects: bool = True,
     verify_ssl: bool = True
@@ -25,7 +103,7 @@ async def create_http_client(
     """
     async with httpx.AsyncClient(
         base_url=base_url,
-        headers=headers,
+        headers=headers or {},
         timeout=timeout,
         follow_redirects=follow_redirects,
         verify=verify_ssl
@@ -102,7 +180,7 @@ class RetryConfig:
         
         Args:
             max_retries: Maximum number of retries
-            retry_statuses: Status codes to retry on
+            retry_statuses: HTTP status codes to retry on
             retry_methods: HTTP methods to retry
             backoff_factor: Backoff factor for exponential backoff
         """
@@ -111,18 +189,19 @@ class RetryConfig:
         self.retry_methods = retry_methods
         self.backoff_factor = backoff_factor
         
-    def should_retry(self, response: httpx.Response, attempt: int) -> bool:
-        """Determine if request should be retried.
+    def should_retry(self, method: str, status_code: int, attempt: int) -> bool:
+        """Check if request should be retried.
         
         Args:
-            response: Response object
+            method: HTTP method
+            status_code: Response status code
             attempt: Current attempt number
             
         Returns:
-            True if request should be retried
+            Whether to retry the request
         """
         return (
             attempt < self.max_retries
-            and response.status_code in self.retry_statuses
-            and response.request.method in self.retry_methods
+            and method in self.retry_methods
+            and status_code in self.retry_statuses
         )
