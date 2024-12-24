@@ -6,8 +6,7 @@ services:
     volumes:
       - ./api:/app
     ports:
-      - '8088:8088'
-      - '7007:7007'
+      - "7007:7007"
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY} # 从.env文件获取OpenAI API密钥
       - WEAVIATE_URL=${WEAVIATE_URL} # 从.env文件获取Weaviate URL
@@ -36,7 +35,7 @@ services:
     image: mysql:5.7
     restart: always
     ports:
-      - '3306:3306'
+      - "3306:3306"
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD} # 从.env文件获取数据库根密码
       MYSQL_DATABASE: ${MYSQL_DATABASE} # 从.env文件获取数据库名称
