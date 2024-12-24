@@ -32,7 +32,7 @@ const InputArea = () => {
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || [])
     if (files.length > 0) {
-      setAttachments((prev) => [...prev, ...files])
+      setAttachments([...attachments, ...files])
     }
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
