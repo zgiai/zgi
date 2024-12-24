@@ -63,9 +63,15 @@ class LLMService:
         try:
             # Route request to appropriate provider
             logger.debug(f"Routing request to provider for model: {params['model']}")
-            response = await router.route_request(params)
-            logger.debug(f"Got response from provider: {response}")
-            return response
+            if params.get("stream", False):
+                # Return async generator for streaming
+                return router.route_request(params)
+            else:
+                # Collect all responses for non-streaming request
+                response = None
+                async for chunk in router.route_request(params):
+                    response = chunk
+                return response
             
         except ValueError as e:
             # Re-raise provider errors

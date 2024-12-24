@@ -2,127 +2,58 @@
 from abc import ABC, abstractmethod
 from typing import Dict, Any, AsyncGenerator, Optional
 import logging
-from ..utils.http import HttpClient
-from ..utils.formatter import format_chat_messages, format_completion_response
-from ..exceptions.provider_errors import ProviderError, InvalidAPIKeyError
-from ..utils.model_validator import ModelValidator
+import os
 
 logger = logging.getLogger(__name__)
 
-class BaseProvider(ABC):
+class LLMProvider(ABC):
     """Base class for LLM providers."""
     
-    @property
-    @abstractmethod
-    def provider_name(self) -> str:
-        """Get provider name.
-        
-        Returns:
-            Provider name
-        """
-        pass
-    
-    def __init__(self, api_key: str, base_url: Optional[str] = None):
+    def __init__(self, provider_name: str):
         """Initialize the provider.
         
         Args:
-            api_key: API key for authentication
-            base_url: Optional base URL override
+            provider_name: Name of the provider
         """
-        self.api_key = self.validate_api_key(api_key)
-        self.base_url = base_url or self.default_base_url()
-        self.http_client = HttpClient(self.base_url, self.get_headers())
-        logger.debug(f"Initialized {self.__class__.__name__} with base_url: {base_url}")
-    
-    @abstractmethod
-    def validate_api_key(self, api_key: str) -> str:
-        """Validate and format API key.
+        self.provider_name = provider_name
+        self.api_key = self._get_api_key()
         
-        Args:
-            api_key: Raw API key
-            
+    def _get_api_key(self) -> str:
+        """Get API key from environment variable.
+        
         Returns:
-            Validated and formatted API key
+            API key
             
         Raises:
-            InvalidAPIKeyError: If API key is invalid
+            ValueError: If API key is not found
         """
-        pass
+        env_var = f"{self.provider_name.upper()}_API_KEY"
+        api_key = os.getenv(env_var)
+        if not api_key:
+            raise ValueError(f"No API key found in environment variable {env_var}")
+        return api_key
         
     @abstractmethod
-    def default_base_url(self) -> str:
-        """Get default base URL for provider.
-        
-        Returns:
-            Default base URL
-        """
-        pass
-        
-    @abstractmethod
-    def get_headers(self) -> Dict[str, str]:
-        """Get HTTP headers for provider.
-        
-        Returns:
-            HTTP headers
-        """
-        pass
-        
-    def validate_model(self, model: str) -> None:
-        """Validate if model is supported.
-        
-        Args:
-            model: Model name
-            
-        Raises:
-            InvalidRequestError: If model is not supported
-        """
-        ModelValidator.validate_model(self.provider_name, model)
-        
-    @abstractmethod
-    async def create_chat_completion(
+    async def chat_completion(
         self,
-        params: Dict[str, Any]
-    ) -> Dict[str, Any] | AsyncGenerator[Dict[str, Any], None]:
-        """Create a chat completion.
+        messages: list[Dict[str, Any]],
+        model: str,
+        temperature: float = 1.0,
+        max_tokens: Optional[int] = None,
+        stream: bool = False,
+        **kwargs: Any
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Generate chat completion.
         
         Args:
-            params: Dictionary containing request parameters
-                Required:
-                    - messages: List of message objects
-                    - model: Model name
-                Optional:
-                    - temperature: Sampling temperature
-                    - max_tokens: Maximum tokens to generate
-                    - stream: Whether to stream the response
-                    
-        Returns:
-            Chat completion response in unified format
+            messages: List of messages
+            model: Model name
+            temperature: Sampling temperature
+            max_tokens: Maximum tokens to generate
+            stream: Whether to stream the response
+            **kwargs: Additional arguments
             
-        Raises:
-            ProviderError: On provider error
+        Yields:
+            Response chunks
         """
-        # Validate model before proceeding
-        self.validate_model(params["model"])
         pass
-        
-    def format_messages(self, messages: Dict[str, Any]) -> Dict[str, Any]:
-        """Format messages for provider.
-        
-        Args:
-            messages: Raw messages
-            
-        Returns:
-            Formatted messages
-        """
-        return format_chat_messages(messages, self.provider_name)
-        
-    def format_response(self, response: Dict[str, Any]) -> Dict[str, Any]:
-        """Format provider response.
-        
-        Args:
-            response: Raw provider response
-            
-        Returns:
-            Formatted response
-        """
-        return format_completion_response(response, self.provider_name)
