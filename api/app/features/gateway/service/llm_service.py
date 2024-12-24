@@ -46,16 +46,33 @@ class LLMService:
         Raises:
             ValueError: If required parameters are missing or invalid
         """
+        logger.debug(f"Processing chat completion request with params: {params}")
+        
         # Request validation
         if "model" not in params:
+            logger.error("Missing required parameter: model")
             raise ValueError("model parameter is required")
-        if "messages" not in params:
-            raise ValueError("messages parameter is required")
             
-        # Route the request to the appropriate provider
+        if "messages" not in params or not params["messages"]:
+            logger.error("Missing required parameter: messages")
+            raise ValueError("messages parameter is required and cannot be empty")
+            
+        # Get router instance
         router = cls.get_router()
+        
         try:
-            return await router.route_request(params)
-        except Exception as e:
-            logger.error(f"Error routing request: {e}", exc_info=True)
+            # Route request to appropriate provider
+            logger.debug(f"Routing request to provider for model: {params['model']}")
+            response = await router.route_request(params)
+            logger.debug(f"Got response from provider: {response}")
+            return response
+            
+        except ValueError as e:
+            # Re-raise provider errors
+            logger.error(f"Provider error: {str(e)}")
             raise
+            
+        except Exception as e:
+            # Log unexpected errors
+            logger.error(f"Unexpected error in chat completion: {str(e)}")
+            raise ValueError(f"Error processing request: {str(e)}")
