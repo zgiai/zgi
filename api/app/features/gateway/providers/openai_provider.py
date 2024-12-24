@@ -1,55 +1,156 @@
-from typing import Dict, Any
+"""OpenAI provider implementation."""
+from typing import Dict, Any, AsyncGenerator, Optional
+import json
+import logging
 import httpx
-from .base import BaseProvider
 
-class OpenAIProvider(BaseProvider):
-    """OpenAI API provider implementation"""
+from .base import LLMProvider
+from ..utils.message_converter import extract_system_message, filter_messages_by_role
+from ..utils.response_formatter import create_chat_response, create_streaming_chunk, extract_usage_stats
+from ..utils.http_client import create_http_client, stream_response, make_json_request
+
+logger = logging.getLogger(__name__)
+
+class OpenAIProvider(LLMProvider):
+    """OpenAI provider implementation."""
     
-    def __init__(self, api_key: str, base_url: str = "https://api.openai.com/v1"):
-        super().__init__(api_key, base_url)
+    SUPPORTED_PREFIXES = ["gpt-3.5", "gpt-4"]
+    
+    def __init__(self, provider_name: str = "openai", api_key: str = None, base_url: str = None):
+        """Initialize OpenAI provider."""
+        super().__init__(provider_name, api_key, base_url)
+        self.base_url = base_url or "https://api.openai.com"
         self.headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
+            "content-type": "application/json",
+            "authorization": f"Bearer {self.api_key}"
         }
-
-    async def handle_request(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle a chat completion request"""
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{self.base_url}/chat/completions",
-                headers=self.headers,
-                json=params,
-                timeout=60.0
-            )
-            response.raise_for_status()
-            return response.json()
-
-    async def validate_api_key(self) -> bool:
-        """Validate the OpenAI API key"""
+        
+    async def chat_completion(
+        self,
+        messages: list[Dict[str, Any]],
+        model: str,
+        temperature: float = 1.0,
+        max_tokens: Optional[int] = None,
+        stream: bool = False,
+        **kwargs: Any
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Generate chat completion.
+        
+        Args:
+            messages: List of messages
+            model: Model name
+            temperature: Sampling temperature
+            max_tokens: Maximum tokens to generate
+            stream: Whether to stream the response
+            **kwargs: Additional arguments
+            
+        Yields:
+            Response chunks
+        """
+        # Filter messages by role
+        messages = filter_messages_by_role(messages, ["system", "user", "assistant"])
+        
+        # Prepare request data
+        data = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "stream": stream
+        }
+        
+        if max_tokens:
+            data["max_tokens"] = max_tokens
+            
+        # Add any additional parameters
+        data.update(kwargs)
+        
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"{self.base_url}/models",
-                    headers=self.headers,
-                    timeout=10.0
-                )
-                return response.status_code == 200
-        except Exception:
-            return False
-
-    def get_model_info(self) -> Dict[str, Any]:
-        """Get information about OpenAI models"""
-        return {
-            "gpt-4": {
-                "name": "GPT-4",
-                "max_tokens": 8192,
-                "supports_streaming": True,
-                "supports_functions": True
-            },
-            "gpt-3.5-turbo": {
-                "name": "GPT-3.5 Turbo",
-                "max_tokens": 4096,
-                "supports_streaming": True,
-                "supports_functions": True
-            }
-        }
+            if stream:
+                async for chunk in self._stream_chat_completion(data):
+                    yield chunk
+            else:
+                result = await self._regular_chat_completion(data)
+                yield result
+                
+        except httpx.HTTPError as e:
+            logger.error(f"OpenAI API request failed: {str(e)}")
+            raise
+            
+    async def _regular_chat_completion(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Make a regular chat completion request.
+        
+        Args:
+            data: Request data
+            
+        Returns:
+            Formatted response
+        """
+        async with create_http_client(self.base_url, self.headers) as client:
+            result = await make_json_request(
+                client,
+                "POST",
+                "/v1/chat/completions",
+                json=data
+            )
+            
+            return create_chat_response(
+                id=result["id"],
+                model=result["model"],
+                content=result["choices"][0]["message"]["content"],
+                usage=extract_usage_stats(
+                    result,
+                    input_key="prompt_tokens",
+                    output_key="completion_tokens",
+                    total_key="total_tokens"
+                ),
+                created=str(result.get("created", ""))
+            )
+            
+    async def _stream_chat_completion(
+        self,
+        data: Dict[str, Any]
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Stream chat completion response.
+        
+        Args:
+            data: Request data
+            
+        Yields:
+            Response chunks
+        """
+        async with create_http_client(self.base_url, self.headers) as client:
+            async for line in stream_response(
+                client,
+                "POST",
+                "/v1/chat/completions",
+                json=data
+            ):
+                if not line.strip():
+                    continue
+                    
+                try:
+                    chunk = json.loads(line.replace("data: ", ""))
+                except json.JSONDecodeError:
+                    logger.warning(f"Failed to parse chunk: {line}")
+                    continue
+                    
+                if chunk.get("object") == "chat.completion.chunk":
+                    delta = chunk["choices"][0]["delta"]
+                    if "role" in delta:
+                        yield create_streaming_chunk(
+                            id=chunk["id"],
+                            model=data["model"],
+                            role=delta["role"]
+                        )
+                    elif "content" in delta:
+                        yield create_streaming_chunk(
+                            id=chunk["id"],
+                            model=data["model"],
+                            content=delta["content"]
+                        )
+                    elif chunk["choices"][0].get("finish_reason"):
+                        yield create_streaming_chunk(
+                            id=chunk["id"],
+                            model=data["model"],
+                            finish_reason=chunk["choices"][0]["finish_reason"]
+                        )

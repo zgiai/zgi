@@ -1,44 +1,73 @@
 """Base provider class for LLM providers."""
 from abc import ABC, abstractmethod
-from typing import Dict, Any, AsyncGenerator, Optional
-import httpx
+from typing import Dict, Any, AsyncGenerator, Optional, List
 import logging
+import os
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
-class BaseProvider(ABC):
+class LLMProvider(ABC):
     """Base class for LLM providers."""
     
-    def __init__(self, api_key: str, base_url: Optional[str] = None):
+    SUPPORTED_PREFIXES: List[str] = []
+    
+    def __init__(self, provider_name: str, api_key: str = None, base_url: str = None):
         """Initialize the provider.
         
         Args:
-            api_key: API key for authentication
-            base_url: Optional base URL override
+            provider_name: Name of the provider
+            api_key: Optional API key (if not provided, will try to get from env)
+            base_url: Optional base URL for API requests
         """
-        self.api_key = api_key
+        self.provider_name = provider_name
+        self.api_key = api_key or self._get_api_key()
         self.base_url = base_url
-        logger.debug(f"Initialized {self.__class__.__name__} with base_url: {base_url}")
+        
+    def _get_api_key(self) -> str:
+        """Get API key from environment variable.
+        
+        Returns:
+            API key
+            
+        Raises:
+            ValueError: If API key is not found
+        """
+        env_var = f"{self.provider_name.upper()}_API_KEY"
+        api_key = os.getenv(env_var)
+        if not api_key:
+            raise ValueError(f"No API key found in environment variable {env_var}")
+        return api_key
+    
+    @classmethod
+    def get_supported_prefixes(cls) -> List[str]:
+        """Get list of supported model prefixes.
+        
+        Returns:
+            List of model prefixes supported by this provider
+        """
+        return cls.SUPPORTED_PREFIXES
         
     @abstractmethod
-    async def create_chat_completion(
+    async def chat_completion(
         self,
-        params: Dict[str, Any]
-    ) -> Dict[str, Any] | AsyncGenerator[Dict[str, Any], None]:
-        """Create a chat completion.
+        messages: list[Dict[str, Any]],
+        model: str,
+        temperature: float = 1.0,
+        max_tokens: Optional[int] = None,
+        stream: bool = False,
+        **kwargs: Any
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Generate chat completion.
         
         Args:
-            params: Dictionary containing request parameters
-                Required:
-                    - messages: List of message objects
-                    - model: Model name
-                Optional:
-                    - temperature: Sampling temperature
-                    - max_tokens: Maximum tokens to generate
-                    - stream: Whether to stream the response
-                    
-        Returns:
-            Chat completion response in unified format
+            messages: List of messages
+            model: Model name
+            temperature: Sampling temperature
+            max_tokens: Maximum tokens to generate
+            stream: Whether to stream the response
+            **kwargs: Additional arguments
+            
+        Yields:
+            Response chunks
         """
-        raise NotImplementedError("Subclasses must implement create_chat_completion")
+        pass
