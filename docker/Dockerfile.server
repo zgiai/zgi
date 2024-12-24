@@ -1,16 +1,23 @@
 # 使用 Python 官方镜像
-FROM python:3.12-slim
+FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y \
+  build-essential \
+  gcc \
+  g++ \
+  python3-dev \
+  && rm -rf /var/lib/apt/lists/*
 
 # 设置工作目录
 WORKDIR /app
 
 COPY ../api /app
 
-
-# # # # 安装依赖
-# RUN ls /app/requirements.txt
-RUN pip install -r /app/requirements.txt
-
+# Create virtual environment and install dependencies
+RUN python -m venv /opt/venv && \
+  . /opt/venv/bin/activate && \
+  pip install --upgrade pip && \
+  pip install -r requirements.txt
 
 # # 启动应用程序
-CMD ["python3", "/app/main.py"]
+CMD ["python", "/app/main.py"]
