@@ -2,6 +2,7 @@
 import os
 from typing import Dict, Any
 import logging
+from typing import AsyncGenerator
 
 from .factory import create_provider
 from ..config.models import ModelConfig
@@ -146,7 +147,6 @@ class LLMRouter:
             try:
                 self._provider_cache[provider_name] = create_provider(
                     provider_name=provider_name,
-                    api_key=api_key,
                     base_url=base_url
                 )
             except Exception as e:
@@ -155,7 +155,7 @@ class LLMRouter:
             
         return self._provider_cache[provider_name]
         
-    def route_request(self, request_params: Dict[str, Any]) -> Dict[str, Any]:
+    async def route_request(self, request_params: Dict[str, Any]) -> AsyncGenerator[Dict[str, Any], None]:
         """Route a request to the appropriate provider.
         
         Args:
@@ -189,17 +189,36 @@ class LLMRouter:
             base_url = request_params.get("base_url") or ModelConfig.get_default_base_url(provider_name)
             
             # Create or get cached provider instance
-            cache_key = f"{provider_name}:{api_key}:{base_url}"
+            cache_key = provider_name
             if cache_key not in self._provider_cache:
                 self._provider_cache[cache_key] = create_provider(
-                    provider_name,
-                    api_key=api_key,
-                    base_url=base_url
+                    provider_name=provider_name
                 )
             
             provider = self._provider_cache[cache_key]
-            return provider.create_chat_completion(request_params)
             
+            # Extract required parameters
+            model = request_params["model"]
+            messages = request_params["messages"]
+            temperature = request_params.get("temperature", 1.0)
+            max_tokens = request_params.get("max_tokens")
+            stream = request_params.get("stream", False)
+            
+            # Add base_url to kwargs if provided
+            kwargs = {}
+            if base_url:
+                kwargs["base_url"] = base_url
+                
+            # Call chat_completion and yield responses
+            async for response in provider.chat_completion(
+                messages=messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=stream,
+                **kwargs
+            ):
+                yield response
         except Exception as e:
             logger.error(f"Error routing request: {str(e)}")
             raise
