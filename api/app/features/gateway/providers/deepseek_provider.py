@@ -19,7 +19,7 @@ class DeepSeekProvider(LLMProvider):
     def __init__(self, provider_name: str = "deepseek", api_key: str = None, base_url: str = None):
         """Initialize DeepSeek provider."""
         super().__init__(provider_name, api_key, base_url)
-        self.base_url = base_url or "https://api.deepseek.com"
+        self.base_url = base_url or "https://api.deepseek.com/v1"
         self.headers = {
             "content-type": "application/json",
             "authorization": f"Bearer {self.api_key}"
@@ -89,7 +89,7 @@ class DeepSeekProvider(LLMProvider):
             result = await make_json_request(
                 client,
                 "POST",
-                "/v1/chat/completions",
+                "/chat/completions",
                 json=data
             )
             
@@ -122,7 +122,7 @@ class DeepSeekProvider(LLMProvider):
             async for line in stream_response(
                 client,
                 "POST",
-                "/v1/chat/completions",
+                "/chat/completions",
                 json=data
             ):
                 if not line.strip():
