@@ -7,6 +7,7 @@ from app.features.api_keys.models import APIKey
 from app.features.applications.models import Application
 from app.features.chat.models.chat import ChatSession
 from app.features.chat.models.chat_file import ChatFile
+from app.features.chat.models.conversation import Conversation, ChatMessage
 
 __all__ = [
     'User',
@@ -15,5 +16,7 @@ __all__ = [
     'APIKey',
     'Application',
     'ChatSession',
-    'ChatFile'
+    'ChatFile',
+    'Conversation',
+    'ChatMessage'
 ]
