@@ -36,13 +36,20 @@ class ChatCompletionRequest(BaseModel):
     n: Optional[int] = Field(1, ge=1, le=128, description="How many chat completion choices to generate for each input message")
     stream: Optional[bool] = Field(False, description="Whether to stream back partial progress")
     stop: Optional[Union[str, List[str]]] = Field(None, description="Up to 4 sequences where the API will stop generating")
-    max_tokens: Optional[int] = Field(None, ge=1, description="The maximum number of tokens to generate")
-    presence_penalty: Optional[float] = Field(0, ge=-2, le=2, description="Penalty for new tokens based on their presence in the text so far")
-    frequency_penalty: Optional[float] = Field(0, ge=-2, le=2, description="Penalty for new tokens based on their frequency in the text so far")
+    max_tokens: Optional[int] = Field(None, description="The maximum number of tokens to generate")
+    presence_penalty: Optional[float] = Field(0, ge=-2, le=2, description="Penalty for new tokens based on their presence in the prompt")
+    frequency_penalty: Optional[float] = Field(0, ge=-2, le=2, description="Penalty for new tokens based on their frequency in the prompt")
     logit_bias: Optional[Dict[str, float]] = Field(None, description="Modify the likelihood of specified tokens appearing in the completion")
     user: Optional[str] = Field(None, description="A unique identifier representing your end-user")
-    # Internal use only
     base_url: Optional[str] = Field(None, description="Base URL for the provider API")
+
+    @root_validator(pre=True)
+    def validate_model(cls, values):
+        """Validate model name."""
+        model = values.get("model", "")
+        if not isinstance(model, str):
+            raise ValueError("Model must be a string")
+        return values
 
     @root_validator(pre=True)
     def validate_function_call(cls, values):
