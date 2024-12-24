@@ -7,6 +7,7 @@ from .base import LLMProvider
 from .openai_provider import OpenAIProvider
 from .deepseek_provider import DeepSeekProvider
 from .anthropic_provider import AnthropicProvider
+from .qwen_provider import QwenProvider
 from ..config.models import ModelConfig
 from ..exceptions.provider_errors import InvalidAPIKeyError
 from ..utils.provider_utils import (
@@ -28,7 +29,8 @@ class LLMRouter:
     PROVIDER_CLASSES = {
         "openai": OpenAIProvider,
         "anthropic": AnthropicProvider,
-        "deepseek": DeepSeekProvider
+        "deepseek": DeepSeekProvider,
+        "qwen": QwenProvider,
     }
     
     def __init__(self):

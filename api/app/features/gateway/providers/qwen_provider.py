@@ -1,9 +1,8 @@
-"""OpenAI provider implementation."""
+import os
 from typing import Dict, Any, AsyncGenerator, Optional
 import json
 import logging
 import httpx
-
 from .base import LLMProvider
 from ..utils.message_converter import extract_system_message, filter_messages_by_role
 from ..utils.response_formatter import create_chat_response, create_streaming_chunk, extract_usage_stats
@@ -11,15 +10,15 @@ from ..utils.http_client import create_http_client, stream_response, make_json_r
 
 logger = logging.getLogger(__name__)
 
-class OpenAIProvider(LLMProvider):
-    """OpenAI provider implementation."""
+class QwenProvider(LLMProvider):
+    """Provider for Alibaba Cloud Qwen API."""
     
-    SUPPORTED_PREFIXES = ["gpt-3.5", "gpt-4"]
+    SUPPORTED_PREFIXES = ["qwen"]
     
-    def __init__(self, provider_name: str = "openai", api_key: str = None, base_url: str = None):
-        """Initialize OpenAI provider."""
+    def __init__(self, provider_name: str = "qwen", api_key: str = None, base_url: str = None):
+        """Initialize Qwen provider."""
         super().__init__(provider_name, api_key, base_url)
-        self.base_url = base_url or "https://api.openai.com/v1"
+        self.base_url = base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1"
         self.headers = {
             "content-type": "application/json",
             "authorization": f"Bearer {self.api_key}"
@@ -73,7 +72,7 @@ class OpenAIProvider(LLMProvider):
                 yield result
                 
         except httpx.HTTPError as e:
-            logger.error(f"OpenAI API request failed: {str(e)}")
+            logger.error(f"Qwen API request failed: {str(e)}")
             raise
             
     async def _regular_chat_completion(self, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -153,4 +152,4 @@ class OpenAIProvider(LLMProvider):
                             id=chunk["id"],
                             model=data["model"],
                             finish_reason=chunk["choices"][0]["finish_reason"]
-                        )
+                        ) 
