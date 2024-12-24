@@ -12,14 +12,16 @@ class ProviderConfig:
     DEFAULT_BASE_URLS = {
         "anthropic": "https://api.anthropic.com",
         "openai": "https://api.openai.com/v1",
-        "deepseek": "https://api.deepseek.com/v1"
+        "deepseek": "https://api.deepseek.com/v1",
+        "qwen": "https://dashscope.aliyuncs.com/compatible-mode/v1"
     }
     
     # Environment variable names for API keys
     API_KEY_ENV_VARS = {
         "openai": "OPENAI_API_KEY",
         "anthropic": "ANTHROPIC_API_KEY",
-        "deepseek": "DEEPSEEK_API_KEY"
+        "deepseek": "DEEPSEEK_API_KEY",
+        "qwen": "QWEN_API_KEY"
     }
     
     # Supported models for each provider
@@ -47,6 +49,19 @@ class ProviderConfig:
         "deepseek": {
             "deepseek-chat",
             "deepseek-coder"
+        },
+        "qwen": {
+            "qwen-turbo",
+            "qwen-plus",
+            "qwen-max",
+            "qwen-long",
+            "qwen2.5-72b-instruct",
+            "qwen2.5-32b-instruct",
+            "qwen2.5-14b-instruct",
+            "qwen2.5-7b-instruct",
+            "qwen2.5-3b-instruct",
+            "qwen2.5-1.5b-instruct",
+            "qwen2.5-0.5b-instruct"
         }
     }
 
