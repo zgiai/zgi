@@ -1,5 +1,5 @@
 """Anthropic API provider implementation."""
-from typing import Dict, Any, AsyncGenerator, Optional
+from typing import Dict, Any, AsyncGenerator, Optional, List
 import json
 import logging
 import httpx
@@ -15,11 +15,21 @@ logger = logging.getLogger(__name__)
 class AnthropicProvider(LLMProvider):
     """Anthropic API provider implementation."""
     
-    def __init__(self, provider_name: str = "anthropic"):
+    MODEL_MAPPING = {
+        "claude-3-opus-20240229": "claude-3-opus-20240229"
+    }
+    
+    SUPPORTED_PREFIXES = ["claude-"]
+    
+    DEFAULT_MAX_TOKENS = 4096
+    BASE_URL = "https://api.anthropic.com"
+    API_VERSION = "2023-06-01"
+    
+    def __init__(self, provider_name: str = "anthropic", api_key: str = None, base_url: str = None):
         """Initialize Anthropic provider."""
-        super().__init__(provider_name)
-        self.base_url = "https://api.anthropic.com"
-        self.api_version = "2023-06-01"  # 回退到稳定版本
+        super().__init__(provider_name, api_key, base_url)
+        self.base_url = base_url or self.BASE_URL
+        self.api_version = self.API_VERSION
         self.headers = {
             "anthropic-version": self.api_version,
             "content-type": "application/json",
@@ -30,6 +40,98 @@ class AnthropicProvider(LLMProvider):
         logger.debug(f"Initialized Anthropic provider with API version: {self.api_version}")
         logger.debug(f"Base URL: {self.base_url}")
         logger.debug(f"Headers: {json.dumps(self.headers, indent=2)}")
+        
+    def _create_content_block(self, text: str) -> List[Dict[str, str]]:
+        """Create a content block for messages.
+        
+        Args:
+            text: The text content
+            
+        Returns:
+            A list containing the content block
+        """
+        return [
+            {
+                "type": "text",
+                "text": text
+            }
+        ]
+        
+    def _create_message(self, role: str, content: str) -> Dict[str, Any]:
+        """Create a message object.
+        
+        Args:
+            role: Message role (user/assistant)
+            content: Message content
+            
+        Returns:
+            Message object
+        """
+        return {
+            "role": role,
+            "content": self._create_content_block(content)
+        }
+        
+    def _create_system_message(self, system: str) -> Dict[str, List[Dict[str, str]]]:
+        """Create a system message object.
+        
+        Args:
+            system: System message content
+            
+        Returns:
+            System message object
+        """
+        return {
+            "content": self._create_content_block(system)
+        }
+        
+    def _prepare_request_data(
+        self,
+        messages: List[Dict[str, str]],
+        model: str,
+        temperature: float,
+        stream: bool,
+        max_tokens: Optional[int] = None,
+        system: Optional[str] = None,
+        **kwargs: Any
+    ) -> Dict[str, Any]:
+        """Prepare request data for the API call.
+        
+        Args:
+            messages: List of messages
+            model: Model name
+            temperature: Temperature value
+            stream: Whether to stream responses
+            max_tokens: Maximum tokens to generate
+            system: System message
+            **kwargs: Additional arguments
+            
+        Returns:
+            Prepared request data
+        """
+        # Extract system message and filter messages
+        messages, system = extract_system_message(messages)
+        messages = filter_messages_by_role(messages, ["user", "assistant"])
+        
+        # Convert model name if needed
+        model = self.MODEL_MAPPING.get(model, model)
+        
+        # Prepare request data
+        data = {
+            "model": model,
+            "messages": [
+                self._create_message(msg["role"], msg["content"])
+                for msg in messages
+            ],
+            "temperature": temperature,
+            "stream": stream,
+            "max_tokens": max_tokens if max_tokens is not None else self.DEFAULT_MAX_TOKENS
+        }
+        
+        if system:
+            data["system"] = self._create_system_message(system)
+            
+        return data
         
     def _update_base_url(self, base_url: Optional[str] = None) -> None:
         """Update base URL if provided in request.
@@ -43,7 +145,7 @@ class AnthropicProvider(LLMProvider):
         
     async def chat_completion(
         self,
-        messages: list[Dict[str, Any]],
+        messages: List[Dict[str, Any]],
         model: str,
         temperature: float = 1.0,
         max_tokens: Optional[int] = None,
@@ -55,57 +157,30 @@ class AnthropicProvider(LLMProvider):
         Args:
             messages: List of messages
             model: Model name
-            temperature: Sampling temperature
+            temperature: Temperature value
             max_tokens: Maximum tokens to generate
-            stream: Whether to stream the response
+            stream: Whether to stream responses
             **kwargs: Additional arguments
             
         Yields:
             Response chunks
+            
+        Raises:
+            Exception: If the request fails
         """
         # Update base URL if provided
         self._update_base_url(kwargs.get("base_url"))
         
-        # Extract system message and filter messages
-        messages, system = extract_system_message(messages)
-        messages = filter_messages_by_role(messages, ["user", "assistant"])
-        
-        # Convert model name if needed
-        MODEL_MAPPING = {
-            "claude-3-opus-20240229": "claude-3-opus-20240229"
-        }
-        model = MODEL_MAPPING.get(model, model)
-        
         # Prepare request data
-        data = {
-            "model": model,
-            "messages": [
-                {
-                    "role": msg["role"],
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": msg["content"]
-                        }
-                    ]
-                }
-                for msg in messages
-            ],
-            "temperature": temperature,
-            "stream": stream,
-            "max_tokens": max_tokens if max_tokens is not None else 4096
-        }
+        data = self._prepare_request_data(
+            messages,
+            model,
+            temperature,
+            stream,
+            max_tokens,
+            **kwargs
+        )
         
-        if system:
-            data["system"] = {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": system
-                    }
-                ]
-            }
-            
         # Log request data for debugging
         logger.debug(f"Request data: {json.dumps(data, indent=2)}")
         logger.debug(f"Request headers: {json.dumps(self.headers, indent=2)}")

@@ -1,19 +1,41 @@
 """Router for LLM requests."""
 import os
 import yaml
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, Type
 from pathlib import Path
 
-from ..providers.factory import create_provider, load_config
+from ..providers.base import LLMProvider
+from ..providers.openai_provider import OpenAIProvider
+from ..providers.anthropic_provider import AnthropicProvider
+from ..providers.deepseek_provider import DeepSeekProvider
 
 class Router:
     """Router for LLM requests."""
     
+    PROVIDER_CLASSES = {
+        "openai": OpenAIProvider,
+        "anthropic": AnthropicProvider,
+        "deepseek": DeepSeekProvider
+    }
+    
     def __init__(self):
         """Initialize the router."""
-        self.config = load_config()
+        self.config = self._load_config()
         self._provider_cache = {}
         
+    def _load_config(self) -> Dict[str, Any]:
+        """Load model configuration.
+        
+        Returns:
+            Model configuration dictionary
+        """
+        config_path = Path(__file__).parent.parent / "config" / "models.yaml"
+        if not config_path.exists():
+            raise ValueError(f"Config file not found: {config_path}")
+            
+        with open(config_path) as f:
+            return yaml.safe_load(f)
+            
     def get_model_info(self, model_id: str) -> Tuple[str, str]:
         """Get provider and model name for a given model ID.
         
@@ -39,7 +61,7 @@ class Router:
                 
         raise ValueError(f"Model not found: {model_id}")
         
-    def get_provider(self, model_id: str):
+    def get_provider(self, model_id: str) -> LLMProvider:
         """Get or create provider for a given model.
         
         Args:
@@ -47,18 +69,30 @@ class Router:
             
         Returns:
             Provider instance
+            
+        Raises:
+            ValueError: If provider not found or API key missing
         """
         provider_name, _ = self.get_model_info(model_id)
         
         if provider_name not in self._provider_cache:
             api_key_var = f"{provider_name.upper()}_API_KEY"
+            base_url_var = f"{provider_name.upper()}_BASE_URL"
+            
             api_key = os.environ.get(api_key_var)
+            base_url = os.environ.get(base_url_var)
+            
             if not api_key:
                 raise ValueError(f"Missing API key: {api_key_var}")
                 
-            self._provider_cache[provider_name] = create_provider(
+            if provider_name not in self.PROVIDER_CLASSES:
+                raise ValueError(f"Unknown provider: {provider_name}")
+                
+            provider_class = self.PROVIDER_CLASSES[provider_name]
+            self._provider_cache[provider_name] = provider_class(
                 provider_name=provider_name,
-                api_key=api_key
+                api_key=api_key,
+                base_url=base_url
             )
             
         return self._provider_cache[provider_name]

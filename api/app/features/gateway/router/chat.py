@@ -1,7 +1,7 @@
 """Chat completion router"""
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse, JSONResponse
-from typing import Dict, Any, AsyncGenerator
+from typing import Dict, Any, AsyncGenerator, List
 import json
 import logging
 from sqlalchemy.orm import Session
@@ -27,6 +27,18 @@ async def stream_response(generator: AsyncGenerator[Dict[str, Any], None]):
     except Exception as e:
         logger.error(f"Error streaming response: {str(e)}")
         yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+async def collect_response(generator: AsyncGenerator[Dict[str, Any], None]) -> Dict[str, Any]:
+    """Collect all chunks from generator into a single response."""
+    chunks: List[Dict[str, Any]] = []
+    try:
+        async for chunk in generator:
+            if chunk:
+                chunks.append(chunk)
+        return chunks[-1] if chunks else {}
+    except Exception as e:
+        logger.error(f"Error collecting response: {str(e)}")
+        raise
 
 @router.post("/chat/completions", response_model=ChatCompletionResponse)
 async def create_chat_completion(
@@ -56,18 +68,20 @@ async def create_chat_completion(
         
         logger.debug(f"Processing chat completion request with params: {params}")
 
-        # Process the request through the service layer
-        response = await LLMService.create_chat_completion(params, db)
+        # Get response generator from service
+        response_generator = LLMService.create_chat_completion(params, db)
         
         # Handle streaming response
         if request.stream:
             logger.debug("Streaming response")
             return StreamingResponse(
-                stream_response(response),
+                stream_response(response_generator),
                 media_type="text/event-stream"
             )
             
-        logger.debug("Returning non-streaming response")
+        # For non-streaming, collect all chunks into a single response
+        logger.debug("Collecting non-streaming response")
+        response = await collect_response(response_generator)
         return JSONResponse(content=response)
 
     except ValueError as e:
