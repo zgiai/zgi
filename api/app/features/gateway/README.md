@@ -1,207 +1,201 @@
-# Gateway Service
+# LLM Gateway Service
 
-The Gateway Service is a unified LLM service gateway that manages and routes requests to different LLM Providers (such as OpenAI, Anthropic, DeepSeek, etc.).
+[English](#english) | [中文](#中文) | [日本語](#日本語)
 
-## Architecture
+## English
 
-### Core Components
+### Overview
+The LLM Gateway Service is a unified service gateway that manages and routes requests to different Language Model Providers (OpenAI, Anthropic, DeepSeek, etc.). It provides a consistent interface while handling provider-specific implementations and configurations.
 
-1. **Provider Base Class** (`providers/base.py`)
-   - Defines the interface that all Providers must implement
-   - Provides common utility methods and properties
+### Key Features
+- **Multi-Provider Support**: Seamlessly integrate with multiple LLM providers
+- **Unified Interface**: Consistent API regardless of the underlying provider
+- **Streaming Support**: Handle both streaming and non-streaming responses
+- **Error Handling**: Robust error handling and logging
+- **Configuration Management**: Flexible model and provider configuration
+- **Rate Limiting**: Built-in rate limiting and quota management
+- **Message Conversion**: Automatic message format conversion between providers
 
-2. **Router** (`router/router.py`)
-   - Routes requests to appropriate Providers based on model ID
-   - Manages Provider instance lifecycle
-   - Handles configuration loading and API key management
+### Architecture
 
-3. **Configuration Management** (`config/models.yaml`)
-   - Defines model-to-Provider mappings
-   - Manages model versions and configurations
+#### Core Components
+1. **Provider System**
+   - Base Provider Class
+   - Provider-specific implementations
+   - Provider Manager for instance lifecycle
 
-## Adding a New Provider
+2. **Router System**
+   - Request routing based on model
+   - API endpoint handling
+   - Response streaming
 
-Follow these steps to add a new LLM Provider:
+3. **Configuration System**
+   - Model configurations
+   - Provider settings
+   - Environment management
 
-### 1. Create Provider Class
+4. **Utility System**
+   - HTTP client management
+   - Message conversion
+   - Response formatting
+   - Error handling
 
-Create a new Provider class file in the `providers` directory (e.g., `new_provider.py`):
+### Usage
 
+#### Adding a New Provider
+1. Create provider class implementing `LLMProvider`
+2. Add model configuration
+3. Set environment variables
+4. Register provider in `ProviderManager`
+
+#### API Example
 ```python
-from .base import LLMProvider
+from gateway.service.llm_service import LLMService
 
-class NewProvider(LLMProvider):
-    """New provider implementation."""
-    
-    SUPPORTED_PREFIXES = ["new-model-"]  # Define supported model prefixes
-    
-    def __init__(self, provider_name: str = "new_provider", api_key: str = None, base_url: str = None):
-        """Initialize provider."""
-        super().__init__(provider_name, api_key, base_url)
-        self.base_url = base_url or "https://api.new-provider.com"
-        self.headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
-        
-    async def chat_completion(self, messages, model, temperature=1.0, max_tokens=None, stream=False, **kwargs):
-        """Implement chat completion method."""
-        # Implement chat completion logic
-        pass
-```
-
-### 2. Register Provider
-
-Add the new Provider to `PROVIDER_CLASSES` in `router/router.py`:
-
-```python
-PROVIDER_CLASSES = {
-    "openai": OpenAIProvider,
-    "anthropic": AnthropicProvider,
-    "deepseek": DeepSeekProvider,
-    "new_provider": NewProvider  # Add new Provider
-}
-```
-
-### 3. Add Model Configuration
-
-Add new model configuration in `config/models.yaml`:
-
-```yaml
-new-model-v1:
-  provider: new_provider
-  model_name: new-model-v1
-  description: New model description
-  max_tokens: 4096
-  supports_streaming: true
-```
-
-### 4. Set Environment Variables
-
-Add necessary environment variables:
-
-```bash
-export NEW_PROVIDER_API_KEY=your_api_key
-export NEW_PROVIDER_BASE_URL=https://api.new-provider.com  # Optional
-```
-
-## Best Practices
-
-1. **Error Handling**
-   - Handle API errors gracefully in Provider implementations
-   - Use custom `ProviderError` exception class
-
-2. **Configuration Management**
-   - Use environment variables for sensitive information
-   - Explicitly specify model capabilities in configuration files
-
-3. **Code Style**
-   - Follow Python type hints
-   - Provide comprehensive docstrings
-   - Implement necessary unit tests
-
-## Examples
-
-### Usage Example
-
-```python
-from gateway.router.router import Router
-
-router = Router()
-response = await router.route_request({
-    "model": "new-model-v1",
+service = LLMService()
+response = await service.create_chat_completion({
+    "model": "gpt-4",
     "messages": [{"role": "user", "content": "Hello!"}],
-    "temperature": 0.7,
-    "stream": False
+    "temperature": 0.7
 })
 ```
 
-### Test Example
+### Development
 
+#### Setup
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Set environment variables
+export OPENAI_API_KEY=your_key
+export ANTHROPIC_API_KEY=your_key
+export DEEPSEEK_API_KEY=your_key
+```
+
+#### Testing
+```bash
+pytest tests/
+```
+
+## 中文
+
+### 概述
+LLM Gateway Service 是一个统一的服务网关，用于管理和路由不同语言模型提供商（OpenAI、Anthropic、DeepSeek 等）的请求。它提供了一致的接口，同时处理提供商特定的实现和配置。
+
+### 主要特性
+- **多提供商支持**：无缝集成多个 LLM 提供商
+- **统一接口**：统一的 API，与底层提供商无关
+- **流式响应**：支持流式和非流式响应
+- **错误处理**：健壮的错误处理和日志记录
+- **配置管理**：灵活的模型和提供商配置
+- **速率限制**：内置速率限制和配额管理
+- **消息转换**：提供商之间的自动消息格式转换
+
+### 架构
+
+#### 核心组件
+1. **提供商系统**
+   - 基础提供商类
+   - 特定提供商实现
+   - 提供商管理器（生命周期管理）
+
+2. **路由系统**
+   - 基于模型的请求路由
+   - API 端点处理
+   - 响应流处理
+
+3. **配置系统**
+   - 模型配置
+   - 提供商设置
+   - 环境管理
+
+4. **工具系统**
+   - HTTP 客户端管理
+   - 消息转换
+   - 响应格式化
+   - 错误处理
+
+### 使用方法
+
+#### 添加新的提供商
+1. 创建实现 `LLMProvider` 的提供商类
+2. 添加模型配置
+3. 设置环境变量
+4. 在 `ProviderManager` 中注册提供商
+
+#### API 示例
 ```python
-import pytest
-from gateway.providers.new_provider import NewProvider
+from gateway.service.llm_service import LLMService
 
-@pytest.mark.asyncio
-async def test_new_provider():
-    provider = NewProvider(api_key="test_key")
-    response = await provider.chat_completion(
-        messages=[{"role": "user", "content": "Hello"}],
-        model="new-model-v1"
-    )
-    assert response["choices"][0]["message"]["content"]
+service = LLMService()
+response = await service.create_chat_completion({
+    "model": "gpt-4",
+    "messages": [{"role": "user", "content": "你好！"}],
+    "temperature": 0.7
+})
 ```
 
-## API Response Format
+## 日本語
 
-All providers should return responses in a standardized format:
+### 概要
+LLM Gateway Service は、異なる言語モデルプロバイダー（OpenAI、Anthropic、DeepSeek など）へのリクエストを管理・ルーティングする統合サービスゲートウェイです。プロバイダー固有の実装と設定を処理しながら、一貫したインターフェースを提供します。
 
-```json
-{
-    "id": "response-id",
-    "object": "chat.completion",
-    "created": "timestamp",
-    "model": "model-name",
-    "choices": [{
-        "index": 0,
-        "message": {
-            "role": "assistant",
-            "content": "response content"
-        },
-        "finish_reason": "stop"
-    }],
-    "usage": {
-        "prompt_tokens": 0,
-        "completion_tokens": 0,
-        "total_tokens": 0
-    }
-}
+### 主な機能
+- **マルチプロバイダー対応**：複数のLLMプロバイダーとのシームレスな統合
+- **統一インターフェース**：基盤となるプロバイダーに関係なく一貫したAPI
+- **ストリーミング対応**：ストリーミングおよび非ストリーミングレスポンスの処理
+- **エラー処理**：堅牢なエラー処理とログ記録
+- **設定管理**：柔軟なモデルとプロバイダーの設定
+- **レート制限**：組み込みのレート制限とクォータ管理
+- **メッセージ変換**：プロバイダー間の自動メッセージフォーマット変換
+
+### アーキテクチャ
+
+#### コアコンポーネント
+1. **プロバイダーシステム**
+   - 基本プロバイダークラス
+   - プロバイダー固有の実装
+   - インスタンスライフサイクル管理
+
+2. **ルーターシステム**
+   - モデルベースのリクエストルーティング
+   - APIエンドポイント処理
+   - レスポンスストリーミング
+
+3. **設定システム**
+   - モデル設定
+   - プロバイダー設定
+   - 環境管理
+
+4. **ユーティリティシステム**
+   - HTTPクライアント管理
+   - メッセージ変換
+   - レスポンスフォーマット
+   - エラー処理
+
+### 使用方法
+
+#### 新しいプロバイダーの追加
+1. `LLMProvider` を実装するプロバイダークラスを作成
+2. モデル設定を追加
+3. 環境変数を設定
+4. `ProviderManager` にプロバイダーを登録
+
+#### API 例
+```python
+from gateway.service.llm_service import LLMService
+
+service = LLMService()
+response = await service.create_chat_completion({
+    "model": "gpt-4",
+    "messages": [{"role": "user", "content": "こんにちは！"}],
+    "temperature": 0.7
+})
 ```
-
-## Development Guidelines
-
-1. **Provider Implementation**
-   - Implement all required methods from the base class
-   - Handle both streaming and non-streaming responses
-   - Properly manage API rate limits and quotas
-
-2. **Testing**
-   - Write unit tests for normal operation
-   - Test error conditions and edge cases
-   - Mock external API calls in tests
-
-3. **Documentation**
-   - Document all public methods and classes
-   - Include usage examples
-   - Document any provider-specific limitations or features
-
-4. **Security**
-   - Never commit API keys or sensitive data
-   - Validate all input parameters
-   - Handle sensitive data according to security best practices
-
-## Troubleshooting
-
-Common issues and solutions:
-
-1. **API Key Issues**
-   - Ensure environment variables are properly set
-   - Check API key permissions and quotas
-
-2. **Model Configuration**
-   - Verify model exists in `models.yaml`
-   - Check model name matches provider's requirements
-
-3. **Response Format**
-   - Ensure provider response matches standard format
-   - Check for missing required fields
 
 ## Contributing
+Please read our [Contributing Guidelines](CONTRIBUTING.md) before submitting pull requests.
 
-1. Fork the repository
-2. Create a feature branch
-3. Add your changes
-4. Write/update tests
-5. Submit a pull request
-
-For more detailed information, please refer to the individual component documentation.
+## License
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
