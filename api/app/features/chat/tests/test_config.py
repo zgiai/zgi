@@ -12,7 +12,7 @@ from app.core.config import settings
 # Use the same database as development
 TEST_DATABASE_URL = settings.SQLALCHEMY_DATABASE_URL
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="function")
 async def event_loop():
     """Create an instance of the default event loop for each test case."""
     loop = asyncio.get_event_loop_policy().new_event_loop()

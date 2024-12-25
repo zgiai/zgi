@@ -2,8 +2,10 @@ from sqlalchemy import Column, Integer, String, DateTime, Boolean, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from datetime import datetime
-
 from app.core.database import Base
+from app.features.applications.models import Application
+from app.features.projects.models import Project
+from app.features.api_keys.models import APIKey
 
 class User(Base):
     """User model for authentication and authorization"""
@@ -23,9 +25,7 @@ class User(Base):
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
-    organization_members = relationship("app.features.organizations.models.OrganizationMember", back_populates="user")
-    applications = relationship("app.features.applications.models.Application", back_populates="owner")
-    # chat_sessions = relationship("app.features.chat.models.ChatSession", back_populates="user", cascade="all, delete-orphan")
-    created_projects = relationship("app.features.projects.models.Project", back_populates="creator")
-    api_keys = relationship("app.features.api_keys.models.APIKey", back_populates="creator")
-    knowledge_bases = relationship("app.models.knowledge_base.KnowledgeBase", back_populates="owner")
+    organization_members = relationship("OrganizationMember", back_populates="user")
+    created_projects = relationship("Project", back_populates="creator")
+    api_keys = relationship("APIKey", back_populates="creator")
+    knowledge_bases = relationship("KnowledgeBase", back_populates="owner")

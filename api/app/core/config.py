@@ -1,95 +1,104 @@
-import os
+from typing import Any, Dict, List, Optional, Union
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import Optional
+from pydantic import AnyHttpUrl, EmailStr, HttpUrl, validator
+import os
+from dotenv import load_dotenv
 
-# 获取项目根目录的路径
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Load environment variables from .env file
+load_dotenv()
 
 class Settings(BaseSettings):
-    PROJECT_NAME: str = "ZGI AI App"  # 添加项目名称设置
-    VERSION: str = "0.1.0"
-    API_V1_STR: str = "/v1/console"
+    PROJECT_NAME: str = "ZGI API"
+    VERSION: str = "1.0.0"
+    API_V1_STR: str = "/api/v1"
     
-    # Server Settings
+    # Server settings
     HOST: str = os.getenv("HOST", "0.0.0.0")
     PORT: int = int(os.getenv("PORT", "7001"))
     
-    OPENAI_MODEL: str = "gpt-4o"
-    WEAVIATE_URL: str
-    OPENAI_API_KEY: str
-    WEAVIATE_API_KEY: str  # 添加这个字段
-    OPENAI_API_BASE: str = "https://api.agicto.cn/v1"  # 添加这个字段
-    OPENAI_BASE_URL: str = "https://api.agicto.cn"
-    ENVIRONMENT: str = "production"
-
-    # Database Settings
-    DB_HOST: str = os.getenv("DB_HOST", "127.0.0.1")
-    DB_PORT: int = int(os.getenv("DB_PORT", "3306"))
-    DB_USER: str = os.getenv("DB_USER", "root")
-    DB_PASSWORD: str = os.getenv("DB_PASSWORD", "")
-    DB_DATABASE: str = os.getenv("DB_DATABASE", "zgi")
+    # Security settings
+    SECRET_KEY: str = os.getenv("SECRET_KEY", "test-secret-key-for-development-only")
+    ALGORITHM: str = os.getenv("ALGORITHM", "HS256")  # Default to HS256 for JWT encoding
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
     
-    @property
-    def SQLALCHEMY_DATABASE_URL(self) -> str:
-        return f"mysql+aiomysql://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_DATABASE}?charset=utf8mb4"
+    # BACKEND_CORS_ORIGINS is a comma-separated list of origins
+    BACKEND_CORS_ORIGINS: List[AnyHttpUrl] = []
 
-    # Redis
-    REDIS_HOST: str = os.getenv("REDIS_HOST", "127.0.0.1")
-    REDIS_PORT: int = int(os.getenv("REDIS_PORT", "6379"))
-    REDIS_DB: int = int(os.getenv("REDIS_DB", "0"))
-    REDIS_PASSWORD: Optional[str] = os.getenv("REDIS_PASSWORD")
+    @validator("BACKEND_CORS_ORIGINS", pre=True)
+    def assemble_cors_origins(cls, v: Union[str, List[str]]) -> Union[List[str], str]:
+        if isinstance(v, str) and not v.startswith("["):
+            return [i.strip() for i in v.split(",")]
+        elif isinstance(v, (list, str)):
+            return v
+        raise ValueError(v)
 
-    # JWT Settings
-    SECRET_KEY: str = os.getenv("SECRET_KEY", "your-secret-key-here")  # 请在生产环境中更改此密钥
-    ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
+    # Database settings
+    MYSQL_SERVER: str = os.getenv("MYSQL_SERVER", "127.0.0.1")
+    MYSQL_USER: str = os.getenv("MYSQL_USER", "root")
+    MYSQL_PASSWORD: str = os.getenv("MYSQL_PASSWORD", "")
+    MYSQL_DB: str = os.getenv("MYSQL_DB", "zgi")
+    MYSQL_PORT: str = os.getenv("MYSQL_PORT", "3306")
+    SQL_ECHO: bool = os.getenv("SQL_ECHO", "False").lower() == "true"
 
-    # Email
-    SMTP_TLS: bool = True
-    SMTP_PORT: Optional[int] = None
-    SMTP_HOST: Optional[str] = None
-    SMTP_USER: Optional[str] = None
-    SMTP_PASSWORD: Optional[str] = None
-    EMAILS_FROM_EMAIL: Optional[str] = None
-    EMAILS_FROM_NAME: Optional[str] = None
+    # Database connection
+    DB_CONNECTION: str = os.getenv("DB_CONNECTION", "mysql")
+    DB_HOST: str = os.getenv("DB_HOST", "127.0.0.1")
+    DB_PORT: str = os.getenv("DB_PORT", "3306")
+    DB_DATABASE: str = os.getenv("DB_DATABASE", "zgi")
+    DB_USERNAME: str = os.getenv("DB_USERNAME", "root")
+    DB_PASSWORD: str = os.getenv("DB_PASSWORD", "")
+    DB_CHARSET: str = os.getenv("DB_CHARSET", "utf8mb4")
+    DB_COLLATION: str = os.getenv("DB_COLLATION", "utf8mb4_unicode_ci")
 
-    # User settings
-    MAX_APPLICATIONS_PER_USER: int = 5
-    MAX_TEAMS_PER_USER: int = 5
+    # OpenAI settings
+    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+    OPENAI_API_BASE: str = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
+    OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4")
+    OPENAI_BASE_URL: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com")
 
-    # Cache
-    CACHE_EXPIRE_MINUTES: int = 60 * 24  # 24 hours
+    # Other LLM providers
+    GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+    ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
+    ANTHROPIC_API_BASE: str = os.getenv("ANTHROPIC_API_BASE", "")
+    DEEPSEEK_API_KEY: str = os.getenv("DEEPSEEK_API_KEY", "")
+    DEEPSEEK_API_BASE: str = os.getenv("DEEPSEEK_API_BASE", "")
 
-    # Logging
-    LOG_LEVEL: str = "INFO"
-    LOG_FORMAT: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    # Production API keys
+    PROD_OPENAI_API_KEY: str = os.getenv("PROD_OPENAI_API_KEY", "")
+    PROD_ANTHROPIC_API_KEY: str = os.getenv("PROD_ANTHROPIC_API_KEY", "")
+    PROD_DEEPSEEK_API_KEY: str = os.getenv("PROD_DEEPSEEK_API_KEY", "")
 
-    # Cors
-    CORS_ORIGINS: list = ["*"]
-    CORS_METHODS: list = ["*"]
-    CORS_HEADERS: list = ["*"]
+    # Environment
+    ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
+
+    # Vector database settings
+    VECTOR_DB_PROVIDER: str = os.getenv("VECTOR_DB_PROVIDER", "pinecone")
+    PINECONE_API_KEY: str = os.getenv("PINECONE_API_KEY", "")
+    PINECONE_ENVIRONMENT: str = os.getenv("PINECONE_ENVIRONMENT", "")
+    PINECONE_INDEX_NAME: str = os.getenv("PINECONE_INDEX_NAME", "zgi")
+    
+    WEAVIATE_URL: str = os.getenv("WEAVIATE_URL", "")
+    WEAVIATE_API_KEY: str = os.getenv("WEAVIATE_API_KEY", "")
+
+    # Embedding settings
+    EMBEDDING_PROVIDER: str = os.getenv("EMBEDDING_PROVIDER", "openai")
+    EMBEDDING_OPENAI_API_KEY: str = os.getenv("EMBEDDING_OPENAI_API_KEY", "")
+    EMBEDDING_OPENAI_MODEL: str = os.getenv("EMBEDDING_OPENAI_MODEL", "text-embedding-3-small")
 
     # File upload settings
     UPLOAD_DIR: str = "uploads"
     MAX_UPLOAD_SIZE: int = 10 * 1024 * 1024  # 10MB
+    ALLOWED_EXTENSIONS: List[str] = ["txt", "pdf", "doc", "docx"]
 
-    # RAG settings
-    PINECONE_API_KEY: str
-    PINECONE_ENVIRONMENT: str
-    PINECONE_INDEX_NAME: str
+    @property
+    def SQLALCHEMY_DATABASE_URL(self) -> str:
+        return f"mysql+aiomysql://{self.MYSQL_USER}:{self.MYSQL_PASSWORD}@{self.MYSQL_SERVER}:{self.MYSQL_PORT}/{self.MYSQL_DB}?charset=utf8mb4"
 
-    # Vector settings
-    EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
-    CHUNK_SIZE: int = 1000
-    CHUNK_OVERLAP: int = 100
-
-    class Config:
-        env_file = os.path.join(ROOT_DIR, ".env.test" if os.getenv("TESTING") else ".env")
-        env_file_encoding = "utf-8"
-        extra = "allow"  # 允许额外的字段
-        case_sensitive = True
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=True,
+        extra="allow"
+    )
 
 settings = Settings()
-
-# 打印 .env 文件的路径（仅用于调试，之后请删除）
-print(f"Loading .env from: {os.path.join(ROOT_DIR, '.env' if not os.getenv('TESTING') else '.env.test')}")

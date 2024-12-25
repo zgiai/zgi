@@ -1,8 +1,11 @@
 from datetime import datetime
 from typing import List, Optional
+from fastapi import UploadFile
+from sqlalchemy.orm import Session
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from app.features.chat.models.chat import ChatSession, ChatFile
+from app.features.chat.models.chat import ChatSession
+from app.features.chat.models.chat_file import ChatFile
 
 class ChatService:
     def __init__(self, db: AsyncSession):

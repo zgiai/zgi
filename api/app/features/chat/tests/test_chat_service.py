@@ -1,6 +1,7 @@
 import pytest
 from app.features.chat.service.chat_service import ChatService
-from app.features.chat.models.chat import ChatSession, ChatFile
+from app.features.chat.models.chat import ChatSession
+from app.features.chat.models.chat_file import ChatFile
 from app.features.providers.models.provider import ModelProvider
 from app.features.providers.models.model import ProviderModel
 from datetime import datetime

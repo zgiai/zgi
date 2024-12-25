@@ -3,6 +3,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from app.core.database import Base
+from app.features.usage.models import ResourceUsage
 
 class Application(Base):
     """Application model"""
@@ -19,6 +20,6 @@ class Application(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
     # Relationships
-    owner = relationship("app.features.users.models.User", back_populates="applications")
-    resource_usage = relationship("app.features.usage.models.ResourceUsage", back_populates="application", cascade="all, delete-orphan")
+    owner = relationship("app.features.users.models.User")
+    resource_usage = relationship(ResourceUsage, back_populates="application", cascade="all, delete-orphan")
     # chat_sessions = relationship("app.features.chat.models.ChatSession", back_populates="application", cascade="all, delete-orphan")

@@ -1,5 +1,4 @@
 """Features package initialization"""
-# Import models for type hints only
 from app.features.users.models import User
 from app.features.organizations.models import Organization
 from app.features.projects.models import Project

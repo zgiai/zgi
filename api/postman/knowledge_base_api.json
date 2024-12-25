@@ -1,0 +1,659 @@
+{
+  "info": {
+    "name": "Knowledge Base API",
+    "description": "API collection for Knowledge Base service",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Knowledge Base",
+      "description": "Operations for managing knowledge bases",
+      "item": [
+        {
+          "name": "Get System Stats",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/knowledge/stats",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "knowledge", "stats"]
+            }
+          }
+        },
+        {
+          "name": "Create Knowledge Base",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Test KB\",\n  \"description\": \"Test Description\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/knowledge",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "knowledge"]
+            }
+          }
+        },
+        {
+          "name": "List Knowledge Bases",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/knowledge?skip=0&limit=10",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "knowledge"],
+              "query": [
+                {
+                  "key": "skip",
+                  "value": "0"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                },
+                {
+                  "key": "search",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "visibility",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Knowledge Base",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/knowledge/{{kb_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "knowledge", "{{kb_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Update Knowledge Base",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Updated KB\",\n  \"description\": \"Updated Description\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/knowledge/{{kb_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "knowledge", "{{kb_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Delete Knowledge Base",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/knowledge/{{kb_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "knowledge", "{{kb_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Find Similar Knowledge Bases",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/knowledge/{{kb_id}}/similar?limit=5",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "knowledge", "{{kb_id}}", "similar"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "5"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Share Knowledge Base",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"visibility\": \"public\",\n  \"organization_id\": null\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/knowledge/{{kb_id}}/share",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "knowledge", "{{kb_id}}", "share"]
+            }
+          }
+        },
+        {
+          "name": "Clone Knowledge Base",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Cloned KB\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/knowledge/{{kb_id}}/clone",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "knowledge", "{{kb_id}}", "clone"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Documents",
+      "description": "Operations for managing documents in knowledge bases",
+      "item": [
+        {
+          "name": "Upload Document",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": []
+                },
+                {
+                  "key": "metadata",
+                  "type": "text",
+                  "value": "{}",
+                  "disabled": true
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/knowledge/{{kb_id}}/documents",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "knowledge", "{{kb_id}}", "documents"]
+            }
+          }
+        },
+        {
+          "name": "Batch Upload Documents",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "files",
+                  "type": "file",
+                  "src": []
+                },
+                {
+                  "key": "metadata",
+                  "type": "text",
+                  "value": "{}",
+                  "disabled": true
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/knowledge/{{kb_id}}/documents/batch",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "knowledge", "{{kb_id}}", "documents", "batch"]
+            }
+          }
+        },
+        {
+          "name": "List Documents",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/knowledge/{{kb_id}}/documents?skip=0&limit=10",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "knowledge", "{{kb_id}}", "documents"],
+              "query": [
+                {
+                  "key": "skip",
+                  "value": "0"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Document",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/knowledge/documents/{{doc_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "knowledge", "documents", "{{doc_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Update Document",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Updated Document\",\n  \"description\": \"Updated Description\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/knowledge/documents/{{doc_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "knowledge", "documents", "{{doc_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Delete Document",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/knowledge/documents/{{doc_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "knowledge", "documents", "{{doc_id}}"]
+            }
+          }
+        },
+        {
+          "name": "List Document Chunks",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/knowledge/documents/{{doc_id}}/chunks?skip=0&limit=10",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "knowledge", "documents", "{{doc_id}}", "chunks"],
+              "query": [
+                {
+                  "key": "skip",
+                  "value": "0"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Find Similar Documents",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/knowledge/documents/{{doc_id}}/similar?limit=5",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "knowledge", "documents", "{{doc_id}}", "similar"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "5"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Reprocess Document",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/knowledge/documents/{{doc_id}}/reprocess",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "knowledge", "documents", "{{doc_id}}", "reprocess"]
+            }
+          }
+        },
+        {
+          "name": "Download Document",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/knowledge/documents/{{doc_id}}/download",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "knowledge", "documents", "{{doc_id}}", "download"]
+            }
+          }
+        },
+        {
+          "name": "Export Document",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/knowledge/documents/{{doc_id}}/export?format=json",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "knowledge", "documents", "{{doc_id}}", "export"],
+              "query": [
+                {
+                  "key": "format",
+                  "value": "json"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Search",
+      "description": "Search operations in knowledge bases",
+      "item": [
+        {
+          "name": "Search Knowledge Base",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"search query\",\n  \"top_k\": 5\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/knowledge/{{kb_id}}/search",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "knowledge", "{{kb_id}}", "search"]
+            }
+          }
+        },
+        {
+          "name": "Similarity Search",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/knowledge/{{kb_id}}/similarity/{{document_id}}?limit=5",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "knowledge", "{{kb_id}}", "similarity", "{{document_id}}"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "5"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Semantic Search",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"semantic search query\",\n  \"top_k\": 5\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/knowledge/{{kb_id}}/semantic",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "knowledge", "{{kb_id}}", "semantic"]
+            }
+          }
+        },
+        {
+          "name": "Hybrid Search",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"hybrid search query\",\n  \"top_k\": 5\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/knowledge/{{kb_id}}/hybrid?weights[semantic]=0.7&weights[keyword]=0.3",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "knowledge", "{{kb_id}}", "hybrid"],
+              "query": [
+                {
+                  "key": "weights[semantic]",
+                  "value": "0.7"
+                },
+                {
+                  "key": "weights[keyword]",
+                  "value": "0.3"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000",
+      "type": "string"
+    },
+    {
+      "key": "access_token",
+      "value": "your_access_token_here",
+      "type": "string"
+    },
+    {
+      "key": "kb_id",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "doc_id",
+      "value": "1", 
+      "type": "string"
+    }
+  ]
+}

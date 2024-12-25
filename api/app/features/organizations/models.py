@@ -5,6 +5,7 @@ import enum
 import uuid
 
 from app.core.database import Base
+from app.features.users.models import User
 
 class OrganizationRole(str, enum.Enum):
     OWNER = "owner"
@@ -35,9 +36,10 @@ class Organization(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
     # Relationships
-    members = relationship("app.features.organizations.models.OrganizationMember", back_populates="organization", cascade="all, delete-orphan")
-    projects = relationship("app.features.projects.models.Project", back_populates="organization", cascade="all, delete-orphan")
+    members = relationship("OrganizationMember", back_populates="organization", cascade="all, delete-orphan")
+    projects = relationship("Project", back_populates="organization", cascade="all, delete-orphan")
     roles = relationship("Role", back_populates="organization", cascade="all, delete-orphan")
+    knowledge_bases = relationship("KnowledgeBase", back_populates="organization")
 
 class OrganizationMember(Base):
     """Organization member model"""
@@ -47,13 +49,12 @@ class OrganizationMember(Base):
     organization_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     is_admin = Column(Boolean, default=False, nullable=False)
-
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
     # Relationships
-    organization = relationship("app.features.organizations.models.Organization", back_populates="members")
-    user = relationship("app.features.users.models.User", back_populates="organization_members")
+    organization = relationship("Organization", back_populates="members")
+    user = relationship("User", back_populates="organization_members")
     roles = relationship("Role", secondary=organization_member_roles, back_populates="members")
 
 class Role(Base):
@@ -66,7 +67,6 @@ class Role(Base):
     description = Column(String(255))
     created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"))
     is_active = Column(Boolean, default=True)
-
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
