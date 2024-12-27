@@ -64,7 +64,7 @@ def login(
         logger.error(f"Login failed: {e.detail}")
         raise
 
-@router.post("/register", status_code=status.HTTP_201_CREATED)
+@router.post("/register")
 def register(
     user_data: UserCreate,
     auth_service: AuthService = Depends(get_auth_service),
