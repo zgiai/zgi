@@ -8,7 +8,7 @@ export default function FlowPage() {
   const { flows, tabId, setTabId } = useContext(TabsContext);
   const { id } = useParams();
   useEffect(() => {
-    setTabId(id);
+    setTabId(id as string);
   }, [id]);
 
   // Initialize state variable for the version
@@ -18,6 +18,7 @@ export default function FlowPage() {
   //     setVersion(data.version);
   //   });
   // }, []);
+  console.log(flows, tabId, setTabId);
   const flow = useMemo(() => {
     const _flow = flows.find((flow) => flow.id === tabId)
     const copyFlow = _flow && _.cloneDeep(_flow)

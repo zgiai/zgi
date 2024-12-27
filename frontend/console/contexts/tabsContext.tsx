@@ -29,7 +29,9 @@ import {
 import { alertContext } from "./alertContext";
 import { typesContext } from "./typesContext";
 
-const uid = new ShortUniqueId({ length: 5 });
+const uid = () => {
+  new ShortUniqueId({ length: 5 })
+};
 
 const TabsContextInitialValue: TabsContextType = {
   page: 1,

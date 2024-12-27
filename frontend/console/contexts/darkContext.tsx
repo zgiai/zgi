@@ -18,9 +18,9 @@ export function DarkProvider({ children }) {
   );
   useEffect(() => {
     if (dark) {
-      document.getElementById("body").classList.add("dark");
+      document.querySelector("body")?.classList.add("dark");
     } else {
-      document.getElementById("body").classList.remove("dark");
+      document.querySelector("body")?.classList.remove("dark");
     }
     window.localStorage.setItem("isDark", dark.toString());
   }, [dark]);
