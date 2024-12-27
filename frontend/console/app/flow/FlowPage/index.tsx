@@ -28,7 +28,31 @@ export default function FlowPage() {
 
   return (
     <div className="flow-page-positioning">
-      {flow[0] && <Page flow={flow[0]} preFlow={flow[1]} />}
+      {/* {flow[0] && <Page flow={flow[0]} preFlow={flow[1]} />} */}
+      <Page flow={{
+        name: 'test',
+        id: 'test',
+        data: {
+          nodes: [],
+          edges: [],
+          viewport: {
+            x: 0,
+            y: 0,
+            zoom: 1,
+          },
+        },
+        description: 'test',
+        status: 0,
+        write: true,
+      }} preFlow={JSON.stringify({
+        nodes: [],
+        edges: [],
+        viewport: {
+          x: 0,
+          y: 0,
+          zoom: 1,
+        },
+      })} />
       {/* <a
         target={"_blank"}
         href="https://logspace.ai/"

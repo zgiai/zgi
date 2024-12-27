@@ -400,7 +400,7 @@ export default function Page({ flow, preFlow }: { flow: FlowType, preFlow: strin
 
   // const blocker = useBlocker(hasChange);
   const blocker = {
-    state: 'blocked',
+    state: '',
     proceed: () => { },
     reset: () => { }
   };
