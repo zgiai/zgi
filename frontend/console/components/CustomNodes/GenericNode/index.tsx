@@ -1,6 +1,6 @@
 import { Zap } from "lucide-react";
 import { useContext, useEffect, useRef, useState } from "react";
-import { NodeToolbar } from "reactflow";
+import { NodeToolbar } from "@xyflow/react";
 import ShadTooltip from "@/components/ShadTooltipComponent";
 import Tooltip from "@/components/TooltipComponent";
 import { useSSE } from "@/contexts/SSEContext";

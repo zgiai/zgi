@@ -22,7 +22,7 @@ import {
   Wrench
 } from "lucide-react";
 import { ComponentType, SVGProps } from "react";
-import { Connection, Edge, Node, ReactFlowInstance } from "reactflow";
+import { Connection, Edge, Node, ReactFlowInstance } from "@xyflow/react";
 import { twMerge } from "tailwind-merge";
 import { ADJECTIVES, DESCRIPTIONS, NOUNS } from "@/constants/flow_constants";
 import { AirbyteIcon } from "@/icons/Airbyte";

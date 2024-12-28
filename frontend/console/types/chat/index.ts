@@ -1,4 +1,4 @@
-import { ReactFlowInstance } from "reactflow";
+import { ReactFlowInstance } from "@xyflow/react";
 import { FlowType } from "../flow";
 
 export type ChatType = { flow: FlowType; reactFlowInstance: ReactFlowInstance };
@@ -12,6 +12,16 @@ export type ChatMessageType = {
   chatKey: string;
   end: boolean;
   id?: number;
-  source?: boolean;
+  source?: number;
   noAccess?: boolean;
+  user_name: string;
+  at?: string;
+  /** 用户名 */
+  sender?: string;
+  /** @某人 */
+  receiver?: any;
+  liked?: boolean;
+  extra?: string;
+  create_time: string;
+  update_time: string;
 };

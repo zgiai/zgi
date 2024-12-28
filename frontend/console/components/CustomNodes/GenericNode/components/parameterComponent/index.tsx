@@ -1,6 +1,6 @@
 import { Info } from "lucide-react";
 import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Handle, Position, useUpdateNodeInternals } from "reactflow";
+import { Handle, Position, useUpdateNodeInternals } from "@xyflow/react";
 import ShadTooltip from "@/components/ShadTooltipComponent";
 import CodeAreaComponent from "@/components/codeAreaComponent";
 import Dropdown from "@/components/dropdownComponent";

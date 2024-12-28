@@ -272,7 +272,7 @@ The cursor: default; property value restores the browser's default cursor style 
     @apply flex gap-2;
   }
   .flow-page-positioning {
-    @apply h-full w-full overflow-hidden;
+    @apply h-screen w-full overflow-hidden;
   }
   .logspace-page-icon {
     @apply absolute bottom-2 left-7 flex h-6 cursor-pointer flex-col items-center justify-start overflow-hidden rounded-lg bg-foreground px-2 text-center font-sans text-xs tracking-wide text-secondary transition-all duration-500 ease-in-out;
@@ -1108,3 +1108,310 @@ The cursor: default; property value restores the browser's default cursor style 
     @apply bg-secondary/80;
   }
 }
+
+
+
+.App {
+	text-align: center;
+}
+
+.App-logo {
+	height: 40vmin;
+	pointer-events: none;
+}
+
+::selection {
+	color: #fff;
+	/* background-color: hsl(var(--primary)); */
+	background-color: #111;
+}
+
+/* 整个滚动条（包括轨道） */
+::-webkit-scrollbar {
+	width: 8px;
+	height: 8px;
+}
+
+/* 滚动条滑块 */
+::-webkit-scrollbar-thumb {
+	background-color: hsl(var(--border));;
+	border-radius: 4px;
+}
+
+/* 滚动条轨道 */
+::-webkit-scrollbar-track {
+	background: hsl(var(--background));
+	border-radius: 8px;
+}
+.dark ::-webkit-scrollbar-track {
+	background: #111;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	.App-logo {
+		animation: App-logo-spin infinite 20s linear;
+	}
+}
+
+.App-header {
+	background-color: #282c34;
+	min-height: 100vh;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	font-size: calc(10px + 2vmin);
+	color: white;
+}
+
+.App-link {
+	color: #61dafb;
+}
+
+.custom-card-btn {
+	opacity: 0;
+}
+
+.custom-card:hover .custom-card-btn,
+.custom-card:hover .card-component-delete-icon {
+	opacity: 1;
+}
+
+.l2Param .l2Param-edit {
+	opacity: 0;
+}
+
+.l2Param:hover .l2Param-edit {
+	opacity: 1;
+}
+
+.stroke-connection.selected path {
+	stroke-width: 2;
+	stroke-dasharray: 0;
+}
+
+.animate-cursor {
+	animation: pulse2 1s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse2 {
+
+	0%,
+	20% {
+		opacity: 1;
+		transform: scale(1);
+	}
+
+	100% {
+		opacity: 0;
+		transform: scale(.6);
+	}
+
+	/* 0%, 20%, 80%, 100% {
+	  opacity: 1;
+	  transform: scale(1);
+	}
+	50% {
+	  opacity: 0;
+	  transform: scale(1.6);
+	} */
+}
+
+.anwser-souce span {
+	color: #347ef9;
+	cursor: pointer;
+}
+
+@keyframes App-logo-spin {
+	from {
+		transform: rotate(0deg);
+	}
+
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+/* @font-face {
+	font-family: AlibabaPuHuiTi-3-55-Regular;
+	src: url("assets/AlibabaPuHuiTi-3-55-Regular.otf") format("opentype");
+} */
+
+:root {
+	--font-sans: 'AlibabaPuHuiTi-3-55-Regular'
+}
+
+/* pdf-text */
+.textLayer :is(span, br) {
+	color: transparent;
+	position: absolute;
+	white-space: pre;
+	cursor: text;
+	transform-origin: 0% 0%;
+}
+
+.textLayer span.markedContent {
+	top: 0;
+	height: 0;
+}
+
+.textLayer ::selection {
+	background: #357ef9;
+}
+
+.textLayer br::selection {
+	background: transparent;
+}
+.highlightArea{
+	position: absolute;
+}
+
+.flag.active {
+	background: linear-gradient(to right, rgba(53, 126, 249, .60), transparent);
+}
+
+.flag:after {
+	content: "";
+	position: absolute;
+	width: 23px;
+	height: 2px;
+	right: -3px;
+	top: 7px;
+	background: rgba(53, 126, 249, .60);
+	transform: rotate(-50deg) translate(0, 0);
+}
+
+.flag::before {
+	content: "";
+	position: absolute;
+	width: 23px;
+	height: 2px;
+	right: -3px;
+	top: 25px;
+	background: rgba(53, 126, 249, .60);
+	transform: rotate(50deg) translate(0, 0);
+}
+
+.chat .chat-image {
+	align-self: start;
+}
+
+.chat-bubble:before {
+	display: none;
+}
+
+.build-tab {}
+
+.build-tab a.active {
+	background: #fff;
+	box-shadow: 1px 1px 2px 0 #e9e9e9
+		/* background: #F4F5F8;
+	padding: 10px 40px; */
+}
+
+.build-tab a.active>svg {
+	color: hsl(var(--primary)) !important;
+}
+
+.build-tab a.active>span {
+	color: hsl(var(--primary)) !important;
+}
+
+:is(.dark .build-tab a.active>svg) {
+	color: #fff !important;
+}
+
+:is(.dark .build-tab a.active>span) {
+	color: #fff !important;
+}
+
+.bs-chat-bg {
+	width: 100%;
+	background-position: 0 100%;
+	background-repeat: repeat-x;
+	background-size: 10px 432px;
+}
+
+/* report情况隐藏离开按钮 */
+.report-hidden .leave {
+	display: none !important;
+}
+
+/* react-flow */
+.dark .react-flow__controls-button {
+	background: #111;
+}
+
+.bs-table-td { background-color: #FBFBFB; }
+.dark .bs-table-td { background-color: #171717; }
+.bs-table-row:nth-child(odd) .bs-table-td { background-color: #f4f5f8;}
+.dark .bs-table-row:nth-child(odd) .bs-table-td { background-color: #111;}
+.bs-table-row:hover .bs-table-td { background-color: #ebf0ff;}
+.dark .bs-table-row:hover .bs-table-td { background-color: #2a2b2e;}
+
+/* vditor编辑器 */
+.vditor-toolbar.vditor-toolbar--hide {
+	display: none !important;
+}
+.vditor-reset table td, .vditor-reset table th{
+	word-wrap: break-word !important;
+    white-space: normal !important;
+	font-size: 12px;
+	padding: 2px 4px !important;
+	word-break: break-all !important;
+}
+
+
+/* .react-flow.theme-attribution {
+	animation: scrollBackground 10s linear infinite;
+  }
+
+  @keyframes scrollBackground {
+	from {
+	  background-position: 0 0;
+	}
+	to {
+	  background-position: 100% 100%;
+	}
+  }
+ */
+  .react-flow__panel.react-flow__attribution{
+	display: none !important;
+  }
+.vditor-content ol>li[data-marker]:before {
+    content: attr(data-marker); 
+    margin-right: 5px;
+    font-weight: bold;
+}
+
+.hover-reveal .hover-reveal-child{
+	opacity: 0;
+	transition: opacity .2s ease-in-out;
+}
+.hover-reveal:hover .hover-reveal-child{
+	opacity: 100;
+}
+
+
+.flow-bg-logo {
+	position: relative;
+	width: 100%;
+	height: 100px; /* 根据需要调整高度 */
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	background-color: #F4F5F8 !important;
+}
+
+.flow-bg-logo::before {
+	content: "BISHENG"; /* 设置文字内容 */
+	font-size: 180px;
+	font-weight: bold;
+	color: rgba(232, 235 ,242,0.7);
+	/* color: rgba(0,102,204,0.7); */
+		text-shadow:1px 3px 6px #fff,0 0 0 #000,1px 3px 6px #fff;
+	display: block;
+	text-align: center;
+	opacity: 0.2;
+}
+  

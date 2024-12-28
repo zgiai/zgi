@@ -30,6 +30,7 @@ type locationContextType = {
   extraComponent: any;
   setExtraComponent: (newState: any) => void;
   appConfig: any;
+  reloadConfig: () => void
 };
 
 //initial value for location context
@@ -48,7 +49,8 @@ const initialValue = {
   setExtraNavigation: () => { },
   extraComponent: <></>,
   setExtraComponent: () => { },
-  appConfig: { libAccepts: [] }
+  appConfig: { libAccepts: [] },
+  reloadConfig: () => { }
 };
 
 export const locationContext = createContext<locationContextType>(initialValue);
@@ -62,17 +64,36 @@ export function LocationProvider({ children }: { children: ReactNode }) {
   const [extraNavigation, setExtraNavigation] = useState({ title: "" });
   const [extraComponent, setExtraComponent] = useState(<></>);
   const [appConfig, setAppConfig] = useState<any>({
-    libAccepts: []
+    libAccepts: [],
+    noFace: true
   })
+
+  const loadConfig = () => {
+    getAppConfig().then(res => {
+      setAppConfig({
+        isDev: res.env === 'dev',
+        libAccepts: res.uns_support,
+        officeUrl: res.office_url,
+        dialogTips: res.dialog_tips,
+        dialogQuickSearch: res.dialog_quick_search,
+        websocketHost: res.websocket_url || window.location.host,
+        isPro: !!res.pro,
+        chatPrompt: !!res.application_usage_tips,
+        noFace: !res.show_github_and_help,
+        register: !!res.enable_registration
+      })
+      // backend version
+      res.version && console.log(
+        "%cversion " + res.version,
+        "background-color:#024de3;color:#fff;font-weight:bold;font-size: 38px;" +
+        "padding: 6px 12px;font-family:'american typewriter';text-shadow:1px 1px 3px black;"
+      );
+    })
+  }
 
   // 获取系统配置
   useEffect(() => {
-    getAppConfig().then(res => {
-      setAppConfig({
-        isDev: res.data.data.env === 'dev',
-        libAccepts: res.data.data.uns_support
-      })
-    })
+    loadConfig()
   }, [])
 
   return (
@@ -88,7 +109,8 @@ export function LocationProvider({ children }: { children: ReactNode }) {
         setExtraNavigation,
         extraComponent,
         setExtraComponent,
-        appConfig
+        appConfig,
+        reloadConfig: loadConfig
       }}
     >
       {children}

@@ -1,66 +1,81 @@
-import { useContext, useEffect, useMemo, useState } from "react";
+import { getFlowApi } from "@/controllers/API/flow";
+import { useEffect } from "react";
 import { useParams } from "next/navigation";
-import { TabsContext } from "@/contexts/tabsContext";
-import Page from "./components/PageComponent";
-import _ from "lodash";
+import Panne from "./Panne";
+import useFlowStore from "./flowStore";
+
 
 export default function FlowPage() {
-  const { flows, tabId, setTabId } = useContext(TabsContext);
-  const { id } = useParams();
-  useEffect(() => {
-    setTabId(id as string);
-  }, [id]);
+    // const { flow, setFlow } = useContext(TabsContext);
+    const { id } = useParams();
+    // useEffect(() => {
+    //     if (id && flow?.id !== id) {
+    //         // 切换技能重新加载flow数据
+    //         getFlowApi(id).then(_flow => setFlow('flow_init', _flow))
+    //     }
+    // }, [])
 
-  // Initialize state variable for the version
-  // const [version, setVersion] = useState("");
-  // useEffect(() => {
-  //   getVersion().then((data) => {
-  //     setVersion(data.version);
-  //   });
-  // }, []);
-  console.log(flows, tabId, setTabId);
-  const flow = useMemo(() => {
-    const _flow = flows.find((flow) => flow.id === tabId)
-    const copyFlow = _flow && _.cloneDeep(_flow)
-    return [copyFlow, JSON.stringify(copyFlow?.data || null)] as const
-  }, [flows, tabId])
+    // const [copyFlow, preFlow] = useMemo(() => {
+    //     if (flow?.id === id) {
+    //         const copyFlow = cloneDeep(flow)
+    //         return [copyFlow, JSON.stringify(copyFlow?.data || null)] as const
+    //     }
+    //     return []
+    // }, [flow, id])
+    // const { user } = useContext(userContext);
 
 
-  return (
-    <div className="flow-page-positioning">
-      {/* {flow[0] && <Page flow={flow[0]} preFlow={flow[1]} />} */}
-      <Page flow={{
-        name: 'test',
-        id: 'test',
-        data: {
-          nodes: [],
-          edges: [],
-          viewport: {
-            x: 0,
-            y: 0,
-            zoom: 1,
-          },
-        },
-        description: 'test',
-        status: 0,
-        write: true,
-      }} preFlow={JSON.stringify({
-        nodes: [],
-        edges: [],
-        viewport: {
-          x: 0,
-          y: 0,
-          zoom: 1,
-        },
-      })} />
-      {/* <a
-        target={"_blank"}
-        href="https://logspace.ai/"
-        className="logspace-page-icon"
-      >
-        {version && <div className="mt-1">⛓️ Langflow v{version}</div>}
-        <div className={version ? "mt-2" : "mt-1"}>Created by Logspace</div>
-      </a> */}
-    </div>
-  );
+    const { flow, setFlow } = useFlowStore()
+
+    useEffect(() => {
+        getFlowApi(id).then(f => {
+            if (f.data) {
+                const { data, ..._flow } = f
+                return setFlow({
+                    ..._flow,
+                    nodes: data.nodes,
+                    edges: data.edges,
+                    viewport: data.viewport
+                })
+            }
+            // default
+            setFlow({
+                ...f,
+                nodes: [],
+                edges: [],
+                viewport: {
+                    x: 0,
+                    y: 0,
+                    zoom: 1
+                },
+                version_list: []
+            })
+        }).catch(() => {
+            setFlow({
+                // ...f,
+                nodes: [],
+                edges: [],
+                viewport: {
+                    x: 0,
+                    y: 0,
+                    zoom: 1
+                },
+                version_list: []
+            })
+        })
+        // const str = localStorage.getItem('flow_tmp')
+        // let f = str ? JSON.parse(str) : flow
+        // if ('workflow_test' === user.user_name) {
+        //     f = test
+        // }
+        // setFlow(f)
+        // return f
+        return () => setFlow(null)
+    }, [])
+    return (
+        <div className="flow-page-positioning">
+            {flow && <Panne flow={flow} />}
+        </div>
+    );
 }
+

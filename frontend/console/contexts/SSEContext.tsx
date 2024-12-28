@@ -1,10 +1,10 @@
 import { createContext, useCallback, useContext, useState } from "react";
 
 const initialValue = {
-  updateSSEData: ({ }) => { },
+  updateSSEData: ({}) => {},
   sseData: {},
   isBuilding: false,
-  setIsBuilding: (isBuilding: boolean) => { },
+  setIsBuilding: (isBuilding: boolean) => {},
 };
 
 const SSEContext = createContext(initialValue);
