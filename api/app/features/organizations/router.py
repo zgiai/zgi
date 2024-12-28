@@ -11,10 +11,12 @@ from app.core.database import get_sync_db
 from app.core.security import create_access_token, verify_token
 from app.core.security.auth import get_current_user
 from app.core.logging.api_logger import logger
+from app.features import Project
 from app.features.organizations.schemas import OrganizationResponse, OrganizationList, MemberList, RoleResponse, \
     RoleBase, RoleResponseBase
 from app.features.organizations.service import organization_require_member_admin, organization_body_require_admin, \
     organization_params_require_admin, role_params_require_admin
+from app.features.projects.models import ProjectStatus
 from app.features.users.models import User
 from app.features.organizations.models import Organization, OrganizationMember, OrganizationRole, Role, \
     organization_member_roles
@@ -63,7 +65,13 @@ def list_organizations(
     if page_size and page_num:
         query = query.offset((page_num - 1) * page_size).limit(page_size)
     organization_list = query.all()
-    return resp_200(data=OrganizationList(organizations=organization_list, total=total))
+    resp_data_list = []
+    for org in organization_list:
+        org_resp = OrganizationResponse.model_validate(org)
+        org.projects = db.query(Project).filter(Project.organization_id == org.id,
+                                                Project.status == ProjectStatus.ACTIVE).all()
+        resp_data_list.append(org_resp)
+    return resp_200(data=OrganizationList(organizations=resp_data_list, total=total))
 
 @router.get("/info")
 def get_organization(
@@ -81,7 +89,10 @@ def get_organization(
     )
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
-    return resp_200(data=OrganizationResponse.model_validate(org))
+    resp_data = OrganizationResponse.model_validate(org)
+    resp_data.projects = db.query(Project).filter(Project.organization_id == org.id,
+                                                  Project.status == ProjectStatus.ACTIVE).all()
+    return resp_200(data=resp_data)
 
 @router.put("/update")
 def update_organization(
