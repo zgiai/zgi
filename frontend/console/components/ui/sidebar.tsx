@@ -59,6 +59,18 @@ export default function Sidebar({
       title: 'Pages',
       children: [
         {
+          type: 'link',
+          title: 'Organization',
+          path: 'organization',
+          icon: (
+            <svg className={`shrink-0 fill-current ${segments.includes('organization') ? 'text-violet-500' : 'text-gray-400 dark:text-gray-500'}`} viewBox="0 0 1026 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="7526" width="16" height="16">
+              <path d="M338.163055 376.734778a211.351909 105.675955 0 1 0 422.703818 0 211.351909 105.675955 0 1 0-422.703818 0Z" fill="currentColor" fillOpacity={0.5}></path>
+              <path d="M831.669763 566.599243a216.107327 216.107327 0 0 0-30.293774 2.465772l-73.973168-109.022359 5.107671-4.403165 4.050912-3.522532a267.712418 267.712418 0 0 0 0-375.325765 267.712418 267.712418 0 0 0-375.325766 0 267.536292 267.536292 0 0 0 0 375.149638A207.829377 207.829377 0 0 0 389.239766 475.541796l-66.399725 111.312005A228.964568 228.964568 0 0 0 228.964568 566.599243a231.254214 231.254214 0 0 0-228.964568 228.964568 226.674923 226.674923 0 0 0 67.808738 160.979705A228.964568 228.964568 0 0 0 228.964568 1024a233.54386 233.54386 0 0 0 159.922945-67.808738 225.26591 225.26591 0 0 0 0-321.783281c-2.113519-2.113519-4.579291-4.579291-7.22119-6.868937l70.450636-116.948057a271.587203 271.587203 0 0 0 96.869625 17.612659 264.189886 264.189886 0 0 0 120.118335-28.884761l63.757826 94.0516a188.807706 188.807706 0 0 0-92.818713 165.382869 193.73925 193.73925 0 1 0 385.717234 0 190.745098 190.745098 0 0 0-194.091503-192.154111z m-441.725491 228.964568a160.979704 160.979704 0 0 1-47.201926 112.368766A172.427933 172.427933 0 0 1 228.964568 957.600275a158.513932 158.513932 0 0 1-113.425524-48.258686 157.633299 157.633299 0 0 1 0-227.027176A160.099071 160.099071 0 0 1 228.964568 634.055728a155.695906 155.695906 0 0 1 113.073272 48.787065 160.275198 160.275198 0 0 1 47.906432 113.601651z m234.424493-348.906776a200.96044 200.96044 0 0 1-74.853801 14.794633 211.351909 211.351909 0 0 1-76.791194-14.794633A191.801858 191.801858 0 0 1 408.613691 405.091159a205.715858 205.715858 0 0 1-42.622635-63.581699 208.533884 208.533884 0 0 1 0-153.406261 188.983832 188.983832 0 0 1 105.675955-105.675954 211.351909 211.351909 0 0 1 76.615067-14.618507 215.226694 215.226694 0 0 1 76.791193 14.618507A192.330237 192.330237 0 0 1 689.71173 123.288614a189.159959 189.159959 0 0 1 41.918129 64.110079 208.71001 208.71001 0 0 1 14.794634 76.791193 211.351909 211.351909 0 0 1-14.794634 76.791194 187.574819 187.574819 0 0 1-40.861369 62.877193 221.391125 221.391125 0 0 1-66.399725 42.798762z m296.949432 401.92088A129.100791 129.100791 0 0 1 880.632955 875.349157a131.74269 131.74269 0 0 1-48.258686 9.686963 127.515652 127.515652 0 0 1-48.258686-9.686963 125.754386 125.754386 0 0 1-77.671827-115.891297A123.288614 123.288614 0 0 1 832.198142 634.055728a126.987272 126.987272 0 0 1 90.352942 36.282077 125.402133 125.402133 0 0 1 36.282077 89.120055 123.288614 123.288614 0 0 1-37.514964 89.120055z" fill="currentColor"></path>
+            </svg>
+          ),
+          href: '/organization',
+        },
+        {
           type: 'group',
           title: 'Dashboard',
           path: 'dashboard',
@@ -87,28 +99,6 @@ export default function Sidebar({
             { type: 'sublink', title: 'Customers', href: '/ecommerce/customers' },
             { type: 'sublink', title: 'Orders', href: '/ecommerce/orders' },
             { type: 'sublink', title: 'Invoices', href: '/ecommerce/invoices' },
-            { type: 'sublink', title: 'Shop', href: '/ecommerce/shop' },
-            { type: 'sublink', title: 'Shop 2', href: '/ecommerce/shop-2' },
-            { type: 'sublink', title: 'Single Product', href: '/ecommerce/product' },
-            { type: 'sublink', title: 'Cart', href: '/ecommerce/cart' },
-            { type: 'sublink', title: 'Cart 2', href: '/ecommerce/cart-2' },
-            { type: 'sublink', title: 'Cart 3', href: '/ecommerce/cart-3' },
-            { type: 'sublink', title: 'Pay', href: '/ecommerce/pay' },
-          ],
-        },
-        {
-          type: 'group',
-          title: 'Finance',
-          path: 'finance',
-          icon: (
-            <svg className={`shrink-0 fill-current ${segments.includes('finance') ? 'text-violet-500' : 'text-gray-400 dark:text-gray-500'}`} xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
-              <path d="M6 0a6 6 0 0 0-6 6c0 1.077.304 2.062.78 2.912a1 1 0 1 0 1.745-.976A3.945 3.945 0 0 1 2 6a4 4 0 0 1 4-4c.693 0 1.344.194 1.936.525A1 1 0 1 0 8.912.779 5.944 5.944 0 0 0 6 0Z" />
-              <path d="M10 4a6 6 0 1 0 0 12 6 6 0 0 0 0-12Zm-4 6a4 4 0 1 1 8 0 4 4 0 0 1-8 0Z" />
-            </svg>
-          ),
-          children: [
-            { type: 'sublink', title: 'Cards', href: '/finance/cards' },
-            { type: 'sublink', title: 'Transactions', href: '/finance/transactions' },
           ],
         },
         {
@@ -121,9 +111,9 @@ export default function Sidebar({
             </svg>
           ),
           children: [
-            { type: 'sublink', title: 'Listing', href: '/jobs' },
-            { type: 'sublink', title: 'Job Post', href: '/jobs/post' },
-            { type: 'sublink', title: 'Company Profile', href: '/jobs/company' },
+            // { type: 'sublink', title: 'Listing', href: '/jobs' },
+            // { type: 'sublink', title: 'Job Post', href: '/jobs/post' },
+            // { type: 'sublink', title: 'Company Profile', href: '/jobs/company' },
           ],
         },
         {
@@ -366,9 +356,8 @@ export default function Sidebar({
             </div>
           ))}
         </div>
-
         {/* Expand / collapse button */}
-        <div className="pt-3 hidden lg:inline-flex 2xl:hidden justify-end mt-auto">
+        <div className="pt-3 hidden lg:inline-flex justify-end mt-auto">
           <div className="w-12 pl-4 pr-3 py-2">
             <button className="text-gray-400 hover:text-gray-500 dark:text-gray-500 dark:hover:text-gray-400" onClick={() => setSidebarExpanded(!sidebarExpanded)}>
               <span className="sr-only">Expand / collapse sidebar</span>
