@@ -23,11 +23,24 @@ class OrganizationUpdate(BaseModel):
         }
     )
 
+class OrgProjectResponse(BaseModel):
+    id: int
+    name: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = Field(None, max_length=1000)
+
+    class Config:
+        from_attributes = True
+        json_encoders = {
+            datetime: lambda v: v.isoformat(),
+            bytes: lambda v: v.decode()
+        }
+
 class OrganizationResponse(OrganizationBase):
     id: int
     # uuid: str
     created_by: Optional[int]
     is_active: bool = True
+    projects: List[OrgProjectResponse]
     created_at: datetime
     updated_at: datetime
 
