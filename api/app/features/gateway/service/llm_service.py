@@ -7,7 +7,7 @@ from ..schemas.chat import AddChatMessagesRequest
 import logging
 
 from ..providers.router import LLMRouter, get_router
-from ... import User
+from app.features.users.models import User
 from ...chat.models.conversation import Conversation, ChatMessage
 
 logger = logging.getLogger(__name__)

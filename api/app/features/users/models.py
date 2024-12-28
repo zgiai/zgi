@@ -5,6 +5,7 @@ from datetime import datetime
 
 from app.core.database import Base
 from app.features.chat.models import Conversation
+from app.features.knowledge.models.knowledge import KnowledgeBase
 
 class User(Base):
     """User model for authentication and authorization"""
@@ -30,5 +31,5 @@ class User(Base):
     # chat_sessions = relationship("app.features.chat.models.ChatSession", back_populates="user", cascade="all, delete-orphan")
     created_projects = relationship("app.features.projects.models.Project", back_populates="creator")
     api_keys = relationship("app.features.api_keys.models.APIKey", back_populates="creator")
-    knowledge_bases = relationship("app.models.knowledge_base.KnowledgeBase", back_populates="owner")
+    knowledge_bases = relationship("app.features.knowledge.models.knowledge.KnowledgeBase", back_populates="owner")
     conversations = relationship("app.features.chat.models.conversation.Conversation", back_populates="user")

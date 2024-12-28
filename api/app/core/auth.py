@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db, get_sync_db
-from app.features import APIKey
+from app.features.api_keys.models import APIKey
 from app.features.api_keys.models import APIKeyStatus
 from app.features.organizations.models import OrganizationMember
 from app.features.users.models import User

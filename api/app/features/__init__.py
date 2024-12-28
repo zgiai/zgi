@@ -8,6 +8,8 @@ from app.features.applications.models import Application
 from app.features.chat.models.chat import ChatSession
 from app.features.chat.models.chat_file import ChatFile
 from app.features.chat.models.conversation import Conversation, ChatMessage
+from app.features.knowledge.models.knowledge import KnowledgeBase
+from app.features.knowledge.models.document import Document, DocumentStatus
 
 __all__ = [
     'User',
@@ -18,5 +20,8 @@ __all__ = [
     'ChatSession',
     'ChatFile',
     'Conversation',
-    'ChatMessage'
+    'ChatMessage',
+    'KnowledgeBase',
+    'Document',
+    'DocumentStatus',
 ]

@@ -21,6 +21,7 @@ from app.features.api_keys.router import router as api_keys_router
 from app.features.providers.router.provider import router as providers_router
 from app.features.providers.router.model import router as models_router
 from app.features.gateway.router import router as gateway_router
+from app.features.knowledge.router import router as knowledge_router
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -157,6 +158,7 @@ app.include_router(api_keys_router, prefix="/v1/api-keys", tags=["API Keys"])
 app.include_router(providers_router)
 app.include_router(models_router)
 app.include_router(gateway_router, tags=["LLM Gateway"])
+app.include_router(knowledge_router, prefix="/v1/knowledge", tags=["Knowledge"])
 
 @app.get("/")
 def root():

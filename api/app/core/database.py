@@ -132,7 +132,8 @@ from app.features.chat.models import ChatSession, ChatFile, Conversation, ChatMe
 from app.features.providers.models import Category, Model, Provider
 from app.features.gateway.models import APIKey, UserQuota
 from app.features.usage.models import ResourceUsage
-from app.models.knowledge_base import KnowledgeBase
+from app.features.knowledge.models.knowledge import KnowledgeBase
+from app.features.knowledge.models.document import Document, DocumentChunk
 
 # Add all models that should be included in migrations
 __all__ = [
@@ -150,5 +151,7 @@ __all__ = [
     "APIKey",
     "UserQuota",
     "ResourceUsage",
-    "KnowledgeBase"
+    "KnowledgeBase",
+    "Document",
+    "DocumentChunk"
 ]
