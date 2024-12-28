@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from uuid import UUID
 
-from app.core.deps import get_db
+from app.core.database import get_db
 from app.core.security.auth import get_current_active_user
 from app.features.users.models import User
 from app.features.applications.models import Application

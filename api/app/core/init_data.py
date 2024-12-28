@@ -2,7 +2,9 @@ import secrets
 import string
 
 from app.core.database import SyncSessionLocal
-from app.features import Organization, Project, APIKey
+from app.features.api_keys.models import APIKey
+from app.features.organizations.models import Organization
+from app.features.projects.models import Project
 
 def generate_api_key() -> str:
     """Generate a secure API key"""

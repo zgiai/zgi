@@ -5,7 +5,8 @@ from sqlalchemy.orm import Session
 
 from app.core.auth import get_current_user
 from app.core.database import get_sync_db
-from app.features import Project, APIKey
+from app.features.projects.models import Project
+from app.features.api_keys.models import APIKey
 from app.features.organizations.models import OrganizationMember, Role
 from app.features.projects.models import ProjectStatus
 from app.features.users.models import User
