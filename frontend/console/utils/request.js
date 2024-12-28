@@ -43,7 +43,6 @@ axios.interceptors.response.use(
         } else if (res.status === 401) {
             console.error('Login authorization is required')
         } else if (res.status === 403) {
-            // localStorage.removeItem("toekn")
             console.error('Sorry! You do not have permission to operate this function')
         } else if ([400, 404].indexOf(res.status) > -1) {
             console.error('400/404 interface request failed, please try again! If you have any questions, please contact the administrator.')
