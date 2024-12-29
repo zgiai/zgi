@@ -96,3 +96,17 @@ def require_super_admin(
             detail="Insufficient permissions. Super admin access required."
         )
     return user
+
+def require_admin(
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_sync_db)
+) -> User:
+    """Require admin access"""
+    auth_service = AuthService(db)
+    user = auth_service.get_current_user(token)
+    if not user.is_superuser and user.user_type == 0:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Insufficient permissions. Admin access required."
+        )
+    return user

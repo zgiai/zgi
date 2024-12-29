@@ -27,7 +27,7 @@ def project_require_admin(
         OrganizationMember.organization_id == project.organization_id,
         OrganizationMember.is_admin == True
     ).first()
-    if not org_admin_member and not current_user.is_superuser:
+    if not org_admin_member and not current_user.is_superuser and current_user.user_type == 0:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Insufficient permissions. Project admin access required."
@@ -50,7 +50,7 @@ def project_require_member(
         OrganizationMember.user_id == current_user.id,
         OrganizationMember.organization_id == project.organization_id
     ).first()
-    if not org_member and not current_user.is_superuser:
+    if not org_member and not current_user.is_superuser and current_user.user_type == 0:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Insufficient permissions. Project admin access required."

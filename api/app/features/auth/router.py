@@ -6,7 +6,7 @@ import logging
 
 from app.core.base import resp_200
 from app.core.database import get_sync_db
-from app.core.auth import require_super_admin
+from app.core.auth import require_super_admin, require_admin
 from app.core.init_data import init_default_organization_data
 from app.features.auth.service import AuthService, get_auth_service
 from app.features.auth.schemas import (
@@ -110,13 +110,16 @@ def get_current_user_info(current_user: User = Depends(get_current_user)):
 def list_users(
                page_size: Optional[int] = 10,
                page_num: Optional[int] = 1,
+               user_type: Annotated[int, Query()] = None,
                org_id: Annotated[List[int], Query()] = None,
                role_id: Annotated[List[int], Query()] = None,
-               current_user: User = Depends(require_super_admin),
+               current_user: User = Depends(require_admin),
                db: Session = Depends(get_sync_db)
 ):
     """List all users (admin only)"""
     query = db.query(User)
+    if user_type is not None:
+        query = query.filter(User.user_type == user_type)
     if org_id:
         query = query.filter(User.organization_members.any(OrganizationMember.organization_id.in_(org_id)))
     if role_id:
@@ -168,3 +171,31 @@ def delete_user(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error deleting user: {str(e)}"
         )
+
+@router.post("/users/set_admin")
+def set_admin(
+    user_id: int,
+    current_user: User = Depends(require_super_admin),
+    auth_service: AuthService = Depends(get_auth_service)
+):
+    """Set a user as a normal admin (super admin only)"""
+    try:
+        user = auth_service.set_admin(user_id)
+        return resp_200(data={"id": user.id, "user_type": user.user_type}, message="User set as admin successfully")
+    except HTTPException as e:
+        logger.error(f"Error setting admin: {e.detail}")
+        raise
+
+@router.post("/users/unset_admin")
+def unset_admin(
+    user_id: int,
+    current_user: User = Depends(require_super_admin),
+    auth_service: AuthService = Depends(get_auth_service)
+):
+    """Unset a user as a normal admin (super admin only)"""
+    try:
+        user = auth_service.unset_admin(user_id)
+        return resp_200(data={"id": user.id, "user_type": user.user_type}, message="User unset as admin successfully")
+    except HTTPException as e:
+        logger.error(f"Error unsetting admin: {e.detail}")
+        raise
