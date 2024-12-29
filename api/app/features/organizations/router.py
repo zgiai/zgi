@@ -47,7 +47,19 @@ def create_organization(
     # db.add(member)
     db.commit()
     db.refresh(org)
-    return resp_200(OrganizationResponse.model_validate(org))
+    resp_data = OrganizationResponse.model_validate(org)
+    if org_data.project:
+        project = Project(
+            name=org_data.project.name,
+            description=org_data.project.description,
+            organization_id=org.id,
+            created_by=current_user.id
+        )
+        db.add(project)
+        db.commit()
+        db.refresh(project)
+        resp_data.projects = [project]
+    return resp_200(resp_data)
 
 @router.get("/list")
 def list_organizations(
