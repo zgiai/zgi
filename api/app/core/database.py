@@ -131,6 +131,7 @@ async def handle_db_operation(operation):
 from app.features.chat.models import ChatSession, ChatFile, Conversation, ChatMessage
 from app.features.providers.models import Category, Model, Provider
 from app.features.gateway.models import APIKey, UserQuota
+from app.features.usage.models import ResourceUsage
 from app.models.knowledge_base import KnowledgeBase
 
 # Add all models that should be included in migrations
@@ -148,5 +149,6 @@ __all__ = [
     "Provider",
     "APIKey",
     "UserQuota",
+    "ResourceUsage",
     "KnowledgeBase"
 ]
