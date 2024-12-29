@@ -21,7 +21,8 @@ export interface UpdateOrganizationParams {
 
 export interface CreateOrganizationParams {
     name: string;
-    description: string;
+    description?: string;
+    project?: CreateProjectParams;
 }
 
 export interface ListProjectParams {
