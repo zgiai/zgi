@@ -1,6 +1,6 @@
 "use client"
 
-import { register } from "@/services/auth";
+import { register, login } from "@/services/auth";
 import { useState } from "react";
 import { message } from "antd";
 
@@ -30,12 +30,25 @@ export default function SignupForm() {
     // console.log(res)
     if (res?.status_code === 200) {
       message.success("Sigin up success")
+      handleLogin()
     } else {
       message.error(res?.status_message)
     }
   }
 
-
+  const handleLogin = async () => {
+    const loginRes = await login({
+      email: formData.email,
+      password: formData.password,
+    })
+    if (loginRes?.status_code === 200) {
+      message.success("Sigin in success")
+      localStorage.setItem("token", loginRes?.data?.access_token || "")
+      location.href = "/"
+    } else {
+      message.error(loginRes?.status_message)
+    }
+  }
 
   return <form onSubmit={handleSubmit}>
     <div className="space-y-4">
