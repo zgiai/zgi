@@ -35,8 +35,13 @@ class MockProvider(VectorDBProvider):
     ) -> bool:
         """Insert vectors into collection"""
         if collection_name not in self.collections:
-            return False
-            
+            # return False
+            self.collections[collection_name] = {
+                "dimension": 1536,
+                "vectors": {},
+                "metadata": {}
+            }
+
         collection = self.collections[collection_name]
         for i, (vector, meta) in enumerate(zip(vectors, metadata)):
             vector_id = str(len(collection["vectors"]))
@@ -89,8 +94,14 @@ class MockProvider(VectorDBProvider):
     ) -> bool:
         """Delete vectors from collection"""
         if collection_name not in self.collections:
-            return False
-            
+            # return False
+            # return False
+            self.collections[collection_name] = {
+                "dimension": 1536,
+                "vectors": {},
+                "metadata": {}
+            }
+
         collection = self.collections[collection_name]
         for vector_id in vector_ids:
             if vector_id in collection["vectors"]:

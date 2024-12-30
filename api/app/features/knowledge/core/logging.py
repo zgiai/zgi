@@ -1,3 +1,5 @@
+import time
+
 import logging
 import json
 from datetime import datetime
@@ -111,7 +113,10 @@ class MetricsLogger(StructuredLogger):
     
     def __init__(self):
         super().__init__("knowledge.metrics")
-    
+
+    def time(self):
+        return time.time()
+
     def log_operation(
         self,
         operation: str,

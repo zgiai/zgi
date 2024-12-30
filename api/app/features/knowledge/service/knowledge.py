@@ -369,3 +369,69 @@ class KnowledgeBaseService:
             
         except Exception as e:
             raise
+
+    @handle_service_errors
+    async def clone_knowledge_base(
+        self,
+        kb_id: int,
+        name: str,
+        user_id: int
+    ) -> ServiceResponse[KnowledgeBase]:
+        """Clone a knowledge base"""
+        query = select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
+        result = await self.db.execute(query)
+        original_kb = result.scalars().first()
+        
+        if not original_kb:
+            raise NotFoundError(f"Knowledge base {kb_id} not found")
+
+        if not self._can_access(original_kb, user_id):
+            raise AuthorizationError("Not authorized to access this knowledge base")
+
+        if not name:
+            name = f"{original_kb.name} (Clone)"
+        if name == original_kb.name:
+            raise ServiceError("New name cannot be the same as the original name")
+
+        new_kb = KnowledgeBase(
+            name=name,
+            description=original_kb.description,
+            visibility=original_kb.visibility,
+            owner_id=user_id,
+            organization_id=original_kb.organization_id,
+            model=original_kb.model,
+            dimension=original_kb.dimension,
+            collection_name=f"kb_{user_id}_{name.lower().replace(' ', '_')}_{str(uuid4())[:8]}",
+            meta_info=original_kb.meta_info,
+            tags=original_kb.tags,
+            status=Status.ACTIVE.value
+        )
+
+        success = await self.vector_db.create_collection(
+            new_kb.collection_name,
+            dimension=new_kb.dimension
+        )
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to create vector collection")
+        
+        # 保存到数据库
+        self.db.add(new_kb)
+        await self.db.commit()
+        await self.db.refresh(new_kb)
+        
+        # 记录审计日志
+        audit_logger.log_access(
+            user_id,
+            "knowledge_base",
+            str(new_kb.id),
+            "clone",
+            "success"
+        )
+        
+        # 返回响应
+        return ServiceResponse(
+            success=True,
+            code=201,
+            message="Cloned",
+            data=new_kb.to_dict()
+        )

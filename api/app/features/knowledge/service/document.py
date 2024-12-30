@@ -1,7 +1,8 @@
 import os
 import hashlib
-from typing import List, Optional, Dict, Any, BinaryIO
+from typing import List, Optional, Dict, Any, BinaryIO, Tuple
 from fastapi import UploadFile
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 import PyPDF2
 import docx
@@ -9,12 +10,13 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 from app.features.knowledge.models.document import Document, DocumentStatus
 from app.features.knowledge.models.knowledge import KnowledgeBase
+from app.features.knowledge.schemas.request.document import DocumentUpdate
 from app.features.knowledge.service.knowledge import KnowledgeBaseService
 from app.features.knowledge.core.config import get_document_settings
 from app.features.knowledge.core.response import (
     ServiceResponse,
     ValidationError,
-    NotFoundError
+    NotFoundError, ServiceError
 )
 from app.features.knowledge.core.decorators import (
     handle_service_errors,
@@ -91,7 +93,7 @@ class DocumentService:
         file: UploadFile,
         kb_id: int,
         user_id: int
-    ) -> str:
+    ) -> tuple[str, str]:
         """Store uploaded file"""
         try:
             # Validate file size
@@ -119,7 +121,7 @@ class DocumentService:
             with open(filepath, "wb") as f:
                 f.write(file_content)
             
-            return filepath
+            return filepath, file_hash
             
         except Exception as e:
             service_logger.error(
@@ -151,27 +153,34 @@ class DocumentService:
                 )
             
             # Get knowledge base
-            kb_response = await self.kb_service.get_knowledge_base(kb_id, user_id)
-            if not kb_response.success:
-                return kb_response
-            kb = kb_response.data
-            
-            # Create document record with processing status
-            document = Document(
-                kb_id=kb_id,
-                file_name=file.filename,
-                file_type=file_ext[1:],
-                status=DocumentStatus.PROCESSING,
-                metadata=metadata
-            )
-            self.db.add(document)
-            self.db.commit()
-            self.db.refresh(document)
+            # kb_response = await self.kb_service.get_knowledge_base(kb_id, user_id)
+            # if not kb_response.success:
+            #     raise NotFoundError(
+            #         f"Knowledge base not found",
+            #         details={"kb_id": kb_id}
+            #     )
+            # kb = KnowledgeBase(**dict(kb_response.data))
+            kb = self.db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
+            if not kb:
+                raise NotFoundError("Knowledge base not found")
             
             try:
                 # Store file
-                filepath = await self._store_file(file, kb_id, user_id)
-                document.file_path = filepath
+                filepath, file_hash = await self._store_file(file, kb_id, user_id)
+                # Create document record with processing status
+                document = Document(
+                    kb_id=kb_id,
+                    file_name=file.filename,
+                    file_path=filepath,
+                    file_type=file_ext[1:],
+                    file_size=file.size,
+                    file_hash=file_hash,
+                    status=DocumentStatus.PROCESSING.value,
+                    meta_info=metadata
+                )
+                self.db.add(document)
+                self.db.commit()
+                self.db.refresh(document)
                 
                 # Extract text
                 with open(filepath, "rb") as f:
@@ -199,7 +208,7 @@ class DocumentService:
                     raise Exception("Failed to store vectors")
                 
                 # Update document status
-                document.status = DocumentStatus.COMPLETED
+                document.status = DocumentStatus.COMPLETED.value
                 document.chunk_count = len(chunks)
                 self.db.commit()
                 
@@ -224,11 +233,11 @@ class DocumentService:
                     {"document_id": document.id, "chunks": len(chunks)}
                 )
                 
-                return ServiceResponse.created(document)
+                return ServiceResponse.created(document.to_dict())
                 
             except Exception as e:
                 # Update document status on failure
-                document.status = DocumentStatus.FAILED
+                document.status = DocumentStatus.FAILED.value
                 document.error_message = str(e)
                 self.db.commit()
                 
@@ -251,12 +260,12 @@ class DocumentService:
             self.db.rollback()
             raise
 
-    @handle_service_errors
+    # @handle_service_errors
     async def get_document(
         self,
         doc_id: int,
         user_id: int
-    ) -> ServiceResponse[Document]:
+    ) -> Document:
         """Get a document by ID"""
         document = self.db.query(Document).filter(Document.id == doc_id).first()
         if not document:
@@ -265,7 +274,7 @@ class DocumentService:
         # Check access through knowledge base
         kb_response = await self.kb_service.get_knowledge_base(document.kb_id, user_id)
         if not kb_response.success:
-            return kb_response
+            raise ServiceError(f"Knowledge base {document.kb_id} not found")
             
         audit_logger.log_access(
             user_id,
@@ -275,7 +284,7 @@ class DocumentService:
             "success"
         )
         
-        return ServiceResponse.ok(document)
+        return document
 
     @handle_service_errors
     async def delete_document(
@@ -289,16 +298,20 @@ class DocumentService:
             raise NotFoundError(f"Document {doc_id} not found")
             
         # Check access through knowledge base
-        kb_response = await self.kb_service.get_knowledge_base(document.kb_id, user_id)
-        if not kb_response.success:
-            return kb_response
-        kb = kb_response.data
+        # kb_response = await self.kb_service.get_knowledge_base(document.kb_id, user_id)
+        # if not kb_response.success:
+        #     return kb_response
+        # kb = kb_response.data
+        kb = self.db.query(KnowledgeBase).filter(KnowledgeBase.id == document.kb_id).first()
+        if not kb:
+            raise NotFoundError("Knowledge base not found")
         
         try:
             # Delete vectors from vector database
             success = await self.kb_service.vector_db.delete_vectors(
                 collection_name=kb.collection_name,
-                filter={"document_id": doc_id}
+                vector_ids=[]
+                # filter={"document_id": doc_id}
             )
             
             if not success:
@@ -330,27 +343,71 @@ class DocumentService:
             self.db.rollback()
             raise
 
-    @handle_service_errors
+    # @handle_service_errors
     async def list_documents(
         self,
         kb_id: int,
         user_id: int,
         skip: int = 0,
         limit: int = 10,
-        file_type: Optional[str] = None
-    ) -> ServiceResponse[List[Document]]:
+        file_type: Optional[str] = None,
+        status: Optional[int] = None,
+        search: Optional[str] = None
+    ) -> Tuple[List[Document], int]:
         """List documents in a knowledge base"""
         # Check access through knowledge base
-        kb_response = await self.kb_service.get_knowledge_base(kb_id, user_id)
-        if not kb_response.success:
-            return kb_response
+        # kb_response = await self.kb_service.get_knowledge_base(kb_id, user_id)
+        # if not kb_response.success:
+        #     return kb_response
+        kb = self.db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
+        if not kb:
+            raise NotFoundError("Knowledge base not found")
             
         # Build query
         query = self.db.query(Document).filter(Document.kb_id == kb_id)
         
         if file_type:
             query = query.filter(Document.file_type == file_type)
-        
+        if status is not None:
+            query = query.filter(Document.status == status)
+
+        if search:
+            query = query.filter(Document.file_name.ilike(f"%{search}%"))
+
+        total = query.count()
         documents = query.offset(skip).limit(limit).all()
         
-        return ServiceResponse.ok(documents)
+        return documents, total
+
+    async def update_document(
+        self,
+        doc_id: int,
+        update_data: DocumentUpdate,
+        user_id: int
+    ):
+        """Update a document"""
+        document = self.db.query(Document).filter(Document.id == doc_id).first()
+        if not document:
+            raise NotFoundError(f"Document {doc_id} not found")
+
+        kb_response = await self.kb_service.get_knowledge_base(document.kb_id, user_id)
+        if not kb_response.success:
+            raise ServiceError(f"Knowledge base {document.kb_id} not found")
+        
+        for field, value in update_data.dict(exclude_unset=True).items():
+            setattr(document, field, value)
+        
+        # 提交更改
+        self.db.commit()
+        self.db.refresh(document)
+        
+        # 记录审计日志
+        audit_logger.log_access(
+            user_id,
+            "document",
+            str(doc_id),
+            "update",
+            "success"
+        )
+        
+        return document
