@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from app.features.knowledge.models.document import DocumentStatus
 
 class DocumentResponse(BaseModel):
@@ -26,7 +26,7 @@ class DocumentResponse(BaseModel):
     language: Optional[str]
     author: Optional[str]
     source_url: Optional[str]
-    metadata: Optional[Dict[str, Any]]
+    meta_info: Optional[Dict[str, Any]]
     tags: Optional[List[str]]
     
     # Processing settings
@@ -39,13 +39,24 @@ class DocumentResponse(BaseModel):
     updated_at: datetime
     processed_at: Optional[datetime]
 
-    class Config:
-        orm_mode = True
+    # class Config:
+    #     orm_mode = True
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_encoders={
+            datetime: lambda v: v.isoformat() if v else None,
+            bytes: lambda v: v.decode() if v else None
+        }
+    )
 
 class DocumentList(BaseModel):
     """Schema for document list response"""
     total: int
     items: List[DocumentResponse]
+
+    class Config:
+        from_attributes = True
 
 class DocumentChunkResponse(BaseModel):
     """Schema for document chunk response"""
