@@ -27,7 +27,6 @@ export const handleStreamResponse = async ({
 }: StreamResponseConfig) => {
   const decoder = new TextDecoder()
   let fullMessage = ''
-
   try {
     if (streamMode === StreamChatMode.ollama) {
       for await (const part of reader as AsyncIterable<ChatResponse>) {

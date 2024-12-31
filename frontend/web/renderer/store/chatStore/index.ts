@@ -9,7 +9,7 @@ import { getLoclOllamaModels } from './ollama'
 import type { ChatStore } from './types'
 
 const models = [
-  { model: 'gpt-4-turbo', name: 'GPT 4-Turbo', usage: '200k', type: 'default' as const },
+  { model: 'deepseek-chat', name: 'deepseek-chat', usage: '200k', type: 'default' as const },
   { model: 'gpt-3.5-turbo', name: 'GPT 3.5-Turbo', usage: '200k', type: 'free' as const },
 ]
 
@@ -415,12 +415,12 @@ export const useChatStore = create<ChatStore>()((set, get) => {
             })
           } else {
             reader = await streamChatCompletions({
+              model: selectedModel.model,
               messages: [...messagesToSend, currentMessageToSend],
               stream: true,
               temperature: 1,
             })
           }
-
           await handleStreamResponse({
             reader,
             chatId,
@@ -439,7 +439,8 @@ export const useChatStore = create<ChatStore>()((set, get) => {
               // Additional actions after completion if needed
               get().saveChatsToDisk()
             },
-            streamMode: StreamChatMode.ollama,
+            streamMode:
+              selectedModel?.type === 'local' ? StreamChatMode.ollama : StreamChatMode.commonChat,
           })
         }
       } catch (error) {

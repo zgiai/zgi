@@ -7,7 +7,7 @@
 	"main": "app/background.js",
 	"scripts": {
 		"lint": "biome check --fix --no-errors-on-unmatched --files-ignore-unknown=true ./src",
-		"dev": "nextron",
+		"dev": "nextron --renderer-port 9988",
 		"build": "nextron build",
 		"build:web": "npx next build ./renderer",
 		"postinstall": "electron-builder install-app-deps"

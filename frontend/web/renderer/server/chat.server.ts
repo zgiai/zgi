@@ -27,7 +27,7 @@ export const streamChatCompletions = async (params: StreamChatCompletionsParams)
     },
     body: JSON.stringify({
       ...options,
-      model: options?.model || 'gpt-4o',
+      model: options?.model,
       messages,
       stream: true,
       temperature: options?.temperature || 1,

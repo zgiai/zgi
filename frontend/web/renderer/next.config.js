@@ -6,15 +6,6 @@ module.exports = {
   images: {
     unoptimized: true,
   },
-  // async redirects() {
-  // 	return [
-  // 		{
-  // 			source: "/",
-  // 			destination: "/chat",
-  // 			permanent: true,
-  // 		},
-  // 	];
-  // },
   webpack: (config) => {
     return config
   },
@@ -22,7 +13,7 @@ module.exports = {
     return [
       {
         source: '/api/:path*',
-        destination: 'https://api.zgi.ai/:path*',
+        destination: 'https://zgi.zeabur.app/:path*',
       },
     ]
   },
