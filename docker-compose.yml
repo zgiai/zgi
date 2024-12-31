@@ -6,7 +6,7 @@ services:
     volumes:
       - ./api:/app
     ports:
-      - "7007:7007"
+      - "7001:7001"
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY} # 从.env文件获取OpenAI API密钥
       - WEAVIATE_URL=${WEAVIATE_URL} # 从.env文件获取Weaviate URL
@@ -22,11 +22,11 @@ services:
       - QINIU_SK=${QINIU_SK}
       - QINIU_AK=${QINIU_AK}
       - QINIU_BUCKET=${QINIU_BUCKET}
-      - MYSQL_HOST=db
-      - MYSQL_USER=${MYSQL_USER}
-      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
-      - MYSQL_DATABASE=${MYSQL_DATABASE}
-      - MYSQL_PORT=${MYSQL_PORT}
+      - DB_HOST=db
+      - DB_USERNAME=${MYSQL_USER}
+      - DB_PASSWORD=${MYSQL_PASSWORD}
+      - DB_DATABASE=${MYSQL_DATABASE}
+      - DB_PORT=${MYSQL_PORT}
 
     depends_on:
       - db
