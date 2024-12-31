@@ -19,5 +19,12 @@ RUN python -m venv /opt/venv && \
   pip install --upgrade pip && \
   pip install -r requirements.txt
 
-# # 启动应用程序
-CMD ["python", "/app/main.py"]
+# set python path
+ENV PYTHONPATH=/app
+ENV PATH="/opt/venv/bin:$PATH"
+
+# 暴露端口
+EXPOSE 7001
+
+# 启动应用程序
+CMD ["python", "/app/run.py"]
