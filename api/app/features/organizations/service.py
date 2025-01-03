@@ -35,7 +35,7 @@ def organization_params_require_admin(
         OrganizationMember.organization_id == organization_id,
         OrganizationMember.user_id == current_user.id,
         OrganizationMember.is_admin == True).first()
-    if not org_admin_member and not current_user.is_superuser:
+    if not org_admin_member and not current_user.is_superuser and current_user.user_type == 0:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Insufficient permissions. Organization admin access required."

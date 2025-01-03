@@ -5,7 +5,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from typing import List, Optional, Annotated
 
-from app.core.auth import require_super_admin
+from app.core.auth import require_super_admin, require_admin
 from app.core.base import resp_200
 from app.core.database import get_sync_db
 from app.core.security import create_access_token, verify_token
@@ -27,7 +27,7 @@ router = APIRouter(tags=["organizations"])
 @router.post("/create")
 def create_organization(
     org_data: schemas.OrganizationCreate,
-    current_user: User = Depends(require_super_admin),
+    current_user: User = Depends(require_admin),
     db: Session = Depends(get_sync_db)
 ):
     """Create a new organization"""
@@ -71,8 +71,11 @@ def list_organizations(
 ):
     """List organizations for current user"""
     query = db.query(Organization).filter(Organization.is_active == True)
-    if user_id:
-        query = query.join(OrganizationMember).filter(OrganizationMember.user_id == user_id)
+    if not current_user.is_superuser and current_user.user_type == 0:
+        query = query.join(OrganizationMember).filter(OrganizationMember.user_id == current_user.id)
+    else:
+        if user_id:
+            query = query.join(OrganizationMember).filter(OrganizationMember.user_id == user_id)
     total = query.count()
     if page_size and page_num:
         query = query.offset((page_num - 1) * page_size).limit(page_size)
@@ -194,7 +197,7 @@ def set_admins(organization_id: Annotated[int, Body(embed=True)],
             OrganizationMember.user_id == user_id
         ).first()
         if member:
-            member.is_admin = True
+            member.type = True
             db.add(member)
             db.commit()
         else:
@@ -443,3 +446,29 @@ def list_members(
         }
         response_members.append(response_member)
     return resp_200(data=MemberList(members=response_members, total=total))
+
+@router.get("/members/me")
+def members_me(
+    organization_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_sync_db)
+):
+    org = db.query(Organization).filter(Organization.id == organization_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    member = db.query(OrganizationMember).filter(
+        OrganizationMember.organization_id == organization_id,
+        OrganizationMember.user_id == current_user.id).first()
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+    response_member = {
+        "id": member.id,
+        "organization_id": member.organization_id,
+        "user_id": member.user_id,
+        "username": member.user.username,
+        "is_admin": member.is_admin,
+        "roles": [RoleResponseBase.model_validate(role) for role in member.roles],
+        "created_at": member.created_at,
+        "updated_at": member.updated_at
+    }
+    return resp_200(data=response_member)

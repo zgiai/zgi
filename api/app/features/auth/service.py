@@ -222,6 +222,7 @@ class AuthService:
                 hashed_password=self.get_password_hash(password),
                 is_active=True,
                 is_superuser=True,
+                user_type=1
             )
             self.db.add(user)
             self.db.commit()
@@ -285,6 +286,58 @@ class AuthService:
         except Exception as e:
             self.db.rollback()
             logger.error(f"Error deleting user: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Internal server error"
+            )
+
+    def set_admin(self, user_id: int) -> User:
+        """Set a user as a normal admin"""
+        try:
+            user = self.db.query(User).filter(User.id == user_id).first()
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="User not found"
+                )
+            if user.is_superuser:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Super admin cannot be set as admin"
+                )
+            if user.user_type == 2:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="User is already an admin"
+                )
+            user.user_type = 2
+            self.db.commit()
+            self.db.refresh(user)
+            return user
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Error setting admin: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Internal server error"
+            )
+
+    def unset_admin(self, user_id: int) -> User:
+        """Unset a user as a normal admin"""
+        try:
+            user = self.db.query(User).filter(User.id == user_id).first()
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="User not found"
+                )
+            user.user_type = 0
+            self.db.commit()
+            self.db.refresh(user)
+            return user
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Error unsetting admin: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Internal server error"

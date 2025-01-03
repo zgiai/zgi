@@ -20,6 +20,7 @@ class UserRegister(BaseModel):
 
 class UserResponse(UserBase):
     id: int
+    user_type: int
     created_at: datetime
     updated_at: datetime
 
