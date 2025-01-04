@@ -4,6 +4,7 @@ import { useState } from "react"
 import { CreateOrganizationParams } from "@/interfaces/request"
 import { createOrganization } from "@/services/organization"
 import { message } from "antd"
+import Link from "next/link"
 
 export default function CreateOrganizationPage() {
     const [pageStatus, setPageStatus] = useState<number>(1)
@@ -79,7 +80,7 @@ export default function CreateOrganizationPage() {
                         />
                     </div>
                 </div>
-                <div className="flex items-center">
+                <div className="flex items-center gap-4">
                     {pageStatus === 1 && <button
                         className="btn bg-gray-900 text-gray-100 hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-800 dark:hover:bg-white"
                         onClick={handleNext}
@@ -93,6 +94,12 @@ export default function CreateOrganizationPage() {
                     >
                         <span className="">Create</span>
                     </button>}
+                    <Link
+                        className="btn bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700/60 hover:border-gray-300 dark:hover:border-gray-600 text-gray-800 dark:text-gray-300"
+                        href="/organization"
+                    >
+                        <span className="">Cancel</span>
+                    </Link>
                 </div>
             </form>
         </div>

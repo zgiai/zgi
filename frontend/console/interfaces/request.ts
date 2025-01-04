@@ -43,4 +43,7 @@ export interface GetProjectParams {
     project_id: string;
 }
 
+export interface GetOrgPermissionParams {
+    organization_id: string;
+}
 

@@ -1,6 +1,6 @@
 import { BASE_URL } from "@/config";
 import request from "@/utils/request";
-import { UpdateOrganizationParams, GetOrganizationParams, CreateOrganizationParams } from "@/interfaces/request";
+import { UpdateOrganizationParams, GetOrganizationParams, CreateOrganizationParams, GetOrgPermissionParams } from "@/interfaces/request";
 
 // 获取组织列表
 export const getOrganization = () => request.get(`${BASE_URL}/organizations/list`)
@@ -16,3 +16,6 @@ export const deleteOrganization = (params: GetOrganizationParams) => request.del
 
 // 创建组织
 export const createOrganization = (params: CreateOrganizationParams) => request.post(`${BASE_URL}/organizations/create`, params)
+
+// 获取当前组织权限
+export const getOrgPermission = (params: GetOrgPermissionParams) => request.get(`${BASE_URL}/organizations/members/me`, params)
