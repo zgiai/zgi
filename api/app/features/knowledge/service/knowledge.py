@@ -119,7 +119,7 @@ class KnowledgeBaseService:
             # Return response
             return ServiceResponse(
                 success=True,
-                code=201,
+                code=200,
                 message="Created",
                 data=kb.to_dict()
             )
@@ -332,9 +332,9 @@ class KnowledgeBaseService:
     ) -> List[Dict[str, Any]]:
         """Search documents in a knowledge base"""
         # Get knowledge base and check access
-        kb = await self.db.query(KnowledgeBase).filter(
-            KnowledgeBase.id == kb_id
-        ).first()
+        query_knowledge = select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
+        query_result = await self.db.execute(query_knowledge)
+        kb = query_result.scalars().first()
         
         if not kb:
             raise NotFoundError(f"Knowledge base {kb_id} not found")
@@ -350,7 +350,7 @@ class KnowledgeBaseService:
             
             # Search vector database
             results = await self.vector_db.search(
-                collection_name=f"kb_{kb_id}",
+                collection_name=kb.collection_name,
                 query_vector=embeddings[0],
                 top_k=query.top_k,
                 filters=None

@@ -1,5 +1,5 @@
 from typing import List, Dict, Any
-import openai
+from openai import OpenAI
 from ..base import EmbeddingProvider
 
 class OpenAIEmbeddingProvider(EmbeddingProvider):
@@ -20,7 +20,7 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
         """
         self.api_key = api_key
         self.model = model
-        openai.api_key = api_key
+        self.client = OpenAI(api_key=api_key)
         
         # Model specific settings
         self._dimensions = {
@@ -52,12 +52,12 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
             
             for i in range(0, len(texts), batch_size):
                 batch = texts[i:i + batch_size]
-                response = await openai.Embedding.acreate(
+                response = self.client.embeddings.create(
                     input=batch,
                     model=self.model,
                     **kwargs
                 )
-                batch_embeddings = [data['embedding'] for data in response['data']]
+                batch_embeddings = [data.embedding for data in response.data]
                 embeddings.extend(batch_embeddings)
             
             return embeddings
@@ -73,7 +73,7 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
         """Check if OpenAI API is accessible"""
         try:
             # Try to get embedding for a simple text
-            response = await openai.Embedding.acreate(
+            response = await self.client.embeddings.create(
                 input="test",
                 model=self.model
             )

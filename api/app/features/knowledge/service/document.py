@@ -8,7 +8,7 @@ import PyPDF2
 import docx
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
-from app.features.knowledge.models.document import Document, DocumentStatus
+from app.features.knowledge.models.document import Document, DocumentStatus, DocumentChunk
 from app.features.knowledge.models.knowledge import KnowledgeBase
 from app.features.knowledge.schemas.request.document import DocumentUpdate
 from app.features.knowledge.service.knowledge import KnowledgeBaseService
@@ -189,6 +189,18 @@ class DocumentService:
                 # Split text into chunks
                 chunks = await self._split_text(text)
                 
+                # Store chunks in the database
+                for i, chunk in enumerate(chunks):
+                    document_chunk = DocumentChunk(
+                        document_id=document.id,
+                        chunk_index=i,
+                        content=chunk,
+                        token_count=len(chunk.split())
+                    )
+                    self.db.add(document_chunk)
+                
+                self.db.commit()
+                
                 # Generate embeddings and store vectors
                 embeddings = await self.kb_service.embedding.get_embeddings(chunks)
                 chunk_metadata = [{
@@ -233,7 +245,7 @@ class DocumentService:
                     {"document_id": document.id, "chunks": len(chunks)}
                 )
                 
-                return ServiceResponse.created(document.to_dict())
+                return ServiceResponse.ok(document.to_dict())
                 
             except Exception as e:
                 # Update document status on failure
@@ -411,3 +423,27 @@ class DocumentService:
         )
         
         return document
+
+    # @handle_service_errors
+    async def list_chunks(
+        self,
+        doc_id: int,
+        user_id: int,
+        skip: int = 0,
+        limit: int = 10
+    ) -> Tuple[List[DocumentChunk], int]:
+        """List chunks of a document"""
+        document = self.db.query(Document).filter(Document.id == doc_id).first()
+        if not document:
+            raise NotFoundError(f"Document {doc_id} not found")
+        
+        # Check access through knowledge base
+        kb_response = await self.kb_service.get_knowledge_base(document.kb_id, user_id)
+        if not kb_response.success:
+            raise ServiceError(f"Knowledge base {document.kb_id} not found")
+        
+        query = self.db.query(DocumentChunk).filter(DocumentChunk.document_id == doc_id)
+        total = query.count()
+        chunks = query.offset(skip).limit(limit).all()
+        
+        return chunks, total

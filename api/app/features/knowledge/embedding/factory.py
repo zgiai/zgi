@@ -2,13 +2,16 @@ from typing import Dict, Type
 from .base import EmbeddingProvider
 from .providers.openai import OpenAIEmbeddingProvider
 from .providers.mock import MockEmbeddingProvider
+from .providers.ollama import OllamaEmbeddingProvider
+
 
 class EmbeddingFactory:
     """Factory for creating embedding providers"""
     
     _providers: Dict[str, Type[EmbeddingProvider]] = {
         'openai': OpenAIEmbeddingProvider,
-        'mock': MockEmbeddingProvider
+        'mock': MockEmbeddingProvider,
+        'ollama': OllamaEmbeddingProvider
     }
     
     @classmethod

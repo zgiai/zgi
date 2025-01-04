@@ -8,6 +8,7 @@ class VectorDBSettings(BaseSettings):
     API_KEY: Optional[str] = None
     ENVIRONMENT: Optional[str] = None
     INDEX_NAME: Optional[str] = None
+    URL: Optional[str] = None
     
     @property
     def provider_config(self) -> Dict[str, Any]:
@@ -15,8 +16,12 @@ class VectorDBSettings(BaseSettings):
         return {
             "api_key": self.API_KEY,
             "environment": self.ENVIRONMENT,
-            "index_name": self.INDEX_NAME
+            "index_name": self.INDEX_NAME,
+            "url": self.URL
         }
+
+    class Config:
+        env_prefix = 'VECTOR_DB_SETTINGS_'
 
 class EmbeddingSettings(BaseSettings):
     """Embedding service settings"""
@@ -26,6 +31,7 @@ class EmbeddingSettings(BaseSettings):
     BATCH_SIZE: int = 100
     MAX_RETRIES: int = 3
     TIMEOUT: int = 30
+    API_BASE: str = "http://localhost:11434"
     
     @property
     def provider_config(self) -> Dict[str, Any]:
@@ -35,8 +41,12 @@ class EmbeddingSettings(BaseSettings):
             "model": self.MODEL,
             "batch_size": self.BATCH_SIZE,
             "max_retries": self.MAX_RETRIES,
-            "timeout": self.TIMEOUT
+            "timeout": self.TIMEOUT,
+            "api_base": self.API_BASE
         }
+
+    class Config:
+        env_prefix = 'EMBEDDING_SETTINGS_'
 
 class DocumentSettings(BaseSettings):
     """Document processing settings"""
@@ -46,6 +56,9 @@ class DocumentSettings(BaseSettings):
     CHUNK_SIZE: int = 1000
     CHUNK_OVERLAP: int = 200
     MAX_CHUNKS_PER_DOC: int = 1000
+
+    class Config:
+        env_prefix = 'DOCUMENT_SETTINGS_'
     
 class KnowledgeBaseSettings(BaseSettings):
     """Knowledge base settings"""
@@ -55,6 +68,9 @@ class KnowledgeBaseSettings(BaseSettings):
     MAX_TOTAL_TOKENS: int = 1000000
     ENABLE_CACHE: bool = True
     CACHE_TTL: int = 3600
+
+    class Config:
+        env_prefix = 'KNOWLEDGE_BASE_SETTINGS_'
 
 @lru_cache()
 def get_vector_db_settings() -> VectorDBSettings:

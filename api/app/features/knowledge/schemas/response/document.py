@@ -67,14 +67,24 @@ class DocumentChunkResponse(BaseModel):
     token_count: int
     vector_id: Optional[str]
     embedding_model: Optional[str]
-    metadata: Optional[Dict[str, Any]]
+    chunk_meta_info: Optional[Dict[str, Any]]
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        orm_mode = True
+    # class Config:
+    #     orm_mode = True
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_encoders={
+            datetime: lambda v: v.isoformat() if v else None,
+            bytes: lambda v: v.decode() if v else None
+        }
+    )
 
 class DocumentChunkList(BaseModel):
     """Schema for document chunk list response"""
     total: int
     items: List[DocumentChunkResponse]
+
+    class Config:
+        from_attributes = True

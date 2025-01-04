@@ -7,7 +7,7 @@ T = TypeVar('T')
 class ErrorCode(int, Enum):
     """Error codes for knowledge base service"""
     SUCCESS = 200
-    CREATED = 200   # 201
+    CREATED = 201
     BAD_REQUEST = 400
     UNAUTHORIZED = 401
     FORBIDDEN = 403

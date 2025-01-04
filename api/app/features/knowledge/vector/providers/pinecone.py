@@ -5,7 +5,7 @@ from ..base import VectorDBProvider
 class PineconeProvider(VectorDBProvider):
     """Pinecone vector database provider"""
     
-    def __init__(self, api_key: str, environment: str):
+    def __init__(self, api_key: str, environment: str, **kwargs):
         """Initialize Pinecone provider
         
         Args:

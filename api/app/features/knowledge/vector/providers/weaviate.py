@@ -5,16 +5,17 @@ from ..base import VectorDBProvider
 class WeaviateProvider(VectorDBProvider):
     """Weaviate vector database provider"""
     
-    def __init__(self, url: str, api_key: str = None):
+    def __init__(self, url: str, api_key: str = None, **kwargs):
         """Initialize Weaviate provider
         
         Args:
             url: Weaviate server URL
             api_key: Optional API key
         """
+        auth_config = weaviate.auth.AuthApiKey(api_key) if api_key else None
         self.client = weaviate.Client(
             url=url,
-            auth_client_secret=weaviate.AuthApiKey(api_key) if api_key else None
+            auth_client_secret=auth_config
         )
     
     async def create_collection(
@@ -29,13 +30,31 @@ class WeaviateProvider(VectorDBProvider):
                 "class": name,
                 "vectorizer": "none",  # We'll provide vectors directly
                 "vectorIndexConfig": {
-                    "distance": kwargs.get('metric', 'cosine')
+                    "distance": kwargs.get('metric', 'cosine'),
+                    "dimension": dimension
                 },
                 "properties": [
                     {
                         "name": "metadata",
                         "dataType": ["object"],
-                        "description": "Vector metadata"
+                        "description": "Vector metadata",
+                        "nestedProperties": [
+                            {
+                                "name": "text",
+                                "dataType": ["text"],
+                                "description": "The text content"
+                            },
+                            {
+                                "name": "document_id",
+                                "dataType": ["int"],
+                                "description": "The document id"
+                            },
+                            {
+                                "name": "chunk_index",
+                                "dataType": ["int"],
+                                "description": "chunk index"
+                            }
+                        ]
                     }
                 ]
             }
@@ -63,14 +82,16 @@ class WeaviateProvider(VectorDBProvider):
         """Insert vectors into Weaviate class"""
         try:
             # Insert vectors in batches
-            batch_size = 100
-            with self.client.batch as batch:
-                batch.batch_size = batch_size
-                for i in range(len(vectors)):
+            with self.client.batch(
+                batch_size=100,
+                dynamic=True,
+                timeout_retries=3
+            ) as batch:
+                for vector, meta in zip(vectors, metadata):
                     batch.add_data_object(
-                        data_object={"metadata": metadata[i]},
+                        data_object={"metadata": meta},
                         class_name=collection_name,
-                        vector=vectors[i]
+                        vector=vector
                     )
             return True
         except Exception as e:
@@ -88,10 +109,13 @@ class WeaviateProvider(VectorDBProvider):
     ) -> List[Dict[str, Any]]:
         """Search similar vectors in Weaviate class"""
         try:
+            # Ensure collection_name is in PascalCase
+            collection_name = collection_name.capitalize()
             # Build query
             query = (
                 self.client.query
-                .get(collection_name, ["metadata"])
+                .get(collection_name, ["metadata{document_id chunk_index text}"])
+                .with_additional(["id", "certainty"])
                 .with_near_vector({
                     "vector": query_vector,
                     "certainty": score_threshold if score_threshold else 0.7
@@ -102,9 +126,12 @@ class WeaviateProvider(VectorDBProvider):
             # Add metadata filter if specified
             if metadata_filter:
                 where_filter = {
-                    "path": ["metadata"],
-                    "operator": "Equal",
-                    "valueObject": metadata_filter
+                    "operator": "And",
+                    "operands": [{
+                        "path": ["metadata", key],
+                        "operator": "Equal",
+                        "valueString": str(value)
+                    } for key, value in metadata_filter.items()]
                 }
                 query = query.with_where(where_filter)
             

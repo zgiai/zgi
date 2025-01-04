@@ -266,20 +266,22 @@ async def delete_document(
     return resp_200("Document deleted")
 
 @router.get("/documents/{doc_id}/chunks", 
-    response_model=DocumentChunkList,
     summary="List document chunks")
 async def list_document_chunks(
     doc_id: int,
     skip: int = Query(0, ge=0),
     limit: int = Query(10, ge=1, le=100),
     db: Session = Depends(get_db),
+    sync_db: Session = Depends(get_sync_db),
     current_user = Depends(get_current_user)
 ):
     """List chunks of a document"""
     kb_service = KnowledgeBaseService(db)
-    doc_service = DocumentService(db, kb_service)
+    doc_service = DocumentService(sync_db, kb_service)
     chunks, total = await doc_service.list_chunks(doc_id, current_user.id, skip, limit)
-    return {"total": total, "items": chunks}
+    chunk_resp = [DocumentChunkResponse.model_validate(chunk) for chunk in chunks]
+    data_list = DocumentChunkList(total=total, items=chunk_resp)
+    return resp_200(data_list)
 
 @router.get("/documents/{doc_id}/similar", 
     response_model=DocumentList,
@@ -334,8 +336,7 @@ async def export_document(
 
 # Search Routes
 
-@router.post("/{kb_id}/search", 
-    response_model=SearchResponse,
+@router.post("/{kb_id}/search",
     summary="Search knowledge base")
 async def search_knowledge_base(
     kb_id: int,
@@ -345,16 +346,17 @@ async def search_knowledge_base(
 ):
     """Search documents in a knowledge base"""
     service = KnowledgeBaseService(db)
-    return await service.search(kb_id, query, current_user.id)
+    results = await service.search(kb_id, query, current_user.id)
+    return resp_200(results)
 
-@router.post("/{kb_id}/search/similar", 
-    response_model=SearchResponse,
+@router.post("/{kb_id}/search/similar",
     summary="Similarity search")
 async def similarity_search(
     kb_id: int,
     document_id: int,
     limit: int = Query(5, ge=1, le=20),
     db: Session = Depends(get_db),
+    sync_db: Session = Depends(get_sync_db),
     current_user = Depends(get_current_user)
 ):
     """Find similar content based on a document"""
