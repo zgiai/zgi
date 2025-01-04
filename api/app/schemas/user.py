@@ -32,7 +32,7 @@ class UserInDB(UserBase):
     preferences: Optional[Dict[str, Any]] = None
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class UserResponse(UserBase):
     """用户响应"""
@@ -40,7 +40,7 @@ class UserResponse(UserBase):
     preferences: Optional[Dict[str, Any]] = None
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class Token(BaseModel):
     """认证令牌"""
