@@ -80,7 +80,8 @@ origins = [
     "http://localhost:7001",
     "http://localhost:3000",
     "https://www.zgi.app",
-    "https://zgi.app",
+    "https://console.zgi.app",
+    "https://chat.zgi.app",
 ]
 
 # Add CORS middleware
