@@ -23,7 +23,7 @@ export default function PageNotFound() {
               <Image className="hidden dark:block" src={NotFoundImageDark} width={176} height={176} alt="404 illustration dark" />    
             </div>
             <div className="mb-6">Hmm...this page doesn't exist. Try searching for something else!</div>
-            <Link href="/" className="btn bg-gray-900 text-gray-100 hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-800 dark:hover:bg-white">Back To Dashboard</Link>
+            <Link href="/" className="btn bg-gray-900 text-gray-100 hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-800 dark:hover:bg-white">Back To Home</Link>
           </div>
 
         </div>

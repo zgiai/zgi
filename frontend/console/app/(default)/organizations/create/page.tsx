@@ -17,21 +17,25 @@ export default function CreateOrganizationPage() {
         }
     })
 
-
     const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault()
-        const response = await createOrganization(formData)
-        if (response?.status_code === 200) {
-            message.success(response?.status_message || "Organization created successfully")
-            window.location.href = '/organization'
+        if ((formData?.project?.name || "").length < 3) {
+            message.error("Project name must be at least 3 characters")
+            return
         } else {
-            message.error(response?.status_message || "Failed to create organization")
+            const response = await createOrganization(formData)
+            if (response?.status_code === 200) {
+                message.success("Organization created successfully")
+                window.location.href = '/organizations'
+            } else {
+                message.error(response?.status_message || "Failed to create organization")
+            }
         }
     }
 
     const handleNext = () => {
         if (formData.name.length < 3) {
-            message.error("Name must be at least 3 characters")
+            message.error("Organization name must be at least 3 characters")
             return
         } else {
             setPageStatus(2)
@@ -96,7 +100,7 @@ export default function CreateOrganizationPage() {
                     </button>}
                     <Link
                         className="btn bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700/60 hover:border-gray-300 dark:hover:border-gray-600 text-gray-800 dark:text-gray-300"
-                        href="/organization"
+                        href="/organizations"
                     >
                         <span className="">Cancel</span>
                     </Link>

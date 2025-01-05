@@ -22,7 +22,10 @@ export interface UpdateOrganizationParams {
 export interface CreateOrganizationParams {
     name: string;
     description?: string;
-    project?: CreateProjectParams;
+    project?: {
+        name?: string;
+        description?: string;
+    };
 }
 
 export interface ListProjectParams {
@@ -30,6 +33,7 @@ export interface ListProjectParams {
 }
 
 export interface CreateProjectParams {
+    organization_id: string;
     name: string;
     description: string;
 }
@@ -43,7 +47,22 @@ export interface GetProjectParams {
     project_id: string;
 }
 
+export interface GetApiKeyListParams {
+    project_id: string;
+    page_size?: number;
+    page_num?: number;
+}
+
+export interface GetApiKeyParams {
+    api_key_uuid: string;
+}
+
 export interface GetOrgPermissionParams {
     organization_id: string;
 }
+
+export interface CreateApiKeyParams {
+    name: string;
+}
+
 

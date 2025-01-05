@@ -76,9 +76,9 @@ const get = (url, params = {}) => {
  * @param data
  * @returns {Promise}
  */
-const post = (url, data = {}) => {
+const post = (url, data = {}, params = {}) => {
     return new Promise((resolve, reject) => {
-        axios.post(url, data).then(
+        axios.post(url, data, { params }).then(
             response => {
                 resolve(response.data || {})
             },
@@ -118,7 +118,7 @@ const put = (url, params = {}, query = {}) => {
 
 const del = (url, params = {}) => {
     return new Promise((resolve, reject) => {
-        axios.delete(url, params).then(
+        axios.delete(url, { params }).then(
             response => {
                 resolve(response?.data)
             },
