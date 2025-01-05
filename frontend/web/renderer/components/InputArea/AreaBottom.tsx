@@ -1,3 +1,4 @@
+import { useAppSettingsStore } from '@/store/appSettingsStore'
 import { useChatStore } from '@/store/chatStore'
 import { FileText, LayoutGrid, Maximize, Send, Settings } from 'lucide-react'
 import React from 'react'
@@ -6,6 +7,7 @@ import ModelSelector from '../ModelSelector'
 const AreaBottom = () => {
   const { isLoadingMap, currentChatId, fileInputRef, inputMessage, attachments, handleSend } =
     useChatStore()
+  const { setOpenModal } = useAppSettingsStore()
 
   const isLoading = currentChatId ? isLoadingMap[currentChatId] : false
 
@@ -44,7 +46,12 @@ const AreaBottom = () => {
       {/* Right side functionality */}
       <div className="flex items-center gap-3">
         {/* Settings button */}
-        <button type="button" className="text-gray-500 hover:text-gray-600" title="Settings">
+        <button
+          type="button"
+          className="text-gray-500 hover:text-gray-600"
+          title="Settings"
+          onClick={() => setOpenModal(true)}
+        >
           <Settings size={18} />
         </button>
 

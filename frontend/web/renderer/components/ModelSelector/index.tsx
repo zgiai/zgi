@@ -67,27 +67,29 @@ const ModelSelector = () => {
                 </svg>
               </button>
             </div>
-            <div className="flex flex-col mt-4">
+            <div className="flex flex-col mt-4 overflow-y-auto" style={{ maxHeight: '70vh' }}>
               {[...models, ...ollamaModels].map((item) => (
                 <button
                   key={item.model}
                   onClick={() => setTempSelectedModel(item)}
-                  className={`flex items-center justify-between w-full px-4 py-2 text-left text-sm ${
+                  className={`flex items-center justify-between w-full px-4 py-2 text-left text-sm rounded-lg ${
                     tempSelectedModel?.model === item.model ? 'bg-blue-100' : 'hover:bg-gray-100'
                   }`}
                 >
                   <span className="flex items-center overflow-hidden whitespace-nowrap text-ellipsis">
-                    {tempSelectedModel?.model === item.model && (
+                    {/* {tempSelectedModel?.model === item.model && (
                       <span className="mr-2 text-blue-500">✔️</span>
-                    )}
+                    )} */}
                     <span className="overflow-hidden whitespace-nowrap text-ellipsis">
                       {item.name}
                     </span>
                   </span>
                   <span className="text-white whitespace-nowrap space-x-2">
-                    <span className="bg-blue-300 rounded-xl px-2 py-0.5">{item.usage}</span>
+                    <span className="bg-blue-300 rounded-xl py-0.5 w-12 inline-block text-center">
+                      {item.usage}
+                    </span>
                     <span
-                      className="rounded-xl px-2 py-0.5"
+                      className="rounded-xl py-0.5 w-16 inline-block text-center"
                       style={{
                         backgroundColor: !['free', 'local'].includes(item.type)
                           ? '#3162FF'

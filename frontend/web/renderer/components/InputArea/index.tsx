@@ -1,6 +1,7 @@
 import { useChatStore } from '@/store/chatStore'
 import type React from 'react'
 import { useEffect } from 'react'
+import AppSettings from '../AppSettings'
 import ModelSelector from '../ModelSelector'
 import AreaBottom from './AreaBottom'
 
@@ -125,6 +126,8 @@ const InputArea = () => {
           />
         </div>
       </div>
+
+      <AppSettings />
     </div>
   )
 }
