@@ -1,13 +1,13 @@
 import secrets
 import string
 
+from app.core.api_key import generate_api_key
 from app.core.database import SyncSessionLocal
 from app.features import Organization, Project, APIKey
 
-def generate_api_key() -> str:
-    """Generate a secure API key"""
-    alphabet = string.ascii_letters + string.digits
-    return ''.join(secrets.choice(alphabet) for _ in range(32))
+# def generate_api_key() -> str:
+#     """Generate a secure API key"""
+#     return f"zgi_{secrets.token_urlsafe(32)}"
 
 def init_default_organization_data(user_id):
     with SyncSessionLocal() as session:

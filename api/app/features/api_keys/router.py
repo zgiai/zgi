@@ -84,6 +84,31 @@ def list_api_keys(
 
     return resp_200(APIKeyResponse.model_validate(api_key))
 
+@router.put("/projects/update")
+def update_api_key_name(
+    api_key_uuid: str,
+    api_key_data: schemas.APIKeyCreate,
+    db: Session = Depends(get_sync_db),
+    current_user: User = Depends(api_keys_params_require_uuid_admin)
+):
+    """Update the name of an API key"""
+    api_key = db.query(models.APIKey).filter(
+        models.APIKey.uuid == api_key_uuid,
+        models.APIKey.status != models.APIKeyStatus.DELETED
+    ).first()
+    if not api_key:
+        raise HTTPException(status_code=404, detail="API key not found")
+    name = api_key_data.name
+    if not name:
+        raise HTTPException(status_code=400, detail="Name cannot be empty")
+    if api_key.name == name:
+        raise HTTPException(status_code=400, detail="Name cannot be the same")
+    api_key.name = name
+    db.commit()
+    db.refresh(api_key)
+
+    return resp_200(APIKeyResponse.model_validate(api_key))
+
 @router.post("/projects/disable")
 def disable_api_key(
     api_key_uuid: str,
