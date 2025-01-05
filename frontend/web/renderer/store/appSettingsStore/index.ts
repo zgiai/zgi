@@ -9,15 +9,15 @@ const STORAGE_KEY = 'app_settings'
  * Initial state for each provider when no stored settings exist
  */
 const defaultProviders: Record<string, ModelProvider> = {
-  openai: {
-    id: 'openai',
-    name: 'OpenAI',
-    enabled: false,
+  zgi: {
+    id: 'zgi',
+    name: 'zgi',
+    enabled: true,
     apiKey: '',
     apiEndpoint: 'https://api.openai.com/v1',
     models: [
-      { id: 'gpt-4', name: 'GPT-4', contextSize: '8K', selected: false },
-      { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', contextSize: '4K', selected: false },
+      { id: 'gpt-4', name: 'GPT-4', contextSize: '8K' },
+      { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', contextSize: '4K' },
     ],
     customModels: [],
     isDefault: false,
@@ -43,8 +43,6 @@ export const useAppSettingsStore = create<AppSettingsStore>()((set, get) => {
     activeSection: 'language-models',
     expandedCards: [],
     providers: defaultProviders,
-    modelSearchQuery: '',
-    isModelDropdownOpen: false,
     selectedModels: {},
 
     setOpenModal: (flag: boolean) => set({ isOpenModal: flag }),
@@ -218,7 +216,8 @@ export const useAppSettingsStore = create<AppSettingsStore>()((set, get) => {
         },
       })),
 
-    removeModel: (providerId: string, modelId: string) =>
+    removeCustomModel: (providerId: string, modelId: string) => {
+      get().removeSelectModelList(providerId, [modelId])
       set((state) => ({
         providers: {
           ...state.providers,
@@ -229,11 +228,8 @@ export const useAppSettingsStore = create<AppSettingsStore>()((set, get) => {
             ),
           },
         },
-      })),
-
-    setModelSearchQuery: (query: string) => set({ modelSearchQuery: query }),
-
-    setModelDropdownOpen: (isOpen: boolean) => set({ isModelDropdownOpen: isOpen }),
+      }))
+    },
 
     updateSelectModelList: (providerId: string, modelIds: string[]) => {
       set((state) => {
@@ -262,9 +258,6 @@ export const useAppSettingsStore = create<AppSettingsStore>()((set, get) => {
         )
 
         get().saveSettings()
-
-        console.log('更新移除', selectedModels, modelIds)
-
         return { selectedModels }
       })
     },

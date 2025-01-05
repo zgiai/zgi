@@ -60,7 +60,7 @@ const AppSettings = () => {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
               </svg>
             </button>
-            <span className="font-medium">{provider.name}</span>
+            <span className="font-medium">{provider?.name}</span>
           </div>
           <div className="flex items-center space-x-2">
             <button className="p-1 hover:bg-gray-200 rounded-full">
@@ -79,13 +79,13 @@ const AppSettings = () => {
               </svg>
             </button>
             <Switch
-              checked={provider.enabled}
+              checked={provider?.enabled}
               onChange={() => toggleProvider(providerId)}
-              className={`${provider.enabled ? 'bg-blue-600' : 'bg-gray-200'} relative inline-flex h-6 w-11 items-center rounded-full`}
+              className={`${provider?.enabled ? 'bg-blue-600' : 'bg-gray-200'} relative inline-flex h-6 w-11 items-center rounded-full`}
             >
-              <span className="sr-only">Enable {provider.name}</span>
+              <span className="sr-only">Enable {provider?.name}</span>
               <span
-                className={`${provider.enabled ? 'translate-x-6' : 'translate-x-1'} inline-block h-4 w-4 transform rounded-full bg-white transition`}
+                className={`${provider?.enabled ? 'translate-x-6' : 'translate-x-1'} inline-block h-4 w-4 transform rounded-full bg-white transition`}
               />
             </Switch>
           </div>
@@ -94,21 +94,19 @@ const AppSettings = () => {
         {expandedCards.includes(providerId) && (
           <div className="p-4 space-y-4 border-t">
             {/* Provider specific fields */}
-            {providerId === 'openai' && (
+            {providerId === 'zgi' && (
               <>
                 <div className="space-y-2">
                   <label className="block text-sm font-medium text-gray-700">
                     API Key
-                    <span className="text-gray-400 font-normal ml-2">
-                      请填写你的 OpenAI API Key
-                    </span>
+                    <span className="text-gray-400 font-normal ml-2">请填写你的 API Key</span>
                   </label>
                   <input
                     type="password"
                     value={provider.apiKey || ''}
                     onChange={(e) => updateProvider(providerId, { apiKey: e.target.value })}
                     className="w-full px-3 py-2 border rounded-md"
-                    placeholder="OpenAI API Key"
+                    placeholder="API Key"
                   />
                 </div>
                 <div className="space-y-2">
@@ -231,8 +229,9 @@ const AppSettings = () => {
             <div className="flex-1 overflow-y-auto custom-thin-scrollbar px-6 py-6 pr-10">
               {activeSection === 'language-models' && (
                 <div className="space-y-4">
-                  {renderProviderCard('openai')}
-                  {renderProviderCard('ollama')}
+                  {Object.keys(providers)?.map((item) => {
+                    return renderProviderCard(item)
+                  })}
                 </div>
               )}
             </div>

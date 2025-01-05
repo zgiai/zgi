@@ -6,7 +6,6 @@ import { Combobox } from '@headlessui/react'
 import React, { useState, useEffect, useMemo } from 'react'
 
 const ModelList = ({ providerId }: { providerId: string }) => {
-  // 每个卡片独立的搜索状态
   const [localQuery, setLocalQuery] = useState('')
   const [isAddingModel, setIsAddingModel] = useState(false)
   const [newModelName, setNewModelName] = useState('')
@@ -16,20 +15,26 @@ const ModelList = ({ providerId }: { providerId: string }) => {
     selectedModels,
     updateSelectModelList,
     addCustomModel,
-    removeModel,
     removeSelectModelList,
+    removeCustomModel,
   } = useAppSettingsStore()
 
   // Combine built-in and custom models
   const allModels = useMemo(
-    () => [...providers[providerId].models, ...providers[providerId].customModels],
+    () => [
+      ...(providers[providerId]?.models || []),
+      ...(providers[providerId]?.customModels || []),
+    ],
     [providers, providerId],
   )
 
-  // Handle input click to show dropdown
-  const handleInputClick = (e: React.MouseEvent) => {
-    e.stopPropagation()
-  }
+  const filteredModels = useMemo(() => {
+    return allModels.filter((model) => model.name.toLowerCase().includes(localQuery.toLowerCase()))
+  }, [allModels, localQuery])
+
+  const selectedModelsData = useMemo(() => {
+    return allModels.filter((model) => selectedModels[providerId]?.includes(model.id))
+  }, [allModels, localQuery, selectedModels])
 
   // Handle input change
   const handleInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -47,13 +52,13 @@ const ModelList = ({ providerId }: { providerId: string }) => {
   const handleAddModel = () => {
     if (newModelName.trim()) {
       addCustomModel(providerId, {
-        id: `custom-${Date.now()}`,
+        id: newModelName.trim(),
         name: newModelName.trim(),
         isCustom: true,
-        selected: true,
       })
       setNewModelName('')
       setIsAddingModel(false)
+      selectedModels[providerId]
     }
   }
 
@@ -77,18 +82,17 @@ const ModelList = ({ providerId }: { providerId: string }) => {
         >
           <div className="relative">
             <div className="flex flex-wrap gap-2 p-2 border rounded-md min-h-[42px]">
-              {allModels.map((model) => (
+              {selectedModelsData?.map((model) => (
                 <span
                   key={model.id}
                   className="inline-flex items-center px-2 py-1 bg-gray-100 rounded-md text-sm"
                 >
                   {model.name}
                   <button
-                    className="ml-1 text-gray-400 hover:text-gray-600"
+                    className="ml-1 text-gray-400 hover:text-gray-600 hover:animate-pulse-fast hover:bg-gray-200 rounded-full px-1"
                     onClick={(e) => {
                       e.stopPropagation()
                       removeSelectModelList(providerId, [model.id])
-                      console.log('移除')
                     }}
                   >
                     ×
@@ -101,7 +105,6 @@ const ModelList = ({ providerId }: { providerId: string }) => {
                   placeholder="Search models"
                   value={localQuery}
                   onChange={handleInputChange}
-                  onClick={handleInputClick}
                 />
                 <div className="flex items-center space-x-1">
                   {localQuery && (
@@ -135,10 +138,10 @@ const ModelList = ({ providerId }: { providerId: string }) => {
             </div>
 
             <Combobox.Options className="absolute w-full bg-white rounded-md shadow-lg max-h-60 overflow-auto custom-thin-scrollbar border mt-1 z-[70]">
-              {allModels.length === 0 ? (
-                <div className="px-4 py-2 text-sm text-gray-500">No models found</div>
+              {filteredModels.length === 0 ? (
+                <div className="px-4 py-2 text-sm text-gray-500">没有找到模型</div>
               ) : (
-                allModels.map((model) => (
+                filteredModels.map((model) => (
                   <Combobox.Option
                     key={model.id}
                     value={model.id}
@@ -166,7 +169,7 @@ const ModelList = ({ providerId }: { providerId: string }) => {
                           <button
                             onClick={(e) => {
                               e.stopPropagation()
-                              removeModel(providerId, model.id)
+                              removeCustomModel(providerId, [model.id])
                             }}
                             className="text-gray-400 hover:text-red-500"
                           >

@@ -16,7 +16,7 @@ export interface ModelProvider {
   apiKey?: string
 
   /** API endpoint URL */
-  apiEndpoint: string
+  apiEndpoint?: string
 
   /** List of built-in models */
   models: ModelConfig[]
@@ -109,34 +109,11 @@ export interface AppSettingsStore {
 
   /** Add a custom model to provider */
   addCustomModel: (providerId: string, model: ModelConfig) => void
-
-  /** Remove a custom model from provider */
-  removeModel: (providerId: string, modelId: string) => void
+  removeCustomModel: (providerId: string, modelId: string) => void
 
   /** model selection state */
   updateSelectModelList: (providerId: string, modelIds: string[]) => void
   removeSelectModelList: (providerId: string, modelIds: string[]) => void
-
-  /**
-   * Search Actions
-   */
-  /** Set model search query */
-  setModelSearchQuery: (query: string) => void
-
-  /** Set model dropdown open state */
-  setModelDropdownOpen: (isOpen: boolean) => void
-
-  /**
-   * Model Search Query
-   */
-  /** Get model search query */
-  getModelSearchQuery: () => string
-
-  /**
-   * Model Dropdown
-   */
-  /** Get model dropdown open state */
-  isModelDropdownOpen: boolean
 }
 
 /**
@@ -172,7 +149,5 @@ export interface ModelConfig {
   name: string
   /** Model context size */
   contextSize?: string
-  /** Whether the model is selected */
-  selected: boolean
   isCustom?: boolean
 }
