@@ -384,7 +384,7 @@ export default function Campaigns() {
 
       {/* Pagination */}
       <div className="mt-8">
-        <PaginationNumeric />
+        <PaginationNumeric current={1} total={10} pageSize={10} />
       </div>
 
     </div>

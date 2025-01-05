@@ -191,7 +191,7 @@ export default function Roadmap() {
 
           {/* Pagination */}
           <div className="xl:pl-32 xl:-translate-x-16 mt-6">
-            <PaginationClassic />
+            {/* <PaginationClassic current={1} total={10} pageSize={10} /> */}
           </div>
 
         </div>
