@@ -17,7 +17,7 @@ const models = [
  * Create chat state management store
  */
 export const useChatStore = create<ChatStore>()((set, get) => {
-  const storageAdapter = getStorageAdapter()
+  const storageAdapter = getStorageAdapter({ key: 'chat' })
 
   // Add helper function to update chat title based on content
   const updateChatTitleByContent = (chatId: string) => {
