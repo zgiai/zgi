@@ -189,7 +189,7 @@ function OrdersContent() {
 
       {/* Pagination */}
       <div className="mt-8">
-        <PaginationClassic />
+        {/* <PaginationClassic current={1} total={10} pageSize={10} /> */}
       </div>    
     </div>
   )

@@ -1,4 +1,4 @@
-
+'use client'
 export default function PaginationNumeric02() {
   return (
     <div>

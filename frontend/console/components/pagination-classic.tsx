@@ -1,3 +1,5 @@
+'use client'
+
 export default function PaginationClassic({ current, total, pageSize, onChange = () => { } }: { current: number, total: number, pageSize: number, onChange?: (page: number) => void }) {
   // 计算当前显示范围
   const start = (current - 1) * pageSize + 1;
