@@ -10,7 +10,9 @@ from app.features.organizations.models import Organization
 from . import schemas, models
 from .schemas import ProjectResponse, ProjectList
 from .service import project_require_admin
+from .. import APIKey
 from ..organizations.service import organization_body_require_admin
+from ...core.api_key import generate_api_key
 from ...core.base import resp_200
 
 router = APIRouter(tags=["projects"])
@@ -40,6 +42,12 @@ def create_project(
         db.add(project)
         db.commit()
         db.refresh(project)
+
+        # create default api key
+        api_key = APIKey(name="Default API Key", key=generate_api_key(), created_by=current_user.id,
+                         project_id=project.id)
+        db.add(api_key)
+        db.commit()
 
         return resp_200(ProjectResponse.model_validate(project))
     except SQLAlchemyError as e:
