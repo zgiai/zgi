@@ -1,6 +1,6 @@
 import { BASE_URL } from "@/config";
 import request from "@/utils/request";
-import { UpdateProjectParams, GetProjectParams, CreateProjectParams, ListProjectParams } from "@/interfaces/request";
+import { UpdateProjectParams, CreateProjectParams, ListProjectParams, GetProjectParams } from "@/interfaces/request";
 
 // 获取项目列表
 export const getProject = (params: ListProjectParams) => request.get(`${BASE_URL}/projects/list`, params)
@@ -17,5 +17,3 @@ export const deleteProject = (params: GetProjectParams) => request.del(`${BASE_U
 // 创建项目
 export const createProject = (params: CreateProjectParams) => request.post(`${BASE_URL}/projects/create`, params)
 
-// 获取api key列表
-export const getApiKey = (params: GetProjectParams) => request.get(`${BASE_URL}/api-keys/projects/list`, params)

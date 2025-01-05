@@ -15,7 +15,7 @@ export default function OrganizationLayout({
   const projectLinks = [
     {
       type: 'groups',
-      title: 'Pages',
+      title: 'Organization',
       children: [
         {
           type: 'link',
@@ -29,31 +29,7 @@ export default function OrganizationLayout({
           ),
           href: `/organizations`,
         },
-        {
-          type: 'group',
-          title: 'Dashboard',
-          path: 'dashboard',
-          icon: (
-            <svg className={`shrink-0 fill-current`} xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
-              <path d="M5.936.278A7.983 7.983 0 0 1 8 0a8 8 0 1 1-8 8c0-.722.104-1.413.278-2.064a1 1 0 1 1 1.932.516A5.99 5.99 0 0 0 2 8a6 6 0 1 0 6-6c-.53 0-1.045.076-1.548.21A1 1 0 1 1 5.936.278Z" />
-              <path d="M6.068 7.482A2.003 2.003 0 0 0 8 10a2 2 0 1 0-.518-3.932L3.707 2.293a1 1 0 0 0-1.414 1.414l3.775 3.775Z" />
-            </svg>
-          ),
-          children: [
-            { type: 'sublink', title: 'Main', href: `/project/${projectId}/dashboard` },
-            { type: 'sublink', title: 'Analytics', href: `/project/${projectId}/dashboard/analytics` },
-            { type: 'sublink', title: 'Fintech', href: `/project/${projectId}/dashboard/fintech` },
-          ],
-        },
-        {
-          type: 'link',
-          title: 'API Key',
-          path: 'apikey',
-          icon: (
-            <svg className={`shrink-0 fill-current`} viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="7110" width="16" height="16"><path d="M111.37536 778.99264c-29.11744 29.07648-29.11744 76.39552 0 105.49248 29.09696 29.12256 76.416 29.12256 105.31328 0l21.02784-20.82304 87.70048 87.67488a38.06208 38.06208 0 0 0 54.05184 0l130.688-130.688a38.06208 38.06208 0 0 0 0-54.05696l-87.67488-87.67488 156.19584-156.39552c33.42336 17.26976 71.5264 27.02336 111.71328 27.02336 134.79936 0 244.0704-109.2608 244.0704-244.0704 0-134.79936-109.27104-244.0704-244.0704-244.0704-134.81984 0-244.0704 109.27104-244.0704 244.0704 0 40.18688 9.74848 78.2848 27.02336 111.7184l-361.96864 361.79968z m485.14048-473.51808c0-51.8144 42.05568-93.8752 93.8752-93.8752s93.8752 42.05568 93.8752 93.8752-42.0608 93.8752-93.8752 93.8752-93.8752-42.0608-93.8752-93.8752z" fill="currentColor"></path></svg>
-          ),
-          href: `/project/${projectId}/apikey`,
-        },
+        
         // {
         //   type: 'group',
         //   title: 'E-Commerce',
@@ -145,6 +121,37 @@ export default function OrganizationLayout({
         // },
       ],
     },
+    {
+      type: 'groups',
+      title: 'Project',
+      children: [
+        {
+          type: 'group',
+          title: 'Dashboard',
+          path: 'dashboard',
+          icon: (
+            <svg className={`shrink-0 fill-current`} xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+              <path d="M5.936.278A7.983 7.983 0 0 1 8 0a8 8 0 1 1-8 8c0-.722.104-1.413.278-2.064a1 1 0 1 1 1.932.516A5.99 5.99 0 0 0 2 8a6 6 0 1 0 6-6c-.53 0-1.045.076-1.548.21A1 1 0 1 1 5.936.278Z" />
+              <path d="M6.068 7.482A2.003 2.003 0 0 0 8 10a2 2 0 1 0-.518-3.932L3.707 2.293a1 1 0 0 0-1.414 1.414l3.775 3.775Z" />
+            </svg>
+          ),
+          children: [
+            { type: 'sublink', title: 'Main', href: `/project/${projectId}/dashboard` },
+            { type: 'sublink', title: 'Analytics', href: `/project/${projectId}/dashboard/analytics` },
+            { type: 'sublink', title: 'Fintech', href: `/project/${projectId}/dashboard/fintech` },
+          ],
+        },
+        {
+          type: 'link',
+          title: 'API Key',
+          path: 'apikey',
+          icon: (
+            <svg className={`shrink-0 fill-current`} viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="7110" width="16" height="16"><path d="M111.37536 778.99264c-29.11744 29.07648-29.11744 76.39552 0 105.49248 29.09696 29.12256 76.416 29.12256 105.31328 0l21.02784-20.82304 87.70048 87.67488a38.06208 38.06208 0 0 0 54.05184 0l130.688-130.688a38.06208 38.06208 0 0 0 0-54.05696l-87.67488-87.67488 156.19584-156.39552c33.42336 17.26976 71.5264 27.02336 111.71328 27.02336 134.79936 0 244.0704-109.2608 244.0704-244.0704 0-134.79936-109.27104-244.0704-244.0704-244.0704-134.81984 0-244.0704 109.27104-244.0704 244.0704 0 40.18688 9.74848 78.2848 27.02336 111.7184l-361.96864 361.79968z m485.14048-473.51808c0-51.8144 42.05568-93.8752 93.8752-93.8752s93.8752 42.05568 93.8752 93.8752-42.0608 93.8752-93.8752 93.8752-93.8752-42.0608-93.8752-93.8752z" fill="currentColor"></path></svg>
+          ),
+          href: `/project/${projectId}/apikey`,
+        },
+      ]
+    }
   ]
 
   return (
