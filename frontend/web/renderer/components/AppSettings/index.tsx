@@ -1,9 +1,8 @@
 import { useAppSettingsStore } from '@/store/appSettingsStore'
-import { useChatStore } from '@/store/chatStore'
 import { Dialog } from '@headlessui/react'
 import { Switch } from '@headlessui/react'
-import { Combobox } from '@headlessui/react'
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
+import ModelList from './ModelList'
 
 const AppSettings = () => {
   const {
@@ -18,8 +17,6 @@ const AppSettings = () => {
     updateProvider,
     loadSettings,
     saveSettings,
-    addCustomModel,
-    toggleModel,
   } = useAppSettingsStore()
 
   // Load settings on mount
@@ -45,7 +42,7 @@ const AppSettings = () => {
     const provider = providers[providerId]
 
     return (
-      <div className="border rounded-lg overflow-hidden">
+      <div className="border rounded-lg">
         <div className="flex items-center justify-between p-4 bg-gray-50">
           <div className="flex items-center space-x-3">
             <button
@@ -63,7 +60,6 @@ const AppSettings = () => {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
               </svg>
             </button>
-            {/* <img src={`/${providerId}-logo.svg`} alt={provider.name} className="w-6 h-6" /> */}
             <span className="font-medium">{provider.name}</span>
           </div>
           <div className="flex items-center space-x-2">
@@ -109,7 +105,7 @@ const AppSettings = () => {
                   </label>
                   <input
                     type="password"
-                    value={provider.apiKey}
+                    value={provider.apiKey || ''}
                     onChange={(e) => updateProvider(providerId, { apiKey: e.target.value })}
                     className="w-full px-3 py-2 border rounded-md"
                     placeholder="OpenAI API Key"
@@ -124,7 +120,7 @@ const AppSettings = () => {
                   </label>
                   <input
                     type="text"
-                    value={provider.apiEndpoint}
+                    value={provider.apiEndpoint || ''}
                     onChange={(e) => updateProvider(providerId, { apiEndpoint: e.target.value })}
                     className="w-full px-3 py-2 border rounded-md"
                     placeholder="https://api.openai.com/v1"
@@ -142,7 +138,7 @@ const AppSettings = () => {
                   </label>
                   <input
                     type="text"
-                    value={provider.apiEndpoint}
+                    value={provider.apiEndpoint || ''}
                     onChange={(e) => updateProvider(providerId, { apiEndpoint: e.target.value })}
                     className="w-full px-3 py-2 border rounded-md"
                     placeholder="http://127.0.0.1:11434"
@@ -171,6 +167,9 @@ const AppSettings = () => {
               </>
             )}
 
+            {/* Model Selector */}
+            <ModelList providerId={providerId} />
+
             {/* Connection Test */}
             <div className="flex items-center justify-between">
               <div className="space-y-1">
@@ -181,9 +180,6 @@ const AppSettings = () => {
                 检查
               </button>
             </div>
-
-            {/* Model Selector */}
-            <ModelSelector providerId={providerId} />
           </div>
         )}
       </div>
@@ -244,120 +240,6 @@ const AppSettings = () => {
         </Dialog.Panel>
       </div>
     </Dialog>
-  )
-}
-
-const ModelSelector = ({ providerId }: { providerId: string }) => {
-  const [query, setQuery] = useState('')
-  const { providers, toggleModel } = useAppSettingsStore()
-  const provider = providers[providerId]
-  const [selectedModels, setSelectedModels] = useState<string[]>([])
-
-  // Filter models based on search query
-  const filteredModels =
-    query === ''
-      ? provider.models
-      : provider.models.filter((model) => model.name.toLowerCase().includes(query.toLowerCase()))
-
-  return (
-    <div className="space-y-2">
-      <label className="block text-sm font-medium text-gray-700">
-        模型列表
-        <span className="text-gray-400 font-normal ml-2">
-          选择在全局中显示的模型，选择的模型会在模型列表中显示
-        </span>
-      </label>
-
-      <div className="relative">
-        <Combobox value={selectedModels} onChange={setSelectedModels} multiple>
-          <div className="relative">
-            <div className="flex flex-wrap gap-2 p-2 border rounded-md min-h-[42px]">
-              {selectedModels.map((modelId) => (
-                <span
-                  key={modelId}
-                  className="inline-flex items-center px-2 py-1 bg-gray-100 rounded-md text-sm"
-                >
-                  {provider.models.find((m) => m.id === modelId)?.name}
-                  <button
-                    className="ml-1 text-gray-500 hover:text-gray-700"
-                    onClick={(e) => {
-                      e.preventDefault()
-                      setSelectedModels(selectedModels.filter((id) => id !== modelId))
-                    }}
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
-              <Combobox.Input
-                className="flex-1 outline-none min-w-[120px]"
-                placeholder="搜索或选择模型"
-                onChange={(event) => setQuery(event.target.value)}
-              />
-            </div>
-            <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center space-x-1">
-              <button className="p-1 hover:bg-gray-100 rounded-full" onClick={() => setQuery('')}>
-                <svg className="w-4 h-4 text-gray-400" viewBox="0 0 24 24">
-                  <path
-                    fill="currentColor"
-                    d="M12 4c4.41 0 8 3.59 8 8s-3.59 8-8 8-8-3.59-8-8 3.59-8 8-8m0-2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 13l-4-4h8z"
-                  />
-                </svg>
-              </button>
-              <button className="p-1 hover:bg-gray-100 rounded-full">
-                <svg className="w-4 h-4 text-gray-400" viewBox="0 0 24 24">
-                  <path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
-                </svg>
-              </button>
-            </div>
-          </div>
-
-          <Combobox.Options className="absolute z-10 mt-1 w-full bg-white rounded-md shadow-lg max-h-60 overflow-auto custom-scrollbar">
-            {filteredModels.length === 0 && query !== '' ? (
-              <div className="px-4 py-2 text-sm text-gray-500">未找到匹配的模型</div>
-            ) : (
-              filteredModels.map((model) => (
-                <Combobox.Option
-                  key={model.id}
-                  value={model.id}
-                  className={({ active }) =>
-                    `${active ? 'bg-blue-50 text-blue-600' : 'text-gray-900'}
-                    cursor-pointer select-none relative py-2 pl-3 pr-9`
-                  }
-                >
-                  {({ active, selected }) => (
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center">
-                        <span className="block truncate">{model.name}</span>
-                        {model.contextSize && (
-                          <span className="ml-2 text-xs text-gray-500">{model.contextSize}</span>
-                        )}
-                      </div>
-                      {selected && (
-                        <span className="absolute inset-y-0 right-0 flex items-center pr-4">
-                          <svg className="w-5 h-5" viewBox="0 0 20 20" fill="currentColor">
-                            <path
-                              fillRule="evenodd"
-                              d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                              clipRule="evenodd"
-                            />
-                          </svg>
-                        </span>
-                      )}
-                    </div>
-                  )}
-                </Combobox.Option>
-              ))
-            )}
-          </Combobox.Options>
-        </Combobox>
-
-        <div className="mt-1 flex justify-between text-sm text-gray-500">
-          <span>共 {provider.models.length} 个模型可用</span>
-          <button className="text-blue-600 hover:text-blue-700">获取模型列表</button>
-        </div>
-      </div>
-    </div>
   )
 }
 

@@ -16,19 +16,19 @@ export interface ModelProvider {
   apiKey?: string
 
   /** API endpoint URL */
-  apiEndpoint?: string
+  apiEndpoint: string
 
-  /** List of available/selected models for this provider */
+  /** List of built-in models */
   models: ModelConfig[]
+
+  /** Custom models added by user */
+  customModels: ModelConfig[]
 
   /** Whether to use client-side streaming mode (specific to Ollama) */
   useStreamMode?: boolean
 
   /** Whether this provider is the default one */
   isDefault: boolean
-
-  /** Custom models added by user */
-  customModels: ModelConfig[]
 }
 
 /**
@@ -51,13 +51,16 @@ export interface AppSettingsStore {
   isOpenModal: boolean
 
   /** Currently active settings section */
-  activeSection: SettingsSection
+  activeSection: string
 
   /** List of expanded provider cards */
   expandedCards: string[]
 
   /** Map of provider configurations */
   providers: Record<string, ModelProvider>
+
+  /** Map of selected models for each provider */
+  selectedModels: Record<string, string[]>
 
   /**
    * Modal Actions
@@ -66,7 +69,7 @@ export interface AppSettingsStore {
   setOpenModal: (flag: boolean) => void
 
   /** Set active settings section */
-  setActiveSection: (section: SettingsSection) => void
+  setActiveSection: (section: string) => void
 
   /** Toggle provider card expansion state */
   toggleCard: (cardId: string) => void
@@ -105,13 +108,35 @@ export interface AppSettingsStore {
   getDefaultProvider: () => ModelProvider | undefined
 
   /** Add a custom model to provider */
-  addCustomModel: (providerId: string, modelName: string) => void
+  addCustomModel: (providerId: string, model: ModelConfig) => void
 
   /** Remove a custom model from provider */
-  removeCustomModel: (providerId: string, modelId: string) => void
+  removeModel: (providerId: string, modelId: string) => void
 
-  /** Toggle model selection state */
-  toggleModel: (providerId: string, modelId: string) => void
+  /** model selection state */
+  updateSelectModelList: (providerId: string, modelIds: string[]) => void
+  removeSelectModelList: (providerId: string, modelIds: string[]) => void
+
+  /**
+   * Search Actions
+   */
+  /** Set model search query */
+  setModelSearchQuery: (query: string) => void
+
+  /** Set model dropdown open state */
+  setModelDropdownOpen: (isOpen: boolean) => void
+
+  /**
+   * Model Search Query
+   */
+  /** Get model search query */
+  getModelSearchQuery: () => string
+
+  /**
+   * Model Dropdown
+   */
+  /** Get model dropdown open state */
+  isModelDropdownOpen: boolean
 }
 
 /**
@@ -149,4 +174,5 @@ export interface ModelConfig {
   contextSize?: string
   /** Whether the model is selected */
   selected: boolean
+  isCustom?: boolean
 }

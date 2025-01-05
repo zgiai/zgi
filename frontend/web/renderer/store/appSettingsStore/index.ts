@@ -1,6 +1,6 @@
 import { getStorageAdapter } from '@/lib/storageAdapter'
 import { create } from 'zustand'
-import type { AppSettingsStore, ModelProvider } from './types'
+import type { AppSettingsStore, ModelConfig, ModelProvider } from './types'
 
 const STORAGE_KEY = 'app_settings'
 
@@ -43,6 +43,9 @@ export const useAppSettingsStore = create<AppSettingsStore>()((set, get) => {
     activeSection: 'language-models',
     expandedCards: [],
     providers: defaultProviders,
+    modelSearchQuery: '',
+    isModelDropdownOpen: false,
+    selectedModels: {},
 
     setOpenModal: (flag: boolean) => set({ isOpenModal: flag }),
 
@@ -121,7 +124,7 @@ export const useAppSettingsStore = create<AppSettingsStore>()((set, get) => {
     /**
      * Set available models for a provider
      */
-    setProviderModels: (providerId: string, models: string[]) =>
+    setProviderModels: (providerId: string, models: ModelConfig[]) =>
       set((state) => ({
         providers: {
           ...state.providers,
@@ -135,7 +138,7 @@ export const useAppSettingsStore = create<AppSettingsStore>()((set, get) => {
     /**
      * Toggle selection state of a specific model
      */
-    toggleProviderModel: (providerId: string, model: string) =>
+    toggleProviderModel: (providerId: string, model: ModelConfig) =>
       set((state) => ({
         providers: {
           ...state.providers,
@@ -204,28 +207,18 @@ export const useAppSettingsStore = create<AppSettingsStore>()((set, get) => {
     /**
      * Add a custom model to provider
      */
-    addCustomModel: (providerId: string, modelName: string) =>
+    addCustomModel: (providerId: string, model: ModelConfig) =>
       set((state) => ({
         providers: {
           ...state.providers,
           [providerId]: {
             ...state.providers[providerId],
-            customModels: [
-              ...state.providers[providerId].customModels,
-              {
-                id: `custom-${Date.now()}`,
-                name: modelName,
-                selected: true,
-              },
-            ],
+            customModels: [...state.providers[providerId].customModels, model],
           },
         },
       })),
 
-    /**
-     * Remove a custom model from provider
-     */
-    removeCustomModel: (providerId: string, modelId: string) =>
+    removeModel: (providerId: string, modelId: string) =>
       set((state) => ({
         providers: {
           ...state.providers,
@@ -238,31 +231,42 @@ export const useAppSettingsStore = create<AppSettingsStore>()((set, get) => {
         },
       })),
 
-    /**
-     * Toggle model selection state
-     */
-    toggleModel: (providerId: string, modelId: string) =>
+    setModelSearchQuery: (query: string) => set({ modelSearchQuery: query }),
+
+    setModelDropdownOpen: (isOpen: boolean) => set({ isModelDropdownOpen: isOpen }),
+
+    updateSelectModelList: (providerId: string, modelIds: string[]) => {
       set((state) => {
-        const provider = state.providers[providerId]
-        const allModels = [...provider.models, ...provider.customModels]
-        const updatedModels = allModels.map((model) =>
-          model.id === modelId ? { ...model, selected: !model.selected } : model,
+        const selectedModels = { ...state.selectedModels }
+        if (!selectedModels[providerId]) {
+          selectedModels[providerId] = []
+        }
+
+        selectedModels[providerId] = modelIds
+
+        get().saveSettings()
+
+        return { selectedModels }
+      })
+    },
+
+    removeSelectModelList: (providerId: string, modelIds: string[]) => {
+      set((state) => {
+        const selectedModels = { ...state.selectedModels }
+        if (!selectedModels[providerId]) {
+          selectedModels[providerId] = []
+        }
+
+        selectedModels[providerId] = selectedModels[providerId].filter(
+          (id) => !modelIds.includes(id),
         )
 
-        return {
-          providers: {
-            ...state.providers,
-            [providerId]: {
-              ...provider,
-              models: updatedModels.filter((model) =>
-                provider.models.some((m) => m.id === model.id),
-              ),
-              customModels: updatedModels.filter((model) =>
-                provider.customModels.some((m) => m.id === model.id),
-              ),
-            },
-          },
-        }
-      }),
+        get().saveSettings()
+
+        console.log('更新移除', selectedModels, modelIds)
+
+        return { selectedModels }
+      })
+    },
   }
 })
