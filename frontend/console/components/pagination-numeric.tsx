@@ -80,9 +80,9 @@ export default function PaginationNumeric({ current, total, pageSize, onChange =
         <div className="ml-2">
           <button
             onClick={() => current < totalPages && onChange(current + 1)}
-            disabled={current === totalPages}
+            disabled={current >= totalPages}
             className={`inline-flex items-center justify-center rounded-lg leading-5 px-2.5 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700/60 ${
-              current === totalPages ? 'text-gray-300 dark:text-gray-600' : 'text-violet-500 hover:bg-gray-50 dark:hover:bg-gray-900'
+              current >= totalPages ? 'text-gray-300 dark:text-gray-600' : 'text-violet-500 hover:bg-gray-50 dark:hover:bg-gray-900'
             }`}
           >
             <span className="sr-only">Next</span><wbr />

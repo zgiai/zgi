@@ -5,6 +5,7 @@ import { getOrgPermission,getOrganizationDetail } from "@/services/organization"
 import { message } from "antd"
 import Link from "next/link"
 import { useParams } from "next/navigation"
+import { getUserInfo } from "@/services/auth"
 
 export default function ProjectsPage() {
     const params = useParams()
@@ -18,27 +19,28 @@ export default function ProjectsPage() {
         const res = await getOrganizationDetail({ organization_id: organizationId })
         if (res?.status_code === 200) {
             setOrganization(res?.data)
-            // console.log(res?.data)
         } else {
             if (res?.status_code === 404) {
-                location.href = '/not-found'
+                message.error("Organization not found")
             } else {
-                location.href = '/not-found'
-                // message.error(res?.status_message || "Failed to fetch organization data")
+                message.error(res?.status_message || "Failed to fetch organization data")
             }
         }
         setLoading(false)
     }
 
-    const getUserInfo = () => {
-        const userInfo = JSON.parse(localStorage?.getItem('userInfo') || '{}')
-        setUserInfo(userInfo)
-        console.log(userInfo)
+    const getUserInfoData = async () => {
+        const res = await getUserInfo()
+        if (res?.status_code === 200) {
+            setUserInfo(res?.data)
+        } else {
+            message.error(res?.status_message || "Failed to fetch user info")
+        }
     }
 
     useEffect(() => {
         getOrganizationData()
-        getUserInfo()
+        getUserInfoData()
     }, [])
 
     return <div className="flex flex-col gap-4 p-4">
@@ -48,7 +50,7 @@ export default function ProjectsPage() {
             </div>
         </div>
         <div className="flex flex-col gap-4 p-4">
-            <OrganizationCard organization={organization} organizationId={organizationId} userType={userInfo?.user_type} />
+            <OrganizationCard organization={organization} organizationId={organizationId} userType={userInfo?.user_type || -1} />
         </div>
     </div>
 }
@@ -57,7 +59,9 @@ function OrganizationCard({ organization, organizationId, userType }: { organiza
     const [isAdmin, setIsAdmin] = useState<boolean>(false)
 
     useEffect(() => {
-        if (userType === 1 || userType === 2) {
+        if (userType === -1) {
+            setIsAdmin(false)
+        } else if (userType === 1 || userType === 2) {
             setIsAdmin(true)
         } else {
             getOrgMemberInfo()
