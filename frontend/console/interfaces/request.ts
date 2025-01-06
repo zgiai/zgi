@@ -1,3 +1,4 @@
+// auth
 export interface RegisterParams {
     username?: string;
     password?: string;
@@ -9,6 +10,7 @@ export interface LoginParams {
     password?: string;
 }
 
+// organization
 export interface GetOrganizationParams {
     organization_id: string;
 }
@@ -28,6 +30,7 @@ export interface CreateOrganizationParams {
     };
 }
 
+// project
 export interface ListProjectParams {
     organization_id: string;
 }
@@ -63,6 +66,17 @@ export interface GetOrgPermissionParams {
 
 export interface CreateApiKeyParams {
     name: string;
+}
+
+// admin
+export interface GetUserByIdParams {
+    user_id: string;
+}
+
+export interface GetUserListParams {
+    page_size?: number;
+    page_num?: number;
+    user_type?: number;
 }
 
 

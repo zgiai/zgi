@@ -1,10 +1,12 @@
+"use client"
+
 import Sidebar from '@/components/ui/sidebar'
 import Header from '@/components/ui/header'
 
 const organizationLinks = [
   {
     type: 'groups',
-    title: 'Pages',
+    title: 'Organizations',
     children: [
       {
         type: 'link',

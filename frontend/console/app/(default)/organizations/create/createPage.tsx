@@ -42,8 +42,8 @@ export default function CreateOrganizationPage() {
         }
     }
 
-    return <div className="flex flex-col px-4 py-4">
-        <div className="flex justify-between p-4 border-b border-gray-200 dark:border-gray-700/60 items-center flex-wrap gap-4">
+    return <div className="flex flex-col px-4 py-4 w-full mx-auto">
+        <div className="flex justify-between border-b py-4 border-gray-200 dark:border-gray-700/60 items-center flex-wrap gap-4">
             <div className="flex-1">
                 <span className="text-2xl text-gray-800 dark:text-gray-100 font-bold">Create Organization</span>
             </div>
