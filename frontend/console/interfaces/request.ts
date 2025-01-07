@@ -30,6 +30,11 @@ export interface CreateOrganizationParams {
     };
 }
 
+export interface SetOrgAdminParams {
+    organization_id: string;
+    user_ids: number[];
+}
+
 // project
 export interface ListProjectParams {
     organization_id: string;
@@ -62,6 +67,12 @@ export interface GetApiKeyParams {
 
 export interface GetOrgPermissionParams {
     organization_id: string;
+}
+
+export interface GetOrgMembersListParams {
+    organization_id: string;
+    page_size?: number;
+    page_num?: number;
 }
 
 export interface CreateApiKeyParams {
