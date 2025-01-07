@@ -32,15 +32,6 @@ const AreaBottom = () => {
 
         {/* Model selection dropdown */}
         <ModelSelector />
-
-        {/* Content safety protocol link */}
-        <div className="text-gray-400 text-xs">
-          <span>Please follow the </span>
-          <a href="/safety-protocol" className="text-gray-500 hover:text-blue-500">
-            content safety protocol
-          </a>
-          <span>. No inappropriate content allowed.</span>
-        </div>
       </div>
 
       {/* Right side functionality */}
@@ -56,9 +47,9 @@ const AreaBottom = () => {
         </button>
 
         {/* Format button */}
-        <button type="button" className="text-gray-500 hover:text-gray-600" title="Format">
+        {/* <button type="button" className="text-gray-500 hover:text-gray-600" title="Format">
           <LayoutGrid size={18} />
-        </button>
+        </button> */}
 
         {/* Fullscreen button */}
         <button type="button" className="text-gray-500 hover:text-gray-600" title="Fullscreen">

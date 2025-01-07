@@ -1,3 +1,4 @@
+import { useAppSettingsStore } from '@/store/appSettingsStore'
 import { useChatStore } from '@/store/chatStore'
 import { Dialog } from '@headlessui/react'
 import React, { useState } from 'react'
@@ -11,6 +12,7 @@ const ModelSelector = () => {
     onRefreshModels,
     refreshModelsLoading,
   } = useChatStore()
+  const { allProvidersSelectedModels } = useAppSettingsStore()
   const [isOpen, setIsOpen] = useState(false)
   const [tempSelectedModel, setTempSelectedModel] = useState(selectedModel)
 
@@ -68,7 +70,7 @@ const ModelSelector = () => {
               </button>
             </div>
             <div className="flex flex-col mt-4 overflow-y-auto" style={{ maxHeight: '70vh' }}>
-              {[...models, ...ollamaModels].map((item) => (
+              {[...models, ...ollamaModels]?.map((item) => (
                 <button
                   key={item.model}
                   onClick={() => setTempSelectedModel(item)}

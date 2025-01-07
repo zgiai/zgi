@@ -1,8 +1,9 @@
+import { STORAGE_ADAPTER_KEYS } from '@/constants/storageAdapterKey'
 import { getStorageAdapter } from '@/lib/storageAdapter'
-import { create } from 'zustand'
+import { createSubsStore } from '@/lib/store_utils'
+import { getLoclOllamaModels } from './ollama'
+import subscribeInit from './subscribe'
 import type { AppSettingsStore, ModelConfig, ModelProvider } from './types'
-
-const STORAGE_KEY = 'app_settings'
 
 /**
  * Default provider configurations
@@ -14,7 +15,7 @@ const defaultProviders: Record<string, ModelProvider> = {
     name: 'zgi',
     enabled: true,
     apiKey: '',
-    apiEndpoint: 'https://api.openai.com/v1',
+    // apiEndpoint: 'https://api.openai.com/v1',
     models: [
       { id: 'gpt-4', name: 'GPT-4', contextSize: '8K' },
       { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', contextSize: '4K' },
@@ -25,8 +26,8 @@ const defaultProviders: Record<string, ModelProvider> = {
   ollama: {
     id: 'ollama',
     name: 'Ollama',
-    enabled: false,
-    apiEndpoint: 'http://127.0.0.1:11434',
+    enabled: true,
+    // apiEndpoint: 'http://127.0.0.1:11434',
     models: [],
     customModels: [],
     useStreamMode: false,
@@ -35,15 +36,21 @@ const defaultProviders: Record<string, ModelProvider> = {
   // Add more providers here as needed
 }
 
-export const useAppSettingsStore = create<AppSettingsStore>()((set, get) => {
-  const storageAdapter = getStorageAdapter({ key: STORAGE_KEY })
+export const useAppSettingsStore = createSubsStore<AppSettingsStore>((set, get) => {
+  const storageAdapter = getStorageAdapter({ key: STORAGE_ADAPTER_KEYS.app_settings.key })
 
   return {
     isOpenModal: false,
     activeSection: 'language-models',
-    expandedCards: [],
+    expandedCards: ['zgi', 'ollama'],
     providers: defaultProviders,
-    selectedModels: {},
+    selectedModelIds: {},
+    checkResults: {},
+    allProvidersSelectedModels: {},
+
+    init: async () => {
+      await get().loadSettings()
+    },
 
     setOpenModal: (flag: boolean) => set({ isOpenModal: flag }),
 
@@ -81,31 +88,6 @@ export const useAppSettingsStore = create<AppSettingsStore>()((set, get) => {
       }),
 
     /**
-     * Set a provider as the default
-     * Only one provider can be default at a time
-     */
-    setDefaultProvider: (providerId: string) =>
-      set((state) => {
-        // Only enabled providers can be set as default
-        if (!state.providers[providerId].enabled) {
-          return state
-        }
-
-        return {
-          providers: Object.entries(state.providers).reduce(
-            (acc, [id, provider]) => ({
-              ...acc,
-              [id]: {
-                ...provider,
-                isDefault: id === providerId,
-              },
-            }),
-            {},
-          ),
-        }
-      }),
-
-    /**
      * Update provider configuration
      */
     updateProvider: (providerId: string, updates: Partial<ModelProvider>) =>
@@ -122,7 +104,7 @@ export const useAppSettingsStore = create<AppSettingsStore>()((set, get) => {
     /**
      * Set available models for a provider
      */
-    setProviderModels: (providerId: string, models: ModelConfig[]) =>
+    setProviderModels: (providerId, models) => {
       set((state) => ({
         providers: {
           ...state.providers,
@@ -131,23 +113,8 @@ export const useAppSettingsStore = create<AppSettingsStore>()((set, get) => {
             models,
           },
         },
-      })),
-
-    /**
-     * Toggle selection state of a specific model
-     */
-    toggleProviderModel: (providerId: string, model: ModelConfig) =>
-      set((state) => ({
-        providers: {
-          ...state.providers,
-          [providerId]: {
-            ...state.providers[providerId],
-            models: state.providers[providerId].models.includes(model)
-              ? state.providers[providerId].models.filter((m) => m !== model)
-              : [...state.providers[providerId].models, model],
-          },
-        },
-      })),
+      }))
+    },
 
     /**
      * Load settings from storage
@@ -162,12 +129,15 @@ export const useAppSettingsStore = create<AppSettingsStore>()((set, get) => {
               ...acc,
               [id]: {
                 ...defaultProvider,
-                ...settings.providers[id],
+                ...settings.languageModel?.providers?.[id],
               },
             }),
             {},
           )
-          set({ providers: mergedProviders })
+
+          const selectedModelIds = settings.languageModel?.selectedModelIds || []
+          set({ providers: mergedProviders, selectedModelIds })
+          getLoclOllamaModels({ set })
         }
       } catch (error) {
         console.error('Failed to load settings:', error)
@@ -179,33 +149,20 @@ export const useAppSettingsStore = create<AppSettingsStore>()((set, get) => {
      */
     saveSettings: async () => {
       try {
-        const { providers } = get()
-        await storageAdapter.save({ providers })
+        const { providers, selectedModelIds } = get()
+        await storageAdapter.save({
+          languageModel: {
+            providers,
+            selectedModelIds,
+          },
+        })
       } catch (error) {
         console.error('Failed to save settings:', error)
       }
     },
 
-    /**
-     * Get all enabled providers
-     */
-    getEnabledProviders: () => {
-      const { providers } = get()
-      return Object.values(providers).filter((provider) => provider.enabled)
-    },
-
-    /**
-     * Get the default provider
-     */
-    getDefaultProvider: () => {
-      const { providers } = get()
-      return Object.values(providers).find((provider) => provider.isDefault)
-    },
-
-    /**
-     * Add a custom model to provider
-     */
-    addCustomModel: (providerId: string, model: ModelConfig) =>
+    /** Add a custom model to provider */
+    addCustomModel: (providerId: string, model: ModelConfig) => {
       set((state) => ({
         providers: {
           ...state.providers,
@@ -214,7 +171,8 @@ export const useAppSettingsStore = create<AppSettingsStore>()((set, get) => {
             customModels: [...state.providers[providerId].customModels, model],
           },
         },
-      })),
+      }))
+    },
 
     removeCustomModel: (providerId: string, modelId: string) => {
       get().removeSelectModelList(providerId, [modelId])
@@ -233,33 +191,103 @@ export const useAppSettingsStore = create<AppSettingsStore>()((set, get) => {
 
     updateSelectModelList: (providerId: string, modelIds: string[]) => {
       set((state) => {
-        const selectedModels = { ...state.selectedModels }
-        if (!selectedModels[providerId]) {
-          selectedModels[providerId] = []
+        const selectedModelIds = { ...state.selectedModelIds }
+        if (!selectedModelIds[providerId]) {
+          selectedModelIds[providerId] = []
         }
-
-        selectedModels[providerId] = modelIds
-
-        get().saveSettings()
-
-        return { selectedModels }
+        selectedModelIds[providerId] = modelIds
+        return { selectedModelIds }
       })
     },
 
     removeSelectModelList: (providerId: string, modelIds: string[]) => {
       set((state) => {
-        const selectedModels = { ...state.selectedModels }
-        if (!selectedModels[providerId]) {
-          selectedModels[providerId] = []
+        const selectedModelIds = { ...state.selectedModelIds }
+        if (!selectedModelIds[providerId]) {
+          selectedModelIds[providerId] = []
         }
-
-        selectedModels[providerId] = selectedModels[providerId].filter(
+        selectedModelIds[providerId] = selectedModelIds[providerId].filter(
           (id) => !modelIds.includes(id),
         )
+        return { selectedModelIds }
+      })
+    },
 
-        get().saveSettings()
-        return { selectedModels }
+    /**
+     * Check provider connectivity
+     */
+    checkProvider: async (providerId: string) => {
+      const provider = get().providers[providerId]
+      if (!provider.apiKey && providerId !== 'ollama') {
+        set((state) => ({
+          checkResults: {
+            ...state.checkResults,
+            [providerId]: { error: 'API Key or Endpoint is missing.' },
+          },
+        }))
+        return
+      }
+      let apiEndpoint = provider.apiEndpoint || ''
+      if (providerId === 'ollama' && !apiEndpoint) {
+        apiEndpoint = 'http://127.0.0.1:11434'
+      }
+      try {
+        const response = await fetch(apiEndpoint, {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${provider.apiKey}`,
+          },
+        })
+
+        if (!response.ok) {
+          const errorDetails = await response.text()
+          set((state) => ({
+            checkResults: {
+              ...state.checkResults,
+              [providerId]: { error: `Error: ${response.status} - ${errorDetails}` },
+            },
+          }))
+        } else {
+          set((state) => ({
+            checkResults: {
+              ...state.checkResults,
+              [providerId]: { error: null },
+            },
+          }))
+        }
+      } catch (error) {
+        set((state) => ({
+          checkResults: {
+            ...state.checkResults,
+            [providerId]: { error: `Network error: ${error.message}` },
+          },
+        }))
+      }
+    },
+
+    generateModelsOptions: () => {
+      const { providers, selectedModelIds } = get()
+      const allProvidersSelectedModels: Record<string, ModelConfig[]> = {}
+
+      Object.entries(providers).forEach(([key, value]) => {
+        if (!allProvidersSelectedModels[key]) {
+          allProvidersSelectedModels[key] = []
+        }
+        const curSelectedModelIds = selectedModelIds[key] || []
+        const filteredModels =
+          value.models?.filter((item) => curSelectedModelIds.includes(item.id)) || []
+        const filteredCustomModels =
+          value.customModels?.filter((item) => curSelectedModelIds.includes(item.id)) || []
+        if (value.enabled) {
+          allProvidersSelectedModels[key].push(...filteredModels, ...filteredCustomModels)
+        }
+      })
+      console.log('allProvidersSelectedModels', allProvidersSelectedModels)
+      set({
+        allProvidersSelectedModels,
       })
     },
   }
 })
+
+subscribeInit()

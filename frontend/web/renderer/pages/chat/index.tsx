@@ -3,13 +3,16 @@ import Footer from '@/components/Footer'
 import Header from '@/components/Header'
 import InputArea from '@/components/InputArea'
 import Sidebar from '@/components/Sidebar'
+import { useAppSettingsStore } from '@/store/appSettingsStore'
 import { useChatStore } from '@/store/chatStore'
 import { useEffect } from 'react'
 
 export default function Chat() {
   const { init } = useChatStore()
+  const appSettingsStore = useAppSettingsStore()
   useEffect(() => {
     init()
+    appSettingsStore.init()
   }, [])
 
   return (

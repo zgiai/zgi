@@ -1,9 +1,6 @@
 import { useAppSettingsStore } from '@/store/appSettingsStore'
-import { useChatStore } from '@/store/chatStore'
-import { Dialog } from '@headlessui/react'
-import { Switch } from '@headlessui/react'
 import { Combobox } from '@headlessui/react'
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useMemo } from 'react'
 
 const ModelList = ({ providerId }: { providerId: string }) => {
   const [localQuery, setLocalQuery] = useState('')
@@ -12,7 +9,7 @@ const ModelList = ({ providerId }: { providerId: string }) => {
 
   const {
     providers,
-    selectedModels,
+    selectedModelIds,
     updateSelectModelList,
     addCustomModel,
     removeSelectModelList,
@@ -33,8 +30,8 @@ const ModelList = ({ providerId }: { providerId: string }) => {
   }, [allModels, localQuery])
 
   const selectedModelsData = useMemo(() => {
-    return allModels.filter((model) => selectedModels[providerId]?.includes(model.id))
-  }, [allModels, localQuery, selectedModels])
+    return allModels.filter((model) => selectedModelIds[providerId]?.includes(model.id))
+  }, [allModels, localQuery, selectedModelIds])
 
   // Handle input change
   const handleInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -58,16 +55,17 @@ const ModelList = ({ providerId }: { providerId: string }) => {
       })
       setNewModelName('')
       setIsAddingModel(false)
-      selectedModels[providerId]
+      selectedModelIds[providerId]
     }
   }
 
   return (
     <div className="space-y-2">
       <label className="block text-sm font-medium text-gray-700">
-        模型列表
+        Model List
         <span className="text-gray-400 font-normal ml-2">
-          选择在会话中展示的模型，选择的模型会在模型列表中展示
+          Select the models to display in the session. The selected models will be displayed in the
+          model list.
         </span>
       </label>
       <div className="relative">
@@ -147,7 +145,7 @@ const ModelList = ({ providerId }: { providerId: string }) => {
                     value={model.id}
                     className={({ active }) =>
                       `relative cursor-pointer select-none py-2 pl-3 pr-9 ${
-                        selectedModels[providerId]?.includes(model.id)
+                        selectedModelIds[providerId]?.includes(model.id)
                           ? 'bg-blue-50 text-blue-600'
                           : 'text-gray-900'
                       }`
@@ -156,7 +154,7 @@ const ModelList = ({ providerId }: { providerId: string }) => {
                     <div className="flex items-center justify-between">
                       <span className="block truncate">{model.name}</span>
                       <div className="absolute right-2 flex items-center space-x-2">
-                        {selectedModels[providerId]?.includes(model.id) && (
+                        {selectedModelIds[providerId]?.includes(model.id) && (
                           <svg className="w-5 h-5" viewBox="0 0 20 20" fill="currentColor">
                             <path
                               fillRule="evenodd"

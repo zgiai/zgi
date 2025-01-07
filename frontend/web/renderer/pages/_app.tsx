@@ -1,7 +1,7 @@
 import type { AppProps } from 'next/app'
 import localFont from 'next/font/local'
 import React from 'react'
-
+import '@radix-ui/themes/styles.css'
 import '../styles/globals.css'
 
 const geistSans = localFont({

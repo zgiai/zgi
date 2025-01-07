@@ -60,7 +60,12 @@ export interface AppSettingsStore {
   providers: Record<string, ModelProvider>
 
   /** Map of selected models for each provider */
-  selectedModels: Record<string, string[]>
+  selectedModelIds: Record<string, string[]>
+
+  allProvidersSelectedModels: Record<string, ModelConfig[]>
+
+  /** Map of check results for each provider */
+  checkResults: Record<string, { error: string | null }>
 
   /**
    * Modal Actions
@@ -84,36 +89,35 @@ export interface AppSettingsStore {
   updateProvider: (providerId: string, updates: Partial<ModelProvider>) => void
 
   /** Set available models for a provider */
-  setProviderModels: (providerId: string, models: string[]) => void
-
-  /** Toggle selection state of a specific model */
-  toggleProviderModel: (providerId: string, model: string) => void
+  setProviderModels: (providerId: string, models: ModelConfig[]) => void
 
   /**
    * Storage Actions
    */
   /** Load settings from storage */
   loadSettings: () => Promise<void>
+  init: () => Promise<void>
 
   /** Save current settings to storage */
   saveSettings: () => Promise<void>
-
-  /** Set a provider as the default provider */
-  setDefaultProvider: (providerId: string) => void
-
-  /** Get all enabled providers */
-  getEnabledProviders: () => ModelProvider[]
-
-  /** Get the default provider */
-  getDefaultProvider: () => ModelProvider | undefined
 
   /** Add a custom model to provider */
   addCustomModel: (providerId: string, model: ModelConfig) => void
   removeCustomModel: (providerId: string, modelId: string) => void
 
-  /** model selection state */
+  /** Model selection state */
   updateSelectModelList: (providerId: string, modelIds: string[]) => void
   removeSelectModelList: (providerId: string, modelIds: string[]) => void
+
+  /**
+   * Check provider connectivity
+   */
+  checkProvider: (providerId: string) => Promise<void>
+
+  /**
+   * Generates all model data for selected language models
+   */
+  generateModelsOptions: () => Promise<void>
 }
 
 /**
@@ -150,4 +154,5 @@ export interface ModelConfig {
   /** Model context size */
   contextSize?: string
   isCustom?: boolean
+  type?: string
 }

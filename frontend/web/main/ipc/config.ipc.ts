@@ -15,7 +15,7 @@ export function registerIpcHandlers() {
       const data = await fs.promises.readFile(CHAT_HISTORY_FILE_PATH, 'utf-8')
       return JSON.parse(data)
     } catch (e) {
-      console.log('No chat history found or error reading file:', e)
+      console.info('No chat history found or error reading file:', e)
       return { chatHistories: [], currentChatId: null }
     }
   })
@@ -37,7 +37,7 @@ export function registerIpcHandlers() {
       const data = await fs.promises.readFile(APP_SETTINGS_FILE_PATH, 'utf-8')
       return JSON.parse(data)
     } catch (e) {
-      console.log('No chat history found or error reading file:', e)
+      console.info('No chat history found or error reading file:', e)
       return {}
     }
   })
