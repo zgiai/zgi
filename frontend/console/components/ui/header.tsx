@@ -25,9 +25,6 @@ export default function Header({
     const res = await getUserInfo()
     if (res?.status_code === 200) {
       setUserInfo(res?.data || {})
-      //获取用户信息
-      // console.log(res?.data)
-      localStorage.setItem('userInfo', JSON.stringify(res?.data))
     } else {
       message.error(res?.status_message || "Failed to fetch user info")
       localStorage.removeItem('token')

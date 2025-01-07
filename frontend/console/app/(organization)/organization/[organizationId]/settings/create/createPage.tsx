@@ -46,8 +46,8 @@ export default function CreateProjectPage() {
     //     }
     // }
 
-    return <div className="flex flex-col px-4 py-4">
-        <div className="flex justify-between p-4 border-b border-gray-200 dark:border-gray-700/60 items-center flex-wrap gap-4">
+    return <div className="flex flex-col px-4 py-4 w-full max-w-[96rem] mx-auto">
+        <div className="flex justify-between py-4 border-b border-gray-200 dark:border-gray-700/60 items-center flex-wrap gap-4">
             <div className="flex-1">
                 <span className="text-2xl text-gray-800 dark:text-gray-100 font-bold">Create Project</span>
             </div>
@@ -58,11 +58,11 @@ export default function CreateProjectPage() {
                 <div className={`flex-col gap-4 ${pageStatus === 1 ? "flex" : "hidden"}`}>
                     <div>
                         <label htmlFor="name" className="text-gray-800 dark:text-gray-100 font-bold">Name</label>
-                        <input id="name" className="form-input w-full" placeholder="my-organization" type="text" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value.trim() })} />
+                        <input id="name" className="form-input w-full" placeholder="my-project" type="text" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value.trim() })} />
                     </div>
                     <div>
                         <label htmlFor="description" className="text-gray-800 dark:text-gray-100 font-bold">Description</label>
-                        <textarea id="description" className="form-textarea w-full min-h-[100px]" placeholder="my-organization-description" value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value.trim() })} />
+                        <textarea id="description" className="form-textarea w-full min-h-[100px]" placeholder="my-project-description" value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value.trim() })} />
                     </div>
                 </div>
                 <div className="flex items-center gap-4">

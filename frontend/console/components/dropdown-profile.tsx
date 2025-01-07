@@ -5,6 +5,8 @@ import Image from 'next/image'
 import { Menu, MenuButton, MenuItems, MenuItem, Transition } from '@headlessui/react'
 import UserAvatar from '@/public/images/user-avatar-32.png'
 
+const userTypeArray = ['User','Super Admin', 'Admin']
+
 export default function DropdownProfile({ align, userInfo = {} }: {
   align?: 'left' | 'right'
   userInfo?: any
@@ -33,7 +35,7 @@ export default function DropdownProfile({ align, userInfo = {} }: {
       >
         <div className="pt-0.5 pb-2 px-3 mb-1 border-b border-gray-200 dark:border-gray-700/60">
           <div className="font-medium text-gray-800 dark:text-gray-100">{userInfo?.username || "User Name"}</div>
-          <div className="text-xs text-gray-500 dark:text-gray-400 italic">{userInfo?.role || "Administrator"}</div>
+          <div className="text-xs text-gray-500 dark:text-gray-400 italic">{userTypeArray[userInfo?.user_type] || "User"}</div>
         </div>
         <MenuItems as="ul" className="focus:outline-none">
           <MenuItem as="li">
