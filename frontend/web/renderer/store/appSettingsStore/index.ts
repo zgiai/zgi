@@ -1,3 +1,4 @@
+import { OLLAMA_DEFAULT_SERVER_API } from '@/constants'
 import { STORAGE_ADAPTER_KEYS } from '@/constants/storageAdapterKey'
 import { getStorageAdapter } from '@/lib/storageAdapter'
 import { createSubsStore } from '@/lib/store_utils'
@@ -15,7 +16,7 @@ const defaultProviders: Record<string, ModelProvider> = {
     name: 'zgi',
     enabled: true,
     apiKey: '',
-    // apiEndpoint: 'https://api.openai.com/v1',
+    apiEndpoint: '',
     models: [
       { id: 'gpt-4', name: 'GPT-4', contextSize: '8K' },
       { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', contextSize: '4K' },
@@ -27,13 +28,12 @@ const defaultProviders: Record<string, ModelProvider> = {
     id: 'ollama',
     name: 'Ollama',
     enabled: true,
-    // apiEndpoint: 'http://127.0.0.1:11434',
+    apiEndpoint: '',
     models: [],
     customModels: [],
     useStreamMode: false,
     isDefault: false,
   },
-  // Add more providers here as needed
 }
 
 export const useAppSettingsStore = createSubsStore<AppSettingsStore>((set, get) => {
@@ -87,10 +87,7 @@ export const useAppSettingsStore = createSubsStore<AppSettingsStore>((set, get) 
         }
       }),
 
-    /**
-     * Update provider configuration
-     */
-    updateProvider: (providerId: string, updates: Partial<ModelProvider>) =>
+    updateProvider: (providerId: string, updates: Partial<ModelProvider>) => {
       set((state) => ({
         providers: {
           ...state.providers,
@@ -99,11 +96,8 @@ export const useAppSettingsStore = createSubsStore<AppSettingsStore>((set, get) 
             ...updates,
           },
         },
-      })),
-
-    /**
-     * Set available models for a provider
-     */
+      }))
+    },
     setProviderModels: (providerId, models) => {
       set((state) => ({
         providers: {
@@ -115,10 +109,6 @@ export const useAppSettingsStore = createSubsStore<AppSettingsStore>((set, get) 
         },
       }))
     },
-
-    /**
-     * Load settings from storage
-     */
     loadSettings: async () => {
       try {
         const settings = await storageAdapter.load()
@@ -143,10 +133,6 @@ export const useAppSettingsStore = createSubsStore<AppSettingsStore>((set, get) 
         console.error('Failed to load settings:', error)
       }
     },
-
-    /**
-     * Save current settings to storage
-     */
     saveSettings: async () => {
       try {
         const { providers, selectedModelIds } = get()
@@ -160,8 +146,6 @@ export const useAppSettingsStore = createSubsStore<AppSettingsStore>((set, get) 
         console.error('Failed to save settings:', error)
       }
     },
-
-    /** Add a custom model to provider */
     addCustomModel: (providerId: string, model: ModelConfig) => {
       set((state) => ({
         providers: {
@@ -173,7 +157,6 @@ export const useAppSettingsStore = createSubsStore<AppSettingsStore>((set, get) 
         },
       }))
     },
-
     removeCustomModel: (providerId: string, modelId: string) => {
       get().removeSelectModelList(providerId, [modelId])
       set((state) => ({
@@ -188,7 +171,6 @@ export const useAppSettingsStore = createSubsStore<AppSettingsStore>((set, get) 
         },
       }))
     },
-
     updateSelectModelList: (providerId: string, modelIds: string[]) => {
       set((state) => {
         const selectedModelIds = { ...state.selectedModelIds }
@@ -199,7 +181,6 @@ export const useAppSettingsStore = createSubsStore<AppSettingsStore>((set, get) 
         return { selectedModelIds }
       })
     },
-
     removeSelectModelList: (providerId: string, modelIds: string[]) => {
       set((state) => {
         const selectedModelIds = { ...state.selectedModelIds }
@@ -212,10 +193,6 @@ export const useAppSettingsStore = createSubsStore<AppSettingsStore>((set, get) 
         return { selectedModelIds }
       })
     },
-
-    /**
-     * Check provider connectivity
-     */
     checkProvider: async (providerId: string) => {
       const provider = get().providers[providerId]
       if (!provider.apiKey && providerId !== 'ollama') {
@@ -229,7 +206,7 @@ export const useAppSettingsStore = createSubsStore<AppSettingsStore>((set, get) 
       }
       let apiEndpoint = provider.apiEndpoint || ''
       if (providerId === 'ollama' && !apiEndpoint) {
-        apiEndpoint = 'http://127.0.0.1:11434'
+        apiEndpoint = OLLAMA_DEFAULT_SERVER_API
       }
       try {
         const response = await fetch(apiEndpoint, {
@@ -264,7 +241,6 @@ export const useAppSettingsStore = createSubsStore<AppSettingsStore>((set, get) 
         }))
       }
     },
-
     generateModelsOptions: () => {
       const { providers, selectedModelIds } = get()
       const allProvidersSelectedModels: Record<string, ModelConfig[]> = {}
@@ -282,7 +258,6 @@ export const useAppSettingsStore = createSubsStore<AppSettingsStore>((set, get) 
           allProvidersSelectedModels[key].push(...filteredModels, ...filteredCustomModels)
         }
       })
-      console.log('allProvidersSelectedModels', allProvidersSelectedModels)
       set({
         allProvidersSelectedModels,
       })

@@ -1,6 +1,7 @@
-import { API_KEY } from '@/constants'
+import { API_KEY, OLLAMA_DEFAULT_SERVER_API } from '@/constants'
 import { API_CONFIG } from '@/lib/http'
-import ollama from 'ollama/dist/browser'
+import { useAppSettingsStore } from '@/store/appSettingsStore'
+import ollama, { Ollama } from 'ollama/dist/browser'
 
 /** Send messages and get real-time response stream */
 interface StreamChatCompletionsParams {
@@ -23,7 +24,7 @@ export const streamChatCompletions = async (params: StreamChatCompletionsParams)
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: API_KEY,
+      Authorization: `Bearer ${API_KEY}`,
     },
     body: JSON.stringify({
       ...options,
@@ -41,10 +42,25 @@ export const streamChatCompletions = async (params: StreamChatCompletionsParams)
   return reader
 }
 
+const getOllamaObj = () => {
+  const ollamaConfig = useAppSettingsStore.getState().providers?.ollama
+  const fetchUrl = ollamaConfig?.apiEndpoint || OLLAMA_DEFAULT_SERVER_API
+  let resOllama: Ollama
+  if (fetchUrl === OLLAMA_DEFAULT_SERVER_API) {
+    resOllama = ollama
+  } else {
+    const _ollama = new Ollama({ host: fetchUrl })
+    resOllama = _ollama
+  }
+
+  return resOllama
+}
+
 export const localStreamChatCompletions = async (
   data: Pick<StreamChatCompletionsParams, 'messages' | 'model'>,
 ) => {
-  const response = await ollama.chat({
+  const _ollama = getOllamaObj()
+  const response = await _ollama.chat({
     model: data?.model as any,
     messages: data?.messages as any,
     stream: true,
@@ -54,7 +70,8 @@ export const localStreamChatCompletions = async (
 
 export const getOllamaModels = async () => {
   try {
-    const response = await ollama?.list?.()
+    const _ollama = getOllamaObj()
+    const response = await _ollama?.list?.()
     return response?.models || []
   } catch (error) {
     console.error(error)

@@ -103,10 +103,12 @@ export interface AppSettingsStore {
 
   /** Add a custom model to provider */
   addCustomModel: (providerId: string, model: ModelConfig) => void
+  /** 移除一个自定义的模型 */
   removeCustomModel: (providerId: string, modelId: string) => void
 
   /** Model selection state */
   updateSelectModelList: (providerId: string, modelIds: string[]) => void
+  /** 移除语言模型，指定模块中的模型 */
   removeSelectModelList: (providerId: string, modelIds: string[]) => void
 
   /**
@@ -117,7 +119,7 @@ export interface AppSettingsStore {
   /**
    * Generates all model data for selected language models
    */
-  generateModelsOptions: () => Promise<void>
+  generateModelsOptions: () => void
 }
 
 /**
