@@ -1,11 +1,13 @@
 import { useAppSettingsStore } from '@/store/appSettingsStore'
 import { Combobox } from '@headlessui/react'
+import { ChevronDownIcon, CrossCircledIcon, ReloadIcon } from '@radix-ui/react-icons'
 import React, { useState, useMemo } from 'react'
 
 const ModelList = ({ providerId }: { providerId: string }) => {
   const [localQuery, setLocalQuery] = useState('')
   const [isAddingModel, setIsAddingModel] = useState(false)
   const [newModelName, setNewModelName] = useState('')
+  const [isHoverSearchBox, setIsHoverSearchBox] = useState(false)
 
   const {
     providers,
@@ -38,11 +40,12 @@ const ModelList = ({ providerId }: { providerId: string }) => {
     setLocalQuery(event.target.value)
   }
 
-  // Handle clear search
-  const handleClearSearch = (e: React.MouseEvent) => {
+  // Handle clear select
+  const handleClearSelect = (e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
     setLocalQuery('')
+    updateSelectModelList(providerId, [])
   }
 
   // Handle adding new custom model
@@ -55,7 +58,6 @@ const ModelList = ({ providerId }: { providerId: string }) => {
       })
       setNewModelName('')
       setIsAddingModel(false)
-      selectedModelIds[providerId]
     }
   }
 
@@ -70,6 +72,7 @@ const ModelList = ({ providerId }: { providerId: string }) => {
       </label>
       <div className="relative">
         <Combobox
+          value={selectedModelIds[providerId]}
           onClose={() => setLocalQuery('')}
           as="div"
           immediate
@@ -97,7 +100,11 @@ const ModelList = ({ providerId }: { providerId: string }) => {
                   </button>
                 </span>
               ))}
-              <div className="flex-1 flex items-center">
+              <div
+                className="flex-1 flex items-center space-x-1 h-full"
+                onMouseEnter={() => setIsHoverSearchBox(true)}
+                onMouseLeave={() => setIsHoverSearchBox(false)}
+              >
                 <Combobox.Input
                   className="combobox-input flex-1 outline-none min-w-[120px]"
                   placeholder="Search models"
@@ -105,23 +112,18 @@ const ModelList = ({ providerId }: { providerId: string }) => {
                   onChange={handleInputChange}
                 />
                 <div className="flex items-center space-x-1">
-                  {localQuery && (
+                  {selectedModelIds[providerId]?.length > 0 && (
                     <button
                       className="p-1 hover:bg-gray-100 rounded-full"
-                      onClick={handleClearSearch}
-                      title="Clear search"
+                      onClick={handleClearSelect}
                     >
-                      <svg className="w-4 h-4 text-gray-400" viewBox="0 0 24 24">
-                        <path
-                          fill="currentColor"
-                          d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"
-                        />
-                      </svg>
+                      {isHoverSearchBox ? <CrossCircledIcon /> : <ChevronDownIcon />}
                     </button>
                   )}
-                  <button
+                  {/* <button
                     className="p-1 hover:bg-gray-100 rounded-full add-model-button"
                     onClick={(e) => {
+                      e.preventDefault()
                       e.stopPropagation()
                       setIsAddingModel(true)
                     }}
@@ -130,7 +132,7 @@ const ModelList = ({ providerId }: { providerId: string }) => {
                     <svg className="w-4 h-4 text-gray-400" viewBox="0 0 24 24">
                       <path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
                     </svg>
-                  </button>
+                  </button> */}
                 </div>
               </div>
             </div>
@@ -143,7 +145,7 @@ const ModelList = ({ providerId }: { providerId: string }) => {
                   <Combobox.Option
                     key={model.id}
                     value={model.id}
-                    className={({ active }) =>
+                    className={() =>
                       `relative cursor-pointer select-none py-2 pl-3 pr-9 ${
                         selectedModelIds[providerId]?.includes(model.id)
                           ? 'bg-blue-50 text-blue-600'
@@ -167,7 +169,7 @@ const ModelList = ({ providerId }: { providerId: string }) => {
                           <button
                             onClick={(e) => {
                               e.stopPropagation()
-                              removeCustomModel(providerId, [model.id])
+                              removeCustomModel(providerId, model.id)
                             }}
                             className="text-gray-400 hover:text-red-500"
                           >
@@ -184,6 +186,12 @@ const ModelList = ({ providerId }: { providerId: string }) => {
             </Combobox.Options>
           </div>
         </Combobox>
+        <div className="flex items-center justify-between py-2">
+          <div>{allModels.length} models available in total</div>
+          {/* <button className="flex items-center justify-center">
+            <ReloadIcon className="mr-2 animate-spin" /> Get Model List
+          </button> */}
+        </div>
       </div>
 
       {/* Add Custom Model Dialog */}

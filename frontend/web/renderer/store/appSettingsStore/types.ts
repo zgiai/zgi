@@ -1,3 +1,5 @@
+import type { ModelConfig } from '@/types/chat'
+
 /**
  * Model provider configuration interface
  * Represents the configuration for a language model provider (e.g., OpenAI, Ollama)
@@ -88,9 +90,6 @@ export interface AppSettingsStore {
   /** Update provider configuration */
   updateProvider: (providerId: string, updates: Partial<ModelProvider>) => void
 
-  /** Set available models for a provider */
-  setProviderModels: (providerId: string, models: ModelConfig[]) => void
-
   /**
    * Storage Actions
    */
@@ -143,18 +142,4 @@ export interface OllamaConfig extends ModelProvider {
  */
 export interface StorageData {
   providers: Record<string, ModelProvider>
-}
-
-/**
- * Model configuration interface
- */
-export interface ModelConfig {
-  /** Model identifier */
-  id: string
-  /** Display name */
-  name: string
-  /** Model context size */
-  contextSize?: string
-  isCustom?: boolean
-  type?: string
 }

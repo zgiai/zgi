@@ -1,4 +1,4 @@
-import type { ChatHistory, ChatMessage } from '@/types/chat'
+import type { ChatHistory, ChatMessage, ModelConfig } from '@/types/chat'
 
 /**
  * Chat state management interface
@@ -10,9 +10,8 @@ export interface ChatStore {
   messageStreamingMap: Record<string, string> // Streaming message status for each chat
   isLoadingMap: Record<string, boolean> // Loading status for each chat
   isFirstOpen: boolean // Flag indicating if it's first open
-  models: ModelsItem[] // Array of available models
-  ollamaModels: ModelsItem[]
-  selectedModel: ModelsItem
+
+  selectedModel: ModelConfig
   fileInputRef: React.RefObject<HTMLInputElement>
   attachments: File[] // New attachment state
   inputMessage: string // New message state
@@ -30,17 +29,8 @@ export interface ChatStore {
   sendMessage: (message: ChatMessage) => void // Send message
   updateChatTitleByContent: (chatId: string) => void // Add new method
   updateChatTitleByFirstMessage: (chatId: string) => void // Add new method
-  setSelectedModel: (model: any) => void
+  setSelectedModel: (model: ModelConfig) => void
   setInputMessage: (msg: string) => void // Function to set message
   setAttachments: (files: File[]) => void // Function to set attachments
   handleSend: () => Promise<void> // Function to send message
-  onRefreshModels: () => Promise<void>
-}
-
-export interface ModelsItem {
-  model: string
-  name: string
-  usage: string
-  type: 'default' | 'free' | 'local'
-  [key: string]: any
 }

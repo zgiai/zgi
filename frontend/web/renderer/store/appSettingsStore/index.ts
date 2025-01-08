@@ -1,40 +1,11 @@
-import { OLLAMA_DEFAULT_SERVER_API } from '@/constants'
+import { OLLAMA_DEFAULT_SERVER_API, defaultProviders } from '@/constants'
 import { STORAGE_ADAPTER_KEYS } from '@/constants/storageAdapterKey'
 import { getStorageAdapter } from '@/lib/storageAdapter'
 import { createSubsStore } from '@/lib/store_utils'
+import type { ModelConfig } from '@/types/chat'
 import { getLoclOllamaModels } from './ollama'
 import subscribeInit from './subscribe'
-import type { AppSettingsStore, ModelConfig, ModelProvider } from './types'
-
-/**
- * Default provider configurations
- * Initial state for each provider when no stored settings exist
- */
-const defaultProviders: Record<string, ModelProvider> = {
-  zgi: {
-    id: 'zgi',
-    name: 'zgi',
-    enabled: true,
-    apiKey: '',
-    apiEndpoint: '',
-    models: [
-      { id: 'gpt-4', name: 'GPT-4', contextSize: '8K' },
-      { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', contextSize: '4K' },
-    ],
-    customModels: [],
-    isDefault: false,
-  },
-  ollama: {
-    id: 'ollama',
-    name: 'Ollama',
-    enabled: true,
-    apiEndpoint: '',
-    models: [],
-    customModels: [],
-    useStreamMode: false,
-    isDefault: false,
-  },
-}
+import type { AppSettingsStore, ModelProvider } from './types'
 
 export const useAppSettingsStore = createSubsStore<AppSettingsStore>((set, get) => {
   const storageAdapter = getStorageAdapter({ key: STORAGE_ADAPTER_KEYS.app_settings.key })
@@ -50,6 +21,7 @@ export const useAppSettingsStore = createSubsStore<AppSettingsStore>((set, get) 
 
     init: async () => {
       await get().loadSettings()
+      get().generateModelsOptions()
     },
 
     setOpenModal: (flag: boolean) => set({ isOpenModal: flag }),
@@ -63,10 +35,6 @@ export const useAppSettingsStore = createSubsStore<AppSettingsStore>((set, get) 
           : [...state.expandedCards, cardId],
       })),
 
-    /**
-     * Toggle provider enabled state
-     * Multiple providers can be enabled simultaneously
-     */
     toggleProvider: (providerId: string) =>
       set((state) => {
         const provider = state.providers[providerId]
@@ -98,21 +66,11 @@ export const useAppSettingsStore = createSubsStore<AppSettingsStore>((set, get) 
         },
       }))
     },
-    setProviderModels: (providerId, models) => {
-      set((state) => ({
-        providers: {
-          ...state.providers,
-          [providerId]: {
-            ...state.providers[providerId],
-            models,
-          },
-        },
-      }))
-    },
     loadSettings: async () => {
       try {
         const settings = await storageAdapter.load()
         if (settings) {
+          console.log('配置处理', { settings, defaultProviders })
           // Merge stored settings with defaults, preserving enabled states
           const mergedProviders = Object.entries(defaultProviders).reduce(
             (acc, [id, defaultProvider]) => ({
@@ -120,6 +78,7 @@ export const useAppSettingsStore = createSubsStore<AppSettingsStore>((set, get) 
               [id]: {
                 ...defaultProvider,
                 ...settings.languageModel?.providers?.[id],
+                models: defaultProvider.models,
               },
             }),
             {},
@@ -244,7 +203,7 @@ export const useAppSettingsStore = createSubsStore<AppSettingsStore>((set, get) 
     generateModelsOptions: () => {
       const { providers, selectedModelIds } = get()
       const allProvidersSelectedModels: Record<string, ModelConfig[]> = {}
-
+      console.log(providers, 'providers')
       Object.entries(providers).forEach(([key, value]) => {
         if (!allProvidersSelectedModels[key]) {
           allProvidersSelectedModels[key] = []

@@ -1,3 +1,4 @@
+import { defaultProviders } from '@/constants'
 import { getStorageAdapter } from '@/lib/storageAdapter'
 import { localStreamChatCompletions, streamChatCompletions } from '@/server/chat.server'
 import { type ChatHistory, type ChatMessage, StreamChatMode } from '@/types/chat'
@@ -7,11 +8,6 @@ import { create } from 'zustand'
 import { handleStreamResponse } from './handleStreamResponse'
 import { getLoclOllamaModels } from './ollama'
 import type { ChatStore } from './types'
-
-const models = [
-  { model: 'deepseek-chat', name: 'deepseek-chat', usage: '200k', type: 'default' as const },
-  { model: 'gpt-3.5-turbo', name: 'GPT 3.5-Turbo', usage: '200k', type: 'free' as const },
-]
 
 /**
  * Create chat state management store
@@ -92,9 +88,8 @@ export const useChatStore = create<ChatStore>()((set, get) => {
     isLoadingMap: {},
     isFirstOpen: true, // Add first open flag
     refreshModelsLoading: false,
-    models: models, // Add available models here
-    ollamaModels: [],
-    selectedModel: models[0], // Default selected model
+
+    selectedModel: defaultProviders.zgi.models[0], // Default selected model
     setSelectedModel: (model) => set({ selectedModel: model }), // Function to update selected model
     fileInputRef: React.createRef<HTMLInputElement>(),
     attachments: [], // Initialize attachment state
@@ -410,12 +405,12 @@ export const useChatStore = create<ChatStore>()((set, get) => {
           let reader
           if (selectedModel?.type === 'local') {
             reader = await localStreamChatCompletions({
-              model: selectedModel.model,
+              model: selectedModel.id,
               messages: [...messagesToSend, currentMessageToSend],
             })
           } else {
             reader = await streamChatCompletions({
-              model: selectedModel.model,
+              model: selectedModel.id,
               messages: [...messagesToSend, currentMessageToSend],
               stream: true,
               temperature: 1,
@@ -440,7 +435,7 @@ export const useChatStore = create<ChatStore>()((set, get) => {
               get().saveChatsToDisk()
             },
             streamMode:
-              selectedModel?.type === 'local' ? StreamChatMode.ollama : StreamChatMode.commonChat,
+              selectedModel?.type === 'ollama' ? StreamChatMode.ollama : StreamChatMode.commonChat,
           })
         }
       } catch (error) {
@@ -464,17 +459,5 @@ export const useChatStore = create<ChatStore>()((set, get) => {
 
     updateChatTitleByContent, // Export method
     updateChatTitleByFirstMessage,
-
-    onRefreshModels: async () => {
-      const { models } = get()
-      set({
-        refreshModelsLoading: true,
-      })
-      await getLoclOllamaModels({ set })
-      set({
-        refreshModelsLoading: false,
-        selectedModel: models[0],
-      })
-    },
   }
 })

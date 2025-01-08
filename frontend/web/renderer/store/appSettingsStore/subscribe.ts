@@ -1,6 +1,4 @@
-import { cloneDeep } from 'lodash'
 import { useAppSettingsStore } from '.'
-import type { ModelConfig } from './types'
 
 const subscribeInit = () => {
   useAppSettingsStore.subscribe(
