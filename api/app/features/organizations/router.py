@@ -5,7 +5,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from typing import List, Optional, Annotated
 
-from app.core.auth import require_super_admin, require_admin
+from app.core.auth import require_admin
 from app.core.base import resp_200
 from app.core.database import get_sync_db
 from app.core.security import create_access_token, verify_token
@@ -13,7 +13,7 @@ from app.core.security.auth import get_current_user
 from app.core.logging.api_logger import logger
 from app.features import Project
 from app.features.organizations.schemas import OrganizationResponse, OrganizationList, MemberList, RoleResponse, \
-    RoleBase, RoleResponseBase
+    RoleBase, RoleResponseBase, MemberResponse, SearchResponse
 from app.features.organizations.service import organization_require_member_admin, organization_body_require_admin, \
     organization_params_require_admin, role_params_require_admin
 from app.features.projects.models import ProjectStatus
@@ -153,7 +153,7 @@ def update_organization(
 def delete_organization(
         organization_id: int,
         db: Session = Depends(get_sync_db),
-        current_user: User = Depends(require_super_admin)
+        current_user: User = Depends(require_admin)
 ):
     """Soft delete a project"""
     org = db.query(Organization).filter(
@@ -181,7 +181,7 @@ def delete_organization(
 def set_admins(organization_id: Annotated[int, Body(embed=True)],
                user_ids: Annotated[List[int], Body(embed=True)],
                db: Session = Depends(get_sync_db),
-               current_user: User = Depends(require_super_admin)):
+               current_user: User = Depends(require_admin)):
     """Set admins for an organization"""
     for user_id in user_ids:
         org = db.query(Organization).filter(Organization.id == organization_id).first()
@@ -209,6 +209,28 @@ def set_admins(organization_id: Annotated[int, Body(embed=True)],
             db.add(new_member)
             db.commit()
     return resp_200("Admins updated successfully")
+
+@router.post("/unset_admins")
+def unset_admins(
+    organization_id: Annotated[int, Body(embed=True)],
+    user_ids: Annotated[List[int], Body(embed=True)],
+    db: Session = Depends(get_sync_db),
+    current_user: User = Depends(require_admin)
+):
+    """Unset multiple admins for an organization"""
+    for user_id in user_ids:
+        member = db.query(OrganizationMember).filter(
+            OrganizationMember.organization_id == organization_id,
+            OrganizationMember.user_id == user_id
+        ).first()
+        if not member:
+            raise HTTPException(status_code=404, detail="Member not found")
+        if not member.is_admin:
+            raise HTTPException(status_code=400, detail="User is not an admin")
+        member.is_admin = False
+        db.add(member)
+    db.commit()
+    return resp_200(message="Admins unset successfully")
 
 @router.post("/set_members")
 def set_members(organization_id: Annotated[int, Body(embed=True)],
@@ -241,6 +263,27 @@ def set_members(organization_id: Annotated[int, Body(embed=True)],
             db.add(new_member)
             db.commit()
     return resp_200(message="Members updated successfully")
+
+@router.post("/unset_members")
+def unset_members(
+    organization_id: Annotated[int, Body(embed=True)],
+    user_ids: Annotated[List[int], Body(embed=True)],
+    db: Session = Depends(get_sync_db),
+    current_user: User = Depends(organization_body_require_admin)
+):
+    """Unset multiple members from an organization"""
+    for user_id in user_ids:
+        member = db.query(OrganizationMember).filter(
+            OrganizationMember.organization_id == organization_id,
+            OrganizationMember.user_id == user_id
+        ).first()
+        if not member:
+            raise HTTPException(status_code=404, detail="Member not found")
+        if member.is_admin:
+            raise HTTPException(status_code=400, detail="User is an admin")
+        db.delete(member)
+    db.commit()
+    return resp_200(message="Members unset successfully")
 
 @router.post("/invite")
 def create_invitation(organization_id: Annotated[int, Body(embed=True)],
@@ -461,14 +504,60 @@ def members_me(
         OrganizationMember.user_id == current_user.id).first()
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
-    response_member = {
-        "id": member.id,
-        "organization_id": member.organization_id,
-        "user_id": member.user_id,
-        "username": member.user.username,
-        "is_admin": member.is_admin,
-        "roles": [RoleResponseBase.model_validate(role) for role in member.roles],
-        "created_at": member.created_at,
-        "updated_at": member.updated_at
-    }
+    response_member = MemberResponse(
+        id=member.id,
+        organization_id=member.organization_id,
+        user_id=member.user_id,
+        username=member.user.username,
+        is_admin=member.is_admin,
+        roles=[RoleResponseBase.model_validate(role) for role in member.roles],
+        created_at=member.created_at,
+        updated_at=member.updated_at
+    )
     return resp_200(data=response_member)
+
+@router.post("/members/exit")
+def members_exit(
+    organization_id: int,
+    db: Session = Depends(get_sync_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Allow current user to leave an organization"""
+    member = db.query(OrganizationMember).filter(
+        OrganizationMember.organization_id == organization_id,
+        OrganizationMember.user_id == current_user.id
+    ).first()
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+    
+    db.delete(member)
+    db.commit()
+    return resp_200(message="You have successfully exited the organization")
+
+@router.get("/search_user")
+def search_user(
+    organization_id: int,
+    email: str,
+    db: Session = Depends(get_sync_db),
+    current_user: User = Depends(organization_params_require_admin)
+):
+    """Get user by email and organization_id"""
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    member = db.query(OrganizationMember).filter(
+        OrganizationMember.organization_id == organization_id,
+        OrganizationMember.user_id == user.id
+    ).first()
+
+    search_response = SearchResponse(
+        user_id=user.id,
+        username=user.username,
+        email=user.email
+    )
+    if member:
+        search_response.organization_id = member.organization_id
+        search_response.roles = [RoleResponseBase.model_validate(role) for role in member.roles]
+
+    return resp_200(data=search_response)
