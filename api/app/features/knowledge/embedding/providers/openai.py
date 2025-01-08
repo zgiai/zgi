@@ -8,6 +8,7 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
     def __init__(
         self,
         api_key: str,
+        api_base: str = None,
         model: str = "text-embedding-3-small",
         **kwargs
     ):
@@ -20,7 +21,7 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
         """
         self.api_key = api_key
         self.model = model
-        self.client = OpenAI(api_key=api_key)
+        self.client = OpenAI(api_key=api_key, base_url=api_base)
         
         # Model specific settings
         self._dimensions = {
