@@ -125,3 +125,10 @@ class MemberList(BaseModel):
 
     class Config:
         from_attributes = True
+
+class SearchResponse(BaseModel):
+    user_id: int
+    username: str
+    email: str
+    organization_id: Optional[int] = Field(None)
+    roles: Optional[List[RoleResponseBase]] = Field(None)
