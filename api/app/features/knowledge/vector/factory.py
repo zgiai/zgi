@@ -1,3 +1,4 @@
+from functools import cache
 from typing import Dict, Type, Any
 from .base import VectorDBProvider
 from .providers.pinecone import PineconeProvider
@@ -14,6 +15,7 @@ class VectorDBFactory:
     }
     
     @classmethod
+    @cache
     def create(cls, provider: str, **kwargs) -> VectorDBProvider:
         """Create a vector database provider instance
         

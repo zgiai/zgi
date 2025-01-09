@@ -1,3 +1,4 @@
+from functools import cache
 from typing import Dict, Type
 from .base import EmbeddingProvider
 from .providers.openai import OpenAIEmbeddingProvider
@@ -15,6 +16,7 @@ class EmbeddingFactory:
     }
     
     @classmethod
+    @cache
     def create(cls, provider: str, **kwargs) -> EmbeddingProvider:
         """Create an embedding provider instance
         
@@ -30,7 +32,7 @@ class EmbeddingFactory:
         """
         if provider not in cls._providers:
             raise ValueError(f"Unsupported embedding provider: {provider}")
-            
+
         provider_class = cls._providers[provider]
         return provider_class(**kwargs)
     

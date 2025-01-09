@@ -1,7 +1,8 @@
 import os
 import hashlib
+import time
 from typing import List, Optional, Dict, Any, BinaryIO, Tuple
-from fastapi import UploadFile
+from fastapi import UploadFile, BackgroundTasks
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 import PyPDF2
@@ -133,12 +134,72 @@ class DocumentService:
             )
             raise
 
+    async def _process_document(
+        self,
+        document: Document,
+        chunks: List[str],
+        kb: KnowledgeBase,
+        metadata: Optional[Dict[str, Any]],
+        user_id: int
+    ):
+        """Process document asynchronously to generate embeddings and store vectors"""
+        try:
+            # Generate embeddings
+            embeddings = await self.kb_service.embedding.get_embeddings(chunks)
+            chunk_metadata = [{
+                "document_id": document.id,
+                "chunk_index": i,
+                "text": chunk,
+                **(metadata or {})
+            } for i, chunk in enumerate(chunks)]
+            
+            # Insert vectors into vector database
+            success = await self.kb_service.vector_db.insert_vectors(
+                collection_name=kb.collection_name,
+                vectors=embeddings,
+                metadata=chunk_metadata
+            )
+            
+            if not success:
+                raise Exception("Failed to store vectors")
+            
+            # Update document status
+            document.status = DocumentStatus.COMPLETED.value
+            document.chunk_count = len(chunks)
+            self.db.commit()
+            
+            # Update knowledge base statistics
+            kb.document_count += 1
+            kb.total_chunks += len(chunks)
+            self.db.commit()
+            
+            audit_logger.log_access(
+                user_id,
+                "document",
+                str(document.id),
+                "process",
+                "success"
+            )
+            
+        except Exception as e:
+            # Update document status on failure
+            document.status = DocumentStatus.FAILED.value
+            document.error_message = str(e)
+            self.db.commit()
+            service_logger.error(
+                "Document processing failed",
+                "document_processing_failed",
+                error=str(e),
+                document_id=document.id
+            )
+
     @handle_service_errors
     async def upload_document(
         self,
         kb_id: int,
         file: UploadFile,
         user_id: int,
+        background_tasks: BackgroundTasks,
         metadata: Optional[Dict[str, Any]] = None
     ) -> ServiceResponse[Document]:
         """Upload and process a document"""
@@ -153,13 +214,6 @@ class DocumentService:
                 )
             
             # Get knowledge base
-            # kb_response = await self.kb_service.get_knowledge_base(kb_id, user_id)
-            # if not kb_response.success:
-            #     raise NotFoundError(
-            #         f"Knowledge base not found",
-            #         details={"kb_id": kb_id}
-            #     )
-            # kb = KnowledgeBase(**dict(kb_response.data))
             kb = self.db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
             if not kb:
                 raise NotFoundError("Knowledge base not found")
@@ -200,35 +254,17 @@ class DocumentService:
                     self.db.add(document_chunk)
                 
                 self.db.commit()
-                
-                # Generate embeddings and store vectors
-                embeddings = await self.kb_service.embedding.get_embeddings(chunks)
-                chunk_metadata = [{
-                    "document_id": document.id,
-                    "chunk_index": i,
-                    "text": chunk,
-                    **(metadata or {})
-                } for i, chunk in enumerate(chunks)]
-                
-                success = await self.kb_service.vector_db.insert_vectors(
-                    collection_name=kb.collection_name,
-                    vectors=embeddings,
-                    metadata=chunk_metadata
+
+                # Add background task for processing
+                background_tasks.add_task(
+                    self._process_document,
+                    document,
+                    chunks,
+                    kb,
+                    metadata,
+                    user_id
                 )
-                
-                if not success:
-                    raise Exception("Failed to store vectors")
-                
-                # Update document status
-                document.status = DocumentStatus.COMPLETED.value
-                document.chunk_count = len(chunks)
-                self.db.commit()
-                
-                # Update knowledge base statistics
-                kb.document_count += 1
-                kb.total_chunks += len(chunks)
-                self.db.commit()
-                
+
                 audit_logger.log_access(
                     user_id,
                     "document",

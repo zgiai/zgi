@@ -1,12 +1,14 @@
+from datetime import datetime
 import json
 from typing import Optional, Dict, Any, List
-from fastapi import APIRouter, Depends, File, UploadFile, Query, HTTPException, status, Form
+from fastapi import APIRouter, Depends, File, UploadFile, Query, HTTPException, status, Form, BackgroundTasks
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.core.base import resp_200
 from app.core.database import get_db, get_sync_db
 from app.core.deps import get_current_user
+from app.features import User
 from app.features.knowledge.models.knowledge import Visibility, Status
 from app.features.knowledge.schemas.request.knowledge import (
     KnowledgeBaseCreate,
@@ -33,6 +35,17 @@ from app.features.knowledge.service.document import DocumentService
 
 # Create router with prefix
 router = APIRouter(tags=["Knowledge Base"])
+
+# dependencies
+def get_knowledge_base_service(db: Session = Depends(get_db)) -> KnowledgeBaseService:
+    return KnowledgeBaseService(db)
+
+def get_document_service(
+    sync_db: Session = Depends(get_sync_db),
+    kb_service: KnowledgeBaseService = Depends(get_knowledge_base_service)
+) -> DocumentService:
+    return DocumentService(sync_db, kb_service)
+
 
 # Knowledge Base Routes
 
@@ -160,13 +173,14 @@ async def clone_knowledge_base(
 
 @router.post("/{kb_id}/documents",
     summary="Upload document")
-async def upload_document(
+async def upload_document(*,
     kb_id: int,
     file: UploadFile = File(...),
     metadata: Optional[str] = Form(None),
     db: Session = Depends(get_db),
     sync_db: Session = Depends(get_sync_db),
-    current_user = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    background_tasks: BackgroundTasks
 ):
     """Upload a document to a knowledge base"""
     kb_service = KnowledgeBaseService(db)
@@ -179,7 +193,7 @@ async def upload_document(
             # metadata_obj = DocumentUpload(**metadata_dict)
         except (json.JSONDecodeError, ValidationError) as e:
             return {"success": False, "error": str(e)}
-    return await doc_service.upload_document(kb_id, file, current_user.id, metadata_dict)
+    return await doc_service.upload_document(kb_id, file, current_user.id, background_tasks, metadata_dict)
 
 @router.post("/{kb_id}/documents/batch",
     summary="Batch upload documents")
@@ -206,13 +220,12 @@ async def list_documents(
     file_type: Optional[str] = None,
     status: Optional[str] = None,
     search: Optional[str] = None,
-    db: Session = Depends(get_db),
-    sync_db: Session = Depends(get_sync_db),
-    current_user = Depends(get_current_user)
+    doc_service: DocumentService = Depends(get_document_service),
+    current_user: User = Depends(get_current_user)
 ):
     """List documents in a knowledge base"""
-    kb_service = KnowledgeBaseService(db)
-    doc_service = DocumentService(sync_db, kb_service)
+    # kb_service = KnowledgeBaseService(db)
+    # doc_service = DocumentService(sync_db, kb_service)
     documents, total = await doc_service.list_documents(
         kb_id, current_user.id, skip, limit, file_type, status, search
     )

@@ -52,7 +52,7 @@ class KnowledgeBaseService:
             vector_settings.PROVIDER,
             **vector_settings.provider_config
         )
-        
+
         # Initialize embedding service
         embedding_settings = get_embedding_settings()
         self.embedding = EmbeddingFactory.create(
