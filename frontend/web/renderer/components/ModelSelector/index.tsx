@@ -34,7 +34,7 @@ const ModelSelector = () => {
         <SelectIcon />
       </SelectTrigger>
       <SelectContent
-        className="bg-white rounded border border-gray-300 custom-thin-scrollbar p-2 max-h-[300px] overflow-y-auto"
+        className="bg-white rounded border border-gray-300 custom-thin-scrollbar p-2 max-h-[300px] overflow-y-auto shadow-lg"
         position="popper"
       >
         {Object.entries(allProvidersSelectedModels).map(([modelType, itemModels]) => (
