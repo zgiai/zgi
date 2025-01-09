@@ -1,12 +1,12 @@
-import { API_KEY } from '@/constants'
 import axios, { type AxiosInstance, type AxiosRequestConfig } from 'axios'
+import { getFetchApiKey } from './utils'
 
 // Define API configurations
 export const API_CONFIG = {
   ADMIN: 'https://api.zgi.ai',
   CLIENT: 'https://api.zgi.ai',
-  COMMON: '/api',
-  // COMMON: 'http://localhost:7007',
+  // COMMON: '/api',
+  COMMON: 'http://localhost:7007',
 } as const
 
 // Type for API endpoints
@@ -46,8 +46,9 @@ class Http {
     // Request interceptor
     instance.interceptors.request.use(
       (config) => {
-        if (config.headers && API_KEY) {
-          config.headers.Authorization = `Bearer ${API_KEY}`
+        const apiKey = getFetchApiKey()
+        if (config.headers && apiKey) {
+          config.headers.Authorization = `Bearer ${apiKey}`
         }
         return config
       },

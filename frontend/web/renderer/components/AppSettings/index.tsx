@@ -1,8 +1,6 @@
 import { useAppSettingsStore } from '@/store/appSettingsStore'
 import { Dialog } from '@headlessui/react'
-import { Switch } from '@headlessui/react'
-import React, { useState, useEffect, useMemo } from 'react'
-import ModelList from './ModelList'
+import React from 'react'
 import ProviderCard from './ProviderCard'
 
 const AppSettings = () => {
@@ -19,7 +17,7 @@ const AppSettings = () => {
   ]
 
   return (
-    <Dialog open={isOpenModal} onClose={() => setOpenModal(false)} className="relative z-10">
+    <Dialog open={isOpenModal} onClose={() => {}} className="relative z-10">
       <div className="fixed inset-0 bg-black/30" aria-hidden="true" />
       <div className="fixed inset-0 flex items-center justify-center p-4">
         <Dialog.Panel className="relative mx-auto w-[1000px] h-[600px] rounded-lg bg-white shadow-xl flex">
@@ -64,7 +62,7 @@ const AppSettings = () => {
               {activeSection === 'language-models' && (
                 <div className="space-y-4">
                   {Object.keys(providers)?.map((item) => {
-                    return <ProviderCard providerId={item} />
+                    return <ProviderCard key={item} providerId={item} />
                   })}
                 </div>
               )}

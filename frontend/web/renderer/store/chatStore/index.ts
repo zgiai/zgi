@@ -1,20 +1,19 @@
-import { defaultProviders } from '@/constants'
+import { STORAGE_ADAPTER_KEYS } from '@/constants/storageAdapterKey'
 import { getStorageAdapter } from '@/lib/storageAdapter'
 import { localStreamChatCompletions, streamChatCompletions } from '@/server/chat.server'
 import { type ChatHistory, type ChatMessage, StreamChatMode } from '@/types/chat'
 import { debounce } from 'lodash'
 import React from 'react'
 import { create } from 'zustand'
+import { useAppSettingsStore } from '../appSettingsStore'
 import { handleStreamResponse } from './handleStreamResponse'
-import { getLoclOllamaModels } from './ollama'
 import type { ChatStore } from './types'
 
+const storageAdapter = getStorageAdapter({ key: STORAGE_ADAPTER_KEYS.chat.key })
 /**
  * Create chat state management store
  */
 export const useChatStore = create<ChatStore>()((set, get) => {
-  const storageAdapter = getStorageAdapter({ key: 'chat' })
-
   // Add helper function to update chat title based on content
   const updateChatTitleByContent = (chatId: string) => {
     const { chatHistories, isFirstOpen } = get()
@@ -81,7 +80,6 @@ export const useChatStore = create<ChatStore>()((set, get) => {
   }
 
   return {
-    // Initial state
     currentChatId: null,
     chatHistories: [],
     messageStreamingMap: {},
@@ -89,7 +87,7 @@ export const useChatStore = create<ChatStore>()((set, get) => {
     isFirstOpen: true, // Add first open flag
     refreshModelsLoading: false,
 
-    selectedModel: defaultProviders.zgi.models[0], // Default selected model
+    selectedModel: undefined, // Default selected model
     setSelectedModel: (model) => set({ selectedModel: model }), // Function to update selected model
     fileInputRef: React.createRef<HTMLInputElement>(),
     attachments: [], // Initialize attachment state
@@ -100,7 +98,11 @@ export const useChatStore = create<ChatStore>()((set, get) => {
     init: async () => {
       const { loadChatsFromDisk } = get()
       loadChatsFromDisk()
-      getLoclOllamaModels({ set })
+      const providers = useAppSettingsStore.getState().providers || {}
+      set({
+        selectedModel:
+          providers.zgi?.models[0] || providers.zgi?.customModels[0] || providers.ollama?.models[0],
+      })
     },
 
     handleSend: async () => {
@@ -403,7 +405,7 @@ export const useChatStore = create<ChatStore>()((set, get) => {
         // If this is not a message to skip AI response, send request
         if (!message.skipAIResponse) {
           let reader
-          if (selectedModel?.type === 'local') {
+          if (selectedModel?.type === StreamChatMode.ollama) {
             reader = await localStreamChatCompletions({
               model: selectedModel.id,
               messages: [...messagesToSend, currentMessageToSend],
@@ -416,6 +418,7 @@ export const useChatStore = create<ChatStore>()((set, get) => {
               temperature: 1,
             })
           }
+          console.log(selectedModel, 'selectedModel')
           await handleStreamResponse({
             reader,
             chatId,
@@ -430,12 +433,14 @@ export const useChatStore = create<ChatStore>()((set, get) => {
                 },
               }))
             },
-            onComplete: (fullMessage) => {
+            onComplete: () => {
               // Additional actions after completion if needed
               get().saveChatsToDisk()
             },
             streamMode:
-              selectedModel?.type === 'ollama' ? StreamChatMode.ollama : StreamChatMode.commonChat,
+              selectedModel?.type === StreamChatMode.ollama
+                ? StreamChatMode.ollama
+                : StreamChatMode.commonChat,
           })
         }
       } catch (error) {

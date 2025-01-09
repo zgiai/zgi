@@ -2,26 +2,32 @@ import { OLLAMA_DEFAULT_SERVER_API, defaultProviders } from '@/constants'
 import { STORAGE_ADAPTER_KEYS } from '@/constants/storageAdapterKey'
 import { getStorageAdapter } from '@/lib/storageAdapter'
 import { createSubsStore } from '@/lib/store_utils'
+import { getOllamaModels } from '@/server/chat.server'
 import type { ModelConfig } from '@/types/chat'
-import { getLoclOllamaModels } from './ollama'
 import subscribeInit from './subscribe'
 import type { AppSettingsStore, ModelProvider } from './types'
 
-export const useAppSettingsStore = createSubsStore<AppSettingsStore>((set, get) => {
-  const storageAdapter = getStorageAdapter({ key: STORAGE_ADAPTER_KEYS.app_settings.key })
+const storageAdapter = getStorageAdapter({ key: STORAGE_ADAPTER_KEYS.app_settings.key })
 
+export const useAppSettingsStore = createSubsStore<AppSettingsStore>((set, get) => {
   return {
     isOpenModal: false,
     activeSection: 'language-models',
     expandedCards: ['zgi', 'ollama'],
     providers: defaultProviders,
-    selectedModelIds: {},
+    selectedModelIds: {
+      zgi: ['deepseek-chat', 'gpt-4', 'gpt-3.5-turbo'],
+      ollama: [],
+    },
     checkResults: {},
     allProvidersSelectedModels: {},
 
     init: async () => {
-      await get().loadSettings()
-      get().generateModelsOptions()
+      console.log('init')
+      const { generateModelsOptions, loadSettings } = get()
+      await loadSettings()
+
+      generateModelsOptions()
     },
 
     setOpenModal: (flag: boolean) => set({ isOpenModal: flag }),
@@ -56,37 +62,48 @@ export const useAppSettingsStore = createSubsStore<AppSettingsStore>((set, get) 
       }),
 
     updateProvider: (providerId: string, updates: Partial<ModelProvider>) => {
-      set((state) => ({
-        providers: {
-          ...state.providers,
-          [providerId]: {
-            ...state.providers[providerId],
-            ...updates,
+      set((state) => {
+        return {
+          providers: {
+            ...state.providers,
+            [providerId]: {
+              ...state.providers[providerId],
+              ...updates,
+            },
           },
-        },
-      }))
+        }
+      })
     },
     loadSettings: async () => {
       try {
         const settings = await storageAdapter.load()
+        const ollamaRes = await getOllamaModels()
+        console.log('loadSettings', settings)
         if (settings) {
-          console.log('配置处理', { settings, defaultProviders })
           // Merge stored settings with defaults, preserving enabled states
           const mergedProviders = Object.entries(defaultProviders).reduce(
-            (acc, [id, defaultProvider]) => ({
-              ...acc,
-              [id]: {
-                ...defaultProvider,
-                ...settings.languageModel?.providers?.[id],
-                models: defaultProvider.models,
-              },
-            }),
+            (acc, [id, defaultProvider]) => {
+              const newData: any = {
+                ...acc,
+                [id]: {
+                  ...defaultProvider,
+                  ...settings.languageModel?.providers?.[id],
+                  models: defaultProvider.models,
+                },
+              }
+              if (id === 'ollama') {
+                newData[id].models = ollamaRes
+              }
+              return newData
+            },
             {},
           )
 
-          const selectedModelIds = settings.languageModel?.selectedModelIds || []
-          set({ providers: mergedProviders, selectedModelIds })
-          getLoclOllamaModels({ set })
+          const _selectedModelIds = settings.languageModel?.selectedModelIds
+          set({
+            providers: mergedProviders,
+            selectedModelIds: _selectedModelIds || get().selectedModelIds,
+          })
         }
       } catch (error) {
         console.error('Failed to load settings:', error)
@@ -203,7 +220,6 @@ export const useAppSettingsStore = createSubsStore<AppSettingsStore>((set, get) 
     generateModelsOptions: () => {
       const { providers, selectedModelIds } = get()
       const allProvidersSelectedModels: Record<string, ModelConfig[]> = {}
-      console.log(providers, 'providers')
       Object.entries(providers).forEach(([key, value]) => {
         if (!allProvidersSelectedModels[key]) {
           allProvidersSelectedModels[key] = []

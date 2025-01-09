@@ -14,7 +14,6 @@ import React from 'react'
 const ModelSelector = () => {
   const { selectedModel, setSelectedModel } = useChatStore()
   const { allProvidersSelectedModels } = useAppSettingsStore()
-  console.log(allProvidersSelectedModels, 'allProvidersSelectedModels')
   return (
     <Select
       onValueChange={(value) => {

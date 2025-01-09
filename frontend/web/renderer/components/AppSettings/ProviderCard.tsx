@@ -26,7 +26,7 @@ const ProviderCard = ({ providerId }) => {
   }
 
   return (
-    <div className="border rounded-lg">
+    <div className="border rounded-lg" key={providerId}>
       <div className="flex items-center justify-between p-4 bg-gray-50">
         <div className="flex items-center space-x-3">
           <button onClick={() => toggleCard(providerId)} className="p-1 hover:bg-gray-200 rounded">

@@ -1,7 +1,6 @@
 import type { ModelProvider } from '@/store/appSettingsStore/types'
 
-export const API_KEY = 'xuuHugtFb6Jgw3mIP2FBqCGDT62U79pH'
-
+// export const API_KEY = 'zgi_ZQXZ-S_fG6erk2JFyuJ1nr69Lj40k3yhx_RBpFjhEjg'
 export const OLLAMA_DEFAULT_SERVER_API = 'http://127.0.0.1:11434'
 
 export const SELECT_VALUE_DECOLLATOR = '&&'
@@ -15,8 +14,8 @@ export const defaultProviders: Record<string, ModelProvider> = {
     id: 'zgi',
     name: 'zgi',
     enabled: true,
-    apiKey: '',
-    apiEndpoint: '',
+    apiKey: undefined,
+    apiEndpoint: undefined,
     models: [
       { id: 'deepseek-chat', name: 'deepseek-chat', contextSize: '200K' },
       { id: 'gpt-4', name: 'GPT-4', contextSize: '8K' },
@@ -29,7 +28,7 @@ export const defaultProviders: Record<string, ModelProvider> = {
     id: 'ollama',
     name: 'Ollama',
     enabled: true,
-    apiEndpoint: '',
+    apiEndpoint: undefined,
     models: [],
     customModels: [],
     useStreamMode: false,

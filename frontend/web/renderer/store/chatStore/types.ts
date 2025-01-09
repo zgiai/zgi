@@ -11,7 +11,7 @@ export interface ChatStore {
   isLoadingMap: Record<string, boolean> // Loading status for each chat
   isFirstOpen: boolean // Flag indicating if it's first open
 
-  selectedModel: ModelConfig
+  selectedModel?: ModelConfig
   fileInputRef: React.RefObject<HTMLInputElement>
   attachments: File[] // New attachment state
   inputMessage: string // New message state

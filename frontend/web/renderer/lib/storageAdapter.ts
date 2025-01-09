@@ -1,6 +1,5 @@
 import { STORAGE_ADAPTER_KEYS } from '@/constants/storageAdapterKey'
-import { INVOKE_CHANNLE } from '@shared/constants/channleName'
-import { isDesktop } from './utils'
+import { isDesktop } from './browse_utils'
 
 /**
  * Storage adapter interface
@@ -33,7 +32,6 @@ class DesktopStorageAdapter implements StorageAdapter {
  * Web storage adapter
  */
 class WebStorageAdapter implements StorageAdapter {
-  // private readonly STORAGE_KEY = 'chat_store_data'
   private key: string
   constructor(key: string) {
     this.key = key
