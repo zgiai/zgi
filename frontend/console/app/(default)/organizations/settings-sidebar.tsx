@@ -22,13 +22,13 @@ export default function SettingsSidebar() {
           label: "New Organization",
           icon: <svg className={`shrink-0 fill-current`} viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="8774" width="16" height="16"><path d="M512 62c-248.4 0-450 201.6-450 450s201.6 450 450 450 450-201.6 450-450-201.6-450-450-450zM725.282 544.733h-172.602v172.611c0 20.753-17.487 38.232-38.242 38.232-20.753 0-38.232-17.478-38.232-38.232v-172.611h-172.62c-20.745 0-38.232-17.478-38.232-38.232 0-20.764 17.487-38.242 38.242-38.242h172.611v-172.611c0-20.753 17.478-38.232 38.232-38.232s38.242 17.478 38.242 38.232v172.62h172.602c20.764 0 38.242 17.469 38.242 38.232 0 21.843-17.478 38.232-38.242 38.232z" p-id="8775"></path></svg>
         },
-        {
-          href: "/organizations/settings",
-          label: "Settings",
-          icon: <svg className={`shrink-0 fill-current`} viewBox="0 0 16 16" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="7526" width="16" height="16">
-            <path d="M5 9a1 1 0 1 1 0-2h6a1 1 0 0 1 0 2H5ZM1 4a1 1 0 1 1 0-2h14a1 1 0 0 1 0 2H1Zm0 10a1 1 0 0 1 0-2h14a1 1 0 0 1 0 2H1Z" />
-          </svg>
-        },
+        // {
+        //   href: "/organizations/settings",
+        //   label: "Settings",
+        //   icon: <svg className={`shrink-0 fill-current`} viewBox="0 0 16 16" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="7526" width="16" height="16">
+        //     <path d="M5 9a1 1 0 1 1 0-2h6a1 1 0 0 1 0 2H5ZM1 4a1 1 0 1 1 0-2h14a1 1 0 0 1 0 2H1Zm0 10a1 1 0 0 1 0-2h14a1 1 0 0 1 0 2H1Z" />
+        //   </svg>
+        // },
       ]
     }
   ]

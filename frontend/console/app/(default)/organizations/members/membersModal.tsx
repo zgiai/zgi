@@ -10,15 +10,16 @@ export function DeleteMemberModal({ isOpen, setIsOpen, currentMember, getMemberL
         setLoading(true);
         try {
             const res = await adminDeleteUser({ user_id: currentMember?.id });
-            if (res.status_code === 200) {
+            if (res?.status_code === 200) {
                 setIsOpen(false);
                 message.success("Delete member success");
                 getMemberList();
             } else {
-                message.error(res.message || "Delete member failed");
+                message.error(res.status_message || "Delete member failed");
             }
         } catch (error) {
             console.error(error);
+            message.error("Delete member failed");
         } finally {
             setLoading(false);
         }
@@ -46,10 +47,11 @@ export function SetAdminModal({ isOpen, setIsOpen, currentMember, getMemberList 
                 message.success("Set admin success");
                 getMemberList();
             } else {
-                message.error(res.message || "Set admin failed");
+                message.error(res.status_message || "Set admin failed");
             }
         } catch (error) {
             console.error(error);
+            message.error("Set admin failed");
         } finally {
             setLoading(false);
         }
@@ -78,10 +80,11 @@ export function UnsetAdminModal({ isOpen, setIsOpen, currentMember, getMemberLis
                 message.success("Unset admin success");
                 getMemberList();
             } else {
-                message.error(res.message || "Unset admin failed");
+                message.error(res.status_message || "Unset admin failed");
             }
         } catch (error) {
             console.error(error);
+            message.error("Unset admin failed");
         } finally {
             setLoading(false);
         }
