@@ -10,7 +10,7 @@ from app.core.database import get_db, get_sync_db
 from ..service.llm_service import LLMService
 from ..schemas.chat import ChatCompletionRequest, ChatCompletionResponse, AddChatMessagesRequest, ChatMessagesResponse, \
     ConversationListResponse, ChatMessages, Message, ConversationResponse
-from app.core.auth import get_api_key, get_current_user
+from app.core.auth import get_api_key, get_current_user, get_current_user_or_none
 from ... import User, Conversation, ChatMessage
 
 # Configure logging
@@ -128,7 +128,7 @@ async def create_chat_completion(
 @router.post("/chat/add_chat_messages")
 async def add_chat_messages(
         request: AddChatMessagesRequest,
-        user: User = Depends(get_current_user),
+        user: User = Depends(get_current_user_or_none),
         db: Session = Depends(get_sync_db)
 ):
     """
@@ -166,7 +166,7 @@ async def add_chat_messages(
 async def get_conversations(
         page_size: Optional[int] = 10,
         page_num: Optional[int] = 1,
-        user: User = Depends(get_current_user),
+        user: User = Depends(get_current_user_or_none),
         db: Session = Depends(get_sync_db)
 ):
     """
@@ -189,9 +189,12 @@ async def get_conversations(
         # Query conversations for the current user
         count_query = (
             db.query(Conversation)
-            .filter(Conversation.user_id == user.id)
             .order_by(Conversation.created_at.desc())
         )
+        if user:
+            count_query = count_query.filter(Conversation.user_id == user.id)
+        else:
+            count_query = count_query.filter(Conversation.user_id.is_(None))
         total = count_query.count()
         if page_num and page_size:
             # Calculate offset
@@ -235,7 +238,7 @@ async def get_chat_history(
         session_id: str,
         page_size: Optional[int] = 10,
         page_num: Optional[int] = 1,
-        user: User = Depends(get_current_user),
+        user: User = Depends(get_current_user_or_none),
         db: Session = Depends(get_sync_db)
 ):
     """
@@ -258,7 +261,9 @@ async def get_chat_history(
         conversation = db.query(Conversation).filter_by(session_id=session_id).first()
         if not conversation:
             raise ValueError(f"No conversation found with session_id: {session_id}")
-        if conversation.user_id != user.id and not user.is_superuser:
+        user_id = user.id if user else None
+        user_type = user.user_type if user else 0
+        if conversation.user_id != user_id and user_type == 0:
             raise ValueError("You are not authorized to access this conversation")
         count_query = (
             db.query(ChatMessage)

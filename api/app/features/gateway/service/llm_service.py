@@ -116,15 +116,16 @@ class LLMService:
         messages = request.messages
 
         # Retrieve or create conversation
+        user_id = user.id if user else None
         if session_id:
             conversation = db.query(Conversation).filter_by(session_id=session_id).first()
             if not conversation:
                 raise ValueError(f"Conversation {session_id} not found")
-            if conversation.user_id != user.id:
+            if conversation.user_id != user_id:
                 raise ValueError("User does not have access to this conversation")
         else:
             session_id = str(uuid.uuid4())
-            conversation = Conversation(session_id=session_id, user_id=user.id)
+            conversation = Conversation(session_id=session_id, user_id=user_id)
             db.add(conversation)
             db.commit()
             db.refresh(conversation)

@@ -66,11 +66,14 @@ def list_organizations(
     user_id: Optional[int] = None,
     page_size: Optional[int] = 10,
     page_num: Optional[int] = 1,
+    is_active: Optional[bool] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_sync_db)
 ):
     """List organizations for current user"""
-    query = db.query(Organization).filter(Organization.is_active == True)
+    query = db.query(Organization)
+    if is_active is not None:
+        query = query.filter(Organization.is_active == is_active)
     if not current_user.is_superuser and current_user.user_type == 0:
         query = query.join(OrganizationMember).filter(OrganizationMember.user_id == current_user.id)
     else:
@@ -129,7 +132,7 @@ def update_organization(
         raise HTTPException(status_code=404, detail="Organization not found")
 
     # Update organization
-    update_data = org_data.model_dump(exclude_unset=False)
+    update_data = org_data.model_dump(exclude_unset=True, exclude_none=True)
     if "is_active" not in update_data:
         update_data["is_active"] = org.is_active
     

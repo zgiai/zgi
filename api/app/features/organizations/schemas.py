@@ -17,7 +17,7 @@ class OrganizationCreate(OrganizationBase):
 class OrganizationUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     description: Optional[str] = Field(None, max_length=1000)
-    is_active: Optional[bool] = True
+    is_active: Optional[bool] = None
 
     model_config = ConfigDict(
         from_attributes=True,
