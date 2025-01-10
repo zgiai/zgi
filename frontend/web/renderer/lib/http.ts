@@ -6,8 +6,8 @@ import { getFetchApiKey } from './utils'
 export const API_CONFIG = {
   ADMIN: 'https://api.zgi.ai',
   CLIENT: 'https://api.zgi.ai',
-  // COMMON: '/api',
-  COMMON: 'http://localhost:7007',
+  COMMON: '/api',
+  // COMMON: 'http://localhost:7007',
 } as const
 
 // Type for API endpoints
