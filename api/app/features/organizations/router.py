@@ -197,7 +197,7 @@ def set_admins(organization_id: Annotated[int, Body(embed=True)],
             OrganizationMember.user_id == user_id
         ).first()
         if member:
-            member.type = True
+            member.is_admin = True
             db.add(member)
             db.commit()
         else:
