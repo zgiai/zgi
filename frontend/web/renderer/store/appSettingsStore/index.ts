@@ -2,7 +2,7 @@ import { OLLAMA_DEFAULT_SERVER_API, defaultProviders } from '@/constants'
 import { STORAGE_ADAPTER_KEYS } from '@/constants/storageAdapterKey'
 import { getStorageAdapter } from '@/lib/storageAdapter'
 import { createSubsStore } from '@/lib/store_utils'
-import { getOllamaModels } from '@/server/chat.server'
+import { getOllamaModels } from '@/server/ollama.server'
 import type { ModelConfig } from '@/types/chat'
 import subscribeInit from './subscribe'
 import type { AppSettingsStore, ModelProvider } from './types'
@@ -23,7 +23,6 @@ export const useAppSettingsStore = createSubsStore<AppSettingsStore>((set, get) 
     allProvidersSelectedModels: {},
 
     init: async () => {
-      console.log('init')
       const { generateModelsOptions, loadSettings } = get()
       await loadSettings()
 

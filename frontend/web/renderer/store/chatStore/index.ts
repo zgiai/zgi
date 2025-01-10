@@ -1,6 +1,7 @@
 import { STORAGE_ADAPTER_KEYS } from '@/constants/storageAdapterKey'
 import { getStorageAdapter } from '@/lib/storageAdapter'
-import { localStreamChatCompletions, streamChatCompletions } from '@/server/chat.server'
+import { streamChatCompletions } from '@/server/chat.server'
+import { localStreamChatCompletions } from '@/server/ollama.server'
 import { type ChatHistory, type ChatMessage, StreamChatMode } from '@/types/chat'
 import { debounce } from 'lodash'
 import React from 'react'

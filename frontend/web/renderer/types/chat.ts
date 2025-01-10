@@ -92,3 +92,12 @@ export interface ModelConfig {
   isCustom?: boolean
   type?: string
 }
+
+/** Send messages and get real-time response stream */
+export interface StreamChatCompletionsParams {
+  messages: Record<string, any>[]
+  model?: string
+  temperature?: number
+  presence_penalty?: number
+  stream?: boolean
+}
