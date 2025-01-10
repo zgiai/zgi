@@ -3,6 +3,7 @@ import { debounce } from 'lodash'
 import { MessageCircle, Plus, Search } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useMemo, useState } from 'react'
+import SignInBtn from './SignInBtn'
 
 const Sidebar = () => {
   const [searchQuery, setSearchQuery] = useState('')
@@ -117,14 +118,7 @@ const Sidebar = () => {
         </ul>
       </div>
 
-      <div className="mt-auto px-4 py-4">
-        <button
-          type="button"
-          className="w-full p-2 border border-gray-300 rounded-md flex items-center justify-center"
-        >
-          Sign In
-        </button>
-      </div>
+      <SignInBtn />
 
       <div className="px-4 py-2 flex justify-between items-center text-sm text-gray-500">
         <div className="flex items-center">

@@ -21,6 +21,13 @@ export const useAppSettingsStore = createSubsStore<AppSettingsStore>((set, get) 
     },
     checkResults: {},
     allProvidersSelectedModels: {},
+    user: null,
+    userFormData: {
+      email: '',
+      password: '',
+    },
+    isUserOpen: false,
+    isRegistering: false,
 
     init: async () => {
       const { generateModelsOptions, loadSettings } = get()
@@ -235,6 +242,42 @@ export const useAppSettingsStore = createSubsStore<AppSettingsStore>((set, get) 
       set({
         allProvidersSelectedModels,
       })
+    },
+    setUser: (user) => set({ user }),
+    setUserFormData: (data) =>
+      set((state) => ({
+        userFormData: {
+          ...state.userFormData,
+          ...data,
+        },
+      })),
+    resetUserFormData: () => {
+      set({
+        userFormData: {
+          email: '',
+          password: '',
+        },
+      })
+    },
+    setUserOpen: (flag) => set({ isUserOpen: flag }),
+    toggleRegistering: () => {
+      set((state) => {
+        return { isRegistering: !state.isRegistering }
+      })
+    },
+
+    handleSignIn: () => {
+      const { userFormData, setUser, resetUserFormData } = get()
+      setUser({ username: userFormData.email })
+      resetUserFormData()
+      set({ isUserOpen: false })
+    },
+
+    handleRegister: () => {
+      const { userFormData, setUser, resetUserFormData } = get()
+      setUser({ username: userFormData.email })
+      resetUserFormData()
+      set({ isUserOpen: false })
     },
   }
 })
