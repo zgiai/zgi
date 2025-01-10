@@ -1,7 +1,7 @@
 from typing import List, Optional, Tuple, Dict, Any
 from uuid import uuid4
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload, selectinload
 from sqlalchemy import and_, or_, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException
@@ -39,13 +39,14 @@ from app.features.knowledge.core.logging import (
     metrics_logger
 )
 
+
 class KnowledgeBaseService:
     """Service for managing knowledge bases"""
 
     def __init__(self, db: AsyncSession):
         self.db = db
         self.kb_settings = get_knowledge_base_settings()
-        
+
         # Initialize vector DB
         vector_settings = get_vector_db_settings()
         self.vector_db = VectorDBFactory.create(
@@ -54,17 +55,17 @@ class KnowledgeBaseService:
         )
 
         # Initialize embedding service
-        embedding_settings = get_embedding_settings()
+        self.embedding_settings = get_embedding_settings()
         self.embedding = EmbeddingFactory.create(
-            embedding_settings.PROVIDER,
-            **embedding_settings.provider_config
+            self.embedding_settings.PROVIDER,
+            **self.embedding_settings.provider_config
         )
 
     @handle_service_errors
     async def create_knowledge_base(
-        self,
-        kb_create: KnowledgeBaseCreate,
-        user_id: int
+            self,
+            kb_create: KnowledgeBaseCreate,
+            user_id: int
     ) -> ServiceResponse[KnowledgeBase]:
         """Create a new knowledge base"""
         try:
@@ -73,13 +74,16 @@ class KnowledgeBaseService:
                 raise ValidationError("Organization ID is required for organization visibility")
 
             # check collection_name
-            collection_name = f"kb_{user_id}_{kb_create.name.lower().replace(' ', '_')}_{str(uuid4())[:8]}"
             query = select(KnowledgeBase).where(KnowledgeBase.name == kb_create.name)
             result = await self.db.execute(query)
             exist_kb = result.scalars().first()
             if exist_kb:
                 raise ValidationError("Knowledge base with this name already exists")
+            collection_name = f"kb_{user_id}_{kb_create.name.lower().replace(' ', '_')}_{str(uuid4())[:8]}"
             # Create knowledge base
+            # get model from embedding setting
+            kb_create.model = self.embedding_settings.MODEL
+            embedding_dimension = self.embedding.get_dimension()
             kb = KnowledgeBase(
                 name=kb_create.name,
                 description=kb_create.description,
@@ -87,13 +91,13 @@ class KnowledgeBaseService:
                 owner_id=user_id,
                 organization_id=kb_create.organization_id,
                 model=kb_create.model or self.kb_settings.DEFAULT_EMBEDDING_MODEL,
-                dimension=self.kb_settings.DEFAULT_EMBEDDING_DIMENSION,
+                dimension=embedding_dimension,
                 collection_name=collection_name,
                 meta_info=kb_create.metadata,
                 tags=kb_create.tags,
                 status=Status.ACTIVE.value  # Use the value instead of the enum
             )
-            
+
             # Create vector collection
             success = await self.vector_db.create_collection(
                 kb.collection_name,
@@ -101,12 +105,12 @@ class KnowledgeBaseService:
             )
             if not success:
                 raise HTTPException(status_code=500, detail="Failed to create vector collection")
-            
+
             # Save to database
             self.db.add(kb)
             await self.db.commit()
             await self.db.refresh(kb)
-            
+
             # Log audit
             audit_logger.log_access(
                 user_id,
@@ -115,7 +119,7 @@ class KnowledgeBaseService:
                 "create",
                 "success"
             )
-            
+
             # Return response
             return ServiceResponse(
                 success=True,
@@ -123,7 +127,7 @@ class KnowledgeBaseService:
                 message="Created",
                 data=kb.to_dict()
             )
-            
+
         except Exception as e:
             await self.db.rollback()
             # Try to cleanup vector collection if created
@@ -136,9 +140,9 @@ class KnowledgeBaseService:
     @handle_service_errors
     @async_cache(ttl=3600)
     async def get_knowledge_base(
-        self,
-        kb_id: int,
-        user_id: int
+            self,
+            kb_id: int,
+            user_id: int
     ) -> ServiceResponse[KnowledgeBase]:
         """Get a knowledge base by ID"""
         query = select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
@@ -146,11 +150,11 @@ class KnowledgeBaseService:
         kb = result.scalars().first()
         if not kb:
             raise NotFoundError("Knowledge base not found")
-            
+
         # Check access
         if not self._can_access(kb, user_id):
             raise AuthorizationError("Not authorized to access this knowledge base")
-            
+
         audit_logger.log_access(
             user_id,
             "knowledge_base",
@@ -158,7 +162,7 @@ class KnowledgeBaseService:
             "read",
             "success"
         )
-        
+
         return ServiceResponse(
             success=True,
             code=200,
@@ -168,10 +172,10 @@ class KnowledgeBaseService:
 
     @handle_service_errors
     async def update_knowledge_base(
-        self,
-        kb_id: int,
-        kb_update: KnowledgeBaseUpdate,
-        user_id: int
+            self,
+            kb_id: int,
+            kb_update: KnowledgeBaseUpdate,
+            user_id: int
     ) -> ServiceResponse[KnowledgeBase]:
         """Update a knowledge base"""
         query = select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
@@ -179,18 +183,18 @@ class KnowledgeBaseService:
         kb = result.scalars().first()
         if not kb:
             raise NotFoundError(f"Knowledge base {kb_id} not found")
-            
+
         # Check ownership
         if kb.owner_id != user_id:
             raise AuthorizationError("Not authorized to update this knowledge base")
-            
+
         # Update fields
         for field, value in kb_update.dict(exclude_unset=True).items():
             setattr(kb, field, value)
         self.db.add(kb)
         await self.db.commit()
         await self.db.refresh(kb)
-        
+
         audit_logger.log_access(
             user_id,
             "knowledge_base",
@@ -208,9 +212,9 @@ class KnowledgeBaseService:
 
     @handle_service_errors
     async def delete_knowledge_base(
-        self,
-        kb_id: int,
-        user_id: int
+            self,
+            kb_id: int,
+            user_id: int
     ) -> ServiceResponse[None]:
         """Delete a knowledge base"""
         query = select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
@@ -218,20 +222,20 @@ class KnowledgeBaseService:
         kb = result.scalars().first()
         if not kb:
             raise NotFoundError(f"Knowledge base {kb_id} not found")
-            
+
         # Check ownership
         if kb.owner_id != user_id:
             raise AuthorizationError("Not authorized to delete this knowledge base")
-            
+
         try:
             # Delete vector collection
             await self.vector_db.delete_collection(kb.collection_name)
-            
+
             # Mark as deleted in database
             kb.status = Status.DELETED.value
             self.db.add(kb)
             await self.db.commit()
-            
+
             audit_logger.log_access(
                 user_id,
                 "knowledge_base",
@@ -239,9 +243,9 @@ class KnowledgeBaseService:
                 "delete",
                 "success"
             )
-            
+
             return ServiceResponse.ok()
-            
+
         except Exception as e:
             await self.db.rollback()
             raise
@@ -250,33 +254,33 @@ class KnowledgeBaseService:
         """Check if user can access knowledge base"""
         if kb.status == Status.DELETED.value:
             return False
-            
+
         if kb.owner_id == user_id:
             return True
-            
+
         if kb.visibility == Visibility.PUBLIC:
             return True
-            
+
         if kb.visibility == Visibility.ORGANIZATION:
             # TODO: Check organization membership
             return True
-            
+
         return False
 
     @handle_service_errors
     async def list_knowledge_bases(
-        self,
-        user_id: int,
-        page_num: int = 1,
-        page_size: int = 10,
-        organization_id: Optional[int] = None
+            self,
+            user_id: int,
+            page_num: int = 1,
+            page_size: int = 10,
+            organization_id: Optional[int] = None
     ) -> ServiceResponse[KnowledgeBaseList]:
         """List knowledge bases"""
         try:
             # Build query
             # 计算偏移量
             skip = (page_num - 1) * page_size
-            
+
             # 构建查询
             query = select(KnowledgeBase).where(
                 and_(
@@ -291,63 +295,67 @@ class KnowledgeBaseService:
                     )
                 )
             )
-            
+
             # Print query for debugging
             print(f"Query: {query}")
             print(f"User ID: {user_id}")
-            
+
             # Get total count
             count_query = select(func.count()).select_from(query.subquery())
             total = await self.db.scalar(count_query) or 0
-            
+
             print(f"Total: {total}")
             # Get items with pagination
-            query = query.offset(skip).limit(page_size)
+            query = (query
+                     .options(selectinload(KnowledgeBase.owner))
+                     .offset(skip).limit(page_size))
             result = await self.db.execute(query)
             items = result.scalars().all()
-            
+
             print(f"Items: {items}")
-            
+
             # Convert to response model
-            response_items = [kb.to_dict() for kb in items]
+            response_items = [
+                {**kb.to_dict(), "owner_name": kb.owner.username if kb.owner else None}
+                for kb in items]
             response = {"total": total, "items": response_items}
-            
+
             return ServiceResponse(
                 success=True,
                 code=200,
                 message="Success",
                 data=response
             )
-            
+
         except Exception as e:
             print(f"Error: {str(e)}")
             raise ServiceError(str(e))
 
     @handle_service_errors(wrap_response=False)
     async def search(
-        self,
-        kb_id: int,
-        query: SearchQuery,
-        user_id: int
+            self,
+            kb_id: int,
+            query: SearchQuery,
+            user_id: int
     ) -> List[Dict[str, Any]]:
         """Search documents in a knowledge base"""
         # Get knowledge base and check access
         query_knowledge = select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
         query_result = await self.db.execute(query_knowledge)
         kb = query_result.scalars().first()
-        
+
         if not kb:
             raise NotFoundError(f"Knowledge base {kb_id} not found")
-            
+
         if not self._can_access(kb, user_id):
             raise AuthorizationError("Not authorized to access this knowledge base")
-        
+
         try:
             # Generate query embedding
             embeddings = await self.embedding.get_embeddings([query.text])
             if not embeddings:
                 raise Exception("Failed to generate query embedding")
-            
+
             # Search vector database
             results = await self.vector_db.search(
                 collection_name=kb.collection_name,
@@ -355,7 +363,7 @@ class KnowledgeBaseService:
                 top_k=query.top_k,
                 filters=None
             )
-            
+
             # Log access
             audit_logger.log_access(
                 user_id,
@@ -364,24 +372,24 @@ class KnowledgeBaseService:
                 "read",
                 "success"
             )
-            
+
             return results
-            
+
         except Exception as e:
             raise
 
     @handle_service_errors
     async def clone_knowledge_base(
-        self,
-        kb_id: int,
-        name: str,
-        user_id: int
+            self,
+            kb_id: int,
+            name: str,
+            user_id: int
     ) -> ServiceResponse[KnowledgeBase]:
         """Clone a knowledge base"""
         query = select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
         result = await self.db.execute(query)
         original_kb = result.scalars().first()
-        
+
         if not original_kb:
             raise NotFoundError(f"Knowledge base {kb_id} not found")
 
@@ -413,12 +421,12 @@ class KnowledgeBaseService:
         )
         if not success:
             raise HTTPException(status_code=500, detail="Failed to create vector collection")
-        
+
         # 保存到数据库
         self.db.add(new_kb)
         await self.db.commit()
         await self.db.refresh(new_kb)
-        
+
         # 记录审计日志
         audit_logger.log_access(
             user_id,
@@ -427,7 +435,7 @@ class KnowledgeBaseService:
             "clone",
             "success"
         )
-        
+
         # 返回响应
         return ServiceResponse(
             success=True,

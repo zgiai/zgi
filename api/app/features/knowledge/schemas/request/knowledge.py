@@ -7,7 +7,7 @@ class KnowledgeBaseCreate(BaseModel):
     name: constr(min_length=1, max_length=255) = Field(..., description="Name of the knowledge base")
     description: Optional[str] = Field(None, description="Description of the knowledge base")
     visibility: Visibility = Field(
-        default=Visibility.PRIVATE,
+        default=Visibility.PUBLIC,
         description="Visibility of the knowledge base"
     )
     model: Optional[str] = Field(

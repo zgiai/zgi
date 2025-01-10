@@ -8,17 +8,20 @@ from app.features.organizations.models import Organization
 
 import enum
 
+
 class Visibility(str, enum.Enum):
     """Knowledge base visibility"""
     PRIVATE = "PRIVATE"
     PUBLIC = "PUBLIC"
     ORGANIZATION = "ORGANIZATION"
 
+
 class Status(int, enum.Enum):
     """Knowledge base status"""
     ACTIVE = 1
     DISABLED = 0
     DELETED = -1
+
 
 class KnowledgeBase(Base):
     """Knowledge base model"""
@@ -29,27 +32,27 @@ class KnowledgeBase(Base):
     description = Column(Text, nullable=True)
     visibility = Column(Enum(Visibility), default=Visibility.PRIVATE)
     status = Column(Integer, default=Status.ACTIVE)
-    
+
     # Vector database settings
     collection_name = Column(String(255), unique=True, nullable=False)
     model = Column(String(255), nullable=False, default="text-embedding-3-small")
     dimension = Column(Integer, nullable=False, default=1536)
-    
+
     # Statistics
     document_count = Column(Integer, default=0)
     total_chunks = Column(Integer, default=0)
     total_tokens = Column(Integer, default=0)
-    
+
     # Metadata
     meta_info = Column(JSON, nullable=True)
     tags = Column(JSON, nullable=True)
-    
+
     # Ownership and timestamps
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+
     # Relationships
     owner = relationship("app.features.users.models.User", back_populates="knowledge_bases")
     documents = relationship("Document", back_populates="knowledge_base", cascade="all, delete-orphan")

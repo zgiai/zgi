@@ -1,4 +1,6 @@
 from typing import Optional, TypeVar, Generic, Any, Dict
+
+from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict
 from enum import Enum
 
@@ -16,7 +18,7 @@ class ErrorCode(int, Enum):
     INTERNAL_ERROR = 500
     SERVICE_UNAVAILABLE = 503
 
-class ServiceError(Exception):
+class ServiceError(HTTPException):
     """Base exception for service errors"""
     def __init__(
         self,
@@ -27,7 +29,10 @@ class ServiceError(Exception):
         self.message = message
         self.code = code
         self.details = details or {}
-        super().__init__(message)
+        super().__init__(
+            status_code=code,
+            detail=message
+        )
 
 class ServiceResponse(BaseModel, Generic[T]):
     """Standard service response wrapper"""
