@@ -3,6 +3,7 @@ import { isDesktop } from './browse_utils'
 
 /**
  * Storage adapter interface
+ * Storage adapter interface
  */
 interface StorageAdapter {
   save: (data: any) => Promise<void>
@@ -10,6 +11,7 @@ interface StorageAdapter {
 }
 
 /**
+ * Desktop storage adapter
  * Desktop storage adapter
  */
 class DesktopStorageAdapter implements StorageAdapter {
@@ -29,6 +31,7 @@ class DesktopStorageAdapter implements StorageAdapter {
 }
 
 /**
+ * Web storage adapter
  * Web storage adapter
  */
 class WebStorageAdapter implements StorageAdapter {
@@ -58,6 +61,7 @@ class WebStorageAdapter implements StorageAdapter {
 }
 
 /**
+ * Get storage adapter for current environment
  * Get storage adapter for current environment
  */
 export const getStorageAdapter = ({ key }: { key: string }): StorageAdapter => {

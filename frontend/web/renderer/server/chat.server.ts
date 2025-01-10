@@ -7,6 +7,9 @@ import { toast } from 'react-toastify'
  * Send messages and get real-time response stream
  * @param params Request parameters including messages and configuration options
  * @returns Returns a readable stream
+ * Send messages and get real-time response stream
+ * @param params Request parameters including messages and configuration options
+ * @returns Returns a readable stream
  */
 export const streamChatCompletions = async (params: StreamChatCompletionsParams) => {
   const { messages, ...options } = params

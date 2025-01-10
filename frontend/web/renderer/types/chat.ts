@@ -18,6 +18,7 @@ export interface ChatMessage {
 }
 
 /** Request parameters for chat completion API */
+/** Request parameters for chat completion API */
 export interface ChatCompletionRequest {
   /** Model identifier */
   model: string
@@ -56,6 +57,7 @@ export interface ChatCompletionResponse {
   }
 }
 
+/** Chat history entry structure */
 /** Chat history entry structure */
 export interface ChatHistory {
   /** Chat history ID */
