@@ -1,9 +1,8 @@
-import { OLLAMA_DEFAULT_SERVER_API } from '@/constants'
+import { http } from '@/lib/http'
+import { message } from '@/lib/tips_utils'
 import { getAPIProxyAddress, getFetchApiKey } from '@/lib/utils'
-import { useAppSettingsStore } from '@/store/appSettingsStore'
-import type { ModelConfig, StreamChatCompletionsParams } from '@/types/chat'
-import ollama, { Ollama } from 'ollama/dist/browser'
-
+import type { FetchChatMessage, StreamChatCompletionsParams } from '@/types/chat'
+import { toast } from 'react-toastify'
 /**
  * Send messages and get real-time response stream
  * @param params Request parameters including messages and configuration options
@@ -29,9 +28,33 @@ export const streamChatCompletions = async (params: StreamChatCompletionsParams)
       max_tokens: 4096,
     }),
   })
-
-  if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
+  if (!response.ok) {
+    message.error(`HTTP error! status: ${response.status}`)
+    throw new Error(`HTTP error! status: ${response.status}`)
+  }
   const reader = response.body?.getReader()
-  if (!reader) throw new Error('No reader available')
+  if (!reader) {
+    message.error('No reader available')
+    throw new Error('No reader available')
+  }
   return reader
+}
+
+/** Add a hidden record */
+export const addChatMessages = (data: {
+  session_id?: string
+  messages: FetchChatMessage
+}) => {
+  return http.post('/v1/chat/add_chat_messages', {
+    data,
+  })
+}
+
+/** Get a single history record */
+export const getChatHistory = (session_id: string) => {
+  return http.get('/v1/chat/chat_history', {
+    params: {
+      session_id,
+    },
+  })
 }

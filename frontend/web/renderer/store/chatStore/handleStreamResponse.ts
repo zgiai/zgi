@@ -1,3 +1,4 @@
+import { message } from '@/lib/tips_utils'
 import { type ChatMessage, StreamChatMode } from '@/types/chat'
 import type { ChatResponse } from 'ollama/dist/browser'
 import type { ChatStore } from './types'
@@ -56,7 +57,6 @@ export const handleStreamResponse = async ({
         const lines = chunk
           .split('\n')
           .filter((line) => line.trim() !== '' && line.trim() !== 'data: [DONE]')
-
         for (const line of lines) {
           if (line.startsWith('data: ')) {
             try {
@@ -77,6 +77,12 @@ export const handleStreamResponse = async ({
               onError?.(error as Error)
             }
           }
+        }
+
+        // error tips
+        if (lines?.length === 1 && lines?.[0]?.includes('status_message')) {
+          const errorRes = JSON.parse(lines[0])
+          message.error(errorRes?.status_message)
         }
       }
     }

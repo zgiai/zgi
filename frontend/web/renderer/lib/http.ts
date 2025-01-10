@@ -1,12 +1,13 @@
 import axios, { type AxiosInstance, type AxiosRequestConfig } from 'axios'
+import { message } from './tips_utils'
 import { getFetchApiKey } from './utils'
 
 // Define API configurations
 export const API_CONFIG = {
   ADMIN: 'https://api.zgi.ai',
   CLIENT: 'https://api.zgi.ai',
-  // COMMON: '/api',
-  COMMON: 'http://localhost:7007',
+  COMMON: '/api',
+  // COMMON: 'http://localhost:7007',
 } as const
 
 // Type for API endpoints
@@ -17,10 +18,11 @@ interface HttpConfig extends AxiosRequestConfig {
 }
 
 class Http {
+  private static instance: Http | null = null
   private instances: Map<ApiEndpoint, AxiosInstance>
   private defaultEndpoint: ApiEndpoint = 'COMMON'
 
-  constructor() {
+  private constructor() {
     // Initialize instances map
     this.instances = new Map()
     // Create axios instance for each endpoint
@@ -42,14 +44,30 @@ class Http {
     }
   }
 
+  public static getInstance(): Http {
+    if (this.instance === null) {
+      this.instance = new Http()
+    }
+    return this.instance
+  }
+
+  public resetBaseURL({ endpoint, newBaseURL }: { endpoint?: ApiEndpoint; newBaseURL: string }) {
+    const instance = this.instances.get(endpoint || 'COMMON')
+    if (instance) {
+      instance.defaults.baseURL = newBaseURL
+    } else {
+      throw new Error(`No instance found for endpoint: ${endpoint}`)
+    }
+  }
+
   private setupInterceptors(instance: AxiosInstance) {
     // Request interceptor
     instance.interceptors.request.use(
       (config) => {
-        const apiKey = getFetchApiKey()
-        if (config.headers && apiKey) {
-          config.headers.Authorization = `Bearer ${apiKey}`
-        }
+        // const apiKey = getFetchApiKey()
+        // if (config.headers && apiKey) {
+        //   config.headers.Authorization = `Bearer ${apiKey}`
+        // }
         return config
       },
       (error) => {
@@ -77,10 +95,10 @@ class Http {
               console.error('Resource not found')
               break
             case 500:
-              console.error('Server error')
+              message.error('Server error')
               break
             default:
-              console.error('An error occurred')
+              message.error('An error occurred')
           }
         }
         return Promise.reject(error)
@@ -121,7 +139,7 @@ class Http {
     config?: HttpConfig,
   ): Promise<T> {
     const { endpoint, ...axiosConfig } = config ?? {}
-    const instance = this.getInstance(endpoint)
+    const instance = this.getInstance('COMMON')
 
     if (config?.responseType === 'stream') {
       const response = await instance.post<T>(url, data, {
@@ -167,4 +185,4 @@ class Http {
 }
 
 // Create and export a single instance
-export const http = new Http()
+export const http = Http.getInstance()

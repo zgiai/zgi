@@ -1,6 +1,7 @@
 import type { AppProps } from 'next/app'
 import localFont from 'next/font/local'
 import React from 'react'
+import { ToastContainer } from 'react-toastify'
 import '@radix-ui/themes/styles.css'
 import '../styles/globals.css'
 
@@ -67,6 +68,7 @@ function MyApp({ Component, pageProps }: AppProps) {
         }
       `}</style>
       </div>
+      <ToastContainer />
     </React.Fragment>
   )
 }
