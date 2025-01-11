@@ -7,6 +7,8 @@ export const INVOKE_CHANNLE = {
   saveChats: 'save-chats',
   saveAppSettings: 'saveAppSettings',
   loadAppSettings: 'loadAppSettings',
+  saveUserInfo: 'saveUserInfo',
+  loadUserInfo: 'loadUserInfo',
 }
 
 /** Notifications from the renderer process, listening for callback events */

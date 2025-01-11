@@ -118,7 +118,7 @@ class Http {
   // Generic request method
   private async request<T>(config: HttpConfig): Promise<T> {
     const { endpoint, ...axiosConfig } = config
-    const instance = this.getInstance(endpoint)
+    const instance = this.getInstance('COMMON')
     const response = await instance.request<unknown, T>(axiosConfig)
     return response
   }
@@ -133,7 +133,7 @@ class Http {
   }
 
   // POST method
-  public async post<T>(
+  public async post<T = any>(
     url: string,
     data?: Record<string, unknown>,
     config?: HttpConfig,

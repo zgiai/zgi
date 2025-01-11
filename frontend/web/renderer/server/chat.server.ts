@@ -2,7 +2,7 @@ import { http } from '@/lib/http'
 import { message } from '@/lib/tips_utils'
 import { getAPIProxyAddress, getFetchApiKey } from '@/lib/utils'
 import type { FetchChatMessage, StreamChatCompletionsParams } from '@/types/chat'
-import { toast } from 'react-toastify'
+
 /**
  * Send messages and get real-time response stream
  * @param params Request parameters including messages and configuration options

@@ -1,4 +1,4 @@
-import { useAppSettingsStore } from '@/store/appSettingsStore'
+import { useUserStore } from '@/store/userStore'
 import { Cross2Icon } from '@radix-ui/react-icons'
 import React, { useEffect, useState } from 'react'
 
@@ -13,7 +13,7 @@ const SignInBtn = () => {
     toggleRegistering,
     handleSignIn,
     handleRegister,
-  } = useAppSettingsStore()
+  } = useUserStore()
   const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState('')
 
@@ -69,7 +69,7 @@ const SignInBtn = () => {
                     name="username"
                     type="text"
                     placeholder="Username"
-                    value={userFormData.username || ''}
+                    value={userFormData?.username || ''}
                     onChange={(e) => setUserFormData({ username: e.target.value })}
                     className="border p-2 w-full"
                     required

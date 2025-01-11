@@ -119,30 +119,6 @@ export interface AppSettingsStore {
    * Generates all model data for selected language models
    */
   generateModelsOptions: () => void
-
-  user: User | null
-  setUser: (user: User | null) => void
-
-  userFormData:
-    | {
-        email: string
-        password: string
-      }
-    | {
-        email: string
-        username: string
-        password: string
-        confirmPassword: string
-      }
-  setUserFormData: (data: Partial<{ email: string; password: string }>) => void
-  resetUserFormData: () => void
-
-  isUserOpen: boolean
-  isRegistering: boolean
-  setUserOpen: (flag: boolean) => void
-  toggleRegistering: () => void
-  handleSignIn: () => void
-  handleRegister: () => void
 }
 
 /**
@@ -166,9 +142,4 @@ export interface OllamaConfig extends ModelProvider {
  */
 export interface StorageData {
   providers: Record<string, ModelProvider>
-}
-
-export interface User {
-  username: string
-  email?: string
 }
