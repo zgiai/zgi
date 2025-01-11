@@ -2,7 +2,7 @@
 
 import { acceptInvite, getOrgInfoByToken } from '@/services/organization';
 import { message } from 'antd';
-import { motion } from 'framer-motion';
+import { motion } from 'framer';
 import { useState, useEffect } from 'react';
 
 export default function InvitePage({ token }: { token: string }) {
