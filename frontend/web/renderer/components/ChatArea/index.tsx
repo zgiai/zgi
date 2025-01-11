@@ -1,10 +1,5 @@
 import { useChatStore } from '@/store/chatStore'
-import { Bot, FileText, User } from 'lucide-react'
-import { ImageIcon } from 'lucide-react'
 import React, { useEffect, useRef, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import { PrismLight as SyntaxHighlighter } from 'react-syntax-highlighter'
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/cjs/styles/prism'
 import MessageItem from './MessageItem'
 
 // Chat area component

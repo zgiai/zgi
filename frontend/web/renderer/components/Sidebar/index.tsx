@@ -1,4 +1,5 @@
 import { useChatStore } from '@/store/chatStore'
+import { ReloadIcon } from '@radix-ui/react-icons'
 import { debounce } from 'lodash'
 import { MessageCircle, Plus, Search } from 'lucide-react'
 import type React from 'react'
@@ -8,7 +9,14 @@ import SignInBtn from './SignInBtn'
 const Sidebar = () => {
   const [searchQuery, setSearchQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
-  const { chatHistories, currentChatId, createChat, setCurrentChatId, deleteChat } = useChatStore()
+  const {
+    chatHistories,
+    currentChatId,
+    createChat,
+    setCurrentChatId,
+    deleteChat,
+    createChatLoading,
+  } = useChatStore()
 
   // Use lodash debounce
   const debouncedSearch = useMemo(
@@ -45,8 +53,13 @@ const Sidebar = () => {
         type="button"
         onClick={createChat}
         className="m-4 p-2 bg-black text-white rounded-md flex items-center justify-center hover:bg-gray-800"
+        disabled={createChatLoading}
       >
-        <Plus className="mr-2" size={18} />
+        {createChatLoading ? (
+          <ReloadIcon className="mr-2 animate-spin" />
+        ) : (
+          <Plus className="mr-2" size={18} />
+        )}
         New Chat
       </button>
 

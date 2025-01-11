@@ -12,7 +12,7 @@ interface StreamResponseConfig {
     replace?: boolean,
   ) => void
   onError?: (error: Error) => void
-  onComplete?: (fullMessage: string) => void
+  onComplete?: (data: { fullMessageStr: string; assistantMessage: any }) => void
   streamMode: StreamChatMode
 }
 
@@ -108,7 +108,7 @@ export const handleStreamResponse = async ({
         messageStreamingMap: { ...state.messageStreamingMap, [chatId]: '' },
       }))
 
-      onComplete?.(fullMessage)
+      onComplete?.({ fullMessageStr: fullMessage, assistantMessage })
     }
 
     return fullMessage

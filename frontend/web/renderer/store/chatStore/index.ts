@@ -1,6 +1,8 @@
+import { HTTP_STATUS_CODE } from '@/constants/http_status'
 import { STORAGE_ADAPTER_KEYS } from '@/constants/storageAdapterKey'
 import { getStorageAdapter } from '@/lib/storageAdapter'
-import { streamChatCompletions } from '@/server/chat.server'
+import { getAuthToken } from '@/lib/token.utils'
+import { addChatMessages, getChatHistory, streamChatCompletions } from '@/server/chat.server'
 import { localStreamChatCompletions } from '@/server/ollama.server'
 import { type ChatHistory, type ChatMessage, StreamChatMode } from '@/types/chat'
 import { debounce } from 'lodash'
@@ -87,7 +89,7 @@ export const useChatStore = create<ChatStore>()((set, get) => {
     isLoadingMap: {},
     isFirstOpen: true, // Add first open flag
     refreshModelsLoading: false,
-
+    createChatLoading: false,
     selectedModel: undefined, // Default selected model
     setSelectedModel: (model) => set({ selectedModel: model }), // Function to update selected model
     fileInputRef: React.createRef<HTMLInputElement>(),
@@ -165,21 +167,37 @@ export const useChatStore = create<ChatStore>()((set, get) => {
         console.error('Failed to send message:', error)
       }
     },
+
     /**
      * Set current chat ID
      * @param id Chat ID
      */
-    setCurrentChatId: (id) => {
+    setCurrentChatId: async (id) => {
+      const { updateChatMessages, saveChatsToDisk } = get()
+      const { access_token } = await getAuthToken()
       set({ currentChatId: id })
-      get().saveChatsToDisk()
+      if (id && !id.includes('local_notId') && access_token) {
+        const res = await getChatHistory(id)
+        if (res?.data && res.status_code === HTTP_STATUS_CODE.SUCCESS) {
+          updateChatMessages(id, res.data.messages || [])
+        }
+      }
+      saveChatsToDisk()
     },
 
     /**
      * Create new chat
      */
-    createChat: () => {
+    createChat: async () => {
+      set({
+        createChatLoading: true,
+      })
+      const id = await get().createChatSessionId({
+        chatId: undefined,
+        messages: [],
+      })
       const newChat: ChatHistory = {
-        id: Date.now().toString(),
+        id,
         title: 'New Chat',
         messages: [],
         createdAt: new Date().toISOString(),
@@ -187,6 +205,7 @@ export const useChatStore = create<ChatStore>()((set, get) => {
       set((state) => ({
         chatHistories: [newChat, ...state.chatHistories],
         currentChatId: newChat.id,
+        createChatLoading: false,
       }))
       get().saveChatsToDisk()
     },
@@ -281,22 +300,37 @@ export const useChatStore = create<ChatStore>()((set, get) => {
       storageAdapter.save(data)
     }, 1000),
 
+    createChatSessionId: async ({ chatId, messages }) => {
+      const { access_token } = await getAuthToken()
+      const localChatId = `local_notId_${Date.now().toString()}`
+      if (access_token && (!chatId || chatId?.includes('local_notId'))) {
+        const res = await addChatMessages({
+          session_id: chatId,
+          messages: messages,
+        })
+        if (res?.data && res.status_code === HTTP_STATUS_CODE.SUCCESS) {
+          return res.data?.session_id
+        }
+        return chatId || localChatId
+      }
+      return localChatId
+    },
+
     /**
      * Send message and handle AI response
-     * @param message User message
      */
     sendMessage: async (message: ChatMessage) => {
-      const { currentChatId, selectedModel } = get()
+      const { currentChatId, selectedModel, createChatSessionId } = get()
       let chatId = currentChatId
 
       // Check if already loading
       const isLoading = get().isLoadingMap[chatId || '']
       if (isLoading) return
-
       if (!chatId) {
+        const id = await createChatSessionId({ chatId: undefined, messages: [] })
         // Don't set title when creating new chat, wait for first message
         const newChat = {
-          id: Date.now().toString(),
+          id,
           title: 'New Chat',
           messages: [],
           createdAt: new Date().toISOString(),
@@ -405,21 +439,21 @@ export const useChatStore = create<ChatStore>()((set, get) => {
         }
         // If this is not a message to skip AI response, send request
         if (!message.skipAIResponse) {
+          const allMessages = [...messagesToSend, currentMessageToSend]
           let reader
           if (selectedModel?.type === StreamChatMode.ollama) {
             reader = await localStreamChatCompletions({
               model: selectedModel.id,
-              messages: [...messagesToSend, currentMessageToSend],
+              messages: allMessages,
             })
           } else {
             reader = await streamChatCompletions({
               model: selectedModel.id,
-              messages: [...messagesToSend, currentMessageToSend],
+              messages: allMessages,
               stream: true,
               temperature: 1,
             })
           }
-          console.log(selectedModel, 'selectedModel')
           await handleStreamResponse({
             reader,
             chatId,
@@ -434,9 +468,16 @@ export const useChatStore = create<ChatStore>()((set, get) => {
                 },
               }))
             },
-            onComplete: () => {
+            onComplete: async ({ assistantMessage }) => {
               // Additional actions after completion if needed
               get().saveChatsToDisk()
+              // history chat
+              if (!chatId?.includes('local_notId')) {
+                await addChatMessages({
+                  session_id: chatId,
+                  messages: [...allMessages, assistantMessage],
+                })
+              }
             },
             streamMode:
               selectedModel?.type === StreamChatMode.ollama

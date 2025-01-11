@@ -48,14 +48,12 @@ export const addChatMessages = (data: {
   session_id?: string
   messages: FetchChatMessage
 }) => {
-  return http.post('/v1/chat/add_chat_messages', {
-    data,
-  })
+  return http.post('/v1/chat/add_chat_messages', data)
 }
 
 /** Get a single history record */
 export const getChatHistory = (session_id: string) => {
-  return http.get('/v1/chat/chat_history', {
+  return http.get<any>('/v1/chat/chat_history', {
     params: {
       session_id,
     },

@@ -22,7 +22,7 @@ export const useUserStore = createSubsStore<UserStore>((set, get) => {
 
     init: async () => {
       const userInfoData = await storageAdapter.load()
-      if (userInfoData) {
+      if (!!userInfoData) {
         setAuthToken({
           access_token: userInfoData?.access_token,
           token_type: userInfoData?.token_type,

@@ -10,7 +10,7 @@ export interface ChatStore {
   messageStreamingMap: Record<string, string> // Streaming message status for each chat
   isLoadingMap: Record<string, boolean> // Loading status for each chat
   isFirstOpen: boolean // Flag indicating if it's first open
-
+  createChatLoading: boolean
   selectedModel?: ModelConfig
   fileInputRef: React.RefObject<HTMLInputElement>
   attachments: File[] // New attachment state
@@ -33,4 +33,5 @@ export interface ChatStore {
   setInputMessage: (msg: string) => void // Function to set message
   setAttachments: (files: File[]) => void // Function to set attachments
   handleSend: () => Promise<void> // Function to send message
+  createChatSessionId: (data: { chatId?: string; messages: any[] }) => Promise<string>
 }
