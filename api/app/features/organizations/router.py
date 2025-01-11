@@ -349,6 +349,22 @@ def create_invitation(
     return resp_200(data={"invite_token": invite_token, "expires_at": expires_at})
 
 
+@router.post("/verify_invite")
+def verify_invite(invite_token: Annotated[str, Body(embed=True)],
+                  db: Session = Depends(get_sync_db),
+                  current_user: User = Depends(get_current_user)):
+    decoded_token = verify_token(invite_token)
+    if not decoded_token:
+        raise HTTPException(status_code=400, detail="Invalid invite token")
+    org_id = decoded_token['org_id']
+    if not org_id:
+        raise HTTPException(status_code=400, detail="Token does not contain organization_id")
+    organization = db.query(Organization).filter(Organization.id == org_id).first()
+    if not organization:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    resp_data = OrganizationResponse.model_validate(organization)
+    return resp_200(resp_data)
+
 @router.post("/accept_invite")
 def accept_invite(
     invite_token: Annotated[str, Body(embed=True)],
