@@ -36,10 +36,16 @@ export const searchUserByEmail = (params: { organization_id: string, email: stri
 export const addOrgMember = (params: { organization_id: string; user_ids: string[] }) => request.post(`${BASE_URL}/organizations/set_members`, params)
 
 // Remove organization member
-export const removeOrgMember = (params: { organization_id: string; user_id: string }) => request.post(`${BASE_URL}/organizations/unset_members`, params)
+export const removeOrgMember = (params: { organization_id: string; user_ids: string[] }) => request.post(`${BASE_URL}/organizations/unset_members`, params)
 
 // Invite organization member
 export const inviteOrgMember = (params: { organization_id: string; }) => request.post(`${BASE_URL}/organizations/invite`, params)
 
 // Accept invite
 export const acceptInvite = (params: { invite_token: string; }) => request.post(`${BASE_URL}/organizations/accept_invite`, params)
+
+// Quit organization
+export const quitOrganization = (params: { organization_id: string; }) => request.post(`${BASE_URL}/organizations/members/exit`, params)
+
+// Get organization info by token
+export const getOrgInfoByToken = (params: { invite_token: string; }) => request.post(`${BASE_URL}/organizations/verify_invite`, params)

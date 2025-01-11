@@ -6,8 +6,8 @@ import PaginationNumeric from "@/components/pagination-numeric"
 import PaginationClassic from "@/components/pagination-classic"
 import { message } from "antd"
 import { useParams } from "next/navigation"
-import { DeleteMemberModal, UnsetAdminModal, SetAdminModal, AddMemberModal } from "./membersModal"
-import { adminGetUserById } from "@/services/admin"
+import { DeleteMemberModal, UnsetAdminModal, SetAdminModal, AddMemberModal, InviteMemberModal } from "./membersModal"
+// import { adminGetUserById } from "@/services/admin"
 import { getUserInfo } from "@/services/auth"
 
 const roleList = [
@@ -23,10 +23,13 @@ export default function MembersPage() {
     const [totalMember, setTotalMember] = useState(0)
 
     const [currentPage, setCurrentPage] = useState(1)
+
     const [isUnsetAdminOpen, setIsUnsetAdminOpen] = useState(false)
     const [isDeleteMemberOpen, setIsDeleteMemberOpen] = useState(false)
     const [isSetAdminOpen, setIsSetAdminOpen] = useState(false)
     const [isAddMemberOpen, setIsAddMemberOpen] = useState(false)
+    const [isInviteMemberOpen, setIsInviteMemberOpen] = useState(false)
+
     const [currentMember, setCurrentMember] = useState<any>(null)
     const [isAdmin, setIsAdmin] = useState(false)
     const [isSuperAdmin, setIsSuperAdmin] = useState(false)
@@ -135,10 +138,11 @@ export default function MembersPage() {
             <SetAdminModal isOpen={isSetAdminOpen} setIsOpen={setIsSetAdminOpen} currentMember={currentMember} getMemberList={getMemberList} orgId={organizationId as string} />
             <UnsetAdminModal isOpen={isUnsetAdminOpen} setIsOpen={setIsUnsetAdminOpen} currentMember={currentMember} getMemberList={getMemberList} orgId={organizationId as string} />
             <AddMemberModal isOpen={isAddMemberOpen} setIsOpen={setIsAddMemberOpen} getMemberList={getMemberList} orgId={organizationId as string} />
+            <InviteMemberModal isOpen={isInviteMemberOpen} setIsOpen={setIsInviteMemberOpen} orgId={organizationId as string} />
             <div className="flex-1 p-4">
                 <div className="bg-white dark:bg-gray-800 shadow-sm rounded-xl relative border border-gray-200 dark:border-gray-700/60">
                     <header className="px-5 py-4 flex flex-row justify-between">
-                        <h2 className="font-semibold text-gray-800 dark:text-gray-100">All Members <span className="text-gray-400 dark:text-gray-500 font-medium">{totalMember}</span></h2>
+                        <h2 className="font-semibold text-gray-800 dark:text-gray-100 flex-nowrap text-nowrap mr-4">All Members <span className="text-gray-400 dark:text-gray-500 font-medium">{totalMember}</span></h2>
                         <div className="flex flex-col md:flex-row gap-2 md:items-center">
                             {/* <input
                                 type="text"
@@ -170,15 +174,24 @@ export default function MembersPage() {
                                     Clear
                                 </button>
                             </div> */}
-                            <div>
-                                <button onClick={() => {
+                            <div className="flex flex-row gap-2 items-center flex-wrap">
+                                <button
+                                    className="btn bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700/60 hover:border-gray-300 dark:hover:border-gray-600 text-gray-800 dark:text-gray-300"
+                                    type="button"
+                                    onClick={() => {
+                                        setIsInviteMemberOpen(true)
+                                    }}
+                                >
+                                    Invite Members
+                                </button>
+                                {isAdmin && <button onClick={() => {
                                     setIsAddMemberOpen(true)
                                 }} className="btn bg-gray-900 text-gray-100 hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-800 dark:hover:bg-white">
                                     <svg className="fill-current text-gray-400 shrink-0" width="16" height="16" viewBox="0 0 16 16">
                                         <path d="M15 7H9V1c0-.6-.4-1-1-1S7 .4 7 1v6H1c-.6 0-1 .4-1 1s.4 1 1 1h6v6c0 .6.4 1 1 1s1-.4 1-1V9h6c.6 0 1-.4 1-1s-.4-1-1-1z" />
                                     </svg>
                                     <span className="ml-2">Add Members</span>
-                                </button>
+                                </button>}
                             </div>
                         </div>
                     </header>

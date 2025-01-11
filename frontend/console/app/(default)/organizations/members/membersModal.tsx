@@ -29,7 +29,7 @@ export function DeleteMemberModal({ isOpen, setIsOpen, currentMember, getMemberL
         <div className="text-lg text-gray-800 dark:text-gray-100 mb-6">Are you sure you want to delete this member?</div>
         <form onSubmit={handleDeleteMember} className="flex justify-end gap-4">
             <button className="btn bg-red-500 text-white" type="submit" disabled={loading}>{loading ? "Deleting..." : "Delete"} </button>
-            <button className="btn bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700/60 hover:border-gray-300 dark:hover:border-gray-600 text-gray-800 dark:text-gray-300" onClick={() => setIsOpen(false)}>Cancel</button>
+            <button className="btn bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700/60 hover:border-gray-300 dark:hover:border-gray-600 text-gray-800 dark:text-gray-300" type="button" onClick={() => setIsOpen(false)}>Cancel</button>
         </form>
     </ModalAction>
 }

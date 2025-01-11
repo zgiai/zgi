@@ -1,7 +1,7 @@
 import ModalAction from "@/components/modal-action";
-import { removeOrgMember, unsetOrgAdmin, setOrgAdmin, searchUserByEmail, addOrgMember } from "@/services/organization";
+import { removeOrgMember, unsetOrgAdmin, setOrgAdmin, searchUserByEmail, addOrgMember, inviteOrgMember } from "@/services/organization";
 import { message } from "antd";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 export function DeleteMemberModal({ isOpen, setIsOpen, currentMember, getMemberList, orgId }: { isOpen: boolean, setIsOpen: (value: boolean) => void, currentMember: any, getMemberList: () => void, orgId: string }) {
     const [loading, setLoading] = useState(false);
@@ -76,7 +76,7 @@ export function UnsetAdminModal({
         e.preventDefault();
         setLoading(true);
         try {
-            const res = await unsetOrgAdmin({ user_ids: [currentMember?.id], organization_id: orgId });
+            const res = await unsetOrgAdmin({ organization_id: orgId, user_ids: [currentMember?.user_id] });
             if (res.status_code === 200) {
                 setIsOpen(false);
                 message.success("Unset admin success");
@@ -174,5 +174,40 @@ export const AddMemberModal = ({ isOpen, setIsOpen, getMemberList, orgId }: { is
                 </button>
             </div>}
         </div>
+    </ModalAction>
+}
+
+export const InviteMemberModal = ({ isOpen, setIsOpen, orgId }: { isOpen: boolean, setIsOpen: (value: boolean) => void, orgId: string }) => {
+    useEffect(() => {
+        getInviteLink();
+        setOrigin(location.origin);
+    }, [isOpen]);
+
+    const [token, setToken] = useState('');
+    const [origin, setOrigin] = useState('');
+
+    const getInviteLink = async () => {
+        try {
+            const res = await inviteOrgMember({ organization_id: orgId });
+            if (res.status_code === 200) {
+                // console.log(res.data);
+                setToken(res.data.invite_token);
+            } else {
+                message.error(res.status_message || "Invite member failed");
+            }
+        } catch (error) {
+            console.error(error);
+        }
+    }
+    return <ModalAction isOpen={isOpen} setIsOpen={setIsOpen}>
+        <div className="text-lg text-gray-800 dark:text-gray-100 font-bold mb-6">Invite Member</div>
+        <div className="text-lg text-gray-800 dark:text-gray-100 mb-4">Invite members by Link:(click to copy)</div>
+        <div
+            className="text-lg text-blue-400 mb-6 break-all underline cursor-pointer rounded-md p-2 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700/60 hover:border-gray-300 dark:hover:border-gray-600"
+            onClick={() => {
+                navigator.clipboard.writeText(`${origin}/invite?token=${token}`)
+                message.success("Copied success");
+            }}
+        >{`${origin}/invite?token=${token}`}</div>
     </ModalAction>
 }

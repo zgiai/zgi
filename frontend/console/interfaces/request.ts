@@ -49,6 +49,7 @@ export interface CreateProjectParams {
 export interface UpdateProjectParams {
     name?: string;
     description?: string;
+    status?: string;
 }
 
 export interface GetProjectParams {

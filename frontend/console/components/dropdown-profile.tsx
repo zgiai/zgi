@@ -38,13 +38,13 @@ export default function DropdownProfile({ align, userInfo = {} }: {
           <div className="text-xs text-gray-500 dark:text-gray-400 italic">{userTypeArray[userInfo?.user_type] || "User"}</div>
         </div>
         <MenuItems as="ul" className="focus:outline-none">
-          <MenuItem as="li">
+          {/* <MenuItem as="li">
             {({ active }) => (
               <Link className={`font-medium text-sm flex items-center py-1 px-3 ${active ? 'text-violet-600 dark:text-violet-400' : 'text-violet-500'}`} href="#0">
                 Settings
               </Link>
             )}
-          </MenuItem>
+          </MenuItem> */}
           <MenuItem as="li">
             {({ active }) => (
               <button

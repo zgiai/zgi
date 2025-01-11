@@ -18,8 +18,8 @@ export const updateApiKey = (params: CreateApiKeyParams, query: GetApiKeyParams)
 export const getApiKeyDetail = (params: GetApiKeyParams) => request.get(`${BASE_URL}/api-keys/projects/info`, params)
 
 // 禁用api key
-export const disableApiKey = (params: GetApiKeyParams) => request.post(`${BASE_URL}/api-keys/projects/disable`, params)
+export const disableApiKey = (query: GetApiKeyParams) => request.post(`${BASE_URL}/api-keys/projects/disable`, {}, query)
 
 // 启用api key
-export const enableApiKey = (params: GetApiKeyParams) => request.put(`${BASE_URL}/api-keys/projects/enable`, params)
+export const enableApiKey = (query: GetApiKeyParams) => request.post(`${BASE_URL}/api-keys/projects/enable`, {}, query)
 

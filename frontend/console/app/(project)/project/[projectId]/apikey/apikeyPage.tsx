@@ -6,8 +6,7 @@ import { getApiKeyList } from "@/services/apikey";
 import { message } from "antd";
 import { useParams } from "next/navigation";
 import { useState, useEffect } from "react";
-import { DeleteApiKeyModal, UpdateApiKeyModal } from "./apikeyModal";
-import { CreateApiKeyModal } from "./apikeyModal";
+import { DeleteApiKeyModal, UpdateApiKeyModal, DisableApiKeyModal, EnableApiKeyModal, CreateApiKeyModal } from "./apikeyModal";
 
 export default function ApiKeyPage() {
     const params = useParams();
@@ -18,6 +17,8 @@ export default function ApiKeyPage() {
     const [isOpenCreateApiKeyModal, setIsOpenCreateApiKeyModal] = useState<boolean>(false);
     const [isOpenDeleteApiKeyModal, setIsOpenDeleteApiKeyModal] = useState<boolean>(false);
     const [isOpenUpdateApiKeyModal, setIsOpenUpdateApiKeyModal] = useState<boolean>(false);
+    const [isOpenDisableApiKeyModal, setIsOpenDisableApiKeyModal] = useState<boolean>(false);
+    const [isOpenEnableApiKeyModal, setIsOpenEnableApiKeyModal] = useState<boolean>(false);
     const [currentApiKey, setCurrentApiKey] = useState<any>({});
 
     useEffect(() => {
@@ -46,6 +47,8 @@ export default function ApiKeyPage() {
         <CreateApiKeyModal isOpen={isOpenCreateApiKeyModal} setIsOpen={setIsOpenCreateApiKeyModal} projectId={projectId} getApiKeyList={getApiKeyListData} />
         <DeleteApiKeyModal isOpen={isOpenDeleteApiKeyModal} setIsOpen={setIsOpenDeleteApiKeyModal} currentApiKey={currentApiKey} getApiKeyList={getApiKeyListData} />
         <UpdateApiKeyModal isOpen={isOpenUpdateApiKeyModal} setIsOpen={setIsOpenUpdateApiKeyModal} currentApiKey={currentApiKey} getApiKeyList={getApiKeyListData} />
+        <DisableApiKeyModal isOpen={isOpenDisableApiKeyModal} setIsOpen={setIsOpenDisableApiKeyModal} currentApiKey={currentApiKey} getApiKeyList={getApiKeyListData} />
+        <EnableApiKeyModal isOpen={isOpenEnableApiKeyModal} setIsOpen={setIsOpenEnableApiKeyModal} currentApiKey={currentApiKey} getApiKeyList={getApiKeyListData} />
         <div className="flex flex-col px-4 py-4 gap-4">
             <div className="flex justify-between p-4 border-b border-gray-200 dark:border-gray-700/60 items-center flex-wrap gap-4">
                 <div className="flex-1">
@@ -91,7 +94,15 @@ export default function ApiKeyPage() {
                             {/* Table body */}
                             <tbody className="text-sm divide-y divide-gray-100 dark:divide-gray-700/60">
                                 {apiKeyList.map((apiKey: any, index: number) => (
-                                    <ApiKeyTableRow key={index} apiKey={apiKey} setIsOpenDeleteApiKeyModal={setIsOpenDeleteApiKeyModal} setIsOpenUpdateApiKeyModal={setIsOpenUpdateApiKeyModal} setCurrentApiKey={setCurrentApiKey} />
+                                    <ApiKeyTableRow
+                                        key={index}
+                                        apiKey={apiKey}
+                                        setIsOpenDeleteApiKeyModal={setIsOpenDeleteApiKeyModal}
+                                        setIsOpenUpdateApiKeyModal={setIsOpenUpdateApiKeyModal}
+                                        setCurrentApiKey={setCurrentApiKey}
+                                        setIsOpenDisableApiKeyModal={setIsOpenDisableApiKeyModal}
+                                        setIsOpenEnableApiKeyModal={setIsOpenEnableApiKeyModal}
+                                    />
                                 ))}
                             </tbody>
                         </table>
@@ -109,7 +120,17 @@ export default function ApiKeyPage() {
     </>)
 }
 
-function ApiKeyTableRow({ apiKey, setIsOpenDeleteApiKeyModal, setIsOpenUpdateApiKeyModal, setCurrentApiKey }: { apiKey: any, setIsOpenDeleteApiKeyModal: (value: boolean) => void, setIsOpenUpdateApiKeyModal: (value: boolean) => void, setCurrentApiKey: (value: any) => void }) {
+function ApiKeyTableRow(
+    {
+        apiKey, setIsOpenDeleteApiKeyModal, setIsOpenUpdateApiKeyModal, setCurrentApiKey, setIsOpenDisableApiKeyModal, setIsOpenEnableApiKeyModal
+    }: {
+        apiKey: any,
+        setIsOpenDeleteApiKeyModal: (value: boolean) => void,
+        setIsOpenUpdateApiKeyModal: (value: boolean) => void,
+        setIsOpenDisableApiKeyModal: (value: boolean) => void,
+        setIsOpenEnableApiKeyModal: (value: boolean) => void,
+        setCurrentApiKey: (value: any) => void
+    }) {
     return <tr className="">
         <td className="px-2 first:pl-5 last:pr-5 py-3 whitespace-nowrap">{apiKey.name}</td>
         <td
@@ -120,7 +141,7 @@ function ApiKeyTableRow({ apiKey, setIsOpenDeleteApiKeyModal, setIsOpenUpdateApi
             }}
             title="Click to copy"
         >{apiKey.key}</td>
-        <td className="px-2 first:pl-5 last:pr-5 py-3 whitespace-nowrap">{apiKey.status}</td>
+        <td className={`px-2 first:pl-5 last:pr-5 py-3 whitespace-nowrap font-bold ${apiKey.status === "active" ? "text-green-500" : "text-red-500"}`}>{apiKey.status}</td>
         <td className="px-2 first:pl-5 last:pr-5 py-3 whitespace-nowrap flex flex-row gap-2">
             <button
                 className="btn bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700/60 hover:border-gray-300 dark:hover:border-gray-600"
@@ -144,6 +165,32 @@ function ApiKeyTableRow({ apiKey, setIsOpenDeleteApiKeyModal, setIsOpenUpdateApi
                     <path d="M5 7h2v6H5V7zm4 0h2v6H9V7zm3-6v2h4v2h-1v10c0 .6-.4 1-1 1H2c-.6 0-1-.4-1-1V5H0V3h4V1c0-.6.4-1 1-1h6c.6 0 1 .4 1 1zM6 2v1h4V2H6zm7 3H3v9h10V5z" />
                 </svg>
             </button>
+            {apiKey.status === "active" && <button
+                className="btn bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700/60 hover:border-gray-300 dark:hover:border-gray-600"
+                onClick={() => {
+                    setIsOpenDisableApiKeyModal(true);
+                    setCurrentApiKey(apiKey);
+                }}
+            >
+                <svg className="text-red-500 shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" width="16" height="16" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" stroke="currentColor">
+                    <path d="M5 13a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2v-6z"></path>
+                    <path d="M11 16a1 1 0 1 0 2 0a1 1 0 0 0 -2 0"></path>
+                    <path d="M8 11v-4a4 4 0 1 1 8 0v4"></path>
+                </svg>
+            </button>}
+            {apiKey.status === "disable" && <button
+                className="btn bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700/60 hover:border-gray-300 dark:hover:border-gray-600"
+                onClick={() => {
+                    setIsOpenEnableApiKeyModal(true);
+                    setCurrentApiKey(apiKey);
+                }}
+            >
+                <svg className="text-green-500 shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" width="16" height="16" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" stroke="currentColor">
+                    <path d="M3 13a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2z"></path>
+                    <path d="M9 16a1 1 0 1 0 2 0a1 1 0 0 0 -2 0"></path>
+                    <path d="M13 11v-4a4 4 0 1 1 8 0v4"></path>
+                </svg>
+            </button>}
         </td>
     </tr>
 }

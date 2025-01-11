@@ -74,25 +74,25 @@ export default function Sidebar({
         children: [
           { type: 'sublink', title: 'Sign in', href: '/signin' },
           { type: 'sublink', title: 'Sign up', href: '/signup' },
-          { type: 'sublink', title: 'Reset Password', href: '/reset-password' },
+          // { type: 'sublink', title: 'Reset Password', href: '/reset-password' },
         ],
       },
-      {
-        type: 'group',
-        title: 'Onboarding',
-        path: 'onboarding',
-        icon: (
-          <svg className={`shrink-0 fill-current`} xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
-            <path d="M6.668.714a1 1 0 0 1-.673 1.244 6.014 6.014 0 0 0-4.037 4.037 1 1 0 1 1-1.916-.571A8.014 8.014 0 0 1 5.425.041a1 1 0 0 1 1.243.673ZM7.71 4.709a3 3 0 1 0 0 6 3 3 0 0 0 0-6ZM9.995.04a1 1 0 1 0-.57 1.918 6.014 6.014 0 0 1 4.036 4.037 1 1 0 0 0 1.917-.571A8.014 8.014 0 0 0 9.995.041ZM14.705 8.75a1 1 0 0 1 .673 1.244 8.014 8.014 0 0 1-5.383 5.384 1 1 0 0 1-.57-1.917 6.014 6.014 0 0 0 4.036-4.037 1 1 0 0 1 1.244-.673ZM1.958 9.424a1 1 0 0 0-1.916.57 8.014 8.014 0 0 0 5.383 5.384 1 1 0 0 0 .57-1.917 6.014 6.014 0 0 1-4.037-4.037Z" />
-          </svg>
-        ),
-        children: [
-          { type: 'sublink', title: 'Step 1', href: '/onboarding-01' },
-          { type: 'sublink', title: 'Step 2', href: '/onboarding-02' },
-          { type: 'sublink', title: 'Step 3', href: '/onboarding-03' },
-          { type: 'sublink', title: 'Step 4', href: '/onboarding-04' },
-        ],
-      },
+      // {
+      //   type: 'group',
+      //   title: 'Onboarding',
+      //   path: 'onboarding',
+      //   icon: (
+      //     <svg className={`shrink-0 fill-current`} xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+      //       <path d="M6.668.714a1 1 0 0 1-.673 1.244 6.014 6.014 0 0 0-4.037 4.037 1 1 0 1 1-1.916-.571A8.014 8.014 0 0 1 5.425.041a1 1 0 0 1 1.243.673ZM7.71 4.709a3 3 0 1 0 0 6 3 3 0 0 0 0-6ZM9.995.04a1 1 0 1 0-.57 1.918 6.014 6.014 0 0 1 4.036 4.037 1 1 0 0 0 1.917-.571A8.014 8.014 0 0 0 9.995.041ZM14.705 8.75a1 1 0 0 1 .673 1.244 8.014 8.014 0 0 1-5.383 5.384 1 1 0 0 1-.57-1.917 6.014 6.014 0 0 0 4.036-4.037 1 1 0 0 1 1.244-.673ZM1.958 9.424a1 1 0 0 0-1.916.57 8.014 8.014 0 0 0 5.383 5.384 1 1 0 0 0 .57-1.917 6.014 6.014 0 0 1-4.037-4.037Z" />
+      //     </svg>
+      //   ),
+      //   children: [
+      //     { type: 'sublink', title: 'Step 1', href: '/onboarding-01' },
+      //     { type: 'sublink', title: 'Step 2', href: '/onboarding-02' },
+      //     { type: 'sublink', title: 'Step 3', href: '/onboarding-03' },
+      //     { type: 'sublink', title: 'Step 4', href: '/onboarding-04' },
+      //   ],
+      // },
       {
         type: 'group',
         title: 'Components',
