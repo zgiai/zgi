@@ -1,63 +1,61 @@
-import { API_KEY } from '@/constants'
-import { API_CONFIG } from '@/lib/http'
-import ollama from 'ollama/dist/browser'
-
-/** Send messages and get real-time response stream */
-interface StreamChatCompletionsParams {
-  messages: Record<string, any>[]
-  model?: string
-  temperature?: number
-  presence_penalty?: number
-  stream?: boolean
-}
+import { http } from '@/lib/http'
+import { message } from '@/lib/tips_utils'
+import { getAPIProxyAddress, getFetchApiKey } from '@/lib/utils'
+import type { FetchChatMessage, StreamChatCompletionsParams } from '@/types/chat'
 
 /**
+ * Send messages and get real-time response stream
+ * @param params Request parameters including messages and configuration options
+ * @returns Returns a readable stream
  * Send messages and get real-time response stream
  * @param params Request parameters including messages and configuration options
  * @returns Returns a readable stream
  */
 export const streamChatCompletions = async (params: StreamChatCompletionsParams) => {
   const { messages, ...options } = params
-  const fetchUrl = `${API_CONFIG.COMMON}/v1/chat/completions`
+  const baseUrl = getAPIProxyAddress()
+  const fetchUrl = `${baseUrl}/v1/chat/completions`
+  const apiKey = getFetchApiKey()
   const response = await fetch(fetchUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: API_KEY,
+      Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
       ...options,
-      model: options?.model || 'gpt-4o',
+      model: options?.model,
       messages,
       stream: true,
-      temperature: options?.temperature || 1,
+      temperature: options?.temperature || 0.7,
       max_tokens: 4096,
     }),
   })
-
-  if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
+  if (!response.ok) {
+    message.error(`HTTP error! status: ${response.status}`)
+    throw new Error(`HTTP error! status: ${response.status}`)
+  }
   const reader = response.body?.getReader()
-  if (!reader) throw new Error('No reader available')
+  if (!reader) {
+    message.error('No reader available')
+    throw new Error('No reader available')
+  }
   return reader
 }
 
-export const localStreamChatCompletions = async (
-  data: Pick<StreamChatCompletionsParams, 'messages' | 'model'>,
-) => {
-  const response = await ollama.chat({
-    model: data?.model as any,
-    messages: data?.messages as any,
-    stream: true,
-  })
-  return response
+/** Add a hidden record */
+export const addChatMessages = (data: {
+  session_id?: string
+  messages: FetchChatMessage
+}) => {
+  return http.post('/v1/chat/add_chat_messages', data)
 }
 
-export const getOllamaModels = async () => {
-  try {
-    const response = await ollama?.list?.()
-    return response?.models || []
-  } catch (error) {
-    console.error(error)
-    return []
-  }
+/** Get a single history record */
+export const getChatHistory = (session_id: string) => {
+  return http.get<any>('/v1/chat/chat_history', {
+    params: {
+      session_id,
+    },
+  })
 }

@@ -62,11 +62,10 @@ async function saveWindowState(window) {
   mainWindow.setMenu(null)
 
   if (isProd) {
-    await mainWindow.loadURL('app://./')
+    await mainWindow.loadURL('app://./chat')
   } else {
     const port = process.argv[2]
-    console.log(port, 'port')
-    await mainWindow.loadURL(`http://localhost:${port}/`)
+    await mainWindow.loadURL(`http://localhost:${port}/chat`)
     mainWindow.webContents.openDevTools()
   }
 })()

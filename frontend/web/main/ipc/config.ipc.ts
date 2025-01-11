@@ -4,28 +4,72 @@ import { INVOKE_CHANNLE } from '@shared/constants/channleName'
 import { ipcMain } from 'electron'
 import { app } from 'electron'
 
-const CHAT_FILE_PATH = path.join(app.getPath('userData'), 'chat-data.json')
+const CHAT_HISTORY_FILE_PATH = path.join(app.getPath('userData'), 'userChatHistoryData.json')
+const APP_SETTINGS_FILE_PATH = path.join(app.getPath('userData'), 'appSettingsData.json')
+const USER_INFO_FILE_PATH = path.join(app.getPath('userData'), 'userInfo.json')
 
-// 注册 IPC 处理程序
+// Register IPC handlers
 export function registerIpcHandlers() {
-  // 读取聊天记录事件
+  // Handle loading chats
   ipcMain.handle(INVOKE_CHANNLE.loadChats, async () => {
     try {
-      const data = await fs.promises.readFile(CHAT_FILE_PATH, 'utf-8')
+      const data = await fs.promises.readFile(CHAT_HISTORY_FILE_PATH, 'utf-8')
       return JSON.parse(data)
     } catch (e) {
-      console.log('No chat history found or error reading file:', e)
+      console.info('No chat history found or error reading file:', e)
       return { chatHistories: [], currentChatId: null }
     }
   })
 
-  // 保存聊天记录事件
+  // Handle saving chats
   ipcMain.handle(INVOKE_CHANNLE.saveChats, async (_, data) => {
     try {
-      await fs.promises.writeFile(CHAT_FILE_PATH, JSON.stringify(data, null, 2), 'utf-8')
+      await fs.promises.writeFile(CHAT_HISTORY_FILE_PATH, JSON.stringify(data, null, 2), 'utf-8')
       return { success: true }
     } catch (e) {
       console.error('sava chats error:', e)
+      return { success: false, error: e.message }
+    }
+  })
+
+  // Handle loading app settings
+  ipcMain.handle(INVOKE_CHANNLE.loadAppSettings, async () => {
+    try {
+      const data = await fs.promises.readFile(APP_SETTINGS_FILE_PATH, 'utf-8')
+      return JSON.parse(data)
+    } catch (e) {
+      console.info('No found or error reading file:', e)
+      return {}
+    }
+  })
+
+  // Handle saving app settings
+  ipcMain.handle(INVOKE_CHANNLE.saveAppSettings, async (_, data) => {
+    try {
+      await fs.promises.writeFile(APP_SETTINGS_FILE_PATH, JSON.stringify(data, null, 2), 'utf-8')
+      return { success: true }
+    } catch (e) {
+      console.error('sava error:', e)
+      return { success: false, error: e.message }
+    }
+  })
+
+  ipcMain.handle(INVOKE_CHANNLE.loadUserInfo, async () => {
+    try {
+      const data = await fs.promises.readFile(USER_INFO_FILE_PATH, 'utf-8')
+      return JSON.parse(data)
+    } catch (e) {
+      console.info('No found or error reading file:', e)
+      return {}
+    }
+  })
+
+  ipcMain.handle(INVOKE_CHANNLE.saveUserInfo, async (_, data) => {
+    try {
+      await fs.promises.writeFile(USER_INFO_FILE_PATH, JSON.stringify(data, null, 2), 'utf-8')
+      return { success: true }
+    } catch (e) {
+      console.error('sava error:', e)
       return { success: false, error: e.message }
     }
   })

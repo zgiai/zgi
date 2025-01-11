@@ -1,7 +1,11 @@
 from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import Depends, HTTPException, status, Security
-from fastapi.security import OAuth2PasswordBearer, HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import (
+    OAuth2PasswordBearer,
+    HTTPAuthorizationCredentials,
+    HTTPBearer,
+)
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
@@ -35,8 +39,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
 
 
 async def get_current_user(
-        db: Session = Depends(get_sync_db),
-        token: str = Depends(oauth2_scheme)
+    db: Session = Depends(get_sync_db), token: str = Depends(oauth2_scheme)
 ) -> User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -60,8 +63,8 @@ async def get_current_user(
 
 
 async def get_current_user_or_none(
-        db: Session = Depends(get_sync_db),
-        credentials: HTTPAuthorizationCredentials = Security(security),
+    db: Session = Depends(get_sync_db),
+    credentials: HTTPAuthorizationCredentials = Security(security),
 ) -> User | None:
     if not credentials:
         return None
@@ -69,17 +72,18 @@ async def get_current_user_or_none(
     return await get_current_user(db, token)
 
 
-async def get_api_key(credentials: HTTPAuthorizationCredentials = Security(security),
-                      db: Session = Depends(get_sync_db)
-                      ) -> str:
+async def get_api_key(
+    credentials: HTTPAuthorizationCredentials = Security(security),
+    db: Session = Depends(get_sync_db),
+) -> str:
     """Get API key from Authorization header.
-    
+
     Args:
         credentials: Authorization credentials from request header
-    
+
     Returns:
         The API key string
-        
+
     Raises:
         HTTPException: If no valid API key is found
     """
@@ -98,8 +102,7 @@ async def get_api_key(credentials: HTTPAuthorizationCredentials = Security(secur
 
 
 def require_super_admin(
-        token: str = Depends(oauth2_scheme),
-        db: Session = Depends(get_sync_db)
+    token: str = Depends(oauth2_scheme), db: Session = Depends(get_sync_db)
 ) -> User:
     """Require super admin access"""
     auth_service = AuthService(db)
@@ -107,14 +110,13 @@ def require_super_admin(
     if not user.is_superuser:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Insufficient permissions. Super admin access required."
+            detail="Insufficient permissions. Super admin access required.",
         )
     return user
 
 
 def require_admin(
-        token: str = Depends(oauth2_scheme),
-        db: Session = Depends(get_sync_db)
+    token: str = Depends(oauth2_scheme), db: Session = Depends(get_sync_db)
 ) -> User:
     """Require admin access"""
     auth_service = AuthService(db)
@@ -122,6 +124,6 @@ def require_admin(
     if not user.is_superuser and user.user_type == 0:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Insufficient permissions. Admin access required."
+            detail="Insufficient permissions. Admin access required.",
         )
     return user

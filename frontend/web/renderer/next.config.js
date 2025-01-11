@@ -1,20 +1,12 @@
 /** @type {import('next').NextConfig} */
 module.exports = {
   // output: "export",
+  // output: "export",
   distDir: process.env.NODE_ENV === 'production' ? '../app' : '.next',
   trailingSlash: true,
   images: {
     unoptimized: true,
   },
-  // async redirects() {
-  // 	return [
-  // 		{
-  // 			source: "/",
-  // 			destination: "/chat",
-  // 			permanent: true,
-  // 		},
-  // 	];
-  // },
   webpack: (config) => {
     return config
   },
@@ -22,7 +14,7 @@ module.exports = {
     return [
       {
         source: '/api/:path*',
-        destination: 'https://api.zgi.ai/:path*',
+        destination: 'https://zgi.zeabur.app/:path*',
       },
     ]
   },

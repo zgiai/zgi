@@ -1,3 +1,4 @@
+import { useAppSettingsStore } from '@/store/appSettingsStore'
 import { useChatStore } from '@/store/chatStore'
 import { FileText, LayoutGrid, Maximize, Send, Settings } from 'lucide-react'
 import React from 'react'
@@ -6,6 +7,7 @@ import ModelSelector from '../ModelSelector'
 const AreaBottom = () => {
   const { isLoadingMap, currentChatId, fileInputRef, inputMessage, attachments, handleSend } =
     useChatStore()
+  const { setOpenModal } = useAppSettingsStore()
 
   const isLoading = currentChatId ? isLoadingMap[currentChatId] : false
 
@@ -30,28 +32,24 @@ const AreaBottom = () => {
 
         {/* Model selection dropdown */}
         <ModelSelector />
-
-        {/* Content safety protocol link */}
-        <div className="text-gray-400 text-xs">
-          <span>Please follow the </span>
-          <a href="/safety-protocol" className="text-gray-500 hover:text-blue-500">
-            content safety protocol
-          </a>
-          <span>. No inappropriate content allowed.</span>
-        </div>
       </div>
 
       {/* Right side functionality */}
       <div className="flex items-center gap-3">
         {/* Settings button */}
-        <button type="button" className="text-gray-500 hover:text-gray-600" title="Settings">
+        <button
+          type="button"
+          className="text-gray-500 hover:text-gray-600"
+          title="Settings"
+          onClick={() => setOpenModal(true)}
+        >
           <Settings size={18} />
         </button>
 
         {/* Format button */}
-        <button type="button" className="text-gray-500 hover:text-gray-600" title="Format">
+        {/* <button type="button" className="text-gray-500 hover:text-gray-600" title="Format">
           <LayoutGrid size={18} />
-        </button>
+        </button> */}
 
         {/* Fullscreen button */}
         <button type="button" className="text-gray-500 hover:text-gray-600" title="Fullscreen">

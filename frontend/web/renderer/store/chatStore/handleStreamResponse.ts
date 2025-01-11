@@ -1,3 +1,4 @@
+import { message } from '@/lib/tips_utils'
 import { type ChatMessage, StreamChatMode } from '@/types/chat'
 import type { ChatResponse } from 'ollama/dist/browser'
 import type { ChatStore } from './types'
@@ -11,7 +12,7 @@ interface StreamResponseConfig {
     replace?: boolean,
   ) => void
   onError?: (error: Error) => void
-  onComplete?: (fullMessage: string) => void
+  onComplete?: (data: { fullMessageStr: string; assistantMessage: any }) => void
   streamMode: StreamChatMode
 }
 
@@ -27,7 +28,6 @@ export const handleStreamResponse = async ({
 }: StreamResponseConfig) => {
   const decoder = new TextDecoder()
   let fullMessage = ''
-
   try {
     if (streamMode === StreamChatMode.ollama) {
       for await (const part of reader as AsyncIterable<ChatResponse>) {
@@ -57,7 +57,6 @@ export const handleStreamResponse = async ({
         const lines = chunk
           .split('\n')
           .filter((line) => line.trim() !== '' && line.trim() !== 'data: [DONE]')
-
         for (const line of lines) {
           if (line.startsWith('data: ')) {
             try {
@@ -78,6 +77,12 @@ export const handleStreamResponse = async ({
               onError?.(error as Error)
             }
           }
+        }
+
+        // error tips
+        if (lines?.length === 1 && lines?.[0]?.includes('status_message')) {
+          const errorRes = JSON.parse(lines[0])
+          message.error(errorRes?.status_message)
         }
       }
     }
@@ -103,7 +108,7 @@ export const handleStreamResponse = async ({
         messageStreamingMap: { ...state.messageStreamingMap, [chatId]: '' },
       }))
 
-      onComplete?.(fullMessage)
+      onComplete?.({ fullMessageStr: fullMessage, assistantMessage })
     }
 
     return fullMessage

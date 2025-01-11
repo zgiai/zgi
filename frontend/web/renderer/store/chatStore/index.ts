@@ -1,24 +1,22 @@
+import { HTTP_STATUS_CODE } from '@/constants/http_status'
+import { STORAGE_ADAPTER_KEYS } from '@/constants/storageAdapterKey'
 import { getStorageAdapter } from '@/lib/storageAdapter'
-import { localStreamChatCompletions, streamChatCompletions } from '@/server/chat.server'
+import { getAuthToken } from '@/lib/token.utils'
+import { addChatMessages, getChatHistory, streamChatCompletions } from '@/server/chat.server'
+import { localStreamChatCompletions } from '@/server/ollama.server'
 import { type ChatHistory, type ChatMessage, StreamChatMode } from '@/types/chat'
 import { debounce } from 'lodash'
 import React from 'react'
 import { create } from 'zustand'
+import { useAppSettingsStore } from '../appSettingsStore'
 import { handleStreamResponse } from './handleStreamResponse'
-import { getLoclOllamaModels } from './ollama'
 import type { ChatStore } from './types'
 
-const models = [
-  { model: 'gpt-4-turbo', name: 'GPT 4-Turbo', usage: '200k', type: 'default' as const },
-  { model: 'gpt-3.5-turbo', name: 'GPT 3.5-Turbo', usage: '200k', type: 'free' as const },
-]
-
+const storageAdapter = getStorageAdapter({ key: STORAGE_ADAPTER_KEYS.chat.key })
 /**
  * Create chat state management store
  */
 export const useChatStore = create<ChatStore>()((set, get) => {
-  const storageAdapter = getStorageAdapter()
-
   // Add helper function to update chat title based on content
   const updateChatTitleByContent = (chatId: string) => {
     const { chatHistories, isFirstOpen } = get()
@@ -85,16 +83,14 @@ export const useChatStore = create<ChatStore>()((set, get) => {
   }
 
   return {
-    // Initial state
     currentChatId: null,
     chatHistories: [],
     messageStreamingMap: {},
     isLoadingMap: {},
     isFirstOpen: true, // Add first open flag
     refreshModelsLoading: false,
-    models: models, // Add available models here
-    ollamaModels: [],
-    selectedModel: models[0], // Default selected model
+    createChatLoading: false,
+    selectedModel: undefined, // Default selected model
     setSelectedModel: (model) => set({ selectedModel: model }), // Function to update selected model
     fileInputRef: React.createRef<HTMLInputElement>(),
     attachments: [], // Initialize attachment state
@@ -105,7 +101,11 @@ export const useChatStore = create<ChatStore>()((set, get) => {
     init: async () => {
       const { loadChatsFromDisk } = get()
       loadChatsFromDisk()
-      getLoclOllamaModels({ set })
+      const providers = useAppSettingsStore.getState().providers || {}
+      set({
+        selectedModel:
+          providers.zgi?.models[0] || providers.zgi?.customModels[0] || providers.ollama?.models[0],
+      })
     },
 
     handleSend: async () => {
@@ -167,21 +167,37 @@ export const useChatStore = create<ChatStore>()((set, get) => {
         console.error('Failed to send message:', error)
       }
     },
+
     /**
      * Set current chat ID
      * @param id Chat ID
      */
-    setCurrentChatId: (id) => {
+    setCurrentChatId: async (id) => {
+      const { updateChatMessages, saveChatsToDisk } = get()
+      const { access_token } = await getAuthToken()
       set({ currentChatId: id })
-      get().saveChatsToDisk()
+      if (id && !id.includes('local_notId') && access_token) {
+        const res = await getChatHistory(id)
+        if (res?.data && res.status_code === HTTP_STATUS_CODE.SUCCESS) {
+          updateChatMessages(id, res.data.messages || [])
+        }
+      }
+      saveChatsToDisk()
     },
 
     /**
      * Create new chat
      */
-    createChat: () => {
+    createChat: async () => {
+      set({
+        createChatLoading: true,
+      })
+      const id = await get().createChatSessionId({
+        chatId: undefined,
+        messages: [],
+      })
       const newChat: ChatHistory = {
-        id: Date.now().toString(),
+        id,
         title: 'New Chat',
         messages: [],
         createdAt: new Date().toISOString(),
@@ -189,6 +205,7 @@ export const useChatStore = create<ChatStore>()((set, get) => {
       set((state) => ({
         chatHistories: [newChat, ...state.chatHistories],
         currentChatId: newChat.id,
+        createChatLoading: false,
       }))
       get().saveChatsToDisk()
     },
@@ -283,22 +300,37 @@ export const useChatStore = create<ChatStore>()((set, get) => {
       storageAdapter.save(data)
     }, 1000),
 
+    createChatSessionId: async ({ chatId, messages }) => {
+      const { access_token } = await getAuthToken()
+      const localChatId = `local_notId_${Date.now().toString()}`
+      if (access_token && (!chatId || chatId?.includes('local_notId'))) {
+        const res = await addChatMessages({
+          session_id: chatId,
+          messages: messages,
+        })
+        if (res?.data && res.status_code === HTTP_STATUS_CODE.SUCCESS) {
+          return res.data?.session_id
+        }
+        return chatId || localChatId
+      }
+      return localChatId
+    },
+
     /**
      * Send message and handle AI response
-     * @param message User message
      */
     sendMessage: async (message: ChatMessage) => {
-      const { currentChatId, selectedModel } = get()
+      const { currentChatId, selectedModel, createChatSessionId } = get()
       let chatId = currentChatId
 
       // Check if already loading
       const isLoading = get().isLoadingMap[chatId || '']
       if (isLoading) return
-
       if (!chatId) {
+        const id = await createChatSessionId({ chatId: undefined, messages: [] })
         // Don't set title when creating new chat, wait for first message
         const newChat = {
-          id: Date.now().toString(),
+          id,
           title: 'New Chat',
           messages: [],
           createdAt: new Date().toISOString(),
@@ -407,20 +439,21 @@ export const useChatStore = create<ChatStore>()((set, get) => {
         }
         // If this is not a message to skip AI response, send request
         if (!message.skipAIResponse) {
+          const allMessages = [...messagesToSend, currentMessageToSend]
           let reader
-          if (selectedModel?.type === 'local') {
+          if (selectedModel?.type === StreamChatMode.ollama) {
             reader = await localStreamChatCompletions({
-              model: selectedModel.model,
-              messages: [...messagesToSend, currentMessageToSend],
+              model: selectedModel.id,
+              messages: allMessages,
             })
           } else {
             reader = await streamChatCompletions({
-              messages: [...messagesToSend, currentMessageToSend],
+              model: selectedModel.id,
+              messages: allMessages,
               stream: true,
               temperature: 1,
             })
           }
-
           await handleStreamResponse({
             reader,
             chatId,
@@ -435,11 +468,21 @@ export const useChatStore = create<ChatStore>()((set, get) => {
                 },
               }))
             },
-            onComplete: (fullMessage) => {
+            onComplete: async ({ assistantMessage }) => {
               // Additional actions after completion if needed
               get().saveChatsToDisk()
+              // history chat
+              if (!chatId?.includes('local_notId')) {
+                await addChatMessages({
+                  session_id: chatId,
+                  messages: [...allMessages, assistantMessage],
+                })
+              }
             },
-            streamMode: StreamChatMode.ollama,
+            streamMode:
+              selectedModel?.type === StreamChatMode.ollama
+                ? StreamChatMode.ollama
+                : StreamChatMode.commonChat,
           })
         }
       } catch (error) {
@@ -463,17 +506,5 @@ export const useChatStore = create<ChatStore>()((set, get) => {
 
     updateChatTitleByContent, // Export method
     updateChatTitleByFirstMessage,
-
-    onRefreshModels: async () => {
-      const { models } = get()
-      set({
-        refreshModelsLoading: true,
-      })
-      await getLoclOllamaModels({ set })
-      set({
-        refreshModelsLoading: false,
-        selectedModel: models[0],
-      })
-    },
   }
 })
