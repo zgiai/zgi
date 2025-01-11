@@ -1,5 +1,5 @@
 import { useUserStore } from '@/store/userStore'
-import { Cross2Icon } from '@radix-ui/react-icons'
+import { Cross2Icon, ReloadIcon } from '@radix-ui/react-icons'
 import React, { useEffect, useState } from 'react'
 
 const SignInBtn = () => {
@@ -13,6 +13,7 @@ const SignInBtn = () => {
     toggleRegistering,
     handleSignIn,
     handleRegister,
+    loading,
   } = useUserStore()
   const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState('')
@@ -26,6 +27,10 @@ const SignInBtn = () => {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+    if (userFormData?.password && userFormData.password.length < 8) {
+      setError('Password must be at least 8 characters long.')
+      return
+    }
     if (isRegistering) {
       if (userFormData.password !== confirmPassword) {
         setError('Passwords do not match.')
@@ -127,8 +132,21 @@ const SignInBtn = () => {
                 </div>
               )}
               {error && <p className="text-red-500 text-sm">{error}</p>}
-              <button type="submit" className="w-full p-2 bg-blue-500 text-white rounded-md">
-                {isRegistering ? 'Register' : 'Sign In'}
+              <button
+                type="submit"
+                className={`w-full p-2 bg-blue-500 text-white rounded-md ${loading ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700 transition-colors'}`}
+                disabled={loading}
+              >
+                {loading ? (
+                  <div className="flex items-center justify-center">
+                    <ReloadIcon className="mr-2 animate-spin" />
+                    <span className="ml-2">{isRegistering ? 'Register' : 'Sign In'}</span>
+                  </div>
+                ) : isRegistering ? (
+                  'Register'
+                ) : (
+                  'Sign In'
+                )}
               </button>
             </form>
             <button type="button" onClick={toggleRegistering} className="mt-2 text-blue-500">

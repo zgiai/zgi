@@ -79,7 +79,6 @@ export const useAppSettingsStore = createSubsStore<AppSettingsStore>((set, get) 
       try {
         const settings = await storageAdapter.load()
         const ollamaRes = await getOllamaModels()
-        console.log('loadSettings', settings)
         if (settings) {
           // Merge stored settings with defaults, preserving enabled states
           const mergedProviders = Object.entries(defaultProviders).reduce(

@@ -8,13 +8,6 @@ import { useChatStore } from '@/store/chatStore'
 import { useEffect } from 'react'
 
 export default function Chat() {
-  const { init } = useChatStore()
-  const appSettingsStore = useAppSettingsStore()
-  useEffect(() => {
-    init()
-    appSettingsStore.init()
-  }, [])
-
   return (
     <div className="flex h-screen bg-gray-100">
       <Sidebar />

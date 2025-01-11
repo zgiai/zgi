@@ -5,19 +5,19 @@ export interface User {
 }
 
 export interface UserStore {
+  loading: boolean
   user: User | null
-  setUser: (user: User | null) => void
-
   userFormData: UserFormData
-  setUserFormData: (data: UserFormData) => void
-  resetUserFormData: () => void
-
   isUserOpen: boolean
   isRegistering: boolean
+
+  setUserFormData: (data: UserFormData) => void
+  resetUserFormData: () => void
   setUserOpen: (flag: boolean) => void
   toggleRegistering: () => void
   handleSignIn: () => void
   handleRegister: () => void
+  init: () => Promise<void>
 }
 
 interface UserFormData {

@@ -64,10 +64,11 @@ class Http {
     // Request interceptor
     instance.interceptors.request.use(
       (config) => {
-        // const apiKey = getFetchApiKey()
-        // if (config.headers && apiKey) {
-        //   config.headers.Authorization = `Bearer ${apiKey}`
-        // }
+        const token = localStorage.getItem('auth_token')
+        const token_type = localStorage.getItem('token_type') || 'Bearer'
+        if (config.headers && token) {
+          config.headers.Authorization = `${token_type} ${token}`
+        }
         return config
       },
       (error) => {
@@ -78,6 +79,9 @@ class Http {
     // Response interceptor
     instance.interceptors.response.use(
       (response) => {
+        if (response.data?.status_code > 400 && response.data?.status_message) {
+          message.error(response.data?.status_message)
+        }
         return response.data
       },
       (error) => {

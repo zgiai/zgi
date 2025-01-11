@@ -1,9 +1,12 @@
 import type { AppProps } from 'next/app'
 import localFont from 'next/font/local'
-import React from 'react'
+import React, { useEffect } from 'react'
 import { ToastContainer } from 'react-toastify'
 import '@radix-ui/themes/styles.css'
 import '../styles/globals.css'
+import { useAppSettingsStore } from '@/store/appSettingsStore'
+import { useChatStore } from '@/store/chatStore'
+import { useUserStore } from '@/store/userStore'
 
 const geistSans = localFont({
   src: '/fonts/GeistVF.woff',
@@ -17,6 +20,18 @@ const geistMono = localFont({
 })
 
 function MyApp({ Component, pageProps }: AppProps) {
+  const chatStore = useChatStore()
+  const appSettingsStore = useAppSettingsStore()
+  const userStore = useUserStore()
+  useEffect(() => {
+    const init = async () => {
+      await userStore.init()
+      chatStore.init()
+      appSettingsStore.init()
+    }
+    init()
+  }, [])
+
   return (
     <React.Fragment>
       <div className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
