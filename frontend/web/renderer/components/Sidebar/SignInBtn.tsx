@@ -1,5 +1,6 @@
 import { useUserStore } from '@/store/userStore'
 import { Cross2Icon, ReloadIcon } from '@radix-ui/react-icons'
+import * as Popover from '@radix-ui/react-popover'
 import React, { useEffect, useState } from 'react'
 
 const SignInBtn = () => {
@@ -14,6 +15,10 @@ const SignInBtn = () => {
     handleSignIn,
     handleRegister,
     loading,
+    handleLogout,
+    isUserInfoPopoverOpen,
+    onClickSigninBaseBtn,
+    setUserInfoPopoverOpen,
   } = useUserStore()
   const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState('')
@@ -44,13 +49,38 @@ const SignInBtn = () => {
 
   return (
     <div className="mt-auto px-4 py-4">
-      <button
-        type="button"
-        className="w-full p-2 border border-gray-300 rounded-md flex items-center justify-center hover:border-blue-500"
-        onClick={() => setUserOpen(true)}
-      >
-        {user ? user.username : 'Sign In'}
-      </button>
+      <Popover.Root open={isUserInfoPopoverOpen}>
+        <Popover.Trigger asChild>
+          <button
+            type="button"
+            className="w-full p-2 border border-gray-300 rounded-md flex items-center justify-center hover:border-blue-500"
+            onClick={onClickSigninBaseBtn}
+          >
+            {user ? user.username : 'Sign In'}
+          </button>
+        </Popover.Trigger>
+
+        {user && (
+          <Popover.Content className="bg-gray-800 text-white p-4 rounded-md shadow-lg">
+            <h2 className="text-lg font-semibold mb-2">用户信息</h2>
+            <p>用户名: {user.username}</p>
+            <p>邮箱: {user.email}</p>
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="mt-2 text-red-500 hover:text-red-400"
+            >
+              退出登录
+            </button>
+            <Popover.Close
+              className="absolute top-2 right-2 text-gray-400 hover:text-gray-300"
+              onClick={() => setUserInfoPopoverOpen(false)}
+            >
+              <Cross2Icon />
+            </Popover.Close>
+          </Popover.Content>
+        )}
+      </Popover.Root>
 
       {isUserOpen && (
         <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50">

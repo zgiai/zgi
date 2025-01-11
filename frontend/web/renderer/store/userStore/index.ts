@@ -2,6 +2,7 @@ import { HTTP_STATUS_CODE } from '@/constants/http_status'
 import { STORAGE_ADAPTER_KEYS } from '@/constants/storageAdapterKey'
 import { getStorageAdapter } from '@/lib/storageAdapter'
 import { createSubsStore } from '@/lib/store_utils'
+import { clearAuthToken, setAuthToken } from '@/lib/token.utils'
 import { login, registerUser } from '@/server/user.server'
 import type { UserStore } from './types'
 
@@ -17,18 +18,39 @@ export const useUserStore = createSubsStore<UserStore>((set, get) => {
     isUserOpen: false,
     isRegistering: false,
     loading: false,
+    isUserInfoPopoverOpen: false,
 
     init: async () => {
       const userInfoData = await storageAdapter.load()
       if (userInfoData) {
-        localStorage.setItem('auth_token', userInfoData?.access_token)
-        localStorage.setItem('token_type', userInfoData?.token_type)
+        setAuthToken({
+          access_token: userInfoData?.access_token,
+          token_type: userInfoData?.token_type,
+        })
         set({
           user: userInfoData?.user,
         })
       }
     },
 
+    onClickSigninBaseBtn: () => {
+      const { user, resetUserFormData } = get()
+      if (user) {
+        set({
+          isUserInfoPopoverOpen: true,
+        })
+        return
+      }
+      resetUserFormData()
+      set({
+        isUserOpen: true,
+      })
+    },
+    setUserInfoPopoverOpen: (flag) => {
+      set({
+        isUserInfoPopoverOpen: flag,
+      })
+    },
     setUserFormData: (data) =>
       set((state) => ({
         userFormData: {
@@ -59,16 +81,17 @@ export const useUserStore = createSubsStore<UserStore>((set, get) => {
       set({
         loading: true,
       })
-      const { userFormData, resetUserFormData } = get()
+      const { userFormData, resetUserFormData, updateSaveConfig } = get()
       const res = await login({
         email: userFormData?.email,
         password: userFormData?.password,
       })
       if (res?.data && res.status_code === HTTP_STATUS_CODE.SUCCESS) {
-        localStorage.setItem('auth_token', res.data?.access_token)
-        localStorage.setItem('token_type', res.data?.token_type)
-
-        storageAdapter.save({
+        setAuthToken({
+          access_token: res.data?.access_token,
+          token_type: res.data?.token_type,
+        })
+        updateSaveConfig({
           access_token: res.data?.access_token,
           token_type: res.data?.token_type,
           user: res.data?.user,
@@ -78,6 +101,15 @@ export const useUserStore = createSubsStore<UserStore>((set, get) => {
       }
       set({
         loading: false,
+      })
+    },
+
+    updateSaveConfig: async ({ access_token, token_type, user }) => {
+      const userInfoData = await storageAdapter.load()
+      storageAdapter.save({
+        access_token: access_token || userInfoData?.access_token,
+        token_type: token_type || userInfoData?.token_type,
+        user: user || userInfoData?.user,
       })
     },
 
@@ -98,6 +130,15 @@ export const useUserStore = createSubsStore<UserStore>((set, get) => {
           loading: false,
         })
       }
+    },
+
+    handleLogout: async () => {
+      clearAuthToken()
+      storageAdapter.save({})
+      set({
+        isUserInfoPopoverOpen: false,
+        user: null,
+      })
     },
   }
 })

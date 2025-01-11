@@ -1,5 +1,6 @@
 import axios, { type AxiosInstance, type AxiosRequestConfig } from 'axios'
 import { message } from './tips_utils'
+import { clearAuthToken, getAuthToken } from './token.utils'
 import { getFetchApiKey } from './utils'
 
 // Define API configurations
@@ -64,10 +65,9 @@ class Http {
     // Request interceptor
     instance.interceptors.request.use(
       (config) => {
-        const token = localStorage.getItem('auth_token')
-        const token_type = localStorage.getItem('token_type') || 'Bearer'
-        if (config.headers && token) {
-          config.headers.Authorization = `${token_type} ${token}`
+        const { access_token, token_type } = getAuthToken()
+        if (config.headers && access_token) {
+          config.headers.Authorization = `${token_type || 'Bearer'} ${access_token}`
         }
         return config
       },
@@ -88,7 +88,7 @@ class Http {
         if (error.response) {
           switch (error.response.status) {
             case 401:
-              localStorage.removeItem('auth_token')
+              clearAuthToken()
               localStorage.removeItem('user')
               window.location.href = '/signin'
               break
