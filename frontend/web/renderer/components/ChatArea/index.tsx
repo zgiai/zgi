@@ -44,7 +44,7 @@ const ChatArea = () => {
       className="h-[calc(100vh-180px)] bg-white overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100 hover:scrollbar-thumb-gray-400"
       onScroll={handleScroll}
     >
-      <div className="max-w-[1200px] mx-auto pb-4">
+      <div className="mx-auto pb-4">
         {messages.map((message, index) => (
           <MessageItem
             key={index}
