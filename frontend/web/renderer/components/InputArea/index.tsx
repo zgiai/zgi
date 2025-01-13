@@ -56,7 +56,7 @@ const InputArea = () => {
       className="absolute bottom-0 right-0 bg-white border-t border-gray-200 p-4"
       style={{ width: 'calc(100% - 256px)' }}
     >
-      <div className="max-w-3xl mx-auto">
+      <div className="mx-auto">
         <div className="flex flex-col">
           {/* Attachment preview area */}
           {attachments.length > 0 && (
