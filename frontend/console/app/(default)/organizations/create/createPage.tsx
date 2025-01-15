@@ -48,7 +48,7 @@ export default function CreateOrganizationPage() {
                 <span className="text-2xl text-gray-800 dark:text-gray-100 font-bold">Create Organization</span>
             </div>
         </div>
-        <CreateProgress step={pageStatus} />
+        <CreateProgress step={pageStatus} setStep={setPageStatus} />
         <div className="flex flex-col gap-4 p-4 border border-gray-200 dark:border-gray-700/60 rounded-lg bg-white dark:bg-gray-800 shadow-sm">
             <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
                 <div className={`flex-col gap-4 ${pageStatus === 1 ? "flex" : "hidden"}`}>
@@ -112,18 +112,20 @@ export default function CreateOrganizationPage() {
 
 function CreateProgress({ step = 1, setStep = () => { } }: { step?: number, setStep?: (step: number) => void }) {
     return <div className="py-4">
-        <div className="flex flex-row gap-2 items-center flex-wrap">
-            <div className="flex flex-row gap-2 items-center">
+        <div className="flex flex-row items-center flex-wrap">
+            <div className="flex flex-row items-center">
                 <button
                     className={`${step === 1 ? "text-gray-800 dark:text-gray-100 font-bold" : "text-gray-500 dark:text-gray-400"}`}
                     type="button"
-                    onClick={() => setStep(1)}
+                    onClick={() => {setStep(1)}}
                 >
                     Create Organization
                 </button>
             </div>
             <div className="text-gray-800 dark:text-gray-100">
-                <svg viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" width="16" height="16"><path d="M320 828.8L636.16 512 320 195.2a32 32 0 1 1 45.44-45.44L704 489.6a32 32 0 0 1 0 45.44l-339.2 339.2a32 32 0 0 1-44.8-45.44z" fill="currentColor" ></path></svg>
+                <svg className="fill-current text-gray-400 dark:text-gray-600 mx-3" width="16" height="16" viewBox="0 0 16 16">
+                    <path d="M6.6 13.4L5.2 12l4-4-4-4 1.4-1.4L12 8z" />
+                </svg>
             </div>
             <div className="flex flex-row gap-2 items-center">
                 <span className={`${step === 2 ? "text-gray-800 dark:text-gray-100 font-bold" : "text-gray-500 dark:text-gray-400"}`}>Create Project</span>

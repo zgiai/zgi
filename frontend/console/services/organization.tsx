@@ -49,3 +49,4 @@ export const quitOrganization = (params: { organization_id: string; }) => reques
 
 // Get organization info by token
 export const getOrgInfoByToken = (params: { invite_token: string; }) => request.post(`${BASE_URL}/organizations/verify_invite`, params)
+

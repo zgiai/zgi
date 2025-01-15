@@ -9,6 +9,7 @@ export default function InvitePage({ token }: { token: string }) {
     const [isHovered, setIsHovered] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
     const [orgName, setOrgName] = useState('');
+    
     const acceptInvitation = async () => {
         setIsLoading(true);
         try {

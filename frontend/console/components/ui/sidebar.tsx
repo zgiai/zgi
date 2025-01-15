@@ -93,31 +93,31 @@ export default function Sidebar({
       //     { type: 'sublink', title: 'Step 4', href: '/onboarding-04' },
       //   ],
       // },
-      {
-        type: 'group',
-        title: 'Components',
-        path: 'components-library',
-        icon: (
-          <svg className={`shrink-0 fill-current`} xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
-            <path d="M.06 10.003a1 1 0 0 1 1.948.455c-.019.08.01.152.078.19l5.83 3.333c.053.03.116.03.168 0l5.83-3.333a.163.163 0 0 0 .078-.188 1 1 0 0 1 1.947-.459 2.161 2.161 0 0 1-1.032 2.384l-5.83 3.331a2.168 2.168 0 0 1-2.154 0l-5.83-3.331a2.162 2.162 0 0 1-1.032-2.382Zm7.856-7.981-5.83 3.332a.17.17 0 0 0 0 .295l5.828 3.33c.054.031.118.031.17.002l5.83-3.333a.17.17 0 0 0 0-.294L8.085 2.023a.172.172 0 0 0-.17-.001ZM9.076.285l5.83 3.332c1.458.833 1.458 2.935 0 3.768l-5.83 3.333c-.667.38-1.485.38-2.153-.001l-5.83-3.332c-1.457-.833-1.457-2.935 0-3.767L6.925.285a2.173 2.173 0 0 1 2.15 0Z" />
-          </svg>
-        ),
-        children: [
-          { type: 'sublink', title: 'Button', href: '/components-library/button' },
-          { type: 'sublink', title: 'Input Form', href: '/components-library/form' },
-          { type: 'sublink', title: 'Dropdown', href: '/components-library/dropdown' },
-          { type: 'sublink', title: 'Alert & Banner', href: '/components-library/alert' },
-          { type: 'sublink', title: 'Modal', href: '/components-library/modal' },
-          { type: 'sublink', title: 'Pagination', href: '/components-library/pagination' },
-          { type: 'sublink', title: 'Tabs', href: '/components-library/tabs' },
-          { type: 'sublink', title: 'Breadcrumb', href: '/components-library/breadcrumb' },
-          { type: 'sublink', title: 'Badge', href: '/components-library/badge' },
-          { type: 'sublink', title: 'Avatar', href: '/components-library/avatar' },
-          { type: 'sublink', title: 'Tooltip', href: '/components-library/tooltip' },
-          { type: 'sublink', title: 'Accordion', href: '/components-library/accordion' },
-          { type: 'sublink', title: 'Icons', href: '/components-library/icons' },
-        ],
-      },
+      // {
+      //   type: 'group',
+      //   title: 'Components',
+      //   path: 'components-library',
+      //   icon: (
+      //     <svg className={`shrink-0 fill-current`} xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+      //       <path d="M.06 10.003a1 1 0 0 1 1.948.455c-.019.08.01.152.078.19l5.83 3.333c.053.03.116.03.168 0l5.83-3.333a.163.163 0 0 0 .078-.188 1 1 0 0 1 1.947-.459 2.161 2.161 0 0 1-1.032 2.384l-5.83 3.331a2.168 2.168 0 0 1-2.154 0l-5.83-3.331a2.162 2.162 0 0 1-1.032-2.382Zm7.856-7.981-5.83 3.332a.17.17 0 0 0 0 .295l5.828 3.33c.054.031.118.031.17.002l5.83-3.333a.17.17 0 0 0 0-.294L8.085 2.023a.172.172 0 0 0-.17-.001ZM9.076.285l5.83 3.332c1.458.833 1.458 2.935 0 3.768l-5.83 3.333c-.667.38-1.485.38-2.153-.001l-5.83-3.332c-1.457-.833-1.457-2.935 0-3.767L6.925.285a2.173 2.173 0 0 1 2.15 0Z" />
+      //     </svg>
+      //   ),
+      //   children: [
+      //     { type: 'sublink', title: 'Button', href: '/components-library/button' },
+      //     { type: 'sublink', title: 'Input Form', href: '/components-library/form' },
+      //     { type: 'sublink', title: 'Dropdown', href: '/components-library/dropdown' },
+      //     { type: 'sublink', title: 'Alert & Banner', href: '/components-library/alert' },
+      //     { type: 'sublink', title: 'Modal', href: '/components-library/modal' },
+      //     { type: 'sublink', title: 'Pagination', href: '/components-library/pagination' },
+      //     { type: 'sublink', title: 'Tabs', href: '/components-library/tabs' },
+      //     { type: 'sublink', title: 'Breadcrumb', href: '/components-library/breadcrumb' },
+      //     { type: 'sublink', title: 'Badge', href: '/components-library/badge' },
+      //     { type: 'sublink', title: 'Avatar', href: '/components-library/avatar' },
+      //     { type: 'sublink', title: 'Tooltip', href: '/components-library/tooltip' },
+      //     { type: 'sublink', title: 'Accordion', href: '/components-library/accordion' },
+      //     { type: 'sublink', title: 'Icons', href: '/components-library/icons' },
+      //   ],
+      // },
     ],
   }
 

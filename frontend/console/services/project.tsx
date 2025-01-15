@@ -2,18 +2,17 @@ import { BASE_URL } from "@/config";
 import request from "@/utils/request";
 import { UpdateProjectParams, CreateProjectParams, ListProjectParams, GetProjectParams } from "@/interfaces/request";
 
-// 获取项目列表
+// Get project list
 export const getProject = (params: ListProjectParams) => request.get(`${BASE_URL}/projects/list`, params)
 
-// 获取项目详情
+// Get project detail
 export const getProjectDetail = (params: GetProjectParams) => request.get(`${BASE_URL}/projects/info`, params)
 
-// 更新项目信息
+// Update project information
 export const updateProject = (query: GetProjectParams, params: UpdateProjectParams) => request.put(`${BASE_URL}/projects/update`, params, query)
 
-// 删除项目
+// Delete project
 export const deleteProject = (params: GetProjectParams) => request.del(`${BASE_URL}/projects/delete`, params)
 
-// 创建项目
+// Create project
 export const createProject = (params: CreateProjectParams) => request.post(`${BASE_URL}/projects/create`, params)
-
