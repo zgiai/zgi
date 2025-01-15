@@ -43,7 +43,7 @@ from app.features.knowledge.core.logging import (
 class KnowledgeBaseService:
     """Service for managing knowledge bases"""
 
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: Session):
         self.db = db
         self.kb_settings = get_knowledge_base_settings()
 
@@ -74,12 +74,13 @@ class KnowledgeBaseService:
                 raise ValidationError("Organization ID is required for organization visibility")
 
             # check collection_name
-            query = select(KnowledgeBase).where(KnowledgeBase.name == kb_create.name)
-            result = await self.db.execute(query)
-            exist_kb = result.scalars().first()
+            # query = select(KnowledgeBase).where(KnowledgeBase.name == kb_create.name)
+            # result = await self.db.execute(query)
+            # exist_kb = result.scalars().first()
+            exist_kb = self.db.query(KnowledgeBase).filter(KnowledgeBase.name == kb_create.name).first()
             if exist_kb:
                 raise ValidationError("Knowledge base with this name already exists")
-            collection_name = f"kb_{user_id}_{kb_create.name.lower().replace(' ', '_')}_{str(uuid4())[:8]}"
+            collection_name = f"kb_{user_id}_{str(uuid4())[:8]}"
             # Create knowledge base
             # get model from embedding setting
             kb_create.model = self.embedding_settings.MODEL
@@ -108,8 +109,10 @@ class KnowledgeBaseService:
 
             # Save to database
             self.db.add(kb)
-            await self.db.commit()
-            await self.db.refresh(kb)
+            # await self.db.commit()
+            # await self.db.refresh(kb)
+            self.db.commit()
+            self.db.refresh(kb)
 
             # Log audit
             audit_logger.log_access(
@@ -129,10 +132,10 @@ class KnowledgeBaseService:
             )
 
         except Exception as e:
-            await self.db.rollback()
+            self.db.rollback()
             # Try to cleanup vector collection if created
             try:
-                await self.vector_db.delete_collection(kb.collection_name)
+                self.vector_db.delete_collection(kb.collection_name)
             except:
                 pass
             raise
@@ -145,9 +148,10 @@ class KnowledgeBaseService:
             user_id: int
     ) -> ServiceResponse[KnowledgeBase]:
         """Get a knowledge base by ID"""
-        query = select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
-        result = await self.db.execute(query)
-        kb = result.scalars().first()
+        # query = select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
+        # result = await self.db.execute(query)
+        # kb = result.scalars().first()
+        kb = self.db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
         if not kb:
             raise NotFoundError("Knowledge base not found")
 
@@ -178,9 +182,10 @@ class KnowledgeBaseService:
             user_id: int
     ) -> ServiceResponse[KnowledgeBase]:
         """Update a knowledge base"""
-        query = select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
-        result = await self.db.execute(query)
-        kb = result.scalars().first()
+        # query = select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
+        # result = await self.db.execute(query)
+        # kb = result.scalars().first()
+        kb = self.db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
         if not kb:
             raise NotFoundError(f"Knowledge base {kb_id} not found")
 
@@ -192,8 +197,10 @@ class KnowledgeBaseService:
         for field, value in kb_update.dict(exclude_unset=True).items():
             setattr(kb, field, value)
         self.db.add(kb)
-        await self.db.commit()
-        await self.db.refresh(kb)
+        # await self.db.commit()
+        # await self.db.refresh(kb)
+        self.db.commit()
+        self.db.refresh(kb)
 
         audit_logger.log_access(
             user_id,
@@ -210,16 +217,16 @@ class KnowledgeBaseService:
             data=kb.to_dict()
         )
 
-    @handle_service_errors
     async def delete_knowledge_base(
             self,
             kb_id: int,
             user_id: int
-    ) -> ServiceResponse[None]:
+    ) -> KnowledgeBase:
         """Delete a knowledge base"""
-        query = select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
-        result = await self.db.execute(query)
-        kb = result.scalars().first()
+        # query = select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
+        # result = await self.db.execute(query)
+        # kb = result.scalars().first()
+        kb = self.db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
         if not kb:
             raise NotFoundError(f"Knowledge base {kb_id} not found")
 
@@ -234,7 +241,8 @@ class KnowledgeBaseService:
             # Mark as deleted in database
             kb.status = Status.DELETED.value
             self.db.add(kb)
-            await self.db.commit()
+            # await self.db.commit()
+            self.db.commit()
 
             audit_logger.log_access(
                 user_id,
@@ -244,10 +252,10 @@ class KnowledgeBaseService:
                 "success"
             )
 
-            return ServiceResponse.ok()
+            return kb
 
         except Exception as e:
-            await self.db.rollback()
+            self.db.rollback()
             raise
 
     def _can_access(self, kb: KnowledgeBase, user_id: int) -> bool:
@@ -282,7 +290,20 @@ class KnowledgeBaseService:
             skip = (page_num - 1) * page_size
 
             # 构建查询
-            query = select(KnowledgeBase).where(
+            # query = select(KnowledgeBase).where(
+            #     and_(
+            #         KnowledgeBase.status != Status.DELETED.value,
+            #         or_(
+            #             KnowledgeBase.owner_id == user_id,
+            #             KnowledgeBase.visibility == Visibility.PUBLIC,
+            #             and_(
+            #                 KnowledgeBase.visibility == Visibility.ORGANIZATION,
+            #                 KnowledgeBase.organization_id == organization_id
+            #             ) if organization_id else False
+            #         )
+            #     )
+            # )
+            query = self.db.query(KnowledgeBase).filter(
                 and_(
                     KnowledgeBase.status != Status.DELETED.value,
                     or_(
@@ -301,16 +322,17 @@ class KnowledgeBaseService:
             print(f"User ID: {user_id}")
 
             # Get total count
-            count_query = select(func.count()).select_from(query.subquery())
-            total = await self.db.scalar(count_query) or 0
+            # count_query = select(func.count()).select_from(query.subquery())
+            # total = await self.db.scalar(count_query) or 0
+            total = query.count() or 0
 
             print(f"Total: {total}")
             # Get items with pagination
-            query = (query
-                     .options(selectinload(KnowledgeBase.owner))
+            query = (query.order_by(KnowledgeBase.created_at.desc())
                      .offset(skip).limit(page_size))
-            result = await self.db.execute(query)
-            items = result.scalars().all()
+            # result = await self.db.execute(query)
+            # items = result.scalars().all()
+            items = query.all()
 
             print(f"Items: {items}")
 
@@ -340,9 +362,10 @@ class KnowledgeBaseService:
     ) -> List[Dict[str, Any]]:
         """Search documents in a knowledge base"""
         # Get knowledge base and check access
-        query_knowledge = select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
-        query_result = await self.db.execute(query_knowledge)
-        kb = query_result.scalars().first()
+        # query_knowledge = select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
+        # query_result = await self.db.execute(query_knowledge)
+        # kb = query_result.scalars().first()
+        kb = self.db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
 
         if not kb:
             raise NotFoundError(f"Knowledge base {kb_id} not found")
@@ -378,17 +401,14 @@ class KnowledgeBaseService:
         except Exception as e:
             raise
 
-    @handle_service_errors
     async def clone_knowledge_base(
             self,
             kb_id: int,
             name: str,
             user_id: int
-    ) -> ServiceResponse[KnowledgeBase]:
+    ):
         """Clone a knowledge base"""
-        query = select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
-        result = await self.db.execute(query)
-        original_kb = result.scalars().first()
+        original_kb = self.db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
 
         if not original_kb:
             raise NotFoundError(f"Knowledge base {kb_id} not found")
@@ -400,7 +420,7 @@ class KnowledgeBaseService:
             name = f"{original_kb.name} (Clone)"
         if name == original_kb.name:
             raise ServiceError("New name cannot be the same as the original name")
-
+        collection_name = f"kb_{user_id}_{str(uuid4())[:8]}"
         new_kb = KnowledgeBase(
             name=name,
             description=original_kb.description,
@@ -409,7 +429,7 @@ class KnowledgeBaseService:
             organization_id=original_kb.organization_id,
             model=original_kb.model,
             dimension=original_kb.dimension,
-            collection_name=f"kb_{user_id}_{name.lower().replace(' ', '_')}_{str(uuid4())[:8]}",
+            collection_name=collection_name,
             meta_info=original_kb.meta_info,
             tags=original_kb.tags,
             status=Status.ACTIVE.value
@@ -424,8 +444,10 @@ class KnowledgeBaseService:
 
         # 保存到数据库
         self.db.add(new_kb)
-        await self.db.commit()
-        await self.db.refresh(new_kb)
+        # await self.db.commit()
+        # await self.db.refresh(new_kb)
+        self.db.commit()
+        self.db.refresh(new_kb)
 
         # 记录审计日志
         audit_logger.log_access(
@@ -436,10 +458,4 @@ class KnowledgeBaseService:
             "success"
         )
 
-        # 返回响应
-        return ServiceResponse(
-            success=True,
-            code=201,
-            message="Cloned",
-            data=new_kb.to_dict()
-        )
+        return new_kb, original_kb

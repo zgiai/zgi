@@ -88,10 +88,9 @@ class MockProvider(VectorDBProvider):
         return results
         
     async def delete_vectors(
-        self,
-        collection_name: str,
-        vector_ids: List[str]
-    ) -> bool:
+            self,
+            collection_name: str,
+            metadata_filter: Dict[str, Any] = None) -> bool:
         """Delete vectors from collection"""
         if collection_name not in self.collections:
             # return False
@@ -120,3 +119,9 @@ class MockProvider(VectorDBProvider):
             "dimension": collection["dimension"],
             "vector_count": len(collection["vectors"])
         }
+
+    async def get_vectors(
+            self,
+            collection_name: str,
+            metadata_filter: Optional[Dict[str, Any]] = None):
+        pass

@@ -63,3 +63,25 @@ class SearchQuery(BaseModel):
         None,
         description="Filter by time range (created_at or updated_at)"
     )
+
+
+class GetVectorQuery(BaseModel):
+    """Schema for get vector query"""
+    score_threshold: Optional[float] = Field(
+        default=0.7,
+        ge=0,
+        le=1,
+        description="Minimum similarity score"
+    )
+    metadata_filter: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Filter results by metadata"
+    )
+    file_types: Optional[List[str]] = Field(
+        None,
+        description="Filter by file types"
+    )
+    time_range: Optional[Dict[str, str]] = Field(
+        None,
+        description="Filter by time range (created_at or updated_at)"
+    )

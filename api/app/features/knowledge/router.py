@@ -13,7 +13,8 @@ from app.features.knowledge.models.knowledge import Visibility, Status
 from app.features.knowledge.schemas.request.knowledge import (
     KnowledgeBaseCreate,
     KnowledgeBaseUpdate,
-    SearchQuery
+    SearchQuery,
+    GetVectorQuery
 )
 from app.features.knowledge.schemas.request.document import (
     DocumentUpload,
@@ -38,7 +39,7 @@ router = APIRouter(tags=["Knowledge Base"])
 
 
 # dependencies
-def get_knowledge_base_service(db: Session = Depends(get_db)) -> KnowledgeBaseService:
+def get_knowledge_base_service(db: Session = Depends(get_sync_db)) -> KnowledgeBaseService:
     return KnowledgeBaseService(db)
 
 
@@ -112,23 +113,29 @@ async def update_knowledge_base(
 async def delete_knowledge_base(
         kb_id: int,
         service: KnowledgeBaseService = Depends(get_knowledge_base_service),
+        doc_service: DocumentService = Depends(get_document_service),
         current_user=Depends(get_current_user)
 ):
     """Delete a knowledge base"""
-    result = await service.delete_knowledge_base(kb_id, current_user.id)
+    # result = await service.delete_knowledge_base(kb_id, current_user.id)
+    result = await doc_service.delete_knowledge_base(kb_id, current_user.id)
     return resp_200(result.data)
 
 
 @router.post("/{kb_id}/clone",
              summary="Clone knowledge base")
 async def clone_knowledge_base(
+        *,
         kb_id: int,
         name: Optional[str] = None,
         service: KnowledgeBaseService = Depends(get_knowledge_base_service),
-        current_user: User = Depends(get_current_user)
+        doc_service: DocumentService = Depends(get_document_service),
+        current_user: User = Depends(get_current_user),
+        background_tasks: BackgroundTasks
 ):
     """Clone a knowledge base"""
-    result = await service.clone_knowledge_base(kb_id, name, current_user.id)
+    # result = await service.clone_knowledge_base(kb_id, name, current_user.id)
+    result = await doc_service.clone_knowledge_base(kb_id, name, current_user.id, background_tasks)
     return resp_200(result.data)
 
 
@@ -158,24 +165,31 @@ async def upload_document(
 @router.post("/{kb_id}/documents/batch",
              summary="Batch upload documents")
 async def batch_upload_documents(
+        *,
         kb_id: int,
         files: List[UploadFile] = File(...),
         metadata: Optional[str] = Form(None),
         db: Session = Depends(get_db),
         doc_service: DocumentService = Depends(get_document_service),
-        current_user=Depends(get_current_user)
+        current_user=Depends(get_current_user),
+        background_tasks: BackgroundTasks
 ):
     """Batch upload documents to a knowledge base"""
-    # return await doc_service.batch_upload_documents(kb_id, files, current_user.id, metadata)
-    return resp_200("batch_upload_documents")
+    metadata_dict = None
+    if metadata:
+        try:
+            metadata_dict = json.loads(metadata)
+        except (json.JSONDecodeError, ValidationError) as e:
+            return {"success": False, "error": str(e)}
+    return await doc_service.batch_upload_documents(kb_id, files, current_user.id, background_tasks, metadata_dict)
 
 
 @router.get("/{kb_id}/documents",
             summary="List documents")
 async def list_documents(
         kb_id: int,
-        skip: int = Query(0, ge=0),
-        limit: int = Query(10, ge=1, le=100),
+        page_num: int = Query(1, ge=1),
+        page_size: int = Query(10, ge=1, le=100),
         file_type: Optional[str] = None,
         status: Optional[str] = None,
         search: Optional[str] = None,
@@ -186,7 +200,7 @@ async def list_documents(
     # kb_service = KnowledgeBaseService(db)
     # doc_service = DocumentService(sync_db, kb_service)
     documents, total = await doc_service.list_documents(
-        kb_id, current_user.id, skip, limit, file_type, status, search
+        kb_id, current_user.id, page_num, page_size, file_type, status, search
     )
     document_resp = [DocumentResponse.model_validate(doc) for doc in documents]
     data_list = DocumentList(total=total, items=document_resp)
@@ -236,13 +250,13 @@ async def delete_document(
             summary="List document chunks")
 async def list_document_chunks(
         doc_id: int,
-        skip: int = Query(0, ge=0),
-        limit: int = Query(10, ge=1, le=100),
+        page_num: int = Query(1, ge=1),
+        page_size: int = Query(10, ge=1, le=100),
         doc_service: DocumentService = Depends(get_document_service),
         current_user=Depends(get_current_user)
 ):
     """List chunks of a document"""
-    chunks, total = await doc_service.list_chunks(doc_id, current_user.id, skip, limit)
+    chunks, total = await doc_service.list_chunks(doc_id, current_user.id, page_num, page_size)
     chunk_resp = [DocumentChunkResponse.model_validate(chunk) for chunk in chunks]
     data_list = DocumentChunkList(total=total, items=chunk_resp)
     return resp_200(data_list)
@@ -280,4 +294,18 @@ async def search_knowledge_base(
 ):
     """Search documents in a knowledge base"""
     results = await service.search(kb_id, query, current_user.id)
+    return resp_200(results)
+
+@router.post("/{kb_id}/get_vectors",
+             summary="Search knowledge base")
+async def get_vectors(
+        kb_id: int,
+        query: GetVectorQuery,
+        service: KnowledgeBaseService = Depends(get_knowledge_base_service),
+        doc_service: DocumentService = Depends(get_document_service),
+        current_user=Depends(get_current_user)
+):
+    """Search documents in a knowledge base"""
+    # results = await service.search(kb_id, query)
+    results = await doc_service.get_vectors(kb_id, query)
     return resp_200(results)

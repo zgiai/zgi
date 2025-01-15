@@ -114,3 +114,9 @@ class PineconeProvider(VectorDBProvider):
         except Exception as e:
             print(f"Error getting Pinecone index info: {e}")
             return {}
+
+    async def get_vectors(
+            self,
+            collection_name: str,
+            metadata_filter: Optional[Dict[str, Any]] = None):
+        pass

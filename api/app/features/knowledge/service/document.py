@@ -1,9 +1,11 @@
 import os
 import hashlib
+import shutil
 import time
 from typing import List, Optional, Dict, Any, BinaryIO, Tuple
 from fastapi import UploadFile, BackgroundTasks
 from sqlalchemy import select
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 import PyPDF2
 import docx
@@ -12,6 +14,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from app.features.knowledge.models.document import Document, DocumentStatus, DocumentChunk
 from app.features.knowledge.models.knowledge import KnowledgeBase
 from app.features.knowledge.schemas.request.document import DocumentUpdate
+from app.features.knowledge.schemas.request.knowledge import SearchQuery, GetVectorQuery
 from app.features.knowledge.service.knowledge import KnowledgeBaseService
 from app.features.knowledge.core.config import get_document_settings
 from app.features.knowledge.core.response import (
@@ -114,8 +117,9 @@ class DocumentService:
             
             # Generate unique filename
             file_hash = hashlib.md5(file_content).hexdigest()
-            file_ext = os.path.splitext(file.filename)[1]
-            filename = f"{file_hash}{file_ext}"
+            # file_ext = os.path.splitext(file.filename)[1]
+            # filename = f"{file_hash}{file_ext}"
+            filename = file.filename
             filepath = os.path.join(upload_dir, filename)
             
             # Write file
@@ -217,7 +221,12 @@ class DocumentService:
             kb = self.db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
             if not kb:
                 raise NotFoundError("Knowledge base not found")
-            
+            exist_document = self.db.query(Document).filter(
+                Document.kb_id == kb_id,
+                Document.file_name == file.filename).first()
+            if exist_document:
+                raise ValidationError(f"Document {file.filename} in Knowledge {kb.name} already exists")
+
             try:
                 # Store file
                 filepath, file_hash = await self._store_file(file, kb_id, user_id)
@@ -308,6 +317,21 @@ class DocumentService:
             self.db.rollback()
             raise
 
+    async def batch_upload_documents(
+        self,
+        kb_id: int,
+        files: List[UploadFile],
+        user_id: int,
+        background_tasks: BackgroundTasks,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> ServiceResponse[Document]:
+        """Batch upload documents"""
+        doc_list = []
+        for file in files:
+            result = await self.upload_document(kb_id, file, user_id, background_tasks, metadata)
+            doc_list.append(result.data)
+        return ServiceResponse.ok(doc_list)
+
     # @handle_service_errors
     async def get_document(
         self,
@@ -346,10 +370,6 @@ class DocumentService:
             raise NotFoundError(f"Document {doc_id} not found")
             
         # Check access through knowledge base
-        # kb_response = await self.kb_service.get_knowledge_base(document.kb_id, user_id)
-        # if not kb_response.success:
-        #     return kb_response
-        # kb = kb_response.data
         kb = self.db.query(KnowledgeBase).filter(KnowledgeBase.id == document.kb_id).first()
         if not kb:
             raise NotFoundError("Knowledge base not found")
@@ -358,13 +378,15 @@ class DocumentService:
             # Delete vectors from vector database
             success = await self.kb_service.vector_db.delete_vectors(
                 collection_name=kb.collection_name,
-                vector_ids=[]
-                # filter={"document_id": doc_id}
+                metadata_filter={"document_id": doc_id}
             )
             
             if not success:
                 raise Exception("Failed to delete vectors")
-            
+
+            # Delete DocumentChunks
+            self.db.query(DocumentChunk).filter(DocumentChunk.document_id == document.id).delete()
+
             # Delete file
             if document.file_path and os.path.exists(document.file_path):
                 os.remove(document.file_path)
@@ -391,22 +413,46 @@ class DocumentService:
             self.db.rollback()
             raise
 
+    @handle_service_errors
+    async def delete_knowledge_base(
+            self,
+            kb_id: int,
+            user_id: int
+    ) -> ServiceResponse:
+        """Delete a knowledge"""
+        try:
+            kb = self.db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
+            if not kb:
+                raise NotFoundError("Knowledge base not found")# Delete VectorDB
+            success = await self.kb_service.vector_db.delete_vectors(kb.collection_name)
+            if not success:
+                raise Exception("Failed to delete vectors")
+            document_all = self.db.query(Document).filter(Document.kb_id == kb_id).all()
+            if document_all:
+                for document in document_all:
+                    # Delete DocumentChunks
+                    self.db.query(DocumentChunk).filter(DocumentChunk.document_id == document.id).delete()
+                    # await self.delete_document(document.id, user_id)
+                self.db.query(Document).filter(Document.kb_id == kb_id).delete()
+            await self.kb_service.delete_knowledge_base(kb_id, user_id)
+            return ServiceResponse.ok()
+        except Exception as e:
+            self.db.rollback()
+            raise
+
     # @handle_service_errors
     async def list_documents(
         self,
         kb_id: int,
         user_id: int,
-        skip: int = 0,
-        limit: int = 10,
+        page_num: int = 0,
+        page_size: int = 10,
         file_type: Optional[str] = None,
         status: Optional[int] = None,
         search: Optional[str] = None
     ) -> Tuple[List[Document], int]:
         """List documents in a knowledge base"""
         # Check access through knowledge base
-        # kb_response = await self.kb_service.get_knowledge_base(kb_id, user_id)
-        # if not kb_response.success:
-        #     return kb_response
         kb = self.db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
         if not kb:
             raise NotFoundError("Knowledge base not found")
@@ -423,6 +469,8 @@ class DocumentService:
             query = query.filter(Document.file_name.ilike(f"%{search}%"))
 
         total = query.count()
+        skip = (page_num - 1) * page_size
+        limit = page_size
         documents = query.offset(skip).limit(limit).all()
         
         return documents, total
@@ -465,8 +513,8 @@ class DocumentService:
         self,
         doc_id: int,
         user_id: int,
-        skip: int = 0,
-        limit: int = 10
+        page_num: int = 1,
+        page_size: int = 10
     ) -> Tuple[List[DocumentChunk], int]:
         """List chunks of a document"""
         document = self.db.query(Document).filter(Document.id == doc_id).first()
@@ -480,6 +528,277 @@ class DocumentService:
         
         query = self.db.query(DocumentChunk).filter(DocumentChunk.document_id == doc_id)
         total = query.count()
+        skip = (page_num - 1) * page_size
+        limit = page_size
         chunks = query.offset(skip).limit(limit).all()
         
         return chunks, total
+
+    @handle_service_errors
+    async def clone_knowledge_base(
+            self,
+            kb_id: int,
+            name: str,
+            user_id: int,
+            background_tasks: BackgroundTasks
+    ) -> ServiceResponse[KnowledgeBase]:
+        """Clone a knowledge base"""
+        new_kb, original_kb = await self.kb_service.clone_knowledge_base(kb_id, name, user_id)
+
+        # create new documents folder
+        upload_dir = os.path.join(
+            self.settings.UPLOAD_DIR,
+            str(user_id),
+            str(new_kb.id)
+        )
+        os.makedirs(upload_dir, exist_ok=True)
+
+        # copy documents and chunks
+        original_docs = self.db.query(Document).filter(Document.kb_id == kb_id).all()
+        chunk_metadata = []
+        for doc in original_docs:
+            file_path = doc.file_path
+            new_file_path = os.path.join(upload_dir, doc.file_name)
+            shutil.copy(file_path, new_file_path)
+            new_doc = Document(
+                kb_id=new_kb.id,
+                file_name=doc.file_name,
+                file_path=new_file_path,
+                file_type=doc.file_type,
+                file_size=doc.file_size,
+                file_hash=doc.file_hash,
+                status=doc.status,
+                meta_info=doc.meta_info
+            )
+            self.db.add(new_doc)
+            self.db.commit()
+            self.db.refresh(new_doc)
+
+            doc_chunks = self.db.query(DocumentChunk).filter(DocumentChunk.document_id == doc.id).all()
+            chunks = []
+            for chunk in doc_chunks:
+                new_chunk = DocumentChunk(
+                    document_id=new_doc.id,
+                    chunk_index=chunk.chunk_index,
+                    content=chunk.content,
+                    token_count=chunk.token_count
+                )
+                chunks.append(chunk.content)
+                self.db.add(new_chunk)
+            self.db.commit()
+
+            # copy vectors
+            chunk_metadata = [{
+                "document_id": new_doc.id,
+                "chunk_index": chunk.chunk_index,
+                "text": chunk.content,
+                "chunk_meta_info": chunk.chunk_meta_info
+            } for chunk in doc_chunks]
+            background_tasks.add_task(
+                self._process_document,
+                new_doc,
+                chunks,
+                new_kb,
+                doc.meta_info,
+                user_id
+            )
+        # if chunk_metadata:
+        #     vectors = await self.kb_service.vector_db.get_vectors(
+        #         collection_name=original_kb.collection_name
+        #     )
+        #
+        #     # Insert vectors into vector database
+        #     success = await self.kb_service.vector_db.insert_vectors(
+        #         collection_name=new_kb.collection_name,
+        #         vectors=vectors,
+        #         metadata=chunk_metadata
+        #     )
+
+        return ServiceResponse(
+            success=True,
+            code=201,
+            message="Cloned",
+            data=new_kb.to_dict()
+        )
+
+    @handle_service_errors
+    async def reprocess_document(
+            self,
+            doc_id: int,
+            user_id: int
+    ) -> ServiceResponse[Document]:
+        """Reprocess a document"""
+        start_time = metrics_logger.time()
+
+        try:
+            # Get document by ID
+            document = self.db.query(Document).filter(Document.id == doc_id).first()
+            if not document:
+                raise NotFoundError(f"Document {doc_id} not found")
+
+            # Check access through knowledge base
+            kb_response = await self.kb_service.get_knowledge_base(document.kb_id, user_id)
+            if not kb_response.success:
+                raise ServiceError(f"Knowledge base {document.kb_id} not found")
+
+            # Get knowledge base
+            kb = self.db.query(KnowledgeBase).filter(KnowledgeBase.id == document.kb_id).first()
+            if not kb:
+                raise NotFoundError("Knowledge base not found")
+
+            # Update document status to PROCESSING
+            document.status = DocumentStatus.PROCESSING.value
+            document.error_message = None
+            self.db.commit()
+
+            # Extract text from the document file
+            with open(document.file_path, "rb") as f:
+                text = await self._extract_text(f, document.file_type)
+
+            # Split text into chunks
+            chunks = await self._split_text(text)
+
+            # Generate embeddings for the new chunks
+            embeddings = await self.kb_service.embedding.get_embeddings(chunks)
+            chunk_metadata = [{
+                "document_id": document.id,
+                "chunk_index": i,
+                "text": chunk,
+                **(document.meta_info or {})
+            } for i, chunk in enumerate(chunks)]
+
+            # Delete existing vectors from the vector database
+            success = await self.kb_service.vector_db.delete_vectors(
+                collection_name=kb.collection_name,
+                metadata_filter={"document_id": document.id}
+            )
+
+            # if not success:
+            #     raise Exception("Failed to delete existing vectors")
+
+            # Insert new vectors into the vector database
+            success = await self.kb_service.vector_db.insert_vectors(
+                collection_name=kb.collection_name,
+                vectors=embeddings,
+                metadata=chunk_metadata
+            )
+
+            if not success:
+                raise Exception("Failed to store new vectors")
+
+            # Update document status to COMPLETED
+            document.status = DocumentStatus.COMPLETED.value
+            document.chunk_count = len(chunks)
+            self.db.commit()
+
+            # Update knowledge base statistics
+            kb.total_chunks = sum(
+                self.db.query(DocumentChunk).filter(DocumentChunk.document_id == doc.id).count()
+                for doc in self.db.query(Document).filter(Document.kb_id == kb.id).all()
+            )
+            self.db.commit()
+
+            audit_logger.log_access(
+                user_id,
+                "document",
+                str(document.id),
+                "reprocess",
+                "success"
+            )
+
+            metrics_logger.log_operation(
+                "document_reprocess",
+                metrics_logger.time() - start_time,
+                True,
+                {"document_id": document.id, "chunks": len(chunks)}
+            )
+
+            return ServiceResponse.ok(document.to_dict())
+
+        except Exception as e:
+            # Update document status to FAILED
+            document.status = DocumentStatus.FAILED.value
+            document.error_message = str(e)
+            self.db.commit()
+
+            metrics_logger.log_operation(
+                "document_reprocess",
+                metrics_logger.time() - start_time,
+                False,
+                {"error": str(e)}
+            )
+            raise
+
+    async def download_document(
+            self,
+            doc_id: int,
+            user_id: int
+    ) -> StreamingResponse:
+        """Download original document"""
+        start_time = metrics_logger.time()
+
+        try:
+            # Get document by ID
+            document = self.db.query(Document).filter(Document.id == doc_id).first()
+            if not document:
+                raise NotFoundError(f"Document {doc_id} not found")
+
+            # Check access through knowledge base
+            kb_response = await self.kb_service.get_knowledge_base(document.kb_id, user_id)
+            if not kb_response.success:
+                raise ServiceError(f"Knowledge base {document.kb_id} not found")
+
+            # Check if file exists
+            if not os.path.exists(document.file_path):
+                raise NotFoundError(f"File for document {doc_id} not found on the server")
+
+            # Open the file in binary read mode
+            file = open(document.file_path, "rb")
+
+            # Create a StreamingResponse to return the file
+            response = StreamingResponse(file, media_type="application/octet-stream")
+            response.headers["Content-Disposition"] = f"attachment; filename={document.file_name}"
+
+            audit_logger.log_access(
+                user_id,
+                "document",
+                str(document.id),
+                "download",
+                "success"
+            )
+
+            metrics_logger.log_operation(
+                "document_download",
+                metrics_logger.time() - start_time,
+                True,
+                {"document_id": document.id}
+            )
+
+            return response
+
+        except Exception as e:
+            metrics_logger.log_operation(
+                "document_download",
+                metrics_logger.time() - start_time,
+                False,
+                {"error": str(e)}
+            )
+            raise
+
+    @handle_service_errors(wrap_response=False)
+    async def get_vectors(
+            self,
+            kb_id: int,
+            query: GetVectorQuery
+    ):
+        """Get documents in a knowledge base"""
+        kb = self.db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
+
+        if not kb:
+            raise NotFoundError(f"Knowledge base {kb_id} not found")
+        filters = query.metadata_filter
+        vectors = await self.kb_service.vector_db.get_vectors(
+            collection_name=kb.collection_name,
+            metadata_filter=filters
+        )
+        return vectors
