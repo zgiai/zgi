@@ -261,6 +261,35 @@ async def list_document_chunks(
     data_list = DocumentChunkList(total=total, items=chunk_resp)
     return resp_200(data_list)
 
+
+@router.get("/documents/chunks/{chunk_id}", summary="Get document chunk by ID")
+async def get_document_chunk(
+        chunk_id: int,
+        doc_service: DocumentService = Depends(get_document_service),
+        current_user: User = Depends(get_current_user)
+):
+    """Get a document chunk by ID"""
+    chunk = await doc_service.get_chunk(chunk_id, current_user.id)
+    resp_data = DocumentChunkResponse.model_validate(chunk)
+    return resp_200(resp_data)
+
+
+@router.put("/documents/chunks/{chunk_id}", summary="Update document chunk by ID")
+async def update_document_chunk(
+        chunk_id: int,
+        content: str = Form(...),
+        doc_service: DocumentService = Depends(get_document_service),
+        current_user: User = Depends(get_current_user)
+):
+    """Update a document chunk by ID"""
+    try:
+        chunk = await doc_service.update_chunk(chunk_id, content, current_user.id)
+        resp_data = DocumentChunkResponse.model_validate(chunk)
+        return resp_200(resp_data)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.post("/documents/{doc_id}/reprocess",
              summary="Reprocess document")
 async def reprocess_document(
@@ -282,6 +311,7 @@ async def download_document(
     """Download original document"""
     return await doc_service.download_document(doc_id, current_user.id)
 
+
 # Search Routes
 
 @router.post("/{kb_id}/search",
@@ -295,6 +325,7 @@ async def search_knowledge_base(
     """Search documents in a knowledge base"""
     results = await service.search(kb_id, query, current_user.id)
     return resp_200(results)
+
 
 @router.post("/{kb_id}/get_vectors",
              summary="Search knowledge base")

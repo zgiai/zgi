@@ -534,6 +534,112 @@ class DocumentService:
         
         return chunks, total
 
+    async def get_chunk(
+            self,
+            chunk_id: int,
+            user_id: int
+    ) -> DocumentChunk:
+        """Get a document chunk by ID"""
+        chunk = self.db.query(DocumentChunk).filter(DocumentChunk.id == chunk_id).first()
+        if not chunk:
+            raise NotFoundError(f"Document chunk {chunk_id} not found")
+
+        # Check access through knowledge base
+        document = self.db.query(Document).filter(Document.id == chunk.document_id).first()
+        if not document:
+            raise NotFoundError("Document not found")
+
+        kb_response = await self.kb_service.get_knowledge_base(document.kb_id, user_id)
+        if not kb_response.success:
+            raise ServiceError(f"Knowledge base {document.kb_id} not found")
+
+        audit_logger.log_access(
+            user_id,
+            "document_chunk",
+            str(chunk_id),
+            "read",
+            "success"
+        )
+
+        return chunk
+
+    async def update_chunk(
+            self,
+            chunk_id: int,
+            new_content: str,
+            user_id: int
+    ) -> DocumentChunk:
+        """Update a document chunk by ID"""
+        try:
+            # Get the chunk by ID
+            chunk = self.db.query(DocumentChunk).filter(DocumentChunk.id == chunk_id).first()
+            if not chunk:
+                raise NotFoundError(f"Document chunk {chunk_id} not found")
+
+            # Get the document associated with the chunk
+            document = self.db.query(Document).filter(Document.id == chunk.document_id).first()
+            if not document:
+                raise NotFoundError("Document not found")
+
+            if new_content == chunk.content:
+                raise ServiceError("New content is the same as the original content")
+
+            # Check access through knowledge base
+            kb_response = await self.kb_service.get_knowledge_base(document.kb_id, user_id)
+            if not kb_response.success:
+                raise ServiceError(f"Knowledge base {document.kb_id} not found")
+
+            # Update the chunk content
+            chunk.content = new_content
+            chunk.token_count = len(new_content.split())
+            self.db.commit()
+
+            # Get the knowledge base
+            kb = self.db.query(KnowledgeBase).filter(KnowledgeBase.id == document.kb_id).first()
+            if not kb:
+                raise NotFoundError("Knowledge base not found")
+
+            # Generate new embeddings for the updated chunk
+            embeddings = await self.kb_service.embedding.get_embeddings([new_content])
+            chunk_metadata = [{
+                "document_id": document.id,
+                "chunk_index": chunk.chunk_index,
+                "text": new_content,
+                **(chunk.chunk_meta_info or {})
+            }]
+
+            # Delete the existing vector from the vector database
+            success = await self.kb_service.vector_db.delete_vectors(
+                collection_name=kb.collection_name,
+                metadata_filter={"document_id": document.id, "chunk_index": chunk.chunk_index}
+            )
+
+            if not success:
+                raise Exception("Failed to delete existing vector")
+
+            # Insert the new vector into the vector database
+            success = await self.kb_service.vector_db.insert_vectors(
+                collection_name=kb.collection_name,
+                vectors=embeddings,
+                metadata=chunk_metadata
+            )
+
+            if not success:
+                raise Exception("Failed to store new vector")
+
+            audit_logger.log_access(
+                user_id,
+                "document_chunk",
+                str(chunk_id),
+                "update",
+                "success"
+            )
+
+            return chunk
+        except Exception as e:
+            self.db.rollback()
+            raise ServiceError(f"Failed to update document chunk: {e}")
+
     @handle_service_errors
     async def clone_knowledge_base(
             self,
