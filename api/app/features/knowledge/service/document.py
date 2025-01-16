@@ -588,31 +588,32 @@ class DocumentService:
             self.db.commit()
 
             # copy vectors
+            # background_tasks.add_task(
+            #     self._process_document,
+            #     new_doc,
+            #     chunks,
+            #     new_kb,
+            #     doc.meta_info,
+            #     user_id
+            # )
             chunk_metadata = [{
                 "document_id": new_doc.id,
                 "chunk_index": chunk.chunk_index,
                 "text": chunk.content,
-                "chunk_meta_info": chunk.chunk_meta_info
+                **(chunk.chunk_meta_info or {})
             } for chunk in doc_chunks]
-            background_tasks.add_task(
-                self._process_document,
-                new_doc,
-                chunks,
-                new_kb,
-                doc.meta_info,
-                user_id
+            vectors = await self.kb_service.vector_db.get_vectors(
+                collection_name=original_kb.collection_name,
+                metadata_filter={
+                    "document_id": doc.id
+                }
             )
-        # if chunk_metadata:
-        #     vectors = await self.kb_service.vector_db.get_vectors(
-        #         collection_name=original_kb.collection_name
-        #     )
-        #
-        #     # Insert vectors into vector database
-        #     success = await self.kb_service.vector_db.insert_vectors(
-        #         collection_name=new_kb.collection_name,
-        #         vectors=vectors,
-        #         metadata=chunk_metadata
-        #     )
+            # Insert vectors into vector database
+            success = await self.kb_service.vector_db.insert_vectors(
+                collection_name=new_kb.collection_name,
+                vectors=vectors,
+                metadata=chunk_metadata
+            )
 
         return ServiceResponse(
             success=True,

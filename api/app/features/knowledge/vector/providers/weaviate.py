@@ -27,6 +27,38 @@ class WeaviateProvider(VectorDBProvider):
     ) -> bool:
         """Create a new Weaviate class"""
         try:
+            # class_obj = {
+            #     "class": name,
+            #     "vectorizer": "none",  # We'll provide vectors directly
+            #     "vectorIndexConfig": {
+            #         "distance": kwargs.get('metric', 'cosine'),
+            #         "dimension": dimension
+            #     },
+            #     "properties": [
+            #         {
+            #             "name": "metadata",
+            #             "dataType": ["object"],
+            #             "description": "Vector metadata",
+            #             "nestedProperties": [
+            #                 {
+            #                     "name": "text",
+            #                     "dataType": ["text"],
+            #                     "description": "The text content"
+            #                 },
+            #                 {
+            #                     "name": "document_id",
+            #                     "dataType": ["int"],
+            #                     "description": "The document id"
+            #                 },
+            #                 {
+            #                     "name": "chunk_index",
+            #                     "dataType": ["int"],
+            #                     "description": "chunk index"
+            #                 }
+            #             ]
+            #         }
+            #     ]
+            # }
             class_obj = {
                 "class": name,
                 "vectorizer": "none",  # We'll provide vectors directly
@@ -36,26 +68,19 @@ class WeaviateProvider(VectorDBProvider):
                 },
                 "properties": [
                     {
-                        "name": "metadata",
-                        "dataType": ["object"],
-                        "description": "Vector metadata",
-                        "nestedProperties": [
-                            {
-                                "name": "text",
-                                "dataType": ["text"],
-                                "description": "The text content"
-                            },
-                            {
-                                "name": "document_id",
-                                "dataType": ["int"],
-                                "description": "The document id"
-                            },
-                            {
-                                "name": "chunk_index",
-                                "dataType": ["int"],
-                                "description": "chunk index"
-                            }
-                        ]
+                        "name": "text",
+                        "dataType": ["text"],
+                        "description": "The text content"
+                    },
+                    {
+                        "name": "document_id",
+                        "dataType": ["int"],
+                        "description": "The document id"
+                    },
+                    {
+                        "name": "chunk_index",
+                        "dataType": ["int"],
+                        "description": "chunk index"
                     }
                 ]
             }
@@ -116,7 +141,7 @@ class WeaviateProvider(VectorDBProvider):
             # Build query
             query = (
                 self.client.query
-                .get(collection_name, ["metadata{document_id chunk_index text}"])
+                .get(collection_name, ["document_id chunk_index text"])
                 .with_additional(["id", "certainty"])
                 .with_near_vector({
                     "vector": query_vector,
@@ -127,14 +152,29 @@ class WeaviateProvider(VectorDBProvider):
 
             # Add metadata filter if specified
             if metadata_filter:
+                # Build the where filter
                 where_filter = {
                     "operator": "And",
-                    "operands": [{
-                        "path": ["metadata", key],
-                        "operator": "Equal",
-                        "valueString": str(value)
-                    } for key, value in metadata_filter.items()]
+                    "operands": []
                 }
+                for key, value in metadata_filter.items():
+                    operand = {
+                        "path": [key],
+                        "operator": "Equal"
+                    }
+                    if isinstance(value, str):
+                        operand["valueString"] = value
+                    elif isinstance(value, int):
+                        operand["valueInt"] = value
+                    elif isinstance(value, bool):
+                        operand["valueBoolean"] = value
+                    elif isinstance(value, float):
+                        operand["valueNumber"] = value
+                    else:
+                        continue
+                    where_filter["operands"].append(operand)
+                # Print the constructed where filter for debugging
+                print(f"Constructed where_filter: {where_filter}")
                 query = query.with_where(where_filter)
 
             # Execute query
@@ -145,7 +185,9 @@ class WeaviateProvider(VectorDBProvider):
             return [{
                 'id': item.get('_additional', {}).get('id'),
                 'score': item.get('_additional', {}).get('certainty'),
-                'metadata': item.get('metadata', {})
+                'document_id': item.get('document_id', {}),
+                'chunk_index': item.get('chunk_index', {}),
+                'text': item.get('text', {})
             } for item in items]
         except Exception as e:
             print(f"Error searching vectors in Weaviate: {e}")
@@ -183,7 +225,7 @@ class WeaviateProvider(VectorDBProvider):
                 }
                 for key, value in metadata_filter.items():
                     operand = {
-                        "path": ["metadata", key],
+                        "path": [key],
                         "operator": "Equal"
                     }
                     if isinstance(value, str):
@@ -235,7 +277,7 @@ class WeaviateProvider(VectorDBProvider):
 
             query = (
                 self.client.query
-                .get(collection_name, ["metadata{document_id chunk_index text}"])
+                .get(collection_name, ["document_id chunk_index text"])
                 .with_additional(["vector"])
             )
 
@@ -246,7 +288,7 @@ class WeaviateProvider(VectorDBProvider):
                 }
                 for key, value in metadata_filter.items():
                     operand = {
-                        "path": ["metadata", key],
+                        "path": [key],
                         "operator": "Equal"
                     }
                     if isinstance(value, str):
