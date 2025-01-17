@@ -2,14 +2,18 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy.future import select
-from typing import Dict
+from typing import Dict, Optional
 
 from app.core.base import resp_200, UnifiedResponseModel
-from app.core.database import get_db
-from app.core.auth import get_api_key
+from app.core.database import get_db, get_sync_db
+from app.core.auth import get_api_key, get_current_user
+from ..schemas.api_key import LLMModelResponse, LLMModelUpdate, LLMModelCreate, LLMModelListResponse, \
+    LLMProviderResponse, LLMProviderUpdate, LLMProviderListResponse, LLMProviderCreate
 from ..service.api_key_service import APIKeyService
 from ..models.api_key import APIKeyMapping
 from pydantic import BaseModel
+
+from ... import User
 
 router = APIRouter()
 
@@ -91,6 +95,190 @@ async def update_api_key_mapping(
             api_key=result.api_key,
             provider_keys=result.provider_keys
         )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/llm-providers", response_model=UnifiedResponseModel[LLMProviderResponse])
+async def create_llm_provider(
+        llm_provider: LLMProviderCreate,
+        db: Session = Depends(get_sync_db),
+        current_user: User = Depends(get_current_user)
+):
+    """Create a new LLMProvider."""
+    try:
+        result = APIKeyService.create_llm_provider(db=db, llm_provider=llm_provider, current_user=current_user)
+        return resp_200(LLMProviderResponse.model_validate(result))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/llm-providers", response_model=UnifiedResponseModel[LLMProviderListResponse])
+async def get_llm_providers(
+        page_size: Optional[int] = 10,
+        page_num: Optional[int] = 1,
+        db: Session = Depends(get_sync_db),
+        current_user: User = Depends(get_current_user)
+):
+    """Get a list of LLMProviders with pagination."""
+    try:
+        total = APIKeyService.count_llm_providers(db=db)
+        llm_providers = APIKeyService.get_llm_providers(db=db, page_size=page_size, page_num=page_num)
+        return resp_200(LLMProviderListResponse(
+            total=total,
+            page_size=page_size,
+            page_num=page_num,
+            data=[LLMProviderResponse.model_validate(llm_provider) for llm_provider in llm_providers]
+        ))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/llm-providers/{llm_provider_id}", response_model=UnifiedResponseModel[LLMProviderResponse])
+async def get_llm_provider(
+        llm_provider_id: int,
+        db: Session = Depends(get_sync_db),
+        current_user: User = Depends(get_current_user)
+):
+    """Get an LLMProvider by ID."""
+    try:
+        result = APIKeyService.get_llm_provider(db=db, llm_provider_id=llm_provider_id)
+        if not result:
+            raise HTTPException(status_code=404, detail="LLMProvider not found")
+        return resp_200(LLMProviderResponse.model_validate(result))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.put("/llm-providers/{llm_provider_id}", response_model=UnifiedResponseModel[LLMProviderResponse])
+async def update_llm_provider(
+        llm_provider_id: int,
+        llm_provider_update: LLMProviderUpdate,
+        db: Session = Depends(get_sync_db),
+        current_user: User = Depends(get_current_user)
+):
+    """Update an LLMProvider by ID."""
+    try:
+        result = APIKeyService.update_llm_provider(
+            db=db,
+            llm_provider_id=llm_provider_id,
+            llm_provider_update=llm_provider_update
+        )
+        if not result:
+            raise HTTPException(status_code=404, detail="LLMProvider not found")
+        return resp_200(LLMProviderResponse.model_validate(result))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/llm-providers/{llm_provider_id}", response_model=UnifiedResponseModel[LLMProviderResponse])
+async def delete_llm_provider(
+        llm_provider_id: int,
+        db: Session = Depends(get_sync_db),
+        current_user: User = Depends(get_current_user)
+):
+    """Delete an LLMProvider by ID."""
+    try:
+        result = APIKeyService.delete_llm_provider(db=db, llm_provider_id=llm_provider_id)
+        if not result:
+            raise HTTPException(status_code=404, detail="LLMProvider not found")
+        return resp_200(LLMProviderResponse.model_validate(result))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/llm-models", response_model=UnifiedResponseModel[LLMModelResponse])
+async def create_llm_model(
+        llm_model: LLMModelCreate,
+        db: Session = Depends(get_sync_db),
+        current_user: User = Depends(get_current_user)
+):
+    """Create a new LLMModel."""
+    try:
+        result = APIKeyService.create_llm_model(db=db, llm_model=llm_model, current_user=current_user)
+        return resp_200(LLMModelResponse.model_validate(result))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/llm-models", response_model=UnifiedResponseModel[LLMModelListResponse])
+async def get_llm_models(
+        page_size: Optional[int] = 10,
+        page_num: Optional[int] = 1,
+        db: Session = Depends(get_sync_db),
+        current_user: User = Depends(get_current_user)
+):
+    """Get a list of LLMModels with pagination."""
+    try:
+        total = APIKeyService.count_llm_models(db=db)
+        llm_models = APIKeyService.get_llm_models(db=db, page_size=page_size, page_num=page_num)
+        return resp_200(LLMModelListResponse(
+            total=total,
+            page_size=page_size,
+            page_num=page_num,
+            data=[LLMModelResponse.model_validate(llm_model) for llm_model in llm_models]
+        ))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/llm-models/{llm_model_id}", response_model=UnifiedResponseModel[LLMModelResponse])
+async def get_llm_model(
+        llm_model_id: int,
+        db: Session = Depends(get_sync_db),
+        current_user: User = Depends(get_current_user)
+):
+    """Get an LLMModel by ID."""
+    try:
+        result = APIKeyService.get_llm_model(db=db, llm_model_id=llm_model_id)
+        if not result:
+            raise HTTPException(status_code=404, detail="LLMModel not found")
+        return resp_200(LLMModelResponse.model_validate(result))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.put("/llm-models/{llm_model_id}", response_model=UnifiedResponseModel[LLMModelResponse])
+async def update_llm_model(
+        llm_model_id: int,
+        llm_model_update: LLMModelUpdate,
+        db: Session = Depends(get_sync_db),
+        current_user: User = Depends(get_current_user)
+):
+    """Update an LLMModel by ID."""
+    try:
+        result = APIKeyService.update_llm_model(db=db, llm_model_id=llm_model_id, llm_model_update=llm_model_update)
+        if not result:
+            raise HTTPException(status_code=404, detail="LLMModel not found")
+        return resp_200(LLMModelResponse.model_validate(result))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/llm-models/{llm_model_id}", response_model=UnifiedResponseModel[LLMModelResponse])
+async def delete_llm_model(
+        llm_model_id: int,
+        db: Session = Depends(get_sync_db),
+        current_user: User = Depends(get_current_user)
+):
+    """Delete an LLMModel by ID."""
+    try:
+        result = APIKeyService.delete_llm_model(db=db, llm_model_id=llm_model_id)
+        if not result:
+            raise HTTPException(status_code=404, detail="LLMModel not found")
+        return resp_200(LLMModelResponse.model_validate(result))
     except HTTPException:
         raise
     except Exception as e:
