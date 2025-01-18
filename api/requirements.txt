@@ -19,6 +19,7 @@ aiomysql==0.2.0
 DBUtils==3.0.3
 redis==5.2.1
 weaviate==0.1.2
+pinecone-client==3.0.0
 
 # Document Processing
 pypdf==3.17.1
