@@ -382,7 +382,8 @@ class DocumentService:
             )
             
             if not success:
-                raise Exception("Failed to delete vectors")
+                print("Failed to delete vectors")
+                # raise Exception("Failed to delete vectors")
 
             # Delete DocumentChunks
             self.db.query(DocumentChunk).filter(DocumentChunk.document_id == document.id).delete()
