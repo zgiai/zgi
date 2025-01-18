@@ -64,7 +64,7 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
             return embeddings
         except Exception as e:
             print(f"Error getting OpenAI embeddings: {e}")
-            return []
+            raise e
     
     def get_dimension(self) -> int:
         """Get embedding dimension for current model"""

@@ -293,12 +293,14 @@ async def update_document_chunk(
 @router.post("/documents/{doc_id}/reprocess",
              summary="Reprocess document")
 async def reprocess_document(
+        *,
         doc_id: int,
         doc_service: DocumentService = Depends(get_document_service),
-        current_user=Depends(get_current_user)
+        current_user=Depends(get_current_user),
+        background_tasks: BackgroundTasks
 ):
     """Reprocess a document"""
-    return await doc_service.reprocess_document(doc_id, current_user.id)
+    return await doc_service.reprocess_document(doc_id, current_user.id, background_tasks)
 
 
 @router.get("/documents/{doc_id}/download",

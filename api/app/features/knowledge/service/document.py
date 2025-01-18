@@ -732,7 +732,8 @@ class DocumentService:
     async def reprocess_document(
             self,
             doc_id: int,
-            user_id: int
+            user_id: int,
+            background_tasks: BackgroundTasks
     ) -> ServiceResponse[Document]:
         """Reprocess a document"""
         start_time = metrics_logger.time()
@@ -765,45 +766,15 @@ class DocumentService:
             # Split text into chunks
             chunks = await self._split_text(text)
 
-            # Generate embeddings for the new chunks
-            embeddings = await self.kb_service.embedding.get_embeddings(chunks)
-            chunk_metadata = [{
-                "document_id": document.id,
-                "chunk_index": i,
-                "text": chunk,
-                **(document.meta_info or {})
-            } for i, chunk in enumerate(chunks)]
-
-            # Delete existing vectors from the vector database
-            success = await self.kb_service.vector_db.delete_vectors(
-                collection_name=kb.collection_name,
-                metadata_filter={"document_id": document.id}
+            # Add background task for processing
+            background_tasks.add_task(
+                self._process_document,
+                document,
+                chunks,
+                kb,
+                document.meta_info,
+                user_id
             )
-
-            # if not success:
-            #     raise Exception("Failed to delete existing vectors")
-
-            # Insert new vectors into the vector database
-            success = await self.kb_service.vector_db.insert_vectors(
-                collection_name=kb.collection_name,
-                vectors=embeddings,
-                metadata=chunk_metadata
-            )
-
-            if not success:
-                raise Exception("Failed to store new vectors")
-
-            # Update document status to COMPLETED
-            document.status = DocumentStatus.COMPLETED.value
-            document.chunk_count = len(chunks)
-            self.db.commit()
-
-            # Update knowledge base statistics
-            kb.total_chunks = sum(
-                self.db.query(DocumentChunk).filter(DocumentChunk.document_id == doc.id).count()
-                for doc in self.db.query(Document).filter(Document.kb_id == kb.id).all()
-            )
-            self.db.commit()
 
             audit_logger.log_access(
                 user_id,
