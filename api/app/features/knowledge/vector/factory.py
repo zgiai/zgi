@@ -1,8 +1,8 @@
 from functools import cache
 from typing import Dict, Type, Any
 from .base import VectorDBProvider
-from .providers.pinecone import PineconeProvider
-from .providers.weaviate import WeaviateProvider
+from .providers.pinecone_provider import PineconeProvider
+from .providers.weaviate_provider import WeaviateProvider
 from .providers.mock import MockProvider
 
 class VectorDBFactory:
