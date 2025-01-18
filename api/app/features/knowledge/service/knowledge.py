@@ -77,9 +77,9 @@ class KnowledgeBaseService:
             # query = select(KnowledgeBase).where(KnowledgeBase.name == kb_create.name)
             # result = await self.db.execute(query)
             # exist_kb = result.scalars().first()
-            exist_kb = self.db.query(KnowledgeBase).filter(KnowledgeBase.name == kb_create.name).first()
-            if exist_kb:
-                raise ValidationError("Knowledge base with this name already exists")
+            # exist_kb = self.db.query(KnowledgeBase).filter(KnowledgeBase.name == kb_create.name).first()
+            # if exist_kb:
+            #     raise ValidationError("Knowledge base with this name already exists")
             collection_name = f"kb_{user_id}_{str(uuid4())[:8]}"
             # Create knowledge base
             # get model from embedding setting
