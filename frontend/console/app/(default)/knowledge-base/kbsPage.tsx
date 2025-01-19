@@ -42,11 +42,23 @@ const KnowledgeBaseCard: FC<KnowledgeBaseCardProps> = ({ kb, index }) => {
             whileTap={{ scale: 0.98 }}
             className="bg-white rounded-lg shadow-md p-6 hover:shadow-lg cursor-pointer"
         >
-            <h3 className="text-xl font-semibold text-gray-800">{kb.name}</h3>
-            <div className="flex gap-2 text-sm text-gray-500 mb-2">
-                <span>{kb?.document_count} files</span>
-                <span>{kb?.total_tokens}tokens</span>
+            <div className='flex justify-between'>
+                <div>
+
+                </div>
+                <div className='flex flex-col flex-1'>
+                    <h3 className="text-xl font-semibold text-gray-800">{kb.name}</h3>
+                    <div className="flex gap-2 text-sm text-gray-500 mb-2">
+                        <span>{kb?.document_count} files</span>
+                        <span>{kb?.total_tokens}tokens</span>
+                    </div>
+                </div>
+                <div>
+                    
+                </div>
             </div>
+
+
             <p className="text-gray-600 mb-4">{kb.description}</p>
             <div className="flex flex-wrap gap-2 mb-4">
                 {kb?.tags?.map((tag, idx) => (

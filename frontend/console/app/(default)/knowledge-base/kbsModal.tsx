@@ -9,10 +9,28 @@ export const AddKbsModal = ({ isOpen, setIsOpen, getKbsList }: { isOpen: boolean
         description: '',
     });
     const [loading, setLoading] = useState(false);
+    const [errors, setErrors] = useState({
+        name: false,
+        description: false,
+    });
 
     const handleAddEntry = async (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
         setLoading(true);
+
+        // Validation logic
+        const newErrors = {
+            name: !formData.name.trim(),
+            description: !formData.description.trim(),
+        };
+        setErrors(newErrors);
+
+        if (newErrors.name || newErrors.description) {
+            message.error('Please fill in all fields.');
+            setLoading(false);
+            return;
+        }
+
         try {
             const res = await createKnowledgeBase(formData);
             if (res.status_code === 200) {
@@ -38,7 +56,7 @@ export const AddKbsModal = ({ isOpen, setIsOpen, getKbsList }: { isOpen: boolean
                     type="text"
                     value={formData.name}
                     onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    className="form-input w-full max-w-xs"
+                    className={`form-input w-full max-w-xs ${errors.name ? 'border-red-500' : ''}`}
                     placeholder="My-Knowledge-Base"
                 />
             </div>
@@ -48,7 +66,7 @@ export const AddKbsModal = ({ isOpen, setIsOpen, getKbsList }: { isOpen: boolean
                     type="text"
                     value={formData.description}
                     onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                    className="form-input w-full max-w-xs"
+                    className={`form-input w-full max-w-xs ${errors.description ? 'border-red-500' : ''}`}
                     placeholder="My-Knowledge-Base-description"
                 />
             </div>
