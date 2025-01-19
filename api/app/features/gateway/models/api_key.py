@@ -28,6 +28,17 @@ class LLMProviderName(Enum):
         return [enum.value for enum in cls]
 
 
+class LLMModelType(Enum):
+    LLM = 'llm'
+    EMBEDDING = 'embedding'
+    RERANK = 'rerank'
+
+    @classmethod
+    def get_values(cls) -> list[str]:
+        """Get enum values"""
+        return [enum.value for enum in cls]
+
+
 class APIKeyMapping(Base):
     """API key mapping model for storing provider API keys"""
     __tablename__ = "api_key_mappings"

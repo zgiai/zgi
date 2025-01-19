@@ -7,7 +7,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.features import User
-from app.features.gateway.models.api_key import LLMModel, LLMProviderName, LLMProvider
+from app.features.gateway.models.api_key import LLMModel, LLMProviderName, LLMProvider, LLMModelType
 from app.features.gateway.schemas.api_key import LLMModelCreate, LLMModelUpdate, LLMProviderCreate, LLMProviderUpdate
 
 # Load environment variables from .env file
@@ -140,14 +140,12 @@ class APIKeyService:
         provider = db.query(LLMProvider).filter(LLMProvider.id == llm_model.provider_id).first()
         if not provider:
             raise HTTPException(status_code=404, detail="LLMProvider not found")
-        lm = db.query(LLMModel).filter(LLMModel.name == llm_model.name).first()
+        lm = db.query(LLMModel).filter(LLMProvider.id == llm_model.provider_id,
+                                       LLMModel.name == llm_model.name).first()
         if lm:
-            raise ValueError(f"LLMModel with name {llm_model.name} already exists")
-        config = llm_model.config
-        if config is None:
-            raise ValueError("LLMModel config cannot be None")
-        if llm_model.model_type not in LLMProviderName.get_values():
-            raise ValueError(f"LLMModel config model_type must be one of the following: {LLMProviderName.get_values()}")
+            raise ValueError(f"LLMModel with name {llm_model.name} in LLMProvider {provider.name} already exists")
+        if llm_model.model_type not in LLMModelType.get_values():
+            raise ValueError(f"LLMModel config model_type must be one of the following: {LLMModelType.get_values()}")
         db_llm_model = LLMModel(**llm_model.model_dump())
         db_llm_model.user_id = current_user.id
         db.add(db_llm_model)
@@ -163,10 +161,12 @@ class APIKeyService:
     @staticmethod
     def update_llm_model(db: Session, llm_model_id: int, llm_model_update: LLMModelUpdate) -> Optional[LLMModel]:
         """Update an LLMModel by ID."""
+        if llm_model_update.model_type not in LLMModelType.get_values():
+            raise ValueError(f"LLMModel config model_type must be one of the following: {LLMModelType.get_values()}")
         db_llm_model = db.query(LLMModel).filter(LLMModel.id == llm_model_id).first()
         if db_llm_model is None:
             return None
-        update_data = llm_model_update.dict(exclude_unset=True)
+        update_data = llm_model_update.model_dump(exclude_unset=True)
         for key, value in update_data.items():
             setattr(db_llm_model, key, value)
         db.add(db_llm_model)

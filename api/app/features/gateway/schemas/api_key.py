@@ -80,7 +80,6 @@ class LLMModelResponse(BaseModel):
     model_name: str
     model_type: str
     status: int
-    config: Dict[str, Any]
     user_id: int
     create_time: datetime
     update_time: datetime
