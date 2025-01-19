@@ -13,12 +13,12 @@ export const getKnowledgeBaseDetail = (params: {
 
 export const createKnowledgeBase = (params: {
     name: string;
-    discription: string;
-}) => request.post(`${BASE_URL}/knowledge`, params);
+    description: string;
+}) => request.post(`${BASE_URL}/knowledge/create`, params);
 
 export const updateKnowledgeBase = (id: string, params: {
     name: string;
-    discription: string;
+    description: string;
 }) => request.put(`${BASE_URL}/knowledge/${id}`, params);
 
 export const deleteKnowledgeBase = (params: {
