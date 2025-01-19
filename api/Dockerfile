@@ -40,5 +40,8 @@ ENV PATH="/opt/venv/bin:$PATH"
 # Expose port
 EXPOSE 7001
 
+# Add volume for uploads
+VOLUME ["/uploads"]
+
 # Run application
 CMD ["python", "run.py"]
