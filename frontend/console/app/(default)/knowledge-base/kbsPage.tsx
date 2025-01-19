@@ -136,7 +136,7 @@ const KnowledgeBasePage: FC = () => {
                     <motion.h1
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
-                        className="text-4xl font-bold text-gray-900 dark:text-gray-100 mb-8 flex flex-col md:flex-row justify-between"
+                        className="text-4xl font-bold gap-2 text-gray-900 dark:text-gray-100 mb-8 flex flex-col md:flex-row justify-between"
                     >
                         <span className="mr-2">Knowledge Base</span>
                         <button

@@ -6,7 +6,7 @@ import Header from '@/components/ui/header'
 const organizationLinks = [
   {
     type: 'groups',
-    title: 'Organizations',
+    title: 'Menu',
     children: [
       {
         type: 'link',
@@ -19,6 +19,16 @@ const organizationLinks = [
           </svg>
         ),
         href: '/organizations',
+      }, {
+        type: 'link',
+        title: 'Knowledge-base',
+        path: 'knowledge-base',
+        icon: (
+          <svg className={`shrink-0 fill-current`} viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="7882" width="16" height="16">
+            <path d="M510.4 243.2c8 27.2 33.6 44.8 60.8 44.8h259.2c0-35.2-28.8-64-64-64H504l6.4 19.2zM484.8 160h281.6c70.4 0 128 57.6 128 128v25.6c30.4 24 51.2 60.8 51.2 102.4v384c0 70.4-57.6 128-128 128H208c-70.4 0-128-57.6-128-128V224c0-70.4 57.6-128 128-128h164.8c46.4 0 89.6 25.6 112 64z m-112 0H208c-35.2 0-64 28.8-64 64v576c0 35.2 28.8 64 64 64h608c35.2 0 64-28.8 64-64V416c0-35.2-28.8-64-64-64H574.4c-56 0-105.6-36.8-121.6-89.6l-19.2-57.6c-8-27.2-32-44.8-60.8-44.8zM272 704h256c17.6 0 32 14.4 32 32s-14.4 32-32 32H272c-17.6 0-32-14.4-32-32s14.4-32 32-32z" fill="currentColor" p-id="7883"></path>
+          </svg>
+        ),
+        href: '/knowledge-base',
       }
     ],
   }
@@ -28,7 +38,7 @@ export default function DefaultLayout({
   children,
 }: {
   children: React.ReactNode
-}) {  
+}) {
   return (
     <div className="flex h-[100dvh] overflow-hidden">
 
@@ -43,7 +53,7 @@ export default function DefaultLayout({
 
         <main className="grow [&>*:first-child]:scroll-mt-16">
           {children}
-        </main>        
+        </main>
 
       </div>
 
