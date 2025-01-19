@@ -5,7 +5,7 @@ import { useAppProvider } from '@/app/app-provider'
 
 import SearchModal from '@/components/search-modal'
 import Notifications from '@/components/dropdown-notifications'
-import DropdownHelp from '@/components/dropdown-help'
+import DropdownHelp from '@/components/dropdown'
 import ThemeToggle from '@/components/theme-toggle'
 import DropdownProfile from '@/components/dropdown-profile'
 import { getUserInfo } from '@/services/auth'

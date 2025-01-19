@@ -4,7 +4,8 @@ import { motion } from 'framer';
 import { FC, useState, useEffect } from 'react';
 import Link from 'next/link';
 import { getKnowledgeBaseList } from '@/services/knowledgeBase';
-import { AddKbsModal } from './kbsModal';
+import { AddKbsModal,UpdateKbsModal,DeleteKbsModal } from './kbsModal';
+import Dropdown from '@/components/dropdown';
 
 interface KnowledgeBase {
     id: number;
@@ -30,9 +31,22 @@ interface KnowledgeBase {
 interface KnowledgeBaseCardProps {
     kb: KnowledgeBase;
     index: number;
+    setCurrentKb: (kb: KnowledgeBase) => void;
+    setEditModalOpen: (isOpen: boolean) => void;
+    setDeleteModalOpen: (isOpen: boolean) => void;
 }
 
-const KnowledgeBaseCard: FC<KnowledgeBaseCardProps> = ({ kb, index }) => {
+const KnowledgeBaseCard: FC<KnowledgeBaseCardProps> = ({ kb, index,setCurrentKb,setEditModalOpen,setDeleteModalOpen }) => {
+    const handleDelete = () => {
+        setCurrentKb(kb);
+        setDeleteModalOpen(true);  
+    };
+
+    const handleSettings = () => {
+        setCurrentKb(kb);
+        setEditModalOpen(true);
+    };
+
     return (
         <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -40,26 +54,31 @@ const KnowledgeBaseCard: FC<KnowledgeBaseCardProps> = ({ kb, index }) => {
             transition={{ duration: 0.3, delay: index * 0.1 }}
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
-            className="bg-white rounded-lg shadow-md p-6 hover:shadow-lg cursor-pointer"
+            className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 hover:shadow-lg cursor-pointer"
         >
             <div className='flex justify-between'>
                 <div>
 
                 </div>
                 <div className='flex flex-col flex-1'>
-                    <h3 className="text-xl font-semibold text-gray-800">{kb.name}</h3>
-                    <div className="flex gap-2 text-sm text-gray-500 mb-2">
+                    <h3 className="text-xl font-semibold text-gray-800 dark:text-gray-100">{kb.name}</h3>
+                    <div className="flex gap-2 text-sm text-gray-500 mb-2 dark:text-gray-400">
                         <span>{kb?.document_count} files</span>
                         <span>{kb?.total_tokens}tokens</span>
                     </div>
                 </div>
-                <div>
-                    
+                <div id="kb-card-actions">
+                    <Dropdown
+                        options={[
+                            { label: 'Delete', action: handleDelete },
+                            { label: 'Settings', action: handleSettings }]
+                        }
+                    />
                 </div>
             </div>
 
 
-            <p className="text-gray-600 mb-4">{kb.description}</p>
+            <p className="text-gray-600 mb-4 dark:text-gray-400">{kb.description}</p>
             <div className="flex flex-wrap gap-2 mb-4">
                 {kb?.tags?.map((tag, idx) => (
                     <span
@@ -87,6 +106,7 @@ const KnowledgeBasePage: FC = () => {
     const [createModalOpen, setCreateModalOpen] = useState(false);
     const [editModalOpen, setEditModalOpen] = useState(false);
     const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+    const [currentKb, setCurrentKb] = useState<KnowledgeBase | null>(null);
 
     const fetchKnowledgeBases = async () => {
         try {
@@ -105,7 +125,9 @@ const KnowledgeBasePage: FC = () => {
     return (
         <>
             <AddKbsModal isOpen={createModalOpen} setIsOpen={setCreateModalOpen} getKbsList={fetchKnowledgeBases} />
-            <div className="min-h-screen bg-gray-50">
+            <UpdateKbsModal isOpen={editModalOpen} setIsOpen={setEditModalOpen} currentEntry={currentKb} getKbsList={fetchKnowledgeBases} />
+            <DeleteKbsModal isOpen={deleteModalOpen} setIsOpen={setDeleteModalOpen} currentEntry={currentKb} getKbsList={fetchKnowledgeBases} />
+            <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
                 <motion.div
                     initial={{ opacity: 0, y: -20 }}
                     animate={{ opacity: 1, y: 0 }}
@@ -114,7 +136,7 @@ const KnowledgeBasePage: FC = () => {
                     <motion.h1
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
-                        className="text-4xl font-bold text-gray-900 mb-8 flex flex-col md:flex-row justify-between"
+                        className="text-4xl font-bold text-gray-900 dark:text-gray-100 mb-8 flex flex-col md:flex-row justify-between"
                     >
                         <span className="mr-2">Knowledge Base</span>
                         <button
@@ -149,7 +171,7 @@ const KnowledgeBasePage: FC = () => {
                             </motion.div>
                         )}
                         {knowledgeBases.map((kb, index) => (
-                            <KnowledgeBaseCard key={kb.id} kb={kb} index={index} />
+                            <KnowledgeBaseCard key={kb.id} kb={kb} index={index} setCurrentKb={setCurrentKb} setEditModalOpen={setEditModalOpen} setDeleteModalOpen={setDeleteModalOpen}  />
                         ))}
                     </div>
                 </motion.div>

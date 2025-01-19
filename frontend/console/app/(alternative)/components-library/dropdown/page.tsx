@@ -9,7 +9,6 @@ import DropdownFilter from '@/components/dropdown-filter'
 import DropdownProfile from '@/components/dropdown-profile'
 import DropdownSwitch from '@/components/dropdown-switch'
 import DropdownNotifications from '@/components/dropdown-notifications'
-import DropdownHelp from '@/components/dropdown-help'
 import EditMenu from '@/components/edit-menu'
 import Datepicker from '@/components/datepicker'
 
@@ -66,11 +65,6 @@ export default function DropdownLibrary() {
               <DropdownNotifications />
             </div>
 
-            {/* Help Center */}
-            <div>
-              <h2 className="text-2xl text-gray-800 dark:text-gray-100 font-bold mb-6">Help Center</h2>
-              <DropdownHelp />
-            </div>
 
             {/* Quick Selection */}
             <div>
