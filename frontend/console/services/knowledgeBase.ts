@@ -5,6 +5,7 @@ export const getKnowledgeBaseList = (params: {
     organization_id?: string;
     page_num?: number;
     page_size?: number;
+    query_name?: string;
 }) => request.get(`${BASE_URL}/knowledge`, params);
 
 export const getKnowledgeBaseDetail = (params: {

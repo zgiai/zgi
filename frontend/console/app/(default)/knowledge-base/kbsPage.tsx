@@ -2,10 +2,10 @@
 
 import { motion } from 'framer';
 import { FC, useState, useEffect } from 'react';
-import Link from 'next/link';
 import { getKnowledgeBaseList } from '@/services/knowledgeBase';
-import { AddKbsModal,UpdateKbsModal,DeleteKbsModal } from './kbsModal';
+import { AddKbsModal, UpdateKbsModal, DeleteKbsModal } from './kbsModal';
 import Dropdown from '@/components/dropdown';
+import { message } from 'antd';
 
 interface KnowledgeBase {
     id: number;
@@ -36,10 +36,10 @@ interface KnowledgeBaseCardProps {
     setDeleteModalOpen: (isOpen: boolean) => void;
 }
 
-const KnowledgeBaseCard: FC<KnowledgeBaseCardProps> = ({ kb, index,setCurrentKb,setEditModalOpen,setDeleteModalOpen }) => {
+const KnowledgeBaseCard: FC<KnowledgeBaseCardProps> = ({ kb, index, setCurrentKb, setEditModalOpen, setDeleteModalOpen }) => {
     const handleDelete = () => {
         setCurrentKb(kb);
-        setDeleteModalOpen(true);  
+        setDeleteModalOpen(true);
     };
 
     const handleSettings = () => {
@@ -107,17 +107,31 @@ const KnowledgeBasePage: FC = () => {
     const [editModalOpen, setEditModalOpen] = useState(false);
     const [deleteModalOpen, setDeleteModalOpen] = useState(false);
     const [currentKb, setCurrentKb] = useState<KnowledgeBase | null>(null);
+    const [queryData, setQueryData] = useState('');
+    const [searchFlag, setSearchFlag] = useState(false);
 
     const fetchKnowledgeBases = async () => {
         try {
-            const res = await getKnowledgeBaseList({ page_num: 1, page_size: 100 });
+            const res = await getKnowledgeBaseList({ page_num: 1, page_size: 100, query_name: queryData });
             if (res?.status_code === 200) {
                 setKnowledgeBases(res?.data?.items || []);
+            } else {
+                message.error(res.status_message || 'Fetch knowledge bases failed');
             }
         } catch (error) {
             console.error('Error fetching knowledge bases:', error);
         }
     };
+
+    const handleSearch = async() => {
+        await fetchKnowledgeBases();
+        if (queryData === '') {
+            setSearchFlag(false);
+        } else {
+            setSearchFlag(true);
+        }    
+    };
+
     useEffect(() => {
         fetchKnowledgeBases();
     }, []);
@@ -136,23 +150,51 @@ const KnowledgeBasePage: FC = () => {
                     <motion.h1
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
-                        className="text-4xl font-bold gap-2 text-gray-900 dark:text-gray-100 mb-8 flex flex-col md:flex-row justify-between"
+                        className="text-4xl font-bold gap-4 text-gray-900 dark:text-gray-100 mb-8 flex flex-col md:flex-row justify-between"
                     >
                         <span className="mr-2">Knowledge Base</span>
-                        <button
-                            className="btn bg-gray-900 text-gray-100 hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-800 dark:hover:bg-white"
-                            onClick={() => setCreateModalOpen(true)}
+                        <div
+                            className='flex md:items-center flex-col-reverse md:flex-row gap-4'
                         >
-                            <svg className="fill-current text-gray-400 shrink-0" width="16" height="16" viewBox="0 0 16 16">
-                                <path d="M15 7H9V1c0-.6-.4-1-1-1S7 .4 7 1v6H1c-.6 0-1 .4-1 1s.4 1 1 1h6v6c0 .6.4 1 1 1s1-.4 1-1V9h6c.6 0 1-.4 1-1s-.4-1-1-1z" />
-                            </svg>
-                            <span className="ml-2">New Knowledge Base</span>
-                        </button>
+                            <div className='flex items-center gap-2'>
+                                <input
+                                    type="text"
+                                    placeholder="Search by name"
+                                    value={queryData}
+                                    onChange={(e) => setQueryData(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                            handleSearch();
+                                        }
+                                    }}
+                                    className="form-input dark:bg-gray-800 dark:text-gray-100 font-normal flex-1"
+                                />
+                                <button
+                                    className="btn bg-gray-900 text-gray-100 hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-800 dark:hover:bg-white"
+                                    onClick={handleSearch}
+                                >Search</button>
+                            </div>
+
+                            <button
+                                className="btn bg-gray-900 text-gray-100 hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-800 dark:hover:bg-white"
+                                onClick={() => setCreateModalOpen(true)}
+                            >
+                                <svg className="fill-current text-gray-400 shrink-0" width="16" height="16" viewBox="0 0 16 16">
+                                    <path d="M15 7H9V1c0-.6-.4-1-1-1S7 .4 7 1v6H1c-.6 0-1 .4-1 1s.4 1 1 1h6v6c0 .6.4 1 1 1s1-.4 1-1V9h6c.6 0 1-.4 1-1s-.4-1-1-1z" />
+                                </svg>
+                                <span className="ml-2">New Knowledge Base</span>
+                            </button>
+                        </div>
+
                     </motion.h1>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                         {knowledgeBases.length === 0 && (
-                            <motion.div
+                            searchFlag ? <div
+                                className='flex items-center justify-center bg-white rounded-lg shadow-md p-6 hover:shadow-lg dark:bg-gray-800'
+                            >
+                                No Data
+                            </div>:<motion.div
                                 initial={{ opacity: 0, y: 20 }}
                                 animate={{ opacity: 1, y: 0 }}
                                 transition={{ duration: 0.3 }}
@@ -170,8 +212,9 @@ const KnowledgeBasePage: FC = () => {
                                 </div>
                             </motion.div>
                         )}
+
                         {knowledgeBases.map((kb, index) => (
-                            <KnowledgeBaseCard key={kb.id} kb={kb} index={index} setCurrentKb={setCurrentKb} setEditModalOpen={setEditModalOpen} setDeleteModalOpen={setDeleteModalOpen}  />
+                            <KnowledgeBaseCard key={kb.id} kb={kb} index={index} setCurrentKb={setCurrentKb} setEditModalOpen={setEditModalOpen} setDeleteModalOpen={setDeleteModalOpen} />
                         ))}
                     </div>
                 </motion.div>

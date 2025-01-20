@@ -42,6 +42,7 @@ export const AddKbsModal = ({ isOpen, setIsOpen, getKbsList }: { isOpen: boolean
             }
         } catch (error) {
             console.error(error);
+            setLoading(false);
         } finally {
             setLoading(false);
         }
@@ -96,6 +97,7 @@ export const DeleteKbsModal = ({ isOpen, setIsOpen, currentEntry, getKbsList }: 
             }
         } catch (error) {
             console.error(error);
+            setLoading(false);
         } finally {
             setLoading(false);
         }
@@ -157,6 +159,7 @@ export const UpdateKbsModal = ({ isOpen, setIsOpen, currentEntry, getKbsList }: 
             }
         } catch (error) {
             console.error(error);
+            setLoading(false);
         } finally {
             setLoading(false);
         }
