@@ -281,7 +281,8 @@ class KnowledgeBaseService:
             user_id: int,
             page_num: int = 1,
             page_size: int = 10,
-            organization_id: Optional[int] = None
+            organization_id: Optional[int] = None,
+            query_name: Optional[str] = None
     ) -> ServiceResponse[KnowledgeBaseList]:
         """List knowledge bases"""
         try:
@@ -303,18 +304,25 @@ class KnowledgeBaseService:
             #         )
             #     )
             # )
-            query = self.db.query(KnowledgeBase).filter(
-                and_(
-                    KnowledgeBase.status != Status.DELETED.value,
-                    or_(
-                        KnowledgeBase.owner_id == user_id,
-                        KnowledgeBase.visibility == Visibility.PUBLIC,
-                        and_(
-                            KnowledgeBase.visibility == Visibility.ORGANIZATION,
-                            KnowledgeBase.organization_id == organization_id
-                        ) if organization_id else False
-                    )
+            query_filter = and_(
+                KnowledgeBase.status != Status.DELETED.value,
+                or_(
+                    KnowledgeBase.owner_id == user_id, KnowledgeBase.visibility == Visibility.PUBLIC,
+                    and_(
+                        KnowledgeBase.visibility == Visibility.ORGANIZATION,
+                        KnowledgeBase.organization_id == organization_id
+                    ) if organization_id else False
                 )
+            )
+
+            if query_name:
+                query_filter = and_(
+                    query_filter,
+                    KnowledgeBase.name.ilike(f"%{query_name}%")
+                )
+
+            query = self.db.query(KnowledgeBase).filter(
+                query_filter
             )
 
             # Print query for debugging

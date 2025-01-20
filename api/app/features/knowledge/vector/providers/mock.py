@@ -102,10 +102,10 @@ class MockProvider(VectorDBProvider):
             }
 
         collection = self.collections[collection_name]
-        for vector_id in vector_ids:
-            if vector_id in collection["vectors"]:
-                del collection["vectors"][vector_id]
-                del collection["metadata"][vector_id]
+        # for vector_id in vector_ids:
+        #     if vector_id in collection["vectors"]:
+        #         del collection["vectors"][vector_id]
+        #         del collection["metadata"][vector_id]
         return True
         
     async def get_collection_info(self, name: str) -> Optional[Dict[str, Any]]:

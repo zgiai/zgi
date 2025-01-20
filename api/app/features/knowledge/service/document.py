@@ -424,7 +424,8 @@ class DocumentService:
         try:
             kb = self.db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
             if not kb:
-                raise NotFoundError("Knowledge base not found")# Delete VectorDB
+                raise NotFoundError("Knowledge base not found")
+            # Delete VectorDB
             success = await self.kb_service.vector_db.delete_vectors(kb.collection_name)
             if not success:
                 raise Exception("Failed to delete vectors")

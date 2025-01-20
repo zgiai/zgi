@@ -70,6 +70,7 @@ async def list_knowledge_bases(
         page_num: int = Query(1, ge=1),
         page_size: int = Query(10, ge=1, le=100),
         organization_id: Optional[int] = Query(None, description="Organization ID"),
+        query_name: Optional[str] = Query(None, description="Search by name"),
         service: KnowledgeBaseService = Depends(get_knowledge_base_service),
         current_user: User = Depends(get_current_user)
 ):
@@ -78,7 +79,8 @@ async def list_knowledge_bases(
         user_id=current_user.id,
         page_num=page_num,
         page_size=page_size,
-        organization_id=organization_id
+        organization_id=organization_id,
+        query_name=query_name
     )
     return resp_200(result.data)
 
