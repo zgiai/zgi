@@ -6,6 +6,7 @@ import { getKnowledgeBaseList } from '@/services/knowledgeBase';
 import { AddKbsModal, UpdateKbsModal, DeleteKbsModal } from './kbsModal';
 import Dropdown from '@/components/dropdown';
 import { message } from 'antd';
+import { useRouter } from 'next/navigation';
 
 interface KnowledgeBase {
     id: number;
@@ -37,6 +38,8 @@ interface KnowledgeBaseCardProps {
 }
 
 const KnowledgeBaseCard: FC<KnowledgeBaseCardProps> = ({ kb, index, setCurrentKb, setEditModalOpen, setDeleteModalOpen }) => {
+    const router = useRouter();
+
     const handleDelete = () => {
         setCurrentKb(kb);
         setDeleteModalOpen(true);
@@ -55,6 +58,7 @@ const KnowledgeBaseCard: FC<KnowledgeBaseCardProps> = ({ kb, index, setCurrentKb
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
             className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 hover:shadow-lg cursor-pointer"
+            onClick={() => router.push(`/knowledge-base/${kb.id}`)}
         >
             <div className='flex justify-between'>
                 <div>
@@ -93,14 +97,6 @@ const KnowledgeBaseCard: FC<KnowledgeBaseCardProps> = ({ kb, index, setCurrentKb
     );
 };
 
-// const formatBytes = (bytes: number): string => {
-//     if (bytes === 0) return '0 Bytes';
-//     const k = 1024;
-//     const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-//     const i = Math.floor(Math.log(bytes) / Math.log(k));
-//     return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
-// };
-
 const KnowledgeBasePage: FC = () => {
     const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
     const [createModalOpen, setCreateModalOpen] = useState(false);
@@ -112,7 +108,7 @@ const KnowledgeBasePage: FC = () => {
 
     const fetchKnowledgeBases = async () => {
         try {
-            const res = await getKnowledgeBaseList({ page_num: 1, page_size: 100, query_name: queryData });
+            const res = await getKnowledgeBaseList({ query_name: queryData });
             if (res?.status_code === 200) {
                 setKnowledgeBases(res?.data?.items || []);
             } else {

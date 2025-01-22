@@ -5,7 +5,6 @@ axios.defaults.withCredentials = true
 axios.defaults.timeout = 50000
 axios.defaults.headers.common['Content-Type'] = 'application/json'
 
-// 
 axios.interceptors.request.use(
     config => {
         config.metadata = {

@@ -1,12 +1,5 @@
-import KBPage from "./kbPage";
+import { redirect } from 'next/navigation'
 
-export const metadata = {
-    title: 'Organization',
-    description: 'Organization',
-}
-
-export default function knowledgeBases() {
-    return (
-        <KBPage />
-    );
+export default function Page({ params }: { params: { id: string } }) {
+    redirect(`/knowledge-base/${params.id}/documents`)
 }

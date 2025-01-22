@@ -10,23 +10,39 @@ export const getKnowledgeBaseList = (params: {
 
 export const getKnowledgeBaseDetail = (params: {
     kb_id: string;
-}) => request.get(`${BASE_URL}/knowledge/${params.kb_id}`);
+}) => request.get(`${BASE_URL}/knowledge/${params?.kb_id}`);
 
 export const createKnowledgeBase = (params: {
     name: string;
     description: string;
 }) => request.post(`${BASE_URL}/knowledge/create`, params);
 
-export const updateKnowledgeBase = (id: string, params: {
+export const updateKnowledgeBase = (kb_id: string, params: {
     name: string;
     description: string;
-}) => request.put(`${BASE_URL}/knowledge/${id}`, params);
+}) => request.put(`${BASE_URL}/knowledge/${kb_id}`, params);
 
 export const deleteKnowledgeBase = (params: {
     kb_id: string;
-}) => request.del(`${BASE_URL}/knowledge/${params.kb_id}`);
+}) => request.del(`${BASE_URL}/knowledge/${params?.kb_id}`);
 
-export const cloneKnowledgeBase = (id: string, params: {
+export const cloneKnowledgeBase = (kb_id: string, params: {
     name: string;
-}) => request.post(`${BASE_URL}/knowledge/${id}/clone`,params);
+}) => request.post(`${BASE_URL}/knowledge/${kb_id}/clone`, params);
+
+export const getDocumentList = (kb_id: string, params?: {
+    page_num?: number;
+    page_size?: number;
+}) => request.get(`${BASE_URL}/knowledge/${kb_id}/documents`, params);
+
+export const deleteDocument = (doc_id: number) => request.del(`${BASE_URL}/knowledge/documents/${doc_id}`);
+
+export const updateDocument = (doc_id: number, params: {
+    title?: string,
+    language?: string,
+    author?: "",
+    source_url?: "",
+    metadata?: {},
+    tags?: []
+}) => request.put(`${BASE_URL}/knowledge/documents/${doc_id}`, params);
 
