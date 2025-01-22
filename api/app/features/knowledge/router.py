@@ -64,7 +64,7 @@ async def create_knowledge_base(
     return resp_200(result.data)
 
 
-@router.get("/",
+@router.get("",
             summary="List knowledge bases")
 async def list_knowledge_bases(
         page_num: int = Query(1, ge=1),
