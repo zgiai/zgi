@@ -468,7 +468,10 @@ class DocumentService:
             query = query.filter(Document.status == status)
 
         if search:
-            query = query.filter(Document.file_name.ilike(f"%{search}%"))
+            query = query.filter(
+                (Document.file_name.ilike(f"%{search}%")) |
+                (Document.title.ilike(f"%{search}%"))
+            )
 
         total = query.count()
         skip = (page_num - 1) * page_size
