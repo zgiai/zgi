@@ -2,6 +2,9 @@ from typing import Dict, Any, Optional
 from pydantic_settings import BaseSettings
 from functools import lru_cache
 
+from app.features.knowledge.config.storage import StorageSettings
+
+
 class VectorDBSettings(BaseSettings):
     """Vector database settings"""
     PROVIDER: str = "mock"  # mock for testing, change to real provider in production
@@ -48,6 +51,7 @@ class EmbeddingSettings(BaseSettings):
     class Config:
         env_prefix = 'EMBEDDING_SETTINGS_'
 
+
 class DocumentSettings(BaseSettings):
     """Document processing settings"""
     UPLOAD_DIR: str = "/tmp/knowledge/uploads"
@@ -59,7 +63,8 @@ class DocumentSettings(BaseSettings):
 
     class Config:
         env_prefix = 'DOCUMENT_SETTINGS_'
-    
+
+
 class KnowledgeBaseSettings(BaseSettings):
     """Knowledge base settings"""
     DEFAULT_EMBEDDING_MODEL: str = "text-embedding-3-small"
@@ -91,3 +96,8 @@ def get_document_settings() -> DocumentSettings:
 def get_knowledge_base_settings() -> KnowledgeBaseSettings:
     """Get knowledge base settings singleton"""
     return KnowledgeBaseSettings()
+
+@lru_cache()
+def get_storage_settings() -> StorageSettings:
+    """Get storage settings singleton"""
+    return StorageSettings()

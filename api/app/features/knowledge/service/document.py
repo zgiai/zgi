@@ -1,8 +1,9 @@
+import io
 import os
 import hashlib
 import shutil
 import time
-from typing import List, Optional, Dict, Any, BinaryIO, Tuple
+from typing import List, Optional, Dict, Any, BinaryIO, Tuple, Union
 from fastapi import UploadFile, BackgroundTasks
 from sqlalchemy import select
 from fastapi.responses import StreamingResponse
@@ -69,7 +70,9 @@ class DocumentService:
                 return text
             
             elif file_type == "txt":
-                return file.read().decode("utf-8")
+                text = ""
+                text = file.read().decode("utf-8")
+                return text
             
             else:
                 raise ValidationError(f"Unsupported file type: {file_type}")
@@ -106,25 +109,28 @@ class DocumentService:
                 raise ValidationError(
                     f"File too large. Maximum size allowed: {self.settings.MAX_FILE_SIZE} bytes"
                 )
-            
-            # Create directory if not exists
-            upload_dir = os.path.join(
-                self.settings.UPLOAD_DIR,
-                str(user_id),
-                str(kb_id)
-            )
-            os.makedirs(upload_dir, exist_ok=True)
-            
+
             # Generate unique filename
             file_hash = hashlib.md5(file_content).hexdigest()
-            # file_ext = os.path.splitext(file.filename)[1]
-            # filename = f"{file_hash}{file_ext}"
-            filename = file.filename
-            filepath = os.path.join(upload_dir, filename)
-            
-            # Write file
-            with open(filepath, "wb") as f:
-                f.write(file_content)
+
+            filepath = await self.kb_service.storage.store_file(
+                file_content, kb_id, user_id, file.filename)
+            # # Create directory if not exists
+            # upload_dir = os.path.join(
+            #     self.settings.UPLOAD_DIR,
+            #     str(user_id),
+            #     str(kb_id)
+            # )
+            # os.makedirs(upload_dir, exist_ok=True)
+            #
+            # # file_ext = os.path.splitext(file.filename)[1]
+            # # filename = f"{file_hash}{file_ext}"
+            # filename = file.filename
+            # filepath = os.path.join(upload_dir, filename)
+            #
+            # # Write file
+            # with open(filepath, "wb") as f:
+            #     f.write(file_content)
             
             return filepath, file_hash
             
@@ -246,8 +252,9 @@ class DocumentService:
                 self.db.refresh(document)
                 
                 # Extract text
-                with open(filepath, "rb") as f:
-                    text = await self._extract_text(f, file_ext[1:])
+                # with open(filepath, "rb") as f:
+                #     text = await self._extract_text(f, file_ext[1:])
+                text = await self._extract_text(file.file, file_ext[1:])
                 
                 # Split text into chunks
                 chunks = await self._split_text(text)
@@ -389,8 +396,10 @@ class DocumentService:
             self.db.query(DocumentChunk).filter(DocumentChunk.document_id == document.id).delete()
 
             # Delete file
-            if document.file_path and os.path.exists(document.file_path):
-                os.remove(document.file_path)
+            # if document.file_path and os.path.exists(document.file_path):
+            #     os.remove(document.file_path)
+            if document.file_path:
+                await self.kb_service.storage.delete_file(document.file_path)
             
             # Update knowledge base statistics
             kb.document_count -= 1
@@ -764,9 +773,12 @@ class DocumentService:
             document.error_message = None
             self.db.commit()
 
+            # Read text from the document file using the storage provider
+            file_content = await self.kb_service.storage.read_file(document.file_path)
+            # Convert bytes to file-like object
+            file_like_object = io.BytesIO(file_content)
             # Extract text from the document file
-            with open(document.file_path, "rb") as f:
-                text = await self._extract_text(f, document.file_type)
+            text = await self._extract_text(file_like_object, document.file_type)
 
             # Split text into chunks
             chunks = await self._split_text(text)
@@ -832,14 +844,23 @@ class DocumentService:
                 raise ServiceError(f"Knowledge base {document.kb_id} not found")
 
             # Check if file exists
-            if not os.path.exists(document.file_path):
-                raise NotFoundError(f"File for document {doc_id} not found on the server")
+            if not document.file_path:
+                raise NotFoundError(f"File path for document {doc_id} is not available")
 
-            # Open the file in binary read mode
-            file = open(document.file_path, "rb")
-
+            # Read file content using the storage provider
+            file_content = await self.kb_service.storage.read_file(document.file_path)
+            # Convert bytes to file-like object
+            file_like_object = io.BytesIO(file_content)
+            file_ext = document.file_type
+            media_type = "application/octet-stream"
+            # if file_ext == "pdf":
+            #     media_type = "application/pdf"
+            # elif file_ext == "docx":
+            #     media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            # elif file_ext == "txt":
+            #     media_type = "text/plain"
             # Create a StreamingResponse to return the file
-            response = StreamingResponse(file, media_type="application/octet-stream")
+            response = StreamingResponse(file_like_object, media_type=media_type)
             response.headers["Content-Disposition"] = f"attachment; filename={document.file_name}"
 
             audit_logger.log_access(

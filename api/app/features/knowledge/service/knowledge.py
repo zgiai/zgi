@@ -14,12 +14,13 @@ from app.features.knowledge.schemas.request.knowledge import (
     SearchQuery
 )
 from app.features.knowledge.schemas.response.knowledge import KnowledgeBaseList
+from app.features.knowledge.storage.factory import StorageFactory
 from app.features.knowledge.vector.factory import VectorDBFactory
 from app.features.knowledge.embedding.factory import EmbeddingFactory
 from app.features.knowledge.core.config import (
     get_vector_db_settings,
     get_embedding_settings,
-    get_knowledge_base_settings
+    get_knowledge_base_settings, get_storage_settings
 )
 from app.features.knowledge.core.response import (
     ServiceResponse,
@@ -59,6 +60,13 @@ class KnowledgeBaseService:
         self.embedding = EmbeddingFactory.create(
             self.embedding_settings.PROVIDER,
             **self.embedding_settings.provider_config
+        )
+
+        # Initialize storage
+        self.storage_setting = get_storage_settings()
+        self.storage = StorageFactory.create(
+            self.storage_setting.PROVIDER,
+            **self.storage_setting.provider_config
         )
 
     @handle_service_errors
