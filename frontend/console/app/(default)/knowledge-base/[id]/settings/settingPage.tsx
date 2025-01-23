@@ -3,27 +3,19 @@
 import { updateKnowledgeBase, getKnowledgeBaseDetail } from "@/services/knowledgeBase";
 import { message } from "antd";
 import { useState, useEffect } from "react";
+import { useKnowledgeBase } from "../knowledgeProvider";
 
 export default function SettingPage({ id }: { id: string }) {
     const [loading, setLoading] = useState(false);
     const [kbName, setKbName] = useState("");
     const [kbDescription, setKbDescription] = useState("");
 
-    const fetchKnowledgeBase = async () => {
-        try {
-            const res = await getKnowledgeBaseDetail({ kb_id: id });
-            if (res.status_code === 200) {
-                setKbName(res.data.name);
-                setKbDescription(res.data.description);
-            }
-        } catch (error) {
-            console.error(error);
-        }
-    }
+    const { knowledgeBase, update, setUpdate } = useKnowledgeBase()
 
     useEffect(() => {
-        fetchKnowledgeBase();
-    }, []);
+        setKbName(knowledgeBase?.name || "");
+        setKbDescription(knowledgeBase?.description || "");
+    }, [knowledgeBase]);
 
     const handleUpdateKb = async (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
@@ -32,6 +24,7 @@ export default function SettingPage({ id }: { id: string }) {
             const res = await updateKnowledgeBase(id, { name: kbName, description: kbDescription });
             if (res.status_code === 200) {
                 message.success("Update knowledge base success");
+                setUpdate(!update);
             }
         } catch (error) {
             console.error(error);

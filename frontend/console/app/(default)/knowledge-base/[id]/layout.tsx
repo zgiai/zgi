@@ -2,49 +2,12 @@
 import { useParams } from "next/navigation"
 
 import SettingsSidebar from "@/components/ui/settings-sidebar"
-import { useEffect, useState } from "react"
-import { getKnowledgeBaseDetail } from "@/services/knowledgeBase"
-import { message } from "antd"
-
-interface KnowledgeBase {
-    id?: number;
-    name?: string;
-    description?: string;
-    visibility?: "PUBLIC" | "PRIVATE";
-    status?: number;
-    collection_name?: string;
-    model?: string;
-    dimension?: number;
-    document_count?: number;
-    total_chunks?: number;
-    total_tokens?: number;
-    meta_info?: any;
-    tags?: string[] | null;
-    owner_id?: number;
-    organization_id?: number | null;
-    created_at?: string;
-    updated_at?: string;
-    owner_name?: string;
-}
+import { KnowledgeBaseProvider } from "./knowledgeProvider"
+import KbHeader from "./kbHeader"
 
 export default function Layout({ children }: { children: React.ReactNode }) {
     const { id } = useParams()
-    const [kbData, setKbData] = useState<KnowledgeBase>({})
-
-    const fetchKbData = async () => {
-        const kbId = Array.isArray(id) ? id[0] : id;
-        const response = await getKnowledgeBaseDetail({ kb_id: kbId });
-        try {
-            if (response?.status_code === 200) {
-                setKbData(response.data);
-            } else {
-                message.error(response?.status_message || "Failed to fetch knowledge base");
-            }
-        } catch (error) {
-            console.error(error);
-        }
-    }
-
+    const kbId = Array.isArray(id) ? id[0] : id;
     const sidebarItems = [
         {
             group: "Knowledge Base",
@@ -67,24 +30,17 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         }
     ]
 
-    useEffect(() => {
-        fetchKbData();
-    }, [])
-
     return (
-        <div className="px-4 sm:px-6 lg:px-4 py-4 w-full max-w-[96rem] mx-auto">
-            <div className="bg-white dark:bg-gray-800 shadow-sm rounded-xl mb-8 flex flex-col md:flex-row md:-mr-px">
-                <SettingsSidebar sidebarItems={sidebarItems} />
-                <div className="flex flex-col flex-1 min-h-[80vh]">
-                    <div className="p-4 sm:px-6 border-b border-gray-200 dark:border-gray-700">
-                        <h1 className="text-2xl md:text-3xl text-gray-800 dark:text-gray-100 font-bold">{kbData.name}</h1>
-                        <div className="mt-2 flex items-center">
-                            <span className="text-gray-400 dark:text-gray-500 mr-2">{kbData.description}</span>
-                        </div>
+        <KnowledgeBaseProvider>
+            <div className="px-4 sm:px-6 lg:px-4 py-4 w-full max-w-[96rem] mx-auto">
+                <div className="bg-white dark:bg-gray-800 shadow-sm rounded-xl mb-8 flex flex-col md:flex-row md:-mr-px">
+                    <SettingsSidebar sidebarItems={sidebarItems} />
+                    <div className="flex flex-col flex-1 min-h-[80vh]">
+                        <KbHeader kbId={kbId} />
+                        {children}
                     </div>
-                    {children}
                 </div>
             </div>
-        </div>
+        </KnowledgeBaseProvider>
     )
 }
