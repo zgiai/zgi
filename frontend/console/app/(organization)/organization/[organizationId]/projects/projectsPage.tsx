@@ -5,17 +5,15 @@ import { getOrgPermission,getOrganizationDetail } from "@/services/organization"
 import { message } from "antd"
 import Link from "next/link"
 import { useParams } from "next/navigation"
-import { getUserInfo } from "@/services/auth"
+import { useAppProvider } from "@/app/app-provider"
 
 export default function ProjectsPage() {
     const params = useParams()
     const organizationId = params.organizationId as string || ""
     const [organization, setOrganization] = useState<any>({})
-    const [userInfo, setUserInfo] = useState<any>({})
-    const [loading, setLoading] = useState<boolean>(false)
+    const { userInfo } = useAppProvider()
 
     const getOrganizationData = async () => {
-        setLoading(true)
         const res = await getOrganizationDetail({ organization_id: organizationId })
         if (res?.status_code === 200) {
             setOrganization(res?.data)
@@ -26,21 +24,10 @@ export default function ProjectsPage() {
                 message.error(res?.status_message || "Failed to fetch organization data")
             }
         }
-        setLoading(false)
-    }
-
-    const getUserInfoData = async () => {
-        const res = await getUserInfo()
-        if (res?.status_code === 200) {
-            setUserInfo(res?.data)
-        } else {
-            message.error(res?.status_message || "Failed to fetch user info")
-        }
     }
 
     useEffect(() => {
         getOrganizationData()
-        getUserInfoData()
     }, [])
 
     return <div className="flex flex-col gap-4 p-4">

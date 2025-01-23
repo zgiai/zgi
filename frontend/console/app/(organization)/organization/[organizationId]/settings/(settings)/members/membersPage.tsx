@@ -7,8 +7,7 @@ import PaginationClassic from "@/components/pagination-classic"
 import { message } from "antd"
 import { useParams } from "next/navigation"
 import { DeleteMemberModal, UnsetAdminModal, SetAdminModal, AddMemberModal, InviteMemberModal } from "./membersModal"
-// import { adminGetUserById } from "@/services/admin"
-import { getUserInfo } from "@/services/auth"
+import { useAppProvider } from "@/app/app-provider"
 
 const roleList = [
     { label: "All", value: -1, color: "" },
@@ -34,9 +33,7 @@ export default function MembersPage() {
     const [isAdmin, setIsAdmin] = useState(false)
     const [isSuperAdmin, setIsSuperAdmin] = useState(false)
 
-    // const [loading, setLoading] = useState(false)
-    // const [search, setSearch] = useState("")
-
+    const { userInfo } = useAppProvider()
 
     useEffect(() => {
         getMemberList()
@@ -66,35 +63,12 @@ export default function MembersPage() {
     }
 
     const init = async () => {
-        try {
-            const isSuperAdmin = await getUserInfoData()
-            if (isSuperAdmin) {
-                setIsAdmin(true)
-                setIsSuperAdmin(true)
-                return
-            } else {
-                getOrgMemberInfo()
-            }
-        } catch (err) {
-            console.log(err)
-        }
-        const res = await getUserInfoData()
-        if (res) {
-            setIsAdmin(res)
-        }
-    }
-
-    const getUserInfoData = async () => {
-        const res = await getUserInfo()
-        if (res?.status_code === 200) {
-            if (res?.data?.user_type === 1 || res?.data?.user_type === 2) {
-                return true
-            } else {
-                return false
-            }
+        if (userInfo?.user_type === 1 || userInfo?.user_type === 2) {
+            setIsAdmin(true)
+            setIsSuperAdmin(true)
+            return
         } else {
-            message.error(res?.status_message || "Failed to fetch user info")
-            return false
+            getOrgMemberInfo()
         }
     }
 
@@ -111,71 +85,20 @@ export default function MembersPage() {
         }
     }
 
-    // const getMemberListById = async () => {
-    //     setLoading(true)
-    //     try {
-    //         if (!search) {
-    //             getMemberList()
-    //             return
-    //         }
-    //         const res = await adminGetUserById({ user_id: search })
-    //         if (res?.status_code === 200) {
-    //             setMemberList([res?.data])
-    //             setTotalMember(1)
-    //         } else {
-    //             message.error(res?.status_message || "Get member list failed")
-    //         }
-    //     } catch (error) {
-    //         console.error(error)
-    //     } finally {
-    //         setLoading(false)
-    //     }
-    // }
-
     return (
         <>
-            <DeleteMemberModal isOpen={isDeleteMemberOpen} setIsOpen={setIsDeleteMemberOpen} currentMember={currentMember} getMemberList={getMemberList} orgId={organizationId as string} />
-            <SetAdminModal isOpen={isSetAdminOpen} setIsOpen={setIsSetAdminOpen} currentMember={currentMember} getMemberList={getMemberList} orgId={organizationId as string} />
-            <UnsetAdminModal isOpen={isUnsetAdminOpen} setIsOpen={setIsUnsetAdminOpen} currentMember={currentMember} getMemberList={getMemberList} orgId={organizationId as string} />
-            <AddMemberModal isOpen={isAddMemberOpen} setIsOpen={setIsAddMemberOpen} getMemberList={getMemberList} orgId={organizationId as string} />
-            <InviteMemberModal isOpen={isInviteMemberOpen} setIsOpen={setIsInviteMemberOpen} orgId={organizationId as string} />
+            {isAdmin && <DeleteMemberModal isOpen={isDeleteMemberOpen} setIsOpen={setIsDeleteMemberOpen} currentMember={currentMember} getMemberList={getMemberList} orgId={organizationId as string} />}
+            {isAdmin && <SetAdminModal isOpen={isSetAdminOpen} setIsOpen={setIsSetAdminOpen} currentMember={currentMember} getMemberList={getMemberList} orgId={organizationId as string} />}
+            {isAdmin && <UnsetAdminModal isOpen={isUnsetAdminOpen} setIsOpen={setIsUnsetAdminOpen} currentMember={currentMember} getMemberList={getMemberList} orgId={organizationId as string} />}
+            {isAdmin && <AddMemberModal isOpen={isAddMemberOpen} setIsOpen={setIsAddMemberOpen} getMemberList={getMemberList} orgId={organizationId as string} />}
+            {isAdmin && <InviteMemberModal isOpen={isInviteMemberOpen} setIsOpen={setIsInviteMemberOpen} orgId={organizationId as string} />}
             <div className="flex-1 p-4">
                 <div className="bg-white dark:bg-gray-800 shadow-sm rounded-xl relative border border-gray-200 dark:border-gray-700/60">
                     <header className="px-5 py-4 flex flex-row justify-between">
                         <h2 className="font-semibold text-gray-800 dark:text-gray-100 flex-nowrap text-nowrap mr-4">All Members <span className="text-gray-400 dark:text-gray-500 font-medium">{totalMember}</span></h2>
                         <div className="flex flex-col md:flex-row gap-2 md:items-center">
-                            {/* <input
-                                type="text"
-                                className="form-input w-36"
-                                placeholder="User ID"
-                                value={search}
-                                onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => {
-                                    if (e.key === "Enter") {
-                                        getMemberListById()
-                                    }
-                                }}
-                            /> */}
-                            {/* <div className="flex flex-row gap-2 items-center">
-                                <button
-                                    className="btn bg-gray-900 text-gray-100 hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-800 dark:hover:bg-white"
-                                    onClick={() => {
-                                        getMemberListById()
-                                    }}
-                                >
-                                    Search
-                                </button>
-                                <button
-                                    className="btn bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700/60 hover:border-gray-300 dark:hover:border-gray-600 text-gray-800 dark:text-gray-300"
-                                    onClick={() => {
-                                        setSearch("")
-                                        getMemberList()
-                                    }}
-                                >
-                                    Clear
-                                </button>
-                            </div> */}
                             <div className="flex flex-row gap-2 items-center flex-wrap">
-                                <button
+                                {isAdmin && <button
                                     className="btn bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700/60 hover:border-gray-300 dark:hover:border-gray-600 text-gray-800 dark:text-gray-300"
                                     type="button"
                                     onClick={() => {
@@ -183,7 +106,7 @@ export default function MembersPage() {
                                     }}
                                 >
                                     Invite Members
-                                </button>
+                                </button>}
                                 {isAdmin && <button onClick={() => {
                                     setIsAddMemberOpen(true)
                                 }} className="btn bg-gray-900 text-gray-100 hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-800 dark:hover:bg-white">
@@ -208,9 +131,6 @@ export default function MembersPage() {
                                         <th className="px-2 first:pl-5 last:pr-5 py-3 whitespace-nowrap">
                                             <div className="font-semibold text-left">Name</div>
                                         </th>
-                                        {/* <th className="px-2 first:pl-5 last:pr-5 py-3 whitespace-nowrap">
-                                            <div className="font-semibold text-left">Email</div>
-                                        </th> */}
                                         <th className="px-2 first:pl-5 last:pr-5 py-3 whitespace-nowrap">
                                             <div className="font-semibold text-left">Role</div>
                                         </th>
@@ -251,9 +171,6 @@ function MemberTableRow(props: { member: any, setCurrentMember: (member: any) =>
         <td className="px-2 first:pl-5 last:pr-5 py-3 whitespace-nowrap">
             <div className="text-left">{member.username}</div>
         </td>
-        {/* <td className="px-2 first:pl-5 last:pr-5 py-3 whitespace-nowrap">
-            <div className="text-left">{member.email}</div>
-        </td> */}
         <td className="px-2 first:pl-5 last:pr-5 py-3 whitespace-nowrap">
             <div>
                 <span className={`${member?.is_admin ? "text-red-500" : "text-blue-500"} font-medium`}>

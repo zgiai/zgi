@@ -4,39 +4,18 @@ import { useEffect, useState } from "react"
 import { getOrganization, getOrgPermission } from "@/services/organization"
 import { message } from "antd"
 import Link from "next/link"
-import { getUserInfo } from "@/services/auth"
 import { motion } from "framer"
+import { useAppProvider } from "@/app/app-provider"
 
 export default function OrganizationPage() {
     const [organizationList, setOrganizationList] = useState<any[]>([])
-    const [userInfo, setUserInfo] = useState<any>({})
+    const { userInfo } = useAppProvider()
     const [userType, setUserType] = useState<number>(-1)
-    const [loading, setLoading] = useState(false)
-    const [error, setError] = useState<Error | null>(null)
 
     useEffect(() => {
-        init()
-    }, [])
-
-    useEffect(() => {
-        console.log(userInfo)
+        getOrganizationList()
+        setUserType(userInfo?.user_type)
     }, [userInfo])
-
-    const init = async () => {
-        setLoading(true)
-        await Promise.all([getUserInfoData(), getOrganizationList()])
-        setLoading(false)
-    }
-
-    const getUserInfoData = async () => {
-        const res = await getUserInfo()
-        if (res?.status_code === 200) {
-            setUserInfo(res?.data)
-            setUserType(res?.data?.user_type)
-        } else {
-            message.error(res?.status_message || "Failed to fetch user info")
-        }
-    }
 
     const getOrganizationList = async () => {
         try {
@@ -47,9 +26,7 @@ export default function OrganizationPage() {
                 message.error(res?.status_message || "Failed to fetch organizations")
             }
         } catch (err) {
-            setError(err as Error)
-        } finally {
-            setLoading(false)
+            console.error(err)
         }
     }
 

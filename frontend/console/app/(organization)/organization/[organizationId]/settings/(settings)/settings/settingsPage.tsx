@@ -1,11 +1,11 @@
 "use client"
 
-import { getUserInfo } from "@/services/auth";
 import { useState, useEffect } from "react"
 import { getOrganizationDetail } from "@/services/organization"
 import { message } from "antd"
 import { useParams } from "next/navigation"
 import { DeleteOrganizationModal, EditOrganizationModal, QuitOrganizationModal } from "./settingsModal"
+import { useAppProvider } from "@/app/app-provider";
 
 export default function SettingsPage() {
     const params = useParams()
@@ -13,6 +13,7 @@ export default function SettingsPage() {
 
     const [isAdmin, setIsAdmin] = useState(false);
     const [organizationInfo, setOrganizationInfo] = useState<any>({});
+    const { userInfo } = useAppProvider()
 
     const [isDeleteOrgModalOpen, setIsDeleteOrgModalOpen] = useState(false);
     const [isQuitOrgModalOpen, setIsQuitOrgModalOpen] = useState(false);
@@ -32,27 +33,17 @@ export default function SettingsPage() {
     }
 
     const getUserRole = async () => {
-        try {
-            const res = await getUserInfo()
-            if (res.status_code === 200) {
-                const data = res.data;
-                if (data?.user_type === 1 || data?.user_type === 2) {
-                    setIsAdmin(true);
-                } else {
-                    setIsAdmin(false);
-                }
-            } else {
-                console.error('Failed to fetch user role');
-            }
-        } catch (error) {
-            console.error('Error fetching user role:', error);
-        };
+        if (userInfo?.user_type === 1 || userInfo?.user_type === 2) {
+            setIsAdmin(true);
+        } else {
+            setIsAdmin(false);
+        }
     }
 
     useEffect(() => {
         getOrganizationInfo();
         getUserRole();
-    }, [])
+    }, [userInfo])
 
     return <>
         <DeleteOrganizationModal isOpen={isDeleteOrgModalOpen} setIsOpen={setIsDeleteOrgModalOpen} orgId={organizationId} />

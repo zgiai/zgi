@@ -12,13 +12,7 @@ const { Dragger } = Upload;
 
 export default function CreateDocumentPage({ kb_id }: { kb_id: string }) {
     const [token,setToken] = useState('')
-    const { organizationId } = useParams()
     const [pageStatus, setPageStatus] = useState<number>(1)
-    const [formData, setFormData] = useState<CreateProjectParams>({
-        name: "",
-        description: "",
-        organization_id: organizationId as string
-    })
 
     const uploadDocumentTypeArr: string[] = ['text/plain', 'application/pdf']
 
@@ -46,7 +40,8 @@ export default function CreateDocumentPage({ kb_id }: { kb_id: string }) {
         },
         beforeUpload(file) {
             const isTypeAllowed = uploadDocumentTypeArr.includes(file.type);
-            const isSizeAllowed = file.size / 1024 / 1024 < 15;
+            // 10MB
+            const isSizeAllowed = file.size / 1024 / 1024 < 10;
             if (isTypeAllowed && isSizeAllowed) {
                 return true;
             } else {
@@ -100,7 +95,7 @@ export default function CreateDocumentPage({ kb_id }: { kb_id: string }) {
                                 </span>
                             </div>
                             <p className="text-gray-500 dark:text-gray-400 mt-2">
-                                Currently support PDF、TXT files, with a maximum size of 15MB per file.
+                                Currently support PDF、TXT files, with a maximum size of 10MB per file.
                             </p>
                         </div>
 

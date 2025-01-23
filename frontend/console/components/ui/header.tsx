@@ -17,9 +17,8 @@ export default function Header({
   variant?: 'default' | 'v2' | 'v3'
 }) {
 
-  const { sidebarOpen, setSidebarOpen } = useAppProvider()
+  const { sidebarOpen, setSidebarOpen, userInfo, setUserInfo } = useAppProvider()
   const [searchModalOpen, setSearchModalOpen] = useState<boolean>(false)
-  const [userInfo, setUserInfo] = useState<any>({})
 
   const init = async () => {
     const res = await getUserInfo()

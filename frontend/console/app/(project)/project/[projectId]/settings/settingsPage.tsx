@@ -1,12 +1,11 @@
 "use client"
 
-
-import { getUserInfo } from "@/services/auth";
 import { useState, useEffect } from "react"
 import { getProjectDetail } from "@/services/project"
 import { message } from "antd"
 import { useParams } from "next/navigation"
 import { DeleteProjectModal, EditProjectModal } from "./settingsModal"
+import { useAppProvider } from "@/app/app-provider";
 
 export default function SettingsPage() {
     const params = useParams()
@@ -15,6 +14,8 @@ export default function SettingsPage() {
     const [projectInfo, setProjectInfo] = useState<any>({});
     const [isDeleteProjectModalOpen, setIsDeleteProjectModalOpen] = useState(false);
     const [editProjectModalOpen, setEditProjectModalOpen] = useState(false);
+
+    const { userInfo } = useAppProvider()
 
     const getOrganizationInfo = async () => {
         try {
@@ -30,27 +31,17 @@ export default function SettingsPage() {
     }
 
     const getUserRole = async () => {
-        try {
-            const res = await getUserInfo()
-            if (res.status_code === 200) {
-                const data = res.data;
-                if (data?.user_type === 1 || data?.user_type === 2) {
-                    setIsAdmin(true);
-                } else {
-                    setIsAdmin(false);
-                }
-            } else {
-                console.error('Failed to fetch user role');
-            }
-        } catch (error) {
-            console.error('Error fetching user role:', error);
-        };
+        if (userInfo?.user_type === 1 || userInfo?.user_type === 2) {
+            setIsAdmin(true);
+        } else {
+            setIsAdmin(false);
+        }
     }
 
     useEffect(() => {
         getOrganizationInfo();
         getUserRole();
-    }, [])
+    }, [userInfo])
 
     return <>
         <DeleteProjectModal isOpen={isDeleteProjectModalOpen} setIsOpen={setIsDeleteProjectModalOpen} projectId={projectId} />
