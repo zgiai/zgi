@@ -106,13 +106,13 @@ export default function DocumentPage({ kbId, documentId }: { kbId: string, docum
             <div className="flex-1 flex flex-col h-full">
                 <div className="flex items-center h-full">
                     <span className="text-sm text-gray-800 dark:text-gray-200 flex-1 font-bold">Create At </span>
-                    <span className="text-sm text-gray-600 dark:text-gray-400 w-40">{new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date(document?.created_at || ""))}</span>
+                    <span className="text-sm text-gray-600 dark:text-gray-400 w-40">{document?.created_at ? new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date(document?.created_at)) : new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date())}</span>
                 </div>
             </div>
             <div className="flex-1 flex flex-col h-full">
                 <div className="flex items-center h-full">
                     <span className="text-sm text-gray-800 dark:text-gray-200 flex-1 font-bold">Last Update At </span>
-                    <span className="text-sm text-gray-600 dark:text-gray-400 w-40">{new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date(document?.updated_at || ""))}</span>
+                    <span className="text-sm text-gray-600 dark:text-gray-400 w-40">{document?.updated_at ? new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date(document?.updated_at)) : new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date())}</span>
                 </div>
             </div>
             <div className="flex-1 flex flex-col h-full">

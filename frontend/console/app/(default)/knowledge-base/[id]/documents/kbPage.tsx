@@ -198,7 +198,8 @@ function DocumentTableRow({ document, setIsDeleteOpen, setIsUpdateOpen, setCurre
             <div className="flex flex-row gap-2">
                 <button
                     className="btn bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700/60 hover:border-gray-300 dark:hover:border-gray-600"
-                    onClick={() => {
+                    onClick={(e) => {
+                        e.stopPropagation();
                         setIsUpdateOpen(true);
                         setCurrentDocument(document);
                     }}
@@ -209,7 +210,8 @@ function DocumentTableRow({ document, setIsDeleteOpen, setIsUpdateOpen, setCurre
                 </button>
                 <button
                     className="btn bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700/60 hover:border-gray-300 dark:hover:border-gray-600"
-                    onClick={() => {
+                    onClick={(e) => {
+                        e.stopPropagation();
                         setIsDeleteOpen(true);
                         setCurrentDocument(document);
                     }}
