@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react";
-import { getChunkList, getDocument } from "@/services/knowledgeBase";
+import { getChunkList, getDocument, updateChunk } from "@/services/knowledgeBase";
 import { message } from "antd";
 import { formatBytes } from "@/utils/common"
 import PaginationClassic from "@/components/pagination-classic";
@@ -94,6 +94,23 @@ export default function DocumentPage({ kbId, documentId }: { kbId: string, docum
         }
     }
 
+    const saveChunk = async (content: string) => {
+        try {
+            const res = await updateChunk(documentId, { content })
+            if(res?.status_code === 200){
+                message.success("Update chunk success");
+                fetchChunkList();
+                return true
+            }else{
+                message.error(res?.status_message || "Failed to update chunk");
+                return false
+            }
+        }catch(err){
+            console.error(err)
+            return false
+        }
+    }
+
     useEffect(() => {
         fetchDocument();
     }, [documentId]);
@@ -105,7 +122,7 @@ export default function DocumentPage({ kbId, documentId }: { kbId: string, docum
 
 
     return <div>
-        <ChunksModal isOpen={isChunksModalOpen} onClose={() => setIsChunksModalOpen(false)} initialContent={currentChunk?.content || ""} onSave={() => { }} />
+        <ChunksModal isOpen={isChunksModalOpen} onClose={() => setIsChunksModalOpen(false)} chunk={currentChunk || {}} onSave={saveChunk} />
         <h1 className="text-2xl font-bold px-4 pt-4 pb-2 text-gray-900 dark:text-gray-100">{document?.title || document?.file_name}</h1>
         <div className="flex flex-col border-b border-gray-300 dark:border-gray-700">
             <div className={`grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-4 p-4 ${documentInfoOpen ? 'hidden' : 'grid'}`}>

@@ -60,5 +60,5 @@ export const getChunk = (chunk_id: string) => request.get(`${BASE_URL}/knowledge
 
 export const updateChunk = (chunk_id: string, params: {
     content: string;
-}) => request.put(`${BASE_URL}/knowledge/chunks/${chunk_id}`, params);
+}) => request.put(`${BASE_URL}/knowledge/documents/chunks/${chunk_id}`, params);
 

@@ -1,12 +1,16 @@
 import React, { useState, useEffect, MouseEvent } from 'react';
 
-const EditModal = ({ isOpen, onClose, initialContent, onSave }:{
+const EditModal = ({ isOpen, onClose, chunk, onSave }: {
     isOpen: boolean;
     onClose: () => void;
-    initialContent: string;
-    onSave: (content: string) => void;
+    chunk: any;
+    onSave: (content: string) => Promise<boolean>;
 }) => {
-    const [content, setContent] = useState(initialContent);
+    const [content, setContent] = useState(chunk?.content);
+
+    useEffect(() => {
+        setContent(chunk?.content || '');
+    }, [chunk]);
 
     const handleOutsideClick = (e: MouseEvent<HTMLDivElement>) => {
         const target = e.target as HTMLElement;
@@ -15,9 +19,13 @@ const EditModal = ({ isOpen, onClose, initialContent, onSave }:{
         }
     };
 
-    const handleSave = () => {
-        onSave(content);
-        onClose();
+    const handleSave = async () => {
+        const res = await onSave(content);
+        if (!res) {
+            return;
+        }else{
+           onClose(); 
+        }
     };
 
     useEffect(() => {
@@ -37,19 +45,23 @@ const EditModal = ({ isOpen, onClose, initialContent, onSave }:{
     if (!isOpen) return null;
 
     return (
-        <div id='modal-backdrop' className='fixed inset-0 flex justify-center items-center z-50' onClick={(e) => handleOutsideClick(e)}>
-            <div className='bg-white p-4 rounded shadow-lg w-full mx-4 sm:max-w-xs md:max-w-md lg:max-w-lg z-50'>
+        <div id='modal-backdrop' className='fixed inset-0 flex justify-center md:justify-end items-center z-50 ' onClick={(e) => handleOutsideClick(e)}>
+            <div className='flex flex-col bg-white dark:bg-gray-800 p-4 rounded h-[85vh] shadow-lg w-full mx-4 sm:max-w-xl md:max-w-2xl lg:max-w-2xl z-50 border border-solid border-gray-300 dark:border-gray-600 md:mr-8 mt-[64px]'>
+                <div>
+                    <h2 className='text-2xl font-bold mb-4'>Edit Chunk</h2>
+                    <p className='text-gray-500 mb-4'>Edit the content of the <span className='font-bold'>chunk-{chunk?.chunk_index+1}</span></p>
+                </div>
                 <textarea
-                    className='w-full h-32 border border-gray-300 rounded p-2 resize-none'
+                    className='form-input resize-none flex-1'
                     value={content}
                     onChange={(e) => setContent(e.target.value)}
                 />
-                <div className='flex justify-end mt-4'>
-                    <button className='bg-gray-300 text-gray-700 px-4 py-2 rounded mr-2' onClick={onClose}>取消</button>
-                    <button className='bg-gray-700 text-white px-4 py-2 rounded' onClick={handleSave}>保存</button>
+                <div className='flex justify-end mt-4 gap-x-2'>
+                    <button className='btn bg-gray-900 text-gray-100 hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-800 dark:hover:bg-white' onClick={handleSave}>Save</button>
+                    <button className='btn bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700/60 hover:border-gray-300 dark:hover:border-gray-600 text-gray-800 dark:text-gray-300' onClick={onClose}>Cancel</button>
                 </div>
             </div>
-            <div className='fixed inset-0 flex justify-center items-center' onClick={(e) => handleOutsideClick(e)}>
+            <div className='fixed inset-0 flex justify-center items-center' id='modal-backdrop' onClick={(e) => handleOutsideClick(e)}>
             </div>
         </div>
     );
