@@ -72,12 +72,17 @@ const KnowledgeBaseCard: FC<KnowledgeBaseCardProps> = ({ kb, index, setCurrentKb
                     </div>
                 </div>
                 <div id="kb-card-actions">
-                    <Dropdown
-                        options={[
-                            { label: 'Delete', action: handleDelete },
-                            { label: 'Settings', action: handleSettings }]
-                        }
-                    />
+                    <div
+                        className='flex items-center justify-center'
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <Dropdown
+                            options={[
+                                { label: 'Delete', action: handleDelete },
+                                { label: 'Settings', action: handleSettings }]
+                            }
+                        />
+                    </div>
                 </div>
             </div>
 
@@ -119,13 +124,13 @@ const KnowledgeBasePage: FC = () => {
         }
     };
 
-    const handleSearch = async() => {
+    const handleSearch = async () => {
         await fetchKnowledgeBases();
         if (queryData === '') {
             setSearchFlag(false);
         } else {
             setSearchFlag(true);
-        }    
+        }
     };
 
     useEffect(() => {
@@ -190,7 +195,7 @@ const KnowledgeBasePage: FC = () => {
                                 className='flex items-center justify-center bg-white rounded-lg shadow-md p-6 hover:shadow-lg dark:bg-gray-800'
                             >
                                 No Data
-                            </div>:<motion.div
+                            </div> : <motion.div
                                 initial={{ opacity: 0, y: 20 }}
                                 animate={{ opacity: 1, y: 0 }}
                                 transition={{ duration: 0.3 }}

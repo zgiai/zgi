@@ -33,7 +33,12 @@ export const cloneKnowledgeBase = (kb_id: string, params: {
 export const getDocumentList = (kb_id: string, params?: {
     page_num?: number;
     page_size?: number;
+    search?:string;
+    file_type?:string;
+    status?:string;
 }) => request.get(`${BASE_URL}/knowledge/${kb_id}/documents`, params);
+
+export const getDocument = (doc_id: string) => request.get(`${BASE_URL}/knowledge/documents/${doc_id}`);
 
 export const deleteDocument = (doc_id: number) => request.del(`${BASE_URL}/knowledge/documents/${doc_id}`);
 

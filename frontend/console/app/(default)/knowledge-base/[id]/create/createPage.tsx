@@ -1,6 +1,6 @@
 "use client"
 
-import { useState,useEffect } from "react"
+import { useState, useEffect } from "react"
 import { CreateProjectParams } from "@/interfaces/request"
 import { message, Upload, } from "antd"
 import type { UploadProps } from 'antd';
@@ -11,7 +11,7 @@ import { BASE_URL } from "@/config"
 const { Dragger } = Upload;
 
 export default function CreateDocumentPage({ kb_id }: { kb_id: string }) {
-    const [token,setToken] = useState('')
+    const [token, setToken] = useState('')
     const [pageStatus, setPageStatus] = useState<number>(1)
 
     const uploadDocumentTypeArr: string[] = ['text/plain', 'application/pdf']
