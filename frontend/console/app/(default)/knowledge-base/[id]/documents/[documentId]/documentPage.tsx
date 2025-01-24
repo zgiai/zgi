@@ -7,6 +7,7 @@ import { formatBytes } from "@/utils/common"
 import PaginationClassic from "@/components/pagination-classic";
 import PaginationLibrary from "@/app/(alternative)/components-library/pagination/page";
 import PaginationNumeric from "@/components/pagination-numeric";
+import ChunksModal from "./chunksModal";
 
 interface Document {
     id?: number;
@@ -57,6 +58,10 @@ export default function DocumentPage({ kbId, documentId }: { kbId: string, docum
     const [total, setTotal] = useState<number>(0);
     const [currentPage, setCurrentPage] = useState<number>(1);
     const [documentInfoOpen, setDocumentInfoOpen] = useState<boolean>(false);
+    const [isChunksModalOpen, setIsChunksModalOpen] = useState<boolean>(false);
+    const [currentChunk, setCurrentChunk] = useState<Chunk | null>(null);
+
+
     const pageSize = 10;
 
     const fetchDocument = async () => {
@@ -100,13 +105,14 @@ export default function DocumentPage({ kbId, documentId }: { kbId: string, docum
 
 
     return <div>
+        <ChunksModal isOpen={isChunksModalOpen} onClose={() => setIsChunksModalOpen(false)} initialContent={currentChunk?.content || ""} onSave={() => { }} />
         <h1 className="text-2xl font-bold px-4 pt-4 pb-2 text-gray-900 dark:text-gray-100">{document?.title || document?.file_name}</h1>
         <div className="flex flex-col border-b border-gray-300 dark:border-gray-700">
             <div className={`grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-4 p-4 ${documentInfoOpen ? 'hidden' : 'grid'}`}>
                 <div className="flex-1 flex flex-col h-full">
                     <div className="flex items-center">
                         <span className="text-sm text-gray-800 dark:text-gray-200 flex-1 font-bold">File Name </span>
-                        <span className="text-sm text-gray-600 dark:text-gray-400 w-40">{document?.file_name}</span>
+                        <span className="text-sm text-gray-600 dark:text-gray-400 w-40 break-all">{document?.file_name}</span>
                     </div>
                 </div>
                 <div className="flex-1 flex flex-col h-full">
@@ -169,7 +175,7 @@ export default function DocumentPage({ kbId, documentId }: { kbId: string, docum
                 </button>
             </div>
         </div>
-        <ChunkListComponent chunkList={chunkList} total={total} />
+        <ChunkListComponent chunkList={chunkList} total={total} setCurrentChunk={setCurrentChunk} setIsChunksModalOpen={setIsChunksModalOpen} />
         <div className="flex items-center justify-center py-4">
             <PaginationNumeric
                 current={currentPage}
@@ -181,9 +187,13 @@ export default function DocumentPage({ kbId, documentId }: { kbId: string, docum
     </div>;
 }
 
-function ChunkListComponent({ chunkList, total }: { chunkList: Chunk[], total: number }) {
+function ChunkListComponent({
+    chunkList, total, setCurrentChunk, setIsChunksModalOpen
+}: {
+    chunkList: Chunk[], total: number, setCurrentChunk: (chunk: Chunk) => void, setIsChunksModalOpen: (isOpen: boolean) => void
+}) {
     const [showMore, setShowMore] = useState<boolean>(false);
-    
+
     return <div>
         <h1 className=" font-bold px-4 py-4 text-gray-900 dark:text-gray-100 flex items-center justify-between">
             <div>
@@ -203,6 +213,12 @@ function ChunkListComponent({ chunkList, total }: { chunkList: Chunk[], total: n
             {chunkList.map((chunk) => (
                 <div key={chunk?.id}
                     className="flex-1 flex flex-col h-full rounded-md border border-gray-300 dark:border-gray-700 p-4 shadow-md bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
+                    onClick={
+                        () => {
+                            setCurrentChunk(chunk)
+                            setIsChunksModalOpen(true)
+                        }
+                    }
                 >
                     <div className="flex items-center h-full gap-x-4">
                         <span className="text-sm text-gray-600 dark:text-gray-400">Chunk-{chunk?.chunk_index + 1}</span>
