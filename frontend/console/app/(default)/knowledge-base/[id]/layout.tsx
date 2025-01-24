@@ -4,6 +4,7 @@ import { useParams } from "next/navigation"
 import SettingsSidebar from "@/components/ui/settings-sidebar"
 import { KnowledgeBaseProvider } from "./knowledgeProvider"
 import KbHeader from "./kbHeader"
+import { useState } from "react"
 
 export default function Layout({ children }: { children: React.ReactNode }) {
     const { id } = useParams()
@@ -30,11 +31,29 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         }
     ]
 
+    const [hiddenSidebar, setHiddenSidebar] = useState<boolean>(false);
+
     return (
         <KnowledgeBaseProvider>
             <div className="px-4 sm:px-6 lg:px-4 py-4 w-full max-w-[96rem] mx-auto">
-                <div className="bg-white dark:bg-gray-800 shadow-sm rounded-xl mb-8 flex flex-col md:flex-row md:-mr-px">
-                    <SettingsSidebar sidebarItems={sidebarItems} />
+                <div className="bg-white dark:bg-gray-800 shadow-sm rounded-xl mb-8 flex flex-col md:flex-row md:-mr-px relative">
+                    <div className="h-[calc(100vh-64px)] sticky top-[64px] overflow-y-auto hidden md:flex">
+                        <div className={`bg-gray-100 dark:bg-gray-900 flex pr-[1px] ${hiddenSidebar ? 'border-r border-gray-200 dark:border-gray-700/60 border-solid' : ''}`}>
+                            <div className={`flex-col md:flex-row md:-mr-px hidden md:flex overflow-hidden rounded-l-xl`}>
+                                <button onClick={() => setHiddenSidebar(!hiddenSidebar)} className="text-gray-600 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700">
+                                    <svg className={`w-3 h-3 shrink-0 ml-1 fill-current text-gray-400 dark:text-gray-500 ${hiddenSidebar ? 'rotate-90' : '-rotate-90'}`} viewBox="0 0 12 12">
+                                        <path d="M5.9 11.4L.5 6l1.4-1.4 4 4 4-4L11.3 6z" />
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                        <div className={`${hiddenSidebar ? 'hidden' : 'flex'}`}>
+                            <SettingsSidebar sidebarItems={sidebarItems} />
+                        </div>
+                    </div>
+                    <div className="md:hidden">
+                        <SettingsSidebar sidebarItems={sidebarItems} />
+                    </div>
                     <div className="flex flex-col flex-1 min-h-[80vh]">
                         <KbHeader kbId={kbId} />
                         {children}
