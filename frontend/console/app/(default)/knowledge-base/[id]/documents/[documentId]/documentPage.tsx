@@ -188,10 +188,10 @@ export default function DocumentPage({ kbId, documentId }: { kbId: string, docum
             </div>
             <div className="flex items-center justify-center">
                 <button
-                    className="flex items-center justify-center w-full py-1 hover:bg-gray-100 dark:hover:bg-gray-700"
+                    className="flex items-center justify-center w-full hover:bg-gray-100 dark:hover:bg-gray-700"
                     onClick={() => setDocumentInfoOpen(!documentInfoOpen)}
                 >
-                    <svg className={`w-3 h-3 shrink-0 ml-1 fill-current text-gray-400 dark:text-gray-500 ${!documentInfoOpen && 'rotate-180'}`} viewBox="0 0 12 12">
+                    <svg className={`w-4 h-4 shrink-0 fill-current text-gray-800 dark:text-gray-200 ${!documentInfoOpen ? 'rotate-180 mt-1':'mb-1'}`} viewBox="0 0 12 12">
                         <path d="M5.9 11.4L.5 6l1.4-1.4 4 4 4-4L11.3 6z" />
                     </svg>
                 </button>
@@ -252,7 +252,7 @@ function ChunkListComponent({
                     className="btn bg-gray-900 text-gray-100 hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-800 dark:hover:bg-white"
                     onClick={() => setShowMore(!showMore)}
                 >
-                    <span className="hidden sm:inline">&nbsp;View All</span>
+                    <span className="hidden sm:inline">View All</span>
                 </button>
             </div>
         </h1>

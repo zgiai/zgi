@@ -3,6 +3,7 @@ import './css/style.css'
 import { Inter } from 'next/font/google'
 import Theme from './theme-provider'
 import AppProvider from './app-provider'
+import { ConfigProvider } from 'antd'
 
 const inter = Inter({
   subsets: ['latin'],
@@ -25,7 +26,29 @@ export default function RootLayout({
       <body className="font-inter antialiased bg-gray-100 dark:bg-gray-900 text-gray-600 dark:text-gray-400">
         <Theme>
           <AppProvider>
-            {children}
+            <ConfigProvider
+              theme={{
+                components: {
+                  Slider: {
+                    trackBg: '#9E54F9',
+                    trackHoverBg: '#7A00E6',
+                    handleActiveColor: '#E3E3E3',
+                    handleActiveOutlineColor: '#9E54F9',
+                    dotActiveBorderColor: '#9E54F9',
+                    handleColor: '#7A00E6',
+                    handleSize: 16,
+                    handleSizeHover: 18,
+                    railSize: 8
+                  }
+                },
+                token: {
+                  colorPrimary: '#9E54F9',
+                  colorPrimaryBorderHover: '#7A00E6',
+                }
+              }}
+            >
+              {children}
+            </ConfigProvider>
           </AppProvider>
         </Theme>
       </body>

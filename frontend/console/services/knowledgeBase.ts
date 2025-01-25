@@ -63,3 +63,8 @@ export const updateChunk = (chunk_id: number, params: {
     content: string;
 }) => request.put(`${BASE_URL}/knowledge/documents/chunks/${chunk_id}`, params);
 
+export const hitTest = (kb_id: number, params: {
+    text: string;
+    top_k?: number;
+}) => request.post(`${BASE_URL}/knowledge/${kb_id}/search`,params);
+
