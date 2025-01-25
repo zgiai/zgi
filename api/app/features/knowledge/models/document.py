@@ -46,6 +46,7 @@ class Document(Base):
     # Processing settings
     chunk_size = Column(Integer, default=1000)
     chunk_overlap = Column(Integer, default=200)
+    separators = Column(JSON, nullable=True)
     embedding_model = Column(String(255), nullable=True)
     
     # Timestamps
@@ -84,6 +85,9 @@ class Document(Base):
             "source_url": self.source_url,
             "meta_info": self.meta_info,
             "tags": self.tags,
+            "chunk_size": self.chunk_size,
+            "chunk_overlap": self.chunk_overlap,
+            "separators": self.separators,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
             "processed_at": self.processed_at.isoformat() if self.processed_at else None

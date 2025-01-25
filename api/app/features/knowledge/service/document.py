@@ -5,7 +5,7 @@ import shutil
 import time
 from typing import List, Optional, Dict, Any, BinaryIO, Tuple, Union
 from fastapi import UploadFile, BackgroundTasks
-from sqlalchemy import select
+from sqlalchemy import select, String
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 import PyPDF2
@@ -85,9 +85,15 @@ class DocumentService:
             )
             raise
 
-    async def _split_text(self, text: str) -> List[str]:
+    async def _split_text(self, text: str, chunk_size: int, chunk_overlap: int, separators: List[str]) -> List[str]:
         """Split text into chunks"""
-        chunks = self.text_splitter.split_text(text)
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            length_function=len,
+            separators=separators
+        )
+        chunks = text_splitter.split_text(text)
         if len(chunks) > self.settings.MAX_CHUNKS_PER_DOC:
             raise ValidationError(
                 f"Document too large. Maximum chunks allowed: {self.settings.MAX_CHUNKS_PER_DOC}"
@@ -115,22 +121,6 @@ class DocumentService:
 
             filepath = await self.kb_service.storage.store_file(
                 file_content, kb_id, user_id, file.filename)
-            # # Create directory if not exists
-            # upload_dir = os.path.join(
-            #     self.settings.UPLOAD_DIR,
-            #     str(user_id),
-            #     str(kb_id)
-            # )
-            # os.makedirs(upload_dir, exist_ok=True)
-            #
-            # # file_ext = os.path.splitext(file.filename)[1]
-            # # filename = f"{file_hash}{file_ext}"
-            # filename = file.filename
-            # filepath = os.path.join(upload_dir, filename)
-            #
-            # # Write file
-            # with open(filepath, "wb") as f:
-            #     f.write(file_content)
             
             return filepath, file_hash
             
@@ -210,7 +200,8 @@ class DocumentService:
         file: UploadFile,
         user_id: int,
         background_tasks: BackgroundTasks,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        chunk_rule: Optional[Dict[str, Any]] = None
     ) -> ServiceResponse[Document]:
         """Upload and process a document"""
         start_time = metrics_logger.time()
@@ -237,6 +228,13 @@ class DocumentService:
                 # Store file
                 filepath, file_hash = await self._store_file(file, kb_id, user_id)
                 # Create document record with processing status
+                # Split text into chunks
+                chunk_size = chunk_rule.get("chunk_size",
+                                            self.settings.CHUNK_SIZE) if chunk_rule else self.settings.CHUNK_SIZE
+                chunk_overlap = chunk_rule.get("chunk_overlap",
+                                               self.settings.CHUNK_OVERLAP) if chunk_rule else self.settings.CHUNK_OVERLAP
+                separators = chunk_rule.get("separators", ["\n\n", "\n", " ", ""]) if chunk_rule else ["\n\n", "\n",
+                                                                                                       " ", ""]
                 document = Document(
                     kb_id=kb_id,
                     file_name=file.filename,
@@ -245,7 +243,10 @@ class DocumentService:
                     file_size=file.size,
                     file_hash=file_hash,
                     status=DocumentStatus.PROCESSING.value,
-                    meta_info=metadata
+                    meta_info=metadata,
+                    chunk_size=chunk_size,
+                    chunk_overlap=chunk_overlap,
+                    separators=separators
                 )
                 self.db.add(document)
                 self.db.commit()
@@ -257,7 +258,12 @@ class DocumentService:
                 text = await self._extract_text(file.file, file_ext[1:])
                 
                 # Split text into chunks
-                chunks = await self._split_text(text)
+                chunks = await self._split_text(
+                    text,
+                    document.chunk_size,
+                    document.chunk_overlap,
+                    document.separators
+                )
                 
                 # Store chunks in the database
                 for i, chunk in enumerate(chunks):
@@ -330,12 +336,13 @@ class DocumentService:
         files: List[UploadFile],
         user_id: int,
         background_tasks: BackgroundTasks,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        chunk_rule: Optional[Dict[str, Any]] = None
     ) -> ServiceResponse[Document]:
         """Batch upload documents"""
         doc_list = []
         for file in files:
-            result = await self.upload_document(kb_id, file, user_id, background_tasks, metadata)
+            result = await self.upload_document(kb_id, file, user_id, background_tasks, metadata, chunk_rule)
             doc_list.append(result.data)
         return ServiceResponse.ok(doc_list)
 
@@ -524,11 +531,12 @@ class DocumentService:
 
     # @handle_service_errors
     async def list_chunks(
-        self,
-        doc_id: int,
-        user_id: int,
-        page_num: int = 1,
-        page_size: int = 10
+            self,
+            doc_id: int,
+            user_id: int,
+            page_num: int = 1,
+            page_size: int = 10,
+            search: Optional[str] = None
     ) -> Tuple[List[DocumentChunk], int]:
         """List chunks of a document"""
         document = self.db.query(Document).filter(Document.id == doc_id).first()
@@ -541,6 +549,12 @@ class DocumentService:
             raise ServiceError(f"Knowledge base {document.kb_id} not found")
         
         query = self.db.query(DocumentChunk).filter(DocumentChunk.document_id == doc_id)
+        if search:
+            query = query.filter(
+                (DocumentChunk.content.ilike(f"%{search}%")) |
+                (DocumentChunk.chunk_meta_info.cast(String).ilike(f"%{search}%"))
+            )
+
         total = query.count()
         skip = (page_num - 1) * page_size
         limit = page_size
@@ -781,7 +795,21 @@ class DocumentService:
             text = await self._extract_text(file_like_object, document.file_type)
 
             # Split text into chunks
-            chunks = await self._split_text(text)
+            chunks = await self._split_text(text, document.chunk_size, document.chunk_overlap, document.separators)
+
+            # delete old chunks
+            self.db.query(DocumentChunk).filter(
+                DocumentChunk.document_id == document.id).delete(synchronize_session=False)
+            # Store chunks in the database
+            for i, chunk in enumerate(chunks):
+                document_chunk = DocumentChunk(
+                    document_id=document.id,
+                    chunk_index=i,
+                    content=chunk,
+                    token_count=len(chunk.split())
+                )
+                self.db.add(document_chunk)
+            self.db.commit()
 
             # Add background task for processing
             background_tasks.add_task(

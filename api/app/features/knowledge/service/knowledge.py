@@ -6,6 +6,7 @@ from sqlalchemy import and_, or_, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException
 
+from app.features.gateway.service.api_key_service import APIKeyService
 from app.features.knowledge.models.knowledge import KnowledgeBase, Visibility, Status
 from app.features.knowledge.models.document import Document, DocumentStatus
 from app.features.knowledge.schemas.request.knowledge import (
@@ -90,16 +91,28 @@ class KnowledgeBaseService:
             #     raise ValidationError("Knowledge base with this name already exists")
             collection_name = f"kb_{user_id}_{str(uuid4())[:8]}"
             # Create knowledge base
-            # get model from embedding setting
-            kb_create.model = self.embedding_settings.MODEL
+            # todo embedding_dimension use mode to config
             embedding_dimension = self.embedding.get_dimension()
+            model_id = kb_create.model_id
+            embedding_model = self.kb_settings.DEFAULT_EMBEDDING_MODEL
+            model_provider = self.embedding_settings.PROVIDER
+            if model_id:
+                llm_model = APIKeyService.get_llm_model(db=self.db, llm_model_id=model_id)
+                if not llm_model:
+                    raise ValidationError("LLM model not found")
+                if llm_model.model_type != "embedding":
+                    raise ValidationError("LLM model is not embedding model")
+                model_provider = llm_model.llm_provider.provider
+                embedding_model = llm_model.model_name
             kb = KnowledgeBase(
                 name=kb_create.name,
                 description=kb_create.description,
                 visibility=kb_create.visibility,
                 owner_id=user_id,
                 organization_id=kb_create.organization_id,
-                model=kb_create.model or self.kb_settings.DEFAULT_EMBEDDING_MODEL,
+                model_id=model_id,
+                model=embedding_model,
+                model_provider=model_provider,
                 dimension=embedding_dimension,
                 collection_name=collection_name,
                 meta_info=kb_create.metadata,
@@ -204,6 +217,15 @@ class KnowledgeBaseService:
         # Update fields
         for field, value in kb_update.dict(exclude_unset=True).items():
             setattr(kb, field, value)
+        # Update model
+        if kb_update.model_id:
+            llm_model = APIKeyService.get_llm_model(db=self.db, llm_model_id=kb_update.model_id)
+            if not llm_model:
+                raise ValidationError("LLM model not found")
+            if llm_model.model_type != "embedding":
+                raise ValidationError("LLM model is not embedding model")
+            kb.model = llm_model.model_name
+            kb.model_provider = llm_model.llm_provider.provider
         self.db.add(kb)
         # await self.db.commit()
         # await self.db.refresh(kb)

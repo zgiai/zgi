@@ -8,7 +8,8 @@ from app.core.base import resp_200, UnifiedResponseModel
 from app.core.database import get_db, get_sync_db
 from app.core.auth import get_api_key, get_current_user
 from ..schemas.api_key import LLMModelResponse, LLMModelUpdate, LLMModelCreate, LLMModelListResponse, \
-    LLMProviderResponse, LLMProviderUpdate, LLMProviderListResponse, LLMProviderCreate
+    LLMProviderResponse, LLMProviderUpdate, LLMProviderListResponse, LLMProviderCreate, LLMConfigResponse, \
+    LLMConfigCreate, LLMConfigListResponse, LLMConfigUpdate
 from ..service.api_key_service import APIKeyService
 from ..models.api_key import APIKeyMapping
 from pydantic import BaseModel
@@ -211,6 +212,7 @@ async def create_llm_model(
 
 @router.get("/llm-models", response_model=UnifiedResponseModel[LLMModelListResponse])
 async def get_llm_models(
+        provider_id: Optional[int] = None,
         page_size: Optional[int] = 10,
         page_num: Optional[int] = 1,
         db: Session = Depends(get_sync_db),
@@ -218,8 +220,9 @@ async def get_llm_models(
 ):
     """Get a list of LLMModels with pagination."""
     try:
-        total = APIKeyService.count_llm_models(db=db)
-        llm_models = APIKeyService.get_llm_models(db=db, page_size=page_size, page_num=page_num)
+        total = APIKeyService.count_llm_models(db=db, provider_id=provider_id)
+        llm_models = APIKeyService.get_llm_models(
+            db=db, provider_id=provider_id, page_size=page_size, page_num=page_num)
         return resp_200(LLMModelListResponse(
             total=total,
             page_size=page_size,
@@ -247,6 +250,21 @@ async def get_llm_model(
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+@router.get("/llm-models-by-type/{model_type}", response_model=UnifiedResponseModel[LLMModelListResponse])
+async def get_llm_models_by_type(
+        model_type: str,
+        db: Session = Depends(get_sync_db),
+        current_user: User = Depends(get_current_user)
+):
+    """Get a list of LLMModels by type with pagination and provider information."""
+    try:
+        llm_models = APIKeyService.get_llm_models_by_type(db=db, model_type=model_type)
+        models_result = []
+        for model in llm_models:
+            models_result.append(LLMModelResponse.model_validate(model))
+        return resp_200(models_result)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 @router.put("/llm-models/{llm_model_id}", response_model=UnifiedResponseModel[LLMModelResponse])
 async def update_llm_model(
@@ -279,6 +297,102 @@ async def delete_llm_model(
         if not result:
             raise HTTPException(status_code=404, detail="LLMModel not found")
         return resp_200(LLMModelResponse.model_validate(result))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/llm-configs")
+async def create_llm_config(
+        llm_config: LLMConfigCreate,
+        db: Session = Depends(get_sync_db),
+        current_user: User = Depends(get_current_user)
+):
+    """Create a new LLMConfig."""
+    try:
+        result = APIKeyService.create_llm_config(db=db, llm_config=llm_config, current_user=current_user)
+        return resp_200(LLMConfigResponse.model_validate(result))
+    except HTTPException as e:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/llm-configs")
+async def get_llm_configs(
+        page_size: Optional[int] = 10,
+        page_num: Optional[int] = 1,
+        db: Session = Depends(get_sync_db),
+        current_user: User = Depends(get_current_user)
+):
+    """Get a list of LLMConfigs with pagination."""
+    try:
+        total = APIKeyService.count_llm_configs(db=db)
+        llm_configs = APIKeyService.get_llm_configs(db=db, page_size=page_size, page_num=page_num)
+        return resp_200(LLMConfigListResponse(
+            total=total,
+            page_size=page_size,
+            page_num=page_num,
+            data=[LLMConfigResponse.model_validate(llm_config).model_dump() for llm_config in llm_configs]
+        ))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/llm-configs/{llm_config_id}")
+async def get_llm_config(
+        llm_config_id: int,
+        db: Session = Depends(get_sync_db),
+        current_user: User = Depends(get_current_user)
+):
+    """Get an LLMConfig by ID."""
+    try:
+        result = APIKeyService.get_llm_config(db=db, llm_config_id=llm_config_id)
+        if not result:
+            raise HTTPException(status_code=404, detail="LLMConfig not found")
+        return resp_200(LLMConfigResponse.model_validate(result))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.put("/llm-configs/{llm_config_id}")
+async def update_llm_config(
+        llm_config_id: int,
+        llm_config_update: LLMConfigUpdate,
+        db: Session = Depends(get_sync_db),
+        current_user: User = Depends(get_current_user)
+):
+    """Update an LLMConfig by ID."""
+    try:
+        result = APIKeyService.update_llm_config(
+            db=db,
+            llm_config_id=llm_config_id,
+            llm_config_update=llm_config_update
+        )
+        if not result:
+            raise HTTPException(status_code=404, detail="LLMConfig not found")
+        return resp_200(LLMConfigResponse.model_validate(result))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/llm-configs/{llm_config_id}")
+async def delete_llm_config(
+        llm_config_id: int,
+        db: Session = Depends(get_sync_db),
+        current_user: User = Depends(get_current_user)
+):
+    """Delete an LLMConfig by ID."""
+    try:
+        result = APIKeyService.delete_llm_config(db=db, llm_config_id=llm_config_id)
+        if not result:
+            raise HTTPException(status_code=404, detail="LLMConfig not found")
+        return resp_200(LLMConfigResponse.model_validate(result))
     except HTTPException:
         raise
     except Exception as e:

@@ -10,9 +10,9 @@ class KnowledgeBaseCreate(BaseModel):
         default=Visibility.PUBLIC,
         description="Visibility of the knowledge base"
     )
-    model: Optional[str] = Field(
-        default="text-embedding-3-small",
-        description="Embedding model to use"
+    model_id: Optional[int] = Field(
+        default=None,
+        description="Embedding model config id to use"
     )
     organization_id: Optional[int] = Field(
         None,
@@ -32,6 +32,10 @@ class KnowledgeBaseUpdate(BaseModel):
     name: Optional[constr(min_length=1, max_length=255)] = Field(None, description="Updated name")
     description: Optional[str] = Field(None, description="Updated description")
     visibility: Optional[Visibility] = Field(None, description="Updated visibility")
+    model_id: Optional[int] = Field(
+        default=None,
+        description="Embedding model config id to use"
+    )
     status: Optional[Status] = Field(None, description="Updated status")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Updated metadata")
     tags: Optional[List[str]] = Field(None, description="Updated tags")

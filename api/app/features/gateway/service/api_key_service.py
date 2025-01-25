@@ -1,4 +1,5 @@
 """Service for managing API key mappings"""
+import datetime
 from typing import Dict, Optional, List
 import os
 import logging
@@ -7,8 +8,9 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.features import User
-from app.features.gateway.models.api_key import LLMModel, LLMProviderName, LLMProvider, LLMModelType
-from app.features.gateway.schemas.api_key import LLMModelCreate, LLMModelUpdate, LLMProviderCreate, LLMProviderUpdate
+from app.features.gateway.models.api_key import LLMModel, LLMProviderName, LLMProvider, LLMConfig
+from app.features.gateway.schemas.api_key import LLMModelCreate, LLMModelUpdate, LLMProviderCreate, LLMProviderUpdate, \
+    LLMConfigCreate, LLMConfigUpdate
 
 # Load environment variables from .env file
 load_dotenv()
@@ -140,7 +142,7 @@ class APIKeyService:
         provider = db.query(LLMProvider).filter(LLMProvider.id == llm_model.provider_id).first()
         if not provider:
             raise HTTPException(status_code=404, detail="LLMProvider not found")
-        lm = db.query(LLMModel).filter(LLMProvider.id == llm_model.provider_id,
+        lm = db.query(LLMModel).filter(LLMModel.provider_id == llm_model.provider_id,
                                        LLMModel.name == llm_model.name).first()
         if lm:
             raise ValueError(f"LLMModel with name {llm_model.name} in LLMProvider {provider.name} already exists")
@@ -165,7 +167,14 @@ class APIKeyService:
             raise ValueError(f"LLMModel config model_type must be one of the following: {LLMModelType.get_values()}")
         db_llm_model = db.query(LLMModel).filter(LLMModel.id == llm_model_id).first()
         if db_llm_model is None:
-            return None
+            raise HTTPException(status_code=404, detail="LLMModel not found")
+        if llm_model_update.name:
+            if llm_model_update.name == db_llm_model.name:
+                raise ValueError(f"Cannot update LLMModel name. New name cannot be the same as the existing name.")
+            exist_llm_model = db.query(LLMModel).filter(LLMModel.provider_id == db_llm_model.provider_id,
+                                       LLMModel.name == llm_model_update.name).first()
+            if exist_llm_model:
+                raise ValueError(f"LLMModel with name {llm_model_update.name} already exists")
         update_data = llm_model_update.model_dump(exclude_unset=True)
         for key, value in update_data.items():
             setattr(db_llm_model, key, value)
@@ -185,12 +194,129 @@ class APIKeyService:
         return db_llm_model
 
     @staticmethod
-    def get_llm_models(db: Session, page_size: int, page_num: int) -> List[LLMModel]:
+    def get_llm_models(db: Session, provider_id: Optional[int], page_size: int, page_num: int) -> List[LLMModel]:
         """Get a list of LLMModels with pagination."""
+        query = db.query(LLMModel)
+        if provider_id is not None:
+            query = query.filter(LLMModel.provider_id == provider_id)
         offset = (page_num - 1) * page_size
-        return db.query(LLMModel).offset(offset).limit(page_size).all()
+        return query.offset(offset).limit(page_size).all()
 
     @staticmethod
-    def count_llm_models(db: Session) -> int:
+    def count_llm_models(db: Session, provider_id: Optional[int]) -> int:
         """Count the total number of LLMModels."""
-        return db.query(LLMModel).count()
+        query = db.query(LLMModel)
+        if provider_id is not None:
+            query = query.filter(LLMModel.provider_id == provider_id)
+        return query.count()
+
+    @staticmethod
+    def get_llm_models_by_type(db: Session, model_type: str) -> List[LLMModel]:
+        """Get LLM models by type and include provider information."""
+        if model_type not in LLMModelType.get_values():
+            raise ValueError(f"Invalid model_type: {model_type}. Must be one of {LLMModelType.get_values()}")
+        query = (
+            db.query(LLMModel)
+            .join(LLMProvider, LLMModel.provider_id == LLMProvider.id)
+            .filter(LLMModel.model_type == model_type,
+                    LLMModel.status == 1)
+        )
+        llm_models = query.all()
+        # fake data, todo replace with real data
+        # if model_type == "embedding":
+        #     datetime_now = datetime.datetime.utcnow()
+        #     fake_data = [
+        #         {
+        #             "id": 1,
+        #             "name": "embedding_model_1",
+        #             "model_type": "embedding",
+        #             "model_name": "text-embedding-3-large",
+        #             "provider_id": 1,
+        #             "status": 1,
+        #             "user_id": 1,
+        #             "create_time": datetime_now,
+        #             "update_time": datetime_now
+        #         },
+        #         {
+        #             "id": 2,
+        #             "name": "embedding_model_2",
+        #             "model_type": "embedding",
+        #             "model_name": "text-embedding-3-small",
+        #             "provider_id": 1,
+        #             "status": 1,
+        #             "user_id": 1,
+        #             "create_time": datetime_now,
+        #             "update_time": datetime_now
+        #         },
+        #         {
+        #             "id": 3,
+        #             "name": "embedding_model_3",
+        #             "model_type": "embedding",
+        #             "model_name": "text-embedding-ada-002",
+        #             "provider_id": 1,
+        #             "status": 1,
+        #             "user_id": 1,
+        #             "create_time": datetime_now,
+        #             "update_time": datetime_now
+        #         }
+        #     ]
+        #     llm_models = [LLMModel(**item) for item in fake_data]
+        return llm_models
+
+
+    @staticmethod
+    def create_llm_config(db: Session, llm_config: LLMConfigCreate, current_user: User) -> LLMConfig:
+        """Create a new LLMConfig."""
+        # Check if the LLMModel exists
+        model = db.query(LLMModel).filter(LLMModel.id == llm_config.llm_model_id).first()
+        if not model:
+            raise HTTPException(status_code=404, detail="LLMModel not found")
+        config = db.query(LLMConfig).filter(LLMConfig.config_key == llm_config.config_key).first()
+        if config:
+            raise ValueError(f"LLMConfig with config_key {llm_config.config_key} already exists")
+        db_llm_config = LLMConfig(**llm_config.model_dump())
+        db_llm_config.user_id = current_user.id
+        db.add(db_llm_config)
+        db.commit()
+        db.refresh(db_llm_config)
+        return db_llm_config
+
+    @staticmethod
+    def get_llm_config(db: Session, llm_config_id: int) -> Optional[LLMConfig]:
+        """Get an LLMConfig by ID."""
+        return db.query(LLMConfig).filter(LLMConfig.id == llm_config_id).first()
+
+    @staticmethod
+    def update_llm_config(db: Session, llm_config_id: int, llm_config_update: LLMConfigUpdate) -> Optional[LLMConfig]:
+        """Update an LLMConfig by ID."""
+        db_llm_config = db.query(LLMConfig).filter(LLMConfig.id == llm_config_id).first()
+        if db_llm_config is None:
+            return None
+        update_data = llm_config_update.model_dump(exclude_unset=True)
+        for key, value in update_data.items():
+            setattr(db_llm_config, key, value)
+        db.add(db_llm_config)
+        db.commit()
+        db.refresh(db_llm_config)
+        return db_llm_config
+
+    @staticmethod
+    def delete_llm_config(db: Session, llm_config_id: int) -> Optional[LLMConfig]:
+        """Delete an LLMConfig by ID."""
+        db_llm_config = db.query(LLMConfig).filter(LLMConfig.id == llm_config_id).first()
+        if db_llm_config is None:
+            return None
+        db.delete(db_llm_config)
+        db.commit()
+        return db_llm_config
+
+    @staticmethod
+    def get_llm_configs(db: Session, page_size: int, page_num: int) -> List[LLMConfig]:
+        """Get a list of LLMConfigs with pagination."""
+        offset = (page_num - 1) * page_size
+        return db.query(LLMConfig).offset(offset).limit(page_size).all()
+
+    @staticmethod
+    def count_llm_configs(db: Session) -> int:
+        """Count the total number of LLMConfigs."""
+        return db.query(LLMConfig).count()
