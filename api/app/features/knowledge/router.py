@@ -161,14 +161,14 @@ async def upload_document(
         try:
             metadata_dict = json.loads(metadata)
         except (json.JSONDecodeError, ValidationError) as e:
-            return {"success": False, "error": str(e)}
+            raise ValidationError(f"Invalid metadata: {e}")
     # Manually parse chunk_rule JSON string to dict
     chunk_rule_dict = None
     if chunk_rule:
         try:
             chunk_rule_dict = json.loads(chunk_rule)
         except (json.JSONDecodeError, ValidationError) as e:
-            return {"success": False, "error": str(e)}
+            raise ValidationError(f"Invalid chunk_rule: {e}")
     return await doc_service.upload_document(kb_id, file, current_user.id, background_tasks, metadata_dict, chunk_rule_dict)
 
 
@@ -191,14 +191,14 @@ async def batch_upload_documents(
         try:
             metadata_dict = json.loads(metadata)
         except (json.JSONDecodeError, ValidationError) as e:
-            return {"success": False, "error": str(e)}
+            raise ValidationError(f"Invalid metadata: {e}")
     # Manually parse chunk_rule JSON string to dict
     chunk_rule_dict = None
     if chunk_rule:
         try:
             chunk_rule_dict = json.loads(chunk_rule)
         except (json.JSONDecodeError, ValidationError) as e:
-            return {"success": False, "error": str(e)}
+            raise ValidationError(f"Invalid chunk_rule: {e}")
     return await doc_service.batch_upload_documents(kb_id, files, current_user.id, background_tasks, metadata_dict, chunk_rule_dict)
 
 

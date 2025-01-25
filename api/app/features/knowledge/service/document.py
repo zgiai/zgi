@@ -246,7 +246,8 @@ class DocumentService:
                     meta_info=metadata,
                     chunk_size=chunk_size,
                     chunk_overlap=chunk_overlap,
-                    separators=separators
+                    separators=separators,
+                    embedding_model=kb.model
                 )
                 self.db.add(document)
                 self.db.commit()
@@ -510,7 +511,12 @@ class DocumentService:
         kb_response = await self.kb_service.get_knowledge_base(document.kb_id, user_id)
         if not kb_response.success:
             raise ServiceError(f"Knowledge base {document.kb_id} not found")
-        
+        chunk_rule = update_data.chunk_rule
+        if chunk_rule:
+            document.chunk_size = chunk_rule.get("chunk_size", document.chunk_size)
+            document.chunk_overlap = chunk_rule.get("chunk_overlap", document.chunk_overlap)
+            document.separators = chunk_rule.get("separators", document.separators)
+
         for field, value in update_data.dict(exclude_unset=True).items():
             setattr(document, field, value)
         

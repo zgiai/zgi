@@ -15,21 +15,9 @@ class DocumentUpload(BaseModel):
         None,
         description="Document tags"
     )
-    chunk_size: Optional[int] = Field(
-        default=1000,
-        ge=100,
-        le=2000,
-        description="Text chunk size"
-    )
-    chunk_overlap: Optional[int] = Field(
-        default=200,
-        ge=0,
-        le=500,
-        description="Text chunk overlap"
-    )
-    separators: Optional[List[str]] = Field(
-        default=None,
-        description="Custom separators for text splitting"
+    chunk_rule: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Custom chunking rules for text splitting"
     )
 
 
@@ -41,19 +29,7 @@ class DocumentUpdate(BaseModel):
     source_url: Optional[str] = Field(None, description="Updated source URL")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Updated metadata")
     tags: Optional[List[str]] = Field(None, description="Updated tags")
-    chunk_size: Optional[int] = Field(
+    chunk_rule: Optional[Dict[str, Any]] = Field(
         None,
-        ge=100,
-        le=2000,
-        description="Updated text chunk size"
-    )
-    chunk_overlap: Optional[int] = Field(
-        None,
-        ge=0,
-        le=500,
-        description="Updated text chunk overlap"
-    )
-    separators: Optional[List[str]] = Field(
-        None,
-        description="Updated custom separators for text splitting"
+        description="Custom chunking rules for text splitting"
     )
