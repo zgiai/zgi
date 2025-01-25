@@ -54,6 +54,7 @@ export const updateDocument = (doc_id: number, params: {
 export const getChunkList = (doc_id: string, params?: {
     page_num?: number;
     page_size?: number;
+    search?: string;
 }) => request.get(`${BASE_URL}/knowledge/documents/${doc_id}/chunks`, params);
 
 export const getChunk = (chunk_id: string) => request.get(`${BASE_URL}/knowledge/chunks/${chunk_id}`);

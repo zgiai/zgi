@@ -12,7 +12,7 @@ type FileType = Parameters<GetProp<UploadProps, 'beforeUpload'>>[0];
 
 export default function CreateDocumentPage({ kb_id }: { kb_id: string }) {
     const [token, setToken] = useState('')
-    const [pageStatus, setPageStatus] = useState<number>(2)
+    const [pageStatus, setPageStatus] = useState<number>(1)
 
     const uploadDocumentTypeArr: string[] = ['text/plain', 'application/pdf']
 
@@ -22,26 +22,49 @@ export default function CreateDocumentPage({ kb_id }: { kb_id: string }) {
         chunk_overlap: 100,
         separator: '\\n\\n',
     })
+    const [chunkRuleErrors, setChunkRuleErrors] = useState({
+        chunk_size: false,
+        chunk_overlap: false,
+        separator: false,
+    })
     const [uploading, setUploading] = useState(false);
 
     const handleUpload = async () => {
         const formData = new FormData();
+        const errors = {
+            chunk_size: !chunkRule.chunk_size,
+            chunk_overlap: !chunkRule.chunk_overlap,
+            separator: !chunkRule.separator,
+        };
+        setChunkRuleErrors(errors);
+
+        if (errors.chunk_size || errors.chunk_overlap || errors.separator) {
+            message.error("Please fill in all chunk rule parameters");
+            return;
+        }
         if (!chunkRule?.chunk_size || !chunkRule?.chunk_overlap || !chunkRule?.separator) {
             message.error("Chunk rule parameter cannot be empty");
             return;
         }
-
-        fileList.forEach((file) => {
-            formData.append('files[]', file as FileType);
-        });
+        const chunk_rule = {
+            chunk_size: chunkRule?.chunk_size,
+            chunk_overlap: chunkRule?.chunk_overlap,
+            separator: chunkRule?.separator?.split(','),
+        }
+        formData.append('chunk_rule', JSON.stringify(chunk_rule));
+        formData.append('file', fileList[0] as FileType);
         setUploading(true);
         try {
             const res = await fetch(`${BASE_URL}/knowledge/${kb_id}/documents`, {
+                headers: {
+                    authorization: 'Bearer ' + token,
+                },
                 method: 'POST',
                 body: formData,
             }).then(resData => resData.json())
-            if (res?.status_code === 200) {
+            if (res?.code === 200) {
                 setUploading(false);
+                setPageStatus(3)
                 return
             } else {
                 message.error(res?.status_message || "Failed to upload document");
@@ -75,9 +98,6 @@ export default function CreateDocumentPage({ kb_id }: { kb_id: string }) {
             console.log('Dropped files', e.dataTransfer.files);
         },
         maxCount: 1,
-        headers: {
-            authorization: 'Bearer ' + token,
-        },
         beforeUpload(file) {
             const isTypeAllowed = uploadDocumentTypeArr.includes(file.type);
             // 10MB
@@ -115,7 +135,7 @@ export default function CreateDocumentPage({ kb_id }: { kb_id: string }) {
     }
 
     return <div className="flex flex-col px-4 py-4 w-full max-w-[96rem] mx-auto gap-4">
-        <PageStatusProgress />
+        <PageStatusProgress pageStatus={pageStatus} setStatus={setPageStatus} />
         <div className="flex flex-col gap-4 p-4 border border-gray-200 dark:border-gray-700/60 rounded-lg bg-white dark:bg-gray-800 shadow-sm">
             {pageStatus === 1 && <h1 className="text-xl md:text-xl text-gray-800 dark:text-gray-100 font-bold" > Upload Document </h1>}
             <form className="flex flex-col gap-4">
@@ -156,7 +176,8 @@ export default function CreateDocumentPage({ kb_id }: { kb_id: string }) {
                                 </div>
                             </Tooltip>
                         </div>
-                        <input id="separators" onChange={(e) => setChunkRule({ ...chunkRule, separator: e.target.value })} value={chunkRule?.separator} className="form-input w-full" type="text" />
+                        <input id="separators" onChange={(e) => setChunkRule({ ...chunkRule, separator: e.target.value })} value={chunkRule?.separator} className={`form-input w-full ${chunkRuleErrors.separator ? 'border-red-500' : ''}`} type="text" />
+                        {chunkRuleErrors.separator && <p className="text-red-500 text-sm mt-1">Please fill in the separator.</p>}
                     </div>
                     <div className={`flex gap-4`}>
                         <div className="mt-4 flex-1">
@@ -171,8 +192,11 @@ export default function CreateDocumentPage({ kb_id }: { kb_id: string }) {
                                 </Tooltip>
                             </div>
                             <div className="relative">
-                                <input id="maxChunkSize" className="form-input w-full" onChange={(e) => setChunkRule({ ...chunkRule, chunk_size: parseInt(e.target.value) })} value={chunkRule?.chunk_size} type="number" />
-                                <span className="absolute text-sm right-4 md:right-8 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400">Tokens</span>
+                                <div className="relative">
+                                    <input id="maxChunkSize" className={`form-input w-full ${chunkRuleErrors.chunk_size ? 'border-red-500' : ''}`} onChange={(e) => setChunkRule({ ...chunkRule, chunk_size: parseInt(e.target.value) })} value={chunkRule?.chunk_size} type="number" />
+                                    <span className="absolute text-sm right-4 md:right-8 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400">Tokens</span>
+                                </div>
+                                {chunkRuleErrors.chunk_size && <p className="text-red-500 text-sm mt-1">Please fill in the max chunk size.</p>}
                             </div>
                         </div>
                         <div className="mt-4 flex-1">
@@ -187,39 +211,58 @@ export default function CreateDocumentPage({ kb_id }: { kb_id: string }) {
                                 </Tooltip>
                             </div>
                             <div className="relative">
-                                <input id="minChunkSize" className="form-input w-full" onChange={(e) => setChunkRule({ ...chunkRule, chunk_overlap: parseInt(e.target.value) })} value={chunkRule?.chunk_overlap} type="number" defaultValue={100} />
-                                <span className="absolute right-4 md:right-8 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400 text-sm">Tokens</span>
+                                <div className="relative">
+                                    <input id="minChunkSize" className={`form-input w-full ${chunkRuleErrors.chunk_overlap ? 'border-red-500' : ''}`} onChange={(e) => setChunkRule({ ...chunkRule, chunk_overlap: parseInt(e.target.value) })} value={chunkRule?.chunk_overlap} type="number" defaultValue={100} />
+                                    <span className="absolute right-4 md:right-8 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400 text-sm">Tokens</span>
+                                </div>
+                                {chunkRuleErrors.chunk_overlap && <p className="text-red-500 text-sm mt-1">Please fill in the chunk overlap.</p>}
                             </div>
 
                         </div>
                     </div>
                 </div>
-                <div className="flex items-center gap-4 mt-8">
+                <div className={`${pageStatus === 3 ? "" : "hidden"} flex flex-col items-center`}>
+                    <h1 className="text-4xl font-bold text-gray-800 dark:text-gray-100 ">Document uploaded successfully!</h1>
+                </div>
+                <div className={`flex items-center gap-4 mt-8 ${pageStatus === 3 ? "justify-center" : "justify-start"}`}>
                     {(pageStatus === 1 || pageStatus === 2) && <button
-                        className="btn bg-gray-900 text-gray-100 hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-800 dark:hover:bg-white disabled:bg-gray-500 disabled:text-gray-100 disabled:hover:bg-gray-500 disabled:hover:text-gray-100 disabled:dark:bg-gray-500 disabled:dark:text-gray-100 disabled:cursor-not-allowed"
+                        className="btn bg-gray-900 text-gray-100 hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-800 dark:hover:bg-white disabled:bg-gray-500 disabled:text-gray-100 disabled:hover:bg-gray-500 disabled:hover:text-gray-100 disabled:cursor-not-allowed"
                         type="button"
                         onClick={handleNext}
                         disabled={pageStatus === 1 ? fileList.length === 0 : uploading}
                     >
                         <span className="">{pageStatus === 1 ? "Next Step" : uploading ? "Uploading..." : "Upload"}</span>
                     </button>}
-                    <Link
+                    {pageStatus !== 3 && <Link
                         className="btn bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700/60 hover:border-gray-300 dark:hover:border-gray-600 text-gray-800 dark:text-gray-300"
                         href={`/knowledge-base/${kb_id}`}
                     >
                         <span className="">Cancel</span>
-                    </Link>
+                    </Link>}
+                    {pageStatus === 3 && <Link
+                        className="btn bg-gray-900 text-gray-100 hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-800 dark:hover:bg-white px-10"
+                        href={`/knowledge-base/${kb_id}`}
+                    >
+                        <span className="">Back</span>
+                    </Link>}
                 </div>
             </form>
         </div>
     </div>
 }
 
-function PageStatusProgress() {
+function PageStatusProgress({ pageStatus, setStatus }: { pageStatus: number, setStatus: (status: number) => void }) {
     return (
         <ul className="inline-flex flex-wrap text-sm font-medium">
             <li className="flex items-center">
-                <button className="text-gray-500 dark:text-gray-400 hover:text-violet-500 dark:hover:text-violet-500">
+                <button
+                    className="text-gray-500 dark:text-gray-400 hover:text-violet-500 dark:hover:text-violet-500"
+                    onClick={() => {
+                        if (pageStatus == 2) {
+                            setStatus(1)
+                        }
+                    }}
+                >
                     Upload
                 </button>
                 <svg className="fill-current text-gray-400 dark:text-gray-600 mx-3" width="16" height="16" viewBox="0 0 16 16">
@@ -227,15 +270,17 @@ function PageStatusProgress() {
                 </svg>
             </li>
             <li className="flex items-center">
-                <button className="text-gray-500 dark:text-gray-400 hover:text-violet-500 dark:hover:text-violet-500">
+                <span
+                    className="text-gray-500 dark:text-gray-400 cursor-default"
+                >
                     Settings
-                </button>
+                </span>
                 <svg className="fill-current text-gray-400 dark:text-gray-600 mx-3" width="16" height="16" viewBox="0 0 16 16">
                     <path d="M6.6 13.4L5.2 12l4-4-4-4 1.4-1.4L12 8z" />
                 </svg>
             </li>
             <li className="flex items-center">
-                <span className="text-gray-500 dark:text-gray-400 hover:text-violet-500 dark:hover:text-violet-500">
+                <span className="text-gray-500 dark:text-gray-400 cursor-default">
                     Complete
                 </span>
             </li>

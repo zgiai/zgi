@@ -60,7 +60,7 @@ export default function DocumentPage({ kbId, documentId }: { kbId: string, docum
     const [documentInfoOpen, setDocumentInfoOpen] = useState<boolean>(false);
     const [isChunksModalOpen, setIsChunksModalOpen] = useState<boolean>(false);
     const [currentChunk, setCurrentChunk] = useState<Chunk | null>(null);
-
+    const [searchQuery, setSearchQuery] = useState<string>("");
 
     const pageSize = 10;
 
@@ -82,6 +82,7 @@ export default function DocumentPage({ kbId, documentId }: { kbId: string, docum
             const res = await getChunkList(documentId, {
                 page_num: currentPage,
                 page_size: pageSize,
+                search: searchQuery
             });
             if (res?.status_code === 200) {
                 setChunkList(res?.data?.items || []);
@@ -97,15 +98,15 @@ export default function DocumentPage({ kbId, documentId }: { kbId: string, docum
     const saveChunk = async (content: string) => {
         try {
             const res = await updateChunk(documentId, { content })
-            if(res?.status_code === 200){
+            if (res?.status_code === 200) {
                 message.success("Update chunk success");
                 fetchChunkList();
                 return true
-            }else{
+            } else {
                 message.error(res?.status_message || "Failed to update chunk");
                 return false
             }
-        }catch(err){
+        } catch (err) {
             console.error(err)
             return false
         }
@@ -192,7 +193,17 @@ export default function DocumentPage({ kbId, documentId }: { kbId: string, docum
                 </button>
             </div>
         </div>
-        <ChunkListComponent chunkList={chunkList} total={total} setCurrentChunk={setCurrentChunk} setIsChunksModalOpen={setIsChunksModalOpen} />
+        <ChunkListComponent
+            chunkList={chunkList}
+            total={total}
+            setCurrentChunk={setCurrentChunk}
+            setIsChunksModalOpen={setIsChunksModalOpen}
+            searchQuery={searchQuery}
+            setSearchQuery={setSearchQuery}
+            fetchChunkList={fetchChunkList}
+            currentPage={currentPage}
+            setCurrentPage={setCurrentPage}
+        />
         <div className="flex items-center justify-center py-4">
             <PaginationNumeric
                 current={currentPage}
@@ -205,9 +216,9 @@ export default function DocumentPage({ kbId, documentId }: { kbId: string, docum
 }
 
 function ChunkListComponent({
-    chunkList, total, setCurrentChunk, setIsChunksModalOpen
+    chunkList, total, setCurrentChunk, setIsChunksModalOpen, searchQuery, setSearchQuery, fetchChunkList, currentPage, setCurrentPage
 }: {
-    chunkList: Chunk[], total: number, setCurrentChunk: (chunk: Chunk) => void, setIsChunksModalOpen: (isOpen: boolean) => void
+    chunkList: Chunk[], total: number, setCurrentChunk: (chunk: Chunk) => void, setIsChunksModalOpen: (isOpen: boolean) => void, searchQuery: string, setSearchQuery: (query: string) => void, fetchChunkList: () => void, currentPage: number, setCurrentPage: (page: number) => void
 }) {
     const [showMore, setShowMore] = useState<boolean>(false);
 
@@ -217,7 +228,22 @@ function ChunkListComponent({
                 <span className="text-gray-800 dark:text-gray-200 mr-2 text-2xl">All Chunks</span>
                 <span className="text-gray-600 dark:text-gray-400 text-lg">{total}</span>
             </div>
-            <div>
+            <div className="flex items-center gap-x-2">
+                <input
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search chunks"
+                    className="form-input font-normal"
+                    onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                            if (currentPage === 1) {
+                                fetchChunkList()
+                            } else {
+                                setCurrentPage(1)
+                            }
+                        }
+                    }}
+                />
                 <button
                     className="btn bg-gray-900 text-gray-100 hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-800 dark:hover:bg-white"
                     onClick={() => setShowMore(!showMore)}
