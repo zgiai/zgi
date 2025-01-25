@@ -96,8 +96,12 @@ export default function DocumentPage({ kbId, documentId }: { kbId: string, docum
     }
 
     const saveChunk = async (content: string) => {
+        if (!currentChunk){
+            message.error("Please select a chunk");
+            return false
+        }
         try {
-            const res = await updateChunk(documentId, { content })
+            const res = await updateChunk(currentChunk?.id, { content })
             if (res?.status_code === 200) {
                 message.success("Update chunk success");
                 fetchChunkList();
