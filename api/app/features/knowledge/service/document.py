@@ -626,6 +626,7 @@ class DocumentService:
             # Update the chunk content
             chunk.content = new_content
             chunk.token_count = len(new_content.split())
+            self.db.add(chunk)
             self.db.commit()
 
             # Get the knowledge base
