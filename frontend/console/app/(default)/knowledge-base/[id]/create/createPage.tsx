@@ -1,20 +1,60 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { CreateProjectParams } from "@/interfaces/request"
-import { message, Upload, } from "antd"
+import { message, Upload, GetProp, UploadFile } from "antd"
+import Tooltip from "@/components/tooltip"
 import type { UploadProps } from 'antd';
 import Link from "next/link"
-import { useParams } from "next/navigation"
 import { BASE_URL } from "@/config"
 
 const { Dragger } = Upload;
+type FileType = Parameters<GetProp<UploadProps, 'beforeUpload'>>[0];
 
 export default function CreateDocumentPage({ kb_id }: { kb_id: string }) {
     const [token, setToken] = useState('')
-    const [pageStatus, setPageStatus] = useState<number>(1)
+    const [pageStatus, setPageStatus] = useState<number>(2)
 
     const uploadDocumentTypeArr: string[] = ['text/plain', 'application/pdf']
+
+    const [fileList, setFileList] = useState<UploadFile[]>([]);
+    const [chunkRule, setChunkRule] = useState({
+        chunk_size: 1000,
+        chunk_overlap: 100,
+        separator: '\\n\\n',
+    })
+    const [uploading, setUploading] = useState(false);
+
+    const handleUpload = async () => {
+        const formData = new FormData();
+        if (!chunkRule?.chunk_size || !chunkRule?.chunk_overlap || !chunkRule?.separator) {
+            message.error("Chunk rule parameter cannot be empty");
+            return;
+        }
+
+        fileList.forEach((file) => {
+            formData.append('files[]', file as FileType);
+        });
+        setUploading(true);
+        try {
+            const res = await fetch(`${BASE_URL}/knowledge/${kb_id}/documents`, {
+                method: 'POST',
+                body: formData,
+            }).then(resData => resData.json())
+            if (res?.status_code === 200) {
+                setUploading(false);
+                return
+            } else {
+                message.error(res?.status_message || "Failed to upload document");
+                return
+            }
+        } catch (error) {
+            console.error(error)
+            setUploading(false);
+        } finally {
+            setUploading(false);
+        }
+
+    };
 
     const props: UploadProps = {
         name: 'file',
@@ -43,12 +83,20 @@ export default function CreateDocumentPage({ kb_id }: { kb_id: string }) {
             // 10MB
             const isSizeAllowed = file.size / 1024 / 1024 < 10;
             if (isTypeAllowed && isSizeAllowed) {
-                return true;
+                setFileList([...fileList, file]);
+                return false;
             } else {
                 message.error(`You can only upload ${uploadDocumentTypeArr.join(', ')} file!`);
-                return Upload.LIST_IGNORE;
+                return false;
             }
         },
+        onRemove: (file) => {
+            const index = fileList.indexOf(file);
+            const newFileList = fileList.slice();
+            newFileList.splice(index, 1);
+            setFileList(newFileList);
+        },
+        fileList,
     };
 
     useEffect(() => {
@@ -58,25 +106,20 @@ export default function CreateDocumentPage({ kb_id }: { kb_id: string }) {
         }
     }, [])
 
-    // const handleNext = () => {
-    //     if (formData.name.length < 3) {
-    //         message.error("Name must be at least 3 characters")
-    //         return
-    //     } else {
-    //         setPageStatus(2)
-    //     }
-    // }
+    const handleNext = () => {
+        if (pageStatus === 1) {
+            setPageStatus(2)
+        } else {
+            handleUpload()
+        }
+    }
 
-    return <div className="flex flex-col px-4 py-4 w-full max-w-[96rem] mx-auto">
-        <div className="flex justify-between pb-4 border-b border-gray-200 dark:border-gray-700/60 items-center flex-wrap gap-4">
-            <div className="flex-1">
-                <span className="text-2xl text-gray-800 dark:text-gray-100 font-bold">Add Document</span>
-            </div>
-        </div>
-        <CreateProgress step={pageStatus} />
+    return <div className="flex flex-col px-4 py-4 w-full max-w-[96rem] mx-auto gap-4">
+        <PageStatusProgress />
         <div className="flex flex-col gap-4 p-4 border border-gray-200 dark:border-gray-700/60 rounded-lg bg-white dark:bg-gray-800 shadow-sm">
+            {pageStatus === 1 && <h1 className="text-xl md:text-xl text-gray-800 dark:text-gray-100 font-bold" > Upload Document </h1>}
             <form className="flex flex-col gap-4">
-                <div>
+                <div className={`${pageStatus === 1 ? "" : "hidden"}`}>
                     <Dragger {...props}>
                         <div
                             className="py-4"
@@ -98,16 +141,68 @@ export default function CreateDocumentPage({ kb_id }: { kb_id: string }) {
                                 Currently support PDF、TXT files, with a maximum size of 10MB per file.
                             </p>
                         </div>
-
                     </Dragger>
                 </div>
+                <div className={`${pageStatus === 2 ? "" : "hidden"}`}>
+                    <h1 className="text-xl md:text-xl text-gray-800 dark:text-gray-100 font-bold" > Chunk Rule Settings </h1>
+                    <div className="mt-4">
+                        <div className="flex items-center gap-1">
+                            <label className="block text-lg font-medium mb-1" htmlFor="separators">
+                                Separators
+                            </label>
+                            <Tooltip className="ml-2" bg="dark" size="md">
+                                <div className="text-sm text-gray-200">
+                                    The separator is used to split the text into vectors. You can use one or more separators. For example, if you want to use both "\n" and "\t" as separators, you can separate them with commas like this: "\n,\t".
+                                </div>
+                            </Tooltip>
+                        </div>
+                        <input id="separators" onChange={(e) => setChunkRule({ ...chunkRule, separator: e.target.value })} value={chunkRule?.separator} className="form-input w-full" type="text" />
+                    </div>
+                    <div className={`flex gap-4`}>
+                        <div className="mt-4 flex-1">
+                            <div className="flex items-center gap-1">
+                                <label className="block text-lg font-medium mb-1" htmlFor="maxChunkSize">
+                                    Max Chunk Size
+                                </label>
+                                <Tooltip className="ml-2" bg="dark" size="md">
+                                    <div className="text-sm text-gray-200">
+                                        The maximum size of a chunk in tokens.
+                                    </div>
+                                </Tooltip>
+                            </div>
+                            <div className="relative">
+                                <input id="maxChunkSize" className="form-input w-full" onChange={(e) => setChunkRule({ ...chunkRule, chunk_size: parseInt(e.target.value) })} value={chunkRule?.chunk_size} type="number" />
+                                <span className="absolute text-sm right-4 md:right-8 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400">Tokens</span>
+                            </div>
+                        </div>
+                        <div className="mt-4 flex-1">
+                            <div className="flex items-center gap-1">
+                                <label className="block text-lg font-medium mb-1" htmlFor="minChunkSize">
+                                    Chunk Overlap
+                                </label>
+                                <Tooltip className="ml-2" bg="dark" size="md">
+                                    <div className="text-sm text-gray-200">
+                                        The overlap between chunks in bytes.Suggest to set it to 1/10-1/4 of the max chunk size.
+                                    </div>
+                                </Tooltip>
+                            </div>
+                            <div className="relative">
+                                <input id="minChunkSize" className="form-input w-full" onChange={(e) => setChunkRule({ ...chunkRule, chunk_overlap: parseInt(e.target.value) })} value={chunkRule?.chunk_overlap} type="number" defaultValue={100} />
+                                <span className="absolute right-4 md:right-8 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400 text-sm">Tokens</span>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
                 <div className="flex items-center gap-4 mt-8">
-                    {/* <button
-                        className="btn bg-gray-900 text-gray-100 hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-800 dark:hover:bg-white"
-                        type="submit"
+                    {(pageStatus === 1 || pageStatus === 2) && <button
+                        className="btn bg-gray-900 text-gray-100 hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-800 dark:hover:bg-white disabled:bg-gray-500 disabled:text-gray-100 disabled:hover:bg-gray-500 disabled:hover:text-gray-100 disabled:dark:bg-gray-500 disabled:dark:text-gray-100 disabled:cursor-not-allowed"
+                        type="button"
+                        onClick={handleNext}
+                        disabled={pageStatus === 1 ? fileList.length === 0 : uploading}
                     >
-                        <span className="">Create</span>
-                    </button> */}
+                        <span className="">{pageStatus === 1 ? "Next Step" : uploading ? "Uploading..." : "Upload"}</span>
+                    </button>}
                     <Link
                         className="btn bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700/60 hover:border-gray-300 dark:hover:border-gray-600 text-gray-800 dark:text-gray-300"
                         href={`/knowledge-base/${kb_id}`}
@@ -120,15 +215,30 @@ export default function CreateDocumentPage({ kb_id }: { kb_id: string }) {
     </div>
 }
 
-function CreateProgress({ step = 1, setStep = () => { } }: { step?: number, setStep?: (step: number) => void }) {
-    return <div className="py-4">
-        <div className="flex flex-row gap-2 items-center flex-wrap">
-            {/* <div className="text-gray-800 dark:text-gray-100">
-                <svg viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" width="16" height="16"><path d="M320 828.8L636.16 512 320 195.2a32 32 0 1 1 45.44-45.44L704 489.6a32 32 0 0 1 0 45.44l-339.2 339.2a32 32 0 0 1-44.8-45.44z" fill="currentColor" ></path></svg>
-            </div> */}
-            <div className="flex flex-row gap-2 items-center">
-                <span className={`${step === 2 ? "text-gray-800 dark:text-gray-100 font-bold" : "text-gray-500 dark:text-gray-400"}`}>Upload Document</span>
-            </div>
-        </div>
-    </div>
+function PageStatusProgress() {
+    return (
+        <ul className="inline-flex flex-wrap text-sm font-medium">
+            <li className="flex items-center">
+                <button className="text-gray-500 dark:text-gray-400 hover:text-violet-500 dark:hover:text-violet-500">
+                    Upload
+                </button>
+                <svg className="fill-current text-gray-400 dark:text-gray-600 mx-3" width="16" height="16" viewBox="0 0 16 16">
+                    <path d="M6.6 13.4L5.2 12l4-4-4-4 1.4-1.4L12 8z" />
+                </svg>
+            </li>
+            <li className="flex items-center">
+                <button className="text-gray-500 dark:text-gray-400 hover:text-violet-500 dark:hover:text-violet-500">
+                    Settings
+                </button>
+                <svg className="fill-current text-gray-400 dark:text-gray-600 mx-3" width="16" height="16" viewBox="0 0 16 16">
+                    <path d="M6.6 13.4L5.2 12l4-4-4-4 1.4-1.4L12 8z" />
+                </svg>
+            </li>
+            <li className="flex items-center">
+                <span className="text-gray-500 dark:text-gray-400 hover:text-violet-500 dark:hover:text-violet-500">
+                    Complete
+                </span>
+            </li>
+        </ul>
+    )
 }
