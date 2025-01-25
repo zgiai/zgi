@@ -335,8 +335,8 @@ async def download_document(
 
 # Search Routes
 
-@router.post("/{kb_id}/search",
-             summary="Search knowledge base")
+@router.post("/{kb_id}/search_vector",
+             summary="Search knowledge base vector")
 async def search_knowledge_base(
         kb_id: int,
         query: SearchQuery,
@@ -345,6 +345,35 @@ async def search_knowledge_base(
 ):
     """Search documents in a knowledge base"""
     results = await service.search(kb_id, query, current_user.id)
+    return resp_200(results)
+
+
+@router.post("/{kb_id}/search",
+             summary="Search knowledge base with document info")
+async def search_knowledge_base_with_document_info(
+        kb_id: int,
+        query: SearchQuery,
+        service: KnowledgeBaseService = Depends(get_knowledge_base_service),
+        doc_service: DocumentService = Depends(get_document_service),
+        current_user=Depends(get_current_user)
+):
+    """Search documents in a knowledge base with additional document info"""
+    results = await service.search(kb_id, query, current_user.id)
+    document_ids = [result['document_id'] for result in results]
+    documents = await doc_service.get_documents_by_ids(document_ids)
+    document_info_map = {doc.id: doc for doc in documents}
+    
+    for result in results:
+        doc_id = result['document_id']
+        if doc_id in document_info_map:
+            doc_file_name = ""
+            doc_title = ""
+            if document_info_map.get(doc_id) is not None:
+                doc_file_name = document_info_map[doc_id].file_name
+                doc_title = document_info_map[doc_id].title
+            result['document_file_name'] = doc_file_name
+            result['document_title'] = doc_title
+            # Add more document fields as needed
     return resp_200(results)
 
 

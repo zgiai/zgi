@@ -33,13 +33,14 @@ from app.features.knowledge.core.logging import (
     metrics_logger
 )
 
+
 class DocumentService:
     """Service for managing documents in knowledge bases"""
 
     def __init__(
-        self,
-        db: Session,
-        kb_service: KnowledgeBaseService
+            self,
+            db: Session,
+            kb_service: KnowledgeBaseService
     ):
         self.db = db
         self.kb_service = kb_service
@@ -61,22 +62,22 @@ class DocumentService:
                 for page in reader.pages:
                     text += page.extract_text() + "\n\n"
                 return text
-            
+
             elif file_type == "docx":
                 doc = docx.Document(file)
                 text = ""
                 for para in doc.paragraphs:
                     text += para.text + "\n\n"
                 return text
-            
+
             elif file_type == "txt":
                 text = ""
                 text = file.read().decode("utf-8")
                 return text
-            
+
             else:
                 raise ValidationError(f"Unsupported file type: {file_type}")
-                
+
         except Exception as e:
             service_logger.error(
                 f"Text extraction failed for file type {file_type}",
@@ -102,10 +103,10 @@ class DocumentService:
 
     @retry(max_attempts=3)
     async def _store_file(
-        self,
-        file: UploadFile,
-        kb_id: int,
-        user_id: int
+            self,
+            file: UploadFile,
+            kb_id: int,
+            user_id: int
     ) -> tuple[str, str]:
         """Store uploaded file"""
         try:
@@ -121,9 +122,9 @@ class DocumentService:
 
             filepath = await self.kb_service.storage.store_file(
                 file_content, kb_id, user_id, file.filename)
-            
+
             return filepath, file_hash
-            
+
         except Exception as e:
             service_logger.error(
                 "File storage failed",
@@ -135,12 +136,12 @@ class DocumentService:
             raise
 
     async def _process_document(
-        self,
-        document: Document,
-        chunks: List[str],
-        kb: KnowledgeBase,
-        metadata: Optional[Dict[str, Any]],
-        user_id: int
+            self,
+            document: Document,
+            chunks: List[str],
+            kb: KnowledgeBase,
+            metadata: Optional[Dict[str, Any]],
+            user_id: int
     ):
         """Process document asynchronously to generate embeddings and store vectors"""
         try:
@@ -152,27 +153,27 @@ class DocumentService:
                 "text": chunk,
                 **(metadata or {})
             } for i, chunk in enumerate(chunks)]
-            
+
             # Insert vectors into vector database
             success = await self.kb_service.vector_db.insert_vectors(
                 collection_name=kb.collection_name,
                 vectors=embeddings,
                 metadata=chunk_metadata
             )
-            
+
             if not success:
                 raise Exception("Failed to store vectors")
-            
+
             # Update document status
             document.status = DocumentStatus.COMPLETED.value
             document.chunk_count = len(chunks)
             self.db.commit()
-            
+
             # Update knowledge base statistics
             kb.document_count += 1
             kb.total_chunks += len(chunks)
             self.db.commit()
-            
+
             audit_logger.log_access(
                 user_id,
                 "document",
@@ -180,7 +181,7 @@ class DocumentService:
                 "process",
                 "success"
             )
-            
+
         except Exception as e:
             # Update document status on failure
             document.status = DocumentStatus.FAILED.value
@@ -195,17 +196,17 @@ class DocumentService:
 
     @handle_service_errors
     async def upload_document(
-        self,
-        kb_id: int,
-        file: UploadFile,
-        user_id: int,
-        background_tasks: BackgroundTasks,
-        metadata: Optional[Dict[str, Any]] = None,
-        chunk_rule: Optional[Dict[str, Any]] = None
+            self,
+            kb_id: int,
+            file: UploadFile,
+            user_id: int,
+            background_tasks: BackgroundTasks,
+            metadata: Optional[Dict[str, Any]] = None,
+            chunk_rule: Optional[Dict[str, Any]] = None
     ) -> ServiceResponse[Document]:
         """Upload and process a document"""
         start_time = metrics_logger.time()
-        
+
         try:
             # Validate file type
             file_ext = os.path.splitext(file.filename)[1].lower()
@@ -213,7 +214,7 @@ class DocumentService:
                 raise ValidationError(
                     f"Unsupported file type. Supported types: {', '.join(self.settings.SUPPORTED_TYPES)}"
                 )
-            
+
             # Get knowledge base
             kb = self.db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
             if not kb:
@@ -252,12 +253,12 @@ class DocumentService:
                 self.db.add(document)
                 self.db.commit()
                 self.db.refresh(document)
-                
+
                 # Extract text
                 # with open(filepath, "rb") as f:
                 #     text = await self._extract_text(f, file_ext[1:])
                 text = await self._extract_text(file.file, file_ext[1:])
-                
+
                 # Split text into chunks
                 chunks = await self._split_text(
                     text,
@@ -265,7 +266,7 @@ class DocumentService:
                     document.chunk_overlap,
                     document.separators
                 )
-                
+
                 # Store chunks in the database
                 for i, chunk in enumerate(chunks):
                     document_chunk = DocumentChunk(
@@ -275,7 +276,7 @@ class DocumentService:
                         token_count=len(chunk.split())
                     )
                     self.db.add(document_chunk)
-                
+
                 self.db.commit()
 
                 # Add background task for processing
@@ -296,29 +297,29 @@ class DocumentService:
                     "success",
                     details={"kb_id": kb_id}
                 )
-                
+
                 metrics_logger.log_operation(
                     "document_upload",
                     metrics_logger.time() - start_time,
                     True,
                     {"document_id": document.id, "chunks": len(chunks)}
                 )
-                
+
                 return ServiceResponse.ok(document.to_dict())
-                
+
             except Exception as e:
                 # Update document status on failure
                 document.status = DocumentStatus.FAILED.value
                 document.error_message = str(e)
                 self.db.commit()
-                
+
                 # Clean up file if stored
                 if document.file_path and os.path.exists(document.file_path):
                     try:
                         os.remove(document.file_path)
                     except:
                         pass
-                
+
                 metrics_logger.log_operation(
                     "document_upload",
                     metrics_logger.time() - start_time,
@@ -326,19 +327,19 @@ class DocumentService:
                     {"error": str(e)}
                 )
                 raise
-                
+
         except Exception as e:
             self.db.rollback()
             raise
 
     async def batch_upload_documents(
-        self,
-        kb_id: int,
-        files: List[UploadFile],
-        user_id: int,
-        background_tasks: BackgroundTasks,
-        metadata: Optional[Dict[str, Any]] = None,
-        chunk_rule: Optional[Dict[str, Any]] = None
+            self,
+            kb_id: int,
+            files: List[UploadFile],
+            user_id: int,
+            background_tasks: BackgroundTasks,
+            metadata: Optional[Dict[str, Any]] = None,
+            chunk_rule: Optional[Dict[str, Any]] = None
     ) -> ServiceResponse[Document]:
         """Batch upload documents"""
         doc_list = []
@@ -349,20 +350,20 @@ class DocumentService:
 
     # @handle_service_errors
     async def get_document(
-        self,
-        doc_id: int,
-        user_id: int
+            self,
+            doc_id: int,
+            user_id: int
     ) -> Document:
         """Get a document by ID"""
         document = self.db.query(Document).filter(Document.id == doc_id).first()
         if not document:
             raise NotFoundError(f"Document {doc_id} not found")
-            
+
         # Check access through knowledge base
         kb_response = await self.kb_service.get_knowledge_base(document.kb_id, user_id)
         if not kb_response.success:
             raise ServiceError(f"Knowledge base {document.kb_id} not found")
-            
+
         audit_logger.log_access(
             user_id,
             "document",
@@ -370,32 +371,50 @@ class DocumentService:
             "read",
             "success"
         )
-        
+
         return document
+
+    async def get_documents_by_ids(
+            self,
+            document_ids: List[int]
+    ):
+        """Get documents by their IDs"""
+        try:
+            # Fetch documents by IDs
+            documents = self.db.query(Document).filter(Document.id.in_(document_ids)).all()
+            return documents
+        except Exception as e:
+            service_logger.error(
+                "Failed to get documents by IDs",
+                "get_documents_by_ids_failed",
+                error=str(e),
+                document_ids=document_ids
+            )
+            raise
 
     @handle_service_errors
     async def delete_document(
-        self,
-        doc_id: int,
-        user_id: int
+            self,
+            doc_id: int,
+            user_id: int
     ) -> ServiceResponse[None]:
         """Delete a document"""
         document = self.db.query(Document).filter(Document.id == doc_id).first()
         if not document:
             raise NotFoundError(f"Document {doc_id} not found")
-            
+
         # Check access through knowledge base
         kb = self.db.query(KnowledgeBase).filter(KnowledgeBase.id == document.kb_id).first()
         if not kb:
             raise NotFoundError("Knowledge base not found")
-        
+
         try:
             # Delete vectors from vector database
             success = await self.kb_service.vector_db.delete_vectors(
                 collection_name=kb.collection_name,
                 metadata_filter={"document_id": doc_id}
             )
-            
+
             if not success:
                 print("Failed to delete vectors")
                 # raise Exception("Failed to delete vectors")
@@ -408,15 +427,15 @@ class DocumentService:
             #     os.remove(document.file_path)
             if document.file_path:
                 await self.kb_service.storage.delete_file(document.file_path)
-            
+
             # Update knowledge base statistics
             kb.document_count -= 1
             kb.total_chunks -= document.chunk_count
-            
+
             # Delete document record
             self.db.delete(document)
             self.db.commit()
-            
+
             audit_logger.log_access(
                 user_id,
                 "document",
@@ -424,9 +443,9 @@ class DocumentService:
                 "delete",
                 "success"
             )
-            
+
             return ServiceResponse.ok()
-            
+
         except Exception as e:
             self.db.rollback()
             raise
@@ -461,24 +480,24 @@ class DocumentService:
 
     # @handle_service_errors
     async def list_documents(
-        self,
-        kb_id: int,
-        user_id: int,
-        page_num: int = 0,
-        page_size: int = 10,
-        file_type: Optional[str] = None,
-        status: Optional[int] = None,
-        search: Optional[str] = None
+            self,
+            kb_id: int,
+            user_id: int,
+            page_num: int = 0,
+            page_size: int = 10,
+            file_type: Optional[str] = None,
+            status: Optional[int] = None,
+            search: Optional[str] = None
     ) -> Tuple[List[Document], int]:
         """List documents in a knowledge base"""
         # Check access through knowledge base
         kb = self.db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
         if not kb:
             raise NotFoundError("Knowledge base not found")
-            
+
         # Build query
         query = self.db.query(Document).filter(Document.kb_id == kb_id)
-        
+
         if file_type:
             query = query.filter(Document.file_type == file_type)
         if status is not None:
@@ -494,14 +513,14 @@ class DocumentService:
         skip = (page_num - 1) * page_size
         limit = page_size
         documents = query.offset(skip).limit(limit).all()
-        
+
         return documents, total
 
     async def update_document(
-        self,
-        doc_id: int,
-        update_data: DocumentUpdate,
-        user_id: int
+            self,
+            doc_id: int,
+            update_data: DocumentUpdate,
+            user_id: int
     ):
         """Update a document"""
         document = self.db.query(Document).filter(Document.id == doc_id).first()
@@ -519,11 +538,11 @@ class DocumentService:
 
         for field, value in update_data.dict(exclude_unset=True).items():
             setattr(document, field, value)
-        
+
         # 提交更改
         self.db.commit()
         self.db.refresh(document)
-        
+
         # 记录审计日志
         audit_logger.log_access(
             user_id,
@@ -532,7 +551,7 @@ class DocumentService:
             "update",
             "success"
         )
-        
+
         return document
 
     # @handle_service_errors
@@ -548,12 +567,12 @@ class DocumentService:
         document = self.db.query(Document).filter(Document.id == doc_id).first()
         if not document:
             raise NotFoundError(f"Document {doc_id} not found")
-        
+
         # Check access through knowledge base
         kb_response = await self.kb_service.get_knowledge_base(document.kb_id, user_id)
         if not kb_response.success:
             raise ServiceError(f"Knowledge base {document.kb_id} not found")
-        
+
         query = self.db.query(DocumentChunk).filter(DocumentChunk.document_id == doc_id)
         if search:
             query = query.filter(
@@ -565,7 +584,7 @@ class DocumentService:
         skip = (page_num - 1) * page_size
         limit = page_size
         chunks = query.offset(skip).limit(limit).all()
-        
+
         return chunks, total
 
     async def get_chunk(
