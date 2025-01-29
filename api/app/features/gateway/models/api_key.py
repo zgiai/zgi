@@ -28,6 +28,17 @@ class LLMProviderName(Enum):
         return [enum.value for enum in cls]
 
 
+class LLMModelType(Enum):
+    LLM = 'llm'
+    EMBEDDING = 'embedding'
+    RERANK = 'rerank'
+
+    @classmethod
+    def get_values(cls) -> list[str]:
+        """Get enum values"""
+        return [enum.value for enum in cls]
+
+
 class APIKeyMapping(Base):
     """API key mapping model for storing provider API keys"""
     __tablename__ = "api_key_mappings"
@@ -61,7 +72,7 @@ class LLMModel(Base):
     __tablename__ = "llm_model"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(255), unique=True, index=True, nullable=False)
+    name = Column(String(255), index=True, nullable=False)
     provider_id = Column(Integer, ForeignKey("llm_provider.id", ondelete="CASCADE"), nullable=False)
     description = Column(String(1000))
     model_name = Column(String(255), nullable=False)
@@ -72,19 +83,16 @@ class LLMModel(Base):
     update_time = Column(DateTime, default=func.now(), onupdate=func.now())
 
     # Relationships
-    llm_configs = relationship("LLMConfig", back_populates="llm_model")
     llm_provider = relationship("LLMProvider", back_populates="llm_models")
+
 
 class LLMConfig(Base):
     """API key mapping model for storing provider API keys"""
     __tablename__ = "llm_config"
 
     id = Column(Integer, primary_key=True, index=True)
-    config_key = Column(String(255), unique=True, index=True, nullable=False)
-    llm_model_id = Column(Integer, ForeignKey("llm_model.id", ondelete="CASCADE"), nullable=False)
+    config_key = Column(String(255), index=True)
+    config = Column(JSON, nullable=False)
     description = Column(String(1000))
     create_time = Column(DateTime, default=func.now())
     update_time = Column(DateTime, default=func.now(), onupdate=func.now())
-
-    # Relationships
-    llm_model = relationship("LLMModel", back_populates="llm_configs")

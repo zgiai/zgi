@@ -35,7 +35,9 @@ class KnowledgeBase(Base):
 
     # Vector database settings
     collection_name = Column(String(255), unique=True, nullable=False)
+    model_id = Column(Integer, nullable=True)
     model = Column(String(255), nullable=False, default="text-embedding-3-small")
+    model_provider = Column(String(255), nullable=False, default="openai")
     dimension = Column(Integer, nullable=False, default=1536)
 
     # Statistics
@@ -69,6 +71,8 @@ class KnowledgeBase(Base):
             "visibility": self.visibility,
             "status": self.status,
             "collection_name": self.collection_name,
+            "model_id": self.model_id,
+            "model_provider": self.model_provider,
             "model": self.model,
             "dimension": self.dimension,
             "document_count": self.document_count,

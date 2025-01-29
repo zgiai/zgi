@@ -32,6 +32,7 @@ class DocumentResponse(BaseModel):
     # Processing settings
     chunk_size: int
     chunk_overlap: int
+    separators: Optional[List[str]]
     embedding_model: Optional[str]
     
     # Timestamps

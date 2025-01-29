@@ -33,7 +33,12 @@ export const cloneKnowledgeBase = (kb_id: string, params: {
 export const getDocumentList = (kb_id: string, params?: {
     page_num?: number;
     page_size?: number;
+    search?:string;
+    file_type?:string;
+    status?:string;
 }) => request.get(`${BASE_URL}/knowledge/${kb_id}/documents`, params);
+
+export const getDocument = (doc_id: string) => request.get(`${BASE_URL}/knowledge/documents/${doc_id}`);
 
 export const deleteDocument = (doc_id: number) => request.del(`${BASE_URL}/knowledge/documents/${doc_id}`);
 
@@ -45,4 +50,21 @@ export const updateDocument = (doc_id: number, params: {
     metadata?: {},
     tags?: []
 }) => request.put(`${BASE_URL}/knowledge/documents/${doc_id}`, params);
+
+export const getChunkList = (doc_id: string, params?: {
+    page_num?: number;
+    page_size?: number;
+    search?: string;
+}) => request.get(`${BASE_URL}/knowledge/documents/${doc_id}/chunks`, params);
+
+export const getChunk = (chunk_id: string) => request.get(`${BASE_URL}/knowledge/chunks/${chunk_id}`);
+
+export const updateChunk = (chunk_id: number, params: {
+    content: string;
+}) => request.put(`${BASE_URL}/knowledge/documents/chunks/${chunk_id}`, params);
+
+export const hitTest = (kb_id: number, params: {
+    text: string;
+    top_k?: number;
+}) => request.post(`${BASE_URL}/knowledge/${kb_id}/search`,params);
 

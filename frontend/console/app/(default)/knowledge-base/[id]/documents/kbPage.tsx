@@ -6,6 +6,7 @@ import { message } from 'antd';
 import Link from "next/link";
 import { formatBytes } from "@/utils/common";
 import { DeleteDocumentModal, UpdateDocumentModal } from "./documentsModal";
+import { useRouter } from "next/navigation";
 
 interface Document {
     id: number;
@@ -58,10 +59,17 @@ export default function KBPage({ id }: { id: string }) {
     const [isDeleteOpen, setIsDeleteOpen] = useState(false);
     const [isUpdateOpen, setIsUpdateOpen] = useState(false);
     const [currentDocument, setCurrentDocument] = useState<Document | null>(null);
+    const [search, setSearch] = useState("");
+    const [documentType, setDocumentType] = useState("");
+    // const [status, setStatus] = useState("");
 
     const fetchDocumentList = async () => {
         try {
-            const response = await getDocumentList(id);
+            const response = await getDocumentList(id, {
+                search,
+                file_type: documentType,
+                // status
+            });
             if (response?.status_code === 200) {
                 setDocumentList(response?.data?.items);
                 setTotal(response?.data?.total);
@@ -75,17 +83,39 @@ export default function KBPage({ id }: { id: string }) {
 
     useEffect(() => {
         fetchDocumentList();
-    }, []);
+    }, [documentType]);
 
     return <div>
         <DeleteDocumentModal isOpen={isDeleteOpen} setIsOpen={setIsDeleteOpen} currentDocument={currentDocument} getDocumentList={fetchDocumentList} />
         <UpdateDocumentModal isOpen={isUpdateOpen} setIsOpen={setIsUpdateOpen} currentDocument={currentDocument} getDocumentList={fetchDocumentList} />
-        <header className="px-5 py-4 flex flex-row justify-between">
+        <header className="px-5 py-4 flex flex-col md:flex-row justify-between gap-2">
             <h2 className="font-semibold text-gray-800 dark:text-gray-100 flex-nowrap text-nowrap mr-4">
                 All Documents <span className="text-gray-400 dark:text-gray-500 font-medium ml-2">{total}</span>
             </h2>
-            <div className="flex flex-col md:flex-row gap-2 md:items-center">
-                <div className="flex flex-row gap-2 items-center flex-wrap">
+            <div className="flex flex-col items-start md:flex-row gap-2 md:items-center">
+                <div className="flex flex-col md:flex-row gap-2 md:items-center flex-wrap">
+                    <input className="form-input " type="text" placeholder="Search" 
+                    onChange={(e) => setSearch(e.target.value)} 
+                    onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                                fetchDocumentList();
+                            }
+                        }} />
+                    <select
+                        className="form-select"
+                        onChange={(e) => setDocumentType(e.target.value)}
+                    >
+                        <option value="">All</option>
+                        <option value="pdf">PDF</option>
+                        <option value="txt">TXT</option>
+                    </select>
+                    {/* <select className="form-select" onChange={ (e) => setStatus(e.target.value) }>
+                        <option value="">All</option>
+                        <option value="0">Pending</option>
+                        <option value="1">Processing</option>
+                        <option value="2">Available</option>
+                        <option value="-1">Failed</option>
+                    </select> */}
                     <Link
                         href={`/knowledge-base/${id}/create`}
                         className="btn bg-gray-900 text-gray-100 hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-800 dark:hover:bg-white">
@@ -131,7 +161,7 @@ export default function KBPage({ id }: { id: string }) {
                         <td colSpan={5} className="text-center py-4">No data</td>
                     </tr>}
                     {documentList.map((document: any, index: number) => (
-                        <DocumentTableRow key={index} document={document} setIsDeleteOpen={setIsDeleteOpen} setIsUpdateOpen={setIsUpdateOpen} setCurrentDocument={setCurrentDocument} />
+                        <DocumentTableRow key={index} document={document} setIsDeleteOpen={setIsDeleteOpen} setIsUpdateOpen={setIsUpdateOpen} setCurrentDocument={setCurrentDocument} id={id} />
                     ))}
                 </tbody>
             </table>
@@ -139,8 +169,13 @@ export default function KBPage({ id }: { id: string }) {
     </div>;
 }
 
-function DocumentTableRow({ document, setIsDeleteOpen, setIsUpdateOpen, setCurrentDocument }: { document: Document, setIsDeleteOpen: (open: boolean) => void, setIsUpdateOpen: (open: boolean) => void, setCurrentDocument: (document: Document) => void }) {
-    return <tr className="hover:bg-gray-50 dark:hover:bg-gray-900 cursor-pointer">
+function DocumentTableRow({ document, setIsDeleteOpen, setIsUpdateOpen, setCurrentDocument, id }: { document: Document, setIsDeleteOpen: (open: boolean) => void, setIsUpdateOpen: (open: boolean) => void, setCurrentDocument: (document: Document) => void, id: string }) {
+    const router = useRouter();
+    return <tr className="hover:bg-gray-50 dark:hover:bg-gray-900 cursor-pointer"
+        onClick={() => {
+            router.push(`/knowledge-base/${id}/documents/${document.id}`);
+        }}
+    >
         <td className="px-2 first:pl-5 last:pr-5 py-3 whitespace-nowrap">
             <div className="text-left">{document.id}</div>
         </td>
@@ -163,7 +198,8 @@ function DocumentTableRow({ document, setIsDeleteOpen, setIsUpdateOpen, setCurre
             <div className="flex flex-row gap-2">
                 <button
                     className="btn bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700/60 hover:border-gray-300 dark:hover:border-gray-600"
-                    onClick={() => {
+                    onClick={(e) => {
+                        e.stopPropagation();
                         setIsUpdateOpen(true);
                         setCurrentDocument(document);
                     }}
@@ -174,7 +210,8 @@ function DocumentTableRow({ document, setIsDeleteOpen, setIsUpdateOpen, setCurre
                 </button>
                 <button
                     className="btn bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700/60 hover:border-gray-300 dark:hover:border-gray-600"
-                    onClick={() => {
+                    onClick={(e) => {
+                        e.stopPropagation();
                         setIsDeleteOpen(true);
                         setCurrentDocument(document);
                     }}

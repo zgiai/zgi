@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Dict, Optional, Any, List
 from datetime import datetime
 
@@ -80,7 +80,6 @@ class LLMModelResponse(BaseModel):
     model_name: str
     model_type: str
     status: int
-    config: Dict[str, Any]
     user_id: int
     create_time: datetime
     update_time: datetime
@@ -93,12 +92,56 @@ class LLMModelResponse(BaseModel):
         }
     )
 
+
 class LLMModelListResponse(BaseModel):
     """LLMModel list response schema"""
     total: int
     page_size: int
     page_num: int
     data: List[LLMModelResponse]
+
+    class Config:
+        from_attributes = True
+
+
+class LLMConfigCreate(BaseModel):
+    """LLMConfig creation schema"""
+    config_key: str = Field(..., description="Unique key for the configuration")
+    description: Optional[str] = Field(None, description="Description of the configuration")
+    config: Dict[str, Any] = Field(..., description="Configuration data")
+
+
+class LLMConfigUpdate(BaseModel):
+    """LLMConfig update schema"""
+    config_key: Optional[str] = Field(None, description="Unique key for the configuration")
+    description: Optional[str] = Field(None, description="Description of the configuration")
+    config: Optional[Dict[str, Any]] = Field(None, description="Configuration data")
+
+
+class LLMConfigResponse(BaseModel):
+    """LLMConfig response schema"""
+    id: int = Field(..., description="ID of the LLMConfig")
+    config_key: str = Field(..., description="Unique key for the configuration")
+    llm_model_id: int = Field(..., description="ID of the LLMModel")
+    description: Optional[str] = Field(None, description="Description of the configuration")
+    create_time: str = Field(..., description="Creation time of the LLMConfig")
+    update_time: str = Field(..., description="Last update time of the LLMConfig")
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_encoders={
+            datetime: lambda v: v.isoformat() if v else None,
+            bytes: lambda v: v.decode() if v else None
+        }
+    )
+
+
+class LLMConfigListResponse(BaseModel):
+    """LLMConfig list response schema"""
+    total: int = Field(..., description="Total number of LLMConfigs")
+    page_size: int = Field(..., description="Number of LLMConfigs per page")
+    page_num: int = Field(..., description="Current page number")
+    data: List[LLMConfigResponse] = Field(..., description="List of LLMConfigs")
 
     class Config:
         from_attributes = True

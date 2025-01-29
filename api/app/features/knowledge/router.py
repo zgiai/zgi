@@ -1,7 +1,7 @@
 from datetime import datetime
 import json
 from typing import Optional, Dict, Any, List
-from fastapi import APIRouter, Depends, File, UploadFile, Query, HTTPException, Form, BackgroundTasks
+from fastapi import APIRouter, Depends, File, UploadFile, Query, HTTPException, Form, BackgroundTasks, Body
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
@@ -150,6 +150,7 @@ async def upload_document(
         kb_id: int,
         file: UploadFile = File(...),
         metadata: Optional[str] = Form(None),
+        chunk_rule: Optional[str] = Form(None),
         doc_service: DocumentService = Depends(get_document_service),
         current_user: User = Depends(get_current_user),
         background_tasks: BackgroundTasks):
@@ -160,8 +161,15 @@ async def upload_document(
         try:
             metadata_dict = json.loads(metadata)
         except (json.JSONDecodeError, ValidationError) as e:
-            return {"success": False, "error": str(e)}
-    return await doc_service.upload_document(kb_id, file, current_user.id, background_tasks, metadata_dict)
+            raise ValidationError(f"Invalid metadata: {e}")
+    # Manually parse chunk_rule JSON string to dict
+    chunk_rule_dict = None
+    if chunk_rule:
+        try:
+            chunk_rule_dict = json.loads(chunk_rule)
+        except (json.JSONDecodeError, ValidationError) as e:
+            raise ValidationError(f"Invalid chunk_rule: {e}")
+    return await doc_service.upload_document(kb_id, file, current_user.id, background_tasks, metadata_dict, chunk_rule_dict)
 
 
 @router.post("/{kb_id}/documents/batch",
@@ -171,6 +179,7 @@ async def batch_upload_documents(
         kb_id: int,
         files: List[UploadFile] = File(...),
         metadata: Optional[str] = Form(None),
+        chunk_rule: Optional[str] = Form(None),
         db: Session = Depends(get_db),
         doc_service: DocumentService = Depends(get_document_service),
         current_user=Depends(get_current_user),
@@ -182,8 +191,15 @@ async def batch_upload_documents(
         try:
             metadata_dict = json.loads(metadata)
         except (json.JSONDecodeError, ValidationError) as e:
-            return {"success": False, "error": str(e)}
-    return await doc_service.batch_upload_documents(kb_id, files, current_user.id, background_tasks, metadata_dict)
+            raise ValidationError(f"Invalid metadata: {e}")
+    # Manually parse chunk_rule JSON string to dict
+    chunk_rule_dict = None
+    if chunk_rule:
+        try:
+            chunk_rule_dict = json.loads(chunk_rule)
+        except (json.JSONDecodeError, ValidationError) as e:
+            raise ValidationError(f"Invalid chunk_rule: {e}")
+    return await doc_service.batch_upload_documents(kb_id, files, current_user.id, background_tasks, metadata_dict, chunk_rule_dict)
 
 
 @router.get("/{kb_id}/documents",
@@ -254,11 +270,12 @@ async def list_document_chunks(
         doc_id: int,
         page_num: int = Query(1, ge=1),
         page_size: int = Query(10, ge=1, le=100),
+        search: Optional[str] = Query(None, description="Search by content or chunk_meta_info"),
         doc_service: DocumentService = Depends(get_document_service),
         current_user=Depends(get_current_user)
 ):
     """List chunks of a document"""
-    chunks, total = await doc_service.list_chunks(doc_id, current_user.id, page_num, page_size)
+    chunks, total = await doc_service.list_chunks(doc_id, current_user.id, page_num, page_size, search)
     chunk_resp = [DocumentChunkResponse.model_validate(chunk) for chunk in chunks]
     data_list = DocumentChunkList(total=total, items=chunk_resp)
     return resp_200(data_list)
@@ -279,7 +296,7 @@ async def get_document_chunk(
 @router.put("/documents/chunks/{chunk_id}", summary="Update document chunk by ID")
 async def update_document_chunk(
         chunk_id: int,
-        content: str = Form(...),
+        content: str = Body(..., embed=True),
         doc_service: DocumentService = Depends(get_document_service),
         current_user: User = Depends(get_current_user)
 ):
@@ -318,8 +335,8 @@ async def download_document(
 
 # Search Routes
 
-@router.post("/{kb_id}/search",
-             summary="Search knowledge base")
+@router.post("/{kb_id}/search_vector",
+             summary="Search knowledge base vector")
 async def search_knowledge_base(
         kb_id: int,
         query: SearchQuery,
@@ -328,6 +345,35 @@ async def search_knowledge_base(
 ):
     """Search documents in a knowledge base"""
     results = await service.search(kb_id, query, current_user.id)
+    return resp_200(results)
+
+
+@router.post("/{kb_id}/search",
+             summary="Search knowledge base with document info")
+async def search_knowledge_base_with_document_info(
+        kb_id: int,
+        query: SearchQuery,
+        service: KnowledgeBaseService = Depends(get_knowledge_base_service),
+        doc_service: DocumentService = Depends(get_document_service),
+        current_user=Depends(get_current_user)
+):
+    """Search documents in a knowledge base with additional document info"""
+    results = await service.search(kb_id, query, current_user.id)
+    document_ids = [result['document_id'] for result in results]
+    documents = await doc_service.get_documents_by_ids(document_ids)
+    document_info_map = {doc.id: doc for doc in documents}
+    
+    for result in results:
+        doc_id = result['document_id']
+        if doc_id in document_info_map:
+            doc_file_name = ""
+            doc_title = ""
+            if document_info_map.get(doc_id) is not None:
+                doc_file_name = document_info_map[doc_id].file_name
+                doc_title = document_info_map[doc_id].title
+            result['document_file_name'] = doc_file_name
+            result['document_title'] = doc_title
+            # Add more document fields as needed
     return resp_200(results)
 
 
