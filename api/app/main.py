@@ -22,6 +22,8 @@ from app.features.providers.router.provider import router as providers_router
 from app.features.providers.router.model import router as models_router
 from app.features.gateway.router import router as gateway_router
 from app.features.knowledge.router import router as knowledge_router
+from app.features.assistant.router import router as assistant_router
+from app.features.flow.router import router as flow_router
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -160,6 +162,8 @@ app.include_router(providers_router)
 app.include_router(models_router)
 app.include_router(gateway_router, tags=["LLM Gateway"])
 app.include_router(knowledge_router, prefix="/v1/knowledge", tags=["Knowledge"])
+app.include_router(assistant_router, prefix="/v1", tags=["Assistant"])
+app.include_router(flow_router, prefix="/v1", tags=["Flow"])
 
 @app.get("/")
 def root():

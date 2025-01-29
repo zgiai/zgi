@@ -10,6 +10,9 @@ from .auth import (
     get_current_user,
     get_current_active_user
 )
+from app.core.config import settings
+
+ALGORITHM = settings.ALGORITHM
 
 __all__ = [
     'verify_password',
@@ -17,5 +20,6 @@ __all__ = [
     'create_access_token',
     'verify_token',
     'get_current_user',
-    'get_current_active_user'
+    'get_current_active_user',
+    'ALGORITHM'
 ]

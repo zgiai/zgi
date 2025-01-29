@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 load_dotenv(os.path.join(Path(__file__).parent, '.env.test'))
 
 # Database connection URL
-DB_USERNAME = os.getenv('DB_USERNAME', 'root')
+DB_USERNAME = os.getenv('DB_USER', 'root')
 DB_PASSWORD = os.getenv('DB_PASSWORD', '')
 DB_HOST = os.getenv('DB_HOST', 'localhost')
 DB_PORT = os.getenv('DB_PORT', '3306')
