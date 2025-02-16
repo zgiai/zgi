@@ -1,5 +1,4 @@
-# ZGI - All-in-One Platform
-# For AGI Development
+# ZGI - Enterprise AI Agent & RAG Orchestration Platform
 
 <p align="center">
   <a href="./README.md">English</a> |
@@ -8,7 +7,7 @@
 </p>
 
 <p align="center">
-  <em>ZGI is an intuitive LLM platform that supports multiple LLM providers, integrates various plugins, and provides a personalized AI assistant experience.</em>
+  <em>ZGI is a powerful enterprise-grade AI development platform focused on visual Agent workflow orchestration, advanced RAG systems, and multi-Agent collaboration.</em>
 </p>
 
 <p align="center">
@@ -17,32 +16,69 @@
   </a>
 </p>
 
-## 🌟 Key Features
+## 🌟 Core Features
 
-- **👔 Enterprise-Ready:** Comprehensive permission management, organization and project management capabilities, designed for enterprise-level LLM applications.
-- **🔗 Flexible Model Integration:** Easily connect with various LLM providers and freely set model usage limits and constraints.
-- **📊 Advanced Analytics:** In-depth usage statistics and analytics for monitoring model performance and user interactions.
-- **🧠 Multi-Model Support:** 
-  - OpenAI (GPT-3.5, GPT-4)
-  - Anthropic Claude
-  - DeepSeek
-  - Baidu ERNIE Bot
-  - Zhipu ChatGLM
-  - 01.AI Yi
-  - Moonshot
-  - Baichuan
-  - Xunfei Spark
-  - SenseNova
-  - *More models coming soon...*
-- **🔌 Plugin Ecosystem:** Enhance platform capabilities with a wide range of third-party plugins, including function calling for advanced interactions.
-- **📄 RAG-Enhanced Retrieval:** Interact with various file formats (PDF, Markdown, JSON, Word, Excel, images) to build a powerful information retrieval system.
-- **🤖 Custom AI Agents:** Create and tailor AI agents for specific tasks, providing solutions perfectly suited to your needs.
-- **🗣️ Text-to-Speech:** Convert AI-generated text into speech for a hands-free experience.
-- **🎙️ Speech-to-Text (Coming Soon):** Use voice input to interact with AI naturally and efficiently.
-- **💾 Local Storage:** Securely store data locally using in-browser IndexedDB, ensuring privacy and faster access.
-- **📤📥 Easy Import/Export:** Effortlessly move documents with robust data portability for smooth migration and backups.
-- **📚 Knowledge Spaces (Coming Soon):** Build custom knowledge bases to store and access information tailored to your interests.
-- **👤 Personalization:** Utilize the memory plugin for more contextual, personalized AI responses that adapt to your unique workflow.
+### 💬 Intelligent Chat Interaction
+- Multi-model dialogue support with parallel model comparison
+- AI Agent integration via @mentions for personalized interactions
+- RAG-enhanced knowledge base conversations
+- Voice interaction and speech synthesis
+- Image recognition and analysis
+- File Q&A for PDF, Word, Excel, and more
+- Visual debugging with response time and behavior analysis
+
+### 🔍 Advanced RAG System
+- State-of-the-art Retrieval Augmented Generation (RAG)
+- Multiple vector database support (FAISS, Milvus, Weaviate, Qdrant)
+- Customizable recall rate and search parameters
+- Rich API ecosystem with RESTful and GraphQL support
+- High-availability distributed architecture
+- Granular data access control
+- High-performance knowledge management
+
+### 🤖 Multi-Agent Orchestration
+- No-code visual workflow editor
+- Flexible node-based design for parallel/serial task execution
+- Domain-specific LLM adaptation
+- Real-time monitoring and debugging
+- Configurable inter-Agent communication
+
+### 🔗 Enterprise API Integration
+- Comprehensive RESTful APIs with Webhook support
+- Detailed documentation, SDKs, and example code
+- Modular architecture for custom extensions
+- Microservices compatibility
+- Multi-environment deployment options
+- API-level access control
+- High concurrency support
+
+### 🔥 LLMS Gateway: 1000+ Models
+- OpenAI SDK-compatible interface
+- Built-in support for OpenAI, Claude, Gemini, LLaMA, Mistral, Command R+
+- Multi-model comparison and switching
+- On-premise deployment options
+- Real-time token tracking and cost management
+- Rate limiting and access control
+- Comprehensive logging and auditing
+
+### 🔐 Enterprise Security
+- Hierarchical organization and project management
+- Fine-grained permission control
+- Data isolation and encryption
+- SSO support (OAuth, LDAP, SAML)
+- Audit logging and compliance
+- Private deployment options
+- Backup and recovery mechanisms
+
+## 🚀 Why Choose ZGI?
+
+✅ **Enterprise-Ready**: Complete organization, project, and permission management with private deployment options
+✅ **Smart Knowledge Management**: Advanced RAG system with multimodal knowledge base and semantic search
+✅ **Visual AI Workflows**: No-code Agent orchestration with multi-Agent collaboration
+✅ **Extensive Model Support**: 1000+ models via LLMS Gateway with OpenAI SDK compatibility
+✅ **Powerful API Ecosystem**: Standardized APIs with comprehensive documentation
+✅ **Security-First**: Fine-grained access control with end-to-end encryption
+✅ **High Performance**: Cloud-native architecture with distributed storage
 
 ## 🚀 Quick Start
 
