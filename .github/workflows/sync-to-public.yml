@@ -1,0 +1,73 @@
+name: Sync to Public Repository
+
+on:
+  workflow_dispatch:  # 手动触发
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout private repo
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup Git
+        run: |
+          git config --global user.name "ZGI Bot"
+          git config --global user.email "bot@zgi.ai"
+
+      - name: Clone public repo
+        env:
+          PUBLIC_REPO_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
+        run: |
+          git clone https://x-access-token:${PUBLIC_REPO_TOKEN}@github.com/zgiai/zgi.git public-repo
+          cd public-repo
+          git checkout main || git checkout -b main
+
+      - name: Sync API code
+        run: |
+          cd api
+          git archive HEAD | tar -x -C ../public-repo/api
+          cd ..
+
+      - name: Sync Web code
+        run: |
+          cd web
+          git archive HEAD | tar -x -C ../public-repo/web
+          cd ..
+
+      - name: Sync config files
+        run: |
+          cp -r docker public-repo/
+          cp README.md LICENSE CONTRIBUTING.md Makefile .gitignore public-repo/
+          cp -r .github/assets public-repo/.github/ || true
+
+      - name: Remove sensitive files
+        run: |
+          cd public-repo
+          find . -name ".env" -type f -delete
+          find . -name ".env.local" -type f -delete
+          find . -name "*.key" -type f -delete
+          find . -name "*.pem" -type f -delete
+          rm -rf .github/workflows  # 移除私有仓库的 workflows
+
+      - name: Commit and push
+        env:
+          PUBLIC_REPO_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
+        run: |
+          cd public-repo
+          git add .
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          VERSION=$(date +"%Y%m%d-%H%M%S")
+          git commit -m "sync: update from private repo ($VERSION)"
+          git push https://x-access-token:${PUBLIC_REPO_TOKEN}@github.com/zgiai/zgi.git main

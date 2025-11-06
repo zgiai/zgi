@@ -1,0 +1,73 @@
+<svg width="1200" height="300" viewBox="0 0 1200 300" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Subtle gradient background -->
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#FFFFFF;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#FAFCFF;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#FFFFFF;stop-opacity:1" />
+    </linearGradient>
+    
+    <!-- Blue accent gradient -->
+    <linearGradient id="blueAccent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#0052FF;stop-opacity:0" />
+      <stop offset="50%" style="stop-color:#0052FF;stop-opacity:0.08" />
+      <stop offset="100%" style="stop-color:#0052FF;stop-opacity:0" />
+    </linearGradient>
+    
+    <!-- Glow for logo -->
+    <filter id="logoGlow">
+      <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- Clean white background with subtle gradient -->
+  <rect width="1200" height="300" fill="url(#bgGradient)"/>
+  
+  <!-- Minimalist accent bar -->
+  <rect x="0" y="148" width="1200" height="4" fill="url(#blueAccent)"/>
+  
+  <!-- Thin decorative lines -->
+  <line x1="0" y1="60" x2="350" y2="60" stroke="#0052FF" stroke-width="1" opacity="0.15"/>
+  <line x1="850" y1="240" x2="1200" y2="240" stroke="#0052FF" stroke-width="1" opacity="0.15"/>
+  
+  <!-- ZGI Logo on the left -->
+  <g transform="translate(120, 150)">
+    <g transform="scale(0.55) translate(0, -78)" filter="url(#logoGlow)">
+      <polygon fill="#0052FF" points="0.15 154.9 0.15 135.7 76.95 28.53 0 28.53 0 1.84 117.83 1.84 117.83 21.05 40.96 128.22 117.98 128.22 117.98 154.9"/>
+      <path fill="#1A1A1A" d="M227.34,53.32 C226.35,49.83 224.94,46.75 223.14,44.07 C221.33,41.34 219.12,39.05 216.51,37.19 C213.94,35.27 210.996,33.82 207.67,32.81 C204.39,31.81 200.76,31.31 196.76,31.31 C189.3,31.31 182.75,33.17 177.09,36.9 C171.48,40.63 167.11,46.05 163.98,53.17 C160.84,60.25 159.27,68.9 159.27,79.13 C159.27,89.36 160.82,98.06 163.9,105.23 C166.99,112.4 171.37,117.87 177.02,121.65 C182.67,125.37 189.35,127.24 197.05,127.24 C204.03,127.24 210,126 214.94,123.51 C219.93,120.98 223.73,117.42 226.35,112.83 C229.01,108.24 230.34,102.81 230.34,96.55 L236.61,97.48 L198.97,97.48 L198.97,74.11 L260.06,74.11 L260.06,92.61 C260.06,105.51 257.35,116.6 251.93,125.88 C246.52,135.1 239.06,142.22 229.55,147.24 C220.05,152.21 209.17,154.7 196.91,154.7 C183.22,154.7 171.2,151.66 160.84,145.59 C150.48,139.47 142.4,130.8 136.6,119.57 C130.85,108.29 127.98,94.9 127.98,79.42 C127.98,67.51 129.69,56.9 133.11,47.58 C136.58,38.21 141.43,30.28 147.65,23.78 C153.88,17.28 161.12,12.33 169.39,8.94 C177.66,5.54 186.62,3.85 196.27,3.85 C204.53,3.85 212.23,5.06 219.36,7.5 C226.49,9.89 232.81,13.29 238.32,17.68 C243.88,22.08 248.42,27.31 251.93,33.39 C255.45,39.41 257.71,46.05 258.71,53.32 L227.34,53.32 Z"/>
+      <polygon fill="#1A1A1A" points="315.78 55.95 283.18 55.95 283.18 156 315.78 156"/>
+      <path fill="#0052FF" d="M299.48,37.05 C309.71,37.05 318,28.76 318,18.53 C318,8.29 309.71,0 299.48,0 C289.25,0 280.96,8.29 280.96,18.53 C280.96,28.76 289.25,37.05 299.48,37.05 Z"/>
+    </g>
+  </g>
+  
+  <!-- Typography on the right -->
+  <g transform="translate(750, 150)">
+    <!-- Main headline -->
+    <text x="0" y="-25" text-anchor="middle" font-family="'Inter', 'Poppins', sans-serif" font-size="46" font-weight="800" fill="#1A1A1A" letter-spacing="-1">
+      Build Enterprise AI Apps
+    </text>
+    
+    <!-- Subheadline -->
+    <text x="0" y="35" text-anchor="middle" font-family="'Inter', 'Poppins', sans-serif" font-size="46" font-weight="800" fill="#0052FF" letter-spacing="-1">
+      Start with ZGI
+    </text>
+    
+    <!-- Minimal underline accent -->
+    <line x1="-120" y1="48" x2="120" y2="48" stroke="#0052FF" stroke-width="3" stroke-linecap="round" opacity="0.3"/>
+  </g>
+  
+  <!-- Minimal corner accents -->
+  <g opacity="0.2">
+    <circle cx="80" cy="80" r="4" fill="#0052FF"/>
+    <circle cx="1120" cy="220" r="4" fill="#0052FF"/>
+  </g>
+  
+  <!-- Subtle geometric element -->
+  <g opacity="0.06">
+    <rect x="950" y="50" width="40" height="40" fill="none" stroke="#0052FF" stroke-width="2" transform="rotate(45 970 70)"/>
+  </g>
+</svg>
