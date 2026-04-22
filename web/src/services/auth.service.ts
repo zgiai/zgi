@@ -15,6 +15,14 @@ import type {
   RegisterInitResponse,
   LoginResponse,
   ErrorResponse,
+  PhoneCodeRequest,
+  PhoneCodeResponse,
+  PhoneCheckRequest,
+  PhoneCheckResponse,
+  PhoneVerifyRequest,
+  PhoneVerifyResponse,
+  PhoneRegisterRequest,
+  PhoneLoginRequest,
 } from './types/auth';
 import type { User, SystemFeatures, SetupStatus } from '@/services/types/auth';
 import type { ApiResponseData, BusinessError } from './types/common';
@@ -663,6 +671,117 @@ export class AuthenticationService extends BaseService {
       data: response.data,
     };
   }
+
+  // Phone authentication methods
+  async checkPhone(data: PhoneCheckRequest): Promise<PhoneCheckResponse> {
+    const response = await this.request<ApiResponseData<PhoneCheckResponse>>(
+      'post',
+      '/phone/check',
+      data,
+      { skipAuth: true }
+    );
+    if (response.code !== '0') {
+      const error = new Error(response.message || 'Phone check failed');
+      (error as unknown as BusinessError).businessError = {
+        code: response.code || '',
+        message: response.message || '',
+      };
+      this.handleBusinessError(error, 'Phone check');
+    }
+    return response.data;
+  }
+
+  async sendPhoneCode(data: PhoneCodeRequest): Promise<PhoneCodeResponse> {
+    const response = await this.request<ApiResponseData<PhoneCodeResponse>>(
+      'post',
+      '/phone/code',
+      data,
+      { skipAuth: true }
+    );
+    if (response.code !== '0') {
+      const error = new Error(response.message || 'Failed to send verification code');
+      (error as unknown as BusinessError).businessError = {
+        code: response.code || '',
+        message: response.message || '',
+      };
+      this.handleBusinessError(error, 'Phone code');
+    }
+    return response.data;
+  }
+
+  async verifyPhoneCode(data: PhoneVerifyRequest): Promise<PhoneVerifyResponse> {
+    const response = await this.request<ApiResponseData<PhoneVerifyResponse>>(
+      'post',
+      '/phone/code/verify',
+      data,
+      { skipAuth: true }
+    );
+    if (response.code !== '0') {
+      const error = new Error(response.message || 'Verification failed');
+      (error as unknown as BusinessError).businessError = {
+        code: response.code || '',
+        message: response.message || '',
+      };
+      this.handleBusinessError(error, 'Phone verify');
+    }
+    return response.data;
+  }
+
+  async phoneRegister(
+    data: PhoneRegisterRequest
+  ): Promise<{ access_token: string; refresh_token?: string; account?: Account }> {
+    const response = await this.request<ApiResponseData<LoginResponse>>(
+      'post',
+      '/phone/register',
+      data,
+      { skipAuth: true }
+    );
+    if (response.code !== '0') {
+      const error = new Error(response.message || 'Registration failed');
+      (error as unknown as BusinessError).businessError = {
+        code: response.code || '',
+        message: response.message || '',
+      };
+      this.handleBusinessError(error, 'Phone register');
+    }
+    const access_token = response.data?.data?.access_token;
+    const refresh_token = response.data?.data?.refresh_token;
+    const account = response.data?.data?.account;
+
+    if (!access_token) {
+      throw new Error('Invalid phone registration response structure');
+    }
+    this.persistTokens(access_token, refresh_token);
+    return { access_token, refresh_token, account };
+  }
+
+  async phoneLogin(
+    data: PhoneLoginRequest
+  ): Promise<{ access_token: string; refresh_token?: string; account?: Account }> {
+    const response = await this.request<ApiResponseData<LoginResponse>>(
+      'post',
+      '/phone/login',
+      data,
+      { skipAuth: true }
+    );
+    if (response.code !== '0') {
+      const error = new Error(response.message || 'Login failed');
+      (error as unknown as BusinessError).businessError = {
+        code: response.code || '',
+        message: response.message || '',
+      };
+      this.handleBusinessError(error, 'Phone login');
+    }
+    const access_token = response.data?.data?.access_token;
+    const refresh_token = response.data?.data?.refresh_token;
+    const account = response.data?.data?.account;
+
+    if (!access_token) {
+      throw new Error('Invalid phone login response structure');
+    }
+    this.persistTokens(access_token, refresh_token);
+    return { access_token, refresh_token, account };
+  }
 }
 
 // Export singleton instance for new service
@@ -697,7 +816,8 @@ export const authService = {
     authenticationService.verifyForgotPassword(data),
 
   // System methods
-  getSystemFeatures: (useCache: boolean = true) => authenticationService.getSystemFeatures(useCache),
+  getSystemFeatures: (useCache: boolean = true) =>
+    authenticationService.getSystemFeatures(useCache),
   getSetupStatus: () => authenticationService.getSetupStatus(),
   setup: (data: SetupRequest) => authenticationService.setup(data),
 
@@ -710,4 +830,11 @@ export const authService = {
   // New methods
   startRegister: (data: { email: string; language: string }) =>
     authenticationService.startRegister(data.email, data.language),
+
+  // Phone authentication legacy wrapper
+  checkPhone: (data: PhoneCheckRequest) => authenticationService.checkPhone(data),
+  sendPhoneCode: (data: PhoneCodeRequest) => authenticationService.sendPhoneCode(data),
+  verifyPhoneCode: (data: PhoneVerifyRequest) => authenticationService.verifyPhoneCode(data),
+  phoneRegister: (data: PhoneRegisterRequest) => authenticationService.phoneRegister(data),
+  phoneLogin: (data: PhoneLoginRequest) => authenticationService.phoneLogin(data),
 };

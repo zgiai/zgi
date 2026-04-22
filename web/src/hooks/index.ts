@@ -124,6 +124,13 @@ export { useResetPassword } from './auth/use-reset-password';
 export { useConsumeCasdoorTicket } from './auth/use-consume-casdoor-ticket';
 export { useSystemFeatures } from './auth/use-system-features';
 export { useInviteInfo, useAcceptInvite } from './auth/use-invite';
+export {
+  usePhoneCheck,
+  usePhoneCode,
+  usePhoneVerify,
+  usePhoneRegister,
+  usePhoneLogin,
+} from './auth/use-phone-auth';
 // DB hooks
 export { useDb, useCreateDb, useUpdateDb, useDeleteDb } from './db/use-dbs';
 export {

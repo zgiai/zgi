@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -17,10 +17,10 @@ import { useForgotPassword } from '@/hooks/auth/use-forgot-password';
 import { useStartRegister } from '@/hooks/auth/use-start-register';
 import { useVerifyForgotPassword } from '@/hooks/auth/use-verify-forgot-password';
 import { useVerifyRegister } from '@/hooks/auth/use-verify-register';
+import { usePhoneCode, usePhoneVerify } from '@/hooks/auth/use-phone-auth';
 import { VerificationCodeInput } from '@/components/ui/verification-code-input';
 import type { ForgotPasswordInitResponse, RegisterInitResponse } from '@/services/types/auth';
 
-// Validation schema
 const verificationSchema = z.object({
   code: z
     .string()
@@ -33,7 +33,7 @@ const verificationSchema = z.object({
 type VerificationFormData = z.infer<typeof verificationSchema>;
 
 const RESEND_COOLDOWN_SECONDS = 60;
-const RESEND_COOLDOWN_MS = RESEND_COOLDOWN_SECONDS * 1000;
+const DEFAULT_PHONE_COUNTRY_CODE = 'CN';
 
 interface ResendCooldownSnapshot {
   serverTime: number;
@@ -41,8 +41,18 @@ interface ResendCooldownSnapshot {
   clientReceivedAt: number;
 }
 
-function buildResendCooldownKey(email: string, token: string, type: string): string {
-  return `auth:verify:resend_cooldown:${type}:${email.toLowerCase()}:${token}`;
+function buildResendCooldownKey(identifier: string, token: string, type: string): string {
+  return `auth:verify:resend_cooldown:${type}:${identifier.toLowerCase()}:${token}`;
+}
+
+function normalizeCountryCode(value: string): string {
+  const normalized = value.trim().toUpperCase();
+
+  if (normalized === '+86' || normalized === '86') {
+    return 'CN';
+  }
+
+  return normalized.startsWith('+') ? normalized.slice(1) : normalized;
 }
 
 function parseTimestamp(value: unknown): number | null {
@@ -139,12 +149,15 @@ export function VerificationForm({ className }: VerificationFormProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  // URL parameters
   const email = searchParams.get('email');
+  const phone = searchParams.get('phone');
   const token = searchParams.get('token');
-  const type = searchParams.get('type') || 'reset'; // 'reset' or 'register'
+  const method = searchParams.get('method');
+  const type = searchParams.get('type') || 'reset';
+  const countryCode = searchParams.get('country_code') || DEFAULT_PHONE_COUNTRY_CODE;
+  const isPhoneRegisterFlow = method === 'phone' && type === 'register';
+  const destination = isPhoneRegisterFlow ? phone : email;
 
-  // Component state
   const [isResending, setIsResending] = useState(false);
   const [canResend, setCanResend] = useState(false);
   const [countdown, setCountdown] = useState(RESEND_COOLDOWN_SECONDS);
@@ -152,29 +165,39 @@ export function VerificationForm({ className }: VerificationFormProps) {
   const [verificationCode, setVerificationCode] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Auth state
   const verifyRegisterMutation = useVerifyRegister();
   const verifyForgotPasswordMutation = useVerifyForgotPassword();
   const forgotPasswordMutation = useForgotPassword();
   const startRegisterMutation = useStartRegister();
-  const isLoading = verifyRegisterMutation.isPending || verifyForgotPasswordMutation.isPending;
+  const phoneCodeMutation = usePhoneCode();
+  const phoneVerifyMutation = usePhoneVerify();
+  const isLoading =
+    verifyRegisterMutation.isPending ||
+    verifyForgotPasswordMutation.isPending ||
+    phoneVerifyMutation.isPending;
   const { locale } = useLocale();
-  const resendCooldownKey = useMemo(
-    () => (email && token ? buildResendCooldownKey(email, token, type) : null),
-    [email, token, type]
-  );
+  const resendCooldownKey = useMemo(() => {
+    if (!destination || !token) {
+      return null;
+    }
+
+    const cooldownType = isPhoneRegisterFlow ? 'phone-register' : type;
+    return buildResendCooldownKey(destination, token, cooldownType);
+  }, [destination, isPhoneRegisterFlow, token, type]);
 
   useEffect(() => {
-    if (!email || !token) {
+    const missingEmailParams = !isPhoneRegisterFlow && (!email || !token);
+    const missingPhoneParams = isPhoneRegisterFlow && (!phone || !token);
+
+    if (missingEmailParams || missingPhoneParams) {
       let redirectPath = type === 'reset' ? '/forgot-password' : '/register';
       const redirect = searchParams.get('redirect');
       if (redirect && type !== 'reset') {
         redirectPath += `?redirect=${encodeURIComponent(redirect)}`;
       }
       router.push(redirectPath);
-      return;
     }
-  }, [email, router, searchParams, token, type]);
+  }, [email, isPhoneRegisterFlow, phone, router, searchParams, token, type]);
 
   useEffect(() => {
     if (!resendCooldownKey) {
@@ -207,7 +230,6 @@ export function VerificationForm({ className }: VerificationFormProps) {
     return () => window.clearInterval(timer);
   }, [resendCooldown]);
 
-  // Form setup
   const {
     setValue,
     handleSubmit,
@@ -219,42 +241,75 @@ export function VerificationForm({ className }: VerificationFormProps) {
     },
   });
 
-  // Handle verification code change
   const handleCodeChange = (code: string) => {
     setVerificationCode(code);
     setValue('code', code);
   };
 
-  // Handle code completion
   const handleCodeComplete = async (code: string) => {
     if (code.length === 6 && !isSubmitting) {
       await submitCode(code);
     }
   };
 
-  // Form submission
   const submitCode = async (code: string) => {
-    if (!email || !token || isSubmitting) {
+    if (!token || isSubmitting) {
+      return;
+    }
+
+    if (isPhoneRegisterFlow && !phone) {
+      return;
+    }
+
+    if (!isPhoneRegisterFlow && !email) {
       return;
     }
 
     setIsSubmitting(true);
     try {
+      if (isPhoneRegisterFlow) {
+        const normalizedCountryCode = normalizeCountryCode(countryCode);
+        const res = await phoneVerifyMutation.mutateAsync({
+          phone: phone || '',
+          country_code: normalizedCountryCode,
+          scene: 'register',
+          token,
+          code,
+        });
+
+        if (res.verified_token) {
+          let completeUrl =
+            `/register/complete?method=phone&phone=${encodeURIComponent(phone || '')}` +
+            `&country_code=${encodeURIComponent(normalizedCountryCode)}` +
+            `&verified_token=${encodeURIComponent(res.verified_token)}`;
+          const redirect = searchParams.get('redirect');
+          if (redirect) {
+            completeUrl += `&redirect=${encodeURIComponent(redirect)}`;
+          }
+          router.push(completeUrl);
+        }
+        return;
+      }
+
       let result = false;
 
       if (type === 'register') {
-        const res = await verifyRegisterMutation.mutateAsync({ email, code, token });
+        const res = await verifyRegisterMutation.mutateAsync({ email: email || '', code, token });
         result = res?.is_valid ?? false;
       } else {
-        const res = await verifyForgotPasswordMutation.mutateAsync({ email, code, token });
+        const res = await verifyForgotPasswordMutation.mutateAsync({
+          email: email || '',
+          code,
+          token,
+        });
         result = res?.data?.is_valid ?? false;
       }
 
       if (result) {
         if (type === 'reset') {
-          router.push(`/reset-password?token=${token}&email=${encodeURIComponent(email)}`);
+          router.push(`/reset-password?token=${token}&email=${encodeURIComponent(email || '')}`);
         } else {
-          let completeUrl = `/register/complete?token=${token}&email=${encodeURIComponent(email)}`;
+          let completeUrl = `/register/complete?token=${token}&email=${encodeURIComponent(email || '')}`;
           const redirect = searchParams.get('redirect');
           if (redirect) {
             completeUrl += `&redirect=${encodeURIComponent(redirect)}`;
@@ -263,7 +318,6 @@ export function VerificationForm({ className }: VerificationFormProps) {
         }
       }
     } catch (err) {
-      // Error is handled by the store
       console.error('Verification failed:', err);
     } finally {
       setIsSubmitting(false);
@@ -275,22 +329,48 @@ export function VerificationForm({ className }: VerificationFormProps) {
   };
 
   const handleResend = async () => {
-    if (!email || !token) {
+    if (!resendCooldownKey) {
       return;
     }
 
     setIsResending(true);
     try {
-      let response: RegisterInitResponse | ForgotPasswordInitResponse | undefined;
-      if (type === 'reset') {
-        response = await forgotPasswordMutation.mutateAsync({ email, language: locale });
+      if (isPhoneRegisterFlow) {
+        if (!phone) {
+          return;
+        }
+
+        const normalizedCountryCode = normalizeCountryCode(countryCode);
+        const response = await phoneCodeMutation.mutateAsync({
+          phone,
+          country_code: normalizedCountryCode,
+          scene: 'register',
+        });
+        const nextCooldown = createCooldownSnapshot();
+        const nextCooldownKey = buildResendCooldownKey(phone, response.token, 'phone-register');
+        writeResendCooldownSnapshot(nextCooldownKey, nextCooldown);
+        setResendCooldown(nextCooldown);
+
+        const params = new URLSearchParams(searchParams.toString());
+        params.set('country_code', normalizedCountryCode);
+        params.set('token', response.token);
+        router.replace(`/verify?${params.toString()}`);
       } else {
-        response = await startRegisterMutation.mutateAsync({ email, language: locale });
+        if (!email || !token) {
+          return;
+        }
+
+        let response: RegisterInitResponse | ForgotPasswordInitResponse | undefined;
+        if (type === 'reset') {
+          response = await forgotPasswordMutation.mutateAsync({ email, language: locale });
+        } else {
+          response = await startRegisterMutation.mutateAsync({ email, language: locale });
+        }
+        const nextCooldown = createCooldownSnapshotFromResponse(response);
+        writeResendCooldownSnapshot(resendCooldownKey, nextCooldown);
+        setResendCooldown(nextCooldown);
       }
-      const nextCooldown = createCooldownSnapshotFromResponse(response);
-      const cooldownKey = buildResendCooldownKey(email, token, type);
-      writeResendCooldownSnapshot(cooldownKey, nextCooldown);
-      setResendCooldown(nextCooldown);
+
       setCountdown(RESEND_COOLDOWN_SECONDS);
       setCanResend(false);
     } catch (err) {
@@ -302,6 +382,7 @@ export function VerificationForm({ className }: VerificationFormProps) {
 
   const formLoading = isLoading || isSubmitting;
   const title = type === 'reset' ? t('resetPasswordTitle') : t('completeRegistrationTitle');
+  const destinationLabel = destination || (isPhoneRegisterFlow ? t('phone') : t('yourEmail'));
 
   return (
     <div className={cn('flex flex-col gap-6', className)}>
@@ -309,16 +390,12 @@ export function VerificationForm({ className }: VerificationFormProps) {
         <CardHeader className="text-center">
           <CardTitle className="text-2xl font-bold">{title}</CardTitle>
           <p className="text-muted-foreground">
-            {t('verificationSentTo')} <span className="font-medium">{email || t('yourEmail')}</span>
+            {t('verificationSentTo')} <span className="font-medium">{destinationLabel}</span>
           </p>
         </CardHeader>
 
         <CardContent className="space-y-6">
-          {/* Errors are shown via toast; field-level errors remain */}
-
-          {/* Verification Form */}
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-            {/* Code Field */}
             <div className="space-y-4">
               <Label htmlFor="code" className="text-center block">
                 {t('verificationCode')}
@@ -332,7 +409,6 @@ export function VerificationForm({ className }: VerificationFormProps) {
               />
             </div>
 
-            {/* Submit Button */}
             <Button
               type="submit"
               className="w-full"
@@ -343,7 +419,6 @@ export function VerificationForm({ className }: VerificationFormProps) {
             </Button>
           </form>
 
-          {/* Resend Code */}
           <div className="text-center text-sm">
             {t('didntReceiveCode')}{' '}
             {canResend ? (
@@ -367,7 +442,6 @@ export function VerificationForm({ className }: VerificationFormProps) {
             )}
           </div>
 
-          {/* Back Link */}
           <div className="text-center text-sm">
             <Link
               href={type === 'reset' ? '/forgot-password' : '/register'}

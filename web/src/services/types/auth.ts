@@ -256,3 +256,53 @@ export interface UpdateProfileRequest {
   // Current selected workspace ID
   current_workspace_id?: string | null;
 }
+
+// Phone authentication related types
+export interface PhoneCodeRequest {
+  phone: string;
+  country_code: string;
+  scene: 'login' | 'register';
+}
+
+export interface PhoneCodeResponse {
+  token: string;
+  request_id?: string;
+  provider?: string;
+  code?: string;
+}
+
+export interface PhoneCheckRequest {
+  phone: string;
+  country_code: string;
+}
+
+export interface PhoneCheckResponse {
+  phone_e164: string;
+  is_registered: boolean;
+}
+
+export interface PhoneVerifyRequest {
+  phone: string;
+  country_code: string;
+  scene: 'login' | 'register';
+  token: string;
+  code: string;
+}
+
+export interface PhoneVerifyResponse {
+  verified_token: string;
+}
+
+export interface PhoneRegisterRequest {
+  phone: string;
+  country_code: string;
+  verified_token: string;
+  name: string;
+  password: string;
+}
+
+export interface PhoneLoginRequest {
+  phone: string;
+  country_code: string;
+  verified_token: string;
+}

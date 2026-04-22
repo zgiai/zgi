@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -10,42 +10,81 @@ import { useLocale } from '@/hooks/use-locale';
 import * as z from 'zod';
 
 import { cn } from '@/lib/utils';
+import { isValidPhoneNumber } from '@/utils/validation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Info, Loader2 } from 'lucide-react';
 import { useStartRegister } from '@/hooks/auth/use-start-register';
 import { useSystemFeatures } from '@/hooks/auth/use-system-features';
+import { usePhoneCheck, usePhoneCode } from '@/hooks/auth/use-phone-auth';
 
 interface RegisterFormProps {
   className?: string;
 }
+
+type RegisterMethod = 'email' | 'phone';
+
+const DEFAULT_PHONE_COUNTRY_CODE = 'CN';
 
 export function RegisterForm({ className }: RegisterFormProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirect = searchParams.get('redirect');
   const loginHref = redirect ? `/login?redirect=${encodeURIComponent(redirect)}` : '/login';
-  const [registerStep, setRegisterStep] = useState<'email' | 'verifying'>('email');
   const t = useT().auth;
   const tCommon = useT('common');
   const { locale } = useLocale();
 
-  // Form validation schema with translated messages
-  const registerFormSchema = z.object({
+  const [mounted, setMounted] = useState(false);
+  const [registerMethod, setRegisterMethod] = useState<RegisterMethod>('email');
+  const [emailRegisterStep, setEmailRegisterStep] = useState<'email' | 'verifying'>('email');
+  const [refreshing, setRefreshing] = useState<boolean>(false);
+
+  const emailRegisterSchema = z.object({
     email: z.string().min(1, t('emailRequired')).email(t('invalidEmail')),
   });
 
-  type RegisterFormData = z.infer<typeof registerFormSchema>;
+  const phoneRegisterSchema = z.object({
+    phone: z
+      .string()
+      .min(1, t('phoneRequired'))
+      .refine(value => isValidPhoneNumber(value, 'INTL'), t('invalidPhoneNumber')),
+  });
 
-  // Auth state
+  type EmailRegisterFormData = z.infer<typeof emailRegisterSchema>;
+  type PhoneRegisterFormData = z.infer<typeof phoneRegisterSchema>;
+
   const startRegisterMutation = useStartRegister();
-  const isLoading = startRegisterMutation.isPending;
+  const phoneCheckMutation = usePhoneCheck({
+    silentSuccess: true,
+    errorMessageKey: 'userAlreadyExists',
+  });
+  const phoneCodeMutation = usePhoneCode();
   const { data: systemFeatures, refetch } = useSystemFeatures();
   const canRegister = Boolean(systemFeatures?.is_allow_register);
-  const [refreshing, setRefreshing] = useState<boolean>(false);
+
+  const emailForm = useForm<EmailRegisterFormData>({
+    resolver: zodResolver(emailRegisterSchema),
+    defaultValues: {
+      email: '',
+    },
+  });
+
+  const phoneForm = useForm<PhoneRegisterFormData>({
+    resolver: zodResolver(phoneRegisterSchema),
+    defaultValues: {
+      phone: '',
+    },
+  });
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   const onRefresh = async (): Promise<void> => {
     setRefreshing(true);
     try {
@@ -55,28 +94,15 @@ export function RegisterForm({ className }: RegisterFormProps) {
     }
   };
 
-  // Form setup
-  const {
-    register: registerField,
-    handleSubmit,
-    watch,
-    formState: { errors },
-  } = useForm<RegisterFormData>({
-    resolver: zodResolver(registerFormSchema),
-    defaultValues: {
-      email: '',
-    },
-  });
+  const appendRedirect = (url: string): string => {
+    if (!redirect) {
+      return url;
+    }
 
-  const emailValue = watch('email');
+    return `${url}&redirect=${encodeURIComponent(redirect)}`;
+  };
 
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  // Form submission
-  const onSubmit = async (data: RegisterFormData) => {
+  const onEmailSubmit = async (data: EmailRegisterFormData) => {
     try {
       const response = await startRegisterMutation.mutateAsync({
         email: data.email,
@@ -84,18 +110,45 @@ export function RegisterForm({ className }: RegisterFormProps) {
       });
 
       if (response.result === 'success') {
-        setRegisterStep('verifying');
-
-        // Redirect to verification page with token
-        let verifyUrl = `/verify?email=${encodeURIComponent(data.email)}&token=${response.token}&type=register`;
-        if (redirect) {
-          verifyUrl += `&redirect=${encodeURIComponent(redirect)}`;
-        }
+        setEmailRegisterStep('verifying');
+        const verifyUrl = appendRedirect(
+          `/verify?email=${encodeURIComponent(data.email)}&token=${response.token}&type=register`
+        );
         router.push(verifyUrl);
       }
     } catch (err: unknown) {
-      // Errors are handled in hook with toast
       console.error('Start registration failed:', err);
+    }
+  };
+
+  const onPhoneSubmit = async (data: PhoneRegisterFormData) => {
+    try {
+      const checkResponse = await phoneCheckMutation.mutateAsync({
+        country_code: DEFAULT_PHONE_COUNTRY_CODE,
+        phone: data.phone,
+      });
+
+      if (checkResponse.is_registered) {
+        phoneForm.setError('phone', {
+          message: t('userAlreadyExists'),
+        });
+        return;
+      }
+
+      const response = await phoneCodeMutation.mutateAsync({
+        country_code: DEFAULT_PHONE_COUNTRY_CODE,
+        phone: data.phone,
+        scene: 'register',
+      });
+
+      const verifyUrl = appendRedirect(
+        `/verify?method=phone&type=register&phone=${encodeURIComponent(data.phone)}` +
+          `&country_code=${encodeURIComponent(DEFAULT_PHONE_COUNTRY_CODE)}` +
+          `&token=${encodeURIComponent(response.token)}`
+      );
+      router.push(verifyUrl);
+    } catch (err) {
+      console.error('Phone registration start failed:', err);
     }
   };
 
@@ -118,6 +171,10 @@ export function RegisterForm({ className }: RegisterFormProps) {
     );
   }
 
+  const emailFormLoading = startRegisterMutation.isPending;
+  const phoneFormLoading =
+    phoneCheckMutation.isPending || phoneCodeMutation.isPending || phoneForm.formState.isSubmitting;
+
   return (
     <div className={cn('flex flex-col gap-8', className)}>
       <Card className="glass-panel border-none shadow-premium overflow-hidden">
@@ -128,55 +185,107 @@ export function RegisterForm({ className }: RegisterFormProps) {
           )}
         >
           <CardTitle className="text-3xl font-bold tracking-tight">{t('createAccount')}</CardTitle>
-          <p className="text-muted-foreground/80">{t('enterEmailToStart')}</p>
+          <p className="text-muted-foreground/80">
+            {registerMethod === 'phone' ? t('phoneRegisterDesc') : t('enterEmailToStart')}
+          </p>
         </div>
 
         <CardContent className="px-8 pb-10">
-          {/* Register Form */}
-          <form
-            onSubmit={handleSubmit(onSubmit)}
-            className={cn(
-              'space-y-6',
-              mounted
-                ? 'animate-in fade-in slide-in-from-bottom-4 duration-700 delay-100'
-                : 'opacity-0'
-            )}
+          <Tabs
+            value={registerMethod}
+            onValueChange={value => setRegisterMethod(value as RegisterMethod)}
+            className="w-full"
           >
-            {/* Email Field */}
-            <div className="space-y-2">
-              <Label
-                htmlFor="email"
-                className="text-xs font-semibold uppercase tracking-wider opacity-60 ml-1"
-              >
-                {t('emailAddress')}
-              </Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder={t('emailPlaceholder')}
-                disabled={isLoading || registerStep === 'verifying'}
-                autoComplete="email"
-                {...registerField('email')}
-                aria-invalid={errors.email ? 'true' : 'false'}
-                errorText={errors.email?.message}
-                className="h-11 px-4 text-base"
-              />
-            </div>
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="email">{t('authMethodEmail')}</TabsTrigger>
+              <TabsTrigger value="phone">{t('authMethodPhone')}</TabsTrigger>
+            </TabsList>
 
-            {/* Submit Button */}
-            <Button
-              type="submit"
-              size="xl"
-              className="w-full font-bold tracking-wide"
-              loading={isLoading}
-              disabled={registerStep === 'verifying' || !emailValue}
-              interactive
+            <TabsContent
+              value="email"
+              className={cn(
+                mounted
+                  ? 'animate-in fade-in slide-in-from-bottom-4 duration-700 delay-100'
+                  : 'opacity-0'
+              )}
             >
-              {registerStep === 'verifying' ? t('verificationCodeSent') : t('continue')}
-            </Button>
-          </form>
+              <form onSubmit={emailForm.handleSubmit(onEmailSubmit)} className="space-y-6">
+                <div className="space-y-2">
+                  <Label
+                    htmlFor="email"
+                    className="text-xs font-semibold uppercase tracking-wider opacity-60 ml-1"
+                  >
+                    {t('emailAddress')}
+                  </Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    placeholder={t('emailPlaceholder')}
+                    disabled={emailFormLoading || emailRegisterStep === 'verifying'}
+                    autoComplete="email"
+                    {...emailForm.register('email')}
+                    aria-invalid={emailForm.formState.errors.email ? 'true' : 'false'}
+                    errorText={emailForm.formState.errors.email?.message}
+                    className="h-11 px-4 text-base"
+                  />
+                </div>
 
-          {/* Links */}
+                <Button
+                  type="submit"
+                  size="xl"
+                  className="w-full font-bold tracking-wide"
+                  loading={emailFormLoading}
+                  disabled={emailRegisterStep === 'verifying' || !emailForm.watch('email')}
+                  interactive
+                >
+                  {emailRegisterStep === 'verifying' ? t('verificationCodeSent') : t('continue')}
+                </Button>
+              </form>
+            </TabsContent>
+
+            <TabsContent
+              value="phone"
+              className={cn(
+                mounted
+                  ? 'animate-in fade-in slide-in-from-bottom-4 duration-700 delay-100'
+                  : 'opacity-0'
+              )}
+            >
+              <form onSubmit={phoneForm.handleSubmit(onPhoneSubmit)} className="space-y-6">
+                <div className="space-y-2">
+                  <Label
+                    htmlFor="phone"
+                    className="text-xs font-semibold uppercase tracking-wider opacity-60 ml-1"
+                  >
+                    {t('phone')}
+                  </Label>
+                  <Input
+                    id="phone"
+                    type="tel"
+                    placeholder={t('phonePlaceholder')}
+                    autoComplete="tel"
+                    disabled={phoneFormLoading}
+                    {...phoneForm.register('phone')}
+                    aria-invalid={phoneForm.formState.errors.phone ? 'true' : 'false'}
+                    errorText={phoneForm.formState.errors.phone?.message}
+                    className="h-11 px-4 text-base"
+                  />
+                </div>
+
+                <Button
+                  type="submit"
+                  size="xl"
+                  className="w-full font-bold tracking-wide"
+                  loading={phoneFormLoading}
+                  disabled={!phoneForm.watch('phone')}
+                  interactive
+                >
+                  {t('continue')}
+                </Button>
+              </form>
+            </TabsContent>
+          </Tabs>
+
           <div className="mt-8 text-center animate-in fade-in duration-700 delay-300">
             <p className="text-sm text-muted-foreground">
               {t('alreadyHaveAccount')}{' '}
@@ -191,7 +300,6 @@ export function RegisterForm({ className }: RegisterFormProps) {
         </CardContent>
       </Card>
 
-      {/* Terms and Privacy */}
       <p className="px-8 text-center text-[10px] text-muted-foreground/50 leading-relaxed max-w-[320px] mx-auto animate-in fade-in duration-700 delay-500">
         {t.rich('byCreatingAccount', {
           termsLink: chunks => (
