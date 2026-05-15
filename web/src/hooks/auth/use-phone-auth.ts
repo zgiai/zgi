@@ -6,7 +6,7 @@ import {
   getAuthBusinessErrorMessage,
 } from '@/utils/auth-errors';
 import { normalizeToastDescription } from '@/utils/error-notifications';
-import {
+import type {
   PhoneCheckRequest,
   PhoneCheckResponse,
   PhoneCodeRequest,
