@@ -73,6 +73,9 @@ func main() {
 			logger.Fatal("Migration status failed: %v", err)
 		}
 
+	case "check":
+		runCheckCommand()
+
 	case "make":
 		runMakeCommand()
 
@@ -121,6 +124,31 @@ func runMakeCommand() {
 		logger.Fatal("Failed to create migration: %v", err)
 	}
 	fmt.Printf("Created migration: %s\n", file)
+}
+
+func runCheckCommand() {
+	checkCmd := flag.NewFlagSet("check", flag.ExitOnError)
+	dbURL := checkCmd.String("db", "", "Fresh PostgreSQL database DSN used to execute all migrations")
+	if err := checkCmd.Parse(os.Args[2:]); err != nil {
+		logger.Fatal("Failed to parse arguments: %v", err)
+	}
+
+	dsn := strings.TrimSpace(*dbURL)
+	if dsn == "" {
+		dsn = strings.TrimSpace(os.Getenv("ZGI_MIGRATION_CHECK_DSN"))
+	}
+
+	result, err := migrations.Check(migrations.CheckOptions{PostgresDSN: dsn})
+	if err != nil {
+		logger.Fatal("Migration check failed: %v", err)
+	}
+
+	fmt.Printf("Migration check passed: %d migrations, %d migration files checked\n", result.MigrationCount, len(result.CheckedFiles))
+	if result.PostgresCheckRan {
+		fmt.Println("Fresh PostgreSQL execution: passed")
+	} else if result.PostgresCheckSkipped {
+		fmt.Println("Fresh PostgreSQL execution: skipped; pass -db or set ZGI_MIGRATION_CHECK_DSN to enable")
+	}
 }
 
 func createMigrationFile(slug string) (string, error) {
@@ -247,6 +275,7 @@ Commands:
   rollback        Rollback the last migration with explicit confirmation
   down            Alias of rollback; requires explicit confirmation
   status          Show migration status
+  check           Validate migration IDs, filenames, safety rules, and optional fresh PostgreSQL execution
   make <slug>     Create a timestamped migration file
   seed            Execute seed data
 
@@ -265,6 +294,8 @@ Examples:
   go run cmd/migrate/main.go up
   go run cmd/migrate/main.go up -pretend
   go run cmd/migrate/main.go status
+  go run cmd/migrate/main.go check
+  go run cmd/migrate/main.go check -db "host=localhost user=postgres password=postgres dbname=zgi_check port=5432 sslmode=disable"
   go run cmd/migrate/main.go make create_audit_events
   go run cmd/migrate/main.go rollback -confirm 20260601090000_create_audit_events
 

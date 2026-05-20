@@ -11,6 +11,8 @@ Runtime entry points:
 - `go run ./cmd/migrate up`
 - `go run ./cmd/migrate up -pretend`
 - `go run ./cmd/migrate status`
+- `go run ./cmd/migrate check`
+- `go run ./cmd/migrate check -db "host=localhost user=postgres password=postgres dbname=zgi_migration_check port=5432 sslmode=disable"`
 - `go run ./cmd/migrate make create_example_table`
 - `go run ./cmd/migrate rollback -confirm <latest_migration_id>`
 
@@ -63,6 +65,7 @@ ZGI follows Laravel's production-safety ideas but adapts them to PostgreSQL:
 - Disabling the migration lock requires `ZGI_UNSAFE_NO_MIGRATION_LOCK=1`.
 - `migrate --pretend` / `up -pretend` prints migration status without applying changes.
 - `migrate:status` / `status` shows which migrations are already applied.
+- `go run ./cmd/migrate check` validates migration IDs, filenames, duplicate IDs, source safety, baseline safety, and, when `-db` or `ZGI_MIGRATION_CHECK_DSN` is provided, executes the full chain against a fresh PostgreSQL database.
 - `internal/migrations/schema` blocks destructive statements such as `DROP TABLE`, `DROP COLUMN`, `TRUNCATE`, `DELETE`, and `UPDATE` unless `AllowDestructive` is explicitly enabled.
 - Rollbacks created through `registerSchemaMigration` run with `AllowDestructive`, because rollback is the only normal path where dropping a newly created table or column is expected.
 - Rollback commands require the exact latest migration ID via `--confirm`, so AI agents and operators cannot accidentally roll back with a short command.

@@ -57,8 +57,13 @@ jobs:
       - name: Test migrations and SQL metadata
         run: go test ./internal/migrations ./internal/migrations/schema ./pkg/sql_base/sqlmeta/service
 
+      - name: Check migration registry
+        run: go run ./cmd/migrate check
+
       - name: Test migrations against PostgreSQL
-        run: go test ./internal/migrations -run TestPublicInitialSchemaAppliesToPostgres -count=1
+        run: |
+          go run ./cmd/migrate check -db "$ZGI_MIGRATION_TEST_DSN"
+          go test ./internal/migrations -run TestPublicInitialSchemaAppliesToPostgres -count=1
         env:
           ZGI_MIGRATION_TEST_DSN: host=localhost user=postgres password=postgres dbname=zgi_migration_test port=5432 sslmode=disable
 

@@ -43,6 +43,25 @@ func TestRegisteredMigrationsAreValid(t *testing.T) {
 	}
 }
 
+func TestCheckStaticRules(t *testing.T) {
+	result, err := Check(CheckOptions{})
+	if err != nil {
+		t.Fatalf("migration check failed: %v", err)
+	}
+	if result.MigrationCount != len(allMigrations()) {
+		t.Fatalf("expected %d migrations checked, got %d", len(allMigrations()), result.MigrationCount)
+	}
+	if len(result.CheckedFiles) != len(allMigrations()) {
+		t.Fatalf("expected %d migration files checked, got %d", len(allMigrations()), len(result.CheckedFiles))
+	}
+	if !result.PostgresCheckSkipped {
+		t.Fatal("expected PostgreSQL execution to be skipped without a DSN")
+	}
+	if result.PostgresCheckRan {
+		t.Fatal("PostgreSQL execution must not run without a DSN")
+	}
+}
+
 func TestMigrationFilenameMatchesRegisteredID(t *testing.T) {
 	_, filename, _, ok := runtime.Caller(0)
 	if !ok {
