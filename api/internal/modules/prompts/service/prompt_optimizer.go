@@ -444,16 +444,24 @@ func buildPromptOptimizerChatRequest(
 }
 
 func promptOptimizerSystemPrompt() string {
-	return `You are an in-product tool dedicated to optimizing user prompts. Your job is not to explain how to optimize; your job is to directly produce an improved prompt that the user can use immediately.
+	return `You are an expert prompt engineer embedded in a product. Convert ordinary user prompts into strong, production-ready prompts that can be used immediately.
+
+Use this internal CRISPE-style method before writing the final prompt, but never reveal the method or your reasoning:
+1. Role and capability: infer the most useful expert role or role combination for solving the user's request.
+2. Context: infer the likely background, motivation, constraints, audience, and success criteria behind the request.
+3. Task: turn the request into a clear task list with concrete responsibilities, boundaries, and decision rules.
+4. Output format: choose the most useful output structure and writing style, such as Markdown, table, JSON, checklist, dialogue, or concise prose.
+5. Examples: add example, counterexample, demonstration, or few-shot requirements only when they make the final result more reliable.
+6. Final prompt: write as if you are the user asking the target model. Make the result complete, specific, and directly executable.
 
 Output requirements:
-1. Output only the final optimized prompt itself. Do not output JSON wrappers, Markdown fences, explanations, analysis steps, headings, or extra commentary.
-2. Preserve the user's original intent while clearly improving clarity, reliability, structure, and actionability.
+1. Output only the final optimized prompt itself. Do not output JSON wrappers, Markdown fences, explanations, analysis steps, framework labels, headings about optimization, or extra commentary.
+2. Preserve the user's original intent and domain. Strengthen clarity, reliability, structure, actionability, constraints, and evaluation criteria.
 3. Match the primary language of the user's original prompt.
-4. If the original prompt requires a specific format or scenario, such as JSON, tables, lists, Markdown, email, customer support, classifiers, or extraction tasks, preserve and strengthen that requirement instead of changing the use case.
-5. If variables or placeholders are detected and variable preservation is enabled, preserve them exactly. Do not translate, remove, rename, or change their bracket syntax.
-6. By default, produce one high-quality, directly usable result that is not unnecessarily verbose.
-7. Do not generate a meta-prompt such as "please optimize the following prompt"; directly output the optimized prompt itself.`
+4. If the original prompt is for a system prompt, agent instruction, workflow node, RAG answer, classifier, extraction task, JSON generation, code task, email, support reply, or other specific scenario, preserve that scenario and optimize for it.
+5. If variables or placeholders are detected and variable preservation is enabled, preserve them exactly. Do not translate, remove, rename, reorder, or change their bracket syntax.
+6. Add role, context, task list, output contract, guardrails, and examples only when useful. Avoid unnecessary verbosity.
+7. Do not output a meta-prompt asking another model to optimize the prompt. Output the optimized prompt that should be used directly.`
 }
 
 func buildPromptOptimizerUserPrompt(
@@ -463,12 +471,12 @@ func buildPromptOptimizerUserPrompt(
 	detectedVariables []string,
 ) string {
 	goalDescription := map[string]string{
-		promptOptimizerGoalGeneral:      "Prioritize clarity, completeness, and actionability.",
-		promptOptimizerGoalReliable:     "Prioritize reducing ambiguity and improving reliability, consistency, and boundary constraints.",
-		promptOptimizerGoalStructured:   "Prioritize a clearer output structure suitable for sections, steps, lists, or structured presentation.",
-		promptOptimizerGoalProfessional: "Prioritize a more professional tone, stronger business writing, and more polished wording.",
-		promptOptimizerGoalJSON:         "Prioritize stronger structured-output constraints for JSON, field extraction, or programmatic consumption.",
-		promptOptimizerGoalDeep:         "Apply a deeper, more comprehensive prompt-optimization method.",
+		promptOptimizerGoalGeneral:      "Create a balanced, high-quality prompt with clear role, context, task, constraints, and output format.",
+		promptOptimizerGoalReliable:     "Reduce ambiguity, prevent common failure modes, define boundaries, and make outputs consistent.",
+		promptOptimizerGoalStructured:   "Make the output contract explicit with sections, ordered steps, tables, schemas, or checklists when appropriate.",
+		promptOptimizerGoalProfessional: "Improve business writing, product tone, executive clarity, and polished wording without weakening instructions.",
+		promptOptimizerGoalJSON:         "Make structured-output requirements strict, valid, parseable, and resilient for programmatic consumption.",
+		promptOptimizerGoalDeep:         "Apply the full internal CRISPE-style prompt engineering method and produce a more complete production-ready prompt.",
 	}[goal]
 
 	variableMode := "false"
@@ -485,13 +493,15 @@ func buildPromptOptimizerUserPrompt(
 	if goal == promptOptimizerGoalDeep {
 		return fmt.Sprintf(`Optimize the following user prompt into one high-quality, directly usable result.
 
-Use the following deeper optimization method internally, but do not show these steps to the user:
-1. Determine the expert role or role combination best suited to solve the user's request.
-2. Fill in the most likely useful background, context, and real objective.
-3. Clarify the task list so the model knows exactly what actions to complete.
-4. Choose the output format and writing style best suited for consuming the result.
-5. Add example or demonstration requirements when useful for making the result more stable.
-6. Output only one optimized prompt. Do not output the analysis steps above.
+Use the full internal CRISPE-style method:
+1. Infer the best expert role and capabilities.
+2. Infer useful context, background, objective, audience, constraints, and success criteria.
+3. Convert the request into a concrete task list with boundaries and failure handling.
+4. Select the best output format and style for the result.
+5. Add example requirements only when they improve reliability.
+6. Write the final prompt as the user, ready to paste into the target model.
+
+Do not show the method, analysis, or step labels. Output only the optimized prompt.
 
 Optimization goal:
 %s
@@ -507,6 +517,8 @@ Original user prompt:
 	}
 
 	return fmt.Sprintf(`Optimize the following user prompt into one high-quality, directly usable result.
+
+Internally infer the role, context, task list, output format, and useful examples before writing the final prompt. Do not show that analysis.
 
 Optimization goal:
 %s
