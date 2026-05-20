@@ -76,13 +76,30 @@ jobs:
           short_sha="${GITHUB_SHA::7}"
           version=""
           publish_latest="false"
+          publish_minor="false"
 
           if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == v* ]]; then
             version="${GITHUB_REF_NAME#v}"
-            publish_latest="true"
+            if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+              echo "Release tag must match vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-prerelease" >&2
+              exit 1
+            fi
+            if [[ ! "${version}" == *-* ]]; then
+              publish_latest="true"
+              publish_minor="true"
+            fi
           elif [[ -n "${INPUT_VERSION}" ]]; then
             version="${INPUT_VERSION#v}"
+            if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+              echo "Manual release version must match MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH-prerelease" >&2
+              exit 1
+            fi
             publish_latest="${INPUT_PUSH_LATEST}"
+          fi
+
+          minor=""
+          if [[ "${publish_minor}" == "true" ]]; then
+            minor="$(cut -d. -f1,2 <<< "${version}")"
           fi
 
           {
@@ -90,6 +107,9 @@ jobs:
             echo "${IMAGE}:sha-${short_sha}"
             if [[ -n "${version}" ]]; then
               echo "${IMAGE}:${version}"
+            fi
+            if [[ -n "${minor}" ]]; then
+              echo "${IMAGE}:${minor}"
             fi
             if [[ "${publish_latest}" == "true" ]]; then
               echo "${IMAGE}:latest"

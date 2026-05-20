@@ -166,6 +166,7 @@ Source-development helpers are designed for Unix-like shells. Windows contributo
 ## Documentation
 
 - Product-level Docker notes: `docker/README.md`
+- Release process: `docs/release-process.md`
 - Web app notes: `web/README.md`
 - Backend service docs: `api/`
 
