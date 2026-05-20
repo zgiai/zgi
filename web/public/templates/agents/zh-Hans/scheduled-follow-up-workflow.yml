@@ -1,0 +1,246 @@
+---
+kind: app
+version: 1.0.0
+exported_from: zgi
+exported_at: '2026-05-15T00:00:00Z'
+app:
+  name: 定时跟进任务
+  description: 根据工作流判断创建定时通知任务。
+  icon: '{"icon":"SF","icon_background":"#1d4ed8"}'
+  icon_type: text
+  mode: WORKFLOW
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    opening_statement_type: slogan
+    opening_slogan: ''
+    opening_statement: ''
+    opening_statement_enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      voice: ''
+      language: ''
+    speech_to_text:
+      enabled: false
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    conversation_history:
+      enabled: false
+      history_window_size: 6
+    file_upload:
+      enabled: false
+      allowed_file_types:
+      - image
+      - document
+      allowed_file_extensions:
+      - jpg
+      - jpeg
+      - png
+      - gif
+      - webp
+      - pdf
+      - doc
+      - docx
+      - txt
+      - md
+      - csv
+      - xlsx
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      number_limits: 5
+    webapp_workflow_config:
+      allow_view_run_detail: true
+      auto_expand_run_detail: false
+  graph:
+    nodes:
+    - id: note_runtime_guide
+      type: note
+      position:
+        x: 80
+        y: 40
+      width: 520
+      height: 240
+      data:
+        type: note
+        title: 运行说明
+        desc: ''
+        text: |-
+          运行说明
+
+          需配置。依赖：Qwen qwen3.6-plus 模型、通知通道。运行前请确认通知通道可用，并在输入中提供真实 owner_email。
+
+          调试输入：
+          打开调试面板后，开始节点字段已经预填，可直接运行。
+          示例：
+          - 跟进请求: 为负责人 ops@example.invalid 创建两个工作日后的跟进任务，确认安全问卷是否完成。
+
+          该备注仅用于说明，不参与执行。
+        theme: yellow
+        isInLoop: false
+        isInIteration: false
+    - id: start_node
+      type: custom
+      position:
+        x: 80
+        y: 280
+      width: 280
+      height: 88
+      data:
+        type: start
+        title: 开始
+        desc: 智能体入口节点
+        variables:
+        - type: paragraph
+          variable: input
+          label: 跟进请求
+          required: true
+          max_length: 8192
+          default: 为负责人 ops@example.invalid 创建两个工作日后的跟进任务，确认安全问卷是否完成。
+        unique: true
+        isInLoop: false
+        isInIteration: false
+    - id: parameter_node
+      type: custom
+      position:
+        x: 420
+        y: 280
+      width: 280
+      height: 92
+      data:
+        type: parameter-extractor
+        title: 参数提取
+        desc: ''
+        query:
+        - start_node
+        - input
+        model:
+          provider: qwen
+          name: qwen3.6-plus
+          mode: chat
+          completion_params: {}
+        reasoning_mode: prompt
+        vision:
+          enabled: false
+          configs:
+            detail: high
+            variable_selector: []
+        instruction: 抽取所需业务参数。只返回输入请求中有依据的字段值。
+        parameters:
+        - name: owner_email
+          type: string
+          required: false
+          description: 负责人邮箱
+        - name: follow_up_reason
+          type: string
+          required: true
+          description: 跟进原因
+        isInLoop: false
+        isInIteration: false
+    - id: schedule_node
+      type: custom
+      position:
+        x: 760
+        y: 280
+      width: 280
+      height: 92
+      data:
+        type: create-scheduled-task
+        title: 创建定时任务
+        desc: ''
+        task:
+          name: 跟进提醒
+          description: 通知负责人复核案件状态。
+          schedule:
+            type: cron
+            timezone: Asia/Shanghai
+            once:
+              input_mode: fixed
+              run_at: '2026-06-01T09:00:00+08:00'
+            cron:
+              expr: 0 9 * * 1
+          actions:
+          - client_id: follow_up_email
+            action_type: send_notification
+            enabled: true
+            channel_type: email
+            notification:
+              recipients:
+              - "{{#parameter_node.owner_email#}}"
+              subject: '工作流跟进提醒：{{#parameter_node.follow_up_reason#}}'
+              body: '请查看工作流输出，并跟进：{{#parameter_node.follow_up_reason#}}'
+              body_type: text/plain
+              template: notification_sms
+              notification_title: 需要跟进
+              link_code: "{{#sys.workflow_run_id#}}"
+            raw_config:
+        isInLoop: false
+        isInIteration: false
+    - id: end_node
+      type: custom
+      position:
+        x: 1100
+        y: 280
+      width: 280
+      height: 64
+      data:
+        type: end
+        title: 结束
+        desc: ''
+        outputs:
+        - variable: task_id
+          type: string
+          value_selector:
+          - schedule_node
+          - task_id
+        - variable: status
+          type: string
+          value_selector:
+          - schedule_node
+          - status
+        isInLoop: false
+        isInIteration: false
+    edges:
+    - id: start_node-source-parameter_node
+      source: start_node
+      target: parameter_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: parameter_node-source-schedule_node
+      source: parameter_node
+      target: schedule_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: schedule_node-source-end_node
+      source: schedule_node
+      target: end_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    viewport:
+      x: 0
+      y: 0
+      zoom: 0.8

@@ -1,0 +1,651 @@
+'use client';
+
+import * as React from 'react';
+import Link from 'next/link';
+import {
+  Settings,
+  ArrowRightToLine,
+  Home,
+  Atom,
+  BookText,
+  FileText,
+  FileSearch,
+  Database,
+  BookOpen,
+  Users,
+  MessageSquare,
+  Image as ImageIcon,
+  AppWindow,
+  Clock3,
+  ChevronDown,
+} from 'lucide-react';
+import { usePathname } from 'next/navigation';
+import { useT } from '@/i18n';
+import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { WorkspaceSwitcher } from './team-switcher';
+import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
+import { useWorkspaceStore } from '@/store/workspace-store';
+import type { PermissionCode } from '@/constants/permissions';
+import { ENABLE_THEME_SWITCH, withBasePathIfInternal } from '@/lib/config';
+import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
+import { useWorkflowDebugFocusMode } from '@/components/workflow/hooks/use-debug-focus-mode';
+import { usePersistentSidebarCollapse } from '@/hooks/use-persistent-sidebar-collapse';
+
+interface NavItem {
+  title: string;
+  href: string;
+  icon: React.ElementType;
+  /** Required permission to show this nav item (when workspace selected) */
+  permission?: PermissionCode;
+}
+
+interface NavGroup {
+  key: string;
+  title: string;
+  items: NavItem[];
+}
+
+interface RootRouteItem {
+  key: string;
+  title: string;
+  href: string;
+  icon: React.ElementType;
+  target?: '_self' | '_blank';
+  activeMatchPaths?: string[];
+}
+
+const STORAGE_KEY = 'zgi:console:sidebar:groups';
+
+function isItemActive(pathname: string, href: string): boolean {
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+function isRootRouteItemActive(pathname: string, item: RootRouteItem): boolean {
+  const matchPaths = item.activeMatchPaths?.length ? item.activeMatchPaths : [item.href];
+
+  return matchPaths.some(matchPath => {
+    if (!matchPath.startsWith('/')) return false;
+    return isItemActive(pathname, withBasePathIfInternal(matchPath));
+  });
+}
+
+export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
+  const pathname = usePathname();
+  const t = useT('navigation');
+
+  // Permission checking
+  const { hasPermission } = useAccountPermissions();
+  const isOrganizationMode = useWorkspaceStore.use.isOrganizationMode();
+  const isDebugFocusMode = useWorkflowDebugFocusMode();
+
+  // Collapsed state persisted via ui-local helpers
+  const [isCollapsed, setIsCollapsed] = usePersistentSidebarCollapse(
+    'console',
+    false,
+    isDebugFocusMode
+  );
+
+  const toggleCollapse = () => setIsCollapsed(prev => !prev);
+
+  // Group open state
+  const [openGroups, setOpenGroups] = React.useState<Record<string, boolean>>(() => {
+    if (typeof window === 'undefined') return {};
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      return raw
+        ? (JSON.parse(raw) as Record<string, boolean>)
+        : { work: true, resources: true, developer: true, management: true };
+    } catch {
+      return { work: true, resources: true, developer: true, management: true };
+    }
+  });
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(openGroups));
+    } catch {
+      // ignore storage errors
+    }
+  }, [openGroups]);
+
+  const toggleGroup = (key: string) => setOpenGroups(prev => ({ ...prev, [key]: !prev[key] }));
+
+  // Define all nav groups
+  const allNavGroups: NavGroup[] = React.useMemo(
+    () => [
+      {
+        key: 'work',
+        title: t('work'),
+        items: [
+          {
+            title: t('chat'),
+            href: '/console/work/chat',
+            icon: MessageSquare,
+            permission: 'workspace.view',
+          },
+          {
+            title: t('image'),
+            href: '/console/work/image',
+            icon: ImageIcon,
+            permission: 'workspace.view',
+          },
+          {
+            title: t('app'),
+            href: '/console/work/app',
+            icon: AppWindow,
+            permission: 'workspace.view',
+          },
+          {
+            title: t('task'),
+            href: '/console/work/task',
+            icon: Clock3,
+            permission: 'workspace.view',
+          },
+        ],
+      },
+      {
+        key: 'resources',
+        title: t('resources'),
+        items: [
+          { title: t('agents'), href: '/console/agents', icon: Atom, permission: 'agent.view' },
+          { title: t('prompts'), href: '/console/prompts', icon: BookText, permission: 'agent.view' },
+          {
+            title: t('datasets'),
+            href: '/console/dataset',
+            icon: BookOpen,
+            permission: 'knowledge_base.view',
+          },
+          { title: t('files'), href: '/console/files', icon: FileText, permission: 'file.view' },
+          { title: t('dbs'), href: '/console/db', icon: Database, permission: 'database.view' },
+        ],
+      },
+      {
+        key: 'developer',
+        title: t('developer'),
+        items: [
+          {
+            title: t('fileRecognition'),
+            href: '/console/developer/content-parse',
+            icon: FileSearch,
+            permission: 'workspace.view',
+          },
+        ],
+      },
+      {
+        key: 'management',
+        title: t('management'),
+        items: [
+          {
+            title: t('workspaceManagement'),
+            href: '/console/workspace',
+            icon: Users,
+            permission: 'workspace.view',
+          },
+          { title: t('systemSettings'), href: '/console/settings', icon: Settings },
+        ],
+      },
+    ],
+    [t]
+  );
+
+  // Filter groups and items
+  const navGroups = React.useMemo(() => {
+    return allNavGroups
+      .map(group => {
+        let filteredItems = group.items;
+
+        // Special handling for management group in organization view
+        if (group.key === 'management' && isOrganizationMode) {
+          filteredItems = filteredItems.filter(item => item.href !== '/console/workspace');
+        }
+
+        // Hide settings if theme switch disabled
+        if (!ENABLE_THEME_SWITCH) {
+          filteredItems = filteredItems.filter(item => item.href !== '/console/settings');
+        }
+
+        // Filter by permissions outside organization view
+        if (!isOrganizationMode) {
+          filteredItems = filteredItems.filter(item => {
+            if (!item.permission) return true;
+            return hasPermission(item.permission);
+          });
+        }
+
+        return { ...group, items: filteredItems };
+      })
+      .filter(group => group.items.length > 0);
+  }, [isOrganizationMode, hasPermission, allNavGroups]);
+
+  const rootRouteItems = React.useMemo(
+    (): RootRouteItem[] => [
+      // Add branch-specific root route items here when needed.
+      // Example:
+      // {
+      //   key: 'model-square',
+      //   title: 'Model Square',
+      //   href: 'https://example.com/modelsquare',
+      //   icon: LayoutGrid,
+      //   target: '_blank',
+      // },
+    ],
+    []
+  );
+
+  const sidebarContent = (
+    <div className="flex flex-col flex-1 h-full overflow-hidden">
+      {/* Workspace Switcher */}
+      <div className="shrink-0 px-2 py-2">
+        <WorkspaceSwitcher isCollapsed={isCollapsed} />
+      </div>
+      {/* Navigation Items */}
+      <nav
+        className={cn(
+          'flex flex-col gap-1 px-2 py-1 flex-1 overflow-y-auto overflow-x-hidden scrollbar-none transition-all duration-300',
+          isCollapsed ? 'items-center' : 'items-start'
+        )}
+      >
+        <Link
+          href="/console"
+          className={cn(
+            'flex items-center gap-2 rounded-md py-1.5 text-[13px] transition-colors shrink-0 w-full',
+            // Adjust padding based on collapse state
+            isCollapsed ? 'justify-center px-0 w-8' : 'justify-start px-2',
+            'text-foreground/70 hover:bg-muted/70 hover:text-foreground',
+            pathname === '/console' && 'bg-muted/80 text-foreground'
+          )}
+        >
+          <Home
+            size={16}
+            className={cn(
+              'shrink-0 text-foreground/65',
+              pathname === '/console' && 'text-foreground'
+            )}
+          />
+          <span
+            className={cn(
+              'truncate transition-all duration-300 opacity-100 font-normal',
+              isCollapsed && 'ml-0 opacity-0 w-0 hidden'
+            )}
+          >
+            {t('home')}
+          </span>
+        </Link>
+
+        {navGroups.map(group => {
+          // If collapsed, we flatten the structure visually (hide headers, show items)
+          if (isCollapsed) {
+            return group.items.map(item => {
+              const Icon = item.icon;
+              const isActive = isItemActive(pathname, item.href);
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={cn(
+                    'flex w-8 items-center justify-center rounded-md py-1.5 text-[13px] font-medium transition-colors',
+                    'text-foreground/70 hover:bg-muted/70 hover:text-foreground',
+                    isActive && 'bg-muted/80 text-foreground'
+                  )}
+                  title={item.title}
+                >
+                  <Icon
+                    size={16}
+                    className={cn('shrink-0 text-foreground/65', isActive && 'text-foreground')}
+                  />
+                </Link>
+              );
+            });
+          }
+
+          const isExpanded = openGroups[group.key] ?? true;
+
+          return (
+            <div key={group.key} className="w-full pt-2">
+              <button
+                type="button"
+                onClick={() => toggleGroup(group.key)}
+                className={cn(
+                  'w-full flex items-center justify-between rounded-md px-2 py-1 text-[12px]',
+                  'font-medium text-foreground/55 hover:bg-muted/60 hover:text-foreground/80'
+                )}
+              >
+                <span className="truncate">{group.title}</span>
+                <ChevronDown
+                  className={cn(
+                    'h-3.5 w-3.5 shrink-0 text-foreground/45 transition-transform duration-200',
+                    !isExpanded && '-rotate-90'
+                  )}
+                />
+              </button>
+
+              {isExpanded && (
+                <div className="mt-1 space-y-0.5">
+                  {group.items.map(item => {
+                    const Icon = item.icon;
+                    const isActive = isItemActive(pathname, item.href);
+                    return (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        className={cn(
+                          'flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px] transition-colors',
+                          isActive
+                            ? 'bg-muted/80 text-foreground'
+                            : 'text-foreground/70 hover:bg-muted/70 hover:text-foreground'
+                        )}
+                      >
+                        <Icon
+                          size={16}
+                          className={cn(
+                            'shrink-0 text-foreground/60',
+                            isActive && 'text-foreground'
+                          )}
+                        />
+                        <span className="truncate font-medium">{item.title}</span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {rootRouteItems.length > 0 ? (
+          <div
+            className={cn(
+              'w-full mt-2 pt-2 border-t border-border',
+              isCollapsed ? 'space-y-1' : 'space-y-1'
+            )}
+          >
+            {rootRouteItems.map(item => {
+              const Icon = item.icon;
+              const isActive = isRootRouteItemActive(pathname, item);
+
+              return (
+                <Link
+                  key={item.key}
+                  href={item.href}
+                  target={item.target}
+                  rel={item.target === '_blank' ? 'noreferrer' : undefined}
+                  className={cn(
+                    'flex items-center rounded-md py-1.5 text-[13px] transition-colors shrink-0 w-full',
+                    isCollapsed ? 'justify-center px-0 w-8' : 'justify-start px-2',
+                    'text-foreground/70 hover:bg-muted/70 hover:text-foreground',
+                    isActive && 'bg-muted/80 text-foreground'
+                  )}
+                  title={item.title}
+                >
+                  <Icon
+                    size={16}
+                    className={cn('shrink-0 text-foreground/65', isActive && 'text-foreground')}
+                  />
+                  <span
+                    className={cn(
+                      'truncate transition-all duration-300 opacity-100 font-normal',
+                      isCollapsed && 'ml-0 opacity-0 w-0 hidden',
+                      !isCollapsed && 'ml-2'
+                    )}
+                  >
+                    {item.title}
+                  </span>
+                </Link>
+              );
+            })}
+          </div>
+        ) : null}
+      </nav>
+    </div>
+  );
+
+  if (hidden) {
+    return null;
+  }
+  return (
+    <aside
+      className={cn(
+        'hidden md:flex md:flex-col shrink-0 border-r border-border/60 bg-background text-sidebar-foreground transition-all duration-300',
+        isCollapsed ? 'w-12' : 'w-44'
+      )}
+    >
+      {sidebarContent}
+      {/* Collapse toggle button */}
+      <div className={cn('shrink-0 flex p-2 pt-1', isCollapsed && 'justify-center')}>
+        <Button
+          onClick={toggleCollapse}
+          variant="ghost"
+          size="xs"
+          aria-label={isCollapsed ? t('expand') : t('collapse')}
+          className={cn(
+            'flex h-7 items-center rounded-md py-0 text-[13px] font-medium transition-colors gap-0',
+            isCollapsed ? 'justify-center w-8 px-0' : 'justify-start w-full px-2',
+            'text-foreground/70 hover:bg-muted/70 hover:text-foreground'
+          )}
+        >
+          <ArrowRightToLine
+            size={16}
+            className={cn(
+              'shrink-0 transition-transform duration-300',
+              !isCollapsed && 'rotate-180'
+            )}
+          />
+          <span
+            className={cn(
+              'truncate transition-all duration-300 ml-2 opacity-100 font-normal',
+              isCollapsed && 'ml-0 opacity-0 w-0 hidden'
+            )}
+          >
+            {isCollapsed ? t('expand') : t('collapse')}
+          </span>
+        </Button>
+      </div>
+    </aside>
+  );
+}
+
+export function ConsoleMobileSidebar({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const pathname = usePathname();
+  const t = useT('navigation');
+  const { hasPermission } = useAccountPermissions();
+  const isOrganizationMode = useWorkspaceStore.use.isOrganizationMode();
+  const [openGroups, setOpenGroups] = React.useState<Record<string, boolean>>({
+    work: true,
+    resources: true,
+    developer: true,
+    management: true,
+  });
+
+  const navGroups = React.useMemo<NavGroup[]>(() => {
+    const groups: NavGroup[] = [
+      {
+        key: 'work',
+        title: t('work'),
+        items: [
+          {
+            title: t('chat'),
+            href: '/console/work/chat',
+            icon: MessageSquare,
+            permission: 'workspace.view',
+          },
+          {
+            title: t('image'),
+            href: '/console/work/image',
+            icon: ImageIcon,
+            permission: 'workspace.view',
+          },
+          {
+            title: t('app'),
+            href: '/console/work/app',
+            icon: AppWindow,
+            permission: 'workspace.view',
+          },
+          {
+            title: t('task'),
+            href: '/console/work/task',
+            icon: Clock3,
+            permission: 'workspace.view',
+          },
+        ],
+      },
+      {
+        key: 'resources',
+        title: t('resources'),
+        items: [
+          { title: t('agents'), href: '/console/agents', icon: Atom, permission: 'agent.view' },
+          {
+            title: t('datasets'),
+            href: '/console/dataset',
+            icon: BookOpen,
+            permission: 'knowledge_base.view',
+          },
+          { title: t('files'), href: '/console/files', icon: FileText, permission: 'file.view' },
+          { title: t('dbs'), href: '/console/db', icon: Database, permission: 'database.view' },
+        ],
+      },
+      {
+        key: 'developer',
+        title: t('developer'),
+        items: [
+          {
+            title: t('fileRecognition'),
+            href: '/console/developer/content-parse',
+            icon: FileSearch,
+            permission: 'workspace.view',
+          },
+        ],
+      },
+      {
+        key: 'management',
+        title: t('management'),
+        items: [
+          {
+            title: t('workspaceManagement'),
+            href: '/console/workspace',
+            icon: Users,
+            permission: 'workspace.view',
+          },
+          { title: t('systemSettings'), href: '/console/settings', icon: Settings },
+        ],
+      },
+    ];
+
+    return groups
+      .map(group => {
+        let items = group.items;
+
+        if (group.key === 'management' && isOrganizationMode) {
+          items = items.filter(item => item.href !== '/console/workspace');
+        }
+
+        if (!ENABLE_THEME_SWITCH) {
+          items = items.filter(item => item.href !== '/console/settings');
+        }
+
+        if (!isOrganizationMode) {
+          items = items.filter(item => !item.permission || hasPermission(item.permission));
+        }
+
+        return { ...group, items };
+      })
+      .filter(group => group.items.length > 0);
+  }, [hasPermission, isOrganizationMode, t]);
+
+  const closeSidebar = () => onOpenChange(false);
+  const toggleGroup = (key: string) => setOpenGroups(prev => ({ ...prev, [key]: !prev[key] }));
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="left" className="w-[86vw] max-w-80 p-0">
+        <SheetTitle className="sr-only">{t('home')}</SheetTitle>
+        <div className="flex h-full flex-col overflow-hidden bg-background">
+          <div className="border-b border-border/60 px-4 py-3">
+            <WorkspaceSwitcher isCollapsed={false} />
+          </div>
+
+          <nav className="flex-1 space-y-3 overflow-y-auto px-3 py-3">
+            <Link
+              href="/console"
+              onClick={closeSidebar}
+              className={cn(
+                'flex items-center gap-2 rounded-md px-2 py-2 text-[13px] transition-colors',
+                pathname === '/console'
+                  ? 'bg-muted/80 text-foreground'
+                  : 'text-foreground/70 hover:bg-muted/70 hover:text-foreground'
+              )}
+            >
+              <Home
+                size={16}
+                className={cn(
+                  'shrink-0 text-foreground/60',
+                  pathname === '/console' && 'text-foreground'
+                )}
+              />
+              <span className="truncate font-medium">{t('home')}</span>
+            </Link>
+
+            {navGroups.map(group => {
+              const isExpanded = openGroups[group.key] ?? true;
+              return (
+                <div key={group.key}>
+                  <button
+                    type="button"
+                    onClick={() => toggleGroup(group.key)}
+                    className="flex w-full items-center justify-between rounded-md px-2 py-1 text-[12px] font-medium text-foreground/55 hover:bg-muted/60 hover:text-foreground/80"
+                  >
+                    <span className="truncate">{group.title}</span>
+                    <ChevronDown
+                      className={cn(
+                        'h-3.5 w-3.5 shrink-0 text-foreground/45 transition-transform duration-200',
+                        !isExpanded && '-rotate-90'
+                      )}
+                    />
+                  </button>
+
+                  {isExpanded ? (
+                    <div className="mt-1 space-y-0.5">
+                      {group.items.map(item => {
+                        const Icon = item.icon;
+                        const isActive = isItemActive(pathname, item.href);
+                        return (
+                          <Link
+                            key={item.href}
+                            href={item.href}
+                            onClick={closeSidebar}
+                            className={cn(
+                              'flex items-center gap-2 rounded-md px-2 py-2 text-[13px] transition-colors',
+                              isActive
+                                ? 'bg-muted/80 text-foreground'
+                                : 'text-foreground/70 hover:bg-muted/70 hover:text-foreground'
+                            )}
+                          >
+                            <Icon
+                              size={16}
+                              className={cn(
+                                'shrink-0 text-foreground/60',
+                                isActive && 'text-foreground'
+                              )}
+                            />
+                            <span className="truncate font-medium">{item.title}</span>
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </nav>
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}

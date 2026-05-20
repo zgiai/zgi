@@ -1,0 +1,97 @@
+package v1
+
+import (
+	"log"
+
+	"github.com/gin-gonic/gin"
+	"github.com/zgiai/ginext/config"
+	"github.com/zgiai/ginext/internal/container"
+	workspace_service "github.com/zgiai/ginext/internal/modules/workspace/service"
+	"github.com/zgiai/ginext/pkg/database"
+)
+
+// RegisterRoutes registers all v1 version routes
+func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *container.ServiceContainer) {
+	// Health & setup routes first
+	RegisterHealthRoutes(v1)
+	RegisterSetupRoutes(v1, serviceContainer)
+
+	// TaskQueue debug routes removed (module deprecated)
+
+	// Ensure DB ready
+	db := database.GetDB()
+	if db == nil {
+		log.Fatal("Database connection not initialized")
+	}
+
+	accountService := serviceContainer.GetAccountServiceAdapter()
+	tenantService := serviceContainer.GetTenantServiceAdapter()
+
+	// ---------- User / Auth domain ----------
+	RegisterUserRoutes(v1, serviceContainer, config.GlobalConfig.Email.ConsoleWebURL)
+
+	// ---------- Workspace / Tenant ----------
+	RegisterWorkspaceRoutes(v1, db, accountService, config.GlobalConfig.Email.ConsoleWebURL, serviceContainer)
+
+	// ---------- Explore ----------
+	RegisterExploreRoutes(v1, accountService)
+
+	tenantServiceImpl := serviceContainer.GetTenantService()
+
+	// ---------- Plugin Runner (Tenant Level) ----------
+	RegisterPluginRunnerTenantRoutes(v1, accountService, tenantServiceImpl, db)
+
+	// ---------- Tool ----------
+	RegisterToolRoutes(v1, serviceContainer)
+
+	// ---------- API Key ----------
+	if tenantServiceImplConcrete, ok := tenantServiceImpl.(*workspace_service.WorkspaceManagementServiceImpl); ok {
+		RegisterAPIKeyRoutes(v1, db, accountService, tenantServiceImplConcrete)
+	}
+
+	// ---------- File (common) ----------
+	RegisterFileRoutes(v1, accountService, serviceContainer)
+
+	// ---------- Dataset ----------
+	RegisterDatasetRoutes(v1, serviceContainer)
+
+	// ---------- Content Parse ----------
+	RegisterContentParseRoutes(v1, serviceContainer)
+
+	// ---------- Data Library ----------
+	RegisterDataLibraryRoutes(v1, serviceContainer)
+
+	// ---------- DataSource ----------
+	RegisterDataSourceRoutes(v1, serviceContainer)
+
+	// ---------- Automation ----------
+	RegisterAutomationRoutes(v1, serviceContainer)
+
+	// ---------- Payment ----------
+	RegisterPaymentRoutes(v1, serviceContainer)
+
+	// ---------- Quota ----------
+	RegisterQuotaRoutes(v1, serviceContainer)
+
+	// ---------- Workflow ----------
+	RegisterWorkflowRoutes(v1, accountService, tenantService, serviceContainer.GetFileService(), db, serviceContainer.GetContentExtractor(), serviceContainer.GetQuotaService(), serviceContainer.GetOrganizationService(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), serviceContainer.GetAutomationDefinitionService(), serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetScheduler(), serviceContainer.GetWorkflowEngineFactory(), serviceContainer)
+
+	// ---------- Agent ----------
+	resourcePermissionService := serviceContainer.GetResourcePermissionService()
+	RegisterAgentsRoutes(v1, db, accountService, tenantService, resourcePermissionService, serviceContainer.GetOrganizationService(), serviceContainer.GetQuotaService(), serviceContainer.GetFileService(), serviceContainer.GetContentExtractor(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), serviceContainer.GetWorkflowEngineFactory())
+
+	// ---------- Prompt Library ----------
+	RegisterPromptRoutes(v1, serviceContainer)
+
+	// ---------- LLM Management ----------
+	llmModule := RegisterLLMRoutes(v1, serviceContainer)
+
+	// ---------- AIChat ----------
+	RegisterAIChatRoutes(v1, serviceContainer)
+
+	// ---------- Dashboard ----------
+	RegisterDashboardRoutes(v1, serviceContainer, llmModule)
+
+	// ---------- GDPR Compliance ----------
+	RegisterGDPRRoutes(v1, serviceContainer)
+}

@@ -1,0 +1,168 @@
+import type {
+  AIChatConversation,
+  AIChatErrorEventData,
+  AIChatFileParseEndEventData,
+  AIChatFileParseErrorEventData,
+  AIChatFileParseStartEventData,
+  AIChatMessageFile,
+  AIChatMessage,
+  AIChatMessageChunkEventData,
+  AIChatMessageEndEventData,
+  AIChatMessageStartEventData,
+} from '@/services/types/aichat';
+import type { ChatBranchNavigation } from '@/components/chat/utils/message-tree';
+import type { StoreApi } from 'zustand/vanilla';
+
+export interface AIChatModelSelection {
+  provider?: string;
+  model: string;
+  parameters?: Record<string, number | string | boolean | string[]>;
+}
+
+export interface AIChatPagination {
+  page: number;
+  limit: number;
+  total: number;
+  hasMore: boolean;
+}
+
+export interface AIChatStreamingMessageState {
+  conversation_id: string;
+  message_id: string;
+  answer: string;
+  status: 'streaming' | 'completed' | 'stopped' | 'error';
+  last_event_id?: string;
+  replay_base_answer?: string;
+  replay_offset?: number;
+  replace?: boolean;
+  sensitiveOutputBlocked?: boolean;
+}
+
+export type AIChatRecoveryMode = 'active' | 'background';
+
+export interface AIChatMessageStartContext {
+  query?: string;
+  model?: AIChatModelSelection;
+  files?: AIChatMessageFile[];
+  previousConversationId?: string | null;
+  resetAnswer?: boolean;
+  mode?: AIChatRecoveryMode;
+  moveToTop?: boolean;
+}
+
+export interface AIChatControllerState {
+  conversations: AIChatConversation[];
+  pagination: AIChatPagination;
+  activeConversationId: string | null;
+  messagesByConversation: Record<string, AIChatMessage[]>;
+  messagePaginationByConversation: Record<string, AIChatPagination>;
+  loadingOlderByConversation: Record<string, boolean>;
+  streamingByMessageId: Record<string, AIChatStreamingMessageState>;
+  recoveringByConversation: Record<string, boolean>;
+  stoppingByConversation: Record<string, boolean>;
+  isLoadingList: boolean;
+  isLoadingMessages: boolean;
+  isSending: boolean;
+  error: string | null;
+}
+
+export interface AIChatControllerStore extends AIChatControllerState {
+  update: (updater: (current: AIChatControllerState) => AIChatControllerState) => void;
+  replaceState: (nextState: AIChatControllerState) => void;
+  applyMessageStart: (
+    payload: AIChatMessageStartEventData,
+    context?: AIChatMessageStartContext,
+    eventId?: string | null
+  ) => void;
+  applyMessageChunk: (
+    payload: AIChatMessageChunkEventData,
+    eventId?: string | null
+  ) => void;
+  applyFileParseStart: (
+    payload: AIChatFileParseStartEventData,
+    eventId?: string | null
+  ) => void;
+  applyFileParseEnd: (
+    payload: AIChatFileParseEndEventData,
+    eventId?: string | null
+  ) => void;
+  applyFileParseError: (
+    payload: AIChatFileParseErrorEventData,
+    eventId?: string | null
+  ) => void;
+  applyMessageEnd: (payload: AIChatMessageEndEventData) => void;
+  applyStreamError: (
+    payload: AIChatErrorEventData,
+    fallbackConversationId: string | null
+  ) => void;
+  mergeMessages: (conversationId: string, messages: AIChatMessage[]) => void;
+  setActiveConversationId: (conversationId: string | null) => void;
+  setConversationRunningState: (
+    conversationId: string,
+    running: boolean,
+    activeMessageId?: string
+  ) => void;
+}
+
+export interface AIChatController {
+  store: StoreApi<AIChatControllerStore>;
+  conversations: AIChatConversation[];
+  pagination: AIChatPagination;
+  activeConversationId: string | null;
+  activeConversation: AIChatConversation | null;
+  messages: AIChatMessage[];
+  displayMessageIds: string[];
+  displayMessages: AIChatMessage[];
+  branchNavigationByMessageId: Map<string, ChatBranchNavigation>;
+  activeMessagePagination: AIChatPagination;
+  isLoadingList: boolean;
+  isLoadingMessages: boolean;
+  isLoadingOlderMessages: boolean;
+  isRecoveringMessages: boolean;
+  isStopping: boolean;
+  isSending: boolean;
+  error: string | null;
+  init: (conversationId?: string | null) => void;
+  refreshList: (params?: { page?: number; append?: boolean }) => Promise<void>;
+  select: (conversationId: string) => Promise<void>;
+  startNew: () => void;
+  remove: (conversationId: string) => Promise<void>;
+  rename: (conversationId: string, title: string) => Promise<void>;
+  loadOlderMessages: (conversationId?: string) => Promise<void>;
+  recoverStreamingConversation: (
+    conversationId: string,
+    options?: { conversation?: AIChatConversation; mode?: AIChatRecoveryMode }
+  ) => Promise<void>;
+  send: (payload: {
+    query: string;
+    model: AIChatModelSelection;
+    files?: AIChatMessageFile[];
+    parentId?: string | null;
+  }) => Promise<void>;
+  stop: () => Promise<void>;
+  regenerate: (messageId: string, model: AIChatModelSelection) => Promise<void>;
+  replaceRootMessage: (payload: {
+    messageId: string;
+    query?: string;
+    model?: AIChatModelSelection;
+  }) => Promise<void>;
+  switchBranch: (messageId: string) => void;
+}
+
+export type AIChatSetControllerState = (
+  updater: (current: AIChatControllerState) => AIChatControllerState
+) => void;
+
+export const DEFAULT_AICHAT_PAGINATION: AIChatPagination = {
+  page: 1,
+  limit: 20,
+  total: 0,
+  hasMore: false,
+};
+
+export const DEFAULT_AICHAT_MESSAGE_PAGINATION: AIChatPagination = {
+  page: 1,
+  limit: 100,
+  total: 0,
+  hasMore: false,
+};

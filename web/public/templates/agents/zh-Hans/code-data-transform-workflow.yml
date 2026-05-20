@@ -1,0 +1,205 @@
+---
+kind: app
+version: 1.0.0
+exported_from: zgi
+exported_at: '2026-05-15T00:00:00Z'
+app:
+  name: 代码数据转换
+  description: 使用代码节点规范化原始 JSON，再输出清洗后的结果。
+  icon: '{"icon":"CT","icon_background":"#3f3f46"}'
+  icon_type: text
+  mode: WORKFLOW
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    opening_statement_type: slogan
+    opening_slogan: ''
+    opening_statement: ''
+    opening_statement_enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      voice: ''
+      language: ''
+    speech_to_text:
+      enabled: false
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    conversation_history:
+      enabled: false
+      history_window_size: 6
+    file_upload:
+      enabled: false
+      allowed_file_types:
+      - image
+      - document
+      allowed_file_extensions:
+      - jpg
+      - jpeg
+      - png
+      - gif
+      - webp
+      - pdf
+      - doc
+      - docx
+      - txt
+      - md
+      - csv
+      - xlsx
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      number_limits: 5
+    webapp_workflow_config:
+      allow_view_run_detail: true
+      auto_expand_run_detail: false
+  graph:
+    nodes:
+    - id: note_runtime_guide
+      type: note
+      position:
+        x: 80
+        y: 40
+      width: 520
+      height: 240
+      data:
+        type: note
+        title: 运行说明
+        desc: ''
+        text: |-
+          运行说明
+
+          需配置。依赖：代码沙箱服务。输入包含 items 数组的 JSON；代码节点会规范化字段。
+
+          调试输入：
+          打开调试面板后，开始节点字段已经预填，可直接运行。
+          示例：
+          - 原始 JSON: {"items":[{"id":" 42 ","title":" 季度复盘 ","priority":"High"},{"id":" 43 ","title":"续约检查清单","priority":"normal"}]}
+
+          该备注仅用于说明，不参与执行。
+        theme: yellow
+        isInLoop: false
+        isInIteration: false
+    - id: start_node
+      type: custom
+      position:
+        x: 80
+        y: 280
+      width: 280
+      height: 88
+      data:
+        type: start
+        title: 开始
+        desc: 智能体入口节点
+        variables:
+        - type: paragraph
+          variable: raw_json
+          label: 原始 JSON
+          required: true
+          max_length: 8192
+          default: '{"items":[{"id":"  42 ","title":" 季度复盘 ","priority":"High"},{"id":"  43
+            ","title":"续约检查清单","priority":"normal"}]}'
+        unique: true
+        isInLoop: false
+        isInIteration: false
+    - id: code_node
+      type: custom
+      position:
+        x: 480
+        y: 280
+      width: 280
+      height: 92
+      data:
+        type: code
+        title: 代码
+        desc: ''
+        code: |
+          import json
+
+          def main(raw_json):
+              try:
+                  data = json.loads(raw_json) if isinstance(raw_json, str) else raw_json
+              except Exception:
+                  data = {"items": []}
+              items = data.get("items", []) if isinstance(data, dict) else []
+              normalized = []
+              for item in items:
+                  if not isinstance(item, dict):
+                      continue
+                  normalized.append({"id": str(item.get("id", "")).strip(), "title": str(item.get("title", "")).strip(), "priority": str(item.get("priority", "normal")).lower()})
+              return {"count": len(normalized), "normalized_json": json.dumps({"items": normalized}, ensure_ascii=False)}
+        code_language: python3
+        variables:
+        - variable: raw_json
+          value_selector:
+          - start_node
+          - raw_json
+          value_type: string
+        outputs:
+          count:
+            type: number
+            children:
+          normalized_json:
+            type: string
+            children:
+        outputKeyOrders:
+        - count
+        - normalized_json
+        isInLoop: false
+        isInIteration: false
+    - id: end_node
+      type: custom
+      position:
+        x: 880
+        y: 280
+      width: 280
+      height: 64
+      data:
+        type: end
+        title: 结束
+        desc: ''
+        outputs:
+        - variable: count
+          type: number
+          value_selector:
+          - code_node
+          - count
+        - variable: normalized_json
+          type: string
+          value_selector:
+          - code_node
+          - normalized_json
+        isInLoop: false
+        isInIteration: false
+    edges:
+    - id: start_node-source-code_node
+      source: start_node
+      target: code_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: code_node-source-end_node
+      source: code_node
+      target: end_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    viewport:
+      x: 0
+      y: 0
+      zoom: 0.8

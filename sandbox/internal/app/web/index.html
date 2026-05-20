@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>zgi-sandbox Control Console</title>
+    <link rel="stylesheet" href="/assets/app.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="side-rail">
+        <div class="brand-block">
+          <p class="eyebrow">ZGI native runtime</p>
+          <h1>zgi-sandbox</h1>
+          <p class="brand-copy">
+            A control room for execution, delivery, and runtime inspection.
+          </p>
+        </div>
+
+        <nav class="side-nav" id="side-nav" aria-label="Sandbox navigation"></nav>
+
+        <div class="rail-footer">
+          <div class="footer-chip">
+            <span class="chip-label">Mode</span>
+            <strong>Preview v1</strong>
+          </div>
+          <div class="footer-chip">
+            <span class="chip-label">Runtime</span>
+            <strong>Python + Node</strong>
+          </div>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <header class="hero">
+          <div class="hero-copy">
+            <p class="eyebrow">Execution foundation</p>
+            <h2>Run the sandbox plan like a product, not a document.</h2>
+            <p class="hero-text" id="hero-subtitle"></p>
+          </div>
+          <div class="hero-actions">
+            <button class="hero-button primary" data-entity="playground">
+              Open execution lab
+            </button>
+            <button class="hero-button" data-entity="phase-1">
+              Focus current delivery
+            </button>
+          </div>
+          <div class="highlight-strip" id="highlight-strip"></div>
+        </header>
+
+        <section class="workspace-section">
+          <div class="section-heading">
+            <p class="eyebrow">Runtime stack</p>
+            <h3>Choose the execution posture.</h3>
+          </div>
+          <div class="tile-row" id="runtime-grid"></div>
+        </section>
+
+        <section class="workspace-section workspace-grid">
+          <div class="section-stack" data-anchor="module-compat">
+            <div class="section-heading">
+              <p class="eyebrow">Control architecture</p>
+              <h3>Map every operator click to a managed control plane.</h3>
+            </div>
+            <div class="module-map" id="module-grid"></div>
+          </div>
+
+          <div class="section-stack" data-anchor="phase-1">
+            <div class="section-heading">
+              <p class="eyebrow">Delivery runway</p>
+              <h3>Sequence the roadmap without breaking the operator flow.</h3>
+            </div>
+            <div class="phase-strip" id="phase-strip"></div>
+          </div>
+        </section>
+
+        <section class="workspace-section" data-anchor="playground">
+          <div class="section-heading">
+            <p class="eyebrow">Execution lab</p>
+            <h3>Run compat and session execution from one operator surface.</h3>
+          </div>
+
+          <div class="playground">
+            <div class="playground-topbar">
+              <div class="language-toggle" role="tablist" aria-label="Language switcher">
+                <button class="toggle-pill is-active" data-language="python3">
+                  Python 3
+                </button>
+                <button class="toggle-pill" data-language="nodejs">
+                  Node.js
+                </button>
+              </div>
+
+              <label class="network-toggle">
+                <input type="checkbox" id="network-toggle" />
+                <span>Send `enable_network` in payload</span>
+              </label>
+            </div>
+
+            <div class="editor-grid">
+              <label class="editor-panel">
+                <span class="editor-label">Preload</span>
+                <textarea id="preload-input" spellcheck="false"></textarea>
+              </label>
+
+              <label class="editor-panel editor-panel-main">
+                <span class="editor-label">Code</span>
+                <textarea id="code-input" spellcheck="false"></textarea>
+              </label>
+            </div>
+
+            <div class="playground-actions">
+              <button class="hero-button primary" id="run-button">Run sample</button>
+              <button class="hero-button" id="reset-button">Reset example</button>
+              <p class="playground-note">
+                If a sandbox is selected below, code runs through the session exec plane. Otherwise it falls back to the compat endpoint.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section class="workspace-section workspace-grid" data-anchor="module-lifecycle">
+          <div class="section-stack">
+            <div class="section-heading">
+              <p class="eyebrow">Sandbox control</p>
+              <h3>Create, select, renew, and delete live sandboxes.</h3>
+            </div>
+
+            <div class="operator-card">
+              <div class="control-row">
+                <label class="compact-field">
+                  <span class="editor-label">Profile</span>
+                  <select id="sandbox-profile">
+                    <option value="session">session</option>
+                    <option value="interactive">interactive</option>
+                  </select>
+                </label>
+                <label class="compact-field">
+                  <span class="editor-label">Network policy</span>
+                  <select id="network-policy-select"></select>
+                </label>
+                <label class="compact-field">
+                  <span class="editor-label">Dependency profile</span>
+                  <select id="dependency-profile-select"></select>
+                </label>
+                <label class="compact-field compact-field-grow">
+                  <span class="editor-label">Workspace binding</span>
+                  <input id="workspace-binding-input" type="text" value="workflow-run-preview" />
+                </label>
+              </div>
+
+              <div class="control-row">
+                <label class="network-toggle">
+                  <input type="checkbox" id="sandbox-network-enabled" />
+                  <span>Allow policy-approved outbound network</span>
+                </label>
+
+                <button class="hero-button primary" id="create-sandbox-button">
+                  Create sandbox
+                </button>
+                <button class="hero-button" id="refresh-sandboxes-button">
+                  Refresh list
+                </button>
+              </div>
+
+              <div class="status-grid" id="active-sandbox-metrics"></div>
+
+              <div class="control-row">
+                <button class="hero-button" id="renew-sandbox-button">Renew active</button>
+                <button class="hero-button" id="delete-sandbox-button">Delete active</button>
+              </div>
+
+              <div class="list-shell" id="sandbox-list"></div>
+
+              <div class="control-row">
+                <label class="compact-field">
+                  <span class="editor-label">Interactive port</span>
+                  <input id="endpoint-port-input" type="number" value="3000" min="1" />
+                </label>
+                <button class="hero-button" id="resolve-endpoint-button">
+                  Resolve endpoint
+                </button>
+              </div>
+
+              <div class="list-shell" id="endpoint-shell"></div>
+            </div>
+          </div>
+
+          <div class="section-stack" data-anchor="module-policy">
+            <div class="section-heading">
+              <p class="eyebrow">Policy layer</p>
+              <h3>Inspect runtime, network, and dependency rules.</h3>
+            </div>
+
+            <div class="operator-card">
+              <div class="policy-grid" id="policy-grid"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="workspace-section workspace-grid" data-anchor="module-exec">
+          <div class="section-stack">
+            <div class="section-heading">
+              <p class="eyebrow">Workspace operations</p>
+              <h3>Run commands and manage files inside the active sandbox.</h3>
+            </div>
+
+            <div class="operator-card">
+              <div class="command-box">
+                <label class="compact-field compact-field-grow">
+                  <span class="editor-label">Command</span>
+                  <input id="command-input" type="text" value="pwd && ls -R" />
+                </label>
+                <button class="hero-button" id="run-command-button">Run command</button>
+              </div>
+
+              <div class="command-box">
+                <label class="compact-field compact-field-grow">
+                  <span class="editor-label">File path</span>
+                  <input id="file-path-input" type="text" value="notes/hello.txt" />
+                </label>
+              </div>
+
+              <label class="editor-panel">
+                <span class="editor-label">File content</span>
+                <textarea id="file-content-input" spellcheck="false">hello from the operator console</textarea>
+              </label>
+
+              <div class="control-row">
+                <button class="hero-button primary" id="save-file-button">Save file</button>
+                <button class="hero-button" id="load-file-button">Load file</button>
+                <button class="hero-button" id="delete-file-button">Delete file</button>
+              </div>
+
+              <div class="list-shell" id="file-list"></div>
+            </div>
+          </div>
+
+          <div class="section-stack" data-anchor="module-observer">
+            <div class="section-heading">
+              <p class="eyebrow">Observer feed</p>
+              <h3>Track lifecycle, exec, and file events for the active sandbox.</h3>
+            </div>
+
+            <div class="operator-card">
+              <div class="control-row">
+                <label class="compact-field">
+                  <span class="editor-label">Event type</span>
+                  <select id="event-type-filter">
+                    <option value="">all events</option>
+                    <option value="sandbox.created">sandbox.created</option>
+                    <option value="sandbox.renewed">sandbox.renewed</option>
+                    <option value="sandbox.endpoint.resolved">sandbox.endpoint.resolved</option>
+                    <option value="exec.code">exec.code</option>
+                    <option value="exec.command">exec.command</option>
+                    <option value="files.upload">files.upload</option>
+                    <option value="files.download">files.download</option>
+                    <option value="files.delete">files.delete</option>
+                  </select>
+                </label>
+                <button class="hero-button" id="refresh-events-button">Refresh events</button>
+                <button class="hero-button" id="refresh-policies-button">Refresh policies</button>
+              </div>
+              <div class="event-list" id="event-list"></div>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <aside class="inspector">
+        <div class="inspector-card">
+          <p class="eyebrow">Inspector</p>
+          <div class="inspector-meta">
+            <span class="meta-pill" id="inspector-category">Runtime</span>
+            <span class="meta-pill meta-pill-soft">right-side mapping active</span>
+          </div>
+          <h2 id="inspector-title">Loading...</h2>
+          <p class="inspector-summary" id="inspector-summary"></p>
+
+          <div class="metric-list" id="inspector-metrics"></div>
+
+          <div class="inspector-block">
+            <h3>Capabilities</h3>
+            <ul id="inspector-capabilities"></ul>
+          </div>
+
+          <div class="inspector-block">
+            <h3>Primary actions</h3>
+            <ul id="inspector-actions"></ul>
+          </div>
+
+          <div class="inspector-block execution-block">
+            <div class="execution-header">
+              <h3>Execution result</h3>
+              <span class="result-state" id="result-state">idle</span>
+            </div>
+
+            <div class="execution-metrics">
+              <div>
+                <span>Exit</span>
+                <strong id="result-exit">-</strong>
+              </div>
+              <div>
+                <span>Duration</span>
+                <strong id="result-duration">-</strong>
+              </div>
+              <div>
+                <span>Output</span>
+                <strong id="result-truncation">-</strong>
+              </div>
+            </div>
+
+            <div class="console-panel">
+              <span class="console-label">stdout</span>
+              <pre id="stdout-output">No execution yet.</pre>
+            </div>
+
+            <div class="console-panel">
+              <span class="console-label">stderr</span>
+              <pre id="stderr-output">No execution yet.</pre>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <script src="/assets/app.js" defer></script>
+  </body>
+</html>

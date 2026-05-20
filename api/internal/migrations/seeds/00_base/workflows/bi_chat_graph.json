@@ -1,0 +1,304 @@
+{
+    "edges": [
+        {
+            "data": {
+                "isInLoop": false,
+                "sourceType": "default",
+                "targetType": "default"
+            },
+            "id": "1763560345206-source-1763560352670-target",
+            "source": "1763560345206",
+            "sourceHandle": "source",
+            "target": "1763560352670",
+            "targetHandle": "target",
+            "type": "custom"
+        },
+        {
+            "data": {
+                "isInLoop": false,
+                "sourceType": "default",
+                "targetType": "default"
+            },
+            "id": "1763560352670-source-1763560350617-target",
+            "source": "1763560352670",
+            "sourceHandle": "source",
+            "target": "1763560350617",
+            "targetHandle": "target",
+            "type": "custom"
+        },
+        {
+            "data": {
+                "isInLoop": false,
+                "sourceType": "default",
+                "targetType": "default"
+            },
+            "id": "1763813414568-source-1763560381101-target",
+            "source": "1763813414568",
+            "sourceHandle": "source",
+            "target": "1763560381101",
+            "targetHandle": "target",
+            "type": "custom"
+        },
+        {
+            "data": {
+                "isInLoop": false,
+                "sourceType": "default",
+                "targetType": "default"
+            },
+            "id": "1763560350617-source-1763813923310-target",
+            "source": "1763560350617",
+            "sourceHandle": "source",
+            "target": "1763813923310",
+            "targetHandle": "target",
+            "type": "custom"
+        },
+        {
+            "data": {
+                "isInLoop": false,
+                "sourceType": "default",
+                "targetType": "default"
+            },
+            "id": "1763813923310-source-1763813414568-target",
+            "source": "1763813923310",
+            "sourceHandle": "source",
+            "target": "1763813414568",
+            "targetHandle": "target",
+            "type": "custom"
+        }
+    ],
+    "nodes": [
+        {
+            "data": {
+                "desc": "",
+                "title": "开始",
+                "type": "start",
+                "unique": true,
+                "variables": []
+            },
+            "dragging": false,
+            "height": 48,
+            "id": "1763560345206",
+            "measured": {
+                "height": 48,
+                "width": 280
+            },
+            "position": {
+                "x": 450,
+                "y": 350
+            },
+            "selected": false,
+            "type": "custom",
+            "width": 280
+        },
+        {
+            "data": {
+                "data": {
+                    "data_source": {
+                        "id": "45416197-ac99-4476-b1f5-dff43fa27f32",
+                        "name": "测试数据库1",
+                        "schema_name": "public",
+                        "type": "postgres"
+                    },
+                    "execution": {
+                        "max_retries": 0,
+                        "timeout_seconds": 30
+                    },
+                    "manual_sql": "{{#1763560352670.sql#}}",
+                    "table_selection": [
+                        {
+                            "id": "12772e77-1513-4f12-b3d0-b79e96fd5136",
+                            "label": "test_table1",
+                            "name": "zgi_base_tbl_5b2ca6093931450f8689dead21d88e98",
+                            "schema": "public",
+                            "table_id": 1630610
+                        }
+                    ]
+                },
+                "desc": "",
+                "title": "执行自定义SQL",
+                "type": "call-database"
+            },
+            "dragging": false,
+            "height": 124,
+            "id": "1763560350617",
+            "measured": {
+                "height": 124,
+                "width": 280
+            },
+            "position": {
+                "x": 1150,
+                "y": 350
+            },
+            "selected": false,
+            "type": "custom",
+            "width": 280
+        },
+        {
+            "data": {
+                "data": {
+                    "data_source": {
+                        "source": {
+                            "id": "45416197-ac99-4476-b1f5-dff43fa27f32",
+                            "name": "测试数据库1",
+                            "schema": "public",
+                            "type": "postgres"
+                        },
+                        "tables": [
+                            {
+                                "id": "12772e77-1513-4f12-b3d0-b79e96fd5136",
+                                "label": "test_table1",
+                                "name": "zgi_base_tbl_5b2ca6093931450f8689dead21d88e98",
+                                "schema": "public",
+                                "table_id": 1630610
+                            }
+                        ]
+                    },
+                    "execution": {
+                        "max_retries": 0,
+                        "timeout_seconds": 30
+                    },
+                    "model": {
+                        "completion_params": {},
+                        "mode": "chat",
+                        "name": "gpt-4o",
+                        "provider": "zgi/agicto/agicto"
+                    },
+                    "prompt": "{{#sys.query#}} "
+                },
+                "desc": "",
+                "title": "智能SQL生成",
+                "type": "sql-generator"
+            },
+            "dragging": false,
+            "height": 124,
+            "id": "1763560352670",
+            "measured": {
+                "height": 124,
+                "width": 280
+            },
+            "position": {
+                "x": 800,
+                "y": 350
+            },
+            "selected": false,
+            "type": "custom",
+            "width": 280
+        },
+        {
+            "data": {
+                "answer": "{{#1763813414568.text#}}",
+                "desc": "",
+                "title": "直接回复",
+                "type": "answer",
+                "variables": []
+            },
+            "dragging": false,
+            "height": 88,
+            "id": "1763560381101",
+            "measured": {
+                "height": 88,
+                "width": 280
+            },
+            "position": {
+                "x": 2140,
+                "y": 350
+            },
+            "selected": true,
+            "type": "custom",
+            "width": 280
+        },
+        {
+            "data": {
+                "context": {
+                    "enabled": false,
+                    "variable_selector": []
+                },
+                "desc": "",
+                "model": {
+                    "completion_params": {},
+                    "mode": "chat",
+                    "name": "gpt-4o",
+                    "provider": "zgi/agicto/agicto"
+                },
+                "prompt_config": {
+                    "jinja2_variables": []
+                },
+                "prompt_template": [
+                    {
+                        "role": "system",
+                        "text": "请根据以下数据进行分析总结：\n{{#1763560350617.rows#}}{{#1763560350617.row_count#}}{{#1763560350617.duration_ms#}}\n特殊需求：\n{{#1763813923310.text#}}"
+                    }
+                ],
+                "structured_output_enabled": false,
+                "title": "LLM",
+                "type": "llm",
+                "variables": [],
+                "vision": {
+                    "enabled": false
+                }
+            },
+            "height": 88,
+            "id": "1763813414568",
+            "measured": {
+                "height": 88,
+                "width": 280
+            },
+            "position": {
+                "x": 1810,
+                "y": 350
+            },
+            "selected": false,
+            "type": "custom",
+            "width": 280
+        },
+        {
+            "data": {
+                "context": {
+                    "enabled": false,
+                    "variable_selector": []
+                },
+                "desc": "",
+                "model": {
+                    "completion_params": {},
+                    "mode": "chat",
+                    "name": "qwen-turbo-latest",
+                    "provider": "zgi/agicto/agicto"
+                },
+                "prompt_config": {
+                    "jinja2_variables": []
+                },
+                "prompt_template": [
+                    {
+                        "role": "system",
+                        "text": "请根据用户输入内容，检索出用户的特殊需求：\n{{#sys.query#}}"
+                    }
+                ],
+                "structured_output_enabled": false,
+                "title": "检测特殊需求",
+                "type": "llm",
+                "variables": [],
+                "vision": {
+                    "enabled": false
+                }
+            },
+            "height": 88,
+            "id": "1763813923310",
+            "measured": {
+                "height": 88,
+                "width": 280
+            },
+            "position": {
+                "x": 1480,
+                "y": 350
+            },
+            "selected": false,
+            "type": "custom",
+            "width": 280
+        }
+    ],
+    "viewport": {
+        "x": -1280,
+        "y": -207.5,
+        "zoom": 1
+    }
+}

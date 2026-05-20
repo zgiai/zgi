@@ -1,0 +1,690 @@
+---
+kind: app
+version: 1.0.0
+exported_from: zgi
+exported_at: '2026-05-15T00:00:00Z'
+app:
+  name: Risk Intelligence Operations
+  description: Route intake, extract entities, consult knowledge, update records,
+    and advise next steps.
+  icon: '{"icon":"RI","icon_background":"#171717"}'
+  icon_type: text
+  mode: CONVERSATIONAL_WORKFLOW
+workflow:
+  conversation_variables:
+  - id: cv_entity_name
+    label: ''
+    name: entity_name
+    required: false
+    type: ''
+    value: ''
+    value_type: string
+    description: entity name
+  - id: cv_document_text
+    label: ''
+    name: document_text
+    required: false
+    type: ''
+    value: ''
+    value_type: string
+    description: document text
+  - id: cv_case_priority
+    label: ''
+    name: case_priority
+    required: false
+    type: ''
+    value: ''
+    value_type: string
+    description: case priority
+  environment_variables: []
+  features:
+    opening_statement_type: slogan
+    opening_slogan: ''
+    opening_statement: ''
+    opening_statement_enabled: false
+    suggested_questions:
+    - "New risk record: Acme renewal is overdue and the billing dispute is still open. Retrieve context and update the action recommendation."
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      voice: ''
+      language: ''
+    speech_to_text:
+      enabled: false
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    conversation_history:
+      enabled: true
+      history_window_size: 6
+    file_upload:
+      enabled: true
+      allowed_file_types:
+      - image
+      - document
+      allowed_file_extensions:
+      - jpg
+      - jpeg
+      - png
+      - gif
+      - webp
+      - pdf
+      - doc
+      - docx
+      - txt
+      - md
+      - csv
+      - xlsx
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      number_limits: 5
+    webapp_workflow_config:
+      allow_view_run_detail: true
+      auto_expand_run_detail: false
+  graph:
+    nodes:
+    - id: note_runtime_guide
+      type: note
+      position:
+        x: 80
+        y: 40
+      width: 520
+      height: 240
+      data:
+        type: note
+        title: Run guide
+        desc: ''
+        text: |-
+          Run guide
+
+          Setup required. Requires: OpenAI gpt-5.5 model, file input, knowledge base, database. This enterprise orchestration requires dataset and database bindings before real case runs.
+
+          Suggested test input:
+          Type this in the debug chat:
+          New risk record: Acme renewal is overdue and the billing dispute is still open. Retrieve context and update the action recommendation.
+          If the flow uses files, upload one sample file first.
+          You can also click the suggested question to start debugging.
+
+          This note is documentation only and is not executed.
+        theme: yellow
+        isInLoop: false
+        isInIteration: false
+    - id: start_node
+      type: custom
+      position:
+        x: 80
+        y: 280
+      width: 280
+      height: 88
+      data:
+        type: start
+        title: Start
+        desc: Agent start node
+        variables: []
+        unique: true
+        isInLoop: false
+        isInIteration: false
+    - id: route_llm
+      type: custom
+      position:
+        x: 360
+        y: 260
+      width: 280
+      height: 92
+      data:
+        type: llm
+        title: Route Intake
+        desc: ''
+        variables: []
+        model:
+          provider: openai
+          name: gpt-5.5
+          mode: chat
+          completion_params:
+            response_format: json_object
+        prompt_template:
+        - role: system
+          text: Classify the latest message. Return JSON with need_record_update,
+            need_analysis, need_advice, entity_name, and priority.
+        - role: user
+          text: |-
+            Latest message:
+            {{#sys.query#}}
+            Files: {{#sys.files#}}
+        prompt_config:
+          jinja2_variables: []
+        vision:
+          enabled: false
+        structured_output_enabled: false
+        reasoning_format: tagged
+        isInLoop: false
+        isInIteration: false
+    - id: route_parser
+      type: custom
+      position:
+        x: 700
+        y: 260
+      width: 280
+      height: 92
+      data:
+        type: json-parser
+        title: Parse Intake Route
+        desc: ''
+        input_selector:
+        - route_llm
+        - text
+        is_flatten_output: true
+        outputs:
+          need_record_update:
+            type: string
+          need_analysis:
+            type: string
+          need_advice:
+            type: string
+          entity_name:
+            type: string
+          priority:
+            type: string
+        error_strategy: default-value
+        default_value:
+        - key: need_record_update
+          type: string
+          value: ''
+        - key: need_analysis
+          type: string
+          value: ''
+        - key: need_advice
+          type: string
+          value: ''
+        - key: entity_name
+          type: string
+          value: ''
+        - key: priority
+          type: string
+          value: ''
+        retry_config:
+          enable: false
+          max_times: 3
+          interval: 1000
+        isInLoop: false
+        isInIteration: false
+    - id: assign_entity
+      type: custom
+      position:
+        x: 1040
+        y: 260
+      width: 280
+      height: 92
+      data:
+        type: assigner
+        title: Store Entity
+        desc: ''
+        version: '2'
+        items:
+        - variable_selector:
+          - conversation
+          - entity_name
+          input_type: variable
+          operation: over-write
+          value:
+          - route_parser
+          - entity_name
+        isInLoop: false
+        isInIteration: false
+    - id: record_branch
+      type: custom
+      position:
+        x: 1380
+        y: 260
+      width: 280
+      height: 92
+      data:
+        type: if-else
+        title: Record Update Branch
+        desc: ''
+        cases:
+        - case_id: update
+          conditions:
+          - id: condition_need_record_update
+            key: need_record_update
+            variable_selector:
+            - route_parser
+            - need_record_update
+            comparison_operator: contains
+            value: 'yes'
+            varType: string
+          logical_operator: and
+        targetBranches:
+        - id: update
+          name: Update Record
+        - id: 'false'
+          name: ELSE
+    - id: doc_extract_node
+      type: custom
+      position:
+        x: 1720
+        y: 100
+      width: 280
+      height: 92
+      data:
+        type: document-extractor
+        title: Document Extractor
+        desc: ''
+        variable_selector:
+        - sys
+        - files
+        is_array_file: true
+        isInLoop: false
+        isInIteration: false
+    - id: entity_llm
+      type: custom
+      position:
+        x: 2040
+        y: 100
+      width: 280
+      height: 92
+      data:
+        type: llm
+        title: Extract Record Facts
+        desc: ''
+        variables: []
+        model:
+          provider: openai
+          name: gpt-5.5
+          mode: chat
+          completion_params:
+            response_format: json_object
+        prompt_template:
+        - role: system
+          text: Extract durable facts, risk indicators, and missing fields from the
+            current message and any extracted document text. Return JSON.
+        - role: user
+          text: |-
+            Message: {{#sys.query#}}
+            Document: {{#doc_extract_node.text#}}
+        prompt_config:
+          jinja2_variables: []
+        vision:
+          enabled: false
+        structured_output_enabled: false
+        reasoning_format: tagged
+        isInLoop: false
+        isInIteration: false
+    - id: entity_parser
+      type: custom
+      position:
+        x: 2360
+        y: 100
+      width: 280
+      height: 92
+      data:
+        type: json-parser
+        title: Parse Record Facts
+        desc: ''
+        input_selector:
+        - entity_llm
+        - text
+        is_flatten_output: true
+        outputs:
+          summary:
+            type: string
+          risk_level:
+            type: string
+          next_owner:
+            type: string
+        error_strategy: default-value
+        default_value:
+        - key: summary
+          type: string
+          value: ''
+        - key: risk_level
+          type: string
+          value: ''
+        - key: next_owner
+          type: string
+          value: ''
+        retry_config:
+          enable: false
+          max_times: 3
+          interval: 1000
+        isInLoop: false
+        isInIteration: false
+    - id: time_node
+      type: custom
+      position:
+        x: 2680
+        y: 100
+      width: 280
+      height: 92
+      data:
+        type: tools
+        title: Current Time
+        desc: ''
+        provider_id: time
+        provider_type: builtin
+        tool_name: current_time
+        tool_parameters:
+          format:
+            type: constant
+            value: "%Y-%m-%d %H:%M:%S"
+          timezone:
+            type: constant
+            value: Asia/Shanghai
+        isInLoop: false
+        isInIteration: false
+    - id: sql_write_node
+      type: custom
+      position:
+        x: 3000
+        y: 100
+      width: 280
+      height: 92
+      data:
+        type: sql-generator
+        title: SQL Generator
+        desc: ''
+        data:
+          model:
+            provider: ''
+            name: ''
+            mode: chat
+            completion_params: {}
+          data_source:
+            source:
+              id: configure-data-source
+              name: Configure Data Source
+              schema: public
+              type: postgres
+            tables:
+            - id: configure-table
+              label: business_records
+              name: business_records
+              schema: public
+              table_id: 0
+              columns:
+              - id
+              - status
+              - owner
+              - priority
+              - updated_at
+          prompt: Create an INSERT or UPDATE SQL statement for entity {{#conversation.entity_name#}}
+            using summary {{#entity_parser.summary#}} and risk {{#entity_parser.risk_level#}}.
+          execution:
+            timeout_seconds: 60
+            max_retries: 3
+        isInLoop: false
+        isInIteration: false
+    - id: record_db_node
+      type: custom
+      position:
+        x: 3320
+        y: 100
+      width: 280
+      height: 92
+      data:
+        type: call-database
+        title: Call Database
+        desc: ''
+        data:
+          data_source:
+            id: configure-data-source
+            name: Configure Data Source
+            schema_name: public
+            type: postgres
+          table_selection:
+          - id: configure-table
+            label: business_records
+            name: business_records
+            schema: public
+            table_id: 0
+            columns:
+            - id
+            - status
+            - owner
+            - priority
+            - updated_at
+          manual_sql: "{{#sql_write_node.sql#}}"
+          execution:
+            timeout_seconds: 30
+            max_retries: 0
+        isInLoop: false
+        isInIteration: false
+    - id: knowledge_node
+      type: custom
+      position:
+        x: 1720
+        y: 420
+      width: 280
+      height: 92
+      data:
+        type: knowledge-retrieval
+        title: Knowledge Retrieval
+        desc: ''
+        query_variable_selector:
+        - sys
+        - query
+        dataset_ids:
+        - configure-dataset
+        retrieval_mode: multiple
+        multiple_retrieval_config:
+          top_k: 6
+          reranking_enable: false
+          score_threshold: 0.2
+          reranking_mode: reranking_model
+          reranking_model:
+            provider: ''
+            model: ''
+        isInLoop: false
+        isInIteration: false
+    - id: advice_llm
+      type: custom
+      position:
+        x: 3000
+        y: 420
+      width: 280
+      height: 92
+      data:
+        type: llm
+        title: Generate Operations Advice
+        desc: ''
+        variables: []
+        model:
+          provider: openai
+          name: gpt-5.5
+          mode: chat
+          completion_params: {}
+        prompt_template:
+        - role: system
+          text: Use route context, knowledge, and record status to produce next actions,
+            risks, and owner guidance.
+        - role: user
+          text: |-
+            Entity: {{#conversation.entity_name#}}
+            Priority: {{#route_parser.priority#}}
+            Knowledge: {{#knowledge_node.result#}}
+            Record rows: {{#record_db_node.rows#}}
+        prompt_config:
+          jinja2_variables: []
+        vision:
+          enabled: false
+        structured_output_enabled: false
+        reasoning_format: tagged
+        isInLoop: false
+        isInIteration: false
+    - id: answer_node
+      type: custom
+      position:
+        x: 3360
+        y: 420
+      width: 280
+      height: 88
+      data:
+        type: answer
+        title: Answer
+        desc: ''
+        variables: []
+        answer: "{{#advice_llm.text#}}"
+        isInLoop: false
+        isInIteration: false
+    edges:
+    - id: start_node-source-route_llm
+      source: start_node
+      target: route_llm
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: route_llm-source-route_parser
+      source: route_llm
+      target: route_parser
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: route_parser-source-assign_entity
+      source: route_parser
+      target: assign_entity
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: assign_entity-source-record_branch
+      source: assign_entity
+      target: record_branch
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: record_branch-update-doc_extract_node
+      source: record_branch
+      target: doc_extract_node
+      sourceHandle: update
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: doc_extract_node-source-entity_llm
+      source: doc_extract_node
+      target: entity_llm
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: entity_llm-source-entity_parser
+      source: entity_llm
+      target: entity_parser
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: entity_parser-source-time_node
+      source: entity_parser
+      target: time_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: time_node-source-sql_write_node
+      source: time_node
+      target: sql_write_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: sql_write_node-source-record_db_node
+      source: sql_write_node
+      target: record_db_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: record_db_node-source-advice_llm
+      source: record_db_node
+      target: advice_llm
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: record_branch-false-knowledge_node
+      source: record_branch
+      target: knowledge_node
+      sourceHandle: 'false'
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: knowledge_node-source-advice_llm
+      source: knowledge_node
+      target: advice_llm
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: advice_llm-source-answer_node
+      source: advice_llm
+      target: answer_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    viewport:
+      x: 0
+      y: 0
+      zoom: 0.8

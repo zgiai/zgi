@@ -1,0 +1,285 @@
+---
+kind: app
+version: 1.0.0
+exported_from: zgi
+exported_at: '2026-05-15T00:00:00Z'
+app:
+  name: SQL 洞察分析
+  description: 基于授权表结构生成 SQL，查询记录，并总结结果。
+  icon: '{"icon":"SQL","icon_background":"#475569"}'
+  icon_type: text
+  mode: WORKFLOW
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    opening_statement_type: slogan
+    opening_slogan: ''
+    opening_statement: ''
+    opening_statement_enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      voice: ''
+      language: ''
+    speech_to_text:
+      enabled: false
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    conversation_history:
+      enabled: false
+      history_window_size: 6
+    file_upload:
+      enabled: false
+      allowed_file_types:
+      - image
+      - document
+      allowed_file_extensions:
+      - jpg
+      - jpeg
+      - png
+      - gif
+      - webp
+      - pdf
+      - doc
+      - docx
+      - txt
+      - md
+      - csv
+      - xlsx
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      number_limits: 5
+    webapp_workflow_config:
+      allow_view_run_detail: true
+      auto_expand_run_detail: false
+  graph:
+    nodes:
+    - id: note_runtime_guide
+      type: note
+      position:
+        x: 80
+        y: 40
+      width: 520
+      height: 240
+      data:
+        type: note
+        title: 运行说明
+        desc: ''
+        text: |-
+          运行说明
+
+          需配置。依赖：Qwen qwen3.6-plus 模型、数据库。先绑定真实数据源和表，再运行 SQL 生成与查询。
+
+          调试输入：
+          打开调试面板后，开始节点字段已经预填，可直接运行。
+          示例：
+          - 业务问题: 按客户金额展示前 5 个未关闭续约风险，并总结下一步动作。
+
+          该备注仅用于说明，不参与执行。
+        theme: yellow
+        isInLoop: false
+        isInIteration: false
+    - id: start_node
+      type: custom
+      position:
+        x: 80
+        y: 280
+      width: 280
+      height: 88
+      data:
+        type: start
+        title: 开始
+        desc: 智能体入口节点
+        variables:
+        - type: paragraph
+          variable: input
+          label: 业务问题
+          required: true
+          max_length: 8192
+          default: 按客户金额展示前 5 个未关闭续约风险，并总结下一步动作。
+        unique: true
+        isInLoop: false
+        isInIteration: false
+    - id: sql_node
+      type: custom
+      position:
+        x: 420
+        y: 280
+      width: 280
+      height: 92
+      data:
+        type: sql-generator
+        title: SQL 生成
+        desc: ''
+        data:
+          model:
+            provider: ''
+            name: ''
+            mode: chat
+            completion_params: {}
+          data_source:
+            source:
+              id: configure-data-source
+              name: 配置数据源
+              schema: public
+              type: postgres
+            tables:
+            - id: configure-table
+              label: business_records
+              name: business_records
+              schema: public
+              table_id: 0
+              columns:
+              - id
+              - status
+              - owner
+              - priority
+              - updated_at
+          prompt: '根据这个业务问题生成安全的只读 SQL 查询：
+            {{#start_node.input#}}'
+          execution:
+            timeout_seconds: 60
+            max_retries: 3
+        isInLoop: false
+        isInIteration: false
+    - id: db_node
+      type: custom
+      position:
+        x: 760
+        y: 280
+      width: 280
+      height: 92
+      data:
+        type: call-database
+        title: 数据库查询
+        desc: ''
+        data:
+          data_source:
+            id: configure-data-source
+            name: 配置数据源
+            schema_name: public
+            type: postgres
+          table_selection:
+          - id: configure-table
+            label: business_records
+            name: business_records
+            schema: public
+            table_id: 0
+            columns:
+            - id
+            - status
+            - owner
+            - priority
+            - updated_at
+          manual_sql: "{{#sql_node.sql#}}"
+          execution:
+            timeout_seconds: 30
+            max_retries: 0
+        isInLoop: false
+        isInIteration: false
+    - id: llm_node
+      type: custom
+      position:
+        x: 1100
+        y: 280
+      width: 280
+      height: 92
+      data:
+        type: llm
+        title: 总结查询结果
+        desc: ''
+        variables: []
+        model:
+          provider: qwen
+          name: qwen3.6-plus
+          mode: chat
+          completion_params: {}
+        prompt_template:
+        - role: system
+          text: 总结数据库查询结果，突出模式，并识别后续问题。
+        - role: user
+          text: |-
+            问题：{{#start_node.input#}}
+            数据行：{{#db_node.rows#}}
+        prompt_config:
+          jinja2_variables: []
+        vision:
+          enabled: false
+        structured_output_enabled: false
+        reasoning_format: tagged
+        isInLoop: false
+        isInIteration: false
+    - id: end_node
+      type: custom
+      position:
+        x: 1440
+        y: 280
+      width: 280
+      height: 64
+      data:
+        type: end
+        title: 结束
+        desc: ''
+        outputs:
+        - variable: answer
+          type: string
+          value_selector:
+          - llm_node
+          - text
+        isInLoop: false
+        isInIteration: false
+    edges:
+    - id: start_node-source-sql_node
+      source: start_node
+      target: sql_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: sql_node-source-db_node
+      source: sql_node
+      target: db_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: db_node-source-llm_node
+      source: db_node
+      target: llm_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: llm_node-source-end_node
+      source: llm_node
+      target: end_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    viewport:
+      x: 0
+      y: 0
+      zoom: 0.8

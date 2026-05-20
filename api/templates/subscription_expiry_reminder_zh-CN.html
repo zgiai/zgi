@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <style>
+      body {
+        font-family: 'Arial', sans-serif;
+        line-height: 16pt;
+        color: #101828;
+        background-color: #e9ebf0;
+        margin: 0;
+        padding: 0;
+      }
+      .container {
+        width: 600px;
+        margin: 40px auto;
+        padding: 36px 48px;
+        background-color: #fcfcfd;
+        border-radius: 16px;
+        border: 1px solid #ffffff;
+        box-shadow: 0 2px 4px -2px rgba(9, 9, 11, 0.08);
+      }
+      .header {
+        margin-bottom: 24px;
+      }
+      .header img {
+        max-height: 100px;
+        width: auto;
+      }
+      .title {
+        font-weight: 600;
+        font-size: 24px;
+        line-height: 28.8px;
+        color: #101828;
+      }
+      .description {
+        font-size: 14px;
+        line-height: 20px;
+        color: #475467;
+        margin-top: 16px;
+      }
+      .highlight-box {
+        padding: 20px 24px;
+        border-radius: 12px;
+        background-color: #fef3c7;
+        border-left: 4px solid #f59e0b;
+        margin: 24px 0;
+      }
+      .highlight-text {
+        font-size: 16px;
+        font-weight: 600;
+        color: #92400e;
+      }
+      .info-row {
+        display: flex;
+        margin: 8px 0;
+        font-size: 14px;
+      }
+      .info-label {
+        color: #6b7280;
+        width: 120px;
+      }
+      .info-value {
+        color: #111827;
+        font-weight: 500;
+      }
+      .action-button {
+        display: inline-block;
+        padding: 12px 24px;
+        background-color: #2563eb;
+        color: #ffffff;
+        text-decoration: none;
+        border-radius: 8px;
+        font-weight: 600;
+        margin-top: 24px;
+      }
+      .tips {
+        line-height: 18px;
+        color: #6b7280;
+        font-size: 13px;
+        margin-top: 24px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <img src="{{logo_url}}" alt="{{brand_name}} Logo" />
+      </div>
+      <p class="title">订阅到期提醒</p>
+      <p class="description">尊敬的用户，</p>
+      <p class="description">您的订阅即将到期，请注意及时续订。</p>
+      
+      <div class="highlight-box">
+        <p class="highlight-text">您的订阅将在 {{days_before}} 天后到期</p>
+      </div>
+      
+      <div class="info-row">
+        <span class="info-label">订阅计划：</span>
+        <span class="info-value">{{plan_name}}</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">到期日期：</span>
+        <span class="info-value">{{expiry_date}}</span>
+      </div>
+      
+      <p class="description">为避免服务中断，请在到期前完成续订。</p>
+      
+      <p class="tips">如有任何问题，请联系我们的支持团队。如果您已完成续订，请忽略此邮件。</p>
+    </div>
+  </body>
+</html>

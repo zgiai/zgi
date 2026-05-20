@@ -1,0 +1,12 @@
+import type { ModelSelectorValue } from '@/components/common/model-selector';
+
+export const MAX_AICHAT_BRANCHES = 5;
+
+export interface AIChatModelValue extends ModelSelectorValue {
+  params?: Record<string, number | string | boolean | string[]>;
+}
+
+export interface AIChatSuggestion {
+  key: string;
+  text: string;
+}

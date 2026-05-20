@@ -1,0 +1,69 @@
+service:
+  extensions: [jaeger_storage, jaeger_query, healthcheckv2]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [jaeger_storage_exporter]
+  telemetry:
+    resource:
+      service.name: jaeger
+    metrics:
+      level: detailed
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
+    logs:
+      level: info
+
+extensions:
+  healthcheckv2:
+    use_v2: true
+    http:
+      endpoint: 0.0.0.0:13133
+
+  jaeger_query:
+    storage:
+      traces: main_store
+      traces_archive: archive_store
+    http:
+      endpoint: 0.0.0.0:16686
+
+  jaeger_storage:
+    backends:
+      main_store:
+        badger:
+          directories:
+            keys: /var/lib/jaeger/badger/main
+            values: /var/lib/jaeger/badger/main
+          ephemeral: false
+          ttl:
+            spans: ${env:JAEGER_BADGER_TTL:-168h}
+          metrics_update_interval: ${env:BADGER_METRICS_UPDATE_INTERVAL:-10s}
+      archive_store:
+        badger:
+          directories:
+            keys: /var/lib/jaeger/badger/archive
+            values: /var/lib/jaeger/badger/archive
+          ephemeral: false
+          ttl:
+            spans: ${env:JAEGER_BADGER_ARCHIVE_TTL:-720h}
+          metrics_update_interval: ${env:BADGER_METRICS_UPDATE_INTERVAL:-10s}
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+
+exporters:
+  jaeger_storage_exporter:
+    trace_storage: main_store

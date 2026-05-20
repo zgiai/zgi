@@ -1,0 +1,254 @@
+---
+kind: app
+version: 1.0.0
+exported_from: zgi
+exported_at: '2026-05-15T00:00:00Z'
+app:
+  name: 短信告警路由
+  description: 判断告警严重程度，并在紧急场景发送短信通知。
+  icon: '{"icon":"SA","icon_background":"#dc2626"}'
+  icon_type: text
+  mode: WORKFLOW
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    opening_statement_type: slogan
+    opening_slogan: ''
+    opening_statement: ''
+    opening_statement_enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      voice: ''
+      language: ''
+    speech_to_text:
+      enabled: false
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    conversation_history:
+      enabled: false
+      history_window_size: 6
+    file_upload:
+      enabled: false
+      allowed_file_types:
+      - image
+      - document
+      allowed_file_extensions:
+      - jpg
+      - jpeg
+      - png
+      - gif
+      - webp
+      - pdf
+      - doc
+      - docx
+      - txt
+      - md
+      - csv
+      - xlsx
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      number_limits: 5
+    webapp_workflow_config:
+      allow_view_run_detail: true
+      auto_expand_run_detail: false
+  graph:
+    nodes:
+    - id: note_runtime_guide
+      type: note
+      position:
+        x: 80
+        y: 40
+      width: 520
+      height: 240
+      data:
+        type: note
+        title: 运行说明
+        desc: ''
+        text: |-
+          运行说明
+
+          需配置。依赖：短信通道。先配置短信通道；severity=critical 时会发送短信。
+
+          调试输入：
+          打开调试面板后，开始节点字段已经预填，可直接运行。
+          示例：
+          - 告警消息: 企业结账服务的支付处理延迟超过约定阈值。
+          - 严重程度: critical
+          - 接收手机号: +15551234567
+
+          该备注仅用于说明，不参与执行。
+        theme: yellow
+        isInLoop: false
+        isInIteration: false
+    - id: start_node
+      type: custom
+      position:
+        x: 80
+        y: 280
+      width: 280
+      height: 88
+      data:
+        type: start
+        title: 开始
+        desc: 智能体入口节点
+        variables:
+        - type: paragraph
+          variable: alert
+          label: 告警消息
+          required: true
+          max_length: 8192
+          default: 企业结账服务的支付处理延迟超过约定阈值。
+        - type: text-input
+          variable: severity
+          label: 严重程度
+          required: true
+          max_length: 8192
+          default: critical
+        - type: text-input
+          variable: phone
+          label: 接收手机号
+          required: true
+          max_length: 8192
+          default: "+15551234567"
+        unique: true
+        isInLoop: false
+        isInIteration: false
+    - id: severity_branch
+      type: custom
+      position:
+        x: 420
+        y: 280
+      width: 280
+      height: 92
+      data:
+        type: if-else
+        title: 严重程度分支
+        desc: ''
+        cases:
+        - case_id: critical
+          conditions:
+          - id: condition_severity
+            key: severity
+            variable_selector:
+            - start_node
+            - severity
+            comparison_operator: contains
+            value: critical
+            varType: string
+          logical_operator: and
+        targetBranches:
+        - id: critical
+          name: 紧急
+        - id: 'false'
+          name: 其他
+    - id: sms_node
+      type: custom
+      position:
+        x: 760
+        y: 160
+      width: 280
+      height: 92
+      data:
+        type: notification-sms
+        title: 短信通知
+        desc: ''
+        phone: "{{#start_node.phone#}}"
+        template: notification_sms
+        notification_title: 紧急工作流提醒
+        link_code: "{{#sys.workflow_run_id#}}"
+        isInLoop: false
+        isInIteration: false
+    - id: sms_end
+      type: custom
+      position:
+        x: 1100
+        y: 160
+      width: 280
+      height: 64
+      data:
+        type: end
+        title: 结束
+        desc: ''
+        outputs:
+        - variable: status
+          type: string
+          value_selector:
+          - sms_node
+          - link_code
+        isInLoop: false
+        isInIteration: false
+    - id: no_sms_end
+      type: custom
+      position:
+        x: 760
+        y: 420
+      width: 280
+      height: 64
+      data:
+        type: end
+        title: 结束
+        desc: ''
+        outputs:
+        - variable: status
+          type: string
+          value_selector:
+          - start_node
+          - severity
+        isInLoop: false
+        isInIteration: false
+    edges:
+    - id: start_node-source-severity_branch
+      source: start_node
+      target: severity_branch
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: severity_branch-critical-sms_node
+      source: severity_branch
+      target: sms_node
+      sourceHandle: critical
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: sms_node-source-sms_end
+      source: sms_node
+      target: sms_end
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: severity_branch-false-no_sms_end
+      source: severity_branch
+      target: no_sms_end
+      sourceHandle: 'false'
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    viewport:
+      x: 0
+      y: 0
+      zoom: 0.8

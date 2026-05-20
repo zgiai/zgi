@@ -1,0 +1,151 @@
+package dto
+
+import (
+	"time"
+)
+
+type CreateAgentRequest struct {
+	Name        string `json:"name" binding:"required"`
+	IconType    string `json:"icon_type,omitempty"`
+	Icon        string `json:"icon,omitempty"`
+	AgentType   string `json:"agent_type,omitempty"`
+	Description string `json:"description,omitempty"`
+	WorkspaceID string `json:"workspace_id,omitempty"`
+	Internal    *bool  `json:"internal,omitempty"`
+}
+
+// Agents represents the application basic information and capability switches.
+type Agents struct {
+	ID                  string     `json:"id" db:"id"`
+	TenantID            string     `json:"tenant_id" db:"tenant_id"`
+	WorkspaceID         string     `json:"workspace_id" db:"workspace_id"`
+	Name                string     `json:"name" db:"name"`
+	Description         string     `json:"description" db:"description"`
+	AgentsType          string     `json:"agent_type" db:"agent_type"`
+	IconType            *string    `json:"icon_type,omitempty" db:"icon_type"`
+	Icon                *string    `json:"icon,omitempty" db:"icon"`
+	AgentsModelConfigID *string    `json:"agents_model_config_id,omitempty" db:"agents_model_config_id"`
+	WorkflowID          *string    `json:"workflow_id,omitempty" db:"workflow_id"`
+	WorkflowConfig      *string    `json:"workflow_config,omitempty" db:"workflow_config"` // JSONB field for conversational workflow config
+	EnableAPI           bool       `json:"enable_api" db:"enable_api"`
+	IsPublic            bool       `json:"is_public" db:"is_public"`
+	IsUniversal         bool       `json:"is_universal" db:"is_universal"`
+	WebAppStatus        string     `json:"web_app_status" db:"web_app_status"`
+	CreatedBy           *string    `json:"created_by,omitempty" db:"created_by"`
+	CreatedAt           time.Time  `json:"created_at" db:"created_at"`
+	UpdatedBy           *string    `json:"updated_by,omitempty" db:"updated_by"`
+	UpdatedAt           time.Time  `json:"updated_at" db:"updated_at"`
+	DeletedBy           *string    `json:"deleted_by,omitempty" db:"deleted_by"`
+	DeletedAt           *time.Time `json:"deleted_at,omitempty" db:"deleted_at"`
+}
+
+type WorkflowConfig struct {
+	WorkflowID        string                 `json:"workflow_id"`
+	VariableConfig    map[string]interface{} `json:"variable_config"`
+	HistoryWindowSize int                    `json:"history_window_size"`
+	ConversationID    string                 `json:"conversation_id"`
+}
+
+type GetAgentsListRequest struct {
+	Page          int    `form:"page" json:"page"`
+	PageSize      int    `form:"pageSize" json:"pageSize"`
+	Limit         int    `form:"limit" json:"limit"`
+	WorkspaceID   string `form:"workspace_id" json:"workspace_id"`
+	Name          string `form:"name" json:"name"`
+	Keyword       string `form:"keyword" json:"keyword"`
+	IsCreatedByMe bool   `form:"is_created_by_me" json:"is_created_by_me"`
+	AgentType     string `form:"agent_type" json:"agent_type"`
+	Internal      *bool  `form:"internal" json:"internal"`
+}
+
+type GetRunnableWebAppsRequest struct {
+	WorkspaceID string `form:"workspace_id" json:"workspace_id"`
+}
+
+type RunnableWebAppMetaData struct {
+	Name      string  `json:"name"`
+	Icon      *string `json:"icon"`
+	IconType  *string `json:"icon_type"`
+	IconUrl   string  `json:"icon_url"`
+	Desc      string  `json:"desc"`
+	AgentType string  `json:"agent_type"`
+}
+
+type RunnableWebAppItem struct {
+	AgentID      string                 `json:"agent_id"`
+	WorkspaceID  string                 `json:"workspace_id"`
+	WebAppID     string                 `json:"web_app_id"`
+	WebAppStatus string                 `json:"web_app_status"`
+	MetaData     RunnableWebAppMetaData `json:"meta_data"`
+}
+
+type RunnableWebAppsResponse struct {
+	Items []RunnableWebAppItem `json:"items"`
+}
+
+// AgentListItem represents a single agent in the list response
+type AgentListItem struct {
+	ID           string  `json:"id"`
+	Name         string  `json:"name"`
+	Description  string  `json:"description"`
+	AgentType    string  `json:"agent_type"`
+	TenantID     string  `json:"tenant_id"`
+	WorkspaceID  string  `json:"workspace_id"`
+	IconType     *string `json:"icon_type,omitempty"`
+	Icon         *string `json:"icon,omitempty"`
+	IconUrl      string  `json:"icon_url,omitempty"`
+	IsPublic     bool    `json:"is_public"`
+	IsPublished  bool    `json:"is_published"`
+	WebAppStatus string  `json:"web_app_status"`
+	CreatedBy    *string `json:"created_by,omitempty"`
+	CreatedAt    int64   `json:"created_at"`
+	UpdatedAt    int64   `json:"updated_at"`
+	Internal     bool    `json:"internal"`
+	CanEdit      bool    `json:"can_edit"` // Indicates if current user can edit this agent
+}
+
+// AgentsListResponse represents the paginated response for agent list queries
+type AgentsListResponse struct {
+	Page    int             `json:"page"`
+	Limit   int             `json:"limit"`
+	Total   int64           `json:"total"`
+	HasMore bool            `json:"has_more"`
+	Data    []AgentListItem `json:"data"`
+}
+
+// AgentDetailResponse represents the detailed response for a single agent
+type AgentDetailResponse struct {
+	ID           string                 `json:"id"`
+	Name         string                 `json:"name"`
+	Description  string                 `json:"description"`
+	AgentType    string                 `json:"agent_type"`
+	IconType     *string                `json:"icon_type,omitempty"`
+	Icon         *string                `json:"icon,omitempty"`
+	EnableAPI    bool                   `json:"enable_api"`
+	CreatedBy    *string                `json:"created_by,omitempty"`
+	UpdatedBy    *string                `json:"updated_by,omitempty"`
+	CreatedAt    int64                  `json:"created_at"`
+	UpdatedAt    int64                  `json:"updated_at"`
+	IsPublished  bool                   `json:"is_published"`
+	WebAppStatus string                 `json:"web_app_status"`
+	Permission   *string                `json:"permission,omitempty"`
+	Internal     bool                   `json:"internal"`
+	IsEditor     bool                   `json:"is_editor"`
+	CanEdit      bool                   `json:"can_edit"` // Indicates if current user can edit this agent
+	Workflow     interface{}            `json:"workflow,omitempty"`
+	AgentConfig  interface{}            `json:"agent_config,omitempty"`
+	Tenant       map[string]interface{} `json:"tenant,omitempty"`
+	OwnerAccount map[string]interface{} `json:"owner_account,omitempty"`
+}
+
+type UpdateWebAppStatusRequest struct {
+	Status string `json:"status" binding:"required"`
+	Reason string `json:"reason,omitempty"`
+}
+
+type WebAppStatusResponse struct {
+	AgentID      string `json:"agent_id"`
+	WebAppID     string `json:"web_app_id"`
+	WebAppStatus string `json:"web_app_status"`
+	UpdatedAt    int64  `json:"updated_at"`
+}

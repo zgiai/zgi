@@ -1,0 +1,122 @@
+{
+    "edges": [
+        {
+            "data": {
+                "isInLoop": false,
+                "sourceType": "default",
+                "targetType": "default"
+            },
+            "id": "start-source-imagegen-target",
+            "source": "start",
+            "sourceHandle": "source",
+            "target": "imagegen",
+            "targetHandle": "target",
+            "type": "custom"
+        },
+        {
+            "data": {
+                "isInLoop": false,
+                "sourceType": "default",
+                "targetType": "default"
+            },
+            "id": "imagegen-source-answer-target",
+            "source": "imagegen",
+            "sourceHandle": "source",
+            "target": "answer",
+            "targetHandle": "target",
+            "type": "custom"
+        }
+    ],
+    "nodes": [
+        {
+            "data": {
+                "desc": "",
+                "title": "Start",
+                "type": "start",
+                "unique": true,
+                "variables": []
+            },
+            "id": "start",
+            "measured": {
+                "height": 42,
+                "width": 280
+            },
+            "position": {
+                "x": 180,
+                "y": 280
+            },
+            "selected": false,
+            "type": "custom",
+            "width": 280
+        },
+        {
+            "data": {
+                "default_value": [],
+                "desc": "",
+                "error_strategy": "fail-branch",
+                "generation": {
+                    "n": 1,
+                    "quality": "",
+                    "size": "1024x1024",
+                    "style": ""
+                },
+                "model": {
+                    "name": "qwen-image-2.0",
+                    "provider": "qwen"
+                },
+                "output": {
+                    "lifecycle": "persistent"
+                },
+                "prompt": "{{#sys.query#}}",
+                "prompt_config": {
+                    "template_variables": []
+                },
+                "retry_config": {
+                    "enable": false,
+                    "interval": 0,
+                    "max_times": 0
+                },
+                "title": "Image Generation",
+                "type": "image-gen"
+            },
+            "id": "imagegen",
+            "measured": {
+                "height": 88,
+                "width": 280
+            },
+            "position": {
+                "x": 510,
+                "y": 280
+            },
+            "selected": false,
+            "type": "custom",
+            "width": 280
+        },
+        {
+            "data": {
+                "answer": "{{#imagegen.files#}}",
+                "desc": "",
+                "title": "Answer",
+                "type": "answer",
+                "variables": []
+            },
+            "id": "answer",
+            "measured": {
+                "height": 92,
+                "width": 280
+            },
+            "position": {
+                "x": 880,
+                "y": 280
+            },
+            "selected": false,
+            "type": "custom",
+            "width": 280
+        }
+    ],
+    "viewport": {
+        "x": -170,
+        "y": 257,
+        "zoom": 0.8
+    }
+}

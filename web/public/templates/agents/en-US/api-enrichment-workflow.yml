@@ -1,0 +1,295 @@
+---
+kind: app
+version: 1.0.0
+exported_from: zgi
+exported_at: '2026-05-15T00:00:00Z'
+app:
+  name: API Enrichment Workflow
+  description: Call an HTTP endpoint, parse the response, and produce an enriched
+    brief.
+  icon: '{"icon":"API","icon_background":"#0369a1"}'
+  icon_type: text
+  mode: WORKFLOW
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    opening_statement_type: slogan
+    opening_slogan: ''
+    opening_statement: ''
+    opening_statement_enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      voice: ''
+      language: ''
+    speech_to_text:
+      enabled: false
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    conversation_history:
+      enabled: false
+      history_window_size: 6
+    file_upload:
+      enabled: false
+      allowed_file_types:
+      - image
+      - document
+      allowed_file_extensions:
+      - jpg
+      - jpeg
+      - png
+      - gif
+      - webp
+      - pdf
+      - doc
+      - docx
+      - txt
+      - md
+      - csv
+      - xlsx
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      number_limits: 5
+    webapp_workflow_config:
+      allow_view_run_detail: true
+      auto_expand_run_detail: false
+  graph:
+    nodes:
+    - id: note_runtime_guide
+      type: note
+      position:
+        x: 80
+        y: 40
+      width: 520
+      height: 240
+      data:
+        type: note
+        title: Run guide
+        desc: ''
+        text: |-
+          Run guide
+
+          Ready. Requires: OpenAI gpt-5.5 model and outbound network. The HTTP node uses GitHub public search by default; replace it with an internal API for enterprise use.
+
+          Suggested test input:
+          The Start node fields are prefilled. Open Debug and run the defaults directly.
+          Example:
+          - Record to enrich: react table sorting
+
+          This note is documentation only and is not executed.
+        theme: blue
+        isInLoop: false
+        isInIteration: false
+    - id: start_node
+      type: custom
+      position:
+        x: 80
+        y: 280
+      width: 280
+      height: 88
+      data:
+        type: start
+        title: Start
+        desc: Agent start node
+        variables:
+        - type: paragraph
+          variable: input
+          label: Record to enrich
+          required: true
+          max_length: 8192
+          default: react table sorting
+        unique: true
+        isInLoop: false
+        isInIteration: false
+    - id: http_node
+      type: custom
+      position:
+        x: 420
+        y: 280
+      width: 280
+      height: 92
+      data:
+        type: http-request
+        title: HTTP Request
+        desc: ''
+        method: GET
+        url: https://api.github.com/search/repositories
+        params:
+        - key: q
+          value: "{{#start_node.input#}}"
+        - key: per_page
+          value: '3'
+        headers:
+        - key: Accept
+          value: application/json
+        body:
+          type: none
+          data: []
+        timeout:
+          max_connect_timeout: 0
+          max_read_timeout: 0
+          max_write_timeout: 0
+          connect: 10
+          read: 60
+          write: 10
+        retry_config:
+          retry_enabled: false
+          max_retries: 3
+          retry_interval: 1000
+        error_strategy: default-value
+        default_value:
+        - key: body
+          type: string
+          value: '{"status":"fallback","summary":"Configure the HTTP endpoint."}'
+        - key: status_code
+          type: number
+          value: '200'
+        - key: headers
+          type: object
+          value: "{}"
+        isInLoop: false
+        isInIteration: false
+    - id: api_parser
+      type: custom
+      position:
+        x: 760
+        y: 280
+      width: 280
+      height: 92
+      data:
+        type: json-parser
+        title: Parse API Response
+        desc: ''
+        input_selector:
+        - http_node
+        - body
+        is_flatten_output: true
+        outputs:
+          total_count:
+            type: number
+          items:
+            type: array[object]
+        error_strategy: default-value
+        default_value:
+        - key: total_count
+          type: number
+          value: '0'
+        - key: items
+          type: array[object]
+          value: "[]"
+        retry_config:
+          enable: false
+          max_times: 3
+          interval: 1000
+        isInLoop: false
+        isInIteration: false
+    - id: llm_node
+      type: custom
+      position:
+        x: 1100
+        y: 280
+      width: 280
+      height: 92
+      data:
+        type: llm
+        title: Enrichment Brief
+        desc: ''
+        variables: []
+        model:
+          provider: openai
+          name: gpt-5.5
+          mode: chat
+          completion_params: {}
+        prompt_template:
+        - role: system
+          text: Combine the original request and API response into a concise enrichment
+            brief.
+        - role: user
+          text: |-
+            Original request:
+            {{#start_node.input#}}
+
+            GitHub repository search count: {{#api_parser.total_count#}}
+            Top items: {{#api_parser.items#}}
+        prompt_config:
+          jinja2_variables: []
+        vision:
+          enabled: false
+        structured_output_enabled: false
+        reasoning_format: tagged
+        isInLoop: false
+        isInIteration: false
+    - id: end_node
+      type: custom
+      position:
+        x: 1440
+        y: 280
+      width: 280
+      height: 64
+      data:
+        type: end
+        title: End
+        desc: ''
+        outputs:
+        - variable: brief
+          type: string
+          value_selector:
+          - llm_node
+          - text
+        isInLoop: false
+        isInIteration: false
+    edges:
+    - id: start_node-source-http_node
+      source: start_node
+      target: http_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: http_node-source-api_parser
+      source: http_node
+      target: api_parser
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: api_parser-source-llm_node
+      source: api_parser
+      target: llm_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: llm_node-source-end_node
+      source: llm_node
+      target: end_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    viewport:
+      x: 0
+      y: 0
+      zoom: 0.8

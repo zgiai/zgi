@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+usage() {
+  cat <<'EOF'
+Usage: ./dev/start-docker [--china]
+
+Options:
+  --china   Use recommended China mainland mirrors for Docker builds.
+EOF
+}
+
+configure_china_build_env() {
+  export BUILD_REGION=cn
+  export APT_MIRROR="${APT_MIRROR:-mirrors.aliyun.com}"
+  export APT_SECURITY_MIRROR="${APT_SECURITY_MIRROR:-mirrors.aliyun.com}"
+  export APK_MIRROR="${APK_MIRROR:-mirrors.aliyun.com}"
+  export NPM_REGISTRY="${NPM_REGISTRY:-https://registry.npmmirror.com}"
+  export PIP_INDEX_URL="${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}"
+  export UV_INDEX_URL="${UV_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}"
+  export GOPROXY="${GOPROXY:-https://goproxy.cn,direct}"
+  echo "[start-docker] build region: china"
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --china)
+      configure_china_build_env
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "[start-docker] unknown argument: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
+
+echo "[start-docker] bootstrap repository"
+"$ROOT/dev/bootstrap"
+
+cd "$ROOT/docker"
+
+docker compose --env-file .env up -d --build

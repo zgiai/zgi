@@ -1,0 +1,50 @@
+# Git
+.git
+.gitignore
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Build artifacts (keep bin/ for pre-built binary)
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test files
+*_test.go
+*.test
+
+# Documentation
+*.md
+!go.md
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Development files
+.env
+.env.*
+*.log
+
+# Temporary files
+tmp/
+temp/
+
+# Third party (if not needed in build)
+third/
+
+# Examples (optional - remove if needed in container)
+examples/
+
+# Workspace (local development)
+workspace/
+
+# Scripts (not needed in container)
+scripts/

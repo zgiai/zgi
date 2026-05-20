@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+display_path() {
+  local target_path="$1"
+  echo "${target_path#$ROOT/}"
+}
+
+copy_if_missing() {
+  local source_path="$1"
+  local target_path="$2"
+
+  if [ ! -f "$source_path" ]; then
+    echo "[bootstrap] missing template: $source_path" >&2
+    exit 1
+  fi
+
+  if [ -f "$target_path" ]; then
+    echo "[bootstrap] keep existing $(display_path "$target_path")"
+    return 0
+  fi
+
+  mkdir -p "$(dirname "$target_path")"
+  cp "$source_path" "$target_path"
+  echo "[bootstrap] created $(display_path "$target_path")"
+}
+
+echo "[bootstrap] sync submodules"
+git -C "$ROOT" submodule sync
+git -C "$ROOT" submodule update --init --remote --merge
+
+copy_if_missing "$ROOT/docker/.env.example" "$ROOT/docker/.env"
+copy_if_missing "$ROOT/api/.env.example" "$ROOT/api/.env"
+copy_if_missing "$ROOT/api/.env.docker.example" "$ROOT/api/.env.docker"
+copy_if_missing "$ROOT/web/.env.example" "$ROOT/web/.env.local"
+copy_if_missing "$ROOT/sandbox/.env.example" "$ROOT/sandbox/.env"
+copy_if_missing "$ROOT/plugin-runner/.env.example" "$ROOT/plugin-runner/.env"
+
+echo "[bootstrap] generate docker compose"
+"$ROOT/docker/generate_docker_compose"
+
+echo "[bootstrap] done"

@@ -1,0 +1,38 @@
+services:
+  zgi-web:
+    image: ${WEB_IMAGE:-zgi-web:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BASE_PATH: ${BASE_PATH:-${NEXT_PUBLIC_BASE_PATH:-}}
+        NEXT_PUBLIC_BASE_PATH: ${BASE_PATH:-${NEXT_PUBLIC_BASE_PATH:-}}
+        NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-}
+        NEXT_PUBLIC_BRAND_NAME: ${NEXT_PUBLIC_BRAND_NAME:-}
+        NEXT_PUBLIC_LOGO_URL: ${NEXT_PUBLIC_LOGO_URL:-}
+        NEXT_PUBLIC_DARK_LOGO_URL: ${NEXT_PUBLIC_DARK_LOGO_URL:-}
+        NEXT_PUBLIC_FAVICON_URL: ${NEXT_PUBLIC_FAVICON_URL:-}
+        NEXT_PUBLIC_ICON_TEXT: ${NEXT_PUBLIC_ICON_TEXT:-}
+        NEXT_PUBLIC_IS_CLOUD: ${NEXT_PUBLIC_IS_CLOUD:-}
+        CUSTOMER_OVERLAY_DIR: ${CUSTOMER_OVERLAY_DIR:-}
+    container_name: ${WEB_CONTAINER_NAME:-zgi-web}
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    env_file:
+      - ${DOCKER_ENV_FILE:-.env}
+    environment:
+      BASE_PATH: ${BASE_PATH:-${NEXT_PUBLIC_BASE_PATH:-}}
+      NEXT_PUBLIC_BASE_PATH: ${BASE_PATH:-${NEXT_PUBLIC_BASE_PATH:-}}
+      TZ: ${TZ:-Asia/Shanghai}
+      PM2_INSTANCES: ${PM2_INSTANCES:-2}
+      NEXT_TELEMETRY_DISABLED: ${NEXT_TELEMETRY_DISABLED:-1}
+      NEXT_PUBLIC_IS_CLOUD: ${NEXT_PUBLIC_IS_CLOUD:-}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - node -e "const bp=(process.env.NEXT_PUBLIC_BASE_PATH||process.env.BASE_PATH||'').replace(/\/+$/,'');const p=(bp?bp:'')+'/env.js';require('http').get('http://127.0.0.1:3000'+p,res=>process.exit(res.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s

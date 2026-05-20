@@ -1,0 +1,293 @@
+---
+kind: app
+version: 1.0.0
+exported_from: zgi
+exported_at: '2026-05-15T00:00:00Z'
+app:
+  name: Service Request Triage
+  description: Classify an incoming request and route it to the right response path.
+  icon: '{"icon":"ST","icon_background":"#0284c7"}'
+  icon_type: text
+  mode: CONVERSATIONAL_WORKFLOW
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    opening_statement_type: slogan
+    opening_slogan: ''
+    opening_statement: ''
+    opening_statement_enabled: false
+    suggested_questions:
+    - "A customer reports production API timeouts for 30 minutes affecting checkout. Which handling path should we use?"
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      voice: ''
+      language: ''
+    speech_to_text:
+      enabled: false
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    conversation_history:
+      enabled: true
+      history_window_size: 6
+    file_upload:
+      enabled: false
+      allowed_file_types:
+      - image
+      - document
+      allowed_file_extensions:
+      - jpg
+      - jpeg
+      - png
+      - gif
+      - webp
+      - pdf
+      - doc
+      - docx
+      - txt
+      - md
+      - csv
+      - xlsx
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      number_limits: 5
+    webapp_workflow_config:
+      allow_view_run_detail: true
+      auto_expand_run_detail: false
+  graph:
+    nodes:
+    - id: note_runtime_guide
+      type: note
+      position:
+        x: 80
+        y: 40
+      width: 520
+      height: 240
+      data:
+        type: note
+        title: Run guide
+        desc: ''
+        text: |-
+          Run guide
+
+          Ready. Requires: OpenAI gpt-5.5 model. Enter a service request; the flow routes urgent vs. standard handling.
+
+          Suggested test input:
+          Type this in the debug chat:
+          A customer reports production API timeouts for 30 minutes affecting checkout. Which handling path should we use?
+          You can also click the suggested question to start debugging.
+
+          This note is documentation only and is not executed.
+        theme: blue
+        isInLoop: false
+        isInIteration: false
+    - id: start_node
+      type: custom
+      position:
+        x: 80
+        y: 280
+      width: 280
+      height: 88
+      data:
+        type: start
+        title: Start
+        desc: Agent start node
+        variables: []
+        unique: true
+        isInLoop: false
+        isInIteration: false
+    - id: route_llm
+      type: custom
+      position:
+        x: 420
+        y: 280
+      width: 280
+      height: 92
+      data:
+        type: llm
+        title: Classify Request
+        desc: ''
+        variables: []
+        model:
+          provider: openai
+          name: gpt-5.5
+          mode: chat
+          completion_params:
+            response_format: json_object
+        prompt_template:
+        - role: system
+          text: Classify the latest request as urgent or standard. Return JSON with
+            route and reason.
+        - role: user
+          text: "{{#sys.query#}}"
+        prompt_config:
+          jinja2_variables: []
+        vision:
+          enabled: false
+        structured_output_enabled: false
+        reasoning_format: tagged
+        isInLoop: false
+        isInIteration: false
+    - id: route_parser
+      type: custom
+      position:
+        x: 740
+        y: 280
+      width: 280
+      height: 92
+      data:
+        type: json-parser
+        title: Parse Route
+        desc: ''
+        input_selector:
+        - route_llm
+        - text
+        is_flatten_output: true
+        outputs:
+          route:
+            type: string
+          reason:
+            type: string
+        error_strategy: default-value
+        default_value:
+        - key: route
+          type: string
+          value: ''
+        - key: reason
+          type: string
+          value: ''
+        retry_config:
+          enable: false
+          max_times: 3
+          interval: 1000
+        isInLoop: false
+        isInIteration: false
+    - id: route_branch
+      type: custom
+      position:
+        x: 1040
+        y: 280
+      width: 280
+      height: 92
+      data:
+        type: if-else
+        title: Route Branch
+        desc: ''
+        cases:
+        - case_id: urgent
+          conditions:
+          - id: condition_route
+            key: route
+            variable_selector:
+            - route_parser
+            - route
+            comparison_operator: contains
+            value: urgent
+            varType: string
+          logical_operator: and
+        targetBranches:
+        - id: urgent
+          name: Urgent
+        - id: 'false'
+          name: ELSE
+    - id: urgent_answer
+      type: custom
+      position:
+        x: 1380
+        y: 180
+      width: 280
+      height: 88
+      data:
+        type: answer
+        title: Answer
+        desc: ''
+        variables: []
+        answer: |-
+          This looks urgent. Reason: {{#route_parser.reason#}}
+
+          Suggested next step: escalate to the responsible owner and collect the required context.
+        isInLoop: false
+        isInIteration: false
+    - id: standard_answer
+      type: custom
+      position:
+        x: 1380
+        y: 420
+      width: 280
+      height: 88
+      data:
+        type: answer
+        title: Answer
+        desc: ''
+        variables: []
+        answer: |-
+          This can follow the standard service path. Reason: {{#route_parser.reason#}}
+
+          Suggested next step: confirm missing details and proceed with the normal workflow.
+        isInLoop: false
+        isInIteration: false
+    edges:
+    - id: start_node-source-route_llm
+      source: start_node
+      target: route_llm
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: route_llm-source-route_parser
+      source: route_llm
+      target: route_parser
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: route_parser-source-route_branch
+      source: route_parser
+      target: route_branch
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: route_branch-urgent-urgent_answer
+      source: route_branch
+      target: urgent_answer
+      sourceHandle: urgent
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: route_branch-false-standard_answer
+      source: route_branch
+      target: standard_answer
+      sourceHandle: 'false'
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    viewport:
+      x: 0
+      y: 0
+      zoom: 0.8

@@ -1,0 +1,8 @@
+.git
+.gitignore
+.zgi-sandbox-data
+tmp
+dist
+bin
+node_modules
+coverage

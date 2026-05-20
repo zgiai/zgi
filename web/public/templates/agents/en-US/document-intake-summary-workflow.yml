@@ -1,0 +1,228 @@
+---
+kind: app
+version: 1.0.0
+exported_from: zgi
+exported_at: '2026-05-15T00:00:00Z'
+app:
+  name: Document Intake Summary
+  description: Extract uploaded files, summarize key facts, and return a structured
+    intake note.
+  icon: '{"icon":"DI","icon_background":"#ea580c"}'
+  icon_type: text
+  mode: WORKFLOW
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    opening_statement_type: slogan
+    opening_slogan: ''
+    opening_statement: ''
+    opening_statement_enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      voice: ''
+      language: ''
+    speech_to_text:
+      enabled: false
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    conversation_history:
+      enabled: false
+      history_window_size: 6
+    file_upload:
+      enabled: true
+      allowed_file_types:
+      - image
+      - document
+      allowed_file_extensions:
+      - jpg
+      - jpeg
+      - png
+      - gif
+      - webp
+      - pdf
+      - doc
+      - docx
+      - txt
+      - md
+      - csv
+      - xlsx
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      number_limits: 5
+    webapp_workflow_config:
+      allow_view_run_detail: true
+      auto_expand_run_detail: false
+  graph:
+    nodes:
+    - id: note_runtime_guide
+      type: note
+      position:
+        x: 80
+        y: 40
+      width: 520
+      height: 240
+      data:
+        type: note
+        title: Run guide
+        desc: ''
+        text: |-
+          Run guide
+
+          Ready. Requires: OpenAI gpt-5.5 model, file input. Upload documents at run time; the flow extracts text and summarizes intake facts.
+
+          Suggested test input:
+          Upload a PDF/TXT/DOCX/MD sample file in the debug panel, such as meeting notes, a contract, or a service request brief.
+
+          This note is documentation only and is not executed.
+        theme: blue
+        isInLoop: false
+        isInIteration: false
+    - id: start_node
+      type: custom
+      position:
+        x: 80
+        y: 280
+      width: 280
+      height: 88
+      data:
+        type: start
+        title: Start
+        desc: Agent start node
+        variables:
+        - type: file-list
+          variable: files
+          label: Files
+          required: true
+          max_length: 5
+          allowed_file_upload_methods:
+          - local_file
+          - remote_url
+          allowed_file_types:
+          - document
+          - image
+          allowed_file_extensions:
+          - pdf
+          - doc
+          - docx
+          - txt
+          - md
+          - csv
+          - xlsx
+          - jpg
+          - jpeg
+          - png
+        unique: true
+        isInLoop: false
+        isInIteration: false
+    - id: doc_extract_node
+      type: custom
+      position:
+        x: 420
+        y: 280
+      width: 280
+      height: 92
+      data:
+        type: document-extractor
+        title: Document Extractor
+        desc: ''
+        variable_selector:
+        - start_node
+        - files
+        is_array_file: true
+        isInLoop: false
+        isInIteration: false
+    - id: llm_node
+      type: custom
+      position:
+        x: 760
+        y: 280
+      width: 280
+      height: 92
+      data:
+        type: llm
+        title: Intake Summary
+        desc: ''
+        variables: []
+        model:
+          provider: openai
+          name: gpt-5.5
+          mode: chat
+          completion_params: {}
+        prompt_template:
+        - role: system
+          text: Create a structured intake note with parties, dates, facts, obligations,
+            risks, and missing information.
+        - role: user
+          text: "{{#doc_extract_node.text#}}"
+        prompt_config:
+          jinja2_variables: []
+        vision:
+          enabled: false
+        structured_output_enabled: false
+        reasoning_format: tagged
+        isInLoop: false
+        isInIteration: false
+    - id: end_node
+      type: custom
+      position:
+        x: 1100
+        y: 280
+      width: 280
+      height: 64
+      data:
+        type: end
+        title: End
+        desc: ''
+        outputs:
+        - variable: summary
+          type: string
+          value_selector:
+          - llm_node
+          - text
+        isInLoop: false
+        isInIteration: false
+    edges:
+    - id: start_node-source-doc_extract_node
+      source: start_node
+      target: doc_extract_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: doc_extract_node-source-llm_node
+      source: doc_extract_node
+      target: llm_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: llm_node-source-end_node
+      source: llm_node
+      target: end_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    viewport:
+      x: 0
+      y: 0
+      zoom: 0.8

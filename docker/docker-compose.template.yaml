@@ -1,0 +1,257 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-zgi}
+      POSTGRES_SQL_BASE_DB: ${POSTGRES_SQL_BASE_DB:-zgi_sql_base}
+      POSTGRES_PLUGIN_RUNNER_DB: ${POSTGRES_PLUGIN_RUNNER_DB:-zgi_plugin_runner}
+      POSTGRES_SANDBOX_DB: ${POSTGRES_SANDBOX_DB:-zgi_sandbox}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-zgiai123456}
+    ports:
+      - "${HOST_POSTGRES_PORT:-15432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-zgi}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      default:
+        aliases:
+          - zgi-postgres
+
+  postgres-init:
+    image: postgres:16-alpine
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-zgi}
+      POSTGRES_SQL_BASE_DB: ${POSTGRES_SQL_BASE_DB:-zgi_sql_base}
+      POSTGRES_PLUGIN_RUNNER_DB: ${POSTGRES_PLUGIN_RUNNER_DB:-zgi_plugin_runner}
+      POSTGRES_SANDBOX_DB: ${POSTGRES_SANDBOX_DB:-zgi_sandbox}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-zgiai123456}
+      PGHOST: postgres
+      PGPORT: 5432
+    volumes:
+      - ./postgres/init:/scripts:ro
+    command: ["/bin/sh", "/scripts/01-init-multiple-dbs.sh"]
+    restart: "no"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${HOST_REDIS_PORT:-16379}:6379"
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-zgiai123456}
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-zgiai123456}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      default:
+        aliases:
+          - zgi-redis
+
+  weaviate:
+    image: semitechnologies/weaviate:1.23.0
+    ports:
+      - "${HOST_WEAVIATE_PORT:-18080}:8080"
+    environment:
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      PERSISTENCE_DATA_PATH: /var/lib/weaviate
+      QUERY_DEFAULTS_LIMIT: "25"
+      DEFAULT_VECTORIZER_MODULE: none
+      ENABLE_MODULES: ""
+      CLUSTER_HOSTNAME: node1
+    volumes:
+      - weaviate-data:/var/lib/weaviate
+    restart: unless-stopped
+
+  neo4j:
+    image: neo4j:5.15-community
+    ports:
+      - "${HOST_NEO4J_HTTP_PORT:-17474}:7474"
+      - "${HOST_NEO4J_BOLT_PORT:-17687}:7687"
+    environment:
+      NEO4J_AUTH: ${NEO4J_USERNAME:-neo4j}/${NEO4J_PASSWORD:-neo4j123456}
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_security_procedures_unrestricted: apoc.*
+      NEO4J_dbms_security_procedures_allowlist: apoc.*
+      NEO4J_apoc_export_file_enabled: "true"
+      NEO4J_apoc_import_file_enabled: "true"
+      NEO4J_dbms_memory_heap_initial__size: 512m
+      NEO4J_dbms_memory_heap_max__size: 2G
+    volumes:
+      - neo4j-data:/data
+      - neo4j-logs:/logs
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "${NEO4J_USERNAME:-neo4j}", "-p", "${NEO4J_PASSWORD:-neo4j123456}", "RETURN 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  sandbox:
+    build:
+      context: ../sandbox
+      dockerfile: Dockerfile
+      args:
+        BUILD_REGION: ${BUILD_REGION:-global}
+        GOPROXY: ${GOPROXY:-}
+    env_file:
+      - ../sandbox/.env
+    environment:
+      ZGI_SANDBOX_DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-zgiai123456}@postgres:5432/${POSTGRES_SANDBOX_DB:-zgi_sandbox}?sslmode=disable
+      ZGI_SANDBOX_REDIS_ADDR: redis:6379
+      ZGI_SANDBOX_REDIS_PASSWORD: ${REDIS_PASSWORD:-zgiai123456}
+      ZGI_SANDBOX_REDIS_DB: ${SANDBOX_REDIS_DB:-1}
+    ports:
+      - "${HOST_SANDBOX_PORT:-18194}:8194"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      postgres-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    volumes:
+      - sandbox-data:/var/lib/zgi-sandbox
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8194/health').getcode() == 200 else 1)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      default:
+        aliases:
+          - zgi-sandbox
+
+  api:
+    build:
+      context: ../api
+      dockerfile: Dockerfile
+      args:
+        BUILD_REGION: ${BUILD_REGION:-global}
+        GOPROXY: ${GOPROXY:-}
+        APK_MIRROR: ${APK_MIRROR:-}
+    env_file:
+      - ../api/.env.docker
+    environment:
+      FILES_URL: ${API_PUBLIC_URL:-http://localhost:${API_PORT:-2678}}
+      WEB_API_CORS_ALLOW_ORIGINS: ${WEB_API_CORS_ALLOW_ORIGINS:-http://localhost:2679,http://localhost:3000,http://localhost:13000,http://localhost:3001,http://localhost:3002}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      postgres-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      weaviate:
+        condition: service_started
+      neo4j:
+        condition: service_healthy
+      sandbox:
+        condition: service_healthy
+      plugin-runner:
+        condition: service_healthy
+    ports:
+      - "${API_PORT:-2678}:2680"
+    volumes:
+      - api-storage:/app/storage
+      - api-logs:/app/logs
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:2680/ping || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    restart: unless-stopped
+
+  plugin-runner:
+    build:
+      context: ../plugin-runner
+      dockerfile: Dockerfile
+      args:
+        BUILD_REGION: ${BUILD_REGION:-global}
+        APT_MIRROR: ${APT_MIRROR:-}
+        APT_SECURITY_MIRROR: ${APT_SECURITY_MIRROR:-}
+        NPM_REGISTRY: ${NPM_REGISTRY:-}
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-}
+        UV_INDEX_URL: ${UV_INDEX_URL:-}
+        GOPROXY: ${GOPROXY:-}
+    env_file:
+      - ../plugin-runner/.env
+    ports:
+      - "${HOST_PLUGIN_RUNNER_PORT:-15000}:15000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      postgres-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    volumes:
+      - plugin-runner-data:/app/plugins
+      - plugin-runner-workspace:/app/workspace
+      - plugin-runner-cache:/app/cache
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:15000/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ../web
+      dockerfile: Dockerfile
+      args:
+        BUILD_REGION: ${BUILD_REGION:-global}
+        APK_MIRROR: ${APK_MIRROR:-}
+        NPM_REGISTRY: ${NPM_REGISTRY:-}
+    env_file:
+      - ../web/.env.local
+    environment:
+      API_URL: ${API_PUBLIC_URL:-http://localhost:${API_PORT:-2678}}
+      MARKETPLACE_API_URL: ${MARKETPLACE_API_URL:-https://market.zgiai.com}
+      PM2_INSTANCES: ${PM2_INSTANCES:-2}
+      NEXT_TELEMETRY_DISABLED: "1"
+      DEPLOY_ENV: local
+      EDITION: ${EDITION:-SELF_HOSTED}
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${WEB_PORT:-13000}:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/env.js').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  api-storage:
+  api-logs:
+  postgres-data:
+  redis-data:
+  weaviate-data:
+  neo4j-data:
+  neo4j-logs:
+  sandbox-data:
+  plugin-runner-data:
+  plugin-runner-workspace:
+  plugin-runner-cache:

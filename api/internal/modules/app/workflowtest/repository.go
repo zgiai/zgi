@@ -1,0 +1,270 @@
+package workflowtest
+
+import (
+	"context"
+	"time"
+
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+)
+
+type Repository struct {
+	db *gorm.DB
+}
+
+func NewRepository(db *gorm.DB) *Repository {
+	return &Repository{db: db}
+}
+
+func (r *Repository) GetSettings(ctx context.Context, agentID string) (*Setting, error) {
+	var settings Setting
+	err := r.db.WithContext(ctx).Where("agent_id = ?", agentID).First(&settings).Error
+	if err != nil {
+		return nil, err
+	}
+	return &settings, nil
+}
+
+func (r *Repository) UpsertSettings(ctx context.Context, settings *Setting) error {
+	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "agent_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"judge_prompt_template", "judge_model_provider", "judge_model_name", "updated_at"}),
+	}).Create(settings).Error
+}
+
+func (r *Repository) CreateScenario(ctx context.Context, scenario *Scenario) error {
+	return r.db.WithContext(ctx).Create(scenario).Error
+}
+
+func (r *Repository) UpdateScenario(ctx context.Context, scenario *Scenario) error {
+	return r.db.WithContext(ctx).Model(&Scenario{}).
+		Where("agent_id = ? AND id = ?", scenario.AgentID, scenario.ID).
+		Updates(map[string]interface{}{
+			"name":        scenario.Name,
+			"description": scenario.Description,
+			"updated_at":  scenario.UpdatedAt,
+		}).Error
+}
+
+func (r *Repository) DeleteScenario(ctx context.Context, agentID string, scenarioID string) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&Case{}).
+			Where("agent_id = ? AND scenario_id = ?", agentID, scenarioID).
+			Updates(map[string]interface{}{"scenario_id": nil, "updated_at": time.Now()}).Error; err != nil {
+			return err
+		}
+		return tx.Where("agent_id = ? AND id = ?", agentID, scenarioID).Delete(&Scenario{}).Error
+	})
+}
+
+func (r *Repository) GetScenarioByName(ctx context.Context, agentID string, name string) (*Scenario, error) {
+	var scenario Scenario
+	err := r.db.WithContext(ctx).
+		Where("agent_id = ? AND name = ?", agentID, name).
+		First(&scenario).Error
+	if err != nil {
+		return nil, err
+	}
+	return &scenario, nil
+}
+
+func (r *Repository) ListScenarios(ctx context.Context, agentID string) ([]Scenario, error) {
+	var scenarios []Scenario
+	err := r.db.WithContext(ctx).
+		Where("agent_id = ?", agentID).
+		Order("created_at DESC").
+		Find(&scenarios).Error
+	return scenarios, err
+}
+
+func (r *Repository) CreateCase(ctx context.Context, testCase *Case) error {
+	return r.db.WithContext(ctx).Create(testCase).Error
+}
+
+func (r *Repository) GetCase(ctx context.Context, agentID string, caseID string) (*Case, error) {
+	var testCase Case
+	err := r.db.WithContext(ctx).
+		Where("agent_id = ? AND id = ?", agentID, caseID).
+		First(&testCase).Error
+	if err != nil {
+		return nil, err
+	}
+	return &testCase, nil
+}
+
+func (r *Repository) ListCases(ctx context.Context, agentID string, status string) ([]Case, error) {
+	var cases []Case
+	query := r.db.WithContext(ctx).Where("agent_id = ?", agentID)
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+	err := query.Order("created_at DESC").Find(&cases).Error
+	return cases, err
+}
+
+func (r *Repository) UpdateCase(ctx context.Context, testCase *Case) error {
+	var scenarioID interface{}
+	if testCase.ScenarioID != nil {
+		scenarioID = *testCase.ScenarioID
+	}
+	return r.db.WithContext(ctx).Model(&Case{}).
+		Where("agent_id = ? AND id = ?", testCase.AgentID, testCase.ID).
+		Updates(map[string]interface{}{
+			"scenario_id":     scenarioID,
+			"content":         testCase.Content,
+			"expected_result": testCase.ExpectedResult,
+			"question_type":   testCase.QuestionType,
+			"status":          testCase.Status,
+			"turns":           testCase.Turns,
+			"updated_at":      testCase.UpdatedAt,
+		}).Error
+}
+
+func (r *Repository) ListCasesByIDs(ctx context.Context, agentID string, ids []string) ([]Case, error) {
+	var cases []Case
+	err := r.db.WithContext(ctx).
+		Where("agent_id = ? AND id IN ?", agentID, ids).
+		Order("created_at ASC").
+		Find(&cases).Error
+	return cases, err
+}
+
+func (r *Repository) UpdateCaseScenario(ctx context.Context, agentID string, caseID string, scenarioID *string) error {
+	var value interface{}
+	if scenarioID != nil {
+		value = *scenarioID
+	}
+	return r.db.WithContext(ctx).Model(&Case{}).
+		Where("agent_id = ? AND id = ?", agentID, caseID).
+		Updates(map[string]interface{}{"scenario_id": value, "updated_at": time.Now()}).Error
+}
+
+func (r *Repository) ResetScenarioCaseCounts(ctx context.Context, agentID string) error {
+	return r.db.WithContext(ctx).Model(&Scenario{}).
+		Where("agent_id = ?", agentID).
+		Update("case_count", 0).Error
+}
+
+func (r *Repository) UpdateScenarioCaseCount(ctx context.Context, agentID string, scenarioID string, count int) error {
+	return r.db.WithContext(ctx).Model(&Scenario{}).
+		Where("agent_id = ? AND id = ?", agentID, scenarioID).
+		Updates(map[string]interface{}{"case_count": count, "updated_at": time.Now()}).Error
+}
+
+func (r *Repository) CreateBatch(ctx context.Context, batch *Batch) error {
+	return r.db.WithContext(ctx).Create(batch).Error
+}
+
+func (r *Repository) CreateBatchWithItems(ctx context.Context, batch *Batch, items []BatchItem) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(batch).Error; err != nil {
+			return err
+		}
+		if len(items) == 0 {
+			return nil
+		}
+		return tx.Create(&items).Error
+	})
+}
+
+func (r *Repository) GetBatch(ctx context.Context, agentID string, batchID string) (*Batch, error) {
+	var batch Batch
+	err := r.db.WithContext(ctx).
+		Where("agent_id = ? AND id = ?", agentID, batchID).
+		First(&batch).Error
+	if err != nil {
+		return nil, err
+	}
+	return &batch, nil
+}
+
+func (r *Repository) UpdateBatchStatus(ctx context.Context, agentID string, batchID string, status string) error {
+	return r.db.WithContext(ctx).Model(&Batch{}).
+		Where("agent_id = ? AND id = ?", agentID, batchID).
+		Updates(map[string]interface{}{"status": status, "updated_at": time.Now()}).Error
+}
+
+func (r *Repository) UpdateBatchStatusIfCurrent(ctx context.Context, agentID string, batchID string, currentStatus string, nextStatus string) (bool, error) {
+	result := r.db.WithContext(ctx).Model(&Batch{}).
+		Where("agent_id = ? AND id = ? AND status = ?", agentID, batchID, currentStatus).
+		Updates(map[string]interface{}{"status": nextStatus, "updated_at": time.Now()})
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected > 0, nil
+}
+
+func (r *Repository) UpdateBatchSummary(ctx context.Context, agentID string, batchID string, status string, passed, failed, review int, summary string) error {
+	return r.db.WithContext(ctx).Model(&Batch{}).
+		Where("agent_id = ? AND id = ?", agentID, batchID).
+		Updates(map[string]interface{}{
+			"status":       status,
+			"passed_count": passed,
+			"failed_count": failed,
+			"review_count": review,
+			"summary":      summary,
+			"updated_at":   time.Now(),
+		}).Error
+}
+
+func (r *Repository) UpdateBatchCaseCount(ctx context.Context, batchID string, count int) error {
+	return r.db.WithContext(ctx).Model(&Batch{}).
+		Where("id = ?", batchID).
+		Updates(map[string]interface{}{"case_count": count, "updated_at": time.Now()}).Error
+}
+
+func (r *Repository) ListBatches(ctx context.Context, agentID string) ([]Batch, error) {
+	var batches []Batch
+	err := r.db.WithContext(ctx).
+		Where("agent_id = ?", agentID).
+		Order("created_at DESC").
+		Find(&batches).Error
+	return batches, err
+}
+
+func (r *Repository) CreateBatchItems(ctx context.Context, items []BatchItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Create(&items).Error
+}
+
+func (r *Repository) ListBatchItems(ctx context.Context, agentID string, batchID string) ([]BatchItem, error) {
+	var items []BatchItem
+	err := r.db.WithContext(ctx).
+		Where("agent_id = ? AND batch_id = ?", agentID, batchID).
+		Order("created_at ASC").
+		Find(&items).Error
+	return items, err
+}
+
+func (r *Repository) UpdateBatchItemsStatus(ctx context.Context, agentID string, batchID string, fromStatuses []string, toStatus string) error {
+	query := r.db.WithContext(ctx).Model(&BatchItem{}).
+		Where("agent_id = ? AND batch_id = ?", agentID, batchID)
+	if len(fromStatuses) > 0 {
+		query = query.Where("status IN ?", fromStatuses)
+	}
+	return query.Updates(map[string]interface{}{"status": toStatus, "updated_at": time.Now()}).Error
+}
+
+func (r *Repository) UpdateBatchItemResult(ctx context.Context, item *BatchItem) error {
+	result := r.db.WithContext(ctx).Model(&BatchItem{}).
+		Where("agent_id = ? AND id = ? AND status = ?", item.AgentID, item.ID, string(BatchItemStatusRunning)).
+		Updates(map[string]interface{}{
+			"status":           item.Status,
+			"workflow_run_id":  item.WorkflowRunID,
+			"outputs":          item.Outputs,
+			"error":            item.Error,
+			"judge_reason":     item.JudgeReason,
+			"judge_suggestion": item.JudgeSuggestion,
+			"judge_confidence": item.JudgeConfidence,
+			"updated_at":       time.Now(),
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}

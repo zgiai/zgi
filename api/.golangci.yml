@@ -1,0 +1,34 @@
+version: "2"
+
+run:
+  timeout: 5m
+  relative-path-mode: gomod
+
+linters:
+  default: none
+  enable:
+    - govet
+    - staticcheck
+    - errcheck
+    - ineffassign
+    - unused
+    - revive
+    - gocyclo
+  settings:
+    gocyclo:
+      min-complexity: 15
+  exclusions:
+    generated: strict
+    warn-unused: true
+    rules:
+      - path: _test\\.go
+        linters:
+          - gocyclo
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  exclusions:
+    generated: strict
+    warn-unused: true

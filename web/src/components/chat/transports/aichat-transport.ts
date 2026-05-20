@@ -1,0 +1,287 @@
+import { aichatService } from '@/services/aichat.service';
+import {
+  isSensitiveOutputBlockedValue,
+  sanitizeModelOutputValue,
+} from '@/utils/model-output-filter';
+import type {
+  AIChatChatRequest,
+  AIChatConversation,
+  AIChatErrorEventData,
+  AIChatFileParseEndEventData,
+  AIChatFileParseErrorEventData,
+  AIChatFileParseStartEventData,
+  AIChatMessage,
+  AIChatMessageChunkEventData,
+  AIChatMessageEndEventData,
+  AIChatMessageStartEventData,
+  AIChatRegenerateMessageRequest,
+  AIChatSkillCallEndEventData,
+  AIChatSkillCallErrorEventData,
+  AIChatSkillCallStartEventData,
+  AIChatSkillArtifactCreatedEventData,
+  AIChatSkillLoadEndEventData,
+  AIChatSkillLoadStartEventData,
+  AIChatSkillReferenceReadEventData,
+  AIChatStopConversationResponseData,
+} from '@/services/types/aichat';
+import {
+  DEFAULT_AICHAT_MESSAGE_PAGINATION,
+  type AIChatPagination,
+} from '@/components/chat/controllers/aichat';
+
+function sanitizeAIChatMessage(message: AIChatMessage): AIChatMessage {
+  const sanitizedAnswer = sanitizeModelOutputValue(message.answer);
+  if (sanitizedAnswer === message.answer) {
+    return message;
+  }
+
+  const isSensitiveOutputBlocked = isSensitiveOutputBlockedValue(sanitizedAnswer);
+  return {
+    ...message,
+    answer: typeof sanitizedAnswer === 'string' ? sanitizedAnswer : message.answer,
+    metadata: isSensitiveOutputBlocked
+      ? {
+          ...message.metadata,
+          sensitiveOutputBlocked: true,
+        }
+      : message.metadata,
+  };
+}
+
+export interface AIChatConversationDetail {
+  conversation: AIChatConversation;
+  messages: AIChatMessage[];
+  messagePagination: AIChatPagination;
+}
+
+export interface AIChatConversationListResult {
+  items: AIChatConversation[];
+  pagination: AIChatPagination;
+}
+
+export interface AIChatMessageListResult {
+  items: AIChatMessage[];
+  pagination: AIChatPagination;
+}
+
+export interface AIChatStreamCallbacks {
+  onMessageStart: (payload: AIChatMessageStartEventData, eventId?: string | null) => void;
+  onFileParseStart: (payload: AIChatFileParseStartEventData, eventId?: string | null) => void;
+  onFileParseEnd: (payload: AIChatFileParseEndEventData, eventId?: string | null) => void;
+  onFileParseError: (payload: AIChatFileParseErrorEventData, eventId?: string | null) => void;
+  onSkillLoadStart: (payload: AIChatSkillLoadStartEventData, eventId?: string | null) => void;
+  onSkillLoadEnd: (payload: AIChatSkillLoadEndEventData, eventId?: string | null) => void;
+  onSkillReferenceRead: (
+    payload: AIChatSkillReferenceReadEventData,
+    eventId?: string | null
+  ) => void;
+  onSkillCallStart: (payload: AIChatSkillCallStartEventData, eventId?: string | null) => void;
+  onSkillCallEnd: (payload: AIChatSkillCallEndEventData, eventId?: string | null) => void;
+  onSkillCallError: (payload: AIChatSkillCallErrorEventData, eventId?: string | null) => void;
+  onSkillArtifactCreated: (
+    payload: AIChatSkillArtifactCreatedEventData,
+    eventId?: string | null
+  ) => void;
+  onMessageChunk: (payload: AIChatMessageChunkEventData, eventId?: string | null) => void;
+  onMessageEnd: (payload: AIChatMessageEndEventData, eventId?: string | null) => void;
+  onErrorEvent: (payload: AIChatErrorEventData, eventId?: string | null) => void;
+  onRequestError: (error: Error) => void;
+  onClose: () => void;
+}
+
+function dispatchAIChatStreamEvent(
+  event: string,
+  data: unknown,
+  eventId: string | null | undefined,
+  callbacks: AIChatStreamCallbacks
+): void {
+  switch (event) {
+    case 'message_start':
+      callbacks.onMessageStart((data ?? {}) as AIChatMessageStartEventData, eventId);
+      break;
+    case 'file_parse_start':
+      callbacks.onFileParseStart((data ?? {}) as AIChatFileParseStartEventData, eventId);
+      break;
+    case 'file_parse_end':
+      callbacks.onFileParseEnd((data ?? {}) as AIChatFileParseEndEventData, eventId);
+      break;
+    case 'file_parse_error':
+      callbacks.onFileParseError((data ?? {}) as AIChatFileParseErrorEventData, eventId);
+      break;
+    case 'skill_load_start':
+      callbacks.onSkillLoadStart((data ?? {}) as AIChatSkillLoadStartEventData, eventId);
+      break;
+    case 'skill_load_end':
+      callbacks.onSkillLoadEnd((data ?? {}) as AIChatSkillLoadEndEventData, eventId);
+      break;
+    case 'skill_reference_read':
+      callbacks.onSkillReferenceRead((data ?? {}) as AIChatSkillReferenceReadEventData, eventId);
+      break;
+    case 'skill_call_start':
+      callbacks.onSkillCallStart((data ?? {}) as AIChatSkillCallStartEventData, eventId);
+      break;
+    case 'skill_call_end':
+      callbacks.onSkillCallEnd((data ?? {}) as AIChatSkillCallEndEventData, eventId);
+      break;
+    case 'skill_call_error':
+      callbacks.onSkillCallError((data ?? {}) as AIChatSkillCallErrorEventData, eventId);
+      break;
+    case 'skill_artifact_created':
+      callbacks.onSkillArtifactCreated(
+        (data ?? {}) as AIChatSkillArtifactCreatedEventData,
+        eventId
+      );
+      break;
+    case 'message':
+      callbacks.onMessageChunk((data ?? {}) as AIChatMessageChunkEventData, eventId);
+      break;
+    case 'message_end':
+      callbacks.onMessageEnd((data ?? {}) as AIChatMessageEndEventData, eventId);
+      break;
+    case 'error':
+      callbacks.onErrorEvent((data ?? {}) as AIChatErrorEventData, eventId);
+      break;
+    default:
+      break;
+  }
+}
+
+export class AIChatTransport {
+  async listConversations(params: {
+    page: number;
+    limit: number;
+  }): Promise<AIChatConversationListResult> {
+    const response = await aichatService.listConversations(params);
+
+    return {
+      items: response.data.data,
+      pagination: {
+        page: response.data.page,
+        limit: response.data.limit,
+        total: response.data.total,
+        hasMore: response.data.has_more,
+      },
+    };
+  }
+
+  async getConversation(conversationId: string): Promise<AIChatConversationDetail> {
+    const [conversationResponse, messageList] = await Promise.all([
+      aichatService.getConversation(conversationId),
+      this.listMessages(conversationId, {
+        page: 1,
+        limit: DEFAULT_AICHAT_MESSAGE_PAGINATION.limit,
+      }),
+    ]);
+
+    return {
+      conversation: conversationResponse.data,
+      messages: messageList.items,
+      messagePagination: messageList.pagination,
+    };
+  }
+
+  async listMessages(
+    conversationId: string,
+    params: { page: number; limit: number }
+  ): Promise<AIChatMessageListResult> {
+    const response = await aichatService.listMessages(conversationId, params);
+
+    return {
+      items: response.data.data
+        .slice()
+        .map(sanitizeAIChatMessage)
+        .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id)),
+      pagination: {
+        page: response.data.page,
+        limit: response.data.limit,
+        total: response.data.total,
+        hasMore: response.data.has_more,
+      },
+    };
+  }
+
+  async refreshConversation(conversationId: string): Promise<AIChatConversation> {
+    const response = await aichatService.getConversation(conversationId);
+    return response.data;
+  }
+
+  async updateConversation(
+    conversationId: string,
+    payload: { title?: string; status?: AIChatConversation['status'] }
+  ): Promise<AIChatConversation> {
+    const response = await aichatService.updateConversation(conversationId, payload);
+    return response.data;
+  }
+
+  async removeConversation(conversationId: string): Promise<void> {
+    await aichatService.deleteConversation(conversationId);
+  }
+
+  async stopConversation(conversationId: string): Promise<AIChatStopConversationResponseData> {
+    const response = await aichatService.stopConversation(conversationId);
+    return response.data;
+  }
+
+  streamChat(
+    payload: AIChatChatRequest,
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ) {
+    return aichatService.streamChat(
+      payload,
+      {
+        onEvent: (event, data, eventId) => {
+          dispatchAIChatStreamEvent(event, data, eventId, callbacks);
+        },
+        onError: callbacks.onRequestError,
+        onClose: callbacks.onClose,
+      },
+      abortSignal
+    );
+  }
+
+  regenerateMessage(
+    messageId: string,
+    payload: AIChatRegenerateMessageRequest,
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ) {
+    return aichatService.regenerateMessage(
+      messageId,
+      payload,
+      {
+        onEvent: (event, data, eventId) => {
+          dispatchAIChatStreamEvent(event, data, eventId, callbacks);
+        },
+        onError: callbacks.onRequestError,
+        onClose: callbacks.onClose,
+      },
+      abortSignal
+    );
+  }
+
+  recoverConversationStream(
+    conversationId: string,
+    params: { messageId: string; afterId?: string },
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ) {
+    return aichatService.recoverConversationStream(
+      conversationId,
+      {
+        message_id: params.messageId,
+        after_id: params.afterId,
+      },
+      {
+        onEvent: (event, data, eventId) => {
+          dispatchAIChatStreamEvent(event, data, eventId, callbacks);
+        },
+        onError: callbacks.onRequestError,
+        onClose: callbacks.onClose,
+      },
+      abortSignal
+    );
+  }
+}
+
+export const aichatTransport = new AIChatTransport();

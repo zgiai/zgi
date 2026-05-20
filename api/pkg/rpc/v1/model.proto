@@ -1,0 +1,69 @@
+syntax = "proto3";
+
+package zgi.rpc.v1;
+
+option go_package = "github.com/zgiai/ginext/pkg/rpc/v1;v1";
+
+// ModelService provides LLM model management operations.
+service ModelService {
+    // ListModels returns a paginated list of LLM models.
+    rpc ListModels(ListModelsRequest) returns (ListModelsResponse);
+    
+    // GetModel returns detailed information about a specific model.
+    rpc GetModel(GetModelRequest) returns (GetModelResponse);
+    
+    // SyncModels synchronizes model data from provider APIs.
+    rpc SyncModels(SyncModelsRequest) returns (SyncModelsResponse);
+}
+
+message ListModelsRequest {
+    string provider = 1;      // Filter by provider (e.g., "openai", "anthropic")
+    string protocol = 2;      // Filter by protocol (e.g., "openai", "anthropic")
+    bool is_active = 3;       // Filter by active status
+    int32 page = 4;           // Page number (1-indexed)
+    int32 page_size = 5;      // Items per page
+}
+
+message ListModelsResponse {
+    repeated ModelInfo models = 1;
+    int64 total = 2;
+}
+
+message GetModelRequest {
+    string id = 1;  // Model ID
+}
+
+message GetModelResponse {
+    ModelInfo model = 1;
+}
+
+message SyncModelsRequest {
+    string provider = 1;  // Provider to sync (empty = all providers)
+}
+
+message SyncModelsResponse {
+    int32 synced_count = 1;
+    int32 updated_count = 2;
+    int32 failed_count = 3;
+    repeated string errors = 4;
+}
+
+message ModelInfo {
+    string id = 1;
+    string model_name = 2;
+    string display_name = 3;
+    string provider = 4;
+    string protocol = 5;
+    repeated string use_cases = 6;
+    int32 max_tokens = 7;
+    int32 max_output_tokens = 8;
+    bool supports_streaming = 9;
+    bool supports_function_call = 10;
+    bool supports_vision = 11;
+    bool is_active = 12;
+    string pricing_input = 13;   // JSON string for pricing
+    string pricing_output = 14;  // JSON string for pricing
+    map<string, string> metadata = 15;
+    string created_at = 16;
+    string updated_at = 17;
+}

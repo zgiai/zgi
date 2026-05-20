@@ -1,0 +1,8 @@
+ZGI API
+
+Third-party notices for bundled reference data:
+
+- Unicode Adobe Symbol mapping data
+  Location: internal/capabilities/contentparse/engines/hyperparse/internal/adapters/pdf/adobe_symbol.txt
+  The file contains Unicode, Inc. copyright and permission text. Keep that
+  notice attached to the file when redistributing this repository.

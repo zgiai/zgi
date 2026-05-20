@@ -1,0 +1,248 @@
+---
+kind: app
+version: 1.0.0
+exported_from: zgi
+exported_at: '2026-05-15T00:00:00Z'
+app:
+  name: Scheduled Follow-up
+  description: Create a scheduled notification task from a workflow decision.
+  icon: '{"icon":"SF","icon_background":"#1d4ed8"}'
+  icon_type: text
+  mode: WORKFLOW
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    opening_statement_type: slogan
+    opening_slogan: ''
+    opening_statement: ''
+    opening_statement_enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      voice: ''
+      language: ''
+    speech_to_text:
+      enabled: false
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    conversation_history:
+      enabled: false
+      history_window_size: 6
+    file_upload:
+      enabled: false
+      allowed_file_types:
+      - image
+      - document
+      allowed_file_extensions:
+      - jpg
+      - jpeg
+      - png
+      - gif
+      - webp
+      - pdf
+      - doc
+      - docx
+      - txt
+      - md
+      - csv
+      - xlsx
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      number_limits: 5
+    webapp_workflow_config:
+      allow_view_run_detail: true
+      auto_expand_run_detail: false
+  graph:
+    nodes:
+    - id: note_runtime_guide
+      type: note
+      position:
+        x: 80
+        y: 40
+      width: 520
+      height: 240
+      data:
+        type: note
+        title: Run guide
+        desc: ''
+        text: |-
+          Run guide
+
+          Setup required. Requires: OpenAI gpt-5.5 model and notification channel. Confirm the notification channel is available and provide a real owner_email in the input.
+
+          Suggested test input:
+          The Start node fields are prefilled. Open Debug and run the defaults directly.
+          Example:
+          - Follow-up request: Schedule a follow-up in two business days for owner ops@example.invalid to confirm whether the security questionnaire is complete.
+
+          This note is documentation only and is not executed.
+        theme: yellow
+        isInLoop: false
+        isInIteration: false
+    - id: start_node
+      type: custom
+      position:
+        x: 80
+        y: 280
+      width: 280
+      height: 88
+      data:
+        type: start
+        title: Start
+        desc: Agent start node
+        variables:
+        - type: paragraph
+          variable: input
+          label: Follow-up request
+          required: true
+          max_length: 8192
+          default: Schedule a follow-up in two business days for owner ops@example.invalid
+            to confirm whether the security questionnaire is complete.
+        unique: true
+        isInLoop: false
+        isInIteration: false
+    - id: parameter_node
+      type: custom
+      position:
+        x: 420
+        y: 280
+      width: 280
+      height: 92
+      data:
+        type: parameter-extractor
+        title: Parameter Extractor
+        desc: ''
+        query:
+        - start_node
+        - input
+        model:
+          provider: openai
+          name: gpt-5.5
+          mode: chat
+          completion_params: {}
+        reasoning_mode: prompt
+        vision:
+          enabled: false
+          configs:
+            detail: high
+            variable_selector: []
+        instruction: Extract the requested business parameters. Return only values
+          supported by the provided request.
+        parameters:
+        - name: owner_email
+          type: string
+          required: false
+          description: Owner email
+        - name: follow_up_reason
+          type: string
+          required: true
+          description: Reason for follow-up
+        isInLoop: false
+        isInIteration: false
+    - id: schedule_node
+      type: custom
+      position:
+        x: 760
+        y: 280
+      width: 280
+      height: 92
+      data:
+        type: create-scheduled-task
+        title: Create Scheduled Task
+        desc: ''
+        task:
+          name: Follow-up reminder
+          description: Notify the owner to review the case status.
+          schedule:
+            type: cron
+            timezone: Asia/Shanghai
+            once:
+              input_mode: fixed
+              run_at: '2026-06-01T09:00:00+08:00'
+            cron:
+              expr: 0 9 * * 1
+          actions:
+          - client_id: follow_up_email
+            action_type: send_notification
+            enabled: true
+            channel_type: email
+            notification:
+              recipients:
+              - "{{#parameter_node.owner_email#}}"
+              subject: 'Workflow follow-up required: {{#parameter_node.follow_up_reason#}}'
+              body: 'Please review the workflow output and follow up on: {{#parameter_node.follow_up_reason#}}'
+              body_type: text/plain
+              template: notification_sms
+              notification_title: Follow-up required
+              link_code: "{{#sys.workflow_run_id#}}"
+            raw_config:
+        isInLoop: false
+        isInIteration: false
+    - id: end_node
+      type: custom
+      position:
+        x: 1100
+        y: 280
+      width: 280
+      height: 64
+      data:
+        type: end
+        title: End
+        desc: ''
+        outputs:
+        - variable: task_id
+          type: string
+          value_selector:
+          - schedule_node
+          - task_id
+        - variable: status
+          type: string
+          value_selector:
+          - schedule_node
+          - status
+        isInLoop: false
+        isInIteration: false
+    edges:
+    - id: start_node-source-parameter_node
+      source: start_node
+      target: parameter_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: parameter_node-source-schedule_node
+      source: parameter_node
+      target: schedule_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: schedule_node-source-end_node
+      source: schedule_node
+      target: end_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    viewport:
+      x: 0
+      y: 0
+      zoom: 0.8

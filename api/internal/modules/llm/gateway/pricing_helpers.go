@@ -1,0 +1,78 @@
+package gateway
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/shopspring/decimal"
+	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
+)
+
+func (s *llmGatewayServiceImpl) pricing() PricingEngine {
+	if s.pricingEngine != nil {
+		return s.pricingEngine
+	}
+	if s.db == nil {
+		return nil
+	}
+	s.pricingEngine = NewPricingEngine(s.db)
+	return s.pricingEngine
+}
+
+func (s *llmGatewayServiceImpl) quoteTokenPricing(
+	ctx context.Context,
+	model PricingModelRef,
+	promptTokens int,
+	completionTokens int,
+) (PricingQuote, error) {
+	engine := s.pricing()
+	if engine == nil {
+		return PricingQuote{}, fmt.Errorf("pricing engine is not configured")
+	}
+	return engine.QuoteTokens(ctx, model, promptTokens, completionTokens)
+}
+
+func (s *llmGatewayServiceImpl) quoteImagePricing(
+	ctx context.Context,
+	model PricingModelRef,
+	req *adapter.ImageRequest,
+) (PricingQuote, error) {
+	engine := s.pricing()
+	if engine == nil {
+		return PricingQuote{}, fmt.Errorf("pricing engine is not configured")
+	}
+	return engine.QuoteImage(ctx, model, req)
+}
+
+func pricingModelRefFromSelection(selection *ProviderSelection) PricingModelRef {
+	if selection == nil {
+		return PricingModelRef{Source: PricingModelSourceGlobal}
+	}
+	return normalizePricingModelRef(PricingModelRef{
+		ModelID: selection.Model.ID,
+		Source:  selection.ModelSource,
+	})
+}
+
+func pricingModelRefFromBillingContext(bc *BillingContext) PricingModelRef {
+	if bc == nil {
+		return PricingModelRef{Source: PricingModelSourceGlobal}
+	}
+	return normalizePricingModelRef(PricingModelRef{
+		ModelID: bc.ModelID,
+		Source:  bc.ModelSource,
+	})
+}
+
+func applyPricingQuoteToBillingContext(bc *BillingContext, quote PricingQuote) {
+	if bc == nil {
+		return
+	}
+
+	bc.InputUSD = quote.InputUSD
+	bc.OutputUSD = quote.OutputUSD
+	bc.TotalUSD = quote.TotalUSD
+	bc.InputCost = decimal.NewFromInt(quote.InputCredits)
+	bc.OutputCost = decimal.NewFromInt(quote.OutputCredits)
+	bc.TotalCost = decimal.NewFromInt(quote.TotalCredits)
+}

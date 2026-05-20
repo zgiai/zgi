@@ -1,0 +1,31 @@
+version: 1
+name: public-smoke
+defaults:
+  intent: preview
+  profile: fast_preview
+  engine: local
+cases:
+  - id: txt-basic
+    file: ../../file_process/hyperparse/fixtures/sample.txt
+    expect:
+      status: succeeded
+      min_elements: 1
+      contains_text:
+        - hello
+      max_duration_ms: 3000
+  - id: csv-basic
+    file: ../fixtures/public/sample.csv
+    expect:
+      status: succeeded
+      min_elements: 1
+      contains_text:
+        - alice,30
+      max_duration_ms: 3000
+  - id: markdown-basic
+    file: ../fixtures/public/sample.md
+    expect:
+      status: succeeded
+      min_elements: 1
+      contains_text:
+        - Release Notes
+      max_duration_ms: 3000

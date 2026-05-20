@@ -1,0 +1,99 @@
+name: Deploy Dev
+
+on:
+  push:
+    branches:
+      - dev
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag, or commit SHA to deploy
+        required: true
+        default: dev
+
+concurrency:
+  group: ${{ vars.DEPLOY_CONCURRENCY_GROUP || 'deploy-dev-production' }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build and deploy with Vercel CLI
+    runs-on: ${{ fromJSON(vars.DEPLOY_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID || vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID || vars.VERCEL_PROJECT_ID }}
+      VERCEL_ENVIRONMENT: ${{ vars.VERCEL_ENVIRONMENT || 'production' }}
+      VERCEL_DEPLOY_ARGS: ${{ vars.VERCEL_DEPLOY_ARGS || '--prod' }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ vars.NODE_VERSION || '24' }}
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@${{ vars.PNPM_VERSION || '10.12.1' }} --activate
+
+      - name: Get pnpm store path
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore pnpm store cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-${{ runner.arch }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-pnpm-
+
+      - name: Restore build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .next/cache
+            .vercel/cache
+          key: ${{ runner.os }}-${{ runner.arch }}-next-${{ github.ref_name }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('app/**', 'src/**', 'components/**', 'lib/**', 'public/**', 'next.config.*', 'mdx-components.*', 'tailwind.config.*', 'postcss.config.*', 'tsconfig.json') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-next-${{ github.ref_name }}-
+            ${{ runner.os }}-${{ runner.arch }}-next-
+
+      - name: Install Vercel CLI
+        run: |
+          if command -v vercel >/dev/null 2>&1; then
+            vercel --version
+          else
+            npm install --global vercel@${{ vars.VERCEL_CLI_VERSION || 'latest' }}
+          fi
+
+      - name: Verify Vercel secrets
+        run: |
+          missing=0
+          for name in VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing GitHub secret ${name}"
+              missing=1
+            fi
+          done
+
+          exit "$missing"
+
+      - name: Pull Vercel production environment
+        run: vercel pull --yes --environment="$VERCEL_ENVIRONMENT" --token="$VERCEL_TOKEN"
+
+      - name: Build Vercel production output
+        run: vercel build $VERCEL_DEPLOY_ARGS --token="$VERCEL_TOKEN"
+
+      - name: Deploy prebuilt output to production
+        run: |
+          deployment_url="$(vercel deploy --prebuilt $VERCEL_DEPLOY_ARGS --yes --token="$VERCEL_TOKEN")"
+          echo "Deployed to ${deployment_url}"
+          echo "### Vercel deployment" >> "$GITHUB_STEP_SUMMARY"
+          echo "${deployment_url}" >> "$GITHUB_STEP_SUMMARY"

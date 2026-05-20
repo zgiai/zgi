@@ -1,0 +1,440 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - dev
+    tags:
+      - 'v*.*.*'
+  pull_request:
+    branches:
+      - main
+      - master
+      - dev
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        type: choice
+        options:
+          - test
+          - staging
+          - production
+
+env:
+  REGISTRY: docker.io
+  IMAGE_NAME: zgiai/zgi-api
+  GO_VERSION: '1.26.2'
+
+jobs:
+  # 代码质量检查（已注释，后续启用）
+  # lint:
+  #   name: Code Linting
+  #   runs-on: ubuntu-latest
+  #   continue-on-error: true  # 允许失败，不影响后续步骤
+  #   steps:
+  #   - name: Checkout code
+  #     uses: actions/checkout@v4
+  #
+  #   - name: Set up Go
+  #     uses: actions/setup-go@v5
+  #     with:
+  #       go-version: ${{ env.GO_VERSION }}
+  #
+  #   - name: Run golangci-lint
+  #     uses: golangci/golangci-lint-action@v4
+  #     with:
+  #       version: latest
+  #       args: --timeout=10m
+
+  # 单元测试（已注释，后续启用）
+  # test:
+  #   name: Unit Tests
+  #   runs-on: ubuntu-latest
+  #   continue-on-error: true  # 允许测试失败，不影响构建
+  #   steps:
+  #   - name: Checkout code
+  #     uses: actions/checkout@v4
+  #
+  #   - name: Set up Go
+  #     uses: actions/setup-go@v5
+  #     with:
+  #       go-version: ${{ env.GO_VERSION }}
+  #
+  #   - name: Cache Go modules
+  #     uses: actions/cache@v4
+  #     with:
+  #       path: ~/go/pkg/mod
+  #       key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+  #       restore-keys: |
+  #         ${{ runner.os }}-go-
+  #
+  #   - name: Download dependencies
+  #     run: go mod download
+  #
+  #   - name: Run tests
+  #     run: go test -v -race -coverprofile=coverage.out ./...
+  #
+  #   - name: Upload coverage
+  #     uses: codecov/codecov-action@v4
+  #     with:
+  #       file: ./coverage.out
+  #       flags: unittests
+  #       name: codecov-umbrella
+  #       fail_ci_if_error: false
+
+  # 构建 Docker 镜像（测试环境）
+  build-test:
+    name: Build Test Image
+    runs-on: self-hosted
+    # needs: [test]  # 已注释，直接构建，不等待测试
+    permissions:
+      contents: read
+    if: |
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') &&
+      github.ref_type != 'tag'
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      with:
+        driver-opts: network=host
+
+    - name: Debug - Check secrets availability
+      run: |
+        echo "=========================================="
+        echo "Secrets 调试信息 (Test Build)"
+        echo "=========================================="
+        echo "Runner: self-hosted (服务器: 47.253.133.65)"
+        echo "执行位置: $(hostname)"
+        echo "执行用户: $(whoami)"
+        echo ""
+        echo "检查 DOCKER_HUB_USERNAME:"
+        if [ -z "${{ secrets.DOCKER_HUB_USERNAME }}" ]; then
+          echo "❌ DOCKER_HUB_USERNAME 为空或未设置"
+        else
+          echo "✅ DOCKER_HUB_USERNAME 已设置"
+        fi
+        echo ""
+        echo "检查 DOCKER_HUB_TOKEN:"
+        if [ -z "${{ secrets.DOCKER_HUB_TOKEN }}" ]; then
+          echo "❌ DOCKER_HUB_TOKEN 为空或未设置"
+        else
+          echo "✅ DOCKER_HUB_TOKEN 已设置"
+        fi
+        echo ""
+        echo "环境变量:"
+        echo "  REGISTRY: ${{ env.REGISTRY }}"
+        echo "  IMAGE_NAME: ${{ env.IMAGE_NAME }}"
+        echo ""
+        echo "说明:"
+        echo "  - 此步骤在服务器 (self-hosted runner) 上执行"
+        echo "  - Secrets 从 GitHub 传递到服务器"
+        echo "  - 如果 secrets 为空，说明 GitHub 未正确传递"
+        echo "=========================================="
+
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ secrets.DOCKER_HUB_USERNAME }}
+        password: ${{ secrets.DOCKER_HUB_TOKEN }}
+
+    - name: Determine test image tag
+      id: tags
+      run: |
+        if [[ "${{ github.ref }}" == "refs/heads/main" || "${{ github.ref }}" == "refs/heads/master" ]]; then
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          echo "tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:dev-${{ github.sha }},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:dev-latest" >> $GITHUB_OUTPUT
+          echo "version=dev-${{ github.sha }}" >> $GITHUB_OUTPUT
+        else
+          BRANCH=${GITHUB_REF#refs/heads/}
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          echo "tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:dev-${BRANCH}-${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "version=dev-${BRANCH}-${SHORT_SHA}" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Build and push test image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile
+        push: true
+        tags: ${{ steps.tags.outputs.tags }}
+        cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
+        cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
+        platforms: linux/amd64
+        provenance: false
+        outputs: type=registry,push=true,push-by-digest=false
+
+    - name: Test image summary
+      run: |
+        echo "## Test Image Built" >> $GITHUB_STEP_SUMMARY
+        echo "**Tags:** ${{ steps.tags.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Version:** ${{ steps.tags.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+
+    - name: Notify Feishu on success
+      if: success()
+      run: |
+        if [ -z "${{ secrets.FEISHU_WEBHOOK_URL }}" ]; then
+          echo "FEISHU_WEBHOOK_URL is not configured; skipping Feishu notification."
+          exit 0
+        fi
+        curl -X POST -H "Content-Type: application/json" \
+          -d '{
+            "msg_type": "interactive",
+            "card": {
+              "header": {
+                "title": {"tag": "plain_text", "content": "\u2705 ZGI API Build Success"},
+                "template": "green"
+              },
+              "elements": [
+                {"tag": "div", "text": {"tag": "lark_md", "content": "**Repository:** ${{ github.repository }}"}},
+                {"tag": "div", "text": {"tag": "lark_md", "content": "**Branch:** ${{ github.ref_name }}"}},
+                {"tag": "div", "text": {"tag": "lark_md", "content": "**Commit:** ${{ github.sha }}"}},
+                {"tag": "div", "text": {"tag": "lark_md", "content": "**Image:** `${{ steps.tags.outputs.version }}`"}},
+                {"tag": "div", "text": {"tag": "lark_md", "content": "**Trigger:** ${{ github.actor }}"}},
+                {"tag": "action", "actions": [{"tag": "button", "text": {"tag": "plain_text", "content": "View Workflow"}, "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}", "type": "primary"}]}
+              ]
+            }
+          }' \
+          "${{ secrets.FEISHU_WEBHOOK_URL }}"
+
+    - name: Notify Feishu on failure
+      if: failure()
+      run: |
+        if [ -z "${{ secrets.FEISHU_WEBHOOK_URL }}" ]; then
+          echo "FEISHU_WEBHOOK_URL is not configured; skipping Feishu notification."
+          exit 0
+        fi
+        curl -X POST -H "Content-Type: application/json" \
+          -d '{
+            "msg_type": "interactive",
+            "card": {
+              "header": {
+                "title": {"tag": "plain_text", "content": "\u274c ZGI API Build Failed"},
+                "template": "red"
+              },
+              "elements": [
+                {"tag": "div", "text": {"tag": "lark_md", "content": "**Repository:** ${{ github.repository }}"}},
+                {"tag": "div", "text": {"tag": "lark_md", "content": "**Branch:** ${{ github.ref_name }}"}},
+                {"tag": "div", "text": {"tag": "lark_md", "content": "**Commit:** ${{ github.sha }}"}},
+                {"tag": "div", "text": {"tag": "lark_md", "content": "**Trigger:** ${{ github.actor }}"}},
+                {"tag": "action", "actions": [{"tag": "button", "text": {"tag": "plain_text", "content": "View Workflow"}, "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}", "type": "danger"}]}
+              ]
+            }
+          }' \
+          "${{ secrets.FEISHU_WEBHOOK_URL }}"
+
+  # 集成测试（使用测试镜像）（已注释，后续启用）
+  # integration-test:
+  #   name: Integration Tests
+  #   runs-on: self-hosted
+  #   needs: [build-test]
+  #   if: |
+  #     github.event_name == 'push' &&
+  #     (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') &&
+  #     github.ref_type != 'tag'
+  #   steps:
+  #   - name: Checkout code
+  #     uses: actions/checkout@v4
+  #
+  #   - name: Set up Go
+  #     uses: actions/setup-go@v5
+  #     with:
+  #       go-version: ${{ env.GO_VERSION }}
+  #
+  #   - name: Run integration tests
+  #     run: |
+  #       # 这里可以添加集成测试
+  #       # 例如：启动 Docker 容器并运行测试
+  #       echo "Integration tests would run here"
+  #       # go test -v -tags=integration ./tests/integration/...
+
+  # 构建正式版本镜像（仅当创建 tag 时）
+  build-release:
+    name: Build Release Image
+    runs-on: self-hosted
+    # needs: [test]  # 已注释，直接构建，不等待测试
+    permissions:
+      contents: read
+    if: github.ref_type == 'tag' && startsWith(github.ref, 'refs/tags/v')
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      with:
+        driver-opts: network=host
+
+    - name: Debug - Check secrets availability
+      run: |
+        echo "=========================================="
+        echo "Secrets 调试信息 (Release Build)"
+        echo "=========================================="
+        echo "Runner: self-hosted (服务器: 47.253.133.65)"
+        echo "执行位置: $(hostname)"
+        echo ""
+        echo "检查 DOCKER_HUB_USERNAME:"
+        if [ -z "${{ secrets.DOCKER_HUB_USERNAME }}" ]; then
+          echo "❌ DOCKER_HUB_USERNAME 为空或未设置"
+        else
+          echo "✅ DOCKER_HUB_USERNAME 已设置"
+        fi
+        echo ""
+        echo "检查 DOCKER_HUB_TOKEN:"
+        if [ -z "${{ secrets.DOCKER_HUB_TOKEN }}" ]; then
+          echo "❌ DOCKER_HUB_TOKEN 为空或未设置"
+        else
+          echo "✅ DOCKER_HUB_TOKEN 已设置"
+        fi
+        echo "=========================================="
+
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ secrets.DOCKER_HUB_USERNAME }}
+        password: ${{ secrets.DOCKER_HUB_TOKEN }}
+
+    - name: Extract version from tag
+      id: version
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/v}
+        echo "version=${VERSION}" >> $GITHUB_OUTPUT
+        echo "full_version=v${VERSION}" >> $GITHUB_OUTPUT
+
+        # 解析语义化版本
+        IFS='.' read -ra ADDR <<< "${VERSION}"
+        MAJOR=${ADDR[0]}
+        MINOR=${ADDR[1]}
+        PATCH=${ADDR[2]}
+
+        echo "major=${MAJOR}" >> $GITHUB_OUTPUT
+        echo "minor=${MINOR}" >> $GITHUB_OUTPUT
+        echo "patch=${PATCH}" >> $GITHUB_OUTPUT
+
+    - name: Determine release tags
+      id: tags
+      run: |
+        VERSION=${{ steps.version.outputs.version }}
+        MAJOR=${{ steps.version.outputs.major }}
+        MINOR=${{ steps.version.outputs.minor }}
+
+        # 构建多个标签：完整版本、主版本.次版本、主版本、latest
+        TAGS="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:v${VERSION}"
+        TAGS="${TAGS},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${MAJOR}.${MINOR}"
+        TAGS="${TAGS},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${MAJOR}"
+        TAGS="${TAGS},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+
+        echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+
+    - name: Build and push release image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile
+        push: true
+        tags: ${{ steps.tags.outputs.tags }}
+        cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
+        cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
+        platforms: linux/amd64
+        provenance: false
+        outputs: type=registry,push=true,push-by-digest=false
+        labels: |
+          org.opencontainers.image.title=ZGI API
+          org.opencontainers.image.version=${{ steps.version.outputs.full_version }}
+          org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
+          org.opencontainers.image.revision=${{ github.sha }}
+          org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      if: startsWith(github.ref, 'refs/tags/')
+      with:
+        name: Release ${{ steps.version.outputs.full_version }}
+        body: |
+          ## Release ${{ steps.version.outputs.full_version }}
+
+          ### Docker Images
+          - `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:v${{ steps.version.outputs.version }}`
+          - `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.major }}.${{ steps.version.outputs.minor }}`
+          - `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.major }}`
+          - `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest`
+
+          ### Pull Command
+          ```bash
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:v${{ steps.version.outputs.version }}
+          ```
+        draft: false
+        prerelease: false
+
+    - name: Release summary
+      run: |
+        echo "## Release Image Built" >> $GITHUB_STEP_SUMMARY
+        echo "**Version:** ${{ steps.version.outputs.full_version }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Tags:** ${{ steps.tags.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "✅ Release image successfully pushed to Docker Hub!" >> $GITHUB_STEP_SUMMARY
+
+    - name: Notify Feishu on release success
+      if: success()
+      run: |
+        if [ -z "${{ secrets.FEISHU_WEBHOOK_URL }}" ]; then
+          echo "FEISHU_WEBHOOK_URL is not configured; skipping Feishu notification."
+          exit 0
+        fi
+        curl -X POST -H "Content-Type: application/json" \
+          -d '{
+            "msg_type": "interactive",
+            "card": {
+              "header": {
+                "title": {"tag": "plain_text", "content": "\ud83d\ude80 ZGI API Release Published"},
+                "template": "blue"
+              },
+              "elements": [
+                {"tag": "div", "text": {"tag": "lark_md", "content": "**Version:** ${{ steps.version.outputs.full_version }}"}},
+                {"tag": "div", "text": {"tag": "lark_md", "content": "**Repository:** ${{ github.repository }}"}},
+                {"tag": "div", "text": {"tag": "lark_md", "content": "**Commit:** ${{ github.sha }}"}},
+                {"tag": "div", "text": {"tag": "lark_md", "content": "**Trigger:** ${{ github.actor }}"}},
+                {"tag": "hr"},
+                {"tag": "div", "text": {"tag": "lark_md", "content": "**Docker Pull:**\n```docker pull docker.io/zgiai/zgi-api:${{ steps.version.outputs.full_version }}```"}},
+                {"tag": "action", "actions": [{"tag": "button", "text": {"tag": "plain_text", "content": "View Release"}, "url": "${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ steps.version.outputs.full_version }}", "type": "primary"}]}
+              ]
+            }
+          }' \
+          "${{ secrets.FEISHU_WEBHOOK_URL }}"
+
+    - name: Notify Feishu on release failure
+      if: failure()
+      run: |
+        if [ -z "${{ secrets.FEISHU_WEBHOOK_URL }}" ]; then
+          echo "FEISHU_WEBHOOK_URL is not configured; skipping Feishu notification."
+          exit 0
+        fi
+        curl -X POST -H "Content-Type: application/json" \
+          -d '{
+            "msg_type": "interactive",
+            "card": {
+              "header": {
+                "title": {"tag": "plain_text", "content": "\u274c ZGI API Release Failed"},
+                "template": "red"
+              },
+              "elements": [
+                {"tag": "div", "text": {"tag": "lark_md", "content": "**Version:** ${{ github.ref_name }}"}},
+                {"tag": "div", "text": {"tag": "lark_md", "content": "**Repository:** ${{ github.repository }}"}},
+                {"tag": "div", "text": {"tag": "lark_md", "content": "**Trigger:** ${{ github.actor }}"}},
+                {"tag": "action", "actions": [{"tag": "button", "text": {"tag": "plain_text", "content": "View Workflow"}, "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}", "type": "danger"}]}
+              ]
+            }
+          }' \
+          "${{ secrets.FEISHU_WEBHOOK_URL }}"

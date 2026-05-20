@@ -1,0 +1,147 @@
+package mineru
+
+import (
+	"archive/zip"
+	"bytes"
+	"testing"
+)
+
+func TestMineruToDocumentResult_Shape(t *testing.T) {
+	resp := &parseResponse{
+		TaskID:  "task-1",
+		Backend: "pipeline",
+		Results: map[string]fileResults{
+			"sample": {
+				MdContent:   "# Title",
+				ContentList: `[{"type":"text","text_level":2,"text":"Title","bbox":[100,200,300,800],"page_idx":0},{"type":"table","table_body":"| A |\n|---|\n| 1 |","table_caption":["Table 1"],"bbox":[10,20,500,600],"page_idx":0}]`,
+				MiddleJSON:  `{"pdf_info":[{"page_idx":0,"page_size":[615,870]}]}`,
+			},
+		},
+	}
+
+	doc, err := mineruToDocumentResult("sample.pdf", resp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if doc.FileName != "sample.pdf" {
+		t.Fatalf("filename mismatch: %q", doc.FileName)
+	}
+	if doc.PageCount != 1 || len(doc.Pages) != 1 {
+		t.Fatalf("page shape mismatch: page_count=%d pages=%d", doc.PageCount, len(doc.Pages))
+	}
+	if len(doc.Chunks) != 2 {
+		t.Fatalf("expected 2 chunks, got %d", len(doc.Chunks))
+	}
+	ch := doc.Chunks[0]
+	if ch.Type != "heading" || ch.Subtype != "h2" {
+		t.Fatalf("type mapping mismatch: type=%q subtype=%q", ch.Type, ch.Subtype)
+	}
+	if ch.BBox == nil {
+		t.Fatalf("expected bbox for mineru chunk")
+	}
+	if ch.Precision != "reliable" {
+		t.Fatalf("expected reliable precision, got %q", ch.Precision)
+	}
+	if ch.Payload["mineru_type"] != "text" || ch.Payload["reading_order"] != 1 {
+		t.Fatalf("mineru payload mismatch: %#v", ch.Payload)
+	}
+
+	table := doc.Chunks[1]
+	if table.Type != "table" || table.Markdown == "" || table.Text == "[table]" {
+		t.Fatalf("table structure not preserved: %+v", table)
+	}
+	if _, ok := table.Payload["table_caption"]; !ok {
+		t.Fatalf("expected table caption in payload: %#v", table.Payload)
+	}
+	diag, _ := doc.Diagnostics["mineru_structure"].(map[string]any)
+	if diag == nil || diag["content_items"] != 2 {
+		t.Fatalf("expected mineru structure diagnostics, got %#v", doc.Diagnostics)
+	}
+}
+
+func TestOfficialReadZipArtifacts(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for name, body := range map[string]string{
+		"sample/full.md":                     "# Title",
+		"sample/sample_content_list.json":    `[{"type":"text","text":"Title","bbox":[0,0,1000,100],"page_idx":0}]`,
+		"sample/sample_middle.json":          `{"pdf_info":[{"page_idx":0,"page_size":[1000,1000]}]}`,
+		"sample/sample_content_list_v2.json": `[[{"type":"title"}]]`,
+	} {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatalf("create zip entry: %v", err)
+		}
+		if _, err := w.Write([]byte(body)); err != nil {
+			t.Fatalf("write zip entry: %v", err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("close zip: %v", err)
+	}
+
+	artifacts, err := officialReadZipArtifacts(buf.Bytes())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if artifacts.Markdown != "# Title" {
+		t.Fatalf("markdown mismatch: %q", artifacts.Markdown)
+	}
+	if artifacts.ContentList == "" || artifacts.ContentListPath != "sample/sample_content_list.json" {
+		t.Fatalf("content list mismatch: path=%q body=%q", artifacts.ContentListPath, artifacts.ContentList)
+	}
+	if artifacts.MiddleJSON == "" || artifacts.MiddleJSONPath != "sample/sample_middle.json" {
+		t.Fatalf("middle json mismatch: path=%q body=%q", artifacts.MiddleJSONPath, artifacts.MiddleJSON)
+	}
+}
+
+func TestDecodeContentItemsV2(t *testing.T) {
+	raw := `[[{"type":"title","content":{"level":1,"title_content":[{"type":"text","content":"Hello"}]},"bbox":[0,0,100,100]},{"type":"paragraph","content":{"paragraph_content":[{"type":"text","content":"World"}]},"bbox":[0,100,100,200]},{"type":"table","content":{"table_content":[{"type":"text","content":"| A |\n|---|"}]},"bbox":[0,200,100,300]}]]`
+
+	items, err := decodeContentItems(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("expected 3 items, got %d", len(items))
+	}
+	if items[0].Type != "text" || items[0].Text != "Hello" || items[0].TextLevel != 1 || items[0].PageIdx != 0 {
+		t.Fatalf("title mismatch: %+v", items[0])
+	}
+	if items[1].Type != "text" || items[1].Text != "World" {
+		t.Fatalf("paragraph mismatch: %+v", items[1])
+	}
+	if items[2].Type != "table" || items[2].TableBody == "" {
+		t.Fatalf("table mismatch: %+v", items[2])
+	}
+}
+
+func TestSyntheticContentListFromMarkdown(t *testing.T) {
+	got := syntheticContentListFromMarkdown("# Title\n\nBody text")
+	if got == "" {
+		t.Fatalf("expected synthetic content list")
+	}
+	resp := &parseResponse{
+		TaskID:  "task-markdown",
+		Backend: "official:MinerU-HTML",
+		Results: map[string]fileResults{
+			"preview.html": {
+				MdContent:   "# Title\n\nBody text",
+				ContentList: got,
+			},
+		},
+	}
+	doc, err := mineruToDocumentResult("preview.html", resp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(doc.Chunks) != 2 {
+		t.Fatalf("expected 2 chunks, got %d", len(doc.Chunks))
+	}
+	if doc.Chunks[0].Type != "heading" || doc.Chunks[0].Text != "Title" {
+		t.Fatalf("heading mismatch: %+v", doc.Chunks[0])
+	}
+	if doc.Chunks[1].Text != "Body text" {
+		t.Fatalf("body mismatch: %+v", doc.Chunks[1])
+	}
+}

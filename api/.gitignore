@@ -1,0 +1,147 @@
+# Kest runtime output
+.kest/logs/
+.kest/history*
+.kest/*.db
+docs/
+
+# 编译生成的文件
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.prof
+*.trace
+
+
+# 二进制文件
+bin/
+dist/
+/server
+main
+zgi-api
+
+# IDE 相关
+.agent/
+.idea/
+.vscode/
+.kiro/
+.trae/
+*.swp
+*.swo
+.DS_Store
+.env
+*.env
+
+# 依赖目录
+vendor/
+
+# 日志文件
+*.log
+logs/
+log/
+
+# 测试缓存
+*.test
+*.tmp
+coverage.txt
+coverage.html
+
+# 配置文件（根据需要调整）
+# config.yaml
+# config.yml
+*.local.yaml
+*.local.yml
+
+# 临时文件
+tmp/
+temp/
+.tmp/
+
+# 数据库文件
+*.db
+
+# Token files (sensitive data)
+scripts/tokens.json
+*.sqlite
+*.sqlite3
+zgi-table.sql
+
+# 证书文件
+*.pem
+*.key
+*.crt
+*.csr
+*.srl
+
+# 环境变量文件
+.env
+.env.*
+!.env.example
+!.env.docker.example
+
+# 缓存文件
+.cache/
+
+# Air 实时重载工具的临时文件
+tmp/
+
+# Go 工作区文件
+go.work
+go.work.sum
+
+# 调试文件
+__debug_bin
+debug.test
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 项目特定文件
+uploads/
+static/uploads/
+public/uploads/
+
+docker/volumes/db/data/*
+docker/volumes/redis/data/*
+docker/volumes/weaviate/*
+
+storage/*
+!storage/.gitkeep
+
+# Cursor editor artifacts
+.cursor/
+.lingma/
+.windsurf/
+
+# Local tooling (do not commit)
+cmd/password_gen/
+*.bak
+
+# Test and Temporary scripts
+list_proxy_models.go
+test_login.go
+test_openai_params.go
+server.pid
+.api_key
+.auth_token
+.llm_api_key
+/.ref/
+
+# Test documents and scripts
+test_docs/
+scripts/inspect_kb.py
+scripts/inspect_kb.go
+scripts/inspect_kb/
+
+# Content parse local corpora, downloaded benchmark assets, and generated reports
+tests/contentparse/fixtures/hf/
+tests/contentparse/fixtures/private/
+tests/contentparse/downloads/
+tests/contentparse/generated/
+tests/contentparse/reports/
+tests/contentparse/manifests/private*.yaml
+tests/pdf-bench/

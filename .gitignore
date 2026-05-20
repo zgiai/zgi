@@ -1,0 +1,8 @@
+.DS_Store
+.env
+.env.local
+.idea/
+.vscode/
+tmp/
+docker/docker-compose.yaml
+

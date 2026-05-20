@@ -1,0 +1,170 @@
+package billing
+
+import (
+	"context"
+	"log"
+
+	pb "github.com/zgiai/ginext/pkg/rpc/v1"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+)
+
+// Remote is the Cloud implementation that communicates with zgi-console via gRPC.
+type Remote struct {
+	client   pb.BillingServiceClient
+	conn     *grpc.ClientConn
+	fallback bool // Whether to allow requests on gRPC failure
+}
+
+// NewRemote creates a new remote billing provider.
+func NewRemote(addr string) (*Remote, error) {
+	conn, err := grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, err
+	}
+
+	return &Remote{
+		client:   pb.NewBillingServiceClient(conn),
+		conn:     conn,
+		fallback: true, // Default to allowing requests on failure
+	}, nil
+}
+
+// SetFallbackBehavior controls what happens when gRPC is unavailable.
+// If true, requests are allowed; if false, requests are rejected.
+func (r *Remote) SetFallbackBehavior(allow bool) {
+	r.fallback = allow
+}
+
+// Close closes the gRPC connection.
+func (r *Remote) Close() error {
+	if r.conn != nil {
+		return r.conn.Close()
+	}
+	return nil
+}
+
+// PreCheck validates if the request should proceed via gRPC to zgi-console.
+func (r *Remote) PreCheck(ctx context.Context, tenantID, model, provider string) (bool, string, error) {
+	resp, err := r.client.PreCheck(ctx, &pb.PreCheckRequest{
+		TenantId: tenantID,
+		Model:    model,
+		Provider: provider,
+	})
+	if err != nil {
+		log.Printf("[Remote.PreCheck] gRPC error: %v, fallback=%v", err, r.fallback)
+		if r.fallback {
+			return true, "billing service unavailable, fallback allowed", nil
+		}
+		return false, "billing service unavailable", err
+	}
+
+	return resp.Allowed, resp.Reason, nil
+}
+
+// RecordUsage reports consumption to zgi-console via gRPC.
+func (r *Remote) RecordUsage(ctx context.Context, tenantID string, usage Usage) error {
+	metadata := make(map[string]string)
+	for k, v := range usage.Metadata {
+		metadata[k] = v
+	}
+
+	_, err := r.client.RecordUsage(ctx, &pb.RecordUsageRequest{
+		TenantId:         tenantID,
+		Model:            usage.Model,
+		Provider:         usage.Provider,
+		PromptTokens:     int32(usage.PromptTokens),
+		CompletionTokens: int32(usage.CompletionTokens),
+		RequestId:        usage.RequestID,
+		Metadata:         metadata,
+	})
+	if err != nil {
+		log.Printf("[Remote.RecordUsage] gRPC error: %v", err)
+		// Don't fail the request for usage recording errors
+		return nil
+	}
+
+	return nil
+}
+
+// PreDeduct pre-deducts estimated quota via gRPC.
+func (r *Remote) PreDeduct(ctx context.Context, req *PreDeductRequest) (*PreDeductResponse, error) {
+	resp, err := r.client.PreDeductQuota(ctx, &pb.PreDeductQuotaRequest{
+		TenantId:         req.TenantID,
+		ApiKeyId:         req.APIKeyID,
+		EstimatedCredits: req.EstimatedCredits,
+		ModelId:          req.Model,
+		ModelName:        req.Model,
+		ProviderId:       req.Provider,
+		ProviderName:     req.Provider,
+		RequestId:        req.RequestID,
+	})
+
+	if err != nil {
+		log.Printf("[Remote.PreDeduct] gRPC error: %v, fallback=%v", err, r.fallback)
+		if r.fallback {
+			// Fallback: allow request to continue
+			return &PreDeductResponse{
+				Allowed:        true,
+				DeductionID:    req.RequestID,
+				RemainingQuota: -1,
+				Reason:         "billing service unavailable, fallback allowed",
+			}, nil
+		}
+		return nil, err
+	}
+
+	return &PreDeductResponse{
+		Allowed:        resp.Success,
+		DeductionID:    resp.DeductionId,
+		RemainingQuota: resp.RemainingQuota,
+		Reason:         resp.ErrorMessage,
+	}, nil
+}
+
+// Settle settles the actual quota consumption via gRPC.
+func (r *Remote) Settle(ctx context.Context, req *SettleRequest) error {
+	_, err := r.client.SettleQuota(ctx, &pb.SettleQuotaRequest{
+		TenantId:         req.TenantID,
+		ApiKeyId:         req.APIKeyID,
+		DeductionId:      req.DeductionID,
+		EstimatedCredits: req.EstimatedCredits,
+		ActualCredits:    req.ActualCredits,
+		PromptTokens:     req.PromptTokens,
+		CompletionTokens: req.CompletionTokens,
+		TotalTokens:      req.TotalTokens,
+		ModelId:          req.Model,
+		ModelName:        req.Model,
+		ProviderId:       req.Provider,
+		ProviderName:     req.Provider,
+		Status:           req.Status,
+		ErrorMessage:     req.ErrorMessage,
+		RequestId:        req.RequestID,
+	})
+
+	if err != nil {
+		log.Printf("[Remote.Settle] gRPC error: %v", err)
+		// Don't fail the request for settlement errors
+		return nil
+	}
+
+	return nil
+}
+
+// GetQuota queries the remaining quota via gRPC.
+func (r *Remote) GetQuota(ctx context.Context, tenantID, apiKeyID string) (int64, error) {
+	resp, err := r.client.GetAPIKeyQuota(ctx, &pb.GetAPIKeyQuotaRequest{
+		ApiKeyId: apiKeyID,
+	})
+
+	if err != nil {
+		log.Printf("[Remote.GetQuota] gRPC error: %v, fallback=%v", err, r.fallback)
+		if r.fallback {
+			// Fallback: return unlimited quota
+			return -1, nil
+		}
+		return 0, err
+	}
+
+	return resp.RemainingQuota, nil
+}

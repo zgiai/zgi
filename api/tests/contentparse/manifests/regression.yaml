@@ -1,0 +1,41 @@
+version: 1
+name: public-regression
+defaults:
+  intent: preview
+  profile: fast_preview
+  engine: local
+cases:
+  - id: txt-basic
+    file: ../../file_process/hyperparse/fixtures/sample.txt
+    expect:
+      status: succeeded
+      min_elements: 1
+      contains_text:
+        - hello
+      max_duration_ms: 3000
+  - id: csv-basic
+    file: ../fixtures/public/sample.csv
+    expect:
+      status: succeeded
+      min_elements: 1
+      contains_text:
+        - bob,28
+      max_duration_ms: 3000
+  - id: markdown-basic
+    file: ../fixtures/public/sample.md
+    expect:
+      status: succeeded
+      min_elements: 1
+      contains_text:
+        - content parse foundation
+      max_duration_ms: 3000
+  - id: pdf-basic
+    file: ../../file_process/hyperparse/fixtures/sample.pdf
+    requires:
+      any_tools:
+        - pdftoppm
+        - tesseract
+    expect:
+      status: succeeded
+      min_elements: 1
+      max_duration_ms: 10000

@@ -1,0 +1,363 @@
+/* Used by the MarkdownViewer component.
+ */
+
+/* ========== GLOBAL TECHNICAL SCROLLBARS ========== */
+.technical-scrollbar::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+.technical-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.technical-scrollbar::-webkit-scrollbar-thumb {
+  @apply bg-muted-foreground/20 rounded-full hover:bg-muted-foreground/40;
+}
+
+/* ========== MARKDOWN CODE WRAPPER ========== */
+.md-code-wrapper {
+  @apply rounded-md border border-border overflow-hidden bg-muted;
+}
+.md-code-wrapper .md-code-header {
+  @apply flex items-center justify-between py-1.5 px-3 border-b border-border bg-muted;
+}
+.md-code-wrapper .md-code-header .md-code-lang {
+  @apply text-xs text-foreground font-medium;
+}
+.md-code-wrapper pre {
+  @apply bg-background m-0 p-4 overflow-auto;
+}
+.md-code-wrapper pre code {
+  @apply bg-transparent p-0 text-xs leading-5 font-mono;
+}
+.md-code-wrapper code.hljs {
+  @apply bg-transparent p-0;
+}
+
+/* ========== MARKDOWN VIEWER BASE ========== */
+.md-viewer {
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+/* Headings */
+.md-viewer h1 {
+  @apply font-bold mt-5 mb-2 pb-1.5 border-b border-border first:mt-0;
+  font-size: 28px;
+  line-height: 1.2;
+}
+.md-viewer h2 {
+  @apply font-bold mt-5 mb-2 pb-1.5 border-b border-border;
+  font-size: 22px;
+  line-height: 1.25;
+}
+.md-viewer h3 {
+  @apply font-semibold mt-4 mb-2;
+  font-size: 18px;
+  line-height: 1.35;
+}
+.md-viewer h4 {
+  @apply font-semibold mt-3 mb-1.5;
+  font-size: 16px;
+  line-height: 1.4;
+}
+.md-viewer h5 {
+  @apply font-semibold mt-3 mb-1.5;
+  font-size: 14px;
+  line-height: 1.45;
+}
+.md-viewer h6 {
+  @apply font-semibold mt-3 mb-1.5 text-muted-foreground;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+/* Paragraphs */
+.md-viewer p {
+  @apply my-1;
+}
+.md-viewer p:first-child {
+  @apply mt-0;
+}
+.md-viewer p:last-child {
+  @apply mb-0;
+}
+
+/* Links */
+.md-viewer a {
+  @apply text-primary font-medium underline underline-offset-4 decoration-primary/50 transition-colors;
+}
+.md-viewer a:hover {
+  @apply text-primary/80 decoration-primary;
+}
+
+/* Text formatting */
+.md-viewer strong {
+  @apply font-semibold text-foreground;
+}
+.md-viewer em {
+  @apply italic;
+}
+.md-viewer del {
+  @apply line-through text-muted-foreground;
+}
+
+/* Blockquotes */
+.md-viewer blockquote {
+  @apply my-1 border-l-4 border-primary/40 pl-4 py-1 bg-primary/10 rounded-r-md;
+}
+.md-viewer blockquote p {
+  @apply my-0 text-primary italic;
+}
+.md-viewer blockquote blockquote {
+  @apply my-1 border-l-primary/30;
+}
+
+/* Horizontal rules */
+.md-viewer hr {
+  @apply my-8 border-t border-border;
+}
+
+/* Images */
+.md-viewer img {
+  @apply rounded-lg max-w-full;
+}
+
+/* Code blocks override in md-viewer context */
+.md-viewer .md-code-wrapper {
+  @apply my-4;
+}
+.md-viewer .md-code-wrapper pre {
+  @apply m-0 p-3;
+}
+.md-viewer pre {
+  @apply m-0;
+}
+.md-viewer pre code {
+  @apply bg-transparent p-0 text-xs leading-5;
+}
+.md-viewer code.hljs {
+  @apply bg-transparent p-0;
+}
+.md-mermaid-wrapper {
+  @apply my-3 rounded-md border border-border bg-background p-3 overflow-x-auto;
+}
+.md-mermaid-loading {
+  @apply h-36 rounded bg-muted/60;
+}
+.md-mermaid-graph {
+  @apply min-w-max;
+}
+.md-mermaid-graph svg {
+  @apply h-auto w-full max-w-none;
+  color: var(--foreground);
+}
+.md-mermaid-graph svg text {
+  @apply fill-foreground;
+}
+.md-mermaid-graph svg .node rect,
+.md-mermaid-graph svg .node circle,
+.md-mermaid-graph svg .node polygon,
+.md-mermaid-graph svg .node path,
+.md-mermaid-graph svg .actor,
+.md-mermaid-graph svg .labelBox,
+.md-mermaid-graph svg .note {
+  @apply fill-background stroke-border;
+}
+.md-mermaid-graph svg .cluster rect {
+  fill: hsl(var(--muted) / 0.4);
+  stroke: hsl(var(--border));
+}
+.md-mermaid-graph svg .edgePath .path,
+.md-mermaid-graph svg marker path,
+.md-mermaid-graph svg .flowchart-link {
+  @apply stroke-foreground;
+}
+.md-mermaid-graph svg .edgeLabel,
+.md-mermaid-graph svg .label {
+  @apply bg-transparent text-foreground;
+}
+.md-mermaid-fallback {
+  @apply my-2 md-code-wrapper;
+}
+.md-mermaid-fallback pre {
+  @apply overflow-auto p-3 m-0;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+/* Table enhancements */
+.md-viewer table {
+  @apply w-full;
+}
+.md-viewer th {
+  @apply bg-muted/50 font-semibold text-left;
+}
+.md-viewer td {
+  @apply align-top;
+}
+.md-viewer tr:hover td {
+  @apply bg-muted/30;
+}
+
+/* Lists */
+.md-viewer ul {
+  @apply my-2 ml-5 list-disc;
+}
+.md-viewer ol {
+  @apply my-2 ml-5 list-decimal;
+}
+.md-viewer li {
+  @apply my-0.5 pl-1;
+}
+.md-viewer li > ul,
+.md-viewer li > ol {
+  @apply my-1;
+}
+.md-viewer li > p {
+  @apply my-0;
+}
+
+/* Nested list styles */
+.md-viewer ul ul {
+  list-style-type: circle;
+}
+.md-viewer ul ul ul {
+  list-style-type: square;
+}
+
+/* Math formulas (KaTeX) */
+.md-viewer .katex-display {
+  @apply my-4 py-2;
+  overflow: hidden;
+  max-width: 100%;
+}
+.md-viewer .katex-display > .katex {
+  @apply text-foreground;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.md-viewer .katex-display svg {
+  max-width: 100%;
+  height: auto;
+}
+.md-viewer .katex {
+  @apply text-foreground;
+  position: relative; /* Contain absolute positioned .katex-mathml elements */
+}
+
+/* Embedded HTML elements */
+.md-viewer kbd {
+  @apply inline-block px-1.5 py-0.5 text-xs font-mono bg-muted border border-border rounded shadow-sm;
+}
+.md-viewer mark {
+  @apply bg-warning/30 px-0.5 rounded;
+}
+.md-viewer abbr {
+  @apply underline decoration-dotted cursor-help;
+}
+.md-viewer sub,
+.md-viewer sup {
+  @apply text-xs;
+}
+.md-viewer sup {
+  line-height: 0;
+}
+.md-viewer [data-footnote-ref] {
+  @apply align-super text-[0.7em] no-underline;
+  line-height: 0;
+}
+.md-viewer [data-footnotes] {
+  @apply mt-4 max-w-full overflow-hidden border-t border-border pt-3 text-xs text-muted-foreground;
+}
+.md-viewer [data-footnotes] > ol {
+  @apply my-0 ml-5 list-decimal space-y-2;
+}
+.md-viewer [data-footnotes] li {
+  @apply my-0 pl-1;
+}
+.md-viewer [data-footnotes] li > p {
+  @apply my-0;
+}
+.md-viewer [data-footnote-backref] {
+  @apply ml-1 inline-flex items-center no-underline;
+}
+.md-viewer details {
+  @apply my-2 border border-border rounded-md;
+}
+.md-viewer .md-think-block {
+  border: 1px solid oklch(from var(--highlight) l c h / 0.14);
+  border-radius: 14px;
+  background: var(--background);
+  box-shadow: 0 1px 2px oklch(from var(--foreground) l c h / 0.04);
+  overflow: hidden;
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease;
+}
+.md-viewer .md-think-block:hover {
+  border-color: oklch(from var(--highlight) l c h / 0.24);
+  box-shadow: 0 4px 8px oklch(from var(--foreground) l c h / 0.06);
+}
+.md-viewer details summary {
+  @apply px-3 py-2 cursor-pointer bg-muted/50 font-medium hover:bg-muted;
+}
+.md-viewer .md-think-header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  border: 0;
+  padding: 8px 12px;
+  background: oklch(from var(--highlight) l c h / 0.05);
+  color: oklch(from var(--foreground) l c h / 0.78);
+  text-align: left;
+  font-weight: 500;
+  font-size: small;
+  letter-spacing: 0;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    background-color 180ms ease,
+    color 180ms ease;
+}
+.md-viewer .md-think-header:hover {
+  background: oklch(from var(--highlight) l c h / 0.1);
+  color: oklch(from var(--foreground) l c h / 0.96);
+}
+.md-viewer .md-think-summary-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.md-viewer .md-think-icon-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background: var(--highlight);
+  flex-shrink: 0;
+  transition: background-color 180ms ease;
+}
+.md-viewer .md-think-header:hover .md-think-icon-dot {
+  background: oklch(from var(--highlight) l c h / 0.88);
+}
+.md-viewer .md-think-icon {
+  color: var(--highlight);
+  flex-shrink: 0;
+}
+.md-viewer .md-think-content {
+  border-top: 1px solid oklch(from var(--highlight) l c h / 0.14);
+  padding: 10px 12px;
+  background: var(--background);
+  color: oklch(from var(--foreground) l c h / 0.62);
+  font-size: small;
+  line-height: 1.68;
+}
+.md-viewer .md-think-content > :first-child {
+  margin-top: 0;
+}
+.md-viewer .md-think-content > :last-child {
+  margin-bottom: 0;
+}

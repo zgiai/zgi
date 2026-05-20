@@ -1,0 +1,790 @@
+package vlm
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	pdfapi "github.com/pdfcpu/pdfcpu/pkg/api"
+	pdfmodel "github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+	extractcommon "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
+)
+
+const (
+	defaultTimeout   = 180 * time.Second
+	defaultMaxTokens = 8192
+	defaultPageBatch = 10
+	defaultMaxConcur = 5
+	bboxScale        = 1000.0
+	queueTimeout     = 60 * time.Second
+)
+
+var (
+	concurrencyOnce sync.Once
+	concurrencySem  chan struct{}
+)
+
+type ChatCompletionRequest struct {
+	Model          string
+	UserContent    []map[string]any
+	MaxTokens      int
+	ResponseFormat string
+}
+
+type ChatCompletionResponse struct {
+	Content      string
+	Model        string
+	FinishReason string
+	PromptTokens int
+}
+
+type ChatCompletionFunc func(ctx context.Context, req ChatCompletionRequest) (*ChatCompletionResponse, error)
+
+type Client struct {
+	chatCompletion    ChatCompletionFunc
+	primaryModel      string
+	fallbackModelName string
+}
+
+func New() *Client { return &Client{} }
+
+func NewWithChatCompletion(primaryModel, fallbackModel string, completion ChatCompletionFunc) *Client {
+	return &Client{
+		chatCompletion:    completion,
+		primaryModel:      strings.TrimSpace(primaryModel),
+		fallbackModelName: strings.TrimSpace(fallbackModel),
+	}
+}
+
+// ParseBytes supports PDFs and common image formats.
+func (c *Client) ParseBytes(ctx context.Context, filename string, data []byte, opts extractcommon.ParseOptions) (*extractcommon.DocumentResult, error) {
+	_ = opts
+	if isImageFilename(filename) {
+		doc, err := c.runImagePipeline(ctx, filename, data)
+		if err != nil {
+			return nil, err
+		}
+		return extractcommon.EnrichStructuredOutput(doc), nil
+	}
+	return c.ParsePDFBytes(ctx, filename, data, opts)
+}
+
+func (c *Client) ParsePDFBytes(ctx context.Context, filename string, data []byte, opts extractcommon.ParseOptions) (*extractcommon.DocumentResult, error) {
+	_ = opts
+	doc, err := c.runPipeline(ctx, filename, data)
+	if err != nil {
+		return nil, err
+	}
+	return extractcommon.EnrichStructuredOutput(doc), nil
+}
+
+func (c *Client) model() string {
+	if c != nil && strings.TrimSpace(c.primaryModel) != "" {
+		return strings.TrimSpace(c.primaryModel)
+	}
+	return model()
+}
+
+func (c *Client) fallbackModel() string {
+	if c != nil && strings.TrimSpace(c.fallbackModelName) != "" {
+		return strings.TrimSpace(c.fallbackModelName)
+	}
+	return fallbackModel()
+}
+
+func (c *Client) usesInjectedCompletion() bool {
+	return c != nil && c.chatCompletion != nil
+}
+
+func apiKey() string {
+	return firstEnv("VLM_API_KEY", "DASHSCOPE_API_KEY", "GEMINI_API_KEY")
+}
+
+func baseURL() string {
+	if v := firstEnv("VLM_BASE_URL", "DASHSCOPE_BASE_URL", "GEMINI_BASE_URL"); v != "" {
+		return strings.TrimRight(v, "/")
+	}
+	return ""
+}
+
+func requiredBaseURL() (string, error) {
+	value := baseURL()
+	if value == "" {
+		return "", fmt.Errorf("missing VLM_BASE_URL (or DASHSCOPE_BASE_URL/GEMINI_BASE_URL)")
+	}
+	return value, nil
+}
+
+func model() string {
+	return firstEnv("VLM_MODEL", "DASHSCOPE_VL_MODEL", "GEMINI_MODEL")
+}
+
+func fallbackModel() string {
+	return firstEnv("VLM_MODEL_FAST", "DASHSCOPE_VL_MODEL_FAST", "GEMINI_FALLBACK_MODEL")
+}
+
+func firstEnv(keys ...string) string {
+	for _, key := range keys {
+		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func timeout() time.Duration {
+	if v := strings.TrimSpace(os.Getenv("GEMINI_TIMEOUT_SECONDS")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return defaultTimeout
+}
+
+func maxTokens() int {
+	if v := strings.TrimSpace(os.Getenv("GEMINI_MAX_TOKENS")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return defaultMaxTokens
+}
+
+func pageBatch() int {
+	if v := strings.TrimSpace(os.Getenv("GEMINI_PAGE_BATCH")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return defaultPageBatch
+}
+
+func maxConcurrency() int {
+	if v := strings.TrimSpace(os.Getenv("GEMINI_MAX_CONCURRENCY")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return defaultMaxConcur
+}
+
+func getSemaphore() chan struct{} {
+	concurrencyOnce.Do(func() {
+		concurrencySem = make(chan struct{}, maxConcurrency())
+	})
+	return concurrencySem
+}
+
+const systemPrompt = `You are a PDF layout parser. Analyze this PDF and output all semantic blocks in reading order.
+Preserve the source document language in extracted text.
+
+Return a strict JSON object only, with this shape:
+{
+  "chunks": [
+    {
+      "type": "heading" | "text" | "figure" | "table" | "formula" | "marginalia",
+      "subtype": "h1" | "h2" | "h3" | "",
+      "page": <0-based page index>,
+      "bbox": [ymin, xmin, ymax, xmax],
+      "text": "<plain text>",
+      "markdown": "<markdown / HTML / LaTeX>"
+    }
+  ]
+}
+
+Rules:
+1. Normalize bbox coordinates to the 0..1000 range with top-left origin.
+2. Use human reading order: top-to-bottom, with column-aware ordering.
+3. Headers, footers, page numbers, and watermarks use type=marginalia.
+4. Images and charts use type=figure; markdown may contain an alt-style description.
+5. Tables use type=table and HTML <table> markdown.
+6. Formulas use type=formula and LaTeX markdown ($...$ or $$...$$).
+7. Headings should set subtype by level, such as h1/h2/h3.
+8. Do not merge blocks of different types and do not drop visible content.
+9. Output only the JSON object: no code fences and no explanation.`
+
+type contentPart struct {
+	Type     string           `json:"type"`
+	Text     string           `json:"text,omitempty"`
+	File     *contentFile     `json:"file,omitempty"`
+	ImageURL *contentImageURL `json:"image_url,omitempty"`
+}
+
+type contentFile struct {
+	Filename string `json:"filename"`
+	FileData string `json:"file_data"`
+}
+
+type contentImageURL struct {
+	URL string `json:"url"`
+}
+
+type message struct {
+	Role    string        `json:"role"`
+	Content []contentPart `json:"content"`
+}
+
+type respFormat struct {
+	Type string `json:"type"`
+}
+
+type request struct {
+	Model          string      `json:"model"`
+	Messages       []message   `json:"messages"`
+	MaxTokens      int         `json:"max_tokens,omitempty"`
+	ResponseFormat *respFormat `json:"response_format,omitempty"`
+}
+
+type choice struct {
+	FinishReason string `json:"finish_reason"`
+	Message      struct {
+		Content string `json:"content"`
+	} `json:"message"`
+}
+
+type usage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+}
+
+type parseResponse struct {
+	Choices []choice `json:"choices"`
+	Usage   usage    `json:"usage"`
+	Error   any      `json:"error,omitempty"`
+}
+
+type chunkItem struct {
+	Type     string    `json:"type"`
+	Subtype  string    `json:"subtype,omitempty"`
+	Page     int       `json:"page"`
+	Bbox     []float64 `json:"bbox,omitempty"`
+	Text     string    `json:"text,omitempty"`
+	Markdown string    `json:"markdown,omitempty"`
+}
+
+type chunksPayload struct {
+	Chunks []chunkItem `json:"chunks"`
+}
+
+type batchResult struct {
+	BatchIndex int
+	PageOffset int
+	Model      string
+	Chunks     []chunkItem
+}
+
+func (c *Client) runPipeline(ctx context.Context, filename string, data []byte) (*extractcommon.DocumentResult, error) {
+	if len(data) == 0 {
+		return nil, errors.New("gemini: empty PDF bytes")
+	}
+	if !c.usesInjectedCompletion() && apiKey() == "" {
+		return nil, errors.New("vlm: VLM_API_KEY/DASHSCOPE_API_KEY/GEMINI_API_KEY not set")
+	}
+	if c.model() == "" {
+		return nil, errors.New("vlm: VLM_MODEL/DASHSCOPE_VL_MODEL/GEMINI_MODEL not set")
+	}
+
+	totalPages, splits, err := splitPDFByPages(data, pageBatch())
+	if err != nil {
+		return nil, fmt.Errorf("gemini: split PDF: %w", err)
+	}
+	if totalPages <= 0 {
+		return nil, errors.New("gemini: PDF has 0 pages")
+	}
+
+	results := make([]*batchResult, len(splits))
+	errs := make([]error, len(splits))
+	var wg sync.WaitGroup
+	for i, split := range splits {
+		wg.Add(1)
+		go func(idx int, sp splitPDF) {
+			defer wg.Done()
+			br, e := c.callParse(ctx, filename, sp.Data, idx, len(splits), sp.PageStart, sp.PageEnd)
+			if e != nil {
+				errs[idx] = e
+				return
+			}
+			br.PageOffset = sp.PageStart
+			br.BatchIndex = idx
+			results[idx] = br
+		}(i, split)
+	}
+	wg.Wait()
+	for i, e := range errs {
+		if e != nil {
+			return nil, fmt.Errorf("gemini: batch %d/%d failed: %w", i+1, len(splits), e)
+		}
+	}
+
+	return toDocumentResult(filename, totalPages, results)
+}
+
+func (c *Client) runImagePipeline(ctx context.Context, filename string, data []byte) (*extractcommon.DocumentResult, error) {
+	if len(data) == 0 {
+		return nil, errors.New("gemini: empty image bytes")
+	}
+	if !c.usesInjectedCompletion() && apiKey() == "" {
+		return nil, errors.New("vlm: VLM_API_KEY/DASHSCOPE_API_KEY/GEMINI_API_KEY not set")
+	}
+	if c.model() == "" {
+		return nil, errors.New("vlm: VLM_MODEL/DASHSCOPE_VL_MODEL/GEMINI_MODEL not set")
+	}
+	br, err := c.callImageParse(ctx, filename, data)
+	if err != nil {
+		return nil, err
+	}
+	return toDocumentResult(filename, 1, []*batchResult{br})
+}
+
+func (c *Client) callParse(ctx context.Context, filename string, pdfData []byte, batchIdx, batchTotal int, pageStart, pageEnd int) (*batchResult, error) {
+	sem := getSemaphore()
+	acquireCtx, cancel := context.WithTimeout(ctx, queueTimeout)
+	defer cancel()
+	select {
+	case sem <- struct{}{}:
+		defer func() { <-sem }()
+	case <-acquireCtx.Done():
+		return nil, fmt.Errorf("gemini: queue acquire timeout after %s (batch %d/%d)", queueTimeout, batchIdx+1, batchTotal)
+	}
+
+	primary := c.model()
+	fallback := c.fallbackModel()
+	br, err := c.callOnce(ctx, filename, pdfData, primary)
+	if err == nil {
+		return br, nil
+	}
+	if isRetryable(err) && fallback != "" && fallback != primary {
+		time.Sleep(2 * time.Second)
+		br2, err2 := c.callOnce(ctx, filename, pdfData, fallback)
+		if err2 == nil {
+			return br2, nil
+		}
+		return nil, fmt.Errorf("gemini: primary+fallback both failed: primary=%v fallback=%v", err, err2)
+	}
+	return nil, err
+}
+
+func (c *Client) callImageParse(ctx context.Context, filename string, imgData []byte) (*batchResult, error) {
+	sem := getSemaphore()
+	acquireCtx, cancel := context.WithTimeout(ctx, queueTimeout)
+	defer cancel()
+	select {
+	case sem <- struct{}{}:
+		defer func() { <-sem }()
+	case <-acquireCtx.Done():
+		return nil, fmt.Errorf("gemini: queue acquire timeout after %s", queueTimeout)
+	}
+
+	primary := c.model()
+	fallback := c.fallbackModel()
+	br, err := c.callImageOnce(ctx, filename, imgData, primary)
+	if err == nil {
+		return br, nil
+	}
+	if isRetryable(err) && fallback != "" && fallback != primary {
+		time.Sleep(2 * time.Second)
+		br2, err2 := c.callImageOnce(ctx, filename, imgData, fallback)
+		if err2 == nil {
+			return br2, nil
+		}
+		return nil, fmt.Errorf("gemini: image primary+fallback both failed: primary=%v fallback=%v", err, err2)
+	}
+	return nil, err
+}
+
+type retryableErr struct{ inner error }
+
+func (e *retryableErr) Error() string { return e.inner.Error() }
+func (e *retryableErr) Unwrap() error { return e.inner }
+
+func isRetryable(err error) bool {
+	var r *retryableErr
+	return errors.As(err, &r)
+}
+
+func (c *Client) callOnce(ctx context.Context, filename string, pdfData []byte, useModel string) (*batchResult, error) {
+	b64 := base64.StdEncoding.EncodeToString(pdfData)
+	dataURI := "data:application/pdf;base64," + b64
+
+	userContent := []map[string]any{
+		{"type": "text", "text": systemPrompt},
+		{
+			"type": "file",
+			"file": map[string]any{
+				"filename":  filename,
+				"file_data": dataURI,
+			},
+		},
+	}
+	return c.callContentOnce(ctx, userContent, useModel, "gemini")
+}
+
+func (c *Client) callImageOnce(ctx context.Context, filename string, imgData []byte, useModel string) (*batchResult, error) {
+	mime := imageMIME(filename)
+	b64 := base64.StdEncoding.EncodeToString(imgData)
+	dataURI := "data:" + mime + ";base64," + b64
+
+	userContent := []map[string]any{
+		{"type": "text", "text": systemPrompt},
+		{
+			"type": "image_url",
+			"image_url": map[string]any{
+				"url": dataURI,
+			},
+		},
+	}
+	return c.callContentOnce(ctx, userContent, useModel, "gemini: image")
+}
+
+func (c *Client) callContentOnce(ctx context.Context, userContent []map[string]any, useModel string, label string) (*batchResult, error) {
+	content, modelUsed, finishReason, promptTokens, err := c.complete(ctx, userContent, useModel)
+	if err != nil {
+		return nil, err
+	}
+	if strings.EqualFold(finishReason, "length") {
+		return nil, fmt.Errorf("%s: finish_reason=length (max_tokens=%d exceeded)", label, maxTokens())
+	}
+	if strings.EqualFold(finishReason, "content_filter") || strings.EqualFold(finishReason, "safety") {
+		return nil, fmt.Errorf("%s: finish_reason=%s (content blocked by safety filter)", label, finishReason)
+	}
+	if content == "" {
+		return nil, &retryableErr{inner: fmt.Errorf("%s: empty message.content (finish_reason=%s)", label, finishReason)}
+	}
+
+	chunks, cerr := parseChunks(content)
+	if cerr != nil {
+		snippet := content
+		if len(snippet) > 400 {
+			snippet = snippet[:400] + "..."
+		}
+		return nil, &retryableErr{inner: fmt.Errorf("%s: parse chunks JSON: %w (content=%s)", label, cerr, snippet)}
+	}
+	if len(chunks) == 0 {
+		return nil, fmt.Errorf("%s: model returned 0 chunks (prompt_tokens=%d)", label, promptTokens)
+	}
+	if modelUsed == "" {
+		modelUsed = useModel
+	}
+	return &batchResult{Model: modelUsed, Chunks: chunks}, nil
+}
+
+func (c *Client) complete(ctx context.Context, userContent []map[string]any, useModel string) (content string, modelUsed string, finishReason string, promptTokens int, err error) {
+	if c != nil && c.chatCompletion != nil {
+		resp, err := c.chatCompletion(ctx, ChatCompletionRequest{
+			Model:          useModel,
+			UserContent:    userContent,
+			MaxTokens:      maxTokens(),
+			ResponseFormat: "json_object",
+		})
+		if err != nil {
+			return "", useModel, "", 0, &retryableErr{inner: err}
+		}
+		if resp == nil {
+			return "", useModel, "", 0, &retryableErr{inner: fmt.Errorf("vlm: empty chat completion response")}
+		}
+		return strings.TrimSpace(resp.Content), firstNonEmptyString(resp.Model, useModel), resp.FinishReason, resp.PromptTokens, nil
+	}
+
+	reqCtx, cancel := context.WithTimeout(ctx, timeout())
+	defer cancel()
+
+	base, err := requiredBaseURL()
+	if err != nil {
+		return "", useModel, "", 0, err
+	}
+	endpoint := base + "/chat/completions"
+	reqBody := map[string]any{
+		"model": useModel,
+		"messages": []map[string]any{
+			{
+				"role":    "user",
+				"content": userContent,
+			},
+		},
+		"max_tokens":      maxTokens(),
+		"response_format": map[string]any{"type": "json_object"},
+	}
+	payload, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", useModel, "", 0, fmt.Errorf("gemini: marshal request: %w", err)
+	}
+	httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return "", useModel, "", 0, fmt.Errorf("gemini: build request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+apiKey())
+
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		return "", useModel, "", 0, &retryableErr{inner: fmt.Errorf("gemini: call %s: %w", endpoint, err)}
+	}
+	defer resp.Body.Close()
+
+	respBytes, rerr := io.ReadAll(resp.Body)
+	if rerr != nil {
+		return "", useModel, "", 0, &retryableErr{inner: fmt.Errorf("gemini: read response: %w", rerr)}
+	}
+	if resp.StatusCode != http.StatusOK {
+		snippet := string(respBytes)
+		if len(snippet) > 800 {
+			snippet = snippet[:800] + "..."
+		}
+		httpErr := fmt.Errorf("gemini: HTTP %d from %s: %s", resp.StatusCode, endpoint, snippet)
+		if resp.StatusCode == 429 || resp.StatusCode >= 500 {
+			return "", useModel, "", 0, &retryableErr{inner: httpErr}
+		}
+		return "", useModel, "", 0, httpErr
+	}
+
+	var parsed parseResponse
+	if err := json.Unmarshal(respBytes, &parsed); err != nil {
+		snippet := string(respBytes)
+		if len(snippet) > 400 {
+			snippet = snippet[:400] + "..."
+		}
+		return "", useModel, "", 0, &retryableErr{inner: fmt.Errorf("gemini: decode response: %w (body=%s)", err, snippet)}
+	}
+	if len(parsed.Choices) == 0 {
+		return "", useModel, "", 0, &retryableErr{inner: fmt.Errorf("gemini: empty choices (error=%v)", parsed.Error)}
+	}
+	choice := parsed.Choices[0]
+	return strings.TrimSpace(choice.Message.Content), useModel, choice.FinishReason, parsed.Usage.PromptTokens, nil
+}
+
+var codeFenceRE = regexp.MustCompile("(?s)^```(?:json)?\\s*(.*?)\\s*```\\s*$")
+
+func parseChunks(content string) ([]chunkItem, error) {
+	trimmed := strings.TrimSpace(content)
+	if m := codeFenceRE.FindStringSubmatch(trimmed); len(m) == 2 {
+		trimmed = strings.TrimSpace(m[1])
+	}
+
+	var payload chunksPayload
+	if err := json.Unmarshal([]byte(trimmed), &payload); err == nil && len(payload.Chunks) > 0 {
+		return payload.Chunks, nil
+	}
+	var arr []chunkItem
+	if err := json.Unmarshal([]byte(trimmed), &arr); err == nil {
+		return arr, nil
+	}
+
+	var dummy any
+	if err := json.Unmarshal([]byte(trimmed), &dummy); err != nil {
+		return nil, fmt.Errorf("not valid JSON: %w", err)
+	}
+	return nil, fmt.Errorf("JSON does not match {\"chunks\":[]} or []")
+}
+
+func toDocumentResult(filename string, totalPages int, batches []*batchResult) (*extractcommon.DocumentResult, error) {
+	sort.SliceStable(batches, func(i, j int) bool { return batches[i].BatchIndex < batches[j].BatchIndex })
+
+	totalChunks := 0
+	for _, b := range batches {
+		if b != nil {
+			totalChunks += len(b.Chunks)
+		}
+	}
+	if totalChunks == 0 {
+		return nil, errors.New("gemini: no chunks returned across all batches")
+	}
+
+	pages := make([]extractcommon.Page, totalPages)
+	for i := 0; i < totalPages; i++ {
+		pages[i] = extractcommon.Page{PageIndex: i}
+	}
+
+	out := make([]extractcommon.Chunk, 0, totalChunks)
+	mdParts := make([]string, 0, totalChunks)
+	modelUsed := ""
+	for _, br := range batches {
+		if br == nil {
+			continue
+		}
+		if modelUsed == "" && br.Model != "" {
+			modelUsed = br.Model
+		}
+		for _, ch := range br.Chunks {
+			page := ch.Page + br.PageOffset
+			if page < 0 {
+				page = 0
+			}
+			if totalPages > 0 && page >= totalPages {
+				page = totalPages - 1
+			}
+			ordinal := len(out) + 1
+			dto := extractcommon.Chunk{
+				ID:        fmt.Sprintf("gemini-%d", ordinal-1),
+				Type:      normalizeType(ch.Type),
+				Subtype:   strings.TrimSpace(ch.Subtype),
+				Page:      page,
+				Ordinal:   ordinal,
+				Precision: "reliable",
+				BBox:      bboxFromYXYX(ch.Bbox),
+				Text:      strings.TrimSpace(ch.Text),
+				Markdown:  strings.TrimSpace(ch.Markdown),
+			}
+			if dto.Text == "" {
+				dto.Text = dto.Markdown
+			}
+			if dto.Markdown == "" {
+				dto.Markdown = dto.Text
+			}
+			out = append(out, dto)
+			if dto.Markdown != "" {
+				mdParts = append(mdParts, dto.Markdown)
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil, errors.New("gemini: all chunks dropped during normalization")
+	}
+	if modelUsed == "" {
+		modelUsed = model()
+	}
+
+	return &extractcommon.DocumentResult{
+		DocID:     newID(),
+		FileName:  filename,
+		PageCount: totalPages,
+		Pages:     pages,
+		Chunks:    out,
+		Markdown:  strings.Join(mdParts, "\n\n"),
+		Source:    "vlm:" + modelUsed,
+	}, nil
+}
+
+var typeWhitelist = map[string]struct{}{
+	"heading": {}, "text": {}, "figure": {}, "table": {}, "formula": {}, "marginalia": {},
+}
+
+func normalizeType(t string) string {
+	t = strings.ToLower(strings.TrimSpace(t))
+	if _, ok := typeWhitelist[t]; ok {
+		return t
+	}
+	return "text"
+}
+
+func bboxFromYXYX(b []float64) *extractcommon.BBox {
+	if len(b) != 4 {
+		return nil
+	}
+	ymin, xmin, ymax, xmax := b[0], b[1], b[2], b[3]
+	clamp := func(v float64) float64 {
+		if v < 0 {
+			return 0
+		}
+		if v > bboxScale {
+			return bboxScale
+		}
+		return v
+	}
+	ymin, xmin, ymax, xmax = clamp(ymin), clamp(xmin), clamp(ymax), clamp(xmax)
+	if ymin > ymax {
+		ymin, ymax = ymax, ymin
+	}
+	if xmin > xmax {
+		xmin, xmax = xmax, xmin
+	}
+	if ymax-ymin <= 0 || xmax-xmin <= 0 {
+		return nil
+	}
+	return &extractcommon.BBox{Left: xmin / bboxScale, Top: ymin / bboxScale, Right: xmax / bboxScale, Bottom: ymax / bboxScale}
+}
+
+type splitPDF struct {
+	Data      []byte
+	PageStart int
+	PageEnd   int
+}
+
+func splitPDFByPages(data []byte, batchSize int) (int, []splitPDF, error) {
+	if batchSize <= 0 {
+		batchSize = defaultPageBatch
+	}
+	conf := pdfmodel.NewDefaultConfiguration()
+	conf.ValidationMode = pdfmodel.ValidationRelaxed
+
+	totalPages, err := pdfapi.PageCount(bytes.NewReader(data), conf)
+	if err != nil {
+		return 0, nil, fmt.Errorf("page count: %w", err)
+	}
+	if totalPages <= 0 {
+		return 0, nil, errors.New("PDF has 0 pages")
+	}
+	if totalPages <= batchSize {
+		return totalPages, []splitPDF{{Data: data, PageStart: 0, PageEnd: totalPages - 1}}, nil
+	}
+
+	var out []splitPDF
+	for start := 0; start < totalPages; start += batchSize {
+		end := start + batchSize - 1
+		if end >= totalPages {
+			end = totalPages - 1
+		}
+		selector := fmt.Sprintf("%d-%d", start+1, end+1)
+		buf := &bytes.Buffer{}
+		confBatch := pdfmodel.NewDefaultConfiguration()
+		confBatch.ValidationMode = pdfmodel.ValidationRelaxed
+		if err := pdfapi.Trim(bytes.NewReader(data), buf, []string{selector}, confBatch); err != nil {
+			return totalPages, nil, fmt.Errorf("trim pages %s: %w", selector, err)
+		}
+		out = append(out, splitPDF{Data: append([]byte(nil), buf.Bytes()...), PageStart: start, PageEnd: end})
+	}
+	return totalPages, out, nil
+}
+
+func newID() string {
+	buf := make([]byte, 8)
+	if _, err := rand.Read(buf); err != nil {
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	return fmt.Sprintf("%x", buf)
+}
+
+func isImageFilename(filename string) bool {
+	ext := strings.ToLower(strings.TrimSpace(filename))
+	return strings.HasSuffix(ext, ".png") ||
+		strings.HasSuffix(ext, ".jpg") ||
+		strings.HasSuffix(ext, ".jpeg") ||
+		strings.HasSuffix(ext, ".webp") ||
+		strings.HasSuffix(ext, ".tif") ||
+		strings.HasSuffix(ext, ".tiff")
+}
+
+func imageMIME(filename string) string {
+	ext := strings.ToLower(strings.TrimSpace(filename))
+	switch {
+	case strings.HasSuffix(ext, ".png"):
+		return "image/png"
+	case strings.HasSuffix(ext, ".webp"):
+		return "image/webp"
+	case strings.HasSuffix(ext, ".tif"), strings.HasSuffix(ext, ".tiff"):
+		return "image/tiff"
+	default:
+		return "image/jpeg"
+	}
+}

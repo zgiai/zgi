@@ -1,0 +1,117 @@
+package config
+
+import (
+	"fmt"
+	"os"
+)
+
+type Config struct {
+	Port           string
+	APIKey         string
+	MaxWorkers     int
+	TimeoutSeconds int
+	OutputLimitKB  int
+	MaxActive      int
+	SessionTTL     int
+	InteractiveTTL int
+	CommandTimeout int
+	MaxFileSizeKB  int
+	DatabaseURL    string
+	DataDir        string
+	CacheTTL       int
+	RedisAddr      string
+	RedisPassword  string
+	RedisDB        int
+	WorkerID       string
+	AdvertiseURL   string
+	PublicBaseURL  string
+	RuntimeBackend string
+	SecureRootFS   string
+	BwrapBinary    string
+	ProxyTimeout   int
+}
+
+func FromEnv() Config {
+	port := getEnv("ZGI_SANDBOX_SERVER_PORT", "8194")
+	workerID := getEnv("ZGI_SANDBOX_WORKER_ID", defaultWorkerID())
+	advertiseURL := getEnv("ZGI_SANDBOX_ADVERTISE_URL", fmt.Sprintf("http://127.0.0.1:%s", port))
+
+	return Config{
+		Port:           port,
+		APIKey:         getEnv("ZGI_SANDBOX_API_KEY", ""),
+		MaxWorkers:     getEnvInt("ZGI_SANDBOX_LITE_MAX_WORKERS", 4),
+		TimeoutSeconds: getEnvInt("ZGI_SANDBOX_LITE_WORKER_TIMEOUT", 5),
+		OutputLimitKB:  getEnvInt("ZGI_SANDBOX_OUTPUT_LIMIT_KB", 64),
+		MaxActive:      getEnvInt("ZGI_SANDBOX_MAX_ACTIVE", 6),
+		SessionTTL:     getEnvInt("ZGI_SANDBOX_SESSION_TTL_SECONDS", 1800),
+		InteractiveTTL: getEnvInt("ZGI_SANDBOX_INTERACTIVE_TTL_SECONDS", 3600),
+		CommandTimeout: getEnvInt("ZGI_SANDBOX_COMMAND_TIMEOUT_SECONDS", 15),
+		MaxFileSizeKB:  getEnvInt("ZGI_SANDBOX_MAX_FILE_SIZE_KB", 256),
+		DatabaseURL:    getEnv("ZGI_SANDBOX_DATABASE_URL", "postgres://postgres@127.0.0.1:5432/postgres?sslmode=disable"),
+		DataDir:        getEnv("ZGI_SANDBOX_DATA_DIR", ".zgi-sandbox-data"),
+		CacheTTL:       getEnvInt("ZGI_SANDBOX_CACHE_TTL_SECONDS", 30),
+		RedisAddr:      getEnv("ZGI_SANDBOX_REDIS_ADDR", ""),
+		RedisPassword:  getEnv("ZGI_SANDBOX_REDIS_PASSWORD", ""),
+		RedisDB:        getEnvIntAllowZero("ZGI_SANDBOX_REDIS_DB", 0),
+		WorkerID:       workerID,
+		AdvertiseURL:   advertiseURL,
+		PublicBaseURL:  getEnv("ZGI_SANDBOX_PUBLIC_BASE_URL", advertiseURL),
+		RuntimeBackend: getEnv("ZGI_SANDBOX_RUNTIME_BACKEND", "preview"),
+		SecureRootFS:   getEnv("ZGI_SANDBOX_SECURE_ROOTFS", ""),
+		BwrapBinary:    getEnv("ZGI_SANDBOX_BWRAP_BINARY", "bwrap"),
+		ProxyTimeout:   getEnvInt("ZGI_SANDBOX_PROXY_TIMEOUT_SECONDS", 20),
+	}
+}
+
+func getEnv(key string, fallback string) string {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func getEnvInt(key string, fallback int) int {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+
+	parsed := 0
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return fallback
+		}
+		parsed = parsed*10 + int(char-'0')
+	}
+
+	if parsed <= 0 {
+		return fallback
+	}
+	return parsed
+}
+
+func getEnvIntAllowZero(key string, fallback int) int {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+
+	parsed := 0
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return fallback
+		}
+		parsed = parsed*10 + int(char-'0')
+	}
+
+	return parsed
+}
+
+func defaultWorkerID() string {
+	hostname, err := os.Hostname()
+	if err != nil || hostname == "" {
+		return "zgi-sandbox-local"
+	}
+	return hostname
+}

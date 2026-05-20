@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+NETWORK_NAME="${SANDBOX_EXTERNAL_NETWORK:-zgi-api_zgi-network}"
+
+usage() {
+  cat <<'EOF'
+Usage: ./scripts/start-docker [--china]
+
+Options:
+  --china   Use recommended China mainland mirrors for the Docker build.
+EOF
+}
+
+copy_env_if_missing() {
+  if [ -f "$ROOT/.env" ]; then
+    echo "[sandbox/start-docker] keep existing .env"
+    return 0
+  fi
+
+  if [ ! -f "$ROOT/.env.example" ]; then
+    echo "[sandbox/start-docker] missing template: $ROOT/.env.example" >&2
+    exit 1
+  fi
+
+  cp "$ROOT/.env.example" "$ROOT/.env"
+  echo "[sandbox/start-docker] created .env from .env.example"
+}
+
+ensure_network() {
+  if docker network inspect "$NETWORK_NAME" >/dev/null 2>&1; then
+    echo "[sandbox/start-docker] keep existing network: $NETWORK_NAME"
+    return 0
+  fi
+
+  docker network create "$NETWORK_NAME" >/dev/null
+  echo "[sandbox/start-docker] created network: $NETWORK_NAME"
+}
+
+configure_china_build_env() {
+  export BUILD_REGION=cn
+  export GOPROXY="${GOPROXY:-https://goproxy.cn,direct}"
+  echo "[sandbox/start-docker] build region: china"
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --china)
+      configure_china_build_env
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "[sandbox/start-docker] unknown argument: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
+
+copy_env_if_missing
+ensure_network
+
+cd "$ROOT"
+docker compose up -d --build

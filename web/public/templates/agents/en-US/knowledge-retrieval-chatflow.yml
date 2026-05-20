@@ -1,0 +1,220 @@
+---
+kind: app
+version: 1.0.0
+exported_from: zgi
+exported_at: '2026-05-15T00:00:00Z'
+app:
+  name: Knowledge Base Answering
+  description: Retrieve enterprise knowledge, answer with citations, and flag missing
+    context.
+  icon: '{"icon":"KR","icon_background":"#059669"}'
+  icon_type: text
+  mode: CONVERSATIONAL_WORKFLOW
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    opening_statement_type: slogan
+    opening_slogan: ''
+    opening_statement: ''
+    opening_statement_enabled: false
+    suggested_questions:
+    - "A customer asks which security materials are required for production API access. Answer with citations and flag uncertainty."
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      voice: ''
+      language: ''
+    speech_to_text:
+      enabled: false
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    conversation_history:
+      enabled: true
+      history_window_size: 6
+    file_upload:
+      enabled: false
+      allowed_file_types:
+      - image
+      - document
+      allowed_file_extensions:
+      - jpg
+      - jpeg
+      - png
+      - gif
+      - webp
+      - pdf
+      - doc
+      - docx
+      - txt
+      - md
+      - csv
+      - xlsx
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      number_limits: 5
+    webapp_workflow_config:
+      allow_view_run_detail: true
+      auto_expand_run_detail: false
+  graph:
+    nodes:
+    - id: note_runtime_guide
+      type: note
+      position:
+        x: 80
+        y: 40
+      width: 520
+      height: 240
+      data:
+        type: note
+        title: Run guide
+        desc: ''
+        text: |-
+          Run guide
+
+          Setup required. Requires: OpenAI gpt-5.5 model, knowledge base. Bind a real dataset in the knowledge retrieval node first.
+
+          Suggested test input:
+          Type this in the debug chat:
+          A customer asks which security materials are required for production API access. Answer with citations and flag uncertainty.
+          You can also click the suggested question to start debugging.
+
+          This note is documentation only and is not executed.
+        theme: yellow
+        isInLoop: false
+        isInIteration: false
+    - id: start_node
+      type: custom
+      position:
+        x: 80
+        y: 280
+      width: 280
+      height: 88
+      data:
+        type: start
+        title: Start
+        desc: Agent start node
+        variables: []
+        unique: true
+        isInLoop: false
+        isInIteration: false
+    - id: knowledge_node
+      type: custom
+      position:
+        x: 420
+        y: 280
+      width: 280
+      height: 92
+      data:
+        type: knowledge-retrieval
+        title: Knowledge Retrieval
+        desc: ''
+        query_variable_selector:
+        - sys
+        - query
+        dataset_ids:
+        - configure-dataset
+        retrieval_mode: multiple
+        multiple_retrieval_config:
+          top_k: 6
+          reranking_enable: false
+          score_threshold: 0.2
+          reranking_mode: reranking_model
+          reranking_model:
+            provider: ''
+            model: ''
+        isInLoop: false
+        isInIteration: false
+    - id: llm_node
+      type: custom
+      position:
+        x: 760
+        y: 280
+      width: 280
+      height: 92
+      data:
+        type: llm
+        title: Answer with Knowledge
+        desc: ''
+        variables: []
+        model:
+          provider: openai
+          name: gpt-5.5
+          mode: chat
+          completion_params: {}
+        prompt_template:
+        - role: system
+          text: Use the retrieved enterprise knowledge to answer. If the knowledge
+            is insufficient, state what is missing and propose a next step.
+        - role: user
+          text: |-
+            Question:
+            {{#sys.query#}}
+
+            Retrieved context:
+            {{#knowledge_node.result#}}
+        prompt_config:
+          jinja2_variables: []
+        vision:
+          enabled: false
+        structured_output_enabled: false
+        reasoning_format: tagged
+        isInLoop: false
+        isInIteration: false
+    - id: answer_node
+      type: custom
+      position:
+        x: 1100
+        y: 280
+      width: 280
+      height: 88
+      data:
+        type: answer
+        title: Answer
+        desc: ''
+        variables: []
+        answer: "{{#llm_node.text#}}"
+        isInLoop: false
+        isInIteration: false
+    edges:
+    - id: start_node-source-knowledge_node
+      source: start_node
+      target: knowledge_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: knowledge_node-source-llm_node
+      source: knowledge_node
+      target: llm_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: llm_node-source-answer_node
+      source: llm_node
+      target: answer_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    viewport:
+      x: 0
+      y: 0
+      zoom: 0.8

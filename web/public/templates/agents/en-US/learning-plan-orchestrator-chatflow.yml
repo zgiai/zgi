@@ -1,0 +1,580 @@
+---
+kind: app
+version: 1.0.0
+exported_from: zgi
+exported_at: '2026-05-15T00:00:00Z'
+app:
+  name: Learning Plan Orchestrator
+  description: Classify intent, extract tasks, estimate workload, persist plans, and
+    track check-ins.
+  icon: '{"icon":"LP","icon_background":"#047857"}'
+  icon_type: text
+  mode: CONVERSATIONAL_WORKFLOW
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    opening_statement_type: slogan
+    opening_slogan: ''
+    opening_statement: ''
+    opening_statement_enabled: false
+    suggested_questions:
+    - "I want to learn enterprise workflow orchestration in 4 weeks with 3 hours per week. Build a plan and track next week tasks."
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      voice: ''
+      language: ''
+    speech_to_text:
+      enabled: false
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    conversation_history:
+      enabled: true
+      history_window_size: 6
+    file_upload:
+      enabled: true
+      allowed_file_types:
+      - image
+      - document
+      allowed_file_extensions:
+      - jpg
+      - jpeg
+      - png
+      - gif
+      - webp
+      - pdf
+      - doc
+      - docx
+      - txt
+      - md
+      - csv
+      - xlsx
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      number_limits: 5
+    webapp_workflow_config:
+      allow_view_run_detail: true
+      auto_expand_run_detail: false
+  graph:
+    nodes:
+    - id: note_runtime_guide
+      type: note
+      position:
+        x: 80
+        y: 40
+      width: 520
+      height: 240
+      data:
+        type: note
+        title: Run guide
+        desc: ''
+        text: |-
+          Run guide
+
+          Setup required. Requires: OpenAI gpt-5.5 model, database, and code sandbox service. Bind the planning detail table and confirm code execution before testing plan creation and persistence.
+
+          Suggested test input:
+          Type this in the debug chat:
+          I want to learn enterprise workflow orchestration in 4 weeks with 3 hours per week. Build a plan and track next week tasks.
+          If the flow uses files, upload one sample file first.
+          You can also click the suggested question to start debugging.
+
+          This note is documentation only and is not executed.
+        theme: yellow
+        isInLoop: false
+        isInIteration: false
+    - id: start_node
+      type: custom
+      position:
+        x: 80
+        y: 280
+      width: 280
+      height: 88
+      data:
+        type: start
+        title: Start
+        desc: Agent start node
+        variables: []
+        unique: true
+        isInLoop: false
+        isInIteration: false
+    - id: intent_llm
+      type: custom
+      position:
+        x: 360
+        y: 260
+      width: 280
+      height: 92
+      data:
+        type: llm
+        title: Classify Planning Intent
+        desc: ''
+        variables: []
+        model:
+          provider: openai
+          name: gpt-5.5
+          mode: chat
+          completion_params:
+            response_format: json_object
+        prompt_template:
+        - role: system
+          text: Classify whether the user wants to create, adjust, or check progress.
+            Return JSON with intent and missing_fields.
+        - role: user
+          text: "{{#sys.query#}}"
+        prompt_config:
+          jinja2_variables: []
+        vision:
+          enabled: false
+        structured_output_enabled: false
+        reasoning_format: tagged
+        isInLoop: false
+        isInIteration: false
+    - id: intent_parser
+      type: custom
+      position:
+        x: 700
+        y: 260
+      width: 280
+      height: 92
+      data:
+        type: json-parser
+        title: Parse Intent
+        desc: ''
+        input_selector:
+        - intent_llm
+        - text
+        is_flatten_output: true
+        outputs:
+          intent:
+            type: string
+          missing_fields:
+            type: array[string]
+        error_strategy: default-value
+        default_value:
+        - key: intent
+          type: string
+          value: ''
+        - key: missing_fields
+          type: array[string]
+          value: "[]"
+        retry_config:
+          enable: false
+          max_times: 3
+          interval: 1000
+        isInLoop: false
+        isInIteration: false
+    - id: intent_branch
+      type: custom
+      position:
+        x: 1040
+        y: 260
+      width: 280
+      height: 92
+      data:
+        type: if-else
+        title: Intent Branch
+        desc: ''
+        cases:
+        - case_id: create
+          conditions:
+          - id: condition_intent
+            key: intent
+            variable_selector:
+            - intent_parser
+            - intent
+            comparison_operator: contains
+            value: create
+            varType: string
+          logical_operator: and
+        targetBranches:
+        - id: create
+          name: Create Plan
+        - id: 'false'
+          name: ELSE
+    - id: task_llm
+      type: custom
+      position:
+        x: 1380
+        y: 140
+      width: 280
+      height: 92
+      data:
+        type: llm
+        title: Extract Tasks
+        desc: ''
+        variables: []
+        model:
+          provider: openai
+          name: gpt-5.5
+          mode: chat
+          completion_params:
+            response_format: json_object
+        prompt_template:
+        - role: system
+          text: Extract plan tasks as JSON with an array named tasks. Each item must
+            include id, title, owner, priority, and estimated_minutes.
+        - role: user
+          text: "{{#sys.query#}}"
+        prompt_config:
+          jinja2_variables: []
+        vision:
+          enabled: false
+        structured_output_enabled: false
+        reasoning_format: tagged
+        isInLoop: false
+        isInIteration: false
+    - id: task_parser
+      type: custom
+      position:
+        x: 1680
+        y: 140
+      width: 280
+      height: 92
+      data:
+        type: json-parser
+        title: Parse Tasks
+        desc: ''
+        input_selector:
+        - task_llm
+        - text
+        is_flatten_output: true
+        outputs:
+          tasks:
+            type: array[object]
+        error_strategy: default-value
+        default_value:
+        - key: tasks
+          type: array[object]
+          value: "[]"
+        retry_config:
+          enable: false
+          max_times: 3
+          interval: 1000
+        isInLoop: false
+        isInIteration: false
+    - id: workload_code
+      type: custom
+      position:
+        x: 1380
+        y: 420
+      width: 280
+      height: 92
+      data:
+        type: code
+        title: Code
+        desc: ''
+        code: |
+          import json
+
+          def main(raw_json):
+              try:
+                  data = json.loads(raw_json) if isinstance(raw_json, str) else raw_json
+              except Exception:
+                  data = {"items": []}
+              items = data.get("items", []) if isinstance(data, dict) else []
+              normalized = []
+              for item in items:
+                  if not isinstance(item, dict):
+                      continue
+                  normalized.append({"id": str(item.get("id", "")).strip(), "title": str(item.get("title", "")).strip(), "priority": str(item.get("priority", "normal")).lower()})
+              return {"count": len(normalized), "normalized_json": json.dumps({"items": normalized}, ensure_ascii=False)}
+        code_language: python3
+        variables:
+        - variable: raw_json
+          value_selector:
+          - task_llm
+          - text
+          value_type: string
+        outputs:
+          count:
+            type: number
+            children:
+          normalized_json:
+            type: string
+            children:
+        outputKeyOrders:
+        - count
+        - normalized_json
+        isInLoop: false
+        isInIteration: false
+    - id: plan_iteration
+      type: custom
+      position:
+        x: 1720
+        y: 140
+      width: 560
+      height: 260
+      data:
+        type: iteration
+        title: Persist Plan Items
+        desc: ''
+        start_node_id: plan_iterationstart
+        iterator_selector:
+        - task_parser
+        - tasks
+        iterator_input_type: array[object]
+        output_selector:
+        - plan_db_node
+        - row_count
+        output_type: array[number]
+        is_parallel: true
+        parallel_nums: 8
+        error_handle_mode: terminated
+        isInLoop: false
+        isInIteration: false
+        _children:
+        - plan_iterationstart
+        - plan_db_node
+    - id: plan_iterationstart
+      type: custom-iteration-start
+      position:
+        x: 12
+        y: 52
+      width: 40
+      height: 40
+      data:
+        type: iteration-start
+        title: Persist Plan Items
+        desc: ''
+        isInIteration: true
+        isInLoop: false
+      parentId: plan_iteration
+      extent: parent
+      selectable: false
+      draggable: false
+      measured:
+        width: 40
+        height: 40
+    - id: plan_db_node
+      type: custom
+      position:
+        x: 90
+        y: 80
+      width: 280
+      height: 92
+      data:
+        type: call-database
+        title: Call Database
+        desc: ''
+        data:
+          data_source:
+            id: configure-data-source
+            name: Configure Data Source
+            schema_name: public
+            type: postgres
+          table_selection:
+          - id: configure-table
+            label: business_records
+            name: business_records
+            schema: public
+            table_id: 0
+            columns:
+            - id
+            - status
+            - owner
+            - priority
+            - updated_at
+          manual_sql: INSERT INTO public.business_records (id, status, owner, priority)
+            VALUES ('{{#plan_iteration.item.id#}}', 'planned', '{{#plan_iteration.item.owner#}}',
+            '{{#plan_iteration.item.priority#}}');
+          execution:
+            timeout_seconds: 30
+            max_retries: 0
+        isInLoop: false
+        isInIteration: true
+      parentId: plan_iteration
+    - id: plan_aggregate
+      type: custom
+      position:
+        x: 2360
+        y: 260
+      width: 280
+      height: 92
+      data:
+        type: variable-aggregator
+        title: Variable Aggregator
+        desc: ''
+        output_type: string
+        variables:
+        - - plan_iteration
+          - output
+        - - workload_code
+          - normalized_json
+        advanced_settings:
+          group_enabled: false
+          groups: []
+        isInLoop: false
+        isInIteration: false
+    - id: created_answer
+      type: custom
+      position:
+        x: 2720
+        y: 160
+      width: 280
+      height: 88
+      data:
+        type: answer
+        title: Answer
+        desc: ''
+        variables: []
+        answer: 'Plan created. Persist result: {{#plan_aggregate.output#}}'
+        isInLoop: false
+        isInIteration: false
+    - id: fallback_answer
+      type: custom
+      position:
+        x: 1380
+        y: 560
+      width: 280
+      height: 88
+      data:
+        type: answer
+        title: Answer
+        desc: ''
+        variables: []
+        answer: 'I need a clearer create-plan request. Missing fields: {{#intent_parser.missing_fields#}}'
+        isInLoop: false
+        isInIteration: false
+    edges:
+    - id: start_node-source-intent_llm
+      source: start_node
+      target: intent_llm
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: intent_llm-source-intent_parser
+      source: intent_llm
+      target: intent_parser
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: intent_parser-source-intent_branch
+      source: intent_parser
+      target: intent_branch
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: intent_branch-create-task_llm
+      source: intent_branch
+      target: task_llm
+      sourceHandle: create
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: task_llm-source-task_parser
+      source: task_llm
+      target: task_parser
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: task_parser-source-plan_iteration
+      source: task_parser
+      target: plan_iteration
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: task_llm-source-workload_code
+      source: task_llm
+      target: workload_code
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: plan_iterationstart-source-plan_db_node
+      source: plan_iterationstart
+      target: plan_db_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: true
+    - id: plan_iteration-source-plan_aggregate
+      source: plan_iteration
+      target: plan_aggregate
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: workload_code-source-plan_aggregate
+      source: workload_code
+      target: plan_aggregate
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: plan_aggregate-source-created_answer
+      source: plan_aggregate
+      target: created_answer
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: intent_branch-false-fallback_answer
+      source: intent_branch
+      target: fallback_answer
+      sourceHandle: 'false'
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    viewport:
+      x: 0
+      y: 0
+      zoom: 0.8

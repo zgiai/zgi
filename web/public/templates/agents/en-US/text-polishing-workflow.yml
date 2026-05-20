@@ -1,0 +1,186 @@
+---
+kind: app
+version: 1.0.0
+exported_from: zgi
+exported_at: '2026-05-15T00:00:00Z'
+app:
+  name: Business Writing Polish
+  description: Rewrite text for clarity, tone, grammar, and stakeholder readiness.
+  icon: '{"icon":"BW","icon_background":"#65a30d"}'
+  icon_type: text
+  mode: WORKFLOW
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    opening_statement_type: slogan
+    opening_slogan: ''
+    opening_statement: ''
+    opening_statement_enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      voice: ''
+      language: ''
+    speech_to_text:
+      enabled: false
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    conversation_history:
+      enabled: false
+      history_window_size: 6
+    file_upload:
+      enabled: false
+      allowed_file_types:
+      - image
+      - document
+      allowed_file_extensions:
+      - jpg
+      - jpeg
+      - png
+      - gif
+      - webp
+      - pdf
+      - doc
+      - docx
+      - txt
+      - md
+      - csv
+      - xlsx
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      number_limits: 5
+    webapp_workflow_config:
+      allow_view_run_detail: true
+      auto_expand_run_detail: false
+  graph:
+    nodes:
+    - id: note_runtime_guide
+      type: note
+      position:
+        x: 80
+        y: 40
+      width: 520
+      height: 240
+      data:
+        type: note
+        title: Run guide
+        desc: ''
+        text: |-
+          Run guide
+
+          Ready. Requires: OpenAI gpt-5.5 model. Enter text to rewrite for professional clarity.
+
+          Suggested test input:
+          The Start node fields are prefilled. Open Debug and run the defaults directly.
+          Example:
+          - Text to polish: We need the customer send all files again because the last upload is wrong and the deadline is near.
+
+          This note is documentation only and is not executed.
+        theme: blue
+        isInLoop: false
+        isInIteration: false
+    - id: start_node
+      type: custom
+      position:
+        x: 80
+        y: 280
+      width: 280
+      height: 88
+      data:
+        type: start
+        title: Start
+        desc: Agent start node
+        variables:
+        - type: paragraph
+          variable: input
+          label: Text to polish
+          required: true
+          max_length: 8192
+          default: We need the customer send all files again because the last upload
+            is wrong and the deadline is near.
+        unique: true
+        isInLoop: false
+        isInIteration: false
+    - id: llm_node
+      type: custom
+      position:
+        x: 480
+        y: 280
+      width: 280
+      height: 92
+      data:
+        type: llm
+        title: Polish Text
+        desc: ''
+        variables: []
+        model:
+          provider: openai
+          name: gpt-5.5
+          mode: chat
+          completion_params: {}
+        prompt_template:
+        - role: system
+          text: Rewrite the text for clarity, professional tone, grammar, and stakeholder
+            readability. Preserve the original meaning.
+        - role: user
+          text: "{{#start_node.input#}}"
+        prompt_config:
+          jinja2_variables: []
+        vision:
+          enabled: false
+        structured_output_enabled: false
+        reasoning_format: tagged
+        isInLoop: false
+        isInIteration: false
+    - id: end_node
+      type: custom
+      position:
+        x: 880
+        y: 280
+      width: 280
+      height: 64
+      data:
+        type: end
+        title: End
+        desc: ''
+        outputs:
+        - variable: output
+          type: string
+          value_selector:
+          - llm_node
+          - text
+        isInLoop: false
+        isInIteration: false
+    edges:
+    - id: start_node-source-llm_node
+      source: start_node
+      target: llm_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: llm_node-source-end_node
+      source: llm_node
+      target: end_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    viewport:
+      x: 0
+      y: 0
+      zoom: 0.8

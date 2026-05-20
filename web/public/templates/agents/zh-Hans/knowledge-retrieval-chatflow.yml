@@ -1,0 +1,218 @@
+---
+kind: app
+version: 1.0.0
+exported_from: zgi
+exported_at: '2026-05-15T00:00:00Z'
+app:
+  name: 知识库问答
+  description: 检索企业知识，带引用回答，并标记缺失上下文。
+  icon: '{"icon":"KR","icon_background":"#059669"}'
+  icon_type: text
+  mode: CONVERSATIONAL_WORKFLOW
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    opening_statement_type: slogan
+    opening_slogan: ''
+    opening_statement: ''
+    opening_statement_enabled: false
+    suggested_questions:
+    - "客户问：生产 API 访问需要哪些安全材料？请引用知识库回答，不确定的地方标记出来。"
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      voice: ''
+      language: ''
+    speech_to_text:
+      enabled: false
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    conversation_history:
+      enabled: true
+      history_window_size: 6
+    file_upload:
+      enabled: false
+      allowed_file_types:
+      - image
+      - document
+      allowed_file_extensions:
+      - jpg
+      - jpeg
+      - png
+      - gif
+      - webp
+      - pdf
+      - doc
+      - docx
+      - txt
+      - md
+      - csv
+      - xlsx
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      number_limits: 5
+    webapp_workflow_config:
+      allow_view_run_detail: true
+      auto_expand_run_detail: false
+  graph:
+    nodes:
+    - id: note_runtime_guide
+      type: note
+      position:
+        x: 80
+        y: 40
+      width: 520
+      height: 240
+      data:
+        type: note
+        title: 运行说明
+        desc: ''
+        text: |-
+          运行说明
+
+          需配置。依赖：Qwen qwen3.6-plus 模型、知识库。先在知识检索节点绑定真实知识库。
+
+          调试输入：
+          可在右侧调试窗口直接输入：
+          客户问：生产 API 访问需要哪些安全材料？请引用知识库回答，不确定的地方标记出来。
+          也可以点击建议问题开始调试。
+
+          该备注仅用于说明，不参与执行。
+        theme: yellow
+        isInLoop: false
+        isInIteration: false
+    - id: start_node
+      type: custom
+      position:
+        x: 80
+        y: 280
+      width: 280
+      height: 88
+      data:
+        type: start
+        title: 开始
+        desc: 智能体入口节点
+        variables: []
+        unique: true
+        isInLoop: false
+        isInIteration: false
+    - id: knowledge_node
+      type: custom
+      position:
+        x: 420
+        y: 280
+      width: 280
+      height: 92
+      data:
+        type: knowledge-retrieval
+        title: 知识检索
+        desc: ''
+        query_variable_selector:
+        - sys
+        - query
+        dataset_ids:
+        - configure-dataset
+        retrieval_mode: multiple
+        multiple_retrieval_config:
+          top_k: 6
+          reranking_enable: false
+          score_threshold: 0.2
+          reranking_mode: reranking_model
+          reranking_model:
+            provider: ''
+            model: ''
+        isInLoop: false
+        isInIteration: false
+    - id: llm_node
+      type: custom
+      position:
+        x: 760
+        y: 280
+      width: 280
+      height: 92
+      data:
+        type: llm
+        title: 知识问答
+        desc: ''
+        variables: []
+        model:
+          provider: qwen
+          name: qwen3.6-plus
+          mode: chat
+          completion_params: {}
+        prompt_template:
+        - role: system
+          text: 基于检索到的企业知识回答。如果知识不足，说明缺失内容并给出下一步建议。
+        - role: user
+          text: |-
+            问题：
+            {{#sys.query#}}
+
+            检索上下文：
+            {{#knowledge_node.result#}}
+        prompt_config:
+          jinja2_variables: []
+        vision:
+          enabled: false
+        structured_output_enabled: false
+        reasoning_format: tagged
+        isInLoop: false
+        isInIteration: false
+    - id: answer_node
+      type: custom
+      position:
+        x: 1100
+        y: 280
+      width: 280
+      height: 88
+      data:
+        type: answer
+        title: 回复
+        desc: ''
+        variables: []
+        answer: "{{#llm_node.text#}}"
+        isInLoop: false
+        isInIteration: false
+    edges:
+    - id: start_node-source-knowledge_node
+      source: start_node
+      target: knowledge_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: knowledge_node-source-llm_node
+      source: knowledge_node
+      target: llm_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: llm_node-source-answer_node
+      source: llm_node
+      target: answer_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    viewport:
+      x: 0
+      y: 0
+      zoom: 0.8

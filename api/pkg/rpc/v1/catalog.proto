@@ -1,0 +1,77 @@
+syntax = "proto3";
+
+package zgi.rpc.v1;
+
+option go_package = "github.com/zgiai/ginext/pkg/rpc/v1;v1";
+
+service CatalogService {
+    rpc GetPublishedCatalog(GetPublishedCatalogRequest) returns (GetPublishedCatalogResponse);
+    rpc WatchCatalogPublishes(WatchCatalogPublishesRequest) returns (stream CatalogPublishEvent);
+}
+
+message WatchCatalogPublishesRequest {
+    int64 last_seen_version = 1;
+}
+
+message CatalogPublishEvent {
+    int64 version = 1;
+    int64 published_at = 2;
+}
+
+message GetPublishedCatalogRequest {
+    int64 version = 1;
+}
+
+message GetPublishedCatalogResponse {
+    int64 version = 1;
+    int64 published_at = 2;
+    repeated CatalogProvider providers = 3;
+    repeated CatalogModel models = 4;
+}
+
+message CatalogProvider {
+    string provider = 1;
+    string provider_name = 2;
+    string description = 3;
+    string tagline = 4;
+    string logo_url = 5;
+    string website = 6;
+    string api_docs_url = 7;
+    string pricing_url = 8;
+    string country_code = 9;
+    int32 founded_year = 10;
+    string status = 11;
+    bool is_active = 12;
+    bool is_system_enabled = 13;
+    string metadata_json = 14;
+}
+
+message CatalogModel {
+    string provider = 1;
+    string model = 2;
+    string model_name = 3;
+    string type = 4;
+    string family = 5;
+    string family_name = 6;
+    string status = 7;
+    string tagline = 8;
+    bool is_flagship = 9;
+    bool is_recommended = 10;
+    bool is_featured = 11;
+    bool is_new = 12;
+    string access_type = 13;
+    string currency = 14;
+    int32 context_window = 15;
+    int32 max_output_tokens = 16;
+    double input_price = 17;
+    double output_price = 18;
+    double cached_input_price = 19;
+    repeated string use_cases = 20;
+    repeated string input_modalities = 21;
+    repeated string output_modalities = 22;
+    string knowledge_cutoff = 23;
+    bool is_active = 24;
+    bool is_system_enabled = 25;
+    string supported_parameters_json = 26;
+    string config_parameters_json = 27;
+}

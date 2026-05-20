@@ -1,0 +1,139 @@
+/* Dark Theme Variables - zweb Inspired Minimalist */
+.dark,
+[data-theme='dark'] {
+  /* === Primitives (Base Values) === */
+  --neutral-0: oklch(1 0 0);
+  --neutral-50: oklch(0.985 0 0);
+  --neutral-100: oklch(0.97 0 0);
+  --neutral-200: oklch(0.922 0 0);
+  --neutral-300: oklch(0.87 0 0);
+  --neutral-400: oklch(0.708 0 0);
+  --neutral-500: oklch(0.556 0 0);
+  --neutral-600: oklch(0.439 0 0);
+  --neutral-700: oklch(0.322 0 0);
+  --neutral-800: oklch(0.205 0 0);
+  --neutral-900: oklch(0.145 0 0);
+  --neutral-950: oklch(0.1 0 0);
+  --neutral-1000: oklch(0 0 0);
+
+  /* Brand Blue */
+  --blue-400: oklch(0.65 0.15 250);
+  --blue-500: oklch(0.6 0.18 250);
+
+  /* Status Colors (Adjusted for Dark Mode brightness) */
+  --green-500: oklch(0.627 0.194 149.214);
+  --yellow-500: oklch(0.769 0.188 70.08);
+  --red-500: oklch(0.577 0.245 27.325);
+  --sky-500: oklch(0.6 0.118 184.704);
+
+  /* === Core Semantic Tokens === */
+  --background: var(--neutral-900);
+  --foreground: var(--neutral-50);
+
+  --card: var(--neutral-800);
+  --card-foreground: var(--neutral-50);
+
+  --popover: var(--neutral-800);
+  --popover-foreground: var(--neutral-50);
+
+  /* Primary - Light gray/white for contrast in dark mode */
+  --primary: var(--neutral-200);
+  --primary-foreground: var(--neutral-950);
+  --primary-hover: var(--neutral-100);
+  --primary-active: var(--neutral-50);
+
+  /* Secondary */
+  --secondary: var(--neutral-800);
+  --secondary-foreground: var(--neutral-50);
+  --secondary-hover: var(--neutral-700);
+  --secondary-active: var(--neutral-600);
+
+  /* Neutral/Muted */
+  --muted: var(--neutral-800);
+  --muted-foreground: var(--neutral-400);
+  --accent: var(--neutral-800);
+  --accent-foreground: var(--neutral-50);
+
+  /* Status Colors */
+  --highlight: var(--blue-400);
+  --highlight-foreground: var(--neutral-950);
+  --destructive: var(--red-500);
+  --destructive-foreground: var(--neutral-0);
+  --warning: var(--yellow-500);
+  --warning-foreground: var(--neutral-950);
+  --success: var(--green-500);
+  --success-foreground: var(--neutral-0);
+  --info: var(--sky-500);
+  --info-foreground: var(--neutral-0);
+
+  /* Borders */
+  --border: var(--neutral-700);
+  --border-strong: var(--neutral-500);
+  --border-subtle: oklch(from var(--neutral-700) l c h / 0.5);
+  --input: var(--neutral-700);
+  --ring: var(--neutral-500);
+
+  /* Semantic Surfaces */
+  --bg-canvas: var(--neutral-950);
+  --bg-surface: var(--neutral-900);
+  --bg-subtle: var(--neutral-800);
+
+  /* Sidebar */
+  --sidebar: var(--neutral-900);
+  --sidebar-foreground: var(--neutral-50);
+  --sidebar-primary: var(--neutral-200);
+  --sidebar-primary-foreground: var(--neutral-950);
+  --sidebar-accent: var(--neutral-800);
+  --sidebar-accent-foreground: var(--neutral-50);
+  --sidebar-border: var(--neutral-700);
+  --sidebar-ring: var(--neutral-500);
+
+  /* Charts */
+  --chart-1: var(--blue-400);
+  --chart-2: var(--green-500);
+  --chart-3: var(--yellow-500);
+  --chart-4: var(--sky-500);
+  --chart-5: var(--red-500);
+
+  /* Button States */
+  --button-primary: var(--neutral-200);
+  --button-primary-hover: var(--neutral-100);
+  --button-primary-disabled: var(--neutral-700);
+  --button-secondary-bg: var(--neutral-800);
+  --button-secondary-text: var(--neutral-300);
+  --button-secondary-hover-border: var(--neutral-500);
+  --button-danger: var(--red-500);
+  --button-danger-hover: oklch(0.62 0.22 27);
+
+  /* Form Elements */
+  --input-hover: var(--neutral-500);
+  --input-disabled: var(--neutral-800);
+  --checkbox-bg: var(--neutral-800);
+  --checkbox-hover: var(--neutral-500);
+  --checkbox-selected: var(--neutral-200);
+  --switch-off: var(--neutral-700);
+  --switch-on: var(--neutral-200);
+
+  /* Tags */
+  --tag-primary-bg: oklch(from var(--blue-400) l c h / 0.15);
+  --tag-primary-text: var(--blue-400);
+  --tag-normal-bg: oklch(from var(--green-500) l c h / 0.15);
+  --tag-normal-text: var(--green-500);
+  --tag-warning-bg: oklch(from var(--yellow-500) l c h / 0.15);
+  --tag-warning-text: var(--yellow-500);
+  --tag-error-bg: oklch(from var(--red-500) l c h / 0.15);
+  --tag-error-text: var(--red-500);
+
+  /* Workflow Edge Colors */
+  --edge-default: var(--blue-400);
+  --edge-hover: var(--blue-500);
+  --edge-selected: var(--blue-500);
+  --edge-running: var(--sky-500);
+  --edge-succeeded: var(--green-500);
+  --edge-failed: var(--red-500);
+  --edge-stopped: var(--neutral-500);
+  --edge-paused: var(--warning);
+
+  /* Shadows - Use darker translucent shadows in dark mode */
+  --shadow-color: oklch(0 0 0);
+}

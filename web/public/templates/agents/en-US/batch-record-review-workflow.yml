@@ -1,0 +1,361 @@
+---
+kind: app
+version: 1.0.0
+exported_from: zgi
+exported_at: '2026-05-15T00:00:00Z'
+app:
+  name: Batch Record Review
+  description: Iterate over records, review each item, and aggregate the final assessment.
+  icon: '{"icon":"BR","icon_background":"#9333ea"}'
+  icon_type: text
+  mode: WORKFLOW
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    opening_statement_type: slogan
+    opening_slogan: ''
+    opening_statement: ''
+    opening_statement_enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      voice: ''
+      language: ''
+    speech_to_text:
+      enabled: false
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    conversation_history:
+      enabled: false
+      history_window_size: 6
+    file_upload:
+      enabled: false
+      allowed_file_types:
+      - image
+      - document
+      allowed_file_extensions:
+      - jpg
+      - jpeg
+      - png
+      - gif
+      - webp
+      - pdf
+      - doc
+      - docx
+      - txt
+      - md
+      - csv
+      - xlsx
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      number_limits: 5
+    webapp_workflow_config:
+      allow_view_run_detail: true
+      auto_expand_run_detail: false
+  graph:
+    nodes:
+    - id: note_runtime_guide
+      type: note
+      position:
+        x: 80
+        y: 40
+      width: 520
+      height: 240
+      data:
+        type: note
+        title: Run guide
+        desc: ''
+        text: |-
+          Run guide
+
+          Ready. Requires: OpenAI gpt-5.5 model. Provide text or JSON that can be extracted into a records array.
+
+          Suggested test input:
+          The Start node fields are prefilled. Open Debug and run the defaults directly.
+          Example:
+          - Records JSON: {"items":[{"id":"case-1001","summary":"Invoice total differs from purchase order","priority":"high"},{"id":"case-1002","summary":"Custome...
+
+          This note is documentation only and is not executed.
+        theme: blue
+        isInLoop: false
+        isInIteration: false
+    - id: start_node
+      type: custom
+      position:
+        x: 80
+        y: 280
+      width: 280
+      height: 88
+      data:
+        type: start
+        title: Start
+        desc: Agent start node
+        variables:
+        - type: paragraph
+          variable: records_text
+          label: Records JSON
+          required: true
+          max_length: 8192
+          default: '{"items":[{"id":"case-1001","summary":"Invoice total differs from
+            purchase order","priority":"high"},{"id":"case-1002","summary":"Customer
+            requests address update","priority":"normal"}]}'
+        unique: true
+        isInLoop: false
+        isInIteration: false
+    - id: extract_llm
+      type: custom
+      position:
+        x: 420
+        y: 280
+      width: 280
+      height: 92
+      data:
+        type: llm
+        title: Extract Records
+        desc: ''
+        variables: []
+        model:
+          provider: openai
+          name: gpt-5.5
+          mode: chat
+          completion_params:
+            response_format: json_object
+        prompt_template:
+        - role: system
+          text: Extract an array named records. Each record should contain id, summary,
+            owner, and priority. Return only JSON.
+        - role: user
+          text: "{{#start_node.records_text#}}"
+        prompt_config:
+          jinja2_variables: []
+        vision:
+          enabled: false
+        structured_output_enabled: false
+        reasoning_format: tagged
+        isInLoop: false
+        isInIteration: false
+    - id: records_parser
+      type: custom
+      position:
+        x: 740
+        y: 280
+      width: 280
+      height: 92
+      data:
+        type: json-parser
+        title: Parse Records
+        desc: ''
+        input_selector:
+        - extract_llm
+        - text
+        is_flatten_output: true
+        outputs:
+          records:
+            type: array[object]
+        error_strategy: default-value
+        default_value:
+        - key: records
+          type: array[object]
+          value: "[]"
+        retry_config:
+          enable: false
+          max_times: 3
+          interval: 1000
+        isInLoop: false
+        isInIteration: false
+    - id: iteration_node
+      type: custom
+      position:
+        x: 1080
+        y: 180
+      width: 520
+      height: 280
+      data:
+        type: iteration
+        title: Iterate Records
+        desc: ''
+        start_node_id: iteration_nodestart
+        iterator_selector:
+        - records_parser
+        - records
+        iterator_input_type: array[object]
+        output_selector:
+        - review_llm
+        - text
+        output_type: array[string]
+        is_parallel: true
+        parallel_nums: 5
+        error_handle_mode: terminated
+        isInLoop: false
+        isInIteration: false
+        _children:
+        - iteration_nodestart
+        - review_llm
+    - id: iteration_nodestart
+      type: custom-iteration-start
+      position:
+        x: 12
+        y: 52
+      width: 40
+      height: 40
+      data:
+        type: iteration-start
+        title: Iterate Records
+        desc: ''
+        isInIteration: true
+        isInLoop: false
+      parentId: iteration_node
+      extent: parent
+      selectable: false
+      draggable: false
+      measured:
+        width: 40
+        height: 40
+    - id: review_llm
+      type: custom
+      position:
+        x: 90
+        y: 80
+      width: 280
+      height: 92
+      data:
+        type: llm
+        title: Review Item
+        desc: ''
+        variables: []
+        model:
+          provider: openai
+          name: gpt-5.5
+          mode: chat
+          completion_params: {}
+        prompt_template:
+        - role: system
+          text: Review the current record. Return a concise quality assessment and
+            recommended action.
+        - role: user
+          text: 'Current record: {{#iteration_node.item#}}'
+        prompt_config:
+          jinja2_variables: []
+        vision:
+          enabled: false
+        structured_output_enabled: false
+        reasoning_format: tagged
+        isInLoop: false
+        isInIteration: true
+      parentId: iteration_node
+    - id: aggregate_node
+      type: custom
+      position:
+        x: 1680
+        y: 280
+      width: 280
+      height: 92
+      data:
+        type: variable-aggregator
+        title: Variable Aggregator
+        desc: ''
+        output_type: string
+        variables:
+        - - iteration_node
+          - output
+        advanced_settings:
+          group_enabled: false
+          groups: []
+        isInLoop: false
+        isInIteration: false
+    - id: end_node
+      type: custom
+      position:
+        x: 2040
+        y: 280
+      width: 280
+      height: 64
+      data:
+        type: end
+        title: End
+        desc: ''
+        outputs:
+        - variable: review_summary
+          type: string
+          value_selector:
+          - aggregate_node
+          - output
+        isInLoop: false
+        isInIteration: false
+    edges:
+    - id: start_node-source-extract_llm
+      source: start_node
+      target: extract_llm
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: extract_llm-source-records_parser
+      source: extract_llm
+      target: records_parser
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: records_parser-source-iteration_node
+      source: records_parser
+      target: iteration_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: iteration_nodestart-source-review_llm
+      source: iteration_nodestart
+      target: review_llm
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: true
+    - id: iteration_node-source-aggregate_node
+      source: iteration_node
+      target: aggregate_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: aggregate_node-source-end_node
+      source: aggregate_node
+      target: end_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    viewport:
+      x: 0
+      y: 0
+      zoom: 0.8

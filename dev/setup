@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+echo "[setup] bootstrap repository"
+"$ROOT/dev/bootstrap"
+
+if [ -f "$ROOT/api/go.mod" ]; then
+  echo "[setup] download api go modules"
+  (cd "$ROOT/api" && go mod download)
+fi
+
+if [ -f "$ROOT/web/package.json" ]; then
+  echo "[setup] install web dependencies"
+  (cd "$ROOT/web" && pnpm install)
+fi
+
+echo "[setup] done"

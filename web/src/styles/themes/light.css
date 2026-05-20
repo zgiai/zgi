@@ -1,0 +1,167 @@
+/* Light Theme Variables - zweb Inspired Minimalist */
+:root,
+[data-theme='light'] {
+  /* === Primitives (Base Values) === */
+  --neutral-0: oklch(1 0 0);
+  --neutral-50: oklch(0.985 0 0);
+  --neutral-100: oklch(0.97 0 0);
+  --neutral-200: oklch(0.922 0 0);
+  --neutral-300: oklch(0.87 0 0);
+  --neutral-400: oklch(0.708 0 0);
+  --neutral-500: oklch(0.556 0 0);
+  --neutral-600: oklch(0.439 0 0);
+  --neutral-700: oklch(0.322 0 0);
+  --neutral-800: oklch(0.205 0 0);
+  --neutral-900: #0c162c;
+
+  /* Brand Blue */
+  --blue-50: oklch(0.97 0.01 250);
+  --blue-100: oklch(0.92 0.03 250);
+  --blue-400: oklch(0.65 0.15 250);
+  --blue-500: oklch(0.6 0.18 250);
+  --blue-600: oklch(0.5 0.2 250);
+  --blue-700: oklch(0.4 0.18 250);
+
+  --zgi-blue-50: #dfe7fb;
+  --zgi-blue-100: #d1e0fa;
+  --zgi-blue-200: #b8ccff;
+  --zgi-blue-400: #3d84ff;
+  --zgi-blue-500: #0847f7;
+  --zgi-blue-600: #0847f7;
+  --zgi-blue-700: #0036c9;
+  --zgi-blue-800: #1a2b6b;
+
+  /* Status Colors */
+  --green-500: oklch(0.627 0.194 149.214);
+  --yellow-500: oklch(0.769 0.188 70.08);
+  --red-500: oklch(0.577 0.245 27.325);
+  --sky-500: oklch(0.6 0.118 184.704);
+
+  /* === Core Semantic Tokens === */
+  --background: var(--neutral-0);
+  --foreground: #0c162c;
+
+  --card: var(--neutral-0);
+  --card-foreground: var(--neutral-900);
+
+  --popover: var(--neutral-0);
+  --popover-foreground: var(--neutral-900);
+
+  /* Primary - ZGI Blue for calm default actions */
+  --primary: var(--zgi-blue-600);
+  --primary-foreground: var(--neutral-50);
+  --primary-hover: var(--zgi-blue-700);
+  --primary-active: var(--zgi-blue-800);
+
+  /* Secondary */
+  --secondary: var(--neutral-200);
+  --secondary-foreground: var(--neutral-800);
+  --secondary-hover: var(--neutral-300);
+  --secondary-active: var(--neutral-300);
+
+  /* Neutral/Muted */
+  --muted: var(--neutral-100);
+  --muted-foreground: var(--neutral-500);
+  --accent: var(--neutral-100);
+  --accent-foreground: var(--neutral-800);
+
+  /* Status Colors */
+  --highlight: var(--blue-500);
+  --highlight-foreground: var(--neutral-0);
+  --destructive: var(--red-500);
+  --destructive-foreground: var(--neutral-0);
+  --warning: var(--yellow-500);
+  --warning-foreground: var(--neutral-900);
+  --success: var(--green-500);
+  --success-foreground: var(--neutral-0);
+  --info: var(--sky-500);
+  --info-foreground: var(--neutral-0);
+
+  /* Borders */
+  --border: var(--neutral-200);
+  --border-strong: var(--neutral-400);
+  --border-subtle: oklch(from var(--neutral-200) l c h / 0.5);
+  --input: var(--neutral-200);
+  --ring: var(--zgi-blue-400);
+
+  /* Semantic Surfaces */
+  --bg-canvas: var(--neutral-50);
+  --bg-surface: var(--neutral-0);
+  --bg-subtle: var(--neutral-100);
+
+  /* Sidebar */
+  --sidebar: var(--neutral-0);
+  --sidebar-foreground: var(--neutral-900);
+  --sidebar-primary: var(--zgi-blue-600);
+  --sidebar-primary-foreground: var(--neutral-50);
+  --sidebar-accent: var(--neutral-100);
+  --sidebar-accent-foreground: var(--neutral-800);
+  --sidebar-border: var(--neutral-200);
+  --sidebar-ring: var(--zgi-blue-400);
+
+  /* Charts */
+  --chart-1: var(--blue-500);
+  --chart-2: var(--green-500);
+  --chart-3: var(--yellow-500);
+  --chart-4: var(--sky-500);
+  --chart-5: var(--red-500);
+
+  /* Brand Colors */
+  --brand-main: var(--zgi-blue-600);
+  --brand-subtle: #dfe7fb;
+  --brand-strong: var(--zgi-blue-700);
+
+  /* Additional Design System */
+  --text-primary: var(--neutral-900);
+  --text-secondary: var(--neutral-600);
+  --text-placeholder: var(--neutral-400);
+  --text-highlight: var(--zgi-blue-600);
+
+  /* Button States */
+  --button-primary: var(--zgi-blue-600);
+  --button-primary-hover: var(--zgi-blue-700);
+  --button-primary-disabled: var(--neutral-300);
+  --button-secondary-bg: var(--neutral-0);
+  --button-secondary-text: var(--neutral-600);
+  --button-secondary-hover-border: var(--neutral-400);
+  --button-danger: var(--red-500);
+  --button-danger-hover: oklch(0.52 0.24 27);
+
+  /* Form Elements */
+  --input-hover: var(--neutral-400);
+  --input-disabled: var(--neutral-200);
+  --checkbox-bg: var(--neutral-100);
+  --checkbox-hover: var(--neutral-400);
+  --checkbox-selected: var(--zgi-blue-600);
+  --switch-off: var(--neutral-400);
+  --switch-on: var(--zgi-blue-600);
+
+  /* Layout */
+  --table-header: var(--neutral-100);
+  --selection-layer: oklch(from var(--neutral-500) l c h / 0.3);
+  --annotation: var(--neutral-500);
+
+  /* Tags */
+  --tag-primary-bg: var(--blue-50);
+  --tag-primary-text: var(--blue-600);
+  --tag-normal-bg: oklch(from var(--green-500) l c h / 0.1);
+  --tag-normal-text: var(--green-500);
+  --tag-warning-bg: oklch(from var(--yellow-500) l c h / 0.1);
+  --tag-warning-text: var(--yellow-500);
+  --tag-error-bg: oklch(from var(--red-500) l c h / 0.1);
+  --tag-error-text: var(--red-500);
+
+  /* Workflow Edge Colors */
+  --edge-default: var(--blue-500);
+  --edge-hover: var(--blue-600);
+  --edge-selected: var(--blue-600);
+  --edge-running: var(--sky-500);
+  --edge-succeeded: var(--green-500);
+  --edge-failed: var(--red-500);
+  --edge-stopped: var(--neutral-500);
+  --edge-paused: var(--warning);
+
+  /* Shadows */
+  --shadow-color: oklch(0 0 0);
+  --glass-blur: 12px;
+}

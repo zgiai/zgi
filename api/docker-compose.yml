@@ -1,0 +1,192 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:14-alpine
+    container_name: zgi-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-zgiai123456}
+      POSTGRES_DB: ${POSTGRES_DB:-zgi}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "${POSTGRES_PORT:-5434}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-zgi}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - zgi-network
+
+  # Main API Service
+  zgi-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BUILD_REGION: ${BUILD_REGION:-global}
+        GOPROXY: ${GOPROXY:-}
+        APK_MIRROR: ${APK_MIRROR:-}
+    image: ${IMAGE_NAME:-docker.io/zgiai/zgi-api}:${IMAGE_TAG:-latest}
+    container_name: zgi-api
+    ports:
+      - "2680:2680"
+      - "50052:50052"  # gRPC port
+    env_file:
+      - .env.docker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      weaviate:
+        condition: service_started
+      neo4j:
+        condition: service_healthy
+    restart: unless-stopped
+    volumes:
+      - app-logs:/app/logs
+      - app-storage:/app/storage
+    networks:
+      - zgi-network
+
+  # OpenTelemetry Collector (optional observability profile)
+  otel-collector:
+    image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector:0.150.1
+    container_name: zgi-otel-collector
+    profiles:
+      - observability
+    command: ["--config=/etc/otelcol/config.yaml"]
+    ports:
+      - "${OTEL_COLLECTOR_GRPC_PORT:-4317}:4317"
+      - "${OTEL_COLLECTOR_HTTP_PORT:-4318}:4318"
+    environment:
+      JAEGER_OTLP_ENDPOINT: ${JAEGER_OTLP_ENDPOINT:-}
+      LANGFUSE_OTEL_ENDPOINT: ${LANGFUSE_OTEL_ENDPOINT:-}
+      LANGFUSE_AUTH_STRING: ${LANGFUSE_AUTH_STRING:-}
+    volumes:
+      - ${OTEL_COLLECTOR_CONFIG:-./docker/otel-collector.debug.yaml}:/etc/otelcol/config.yaml:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    networks:
+      - zgi-network
+
+  # One-off seed task
+  seed:
+    image: ${IMAGE_NAME:-docker.io/zgiai/zgi-api}:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BUILD_REGION: ${BUILD_REGION:-global}
+        GOPROXY: ${GOPROXY:-}
+        APK_MIRROR: ${APK_MIRROR:-}
+    profiles:
+      - manual
+    env_file:
+      - .env.docker
+    entrypoint: ["./server"]
+    command: ["seed"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      weaviate:
+        condition: service_started
+      neo4j:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - zgi-network
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: zgi-redis
+    ports:
+      - "${REDIS_HOST_PORT:-6381}:6379"
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-zgiai123456}
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-zgiai123456}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - zgi-network
+
+  # Neo4j (Graph Database + Vector Index)
+  neo4j:
+    image: neo4j:5.15-community
+    container_name: zgi-neo4j
+    ports:
+      - "7474:7474"  # HTTP
+      - "7687:7687"  # Bolt
+    environment:
+      - NEO4J_AUTH=neo4j/neo4j123456
+      - NEO4J_PLUGINS=["apoc"]
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+      - NEO4J_dbms_security_procedures_allowlist=apoc.*
+      - NEO4J_apoc_export_file_enabled=true
+      - NEO4J_apoc_import_file_enabled=true
+      - NEO4J_dbms_memory_heap_initial__size=512m
+      - NEO4J_dbms_memory_heap_max__size=2G
+    volumes:
+      - neo4j-data:/data
+      - neo4j-logs:/logs
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "neo4j123456", "RETURN 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - zgi-network
+
+  # Weaviate (Vector Database)
+  weaviate:
+    image: semitechnologies/weaviate:1.23.0
+    container_name: zgi-weaviate
+    ports:
+      - "18080:8080"
+    environment:
+      - AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED=true
+      - PERSISTENCE_DATA_PATH=/var/lib/weaviate
+      - QUERY_DEFAULTS_LIMIT=25
+      - DEFAULT_VECTORIZER_MODULE=none
+      - ENABLE_MODULES=
+      - CLUSTER_HOSTNAME=node1
+    volumes:
+      - weaviate-data:/var/lib/weaviate
+    restart: unless-stopped
+    networks:
+      - zgi-network
+
+
+volumes:
+  app-logs:
+    driver: local
+  app-storage:
+    driver: local
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local
+  neo4j-data:
+    driver: local
+  neo4j-logs:
+    driver: local
+  weaviate-data:
+    driver: local
+
+networks:
+  zgi-network:
+    driver: bridge

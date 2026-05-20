@@ -1,0 +1,55 @@
+identity:
+  author: vic
+  name: echo
+  label:
+    en_US: Echo Provider
+  description:
+    en_US: A provider for network requests and regex operations
+  icon: icon.svg
+
+tools:
+  - name: echo_http
+    label:
+      en_US: Echo HTTP
+    description:
+      en_US: GET a URL and echo a message back with response info
+    parameters:
+      - name: url
+        type: string
+        required: false
+        label:
+          en_US: URL
+        human_description:
+          en_US: The URL to fetch (default https://httpbin.org/get)
+        form: llm
+      - name: message
+        type: string
+        required: false
+        label:
+          en_US: Message
+        human_description:
+          en_US: A message to echo back (default hello-from-uv-echo)
+        form: llm
+
+  - name: regex_extract
+    label:
+      en_US: Regex Extract
+    description:
+      en_US: Extract content from text using regular expression patterns
+    parameters:
+      - name: content
+        type: string
+        required: true
+        label:
+          en_US: Content
+        human_description:
+          en_US: The text content to search in
+        form: llm
+      - name: expression
+        type: string
+        required: true
+        label:
+          en_US: Expression
+        human_description:
+          en_US: The regular expression pattern to match
+        form: llm

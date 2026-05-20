@@ -1,0 +1,176 @@
+---
+kind: app
+version: 1.0.0
+exported_from: zgi
+exported_at: '2026-05-15T00:00:00Z'
+app:
+  name: Meeting Decisions and Follow-ups
+  description: Turn meeting notes into decisions, owners, risks, and next actions.
+  icon: '{"icon":"MS","icon_background":"#4f46e5"}'
+  icon_type: text
+  mode: CONVERSATIONAL_WORKFLOW
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    opening_statement_type: slogan
+    opening_slogan: ''
+    opening_statement: ''
+    opening_statement_enabled: false
+    suggested_questions:
+    - "Meeting notes: Mia will confirm contract seats by Friday, Leo will submit security review next Tuesday, and the budget is still a risk."
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      voice: ''
+      language: ''
+    speech_to_text:
+      enabled: false
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    conversation_history:
+      enabled: true
+      history_window_size: 6
+    file_upload:
+      enabled: false
+      allowed_file_types:
+      - image
+      - document
+      allowed_file_extensions:
+      - jpg
+      - jpeg
+      - png
+      - gif
+      - webp
+      - pdf
+      - doc
+      - docx
+      - txt
+      - md
+      - csv
+      - xlsx
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      number_limits: 5
+    webapp_workflow_config:
+      allow_view_run_detail: true
+      auto_expand_run_detail: false
+  graph:
+    nodes:
+    - id: note_runtime_guide
+      type: note
+      position:
+        x: 80
+        y: 40
+      width: 520
+      height: 240
+      data:
+        type: note
+        title: Run guide
+        desc: ''
+        text: |-
+          Run guide
+
+          Ready. Requires: OpenAI gpt-5.5 model. Paste meeting notes or transcript to extract decisions and follow-ups.
+
+          Suggested test input:
+          Type this in the debug chat:
+          Meeting notes: Mia will confirm contract seats by Friday, Leo will submit security review next Tuesday, and the budget is still a risk.
+          You can also click the suggested question to start debugging.
+
+          This note is documentation only and is not executed.
+        theme: blue
+        isInLoop: false
+        isInIteration: false
+    - id: start_node
+      type: custom
+      position:
+        x: 80
+        y: 280
+      width: 280
+      height: 88
+      data:
+        type: start
+        title: Start
+        desc: Agent start node
+        variables: []
+        unique: true
+        isInLoop: false
+        isInIteration: false
+    - id: llm_node
+      type: custom
+      position:
+        x: 480
+        y: 280
+      width: 280
+      height: 92
+      data:
+        type: llm
+        title: Summarize Meeting
+        desc: ''
+        variables: []
+        model:
+          provider: openai
+          name: gpt-5.5
+          mode: chat
+          completion_params: {}
+        prompt_template:
+        - role: system
+          text: Extract decisions, owners, risks, dependencies, and follow-up actions.
+            Use concise business language.
+        - role: user
+          text: "{{#sys.query#}}"
+        prompt_config:
+          jinja2_variables: []
+        vision:
+          enabled: false
+        structured_output_enabled: false
+        reasoning_format: tagged
+        isInLoop: false
+        isInIteration: false
+    - id: answer_node
+      type: custom
+      position:
+        x: 880
+        y: 280
+      width: 280
+      height: 88
+      data:
+        type: answer
+        title: Answer
+        desc: ''
+        variables: []
+        answer: "{{#llm_node.text#}}"
+        isInLoop: false
+        isInIteration: false
+    edges:
+    - id: start_node-source-llm_node
+      source: start_node
+      target: llm_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: llm_node-source-answer_node
+      source: llm_node
+      target: answer_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    viewport:
+      x: 0
+      y: 0
+      zoom: 0.8

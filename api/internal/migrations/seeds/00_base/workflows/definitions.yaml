@@ -1,0 +1,52 @@
+# Built-in Workflow Definitions
+# This file defines metadata for all built-in workflows
+# Graph and features are loaded from separate JSON files
+
+workflows:
+  - scenario: "global_chat"
+    name: "Global Chat"
+    description: "Universal conversational AI assistant"
+    agent_type: "CONVERSATIONAL_WORKFLOW"
+    icon_type: "text"
+    icon: '{"icon": "GC", "icon_background": "#4F46E5"}'
+    enable_api: true
+    is_public: false
+    is_universal: true
+    internal: true
+    # Graph and features loaded from:
+    # - global_chat_graph.json
+    # - global_chat_features.json
+    # Two workflow versions will be created:
+    # - draft version (for editing)
+    # - published version (with timestamp)
+    
+  - scenario: "bi_chat"
+    name: "BI Chat"
+    description: "Business Intelligence data analysis assistant"
+    agent_type: "CONVERSATIONAL_WORKFLOW"
+    icon_type: "text"
+    icon: '{"icon": "BI", "icon_background": "#10B981"}'
+    enable_api: true
+    is_public: false
+    is_universal: false
+    internal: true
+    # Graph and features loaded from:
+    # - bi_chat_graph.json
+    # - bi_chat_features.json
+    # Two workflow versions will be created:
+    # - draft version (for editing)
+    # - published version (with timestamp)
+
+  - scenario: "imagegen_chat"
+    name: "Image Generation"
+    description: "Image generation assistant"
+    agent_type: "CONVERSATIONAL_WORKFLOW"
+    icon_type: "text"
+    icon: '{"icon": "IMG", "icon_background": "#0F766E"}'
+    enable_api: true
+    is_public: false
+    is_universal: false
+    internal: true
+    # Graph and features loaded from:
+    # - imagegen_chat_graph.json
+    # - imagegen_chat_features.json

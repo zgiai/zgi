@@ -1,0 +1,284 @@
+'use client';
+
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import { workflowTestService } from '@/services/workflow-test.service';
+import { WORKFLOW_TEST_KEYS } from '@/hooks/query-keys';
+import { useT } from '@/i18n';
+import { getErrorMessage } from '@/utils/error-notifications';
+import type {
+  CreateWorkflowTestBatchRequest,
+  CreateWorkflowTestCaseRequest,
+  CreateWorkflowTestScenarioRequest,
+  GenerateWorkflowTestCasesRequest,
+  RecognizeWorkflowTestScenariosRequest,
+  RetestWorkflowTestBatchRequest,
+  SaveWorkflowTestScenariosRequest,
+  UpdateWorkflowTestCaseRequest,
+  UpdateWorkflowTestSettingsRequest,
+} from '@/services/types/workflow-test';
+
+export function useWorkflowTestSettings(agentId: string) {
+  return useQuery({
+    queryKey: WORKFLOW_TEST_KEYS.settings(agentId),
+    queryFn: () => workflowTestService.getSettings(agentId),
+    enabled: !!agentId,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useUpdateWorkflowTestSettings(agentId: string) {
+  const t = useT('agents.workflowTest.toasts');
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: UpdateWorkflowTestSettingsRequest) =>
+      workflowTestService.updateSettings(agentId, data),
+    onSuccess: () => {
+      toast.success(t('settingsSaved'));
+      queryClient.invalidateQueries({ queryKey: WORKFLOW_TEST_KEYS.settings(agentId) });
+    },
+    onError: error => {
+      toast.error(getErrorMessage(error) || t('settingsSaveFailed'));
+    },
+  });
+}
+
+export function useResetWorkflowTestJudgePrompt(agentId: string) {
+  const t = useT('agents.workflowTest.toasts');
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => workflowTestService.resetJudgePrompt(agentId),
+    onSuccess: () => {
+      toast.success(t('settingsReset'));
+      queryClient.invalidateQueries({ queryKey: WORKFLOW_TEST_KEYS.settings(agentId) });
+    },
+    onError: error => {
+      toast.error(getErrorMessage(error) || t('settingsResetFailed'));
+    },
+  });
+}
+
+export function useWorkflowTestScenarios(agentId: string) {
+  return useQuery({
+    queryKey: WORKFLOW_TEST_KEYS.scenarios(agentId),
+    queryFn: () => workflowTestService.listScenarios(agentId),
+    enabled: !!agentId,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useCreateWorkflowTestScenario(agentId: string) {
+  const t = useT('agents.workflowTest.toasts');
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: CreateWorkflowTestScenarioRequest) =>
+      workflowTestService.createScenario(agentId, data),
+    onSuccess: () => {
+      toast.success(t('scenarioCreated'));
+      queryClient.invalidateQueries({ queryKey: WORKFLOW_TEST_KEYS.scenarios(agentId) });
+    },
+    onError: error => {
+      toast.error(getErrorMessage(error) || t('scenarioCreateFailed'));
+    },
+  });
+}
+
+export function useSaveWorkflowTestScenarios(agentId: string) {
+  const t = useT('agents.workflowTest.toasts');
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: SaveWorkflowTestScenariosRequest) =>
+      workflowTestService.saveScenarios(agentId, data),
+    onSuccess: () => {
+      toast.success(t('scenariosSaved'));
+      queryClient.invalidateQueries({ queryKey: WORKFLOW_TEST_KEYS.all });
+    },
+    onError: error => {
+      toast.error(getErrorMessage(error) || t('scenariosSaveFailed'));
+    },
+  });
+}
+
+export function useRecognizeWorkflowTestScenarios(agentId: string) {
+  const t = useT('agents.workflowTest.toasts');
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: RecognizeWorkflowTestScenariosRequest) =>
+      workflowTestService.recognizeScenarios(agentId, data),
+    onSuccess: response => {
+      toast.success(t('scenariosRecognized', { count: response.data.scenarios.length }));
+      queryClient.invalidateQueries({ queryKey: WORKFLOW_TEST_KEYS.all });
+    },
+    onError: error => {
+      toast.error(getErrorMessage(error) || t('scenariosRecognizeFailed'));
+    },
+  });
+}
+
+export function useWorkflowTestCases(agentId: string, params?: { status?: string }) {
+  return useQuery({
+    queryKey: WORKFLOW_TEST_KEYS.cases(agentId, params),
+    queryFn: () => workflowTestService.listCases(agentId, params),
+    enabled: !!agentId,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useCreateWorkflowTestCase(agentId: string) {
+  const t = useT('agents.workflowTest.toasts');
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: CreateWorkflowTestCaseRequest) =>
+      workflowTestService.createCase(agentId, data),
+    onSuccess: () => {
+      toast.success(t('caseCreated'));
+      queryClient.invalidateQueries({ queryKey: WORKFLOW_TEST_KEYS.all });
+    },
+    onError: error => {
+      toast.error(getErrorMessage(error) || t('caseCreateFailed'));
+    },
+  });
+}
+
+export function useUpdateWorkflowTestCase(agentId: string, options?: { silent?: boolean }) {
+  const t = useT('agents.workflowTest.toasts');
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ caseId, data }: { caseId: string; data: UpdateWorkflowTestCaseRequest }) =>
+      workflowTestService.updateCase(agentId, caseId, data),
+    onSuccess: () => {
+      if (!options?.silent) {
+        toast.success(t('caseUpdated'));
+        queryClient.invalidateQueries({ queryKey: WORKFLOW_TEST_KEYS.all });
+      }
+    },
+    onError: error => {
+      toast.error(getErrorMessage(error) || t('caseUpdateFailed'));
+    },
+  });
+}
+
+export function useGenerateWorkflowTestCases(agentId: string) {
+  const t = useT('agents.workflowTest.toasts');
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: GenerateWorkflowTestCasesRequest) =>
+      workflowTestService.generateCases(agentId, data),
+    onSuccess: response => {
+      toast.success(t('casesGenerated', { count: response.data.items.length }));
+      queryClient.invalidateQueries({ queryKey: WORKFLOW_TEST_KEYS.all });
+    },
+    onError: error => {
+      toast.error(getErrorMessage(error) || t('casesGenerateFailed'));
+    },
+  });
+}
+
+export function useWorkflowTestBatches(agentId: string) {
+  return useQuery({
+    queryKey: WORKFLOW_TEST_KEYS.batches(agentId),
+    queryFn: () => workflowTestService.listBatches(agentId),
+    enabled: !!agentId,
+    refetchOnWindowFocus: false,
+    refetchInterval: query => {
+      const batches = query.state.data?.data?.items ?? [];
+      return batches.some(batch => batch.status === 'queued' || batch.status === 'running')
+        ? 3000
+        : false;
+    },
+  });
+}
+
+export function useWorkflowTestBatchItems(agentId: string, batchId: string) {
+  return useQuery({
+    queryKey: WORKFLOW_TEST_KEYS.batchItems(agentId, batchId),
+    queryFn: () => workflowTestService.listBatchItems(agentId, batchId),
+    enabled: !!agentId && !!batchId,
+    refetchOnWindowFocus: false,
+    refetchInterval: query => {
+      const items = query.state.data?.data?.items ?? [];
+      return items.some(item => item.status === 'pending' || item.status === 'running')
+        ? 3000
+        : false;
+    },
+  });
+}
+
+export function useCreateWorkflowTestBatch(agentId: string) {
+  const t = useT('agents.workflowTest.toasts');
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: CreateWorkflowTestBatchRequest) =>
+      workflowTestService.createBatch(agentId, data),
+    onSuccess: () => {
+      toast.success(t('batchCreated'));
+      queryClient.invalidateQueries({ queryKey: WORKFLOW_TEST_KEYS.batches(agentId) });
+    },
+    onError: error => {
+      toast.error(getErrorMessage(error) || t('batchCreateFailed'));
+    },
+  });
+}
+
+export function useStartWorkflowTestBatch(agentId: string) {
+  const t = useT('agents.workflowTest.toasts');
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (batchId: string) => workflowTestService.startBatch(agentId, batchId),
+    onSuccess: () => {
+      toast.success(t('batchStarted'));
+      queryClient.invalidateQueries({ queryKey: WORKFLOW_TEST_KEYS.batches(agentId) });
+    },
+    onError: error => {
+      toast.error(getErrorMessage(error) || t('batchStartFailed'));
+    },
+  });
+}
+
+export function useExecuteWorkflowTestBatch(agentId: string) {
+  const t = useT('agents.workflowTest.toasts');
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (batchId: string) => workflowTestService.executeBatch(agentId, batchId),
+    onSuccess: (_data, batchId) => {
+      toast.success(t('batchStarted'));
+      queryClient.invalidateQueries({ queryKey: WORKFLOW_TEST_KEYS.batches(agentId) });
+      queryClient.invalidateQueries({ queryKey: WORKFLOW_TEST_KEYS.batchItems(agentId, batchId) });
+    },
+    onError: error => {
+      toast.error(getErrorMessage(error) || t('batchStartFailed'));
+    },
+  });
+}
+
+export function useCancelWorkflowTestBatch(agentId: string) {
+  const t = useT('agents.workflowTest.toasts');
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (batchId: string) => workflowTestService.cancelBatch(agentId, batchId),
+    onSuccess: (_data, batchId) => {
+      toast.success(t('batchCanceled'));
+      queryClient.invalidateQueries({ queryKey: WORKFLOW_TEST_KEYS.batches(agentId) });
+      queryClient.invalidateQueries({ queryKey: WORKFLOW_TEST_KEYS.batchItems(agentId, batchId) });
+    },
+    onError: error => {
+      toast.error(getErrorMessage(error) || t('batchCancelFailed'));
+    },
+  });
+}
+
+export function useRetestWorkflowTestBatch(agentId: string) {
+  const t = useT('agents.workflowTest.toasts');
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ batchId, data }: { batchId: string; data?: RetestWorkflowTestBatchRequest }) =>
+      workflowTestService.retestBatch(agentId, batchId, data),
+    onSuccess: () => {
+      toast.success(t('batchRetestCreated'));
+      queryClient.invalidateQueries({ queryKey: WORKFLOW_TEST_KEYS.batches(agentId) });
+    },
+    onError: error => {
+      toast.error(getErrorMessage(error) || t('batchRetestFailed'));
+    },
+  });
+}

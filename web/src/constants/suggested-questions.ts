@@ -1,0 +1,1 @@
+export const SUGGESTED_QUESTIONS_LIMIT = 3;

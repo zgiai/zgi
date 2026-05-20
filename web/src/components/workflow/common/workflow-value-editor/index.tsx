@@ -1,0 +1,1002 @@
+'use client';
+
+import React, {
+  useEffect,
+  useMemo,
+  forwardRef,
+  useImperativeHandle,
+  useRef,
+  useCallback,
+  useState,
+} from 'react';
+import { cn } from '@/lib/utils';
+import { useWorkflowStore } from '@/components/workflow/store';
+import type { UpstreamExportItem } from '@/components/workflow/store/helpers/graph';
+import type { WorkflowVariable } from '@/components/workflow/store/type';
+import type { StructuredTypeField } from '@/components/workflow/types/input-var';
+
+// tiptap
+import { EditorContent, useEditor } from '@tiptap/react';
+import StarterKit from '@tiptap/starter-kit';
+import Placeholder from '@tiptap/extension-placeholder';
+import { Extension, type Editor as TiptapEditor } from '@tiptap/core';
+import { Plugin, PluginKey } from '@tiptap/pm/state';
+
+// Custom extension to fix backspace behavior near atom nodes
+// When cursor is right after an atom node, default backspace may fail to delete previous character
+const FixAtomBackspace = Extension.create({
+  name: 'fixAtomBackspace',
+  addKeyboardShortcuts() {
+    return {
+      Backspace: ({ editor }) => {
+        const { state, view } = editor;
+        const { selection } = state;
+        const { $from, empty } = selection;
+
+        // Only handle when cursor is collapsed (no selection)
+        if (!empty) return false;
+
+        const pos = $from.pos;
+        if (pos <= 1) return false;
+
+        // Check if node immediately before cursor is an atom
+        const nodeBefore = $from.nodeBefore;
+
+        // Debug logging
+        const parent = $from.parent;
+        const indexInParent = $from.index();
+
+        // If nodeBefore is a text node, default backspace should work
+        // isAtom returns true for text (leaf nodes), so we check isText explicitly
+        if (nodeBefore?.isText) {
+          // Default backspace should delete text character - but if it's stuck,
+          // force delete from current position
+          const deleteFrom = pos - 1;
+          const deleteTo = pos;
+          const tr = state.tr.delete(deleteFrom, deleteTo);
+          view.dispatch(tr);
+          return true;
+        }
+
+        // If nodeBefore is a non-text atom (like variableToken), let default handle it
+        if (nodeBefore?.type.isAtom) {
+          return false;
+        }
+
+        // Look for pattern: [text][atom] with cursor after atom
+        // In this case, indexInParent points to position after last child
+        if (parent.childCount >= 2 && indexInParent >= 1) {
+          // Check if previous child is a non-text atom
+          const prevChild = parent.child(indexInParent - 1);
+          if (prevChild.type.isAtom && !prevChild.isText) {
+            // We're positioned right after an atom
+            // Look for text node before the atom
+            if (indexInParent >= 2) {
+              const textChild = parent.child(indexInParent - 2);
+              if (textChild.isText && textChild.text) {
+                // Calculate absolute position of the text node's last character
+                let textEndPos = $from.start();
+                for (let i = 0; i < indexInParent - 2; i++) {
+                  textEndPos += parent.child(i).nodeSize;
+                }
+                textEndPos += textChild.nodeSize;
+                const tr = state.tr.delete(textEndPos - 1, textEndPos);
+                view.dispatch(tr);
+                return true;
+              }
+            }
+          }
+        }
+
+        // Let default handler proceed
+        return false;
+      },
+    };
+  },
+});
+import { valueToDoc, docToValue } from './utils/value-transform';
+import VariableToken from './nodes/variable-token';
+import VariableSuggestPanel from './variable-suggest-panel';
+import { useT } from '@/i18n';
+
+// Stable plugin key for our Suggestion plugin to avoid duplicate-key collisions
+const SUGGEST_PLUGIN_KEY = 'wf-variable-suggest';
+// Create a real ProseMirror PluginKey instance (strings won't have getState and will break PM)
+const SUGGEST_PM_PLUGIN_KEY = new PluginKey(SUGGEST_PLUGIN_KEY);
+
+// Token pattern utils are now imported from ./utils/value-transform
+
+export interface WorkflowValueEditorHandle {
+  insertToken: (sourceId: string, name: string) => void;
+  focus: () => void;
+  openVariableSelector: () => void;
+}
+
+export interface WorkflowValueEditorProps {
+  className?: string;
+  editorClassName?: string;
+  value: string;
+  onChange: (value: string) => void;
+  readOnly?: boolean;
+  placeholder?: string;
+  nodeId?: string; // current node id to load upstream variables
+  // Whether variable suggestion (slash-trigger) is enabled. Default: true
+  suggestEnabled?: boolean;
+  // Whether "/" should open the variable suggestion list while typing. Default: true
+  slashTriggerEnabled?: boolean;
+  // Extra suggest items appended after upstream groups
+  extraSuggestItems?: VarOption[];
+  // Title for extra group
+  extraGroupTitle?: string;
+  // Notify parent when the TipTap editor gains focus
+  onFocus?: () => void;
+  // Optional portal root for rendering the variable suggest panel
+  portalRoot?: React.ComponentProps<typeof VariableSuggestPanel>['portalRoot'];
+}
+
+// VariableToken node and value transform functions are imported from local modules to keep this file focused on editor wiring.
+
+// Upstream variable option
+interface VarOption {
+  sourceId: string;
+  sourceTitle: string;
+  key: string;
+  type: WorkflowVariable['type'];
+  description?: string;
+  hasChildren?: boolean;
+}
+
+const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueEditorProps>(
+  (
+    {
+      className,
+      editorClassName,
+      value,
+      onChange,
+      readOnly = false,
+      placeholder = `Enter '/' to insert variable`,
+      nodeId,
+      suggestEnabled = true,
+      slashTriggerEnabled = true,
+      extraSuggestItems,
+      extraGroupTitle,
+      onFocus,
+      portalRoot,
+    },
+    ref
+  ) => {
+    // Access store safely to get upstream variables for suggestions
+    const getUpstreamVariables = useWorkflowStore.use.getUpstreamVariables();
+    const getAncestors = useWorkflowStore.use.getAncestors();
+    // Use graphVersion as a stable trigger for structural updates.
+    // We avoid subscribing to nodeIdToTitle directly to prevent re-renders when nodes move.
+    const graphVersion = useWorkflowStore.use.graphVersion();
+    const t = useT();
+
+    // Helper to resolve description from descriptionKey
+    const resolveDescription = useCallback(
+      (descriptionKey?: string, description?: string): string | undefined => {
+        if (descriptionKey) {
+          return t(`nodes.${descriptionKey}` as Parameters<typeof t>[0], {
+            innerType: description || 'string',
+          });
+        }
+        return description;
+      },
+      [t]
+    );
+
+    // Recursive flattener for nested fields
+    const flattenVariable = useCallback(
+      (
+        sid: string,
+        st: string,
+        key: string,
+        type: WorkflowVariable['type'],
+        description?: string,
+        children?: StructuredTypeField[],
+        depth = 0
+      ): VarOption[] => {
+        const result: VarOption[] = [
+          {
+            sourceId: sid,
+            sourceTitle: st,
+            key,
+            type,
+            description,
+            hasChildren: children && children.length > 0,
+          },
+        ];
+
+        // StructuredTypeField currently doesn't have nested fields in its interface,
+        // but if it ever does or if we use getStructuredTypeFields recursively, we'd handle it here.
+        if (depth < 5 && children && children.length > 0) {
+          for (const f of children) {
+            result.push(
+              ...flattenVariable(
+                sid,
+                st,
+                `${key}.${f.key}`,
+                f.type as WorkflowVariable['type'],
+                resolveDescription(f.descriptionKey),
+                f.children,
+                depth + 1
+              )
+            );
+          }
+        }
+        return result;
+      },
+      [resolveDescription]
+    );
+
+    const [isFocused, setIsFocused] = useState(false);
+
+    // Tracks current drill-down path in the suggestion list (e.g. ['nodeId', 'varKey'])
+    const suggestSessionPathRef = useRef<string[]>([]);
+
+    // Integrated suggestion state for stable React-based rendering
+    interface SuggestItem {
+      sourceId: string;
+      key: string;
+      sourceTitle?: string;
+      type?: string;
+      description?: string;
+      hasChildren?: boolean;
+      displayKey?: string;
+    }
+
+    const [suggestState, setSuggestState] = useState<{
+      open: boolean;
+      x: number;
+      y: number;
+      query: string;
+      trigger: 'slash' | 'manual';
+      editor: TiptapEditor;
+      command: (item: SuggestItem) => void;
+      path: string[];
+      activeGroupIndex: number;
+      activeItemIndex: number;
+    } | null>(null);
+
+    // Refs need to be declared before callbacks that use them
+    const suggestStateRef = useRef(suggestState);
+    useEffect(() => {
+      suggestStateRef.current = suggestState;
+    }, [suggestState]);
+
+    const closeSuggest = useCallback(() => {
+      setSuggestState(null);
+      suggestSessionPathRef.current = [];
+    }, []);
+
+    const suggestionEnabled = suggestEnabled && !readOnly;
+
+    const handleSuggestSelect = useCallback(
+      (it: SuggestItem) => {
+        if (!suggestStateRef.current) return;
+        try {
+          suggestStateRef.current.editor.chain().focus();
+          suggestStateRef.current.command(it);
+          closeSuggest();
+        } catch (err) {
+          console.error('Failed to apply suggestion:', err);
+        }
+      },
+      [closeSuggest]
+    );
+
+    const handleSuggestExpand = useCallback((it: { sourceId: string; key: string }) => {
+      setSuggestState(prev => {
+        if (!prev) return null;
+        let nextPath: string[];
+        if (prev.path.length === 0) {
+          nextPath = [it.sourceId, it.key];
+        } else {
+          const parts = it.key.split('.');
+          nextPath = [...prev.path, parts[parts.length - 1]];
+        }
+        suggestSessionPathRef.current = nextPath;
+        return { ...prev, path: nextPath, activeGroupIndex: 0, activeItemIndex: 0 };
+      });
+    }, []);
+
+    const handleSuggestBack = useCallback(() => {
+      setSuggestState(prev => {
+        if (!prev) return null;
+        let nextPath: string[];
+        if (prev.path.length <= 2) {
+          nextPath = [];
+        } else {
+          nextPath = prev.path.slice(0, -1);
+        }
+        suggestSessionPathRef.current = nextPath;
+        return { ...prev, path: nextPath, activeGroupIndex: 0, activeItemIndex: 0 };
+      });
+    }, []);
+
+    const handleSuggestHover = useCallback((gi: number, ii: number) => {
+      setSuggestState(prev =>
+        prev ? { ...prev, activeGroupIndex: gi, activeItemIndex: ii } : null
+      );
+    }, []);
+
+    const groups = useMemo(() => {
+      const list: Array<{ id: string; title: string; items: VarOption[] }> = [];
+      // Delay expensive group and variable flattening until the editor is actually interacted with.
+      if (!nodeId || (!isFocused && !suggestState)) return list;
+
+      const upstreams: UpstreamExportItem[] = getUpstreamVariables(nodeId) || [];
+
+      // Build a dedicated sys group from upstream variables (deduped by key)
+      const sysSeen = new Set<string>();
+      const sysItems: VarOption[] = [];
+      for (const src of upstreams) {
+        const vars = src.variables || [];
+        for (const v of vars) {
+          if (typeof v.key === 'string' && v.key.startsWith('sys.')) {
+            const trimmed = v.key.slice(4);
+            if (!sysSeen.has(trimmed)) {
+              sysSeen.add(trimmed);
+              sysItems.push({
+                sourceId: 'sys',
+                sourceTitle: t('agents.workflow.systemVariables.title'),
+                key: trimmed,
+                type: v.type as WorkflowVariable['type'],
+                description: resolveDescription(v.descriptionKey, v.description),
+              });
+            }
+          }
+        }
+      }
+
+      // Build normal groups excluding sys variables, with recursive flattening
+      // Environment and conversation variables are included from upstreams
+      const normalGroups = upstreams.map(src => {
+        // Apply i18n for special groups (environment, conversation)
+        let groupTitle = src.nodeTitle || src.nodeId;
+        if (src.nodeId === 'environment') {
+          groupTitle = t('agents.workflow.environmentVariables.title');
+        } else if (src.nodeId === 'conversation') {
+          groupTitle = t('agents.workflow.conversationVariables.title');
+        }
+
+        const flattenedItems = (src.variables || [])
+          .filter(v => !(typeof v.key === 'string' && v.key.startsWith('sys.')))
+          .flatMap(v =>
+            flattenVariable(
+              src.nodeId,
+              groupTitle,
+              v.key,
+              v.type as WorkflowVariable['type'],
+              resolveDescription(v.descriptionKey, v.description),
+              v.children as StructuredTypeField[]
+            )
+          );
+
+        return {
+          id: src.nodeId,
+          title: groupTitle,
+          items: flattenedItems,
+        };
+      });
+
+      if (Array.isArray(extraSuggestItems) && extraSuggestItems.length > 0) {
+        list.push({
+          id: '__extra__',
+          title: extraGroupTitle || '上下文',
+          items: extraSuggestItems,
+        });
+      }
+      if (sysItems.length > 0) {
+        list.push({
+          id: '__sys__',
+          title: t('agents.workflow.systemVariables.title'),
+          items: sysItems,
+        });
+      }
+      list.push(...normalGroups);
+      return list;
+    }, [
+      getUpstreamVariables,
+      nodeId,
+      extraSuggestItems,
+      extraGroupTitle,
+      flattenVariable,
+      resolveDescription,
+      isFocused,
+      suggestState,
+      graphVersion,
+      t,
+    ]);
+
+    const groupsRef = useRef<Array<{ id: string; title: string; items: VarOption[] }>>(groups);
+    useEffect(() => {
+      groupsRef.current = groups;
+    }, [groups]);
+
+    // Map sourceId to sourceTitle for quick lookup when rendering tokens
+    const idToTitle = useMemo(() => {
+      const state = useWorkflowStore.getState();
+      // In history mode, compute titles from snapshot nodes
+      let baseMap: Map<string, string>;
+      if (state.mode === 'history' && state.selectedRunId) {
+        const snap = state.historySnapshots[state.selectedRunId];
+        if (snap && Array.isArray(snap.nodes)) {
+          baseMap = new Map<string, string>();
+          for (const n of snap.nodes) {
+            const title = n.data?.title;
+            if (title) baseMap.set(n.id, title);
+          }
+        } else {
+          baseMap = new Map<string, string>(state.nodeIdToTitle);
+        }
+      } else {
+        baseMap = new Map<string, string>(state.nodeIdToTitle);
+      }
+      // Override special groups with i18n labels
+      baseMap.set('sys', t('agents.workflow.systemVariables.title'));
+      baseMap.set('environment', t('agents.workflow.environmentVariables.title'));
+      baseMap.set('conversation', t('agents.workflow.conversationVariables.title'));
+      if (Array.isArray(extraSuggestItems)) {
+        extraSuggestItems.forEach(item => {
+          if (item.sourceId && item.sourceTitle) {
+            baseMap.set(item.sourceId, item.sourceTitle);
+          }
+        });
+      }
+      return baseMap;
+    }, [extraSuggestItems, graphVersion, t]);
+
+    // Keep latest title mapping in a ref to avoid re-registering Suggestion plugin on title updates
+    const idToTitleRef = useRef<Map<string, string>>(idToTitle);
+    useEffect(() => {
+      idToTitleRef.current = idToTitle;
+    }, [idToTitle]);
+
+    // Labels for suggestion panel - stored in ref to avoid re-registering plugin on t change
+    const suggestLabelsRef = useRef({ empty: '' });
+    useEffect(() => {
+      suggestLabelsRef.current = { empty: t('nodes.common.noVariables') };
+    }, [t]);
+
+    const wrapperRef = useRef<HTMLDivElement>(null);
+    const closeSuggestRef = useRef<(() => void) | null>(null);
+    const lastEmittedValueRef = useRef<string>(value);
+    const lastEmitTimeRef = useRef<number>(0);
+    const lastSeenPropRef = useRef<string>(value);
+
+    useEffect(() => {
+      closeSuggestRef.current = closeSuggest;
+    }, [closeSuggest]);
+
+    // If suggestions are being disabled dynamically, ensure any open dropdown is closed
+    useEffect(() => {
+      if (!suggestionEnabled) {
+        closeSuggest();
+      }
+    }, [suggestionEnabled, closeSuggest]);
+
+    const handlersRef = useRef({
+      handleSuggestSelect,
+      handleSuggestExpand,
+      handleSuggestBack,
+      closeSuggest,
+    });
+    useEffect(() => {
+      handlersRef.current = {
+        handleSuggestSelect,
+        handleSuggestExpand,
+        handleSuggestBack,
+        closeSuggest,
+      };
+    }, [handleSuggestSelect, handleSuggestExpand, handleSuggestBack, closeSuggest]);
+
+    const suggestPath = useMemo(() => {
+      if (!suggestState) return [];
+      const { path } = suggestState;
+      return path.length > 0 ? [idToTitle.get(path[0]) || path[0], ...path.slice(1)] : [];
+    }, [suggestState, idToTitle]);
+
+    const editorRef = useRef<TiptapEditor | null>(null);
+
+    const buildSuggestCommand = useCallback(
+      (replaceRange?: { from: number; to: number }) => {
+        return (item: SuggestItem) => {
+          if (!item.sourceId || !editorRef.current) return;
+          const chain = editorRef.current.chain().focus();
+          if (replaceRange) {
+            chain.deleteRange(replaceRange);
+          }
+          chain
+            .insertContent({
+              type: 'variableToken',
+              attrs: {
+                sourceId: item.sourceId,
+                key: item.key,
+                title: idToTitleRef.current.get(item.sourceId) || item.sourceId,
+              },
+            })
+            .run();
+        };
+      },
+      []
+    );
+
+    const openManualSuggest = useCallback(() => {
+      if (!suggestEnabled || !editorRef.current) return;
+
+      const currentEditor = editorRef.current;
+      currentEditor.chain().focus().run();
+
+      const { selection } = currentEditor.state;
+      const coords = currentEditor.view.coordsAtPos(selection.from);
+      const rootRect =
+        portalRoot instanceof HTMLElement ? portalRoot.getBoundingClientRect() : null;
+      suggestSessionPathRef.current = [];
+
+      setSuggestState({
+        open: true,
+        x: rootRect ? coords.left - rootRect.left : coords.left,
+        y: rootRect ? coords.bottom - rootRect.top + 4 : coords.bottom + 4,
+        query: '',
+        trigger: 'manual',
+        editor: currentEditor,
+        command: buildSuggestCommand(),
+        path: [],
+        activeGroupIndex: 0,
+        activeItemIndex: 0,
+      });
+    }, [buildSuggestCommand, portalRoot, suggestEnabled]);
+
+    const extensions = useMemo(() => {
+      return [
+        FixAtomBackspace,
+        VariableToken,
+        // Custom variable trigger extension that allows detection anywhere (e.g. 123/|)
+        Extension.create({
+          name: 'variable-trigger',
+          priority: 200,
+          addProseMirrorPlugins() {
+            return [
+              new Plugin({
+                key: SUGGEST_PM_PLUGIN_KEY,
+                view() {
+                  return {
+                    update: view => {
+                      const { state } = view;
+                      const { selection, doc } = state;
+                      const { $from, empty } = selection;
+
+                      if (!empty || !suggestionEnabled) {
+                        if (suggestStateRef.current?.open) handlersRef.current?.closeSuggest();
+                        return;
+                      }
+
+                      if (!slashTriggerEnabled) {
+                        if (suggestStateRef.current?.trigger === 'slash') {
+                          handlersRef.current?.closeSuggest();
+                        }
+                        return;
+                      }
+
+                      // Look back for '/' trigger
+                      const textBefore = $from.parent.textBetween(
+                        Math.max(0, $from.parentOffset - 50),
+                        $from.parentOffset,
+                        '\n',
+                        '\n'
+                      );
+
+                      const match = textBefore.match(/\/([^\s/]*)$/);
+                      if (match) {
+                        const query = match[1];
+                        const start = $from.pos - query.length - 1;
+                        const end = $from.pos;
+
+                        const charAtStart = doc.textBetween(start, start + 1);
+                        if (charAtStart !== '/') {
+                          if (suggestStateRef.current?.open) handlersRef.current?.closeSuggest();
+                          return;
+                        }
+
+                        const coords = view.coordsAtPos(start);
+                        const rootRect =
+                          portalRoot instanceof HTMLElement
+                            ? portalRoot.getBoundingClientRect()
+                            : null;
+                        const currentEditor = editorRef.current;
+                        if (!currentEditor) return;
+                        const nextState = {
+                          open: true,
+                          x: rootRect ? coords.left - rootRect.left : coords.left,
+                          y: rootRect ? coords.bottom - rootRect.top + 4 : coords.bottom + 4,
+                          query,
+                          trigger: 'slash' as const,
+                          editor: currentEditor,
+                          command: buildSuggestCommand({ from: start, to: end }),
+                          path: suggestSessionPathRef.current,
+                          activeGroupIndex:
+                            suggestStateRef.current?.query !== query
+                              ? 0
+                              : (suggestStateRef.current?.activeGroupIndex ?? 0),
+                          activeItemIndex:
+                            suggestStateRef.current?.query !== query
+                              ? 0
+                              : (suggestStateRef.current?.activeItemIndex ?? 0),
+                        };
+
+                        const prev = suggestStateRef.current;
+                        if (
+                          !prev ||
+                          prev.query !== nextState.query ||
+                          Math.abs(prev.x - nextState.x) > 1 ||
+                          Math.abs(prev.y - nextState.y) > 1
+                        ) {
+                          setSuggestState(nextState);
+                        }
+                      } else {
+                        if (suggestStateRef.current?.trigger === 'slash') {
+                          handlersRef.current?.closeSuggest();
+                        }
+                      }
+                    },
+                  };
+                },
+              }),
+            ];
+          },
+          addKeyboardShortcuts() {
+            return {
+              ArrowUp: () => {
+                const s = suggestStateRef.current;
+                if (!s?.open) return false;
+                setSuggestState(prev => {
+                  if (!prev) return null;
+                  const currentGroups = enrichedGroupsRef.current;
+                  if (!currentGroups.length) return prev;
+                  let gi = prev.activeGroupIndex;
+                  let ii = prev.activeItemIndex - 1;
+                  if (ii < 0) {
+                    gi = (gi - 1 + currentGroups.length) % currentGroups.length;
+                    ii = (currentGroups[gi]?.items?.length || 1) - 1;
+                  }
+                  return { ...prev, activeGroupIndex: gi, activeItemIndex: ii };
+                });
+                return true;
+              },
+              ArrowDown: () => {
+                const s = suggestStateRef.current;
+                if (!s?.open) return false;
+                setSuggestState(prev => {
+                  if (!prev) return null;
+                  const currentGroups = enrichedGroupsRef.current;
+                  if (!currentGroups.length) return prev;
+                  let gi = prev.activeGroupIndex;
+                  let ii = prev.activeItemIndex + 1;
+                  if (ii >= (currentGroups[gi]?.items?.length || 0)) {
+                    gi = (gi + 1) % currentGroups.length;
+                    ii = 0;
+                  }
+                  return { ...prev, activeGroupIndex: gi, activeItemIndex: ii };
+                });
+                return true;
+              },
+              ArrowRight: () => {
+                const s = suggestStateRef.current;
+                if (!s?.open) return false;
+                const item =
+                  enrichedGroupsRef.current[s.activeGroupIndex]?.items?.[s.activeItemIndex];
+                if (item?.hasChildren) {
+                  handlersRef.current?.handleSuggestExpand(item);
+                  return true;
+                }
+                return false;
+              },
+              ArrowLeft: () => {
+                const s = suggestStateRef.current;
+                if (!s?.open || s.path.length === 0) return false;
+                handlersRef.current?.handleSuggestBack();
+                return true;
+              },
+              Enter: () => {
+                const s = suggestStateRef.current;
+                if (!s?.open) return false;
+                const item =
+                  enrichedGroupsRef.current[s.activeGroupIndex]?.items?.[s.activeItemIndex];
+                if (item && item.key) {
+                  s.command(item);
+                  return true;
+                }
+                return true; // prevent newline even if no selection
+              },
+              Tab: () => {
+                const s = suggestStateRef.current;
+                if (!s?.open) return false;
+                const item =
+                  enrichedGroupsRef.current[s.activeGroupIndex]?.items?.[s.activeItemIndex];
+                if (item && item.key) {
+                  s.command(item);
+                  return true;
+                }
+                return false;
+              },
+              Escape: () => {
+                if (!suggestStateRef.current?.open) return false;
+                handlersRef.current?.closeSuggest();
+                return true;
+              },
+              Backspace: () => {
+                const s = suggestStateRef.current;
+                if (s?.open && !s.query && s.path.length > 0) {
+                  handlersRef.current?.handleSuggestBack();
+                  return true;
+                }
+                return false;
+              },
+            };
+          },
+        }),
+        StarterKit.configure({
+          heading: false,
+          blockquote: false,
+          code: false,
+        }),
+        Placeholder.configure({ placeholder }),
+      ];
+    }, [buildSuggestCommand, placeholder, portalRoot, slashTriggerEnabled, suggestEnabled]);
+
+    const editor = useEditor({
+      extensions,
+      content: valueToDoc(value),
+      editable: !readOnly,
+      editorProps: {
+        attributes: {
+          class:
+            'ProseMirror min-w-0 max-w-full whitespace-pre-wrap break-all outline-none grow [&_p]:m-0',
+        },
+      },
+      onUpdate: ({ editor }) => {
+        if (readOnly) return;
+        const next = docToValue(editor.getJSON());
+        if (next !== lastEmittedValueRef.current && next !== lastSeenPropRef.current) {
+          lastEmitTimeRef.current = Date.now();
+          lastEmittedValueRef.current = next;
+          onChange(next);
+        }
+      },
+      immediatelyRender: false,
+    });
+
+    useEffect(() => {
+      editorRef.current = editor;
+    }, [editor]);
+
+    useEffect(() => {
+      if (!editor) return;
+      editor.setEditable(!readOnly);
+      if (readOnly) {
+        closeSuggest();
+      }
+    }, [editor, readOnly, closeSuggest]);
+
+    // Notify parent when editor gains focus
+    useEffect(() => {
+      if (!editor) return;
+      const onFocusCb = () => {
+        setIsFocused(true);
+        if (typeof onFocus === 'function') onFocus();
+      };
+      const onBlurCb = () => setIsFocused(false);
+      editor.on('focus', onFocusCb);
+      editor.on('blur', onBlurCb);
+      return () => {
+        editor.off('focus', onFocusCb);
+        editor.off('blur', onBlurCb);
+      };
+    }, [editor, onFocus]);
+
+    // Update variable token titles (invalid/title)
+    const updateTokenTitles = useCallback(() => {
+      if (!editor) return;
+      try {
+        const { state, view } = editor;
+        const { doc, schema } = state;
+        const varType = schema.nodes.variableToken;
+        if (!varType) return;
+        const allowedSpecial = new Set<string>(['sys', 'conversation', 'environment']);
+        if (Array.isArray(extraSuggestItems)) {
+          extraSuggestItems.forEach(item => {
+            if (item.sourceId) {
+              allowedSpecial.add(item.sourceId);
+            }
+          });
+        }
+        const upstreamSet = nodeId ? new Set<string>(getAncestors(nodeId) || []) : null;
+        const updates: Array<{ pos: number; attrs: Record<string, unknown> }> = [];
+        doc.descendants((node, pos) => {
+          if (node.type === varType) {
+            const sid = String((node.attrs as { sourceId?: string }).sourceId || '');
+            const desiredTitle = idToTitleRef.current.get(sid) || sid;
+            const currentTitle = String((node.attrs as { title?: string }).title || '');
+            const shouldMarkInvalid = Boolean(
+              sid && !allowedSpecial.has(sid) && upstreamSet ? !upstreamSet.has(sid) : false
+            );
+            if (desiredTitle && desiredTitle !== currentTitle) {
+              updates.push({ pos, attrs: { ...node.attrs, title: desiredTitle } });
+            }
+            if (shouldMarkInvalid !== Boolean((node.attrs as { invalid?: boolean }).invalid)) {
+              updates.push({ pos, attrs: { ...node.attrs, invalid: shouldMarkInvalid } });
+            }
+          }
+          return true;
+        });
+        if (updates.length > 0) {
+          let tr = state.tr;
+          for (const u of updates) {
+            tr = tr.setNodeMarkup(u.pos, varType, u.attrs);
+          }
+          view.dispatch(tr);
+        }
+      } catch (e) {
+        console.error('Error updating token titles:', e);
+      }
+    }, [editor, extraSuggestItems, nodeId, getAncestors]);
+
+    // Compute UI groups for the suggestion panel based on current path and query
+    const enrichedGroups = useMemo(() => {
+      if (!suggestState) return [];
+      const lowQ = suggestState.query.toLowerCase();
+      const segments = suggestState.path;
+
+      return groups
+        .map(g => {
+          if (segments.length > 0) {
+            const [sid, ...rest] = segments;
+            if (g.id !== sid && sid !== '__sys__' && sid !== '__extra__') {
+              return { title: g.title, items: [] };
+            }
+            const prefix = rest.length > 0 ? rest.join('.') + '.' : '';
+            const items = g.items
+              .filter(i => {
+                if (prefix && !i.key.startsWith(prefix)) return false;
+                const relativeKey = prefix ? i.key.slice(prefix.length) : i.key;
+                return !relativeKey.includes('.');
+              })
+              .filter(i => {
+                if (!lowQ) return true;
+                return i.key.toLowerCase().includes(lowQ);
+              })
+              .map(i => {
+                const relativeKey = prefix ? i.key.slice(prefix.length) : i.key;
+                return { ...i, displayKey: relativeKey || i.sourceTitle, type: String(i.type) };
+              });
+            return { title: g.title, items };
+          }
+          const items = g.items
+            .filter(i => {
+              if (i.key.includes('.')) return false;
+              if (!lowQ) return true;
+              return (
+                i.key.toLowerCase().includes(lowQ) || i.sourceTitle.toLowerCase().includes(lowQ)
+              );
+            })
+            .map(i => ({ ...i, displayKey: i.key || i.sourceTitle, type: String(i.type) }));
+          return { title: g.title, items };
+        })
+        .filter(g => (g.items?.length ?? 0) > 0);
+    }, [suggestState, groups]);
+
+    const enrichedGroupsRef = useRef(enrichedGroups);
+    useEffect(() => {
+      enrichedGroupsRef.current = enrichedGroups;
+    }, [enrichedGroups]);
+
+    // Sync editor content with external value
+    useEffect(() => {
+      if (!editor) return;
+
+      const isPropChange = value !== lastSeenPropRef.current;
+      lastSeenPropRef.current = value;
+
+      if (!isPropChange || value === lastEmittedValueRef.current) return;
+
+      const now = Date.now();
+      const isRecentlyTyped = editor.isFocused && now - lastEmitTimeRef.current < 1000;
+
+      const current = docToValue(editor.getJSON());
+      if (current !== value) {
+        if (isRecentlyTyped) return;
+
+        lastEmittedValueRef.current = value;
+        editor.commands.setContent(valueToDoc(value), { emitUpdate: false });
+        updateTokenTitles();
+      }
+    }, [value, editor, updateTokenTitles]);
+
+    // Keep token titles in sync with node changes
+    useEffect(() => {
+      updateTokenTitles();
+    }, [updateTokenTitles, idToTitle]);
+
+    // Suggestion plugin is now correctly managed via extensions array for proper priority
+
+    useImperativeHandle(
+      ref,
+      () => ({
+        insertToken: (sourceId: string, name: string) => {
+          if (readOnly) return;
+          editor
+            ?.chain()
+            .focus()
+            .insertContent({
+              type: 'variableToken',
+              attrs: { sourceId, key: name, title: idToTitle.get(sourceId) || sourceId },
+            })
+            .run();
+        },
+        focus: () => {
+          editor?.view?.focus();
+        },
+        openVariableSelector: () => {
+          openManualSuggest();
+        },
+      }),
+      [editor, idToTitle, openManualSuggest]
+    );
+
+    return (
+      <div className={cn('space-y-0.5', className)}>
+        <div
+          ref={wrapperRef}
+          className={cn(
+            'relative w-full min-w-0 overflow-x-hidden overflow-y-auto rounded-sm border bg-background px-2.5 py-1.5 text-sm ring-offset-background focus-within:outline-none flex flex-col',
+            readOnly ? 'cursor-default' : 'cursor-text',
+            editorClassName
+          )}
+          onClick={() => {
+            if (!readOnly) {
+              editor?.view?.focus();
+            }
+          }}
+          onBlur={() => {
+            const root = wrapperRef.current;
+            setTimeout(() => {
+              const next = document.activeElement as HTMLElement | null;
+              const suggest = document.querySelector('div[data-wf-suggest="open"]');
+              const inSuggest = !!(suggest && next && suggest.contains(next));
+              if (!inSuggest && root && (!next || !root.contains(next))) {
+                closeSuggest();
+              }
+            }, 100);
+          }}
+        >
+          <EditorContent editor={editor} className="min-h-[1.5em] min-w-0" />
+        </div>
+
+        {suggestState && (
+          <VariableSuggestPanel
+            open={suggestState.open}
+            x={suggestState.x}
+            y={suggestState.y}
+            groups={enrichedGroups}
+            activeGroupIndex={suggestState.activeGroupIndex}
+            activeItemIndex={suggestState.activeItemIndex}
+            suggestPath={suggestPath}
+            onHover={handleSuggestHover}
+            onSelect={handleSuggestSelect}
+            onExpand={handleSuggestExpand}
+            onBack={handleSuggestBack}
+            portalRoot={portalRoot}
+            labels={suggestLabelsRef.current}
+            onOpenChange={open => !open && closeSuggest()}
+          />
+        )}
+      </div>
+    );
+  }
+);
+
+WorkflowValueEditor.displayName = 'WorkflowValueEditor';
+
+export default WorkflowValueEditor;

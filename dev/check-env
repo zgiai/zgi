@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+MODE="check"
+TIMESTAMP="$(date +"%Y%m%d_%H%M%S")"
+
+MAPPINGS=(
+  "docker/.env.example|docker/.env|docker compose"
+  "api/.env.example|api/.env|api local"
+  "api/.env.docker.example|api/.env.docker|api docker"
+  "web/.env.example|web/.env.local|web local"
+  "sandbox/.env.example|sandbox/.env|sandbox"
+  "plugin-runner/.env.example|plugin-runner/.env|plugin-runner"
+)
+
+usage() {
+  cat <<'EOF'
+Usage: ./dev/check-env [--sync]
+
+Default mode only reports differences.
+--sync creates a backup and appends missing keys from each template.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --sync)
+      MODE="sync"
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+
+trim() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
+
+parse_env_file() {
+  local file_path="$1"
+  awk '
+    /^[[:space:]]*#/ { next }
+    /^[[:space:]]*$/ { next }
+    index($0, "=") == 0 { next }
+    {
+      key = $0
+      sub(/=.*/, "", key)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
+      value = $0
+      sub(/^[^=]*=/, "", value)
+      print key "\t" value
+    }
+  ' "$file_path"
+}
+
+append_missing_keys() {
+  local template_path="$1"
+  local target_path="$2"
+  local label="$3"
+  declare -n template_keys_ref="$4"
+  declare -n target_keys_ref="$5"
+
+  local tmp_file
+  local appended_count=0
+  local backup_path
+  tmp_file="$(mktemp)"
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [[ "$line" =~ ^[[:space:]]*# ]] || [[ "$line" =~ ^[[:space:]]*$ ]] || [[ "$line" != *=* ]]; then
+      continue
+    fi
+
+    local key="${line%%=*}"
+    key="$(trim "$key")"
+    [ -z "$key" ] && continue
+
+    if [ -z "${target_keys_ref[$key]+x}" ] && [ -n "${template_keys_ref[$key]+x}" ]; then
+      printf '%s\n' "$line" >> "$tmp_file"
+      appended_count=$((appended_count + 1))
+    fi
+  done < "$template_path"
+
+  if [ "$appended_count" -eq 0 ]; then
+    rm -f "$tmp_file"
+    return 0
+  fi
+
+  backup_path="${target_path}.bak.${TIMESTAMP}"
+  cp "$target_path" "$backup_path"
+
+  {
+    printf '\n# Added by dev/check-env --sync on %s\n' "$TIMESTAMP"
+    cat "$tmp_file"
+  } >> "$target_path"
+
+  rm -f "$tmp_file"
+  echo "  synced missing keys: $appended_count"
+  echo "  backup: ${backup_path#$ROOT/}"
+}
+
+check_mapping() {
+  local template_rel="$1"
+  local target_rel="$2"
+  local label="$3"
+  local template_path="$ROOT/$template_rel"
+  local target_path="$ROOT/$target_rel"
+
+  local missing_count=0
+  local changed_count=0
+  local stale_count=0
+
+  echo "[check-env] $label"
+
+  if [ ! -f "$template_path" ]; then
+    echo "  template missing: $template_rel"
+    return 1
+  fi
+
+  if [ ! -f "$target_path" ]; then
+    echo "  target missing: $target_rel"
+    return 0
+  fi
+
+  declare -A template_values=()
+  declare -A target_values=()
+
+  while IFS=$'\t' read -r key value; do
+    [ -z "$key" ] && continue
+    template_values["$key"]="$(trim "$value")"
+  done < <(parse_env_file "$template_path")
+
+  while IFS=$'\t' read -r key value; do
+    [ -z "$key" ] && continue
+    target_values["$key"]="$(trim "$value")"
+  done < <(parse_env_file "$target_path")
+
+  for key in "${!template_values[@]}"; do
+    if [ -z "${target_values[$key]+x}" ]; then
+      echo "  missing key: $key"
+      missing_count=$((missing_count + 1))
+      continue
+    fi
+
+    if [ "${template_values[$key]}" != "${target_values[$key]}" ]; then
+      echo "  changed value: $key"
+      changed_count=$((changed_count + 1))
+    fi
+  done
+
+  for key in "${!target_values[@]}"; do
+    if [ -z "${template_values[$key]+x}" ]; then
+      echo "  extra key: $key"
+      stale_count=$((stale_count + 1))
+    fi
+  done
+
+  if [ "$missing_count" -eq 0 ] && [ "$changed_count" -eq 0 ] && [ "$stale_count" -eq 0 ]; then
+    echo "  ok"
+  else
+    echo "  summary: missing=$missing_count changed=$changed_count extra=$stale_count"
+    if [ "$MODE" = "sync" ] && [ "$missing_count" -gt 0 ]; then
+      append_missing_keys "$template_path" "$target_path" "$label" template_values target_values
+    fi
+  fi
+
+  unset template_values
+  unset target_values
+}
+
+overall_status=0
+
+for mapping in "${MAPPINGS[@]}"; do
+  IFS='|' read -r template_rel target_rel label <<< "$mapping"
+  if ! check_mapping "$template_rel" "$target_rel" "$label"; then
+    overall_status=1
+  fi
+done
+
+exit "$overall_status"

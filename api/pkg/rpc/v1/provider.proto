@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+package zgi.rpc.v1;
+
+option go_package = "github.com/zgiai/ginext/pkg/rpc/v1;v1";
+
+// ProviderService provides LLM provider information and protocol detection.
+service ProviderService {
+    // ListProviders returns all available LLM providers.
+    rpc ListProviders(ListProvidersRequest) returns (ListProvidersResponse);
+    
+    // GetProvider returns detailed information about a specific provider.
+    rpc GetProvider(GetProviderRequest) returns (GetProviderResponse);
+    
+    // DetectProtocols detects supported protocols for a provider endpoint.
+    rpc DetectProtocols(DetectProtocolsRequest) returns (DetectProtocolsResponse);
+}
+
+message ListProvidersRequest {
+    bool include_inactive = 1;  // Include inactive providers
+}
+
+message ListProvidersResponse {
+    repeated ProviderInfo providers = 1;
+}
+
+message GetProviderRequest {
+    string code = 1;  // Provider code (e.g., "openai", "anthropic")
+}
+
+message GetProviderResponse {
+    ProviderInfo provider = 1;
+}
+
+message DetectProtocolsRequest {
+    string provider = 1;
+    string base_url = 2;
+    string api_key = 3;
+}
+
+message DetectProtocolsResponse {
+    repeated string supported_protocols = 1;
+    string recommended_protocol = 2;
+    map<string, string> detection_results = 3;
+}
+
+message ProviderInfo {
+    string code = 1;
+    string name = 2;
+    string description = 3;
+    repeated string supported_protocols = 4;
+    string default_protocol = 5;
+    string website = 6;
+    string logo_url = 7;
+    bool is_active = 8;
+    map<string, string> metadata = 9;
+}

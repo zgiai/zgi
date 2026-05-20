@@ -1,0 +1,100 @@
+server:
+  port: 2678
+  mode: debug  # debug, release, test
+  read_timeout: 300  # 5 minutes for long-running workflows
+  write_timeout: 300  # 5 minutes for streaming responses
+  max_header_bytes: 1048576  # 1MB
+
+database:
+  driver: postgres
+  host: localhost
+  port: 5432
+  username: postgres
+  password: postgres
+  dbname: ginext
+  sslmode: disable
+  timezone: Asia/Shanghai
+  max_idle_conns: 10
+  max_open_conns: 100
+  conn_max_lifetime: 3600
+
+# Test environment database configuration
+# To use test environment, set these environment variables:
+#   DB_HOST=your-test-db-host
+#   DB_PORT=5432
+#   DB_USERNAME=your-db-user
+#   DB_PASSWORD=your-db-password
+#   DB_NAME=your-db-name
+#   DB_SSLMODE=require
+
+redis:
+  host: localhost
+  port: 6379
+  password: ""
+  db: 0
+  pool_size: 10
+  min_idle_conns: 5
+
+email:
+  from: "Your App <noreply@example.com>"
+  resend_api_key: "your-resend-api-key"
+
+jwt:
+  secret: "your-secret-key-please-change-it"
+  expire_days: 7
+
+openai:
+  api_key: "your-openai-api-key"
+  api_timeout: 90  # API timeout in seconds
+
+deepseek:
+  api_key: "your-deepseek-api-key"
+  base_url: "https://api.deepseek.com/v1"
+  api_timeout: 90  # API timeout in seconds
+
+log:
+  level: debug  # debug, info, warn, error
+  filename: logs/app.log
+  max_size: 100    # megabytes
+  max_age: 30      # days
+  max_backups: 7
+  compress: true
+
+rate_limit:
+  enabled: true
+  requests: 100    # requests per second
+  burst: 50
+
+cors:
+  allowed_origins:
+    - "*"
+  allowed_methods:
+    - GET
+    - POST
+    - PUT
+    - DELETE
+    - OPTIONS
+  allowed_headers:
+    - Origin
+    - Content-Type
+    - Accept
+    - Authorization
+
+swagger:
+  enabled: true
+  path: /swagger/*any
+
+task_queue:
+  # Reuses the main Redis host, port, and password.
+  redis_db: 0
+  concurrency: 10
+  retention: 24h    # task retention period
+
+workflow:
+  execution_timeout: 300  # Maximum workflow execution time in seconds (5 minutes)
+  llm_timeout: 120        # Maximum LLM node execution time in seconds (2 minutes)
+  heartbeat_interval: 5   # Heartbeat interval in seconds to keep connection alive
+  cleanup_timeout: 30     # Timeout for cleanup operations in seconds
+
+modelmeta:
+  api_url: ""  # Leave empty to disable remote sync; use https://api.modelmeta.dev for official ZGI ModelMeta

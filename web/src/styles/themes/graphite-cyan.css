@@ -1,0 +1,47 @@
+[data-theme='graphite-cyan'] {
+  --graphite-cyan-50: #ecfeff;
+  --graphite-cyan-100: #cffafe;
+  --graphite-cyan-200: #a5f3fc;
+  --graphite-cyan-300: #67e8f9;
+  --graphite-cyan-400: #22d3ee;
+  --graphite-cyan-500: #0891b2;
+  --graphite-cyan-600: #0e7490;
+  --graphite-cyan-700: #155e75;
+  --graphite-cyan-800: #164e63;
+
+  --primary: var(--graphite-cyan-600);
+  --primary-foreground: var(--neutral-0);
+  --primary-hover: var(--graphite-cyan-700);
+  --primary-active: var(--graphite-cyan-800);
+  --secondary: var(--graphite-cyan-100);
+  --secondary-foreground: var(--neutral-800);
+  --secondary-hover: var(--graphite-cyan-200);
+  --secondary-active: var(--graphite-cyan-300);
+  --muted: var(--neutral-100);
+  --muted-foreground: var(--neutral-500);
+  --highlight: var(--graphite-cyan-600);
+  --highlight-foreground: var(--neutral-0);
+  --border: var(--neutral-200);
+  --ring: var(--graphite-cyan-400);
+  --sidebar-primary: var(--graphite-cyan-600);
+  --sidebar-primary-foreground: var(--neutral-50);
+  --sidebar-ring: var(--graphite-cyan-400);
+  --chart-1: var(--graphite-cyan-600);
+  --brand-main: var(--graphite-cyan-600);
+  --brand-subtle: var(--graphite-cyan-50);
+  --brand-strong: var(--graphite-cyan-700);
+  --text-highlight: var(--graphite-cyan-600);
+  --button-primary: var(--graphite-cyan-600);
+  --button-primary-hover: var(--graphite-cyan-700);
+  --checkbox-bg: var(--graphite-cyan-50);
+  --checkbox-hover: var(--graphite-cyan-300);
+  --checkbox-selected: var(--graphite-cyan-600);
+  --switch-on: var(--graphite-cyan-600);
+  --table-header: var(--graphite-cyan-50);
+  --selection-layer: oklch(from var(--graphite-cyan-500) l c h / 0.3);
+  --tag-primary-bg: var(--graphite-cyan-50);
+  --tag-primary-text: var(--graphite-cyan-700);
+  --edge-default: var(--graphite-cyan-600);
+  --edge-hover: var(--graphite-cyan-700);
+  --edge-selected: var(--graphite-cyan-700);
+}

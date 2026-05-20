@@ -1,0 +1,255 @@
+---
+kind: app
+version: 1.0.0
+exported_from: zgi
+exported_at: '2026-05-15T00:00:00Z'
+app:
+  name: SMS Alert Routing
+  description: Evaluate alert severity and send an SMS notification for urgent cases.
+  icon: '{"icon":"SA","icon_background":"#dc2626"}'
+  icon_type: text
+  mode: WORKFLOW
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    opening_statement_type: slogan
+    opening_slogan: ''
+    opening_statement: ''
+    opening_statement_enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      voice: ''
+      language: ''
+    speech_to_text:
+      enabled: false
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    conversation_history:
+      enabled: false
+      history_window_size: 6
+    file_upload:
+      enabled: false
+      allowed_file_types:
+      - image
+      - document
+      allowed_file_extensions:
+      - jpg
+      - jpeg
+      - png
+      - gif
+      - webp
+      - pdf
+      - doc
+      - docx
+      - txt
+      - md
+      - csv
+      - xlsx
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      number_limits: 5
+    webapp_workflow_config:
+      allow_view_run_detail: true
+      auto_expand_run_detail: false
+  graph:
+    nodes:
+    - id: note_runtime_guide
+      type: note
+      position:
+        x: 80
+        y: 40
+      width: 520
+      height: 240
+      data:
+        type: note
+        title: Run guide
+        desc: ''
+        text: |-
+          Run guide
+
+          Setup required. Requires: SMS channel. Configure SMS first; severity=critical sends an SMS.
+
+          Suggested test input:
+          The Start node fields are prefilled. Open Debug and run the defaults directly.
+          Example:
+          - Alert message: Payment processing latency is above the agreed threshold for the enterprise checkout service.
+          - Severity: critical
+          - Recipient phone: +15551234567
+
+          This note is documentation only and is not executed.
+        theme: yellow
+        isInLoop: false
+        isInIteration: false
+    - id: start_node
+      type: custom
+      position:
+        x: 80
+        y: 280
+      width: 280
+      height: 88
+      data:
+        type: start
+        title: Start
+        desc: Agent start node
+        variables:
+        - type: paragraph
+          variable: alert
+          label: Alert message
+          required: true
+          max_length: 8192
+          default: Payment processing latency is above the agreed threshold for the
+            enterprise checkout service.
+        - type: text-input
+          variable: severity
+          label: Severity
+          required: true
+          max_length: 8192
+          default: critical
+        - type: text-input
+          variable: phone
+          label: Recipient phone
+          required: true
+          max_length: 8192
+          default: "+15551234567"
+        unique: true
+        isInLoop: false
+        isInIteration: false
+    - id: severity_branch
+      type: custom
+      position:
+        x: 420
+        y: 280
+      width: 280
+      height: 92
+      data:
+        type: if-else
+        title: Severity Branch
+        desc: ''
+        cases:
+        - case_id: critical
+          conditions:
+          - id: condition_severity
+            key: severity
+            variable_selector:
+            - start_node
+            - severity
+            comparison_operator: contains
+            value: critical
+            varType: string
+          logical_operator: and
+        targetBranches:
+        - id: critical
+          name: Critical
+        - id: 'false'
+          name: ELSE
+    - id: sms_node
+      type: custom
+      position:
+        x: 760
+        y: 160
+      width: 280
+      height: 92
+      data:
+        type: notification-sms
+        title: SMS Notification
+        desc: ''
+        phone: "{{#start_node.phone#}}"
+        template: notification_sms
+        notification_title: Urgent workflow alert
+        link_code: "{{#sys.workflow_run_id#}}"
+        isInLoop: false
+        isInIteration: false
+    - id: sms_end
+      type: custom
+      position:
+        x: 1100
+        y: 160
+      width: 280
+      height: 64
+      data:
+        type: end
+        title: End
+        desc: ''
+        outputs:
+        - variable: status
+          type: string
+          value_selector:
+          - sms_node
+          - link_code
+        isInLoop: false
+        isInIteration: false
+    - id: no_sms_end
+      type: custom
+      position:
+        x: 760
+        y: 420
+      width: 280
+      height: 64
+      data:
+        type: end
+        title: End
+        desc: ''
+        outputs:
+        - variable: status
+          type: string
+          value_selector:
+          - start_node
+          - severity
+        isInLoop: false
+        isInIteration: false
+    edges:
+    - id: start_node-source-severity_branch
+      source: start_node
+      target: severity_branch
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: severity_branch-critical-sms_node
+      source: severity_branch
+      target: sms_node
+      sourceHandle: critical
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: sms_node-source-sms_end
+      source: sms_node
+      target: sms_end
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: severity_branch-false-no_sms_end
+      source: severity_branch
+      target: no_sms_end
+      sourceHandle: 'false'
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    viewport:
+      x: 0
+      y: 0
+      zoom: 0.8

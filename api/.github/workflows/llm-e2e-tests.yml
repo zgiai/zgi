@@ -1,0 +1,152 @@
+name: LLM Gateway E2E Tests
+
+on:
+  push:
+    branches: [ main, develop/v1 ]
+    paths:
+      - 'internal/modules/llm/**'
+      - 'tests/llm/e2e/**'
+  pull_request:
+    branches: [ main, develop/v1 ]
+    paths:
+      - 'internal/modules/llm/**'
+      - 'tests/llm/e2e/**'
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  e2e-tests:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_DB: ${{ secrets.TEST_DB_NAME || 'testdb' }}
+          POSTGRES_USER: ${{ secrets.TEST_DB_USERNAME || 'postgres' }}
+          POSTGRES_PASSWORD: ${{ secrets.TEST_DB_PASSWORD }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:6
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.2'
+          cache: true
+
+      - name: Install dependencies
+        run: |
+          go mod download
+
+      - name: Run database migrations
+        env:
+          DB_DRIVER: postgres
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USERNAME: ${{ secrets.TEST_DB_USERNAME || 'postgres' }}
+          DB_PASSWORD: ${{ secrets.TEST_DB_PASSWORD }}
+          DB_NAME: ${{ secrets.TEST_DB_NAME || 'testdb' }}
+          DB_SSLMODE: disable
+        run: |
+          go run cmd/migrate/main.go up
+
+      - name: Start API server
+        env:
+          DB_DRIVER: postgres
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USERNAME: ${{ secrets.TEST_DB_USERNAME || 'postgres' }}
+          DB_PASSWORD: ${{ secrets.TEST_DB_PASSWORD }}
+          DB_NAME: ${{ secrets.TEST_DB_NAME || 'testdb' }}
+          DB_SSLMODE: disable
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          SERVER_PORT: 2620
+        run: |
+          go run cmd/server/main.go start &
+          sleep 10  # Wait for server to start
+
+      - name: Wait for server
+        run: |
+          for i in {1..30}; do
+            if curl -f http://localhost:2620/health; then
+              echo "Server is ready"
+              break
+            fi
+            echo "Waiting for server... ($i/30)"
+            sleep 2
+          done
+
+      - name: Run E2E tests
+        env:
+          BASE_URL: http://localhost:2620
+          TEST_EMAIL: ${{ secrets.TEST_EMAIL }}
+          TEST_PASSWORD: ${{ secrets.TEST_PASSWORD }}
+        run: |
+          go test -v -timeout 5m ./tests/llm/e2e/...
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            tests/llm/e2e/*.log
+            tests/llm/e2e/coverage.out
+
+      - name: Generate test report
+        if: always()
+        run: |
+          go test -v -json ./tests/llm/e2e/... > test-report.json
+
+      - name: Comment PR with results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('test-report.json', 'utf8');
+            const lines = report.trim().split('\n');
+
+            let passed = 0;
+            let failed = 0;
+
+            lines.forEach(line => {
+              const data = JSON.parse(line);
+              if (data.Action === 'pass') passed++;
+              if (data.Action === 'fail') failed++;
+            });
+
+            const body = `## 🧪 E2E Test Results
+
+            - ✅ Passed: ${passed}
+            - ❌ Failed: ${failed}
+            - 📊 Total: ${passed + failed}
+
+            ${failed === 0 ? '🎉 All tests passed!' : '⚠️ Some tests failed. Please check the logs.'}
+            `;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });

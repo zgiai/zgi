@@ -1,0 +1,1989 @@
+package handler
+
+import (
+	"fmt"
+	"strconv"
+	"strings"
+
+	"github.com/zgiai/ginext/internal/dto"
+	"github.com/zgiai/ginext/internal/modules/datasource/service"
+	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
+	shared_visibility "github.com/zgiai/ginext/internal/modules/shared/visibility"
+	auth_model "github.com/zgiai/ginext/internal/modules/user/auth/model"
+	workspace_model "github.com/zgiai/ginext/internal/modules/workspace/model"
+	"github.com/zgiai/ginext/internal/util"
+	"github.com/zgiai/ginext/middleware"
+	"github.com/zgiai/ginext/pkg/response"
+
+	"github.com/gin-gonic/gin"
+)
+
+// DataSourceHandler handles HTTP requests for data sources
+type DataSourceHandler struct {
+	service             service.DataSourceService
+	accountService      interfaces.AccountService
+	organizationService interfaces.OrganizationService
+}
+
+// NewDataSourceHandler creates a new DataSourceHandler
+func NewDataSourceHandler(service service.DataSourceService, accountService interfaces.AccountService, enterpriseService interfaces.OrganizationService) *DataSourceHandler {
+	return &DataSourceHandler{
+		service:             service,
+		accountService:      accountService,
+		organizationService: enterpriseService,
+	}
+}
+
+func sanitizeDownloadFileName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "table"
+	}
+
+	replacer := strings.NewReplacer(
+		"/", "_",
+		"\\", "_",
+		":", "_",
+		"*", "_",
+		"?", "_",
+		"\"", "_",
+		"<", "_",
+		">", "_",
+		"|", "_",
+	)
+	return replacer.Replace(name)
+}
+
+// UpdateDataSource updates an existing data source
+// @Summary Update data source
+// @Description Update an existing data source's name, icon, permission, and workspace scope
+// @Tags Data Source
+// @Accept json
+// @Produce json
+// @Param id path string true "Data source ID"
+// @Param dataSource body dto.UpdateDataSourceRequest true "Data source update request"
+// @Success 200 {object} response.Response
+// @Failure 400 {object} response.Response
+// @Failure 500 {object} response.Response
+// @Router /data-dbs/{id} [put]
+func (h *DataSourceHandler) UpdateDataSource(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	id := c.Param("id")
+	if id == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "id is required")
+		return
+	}
+
+	var req dto.UpdateDataSourceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	permissionOrganizationID := util.GetOrganizationIDCompat(c)
+	if permissionOrganizationID == "" {
+		permissionOrganizationID = organizationID
+	}
+
+	if h.organizationService != nil {
+		dataSource, err := h.service.GetDataSourceByID(c.Request.Context(), organizationID, id, accountID)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if dataSource == nil {
+			response.FailWithMessage(c, response.ErrSystemError, "data source not found")
+			return
+		}
+
+		dataSourceWorkspaceID := ""
+		if dataSource.WorkspaceID != nil && *dataSource.WorkspaceID != "" {
+			dataSourceWorkspaceID = *dataSource.WorkspaceID
+		}
+
+		hasPermission, err := h.organizationService.CheckWorkspacePermission(
+			c.Request.Context(),
+			permissionOrganizationID,
+			dataSourceWorkspaceID,
+			accountID,
+			workspace_model.WorkspacePermissionDatabaseManage,
+		)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if !hasPermission {
+			response.Fail(c, response.ErrPermissionDenied)
+			return
+		}
+	}
+
+	// Update data source
+	dataSource, err := h.service.UpdateDataSource(c.Request.Context(), organizationID, id, accountID, req)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+
+	response.Success(c, dataSource)
+}
+
+// CreateDataSource creates a new data source
+// @Summary Create a new data source
+// @Description Create a new data source for the tenant
+// @Tags Data Source
+// @Accept json
+// @Produce json
+// @Param dataSource body dto.CreateDataSourceRequest true "Data source to create"
+// @Success 200 {object} response.Response
+// @Failure 400 {object} response.Response
+// @Failure 500 {object} response.Response
+// @Router /data-dbs [post]
+func (h *DataSourceHandler) CreateDataSource(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	var req dto.CreateDataSourceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	permissionOrganizationID := util.GetOrganizationIDCompat(c)
+	if permissionOrganizationID == "" {
+		permissionOrganizationID = organizationID
+	}
+
+	if h.organizationService != nil && req.WorkspaceID != nil && *req.WorkspaceID != "" {
+		hasPermission, err := h.organizationService.CheckWorkspacePermission(
+			c.Request.Context(),
+			permissionOrganizationID,
+			*req.WorkspaceID,
+			accountID,
+			workspace_model.WorkspacePermissionDatabaseManage,
+		)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if !hasPermission {
+			response.Fail(c, response.ErrPermissionDenied)
+			return
+		}
+	}
+
+	// Create data source
+	dataSource, err := h.service.CreateDataSource(c.Request.Context(), organizationID, accountID, req)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+
+	response.Success(c, dataSource)
+}
+
+// ListDataSources lists all data sources for a tenant
+// @Summary List data sources
+// @Description List all data sources for the tenant with permission filtering
+// @Tags Data Source
+// @Produce json
+// @Success 200 {object} response.Response
+// @Failure 400 {object} response.Response
+// @Failure 500 {object} response.Response
+// @Router /data-dbs [get]
+func (h *DataSourceHandler) ListDataSources(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+	accountID := c.GetString("account_id")
+
+	filterWorkspaceID := c.Query("workspace_id")
+
+	var filteredWorkspaceIDs []string
+	if h.organizationService != nil {
+		isAdmin, err := h.organizationService.IsOrganizationAdminOrOwner(c.Request.Context(), organizationID, accountID)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+
+		if !isAdmin || filterWorkspaceID != "" {
+			filteredWorkspaceIDs, err = shared_visibility.ResolveVisibleWorkspaceIDs(
+				c.Request.Context(),
+				h.organizationService,
+				organizationID,
+				accountID,
+				filterWorkspaceID,
+				workspace_model.WorkspacePermissionDatabaseView,
+				workspace_model.WorkspacePermissionDatabaseManage,
+				workspace_model.WorkspacePermissionDatabaseDataEdit,
+			)
+			if err != nil {
+				response.Fail(c, response.ErrSystemError)
+				return
+			}
+			if len(filteredWorkspaceIDs) == 0 {
+				response.Success(c, []*dto.DataSourceResponse{})
+				return
+			}
+		}
+	}
+
+	// List data sources with permission filtering at query time
+	dataSources, err := h.service.ListDataSources(c.Request.Context(), organizationID, accountID, filteredWorkspaceIDs)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+
+	response.Success(c, dataSources)
+}
+
+// GetDataSourceByID gets a specific data source by ID
+// @Summary Get data source by ID
+// @Description Get a specific data source by ID
+// @Tags Data Source
+// @Produce json
+// @Param id path string true "Data source ID"
+// @Success 200 {object} response.Response
+// @Failure 400 {object} response.Response
+// @Failure 404 {object} response.Response
+// @Failure 500 {object} response.Response
+// @Router /data-dbs/{id} [get]
+func (h *DataSourceHandler) GetDataSourceByID(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	id := c.Param("id")
+	if id == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "id is required")
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	// Get data source
+	dataSource, err := h.service.GetDataSourceByID(c.Request.Context(), organizationID, id, accountID)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+
+	if dataSource == nil {
+		response.Fail(c, response.ErrNotFound)
+		return
+	}
+
+	response.Success(c, dataSource)
+}
+
+// DeleteDataSourceByID deletes a data source by ID
+// @Summary Delete data source by ID
+// @Description Delete a specific data source by ID
+// @Tags Data Source
+// @Produce json
+// @Param id path string true "Data source ID"
+// @Success 200 {object} response.Response
+// @Failure 400 {object} response.Response
+// @Failure 404 {object} response.Response
+// @Failure 500 {object} response.Response
+// @Router /data-dbs/{id} [delete]
+func (h *DataSourceHandler) DeleteDataSourceByID(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	id := c.Param("id")
+	if id == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "id is required")
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	permissionOrganizationID := util.GetOrganizationIDCompat(c)
+	if permissionOrganizationID == "" {
+		permissionOrganizationID = organizationID
+	}
+
+	if h.organizationService != nil {
+		dataSource, err := h.service.GetDataSourceByID(c.Request.Context(), organizationID, id, accountID)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if dataSource == nil {
+			response.FailWithMessage(c, response.ErrSystemError, "data source not found")
+			return
+		}
+
+		dataSourceWorkspaceID := organizationID
+		if dataSource.WorkspaceID != nil && *dataSource.WorkspaceID != "" {
+			dataSourceWorkspaceID = *dataSource.WorkspaceID
+		}
+
+		hasPermission, err := h.organizationService.CheckWorkspacePermission(
+			c.Request.Context(),
+			permissionOrganizationID,
+			dataSourceWorkspaceID,
+			accountID,
+			workspace_model.WorkspacePermissionDatabaseManage,
+		)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if !hasPermission {
+			response.Fail(c, response.ErrPermissionDenied)
+			return
+		}
+	}
+
+	// Delete data source
+	err := h.service.DeleteDataSourceByID(c.Request.Context(), organizationID, id, accountID)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+
+	response.Success(c, gin.H{"message": "data source deleted successfully"})
+}
+
+// CreateTable creates a new table in a data source
+// @Summary Create a new table
+// @Description Create a new table in the specified data source
+// @Tags Data Source Tables
+// @Accept json
+// @Produce json
+// @Param id path string true "Data source ID"
+// @Param table body dto.CreateTableRequest true "Table to create"
+// @Success 200 {object} response.Response
+// @Failure 400 {object} response.Response
+// @Failure 500 {object} response.Response
+// @Router /data-dbs/{id}/tables [post]
+func (h *DataSourceHandler) CreateTable(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	id := c.Param("id")
+	if id == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "id is required")
+		return
+	}
+
+	var req dto.CreateTableRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	permissionOrganizationID := util.GetOrganizationIDCompat(c)
+	if permissionOrganizationID == "" {
+		permissionOrganizationID = organizationID
+	}
+
+	if h.organizationService != nil {
+		dataSource, err := h.service.GetDataSourceByID(c.Request.Context(), organizationID, id, accountID)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if dataSource == nil {
+			response.FailWithMessage(c, response.ErrSystemError, "data source not found")
+			return
+		}
+
+		dataSourceWorkspaceID := organizationID
+		if dataSource.WorkspaceID != nil && *dataSource.WorkspaceID != "" {
+			dataSourceWorkspaceID = *dataSource.WorkspaceID
+		}
+
+		hasPermission, err := h.organizationService.CheckWorkspacePermission(
+			c.Request.Context(),
+			permissionOrganizationID,
+			dataSourceWorkspaceID,
+			accountID,
+			workspace_model.WorkspacePermissionDatabaseManage,
+		)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if !hasPermission {
+			response.Fail(c, response.ErrPermissionDenied)
+			return
+		}
+	}
+
+	// Create table in data source
+	table, err := h.service.CreateTable(c.Request.Context(), organizationID, id, accountID, req)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+
+	response.Success(c, table)
+}
+
+// ListTables lists all tables in a data source
+// @Summary List tables
+// @Description List all tables in the specified data source
+// @Tags Data Source Tables
+// @Produce json
+// @Param id path string true "Data source ID"
+// @Success 200 {object} response.Response
+// @Failure 400 {object} response.Response
+// @Failure 500 {object} response.Response
+// @Router /data-dbs/{id}/tables [get]
+func (h *DataSourceHandler) ListTables(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	id := c.Param("id")
+	if id == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "id is required")
+		return
+	}
+
+	accountID := c.GetString("account_id")
+
+	permissionOrganizationID := util.GetOrganizationIDCompat(c)
+	if permissionOrganizationID == "" {
+		permissionOrganizationID = organizationID
+	}
+
+	if h.organizationService != nil {
+		dataSource, err := h.service.GetDataSourceByID(c.Request.Context(), organizationID, id, accountID)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if dataSource == nil {
+			response.FailWithMessage(c, response.ErrSystemError, "data source not found")
+			return
+		}
+
+		dataSourceWorkspaceID := organizationID
+		if dataSource.WorkspaceID != nil && *dataSource.WorkspaceID != "" {
+			dataSourceWorkspaceID = *dataSource.WorkspaceID
+		}
+
+		hasPermission, err := h.organizationService.CheckWorkspacePermission(
+			c.Request.Context(),
+			permissionOrganizationID,
+			dataSourceWorkspaceID,
+			accountID,
+			workspace_model.WorkspacePermissionDatabaseView,
+		)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if !hasPermission {
+			response.Fail(c, response.ErrPermissionDenied)
+			return
+		}
+	}
+
+	// List tables in data source
+	tables, err := h.service.ListTables(c.Request.Context(), organizationID, id, accountID)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+
+	response.Success(c, tables)
+}
+
+// GetTable gets a specific table in a data source
+// @Summary Get table
+// @Description Get a specific table in the specified data source
+// @Tags Data Source Tables
+// @Produce json
+// @Param id path string true "Data source ID"
+// @Param table_id path string true "Table ID"
+// @Success 200 {object} response.Response
+// @Failure 400 {object} response.Response
+// @Failure 404 {object} response.Response
+// @Failure 500 {object} response.Response
+// @Router /data-dbs/{id}/tables/{table_id} [get]
+func (h *DataSourceHandler) GetTable(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	id := c.Param("id")
+	if id == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "data source id is required")
+		return
+	}
+
+	tableID := c.Param("table_id")
+	if tableID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "table id is required")
+		return
+	}
+
+	accountID := c.GetString("account_id")
+
+	// Get table in data source
+	table, err := h.service.GetTable(c.Request.Context(), organizationID, id, tableID, accountID)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+
+	if table == nil {
+		response.Fail(c, response.ErrNotFound)
+		return
+	}
+
+	response.Success(c, table)
+}
+
+// DeleteTable deletes a table in a data source
+// @Summary Delete table
+// @Description Delete a specific table in the specified data source
+// @Tags Data Source Tables
+// @Produce json
+// @Param id path string true "Data source ID"
+// @Param table_id path string true "Table ID"
+// @Success 200 {object} response.Response
+// @Failure 400 {object} response.Response
+// @Failure 404 {object} response.Response
+// @Failure 500 {object} response.Response
+// @Router /data-dbs/{id}/tables/{table_id} [delete]
+func (h *DataSourceHandler) DeleteTable(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	id := c.Param("id")
+	if id == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "data source id is required")
+		return
+	}
+
+	tableID := c.Param("table_id")
+	if tableID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "table id is required")
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	permissionOrganizationID := util.GetOrganizationIDCompat(c)
+	if permissionOrganizationID == "" {
+		permissionOrganizationID = organizationID
+	}
+
+	if h.organizationService != nil {
+		dataSource, err := h.service.GetDataSourceByID(c.Request.Context(), organizationID, id, accountID)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if dataSource == nil {
+			response.FailWithMessage(c, response.ErrSystemError, "data source not found")
+			return
+		}
+
+		dataSourceWorkspaceID := organizationID
+		if dataSource.WorkspaceID != nil && *dataSource.WorkspaceID != "" {
+			dataSourceWorkspaceID = *dataSource.WorkspaceID
+		}
+
+		hasPermission, err := h.organizationService.CheckWorkspacePermission(
+			c.Request.Context(),
+			permissionOrganizationID,
+			dataSourceWorkspaceID,
+			accountID,
+			workspace_model.WorkspacePermissionDatabaseManage,
+		)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if !hasPermission {
+			response.Fail(c, response.ErrPermissionDenied)
+			return
+		}
+	}
+
+	// Delete table in data source
+	err := h.service.DeleteTable(c.Request.Context(), organizationID, id, tableID, accountID)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+
+	response.Success(c, gin.H{"message": "table deleted successfully"})
+}
+
+// UpdateTable updates a table's metadata (name and/or description)
+// @Summary Update table metadata
+// @Description Update a table's name and/or description
+// @Tags Data Source Tables
+// @Accept json
+// @Produce json
+// @Param id path string true "Data source ID"
+// @Param table_id path string true "Table ID"
+// @Param table body dto.UpdateTableRequest true "Table metadata to update"
+// @Success 200 {object} response.Response{data=model.Table}
+// @Failure 400 {object} response.Response
+// @Failure 404 {object} response.Response
+// @Failure 500 {object} response.Response
+// @Router /data-dbs/{id}/tables/{table_id} [put]
+func (h *DataSourceHandler) UpdateTable(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	dataSourceID := c.Param("id")
+	if dataSourceID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "data source id is required")
+		return
+	}
+
+	tableID := c.Param("table_id")
+	if tableID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "table id is required")
+		return
+	}
+
+	var req dto.UpdateTableRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	permissionOrganizationID := util.GetOrganizationIDCompat(c)
+	if permissionOrganizationID == "" {
+		permissionOrganizationID = organizationID
+	}
+
+	if h.organizationService != nil {
+		dataSource, err := h.service.GetDataSourceByID(c.Request.Context(), organizationID, dataSourceID, accountID)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if dataSource == nil {
+			response.FailWithMessage(c, response.ErrSystemError, "data source not found")
+			return
+		}
+
+		dataSourceWorkspaceID := organizationID
+		if dataSource.WorkspaceID != nil && *dataSource.WorkspaceID != "" {
+			dataSourceWorkspaceID = *dataSource.WorkspaceID
+		}
+
+		hasPermission, err := h.organizationService.CheckWorkspacePermission(
+			c.Request.Context(),
+			permissionOrganizationID,
+			dataSourceWorkspaceID,
+			accountID,
+			workspace_model.WorkspacePermissionDatabaseManage,
+		)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if !hasPermission {
+			response.Fail(c, response.ErrPermissionDenied)
+			return
+		}
+	}
+
+	// Update table metadata
+	table, err := h.service.UpdateTable(c.Request.Context(), organizationID, dataSourceID, tableID, accountID, req)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+
+	if table == nil {
+		response.Fail(c, response.ErrNotFound)
+		return
+	}
+
+	response.Success(c, table)
+}
+
+// UpdateTableColumns updates the columns of a table
+// @Summary Update table columns
+// @Description Update the columns of a specific table in the specified data source (full replacement)
+// @Tags Data Source Tables
+// @Accept json
+// @Produce json
+// @Param id path string true "Data source ID"
+// @Param table_id path string true "Table ID"
+// @Param columns body dto.UpdateTableColumnsRequest true "Columns to update"
+// @Success 200 {object} response.Response
+// @Failure 400 {object} response.Response
+// @Failure 404 {object} response.Response
+// @Failure 500 {object} response.Response
+// @Router /data-dbs/{id}/tables/{table_id}/columns [put]
+func (h *DataSourceHandler) UpdateTableColumns(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	id := c.Param("id")
+	if id == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "data source id is required")
+		return
+	}
+
+	tableID := c.Param("table_id")
+	if tableID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "table id is required")
+		return
+	}
+
+	var req dto.UpdateTableColumnsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	// Update table columns
+	err := h.service.UpdateTableColumns(c.Request.Context(), organizationID, id, tableID, accountID, req)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+
+	response.Success(c, gin.H{"message": "table columns updated successfully"})
+}
+
+// GetTableColumns retrieves the columns of a specific table
+// @Summary Get table columns
+// @Description Retrieve the columns of the specified table
+// @Tags Data Source Tables
+// @Produce json
+// @Param id path string true "Data source ID"
+// @Param table_id path string true "Table ID"
+// @Success 200 {object} response.Response{data=dto.GetTableColumnsResponse}
+// @Failure 400 {object} response.Response
+// @Failure 500 {object} response.Response
+// @Router /data-dbs/{id}/tables/{table_id}/columns [get]
+func (h *DataSourceHandler) GetTableColumns(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	dataSourceID := c.Param("id")
+	if dataSourceID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "data source id is required")
+		return
+	}
+
+	tableID := c.Param("table_id")
+	if tableID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "table id is required")
+		return
+	}
+
+	accountID := c.GetString("account_id")
+
+	permissionOrganizationID := util.GetOrganizationIDCompat(c)
+	if permissionOrganizationID == "" {
+		permissionOrganizationID = organizationID
+	}
+
+	if h.organizationService != nil {
+		dataSource, err := h.service.GetDataSourceByID(c.Request.Context(), organizationID, dataSourceID, accountID)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if dataSource == nil {
+			response.FailWithMessage(c, response.ErrSystemError, "data source not found")
+			return
+		}
+
+		dataSourceWorkspaceID := organizationID
+		if dataSource.WorkspaceID != nil && *dataSource.WorkspaceID != "" {
+			dataSourceWorkspaceID = *dataSource.WorkspaceID
+		}
+
+		hasPermission, err := h.organizationService.CheckWorkspacePermission(
+			c.Request.Context(),
+			permissionOrganizationID,
+			dataSourceWorkspaceID,
+			accountID,
+			workspace_model.WorkspacePermissionDatabaseView,
+		)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if !hasPermission {
+			response.Fail(c, response.ErrPermissionDenied)
+			return
+		}
+	}
+
+	// Check if system fields should be included
+	includeSystemFields := c.Query("include_system_fields") == "true"
+
+	// Get table columns
+	columns, err := h.service.GetTableColumns(c.Request.Context(), organizationID, dataSourceID, tableID, includeSystemFields)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+
+	response.Success(c, columns)
+}
+
+// AddTableRecords adds records to a table
+// @Summary Add records to table
+// @Description Add one or more records to the specified table
+// @Tags Data Source Tables
+// @Accept json
+// @Produce json
+// @Param id path string true "Data source ID"
+// @Param table_id path string true "Table ID"
+// @Param records body dto.AddRecordRequest true "Records to add"
+// @Success 200 {object} response.Response{data=dto.AddRecordResponse}
+// @Failure 400 {object} response.Response
+// @Failure 404 {object} response.Response
+// @Failure 500 {object} response.Response
+// @Router /data-dbs/{id}/tables/{table_id}/records [post]
+func (h *DataSourceHandler) AddTableRecords(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	dataSourceID := c.Param("id")
+	if dataSourceID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "data source id is required")
+		return
+	}
+
+	tableID := c.Param("table_id")
+	if tableID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "table id is required")
+		return
+	}
+
+	var req dto.AddRecordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	permissionOrganizationID := util.GetOrganizationIDCompat(c)
+	if permissionOrganizationID == "" {
+		permissionOrganizationID = organizationID
+	}
+
+	if h.organizationService != nil {
+		dataSource, err := h.service.GetDataSourceByID(c.Request.Context(), organizationID, dataSourceID, accountID)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if dataSource == nil {
+			response.FailWithMessage(c, response.ErrSystemError, "data source not found")
+			return
+		}
+
+		dataSourceWorkspaceID := organizationID
+		if dataSource.WorkspaceID != nil && *dataSource.WorkspaceID != "" {
+			dataSourceWorkspaceID = *dataSource.WorkspaceID
+		}
+
+		hasPermission, err := h.organizationService.CheckWorkspaceOrganizationAnyPermission(
+			c.Request.Context(),
+			permissionOrganizationID,
+			dataSourceWorkspaceID,
+			accountID,
+			workspace_model.WorkspacePermissionDatabaseManage,
+			workspace_model.WorkspacePermissionDatabaseDataEdit,
+		)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if !hasPermission {
+			response.Fail(c, response.ErrPermissionDenied)
+			return
+		}
+	}
+
+	// Add records to table
+	result, err := h.service.AddTableRecords(c.Request.Context(), organizationID, dataSourceID, tableID, accountID, req)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+
+	response.Success(c, result)
+}
+
+// QueryTableRecords queries data from a table
+// @Summary Query table data
+// @Description Query data from the specified table with pagination
+// @Tags Data Source Tables
+// @Produce json
+// @Param id path string true "Data source ID"
+// @Param table_id path string true "Table ID"
+// @Param limit query int false "Number of records to return (default: 20)"
+// @Param offset query int false "Offset for pagination (default: 0)"
+// @Param order query string false "Order by clause (default: id DESC)"
+// @Success 200 {object} response.Response{data=dto.QueryRecordResponse}
+// @Failure 400 {object} response.Response
+// @Failure 500 {object} response.Response
+// @Router /data-dbs/{id}/tables/{table_id}/records [get]
+func (h *DataSourceHandler) QueryTableRecords(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	dataSourceID := c.Param("id")
+	if dataSourceID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "data source id is required")
+		return
+	}
+
+	tableID := c.Param("table_id")
+	if tableID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "table id is required")
+		return
+	}
+
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	order := c.DefaultQuery("order", "id DESC")
+
+	accountID := c.GetString("account_id")
+
+	permissionOrganizationID := util.GetOrganizationIDCompat(c)
+	if permissionOrganizationID == "" {
+		permissionOrganizationID = organizationID
+	}
+
+	if h.organizationService != nil {
+		dataSource, err := h.service.GetDataSourceByID(c.Request.Context(), organizationID, dataSourceID, accountID)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if dataSource == nil {
+			response.FailWithMessage(c, response.ErrSystemError, "data source not found")
+			return
+		}
+
+		dataSourceWorkspaceID := organizationID
+		if dataSource.WorkspaceID != nil && *dataSource.WorkspaceID != "" {
+			dataSourceWorkspaceID = *dataSource.WorkspaceID
+		}
+
+		hasPermission, err := h.organizationService.CheckWorkspacePermission(
+			c.Request.Context(),
+			permissionOrganizationID,
+			dataSourceWorkspaceID,
+			accountID,
+			workspace_model.WorkspacePermissionDatabaseView,
+		)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if !hasPermission {
+			response.Fail(c, response.ErrPermissionDenied)
+			return
+		}
+	}
+
+	data, err := h.service.QueryTableRecords(c.Request.Context(), organizationID, dataSourceID, tableID, accountID, limit, offset, order)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+
+	response.Success(c, data)
+}
+
+// UpdateTableRecords updates existing records in a table
+// @Summary Update table records
+// @Description Update one or more existing records in the specified table
+// @Tags Data Source Tables
+// @Accept json
+// @Produce json
+// @Param id path string true "Data source ID"
+// @Param table_id path string true "Table ID"
+// @Param records body dto.UpdateRecordRequest true "Records to update"
+// @Success 200 {object} response.Response{data=dto.UpdateRecordResponse}
+// @Failure 400 {object} response.Response
+// @Failure 404 {object} response.Response
+// @Failure 500 {object} response.Response
+// @Router /data-dbs/{id}/tables/{table_id}/records [put]
+func (h *DataSourceHandler) UpdateTableRecords(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	dataSourceID := c.Param("id")
+	if dataSourceID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "data source id is required")
+		return
+	}
+
+	tableID := c.Param("table_id")
+	if tableID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "table id is required")
+		return
+	}
+
+	var req dto.UpdateRecordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	permissionOrganizationID := util.GetOrganizationIDCompat(c)
+	if permissionOrganizationID == "" {
+		permissionOrganizationID = organizationID
+	}
+
+	if h.organizationService != nil {
+		dataSource, err := h.service.GetDataSourceByID(c.Request.Context(), organizationID, dataSourceID, accountID)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if dataSource == nil {
+			response.FailWithMessage(c, response.ErrSystemError, "data source not found")
+			return
+		}
+
+		dataSourceWorkspaceID := organizationID
+		if dataSource.WorkspaceID != nil && *dataSource.WorkspaceID != "" {
+			dataSourceWorkspaceID = *dataSource.WorkspaceID
+		}
+
+		hasPermission, err := h.organizationService.CheckWorkspaceOrganizationAnyPermission(
+			c.Request.Context(),
+			permissionOrganizationID,
+			dataSourceWorkspaceID,
+			accountID,
+			workspace_model.WorkspacePermissionDatabaseManage,
+			workspace_model.WorkspacePermissionDatabaseDataEdit,
+		)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if !hasPermission {
+			response.Fail(c, response.ErrPermissionDenied)
+			return
+		}
+	}
+
+	// Update records in table
+	result, err := h.service.UpdateTableRecords(c.Request.Context(), organizationID, dataSourceID, tableID, accountID, req)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+
+	response.Success(c, result)
+}
+
+// DeleteTableRecords deletes records from a table
+// @Summary Delete table records
+// @Description Delete one or more records from the specified table
+// @Tags Data Source Tables
+// @Produce json
+// @Param id path string true "Data source ID"
+// @Param table_id path string true "Table ID"
+// @Param ids query []string true "Record IDs to delete"
+// @Success 200 {object} response.Response{data=dto.DeleteRecordResponse}
+// @Failure 400 {object} response.Response
+// @Failure 404 {object} response.Response
+// @Failure 500 {object} response.Response
+// @Router /data-dbs/{id}/tables/{table_id}/records [delete]
+func (h *DataSourceHandler) DeleteTableRecords(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	dataSourceID := c.Param("id")
+	if dataSourceID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "data source id is required")
+		return
+	}
+
+	tableID := c.Param("table_id")
+	if tableID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "table id is required")
+		return
+	}
+
+	// Get IDs from query parameters
+	ids := c.QueryArray("ids")
+	if len(ids) == 0 {
+		response.FailWithMessage(c, response.ErrInvalidParam, "at least one record id is required")
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	permissionOrganizationID := util.GetOrganizationIDCompat(c)
+	if permissionOrganizationID == "" {
+		permissionOrganizationID = organizationID
+	}
+
+	if h.organizationService != nil {
+		dataSource, err := h.service.GetDataSourceByID(c.Request.Context(), organizationID, dataSourceID, accountID)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if dataSource == nil {
+			response.FailWithMessage(c, response.ErrSystemError, "data source not found")
+			return
+		}
+
+		dataSourceWorkspaceID := organizationID
+		if dataSource.WorkspaceID != nil && *dataSource.WorkspaceID != "" {
+			dataSourceWorkspaceID = *dataSource.WorkspaceID
+		}
+
+		hasPermission, err := h.organizationService.CheckWorkspaceOrganizationAnyPermission(
+			c.Request.Context(),
+			permissionOrganizationID,
+			dataSourceWorkspaceID,
+			accountID,
+			workspace_model.WorkspacePermissionDatabaseManage,
+			workspace_model.WorkspacePermissionDatabaseDataEdit,
+		)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if !hasPermission {
+			response.Fail(c, response.ErrPermissionDenied)
+			return
+		}
+	}
+
+	// Construct DeleteRecordRequest from IDs
+	var req dto.DeleteRecordRequest
+	for _, id := range ids {
+		req.Records = append(req.Records, map[string]interface{}{"id": id})
+	}
+
+	// Delete records from table
+	result, err := h.service.DeleteTableRecords(c.Request.Context(), organizationID, dataSourceID, tableID, accountID, req)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+
+	response.Success(c, result)
+}
+
+// AnalyzeFileForTable analyzes a file and returns inferred table structure
+// @Summary Analyze file for table structure
+// @Description Analyze a file and return inferred table structure
+// @Tags Data Source Tables
+// @Accept json
+// @Produce json
+// @Param request body dto.AnalyzeFileForTableRequest true "File analysis request"
+// @Success 200 {object} response.Response{data=dto.AnalyzeFileForTableResponse}
+// @Failure 400 {object} response.Response
+// @Failure 500 {object} response.Response
+// @Router /data-dbs/analyze-file-for-table [post]
+func (h *DataSourceHandler) AnalyzeFileForTable(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	var req dto.AnalyzeFileForTableRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
+	}
+
+	// Extract fileID if provided
+	var fileID string
+	if req.FileID != nil {
+		fileID = *req.FileID
+	}
+
+	// Analyze file for table structure using dataSourceID to resolve organization scope
+	columns, err := h.service.AnalyzeFileForTable(c.Request.Context(), req.DataSourceID, accountID, fileID, req.Prompt, req.Model)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+
+	response.Success(c, dto.AnalyzeFileForTableResponse{Columns: columns})
+}
+
+// DownloadTableTemplate downloads an Excel template for the specified table
+// @Summary Download table template
+// @Description Download an Excel template with column headers matching the table structure for data import
+// @Tags Data Source Tables
+// @Produce application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+// @Param id path string true "Data source ID"
+// @Param table_id path string true "Table ID"
+// @Success 200 {file} file "Excel template file"
+// @Failure 400 {object} response.Response
+// @Failure 404 {object} response.Response
+// @Failure 500 {object} response.Response
+// @Router /data-dbs/{id}/tables/{table_id}/template [get]
+func (h *DataSourceHandler) DownloadTableTemplate(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	dataSourceID := c.Param("id")
+	if dataSourceID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "data source id is required")
+		return
+	}
+
+	tableID := c.Param("table_id")
+	if tableID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "table id is required")
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	table, err := h.service.GetTable(c.Request.Context(), organizationID, dataSourceID, tableID, accountID)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, "failed to get table: "+err.Error())
+		return
+	}
+
+	// Generate Excel template through service
+	excelData, err := h.service.GenerateTableTemplateExcel(c.Request.Context(), organizationID, dataSourceID, tableID)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, "failed to generate table template: "+err.Error())
+		return
+	}
+
+	// Set file name
+	fileName := fmt.Sprintf("%s_import_template.xlsx", sanitizeDownloadFileName(table.Name))
+
+	// Set response headers
+	c.Header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", fileName))
+
+	// Write file data to response
+	c.Data(200, "application/octet-stream", excelData)
+
+	c.AbortWithStatus(200)
+}
+
+// ImportTableRecords imports records from an Excel file
+// @Summary Import records from Excel
+// @Description Import records from an uploaded Excel file to the specified table
+// @Tags Data Source Tables
+// @Accept json
+// @Accept multipart/form-data
+// @Produce json
+// @Param id path string true "Data source ID"
+// @Param table_id path string true "Table ID"
+// @Param request body dto.ImportRecordRequest false "Internal uploaded file ID"
+// @Param file formData file false "Legacy Excel file upload"
+// @Success 200 {object} response.Response{data=dto.ImportRecordResponse}
+// @Failure 400 {object} response.Response
+// @Failure 404 {object} response.Response
+// @Failure 500 {object} response.Response
+// @Router /data-dbs/{id}/tables/{table_id}/records/import [post]
+func (h *DataSourceHandler) ImportTableRecords(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	dataSourceID := c.Param("id")
+	if dataSourceID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "data source id is required")
+		return
+	}
+
+	tableID := c.Param("table_id")
+	if tableID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "table id is required")
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	contentType := c.GetHeader("Content-Type")
+	if strings.Contains(contentType, "application/json") {
+		var req dto.ImportRecordRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			response.FailWithMessage(c, response.ErrInvalidParam, "invalid request: "+err.Error())
+			return
+		}
+		result, err := h.service.ImportTableRecordsFromUploadFile(c.Request.Context(), organizationID, dataSourceID, tableID, accountID, req.UploadFileID)
+		if err != nil {
+			response.FailWithMessage(c, response.ErrSystemError, "failed to import records: "+err.Error())
+			return
+		}
+		response.Success(c, result)
+		return
+	}
+
+	// Legacy multipart upload path.
+	file, err := c.FormFile("file")
+	if err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "failed to get file: "+err.Error())
+		return
+	}
+
+	// Open the file
+	fileContent, err := file.Open()
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, "failed to open file: "+err.Error())
+		return
+	}
+	defer fileContent.Close()
+
+	// Import records through service
+	result, err := h.service.ImportTableRecords(c.Request.Context(), organizationID, dataSourceID, tableID, accountID, fileContent, file.Filename)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, "failed to import records: "+err.Error())
+		return
+	}
+
+	response.Success(c, result)
+}
+
+// IngestFileToTable ingests file content into a table
+// @Summary Ingest file content into table
+// @Description Ingest file content into the specified table and return parsed records for review
+// @Tags Data Source Tables
+// @Accept json
+// @Produce json
+// @Param request body dto.IngestFileToTableRequest true "File ingestion request"
+// @Success 200 {object} response.Response{data=dto.IngestFileToTableResponse}
+// @Failure 400 {object} response.Response
+// @Failure 500 {object} response.Response
+// @Router /data-dbs/ingest-file-to-table [post]
+func (h *DataSourceHandler) IngestFileToTable(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	var req dto.IngestFileToTableRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
+	}
+
+	// Ingest file content into table
+	result, err := h.service.IngestFileToTable(c.Request.Context(), organizationID, accountID, req)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+
+	response.Success(c, result)
+}
+
+// BatchIngestFileToTable handles the batch ingestion of multiple files into a table
+func (h *DataSourceHandler) BatchIngestFileToTable(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	var req dto.BatchIngestFileToTableRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
+	}
+
+	// Batch ingest file contents into table
+	result, err := h.service.BatchIngestFileToTable(c.Request.Context(), organizationID, accountID, req)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+
+	response.Success(c, result)
+}
+
+// GetTablePrompt gets the prompt for a table or returns a default one if it doesn't exist
+// @Summary Get table prompt
+// @Description Get the prompt for a table or returns a default one if it doesn't exist
+// @Tags Data Source Tables
+// @Produce json
+// @Param id path string true "Data source ID"
+// @Param table_id path string true "Table ID"
+// @Success 200 {object} response.Response{data=model.TablePrompt}
+// @Failure 400 {object} response.Response
+// @Failure 500 {object} response.Response
+// @Router /data-dbs/{id}/tables/{table_id}/prompt [get]
+func (h *DataSourceHandler) GetTablePrompt(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	dataSourceID := c.Param("id")
+	if dataSourceID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "data source id is required")
+		return
+	}
+
+	tableID := c.Param("table_id")
+	if tableID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "table id is required")
+		return
+	}
+
+	permissionOrganizationID := util.GetOrganizationIDCompat(c)
+	if permissionOrganizationID == "" {
+		permissionOrganizationID = organizationID
+	}
+
+	accountID := c.GetString("account_id")
+
+	if h.organizationService != nil {
+		dataSource, err := h.service.GetDataSourceByID(c.Request.Context(), organizationID, dataSourceID, accountID)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if dataSource == nil {
+			response.FailWithMessage(c, response.ErrSystemError, "data source not found")
+			return
+		}
+
+		dataSourceWorkspaceID := organizationID
+		if dataSource.WorkspaceID != nil && *dataSource.WorkspaceID != "" {
+			dataSourceWorkspaceID = *dataSource.WorkspaceID
+		}
+
+		hasPermission, err := h.organizationService.CheckWorkspacePermission(
+			c.Request.Context(),
+			permissionOrganizationID,
+			dataSourceWorkspaceID,
+			accountID,
+			workspace_model.WorkspacePermissionDatabaseView,
+		)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if !hasPermission {
+			response.Fail(c, response.ErrPermissionDenied)
+			return
+		}
+	}
+
+	// Determine language - prioritize user's interface language setting
+	lang := "en" // default language
+	accountID = c.GetString("account_id")
+	if accountID != "" {
+		// Get user's profile to check interface language setting
+		profile, err := h.accountService.GetAccountProfile(c.Request.Context(), accountID)
+		if err == nil && profile != nil && profile.InterfaceLanguage != "" {
+			// Simplify complex language codes to basic language identifiers (zh-CN → zh)
+			if strings.HasPrefix(strings.ToLower(profile.InterfaceLanguage), "zh") {
+				lang = "zh"
+			} else {
+				lang = "en"
+			}
+		} else {
+			// Fallback to Accept-Language header if user language not set or error occurred
+			acceptLanguage := c.GetHeader("Accept-Language")
+			lang = parseAcceptLanguage(acceptLanguage)
+		}
+	} else {
+		// Fallback to Accept-Language header if no account ID
+		acceptLanguage := c.GetHeader("Accept-Language")
+		lang = parseAcceptLanguage(acceptLanguage)
+	}
+
+	// Get prompt for table
+	prompt, err := h.service.GetTablePrompt(c.Request.Context(), tableID, lang)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+
+	response.Success(c, prompt)
+}
+
+// parseAcceptLanguage parses the Accept-Language header and returns the preferred language
+// Returns "zh" for Chinese, "en" for English (default)
+func parseAcceptLanguage(acceptLanguage string) string {
+	if acceptLanguage == "" {
+		return "en"
+	}
+
+	// Split by comma to get language-qvalue pairs
+	langs := strings.Split(acceptLanguage, ",")
+
+	// Find the language with the highest q-value
+	highestQ := 0.0
+	preferredLang := "en"
+
+	for _, lang := range langs {
+		// Split language and q-value
+		parts := strings.Split(strings.TrimSpace(lang), ";")
+		language := strings.ToLower(strings.TrimSpace(parts[0]))
+
+		// Default q-value is 1.0
+		q := 1.0
+		if len(parts) > 1 {
+			qPart := strings.TrimSpace(parts[1])
+			if strings.HasPrefix(qPart, "q=") {
+				if qVal, err := strconv.ParseFloat(qPart[2:], 64); err == nil {
+					q = qVal
+				}
+			}
+		}
+
+		// Check if this language has a higher q-value
+		if q > highestQ {
+			highestQ = q
+			// Check if it's Chinese (zh, zh-CN, zh-TW, etc.)
+			if strings.HasPrefix(language, "zh") {
+				preferredLang = "zh"
+			} else if strings.HasPrefix(language, "en") {
+				preferredLang = "en"
+			}
+		}
+	}
+
+	return preferredLang
+}
+
+// UpsertTablePrompt updates the prompt for a table, or creates it if it doesn't exist
+// @Summary Update or create table prompt
+// @Description Update the prompt for a table, or create it if it doesn't exist
+// @Tags Data Source Tables
+// @Accept json
+// @Produce json
+// @Param id path string true "Data source ID"
+// @Param table_id path string true "Table ID"
+// @Param prompt body dto.UpdateTablePromptRequest true "Prompt to update or create"
+// @Success 200 {object} response.Response{data=model.TablePrompt}
+// @Failure 400 {object} response.Response
+// @Failure 500 {object} response.Response
+// @Router /data-dbs/{id}/tables/{table_id}/prompt [put]
+func (h *DataSourceHandler) UpsertTablePrompt(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	dataSourceID := c.Param("id")
+	if dataSourceID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "data source id is required")
+		return
+	}
+
+	tableID := c.Param("table_id")
+	if tableID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "table id is required")
+		return
+	}
+
+	var req dto.UpdateTablePromptRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	_ = organizationID
+
+	req.UpdatedBy = accountID
+
+	// Update or create prompt for table
+	prompt, err := h.service.UpsertTablePrompt(c.Request.Context(), tableID, req)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+
+	response.Success(c, prompt)
+}
+
+// DeleteTablePrompt deletes the prompt for a table, resetting it to default
+// @Summary Delete table prompt
+// @Description Delete the prompt for a table, resetting it to default
+// @Tags Data Source Tables
+// @Produce json
+// @Param id path string true "Data source ID"
+// @Param table_id path string true "Table ID"
+// @Success 200 {object} response.Response
+// @Failure 400 {object} response.Response
+// @Failure 500 {object} response.Response
+// @Router /data-dbs/{id}/tables/{table_id}/prompt [delete]
+func (h *DataSourceHandler) DeleteTablePrompt(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	dataSourceID := c.Param("id")
+	if dataSourceID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "data source id is required")
+		return
+	}
+
+	tableID := c.Param("table_id")
+	if tableID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "table id is required")
+		return
+	}
+
+	// Delete prompt for table
+	_ = organizationID
+
+	err := h.service.DeleteTablePrompt(c.Request.Context(), tableID)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+
+	response.Success(c, gin.H{"message": "table prompt deleted successfully"})
+}
+
+// ListOperationLogsByDataSourceID lists operation logs for a specific data source
+// @Summary List operation logs by data source ID
+// @Description List operation logs for a specific data source with pagination
+// @Tags Data Source
+// @Produce json
+// @Param data_source_id path string true "Data Source ID"
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Page size" default(20)
+// @Param table_id query string false "Table ID to filter by"
+// @Param created_by query string false "Created by user ID to filter by"
+// @Param operation_type query string false "Operation type to filter by"
+// @Param status query string false "Status to filter by"
+// @Param created_at_gte query string false "Created at greater than or equal (RFC3339 format)"
+// @Param created_at_lte query string false "Created at less than or equal (RFC3339 format)"
+// @Success 200 {object} response.Response
+// @Failure 400 {object} response.Response
+// @Failure 500 {object} response.Response
+// @Router /data-dbs/{data_source_id}/sql-operations [get]
+func (h *DataSourceHandler) ListOperationLogsByDataSourceID(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	dataSourceID := c.Param("id")
+	if dataSourceID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "data_source_id is required")
+		return
+	}
+
+	permissionOrganizationID := util.GetOrganizationIDCompat(c)
+	if permissionOrganizationID == "" {
+		permissionOrganizationID = organizationID
+	}
+
+	accountID := c.GetString("account_id")
+
+	if h.organizationService != nil {
+		dataSource, err := h.service.GetDataSourceByID(c.Request.Context(), organizationID, dataSourceID, accountID)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if dataSource == nil {
+			response.FailWithMessage(c, response.ErrSystemError, "data source not found")
+			return
+		}
+
+		dataSourceWorkspaceID := organizationID
+		if dataSource.WorkspaceID != nil && *dataSource.WorkspaceID != "" {
+			dataSourceWorkspaceID = *dataSource.WorkspaceID
+		}
+
+		hasPermission, err := h.organizationService.CheckWorkspacePermission(
+			c.Request.Context(),
+			permissionOrganizationID,
+			dataSourceWorkspaceID,
+			accountID,
+			workspace_model.WorkspacePermissionDatabaseView,
+		)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if !hasPermission {
+			response.Fail(c, response.ErrPermissionDenied)
+			return
+		}
+	}
+
+	// Parse query parameters
+	var req dto.ListSQLOperationsRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid query parameters: "+err.Error())
+		return
+	}
+
+	// Set default values
+	page := 1
+	limit := 20
+	if req.Page > 0 {
+		page = req.Page
+	}
+	if req.Limit > 0 {
+		limit = req.Limit
+	}
+
+	// Calculate offset from page and limit
+	offset := (page - 1) * limit
+
+	// Prepare filters
+	filters := dto.SQLOperationFilter{
+		TableID:       req.TableID,
+		CreatedBy:     req.CreatedBy,
+		OperationType: req.OperationType,
+		Status:        req.Status,
+		CreatedAtGTE:  req.StartTime,
+		CreatedAtLTE:  req.EndTime,
+	}
+
+	// List operation logs with filters
+	operations, err := h.service.ListOperationLogsByDataSourceIDWithFilters(c.Request.Context(), organizationID, dataSourceID, filters, limit, offset)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+
+	// Get total count for pagination info
+	total, err := h.service.CountOperationLogsByDataSourceIDWithFilters(c.Request.Context(), organizationID, dataSourceID, filters)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+
+	uniqueCreatorIDs := make([]string, 0)
+	creatorIDMap := make(map[string]bool)
+	for _, op := range operations {
+		if op.CreatedBy != "" && !creatorIDMap[op.CreatedBy] {
+			uniqueCreatorIDs = append(uniqueCreatorIDs, op.CreatedBy)
+			creatorIDMap[op.CreatedBy] = true
+		}
+	}
+
+	creatorMap := make(map[string]*auth_model.Account)
+	if len(uniqueCreatorIDs) > 0 {
+		creators, err := h.accountService.GetAccountsByIDs(c.Request.Context(), uniqueCreatorIDs)
+		if err == nil {
+			creatorMap = creators
+		}
+	}
+
+	// Convert to response DTOs
+	var operationResponses []dto.SQLOperationResponse
+	for _, op := range operations {
+		responseDTO := dto.ConvertSQLOperationModelToResponse(op)
+
+		if op.CreatedBy != "" {
+			if account, exists := creatorMap[op.CreatedBy]; exists && account != nil {
+				responseDTO.CreatedByName = &account.Name
+			}
+		}
+
+		operationResponses = append(operationResponses, *responseDTO)
+	}
+
+	hasMore := int64(page*limit) < total
+
+	response.Success(c, dto.ListSQLOperationsByDataSourceIDResponse{
+		Data:    operationResponses,
+		HasMore: hasMore,
+		Limit:   limit,
+		Total:   total,
+		Page:    page,
+	})
+}
+
+// RegisterRoutes registers all data source routes
+func (h *DataSourceHandler) RegisterRoutes(router *gin.RouterGroup) {
+	authWithTenant := router.Group("", middleware.JWTWithOrganizationAndService(h.accountService))
+
+	// Data source routes with authentication
+	authWithTenant.POST("/data-dbs", h.CreateDataSource)
+	authWithTenant.GET("/data-dbs", h.ListDataSources)
+	authWithTenant.GET("/data-dbs/:id", h.GetDataSourceByID)
+	authWithTenant.PUT("/data-dbs/:id", h.UpdateDataSource)
+	authWithTenant.DELETE("/data-dbs/:id", h.DeleteDataSourceByID)
+
+	// Table operations within a data source
+	authWithTenant.POST("/data-dbs/:id/tables", h.CreateTable)
+	authWithTenant.GET("/data-dbs/:id/tables", h.ListTables)
+	authWithTenant.GET("/data-dbs/:id/tables/:table_id", h.GetTable)
+	authWithTenant.PUT("/data-dbs/:id/tables/:table_id", h.UpdateTable)
+	authWithTenant.DELETE("/data-dbs/:id/tables/:table_id", h.DeleteTable)
+	authWithTenant.GET("/data-dbs/:id/tables/:table_id/prompt", h.GetTablePrompt)
+	authWithTenant.PUT("/data-dbs/:id/tables/:table_id/prompt", h.UpsertTablePrompt)
+	authWithTenant.DELETE("/data-dbs/:id/tables/:table_id/prompt", h.DeleteTablePrompt)
+	authWithTenant.PUT("/data-dbs/:id/tables/:table_id/columns", h.UpdateTableColumns)
+	authWithTenant.GET("/data-dbs/:id/tables/:table_id/columns", h.GetTableColumns)
+	authWithTenant.GET("/data-dbs/:id/sql-operations", h.ListOperationLogsByDataSourceID)
+	authWithTenant.POST("/data-dbs/analyze-file-for-table", h.AnalyzeFileForTable)
+	authWithTenant.POST("/data-dbs/:id/excel-import/analyze", h.AnalyzeExcelImport)
+	authWithTenant.GET("/data-dbs/:id/excel-import/jobs/:job_id", h.GetExcelImportJob)
+	authWithTenant.POST("/data-dbs/:id/excel-import/jobs/:job_id/import", h.ConfirmExcelImport)
+	authWithTenant.GET("/data-dbs/:id/excel-import/jobs/:job_id/errors", h.ListExcelImportErrors)
+
+	// Table data operations
+	authWithTenant.POST("/data-dbs/:id/tables/:table_id/records", h.AddTableRecords)
+	authWithTenant.PUT("/data-dbs/:id/tables/:table_id/records", h.UpdateTableRecords)
+	authWithTenant.DELETE("/data-dbs/:id/tables/:table_id/records", h.DeleteTableRecords)
+	authWithTenant.GET("/data-dbs/:id/tables/:table_id/records", h.QueryTableRecords)
+	authWithTenant.GET("/data-dbs/:id/tables/:table_id/template", h.DownloadTableTemplate)
+	authWithTenant.POST("/data-dbs/:id/tables/:table_id/records/import", h.ImportTableRecords)
+
+	// File ingestion operations
+	authWithTenant.POST("/data-dbs/ingest-file-to-table", h.IngestFileToTable)
+	authWithTenant.POST("/data-dbs/batch-ingest-file-to-table", h.BatchIngestFileToTable)
+}

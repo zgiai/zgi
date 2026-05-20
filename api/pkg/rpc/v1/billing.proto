@@ -1,0 +1,146 @@
+syntax = "proto3";
+
+package zgi.rpc.v1;
+
+option go_package = "github.com/zgiai/ginext/pkg/rpc/v1;v1";
+
+service BillingService {
+  rpc PreDeductQuota(PreDeductQuotaRequest) returns (PreDeductQuotaResponse);
+  rpc SettleQuota(SettleQuotaRequest) returns (SettleQuotaResponse);
+  rpc CalculateDualCost(CalculateDualCostRequest) returns (DualCostResponse);
+  rpc SettleUsageWithDualTrack(SettleUsageRequest) returns (SettleUsageResponse);
+  rpc GetBillingMode(GetBillingModeRequest) returns (BillingModeResponse);
+  rpc CheckCreditBalance(CheckCreditBalanceRequest) returns (CheckCreditBalanceResponse);
+}
+
+message PreDeductQuotaRequest {
+  string organization_id = 1;
+  int64 estimated_credits = 2;
+  string model_id = 3;
+  string model_name = 4;
+  string provider_id = 5;
+  string provider_name = 6;
+  string request_id = 7;
+  string attempt_id = 8;
+}
+
+message PreDeductQuotaResponse {
+  bool success = 1;
+  string error_code = 2;
+  string error_message = 3;
+  int64 remaining_quota = 4;
+  string deduction_id = 5;
+}
+
+message SettleQuotaRequest {
+  string organization_id = 1;
+  string deduction_id = 2;
+  int64 estimated_credits = 3;
+  int64 actual_credits = 4;
+  int32 prompt_tokens = 5;
+  int32 completion_tokens = 6;
+  int32 total_tokens = 7;
+  double input_cost = 8;
+  double output_cost = 9;
+  double total_cost = 10;
+  string model_id = 11;
+  string model_name = 12;
+  string provider_id = 13;
+  string provider_name = 14;
+  string channel_id = 15;
+  string request_id = 16;
+  int64 response_time = 17;
+  string status = 18;
+  string error_message = 19;
+  string account_id = 20;
+  string app_id = 21;
+  string app_type = 22;
+  string ip_address = 23;
+  string user_agent = 24;
+  bool is_streaming = 25;
+  bool use_system_provider = 26;
+  string attempt_id = 27;
+}
+
+message SettleQuotaResponse {
+  bool success = 1;
+  string error_message = 2;
+  int64 remaining_quota = 3;
+  int64 used_quota = 4;
+  int64 refunded_credits = 5;
+  int64 settled_credits = 6;
+}
+
+message CalculateDualCostRequest {
+  int32 prompt_tokens = 1;
+  int32 completion_tokens = 2;
+  string model_id = 3;
+  string organization_id = 4;
+}
+
+message DualCostResponse {
+  bool success = 1;
+  string error_message = 2;
+  int64 input_credits = 3;
+  int64 output_credits = 4;
+  int64 total_credits = 5;
+  double input_usd = 6;
+  double output_usd = 7;
+  double total_usd = 8;
+  string billing_mode = 9;
+}
+
+message SettleUsageRequest {
+  string organization_id = 1;
+  string model_id = 2;
+  string model_name = 3;
+  string provider_id = 4;
+  string provider_name = 5;
+  string channel_id = 6;
+  string request_id = 7;
+  int32 prompt_tokens = 8;
+  int32 completion_tokens = 9;
+  int32 total_tokens = 10;
+  int64 response_time = 11;
+  string status = 12;
+  string error_message = 13;
+  string account_id = 14;
+  string app_id = 15;
+  string app_type = 16;
+  string ip_address = 17;
+  string user_agent = 18;
+  bool is_streaming = 19;
+  bool use_system_provider = 20;
+}
+
+message SettleUsageResponse {
+  bool success = 1;
+  string error_message = 2;
+  int64 credits_deducted = 3;
+  double usd_cost = 4;
+  string billing_mode = 5;
+  bool is_self_paid = 6;
+}
+
+message GetBillingModeRequest {
+  string organization_id = 1;
+}
+
+message BillingModeResponse {
+  bool success = 1;
+  string error_message = 2;
+  string billing_mode = 3;
+  bool is_self_paid = 4;
+}
+
+message CheckCreditBalanceRequest {
+  string organization_id = 1;
+  int64 estimated_credits = 2;
+}
+
+message CheckCreditBalanceResponse {
+  bool success = 1;
+  string error_message = 2;
+  bool sufficient = 3;
+  int64 balance = 4;
+}

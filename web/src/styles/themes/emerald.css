@@ -1,0 +1,47 @@
+[data-theme='emerald'] {
+  --emerald-50: #ecfdf5;
+  --emerald-100: #d1fae5;
+  --emerald-200: #a7f3d0;
+  --emerald-300: #6ee7b7;
+  --emerald-400: #34d399;
+  --emerald-500: #10b981;
+  --emerald-600: #059669;
+  --emerald-700: #047857;
+  --emerald-800: #065f46;
+
+  --primary: var(--emerald-600);
+  --primary-foreground: var(--neutral-0);
+  --primary-hover: var(--emerald-700);
+  --primary-active: var(--emerald-800);
+  --secondary: var(--emerald-100);
+  --secondary-foreground: var(--neutral-800);
+  --secondary-hover: var(--emerald-200);
+  --secondary-active: var(--emerald-300);
+  --muted: var(--neutral-100);
+  --muted-foreground: var(--neutral-500);
+  --highlight: var(--emerald-600);
+  --highlight-foreground: var(--neutral-0);
+  --border: var(--neutral-200);
+  --ring: var(--emerald-400);
+  --sidebar-primary: var(--emerald-600);
+  --sidebar-primary-foreground: var(--neutral-50);
+  --sidebar-ring: var(--emerald-400);
+  --chart-1: var(--emerald-600);
+  --brand-main: var(--emerald-600);
+  --brand-subtle: var(--emerald-50);
+  --brand-strong: var(--emerald-700);
+  --text-highlight: var(--emerald-600);
+  --button-primary: var(--emerald-600);
+  --button-primary-hover: var(--emerald-700);
+  --checkbox-bg: var(--emerald-50);
+  --checkbox-hover: var(--emerald-300);
+  --checkbox-selected: var(--emerald-600);
+  --switch-on: var(--emerald-600);
+  --table-header: var(--emerald-50);
+  --selection-layer: oklch(from var(--emerald-500) l c h / 0.3);
+  --tag-primary-bg: var(--emerald-50);
+  --tag-primary-text: var(--emerald-700);
+  --edge-default: var(--emerald-600);
+  --edge-hover: var(--emerald-700);
+  --edge-selected: var(--emerald-700);
+}

@@ -1,0 +1,72 @@
+syntax = "proto3";
+
+package zgi.rpc.v1;
+
+option go_package = "github.com/zgiai/ginext/pkg/rpc/v1;v1";
+
+// ChannelService provides access to official LLM channels.
+service ChannelService {
+    // ListOfficialChannels returns all platform-provided channels.
+    rpc ListOfficialChannels(ListOfficialChannelsRequest) returns (ListOfficialChannelsResponse);
+    
+    // WatchChannels streams real-time channel updates to subscribers.
+    // Gateway instances subscribe to this stream to receive instant notifications
+    // when channels are created, updated, enabled, or disabled.
+    rpc WatchChannels(WatchChannelsRequest) returns (stream ChannelEvent);
+}
+
+message ListOfficialChannelsRequest {}
+
+message ListOfficialChannelsResponse {
+    repeated OfficialChannel channels = 1;
+}
+
+message OfficialChannel {
+    string id = 1;
+    string name = 2;
+    string provider = 3;
+    string protocol = 4;
+    string api_base_url = 5;
+    string api_key_encrypted = 6;
+    repeated string models = 7;
+    int32 priority = 8;
+    int32 weight = 9;
+    map<string, string> model_maps = 10;
+    string param_override = 11; // JSON string
+    string header_override = 12; // JSON string
+    repeated string tags = 13;
+    map<string, string> metadata = 14;
+}
+
+// WatchChannelsRequest initiates a streaming subscription to channel updates.
+message WatchChannelsRequest {
+    // from_version allows clients to resume from a specific version after reconnection.
+    // If 0 or omitted, server sends full snapshot first.
+    int64 from_version = 1;
+}
+
+// ChannelEvent represents a change to a platform channel.
+message ChannelEvent {
+    // EventType defines the type of change that occurred.
+    enum EventType {
+        SNAPSHOT = 0;   // Full snapshot (sent on initial connection)
+        CREATED = 1;    // New channel created
+        UPDATED = 2;    // Existing channel modified
+        DELETED = 3;    // Channel deleted
+        ENABLED = 4;    // Channel enabled (is_enabled = true)
+        DISABLED = 5;   // Channel disabled (is_enabled = false)
+    }
+    
+    // type indicates what kind of change occurred
+    EventType type = 1;
+    
+    // channel contains the full channel data after the change
+    OfficialChannel channel = 2;
+    
+    // version is a globally incrementing counter for event ordering.
+    // Clients can detect missed events by checking for gaps in version numbers.
+    int64 version = 3;
+    
+    // timestamp is when the event was generated (Unix milliseconds)
+    int64 timestamp = 4;
+}

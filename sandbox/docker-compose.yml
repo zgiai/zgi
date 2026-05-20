@@ -1,0 +1,79 @@
+services:
+  sandbox:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BUILD_REGION: ${BUILD_REGION:-global}
+        GOPROXY: ${GOPROXY:-}
+    image: zgi-sandbox:local
+    env_file:
+      - .env
+    networks:
+      default:
+      zgi-network:
+        aliases:
+          - zgi-sandbox
+    ports:
+      - "${ZGI_SANDBOX_SERVER_PORT}:8194"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - sandbox-data:/var/lib/zgi-sandbox
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python3 -c \"import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8194/health').getcode() == 200 else 1)\"",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    env_file:
+      - .env
+    networks:
+      default:
+        aliases:
+          - sandbox-postgres
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    networks:
+      default:
+        aliases:
+          - sandbox-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  sandbox-data:
+  postgres-data:
+  redis-data:
+
+networks:
+  zgi-network:
+    external: true
+    name: zgi-api_zgi-network

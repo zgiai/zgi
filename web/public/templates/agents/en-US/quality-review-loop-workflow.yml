@@ -1,0 +1,280 @@
+---
+kind: app
+version: 1.0.0
+exported_from: zgi
+exported_at: '2026-05-15T00:00:00Z'
+app:
+  name: Quality Review Loop
+  description: Run a bounded review loop that refines an answer until quality criteria
+    are met.
+  icon: '{"icon":"QL","icon_background":"#57534e"}'
+  icon_type: text
+  mode: WORKFLOW
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    opening_statement_type: slogan
+    opening_slogan: ''
+    opening_statement: ''
+    opening_statement_enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      voice: ''
+      language: ''
+    speech_to_text:
+      enabled: false
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    conversation_history:
+      enabled: false
+      history_window_size: 6
+    file_upload:
+      enabled: false
+      allowed_file_types:
+      - image
+      - document
+      allowed_file_extensions:
+      - jpg
+      - jpeg
+      - png
+      - gif
+      - webp
+      - pdf
+      - doc
+      - docx
+      - txt
+      - md
+      - csv
+      - xlsx
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      number_limits: 5
+    webapp_workflow_config:
+      allow_view_run_detail: true
+      auto_expand_run_detail: false
+  graph:
+    nodes:
+    - id: note_runtime_guide
+      type: note
+      position:
+        x: 80
+        y: 40
+      width: 520
+      height: 240
+      data:
+        type: note
+        title: Run guide
+        desc: ''
+        text: |-
+          Run guide
+
+          Ready. Requires: OpenAI gpt-5.5 model. Enter a draft; the loop reviews it up to three times.
+
+          Suggested test input:
+          The Start node fields are prefilled. Open Debug and run the defaults directly.
+          Example:
+          - Draft answer: Draft answer: We will fix your issue soon. Please wait. Review it for enterprise customer communication quality and rewrite if needed.
+
+          This note is documentation only and is not executed.
+        theme: blue
+        isInLoop: false
+        isInIteration: false
+    - id: start_node
+      type: custom
+      position:
+        x: 80
+        y: 280
+      width: 280
+      height: 88
+      data:
+        type: start
+        title: Start
+        desc: Agent start node
+        variables:
+        - type: paragraph
+          variable: input
+          label: Draft answer
+          required: true
+          max_length: 8192
+          default: 'Draft answer: We will fix your issue soon. Please wait. Review
+            it for enterprise customer communication quality and rewrite if needed.'
+        unique: true
+        isInLoop: false
+        isInIteration: false
+    - id: loop_node
+      type: custom
+      position:
+        x: 480
+        y: 180
+      width: 640
+      height: 320
+      data:
+        type: loop
+        title: Quality Loop
+        desc: ''
+        start_node_id: loop_nodestart
+        loop_count: 3
+        break_conditions:
+        - id: condition_text
+          key: text
+          variable_selector:
+          - quality_llm
+          - text
+          comparison_operator: contains
+          value: PASS
+          varType: string
+        logical_operator: or
+        loop_variables:
+        - label: draft
+          var_type: string
+          value_type: variable
+          value:
+          - start_node
+          - input
+        isInLoop: false
+        isInIteration: false
+        _children:
+        - loop_nodestart
+        - quality_llm
+        - loop_end_node
+    - id: loop_nodestart
+      type: custom-loop-start
+      position:
+        x: 12
+        y: 52
+      width: 40
+      height: 40
+      data:
+        type: loop-start
+        title: Quality Loop
+        desc: ''
+        isInLoop: true
+        isInIteration: false
+      parentId: loop_node
+      extent: parent
+      selectable: false
+      draggable: false
+      measured:
+        width: 40
+        height: 40
+    - id: quality_llm
+      type: custom
+      position:
+        x: 90
+        y: 88
+      width: 280
+      height: 92
+      data:
+        type: llm
+        title: Review Draft
+        desc: ''
+        variables: []
+        model:
+          provider: openai
+          name: gpt-5.5
+          mode: chat
+          completion_params: {}
+        prompt_template:
+        - role: system
+          text: Review the draft against clarity, completeness, and compliance. Return
+            PASS if acceptable, otherwise return revision guidance.
+        - role: user
+          text: 'Draft: {{#loop_node.draft#}}'
+        prompt_config:
+          jinja2_variables: []
+        vision:
+          enabled: false
+        structured_output_enabled: false
+        reasoning_format: tagged
+        isInLoop: true
+        isInIteration: false
+      parentId: loop_node
+    - id: loop_end_node
+      type: custom
+      position:
+        x: 420
+        y: 100
+      width: 280
+      height: 92
+      data:
+        type: loop-end
+        title: Loop End
+        desc: ''
+        isInLoop: true
+        isInIteration: false
+      parentId: loop_node
+    - id: end_node
+      type: custom
+      position:
+        x: 1240
+        y: 280
+      width: 280
+      height: 64
+      data:
+        type: end
+        title: End
+        desc: ''
+        outputs:
+        - variable: reviewed_draft
+          type: string
+          value_selector:
+          - loop_node
+          - draft
+        isInLoop: false
+        isInIteration: false
+    edges:
+    - id: start_node-source-loop_node
+      source: start_node
+      target: loop_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: loop_nodestart-source-quality_llm
+      source: loop_nodestart
+      target: quality_llm
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: true
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: quality_llm-source-loop_end_node
+      source: quality_llm
+      target: loop_end_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: true
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: loop_node-source-end_node
+      source: loop_node
+      target: end_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    viewport:
+      x: 0
+      y: 0
+      zoom: 0.8

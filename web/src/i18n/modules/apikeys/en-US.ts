@@ -1,0 +1,136 @@
+const messages = {
+  title: 'API Keys',
+  description: 'Manage API keys for accessing LLM services',
+  listTitle: 'API Key List',
+  searchPlaceholder: 'Search by name',
+  filters: {
+    allStatus: 'All Status',
+    active: 'Active',
+    inactive: 'Inactive',
+    revoked: 'Revoked',
+    startDate: 'Start Date',
+    endDate: 'End Date',
+  },
+  status: {
+    active: 'Active',
+    inactive: 'Inactive',
+    revoked: 'Revoked',
+  },
+  table: {
+    name: 'Name',
+    key: 'API Key',
+    status: 'Status',
+    usedQuota: 'Used Quota',
+    remainQuota: 'Remain Quota',
+    modelLimits: 'Model Limits',
+    createdAt: 'Created At',
+    updatedAt: 'Updated At',
+    expiresAt: 'Expires At',
+    noExpiration: 'Never',
+    enabled: 'Enabled',
+    actions: 'Actions',
+  },
+  actions: {
+    add: 'Create API Key',
+    edit: 'Edit',
+    delete: 'Delete',
+    copy: 'Copy Key',
+    copied: 'Copied!',
+    batch: 'Batch Actions',
+    confirmDeleteTitle: 'Delete API Key',
+    confirmDeleteDesc:
+      'Are you sure you want to delete this API key? This action cannot be undone.',
+    cancel: 'Cancel',
+    confirm: 'Confirm',
+  },
+  usage: {
+    badge: 'OpenAI Compatible',
+    inlineTitle: 'Call the platform API with generated API keys',
+    inlineDescription:
+      'After an API key is created, you can call platform APIs through the OpenAI-compatible protocol. Basic chat completions are currently supported.',
+    apiBaseLabel: 'API Base:',
+    openDialog: 'View Access Guide',
+    dialogTitle: 'API Access Guide',
+    dialogDescription:
+      'Read the basic connection info and switch between curl, TypeScript, and Python examples.',
+    markdown: {
+      overviewTitle: 'API Access Basics',
+      overviewBody:
+        'After an API key is created, you can call the platform API through the OpenAI-compatible protocol.',
+      apiBaseLabel: 'API Base',
+      openAiBaseLabel: 'OpenAI Base URL',
+      chatCompletionsLabel: 'Chat Completions Endpoint',
+      supportNote: 'Current support: basic chat completions.',
+      tabs: {
+        curl: 'curl',
+        ts: 'TypeScript',
+        python: 'Python',
+      },
+      exampleTitle: 'curl Example',
+      exampleNote:
+        'Replace `YOUR_API_KEY` with your API key and `your-model-name` with an available model.',
+      tsExampleTitle: 'OpenAI SDK Example (Node.js / TypeScript)',
+      tsInstallLabel: 'Install',
+      tsExampleNote:
+        'Use this on the server side. Put your key in an environment variable such as `PLATFORM_API_KEY`, and replace `your-model-name` with an available model.',
+      pythonExampleTitle: 'OpenAI SDK Example (Python)',
+      pythonInstallLabel: 'Install',
+      pythonExampleNote:
+        'Use this on the server side. Put your key in an environment variable such as `PLATFORM_API_KEY`, and replace `your-model-name` with an available model.',
+    },
+  },
+  dialog: {
+    titleCreate: 'Create API Key',
+    titleEdit: 'Edit API Key',
+    basic: 'Basic Information',
+    advanced: 'Advanced Settings',
+    labels: {
+      name: 'Name',
+      count: 'Count',
+      quotaType: 'Quota Type',
+      quotaAmount: 'Quota Amount',
+      allowAllModels: 'Allow All Models',
+      modelNames: 'Allowed Models',
+      allowIps: 'IP Whitelist',
+      expiresAt: 'Expires At',
+      status: 'Status',
+      modelLimitsEnabled: 'Enable Model Limits',
+    },
+    placeholders: {
+      name: 'API key name',
+      count: '1',
+      quotaAmount: '1000',
+      allowIps: '192.168.1.1, 10.0.0.0/8',
+    },
+    quotaTypes: {
+      unlimited: 'Unlimited',
+      custom: 'Custom',
+    },
+    buttons: {
+      cancel: 'Cancel',
+      create: 'Create',
+      save: 'Save',
+    },
+    createdTitle: 'API Key Created Successfully!',
+    createdNotice: 'Please copy and save this secret key now. It will not be shown again.',
+    errors: {
+      invalidIp: 'Invalid IP address format',
+      duplicateIp: 'IP address already exists',
+      expiresInPast: 'Expiration time must be in the future',
+      quotaAmountRequired: 'Quota amount is required and must be a non-negative integer',
+      quotaAmountMax: 'Quota amount cannot exceed {max}',
+    },
+    hints: {
+      expiresAt: 'Leave empty for no expiration',
+      allowAllModelsEnabled: 'All models are allowed for this API key',
+      quotaAmountMax: 'Maximum: {max}',
+    },
+  },
+  empty: 'No API keys found',
+  updateSuccess: 'API key updated successfully',
+  deleteSuccess: 'API key deleted successfully',
+  createSuccess: 'API key created successfully',
+};
+
+export default messages;
+export type ApikeysMessages = typeof messages;

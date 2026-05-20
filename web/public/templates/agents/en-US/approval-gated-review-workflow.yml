@@ -1,0 +1,319 @@
+---
+kind: app
+version: 1.0.0
+exported_from: zgi
+exported_at: '2026-05-15T00:00:00Z'
+app:
+  name: Approval-gated Case Review
+  description: Draft a case summary, request approval, and branch on the approver
+    decision.
+  icon: '{"icon":"AR","icon_background":"#a16207"}'
+  icon_type: text
+  mode: WORKFLOW
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    opening_statement_type: slogan
+    opening_slogan: ''
+    opening_statement: ''
+    opening_statement_enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      voice: ''
+      language: ''
+    speech_to_text:
+      enabled: false
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    conversation_history:
+      enabled: false
+      history_window_size: 6
+    file_upload:
+      enabled: false
+      allowed_file_types:
+      - image
+      - document
+      allowed_file_extensions:
+      - jpg
+      - jpeg
+      - png
+      - gif
+      - webp
+      - pdf
+      - doc
+      - docx
+      - txt
+      - md
+      - csv
+      - xlsx
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      number_limits: 5
+    webapp_workflow_config:
+      allow_view_run_detail: true
+      auto_expand_run_detail: false
+  graph:
+    nodes:
+    - id: note_runtime_guide
+      type: note
+      position:
+        x: 80
+        y: 40
+      width: 520
+      height: 240
+      data:
+        type: note
+        title: Run guide
+        desc: ''
+        text: |-
+          Run guide
+
+          Setup required. Requires: OpenAI gpt-5.5 model, approver. The run pauses at approval and needs a reviewer action.
+
+          Suggested test input:
+          The Start node fields are prefilled. Open Debug and run the defaults directly.
+          Example:
+          - Case details: Vendor onboarding request: Acme Analytics asks for production API access. Contract value is 48,000 USD annually. Security review is compl...
+
+          This note is documentation only and is not executed.
+        theme: yellow
+        isInLoop: false
+        isInIteration: false
+    - id: start_node
+      type: custom
+      position:
+        x: 80
+        y: 280
+      width: 280
+      height: 88
+      data:
+        type: start
+        title: Start
+        desc: Agent start node
+        variables:
+        - type: paragraph
+          variable: input
+          label: Case details
+          required: true
+          max_length: 8192
+          default: 'Vendor onboarding request: Acme Analytics asks for production
+            API access. Contract value is 48,000 USD annually. Security review is
+            complete, but finance approval is pending.'
+        unique: true
+        isInLoop: false
+        isInIteration: false
+    - id: draft_llm
+      type: custom
+      position:
+        x: 420
+        y: 280
+      width: 280
+      height: 92
+      data:
+        type: llm
+        title: Draft Decision
+        desc: ''
+        variables: []
+        model:
+          provider: openai
+          name: gpt-5.5
+          mode: chat
+          completion_params: {}
+        prompt_template:
+        - role: system
+          text: Draft a case summary, recommendation, risks, and rationale for human
+            review.
+        - role: user
+          text: "{{#start_node.input#}}"
+        prompt_config:
+          jinja2_variables: []
+        vision:
+          enabled: false
+        structured_output_enabled: false
+        reasoning_format: tagged
+        isInLoop: false
+        isInIteration: false
+    - id: approval_node
+      type: custom
+      position:
+        x: 760
+        y: 280
+      width: 280
+      height: 92
+      data:
+        type: approval
+        title: Approval
+        desc: ''
+        version: v1
+        approval:
+          content: |-
+            Please review the proposed decision:
+
+            {{#draft_llm.text#}}
+          fields:
+          - key: review_notes
+            label: Review notes
+            type: textarea
+            required: false
+          actions:
+          - id: approve
+            label: Approve
+            style: primary
+          - id: revise
+            label: Revise
+            style: secondary
+          - id: reject
+            label: Reject
+            style: danger
+        submit_methods:
+          webapp:
+            enabled: true
+          email:
+            enabled: false
+            subject: ''
+            body: 'Please open the link to complete the review: {{#url#}}'
+            recipients: []
+        timeout:
+          duration: 36
+          unit: hour
+        isInLoop: false
+        isInIteration: false
+    - id: approved_end
+      type: custom
+      position:
+        x: 1120
+        y: 120
+      width: 280
+      height: 64
+      data:
+        type: end
+        title: End
+        desc: ''
+        outputs:
+        - variable: decision
+          type: string
+          value_selector:
+          - draft_llm
+          - text
+        - variable: review_notes
+          type: string
+          value_selector:
+          - approval_node
+          - review_notes
+        isInLoop: false
+        isInIteration: false
+    - id: revise_end
+      type: custom
+      position:
+        x: 1120
+        y: 300
+      width: 280
+      height: 64
+      data:
+        type: end
+        title: End
+        desc: ''
+        outputs:
+        - variable: revision_request
+          type: string
+          value_selector:
+          - approval_node
+          - approval_action_label
+        - variable: review_notes
+          type: string
+          value_selector:
+          - approval_node
+          - review_notes
+        isInLoop: false
+        isInIteration: false
+    - id: rejected_end
+      type: custom
+      position:
+        x: 1120
+        y: 480
+      width: 280
+      height: 64
+      data:
+        type: end
+        title: End
+        desc: ''
+        outputs:
+        - variable: rejection
+          type: string
+          value_selector:
+          - approval_node
+          - approval_action_label
+        - variable: review_notes
+          type: string
+          value_selector:
+          - approval_node
+          - review_notes
+        isInLoop: false
+        isInIteration: false
+    edges:
+    - id: start_node-source-draft_llm
+      source: start_node
+      target: draft_llm
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: draft_llm-source-approval_node
+      source: draft_llm
+      target: approval_node
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: approval_node-approve-approved_end
+      source: approval_node
+      target: approved_end
+      sourceHandle: approve
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: approval_node-revise-revise_end
+      source: approval_node
+      target: revise_end
+      sourceHandle: revise
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    - id: approval_node-reject-rejected_end
+      source: approval_node
+      target: rejected_end
+      sourceHandle: reject
+      targetHandle: target
+      type: custom
+      data:
+        isInLoop: false
+        sourceType: default
+        targetType: default
+        isInIteration: false
+    viewport:
+      x: 0
+      y: 0
+      zoom: 0.8
