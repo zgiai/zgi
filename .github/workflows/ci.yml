@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hygiene:
+    name: Open source hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check repository hygiene
+        run: make check-open-source
+
+  api:
+    name: API targeted tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: api/go.mod
+          cache-dependency-path: api/go.sum
+
+      - name: Test migrations and SQL metadata
+        run: go test ./internal/migrations ./internal/migrations/schema ./pkg/sql_base/sqlmeta/service
+
+      - name: Test workflow and model gateway packages
+        run: go test ./internal/modules/llm/llmmodel/handler ./internal/modules/app/workflow/diagnosis ./internal/modules/app/workflow/nodes/llm ./internal/modules/app/workflow/nodes/sqlgenerator ./pkg/kafka
+
+      - name: Test content parsing packages
+        run: go test ./internal/capabilities/contentparse/engines/hyperparse/internal/adapters/pdf ./internal/capabilities/contentparse/engines/hyperparse/internal/core/chunking ./internal/capabilities/contentparse/engines/hyperparse/internal/export ./internal/capabilities/contentparse/engines/hyperparse/internal/orchestrators/pdf
+
+  runner:
+    name: Runner targeted tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: runner
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: runner/go.mod
+          cache-dependency-path: runner/go.sum
+
+      - name: Test runner packages
+        run: go test ./internal/manager ./internal/server
+
+  web:
+    name: Web lint and type check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.12.1 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Type check
+        run: pnpm type-check
