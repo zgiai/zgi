@@ -74,7 +74,7 @@ workflow:
         text: |-
           运行说明
 
-          可运行。依赖：Qwen qwen3.6-plus 模型。输入非结构化文本，输出结构化字段。
+          可运行。依赖：OpenAI GPT gpt-5.5 模型。输入非结构化文本，输出结构化字段。
 
           调试输入：
           打开调试面板后，开始节点字段已经预填，可直接运行。
@@ -120,8 +120,8 @@ workflow:
         desc: ''
         variables: []
         model:
-          provider: qwen
-          name: qwen3.6-plus
+          provider: openai
+          name: gpt-5.5
           mode: chat
           completion_params:
             response_format: json_object

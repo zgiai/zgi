@@ -75,7 +75,7 @@ workflow:
         text: |-
           运行说明
 
-          需配置。依赖：Qwen qwen3.6-plus 模型、数据库、代码沙箱服务。先绑定计划明细表并确认代码节点可执行，再测试创建计划和持久化。
+          需配置。依赖：OpenAI GPT gpt-5.5 模型、数据库、代码沙箱服务。先绑定计划明细表并确认代码节点可执行，再测试创建计划和持久化。
 
           调试输入：
           可在右侧调试窗口直接输入：
@@ -115,8 +115,8 @@ workflow:
         desc: ''
         variables: []
         model:
-          provider: qwen
-          name: qwen3.6-plus
+          provider: openai
+          name: gpt-5.5
           mode: chat
           completion_params:
             response_format: json_object
@@ -209,8 +209,8 @@ workflow:
         desc: ''
         variables: []
         model:
-          provider: qwen
-          name: qwen3.6-plus
+          provider: openai
+          name: gpt-5.5
           mode: chat
           completion_params:
             response_format: json_object

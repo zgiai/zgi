@@ -47,8 +47,8 @@ const localeModel = {
     debugKeyword: 'Suggested test input',
   },
   'zh-Hans': {
-    provider: 'qwen',
-    name: 'qwen3.6-plus',
+    provider: 'openai',
+    name: 'gpt-5.5',
     noteKeyword: '运行说明',
     debugKeyword: '调试输入',
   },
