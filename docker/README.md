@@ -4,16 +4,18 @@ This directory is the product-level docker entrypoint for ZGI.
 
 ## Current Compose Scope
 
-The current `docker-compose.yaml` starts the full local stack:
+The default `docker-compose.yaml` starts the lightweight core stack:
 
 - PostgreSQL
 - Redis
-- Weaviate
-- Neo4j
-- Sandbox
-- Runner
 - API
 - Web
+
+Optional profiles add heavier services only when needed:
+
+- `runtime` starts Sandbox and Runner.
+- `knowledge` starts Weaviate and Neo4j.
+- `full` starts both optional profiles through the helper script.
 
 When started from `docker/`, `sandbox` reuses the shared root Postgres and Redis services:
 
@@ -26,6 +28,24 @@ Run:
 
 ```bash
 make docker-up
+```
+
+To start optional runtime services for code execution and plugin execution:
+
+```bash
+./dev/start-docker --runtime
+```
+
+To start optional knowledge services for vector and graph retrieval:
+
+```bash
+./dev/start-docker --knowledge
+```
+
+To start everything:
+
+```bash
+./dev/start-docker --full
 ```
 
 If you are already inside `docker/` or do not have `make`, run from the repository root:
@@ -62,6 +82,8 @@ powershell -ExecutionPolicy Bypass -File .\dev\start-docker.ps1 -China
 
 That applies recommended build mirrors for the current run while keeping service runtime env files in their own service directories.
 
+PowerShell also supports `-Runtime`, `-Knowledge`, and `-Full` for optional service profiles.
+
 Local default endpoints:
 
 - Web and API gateway: `http://localhost:${PUBLIC_PORT:-2679}`
@@ -79,12 +101,12 @@ Internal Docker network ports:
 
 - Web: `2680`
 - API: `2670`
-- Sandbox: `2660`
-- Runner: `2665`
+- Sandbox: `2660` when the `runtime` profile is enabled
+- Runner: `2665` when the `runtime` profile is enabled
 - PostgreSQL: `5432`
 - Redis: `6379`
-- Neo4j HTTP: `7474`
-- Neo4j Bolt: `7687`
+- Neo4j HTTP: `7474` when the `knowledge` profile is enabled
+- Neo4j Bolt: `7687` when the `knowledge` profile is enabled
 
 ## Notes
 
@@ -94,6 +116,9 @@ Internal Docker network ports:
 - `dev/check-env` compares local env files with their templates and reports missing keys, changed values, and extra local keys without modifying anything.
 - `dev/check-env --sync` creates a timestamped backup next to each env file and appends only template keys that are currently missing.
 - `docker/.env` is intentionally small and only carries compose-level orchestration values such as the public gateway port and shared infrastructure defaults.
+- The default Docker stack intentionally uses `VECTOR_STORE=mock`, disables Neo4j, and disables plugin runner integration so first-time startup stays small.
+- `./dev/start-docker --runtime` wires `CODE_EXECUTION_ENDPOINT`, `PLUGIN_RUNNER_ENABLED`, and `PLUGIN_RUNNER_URL` for the current run.
+- `./dev/start-docker --knowledge` wires `VECTOR_STORE`, `WEAVIATE_ENDPOINT`, and `NEO4J_URI` for the current run.
 - `sandbox` is wired differently in product mode versus standalone mode:
   product mode reuses the shared root Postgres / Redis, while standalone mode keeps its own bundled Postgres / Redis.
 - `./dev/start-docker --china` currently wires China mainland build mirrors for `api`, `sandbox`, and `runner` through compose build args.
