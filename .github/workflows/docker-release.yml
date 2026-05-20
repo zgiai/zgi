@@ -1,0 +1,113 @@
+name: Docker Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Optional release version, for example v1.0.0 or 1.0.0"
+        required: false
+        type: string
+      push_latest:
+        description: "Also publish the latest tag for a manual release"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOCKERHUB_NAMESPACE: zgiai
+
+jobs:
+  build-and-push:
+    name: Build ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: zgi-api
+            context: ./api
+            dockerfile: ./api/Dockerfile
+          - image: zgi-web
+            context: ./web
+            dockerfile: ./web/Dockerfile
+          - image: zgi-sandbox
+            context: ./sandbox
+            dockerfile: ./sandbox/Dockerfile
+          - image: zgi-runner
+            context: ./runner
+            dockerfile: ./runner/Dockerfile
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Prepare tags
+        id: docker_tags
+        shell: bash
+        env:
+          IMAGE: ${{ env.DOCKERHUB_NAMESPACE }}/${{ matrix.image }}
+          INPUT_VERSION: ${{ github.event.inputs.version || '' }}
+          INPUT_PUSH_LATEST: ${{ github.event.inputs.push_latest || 'false' }}
+        run: |
+          set -euo pipefail
+
+          short_sha="${GITHUB_SHA::7}"
+          version=""
+          publish_latest="false"
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+            publish_latest="true"
+          elif [[ -n "${INPUT_VERSION}" ]]; then
+            version="${INPUT_VERSION#v}"
+            publish_latest="${INPUT_PUSH_LATEST}"
+          fi
+
+          {
+            echo "tags<<EOF"
+            echo "${IMAGE}:sha-${short_sha}"
+            if [[ -n "${version}" ]]; then
+              echo "${IMAGE}:${version}"
+            fi
+            if [[ "${publish_latest}" == "true" ]]; then
+              echo "${IMAGE}:latest"
+            fi
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.docker_tags.outputs.tags }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,scope=${{ matrix.image }},mode=max
+          labels: |
+            org.opencontainers.image.source=https://github.com/zgiai/zgi
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.title=${{ matrix.image }}
