@@ -28,7 +28,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-zgiai123456}
     ports:
-      - "${HOST_POSTGRES_PORT:-15432}:5432"
+      - "${HOST_POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./postgres/init:/docker-entrypoint-initdb.d:ro
@@ -65,7 +65,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "${HOST_REDIS_PORT:-16379}:6379"
+      - "${HOST_REDIS_PORT:-6379}:6379"
     command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-zgiai123456}
     volumes:
       - redis-data:/data
@@ -96,8 +96,8 @@ services:
   neo4j:
     image: neo4j:5.15-community
     ports:
-      - "${HOST_NEO4J_HTTP_PORT:-17474}:7474"
-      - "${HOST_NEO4J_BOLT_PORT:-17687}:7687"
+      - "${HOST_NEO4J_HTTP_PORT:-7474}:7474"
+      - "${HOST_NEO4J_BOLT_PORT:-7687}:7687"
     environment:
       NEO4J_AUTH: ${NEO4J_USERNAME:-neo4j}/${NEO4J_PASSWORD:-neo4j123456}
       NEO4J_PLUGINS: '["apoc"]'

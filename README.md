@@ -54,10 +54,10 @@ The startup script copies missing environment files from examples, prepares Dock
 Default local endpoints:
 
 - Web and API gateway: `http://localhost:2679`
-- PostgreSQL: `localhost:15432`
-- Redis: `localhost:16379`
-- Neo4j HTTP: `http://localhost:17474`
-- Neo4j Bolt: `bolt://localhost:17687`
+- PostgreSQL: `localhost:5432`
+- Redis: `localhost:6379`
+- Neo4j HTTP: `http://localhost:7474`
+- Neo4j Bolt: `bolt://localhost:7687`
 
 The application services use internal container ports only:
 

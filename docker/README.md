@@ -60,10 +60,10 @@ That applies recommended build mirrors for the current run while keeping service
 Local default endpoints:
 
 - Web and API gateway: `http://localhost:${PUBLIC_PORT:-2679}`
-- PostgreSQL: `localhost:${HOST_POSTGRES_PORT:-15432}`
-- Redis: `localhost:${HOST_REDIS_PORT:-16379}`
-- Neo4j HTTP: `http://localhost:${HOST_NEO4J_HTTP_PORT:-17474}`
-- Neo4j Bolt: `localhost:${HOST_NEO4J_BOLT_PORT:-17687}`
+- PostgreSQL: `localhost:${HOST_POSTGRES_PORT:-5432}`
+- Redis: `localhost:${HOST_REDIS_PORT:-6379}`
+- Neo4j HTTP: `http://localhost:${HOST_NEO4J_HTTP_PORT:-7474}`
+- Neo4j Bolt: `localhost:${HOST_NEO4J_BOLT_PORT:-7687}`
 
 Internal service ports:
 
