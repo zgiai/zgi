@@ -6,6 +6,7 @@ Current checks:
 
 - Repository hygiene checks from `make check-open-source`
 - API targeted Go tests for migrations, SQL metadata, workflow, model gateway, and content parsing packages
+- PostgreSQL migration smoke test against a fresh database
 - Runner targeted Go tests
 - Web lint and TypeScript checks
 
