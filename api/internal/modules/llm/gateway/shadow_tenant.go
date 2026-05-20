@@ -22,7 +22,7 @@ func GetShadowOrganizationID(ctx context.Context, db *gorm.DB, organizationID uu
 		SELECT 
 			w.organization_id,
 			CASE WHEN o.id IS NOT NULL THEN true ELSE false END as is_organization
-		FROM (SELECT ? as id) t
+		FROM (SELECT ?::uuid as id) t
 		LEFT JOIN workspaces w ON w.id = t.id
 		LEFT JOIN organizations o ON o.id = t.id
 		LIMIT 1

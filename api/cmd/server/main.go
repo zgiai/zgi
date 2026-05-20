@@ -8,9 +8,9 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/bootstrap/fxapp"
-	"github.com/zgiai/zgi/api/internal/migrationsseed"
-	"github.com/zgiai/zgi/api/internal/migrationsv2"
+	"github.com/zgiai/zgi/api/internal/migrations"
 	_ "github.com/zgiai/zgi/api/internal/modules/payment"
+	"github.com/zgiai/zgi/api/internal/seeders"
 	"github.com/zgiai/zgi/api/pkg/database"
 )
 
@@ -25,7 +25,9 @@ func main() {
 		Short: "ZGI API Server",
 	}
 
-	seedOpts := migrationsseed.SeedOptions{}
+	seedOpts := seeders.SeedOptions{}
+	migrateOpts := migrations.RunOptions{}
+	rollbackOpts := migrations.RollbackOptions{}
 
 	// Add start command (contains original functionality)
 	rootCmd.AddCommand(&cobra.Command{
@@ -37,29 +39,64 @@ func main() {
 	})
 
 	// Add migrate command
-	rootCmd.AddCommand(&cobra.Command{
+	migrateCmd := &cobra.Command{
 		Use:   "migrate",
 		Short: "Run database migrations",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return migrationsv2.Run()
+			if migrateOpts.DryRun {
+				return migrations.PrintStatus()
+			}
+			if migrateOpts.NoLock {
+				cfg, err := config.Load()
+				if err != nil {
+					return err
+				}
+				db, err := database.InitDB(cfg.Database)
+				if err != nil {
+					return err
+				}
+				return migrations.RunWithOptions(db, migrateOpts)
+			}
+			return migrations.Run()
+		},
+	}
+	migrateCmd.Flags().BoolVar(&migrateOpts.DryRun, "pretend", false, "Show migration status without applying changes")
+	migrateCmd.Flags().BoolVar(&migrateOpts.NoLock, "no-lock", false, "Run without the PostgreSQL migration advisory lock")
+	rootCmd.AddCommand(migrateCmd)
+
+	rootCmd.AddCommand(&cobra.Command{
+		Use:   "migrate:status",
+		Short: "Show database migration status",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return migrations.PrintStatus()
 		},
 	})
 
-	// Add migrate:rollback command
-	rootCmd.AddCommand(&cobra.Command{
+	rollbackCmd := &cobra.Command{
 		Use:   "migrate:rollback",
 		Short: "Rollback the last database migration",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return migrationsv2.Rollback()
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			db, err := database.InitDB(cfg.Database)
+			if err != nil {
+				return err
+			}
+			return migrations.RollbackWithOptions(db, rollbackOpts)
 		},
-	})
+	}
+	rollbackCmd.Flags().StringVar(&rollbackOpts.ConfirmID, "confirm", "", "Confirm the exact latest applied migration ID to roll back")
+	rollbackCmd.Flags().BoolVar(&rollbackOpts.NoLock, "no-lock", false, "Run without the PostgreSQL migration advisory lock; requires ZGI_UNSAFE_NO_MIGRATION_LOCK=1")
+	rootCmd.AddCommand(rollbackCmd)
 
 	seedCmd := &cobra.Command{
 		Use:   "seed",
 		Short: "Execute seed data",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if seedOpts.ListOnly {
-				files, err := migrationsseed.ListSeedFiles(seedOpts.Env)
+				files, err := seeders.ListSeedFiles(seedOpts.Env)
 				if err != nil {
 					return err
 				}
@@ -73,7 +110,7 @@ func main() {
 				return nil
 			}
 
-			if err := migrationsseed.RunSeed(context.Background(), seedOpts); err != nil {
+			if err := seeders.RunSeed(context.Background(), seedOpts); err != nil {
 				return err
 			}
 

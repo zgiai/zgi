@@ -9,8 +9,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"plugin_runner/internal/plugin"
-	"plugin_runner/internal/storage"
+	"github.com/zgiai/zgi/runner/internal/plugin"
+	"github.com/zgiai/zgi/runner/internal/storage"
 )
 
 // Store implements storage.Store using the local filesystem.

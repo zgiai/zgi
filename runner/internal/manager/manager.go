@@ -16,14 +16,14 @@ import (
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 
-	"plugin_runner/internal/cache"
-	"plugin_runner/internal/callback"
-	"plugin_runner/internal/config"
-	"plugin_runner/internal/dataplane"
-	"plugin_runner/internal/plugin"
-	"plugin_runner/internal/protocol"
-	"plugin_runner/internal/runtime"
-	"plugin_runner/internal/storage"
+	"github.com/zgiai/zgi/runner/internal/cache"
+	"github.com/zgiai/zgi/runner/internal/callback"
+	"github.com/zgiai/zgi/runner/internal/config"
+	"github.com/zgiai/zgi/runner/internal/dataplane"
+	"github.com/zgiai/zgi/runner/internal/plugin"
+	"github.com/zgiai/zgi/runner/internal/protocol"
+	"github.com/zgiai/zgi/runner/internal/runtime"
+	"github.com/zgiai/zgi/runner/internal/storage"
 )
 
 type tenantCtxKey struct{}

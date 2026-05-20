@@ -9,7 +9,7 @@ import (
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 
-	"plugin_runner/internal/config"
+	"github.com/zgiai/zgi/runner/internal/config"
 )
 
 type connectionParams struct {

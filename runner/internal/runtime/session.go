@@ -10,9 +10,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"plugin_runner/internal/invoke"
-	"plugin_runner/internal/plugin"
-	"plugin_runner/internal/protocol"
+	"github.com/zgiai/zgi/runner/internal/invoke"
+	"github.com/zgiai/zgi/runner/internal/plugin"
+	"github.com/zgiai/zgi/runner/internal/protocol"
 )
 
 // Session tracks the lifecycle of one plugin process.

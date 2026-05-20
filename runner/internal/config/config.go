@@ -83,7 +83,7 @@ type Config struct {
 	RedisDialTimeout      time.Duration `envconfig:"REDIS_DIAL_TIMEOUT" default:"5s"`
 	RedisReadTimeout      time.Duration `envconfig:"REDIS_READ_TIMEOUT" default:"3s"`
 	RedisWriteTimeout     time.Duration `envconfig:"REDIS_WRITE_TIMEOUT" default:"3s"`
-	RedisKeyPrefix        string        `envconfig:"REDIS_KEY_PREFIX" default:"plugin_runner"`
+	RedisKeyPrefix        string        `envconfig:"REDIS_KEY_PREFIX" default:"runner"`
 
 	// Proxy settings forwarded to the child process.
 	HTTPProxy  string `envconfig:"HTTP_PROXY"`

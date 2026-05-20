@@ -19,13 +19,13 @@ import (
 
 	"go.uber.org/zap"
 
-	"plugin_runner/internal/config"
-	"plugin_runner/internal/manager"
-	"plugin_runner/internal/plugin"
-	"plugin_runner/internal/registry"
-	"plugin_runner/internal/runtime"
-	"plugin_runner/internal/runtime/local"
-	"plugin_runner/internal/storage"
+	"github.com/zgiai/zgi/runner/internal/config"
+	"github.com/zgiai/zgi/runner/internal/manager"
+	"github.com/zgiai/zgi/runner/internal/plugin"
+	"github.com/zgiai/zgi/runner/internal/registry"
+	"github.com/zgiai/zgi/runner/internal/runtime"
+	"github.com/zgiai/zgi/runner/internal/runtime/local"
+	"github.com/zgiai/zgi/runner/internal/storage"
 )
 
 // TestE2E_UVEchoPlugin tests the complete lifecycle of the uv-echo plugin:

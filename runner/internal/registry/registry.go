@@ -12,8 +12,8 @@ import (
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 
-	"plugin_runner/internal/dataplane"
-	"plugin_runner/internal/plugin"
+	"github.com/zgiai/zgi/runner/internal/dataplane"
+	"github.com/zgiai/zgi/runner/internal/plugin"
 )
 
 // Registry stores plugin manifests in DB/Redis (if configured) with an in-memory fallback.
@@ -47,7 +47,7 @@ func New(conns *dataplane.Connections, log *zap.Logger) *Registry {
 func (r *Registry) Save(ctx context.Context, manifest plugin.Manifest) (*plugin.Manifest, error) {
 	key := manifestKey(manifest)
 	if key == "" {
-		return nil, fmt.Errorf("manifest must include author, name,version or id")
+		return nil, fmt.Errorf("manifest must include name and version, or id")
 	}
 
 	if manifest.ID == "" {
@@ -66,14 +66,18 @@ func (r *Registry) Save(ctx context.Context, manifest plugin.Manifest) (*plugin.
 	}
 
 	if r.cache != nil {
-		if err := r.cache.Set(ctx, cacheKey(key), payload, 0).Err(); err != nil {
-			r.log.Warn("set manifest cache failed", zap.String("key", key), zap.Error(err))
+		for _, alias := range manifestKeys(manifest) {
+			if err := r.cache.Set(ctx, cacheKey(alias), payload, 0).Err(); err != nil {
+				r.log.Warn("set manifest cache failed", zap.String("key", alias), zap.Error(err))
+			}
 		}
 	}
 
 	r.mu.Lock()
-	// TODO: this uses a plain map for now and should be improved later
-	r.memory[key] = manifest
+	for _, alias := range manifestKeys(manifest) {
+		// TODO: this uses a plain map for now and should be improved later
+		r.memory[alias] = manifest
+	}
 	r.mu.Unlock()
 	return &manifest, nil
 }
@@ -220,15 +224,49 @@ func (r *Registry) getFromCache(ctx context.Context, key string) (*plugin.Manife
 }
 
 func manifestKey(m plugin.Manifest) string {
-	if strings.TrimSpace(m.ID) != "" {
-		return normalizeKey(m.ID)
-	}
-	if strings.TrimSpace(m.Name) == "" || strings.TrimSpace(m.Version) == "" || strings.TrimSpace(m.Author) == "" {
+	keys := manifestKeys(m)
+	if len(keys) == 0 {
 		return ""
 	}
-	// Generate key in format: author:name:version
-	return fmt.Sprintf("%s:%s:%s", strings.TrimSpace(m.Author), strings.TrimSpace(m.Name), strings.TrimSpace(m.Version))
+	return keys[0]
+}
 
+func manifestKeys(m plugin.Manifest) []string {
+	var keys []string
+	if id := strings.TrimSpace(m.ID); id != "" {
+		keys = append(keys, normalizeKey(id))
+	}
+
+	name := strings.TrimSpace(m.Name)
+	version := strings.TrimSpace(m.Version)
+	if name == "" || version == "" {
+		return dedupeKeys(keys)
+	}
+
+	if author := strings.TrimSpace(m.Author); author != "" {
+		keys = append(keys, fmt.Sprintf("%s:%s:%s", author, name, version))
+	}
+
+	// Keep accepting the historical name:version key for older API clients.
+	keys = append(keys, fmt.Sprintf("%s:%s", name, version))
+	return dedupeKeys(keys)
+}
+
+func dedupeKeys(keys []string) []string {
+	seen := make(map[string]struct{}, len(keys))
+	out := make([]string, 0, len(keys))
+	for _, key := range keys {
+		key = normalizeKey(key)
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, key)
+	}
+	return out
 }
 
 func normalizeKey(key string) string {
@@ -277,10 +315,24 @@ func (r *Registry) findRecordByKey(ctx context.Context, key string) (*dataplane.
 	if err == nil {
 		return rec, true, nil
 	}
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, false, nil
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, false, err
 	}
-	return nil, false, err
+
+	if parts := strings.Split(key, ":"); len(parts) == 2 {
+		var rec dataplane.PluginRecord
+		err = r.db.WithContext(ctx).
+			Where("name = ? AND version = ?", parts[0], parts[1]).
+			First(&rec).Error
+		if err == nil {
+			return &rec, true, nil
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, false, err
+		}
+	}
+
+	return nil, false, nil
 }
 
 func (r *Registry) getRecordByField(ctx context.Context, field, value string) (*dataplane.PluginRecord, error) {

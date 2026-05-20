@@ -4,8 +4,8 @@ import (
 	"go.uber.org/fx"
 	"go.uber.org/zap"
 
-	"plugin_runner/internal/config"
-	"plugin_runner/internal/runtime"
+	"github.com/zgiai/zgi/runner/internal/config"
+	"github.com/zgiai/zgi/runner/internal/runtime"
 )
 
 // Module exposes the local runtime as the default runtime.Runtime implementation.

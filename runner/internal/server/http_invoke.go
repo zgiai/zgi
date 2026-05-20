@@ -8,7 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"plugin_runner/internal/protocol"
+	"github.com/zgiai/zgi/runner/internal/protocol"
 )
 
 // InvokeRequest is the payload for invoke API calls.

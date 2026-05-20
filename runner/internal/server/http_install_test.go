@@ -19,12 +19,12 @@ import (
 
 	"go.uber.org/zap"
 
-	"plugin_runner/internal/config"
-	"plugin_runner/internal/manager"
-	"plugin_runner/internal/plugin"
-	"plugin_runner/internal/registry"
-	"plugin_runner/internal/runtime"
-	"plugin_runner/internal/storage"
+	"github.com/zgiai/zgi/runner/internal/config"
+	"github.com/zgiai/zgi/runner/internal/manager"
+	"github.com/zgiai/zgi/runner/internal/plugin"
+	"github.com/zgiai/zgi/runner/internal/registry"
+	"github.com/zgiai/zgi/runner/internal/runtime"
+	"github.com/zgiai/zgi/runner/internal/storage"
 )
 
 // mockStore implements storage.Store for testing.
@@ -475,7 +475,7 @@ func TestAPI_InstallRegexPlugin(t *testing.T) {
 	}
 
 	// Locate the regex plugin directory
-	regexPluginDir := filepath.Join("..", "..", "examples", "regex", "langgenius-regex_0.0.3")
+	regexPluginDir := filepath.Join("..", "..", "examples", "regex", "zgi-regex_0.0.3")
 	if _, err := os.Stat(regexPluginDir); os.IsNotExist(err) {
 		t.Skipf("regex plugin not found at %s", regexPluginDir)
 	}
@@ -487,7 +487,7 @@ func TestAPI_InstallRegexPlugin(t *testing.T) {
 		"manifest": map[string]interface{}{
 			"name":    "regex",
 			"version": "0.0.3",
-			"author":  "langgenius",
+			"author":  "zgi",
 			"runner": map[string]interface{}{
 				"language":   "python",
 				"entrypoint": "main",

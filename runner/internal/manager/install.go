@@ -14,8 +14,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"plugin_runner/internal/config"
-	"plugin_runner/internal/plugin"
+	"github.com/zgiai/zgi/runner/internal/config"
+	"github.com/zgiai/zgi/runner/internal/plugin"
 )
 
 func (m *Manager) installDependencies(ctx context.Context, manifest plugin.Manifest, workdir string) error {

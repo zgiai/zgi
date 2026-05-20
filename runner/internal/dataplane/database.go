@@ -14,7 +14,7 @@ import (
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
 
-	"plugin_runner/internal/config"
+	"github.com/zgiai/zgi/runner/internal/config"
 )
 
 func initDatabase(cfg *config.Config, log *zap.Logger) (*gorm.DB, *sql.DB, error) {

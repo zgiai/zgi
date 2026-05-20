@@ -48,6 +48,21 @@ while IFS= read -r path; do
   [ -z "$path" ] && continue
   [ -f "$path" ] || continue
 
+  case "$path" in
+    api/cmd/reset_db/*)
+      echo "open-source-check: global database reset command is not allowed: $path" >&2
+      echo "  Open-source builds must not include commands that drop or wipe all user data." >&2
+      failures=$((failures + 1))
+      continue
+      ;;
+    api/internal/migrationsv2/*|api/pkg/database/migrations/*|api/internal/migrations/m[0-9]*.go|api/internal/migrations/ids.go|api/internal/migrations/lineage.go)
+      echo "open-source-check: retired migration path is not allowed: $path" >&2
+      echo "  Use api/internal/migrations for schema migrations or api/internal/seeders for seed data." >&2
+      failures=$((failures + 1))
+      continue
+      ;;
+  esac
+
   if is_binary_extension "$path" && ! allowed_binary "$path"; then
     echo "open-source-check: binary file is not allowed: $path" >&2
     echo "  Add a justified exception to .github/allowed-binaries.txt if this is intentional." >&2
@@ -75,10 +90,28 @@ done < <(list_files)
 if [ "${#scan_targets[@]}" -gt 0 ]; then
   if rg -n --hidden --glob '!.git' --glob '!node_modules' --glob '!web/.next' \
     --glob '!scripts/check-open-source.sh' \
-    '(/Users/[^[:space:]"'"'"']+|GolandProjects|zgi-pre|git@github|CLAUDE|Claude Code|Windsurf|\.codex|\.cursorrules|internal channel|placeholder and should be updated)' \
+    '(/Users/[^[:space:]"'"'"']+|GolandProjects|zgi-pre|git@github|CLAUDE|Claude Code|Windsurf|\.codex|\.cursorrules|internal channel|placeholder and should be updated|Secrets 调试|self-hosted runner|FEISHU_WEBHOOK_URL)' \
     "${scan_targets[@]}"; then
     echo "open-source-check: remove local/private/tooling references above" >&2
     failures=$((failures + 1))
+  fi
+
+  command_targets=()
+  for path in "${scan_targets[@]}"; do
+    case "$path" in
+      Makefile|*/Makefile|dev/*|docker/*|scripts/*|api/cmd/*|README.md|api/README.md|web/README.md)
+        [ "$path" = "scripts/check-open-source.sh" ] && continue
+        command_targets+=("$path")
+        ;;
+    esac
+  done
+  if [ "${#command_targets[@]}" -gt 0 ]; then
+    if rg -n --hidden \
+      '(DROP SCHEMA public CASCADE|DROP DATABASE|Database reset successful|migrate:fresh|db:fresh|db:reset|reset_db|docker compose[^[:cntrl:]]* down -v)' \
+      "${command_targets[@]}"; then
+      echo "open-source-check: global database reset/fresh commands are not allowed" >&2
+      failures=$((failures + 1))
+    fi
   fi
 
   if rg -n --hidden --glob '!.git' --glob '!node_modules' --glob '!web/.next' \
@@ -102,6 +135,37 @@ if [ "${#scan_targets[@]}" -gt 0 ]; then
       echo "open-source-check: SQLite-backed Go tests are not allowed; use Postgres-compatible tests instead" >&2
       failures=$((failures + 1))
     fi
+  fi
+
+  declare -a migration_targets=()
+  for path in "${scan_targets[@]}"; do
+    case "$path" in
+      api/internal/migrations/[0-9]*.go)
+        migration_targets+=("$path")
+        ;;
+    esac
+  done
+  if [ "${#migration_targets[@]}" -gt 0 ]; then
+    for path in "${migration_targets[@]}"; do
+      [ "$path" = "api/internal/migrations/20260520000000_initial_schema.go" ] && continue
+      file_id="$(basename "$path" .go)"
+      if ! [[ "$file_id" =~ ^[0-9]{14}([0-9]{2})?_[a-z0-9_]+$ ]]; then
+        echo "open-source-check: migration file must use timestamp_slug naming: $path" >&2
+        failures=$((failures + 1))
+      fi
+      if ! grep -Fq "\"$file_id\"" "$path"; then
+        echo "open-source-check: migration filename must match migration ID: $path" >&2
+        failures=$((failures + 1))
+      fi
+      if grep -Eq 'registerMigration\(' "$path"; then
+        echo "open-source-check: migrations must use registerSchemaMigration: $path" >&2
+        failures=$((failures + 1))
+      fi
+      if grep -Eq 'AllowDestructive\(' "$path"; then
+        echo "open-source-check: migration files must not call AllowDestructive directly: $path" >&2
+        failures=$((failures + 1))
+      fi
+    done
   fi
 fi
 

@@ -1,21 +1,52 @@
-MIT License
+ZGI Community License
+Version 1.0
 
-Copyright (c) 2025 Llamacto Team
+Copyright (c) 2026 ZGI
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+ZGI is licensed under the Apache License 2.0 with the additional conditions
+below. If these conditions conflict with the Apache License 2.0, these
+conditions apply.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. Free Use
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE. 
+You may use, modify, and deploy ZGI free of charge for personal, research,
+educational, and internal organizational use.
+
+You may modify ZGI for your permitted use, provided that you do not remove,
+hide, replace, or modify ZGI branding or attribution in the official ZGI
+frontend.
+
+You may also use ZGI as a backend or API inside your own products, provided
+that the official ZGI frontend is not exposed as your product.
+
+2. Commercial License
+
+You need a separate commercial license from ZGI before you:
+
+(a) operate ZGI as a hosted multi-tenant service for unrelated third-party
+organizations;
+
+(b) remove, hide, replace, or modify the ZGI logo, product name, copyright
+notices, or other attribution shown in the official ZGI frontend or official
+ZGI Docker images;
+
+(c) distribute, resell, or offer ZGI or a modified version of ZGI as a
+white-label or standalone product under your own brand.
+
+To request a commercial license, contact business@zgi.ai.
+
+3. Contributions
+
+By submitting a contribution to ZGI, you agree that your contribution may be
+used in both community and commercial versions of ZGI. You confirm that you
+have the right to submit the contribution.
+
+4. Trademarks and Warranty
+
+"ZGI" and the ZGI logo are trademarks of ZGI. This license does not grant
+trademark rights except for reasonable reference to the project.
+
+ZGI is provided "as is", without warranty of any kind.
+
+All other terms follow the Apache License 2.0:
+https://www.apache.org/licenses/LICENSE-2.0

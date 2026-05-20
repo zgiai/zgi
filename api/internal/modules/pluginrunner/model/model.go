@@ -98,7 +98,7 @@ type StartSessionRequest struct {
 	TenantID   uint              `json:"tenant_id,omitempty"`
 }
 
-// SessionMetadata carries optional lifecycle metadata echoed by plugin-runner.
+// SessionMetadata carries optional lifecycle metadata echoed by runner.
 type SessionMetadata struct {
 	WorkflowRunID             string `json:"workflow_run_id,omitempty"`
 	SessionPolicy             string `json:"session_policy,omitempty"`

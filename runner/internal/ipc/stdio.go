@@ -6,7 +6,7 @@ import (
 	"io"
 	"sync"
 
-	"plugin_runner/internal/protocol"
+	"github.com/zgiai/zgi/runner/internal/protocol"
 )
 
 // StdIO manages bidirectional communication with a plugin process.

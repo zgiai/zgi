@@ -12,10 +12,10 @@ import (
 
 	"go.uber.org/zap"
 
-	"plugin_runner/internal/ipc"
-	"plugin_runner/internal/plugin"
-	"plugin_runner/internal/protocol"
-	"plugin_runner/internal/runtime"
+	"github.com/zgiai/zgi/runner/internal/ipc"
+	"github.com/zgiai/zgi/runner/internal/plugin"
+	"github.com/zgiai/zgi/runner/internal/protocol"
+	"github.com/zgiai/zgi/runner/internal/runtime"
 )
 
 // Config represents knobs for the local runtime.

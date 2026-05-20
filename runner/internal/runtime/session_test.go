@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"plugin_runner/internal/plugin"
+	"github.com/zgiai/zgi/runner/internal/plugin"
 )
 
 func TestSessionSnapshotMetadataAndLastActivity(t *testing.T) {

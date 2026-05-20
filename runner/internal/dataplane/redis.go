@@ -10,7 +10,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
-	"plugin_runner/internal/config"
+	"github.com/zgiai/zgi/runner/internal/config"
 )
 
 func initRedis(cfg *config.Config, log *zap.Logger) (redis.UniversalClient, error) {

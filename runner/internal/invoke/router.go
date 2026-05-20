@@ -11,7 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"plugin_runner/internal/protocol"
+	"github.com/zgiai/zgi/runner/internal/protocol"
 )
 
 var (

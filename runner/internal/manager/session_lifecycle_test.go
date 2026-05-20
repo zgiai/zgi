@@ -8,7 +8,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"plugin_runner/internal/runtime"
+	"github.com/zgiai/zgi/runner/internal/runtime"
 )
 
 type controllableRuntime struct {

@@ -172,7 +172,7 @@ func buildTenantPluginResponse(info model.InstalledPluginInfo, status string) dt
 		Name:        info.PluginName,
 		Version:     info.PluginVersion,
 		Description: description,
-		Language:    "plugin-runner",
+		Language:    "runner",
 		Tags:        tags,
 		Enabled:     status == model.InstallationStatusActive,
 	}

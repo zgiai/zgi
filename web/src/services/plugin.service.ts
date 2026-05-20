@@ -29,7 +29,7 @@ class PluginService extends BaseService {
 
   /**
    * Install a plugin from marketplace for the current workspace
-   * POST /console/api/workspaces/current/plugin-runner/management/plugins/install-from-marketplace
+   * POST /console/api/workspaces/current/runner/management/plugins/install-from-marketplace
    */
   installPluginFromMarketplace(data: {
     plugin_id: string;
@@ -37,25 +37,25 @@ class PluginService extends BaseService {
   }): Promise<ApiResponseData<{ result: string }>> {
     return this.request(
       'post',
-      '/current/plugin-runner/management/plugins/install-from-marketplace',
+      '/current/runner/management/plugins/install-from-marketplace',
       data
     );
   }
 
   /**
    * Get installed plugins for the current workspace
-   * GET /console/api/workspaces/current/plugin-runner/management/plugins/installed
+   * GET /console/api/workspaces/current/runner/management/plugins/installed
    */
   getInstalledPlugins(): Promise<ApiResponseData<InstalledPlugin[]>> {
-    return this.request('get', '/current/plugin-runner/management/plugins/installed');
+    return this.request('get', '/current/runner/management/plugins/installed');
   }
 
   /**
    * Uninstall a plugin by version ID from the current workspace
-   * DELETE /console/api/workspaces/current/plugin-runner/management/plugins/:id
+   * DELETE /console/api/workspaces/current/runner/management/plugins/:id
    */
   uninstallPluginByVersionId(versionId: string): Promise<ApiResponseData<UninstallResult>> {
-    return this.request('delete', `/current/plugin-runner/management/plugins/${versionId}`);
+    return this.request('delete', `/current/runner/management/plugins/${versionId}`);
   }
 
   /**

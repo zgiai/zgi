@@ -3,9 +3,9 @@ package storagefx
 import (
 	"go.uber.org/fx"
 
-	"plugin_runner/internal/config"
-	"plugin_runner/internal/storage"
-	localstore "plugin_runner/internal/storage/local"
+	"github.com/zgiai/zgi/runner/internal/config"
+	"github.com/zgiai/zgi/runner/internal/storage"
+	localstore "github.com/zgiai/zgi/runner/internal/storage/local"
 )
 
 // Module wires the storage implementation into Fx.

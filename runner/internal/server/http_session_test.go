@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"testing"
 
-	"plugin_runner/internal/runtime"
+	"github.com/zgiai/zgi/runner/internal/runtime"
 )
 
 func TestAPI_LaunchSession_MetadataHeaders(t *testing.T) {

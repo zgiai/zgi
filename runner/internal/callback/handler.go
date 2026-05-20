@@ -12,7 +12,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"plugin_runner/internal/protocol"
+	"github.com/zgiai/zgi/runner/internal/protocol"
 )
 
 // Handler processes callback requests from plugins.

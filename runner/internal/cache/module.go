@@ -3,8 +3,8 @@ package cache
 import (
 	"go.uber.org/fx"
 
-	"plugin_runner/internal/config"
-	"plugin_runner/internal/dataplane"
+	"github.com/zgiai/zgi/runner/internal/config"
+	"github.com/zgiai/zgi/runner/internal/dataplane"
 )
 
 // Module provides a cache client if Redis is configured.

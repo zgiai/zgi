@@ -1,289 +1,156 @@
 package migrations
 
-import "testing"
+import (
+	"io/fs"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
 
-func TestAllMigrationsIncludesCredentialsCompatibility(t *testing.T) {
-	targetID := "20260306000124"
+	"github.com/zgiai/zgi/api/internal/migrations/baseline"
+)
 
-	for _, m := range allMigrations() {
-		if m.ID == targetID {
-			return
-		}
+func TestAllMigrationsStartsAtPublicInitialSchema(t *testing.T) {
+	got := allMigrations()
+	if len(got) != 1 {
+		t.Fatalf("expected one public baseline migration, got %d", len(got))
 	}
-
-	t.Fatalf("expected migration %s to be registered in allMigrations()", targetID)
+	if got[0].ID != initialSchemaMigrationID {
+		t.Fatalf("expected initial migration %s, got %s", initialSchemaMigrationID, got[0].ID)
+	}
 }
 
-func TestAllMigrationsIncludesRouteCredentialFKCompatibility(t *testing.T) {
-	targetID := "20260306000125"
-
-	for _, m := range allMigrations() {
-		if m.ID == targetID {
-			return
+func TestRegisteredMigrationsAreValid(t *testing.T) {
+	migrations := allMigrations()
+	seen := make(map[string]struct{}, len(migrations))
+	for _, migration := range migrations {
+		if !migrationIDPattern.MatchString(migration.ID) {
+			t.Fatalf("migration ID %q must match YYYYMMDDHHMMSS_slug", migration.ID)
 		}
-	}
-
-	t.Fatalf("expected migration %s to be registered in allMigrations()", targetID)
-}
-
-func TestAllMigrationsIncludesSubscriptionPlanSeedBackfill(t *testing.T) {
-	targetID := "20260306000126"
-
-	for _, m := range allMigrations() {
-		if m.ID == targetID {
-			return
+		if migration.Migrate == nil {
+			t.Fatalf("migration %s has nil Migrate function", migration.ID)
 		}
-	}
-
-	t.Fatalf("expected migration %s to be registered in allMigrations()", targetID)
-}
-
-func TestAllMigrationsIncludesOrganizationAPIKeysCompatibility(t *testing.T) {
-	targetID := "20260306000127"
-
-	for _, m := range allMigrations() {
-		if m.ID == targetID {
-			return
+		if _, exists := seen[migration.ID]; exists {
+			t.Fatalf("duplicate migration ID %s", migration.ID)
 		}
+		seen[migration.ID] = struct{}{}
 	}
-
-	t.Fatalf("expected migration %s to be registered in allMigrations()", targetID)
-}
-
-func TestAllMigrationsIncludesChannelWalletCompatibility(t *testing.T) {
-	targetID := "20260306000128"
-
-	for _, m := range allMigrations() {
-		if m.ID == targetID {
-			return
-		}
-	}
-
-	t.Fatalf("expected migration %s to be registered in allMigrations()", targetID)
-}
-
-func TestAllMigrationsIncludesOfficialRouteConstraintCompatibility(t *testing.T) {
-	targetID := "20260306000129"
-
-	for _, m := range allMigrations() {
-		if m.ID == targetID {
-			return
-		}
-	}
-
-	t.Fatalf("expected migration %s to be registered in allMigrations()", targetID)
-}
-
-func TestAllMigrationsIncludesOfficialModelSnapshot(t *testing.T) {
-	targetID := "20260306000130"
-
-	for _, m := range allMigrations() {
-		if m.ID == targetID {
-			return
-		}
-	}
-
-	t.Fatalf("expected migration %s to be registered in allMigrations()", targetID)
-}
-
-func TestAllMigrationsIncludesWorkspaceAndGatewayKeyStatisticsCompatibility(t *testing.T) {
-	targetID := "20260309000131"
-
-	for _, m := range allMigrations() {
-		if m.ID == targetID {
-			return
-		}
-	}
-
-	t.Fatalf("expected migration %s to be registered in allMigrations()", targetID)
-}
-
-func TestAllMigrationsIncludesToolFilesSchemaAlignment(t *testing.T) {
-	targetID := "202603150134"
-
-	for _, m := range allMigrations() {
-		if m.ID == targetID {
-			return
-		}
-	}
-
-	t.Fatalf("expected migration %s to be registered in allMigrations()", targetID)
-}
-
-func TestAllMigrationsIncludesAccountSSOIdentityFields(t *testing.T) {
-	targetID := migration0135ID
-
-	for _, m := range allMigrations() {
-		if m.ID == targetID {
-			return
-		}
-	}
-
-	t.Fatalf("expected migration %s to be registered in allMigrations()", targetID)
-}
-
-func TestAllMigrationsIncludesSupportedParametersNormalization(t *testing.T) {
-	targetID := migration0137ID
-
-	for _, m := range allMigrations() {
-		if m.ID == targetID {
-			return
-		}
-	}
-
-	t.Fatalf("expected migration %s to be registered in allMigrations()", targetID)
-}
-
-func TestAllMigrationsIncludesCustomModelsRuntimeCompatibilityFix(t *testing.T) {
-	targetID := migration0138ID
-
-	for _, m := range allMigrations() {
-		if m.ID == targetID {
-			return
-		}
-	}
-
-	t.Fatalf("expected migration %s to be registered in allMigrations()", targetID)
-}
-
-func TestAllMigrationsIncludesLLMForeignKeyDrop(t *testing.T) {
-	targetID := migration0144ID
-
-	for _, m := range allMigrations() {
-		if m.ID == targetID {
-			return
-		}
-	}
-
-	t.Fatalf("expected migration %s to be registered in allMigrations()", targetID)
-}
-
-func TestAllMigrationsIncludesAccountSoftDelete(t *testing.T) {
-	targetID := migration0145ID
-
-	for _, m := range allMigrations() {
-		if m.ID == targetID {
-			return
-		}
-	}
-
-	t.Fatalf("expected migration %s to be registered in allMigrations()", targetID)
-}
-
-func TestAllMigrationsIncludesBootstrapLocks(t *testing.T) {
-	targetID := migration0146ID
-
-	for _, m := range allMigrations() {
-		if m.ID == targetID {
-			return
-		}
-	}
-
-	t.Fatalf("expected migration %s to be registered in allMigrations()", targetID)
-}
-
-func TestAllMigrationsDoesNotRegisterExcelImportJobs(t *testing.T) {
-	const targetID = "20260513000149"
-
-	for _, m := range allMigrations() {
-		if m.ID == targetID {
-			t.Fatalf("legacy migrations must not register Excel import migration %s", targetID)
+	for i := 1; i < len(migrations); i++ {
+		if migrations[i-1].ID > migrations[i].ID {
+			t.Fatalf("migrations must be sorted by ID: %s before %s", migrations[i-1].ID, migrations[i].ID)
 		}
 	}
 }
 
-func TestAllMigrationsIncludesContentParseChunkArtifactSets(t *testing.T) {
-	targetID := migration0157ID
+func TestMigrationFilenameMatchesRegisteredID(t *testing.T) {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve caller path")
+	}
+	root := filepath.Dir(filename)
 
-	for _, m := range allMigrations() {
-		if m.ID == targetID {
-			return
+	for _, migration := range allMigrations() {
+		if migration.ID == initialSchemaMigrationID {
+			continue
+		}
+		path := filepath.Join(root, migration.ID+".go")
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("migration %s must live in %s: %v", migration.ID, path, err)
 		}
 	}
-
-	t.Fatalf("expected migration %s to be registered in allMigrations()", targetID)
 }
 
-func TestAllMigrationsIncludesDataLibraryDocumentAssets(t *testing.T) {
-	targetID := migration0158ID
+func TestInitialSchemaSnapshotLooksComplete(t *testing.T) {
+	text := readInitialSchemaText(t)
 
-	for _, m := range allMigrations() {
-		if m.ID == targetID {
-			return
-		}
+	if count := strings.Count(text, "CREATE TABLE public."); count < 140 {
+		t.Fatalf("expected public baseline to contain at least 140 tables, got %d", count)
 	}
-
-	t.Fatalf("expected migration %s to be registered in allMigrations()", targetID)
+	if count := strings.Count(text, "CREATE VIEW public."); count < 7 {
+		t.Fatalf("expected public baseline to contain compatibility views, got %d", count)
+	}
+	if strings.Contains(text, "CREATE TABLE public.migrations") {
+		t.Fatal("public baseline must not create the gormigrate migrations table")
+	}
+	if strings.Contains(text, "COPY ") || strings.Contains(text, "INSERT INTO ") {
+		t.Fatal("public baseline must be schema-only and must not contain data")
+	}
 }
 
-func TestAllMigrationsIncludesDataLibraryReuseEvents(t *testing.T) {
-	targetID := migration0159ID
-
-	for _, m := range allMigrations() {
-		if m.ID == targetID {
-			return
+func TestInitialSchemaSnapshotIsSafeForExistingData(t *testing.T) {
+	for _, file := range baseline.Files {
+		for _, statement := range file.Statements {
+			normalized := strings.ToUpper(strings.Join(strings.Fields(statement), " "))
+			for _, forbidden := range []string{
+				"DROP TABLE",
+				"DROP SCHEMA",
+				"TRUNCATE ",
+				"DELETE FROM ",
+				"UPDATE ",
+				"ALTER TABLE ONLY PUBLIC.MIGRATIONS",
+			} {
+				if strings.HasPrefix(normalized, forbidden) {
+					t.Fatalf("public baseline must not contain destructive statement %q: %s", forbidden, statementPreview(statement))
+				}
+			}
 		}
 	}
-
-	t.Fatalf("expected migration %s to be registered in allMigrations()", targetID)
 }
 
-func TestAllMigrationsIncludesDataLibraryVectorArtifacts(t *testing.T) {
-	targetID := migration0161ID
-
-	for _, m := range allMigrations() {
-		if m.ID == targetID {
-			return
+func TestInitialSchemaFilesAreOrderedAndPresent(t *testing.T) {
+	if len(baseline.Files) < 5 {
+		t.Fatal("public baseline must be split into ordered schema chunks")
+	}
+	for i, file := range baseline.Files {
+		if file.Name == "" {
+			t.Fatal("initial schema chunk name must not be empty")
+		}
+		if len(file.Statements) == 0 {
+			t.Fatalf("initial schema chunk %s must contain statements", file.Name)
+		}
+		if i > 0 && baseline.Files[i-1].Name >= file.Name {
+			t.Fatalf("initial schema chunks must be listed in execution order: %s before %s", baseline.Files[i-1].Name, file.Name)
 		}
 	}
-
-	t.Fatalf("expected migration %s to be registered in allMigrations()", targetID)
 }
 
-func TestAllMigrationsIncludesDataLibraryProcessingExecutionState(t *testing.T) {
-	targetID := migration0162ID
+func TestNoClosedSourceMigrationHistoryFilesRemain(t *testing.T) {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve caller path")
+	}
+	root := filepath.Dir(filename)
 
-	for _, m := range allMigrations() {
-		if m.ID == targetID {
-			return
+	var historical []string
+	if err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
 		}
+		if entry.IsDir() {
+			return nil
+		}
+		name := entry.Name()
+		if strings.HasPrefix(name, "m") && strings.HasSuffix(name, ".go") {
+			historical = append(historical, filepath.ToSlash(path))
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 
-	t.Fatalf("expected migration %s to be registered in allMigrations()", targetID)
+	if len(historical) > 0 {
+		t.Fatalf("closed-source migration history files must not remain: %s", strings.Join(historical, ", "))
+	}
 }
 
-func TestAllMigrationsIncludesDataLibraryKnowledgeBaseAssetRefs(t *testing.T) {
-	targetID := migration0163ID
+func readInitialSchemaText(t *testing.T) string {
+	t.Helper()
 
-	for _, m := range allMigrations() {
-		if m.ID == targetID {
-			return
-		}
+	var builder strings.Builder
+	for _, file := range baseline.Files {
+		builder.WriteString(strings.Join(file.Statements, "\n"))
+		builder.WriteByte('\n')
 	}
-
-	t.Fatalf("expected migration %s to be registered in allMigrations()", targetID)
-}
-
-func TestAllMigrationsIncludesDataLibraryDatabaseAssetRefs(t *testing.T) {
-	targetID := migration0164ID
-
-	for _, m := range allMigrations() {
-		if m.ID == targetID {
-			return
-		}
-	}
-
-	t.Fatalf("expected migration %s to be registered in allMigrations()", targetID)
-}
-
-func TestAllMigrationsIncludesDataLibraryExtractionArtifacts(t *testing.T) {
-	targetID := migration0165ID
-
-	for _, m := range allMigrations() {
-		if m.ID == targetID {
-			return
-		}
-	}
-
-	t.Fatalf("expected migration %s to be registered in allMigrations()", targetID)
+	return builder.String()
 }

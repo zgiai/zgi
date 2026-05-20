@@ -1,6 +1,6 @@
 # ZGI
 
-ZGI is an open-source platform for building and operating AI applications.
+ZGI is a source-available platform for building and operating AI applications.
 
 It includes a Go backend, a Next.js web console, a sandbox service for code execution, and a runner service for extensible plugin execution. The repository is organized as a monorepo so contributors can run and inspect the full stack from one place.
 
@@ -26,7 +26,6 @@ Repository: https://github.com/zgiai/zgi
 ├── runner/          Plugin execution service
 ├── docker/          Product-level Docker Compose assets
 ├── dev/             Local development scripts
-├── docs/            Public documentation
 ├── scripts/         Maintenance scripts
 ├── Makefile         Common local entry points
 └── README.md
@@ -46,10 +45,16 @@ The web app uses `pnpm@10.12.1`.
 Start the full local stack with Docker:
 
 ```bash
-make dev-docker
+make docker-up
 ```
 
 The startup script copies missing environment files from examples, prepares Docker Compose configuration, and starts the product stack.
+
+If you do not have `make`, run the startup script directly:
+
+```bash
+./dev/start-docker
+```
 
 Default local endpoints:
 
@@ -161,7 +166,6 @@ Source-development helpers are designed for Unix-like shells. Windows contributo
 - Product-level Docker notes: `docker/README.md`
 - Web app notes: `web/README.md`
 - Backend service docs: `api/`
-- Public documentation: `docs/`
 
 ## Project Links
 
@@ -180,4 +184,11 @@ For security-sensitive reports, follow `SECURITY.md`.
 
 ## License
 
-This repository is being prepared for public release. Component license files currently exist under `api/` and `web/`. Add a root license before the first public release so GitHub and downstream users can identify the project license unambiguously.
+ZGI is source-available under the ZGI Community License, based on Apache
+License 2.0 with additional conditions. ZGI is free for personal, research,
+educational, and internal organizational use. Hosted multi-tenant services,
+white-label distribution, and removal of official ZGI branding require a
+commercial license. See `LICENSE` for details.
+
+The Apache License 2.0 text referenced by the ZGI Community License is
+included in `LICENSE-APACHE`.

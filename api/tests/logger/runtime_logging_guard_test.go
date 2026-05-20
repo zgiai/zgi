@@ -17,7 +17,7 @@ var runtimeLoggingGuardRoots = []string{
 
 var runtimeLoggingGuardExcludedDirs = []string{
 	filepath.Join("internal", "migrations"),
-	filepath.Join("internal", "migrationsv2"),
+	filepath.Join("internal", "seeders"),
 }
 
 func TestRuntimeCodeDoesNotPrintLogsToStdout(t *testing.T) {

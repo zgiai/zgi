@@ -1,4 +1,4 @@
-module plugin_runner
+module github.com/zgiai/zgi/runner
 
 go 1.26.2
 

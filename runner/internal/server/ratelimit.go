@@ -8,7 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
-	"plugin_runner/internal/config"
+	"github.com/zgiai/zgi/runner/internal/config"
 )
 
 var (

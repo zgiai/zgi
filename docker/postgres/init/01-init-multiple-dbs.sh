@@ -34,5 +34,5 @@ EOSQL
 
 create_db "$POSTGRES_DB"
 create_db "$POSTGRES_SQL_BASE_DB"
-create_db "$POSTGRES_PLUGIN_RUNNER_DB"
+create_db "${POSTGRES_RUNNER_DB:-${POSTGRES_PLUGIN_RUNNER_DB:-zgi_runner}}"
 create_db "$POSTGRES_SANDBOX_DB"

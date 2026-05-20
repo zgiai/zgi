@@ -16,10 +16,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
-	"plugin_runner/internal/config"
-	"plugin_runner/internal/manager"
-	"plugin_runner/internal/plugin"
-	"plugin_runner/internal/registry"
+	"github.com/zgiai/zgi/runner/internal/config"
+	"github.com/zgiai/zgi/runner/internal/manager"
+	"github.com/zgiai/zgi/runner/internal/plugin"
+	"github.com/zgiai/zgi/runner/internal/registry"
 )
 
 // HTTPServer exposes a lightweight REST API to control plugin sessions.

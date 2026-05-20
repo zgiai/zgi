@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"plugin_runner/internal/plugin"
+	"github.com/zgiai/zgi/runner/internal/plugin"
 )
 
 // Runtime describes the behaviour of a plugin runtime implementation.

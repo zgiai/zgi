@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/catalog/schemas"
 	"github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/types"
@@ -86,10 +87,20 @@ func (s *schemasService) Delete(ctx context.Context, id int64, opts types.Schema
 	if err != nil {
 		return nil, err
 	}
+	if isProtectedSchemaName(existing.Name) {
+		return nil, fmt.Errorf("sqlmeta: refusing to delete protected schema %q", existing.Name)
+	}
 
 	if err := repo.Delete(ctx, id, opts.Cascade); err != nil {
 		return nil, err
 	}
 
 	return existing, nil
+}
+
+func isProtectedSchemaName(name string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(name))
+	return normalized == "public" ||
+		normalized == "information_schema" ||
+		strings.HasPrefix(normalized, "pg_")
 }

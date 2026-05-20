@@ -27,7 +27,7 @@ var (
 )
 
 // Subscribe subscribes the current organization to a plugin
-// POST /workspaces/current/plugin-runner/plugins/:id/subscribe
+// POST /workspaces/current/runner/plugins/:id/subscribe
 func (h *SubscriptionHandler) Subscribe(c *gin.Context) {
 	groupID, err := getOrganizationIDFromContext(c, h.accountService)
 	if err != nil {
@@ -72,7 +72,7 @@ func (h *SubscriptionHandler) Subscribe(c *gin.Context) {
 }
 
 // Unsubscribe removes the current organization's subscription to a plugin
-// DELETE /workspaces/current/plugin-runner/plugins/:id/subscribe
+// DELETE /workspaces/current/runner/plugins/:id/subscribe
 func (h *SubscriptionHandler) Unsubscribe(c *gin.Context) {
 	groupID, err := getOrganizationIDFromContext(c, h.accountService)
 	if err != nil {
@@ -101,7 +101,7 @@ func (h *SubscriptionHandler) Unsubscribe(c *gin.Context) {
 }
 
 // ListSubscriptions lists all subscriptions for the current organization
-// GET /workspaces/current/plugin-runner/plugins/subscribed
+// GET /workspaces/current/runner/plugins/subscribed
 func (h *SubscriptionHandler) ListSubscriptions(c *gin.Context) {
 	groupID, err := getOrganizationIDFromContext(c, h.accountService)
 	if err != nil {
@@ -143,7 +143,7 @@ func (h *SubscriptionHandler) ListSubscriptions(c *gin.Context) {
 }
 
 // IsSubscribed checks if the current organization is subscribed to a plugin
-// GET /workspaces/current/plugin-runner/plugins/:id/subscribed
+// GET /workspaces/current/runner/plugins/:id/subscribed
 func (h *SubscriptionHandler) IsSubscribed(c *gin.Context) {
 	groupID, err := getOrganizationIDFromContext(c, h.accountService)
 	if err != nil {

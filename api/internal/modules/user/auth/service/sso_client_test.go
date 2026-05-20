@@ -55,18 +55,18 @@ func TestNormalizeCasdoorDiscoveryEndpointsUsesConfiguredPortWhenDiscoveryOmitsI
 	t.Parallel()
 
 	discovery := oidcDiscoveryDocument{
-		AuthorizationEndpoint: "http://39.105.179.59/login/oauth/authorize",
-		TokenEndpoint:         "http://39.105.179.59/api/login/oauth/access_token",
-		UserinfoEndpoint:      "http://39.105.179.59/api/userinfo",
-		JWKSURI:               "http://39.105.179.59/.well-known/jwks",
-		Issuer:                "http://39.105.179.59",
+		AuthorizationEndpoint: "http://sso.example.test/login/oauth/authorize",
+		TokenEndpoint:         "http://sso.example.test/api/login/oauth/access_token",
+		UserinfoEndpoint:      "http://sso.example.test/api/userinfo",
+		JWKSURI:               "http://sso.example.test/.well-known/jwks",
+		Issuer:                "http://sso.example.test",
 	}
 
-	got := normalizeCasdoorDiscoveryEndpoints("http://39.105.179.59:8000", discovery)
+	got := normalizeCasdoorDiscoveryEndpoints("http://sso.example.test:8000", discovery)
 
-	require.Equal(t, "http://39.105.179.59:8000/login/oauth/authorize", got.AuthorizationEndpoint)
-	require.Equal(t, "http://39.105.179.59:8000/api/login/oauth/access_token", got.TokenEndpoint)
-	require.Equal(t, "http://39.105.179.59:8000/api/userinfo", got.UserinfoEndpoint)
-	require.Equal(t, "http://39.105.179.59:8000/.well-known/jwks", got.JWKSURI)
-	require.Equal(t, "http://39.105.179.59", got.Issuer)
+	require.Equal(t, "http://sso.example.test:8000/login/oauth/authorize", got.AuthorizationEndpoint)
+	require.Equal(t, "http://sso.example.test:8000/api/login/oauth/access_token", got.TokenEndpoint)
+	require.Equal(t, "http://sso.example.test:8000/api/userinfo", got.UserinfoEndpoint)
+	require.Equal(t, "http://sso.example.test:8000/.well-known/jwks", got.JWKSURI)
+	require.Equal(t, "http://sso.example.test", got.Issuer)
 }

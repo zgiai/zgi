@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help bootstrap setup status env-check env-sync install-hooks check-open-source dev-api dev-web dev-docker docker-down docker-logs
+.PHONY: help bootstrap setup status env-check env-sync install-hooks check-open-source dev-api dev-web dev-docker docker-up docker-down docker-logs
 
 help:
 	@echo "Available commands:"
@@ -11,7 +11,8 @@ help:
 	@echo "  make env-sync    Backup env files and append missing template keys"
 	@echo "  make install-hooks Install repository Git hooks"
 	@echo "  make check-open-source Run open-source hygiene checks"
-	@echo "  make dev-docker  Build and start the full local docker stack"
+	@echo "  make docker-up   Build and start the full local docker stack"
+	@echo "  make dev-docker  Alias of docker-up for local development"
 	@echo "                    Tip: ./dev/start-docker --china uses China mainland build mirrors"
 	@echo "  make docker-down Stop the local docker stack"
 	@echo "  make docker-logs Tail logs from the local docker stack"
@@ -46,6 +47,9 @@ dev-web:
 	@./dev/start-web
 
 dev-docker:
+	@./dev/start-docker
+
+docker-up:
 	@./dev/start-docker
 
 docker-down:

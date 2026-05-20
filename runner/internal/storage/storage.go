@@ -3,7 +3,7 @@ package storage
 import (
 	"context"
 
-	"plugin_runner/internal/plugin"
+	"github.com/zgiai/zgi/runner/internal/plugin"
 )
 
 // Store abstracts how plugin packages are persisted and expanded.

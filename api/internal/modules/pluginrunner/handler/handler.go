@@ -54,7 +54,7 @@ func NewHandler(
 }
 
 // ListPlugins lists all registered plugins
-// GET /workspaces/current/plugin-runner/management/plugins
+// GET /workspaces/current/runner/management/plugins
 func (h *Handler) ListPlugins(c *gin.Context) {
 	plugins, err := h.service.ListPlugins(c.Request.Context())
 	if err != nil {
@@ -76,7 +76,7 @@ func (h *Handler) ListPlugins(c *gin.Context) {
 }
 
 // GetPlugin gets a specific plugin by ID
-// GET /workspaces/current/plugin-runner/management/plugins/:id
+// GET /workspaces/current/runner/management/plugins/:id
 func (h *Handler) GetPlugin(c *gin.Context) {
 	pluginID := c.Param("id")
 	plugin, err := h.service.GetPlugin(c.Request.Context(), pluginID)
@@ -95,7 +95,7 @@ func (h *Handler) GetPlugin(c *gin.Context) {
 }
 
 // RegisterPlugin registers a new plugin
-// POST /workspaces/current/plugin-runner/management/plugins
+// POST /workspaces/current/runner/management/plugins
 func (h *Handler) RegisterPlugin(c *gin.Context) {
 	var req dto.RegisterPluginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -131,7 +131,7 @@ func (h *Handler) RegisterPlugin(c *gin.Context) {
 }
 
 // DeletePlugin removes the organization installation for a plugin version.
-// DELETE /workspaces/current/plugin-runner/management/plugins/:id
+// DELETE /workspaces/current/runner/management/plugins/:id
 // The plugin package remains in the runner unless no organization references it.
 func (h *Handler) DeletePlugin(c *gin.Context) {
 	// The primary API semantics use marketplace_version_id.
@@ -156,7 +156,7 @@ func (h *Handler) DeletePlugin(c *gin.Context) {
 }
 
 // InstallPlugin installs a plugin package (file upload)
-// POST /workspaces/current/plugin-runner/management/plugins/:id/install
+// POST /workspaces/current/runner/management/plugins/:id/install
 func (h *Handler) InstallPlugin(c *gin.Context) {
 	pluginID := c.Param("id")
 	forceStr := c.PostForm("force")
@@ -198,7 +198,7 @@ func (h *Handler) InstallPlugin(c *gin.Context) {
 }
 
 // InstallPluginBase64 installs a plugin package (base64 encoded)
-// POST /workspaces/current/plugin-runner/management/plugins/:id/install-base64
+// POST /workspaces/current/runner/management/plugins/:id/install-base64
 func (h *Handler) InstallPluginBase64(c *gin.Context) {
 	pluginID := c.Param("id")
 
@@ -231,7 +231,7 @@ func (h *Handler) InstallPluginBase64(c *gin.Context) {
 }
 
 // InstallFromMarketplace downloads plugin from Marketplace and installs to Runner
-// POST /workspaces/current/plugin-runner/management/plugins/install-from-marketplace
+// POST /workspaces/current/runner/management/plugins/install-from-marketplace
 // TODO: After successful installation, consider whether to automatically create a subscription record for the organization. No rollback is needed on installation failure (currently subscription and installation are separate).
 func (h *Handler) InstallFromMarketplace(c *gin.Context) {
 	var req dto.InstallFromMarketplaceRequest
@@ -271,7 +271,7 @@ func (h *Handler) InstallFromMarketplace(c *gin.Context) {
 }
 
 // ReinstallFromMarketplace reinstalls plugin from Marketplace and updates declaration
-// POST /workspaces/current/plugin-runner/management/plugins/reinstall-from-marketplace
+// POST /workspaces/current/runner/management/plugins/reinstall-from-marketplace
 func (h *Handler) ReinstallFromMarketplace(c *gin.Context) {
 	var req dto.InstallFromMarketplaceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -319,7 +319,7 @@ func (h *Handler) ReinstallFromMarketplace(c *gin.Context) {
 }
 
 // ListInstalledPlugins lists all installed plugins
-// GET /workspaces/current/plugin-runner/management/plugins/installed
+// GET /workspaces/current/runner/management/plugins/installed
 func (h *Handler) ListInstalledPlugins(c *gin.Context) {
 	if h.installService != nil && h.infoRepo != nil {
 		organizationID, err := getOrganizationIDFromContext(c, h.accountService)
@@ -359,7 +359,7 @@ func (h *Handler) ListInstalledPlugins(c *gin.Context) {
 }
 
 // ListSessions lists all active sessions
-// GET /workspaces/current/plugin-runner/sessions
+// GET /workspaces/current/runner/sessions
 func (h *Handler) ListSessions(c *gin.Context) {
 	sessions, err := h.service.ListSessions(c.Request.Context())
 	if err != nil {
@@ -386,7 +386,7 @@ func (h *Handler) ListSessions(c *gin.Context) {
 }
 
 // StopSession stops a running session
-// POST /workspaces/current/plugin-runner/sessions/:id/stop
+// POST /workspaces/current/runner/sessions/:id/stop
 func (h *Handler) StopSession(c *gin.Context) {
 	sessionID := c.Param("id")
 	if err := h.service.StopSession(c.Request.Context(), sessionID); err != nil {
@@ -397,7 +397,7 @@ func (h *Handler) StopSession(c *gin.Context) {
 }
 
 // TenantListPlugins lists plugins installed for the current organization.
-// GET /workspaces/current/plugin-runner/plugins
+// GET /workspaces/current/runner/plugins
 func (h *Handler) TenantListPlugins(c *gin.Context) {
 	organizationID, _, ok := h.requireOrganizationMember(c)
 	if !ok {
@@ -414,7 +414,7 @@ func (h *Handler) TenantListPlugins(c *gin.Context) {
 }
 
 // TenantGetPlugin gets a specific plugin if the organization has installed it.
-// GET /workspaces/current/plugin-runner/plugins/:id
+// GET /workspaces/current/runner/plugins/:id
 func (h *Handler) TenantGetPlugin(c *gin.Context) {
 	pluginID := c.Param("id")
 
@@ -446,11 +446,11 @@ func (h *Handler) RegisterTenantRoutes(router *gin.RouterGroup, accountService i
 	{
 		current := workspaces.Group("/current")
 		{
-			pluginRunner := current.Group("/plugin-runner")
-			{
-				pluginRunner.GET("/plugins", h.TenantListPlugins)
-				pluginRunner.GET("/plugins/:id", h.TenantGetPlugin)
-				subHandler.RegisterRoutes(pluginRunner)
+			for _, routePrefix := range []string{"/runner", "/plugin-runner"} {
+				runner := current.Group(routePrefix)
+				runner.GET("/plugins", h.TenantListPlugins)
+				runner.GET("/plugins/:id", h.TenantGetPlugin)
+				subHandler.RegisterRoutes(runner)
 			}
 		}
 	}

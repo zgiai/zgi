@@ -25,8 +25,13 @@ This is intentionally different from `sandbox/docker-compose.yml`, which remains
 Run:
 
 ```bash
-../dev/bootstrap
-docker compose --env-file .env up -d --build
+make docker-up
+```
+
+If you are already inside `docker/` or do not have `make`, run from the repository root:
+
+```bash
+./dev/start-docker
 ```
 
 For Windows users who want the quickest Docker-only path, run from the repository root:

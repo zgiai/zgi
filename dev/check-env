@@ -69,9 +69,6 @@ parse_env_file() {
 append_missing_keys() {
   local template_path="$1"
   local target_path="$2"
-  local label="$3"
-  declare -n template_keys_ref="$4"
-  declare -n target_keys_ref="$5"
 
   local tmp_file
   local appended_count=0
@@ -87,7 +84,7 @@ append_missing_keys() {
     key="$(trim "$key")"
     [ -z "$key" ] && continue
 
-    if [ -z "${target_keys_ref[$key]+x}" ] && [ -n "${template_keys_ref[$key]+x}" ]; then
+    if ! env_key_exists "$target_path" "$key"; then
       printf '%s\n' "$line" >> "$tmp_file"
       appended_count=$((appended_count + 1))
     fi
@@ -109,6 +106,29 @@ append_missing_keys() {
   rm -f "$tmp_file"
   echo "  synced missing keys: $appended_count"
   echo "  backup: ${backup_path#$ROOT/}"
+}
+
+env_key_exists() {
+  local file_path="$1"
+  local wanted_key="$2"
+
+  parse_env_file "$file_path" | awk -F '\t' -v wanted="$wanted_key" '
+    $1 == wanted { found = 1; exit }
+    END { exit found ? 0 : 1 }
+  '
+}
+
+env_value_for_key() {
+  local file_path="$1"
+  local wanted_key="$2"
+
+  parse_env_file "$file_path" | awk -F '\t' -v wanted="$wanted_key" '
+    $1 == wanted { value = $2; found = 1 }
+    END {
+      if (!found) exit 1
+      print value
+    }
+  '
 }
 
 check_mapping() {
@@ -134,50 +154,39 @@ check_mapping() {
     return 0
   fi
 
-  declare -A template_values=()
-  declare -A target_values=()
-
-  while IFS=$'\t' read -r key value; do
+  while IFS=$'\t' read -r key template_value; do
     [ -z "$key" ] && continue
-    template_values["$key"]="$(trim "$value")"
-  done < <(parse_env_file "$template_path")
 
-  while IFS=$'\t' read -r key value; do
-    [ -z "$key" ] && continue
-    target_values["$key"]="$(trim "$value")"
-  done < <(parse_env_file "$target_path")
-
-  for key in "${!template_values[@]}"; do
-    if [ -z "${target_values[$key]+x}" ]; then
+    if ! env_key_exists "$target_path" "$key"; then
       echo "  missing key: $key"
       missing_count=$((missing_count + 1))
       continue
     fi
 
-    if [ "${template_values[$key]}" != "${target_values[$key]}" ]; then
+    target_value="$(env_value_for_key "$target_path" "$key")"
+    if [ "$(trim "$template_value")" != "$(trim "$target_value")" ]; then
       echo "  changed value: $key"
       changed_count=$((changed_count + 1))
     fi
-  done
+  done < <(parse_env_file "$template_path")
 
-  for key in "${!target_values[@]}"; do
-    if [ -z "${template_values[$key]+x}" ]; then
+  while IFS=$'\t' read -r key _value; do
+    [ -z "$key" ] && continue
+
+    if ! env_key_exists "$template_path" "$key"; then
       echo "  extra key: $key"
       stale_count=$((stale_count + 1))
     fi
-  done
+  done < <(parse_env_file "$target_path")
 
   if [ "$missing_count" -eq 0 ] && [ "$changed_count" -eq 0 ] && [ "$stale_count" -eq 0 ]; then
     echo "  ok"
   else
     echo "  summary: missing=$missing_count changed=$changed_count extra=$stale_count"
     if [ "$MODE" = "sync" ] && [ "$missing_count" -gt 0 ]; then
-      append_missing_keys "$template_path" "$target_path" "$label" template_values target_values
+      append_missing_keys "$template_path" "$target_path"
     fi
   fi
-
-  unset template_values
-  unset target_values
 }
 
 overall_status=0

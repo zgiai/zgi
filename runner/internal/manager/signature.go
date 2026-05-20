@@ -9,7 +9,7 @@ import (
 	"encoding/pem"
 	"fmt"
 
-	"plugin_runner/internal/plugin"
+	"github.com/zgiai/zgi/runner/internal/plugin"
 )
 
 // SignatureVerifier verifies manifest signatures.
