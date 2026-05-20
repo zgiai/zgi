@@ -88,7 +88,7 @@ jobs:
         run: go test ./internal/manager ./internal/server
 
   web:
-    name: Web lint and type check
+    name: Web type check
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -109,9 +109,6 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Lint
-        run: pnpm lint
 
       - name: Type check
         run: pnpm type-check

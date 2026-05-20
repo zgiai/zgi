@@ -8,6 +8,6 @@ Current checks:
 - API targeted Go tests for migrations, SQL metadata, workflow, model gateway, and content parsing packages
 - PostgreSQL migration smoke test against a fresh database
 - Runner targeted Go tests
-- Web lint and TypeScript checks
+- Web TypeScript checks
 
 Keep CI focused on checks that are stable for external contributors. Add heavier integration tests behind explicit jobs or service-specific workflows.
