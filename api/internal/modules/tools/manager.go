@@ -55,7 +55,7 @@ func (m *ToolManager) RegisterProvider(provider ToolProvider) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	providerType := provider.GetProviderType()
+	providerType := NormalizeToolProviderType(provider.GetProviderType())
 	entity := provider.GetEntity()
 
 	if _, exists := m.providers[providerType]; !exists {
@@ -71,6 +71,7 @@ func (m *ToolManager) UnregisterProvider(providerType ToolProviderType, provider
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	providerType = NormalizeToolProviderType(providerType)
 	if providers, exists := m.providers[providerType]; exists {
 		delete(providers, providerName)
 	}
@@ -81,6 +82,8 @@ func (m *ToolManager) UnregisterProvider(providerType ToolProviderType, provider
 func (m *ToolManager) GetProvider(ctx context.Context, providerType ToolProviderType, providerName, tenantID string) (ToolProvider, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+
+	providerType = NormalizeToolProviderType(providerType)
 
 	// For plugin runner type, dynamically fetch from plugin runner service
 	if providerType == ToolProviderTypePluginRunner && m.pluginRunnerManager != nil {
@@ -136,6 +139,8 @@ func (m *ToolManager) GetToolRuntime(
 func (m *ToolManager) ListProviders(providerType ToolProviderType) []ToolProvider {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+
+	providerType = NormalizeToolProviderType(providerType)
 
 	var result []ToolProvider
 	if providers, exists := m.providers[providerType]; exists {

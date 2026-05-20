@@ -100,6 +100,35 @@ func TestToolManager_ListBuiltinProviders(t *testing.T) {
 	assert.True(t, hasProvider(providers, "file_generator"))
 }
 
+func TestToolManager_RunnerProviderTypeAlias(t *testing.T) {
+	manager := tools.NewToolManager(nil)
+	require.NotNil(t, manager)
+
+	provider := tools.NewPluginRunnerProvider(
+		tools.ToolProviderEntity{
+			Identity: tools.ToolProviderIdentity{
+				Name: "echo",
+				Label: tools.I18nText{
+					"en_US": "Echo",
+				},
+			},
+			ProviderType: tools.ToolProviderTypePluginRunner,
+		},
+		"test-tenant",
+		nil,
+	)
+	require.NoError(t, manager.RegisterProvider(provider))
+
+	providers := manager.ListProviders(tools.ToolProviderTypeRunner)
+	require.Len(t, providers, 1)
+	assert.Equal(t, "echo", providers[0].GetEntity().Identity.Name)
+
+	got, err := manager.GetProvider(context.Background(), tools.ToolProviderTypeRunner, "echo", "test-tenant")
+	require.NoError(t, err)
+	assert.Equal(t, "echo", got.GetEntity().Identity.Name)
+	assert.Equal(t, tools.ToolProviderTypePluginRunner, tools.NormalizeToolProviderType(tools.ToolProviderTypeRunner))
+}
+
 func hasProvider(providers []tools.ToolProvider, name string) bool {
 	for _, provider := range providers {
 		if provider.GetEntity().Identity.Name == name {

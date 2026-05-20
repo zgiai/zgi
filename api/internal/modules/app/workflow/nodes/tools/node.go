@@ -29,7 +29,7 @@ type ToolInput struct {
 // NodeData contains the configuration for the tools node
 type NodeData struct {
 	Title                  string                `json:"title"`
-	ProviderType           string                `json:"provider_type"`           // builtin, api, workflow, plugin_runner, app, dataset-retrieval, mcp
+	ProviderType           string                `json:"provider_type"`           // builtin, runner, plugin_runner, api, workflow, app, dataset-retrieval, mcp
 	ProviderID             string                `json:"provider_id"`             // Tool provider identifier
 	ProviderName           string                `json:"provider_name,omitempty"` // Provider display name
 	ToolName               string                `json:"tool_name"`               // Tool name to invoke
@@ -211,14 +211,14 @@ func (n *Node) withWorkflowRunID(ctx context.Context, variablePool *entities.Var
 }
 
 // getProviderType converts string provider type to tools.ToolProviderType
-// Currently only supports: builtin, plugin_runner
+// Currently only supports: builtin, runner, plugin_runner
 func (n *Node) getProviderType() tools.ToolProviderType {
 	switch n.nodeData.ProviderType {
 	case "builtin":
 		return tools.ToolProviderTypeBuiltin
-	case "plugin_runner", "plugin":
-		// plugin_runner: Plugin marketplace tools via Plugin Runner
-		// plugin: Legacy plugin type, also routed to Plugin Runner
+	case "runner", "plugin_runner", "plugin":
+		// runner is the preferred public value. plugin_runner and plugin remain
+		// compatibility aliases for existing workflow data.
 		return tools.ToolProviderTypePluginRunner
 
 	// Not supported - reserved for future extension
@@ -701,11 +701,11 @@ func parseNodeDataFromConfig(config map[string]any) (NodeData, string, error) {
 		nd.Title = title
 	}
 
-	// Parse provider_type (optional, defaults to plugin_runner)
+	// Parse provider_type (optional, defaults to runner)
 	if providerType, ok := data["provider_type"].(string); ok {
 		nd.ProviderType = providerType
 	} else {
-		nd.ProviderType = "plugin_runner"
+		nd.ProviderType = "runner"
 	}
 
 	// Parse provider_id (required)

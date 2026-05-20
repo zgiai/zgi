@@ -26,7 +26,8 @@ type ToolProviderType string
 const (
 	// Supported types
 	ToolProviderTypeBuiltin      ToolProviderType = "builtin"       // Built-in tools provided by the system
-	ToolProviderTypePluginRunner ToolProviderType = "plugin_runner" // Plugin marketplace tools via Plugin Runner
+	ToolProviderTypePluginRunner ToolProviderType = "plugin_runner" // Compatibility value for marketplace tools
+	ToolProviderTypeRunner       ToolProviderType = "runner"        // Preferred public alias for marketplace tools
 
 	// Not supported - reserved for future extension
 	// ToolProviderTypeAPI              ToolProviderType = "api"               // Custom OpenAPI tools - not supported
@@ -40,6 +41,16 @@ const (
 // String returns the string representation
 func (t ToolProviderType) String() string {
 	return string(t)
+}
+
+// NormalizeToolProviderType maps public aliases to the internal compatibility value.
+func NormalizeToolProviderType(providerType ToolProviderType) ToolProviderType {
+	switch providerType {
+	case ToolProviderTypeRunner, "plugin":
+		return ToolProviderTypePluginRunner
+	default:
+		return providerType
+	}
 }
 
 // ============================================
