@@ -143,7 +143,7 @@ V2 should add lifecycle APIs:
 Recommended configuration keys:
 
 ```bash
-ZGI_SANDBOX_SERVER_PORT=8194
+ZGI_SANDBOX_SERVER_PORT=2660
 ZGI_SANDBOX_LOG_LEVEL=info
 ZGI_SANDBOX_API_KEY=
 

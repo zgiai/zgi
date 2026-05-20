@@ -4,7 +4,7 @@ package config
 // Server and process runtime keys.
 const (
 	// Network listeners.
-	// envServerPort sets the HTTP server port. Default: 2678.
+	// envServerPort sets the HTTP server port. Default: 2670.
 	envServerPort = "SERVER_PORT"
 	// envGRPCEnabled controls whether the gRPC server starts. Default: true.
 	envGRPCEnabled = "GRPC_ENABLED"
@@ -156,7 +156,7 @@ const (
 	envFilesAccessTimeout = "FILES_ACCESS_TIMEOUT"
 	// envAppVersion sets the application version string. Default: 1.0.0.
 	envAppVersion = "APP_VERSION"
-	// envFilesURL sets the public base URL for file access. Default: http://localhost:2678.
+	// envFilesURL sets the public base URL for file access. Default: http://localhost:2679.
 	envFilesURL = "FILES_URL"
 	// envInternalFilesURL sets the internal base URL used for file access inside the deployment. Default: empty.
 	envInternalFilesURL = "INTERNAL_FILES_URL"
@@ -165,7 +165,7 @@ const (
 // Console routing and product feature keys.
 const (
 	// Console endpoints and service-to-service credentials.
-	// envConsoleAPIURL sets the public base URL of the console API. Default: http://127.0.0.1:2678.
+	// envConsoleAPIURL sets the public base URL of the console API. Default: http://127.0.0.1:2679.
 	envConsoleAPIURL = "CONSOLE_API_URL"
 	// envConsoleAPIGRPCAddr sets the console gRPC endpoint address. Default: empty.
 	envConsoleAPIGRPCAddr = "CONSOLE_API_GRPC_ADDR"
@@ -212,7 +212,7 @@ const (
 	// Plugin runner integration.
 	// envPluginRunnerEnabled controls whether the plugin runner integration is enabled. Default: false.
 	envPluginRunnerEnabled = "PLUGIN_RUNNER_ENABLED"
-	// envPluginRunnerURL sets the plugin runner base URL. Default: http://localhost:15000.
+	// envPluginRunnerURL sets the plugin runner base URL. Default: http://localhost:2665.
 	envPluginRunnerURL = "PLUGIN_RUNNER_URL"
 	// envPluginRunnerAPIKey sets the plugin runner API key. Default: empty.
 	envPluginRunnerAPIKey = "PLUGIN_RUNNER_API_KEY"

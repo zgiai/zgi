@@ -71,10 +71,10 @@ RUN sed -i 's/\r$//' /app/entrypoint.sh
 RUN chown -R appuser:appuser /app
 
 # Expose port
-EXPOSE 2680
+EXPOSE 2670
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
-  CMD wget --no-verbose --tries=1 -O /dev/null http://localhost:2680/ping || exit 1
+  CMD wget --no-verbose --tries=1 -O /dev/null http://localhost:2670/ping || exit 1
 
 ENTRYPOINT ["/bin/sh", "/app/entrypoint.sh"]

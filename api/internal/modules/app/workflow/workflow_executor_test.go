@@ -527,10 +527,10 @@ func TestExecuteWorkflowNodeWithCallbacks_VisionFailureRetainsProcessData(t *tes
 	appconfig.GlobalConfig = &appconfig.Config{
 		Server: appconfig.ServerConfig{Mode: "release"},
 		Console: appconfig.ConsoleConfig{
-			APIURL: "http://localhost:2678",
+			APIURL: "http://localhost:2679",
 		},
 		App: appconfig.AppConfig{
-			FilesURL:  "http://localhost:2678",
+			FilesURL:  "http://localhost:2679",
 			SecretKey: "test-secret",
 		},
 	}

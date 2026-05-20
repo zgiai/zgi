@@ -786,7 +786,7 @@ func TestProcessVisionFiles_UsesSignedPreviewURLForLocalImageFromWorkflowFileMap
 }
 
 func TestProcessVisionFiles_RejectsNonPublicSignedPreviewURLForLocalImage(t *testing.T) {
-	setTestFileURLConfig(t, "http://localhost:2678", "release")
+	setTestFileURLConfig(t, "http://localhost:2679", "release")
 
 	n := &Node{}
 

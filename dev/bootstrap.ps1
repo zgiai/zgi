@@ -118,7 +118,9 @@ Ensure-EnvValue -TargetPath $apiEnv -Key 'API_KEY_ENCRYPTION_KEY' -Value (New-Se
 Ensure-EnvValue -TargetPath $apiDockerEnv -Key 'SECRET_KEY' -Value (New-Secret32)
 Ensure-EnvValue -TargetPath $apiDockerEnv -Key 'API_KEY_ENCRYPTION_KEY' -Value (New-Secret32)
 Replace-EnvValueIfCurrent -TargetPath $apiDockerEnv -Key 'SQL_BASE_INTERNAL_DB' -OldValue 'zgi' -NewValue 'zgi_sql_base'
-Replace-EnvValueIfCurrent -TargetPath (Join-Path $Root 'docker/.env') -Key 'HOST_WEAVIATE_PORT' -OldValue '18080' -NewValue '18081'
+$dockerEnv = Join-Path $Root 'docker/.env'
+Ensure-EnvValue -TargetPath $dockerEnv -Key 'PUBLIC_PORT' -Value '2679'
+Ensure-EnvValue -TargetPath $dockerEnv -Key 'PUBLIC_URL' -Value 'http://localhost:2679'
 
 Write-Host "[bootstrap] generate docker compose"
 & (Join-Path $Root 'docker/generate_docker_compose.ps1')

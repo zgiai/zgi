@@ -191,7 +191,7 @@ func testConfig(t *testing.T) config.Config {
 	cfg.DataDir = t.TempDir()
 	cfg.DatabaseURL = testutil.CreateTestPostgresDSN(t)
 	cfg.WorkerID = "test-worker"
-	cfg.AdvertiseURL = "http://127.0.0.1:8194"
+	cfg.AdvertiseURL = "http://127.0.0.1:2660"
 	cfg.PublicBaseURL = cfg.AdvertiseURL
 	cfg.RedisAddr = ""
 	cfg.RuntimeBackend = "preview"

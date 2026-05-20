@@ -351,7 +351,7 @@ func loadAppConfig(cfg *Config, source *envSource) error {
 	cfg.App = AppConfig{
 		Name:               source.string("ZGI-GinKit", envAppName),
 		SecretKey:          source.string("", envSecretKey),
-		FilesURL:           source.string("http://localhost:2678", envFilesURL),
+		FilesURL:           source.string("http://localhost:2679", envFilesURL),
 		InternalFilesURL:   source.string("", envInternalFilesURL),
 		FilesAccessTimeout: filesAccessTimeout,
 	}
@@ -360,7 +360,7 @@ func loadAppConfig(cfg *Config, source *envSource) error {
 
 func loadConsoleConfig(cfg *Config, source *envSource) {
 	cfg.Console = ConsoleConfig{
-		APIURL:         source.string("http://127.0.0.1:2678", envConsoleAPIURL),
+		APIURL:         source.string("http://127.0.0.1:2679", envConsoleAPIURL),
 		GRPCAddr:       source.string("", envConsoleAPIGRPCAddr),
 		InternalAPIKey: source.string("", envConsoleInternalAPIKey),
 		WebURL:         source.string(cfg.Email.ConsoleWebURL, envEmailConsoleWebURL),
@@ -409,7 +409,7 @@ func loadPluginRunnerConfig(cfg *Config, source *envSource) error {
 
 	cfg.PluginRunner = PluginRunnerConfig{
 		Enabled: enabled,
-		BaseURL: source.string("http://localhost:15000", envPluginRunnerURL),
+		BaseURL: source.string("http://localhost:2665", envPluginRunnerURL),
 		APIKey:  source.string("", envPluginRunnerAPIKey),
 		Timeout: timeout,
 	}

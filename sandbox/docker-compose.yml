@@ -15,7 +15,7 @@ services:
         aliases:
           - zgi-sandbox
     ports:
-      - "${ZGI_SANDBOX_SERVER_PORT}:8194"
+      - "${ZGI_SANDBOX_SERVER_PORT:-2660}:${ZGI_SANDBOX_SERVER_PORT:-2660}"
     depends_on:
       postgres:
         condition: service_healthy
@@ -27,7 +27,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "python3 -c \"import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8194/health').getcode() == 200 else 1)\"",
+          "python3 -c \"import os, sys, urllib.request; port=os.environ.get('ZGI_SANDBOX_SERVER_PORT', '2660'); sys.exit(0 if urllib.request.urlopen(f'http://127.0.0.1:{port}/health').getcode() == 200 else 1)\"",
         ]
       interval: 15s
       timeout: 5s

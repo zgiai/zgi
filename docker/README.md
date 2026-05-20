@@ -59,15 +59,18 @@ That applies recommended build mirrors for the current run while keeping service
 
 Local default endpoints:
 
-- Web: `http://localhost:13000`
-- API: `http://localhost:2678`
+- Web and API gateway: `http://localhost:${PUBLIC_PORT:-2679}`
 - PostgreSQL: `localhost:${HOST_POSTGRES_PORT:-15432}`
 - Redis: `localhost:${HOST_REDIS_PORT:-16379}`
-- Weaviate: `http://localhost:${HOST_WEAVIATE_PORT:-18081}`
 - Neo4j HTTP: `http://localhost:${HOST_NEO4J_HTTP_PORT:-17474}`
 - Neo4j Bolt: `localhost:${HOST_NEO4J_BOLT_PORT:-17687}`
-- Sandbox: `http://localhost:${HOST_SANDBOX_PORT:-18194}`
-- Runner: `http://localhost:${HOST_PLUGIN_RUNNER_PORT:-15000}`
+
+Internal service ports:
+
+- Web: `2680`
+- API: `2670`
+- Sandbox: `2660`
+- Runner: `2665`
 
 ## Notes
 
@@ -80,4 +83,4 @@ Local default endpoints:
 - `sandbox` is wired differently in product mode versus standalone mode:
   product mode reuses the shared root Postgres / Redis, while standalone mode keeps its own bundled Postgres / Redis.
 - `./dev/start-docker --china` currently wires China mainland build mirrors for `api`, `sandbox`, and `runner` through compose build args.
-- `WEB_PORT` defaults to `13000` to avoid common collisions on `3000`.
+- `PUBLIC_PORT` defaults to `2679`; app services stay on the internal Docker network.

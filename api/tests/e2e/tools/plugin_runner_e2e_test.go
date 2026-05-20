@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	pluginRunnerURL    = "http://localhost:15000"
+	pluginRunnerURL    = "http://localhost:2665"
 	pluginRunnerAPIKey = "admin-key-123"
 	testPluginPath     = "../../../../runner/examples/test_plugin/uv_echo_0.0.1"
 	testPluginName     = "uv-echo-e2e-test"

@@ -17,7 +17,7 @@ import (
 // @title ZGI-GinKit API
 // @version 1.0
 // @description A Gin-based enterprise-level web development kit
-// @host localhost:2678
+// @host localhost:2679
 // @BasePath /v1
 func main() {
 	rootCmd := &cobra.Command{

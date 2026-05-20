@@ -94,9 +94,9 @@ ARG COMMIT_SHA
 ENV COMMIT_SHA=${COMMIT_SHA}
 
 USER 1001
-EXPOSE 3000
+EXPOSE 2680
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD node -e "const bp=(process.env.NEXT_PUBLIC_BASE_PATH||process.env.BASE_PATH||'').replace(/\/+$/,'');const p=(bp?bp:'')+'/env.js';require('http').get('http://127.0.0.1:3000'+p,res=>process.exit(res.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+    CMD node -e "const port=process.env.PORT||2680;const bp=(process.env.NEXT_PUBLIC_BASE_PATH||process.env.BASE_PATH||'').replace(/\/+$/,'');const p=(bp?bp:'')+'/env.js';require('http').get('http://127.0.0.1:'+port+p,res=>process.exit(res.statusCode===200?0:1)).on('error',()=>process.exit(1))"
 
 ENTRYPOINT ["./entrypoint.sh"]

@@ -68,7 +68,7 @@ type IntegrationExample struct {
 func NewIntegrationExample(pluginRunnerBaseURL, apiKey string) (*IntegrationExample, error) {
 	// 1. Create Plugin Runner service
 	pluginRunnerService := service.NewPluginRunnerService(&client.Config{
-		BaseURL: pluginRunnerBaseURL, // e.g., "http://localhost:15000"
+		BaseURL: pluginRunnerBaseURL, // e.g., "http://localhost:2665"
 		APIKey:  apiKey,
 	})
 

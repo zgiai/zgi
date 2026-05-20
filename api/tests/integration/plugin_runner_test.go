@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	defaultPluginRunnerURL = "http://localhost:15000"
+	defaultPluginRunnerURL = "http://localhost:2665"
 	defaultAPIKey          = "admin-key-123" // Use admin key for plugin management
 )
 

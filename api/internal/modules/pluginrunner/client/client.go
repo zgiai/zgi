@@ -19,7 +19,7 @@ import (
 
 // Config holds the configuration for the plugin runner client
 type Config struct {
-	BaseURL string        // Base URL of the plugin runner service (e.g., http://localhost:15000)
+	BaseURL string        // Base URL of the plugin runner service (e.g., http://localhost:2665)
 	APIKey  string        // API key for authentication
 	Timeout time.Duration // Request timeout
 }
@@ -30,7 +30,7 @@ func NewConfigFromEnv() *Config {
 	runnerCfg := appconfig.Current().PluginRunner
 	baseURL := runnerCfg.BaseURL
 	if baseURL == "" {
-		baseURL = "http://localhost:15000"
+		baseURL = "http://localhost:2665"
 	}
 
 	apiKey := runnerCfg.APIKey

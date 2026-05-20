@@ -18,20 +18,21 @@ services:
     container_name: ${WEB_CONTAINER_NAME:-zgi-web}
     restart: unless-stopped
     ports:
-      - "${WEB_PORT:-3000}:3000"
+      - "${WEB_PORT:-2680}:${PORT:-2680}"
     env_file:
       - ${DOCKER_ENV_FILE:-.env}
     environment:
       BASE_PATH: ${BASE_PATH:-${NEXT_PUBLIC_BASE_PATH:-}}
       NEXT_PUBLIC_BASE_PATH: ${BASE_PATH:-${NEXT_PUBLIC_BASE_PATH:-}}
       TZ: ${TZ:-Asia/Shanghai}
+      PORT: ${PORT:-2680}
       PM2_INSTANCES: ${PM2_INSTANCES:-2}
       NEXT_TELEMETRY_DISABLED: ${NEXT_TELEMETRY_DISABLED:-1}
       NEXT_PUBLIC_IS_CLOUD: ${NEXT_PUBLIC_IS_CLOUD:-}
     healthcheck:
       test:
         - CMD-SHELL
-        - node -e "const bp=(process.env.NEXT_PUBLIC_BASE_PATH||process.env.BASE_PATH||'').replace(/\/+$/,'');const p=(bp?bp:'')+'/env.js';require('http').get('http://127.0.0.1:3000'+p,res=>process.exit(res.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+        - node -e "const bp=(process.env.NEXT_PUBLIC_BASE_PATH||process.env.BASE_PATH||'').replace(/\/+$/,'');const port=process.env.PORT||2680;const p=(bp?bp:'')+'/env.js';require('http').get('http://127.0.0.1:'+port+p,res=>process.exit(res.statusCode===200?0:1)).on('error',()=>process.exit(1))"
       interval: 30s
       timeout: 10s
       retries: 3

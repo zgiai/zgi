@@ -149,7 +149,7 @@ export const APP_VERSION: string = readPublicEnvRaw('NEXT_PUBLIC_APP_VERSION') |
 export const API_URL: string = (() => {
   // Server-side or build-time
   if (typeof window === 'undefined') {
-    return readPublicEnvRaw('NEXT_PUBLIC_API_URL') || 'http://localhost:2678';
+    return readPublicEnvRaw('NEXT_PUBLIC_API_URL') || 'http://localhost:2679';
   }
 
   // Client-side: use NEXT_PUBLIC_API_URL if set, otherwise use current host with API port
@@ -166,8 +166,8 @@ export const API_URL: string = (() => {
   ) {
     return `${protocol}//${hostname}`;
   }
-  // Otherwise use port 2678
-  return `${protocol}//${hostname}:2678`;
+  // Otherwise use the local public gateway port.
+  return `${protocol}//${hostname}:2679`;
 })();
 
 /**

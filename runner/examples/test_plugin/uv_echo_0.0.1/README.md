@@ -25,7 +25,7 @@ zip -r ../uv_echo_0.0.1.zip .
    export EXECUTOR_PLUGIN_HOME=/path/to/zgi/runner/plugins
    export EXECUTOR_WORKSPACE_PATH=/path/to/zgi/runner/workspace
    export EXECUTOR_PACKAGE_CACHE_PATH=/path/to/zgi/runner/cache
-   export EXECUTOR_HTTP_PORT=15000
+   export EXECUTOR_HTTP_PORT=2665
    export EXECUTOR_API_KEY=test-api-key
    export EXECUTOR_ADMIN_API_KEYS=admin-key-123
    ```
@@ -39,7 +39,7 @@ zip -r ../uv_echo_0.0.1.zip .
 3. Register and install it through the API:
    - Register the manifest (you can refer to the metadata in `main_runner`, or build the payload directly):
      ```bash
-     curl -X POST http://127.0.0.1:15000/api/v1/plugins \
+     curl -X POST http://127.0.0.1:2665/api/v1/plugins \
        -H "X-API-Key: admin-key-123" \
        -H "Content-Type: application/json" \
        -d '{
@@ -53,14 +53,14 @@ zip -r ../uv_echo_0.0.1.zip .
      ```
    - Upload the ZIP package to complete installation:
      ```bash
-     curl -X POST http://127.0.0.1:15000/api/v1/plugins/uv-echo:0.0.1/install \
+     curl -X POST http://127.0.0.1:2665/api/v1/plugins/uv-echo:0.0.1/install \
        -H "X-API-Key: admin-key-123" \
        -F "file=@test_plugin/uv_echo_0.0.1.zip"
      ```
 
 4. Verify:
    ```bash
-   curl -H "X-API-Key: test-api-key" http://127.0.0.1:15000/api/v1/plugins/installed
+   curl -H "X-API-Key: test-api-key" http://127.0.0.1:2665/api/v1/plugins/installed
    ```
    You should see `uv-echo`, and the workspace should contain `.venv` (or a UV environment) and the `requests` dependency.
 

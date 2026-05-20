@@ -10,7 +10,7 @@ const (
 	MaxChunkSize     = 1000
 	TempFileTenantID = "00000000-0000-0000-0000-000000000000"
 
-	defaultServerPort = 2678
+	defaultServerPort = 2670
 	defaultGRPCPort   = 50051
 )
 

@@ -10,7 +10,7 @@
 
 set -e
 
-BASE_URL="http://localhost:15000"
+BASE_URL="${BASE_URL:-http://localhost:2665}"
 API_KEY="admin-key-123"
 PLUGIN_DIR="${PLUGIN_DIR:-$(cd "$(dirname "$0")/.." && pwd)/examples/test_plugin/uv_echo_0.0.1}"
 WORKSPACE_DIR="${WORKSPACE_DIR:-$(cd "$(dirname "$0")/.." && pwd)/workspace/uv-echo-0.0.1}"

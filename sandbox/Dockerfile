@@ -29,7 +29,7 @@ RUN useradd --system --create-home --home-dir /home/zgi --shell /usr/sbin/nologi
     mkdir -p /var/lib/zgi-sandbox && \
     chown -R zgi:zgi /var/lib/zgi-sandbox
 
-EXPOSE 8194
+EXPOSE 2660
 
 USER zgi
 

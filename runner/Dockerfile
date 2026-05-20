@@ -84,7 +84,7 @@ RUN mkdir -p /app/plugins /app/workspace /app/cache
 # Default environment variables
 # These can be overridden by Zeabur environment variables
 # ============================================================
-ENV EXECUTOR_HTTP_PORT=15000 \
+ENV EXECUTOR_HTTP_PORT=2665 \
     EXECUTOR_PLUGIN_HOME=/app/plugins \
     EXECUTOR_WORKSPACE_PATH=/app/workspace \
     EXECUTOR_PACKAGE_CACHE_PATH=/app/cache \
@@ -116,10 +116,10 @@ ENV EXECUTOR_HTTP_PORT=15000 \
 #   EXECUTOR_API_KEY=<your-api-key>
 # ============================================================
 
-EXPOSE 15000
+EXPOSE 2665
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:15000/healthz || exit 1
+    CMD curl -f http://localhost:2665/healthz || exit 1
 
 ENTRYPOINT ["/app/runner"]

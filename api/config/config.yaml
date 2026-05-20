@@ -1,5 +1,5 @@
 server:
-  port: 2678
+  port: 2670
   mode: debug  # debug, release, test
   read_timeout: 300  # 5 minutes for long-running workflows
   write_timeout: 300  # 5 minutes for streaming responses

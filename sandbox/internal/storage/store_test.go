@@ -35,7 +35,7 @@ func TestPostgresStorePersistsSandboxAndEvents(t *testing.T) {
 		WorkspaceBinding:  "wf_1",
 		TTLSeconds:        300,
 		WorkerID:          "worker-a",
-		WorkerAddr:        "http://127.0.0.1:8194",
+		WorkerAddr:        "http://127.0.0.1:2660",
 	}
 	if err := store.SaveSandbox(box); err != nil {
 		t.Fatalf("save sandbox: %v", err)

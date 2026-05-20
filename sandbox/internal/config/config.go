@@ -32,7 +32,7 @@ type Config struct {
 }
 
 func FromEnv() Config {
-	port := getEnv("ZGI_SANDBOX_SERVER_PORT", "8194")
+	port := getEnv("ZGI_SANDBOX_SERVER_PORT", "2660")
 	workerID := getEnv("ZGI_SANDBOX_WORKER_ID", defaultWorkerID())
 	advertiseURL := getEnv("ZGI_SANDBOX_ADVERTISE_URL", fmt.Sprintf("http://127.0.0.1:%s", port))
 
