@@ -8,13 +8,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	auth_model "github.com/zgiai/ginext/internal/modules/user/auth/model"
-	"github.com/zgiai/ginext/internal/util"
-	"github.com/zgiai/ginext/pkg/database"
-	jwtpkg "github.com/zgiai/ginext/pkg/jwt"
-	"github.com/zgiai/ginext/pkg/logger"
-	"github.com/zgiai/ginext/pkg/response"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
+	"github.com/zgiai/zgi/api/internal/util"
+	"github.com/zgiai/zgi/api/pkg/database"
+	jwtpkg "github.com/zgiai/zgi/api/pkg/jwt"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/response"
 	"gorm.io/gorm"
 )
 

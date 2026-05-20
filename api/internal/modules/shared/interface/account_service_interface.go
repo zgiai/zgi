@@ -3,11 +3,11 @@ package interfaces
 import (
 	"context"
 
-	"github.com/zgiai/ginext/internal/dto"
+	"github.com/zgiai/zgi/api/internal/dto"
 
-	auth_model "github.com/zgiai/ginext/internal/modules/user/auth/model"
-	"github.com/zgiai/ginext/internal/modules/workspace/model"
-	helper "github.com/zgiai/ginext/internal/util"
+	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
+	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	helper "github.com/zgiai/zgi/api/internal/util"
 )
 
 type AccountService interface {

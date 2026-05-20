@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	automationdto "github.com/zgiai/ginext/internal/modules/automation/dto"
-	automationmodel "github.com/zgiai/ginext/internal/modules/automation/model"
+	automationdto "github.com/zgiai/zgi/api/internal/modules/automation/dto"
+	automationmodel "github.com/zgiai/zgi/api/internal/modules/automation/model"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )

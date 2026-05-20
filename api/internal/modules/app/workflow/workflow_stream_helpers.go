@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine"
-	graphentities "github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/entities"
-	workflow_shared "github.com/zgiai/ginext/internal/modules/app/workflow/shared"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
+	graphentities "github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
+	workflow_shared "github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 )
 
 const (

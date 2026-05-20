@@ -9,10 +9,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/datalibrary/model"
-	"github.com/zgiai/ginext/internal/modules/datalibrary/repository"
-	"github.com/zgiai/ginext/internal/modules/datalibrary/service"
-	"github.com/zgiai/ginext/internal/util"
+	"github.com/zgiai/zgi/api/internal/modules/datalibrary/model"
+	"github.com/zgiai/zgi/api/internal/modules/datalibrary/repository"
+	"github.com/zgiai/zgi/api/internal/modules/datalibrary/service"
+	"github.com/zgiai/zgi/api/internal/util"
 )
 
 func TestVectorArtifactHandlerListsArtifacts(t *testing.T) {

@@ -2,8 +2,8 @@ package v1
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/internal/container"
-	"github.com/zgiai/ginext/middleware"
+	"github.com/zgiai/zgi/api/internal/container"
+	"github.com/zgiai/zgi/api/middleware"
 )
 
 func RegisterDataLibraryRoutes(v1 *gin.RouterGroup, serviceContainer *container.ServiceContainer) {

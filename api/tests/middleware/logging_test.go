@@ -11,9 +11,9 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/config"
-	appmiddleware "github.com/zgiai/ginext/middleware"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/config"
+	appmiddleware "github.com/zgiai/zgi/api/middleware"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 func TestRequestAccessAndAuditLogging(t *testing.T) {

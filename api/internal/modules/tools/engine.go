@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 // ToolEngine is the central engine for executing tools

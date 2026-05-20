@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/hibiken/asynq"
-	automationdefinition "github.com/zgiai/ginext/internal/modules/automation/service/definition"
-	"github.com/zgiai/ginext/pkg/logger"
+	automationdefinition "github.com/zgiai/zgi/api/internal/modules/automation/service/definition"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 const (

@@ -6,14 +6,15 @@
 ## Scope
 
 - [ ] root repository only
-- [ ] api submodule
-- [ ] web submodule
+- [ ] api
+- [ ] web
+- [ ] sandbox
+- [ ] runner
 - [ ] docs
 - [ ] docker
 
 ## Checklist
 
 - [ ] I updated documentation if needed
-- [ ] I verified whether a submodule pointer update is required
-- [ ] I did not place business code in the root repository by mistake
-
+- [ ] I ran the relevant local checks or explained why they were skipped
+- [ ] I did not commit local env files, generated runtime files, secrets, logs, or editor state

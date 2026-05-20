@@ -5,9 +5,9 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/pkg/logger"
-	"github.com/zgiai/ginext/pkg/queue"
-	"github.com/zgiai/ginext/pkg/response"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/queue"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 type Handler struct {

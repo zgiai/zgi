@@ -13,8 +13,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/zgiai/ginext/pkg/redis"
-	"github.com/zgiai/ginext/pkg/storage"
+	"github.com/zgiai/zgi/api/pkg/redis"
+	"github.com/zgiai/zgi/api/pkg/storage"
 )
 
 var prefixHybrid = []byte("HYBRID:")

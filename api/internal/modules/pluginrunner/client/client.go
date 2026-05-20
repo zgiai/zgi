@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	appconfig "github.com/zgiai/ginext/config"
-	"github.com/zgiai/ginext/internal/modules/pluginrunner/model"
-	"github.com/zgiai/ginext/internal/observability"
+	appconfig "github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/modules/pluginrunner/model"
+	"github.com/zgiai/zgi/api/internal/observability"
 )
 
 // Config holds the configuration for the plugin runner client

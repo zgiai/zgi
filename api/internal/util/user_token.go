@@ -8,12 +8,12 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/zgiai/ginext/internal/modules/user/auth/model"
+	"github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
-	"github.com/zgiai/ginext/pkg/logger"
-	redisUtil "github.com/zgiai/ginext/pkg/redis"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	redisUtil "github.com/zgiai/zgi/api/pkg/redis"
 )
 
 // Config holds the application configuration

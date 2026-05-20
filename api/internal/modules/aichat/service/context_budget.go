@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	aichatmodel "github.com/zgiai/ginext/internal/modules/aichat/model"
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
-	"github.com/zgiai/ginext/internal/modules/llm/tokenestimate"
+	aichatmodel "github.com/zgiai/zgi/api/internal/modules/aichat/model"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/llm/tokenestimate"
 )
 
 const (

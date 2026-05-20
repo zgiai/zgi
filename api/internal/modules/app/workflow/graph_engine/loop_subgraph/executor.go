@@ -6,11 +6,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/entities"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/subgraph"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graphconfig"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/shared"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/subgraph"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graphconfig"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 )
 
 // Config carries inputs needed for a loop subgraph execution.

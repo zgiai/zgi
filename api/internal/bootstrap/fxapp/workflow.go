@@ -1,9 +1,9 @@
 package fxapp
 
 import (
-	"github.com/zgiai/ginext/internal/container"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine"
-	workflowruntime "github.com/zgiai/ginext/internal/modules/app/workflow/runtime"
+	"github.com/zgiai/zgi/api/internal/container"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
+	workflowruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/runtime"
 	"go.uber.org/fx"
 )
 

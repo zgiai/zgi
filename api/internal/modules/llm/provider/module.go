@@ -1,10 +1,10 @@
 package provider
 
 import (
-	llmmodelrepo "github.com/zgiai/ginext/internal/modules/llm/llmmodel/repository"
-	"github.com/zgiai/ginext/internal/modules/llm/provider/handler"
-	"github.com/zgiai/ginext/internal/modules/llm/provider/repository"
-	"github.com/zgiai/ginext/internal/modules/llm/provider/service"
+	llmmodelrepo "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/repository"
+	"github.com/zgiai/zgi/api/internal/modules/llm/provider/handler"
+	"github.com/zgiai/zgi/api/internal/modules/llm/provider/repository"
+	"github.com/zgiai/zgi/api/internal/modules/llm/provider/service"
 	"gorm.io/gorm"
 )
 

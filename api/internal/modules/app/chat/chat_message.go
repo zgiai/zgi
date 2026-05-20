@@ -1,7 +1,7 @@
 package chat
 
 import (
-	"github.com/zgiai/ginext/internal/modules/shared/model"
+	"github.com/zgiai/zgi/api/internal/modules/shared/model"
 )
 
 type Message = model.Message

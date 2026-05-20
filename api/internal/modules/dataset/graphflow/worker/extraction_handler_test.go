@@ -6,9 +6,9 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/dataset/graphflow/extractor"
-	"github.com/zgiai/ginext/internal/modules/dataset/graphflow/model"
-	dataset_model "github.com/zgiai/ginext/internal/modules/dataset/model"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/extractor"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/model"
+	dataset_model "github.com/zgiai/zgi/api/internal/modules/dataset/model"
 )
 
 func TestValidateExtractionOutcome_AllSegmentsFailed(t *testing.T) {

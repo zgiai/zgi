@@ -19,8 +19,8 @@ import (
 
 	"golang.org/x/image/draw"
 
-	pdfadapter "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/adapters/pdf"
-	"github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/binutil"
+	pdfadapter "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/adapters/pdf"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/binutil"
 
 	_ "image/jpeg" // image.Decode
 	_ "image/png"

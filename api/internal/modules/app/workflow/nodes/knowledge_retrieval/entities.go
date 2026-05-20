@@ -1,11 +1,11 @@
 package knowledgeretrieval
 
 import (
-	"github.com/zgiai/ginext/internal/modules/app/workflow/file"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/nodes/base"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/nodes/llm"
-	"github.com/zgiai/ginext/internal/modules/dataset/graphflow"
-	llmclient "github.com/zgiai/ginext/internal/modules/llm/client"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/base"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/llm"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	"gorm.io/gorm"
 )
 

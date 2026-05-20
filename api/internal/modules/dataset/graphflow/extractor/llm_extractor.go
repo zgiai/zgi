@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/zgiai/ginext/internal/modules/llm/client"
-	llmdefaultservice "github.com/zgiai/ginext/internal/modules/llm/defaultmodel/service"
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
-	llmruntime "github.com/zgiai/ginext/internal/modules/llm/runtime"
-	shared_model "github.com/zgiai/ginext/internal/modules/shared/model"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/modules/llm/client"
+	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	llmruntime "github.com/zgiai/zgi/api/internal/modules/llm/runtime"
+	shared_model "github.com/zgiai/zgi/api/internal/modules/shared/model"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
 )
 

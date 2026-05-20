@@ -9,13 +9,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zgiai/ginext/config"
-	"github.com/zgiai/ginext/internal/modules/file_process/model"
-	fileProcessRepo "github.com/zgiai/ginext/internal/modules/file_process/repository"
-	file_service "github.com/zgiai/ginext/internal/modules/file_process/service"
-	"github.com/zgiai/ginext/pkg/database"
-	"github.com/zgiai/ginext/pkg/image"
-	"github.com/zgiai/ginext/pkg/storage"
+	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/modules/file_process/model"
+	fileProcessRepo "github.com/zgiai/zgi/api/internal/modules/file_process/repository"
+	file_service "github.com/zgiai/zgi/api/internal/modules/file_process/service"
+	"github.com/zgiai/zgi/api/pkg/database"
+	"github.com/zgiai/zgi/api/pkg/image"
+	"github.com/zgiai/zgi/api/pkg/storage"
 )
 
 type agent struct {

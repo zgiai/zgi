@@ -1,8 +1,8 @@
 package approval
 
 import (
-	approvalruntime "github.com/zgiai/ginext/internal/modules/app/workflow/approval"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/nodes/base"
+	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/base"
 )
 
 type NodeData struct {

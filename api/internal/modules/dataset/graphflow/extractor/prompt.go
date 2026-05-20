@@ -1,6 +1,6 @@
 package extractor
 
-import "github.com/zgiai/ginext/internal/prompt"
+import "github.com/zgiai/zgi/api/internal/prompt"
 
 const (
 	defaultGlobalContextValue = "No specific global context provided."

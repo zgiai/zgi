@@ -3,11 +3,11 @@ package platform
 import (
 	"fmt"
 
-	appconfig "github.com/zgiai/ginext/config"
-	"github.com/zgiai/ginext/internal/infra/platform/billing"
-	"github.com/zgiai/ginext/internal/infra/platform/channel"
-	"github.com/zgiai/ginext/internal/infra/platform/console"
-	"github.com/zgiai/ginext/internal/infra/platform/identity"
+	appconfig "github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/infra/platform/billing"
+	"github.com/zgiai/zgi/api/internal/infra/platform/channel"
+	"github.com/zgiai/zgi/api/internal/infra/platform/console"
+	"github.com/zgiai/zgi/api/internal/infra/platform/identity"
 	"gorm.io/gorm"
 )
 

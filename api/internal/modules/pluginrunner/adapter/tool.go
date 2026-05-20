@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 // PluginRunnerTool represents a tool that can be invoked through the plugin runner

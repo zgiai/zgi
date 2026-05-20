@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	llmclient "github.com/zgiai/ginext/internal/modules/llm/client"
-	llmadapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
-	"github.com/zgiai/ginext/pkg/embedding"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	llmadapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/pkg/embedding"
 )
 
 // embeddingInvoker mirrors llmInvoker but for embedding calls.

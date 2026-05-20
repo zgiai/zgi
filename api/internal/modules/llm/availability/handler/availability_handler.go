@@ -5,9 +5,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/llm/availability/dto"
-	"github.com/zgiai/ginext/internal/modules/llm/availability/service"
-	"github.com/zgiai/ginext/pkg/response"
+	"github.com/zgiai/zgi/api/internal/modules/llm/availability/dto"
+	"github.com/zgiai/zgi/api/internal/modules/llm/availability/service"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 // AvailabilityHandler handles model availability check requests

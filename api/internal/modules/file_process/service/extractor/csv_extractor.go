@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/zgiai/ginext/internal/dto"
+	"github.com/zgiai/zgi/api/internal/dto"
 )
 
 type CSVExtractor struct {

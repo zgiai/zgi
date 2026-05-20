@@ -15,8 +15,8 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/core/model"
-	localocr "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/ocr"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/core/model"
+	localocr "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/ocr"
 )
 
 type Adapter struct{}

@@ -7,10 +7,10 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	aichatdto "github.com/zgiai/ginext/internal/modules/aichat/dto"
-	aichatmodel "github.com/zgiai/ginext/internal/modules/aichat/model"
-	"github.com/zgiai/ginext/internal/modules/aichat/repository"
-	"github.com/zgiai/ginext/internal/modules/skills"
+	aichatdto "github.com/zgiai/zgi/api/internal/modules/aichat/dto"
+	aichatmodel "github.com/zgiai/zgi/api/internal/modules/aichat/model"
+	"github.com/zgiai/zgi/api/internal/modules/aichat/repository"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"gorm.io/gorm"
 )
 

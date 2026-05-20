@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/zgiai/ginext/internal/modules/llm/statistics/dto"
+	"github.com/zgiai/zgi/api/internal/modules/llm/statistics/dto"
 	"gorm.io/gorm"
 )
 

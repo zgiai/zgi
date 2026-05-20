@@ -466,7 +466,7 @@ const file_pkg_rpc_v1_provider_proto_rawDesc = "" +
 	"\x0fProviderService\x12T\n" +
 	"\rListProviders\x12 .zgi.rpc.v1.ListProvidersRequest\x1a!.zgi.rpc.v1.ListProvidersResponse\x12N\n" +
 	"\vGetProvider\x12\x1e.zgi.rpc.v1.GetProviderRequest\x1a\x1f.zgi.rpc.v1.GetProviderResponse\x12Z\n" +
-	"\x0fDetectProtocols\x12\".zgi.rpc.v1.DetectProtocolsRequest\x1a#.zgi.rpc.v1.DetectProtocolsResponseB'Z%github.com/zgiai/ginext/pkg/rpc/v1;v1b\x06proto3"
+	"\x0fDetectProtocols\x12\".zgi.rpc.v1.DetectProtocolsRequest\x1a#.zgi.rpc.v1.DetectProtocolsResponseB'Z%github.com/zgiai/zgi/api/pkg/rpc/v1;v1b\x06proto3"
 
 var (
 	file_pkg_rpc_v1_provider_proto_rawDescOnce sync.Once

@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/aliyun/aliyun-oss-go-sdk/oss"
-	appconfig "github.com/zgiai/ginext/config"
+	appconfig "github.com/zgiai/zgi/api/config"
 )
 
 // AliyunOssStorage

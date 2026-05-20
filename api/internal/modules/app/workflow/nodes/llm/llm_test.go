@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	appconfig "github.com/zgiai/ginext/config"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/file"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/entities"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/nodes/base"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/shared"
+	appconfig "github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/base"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 )
 
 type stubFileDownloader struct {

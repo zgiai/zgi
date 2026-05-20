@@ -11,11 +11,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
-	"github.com/zgiai/ginext/config"
-	shared_dto "github.com/zgiai/ginext/internal/dto"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	auth_model "github.com/zgiai/ginext/internal/modules/user/auth/model"
-	auth_service "github.com/zgiai/ginext/internal/modules/user/auth/service"
+	"github.com/zgiai/zgi/api/config"
+	shared_dto "github.com/zgiai/zgi/api/internal/dto"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
+	auth_service "github.com/zgiai/zgi/api/internal/modules/user/auth/service"
 )
 
 type fakeFeatureService struct {

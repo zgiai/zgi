@@ -6,10 +6,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
-	channeldto "github.com/zgiai/ginext/internal/modules/llm/channel/dto"
-	channelmodel "github.com/zgiai/ginext/internal/modules/llm/channel/model"
-	credentialmodel "github.com/zgiai/ginext/internal/modules/llm/credential/model"
-	llmmodelmodel "github.com/zgiai/ginext/internal/modules/llm/llmmodel/model"
+	channeldto "github.com/zgiai/zgi/api/internal/modules/llm/channel/dto"
+	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
+	credentialmodel "github.com/zgiai/zgi/api/internal/modules/llm/credential/model"
+	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 )
 
 func TestCreateRoute_RejectsLegacyShortModelNameWithFullNameHint(t *testing.T) {

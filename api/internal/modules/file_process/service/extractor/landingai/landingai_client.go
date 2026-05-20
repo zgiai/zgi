@@ -12,8 +12,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/zgiai/ginext/internal/observability"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/observability"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 // LandingAIClient is a client for the LandingAI ADE API

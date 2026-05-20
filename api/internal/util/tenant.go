@@ -5,8 +5,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/pkg/jwt"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/jwt"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 // GetTenantID is a legacy compatibility helper.

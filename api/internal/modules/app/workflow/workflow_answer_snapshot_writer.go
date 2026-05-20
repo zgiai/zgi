@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/zgiai/ginext/internal/modules/app/conversation"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 const workflowEventAnswerSnapshotReady = "answer_snapshot_ready"

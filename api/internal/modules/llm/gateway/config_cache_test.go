@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	llmmodel "github.com/zgiai/ginext/internal/modules/llm/llmmodel/model"
+	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 )
 
 func TestModelCachePreservesInternalCapabilities(t *testing.T) {

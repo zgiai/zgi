@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zgiai/ginext/config"
-	workflowpause "github.com/zgiai/ginext/internal/modules/app/workflow/pause"
-	workflow_shared "github.com/zgiai/ginext/internal/modules/app/workflow/shared"
+	"github.com/zgiai/zgi/api/config"
+	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
+	workflow_shared "github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 )
 
 func TestAnswerOutputCoordinatorDoesNotEmitBeforeAnswerActive(t *testing.T) {

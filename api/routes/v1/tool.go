@@ -2,9 +2,9 @@ package v1
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/internal/container"
-	tools_handler "github.com/zgiai/ginext/internal/modules/tools/handler"
-	"github.com/zgiai/ginext/middleware"
+	"github.com/zgiai/zgi/api/internal/container"
+	tools_handler "github.com/zgiai/zgi/api/internal/modules/tools/handler"
+	"github.com/zgiai/zgi/api/middleware"
 )
 
 // RegisterToolRoutes registers tool-related routes

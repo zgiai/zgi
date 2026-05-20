@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/entities"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
 )
 
 // HTTPRequestExample HTTP request usage examples

@@ -7,11 +7,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/entities"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/subgraph"
-	workflowruntime "github.com/zgiai/ginext/internal/modules/app/workflow/runtime"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/shared"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/subgraph"
+	workflowruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/runtime"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 )
 
 func newGraphConfig(nodes []map[string]any, edges []map[string]any) map[string]any {

@@ -11,26 +11,26 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/config"
+	"github.com/zgiai/zgi/api/config"
 
-	"github.com/zgiai/ginext/pkg/jwt"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/jwt"
+	"github.com/zgiai/zgi/api/pkg/logger"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/zgiai/ginext/internal/dto"
-	platformconsole "github.com/zgiai/ginext/internal/infra/platform/console"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	"github.com/zgiai/ginext/internal/modules/shared/workspacebootstrap"
-	redisUtil "github.com/zgiai/ginext/pkg/redis"
+	"github.com/zgiai/zgi/api/internal/dto"
+	platformconsole "github.com/zgiai/zgi/api/internal/infra/platform/console"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/internal/modules/shared/workspacebootstrap"
+	redisUtil "github.com/zgiai/zgi/api/pkg/redis"
 
 	"gorm.io/gorm"
 
-	system_service "github.com/zgiai/ginext/internal/modules/system/service"
-	auth_model "github.com/zgiai/ginext/internal/modules/user/auth/model"
-	auth_repo "github.com/zgiai/ginext/internal/modules/user/auth/repository"
-	workspace_model "github.com/zgiai/ginext/internal/modules/workspace/model"
-	helper "github.com/zgiai/ginext/internal/util"
-	"github.com/zgiai/ginext/pkg/email"
+	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
+	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
+	auth_repo "github.com/zgiai/zgi/api/internal/modules/user/auth/repository"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	helper "github.com/zgiai/zgi/api/internal/util"
+	"github.com/zgiai/zgi/api/pkg/email"
 )
 
 const (

@@ -10,8 +10,8 @@ import (
 	"strings"
 
 	"github.com/lib/pq"
-	"github.com/zgiai/ginext/internal/migrations"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/migrations"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 //go:embed seeds

@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/zgiai/ginext/internal/modules/file_process/model"
-	"github.com/zgiai/ginext/internal/modules/file_process/repository"
+	"github.com/zgiai/zgi/api/internal/modules/file_process/model"
+	"github.com/zgiai/zgi/api/internal/modules/file_process/repository"
 )
 
 // FileFavoriteService defines the interface for file favorite operations

@@ -9,13 +9,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	usererrors "github.com/zgiai/ginext/internal/errors"
-	quota_model "github.com/zgiai/ginext/internal/modules/quota/model"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	auth_model "github.com/zgiai/ginext/internal/modules/user/auth/model"
-	"github.com/zgiai/ginext/internal/modules/workspace/model"
-	"github.com/zgiai/ginext/internal/modules/workspace/repository"
-	"github.com/zgiai/ginext/pkg/logger"
+	usererrors "github.com/zgiai/zgi/api/internal/errors"
+	quota_model "github.com/zgiai/zgi/api/internal/modules/quota/model"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
+	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	"github.com/zgiai/zgi/api/internal/modules/workspace/repository"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/gorm"
 )
 

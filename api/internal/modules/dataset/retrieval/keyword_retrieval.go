@@ -3,8 +3,8 @@ package retrieval
 import (
 	"context"
 
-	"github.com/zgiai/ginext/pkg/indexing"
-	"github.com/zgiai/ginext/pkg/tokenization"
+	"github.com/zgiai/zgi/api/pkg/indexing"
+	"github.com/zgiai/zgi/api/pkg/tokenization"
 )
 
 // SearchResult represents a single search result

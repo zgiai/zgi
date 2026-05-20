@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/zgiai/ginext/internal/modules/pluginrunner/client"
-	"github.com/zgiai/ginext/internal/modules/pluginrunner/model"
-	"github.com/zgiai/ginext/internal/modules/pluginrunner/service"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/modules/pluginrunner/client"
+	"github.com/zgiai/zgi/api/internal/modules/pluginrunner/model"
+	"github.com/zgiai/zgi/api/internal/modules/pluginrunner/service"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 // PluginRunnerToolManager adapts PluginRunnerService for workflow tool invocation

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/app/conversation"
+	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
 )
 
 type conversationHistoryAccessService interface {

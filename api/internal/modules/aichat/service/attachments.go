@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/zgiai/ginext/internal/dto"
-	aichatmodel "github.com/zgiai/ginext/internal/modules/aichat/model"
-	workflowfile "github.com/zgiai/ginext/internal/modules/app/workflow/file"
-	"github.com/zgiai/ginext/internal/modules/llm/multimodal"
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	workspacemodel "github.com/zgiai/ginext/internal/modules/workspace/model"
+	"github.com/zgiai/zgi/api/internal/dto"
+	aichatmodel "github.com/zgiai/zgi/api/internal/modules/aichat/model"
+	workflowfile "github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
+	"github.com/zgiai/zgi/api/internal/modules/llm/multimodal"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 )
 
 const (

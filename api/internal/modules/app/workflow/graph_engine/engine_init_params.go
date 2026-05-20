@@ -1,7 +1,7 @@
 package graph_engine
 
 import (
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/entities"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
 )
 
 func (e *WorkflowEngine) getGraphInitParams() entities.GraphInitParams {

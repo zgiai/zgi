@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	channelmodel "github.com/zgiai/ginext/internal/modules/llm/channel/model"
-	paymentservice "github.com/zgiai/ginext/internal/modules/payment/service"
+	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
+	paymentservice "github.com/zgiai/zgi/api/internal/modules/payment/service"
 	"gorm.io/gorm"
 )
 

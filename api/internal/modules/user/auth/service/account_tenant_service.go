@@ -3,10 +3,10 @@ package service
 import (
 	"context"
 
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	auth_model "github.com/zgiai/ginext/internal/modules/user/auth/model"
-	auth_repo "github.com/zgiai/ginext/internal/modules/user/auth/repository"
-	workspace_model "github.com/zgiai/ginext/internal/modules/workspace/model"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
+	auth_repo "github.com/zgiai/zgi/api/internal/modules/user/auth/repository"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 )
 
 type AccountTenantService struct {

@@ -9,10 +9,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	platformconsole "github.com/zgiai/ginext/internal/infra/platform/console"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	"github.com/zgiai/ginext/middleware"
-	"github.com/zgiai/ginext/pkg/response"
+	platformconsole "github.com/zgiai/zgi/api/internal/infra/platform/console"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/middleware"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 // WalletHandler handles wallet-related HTTP requests

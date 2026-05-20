@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zgiai/ginext/config"
+	"github.com/zgiai/zgi/api/config"
 )
 
 const (

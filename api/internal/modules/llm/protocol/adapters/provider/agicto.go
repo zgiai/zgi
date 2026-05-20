@@ -1,7 +1,7 @@
 package provider
 
 import (
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 const defaultAgictoBaseURL = "https://api.agicto.cn/v1"

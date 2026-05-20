@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	datasetadapter "github.com/zgiai/ginext/internal/capabilities/chunking/adapters/dataset"
-	chunkquality "github.com/zgiai/ginext/internal/capabilities/chunking/quality"
-	"github.com/zgiai/ginext/internal/contracts"
-	"github.com/zgiai/ginext/internal/dto"
+	datasetadapter "github.com/zgiai/zgi/api/internal/capabilities/chunking/adapters/dataset"
+	chunkquality "github.com/zgiai/zgi/api/internal/capabilities/chunking/quality"
+	"github.com/zgiai/zgi/api/internal/contracts"
+	"github.com/zgiai/zgi/api/internal/dto"
 )
 
 func TestPDFParseToChunkQualityReport(t *testing.T) {

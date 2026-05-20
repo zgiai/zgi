@@ -9,10 +9,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
-	"github.com/zgiai/ginext/internal/modules/llm/gateway/types"
-	llmmodel "github.com/zgiai/ginext/internal/modules/llm/llmmodel/model"
-	providermodel "github.com/zgiai/ginext/internal/modules/llm/provider/model"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway/types"
+	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	providermodel "github.com/zgiai/zgi/api/internal/modules/llm/provider/model"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )

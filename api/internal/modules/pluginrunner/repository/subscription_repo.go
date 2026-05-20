@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/zgiai/ginext/internal/modules/pluginrunner/model"
+	"github.com/zgiai/zgi/api/internal/modules/pluginrunner/model"
 	"gorm.io/gorm"
 )
 

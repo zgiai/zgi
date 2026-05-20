@@ -7,10 +7,10 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	apikeymodel "github.com/zgiai/ginext/internal/modules/llm/apikey/model"
-	llmmodel "github.com/zgiai/ginext/internal/modules/llm/llmmodel/model"
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
-	providermodel "github.com/zgiai/ginext/internal/modules/llm/provider/model"
+	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
+	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	providermodel "github.com/zgiai/zgi/api/internal/modules/llm/provider/model"
 )
 
 // =============================================================================

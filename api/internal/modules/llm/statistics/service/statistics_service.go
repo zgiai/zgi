@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/zgiai/ginext/internal/modules/llm/statistics/dto"
-	"github.com/zgiai/ginext/internal/modules/llm/statistics/repository"
+	"github.com/zgiai/zgi/api/internal/modules/llm/statistics/dto"
+	"github.com/zgiai/zgi/api/internal/modules/llm/statistics/repository"
 )
 
 const maxUnixSeconds = int64(9999999999)

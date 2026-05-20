@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/shared"
-	llmClient "github.com/zgiai/ginext/internal/modules/llm/client"
-	"github.com/zgiai/ginext/internal/modules/llm/multimodal"
-	llmAdapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
+	llmClient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	"github.com/zgiai/zgi/api/internal/modules/llm/multimodal"
+	llmAdapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 // gatewayLLMInvoker is the default implementation backed by the LLM client.

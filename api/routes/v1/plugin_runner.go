@@ -2,15 +2,15 @@ package v1
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/internal/modules/pluginrunner/client"
-	"github.com/zgiai/ginext/internal/modules/pluginrunner/handler"
-	"github.com/zgiai/ginext/internal/modules/pluginrunner/repository"
-	"github.com/zgiai/ginext/internal/modules/pluginrunner/service"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	"github.com/zgiai/ginext/internal/util"
-	"github.com/zgiai/ginext/middleware"
-	"github.com/zgiai/ginext/pkg/logger"
-	"github.com/zgiai/ginext/pkg/response"
+	"github.com/zgiai/zgi/api/internal/modules/pluginrunner/client"
+	"github.com/zgiai/zgi/api/internal/modules/pluginrunner/handler"
+	"github.com/zgiai/zgi/api/internal/modules/pluginrunner/repository"
+	"github.com/zgiai/zgi/api/internal/modules/pluginrunner/service"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/internal/util"
+	"github.com/zgiai/zgi/api/middleware"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/response"
 	"gorm.io/gorm"
 )
 

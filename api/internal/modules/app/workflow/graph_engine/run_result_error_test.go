@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/shared"
-	"github.com/zgiai/ginext/internal/modules/llm/gateway"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 )
 
 func TestErrorFromNodeRunResult_PreservesBillingUserErrorChain(t *testing.T) {

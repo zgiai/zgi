@@ -5,10 +5,10 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/entities"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/nodes/base"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/shared"
-	"github.com/zgiai/ginext/internal/modules/llm/gateway"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/base"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 )
 
 func TestExecuteRun_UsesNestedQuerySelector(t *testing.T) {

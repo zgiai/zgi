@@ -1,8 +1,8 @@
 package knowledgeretrieval
 
 import (
-	"github.com/zgiai/ginext/internal/modules/app/workflow/nodes/llm"
-	datasetmodel "github.com/zgiai/ginext/internal/modules/dataset/model"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/llm"
+	datasetmodel "github.com/zgiai/zgi/api/internal/modules/dataset/model"
 )
 
 // PlanningStrategy defines the strategy for dataset selection during retrieval

@@ -3,9 +3,9 @@ package v1
 import (
 	"github.com/gin-gonic/gin"
 
-	"github.com/zgiai/ginext/internal/container"
-	paymentHandler "github.com/zgiai/ginext/internal/modules/payment/handler"
-	"github.com/zgiai/ginext/internal/modules/payment/service"
+	"github.com/zgiai/zgi/api/internal/container"
+	paymentHandler "github.com/zgiai/zgi/api/internal/modules/payment/handler"
+	"github.com/zgiai/zgi/api/internal/modules/payment/service"
 )
 
 // RegisterPaymentRoutes registers all payment-related routes

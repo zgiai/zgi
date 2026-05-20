@@ -6,9 +6,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
-	"github.com/zgiai/ginext/internal/modules/llm/credential/dto"
-	"github.com/zgiai/ginext/internal/modules/llm/credential/service"
-	testutil "github.com/zgiai/ginext/tests/llm/shared"
+	"github.com/zgiai/zgi/api/internal/modules/llm/credential/dto"
+	"github.com/zgiai/zgi/api/internal/modules/llm/credential/service"
+	testutil "github.com/zgiai/zgi/api/tests/llm/shared"
 )
 
 func TestTenantCredentialService_Create(t *testing.T) {

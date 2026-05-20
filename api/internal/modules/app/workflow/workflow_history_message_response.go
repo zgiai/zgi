@@ -3,7 +3,7 @@ package workflow
 import (
 	"context"
 
-	"github.com/zgiai/ginext/internal/modules/app/conversation"
+	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
 )
 
 func buildChatMessagesResponse(messages []*conversation.AgentMessage, total int64, page, limit int) map[string]interface{} {

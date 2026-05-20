@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/zgiai/ginext/internal/dto"
+	"github.com/zgiai/zgi/api/internal/dto"
 
 	"github.com/ledongthuc/pdf"
 )

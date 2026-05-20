@@ -13,7 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
-	"github.com/zgiai/ginext/config"
+	"github.com/zgiai/zgi/api/config"
 )
 
 func TestRegisterConsoleInternalRoutes_PaymentEventRemoved(t *testing.T) {

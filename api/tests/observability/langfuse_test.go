@@ -5,8 +5,8 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/zgiai/ginext/config"
-	"github.com/zgiai/ginext/internal/observability"
+	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/observability"
 	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"

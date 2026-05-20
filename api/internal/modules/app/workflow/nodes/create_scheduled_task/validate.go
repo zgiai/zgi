@@ -5,8 +5,8 @@ import (
 	"strings"
 
 	"github.com/robfig/cron/v3"
-	automationmodel "github.com/zgiai/ginext/internal/modules/automation/model"
-	notificationsms "github.com/zgiai/ginext/internal/modules/notification/sms"
+	automationmodel "github.com/zgiai/zgi/api/internal/modules/automation/model"
+	notificationsms "github.com/zgiai/zgi/api/internal/modules/notification/sms"
 )
 
 func validateNodeData(nodeData NodeData) error {

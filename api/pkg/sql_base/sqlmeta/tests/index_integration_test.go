@@ -11,12 +11,12 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/samber/do/v2"
 
-	"github.com/zgiai/ginext/pkg/sql_base/sqlmeta/catalog/indexes"
-	"github.com/zgiai/ginext/pkg/sql_base/sqlmeta/catalog/schemas"
-	"github.com/zgiai/ginext/pkg/sql_base/sqlmeta/catalog/tables"
-	"github.com/zgiai/ginext/pkg/sql_base/sqlmeta/driver"
-	"github.com/zgiai/ginext/pkg/sql_base/sqlmeta/service"
-	"github.com/zgiai/ginext/pkg/sql_base/sqlmeta/types"
+	"github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/catalog/indexes"
+	"github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/catalog/schemas"
+	"github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/catalog/tables"
+	"github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/driver"
+	"github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/service"
+	"github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/types"
 )
 
 func TestIndexesListAndRetrieve(t *testing.T) {

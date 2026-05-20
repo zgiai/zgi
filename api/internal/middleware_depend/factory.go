@@ -1,7 +1,7 @@
 package middleware_depend
 
 import (
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 )
 
 func CreateServiceProviderFromServices(

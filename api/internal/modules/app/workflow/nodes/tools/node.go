@@ -6,11 +6,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/file"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/entities"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/nodes/base"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/shared"
-	"github.com/zgiai/ginext/internal/modules/tools"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/base"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
+	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
 
 // Node represents a Tools node in the workflow for the new Plugin Runner system

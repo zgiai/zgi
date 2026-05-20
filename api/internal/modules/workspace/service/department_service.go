@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/zgiai/ginext/internal/modules/workspace/model"
-	"github.com/zgiai/ginext/internal/modules/workspace/repository"
+	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	"github.com/zgiai/zgi/api/internal/modules/workspace/repository"
 	"gorm.io/gorm"
 )
 

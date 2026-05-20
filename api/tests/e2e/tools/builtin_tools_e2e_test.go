@@ -7,14 +7,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/entities"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/nodes/tools"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/shared"
-	toolspkg "github.com/zgiai/ginext/internal/modules/tools"
-	"github.com/zgiai/ginext/internal/modules/tools/builtin"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/tools"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
+	toolspkg "github.com/zgiai/zgi/api/internal/modules/tools"
+	"github.com/zgiai/zgi/api/internal/modules/tools/builtin"
 
 	// Import to trigger init() registration
-	_ "github.com/zgiai/ginext/internal/modules/tools/builtin/time"
+	_ "github.com/zgiai/zgi/api/internal/modules/tools/builtin/time"
 )
 
 // TestToolsNode_BuiltinTime tests the Tools node with builtin time tool
@@ -62,13 +62,13 @@ func TestToolsNode_BuiltinTime(t *testing.T) {
 
 	// Create graph init params
 	graphInitParams := entities.GraphInitParams{
-		OrganizationID:     "test-tenant-123",
-		AppID:        "test-app-123",
-		WorkflowID:   "test-workflow-123",
-		UserID:       "test-user-123",
-		WorkflowType: entities.WorkflowTypeWorkflow,
-		UserFrom:     entities.UserFromAccount,
-		InvokeFrom:   entities.InvokeFromDebugger,
+		OrganizationID: "test-tenant-123",
+		AppID:          "test-app-123",
+		WorkflowID:     "test-workflow-123",
+		UserID:         "test-user-123",
+		WorkflowType:   entities.WorkflowTypeWorkflow,
+		UserFrom:       entities.UserFromAccount,
+		InvokeFrom:     entities.InvokeFromDebugger,
 	}
 
 	// Create graph
@@ -171,13 +171,13 @@ func TestToolsNode_VariableParameter(t *testing.T) {
 	}
 
 	graphInitParams := entities.GraphInitParams{
-		OrganizationID:     "test-tenant-123",
-		AppID:        "test-app-123",
-		WorkflowID:   "test-workflow-123",
-		UserID:       "test-user-123",
-		WorkflowType: entities.WorkflowTypeWorkflow,
-		UserFrom:     entities.UserFromAccount,
-		InvokeFrom:   entities.InvokeFromDebugger,
+		OrganizationID: "test-tenant-123",
+		AppID:          "test-app-123",
+		WorkflowID:     "test-workflow-123",
+		UserID:         "test-user-123",
+		WorkflowType:   entities.WorkflowTypeWorkflow,
+		UserFrom:       entities.UserFromAccount,
+		InvokeFrom:     entities.InvokeFromDebugger,
 	}
 
 	graph := &entities.Graph{}
@@ -254,13 +254,13 @@ func TestToolsNode_MixedParameter(t *testing.T) {
 	}
 
 	graphInitParams := entities.GraphInitParams{
-		OrganizationID:     "test-tenant-123",
-		AppID:        "test-app-123",
-		WorkflowID:   "test-workflow-123",
-		UserID:       "test-user-123",
-		WorkflowType: entities.WorkflowTypeWorkflow,
-		UserFrom:     entities.UserFromAccount,
-		InvokeFrom:   entities.InvokeFromDebugger,
+		OrganizationID: "test-tenant-123",
+		AppID:          "test-app-123",
+		WorkflowID:     "test-workflow-123",
+		UserID:         "test-user-123",
+		WorkflowType:   entities.WorkflowTypeWorkflow,
+		UserFrom:       entities.UserFromAccount,
+		InvokeFrom:     entities.InvokeFromDebugger,
 	}
 
 	graph := &entities.Graph{}

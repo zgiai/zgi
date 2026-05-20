@@ -5,7 +5,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/zgiai/ginext/internal/contracts"
+	"github.com/zgiai/zgi/api/internal/contracts"
 )
 
 var (

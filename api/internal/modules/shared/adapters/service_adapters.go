@@ -3,13 +3,13 @@ package adapters
 import (
 	"context"
 
-	"github.com/zgiai/ginext/internal/dto"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	auth_model "github.com/zgiai/ginext/internal/modules/user/auth/model"
-	auth_service "github.com/zgiai/ginext/internal/modules/user/auth/service"
-	workspace_model "github.com/zgiai/ginext/internal/modules/workspace/model"
-	workspace_service "github.com/zgiai/ginext/internal/modules/workspace/service"
-	helper "github.com/zgiai/ginext/internal/util"
+	"github.com/zgiai/zgi/api/internal/dto"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
+	auth_service "github.com/zgiai/zgi/api/internal/modules/user/auth/service"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	workspace_service "github.com/zgiai/zgi/api/internal/modules/workspace/service"
+	helper "github.com/zgiai/zgi/api/internal/util"
 	"gorm.io/gorm"
 )
 

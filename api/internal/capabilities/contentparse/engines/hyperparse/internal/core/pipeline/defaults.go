@@ -1,11 +1,11 @@
 package pipeline
 
 import (
-	"github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/adapters/docx"
-	"github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/adapters/image"
-	"github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/adapters/markdown"
-	"github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/adapters/pdf"
-	"github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/adapters/text"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/adapters/docx"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/adapters/image"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/adapters/markdown"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/adapters/pdf"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/adapters/text"
 )
 
 // NewDefaultRouter registers built-in adapters and extension mappings.

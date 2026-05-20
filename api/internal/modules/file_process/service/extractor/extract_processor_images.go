@@ -11,12 +11,12 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/zgiai/ginext/internal/dto"
-	"github.com/zgiai/ginext/internal/modules/file_process/model"
-	defaultmodelservice "github.com/zgiai/ginext/internal/modules/llm/defaultmodel/service"
-	llmmodelmodel "github.com/zgiai/ginext/internal/modules/llm/llmmodel/model"
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/file_process/model"
+	defaultmodelservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
+	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 const fallbackFigureSummary = "Image summary is unavailable."

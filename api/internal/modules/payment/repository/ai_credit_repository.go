@@ -9,7 +9,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	"github.com/zgiai/ginext/internal/modules/payment/model"
+	"github.com/zgiai/zgi/api/internal/modules/payment/model"
 )
 
 // GroupAICreditAccountRepository defines the interface for user AI credit account operations

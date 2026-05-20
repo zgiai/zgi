@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/zgiai/ginext/internal/modules/llm/shared/types"
+	"github.com/zgiai/zgi/api/internal/modules/llm/shared/types"
 )
 
 func TestJSONArray_Value(t *testing.T) {

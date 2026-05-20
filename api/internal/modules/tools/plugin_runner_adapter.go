@@ -7,10 +7,10 @@ import (
 	"sync"
 	"time"
 
-	pluginrunner_client "github.com/zgiai/ginext/internal/modules/pluginrunner/client"
-	pluginrunner_model "github.com/zgiai/ginext/internal/modules/pluginrunner/model"
-	pluginrunner_service "github.com/zgiai/ginext/internal/modules/pluginrunner/service"
-	"github.com/zgiai/ginext/pkg/logger"
+	pluginrunner_client "github.com/zgiai/zgi/api/internal/modules/pluginrunner/client"
+	pluginrunner_model "github.com/zgiai/zgi/api/internal/modules/pluginrunner/model"
+	pluginrunner_service "github.com/zgiai/zgi/api/internal/modules/pluginrunner/service"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 const (

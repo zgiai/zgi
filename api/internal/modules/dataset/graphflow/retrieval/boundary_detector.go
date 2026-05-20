@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/dataset/graphflow/repository"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/repository"
 )
 
 // BoundaryType defines the scope of the graph search.

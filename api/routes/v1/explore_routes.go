@@ -2,9 +2,9 @@ package v1
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/internal/modules/explore/handler"
-	"github.com/zgiai/ginext/internal/modules/explore/service"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/internal/modules/explore/handler"
+	"github.com/zgiai/zgi/api/internal/modules/explore/service"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 )
 
 // RegisterExploreRoutes registers explore-related routes

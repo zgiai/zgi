@@ -2,8 +2,8 @@ package workflow
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/pkg/logger"
-	"github.com/zgiai/ginext/pkg/response"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 // BuiltInWorkflowHandler handles built-in workflow HTTP requests

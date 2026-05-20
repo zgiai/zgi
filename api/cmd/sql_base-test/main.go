@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/zgiai/ginext/config"
-	sql_base "github.com/zgiai/ginext/pkg/sql_base"
+	"github.com/zgiai/zgi/api/config"
+	sql_base "github.com/zgiai/zgi/api/pkg/sql_base"
 )
 
 func main() {

@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/zgiai/ginext/internal/infra/platform"
-	"github.com/zgiai/ginext/internal/infra/platform/billing"
-	"github.com/zgiai/ginext/internal/infra/platform/channel"
-	"github.com/zgiai/ginext/internal/infra/platform/identity"
+	"github.com/zgiai/zgi/api/internal/infra/platform"
+	"github.com/zgiai/zgi/api/internal/infra/platform/billing"
+	"github.com/zgiai/zgi/api/internal/infra/platform/channel"
+	"github.com/zgiai/zgi/api/internal/infra/platform/identity"
 )
 
 func TestBillingStandalone_PreCheck(t *testing.T) {

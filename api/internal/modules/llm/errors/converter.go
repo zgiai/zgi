@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/pkg/response"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 // Common domain errors that can be returned from service layer

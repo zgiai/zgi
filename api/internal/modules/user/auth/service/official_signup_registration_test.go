@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	platformconsole "github.com/zgiai/ginext/internal/infra/platform/console"
-	auth_model "github.com/zgiai/ginext/internal/modules/user/auth/model"
-	workspace_model "github.com/zgiai/ginext/internal/modules/workspace/model"
+	platformconsole "github.com/zgiai/zgi/api/internal/infra/platform/console"
+	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 )
 
 type stubOfficialSignupRegistrationOrganizationLookup struct {

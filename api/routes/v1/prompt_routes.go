@@ -2,8 +2,8 @@ package v1
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/internal/container"
-	"github.com/zgiai/ginext/internal/modules/prompts"
+	"github.com/zgiai/zgi/api/internal/container"
+	"github.com/zgiai/zgi/api/internal/modules/prompts"
 )
 
 func RegisterPromptRoutes(router *gin.RouterGroup, serviceContainer *container.ServiceContainer) {

@@ -2,7 +2,7 @@ package dto
 
 import (
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/llm/llmmodel/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 )
 
 // CreateModelRequest is the request for creating a global model

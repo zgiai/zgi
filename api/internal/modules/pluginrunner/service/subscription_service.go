@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/zgiai/ginext/internal/modules/pluginrunner/model"
-	"github.com/zgiai/ginext/internal/modules/pluginrunner/repository"
+	"github.com/zgiai/zgi/api/internal/modules/pluginrunner/model"
+	"github.com/zgiai/zgi/api/internal/modules/pluginrunner/repository"
 )
 
 // SubscriptionService handles organization plugin subscription operations

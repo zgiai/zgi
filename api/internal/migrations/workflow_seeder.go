@@ -8,8 +8,8 @@ import (
 	"path"
 	"time"
 
-	"github.com/zgiai/ginext/pkg/logger"
-	pkguuid "github.com/zgiai/ginext/pkg/uuid"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	pkguuid "github.com/zgiai/zgi/api/pkg/uuid"
 	"gopkg.in/yaml.v3"
 )
 

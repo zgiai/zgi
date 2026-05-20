@@ -8,8 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
-	provider "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters/provider"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	provider "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters/provider"
 )
 
 func TestMoonshotAICNAdapterGetProviderInfo_UsesDocumentedEndpointAndCapabilities(t *testing.T) {

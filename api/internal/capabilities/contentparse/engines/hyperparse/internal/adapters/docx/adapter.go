@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/core/model"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/core/model"
 )
 
 type Adapter struct{}

@@ -1,6 +1,6 @@
 package condbranch
 
-import "github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/entities"
+import "github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
 
 // EvaluateConditions evaluates conditions using the same logic as the branch node.
 func EvaluateConditions(

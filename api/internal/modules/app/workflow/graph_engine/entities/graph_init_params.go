@@ -1,6 +1,6 @@
 package entities
 
-import "github.com/zgiai/ginext/internal/modules/app/common"
+import "github.com/zgiai/zgi/api/internal/modules/app/common"
 
 // WorkflowType represents workflow type enum (copied from workflow package to avoid circular import)
 type WorkflowType string

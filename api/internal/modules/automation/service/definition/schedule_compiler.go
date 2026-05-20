@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
-	automationmodel "github.com/zgiai/ginext/internal/modules/automation/model"
+	automationmodel "github.com/zgiai/zgi/api/internal/modules/automation/model"
 )
 
 func compileNextRunAt(

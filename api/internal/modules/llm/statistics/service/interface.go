@@ -3,7 +3,7 @@ package service
 import (
 	"context"
 
-	"github.com/zgiai/ginext/internal/modules/llm/statistics/dto"
+	"github.com/zgiai/zgi/api/internal/modules/llm/statistics/dto"
 )
 
 // StatisticsService defines the interface for statistics operations

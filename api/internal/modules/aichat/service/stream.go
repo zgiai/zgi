@@ -8,11 +8,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	aichatmodel "github.com/zgiai/ginext/internal/modules/aichat/model"
-	"github.com/zgiai/ginext/internal/modules/aichat/repository"
-	llmclient "github.com/zgiai/ginext/internal/modules/llm/client"
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
-	"github.com/zgiai/ginext/pkg/logger"
+	aichatmodel "github.com/zgiai/zgi/api/internal/modules/aichat/model"
+	"github.com/zgiai/zgi/api/internal/modules/aichat/repository"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/gorm"
 )
 

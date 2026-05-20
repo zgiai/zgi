@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/zgiai/ginext/internal/capabilities/contentparse/routing"
-	"github.com/zgiai/ginext/internal/contracts"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/routing"
+	"github.com/zgiai/zgi/api/internal/contracts"
 )
 
 func AttemptedProviderOrder(plan *routing.RoutePlan, artifact *contracts.ParseArtifact) []string {

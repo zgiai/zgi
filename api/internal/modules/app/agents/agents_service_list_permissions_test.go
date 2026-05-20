@@ -6,9 +6,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
-	"github.com/zgiai/ginext/internal/dto"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	workspace_model "github.com/zgiai/ginext/internal/modules/workspace/model"
+	"github.com/zgiai/zgi/api/internal/dto"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 )
 
 func TestAgentsService_GetAgentsListWithPermissions_ReturnsEmptyWhenWorkspacePermissionMissing(t *testing.T) {
@@ -35,10 +35,10 @@ func TestAgentsService_GetAgentsListWithPermissions_ReturnsEmptyWhenWorkspacePer
 	}
 
 	service := &agentsService{
-		agentsRepo:                 repo,
-		tenantService:              tenantService,
-		enterpriseService:          orgService,
-		resourcePermissionService:  &stubResourcePermissionService{},
+		agentsRepo:                repo,
+		tenantService:             tenantService,
+		enterpriseService:         orgService,
+		resourcePermissionService: &stubResourcePermissionService{},
 	}
 
 	resp, err := service.GetAgentsListWithPermissions(ctx, "account-1", dto.GetAgentsListRequest{
@@ -74,9 +74,9 @@ func (s *stubAgentsListRepository) GetPaginatedAgentsMultipleTenants(_ context.C
 type stubWorkspaceManagementServiceForAgentsList struct {
 	interfaces.WorkspaceManagementService
 
-	currentOrganization       *workspace_model.OrganizationMember
+	currentOrganization        *workspace_model.OrganizationMember
 	workspaceIDsByOrganization []string
-	userWorkspaceMemberships  []interfaces.WorkspaceMembership
+	userWorkspaceMemberships   []interfaces.WorkspaceMembership
 }
 
 func (s *stubWorkspaceManagementServiceForAgentsList) GetCurrentOrganization(_ context.Context, _ string) (*workspace_model.OrganizationMember, error) {

@@ -6,8 +6,8 @@ import (
 	"sort"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/dto"
-	pkguuid "github.com/zgiai/ginext/pkg/uuid"
+	"github.com/zgiai/zgi/api/internal/dto"
+	pkguuid "github.com/zgiai/zgi/api/pkg/uuid"
 	"gorm.io/gorm"
 )
 

@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/zgiai/ginext/internal/dto"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/file"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 func (h *WorkflowHandler) processAllFileInputs(ctx context.Context, inputs map[string]interface{}, workspaceID string, appID string) map[string]interface{} {

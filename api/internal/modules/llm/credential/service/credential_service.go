@@ -8,12 +8,12 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	channelmodel "github.com/zgiai/ginext/internal/modules/llm/channel/model"
-	"github.com/zgiai/ginext/internal/modules/llm/channelprovider"
-	"github.com/zgiai/ginext/internal/modules/llm/credential/dto"
-	"github.com/zgiai/ginext/internal/modules/llm/credential/model"
-	"github.com/zgiai/ginext/internal/modules/llm/credential/repository"
-	"github.com/zgiai/ginext/internal/modules/llm/shared"
+	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/channelprovider"
+	"github.com/zgiai/zgi/api/internal/modules/llm/credential/dto"
+	"github.com/zgiai/zgi/api/internal/modules/llm/credential/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/credential/repository"
+	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 	"gorm.io/gorm"
 )
 

@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	apikeymodel "github.com/zgiai/ginext/internal/modules/llm/apikey/model"
-	gatewayhandler "github.com/zgiai/ginext/internal/modules/llm/gateway/handler"
+	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
+	gatewayhandler "github.com/zgiai/zgi/api/internal/modules/llm/gateway/handler"
 )
 
 func TestLLMAPIKeyAuthMiddlewareAcceptsXAPIKey(t *testing.T) {

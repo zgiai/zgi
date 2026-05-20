@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/zgiai/ginext/internal/modules/dataset/graphflow/openie"
-	"github.com/zgiai/ginext/internal/modules/llm/client"
-	llmdefaultservice "github.com/zgiai/ginext/internal/modules/llm/defaultmodel/service"
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/openie"
+	"github.com/zgiai/zgi/api/internal/modules/llm/client"
+	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 // Strategy constants for extraction strategies.

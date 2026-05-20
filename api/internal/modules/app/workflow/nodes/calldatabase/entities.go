@@ -1,6 +1,6 @@
 package calldatabase
 
-import "github.com/zgiai/ginext/internal/modules/app/workflow/nodes/base"
+import "github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/base"
 
 // DataSourceConfig holds metadata about the selected data source.
 type DataSourceConfig struct {

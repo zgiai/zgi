@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/llm/defaultmodel/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/model"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -58,4 +58,3 @@ func (r *defaultModelRepository) DeleteByOrganizationAndUseCase(ctx context.Cont
 		Where("organization_id = ? AND use_case = ?", organizationID, useCase).
 		Delete(&model.DefaultModel{}).Error
 }
-

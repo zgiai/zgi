@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/pkg/response"
+	"github.com/zgiai/zgi/api/pkg/response"
 	"gorm.io/gorm"
 )
 

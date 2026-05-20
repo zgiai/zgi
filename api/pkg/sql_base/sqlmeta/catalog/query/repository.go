@@ -14,8 +14,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/zgiai/ginext/pkg/sql_base/sqlmeta/driver"
-	"github.com/zgiai/ginext/pkg/sql_base/sqlmeta/types"
+	"github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/driver"
+	"github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/types"
 )
 
 // Repository exposes the low-level capability to run arbitrary SQL.

@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/zgiai/ginext/config"
+	"github.com/zgiai/zgi/api/config"
 	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"

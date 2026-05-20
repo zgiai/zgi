@@ -1,12 +1,12 @@
 package prompts
 
 import (
-	"github.com/zgiai/ginext/internal/modules/prompts/handler"
-	"github.com/zgiai/ginext/internal/modules/prompts/repository"
-	"github.com/zgiai/ginext/internal/modules/prompts/service"
-	llmclient "github.com/zgiai/ginext/internal/modules/llm/client"
-	llmdefaultservice "github.com/zgiai/ginext/internal/modules/llm/defaultmodel/service"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
+	"github.com/zgiai/zgi/api/internal/modules/prompts/handler"
+	"github.com/zgiai/zgi/api/internal/modules/prompts/repository"
+	"github.com/zgiai/zgi/api/internal/modules/prompts/service"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"gorm.io/gorm"
 )
 

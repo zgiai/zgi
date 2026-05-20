@@ -5,12 +5,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	pluginmodel "github.com/zgiai/ginext/internal/modules/pluginrunner/model"
-	"github.com/zgiai/ginext/internal/modules/pluginrunner/service"
-	"github.com/zgiai/ginext/internal/modules/tools"
-	"github.com/zgiai/ginext/middleware"
-	"github.com/zgiai/ginext/pkg/logger"
-	"github.com/zgiai/ginext/pkg/response"
+	pluginmodel "github.com/zgiai/zgi/api/internal/modules/pluginrunner/model"
+	"github.com/zgiai/zgi/api/internal/modules/pluginrunner/service"
+	"github.com/zgiai/zgi/api/internal/modules/tools"
+	"github.com/zgiai/zgi/api/middleware"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 // BuiltinToolsHandler handles builtin tools API requests

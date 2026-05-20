@@ -7,9 +7,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	platformconsole "github.com/zgiai/ginext/internal/infra/platform/console"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	"github.com/zgiai/ginext/middleware"
+	platformconsole "github.com/zgiai/zgi/api/internal/infra/platform/console"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/middleware"
 )
 
 // BankTransferHandler handles bank transfer related HTTP requests

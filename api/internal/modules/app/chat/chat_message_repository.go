@@ -2,7 +2,7 @@ package chat
 
 import (
 	"context"
-	"github.com/zgiai/ginext/internal/modules/shared/model"
+	"github.com/zgiai/zgi/api/internal/modules/shared/model"
 	"gorm.io/gorm"
 )
 

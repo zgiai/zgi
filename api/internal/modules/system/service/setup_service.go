@@ -7,16 +7,16 @@ import (
 	"strings"
 	"time"
 
-	auth_repo "github.com/zgiai/ginext/internal/modules/user/auth/repository"
-	workspace_model "github.com/zgiai/ginext/internal/modules/workspace/model"
-	"github.com/zgiai/ginext/internal/util"
+	auth_repo "github.com/zgiai/zgi/api/internal/modules/user/auth/repository"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	"github.com/zgiai/zgi/api/internal/util"
 	"gorm.io/gorm"
 
-	auth_model "github.com/zgiai/ginext/internal/modules/user/auth/model"
+	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	"github.com/zgiai/ginext/internal/modules/system/model"
-	"github.com/zgiai/ginext/internal/modules/system/repository"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/internal/modules/system/model"
+	"github.com/zgiai/zgi/api/internal/modules/system/repository"
 )
 
 const (

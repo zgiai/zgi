@@ -9,11 +9,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
-	"github.com/zgiai/ginext/internal/modules/llm/channel/dto"
-	llmmodelmodel "github.com/zgiai/ginext/internal/modules/llm/llmmodel/model"
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
-	adapterprovider "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters/provider"
-	providermodel "github.com/zgiai/ginext/internal/modules/llm/provider/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/channel/dto"
+	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	adapterprovider "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters/provider"
+	providermodel "github.com/zgiai/zgi/api/internal/modules/llm/provider/model"
 	"gorm.io/gorm"
 )
 

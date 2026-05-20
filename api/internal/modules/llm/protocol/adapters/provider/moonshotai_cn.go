@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/shopspring/decimal"
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 const moonshotAICNDefaultBaseURL = "https://api.moonshot.cn/v1"

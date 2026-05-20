@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/gorm"
 )
 

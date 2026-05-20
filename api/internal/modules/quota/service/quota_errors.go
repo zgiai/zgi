@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/quota/model"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/modules/quota/model"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 // FormatQuotaError Format quota error message

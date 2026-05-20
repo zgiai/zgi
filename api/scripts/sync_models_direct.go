@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/shopspring/decimal"
-	"github.com/zgiai/ginext/config"
+	"github.com/zgiai/zgi/api/config"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )

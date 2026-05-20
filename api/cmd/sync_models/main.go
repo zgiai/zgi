@@ -5,9 +5,9 @@ import (
 	"log"
 	"os"
 
-	"github.com/zgiai/ginext/config"
-	"github.com/zgiai/ginext/internal/modules/llm/modelmeta"
-	"github.com/zgiai/ginext/pkg/database"
+	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/modules/llm/modelmeta"
+	"github.com/zgiai/zgi/api/pkg/database"
 )
 
 func main() {

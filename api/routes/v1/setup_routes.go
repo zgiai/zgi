@@ -4,11 +4,11 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/config"
+	"github.com/zgiai/zgi/api/config"
 
-	"github.com/zgiai/ginext/internal/container"
-	system_handler "github.com/zgiai/ginext/internal/modules/system/handler"
-	system_service "github.com/zgiai/ginext/internal/modules/system/service"
+	"github.com/zgiai/zgi/api/internal/container"
+	system_handler "github.com/zgiai/zgi/api/internal/modules/system/handler"
+	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
 )
 
 // RegisterSetupPaths registers setup endpoints for the current edition.

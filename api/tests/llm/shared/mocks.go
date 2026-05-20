@@ -6,7 +6,7 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/llm/credential/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/credential/model"
 )
 
 // ErrNotFound is returned when a resource is not found

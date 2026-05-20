@@ -3,7 +3,7 @@ package draftgen
 import (
 	"testing"
 
-	automationmodel "github.com/zgiai/ginext/internal/modules/automation/model"
+	automationmodel "github.com/zgiai/zgi/api/internal/modules/automation/model"
 )
 
 func TestParseDraftEmailCron(t *testing.T) {

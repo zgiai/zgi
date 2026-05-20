@@ -4,8 +4,8 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	channelmodel "github.com/zgiai/ginext/internal/modules/llm/channel/model"
-	"github.com/zgiai/ginext/internal/modules/llm/shared"
+	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 )
 
 // OfficialChannel represents a platform-provided channel for routing decisions.

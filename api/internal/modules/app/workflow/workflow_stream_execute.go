@@ -9,12 +9,12 @@ import (
 
 	"github.com/getsentry/sentry-go"
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/internal/dto"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/diagnosis"
-	workflowpause "github.com/zgiai/ginext/internal/modules/app/workflow/pause"
-	workflow_shared "github.com/zgiai/ginext/internal/modules/app/workflow/shared"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/streamscheduler"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/diagnosis"
+	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
+	workflow_shared "github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/streamscheduler"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 // executeWorkflowStream executes workflow and sends events through channels.

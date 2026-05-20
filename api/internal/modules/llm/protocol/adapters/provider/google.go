@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
-	"github.com/zgiai/ginext/pkg/storage"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/pkg/storage"
 )
 
 const defaultGoogleGeminiBaseURL = "https://generativelanguage.googleapis.com/v1beta"

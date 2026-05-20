@@ -7,18 +7,18 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/zgiai/ginext/middleware"
-	accountMiddleware "github.com/zgiai/ginext/middleware"
+	"github.com/zgiai/zgi/api/middleware"
+	accountMiddleware "github.com/zgiai/zgi/api/middleware"
 
 	"errors"
 
 	"github.com/gin-gonic/gin"
-	usererrors "github.com/zgiai/ginext/internal/errors"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	auth_model "github.com/zgiai/ginext/internal/modules/user/auth/model"
-	"github.com/zgiai/ginext/internal/modules/workspace/model"
-	helper "github.com/zgiai/ginext/internal/util"
-	"github.com/zgiai/ginext/pkg/response"
+	usererrors "github.com/zgiai/zgi/api/internal/errors"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
+	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	helper "github.com/zgiai/zgi/api/internal/util"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 type MembersHandler struct {

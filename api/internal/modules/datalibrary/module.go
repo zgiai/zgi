@@ -1,10 +1,10 @@
 package datalibrary
 
 import (
-	"github.com/zgiai/ginext/internal/modules/datalibrary/handler"
-	"github.com/zgiai/ginext/internal/modules/datalibrary/repository"
-	"github.com/zgiai/ginext/internal/modules/datalibrary/service"
-	fileRepository "github.com/zgiai/ginext/internal/modules/file_process/repository"
+	"github.com/zgiai/zgi/api/internal/modules/datalibrary/handler"
+	"github.com/zgiai/zgi/api/internal/modules/datalibrary/repository"
+	"github.com/zgiai/zgi/api/internal/modules/datalibrary/service"
+	fileRepository "github.com/zgiai/zgi/api/internal/modules/file_process/repository"
 	"gorm.io/gorm"
 )
 

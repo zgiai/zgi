@@ -10,11 +10,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/zgiai/ginext/internal/dto"
-	filehandler "github.com/zgiai/ginext/internal/modules/file_process/handler"
-	filemodel "github.com/zgiai/ginext/internal/modules/file_process/model"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	"github.com/zgiai/ginext/internal/util"
+	"github.com/zgiai/zgi/api/internal/dto"
+	filehandler "github.com/zgiai/zgi/api/internal/modules/file_process/handler"
+	filemodel "github.com/zgiai/zgi/api/internal/modules/file_process/model"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/internal/util"
 )
 
 func TestGetFileOriginalPreviewURL_TemporaryFileUsesCreatorAuthorization(t *testing.T) {

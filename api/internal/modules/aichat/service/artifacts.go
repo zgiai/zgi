@@ -3,8 +3,8 @@ package service
 import (
 	"strings"
 
-	aichatmodel "github.com/zgiai/ginext/internal/modules/aichat/model"
-	tool_file "github.com/zgiai/ginext/internal/modules/app/workflow/tool_file"
+	aichatmodel "github.com/zgiai/zgi/api/internal/modules/aichat/model"
+	tool_file "github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
 )
 
 func hydrateMessagesGeneratedFileURLs(messages []*aichatmodel.Message) {

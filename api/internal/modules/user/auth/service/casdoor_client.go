@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/zgiai/ginext/config"
-	shareddto "github.com/zgiai/ginext/internal/dto"
-	"github.com/zgiai/ginext/internal/observability"
+	"github.com/zgiai/zgi/api/config"
+	shareddto "github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/observability"
 )
 
 const casdoorDiscoveryPath = "/.well-known/openid-configuration"

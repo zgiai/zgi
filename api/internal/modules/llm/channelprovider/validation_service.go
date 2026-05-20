@@ -11,10 +11,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	llmmodelmodel "github.com/zgiai/ginext/internal/modules/llm/llmmodel/model"
-	llmmodelrepo "github.com/zgiai/ginext/internal/modules/llm/llmmodel/repository"
-	llmmodelsvc "github.com/zgiai/ginext/internal/modules/llm/llmmodel/service"
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
+	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	llmmodelrepo "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/repository"
+	llmmodelsvc "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 const (

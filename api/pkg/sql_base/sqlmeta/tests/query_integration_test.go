@@ -9,10 +9,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/samber/do/v2"
 
-	"github.com/zgiai/ginext/pkg/sql_base/sqlmeta/catalog/query"
-	"github.com/zgiai/ginext/pkg/sql_base/sqlmeta/driver"
-	"github.com/zgiai/ginext/pkg/sql_base/sqlmeta/service"
-	"github.com/zgiai/ginext/pkg/sql_base/sqlmeta/types"
+	"github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/catalog/query"
+	"github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/driver"
+	"github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/service"
+	"github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/types"
 )
 
 func TestQueryExecute(t *testing.T) {

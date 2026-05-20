@@ -5,12 +5,12 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/internal/modules/llm/client"
-	llmerrors "github.com/zgiai/ginext/internal/modules/llm/errors"
-	"github.com/zgiai/ginext/internal/modules/llm/gateway"
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
-	llmshared "github.com/zgiai/ginext/internal/modules/llm/shared"
-	"github.com/zgiai/ginext/pkg/response"
+	"github.com/zgiai/zgi/api/internal/modules/llm/client"
+	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	llmshared "github.com/zgiai/zgi/api/internal/modules/llm/shared"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 // InternalHandler handles internal LLM requests (authenticated via JWT)

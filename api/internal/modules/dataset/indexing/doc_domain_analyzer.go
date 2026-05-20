@@ -6,13 +6,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zgiai/ginext/internal/dto"
-	llmclient "github.com/zgiai/ginext/internal/modules/llm/client"
-	llmdefaultservice "github.com/zgiai/ginext/internal/modules/llm/defaultmodel/service"
-	llmadapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
-	llmruntime "github.com/zgiai/ginext/internal/modules/llm/runtime"
-	shared_model "github.com/zgiai/ginext/internal/modules/shared/model"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/dto"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
+	llmadapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	llmruntime "github.com/zgiai/zgi/api/internal/modules/llm/runtime"
+	shared_model "github.com/zgiai/zgi/api/internal/modules/shared/model"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 var (

@@ -3,8 +3,8 @@ package workflow
 import (
 	"errors"
 
-	"github.com/zgiai/ginext/internal/modules/llm/gateway"
-	"github.com/zgiai/ginext/pkg/response"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 func buildWorkflowStreamErrorPayload(err error) map[string]any {

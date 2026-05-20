@@ -10,9 +10,9 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/zgiai/ginext/config"
-	toolfile "github.com/zgiai/ginext/internal/modules/app/workflow/tool_file"
-	"github.com/zgiai/ginext/internal/util"
+	"github.com/zgiai/zgi/api/config"
+	toolfile "github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
+	"github.com/zgiai/zgi/api/internal/util"
 )
 
 func GetSignedFileURL(uploadFileID string) (string, error) {

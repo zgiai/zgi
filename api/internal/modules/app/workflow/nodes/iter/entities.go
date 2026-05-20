@@ -4,8 +4,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/subgraph"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/nodes/base"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/subgraph"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/base"
 )
 
 // ErrorHandleMode defines how the iteration node deals with failures that

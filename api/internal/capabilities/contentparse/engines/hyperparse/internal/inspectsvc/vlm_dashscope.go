@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	pdforchestrator "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/orchestrators/pdf"
+	pdforchestrator "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/orchestrators/pdf"
 )
 
 var dashscopeHTTPClient = &http.Client{Timeout: 180 * time.Second}

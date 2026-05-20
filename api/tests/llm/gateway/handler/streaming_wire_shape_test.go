@@ -9,9 +9,9 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	apikeymodel "github.com/zgiai/ginext/internal/modules/llm/apikey/model"
-	gatewayhandler "github.com/zgiai/ginext/internal/modules/llm/gateway/handler"
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
+	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
+	gatewayhandler "github.com/zgiai/zgi/api/internal/modules/llm/gateway/handler"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 func TestChatCompletionsStreamDoneFrameOnlyEmitsDoneSentinel(t *testing.T) {

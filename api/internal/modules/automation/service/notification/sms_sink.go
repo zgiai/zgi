@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	automationmodel "github.com/zgiai/ginext/internal/modules/automation/model"
-	notificationsms "github.com/zgiai/ginext/internal/modules/notification/sms"
+	automationmodel "github.com/zgiai/zgi/api/internal/modules/automation/model"
+	notificationsms "github.com/zgiai/zgi/api/internal/modules/notification/sms"
 )
 
 type notificationSMSService interface {

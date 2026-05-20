@@ -6,8 +6,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/zgiai/ginext/internal/capabilities/chunking/quality"
-	"github.com/zgiai/ginext/internal/contracts"
+	"github.com/zgiai/zgi/api/internal/capabilities/chunking/quality"
+	"github.com/zgiai/zgi/api/internal/contracts"
 )
 
 type Executor struct {

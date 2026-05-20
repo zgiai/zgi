@@ -12,7 +12,7 @@ MAPPINGS=(
   "api/.env.docker.example|api/.env.docker|api docker"
   "web/.env.example|web/.env.local|web local"
   "sandbox/.env.example|sandbox/.env|sandbox"
-  "plugin-runner/.env.example|plugin-runner/.env|plugin-runner"
+  "runner/.env.example|runner/.env|runner"
 )
 
 usage() {

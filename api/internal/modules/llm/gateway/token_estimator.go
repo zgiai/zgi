@@ -5,7 +5,7 @@ import (
 	"strings"
 	"sync"
 
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 // TokenEstimator estimates token usage for requests

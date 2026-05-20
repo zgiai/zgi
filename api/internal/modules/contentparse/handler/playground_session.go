@@ -9,8 +9,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/contentparse/service"
-	"github.com/zgiai/ginext/pkg/response"
+	"github.com/zgiai/zgi/api/internal/modules/contentparse/service"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 func (h *PlaygroundHandler) executionFromParseSession(c *gin.Context, sessionID string) (*playgroundExecution, error) {

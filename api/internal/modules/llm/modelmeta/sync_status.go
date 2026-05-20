@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	llmmodel "github.com/zgiai/ginext/internal/modules/llm/llmmodel/model"
+	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 )
 
 // SyncStatusResponse represents the high-level sync status

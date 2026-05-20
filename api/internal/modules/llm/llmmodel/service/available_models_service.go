@@ -7,14 +7,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	channelmodel "github.com/zgiai/ginext/internal/modules/llm/channel/model"
-	channelrepo "github.com/zgiai/ginext/internal/modules/llm/channel/repository"
-	"github.com/zgiai/ginext/internal/modules/llm/llmmodel/model"
-	"github.com/zgiai/ginext/internal/modules/llm/llmmodel/repository"
-	providerrepo "github.com/zgiai/ginext/internal/modules/llm/provider/repository"
-	"github.com/zgiai/ginext/internal/modules/llm/shared/types"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	"github.com/zgiai/ginext/pkg/logger"
+	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
+	channelrepo "github.com/zgiai/zgi/api/internal/modules/llm/channel/repository"
+	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/repository"
+	providerrepo "github.com/zgiai/zgi/api/internal/modules/llm/provider/repository"
+	"github.com/zgiai/zgi/api/internal/modules/llm/shared/types"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 // ModelScene represents different business scenarios for model selection

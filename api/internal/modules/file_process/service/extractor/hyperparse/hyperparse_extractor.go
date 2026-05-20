@@ -9,12 +9,12 @@ import (
 	"runtime"
 	"strings"
 
-	extractcommon "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
-	extractlocal "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/local"
-	extractmineru "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/mineru"
-	extractreducto "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/reducto"
-	extractvlm "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/vlm"
-	"github.com/zgiai/ginext/internal/dto"
+	extractcommon "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
+	extractlocal "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/local"
+	extractmineru "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/mineru"
+	extractreducto "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/reducto"
+	extractvlm "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/vlm"
+	"github.com/zgiai/zgi/api/internal/dto"
 )
 
 var extractSemaphore = make(chan struct{}, maxSemaphore())

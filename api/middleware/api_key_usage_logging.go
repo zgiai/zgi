@@ -10,8 +10,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	apiKeyModule "github.com/zgiai/ginext/internal/modules/api_key"
-	"github.com/zgiai/ginext/pkg/logger"
+	apiKeyModule "github.com/zgiai/zgi/api/internal/modules/api_key"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/gorm"
 )
 

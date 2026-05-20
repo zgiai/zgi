@@ -3,10 +3,10 @@ package handler
 import (
 	"github.com/gin-gonic/gin"
 
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	"github.com/zgiai/ginext/internal/modules/system/service"
-	"github.com/zgiai/ginext/internal/util"
-	"github.com/zgiai/ginext/pkg/response"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/internal/modules/system/service"
+	"github.com/zgiai/zgi/api/internal/util"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 // DashboardHandler handles dashboard related requests

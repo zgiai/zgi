@@ -3,13 +3,13 @@ package v1
 import (
 	"github.com/gin-gonic/gin"
 
-	"github.com/zgiai/ginext/internal/container"
-	system_service "github.com/zgiai/ginext/internal/modules/system/service"
-	authHandler "github.com/zgiai/ginext/internal/modules/user/auth/handler"
-	workspaceHandler "github.com/zgiai/ginext/internal/modules/workspace/handler"
-	workspaceRepo "github.com/zgiai/ginext/internal/modules/workspace/repository"
-	workspaceService "github.com/zgiai/ginext/internal/modules/workspace/service"
-	helper "github.com/zgiai/ginext/internal/util"
+	"github.com/zgiai/zgi/api/internal/container"
+	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
+	authHandler "github.com/zgiai/zgi/api/internal/modules/user/auth/handler"
+	workspaceHandler "github.com/zgiai/zgi/api/internal/modules/workspace/handler"
+	workspaceRepo "github.com/zgiai/zgi/api/internal/modules/workspace/repository"
+	workspaceService "github.com/zgiai/zgi/api/internal/modules/workspace/service"
+	helper "github.com/zgiai/zgi/api/internal/util"
 )
 
 // RegisterUserRoutes registers user-related routes

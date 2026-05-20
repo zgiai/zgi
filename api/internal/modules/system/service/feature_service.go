@@ -3,10 +3,10 @@ package service
 import (
 	"context"
 
-	"github.com/zgiai/ginext/config"
-	notificationsms "github.com/zgiai/ginext/internal/modules/notification/sms"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	"github.com/zgiai/ginext/internal/modules/system/model"
+	"github.com/zgiai/zgi/api/config"
+	notificationsms "github.com/zgiai/zgi/api/internal/modules/notification/sms"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/internal/modules/system/model"
 )
 
 // featureService implements the FeatureService interface

@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"time"
 
-	appconfig "github.com/zgiai/ginext/config"
+	appconfig "github.com/zgiai/zgi/api/config"
 )
 
 // GetSignedFileURL generates a signed URL for file preview

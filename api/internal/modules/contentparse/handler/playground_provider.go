@@ -6,10 +6,10 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	extractlocal "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/local"
-	"github.com/zgiai/ginext/internal/capabilities/contentparse/routing"
-	"github.com/zgiai/ginext/internal/contracts"
-	"github.com/zgiai/ginext/internal/modules/contentparse/service"
+	extractlocal "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/local"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/routing"
+	"github.com/zgiai/zgi/api/internal/contracts"
+	"github.com/zgiai/zgi/api/internal/modules/contentparse/service"
 )
 
 func (h *PlaygroundHandler) catalogForRequest(c *gin.Context) (*contracts.ParseProviderCatalog, string, error) {

@@ -2,7 +2,7 @@ package model
 
 import (
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/llm/shared"
+	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 )
 
 // ============================================================================

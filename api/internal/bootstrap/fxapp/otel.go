@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zgiai/ginext/config"
-	"github.com/zgiai/ginext/internal/observability"
+	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/observability"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"

@@ -478,7 +478,7 @@ const file_pkg_rpc_v1_channel_proto_rawDesc = "" +
 	"\bDISABLED\x10\x052\xca\x01\n" +
 	"\x0eChannelService\x12i\n" +
 	"\x14ListOfficialChannels\x12'.zgi.rpc.v1.ListOfficialChannelsRequest\x1a(.zgi.rpc.v1.ListOfficialChannelsResponse\x12M\n" +
-	"\rWatchChannels\x12 .zgi.rpc.v1.WatchChannelsRequest\x1a\x18.zgi.rpc.v1.ChannelEvent0\x01B'Z%github.com/zgiai/ginext/pkg/rpc/v1;v1b\x06proto3"
+	"\rWatchChannels\x12 .zgi.rpc.v1.WatchChannelsRequest\x1a\x18.zgi.rpc.v1.ChannelEvent0\x01B'Z%github.com/zgiai/zgi/api/pkg/rpc/v1;v1b\x06proto3"
 
 var (
 	file_pkg_rpc_v1_channel_proto_rawDescOnce sync.Once

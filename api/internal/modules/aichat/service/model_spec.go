@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	llmmodel "github.com/zgiai/ginext/internal/modules/llm/llmmodel/model"
-	llmrepo "github.com/zgiai/ginext/internal/modules/llm/llmmodel/repository"
+	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	llmrepo "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/repository"
 	"gorm.io/gorm"
 )
 

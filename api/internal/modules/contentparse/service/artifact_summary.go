@@ -3,7 +3,7 @@ package service
 import (
 	"sort"
 
-	"github.com/zgiai/ginext/internal/contracts"
+	"github.com/zgiai/zgi/api/internal/contracts"
 )
 
 // ParseArtifactStorageSummary keeps parse artifact persistence metadata stable

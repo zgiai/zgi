@@ -702,7 +702,7 @@ const file_pkg_rpc_v1_catalog_proto_rawDesc = "" +
 	"\x16config_parameters_json\x18\x1b \x01(\tR\x14configParametersJson2\xde\x01\n" +
 	"\x0eCatalogService\x12f\n" +
 	"\x13GetPublishedCatalog\x12&.zgi.rpc.v1.GetPublishedCatalogRequest\x1a'.zgi.rpc.v1.GetPublishedCatalogResponse\x12d\n" +
-	"\x15WatchCatalogPublishes\x12(.zgi.rpc.v1.WatchCatalogPublishesRequest\x1a\x1f.zgi.rpc.v1.CatalogPublishEvent0\x01B'Z%github.com/zgiai/ginext/pkg/rpc/v1;v1b\x06proto3"
+	"\x15WatchCatalogPublishes\x12(.zgi.rpc.v1.WatchCatalogPublishesRequest\x1a\x1f.zgi.rpc.v1.CatalogPublishEvent0\x01B'Z%github.com/zgiai/zgi/api/pkg/rpc/v1;v1b\x06proto3"
 
 var (
 	file_pkg_rpc_v1_catalog_proto_rawDescOnce sync.Once

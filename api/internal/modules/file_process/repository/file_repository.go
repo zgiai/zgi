@@ -6,7 +6,7 @@ import (
 
 	"gorm.io/gorm"
 
-	file_model "github.com/zgiai/ginext/internal/modules/file_process/model"
+	file_model "github.com/zgiai/zgi/api/internal/modules/file_process/model"
 )
 
 type FileRepository interface {

@@ -3,10 +3,10 @@ package middleware_depend
 import (
 	"context"
 
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	"github.com/zgiai/ginext/internal/modules/workspace/model"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
 
-	auth_model "github.com/zgiai/ginext/internal/modules/user/auth/model"
+	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 )
 
 type ServiceProvider interface {

@@ -3,7 +3,7 @@ package repository
 import (
 	"context"
 
-	"github.com/zgiai/ginext/internal/modules/llm/statistics/dto"
+	"github.com/zgiai/zgi/api/internal/modules/llm/statistics/dto"
 )
 
 // StatisticsRepository defines the interface for statistics operations

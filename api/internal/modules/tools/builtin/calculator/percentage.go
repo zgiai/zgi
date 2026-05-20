@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/zgiai/ginext/internal/modules/tools"
-	"github.com/zgiai/ginext/internal/modules/tools/builtin"
+	"github.com/zgiai/zgi/api/internal/modules/tools"
+	"github.com/zgiai/zgi/api/internal/modules/tools/builtin"
 )
 
 // PercentageTool performs deterministic percentage calculations.

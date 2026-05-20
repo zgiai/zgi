@@ -1372,7 +1372,7 @@ const file_pkg_rpc_v1_billing_proto_rawDesc = "" +
 	"\x11CalculateDualCost\x12$.zgi.rpc.v1.CalculateDualCostRequest\x1a\x1c.zgi.rpc.v1.DualCostResponse\x12[\n" +
 	"\x18SettleUsageWithDualTrack\x12\x1e.zgi.rpc.v1.SettleUsageRequest\x1a\x1f.zgi.rpc.v1.SettleUsageResponse\x12T\n" +
 	"\x0eGetBillingMode\x12!.zgi.rpc.v1.GetBillingModeRequest\x1a\x1f.zgi.rpc.v1.BillingModeResponse\x12c\n" +
-	"\x12CheckCreditBalance\x12%.zgi.rpc.v1.CheckCreditBalanceRequest\x1a&.zgi.rpc.v1.CheckCreditBalanceResponseB'Z%github.com/zgiai/ginext/pkg/rpc/v1;v1b\x06proto3"
+	"\x12CheckCreditBalance\x12%.zgi.rpc.v1.CheckCreditBalanceRequest\x1a&.zgi.rpc.v1.CheckCreditBalanceResponseB'Z%github.com/zgiai/zgi/api/pkg/rpc/v1;v1b\x06proto3"
 
 var (
 	file_pkg_rpc_v1_billing_proto_rawDescOnce sync.Once

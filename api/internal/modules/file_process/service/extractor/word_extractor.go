@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/zgiai/ginext/internal/dto"
+	"github.com/zgiai/zgi/api/internal/dto"
 
 	gooxmldoc "baliance.com/gooxml/document"
 	docx "github.com/fumiama/go-docx"

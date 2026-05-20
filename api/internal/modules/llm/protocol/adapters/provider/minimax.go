@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 const defaultMiniMaxBaseURL = "https://api.minimaxi.com/v1"

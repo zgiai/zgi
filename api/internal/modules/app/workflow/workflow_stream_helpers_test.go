@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	approvalruntime "github.com/zgiai/ginext/internal/modules/app/workflow/approval"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine"
-	graphentities "github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/entities"
-	workflowpause "github.com/zgiai/ginext/internal/modules/app/workflow/pause"
+	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
+	graphentities "github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
+	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 )
 
 func TestMergeWorkflowOutputsForNode_AllowsLoopOutputs(t *testing.T) {

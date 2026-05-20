@@ -3,7 +3,7 @@ package gateway
 import (
 	"testing"
 
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 func TestNormalizeRequestedModelName_TrimAndCursorPrefix(t *testing.T) {

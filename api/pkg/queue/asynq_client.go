@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/hibiken/asynq"
-	"github.com/zgiai/ginext/config"
+	"github.com/zgiai/zgi/api/config"
 )
 
 // NewAsynqClient creates a new asynq client instance

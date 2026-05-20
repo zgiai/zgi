@@ -3,7 +3,7 @@ package skills
 import (
 	"strings"
 
-	"github.com/zgiai/ginext/internal/modules/tools"
+	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
 
 const (

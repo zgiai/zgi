@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	apikeydto "github.com/zgiai/ginext/internal/modules/llm/apikey/dto"
-	apikeyhandler "github.com/zgiai/ginext/internal/modules/llm/apikey/handler"
+	apikeydto "github.com/zgiai/zgi/api/internal/modules/llm/apikey/dto"
+	apikeyhandler "github.com/zgiai/zgi/api/internal/modules/llm/apikey/handler"
 )
 
 type recordingAPIKeyService struct {

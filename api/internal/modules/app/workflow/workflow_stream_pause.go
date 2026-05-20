@@ -5,9 +5,9 @@ import (
 	"strings"
 	"time"
 
-	graph_entities "github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/entities"
-	workflowpause "github.com/zgiai/ginext/internal/modules/app/workflow/pause"
-	"github.com/zgiai/ginext/pkg/logger"
+	graph_entities "github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
+	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 const workflowMessageKindQuestionAnswerPrompt = "question_answer_prompt"

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 // Rerank reports that Ollama rerank is unsupported because Ollama has no standard rerank API.

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/zgiai/ginext/config"
+	"github.com/zgiai/zgi/api/config"
 )
 
 // SQLBase defines the interface for postgres-meta service

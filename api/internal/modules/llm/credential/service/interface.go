@@ -4,8 +4,8 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/llm/credential/dto"
-	"github.com/zgiai/ginext/internal/modules/llm/credential/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/credential/dto"
+	"github.com/zgiai/zgi/api/internal/modules/llm/credential/model"
 )
 
 // TenantCredentialService defines the interface for tenant credential operations

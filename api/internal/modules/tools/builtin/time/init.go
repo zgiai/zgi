@@ -1,7 +1,7 @@
 package time
 
 import (
-	"github.com/zgiai/ginext/internal/modules/tools/builtin"
+	"github.com/zgiai/zgi/api/internal/modules/tools/builtin"
 )
 
 func init() {

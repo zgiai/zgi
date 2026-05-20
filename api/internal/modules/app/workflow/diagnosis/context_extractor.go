@@ -3,8 +3,8 @@ package diagnosis
 import (
 	"fmt"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"gopkg.in/yaml.v3"
 )
 

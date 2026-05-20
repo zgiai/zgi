@@ -9,13 +9,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
 
-	"github.com/zgiai/ginext/internal/dto"
-	"github.com/zgiai/ginext/internal/modules/file_process/model"
-	file_model "github.com/zgiai/ginext/internal/modules/file_process/model"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	"github.com/zgiai/ginext/internal/util"
-	zgiimage "github.com/zgiai/ginext/pkg/image"
-	"github.com/zgiai/ginext/pkg/response"
+	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/file_process/model"
+	file_model "github.com/zgiai/zgi/api/internal/modules/file_process/model"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/internal/util"
+	zgiimage "github.com/zgiai/zgi/api/pkg/image"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 // ImagePreviewHandler handles image preview HTTP requests

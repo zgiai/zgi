@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zgiai/ginext/internal/capabilities/contentparse/routing"
-	"github.com/zgiai/ginext/internal/contracts"
-	"github.com/zgiai/ginext/internal/dto"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/routing"
+	"github.com/zgiai/zgi/api/internal/contracts"
+	"github.com/zgiai/zgi/api/internal/dto"
 )
 
 const (

@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/zgiai/ginext/internal/migrationsseed"
-	"github.com/zgiai/ginext/internal/migrationsv2"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/migrationsseed"
+	"github.com/zgiai/zgi/api/internal/migrationsv2"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 func main() {

@@ -10,12 +10,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/dto"
-	quota_model "github.com/zgiai/ginext/internal/modules/quota/model"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	shared_visibility "github.com/zgiai/ginext/internal/modules/shared/visibility"
-	"github.com/zgiai/ginext/internal/modules/workspace/model"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/dto"
+	quota_model "github.com/zgiai/zgi/api/internal/modules/quota/model"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	shared_visibility "github.com/zgiai/zgi/api/internal/modules/shared/visibility"
+	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )

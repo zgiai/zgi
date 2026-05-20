@@ -3,7 +3,7 @@ package llm
 import (
 	"strings"
 
-	"github.com/zgiai/ginext/internal/prompt"
+	"github.com/zgiai/zgi/api/internal/prompt"
 )
 
 const (

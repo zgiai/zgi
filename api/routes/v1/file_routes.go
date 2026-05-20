@@ -3,19 +3,19 @@ package v1
 import (
 	"github.com/gin-gonic/gin"
 
-	"github.com/zgiai/ginext/internal/container"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/tool_file"
-	toolfilescheduler "github.com/zgiai/ginext/internal/modules/app/workflow/tool_file/scheduler"
-	dataset_repo "github.com/zgiai/ginext/internal/modules/dataset/repository"
-	fileProcessHandler "github.com/zgiai/ginext/internal/modules/file_process/handler"
-	fileProcessRepo "github.com/zgiai/ginext/internal/modules/file_process/repository"
-	fileScheduler "github.com/zgiai/ginext/internal/modules/file_process/scheduler"
-	fileProcessService "github.com/zgiai/ginext/internal/modules/file_process/service"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	jwtMiddleware "github.com/zgiai/ginext/middleware"
-	"github.com/zgiai/ginext/pkg/database"
-	"github.com/zgiai/ginext/pkg/logger"
-	"github.com/zgiai/ginext/pkg/storage"
+	"github.com/zgiai/zgi/api/internal/container"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
+	toolfilescheduler "github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file/scheduler"
+	dataset_repo "github.com/zgiai/zgi/api/internal/modules/dataset/repository"
+	fileProcessHandler "github.com/zgiai/zgi/api/internal/modules/file_process/handler"
+	fileProcessRepo "github.com/zgiai/zgi/api/internal/modules/file_process/repository"
+	fileScheduler "github.com/zgiai/zgi/api/internal/modules/file_process/scheduler"
+	fileProcessService "github.com/zgiai/zgi/api/internal/modules/file_process/service"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	jwtMiddleware "github.com/zgiai/zgi/api/middleware"
+	"github.com/zgiai/zgi/api/pkg/database"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/storage"
 )
 
 // registerFileRoutesLegacy keeps original implementation details.

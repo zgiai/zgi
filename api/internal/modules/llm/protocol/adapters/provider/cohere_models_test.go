@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 func TestCohereAdapterListModels_NormalizesCapabilities(t *testing.T) {

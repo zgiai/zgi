@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/datalibrary/model"
+	"github.com/zgiai/zgi/api/internal/modules/datalibrary/model"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"

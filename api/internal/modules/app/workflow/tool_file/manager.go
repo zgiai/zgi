@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/observability"
-	"github.com/zgiai/ginext/pkg/storage"
+	"github.com/zgiai/zgi/api/internal/observability"
+	"github.com/zgiai/zgi/api/pkg/storage"
 	"gorm.io/gorm"
 )
 

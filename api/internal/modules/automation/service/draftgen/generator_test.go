@@ -3,7 +3,7 @@ package draftgen
 import (
 	"testing"
 
-	llmclient "github.com/zgiai/ginext/internal/modules/llm/client"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 )
 
 func TestBuildAppContextUsesWorkspaceForDraftAttribution(t *testing.T) {

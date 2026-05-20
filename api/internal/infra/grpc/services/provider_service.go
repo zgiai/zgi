@@ -3,11 +3,11 @@ package services
 import (
 	"context"
 
-	"github.com/zgiai/ginext/internal/container"
-	"github.com/zgiai/ginext/internal/modules/llm/provider/model"
-	"github.com/zgiai/ginext/internal/modules/llm/provider/repository"
-	"github.com/zgiai/ginext/pkg/logger"
-	pb "github.com/zgiai/ginext/pkg/rpc/v1"
+	"github.com/zgiai/zgi/api/internal/container"
+	"github.com/zgiai/zgi/api/internal/modules/llm/provider/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/provider/repository"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	pb "github.com/zgiai/zgi/api/pkg/rpc/v1"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"

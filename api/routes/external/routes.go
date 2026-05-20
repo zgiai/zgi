@@ -2,7 +2,7 @@ package external
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/internal/container"
+	"github.com/zgiai/zgi/api/internal/container"
 )
 
 // RegisterExternalRoutes registers all external API routes

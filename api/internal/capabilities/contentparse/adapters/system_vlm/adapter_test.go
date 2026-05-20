@@ -6,10 +6,10 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/contracts"
-	llmdefaultservice "github.com/zgiai/ginext/internal/modules/llm/defaultmodel/service"
-	llmmodelmodel "github.com/zgiai/ginext/internal/modules/llm/llmmodel/model"
-	llmadapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/contracts"
+	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
+	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	llmadapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 type fakeVisionResolver struct {

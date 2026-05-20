@@ -6,10 +6,10 @@ import (
 	"sort"
 
 	"github.com/google/uuid"
-	channelmodel "github.com/zgiai/ginext/internal/modules/llm/channel/model"
-	llmerrors "github.com/zgiai/ginext/internal/modules/llm/errors"
-	"github.com/zgiai/ginext/internal/modules/llm/shared"
-	"github.com/zgiai/ginext/pkg/logger"
+	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
+	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
+	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
 )
 

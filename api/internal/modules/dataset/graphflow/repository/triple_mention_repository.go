@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/dataset/graphflow/model"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/model"
 	"gorm.io/gorm"
 )
 
@@ -32,7 +32,7 @@ func (r *TripleMentionRepository) FindPendingByKBID(ctx context.Context, kbID uu
 	var results []*model.TripleMention
 	query := r.db.WithContext(ctx).
 		Where("kb_id = ? AND status = ?", kbID, "pending")
-	
+
 	if limit > 0 {
 		query = query.Limit(limit)
 	}

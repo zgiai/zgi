@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/pkg/hyperparse"
-	extractcommon "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/hyperparse"
+	extractcommon "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
 )
 
 func TestRefineNativeFullDocumentLayoutBuildsVisualRows(t *testing.T) {

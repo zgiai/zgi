@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/binutil"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/binutil"
 )
 
 const (

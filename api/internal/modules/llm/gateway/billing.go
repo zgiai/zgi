@@ -10,12 +10,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
-	apikeymodel "github.com/zgiai/ginext/internal/modules/llm/apikey/model"
-	apikeyrepo "github.com/zgiai/ginext/internal/modules/llm/apikey/repository"
-	llmmodel "github.com/zgiai/ginext/internal/modules/llm/llmmodel/model"
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
-	paymentModel "github.com/zgiai/ginext/internal/modules/payment/model"
-	paymentRepo "github.com/zgiai/ginext/internal/modules/payment/repository"
+	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
+	apikeyrepo "github.com/zgiai/zgi/api/internal/modules/llm/apikey/repository"
+	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	paymentModel "github.com/zgiai/zgi/api/internal/modules/payment/model"
+	paymentRepo "github.com/zgiai/zgi/api/internal/modules/payment/repository"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )

@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/dataset/graphflow/sync"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/sync"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 // SyncResult represents the combined result of all sync operations

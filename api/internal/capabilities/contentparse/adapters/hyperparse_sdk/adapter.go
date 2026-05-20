@@ -6,12 +6,12 @@ import (
 	"os"
 	"strings"
 
-	extractcommon "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
-	extractlocal "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/local"
-	extractmineru "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/mineru"
-	extractreducto "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/reducto"
-	extractvlm "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/vlm"
-	"github.com/zgiai/ginext/internal/contracts"
+	extractcommon "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
+	extractlocal "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/local"
+	extractmineru "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/mineru"
+	extractreducto "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/reducto"
+	extractvlm "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/vlm"
+	"github.com/zgiai/zgi/api/internal/contracts"
 )
 
 const adapterName = "hyperparse_sdk"

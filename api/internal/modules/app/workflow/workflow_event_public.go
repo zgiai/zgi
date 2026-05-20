@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"time"
 
-	workflowpause "github.com/zgiai/ginext/internal/modules/app/workflow/pause"
-	"github.com/zgiai/ginext/pkg/database"
-	"github.com/zgiai/ginext/pkg/logger"
+	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
+	"github.com/zgiai/zgi/api/pkg/database"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 const (

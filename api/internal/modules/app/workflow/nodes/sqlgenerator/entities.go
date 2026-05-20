@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/nodes/base"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/nodes/calldatabase"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/base"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/calldatabase"
 )
 
 const AppType = "agent"

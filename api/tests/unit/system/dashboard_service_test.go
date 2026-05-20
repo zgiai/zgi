@@ -8,8 +8,8 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
-	llmmodelservice "github.com/zgiai/ginext/internal/modules/llm/llmmodel/service"
-	"github.com/zgiai/ginext/internal/modules/system/service"
+	llmmodelservice "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
+	"github.com/zgiai/zgi/api/internal/modules/system/service"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )

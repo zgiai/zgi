@@ -10,10 +10,10 @@ import (
 	"regexp"
 	"strings"
 
-	workflowfile "github.com/zgiai/ginext/internal/modules/app/workflow/file"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/tool_file"
-	"github.com/zgiai/ginext/internal/modules/tools"
-	"github.com/zgiai/ginext/internal/modules/tools/builtin"
+	workflowfile "github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
+	"github.com/zgiai/zgi/api/internal/modules/tools"
+	"github.com/zgiai/zgi/api/internal/modules/tools/builtin"
 )
 
 const (

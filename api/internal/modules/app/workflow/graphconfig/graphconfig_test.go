@@ -3,7 +3,7 @@ package graphconfig
 import (
 	"testing"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/shared"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 )
 
 func TestParseNodeTypeSupportsQuestionAnswer(t *testing.T) {

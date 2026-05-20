@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/streamscheduler"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/streamscheduler"
 )
 
 // This test reproduces a streaming-scheduler deadlock class:

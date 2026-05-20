@@ -8,13 +8,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	"github.com/zgiai/ginext/internal/dto"
-	"github.com/zgiai/ginext/internal/modules/dataset/model"
-	"github.com/zgiai/ginext/internal/modules/dataset/service"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	workspace_model "github.com/zgiai/ginext/internal/modules/workspace/model"
-	middleware "github.com/zgiai/ginext/middleware"
-	"github.com/zgiai/ginext/pkg/response"
+	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/model"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/service"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	middleware "github.com/zgiai/zgi/api/middleware"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 // DatasetFolderHandler handles dataset folder-related HTTP requests

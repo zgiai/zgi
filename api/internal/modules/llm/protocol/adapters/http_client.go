@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zgiai/ginext/internal/observability"
+	"github.com/zgiai/zgi/api/internal/observability"
 )
 
 // HTTPClient wrapped HTTP client

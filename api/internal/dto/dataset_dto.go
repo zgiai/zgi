@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/zgiai/ginext/config"
-	shared_model "github.com/zgiai/ginext/internal/modules/shared/model"
-	"github.com/zgiai/ginext/internal/util"
+	"github.com/zgiai/zgi/api/config"
+	shared_model "github.com/zgiai/zgi/api/internal/modules/shared/model"
+	"github.com/zgiai/zgi/api/internal/util"
 )
 
 // DatasetListRequest represents request for dataset list

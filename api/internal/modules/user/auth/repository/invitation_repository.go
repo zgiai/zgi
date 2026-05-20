@@ -6,7 +6,7 @@ import (
 
 	"gorm.io/gorm"
 
-	auth_model "github.com/zgiai/ginext/internal/modules/user/auth/model"
+	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 )
 
 type InvitationRepository interface {

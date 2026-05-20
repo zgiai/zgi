@@ -3,9 +3,9 @@ package v1
 import (
 	"github.com/gin-gonic/gin"
 
-	"github.com/zgiai/ginext/internal/container"
-	"github.com/zgiai/ginext/internal/modules/quota/handler"
-	"github.com/zgiai/ginext/middleware"
+	"github.com/zgiai/zgi/api/internal/container"
+	"github.com/zgiai/zgi/api/internal/modules/quota/handler"
+	"github.com/zgiai/zgi/api/middleware"
 )
 
 // RegisterQuotaRoutes registers all quota-related routes

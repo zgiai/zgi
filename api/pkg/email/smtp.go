@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 func sendSMTPEmail(to []string, subject, body, bodyType string) error {

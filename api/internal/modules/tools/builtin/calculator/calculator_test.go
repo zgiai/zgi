@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zgiai/ginext/internal/modules/tools"
-	calculator "github.com/zgiai/ginext/internal/modules/tools/builtin/calculator"
+	"github.com/zgiai/zgi/api/internal/modules/tools"
+	calculator "github.com/zgiai/zgi/api/internal/modules/tools/builtin/calculator"
 )
 
 func TestCalculatorTools_MetadataIncludesLocalizedHumanText(t *testing.T) {

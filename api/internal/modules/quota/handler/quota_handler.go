@@ -6,9 +6,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	"github.com/zgiai/ginext/internal/dto"
-	quota_model "github.com/zgiai/ginext/internal/modules/quota/model"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/internal/dto"
+	quota_model "github.com/zgiai/zgi/api/internal/modules/quota/model"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 )
 
 // QuotaHandler Quota management handler

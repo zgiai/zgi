@@ -4,11 +4,11 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/config"
-	llmmodel "github.com/zgiai/ginext/internal/modules/llm/llmmodel/model"
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
-	_ "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters/provider"
-	providermodel "github.com/zgiai/ginext/internal/modules/llm/provider/model"
+	"github.com/zgiai/zgi/api/config"
+	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	_ "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters/provider"
+	providermodel "github.com/zgiai/zgi/api/internal/modules/llm/provider/model"
 )
 
 func TestCreateAdapterConfig_OfficialRouteUsesZGICloudTransport(t *testing.T) {

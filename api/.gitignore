@@ -1,10 +1,6 @@
-# Kest runtime output
-.kest/logs/
-.kest/history*
-.kest/*.db
 docs/
 
-# 编译生成的文件
+# Build outputs
 *.exe
 *.exe~
 *.dll
@@ -16,15 +12,14 @@ docs/
 *.trace
 
 
-# 二进制文件
+# Binary outputs
 bin/
 dist/
 /server
 main
 zgi-api
 
-# IDE 相关
-.agent/
+# Editor and OS files
 .idea/
 .vscode/
 .kiro/
@@ -35,32 +30,32 @@ zgi-api
 .env
 *.env
 
-# 依赖目录
+# Dependencies
 vendor/
 
-# 日志文件
+# Logs
 *.log
 logs/
 log/
 
-# 测试缓存
+# Test cache
 *.test
 *.tmp
 coverage.txt
 coverage.html
 
-# 配置文件（根据需要调整）
+# Local config
 # config.yaml
 # config.yml
 *.local.yaml
 *.local.yml
 
-# 临时文件
+# Temporary files
 tmp/
 temp/
 .tmp/
 
-# 数据库文件
+# Database files
 *.db
 
 # Token files (sensitive data)
@@ -69,38 +64,38 @@ scripts/tokens.json
 *.sqlite3
 zgi-table.sql
 
-# 证书文件
+# Certificate files
 *.pem
 *.key
 *.crt
 *.csr
 *.srl
 
-# 环境变量文件
+# Environment files
 .env
 .env.*
 !.env.example
 !.env.docker.example
 
-# 缓存文件
+# Cache files
 .cache/
 
-# Air 实时重载工具的临时文件
+# Air hot reload temporary files
 tmp/
 
-# Go 工作区文件
+# Go workspace files
 go.work
 go.work.sum
 
-# 调试文件
+# Debug files
 __debug_bin
 debug.test
 
-# 系统文件
+# System files
 .DS_Store
 Thumbs.db
 
-# 项目特定文件
+# Project runtime files
 uploads/
 static/uploads/
 public/uploads/
@@ -111,11 +106,6 @@ docker/volumes/weaviate/*
 
 storage/*
 !storage/.gitkeep
-
-# Cursor editor artifacts
-.cursor/
-.lingma/
-.windsurf/
 
 # Local tooling (do not commit)
 cmd/password_gen/

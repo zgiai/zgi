@@ -5,7 +5,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
-	"github.com/zgiai/ginext/internal/modules/llm/llmmodel/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 )
 
 // TestModelViewHasIsAvailableField tests that ModelView includes is_available field

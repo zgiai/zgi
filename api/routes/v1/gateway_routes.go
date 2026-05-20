@@ -2,13 +2,13 @@ package v1
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/internal/container"
-	"github.com/zgiai/ginext/internal/modules/llm/gateway"
-	gatewayhandler "github.com/zgiai/ginext/internal/modules/llm/gateway/handler"
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
-	_ "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters/provider" // Register adapters
-	"github.com/zgiai/ginext/pkg/logger"
-	redisPkg "github.com/zgiai/ginext/pkg/redis"
+	"github.com/zgiai/zgi/api/internal/container"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
+	gatewayhandler "github.com/zgiai/zgi/api/internal/modules/llm/gateway/handler"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	_ "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters/provider" // Register adapters
+	"github.com/zgiai/zgi/api/pkg/logger"
+	redisPkg "github.com/zgiai/zgi/api/pkg/redis"
 )
 
 // RegisterGatewayRoutes registers OpenAI-compatible AI API routes at /v1/*

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 // MidjourneyAdapter adapter for mj-proxy
@@ -132,75 +132,75 @@ func (a *MidjourneyAdapter) handleAction(ctx context.Context, action string, tas
 	// Map action + index to customId or use simple action endpoint if supported
 	// Many mj-proxy support /mj/submit/action or /mj/submit/simple-change
 	// Let's assume /mj/submit/simple-change for U1, V1, etc.
-	
+
 	url := fmt.Sprintf("%s/mj/submit/simple-change", a.baseURL)
-	
+
 	content := fmt.Sprintf("%s%d", strings.ToUpper(string(action[0])), index) // e.g. U1, V2
-	
+
 	payload := map[string]interface{}{
 		"content": content,
 		"taskId":  taskID,
 	}
-	
+
 	headers := a.buildHeaders()
 	respBody, statusCode, err := a.httpClient.DoRequest(ctx, "POST", url, headers, payload)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
-	
+
 	if statusCode != 200 {
 		return nil, fmt.Errorf("midjourney action error (status=%d): %s", statusCode, string(respBody))
 	}
-	
+
 	var resp struct {
 		Code        int    `json:"code"`
 		Description string `json:"description"`
 		Result      string `json:"result"`
 	}
-	
+
 	if err := json.Unmarshal(respBody, &resp); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	
+
 	if resp.Code != 1 {
 		return nil, fmt.Errorf("midjourney action failed: %s", resp.Description)
 	}
-	
+
 	return a.pollTask(ctx, resp.Result)
 }
 
 func (a *MidjourneyAdapter) handleCustomAction(ctx context.Context, taskID string, customID string) (*adapter.ImageResponse, error) {
 	url := fmt.Sprintf("%s/mj/submit/action", a.baseURL)
-	
+
 	payload := map[string]interface{}{
 		"customId": customID,
 		"taskId":   taskID,
 	}
-	
+
 	headers := a.buildHeaders()
 	respBody, statusCode, err := a.httpClient.DoRequest(ctx, "POST", url, headers, payload)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
-	
+
 	if statusCode != 200 {
 		return nil, fmt.Errorf("midjourney action error (status=%d): %s", statusCode, string(respBody))
 	}
-	
+
 	var resp struct {
 		Code        int    `json:"code"`
 		Description string `json:"description"`
 		Result      string `json:"result"`
 	}
-	
+
 	if err := json.Unmarshal(respBody, &resp); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	
+
 	if resp.Code != 1 {
 		return nil, fmt.Errorf("midjourney action failed: %s", resp.Description)
 	}
-	
+
 	return a.pollTask(ctx, resp.Result)
 }
 

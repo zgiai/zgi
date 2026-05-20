@@ -1,3 +1,3 @@
-module github.com/zgiai/ginext/tests/llm/load_balance
+module github.com/zgiai/zgi/api/tests/llm/load_balance
 
 go 1.26.2

@@ -2,9 +2,9 @@ package handler
 
 import (
 	"github.com/gin-gonic/gin"
-	llmmodel "github.com/zgiai/ginext/internal/modules/llm/llmmodel/model"
-	"github.com/zgiai/ginext/internal/modules/llm/llmmodel/service"
-	"github.com/zgiai/ginext/pkg/response"
+	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 // AvailableModelsHandler handles available models API requests

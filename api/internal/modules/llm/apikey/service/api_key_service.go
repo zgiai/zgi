@@ -9,11 +9,11 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/zgiai/ginext/internal/modules/llm/apikey/dto"
-	"github.com/zgiai/ginext/internal/modules/llm/apikey/model"
-	"github.com/zgiai/ginext/internal/modules/llm/apikey/repository"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	"github.com/zgiai/ginext/internal/util"
+	"github.com/zgiai/zgi/api/internal/modules/llm/apikey/dto"
+	"github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/apikey/repository"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/internal/util"
 	"gorm.io/gorm"
 )
 

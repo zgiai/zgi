@@ -7,8 +7,8 @@ import (
 
 	"github.com/smartystreets/goconvey/convey"
 
-	llmClient "github.com/zgiai/ginext/internal/modules/llm/client"
-	llmAdapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
+	llmClient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	llmAdapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 // mockLLMClient implements LLMClient for testing.

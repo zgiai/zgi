@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/zgiai/ginext/internal/modules/dataset/model"
-	"github.com/zgiai/ginext/internal/modules/dataset/repository"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/model"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/repository"
 	"gorm.io/gorm"
 )
 

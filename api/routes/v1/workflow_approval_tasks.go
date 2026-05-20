@@ -4,11 +4,11 @@ import (
 	"context"
 
 	"github.com/hibiken/asynq"
-	workflowHandlerPkg "github.com/zgiai/ginext/internal/modules/app/workflow"
-	approvalruntime "github.com/zgiai/ginext/internal/modules/app/workflow/approval"
-	"github.com/zgiai/ginext/pkg/logger"
-	"github.com/zgiai/ginext/pkg/queue"
-	pkgscheduler "github.com/zgiai/ginext/pkg/scheduler"
+	workflowHandlerPkg "github.com/zgiai/zgi/api/internal/modules/app/workflow"
+	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/queue"
+	pkgscheduler "github.com/zgiai/zgi/api/pkg/scheduler"
 )
 
 type approvalTaskRegistry interface {

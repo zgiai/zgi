@@ -6,8 +6,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
-	credentialmodel "github.com/zgiai/ginext/internal/modules/llm/credential/model"
-	"github.com/zgiai/ginext/internal/modules/llm/shared"
+	credentialmodel "github.com/zgiai/zgi/api/internal/modules/llm/credential/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 	"gorm.io/gorm"
 )
 

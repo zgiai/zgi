@@ -6,8 +6,8 @@ import (
 	"fmt"
 
 	_ "github.com/lib/pq"
-	"github.com/zgiai/ginext/config"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 // SeedOptions controls how seed execution is performed.

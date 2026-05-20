@@ -9,11 +9,11 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/config"
-	"github.com/zgiai/ginext/middleware"
-	"github.com/zgiai/ginext/pkg/database"
-	jwtpkg "github.com/zgiai/ginext/pkg/jwt"
-	"github.com/zgiai/ginext/pkg/response"
+	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/middleware"
+	"github.com/zgiai/zgi/api/pkg/database"
+	jwtpkg "github.com/zgiai/zgi/api/pkg/jwt"
+	"github.com/zgiai/zgi/api/pkg/response"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )

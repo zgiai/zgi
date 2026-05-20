@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
-	"github.com/zgiai/ginext/internal/modules/llm/channel/dto"
+	"github.com/zgiai/zgi/api/internal/modules/llm/channel/dto"
 )
 
 // TestChannelViewFields tests that ChannelView includes expected fields and excludes is_official

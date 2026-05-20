@@ -6,13 +6,13 @@ import (
 	"slices"
 	"time"
 
-	"github.com/zgiai/ginext/internal/dto"
-	dataset_model "github.com/zgiai/ginext/internal/modules/dataset/model"
-	dataset_repo "github.com/zgiai/ginext/internal/modules/dataset/repository"
-	file_model "github.com/zgiai/ginext/internal/modules/file_process/model"
-	"github.com/zgiai/ginext/internal/modules/file_process/repository"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/dto"
+	dataset_model "github.com/zgiai/zgi/api/internal/modules/dataset/model"
+	dataset_repo "github.com/zgiai/zgi/api/internal/modules/dataset/repository"
+	file_model "github.com/zgiai/zgi/api/internal/modules/file_process/model"
+	"github.com/zgiai/zgi/api/internal/modules/file_process/repository"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
 )
 

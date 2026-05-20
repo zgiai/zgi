@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	"github.com/zgiai/ginext/internal/modules/shared/repository"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/internal/modules/shared/repository"
 )
 
 // resourcePermissionServiceImpl implements ResourcePermissionService

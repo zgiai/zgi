@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/file"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
 )
 
 // TestBuildUserMessageWithVision tests that multi-part content is correctly built for vision

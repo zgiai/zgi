@@ -3,7 +3,7 @@ package provider
 import (
 	"context"
 
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 const defaultSiliconFlowBaseURL = "https://api.siliconflow.com/v1"

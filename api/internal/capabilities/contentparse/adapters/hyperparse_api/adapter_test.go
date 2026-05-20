@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zgiai/ginext/internal/contracts"
+	"github.com/zgiai/zgi/api/internal/contracts"
 )
 
 func TestAdapterParsesRemoteResponse(t *testing.T) {

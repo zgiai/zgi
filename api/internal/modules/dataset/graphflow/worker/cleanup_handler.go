@@ -7,9 +7,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
-	"github.com/zgiai/ginext/internal/modules/dataset/graphflow"
-	"github.com/zgiai/ginext/pkg/logger"
-	"github.com/zgiai/ginext/pkg/queue"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/queue"
 )
 
 // NewCleanupHandler creates a handler for cleaning up GraphFlow data when a document is deleted

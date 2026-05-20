@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/hibiken/asynq"
-	"github.com/zgiai/ginext/config"
-	"github.com/zgiai/ginext/internal/bootstrap/fxapp"
+	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/bootstrap/fxapp"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
 	"go.uber.org/zap"
@@ -38,6 +38,7 @@ func TestValidateAppModuleWithGRPCDisabled(t *testing.T) {
 		"SERVER_MODE":                  "release",
 		"ENV":                          "production",
 		"SECRET_KEY":                   "test-secret",
+		"API_KEY_ENCRYPTION_KEY":       "0123456789abcdef0123456789abcdef",
 		"EMAIL_MAIL_DEFAULT_SEND_FROM": "noreply@example.com",
 		"EMAIL_RESEND_API_KEY":         "test-api-key",
 		"GRPC_ENABLED":                 "false",

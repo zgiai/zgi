@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/hibiken/asynq"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/tool_file"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 const TaskTypeTempToolFileCleanup = "workflow:tool_file:temp:cleanup"

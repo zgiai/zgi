@@ -7,8 +7,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
-	llmmodel "github.com/zgiai/ginext/internal/modules/llm/llmmodel/model"
-	"github.com/zgiai/ginext/internal/modules/llm/shared/types"
+	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/shared/types"
 	"gorm.io/gorm"
 )
 

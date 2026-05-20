@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	llmadapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
+	llmadapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 var ErrInvokerNotConfigured = errors.New("image invoker not configured")

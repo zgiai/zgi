@@ -3,7 +3,7 @@ package util
 import (
 	"context"
 
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 // ClearTenantCache Clear all cache entries for a specific tenant

@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	auth_model "github.com/zgiai/ginext/internal/modules/user/auth/model"
-	"github.com/zgiai/ginext/internal/modules/workspace/model"
+	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
+	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"

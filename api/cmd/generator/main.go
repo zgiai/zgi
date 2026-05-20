@@ -157,7 +157,7 @@ const serviceTemplate = `package {{.PackageName}}
 
 import (
 	"context"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 type {{.ModelName}}Service interface {
@@ -204,8 +204,8 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/pkg/logger"
-	"github.com/zgiai/ginext/pkg/response"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 type {{.ModelName}}Handler struct {
@@ -304,7 +304,7 @@ const repositoryTemplate = `package {{.PackageName}}
 import (
 	"context"
 	"gorm.io/gorm"
-	"github.com/zgiai/ginext/pkg/database"
+	"github.com/zgiai/zgi/api/pkg/database"
 )
 
 type {{.ModelName}}Repository interface {

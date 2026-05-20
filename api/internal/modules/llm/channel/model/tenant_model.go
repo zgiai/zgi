@@ -4,8 +4,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	llmmodel "github.com/zgiai/ginext/internal/modules/llm/llmmodel/model"
-	providermodel "github.com/zgiai/ginext/internal/modules/llm/provider/model"
+	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	providermodel "github.com/zgiai/zgi/api/internal/modules/llm/provider/model"
 	"gorm.io/gorm"
 )
 

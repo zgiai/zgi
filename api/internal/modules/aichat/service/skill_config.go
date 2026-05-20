@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	aichatmodel "github.com/zgiai/ginext/internal/modules/aichat/model"
-	"github.com/zgiai/ginext/internal/modules/skills"
+	aichatmodel "github.com/zgiai/zgi/api/internal/modules/aichat/model"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
 func (s *service) catalogSkillMetadata(ctx context.Context, organizationID uuid.UUID) ([]skills.SkillDiscoveryMetadata, error) {

@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	automationmodel "github.com/zgiai/ginext/internal/modules/automation/model"
-	"github.com/zgiai/ginext/pkg/email"
+	automationmodel "github.com/zgiai/zgi/api/internal/modules/automation/model"
+	"github.com/zgiai/zgi/api/pkg/email"
 )
 
 // EmailSink delivers notifications through the email package.

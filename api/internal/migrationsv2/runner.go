@@ -4,8 +4,8 @@ import (
 	"log"
 
 	"github.com/go-gormigrate/gormigrate/v2"
-	"github.com/zgiai/ginext/config"
-	"github.com/zgiai/ginext/pkg/database"
+	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/pkg/database"
 	"gorm.io/gorm"
 )
 

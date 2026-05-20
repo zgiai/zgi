@@ -5,21 +5,21 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/zgiai/ginext/config"
-	shared_dto "github.com/zgiai/ginext/internal/dto"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	auth_service "github.com/zgiai/ginext/internal/modules/user/auth/service"
+	"github.com/zgiai/zgi/api/config"
+	shared_dto "github.com/zgiai/zgi/api/internal/dto"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	auth_service "github.com/zgiai/zgi/api/internal/modules/user/auth/service"
 
 	"github.com/gin-gonic/gin"
-	auth_model "github.com/zgiai/ginext/internal/modules/user/auth/model"
+	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 
 	"strconv"
 	"strings"
 
-	helper "github.com/zgiai/ginext/internal/util"
-	"github.com/zgiai/ginext/middleware"
-	"github.com/zgiai/ginext/pkg/logger"
-	"github.com/zgiai/ginext/pkg/response"
+	helper "github.com/zgiai/zgi/api/internal/util"
+	"github.com/zgiai/zgi/api/middleware"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/response"
 	"gorm.io/gorm"
 )
 

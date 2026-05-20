@@ -11,11 +11,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zgiai/ginext/internal/modules/pluginrunner/client"
-	"github.com/zgiai/ginext/internal/modules/pluginrunner/model"
-	"github.com/zgiai/ginext/internal/modules/pluginrunner/parser"
-	"github.com/zgiai/ginext/internal/modules/pluginrunner/repository"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/modules/pluginrunner/client"
+	"github.com/zgiai/zgi/api/internal/modules/pluginrunner/model"
+	"github.com/zgiai/zgi/api/internal/modules/pluginrunner/parser"
+	"github.com/zgiai/zgi/api/internal/modules/pluginrunner/repository"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
 )

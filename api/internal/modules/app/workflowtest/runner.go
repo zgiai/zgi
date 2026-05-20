@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/zgiai/ginext/internal/dto"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/internal/dto"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 )
 
 type RunCaseRequest struct {

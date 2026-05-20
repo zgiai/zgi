@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/zgiai/ginext/internal/prompt"
+	"github.com/zgiai/zgi/api/internal/prompt"
 )
 
 type promptContext struct {

@@ -1,6 +1,6 @@
 package graphflow
 
-import "github.com/zgiai/ginext/internal/prompt"
+import "github.com/zgiai/zgi/api/internal/prompt"
 
 type queryEntityExtractionPromptData struct {
 	Query string

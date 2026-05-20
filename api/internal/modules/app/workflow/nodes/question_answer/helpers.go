@@ -6,9 +6,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/entities"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/shared"
-	llmadapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
+	llmadapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 func normalizeNodeData(nodeData *NodeData) {

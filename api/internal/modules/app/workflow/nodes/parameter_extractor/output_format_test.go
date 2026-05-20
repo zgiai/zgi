@@ -8,8 +8,8 @@ import (
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/shared"
-	"github.com/zgiai/ginext/internal/modules/llm/gateway"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 )
 
 // TestOutputFormatCompatibility_Success validates that successful outputs contain all required fields

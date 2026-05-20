@@ -14,21 +14,21 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/entities"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/nodes/tools"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/shared"
-	"github.com/zgiai/ginext/internal/modules/pluginrunner/client"
-	"github.com/zgiai/ginext/internal/modules/pluginrunner/model"
-	"github.com/zgiai/ginext/internal/modules/pluginrunner/service"
-	toolspkg "github.com/zgiai/ginext/internal/modules/tools"
-	"github.com/zgiai/ginext/internal/modules/tools/builtin"
-	_ "github.com/zgiai/ginext/internal/modules/tools/builtin/time"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/tools"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
+	"github.com/zgiai/zgi/api/internal/modules/pluginrunner/client"
+	"github.com/zgiai/zgi/api/internal/modules/pluginrunner/model"
+	"github.com/zgiai/zgi/api/internal/modules/pluginrunner/service"
+	toolspkg "github.com/zgiai/zgi/api/internal/modules/tools"
+	"github.com/zgiai/zgi/api/internal/modules/tools/builtin"
+	_ "github.com/zgiai/zgi/api/internal/modules/tools/builtin/time"
 )
 
 const (
 	pluginRunnerURL    = "http://localhost:15000"
 	pluginRunnerAPIKey = "admin-key-123"
-	testPluginPath     = "/Users/vic/GolandProjects/zgi-plugin-runner/examples/test_plugin/uv_echo_0.0.1"
+	testPluginPath     = "../../../../runner/examples/test_plugin/uv_echo_0.0.1"
 	testPluginName     = "uv-echo-e2e-test"
 )
 

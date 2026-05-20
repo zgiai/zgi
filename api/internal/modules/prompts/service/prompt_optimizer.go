@@ -7,13 +7,13 @@ import (
 	"regexp"
 	"strings"
 
-	llmclient "github.com/zgiai/ginext/internal/modules/llm/client"
-	llmdefaultservice "github.com/zgiai/ginext/internal/modules/llm/defaultmodel/service"
-	llmmodelmodel "github.com/zgiai/ginext/internal/modules/llm/llmmodel/model"
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
-	promptdto "github.com/zgiai/ginext/internal/modules/prompts/dto"
-	promptmodel "github.com/zgiai/ginext/internal/modules/prompts/model"
-	workspace_model "github.com/zgiai/ginext/internal/modules/workspace/model"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
+	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	promptdto "github.com/zgiai/zgi/api/internal/modules/prompts/dto"
+	promptmodel "github.com/zgiai/zgi/api/internal/modules/prompts/model"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 )
 
 const (

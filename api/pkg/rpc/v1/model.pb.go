@@ -578,7 +578,7 @@ const file_pkg_rpc_v1_model_proto_rawDesc = "" +
 	"ListModels\x12\x1d.zgi.rpc.v1.ListModelsRequest\x1a\x1e.zgi.rpc.v1.ListModelsResponse\x12E\n" +
 	"\bGetModel\x12\x1b.zgi.rpc.v1.GetModelRequest\x1a\x1c.zgi.rpc.v1.GetModelResponse\x12K\n" +
 	"\n" +
-	"SyncModels\x12\x1d.zgi.rpc.v1.SyncModelsRequest\x1a\x1e.zgi.rpc.v1.SyncModelsResponseB'Z%github.com/zgiai/ginext/pkg/rpc/v1;v1b\x06proto3"
+	"SyncModels\x12\x1d.zgi.rpc.v1.SyncModelsRequest\x1a\x1e.zgi.rpc.v1.SyncModelsResponseB'Z%github.com/zgiai/zgi/api/pkg/rpc/v1;v1b\x06proto3"
 
 var (
 	file_pkg_rpc_v1_model_proto_rawDescOnce sync.Once

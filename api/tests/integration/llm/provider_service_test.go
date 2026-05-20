@@ -7,9 +7,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	"github.com/zgiai/ginext/internal/modules/llm/provider/dto"
-	"github.com/zgiai/ginext/internal/modules/llm/provider/model"
-	"github.com/zgiai/ginext/internal/modules/llm/provider/service"
+	"github.com/zgiai/zgi/api/internal/modules/llm/provider/dto"
+	"github.com/zgiai/zgi/api/internal/modules/llm/provider/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/provider/service"
 )
 
 // MockProviderRepository is a mock implementation of ProviderRepository

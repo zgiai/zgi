@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zgiai/ginext/config"
+	"github.com/zgiai/zgi/api/config"
 )
 
 func TestExecuteWorkflowCodeTemplatePython(t *testing.T) {

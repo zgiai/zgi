@@ -6,13 +6,13 @@ import (
 	"io"
 
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/internal/modules/pluginrunner/dto"
-	"github.com/zgiai/ginext/internal/modules/pluginrunner/model"
-	"github.com/zgiai/ginext/internal/modules/pluginrunner/repository"
-	"github.com/zgiai/ginext/internal/modules/pluginrunner/service"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	"github.com/zgiai/ginext/middleware"
-	"github.com/zgiai/ginext/pkg/response"
+	"github.com/zgiai/zgi/api/internal/modules/pluginrunner/dto"
+	"github.com/zgiai/zgi/api/internal/modules/pluginrunner/model"
+	"github.com/zgiai/zgi/api/internal/modules/pluginrunner/repository"
+	"github.com/zgiai/zgi/api/internal/modules/pluginrunner/service"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/middleware"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 // Plugin Runner error codes (module 15)

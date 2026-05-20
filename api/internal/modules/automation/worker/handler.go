@@ -4,9 +4,9 @@ import (
 	"context"
 
 	"github.com/hibiken/asynq"
-	automationruntime "github.com/zgiai/ginext/internal/modules/automation/service/runtime"
-	"github.com/zgiai/ginext/pkg/logger"
-	"github.com/zgiai/ginext/pkg/queue"
+	automationruntime "github.com/zgiai/zgi/api/internal/modules/automation/service/runtime"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/queue"
 )
 
 // TaskHandlerRegistry avoids importing the container package directly.

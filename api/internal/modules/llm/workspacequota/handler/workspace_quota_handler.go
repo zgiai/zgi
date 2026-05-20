@@ -4,9 +4,9 @@ import (
 	"errors"
 
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/internal/modules/llm/workspacequota/dto"
-	"github.com/zgiai/ginext/internal/modules/llm/workspacequota/service"
-	"github.com/zgiai/ginext/pkg/response"
+	"github.com/zgiai/zgi/api/internal/modules/llm/workspacequota/dto"
+	"github.com/zgiai/zgi/api/internal/modules/llm/workspacequota/service"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 // WorkspaceQuotaHandler handles workspace quota management requests.

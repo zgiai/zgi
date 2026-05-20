@@ -2,148 +2,126 @@
 
 Thanks for your interest in contributing to ZGI.
 
-This repository is the top-level product shell for the open-source ZGI stack. It coordinates:
+ZGI is organized as a monorepo. The main services live in:
 
-- product-level Docker and local startup workflows
-- release integration across submodules
-- root repository metadata, templates, and automation
-- top-level documentation such as the project README
-
-The application code itself lives in the submodules:
-
-- `api/`
-- `web/`
-- `sandbox/`
-- `plugin-runner/`
+- `api/` - Go backend service
+- `web/` - Next.js web application
+- `sandbox/` - isolated execution service
+- `runner/` - plugin execution service
+- `docker/` and `dev/` - local development and product-level orchestration
 
 ## Before You Start
 
-Please take a moment to review the project documentation before opening a pull request:
+Please review:
 
-- [README.md](./README.md)
-- [SECURITY.md](./SECURITY.md)
+- `README.md` for setup and project layout
+- `SECURITY.md` for security reporting
+- `CODE_OF_CONDUCT.md` for community expectations
+- `AGENTS.md` for repository-level coding guidance
 
-If you are planning a larger change, open an issue first so we can align on scope and approach before implementation work begins.
+For larger changes, open an issue first so maintainers and contributors can align on scope.
+
+Project issue tracker: https://github.com/zgiai/zgi/issues
 
 ## Ways To Contribute
 
-You can help by contributing in a few different ways:
-
-- report bugs
-- propose features or workflow improvements
-- improve documentation
-- fix issues in the root product shell
-- contribute application changes in the relevant submodule repository
+- Report reproducible bugs.
+- Propose improvements to workflows, APIs, or documentation.
+- Fix issues in the backend, frontend, sandbox, runner, or local development stack.
+- Improve tests, examples, and setup documentation.
 
 ## Reporting Bugs
 
 Please include:
 
-- a clear title
 - what happened
 - what you expected to happen
 - steps to reproduce
-- screenshots or logs when available
-- environment details if the issue is related to Docker, startup, or local development
+- logs or screenshots when useful
+- operating system, Docker version, browser, and relevant service versions
 
-For security-sensitive reports, please follow [SECURITY.md](./SECURITY.md) instead of opening a public issue.
+Do not include secrets, API keys, tokens, private URLs, or customer data in public issues.
 
-## Suggesting Features
-
-Feature requests are most helpful when they include:
-
-- the problem you are trying to solve
-- the proposed behavior
-- why the change matters
-- any relevant examples, screenshots, or references
-
-## Submitting a Pull Request
-
-Please follow this flow:
+## Submitting Pull Requests
 
 1. Fork the repository.
-2. Create a branch for your change.
+2. Create a branch from `main`.
 3. Make the smallest reasonable change that solves the problem.
-4. Add or update tests when the change affects behavior.
-5. Make sure the relevant local checks pass.
-6. Open a pull request and link the related issue when applicable.
+4. Add or update tests when behavior changes.
+5. Install the repository hooks with `make install-hooks`.
+6. Run the relevant local checks.
+7. Open a pull request with a clear description and link any related issue.
 
-Small documentation fixes and low-risk maintenance changes do not always need a prior issue, but larger behavior or workflow changes usually should start with one.
+Pull requests are opened at https://github.com/zgiai/zgi/pulls.
 
-## Local Setup
+Small documentation fixes do not need a prior issue. Larger behavior changes usually should start with one.
 
-Clone the repository with submodules:
+## Local Checks
 
-```bash
-git clone --recurse-submodules <repo-url>
-```
-
-If you already cloned the repository:
-
-```bash
-git submodule update --init --recursive
-```
-
-Useful local entry points:
-
-- Full product stack:
-
-```bash
-make dev-docker
-```
-
-- China mainland build mirrors:
-
-```bash
-./dev/start-docker --china
-```
-
-- Mixed source development:
-
-```bash
-make setup
-make dev-docker
-make dev-api
-make dev-web
-```
-
-For service-specific setup and development details, please refer to each submodule repository.
-
-## Working With Submodules
-
-If your change touches code inside `api/`, `web/`, `sandbox/`, or `plugin-runner/`, there are usually two parts to the contribution:
-
-1. Commit and push the change in the submodule repository.
-2. Commit the updated submodule pointer in this root repository.
-
-Example:
+For backend changes:
 
 ```bash
 cd api
-git checkout -b feature/example
-git commit -am "Update backend behavior"
-git push
-
-cd ..
-git add api
-git commit -m "Bump api submodule"
-git push
+make fmt
+make test
+make build
 ```
 
-If you only change root-level Docker, scripts, workflows, or documentation, you only need a pull request in this repository.
+For frontend changes:
 
-## What Belongs In This Repository
+```bash
+cd web
+pnpm lint
+pnpm type-check
+pnpm build
+```
 
-Good fits for this repository include:
+For full-stack startup changes:
 
-- `dev/` scripts
-- `docker/` assets
-- GitHub workflows and templates
-- top-level docs and README files
-- release coordination across submodules
+```bash
+make dev-docker
+make docker-logs
+make docker-down
+```
 
-Application business logic should stay in the relevant submodule unless the change is specifically about top-level integration.
+Run the narrowest useful checks first, then broaden validation when the change affects shared behavior.
+
+## Commit Messages
+
+Use English Conventional Commits:
+
+```text
+feat(api): add workspace quota endpoint
+fix(web): handle empty workflow list
+docs: update Docker quick start
+```
+
+Do not use non-English commit messages in public history. The repository hook rejects non-ASCII commit messages to keep project history searchable and consistent for global contributors.
+
+## Open Source Hygiene
+
+Install hooks before committing:
+
+```bash
+make install-hooks
+```
+
+Run the same checks manually:
+
+```bash
+make check-open-source
+```
+
+The checks reject unapproved binary files, large files, local absolute paths, private tooling references, and high-confidence secret patterns. If a binary fixture is truly required, add a short justification by listing it in `.github/allowed-binaries.txt`.
+
+## Code Guidelines
+
+- Follow existing patterns in the area you change.
+- Keep unrelated refactors out of focused fixes.
+- Do not commit local `.env` files, generated runtime files, uploaded files, logs, caches, or editor state.
+- Update documentation when commands, setup, APIs, or public behavior change.
+- Keep public examples free of real secrets or production credentials.
 
 ## Need Help?
 
-If you are unsure where a change belongs, open an issue first. That is often the fastest way for us to help you land a contribution cleanly.
+Open an issue with a short description of what you are trying to do and where you are stuck.

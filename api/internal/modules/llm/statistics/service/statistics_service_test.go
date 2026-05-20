@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/zgiai/ginext/internal/modules/llm/statistics/dto"
+	"github.com/zgiai/zgi/api/internal/modules/llm/statistics/dto"
 )
 
 type fakeStatisticsRepository struct {

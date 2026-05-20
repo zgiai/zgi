@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	quota_model "github.com/zgiai/ginext/internal/modules/quota/model"
+	quota_model "github.com/zgiai/zgi/api/internal/modules/quota/model"
 )
 
 // QuotaUsageHistoryDTO Quota usage history DTO

@@ -1,6 +1,6 @@
 package dto
 
-import automationmodel "github.com/zgiai/ginext/internal/modules/automation/model"
+import automationmodel "github.com/zgiai/zgi/api/internal/modules/automation/model"
 
 // TaskScope defines the organization and workspace boundaries for task operations.
 type TaskScope struct {

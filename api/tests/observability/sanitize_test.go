@@ -6,7 +6,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/zgiai/ginext/internal/observability"
+	"github.com/zgiai/zgi/api/internal/observability"
 	"go.opentelemetry.io/otel/attribute"
 )
 

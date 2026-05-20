@@ -1,6 +1,6 @@
 package llmerrors
 
-import "github.com/zgiai/ginext/pkg/response"
+import "github.com/zgiai/zgi/api/pkg/response"
 
 // LLM Module Error Code Range: 40000-40999
 // Module Code: 40 (LLM Gateway)

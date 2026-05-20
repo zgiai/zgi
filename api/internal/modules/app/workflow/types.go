@@ -1,6 +1,6 @@
 package workflow
 
-import "github.com/zgiai/ginext/internal/modules/app/common"
+import "github.com/zgiai/zgi/api/internal/modules/app/common"
 
 type WorkflowType string
 

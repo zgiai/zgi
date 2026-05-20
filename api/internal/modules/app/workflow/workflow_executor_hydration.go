@@ -3,7 +3,7 @@ package workflow
 import (
 	"context"
 
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 // HydrateInputs recursively traverses inputs and fills in file metadata from upload_files table

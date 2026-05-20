@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	appconfig "github.com/zgiai/ginext/config"
+	appconfig "github.com/zgiai/zgi/api/config"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"gopkg.in/natefinch/lumberjack.v2"

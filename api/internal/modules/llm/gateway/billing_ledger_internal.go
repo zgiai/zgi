@@ -9,8 +9,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
-	channelmodel "github.com/zgiai/ginext/internal/modules/llm/channel/model"
-	"github.com/zgiai/ginext/pkg/logger"
+	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"

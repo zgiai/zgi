@@ -4,10 +4,10 @@ import (
 	"context"
 	"time"
 
-	automationmodel "github.com/zgiai/ginext/internal/modules/automation/model"
-	automationrepo "github.com/zgiai/ginext/internal/modules/automation/repository"
-	automationaction "github.com/zgiai/ginext/internal/modules/automation/service/action"
-	"github.com/zgiai/ginext/pkg/logger"
+	automationmodel "github.com/zgiai/zgi/api/internal/modules/automation/model"
+	automationrepo "github.com/zgiai/zgi/api/internal/modules/automation/repository"
+	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )

@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	model "github.com/zgiai/ginext/internal/modules/datasource/model/excelimport"
+	model "github.com/zgiai/zgi/api/internal/modules/datasource/model/excelimport"
 	"gorm.io/gorm"
 )
 

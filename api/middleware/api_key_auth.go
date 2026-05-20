@@ -9,9 +9,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	apiKeyModule "github.com/zgiai/ginext/internal/modules/api_key"
-	"github.com/zgiai/ginext/internal/util"
-	"github.com/zgiai/ginext/pkg/response"
+	apiKeyModule "github.com/zgiai/zgi/api/internal/modules/api_key"
+	"github.com/zgiai/zgi/api/internal/util"
+	"github.com/zgiai/zgi/api/pkg/response"
 	"gorm.io/gorm"
 )
 

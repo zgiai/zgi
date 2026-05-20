@@ -1,8 +1,8 @@
 package v1
 
 import (
-	"github.com/zgiai/ginext/internal/container"
-	"github.com/zgiai/ginext/internal/modules/datasource/handler"
+	"github.com/zgiai/zgi/api/internal/container"
+	"github.com/zgiai/zgi/api/internal/modules/datasource/handler"
 
 	"github.com/gin-gonic/gin"
 )

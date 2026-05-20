@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/zgiai/ginext/internal/modules/dataset/model"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/model"
 )
 
 // RerankMode represents different reranking modes

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zgiai/ginext/internal/modules/system/model"
+	"github.com/zgiai/zgi/api/internal/modules/system/model"
 	"gorm.io/gorm"
 )
 

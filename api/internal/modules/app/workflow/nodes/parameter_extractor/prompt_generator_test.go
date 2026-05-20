@@ -3,7 +3,7 @@ package parameterextractor
 import (
 	"testing"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/file"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
 )
 
 func TestGeneratePromptEngineeringChatPrompt_UsesTemplates(t *testing.T) {

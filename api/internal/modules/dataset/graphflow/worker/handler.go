@@ -4,11 +4,11 @@ import (
 	"context"
 
 	"github.com/hibiken/asynq"
-	"github.com/zgiai/ginext/internal/modules/dataset/graphflow"
-	"github.com/zgiai/ginext/pkg/logger"
-	"github.com/zgiai/ginext/pkg/queue"
-	"github.com/zgiai/ginext/pkg/ratelimit"
-	pkgredis "github.com/zgiai/ginext/pkg/redis"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/queue"
+	"github.com/zgiai/zgi/api/pkg/ratelimit"
+	pkgredis "github.com/zgiai/zgi/api/pkg/redis"
 )
 
 // TaskHandlerRegistry is an interface for registering asynq task handlers

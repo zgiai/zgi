@@ -4,8 +4,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/zgiai/ginext/internal/dto"
-	extractcommon "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
+	extractcommon "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
+	"github.com/zgiai/zgi/api/internal/dto"
 )
 
 func mapResultToExtractOutput(result *extractcommon.DocumentResult, filePath, backend string) *dto.ExtractOutput {

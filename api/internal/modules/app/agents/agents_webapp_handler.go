@@ -5,9 +5,9 @@ import (
 	"errors"
 
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/internal/dto"
-	"github.com/zgiai/ginext/internal/util"
-	"github.com/zgiai/ginext/pkg/response"
+	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/util"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 func (h *AgentsHandler) UpdateWebAppStatus(c *gin.Context) {

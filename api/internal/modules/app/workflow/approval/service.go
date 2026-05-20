@@ -11,10 +11,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	appconfig "github.com/zgiai/ginext/config"
-	workflowpause "github.com/zgiai/ginext/internal/modules/app/workflow/pause"
-	"github.com/zgiai/ginext/pkg/email"
-	"github.com/zgiai/ginext/pkg/logger"
+	appconfig "github.com/zgiai/zgi/api/config"
+	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
+	"github.com/zgiai/zgi/api/pkg/email"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/gorm"
 )
 

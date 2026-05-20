@@ -3,9 +3,8 @@ package indexing
 import (
 	"sync"
 
-	"github.com/zgiai/ginext/pkg/scoring"
+	"github.com/zgiai/zgi/api/pkg/scoring"
 )
-
 
 type FullTextIndex struct {
 	bm25     *scoring.BM25

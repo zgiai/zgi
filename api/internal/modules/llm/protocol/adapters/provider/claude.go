@@ -13,7 +13,7 @@ import (
 	anthropicoption "github.com/anthropics/anthropic-sdk-go/option"
 	anthropicparam "github.com/anthropics/anthropic-sdk-go/packages/param"
 	"github.com/shopspring/decimal"
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 const claudeModelListPageLimit = 1000

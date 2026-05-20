@@ -7,8 +7,8 @@ import (
 	"strings"
 	stdtime "time"
 
-	"github.com/zgiai/ginext/internal/modules/tools"
-	"github.com/zgiai/ginext/internal/modules/tools/builtin"
+	"github.com/zgiai/zgi/api/internal/modules/tools"
+	"github.com/zgiai/zgi/api/internal/modules/tools/builtin"
 )
 
 const defaultDateFormat = "2006-01-02"

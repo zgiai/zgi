@@ -3,8 +3,8 @@ package fxapp
 import (
 	"context"
 
-	"github.com/zgiai/ginext/config"
-	applogger "github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/config"
+	applogger "github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
 )

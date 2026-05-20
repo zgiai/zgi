@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/zgiai/ginext/internal/contracts"
+	"github.com/zgiai/zgi/api/internal/contracts"
 )
 
 func ProviderSignature(providerKey string, engine contracts.ParseEngine) string {

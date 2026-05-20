@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/llm/credential/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/credential/model"
 )
 
 // TenantCredentialRepository defines the interface for tenant credential operations

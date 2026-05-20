@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	imageadapter "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/adapters/image"
-	coremodel "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/core/model"
-	"github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/pkg/hyperparse"
-	extractcommon "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
-	extractvlm "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/vlm"
+	imageadapter "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/adapters/image"
+	coremodel "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/core/model"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/hyperparse"
+	extractcommon "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
+	extractvlm "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/vlm"
 )
 
 // Client is the local parser entry point.

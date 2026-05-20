@@ -1,6 +1,6 @@
 package gateway
 
-import channelmodel "github.com/zgiai/ginext/internal/modules/llm/channel/model"
+import channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 
 type AppModelRoutePrecheckStatus string
 

@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	channelmodel "github.com/zgiai/ginext/internal/modules/llm/channel/model"
-	"github.com/zgiai/ginext/internal/modules/llm/shared"
+	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 )
 
 // TestTenantAutonomyStrategy_SupportsModel tests the TenantAutonomyStrategy implementation

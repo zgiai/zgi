@@ -5,11 +5,11 @@ import (
 	"encoding/base64"
 	"fmt"
 
-	// "github.com/zgiai/ginext/internal/libs"
-	// "github.com/zgiai/ginext/internal/model"
-	"github.com/zgiai/ginext/internal/modules/workspace/model"
-	"github.com/zgiai/ginext/pkg/database"
-	"github.com/zgiai/ginext/pkg/security"
+	// "github.com/zgiai/zgi/api/internal/libs"
+	// "github.com/zgiai/zgi/api/internal/model"
+	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	"github.com/zgiai/zgi/api/pkg/database"
+	"github.com/zgiai/zgi/api/pkg/security"
 )
 
 // obfuscatedToken obfuscates a token for display purposes

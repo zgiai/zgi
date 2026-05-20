@@ -1,9 +1,9 @@
 package statistics
 
 import (
-	"github.com/zgiai/ginext/internal/modules/llm/statistics/handler"
-	"github.com/zgiai/ginext/internal/modules/llm/statistics/repository"
-	"github.com/zgiai/ginext/internal/modules/llm/statistics/service"
+	"github.com/zgiai/zgi/api/internal/modules/llm/statistics/handler"
+	"github.com/zgiai/zgi/api/internal/modules/llm/statistics/repository"
+	"github.com/zgiai/zgi/api/internal/modules/llm/statistics/service"
 	"gorm.io/gorm"
 )
 

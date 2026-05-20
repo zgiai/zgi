@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zgiai/ginext/config"
-	"github.com/zgiai/ginext/pkg/email"
+	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/pkg/email"
 )
 
 func TestSendEmailWithSMTPBackend(t *testing.T) {

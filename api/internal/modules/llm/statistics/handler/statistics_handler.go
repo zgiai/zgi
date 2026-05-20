@@ -4,9 +4,9 @@ import (
 	"errors"
 
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/internal/modules/llm/statistics/dto"
-	"github.com/zgiai/ginext/internal/modules/llm/statistics/service"
-	"github.com/zgiai/ginext/pkg/response"
+	"github.com/zgiai/zgi/api/internal/modules/llm/statistics/dto"
+	"github.com/zgiai/zgi/api/internal/modules/llm/statistics/service"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 // StatisticsHandler handles HTTP requests for statistics operations

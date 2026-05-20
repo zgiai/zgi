@@ -6,7 +6,7 @@ import (
 	"net/url"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 // Config holds connection settings required to initialise the shared pgx pool.

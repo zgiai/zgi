@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	llmmodelmodel "github.com/zgiai/ginext/internal/modules/llm/llmmodel/model"
-	llmmodelsvc "github.com/zgiai/ginext/internal/modules/llm/llmmodel/service"
+	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	llmmodelsvc "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
 )
 
 type privateModelLookupRepo struct {

@@ -4,7 +4,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/shared"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 )
 
 const millisecondsPerSecond = 1000.0

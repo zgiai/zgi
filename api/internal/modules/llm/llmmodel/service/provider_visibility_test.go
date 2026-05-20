@@ -5,7 +5,7 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
-	providermodel "github.com/zgiai/ginext/internal/modules/llm/provider/model"
+	providermodel "github.com/zgiai/zgi/api/internal/modules/llm/provider/model"
 )
 
 type fakeProviderRepo struct {

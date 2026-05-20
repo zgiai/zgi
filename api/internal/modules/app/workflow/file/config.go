@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zgiai/ginext/config"
+	"github.com/zgiai/zgi/api/config"
 )
 
 // WorkflowFileConfig holds configuration for workflow file handling and validation.

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/zgiai/ginext/internal/modules/tools"
-	"github.com/zgiai/ginext/internal/modules/tools/builtin"
+	"github.com/zgiai/zgi/api/internal/modules/tools"
+	"github.com/zgiai/zgi/api/internal/modules/tools/builtin"
 )
 
 // CurrentTimeTool is a builtin tool for getting the current time

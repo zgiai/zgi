@@ -16,10 +16,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	aichatmodel "github.com/zgiai/ginext/internal/modules/aichat/model"
-	"github.com/zgiai/ginext/internal/modules/aichat/repository"
-	"github.com/zgiai/ginext/internal/modules/skills"
-	"github.com/zgiai/ginext/pkg/logger"
+	aichatmodel "github.com/zgiai/zgi/api/internal/modules/aichat/model"
+	"github.com/zgiai/zgi/api/internal/modules/aichat/repository"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/gorm"
 )
 

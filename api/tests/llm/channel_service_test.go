@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/zgiai/ginext/internal/modules/llm/shared"
+	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 )
 
 // TestUserOwnedChannelDefaultPriority tests that user-owned channels get default priority of 100

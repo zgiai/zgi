@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/llm/provider/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/provider/model"
 	"gorm.io/gorm"
 )
 

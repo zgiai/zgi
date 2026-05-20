@@ -7,7 +7,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
-	"github.com/zgiai/ginext/internal/modules/payment/model"
+	"github.com/zgiai/zgi/api/internal/modules/payment/model"
 )
 
 // TransactionRepository defines the interface for transaction operations

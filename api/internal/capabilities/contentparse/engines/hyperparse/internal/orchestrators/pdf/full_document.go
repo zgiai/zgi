@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	pdfadapter "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/adapters/pdf"
-	"github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/core/chunking"
-	"github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/core/layoutdoc"
+	pdfadapter "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/adapters/pdf"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/core/chunking"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/core/layoutdoc"
 )
 
 // full_document progress logging is enabled by CONTENT_PARSE_FULLDOC_LOG=1

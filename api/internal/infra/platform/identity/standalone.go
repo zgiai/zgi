@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	appconfig "github.com/zgiai/ginext/config"
+	appconfig "github.com/zgiai/zgi/api/config"
 )
 
 // Standalone is the implementation for self-hosted/open-source users.

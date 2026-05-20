@@ -21,8 +21,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/zgiai/ginext/pkg/logger"
-	redisUtil "github.com/zgiai/ginext/pkg/redis"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	redisUtil "github.com/zgiai/zgi/api/pkg/redis"
 	"go.uber.org/zap"
 )
 

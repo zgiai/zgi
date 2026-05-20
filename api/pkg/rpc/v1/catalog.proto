@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package zgi.rpc.v1;
 
-option go_package = "github.com/zgiai/ginext/pkg/rpc/v1;v1";
+option go_package = "github.com/zgiai/zgi/api/pkg/rpc/v1;v1";
 
 service CatalogService {
     rpc GetPublishedCatalog(GetPublishedCatalogRequest) returns (GetPublishedCatalogResponse);

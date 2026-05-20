@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zgiai/ginext/internal/contracts"
+	"github.com/zgiai/zgi/api/internal/contracts"
 )
 
 func buildPlaygroundQualitySummary(artifact *contracts.ParseArtifact, duration time.Duration) playgroundQualitySummary {

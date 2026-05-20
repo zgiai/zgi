@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	pdfadapter "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/adapters/pdf"
-	"github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/core/chunking"
+	pdfadapter "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/adapters/pdf"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/core/chunking"
 )
 
 func buildOnePagePDFWithAnnot() []byte {

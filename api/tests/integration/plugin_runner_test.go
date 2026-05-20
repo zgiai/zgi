@@ -7,10 +7,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/zgiai/ginext/config"
+	"github.com/zgiai/zgi/api/config"
 
-	"github.com/zgiai/ginext/internal/modules/pluginrunner/client"
-	"github.com/zgiai/ginext/internal/modules/pluginrunner/model"
+	"github.com/zgiai/zgi/api/internal/modules/pluginrunner/client"
+	"github.com/zgiai/zgi/api/internal/modules/pluginrunner/model"
 )
 
 const (

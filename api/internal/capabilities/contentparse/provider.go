@@ -1,11 +1,11 @@
 package contentparse
 
 import (
-	"github.com/zgiai/ginext/internal/capabilities/chunking"
-	hyperparseapi "github.com/zgiai/ginext/internal/capabilities/contentparse/adapters/hyperparse_api"
-	hyperparsesdk "github.com/zgiai/ginext/internal/capabilities/contentparse/adapters/hyperparse_sdk"
-	"github.com/zgiai/ginext/internal/capabilities/contentparse/routing"
-	"github.com/zgiai/ginext/internal/contracts"
+	"github.com/zgiai/zgi/api/internal/capabilities/chunking"
+	hyperparseapi "github.com/zgiai/zgi/api/internal/capabilities/contentparse/adapters/hyperparse_api"
+	hyperparsesdk "github.com/zgiai/zgi/api/internal/capabilities/contentparse/adapters/hyperparse_sdk"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/routing"
+	"github.com/zgiai/zgi/api/internal/contracts"
 )
 
 // Module keeps the new capability easy to instantiate and wire later without

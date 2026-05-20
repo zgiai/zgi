@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	llmclient "github.com/zgiai/ginext/internal/modules/llm/client"
-	llmadapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	llmadapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 // GatewayRerankResult represents a single rerank result from gateway

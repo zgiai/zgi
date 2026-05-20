@@ -12,7 +12,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/core/chunking"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/core/chunking"
 )
 
 // Native chunk types kept during VLM merge. Structural metadata still comes

@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"time"
 
-	"github.com/zgiai/ginext/internal/dto"
-	"github.com/zgiai/ginext/internal/modules/datasource/model"
+	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/datasource/model"
 	"gorm.io/gorm"
 
 	"github.com/google/uuid"

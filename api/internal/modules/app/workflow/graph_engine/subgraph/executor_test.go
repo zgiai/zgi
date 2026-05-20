@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/entities"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/shared"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 )
 
 func TestApplyIterationMetadata(t *testing.T) {

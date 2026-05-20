@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	datasetadapter "github.com/zgiai/ginext/internal/capabilities/chunking/adapters/dataset"
-	"github.com/zgiai/ginext/internal/contracts"
+	datasetadapter "github.com/zgiai/zgi/api/internal/capabilities/chunking/adapters/dataset"
+	"github.com/zgiai/zgi/api/internal/contracts"
 )
 
 func BenchmarkExecutorThroughput(b *testing.B) {

@@ -1,9 +1,9 @@
 package gdpr
 
 import (
-	"github.com/zgiai/ginext/internal/modules/gdpr/handler"
-	"github.com/zgiai/ginext/internal/modules/gdpr/repository"
-	"github.com/zgiai/ginext/internal/modules/gdpr/service"
+	"github.com/zgiai/zgi/api/internal/modules/gdpr/handler"
+	"github.com/zgiai/zgi/api/internal/modules/gdpr/repository"
+	"github.com/zgiai/zgi/api/internal/modules/gdpr/service"
 	"gorm.io/gorm"
 )
 

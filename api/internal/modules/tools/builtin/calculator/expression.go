@@ -6,8 +6,8 @@ import (
 	"math"
 
 	"github.com/shopspring/decimal"
-	"github.com/zgiai/ginext/internal/modules/tools"
-	"github.com/zgiai/ginext/internal/modules/tools/builtin"
+	"github.com/zgiai/zgi/api/internal/modules/tools"
+	"github.com/zgiai/zgi/api/internal/modules/tools/builtin"
 )
 
 const (

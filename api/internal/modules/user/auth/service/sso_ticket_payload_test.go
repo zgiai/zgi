@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	shared_dto "github.com/zgiai/ginext/internal/dto"
+	shared_dto "github.com/zgiai/zgi/api/internal/dto"
 )
 
 func TestSSOProviderTokenFromExtra(t *testing.T) {

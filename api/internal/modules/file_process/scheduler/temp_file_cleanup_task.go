@@ -6,8 +6,8 @@ import (
 
 	"github.com/hibiken/asynq"
 
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	"github.com/zgiai/ginext/pkg/logger"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 const (

@@ -3,8 +3,8 @@ package interfaces
 import (
 	"context"
 
-	"github.com/zgiai/ginext/internal/dto"
-	llmmodel "github.com/zgiai/ginext/internal/modules/llm/llmmodel/model"
+	"github.com/zgiai/zgi/api/internal/dto"
+	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 )
 
 type LLMModelService interface {

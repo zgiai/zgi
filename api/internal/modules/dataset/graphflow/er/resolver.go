@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/dataset/graphflow/graph"
-	"github.com/zgiai/ginext/internal/modules/dataset/graphflow/model"
-	"github.com/zgiai/ginext/pkg/logger"
-	"github.com/zgiai/ginext/pkg/redis"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/graph"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/model"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/redis"
 )
 
 // EntityResolver defines the interface for entity resolution
@@ -55,7 +55,7 @@ func (s *EntityResolutionService) Resolve(ctx context.Context, kbID, mention, la
 	if mention == "" {
 		return nil, false, fmt.Errorf("mention cannot be empty")
 	}
-	
+
 	normalizedName := strings.ToLower(strings.TrimSpace(mention))
 	cacheKey := fmt.Sprintf("er:idx:%s:%s:%s", kbID, label, hashString(normalizedName))
 
@@ -63,7 +63,7 @@ func (s *EntityResolutionService) Resolve(ctx context.Context, kbID, mention, la
 	if exists, canonicalID := s.checkRedisCache(ctx, cacheKey); exists {
 		return &model.GraphEntity{
 			ID:            canonicalID,
-			CanonicalName: mention, 
+			CanonicalName: mention,
 			Type:          label,
 		}, false, nil
 	}
@@ -71,7 +71,7 @@ func (s *EntityResolutionService) Resolve(ctx context.Context, kbID, mention, la
 	// --- L2: Embedding-based Blocking & Vector Search ---
 	// We dropped "Prefix Blocking" because it fails for synonyms (WWII vs World War II).
 	// We rely on Neo4j Vector Index to find "Semantically Close" candidates efficiently.
-	
+
 	// High Confidence Search
 	canonicalID, err := s.neo4jClient.FindSimilarEntityWithFilter(ctx, kbID, label, embedding, s.similarityThreshold)
 	if err != nil {
@@ -83,12 +83,12 @@ func (s *EntityResolutionService) Resolve(ctx context.Context, kbID, mention, la
 		s.updateRedisCache(ctx, cacheKey, canonicalID)
 		return &model.GraphEntity{
 			ID:            canonicalID,
-			CanonicalName: mention, 
+			CanonicalName: mention,
 			Type:          label,
-			Confidence:    1.0, 
+			Confidence:    1.0,
 		}, false, nil
 	}
-	
+
 	// --- L3: Low Confidence / Ambiguous Cases (Async Judge) ---
 	// If score is between 0.8 and 0.9, we might want to trigger an LLM check.
 	// Current Neo4j client doesn't return score in the simple Find function.
@@ -109,7 +109,7 @@ func (s *EntityResolutionService) Resolve(ctx context.Context, kbID, mention, la
 			return &model.GraphEntity{ID: cid, Type: label}, false, nil
 		}
 	}
-	
+
 	done := make(chan struct{})
 	go s.watchDog(ctx, lockKey, ttl, done)
 	defer close(done)
@@ -126,9 +126,9 @@ func (s *EntityResolutionService) Resolve(ctx context.Context, kbID, mention, la
 		CanonicalName: mention,
 		Embedding:     embedding,
 		Type:          label,
-		Confidence:    1.0, 
+		Confidence:    1.0,
 	}
-	
+
 	targetType := label
 	if targetType == "" {
 		targetType = "Entity"
@@ -147,15 +147,15 @@ func (s *EntityResolutionService) Resolve(ctx context.Context, kbID, mention, la
 	createdID, err := s.neo4jClient.CreateNode(ctx, targetType, props)
 	if err != nil {
 		if strings.Contains(err.Error(), "ConstraintValidationFailed") || strings.Contains(err.Error(), "already exists") {
-			 logger.Info("Entity creation conflict, resolving to existing", map[string]interface{}{"name": mention})
-			 return nil, false, fmt.Errorf("concurrent creation conflict: %w", err)
+			logger.Info("Entity creation conflict, resolving to existing", map[string]interface{}{"name": mention})
+			return nil, false, fmt.Errorf("concurrent creation conflict: %w", err)
 		}
 		return nil, false, err
 	}
 
 	s.updateRedisCache(ctx, cacheKey, createdID)
 	newEntity.ID = createdID
-	
+
 	return newEntity, true, nil
 }
 
@@ -170,7 +170,7 @@ func (s *EntityResolutionService) checkRedisCache(ctx context.Context, key strin
 }
 
 func (s *EntityResolutionService) updateRedisCache(ctx context.Context, key, value string) {
-	_ = redis.SetEx(ctx, key, value, 24*time.Hour) 
+	_ = redis.SetEx(ctx, key, value, 24*time.Hour)
 }
 
 func (s *EntityResolutionService) acquireLock(ctx context.Context, key string, ttl time.Duration) bool {
@@ -185,11 +185,11 @@ func (s *EntityResolutionService) acquireLock(ctx context.Context, key string, t
 func (s *EntityResolutionService) watchDog(ctx context.Context, key string, ttl time.Duration, done chan struct{}) {
 	ticker := time.NewTicker(ttl / 2)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-done:
-			return 
+			return
 		case <-ctx.Done():
 			return
 		case <-ticker.C:

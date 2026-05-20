@@ -3,7 +3,7 @@ package schemas
 import (
 	"github.com/samber/do/v2"
 
-	"github.com/zgiai/ginext/pkg/sql_base/sqlmeta/driver"
+	"github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/driver"
 )
 
 // ProvideRepository registers the schema repository with the injector.

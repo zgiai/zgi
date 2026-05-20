@@ -7,8 +7,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
-	"github.com/zgiai/ginext/config"
-	"github.com/zgiai/ginext/internal/modules/llm/gateway"
+	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 )
 
 func TestGRPCBillingConnection(t *testing.T) {

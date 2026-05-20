@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/entities"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/shared"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 )
 
 func TestStartNode_New(t *testing.T) {
@@ -34,14 +34,14 @@ func TestStartNode_New(t *testing.T) {
 	}
 
 	graphInitParams := entities.GraphInitParams{
-		OrganizationID:     "test-tenant",
-		AppID:        "test-app",
-		WorkflowType: entities.WorkflowTypeWorkflow,
-		WorkflowID:   "test-workflow",
-		UserID:       "test-user",
-		UserFrom:     entities.UserFromAccount,
-		InvokeFrom:   entities.InvokeFromDebugger,
-		CallDepth:    0,
+		OrganizationID: "test-tenant",
+		AppID:          "test-app",
+		WorkflowType:   entities.WorkflowTypeWorkflow,
+		WorkflowID:     "test-workflow",
+		UserID:         "test-user",
+		UserFrom:       entities.UserFromAccount,
+		InvokeFrom:     entities.InvokeFromDebugger,
+		CallDepth:      0,
 	}
 
 	graph := &entities.Graph{}
@@ -131,11 +131,11 @@ func TestStartNode_ExecuteRun(t *testing.T) {
 	}
 
 	graphInitParams := entities.GraphInitParams{
-		OrganizationID:     "test-tenant",
-		AppID:        "test-app",
-		WorkflowType: "workflow",
-		WorkflowID:   "test-workflow",
-		UserID:       "test-user",
+		OrganizationID: "test-tenant",
+		AppID:          "test-app",
+		WorkflowType:   "workflow",
+		WorkflowID:     "test-workflow",
+		UserID:         "test-user",
 	}
 
 	// Create system variables
@@ -227,8 +227,8 @@ func TestStartNode_Run(t *testing.T) {
 
 	graphInitParams := entities.GraphInitParams{
 		OrganizationID: "test-tenant",
-		AppID:    "test-app",
-		UserID:   "test-user",
+		AppID:          "test-app",
+		UserID:         "test-user",
 	}
 
 	// Create variable pool

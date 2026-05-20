@@ -3,7 +3,7 @@ package quality
 import (
 	"testing"
 
-	"github.com/zgiai/ginext/internal/contracts"
+	"github.com/zgiai/zgi/api/internal/contracts"
 )
 
 func TestUnitFilterRemovesLowValueNoise(t *testing.T) {

@@ -10,12 +10,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/infra/platform/console"
-	"github.com/zgiai/ginext/internal/modules/llm/channel/dto"
-	"github.com/zgiai/ginext/internal/modules/llm/channel/service"
-	"github.com/zgiai/ginext/internal/modules/llm/channelprovider"
-	"github.com/zgiai/ginext/internal/modules/llm/shared"
-	"github.com/zgiai/ginext/pkg/response"
+	"github.com/zgiai/zgi/api/internal/infra/platform/console"
+	"github.com/zgiai/zgi/api/internal/modules/llm/channel/dto"
+	"github.com/zgiai/zgi/api/internal/modules/llm/channel/service"
+	"github.com/zgiai/zgi/api/internal/modules/llm/channelprovider"
+	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 // ChannelHandler handles channel and route HTTP requests

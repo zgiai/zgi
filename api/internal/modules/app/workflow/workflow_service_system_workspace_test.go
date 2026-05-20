@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/app/agents"
-	workspace_model "github.com/zgiai/ginext/internal/modules/workspace/model"
+	"github.com/zgiai/zgi/api/internal/modules/app/agents"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 )
 
 func TestResolveServiceWebAppRunWorkspaceID_PrefersCurrentWorkspaceForSystemAgent(t *testing.T) {

@@ -10,10 +10,10 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 
-	system_service "github.com/zgiai/ginext/internal/modules/system/service"
-	auth_service "github.com/zgiai/ginext/internal/modules/user/auth/service"
-	helper "github.com/zgiai/ginext/internal/util"
-	redisUtil "github.com/zgiai/ginext/pkg/redis"
+	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
+	auth_service "github.com/zgiai/zgi/api/internal/modules/user/auth/service"
+	helper "github.com/zgiai/zgi/api/internal/util"
+	redisUtil "github.com/zgiai/zgi/api/pkg/redis"
 )
 
 func TestLoginErrorRateLimitUsesNormalizedKeyAndTTL(t *testing.T) {

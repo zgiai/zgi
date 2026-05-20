@@ -6,11 +6,11 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/config"
-	channelmodel "github.com/zgiai/ginext/internal/modules/llm/channel/model"
-	credentialmodel "github.com/zgiai/ginext/internal/modules/llm/credential/model"
-	llmmodel "github.com/zgiai/ginext/internal/modules/llm/llmmodel/model"
-	"github.com/zgiai/ginext/internal/modules/llm/shared"
+	"github.com/zgiai/zgi/api/config"
+	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
+	credentialmodel "github.com/zgiai/zgi/api/internal/modules/llm/credential/model"
+	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 )
 
 type stubCryptoService struct{}

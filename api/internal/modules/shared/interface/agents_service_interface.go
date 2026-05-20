@@ -3,7 +3,7 @@ package interfaces
 import (
 	"context"
 
-	"github.com/zgiai/ginext/internal/dto"
+	"github.com/zgiai/zgi/api/internal/dto"
 )
 
 // AgentService defines the interface for agent-related operations

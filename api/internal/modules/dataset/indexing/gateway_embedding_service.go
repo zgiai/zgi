@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	llmclient "github.com/zgiai/ginext/internal/modules/llm/client"
-	llmadapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
-	"github.com/zgiai/ginext/pkg/embedding"
-	"github.com/zgiai/ginext/pkg/logger"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	llmadapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/pkg/embedding"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
 )
 

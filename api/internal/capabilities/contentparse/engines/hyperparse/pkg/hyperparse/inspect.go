@@ -3,7 +3,7 @@ package hyperparse
 import (
 	"context"
 
-	"github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/inspectsvc"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/inspectsvc"
 )
 
 // PDFInspectInput mirrors the playground inspect request shape.

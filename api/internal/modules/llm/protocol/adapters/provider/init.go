@@ -1,6 +1,6 @@
 package provider
 
-import adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
+import adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 
 func init() {
 	// Register adapters by adapter_type (not provider name)

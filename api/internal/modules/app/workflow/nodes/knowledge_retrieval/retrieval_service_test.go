@@ -3,9 +3,9 @@ package knowledgeretrieval
 import (
 	"testing"
 
-	"github.com/zgiai/ginext/internal/dto"
-	drepo "github.com/zgiai/ginext/internal/modules/dataset/repository"
-	dservice "github.com/zgiai/ginext/internal/modules/dataset/service"
+	"github.com/zgiai/zgi/api/internal/dto"
+	drepo "github.com/zgiai/zgi/api/internal/modules/dataset/repository"
+	dservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
 )
 
 func TestBuildWorkflowRetrieveOptionsPromotesGraphSearchToHybridCandidates(t *testing.T) {

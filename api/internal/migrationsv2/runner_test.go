@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	baselinepkg "github.com/zgiai/ginext/internal/migrationsv2/baseline"
+	baselinepkg "github.com/zgiai/zgi/api/internal/migrationsv2/baseline"
 )
 
 var removedBaselineTables = []string{
@@ -536,7 +536,7 @@ func TestMigrationsV2DoesNotImportLegacyMigrations(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if strings.Contains(string(content), `"github.com/zgiai/ginext/internal/migrations"`) {
+		if strings.Contains(string(content), `"github.com/zgiai/zgi/api/internal/migrations"`) {
 			return fmt.Errorf("unexpected legacy migration import in %s", filepath.ToSlash(path))
 		}
 		return nil

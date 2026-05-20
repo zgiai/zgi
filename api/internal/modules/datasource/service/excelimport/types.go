@@ -1,6 +1,6 @@
 package excelimport
 
-import "github.com/zgiai/ginext/internal/dto"
+import "github.com/zgiai/zgi/api/internal/dto"
 
 type ParsedWorkbook struct {
 	SourceType string

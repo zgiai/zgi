@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/entities"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/nodes/httprequest"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/nodes/start"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/shared"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/httprequest"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/start"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 )
 
 // TestRebuiltFilesIntegration tests integration of rebuilt files
@@ -48,15 +48,15 @@ func testStartNodeIntegration(t *testing.T) {
 
 	// Create graph runtime environment
 	graphInitParams := entities.GraphInitParams{
-		OrganizationID:     "test-tenant",
-		AppID:        "test-app",
-		WorkflowType: entities.WorkflowTypeWorkflow,
-		WorkflowID:   "test-workflow",
-		UserID:       "test-user",
-		UserFrom:     entities.UserFromAccount,
-		InvokeFrom:   entities.InvokeFromWebApp,
-		CallDepth:    0,
-		GraphConfig:  make(map[string]interface{}),
+		OrganizationID: "test-tenant",
+		AppID:          "test-app",
+		WorkflowType:   entities.WorkflowTypeWorkflow,
+		WorkflowID:     "test-workflow",
+		UserID:         "test-user",
+		UserFrom:       entities.UserFromAccount,
+		InvokeFrom:     entities.InvokeFromWebApp,
+		CallDepth:      0,
+		GraphConfig:    make(map[string]interface{}),
 	}
 
 	// Create variable pool
@@ -128,15 +128,15 @@ func testHTTPRequestNodeCreation(t *testing.T) {
 
 	// Create graph runtime environment
 	graphInitParams := entities.GraphInitParams{
-		OrganizationID:     "test-tenant",
-		AppID:        "test-app",
-		WorkflowType: entities.WorkflowTypeWorkflow,
-		WorkflowID:   "test-workflow",
-		UserID:       "test-user",
-		UserFrom:     entities.UserFromAccount,
-		InvokeFrom:   entities.InvokeFromWebApp,
-		CallDepth:    0,
-		GraphConfig:  make(map[string]interface{}),
+		OrganizationID: "test-tenant",
+		AppID:          "test-app",
+		WorkflowType:   entities.WorkflowTypeWorkflow,
+		WorkflowID:     "test-workflow",
+		UserID:         "test-user",
+		UserFrom:       entities.UserFromAccount,
+		InvokeFrom:     entities.InvokeFromWebApp,
+		CallDepth:      0,
+		GraphConfig:    make(map[string]interface{}),
 	}
 
 	variablePool := entities.NewVariablePool()
@@ -231,8 +231,8 @@ func BenchmarkStartNodeExecution(b *testing.B) {
 
 	graphInitParams := entities.GraphInitParams{
 		OrganizationID: "test-tenant",
-		AppID:    "test-app",
-		UserID:   "test-user",
+		AppID:          "test-app",
+		UserID:         "test-user",
 	}
 
 	variablePool := entities.NewVariablePool()

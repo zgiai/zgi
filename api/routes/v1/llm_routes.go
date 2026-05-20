@@ -2,17 +2,17 @@ package v1
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/internal/container"
-	"github.com/zgiai/ginext/internal/modules/llm"
-	apikeyrepo "github.com/zgiai/ginext/internal/modules/llm/apikey/repository"
-	"github.com/zgiai/ginext/internal/modules/llm/client"
-	"github.com/zgiai/ginext/internal/modules/llm/gateway"
-	"github.com/zgiai/ginext/internal/modules/llm/handler"
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
-	"github.com/zgiai/ginext/internal/modules/llm/shared"
-	"github.com/zgiai/ginext/middleware"
-	"github.com/zgiai/ginext/pkg/logger"
-	redisPkg "github.com/zgiai/ginext/pkg/redis"
+	"github.com/zgiai/zgi/api/internal/container"
+	"github.com/zgiai/zgi/api/internal/modules/llm"
+	apikeyrepo "github.com/zgiai/zgi/api/internal/modules/llm/apikey/repository"
+	"github.com/zgiai/zgi/api/internal/modules/llm/client"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
+	"github.com/zgiai/zgi/api/internal/modules/llm/handler"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
+	"github.com/zgiai/zgi/api/middleware"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	redisPkg "github.com/zgiai/zgi/api/pkg/redis"
 )
 
 // RegisterLLMRoutes registers all LLM-related routes

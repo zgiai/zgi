@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/zgiai/ginext/internal/modules/tools"
+	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
 
 func (r *Runtime) validateSkillReferences(doc SkillDocument) error {

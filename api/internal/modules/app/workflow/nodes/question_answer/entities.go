@@ -1,8 +1,8 @@
 package question_answer
 
 import (
-	"github.com/zgiai/ginext/internal/modules/app/workflow/nodes/base"
-	llmclient "github.com/zgiai/ginext/internal/modules/llm/client"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/base"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 )
 
 const (

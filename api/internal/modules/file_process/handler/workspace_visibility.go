@@ -5,11 +5,11 @@ import (
 	"fmt"
 
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/internal/dto"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	shared_visibility "github.com/zgiai/ginext/internal/modules/shared/visibility"
-	workspace_model "github.com/zgiai/ginext/internal/modules/workspace/model"
-	"github.com/zgiai/ginext/pkg/response"
+	"github.com/zgiai/zgi/api/internal/dto"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	shared_visibility "github.com/zgiai/zgi/api/internal/modules/shared/visibility"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 func resolveVisibleWorkspaceIDs(

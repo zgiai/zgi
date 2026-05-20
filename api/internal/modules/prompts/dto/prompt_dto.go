@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"time"
 
-	jsondto "github.com/zgiai/ginext/internal/dto"
-	promptmodel "github.com/zgiai/ginext/internal/modules/prompts/model"
+	jsondto "github.com/zgiai/zgi/api/internal/dto"
+	promptmodel "github.com/zgiai/zgi/api/internal/modules/prompts/model"
 )
 
 type PromptListRequest struct {

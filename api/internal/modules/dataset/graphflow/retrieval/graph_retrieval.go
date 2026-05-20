@@ -6,16 +6,16 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/dataset/graphflow/graph"
-	"github.com/zgiai/ginext/internal/modules/dataset/graphflow/model"
-	"github.com/zgiai/ginext/internal/modules/dataset/graphflow/repository"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/graph"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/model"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/repository"
 )
 
 // GraphContext represents the graph-based context for retrieved entities
 type GraphContext struct {
-	Entities      []GraphEntity      `json:"entities"`
-	Relationships []GraphRelation    `json:"relationships"`
-	Summary       string             `json:"summary,omitempty"`
+	Entities      []GraphEntity   `json:"entities"`
+	Relationships []GraphRelation `json:"relationships"`
+	Summary       string          `json:"summary,omitempty"`
 }
 
 // GraphEntity represents an entity with its graph context
@@ -380,4 +380,3 @@ func findEntityName(entities []*model.Entity, id uuid.UUID) string {
 	}
 	return id.String()
 }
-

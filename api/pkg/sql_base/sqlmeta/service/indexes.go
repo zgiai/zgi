@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/zgiai/ginext/pkg/sql_base/sqlmeta/catalog/indexes"
-	"github.com/zgiai/ginext/pkg/sql_base/sqlmeta/types"
+	"github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/catalog/indexes"
+	"github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/types"
 )
 
 // IndexesService orchestrates read flows for index metadata.

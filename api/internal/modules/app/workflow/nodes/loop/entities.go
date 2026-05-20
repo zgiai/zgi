@@ -1,8 +1,8 @@
 package loop
 
 import (
-	"github.com/zgiai/ginext/internal/modules/app/workflow/nodes/base"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/nodes/condbranch"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/base"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/condbranch"
 )
 
 type VariableValueType string

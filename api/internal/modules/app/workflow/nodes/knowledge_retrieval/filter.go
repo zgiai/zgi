@@ -10,10 +10,10 @@ import (
 
 	"gorm.io/gorm"
 
-	ge "github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/entities"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/nodes/llm"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/shared"
-	dmodel "github.com/zgiai/ginext/internal/modules/dataset/model"
+	ge "github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/llm"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
+	dmodel "github.com/zgiai/zgi/api/internal/modules/dataset/model"
 )
 
 // MetadataCondition aliases MetadataFilteringCondition for downstream usage (manual/automatic modes).

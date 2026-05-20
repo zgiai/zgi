@@ -7,8 +7,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/nodes/llm"
-	llmadapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/llm"
+	llmadapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 // mergeModelParameters merges user-provided model parameters with fixed defaults

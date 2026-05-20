@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zgiai/ginext/internal/dto"
-	graphentities "github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/entities"
-	filemodel "github.com/zgiai/ginext/internal/modules/file_process/model"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/internal/dto"
+	graphentities "github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
+	filemodel "github.com/zgiai/zgi/api/internal/modules/file_process/model"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 )
 
 type mockWorkflowFileService struct {

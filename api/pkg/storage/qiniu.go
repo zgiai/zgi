@@ -11,7 +11,7 @@ import (
 
 	"github.com/qiniu/go-sdk/v7/auth"
 	"github.com/qiniu/go-sdk/v7/storage"
-	appconfig "github.com/zgiai/ginext/config"
+	appconfig "github.com/zgiai/zgi/api/config"
 )
 
 // QiniuStorage qiniu cloud storage

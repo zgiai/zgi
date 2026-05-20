@@ -8,37 +8,37 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	"github.com/zgiai/ginext/config"
-	contentparseRepo "github.com/zgiai/ginext/internal/modules/contentparse/repository"
-	contentparseService "github.com/zgiai/ginext/internal/modules/contentparse/service"
-	graphflow_model "github.com/zgiai/ginext/internal/modules/dataset/graphflow/model"
-	graphflow_repo "github.com/zgiai/ginext/internal/modules/dataset/graphflow/repository"
-	datasetHandler "github.com/zgiai/ginext/internal/modules/dataset/handler"
-	datasetIndexing "github.com/zgiai/ginext/internal/modules/dataset/indexing"
-	dataset_model "github.com/zgiai/ginext/internal/modules/dataset/model"
-	datasetRepo "github.com/zgiai/ginext/internal/modules/dataset/repository"
-	datasetService "github.com/zgiai/ginext/internal/modules/dataset/service"
-	"github.com/zgiai/ginext/internal/modules/dataset/task"
+	"github.com/zgiai/zgi/api/config"
+	contentparseRepo "github.com/zgiai/zgi/api/internal/modules/contentparse/repository"
+	contentparseService "github.com/zgiai/zgi/api/internal/modules/contentparse/service"
+	graphflow_model "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/model"
+	graphflow_repo "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/repository"
+	datasetHandler "github.com/zgiai/zgi/api/internal/modules/dataset/handler"
+	datasetIndexing "github.com/zgiai/zgi/api/internal/modules/dataset/indexing"
+	dataset_model "github.com/zgiai/zgi/api/internal/modules/dataset/model"
+	datasetRepo "github.com/zgiai/zgi/api/internal/modules/dataset/repository"
+	datasetService "github.com/zgiai/zgi/api/internal/modules/dataset/service"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/task"
 
-	fileProcessRepo "github.com/zgiai/ginext/internal/modules/file_process/repository"
-	fileProcess "github.com/zgiai/ginext/internal/modules/file_process/service"
-	"github.com/zgiai/ginext/pkg/logger"
-	"github.com/zgiai/ginext/pkg/vectordb"
+	fileProcessRepo "github.com/zgiai/zgi/api/internal/modules/file_process/repository"
+	fileProcess "github.com/zgiai/zgi/api/internal/modules/file_process/service"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/vectordb"
 
-	"github.com/zgiai/ginext/pkg/storage"
+	"github.com/zgiai/zgi/api/pkg/storage"
 
 	// Security and Redis
-	"github.com/zgiai/ginext/internal/container"
-	"github.com/zgiai/ginext/internal/util"
-	redisPkg "github.com/zgiai/ginext/pkg/redis"
-	sec "github.com/zgiai/ginext/pkg/security"
+	"github.com/zgiai/zgi/api/internal/container"
+	"github.com/zgiai/zgi/api/internal/util"
+	redisPkg "github.com/zgiai/zgi/api/pkg/redis"
+	sec "github.com/zgiai/zgi/api/pkg/security"
 
 	// Retrieval
-	"github.com/zgiai/ginext/internal/modules/dataset/retrieval"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/retrieval"
 
 	// Middleware
-	"github.com/zgiai/ginext/middleware"
-	"github.com/zgiai/ginext/pkg/response"
+	"github.com/zgiai/zgi/api/middleware"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 func RegisterDatasetRoutes(router *gin.RouterGroup, container *container.ServiceContainer) {

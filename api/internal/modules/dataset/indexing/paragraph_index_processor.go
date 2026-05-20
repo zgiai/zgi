@@ -5,15 +5,15 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/zgiai/ginext/config"
-	"github.com/zgiai/ginext/internal/dto"
-	"github.com/zgiai/ginext/internal/modules/dataset/model"
-	dataset_repository "github.com/zgiai/ginext/internal/modules/dataset/repository"
-	llmclient "github.com/zgiai/ginext/internal/modules/llm/client"
-	llmdefaultservice "github.com/zgiai/ginext/internal/modules/llm/defaultmodel/service"
-	"github.com/zgiai/ginext/pkg/embedding"
-	"github.com/zgiai/ginext/pkg/storage"
-	"github.com/zgiai/ginext/pkg/vectordb"
+	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/model"
+	dataset_repository "github.com/zgiai/zgi/api/internal/modules/dataset/repository"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
+	"github.com/zgiai/zgi/api/pkg/embedding"
+	"github.com/zgiai/zgi/api/pkg/storage"
+	"github.com/zgiai/zgi/api/pkg/vectordb"
 )
 
 // NewParagraphIndexProcessor creates a new paragraph index processor

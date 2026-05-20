@@ -8,8 +8,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	contentmodel "github.com/zgiai/ginext/internal/modules/contentparse/model"
-	contentsvc "github.com/zgiai/ginext/internal/modules/contentparse/service"
+	contentmodel "github.com/zgiai/zgi/api/internal/modules/contentparse/model"
+	contentsvc "github.com/zgiai/zgi/api/internal/modules/contentparse/service"
 )
 
 type fakeProviderAdminService struct{}

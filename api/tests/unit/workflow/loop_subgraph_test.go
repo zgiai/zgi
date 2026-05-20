@@ -6,10 +6,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/entities"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/loop_subgraph"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/subgraph"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/loop_subgraph"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/subgraph"
 )
 
 func TestLoopSubgraphDefaultsParallelism(t *testing.T) {

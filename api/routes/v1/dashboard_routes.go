@@ -3,12 +3,12 @@ package v1
 import (
 	"github.com/gin-gonic/gin"
 
-	"github.com/zgiai/ginext/internal/container"
-	"github.com/zgiai/ginext/internal/modules/llm"
-	systemHandler "github.com/zgiai/ginext/internal/modules/system/handler"
-	"github.com/zgiai/ginext/internal/modules/system/service"
-	"github.com/zgiai/ginext/middleware"
-	"github.com/zgiai/ginext/pkg/database"
+	"github.com/zgiai/zgi/api/internal/container"
+	"github.com/zgiai/zgi/api/internal/modules/llm"
+	systemHandler "github.com/zgiai/zgi/api/internal/modules/system/handler"
+	"github.com/zgiai/zgi/api/internal/modules/system/service"
+	"github.com/zgiai/zgi/api/middleware"
+	"github.com/zgiai/zgi/api/pkg/database"
 )
 
 // RegisterDashboardRoutes registers dashboard related routes

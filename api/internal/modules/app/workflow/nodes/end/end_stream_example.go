@@ -3,7 +3,7 @@ package end
 import (
 	"fmt"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/entities"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
 )
 
 // EndStreamExample demonstrates the usage of end stream

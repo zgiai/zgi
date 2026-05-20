@@ -1,6 +1,6 @@
 package workflow
 
-import workflow_shared "github.com/zgiai/ginext/internal/modules/app/workflow/shared"
+import workflow_shared "github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 
 func workflowExecutionMetadataToMap(metadata map[workflow_shared.WorkflowNodeExecutionMetadataKey]any) map[string]interface{} {
 	if len(metadata) == 0 {

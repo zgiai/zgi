@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow"
 )
 
 // ──────────────────────────────────────────────

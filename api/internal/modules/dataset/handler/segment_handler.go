@@ -4,13 +4,13 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/internal/dto"
-	"github.com/zgiai/ginext/internal/modules/dataset/model"
-	datasetservice "github.com/zgiai/ginext/internal/modules/dataset/service"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	workspace_model "github.com/zgiai/ginext/internal/modules/workspace/model"
-	"github.com/zgiai/ginext/middleware"
-	"github.com/zgiai/ginext/pkg/response"
+	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/model"
+	datasetservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	"github.com/zgiai/zgi/api/middleware"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 // SegmentHandler handles segment-related HTTP requests

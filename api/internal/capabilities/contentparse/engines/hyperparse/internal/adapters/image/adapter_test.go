@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	localocr "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/ocr"
+	localocr "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/ocr"
 )
 
 func TestNormalizeOCRText(t *testing.T) {

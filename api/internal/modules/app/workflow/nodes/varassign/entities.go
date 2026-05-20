@@ -1,6 +1,6 @@
 package varassign
 
-import "github.com/zgiai/ginext/internal/modules/app/workflow/nodes/base"
+import "github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/base"
 
 const updatedVariablesKey = "updated_variables"
 

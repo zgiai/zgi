@@ -10,13 +10,13 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	apikeymodel "github.com/zgiai/ginext/internal/modules/llm/apikey/model"
-	llmerrors "github.com/zgiai/ginext/internal/modules/llm/errors"
-	"github.com/zgiai/ginext/internal/modules/llm/gateway"
-	"github.com/zgiai/ginext/internal/modules/llm/gateway/types"
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
-	llmshared "github.com/zgiai/ginext/internal/modules/llm/shared"
-	"github.com/zgiai/ginext/pkg/response"
+	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
+	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway/types"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	llmshared "github.com/zgiai/zgi/api/internal/modules/llm/shared"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 // LLMHandler handles LLM API requests (OpenAI compatible)

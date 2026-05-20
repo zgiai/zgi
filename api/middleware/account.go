@@ -2,11 +2,11 @@ package middleware
 
 import (
 	"context"
-	"github.com/zgiai/ginext/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/internal/modules/shared/interface"
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/zgiai/ginext/pkg/response"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 func AccountInitRequired(accountService interfaces.AccountService) gin.HandlerFunc {

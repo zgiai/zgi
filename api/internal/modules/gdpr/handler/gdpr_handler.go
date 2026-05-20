@@ -3,9 +3,9 @@ package handler
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/gdpr/dto"
-	"github.com/zgiai/ginext/internal/modules/gdpr/service"
-	"github.com/zgiai/ginext/pkg/response"
+	"github.com/zgiai/zgi/api/internal/modules/gdpr/dto"
+	"github.com/zgiai/zgi/api/internal/modules/gdpr/service"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 // GDPRHandler handles GDPR-related HTTP requests
@@ -156,5 +156,5 @@ func (h *GDPRHandler) UpdateMyConsent(c *gin.Context) {
 		return
 	}
 
-response.Success(c, gin.H{"message": "consent updated"})
+	response.Success(c, gin.H{"message": "consent updated"})
 }

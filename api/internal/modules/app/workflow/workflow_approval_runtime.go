@@ -8,13 +8,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/dto"
-	"github.com/zgiai/ginext/internal/modules/app/conversation"
-	approvalruntime "github.com/zgiai/ginext/internal/modules/app/workflow/approval"
-	graph_entities "github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/entities"
-	workflowpause "github.com/zgiai/ginext/internal/modules/app/workflow/pause"
-	"github.com/zgiai/ginext/pkg/database"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
+	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
+	graph_entities "github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
+	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
+	"github.com/zgiai/zgi/api/pkg/database"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 const (

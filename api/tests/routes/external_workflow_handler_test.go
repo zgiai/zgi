@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	external "github.com/zgiai/ginext/routes/external"
+	external "github.com/zgiai/zgi/api/routes/external"
 )
 
 func TestExternalWorkflowStopTaskReturnsNotImplemented(t *testing.T) {

@@ -6,11 +6,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine"
-	"github.com/zgiai/ginext/internal/modules/llm/client"
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
-	"github.com/zgiai/ginext/internal/prompt"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
+	"github.com/zgiai/zgi/api/internal/modules/llm/client"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/prompt"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 // DiagnoseContext carries all possible context sources for diagnosis

@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/zgiai/ginext/internal/observability"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/observability"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
 )
 

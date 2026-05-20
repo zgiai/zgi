@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	llmerrors "github.com/zgiai/ginext/internal/modules/llm/errors"
+	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 )
 
 type BillingUserErrorKind string

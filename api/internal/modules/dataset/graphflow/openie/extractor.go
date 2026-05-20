@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/zgiai/ginext/internal/prompt"
+	"github.com/zgiai/zgi/api/internal/prompt"
 )
 
 // LLMClient generates extraction output for OpenIE.

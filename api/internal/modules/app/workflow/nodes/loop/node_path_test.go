@@ -3,8 +3,8 @@ package loop
 import (
 	"testing"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/entities"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/nodes/base"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/base"
 )
 
 func TestNode_initLoopVariables_UsesNestedSelector(t *testing.T) {

@@ -5,10 +5,10 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/dataset/graphflow/graph"
-	"github.com/zgiai/ginext/internal/modules/dataset/graphflow/model"
-	"github.com/zgiai/ginext/internal/modules/dataset/graphflow/repository"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/graph"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/model"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/repository"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 // RelationshipSyncResult contains the result of relationship synchronization

@@ -4,9 +4,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/zgiai/ginext/internal/contracts"
-	"github.com/zgiai/ginext/internal/dto"
-	"github.com/zgiai/ginext/internal/modules/dataset/splitter"
+	"github.com/zgiai/zgi/api/internal/contracts"
+	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/splitter"
 )
 
 type AdapterOptions struct {

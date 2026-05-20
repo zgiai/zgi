@@ -6,8 +6,8 @@ import (
 	"regexp"
 
 	"github.com/flosch/pongo2/v6"
-	"github.com/zgiai/ginext/internal/modules/shared/interface"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 type Pongo2Renderer struct {
@@ -50,7 +50,7 @@ func preprocessFileContentSyntax(templateStr string) string {
 		varPath := re.FindStringSubmatch(match)[1]
 		return "{{" + varPath + "_content}}"
 	})
-	
+
 	return result
 }
 
@@ -58,7 +58,7 @@ func (pr *Pongo2Renderer) registerFileFilter() {
 	pongo2.RegisterFilter("file_content", func(in *pongo2.Value, param *pongo2.Value) (*pongo2.Value, *pongo2.Error) {
 		if !in.IsNil() && in.IsString() {
 			varName := in.String()
-			
+
 			if pr.variablePool != nil {
 				contentVarName := varName + "_content"
 				if contentValue, exists := pr.variablePool[contentVarName]; exists {
@@ -72,7 +72,7 @@ func (pr *Pongo2Renderer) registerFileFilter() {
 				}
 			}
 		}
-		
+
 		if !in.IsNil() && in.CanSlice() {
 			fileMap, ok := in.Interface().(map[string]interface{})
 			if !ok {
@@ -95,12 +95,12 @@ func (pr *Pongo2Renderer) registerFileFilter() {
 					logger.Error(fmt.Sprintf("Failed to get file content for %s", fileIDStr), err)
 					return pongo2.AsValue(fmt.Sprintf("[File: %s (content unavailable)]", fileIDStr)), nil
 				}
-				
+
 				const maxContentSize = 100 * 1024
 				if len(content) > maxContentSize {
 					content = content[:maxContentSize] + "\n... (content truncated due to size limit)"
 				}
-				
+
 				return pongo2.AsValue(content), nil
 			}
 
@@ -118,11 +118,11 @@ func (pr *Pongo2Renderer) registerFileFilter() {
 func (pr *Pongo2Renderer) Render(templateStr string, variables map[string]interface{}) (string, error) {
 	originalTemplate := templateStr
 	templateStr = preprocessFileContentSyntax(templateStr)
-	
+
 	if originalTemplate != templateStr {
 		logger.Info(fmt.Sprintf("[Pongo2Renderer] Template preprocessed: '%s' -> '%s'", originalTemplate, templateStr))
 	}
-	
+
 	tmpl, err := pongo2.FromString(templateStr)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse pongo2 template: %v", err)
@@ -132,14 +132,14 @@ func (pr *Pongo2Renderer) Render(templateStr string, variables map[string]interf
 	for k, v := range variables {
 		ctx[k] = v
 	}
-	
+
 	logger.Info(fmt.Sprintf("[Pongo2Renderer] Available variables: %v", getVariableKeys(variables)))
 
 	result, err := tmpl.Execute(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to execute pongo2 template: %v", err)
 	}
-	
+
 	logger.Info(fmt.Sprintf("[Pongo2Renderer] Template result: '%s'", result))
 
 	return result, nil

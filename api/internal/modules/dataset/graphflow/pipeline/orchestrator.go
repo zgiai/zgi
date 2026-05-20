@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/zgiai/ginext/internal/modules/dataset/graphflow/graph"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/graph"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 // GraphOrchestrator manages the graph processing pipeline including extraction, resolution, and cleanup
@@ -42,7 +42,7 @@ func (o *GraphOrchestrator) runCommunityDetection(ctx context.Context) {
 	// logical candidates for "SameAs" merging.
 	// Typically run per KB or globally depending on isolation policy.
 	// Here assuming Global for the example.
-	
+
 	logger.Info("Running Periodic Community Detection...", nil)
 	if err := o.neo4jClient.RunCommunityDetection(ctx, ""); err != nil {
 		logger.Error("Community Detection Cycle Failed", err)

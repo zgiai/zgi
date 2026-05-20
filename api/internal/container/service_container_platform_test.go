@@ -3,7 +3,7 @@ package container
 import (
 	"testing"
 
-	"github.com/zgiai/ginext/internal/infra/platform"
+	"github.com/zgiai/zgi/api/internal/infra/platform"
 )
 
 func TestGetPlatformChannels_ReturnsErrorWhenUninitialized(t *testing.T) {

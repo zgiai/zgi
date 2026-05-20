@@ -2,10 +2,10 @@
 package indexing
 
 import (
-	dataset_repository "github.com/zgiai/ginext/internal/modules/dataset/repository"
-	llmclient "github.com/zgiai/ginext/internal/modules/llm/client"
-	llmdefaultservice "github.com/zgiai/ginext/internal/modules/llm/defaultmodel/service"
-	"github.com/zgiai/ginext/pkg/storage"
+	dataset_repository "github.com/zgiai/zgi/api/internal/modules/dataset/repository"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
+	"github.com/zgiai/zgi/api/pkg/storage"
 )
 
 // IndexType represents the type of index processor

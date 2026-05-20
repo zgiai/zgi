@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	llmclient "github.com/zgiai/ginext/internal/modules/llm/client"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 )
 
 type mockWorkflowAppModelPrechecker struct {

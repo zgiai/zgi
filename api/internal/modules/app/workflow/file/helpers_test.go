@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	appconfig "github.com/zgiai/ginext/config"
-	toolfile "github.com/zgiai/ginext/internal/modules/app/workflow/tool_file"
-	"github.com/zgiai/ginext/internal/util"
+	appconfig "github.com/zgiai/zgi/api/config"
+	toolfile "github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
+	"github.com/zgiai/zgi/api/internal/util"
 )
 
 func TestGetSignedFileURL_GeneratesVerifiableConsoleAPIURL(t *testing.T) {

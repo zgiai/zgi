@@ -1,6 +1,6 @@
 package definition
 
-import automationmodel "github.com/zgiai/ginext/internal/modules/automation/model"
+import automationmodel "github.com/zgiai/zgi/api/internal/modules/automation/model"
 
 const defaultCronTimezone = "Asia/Shanghai"
 

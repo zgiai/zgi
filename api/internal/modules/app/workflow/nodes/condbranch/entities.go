@@ -1,6 +1,6 @@
 package condbranch
 
-import "github.com/zgiai/ginext/internal/modules/app/workflow/nodes/base"
+import "github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/base"
 
 type ComparisonOperator string
 

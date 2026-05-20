@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/entities"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/shared"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 )
 
 // NodeStruct base node structure - designed according to start, end, http node calling patterns

@@ -6,11 +6,11 @@ import (
 	"time"
 
 	"github.com/hibiken/asynq"
-	automationdto "github.com/zgiai/ginext/internal/modules/automation/dto"
-	automationmodel "github.com/zgiai/ginext/internal/modules/automation/model"
-	automationrepo "github.com/zgiai/ginext/internal/modules/automation/repository"
-	automationruntime "github.com/zgiai/ginext/internal/modules/automation/service/runtime"
-	"github.com/zgiai/ginext/pkg/queue"
+	automationdto "github.com/zgiai/zgi/api/internal/modules/automation/dto"
+	automationmodel "github.com/zgiai/zgi/api/internal/modules/automation/model"
+	automationrepo "github.com/zgiai/zgi/api/internal/modules/automation/repository"
+	automationruntime "github.com/zgiai/zgi/api/internal/modules/automation/service/runtime"
+	"github.com/zgiai/zgi/api/pkg/queue"
 	"gorm.io/gorm"
 )
 

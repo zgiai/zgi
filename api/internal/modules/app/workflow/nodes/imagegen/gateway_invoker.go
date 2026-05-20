@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	llmclient "github.com/zgiai/ginext/internal/modules/llm/client"
-	llmadapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	llmadapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 type gatewayImageInvoker struct {

@@ -1,7 +1,7 @@
 package end
 
 import (
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/entities"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
 )
 
 // EndStreamFactory is the factory for end stream

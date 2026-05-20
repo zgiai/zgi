@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	timepkg "github.com/zgiai/ginext/internal/modules/tools/builtin/time"
+	timepkg "github.com/zgiai/zgi/api/internal/modules/tools/builtin/time"
 )
 
 func TestCurrentTimeTool_Invoke(t *testing.T) {

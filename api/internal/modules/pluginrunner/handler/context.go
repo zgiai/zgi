@@ -4,7 +4,7 @@ import (
 	"errors"
 
 	"github.com/gin-gonic/gin"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 )
 
 var errOrganizationNotFound = errors.New("organization_id not found in context")

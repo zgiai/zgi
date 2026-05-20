@@ -3,7 +3,7 @@ package httprequest
 import (
 	"testing"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/entities"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
 )
 
 func TestResolveFiles_UsesNestedSelector(t *testing.T) {

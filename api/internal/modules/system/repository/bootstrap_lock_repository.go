@@ -8,7 +8,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	"github.com/zgiai/ginext/internal/modules/system/model"
+	"github.com/zgiai/zgi/api/internal/modules/system/model"
 )
 
 // BootstrapLockRepository manages bootstrap serialization records.

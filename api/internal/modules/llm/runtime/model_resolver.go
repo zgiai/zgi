@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	llmdefaultservice "github.com/zgiai/ginext/internal/modules/llm/defaultmodel/service"
-	shared_model "github.com/zgiai/ginext/internal/modules/shared/model"
+	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
+	shared_model "github.com/zgiai/zgi/api/internal/modules/shared/model"
 )
 
 // DefaultModelGetter resolves explicit or default models using organization-scoped defaults.

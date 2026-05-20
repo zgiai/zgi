@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+usage() {
+  cat <<'EOF'
+Usage: ./scripts/start-docker [--china]
+
+Options:
+  --china   Use recommended China mainland mirrors for the Docker build.
+EOF
+}
+
+copy_env_if_missing() {
+  if [ -f "$ROOT/.env" ]; then
+    echo "[runner/start-docker] keep existing .env"
+    return 0
+  fi
+
+  if [ ! -f "$ROOT/.env.example" ]; then
+    echo "[runner/start-docker] missing template: $ROOT/.env.example" >&2
+    exit 1
+  fi
+
+  cp "$ROOT/.env.example" "$ROOT/.env"
+  echo "[runner/start-docker] created .env from .env.example"
+}
+
+configure_china_build_env() {
+  export BUILD_REGION=cn
+  export APT_MIRROR="${APT_MIRROR:-mirrors.aliyun.com}"
+  export APT_SECURITY_MIRROR="${APT_SECURITY_MIRROR:-mirrors.aliyun.com}"
+  export NPM_REGISTRY="${NPM_REGISTRY:-https://registry.npmmirror.com}"
+  export PIP_INDEX_URL="${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}"
+  export UV_INDEX_URL="${UV_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}"
+  export GOPROXY="${GOPROXY:-https://goproxy.cn,direct}"
+  echo "[runner/start-docker] build region: china"
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --china)
+      configure_china_build_env
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "[runner/start-docker] unknown argument: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
+
+copy_env_if_missing
+
+cd "$ROOT"
+docker compose up -d --build

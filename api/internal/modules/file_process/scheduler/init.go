@@ -1,9 +1,9 @@
 package scheduler
 
 import (
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	"github.com/zgiai/ginext/pkg/logger"
-	pkgScheduler "github.com/zgiai/ginext/pkg/scheduler"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	pkgScheduler "github.com/zgiai/zgi/api/pkg/scheduler"
 )
 
 func RegisterFileTasks(s *pkgScheduler.Scheduler, fileService interfaces.FileService) error {

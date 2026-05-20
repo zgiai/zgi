@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	automationmodel "github.com/zgiai/ginext/internal/modules/automation/model"
-	automationaction "github.com/zgiai/ginext/internal/modules/automation/service/action"
+	automationmodel "github.com/zgiai/zgi/api/internal/modules/automation/model"
+	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 )
 
 const (

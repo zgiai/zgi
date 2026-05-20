@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	llmmodel "github.com/zgiai/ginext/internal/modules/llm/llmmodel/model"
+	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 )
 
 func TestConfigParametersValueAndScan(t *testing.T) {

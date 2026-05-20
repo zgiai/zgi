@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/xuri/excelize/v2"
-	platformconsole "github.com/zgiai/ginext/internal/infra/platform/console"
-	"github.com/zgiai/ginext/internal/modules/payment/model"
+	platformconsole "github.com/zgiai/zgi/api/internal/infra/platform/console"
+	"github.com/zgiai/zgi/api/internal/modules/payment/model"
 )
 
 func TestMapTransactionTypeToPurchaseEvent(t *testing.T) {

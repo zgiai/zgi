@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/zgiai/ginext/internal/container"
-	"github.com/zgiai/ginext/internal/infra/grpc/services"
-	"github.com/zgiai/ginext/internal/observability"
-	"github.com/zgiai/ginext/pkg/logger"
-	pb "github.com/zgiai/ginext/pkg/rpc/v1"
+	"github.com/zgiai/zgi/api/internal/container"
+	"github.com/zgiai/zgi/api/internal/infra/grpc/services"
+	"github.com/zgiai/zgi/api/internal/observability"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	pb "github.com/zgiai/zgi/api/pkg/rpc/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 )

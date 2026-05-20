@@ -2,9 +2,9 @@ package app
 
 import (
 	"context"
-	"github.com/zgiai/ginext/internal/modules/app/chat"
-	"github.com/zgiai/ginext/internal/modules/app/conversation"
-	"github.com/zgiai/ginext/internal/modules/shared/model"
+	"github.com/zgiai/zgi/api/internal/modules/app/chat"
+	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
+	"github.com/zgiai/zgi/api/internal/modules/shared/model"
 	"gorm.io/gorm"
 )
 

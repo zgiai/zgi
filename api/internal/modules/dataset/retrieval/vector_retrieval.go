@@ -6,9 +6,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/zgiai/ginext/pkg/embedding"
-	"github.com/zgiai/ginext/pkg/logger"
-	"github.com/zgiai/ginext/pkg/vectordb"
+	"github.com/zgiai/zgi/api/pkg/embedding"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/vectordb"
 )
 
 // VectorRetrievalService handles vector-based retrieval operations

@@ -4,8 +4,8 @@ import (
 	"context"
 	"slices"
 
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	workspace_model "github.com/zgiai/ginext/internal/modules/workspace/model"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 )
 
 type VisibleWorkspaceScope struct {

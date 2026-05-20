@@ -3,7 +3,7 @@ package vectordb
 import (
 	"context"
 
-	"github.com/zgiai/ginext/config"
+	"github.com/zgiai/zgi/api/config"
 )
 
 // VectorDB represents a generic vector database interface

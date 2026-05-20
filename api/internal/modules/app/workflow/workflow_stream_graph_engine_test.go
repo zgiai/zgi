@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine"
-	workflow_shared "github.com/zgiai/ginext/internal/modules/app/workflow/shared"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
+	workflow_shared "github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 )
 
 func TestWorkflowGraphPauseExecutorStateKeepsPendingNodesForResume(t *testing.T) {

@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	llmclient "github.com/zgiai/ginext/internal/modules/llm/client"
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 type judgeLLMClientStub struct {

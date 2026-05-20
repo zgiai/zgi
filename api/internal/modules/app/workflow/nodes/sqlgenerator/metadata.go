@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/nodes/calldatabase"
-	"github.com/zgiai/ginext/pkg/sql_base"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/calldatabase"
+	"github.com/zgiai/zgi/api/pkg/sql_base"
 )
 
 const sqlMetaTablePrefix = "zgi_base_"

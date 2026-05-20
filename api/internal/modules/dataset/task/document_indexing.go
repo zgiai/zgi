@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"github.com/hibiken/asynq"
-	"github.com/zgiai/ginext/config"
-	dataset_model "github.com/zgiai/ginext/internal/modules/dataset/model"
-	"github.com/zgiai/ginext/pkg/logger"
-	"github.com/zgiai/ginext/pkg/queue"
+	"github.com/zgiai/zgi/api/config"
+	dataset_model "github.com/zgiai/zgi/api/internal/modules/dataset/model"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/queue"
 	"go.uber.org/zap"
 )
 

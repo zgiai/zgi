@@ -8,16 +8,16 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/dto"
-	"github.com/zgiai/ginext/internal/modules/app/agents"
-	"github.com/zgiai/ginext/internal/modules/app/conversation"
-	fileProcessRepo "github.com/zgiai/ginext/internal/modules/file_process/repository"
-	file_service "github.com/zgiai/ginext/internal/modules/file_process/service"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	"github.com/zgiai/ginext/pkg/database"
-	"github.com/zgiai/ginext/pkg/logger"
-	"github.com/zgiai/ginext/pkg/response"
-	"github.com/zgiai/ginext/pkg/storage"
+	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/app/agents"
+	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
+	fileProcessRepo "github.com/zgiai/zgi/api/internal/modules/file_process/repository"
+	file_service "github.com/zgiai/zgi/api/internal/modules/file_process/service"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/pkg/database"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/response"
+	"github.com/zgiai/zgi/api/pkg/storage"
 )
 
 // ConversationQueryHandler handles conversation query operations

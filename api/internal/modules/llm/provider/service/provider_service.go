@@ -6,12 +6,12 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	llmmodelmodel "github.com/zgiai/ginext/internal/modules/llm/llmmodel/model"
-	llmmodelrepo "github.com/zgiai/ginext/internal/modules/llm/llmmodel/repository"
-	llmmodelservice "github.com/zgiai/ginext/internal/modules/llm/llmmodel/service"
-	"github.com/zgiai/ginext/internal/modules/llm/provider/dto"
-	"github.com/zgiai/ginext/internal/modules/llm/provider/model"
-	"github.com/zgiai/ginext/internal/modules/llm/provider/repository"
+	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	llmmodelrepo "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/repository"
+	llmmodelservice "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
+	"github.com/zgiai/zgi/api/internal/modules/llm/provider/dto"
+	"github.com/zgiai/zgi/api/internal/modules/llm/provider/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/provider/repository"
 	"gorm.io/gorm"
 )
 

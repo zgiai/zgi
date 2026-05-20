@@ -3,13 +3,13 @@ package main
 import (
 	"log"
 
-	"github.com/zgiai/ginext/config"
-	"github.com/zgiai/ginext/internal/container"
-	"github.com/zgiai/ginext/internal/infra/grpc"
-	"github.com/zgiai/ginext/internal/infra/platform"
-	workspace_repo "github.com/zgiai/ginext/internal/modules/workspace/repository"
-	"github.com/zgiai/ginext/internal/util"
-	"github.com/zgiai/ginext/pkg/database"
+	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/container"
+	"github.com/zgiai/zgi/api/internal/infra/grpc"
+	"github.com/zgiai/zgi/api/internal/infra/platform"
+	workspace_repo "github.com/zgiai/zgi/api/internal/modules/workspace/repository"
+	"github.com/zgiai/zgi/api/internal/util"
+	"github.com/zgiai/zgi/api/pkg/database"
 )
 
 func main() {

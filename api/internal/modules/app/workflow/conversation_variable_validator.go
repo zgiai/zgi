@@ -5,8 +5,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/zgiai/ginext/internal/dto"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 // ValidateConversationVariables validates conversation variables according to requirements

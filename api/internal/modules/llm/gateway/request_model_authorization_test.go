@@ -5,9 +5,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	apikeymodel "github.com/zgiai/ginext/internal/modules/llm/apikey/model"
-	llmmodel "github.com/zgiai/ginext/internal/modules/llm/llmmodel/model"
-	providermodel "github.com/zgiai/ginext/internal/modules/llm/provider/model"
+	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
+	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	providermodel "github.com/zgiai/zgi/api/internal/modules/llm/provider/model"
 )
 
 func TestCheckModelAuthorization_WorkspaceSubject_IgnoresAPIKeyLimits(t *testing.T) {

@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+MSG_FILE="$1"
+
+subject="$(sed -n '1p' "$MSG_FILE")"
+
+if [ -z "$subject" ]; then
+  echo "commit-msg: empty commit subject" >&2
+  exit 1
+fi
+
+if ! printf '%s' "$subject" | LC_ALL=C grep -Eq '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([A-Za-z0-9._/-]+\))?!?: [A-Za-z0-9]'; then
+  cat >&2 <<'EOF'
+commit-msg: subject must use Conventional Commits, for example:
+  feat(api): add workspace quota endpoint
+  fix(web): handle empty workflow list
+  docs: update Docker quick start
+EOF
+  exit 1
+fi
+
+if LC_ALL=C grep -n '^[^#]' "$MSG_FILE" | grep -q '[^[:print:][:space:]]'; then
+  echo "commit-msg: commit message must be UTF-8 text without control characters" >&2
+  exit 1
+fi
+
+if grep -n '^[^#]' "$MSG_FILE" | LC_ALL=C grep -q '[^ -~]'; then
+  cat >&2 <<'EOF'
+commit-msg: commit messages must be written in English ASCII.
+Use English commit messages for the public project history.
+EOF
+  exit 1
+fi

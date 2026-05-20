@@ -3,10 +3,10 @@ package parameterextractor
 import (
 	"encoding/json"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/file"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/entities"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/template"
-	"github.com/zgiai/ginext/internal/prompt"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/template"
+	"github.com/zgiai/zgi/api/internal/prompt"
 )
 
 // PromptGenerator generates prompts for parameter extraction

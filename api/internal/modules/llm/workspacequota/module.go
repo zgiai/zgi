@@ -1,8 +1,8 @@
 package workspacequota
 
 import (
-	"github.com/zgiai/ginext/internal/modules/llm/workspacequota/handler"
-	"github.com/zgiai/ginext/internal/modules/llm/workspacequota/service"
+	"github.com/zgiai/zgi/api/internal/modules/llm/workspacequota/handler"
+	"github.com/zgiai/zgi/api/internal/modules/llm/workspacequota/service"
 	"gorm.io/gorm"
 )
 

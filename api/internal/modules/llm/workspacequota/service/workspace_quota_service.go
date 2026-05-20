@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/llm/gateway"
-	"github.com/zgiai/ginext/internal/modules/llm/workspacequota/dto"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
+	"github.com/zgiai/zgi/api/internal/modules/llm/workspacequota/dto"
 	"gorm.io/gorm"
 )
 

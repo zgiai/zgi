@@ -3,7 +3,7 @@ package excelimport
 import (
 	"testing"
 
-	"github.com/zgiai/ginext/internal/dto"
+	"github.com/zgiai/zgi/api/internal/dto"
 )
 
 func TestAnalyzeWorkbookKeepsSourceHeaderAndNormalizesFieldName(t *testing.T) {

@@ -8,8 +8,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/llm/statistics/dto"
-	"github.com/zgiai/ginext/internal/modules/llm/statistics/service"
+	"github.com/zgiai/zgi/api/internal/modules/llm/statistics/dto"
+	"github.com/zgiai/zgi/api/internal/modules/llm/statistics/service"
 )
 
 type fakeStatisticsService struct {

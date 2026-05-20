@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
-	quota_model "github.com/zgiai/ginext/internal/modules/quota/model"
+	quota_model "github.com/zgiai/zgi/api/internal/modules/quota/model"
 )
 
 // QuotaRepository Quota repository interface

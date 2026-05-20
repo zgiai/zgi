@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/zgiai/ginext/internal/capabilities/chunking/executor"
-	"github.com/zgiai/ginext/internal/contracts"
+	"github.com/zgiai/zgi/api/internal/capabilities/chunking/executor"
+	"github.com/zgiai/zgi/api/internal/contracts"
 )
 
 // Service keeps the parse-to-chunk planning flow behind one capability boundary.

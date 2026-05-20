@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zgiai/ginext/config"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/entities"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/nodes/base"
-	codeexec "github.com/zgiai/ginext/internal/modules/app/workflow/nodes/code/codeExec"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/shared"
+	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/base"
+	codeexec "github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/code/codeExec"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 )
 
 const (

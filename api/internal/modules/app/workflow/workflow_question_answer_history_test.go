@@ -3,7 +3,7 @@ package workflow
 import (
 	"testing"
 
-	workflowpause "github.com/zgiai/ginext/internal/modules/app/workflow/pause"
+	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 )
 
 func TestBuildQuestionAnswerTranscriptFromEventsRestoresMultipleNodes(t *testing.T) {

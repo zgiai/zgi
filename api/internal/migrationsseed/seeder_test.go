@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/zgiai/ginext/internal/migrations"
+	"github.com/zgiai/zgi/api/internal/migrations"
 )
 
 func TestListExcludesRemovedSystemSettingsSeed(t *testing.T) {

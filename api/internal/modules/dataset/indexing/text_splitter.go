@@ -1,7 +1,7 @@
 package indexing
 
 import (
-	"github.com/zgiai/ginext/internal/modules/dataset/splitter"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/splitter"
 )
 
 // TextSplitter is an interface for text splitters

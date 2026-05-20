@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	extractcommon "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
+	extractcommon "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
 )
 
 func TestDemoteStatementInfoTable(t *testing.T) {

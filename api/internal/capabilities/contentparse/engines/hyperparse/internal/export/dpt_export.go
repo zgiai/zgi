@@ -13,7 +13,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/core/chunking"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/core/chunking"
 )
 
 type dptBuilt struct {

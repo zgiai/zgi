@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/zgiai/ginext/internal/modules/llm/gateway"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 )
 
 type gatewayAppModelPrechecker interface {

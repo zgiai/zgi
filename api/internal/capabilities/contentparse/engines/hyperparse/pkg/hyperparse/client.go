@@ -6,8 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/core/model"
-	"github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/core/pipeline"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/core/model"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/core/pipeline"
 )
 
 // Client wraps pipeline.Router for lightweight multi-format parsing and optional

@@ -10,7 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 
-	platformconsole "github.com/zgiai/ginext/internal/infra/platform/console"
+	platformconsole "github.com/zgiai/zgi/api/internal/infra/platform/console"
 )
 
 const (

@@ -2,8 +2,8 @@ package gdpr
 
 import (
 	"github.com/gin-gonic/gin"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	"github.com/zgiai/ginext/middleware"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/middleware"
 )
 
 // RegisterRoutes registers GDPR routes.

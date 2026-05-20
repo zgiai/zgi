@@ -3,7 +3,7 @@ package local
 import (
 	"testing"
 
-	extractcommon "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
+	extractcommon "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
 )
 
 func TestBuildPopplerRecoveryDocument(t *testing.T) {

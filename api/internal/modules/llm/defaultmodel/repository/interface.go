@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/llm/defaultmodel/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/model"
 )
 
 type DefaultModelRepository interface {
@@ -13,4 +13,3 @@ type DefaultModelRepository interface {
 	Upsert(ctx context.Context, item *model.DefaultModel) error
 	DeleteByOrganizationAndUseCase(ctx context.Context, organizationID uuid.UUID, useCase string) error
 }
-

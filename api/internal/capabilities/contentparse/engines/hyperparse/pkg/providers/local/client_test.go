@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	coremodel "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/core/model"
-	localocr "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/ocr"
-	extractcommon "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
+	coremodel "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/core/model"
+	localocr "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/ocr"
+	extractcommon "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
 )
 
 func TestNormalizeMode(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	llmadapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
+	llmadapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 // PromptMessage is a minimal role/content pair used for LLM requests.

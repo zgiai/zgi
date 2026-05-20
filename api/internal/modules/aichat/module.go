@@ -4,14 +4,14 @@ import (
 	"context"
 
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/internal/modules/aichat/handler"
-	"github.com/zgiai/ginext/internal/modules/aichat/repository"
-	"github.com/zgiai/ginext/internal/modules/aichat/service"
-	llmclient "github.com/zgiai/ginext/internal/modules/llm/client"
-	llmdefaultservice "github.com/zgiai/ginext/internal/modules/llm/defaultmodel/service"
-	"github.com/zgiai/ginext/internal/modules/shared/titlegen"
-	"github.com/zgiai/ginext/internal/modules/skills"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/modules/aichat/handler"
+	"github.com/zgiai/zgi/api/internal/modules/aichat/repository"
+	"github.com/zgiai/zgi/api/internal/modules/aichat/service"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
+	"github.com/zgiai/zgi/api/internal/modules/shared/titlegen"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/gorm"
 )
 

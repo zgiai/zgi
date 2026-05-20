@@ -19,10 +19,10 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
-	"github.com/zgiai/ginext/config"
-	"github.com/zgiai/ginext/pkg/database"
-	"github.com/zgiai/ginext/pkg/queue"
-	"github.com/zgiai/ginext/pkg/response"
+	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/pkg/database"
+	"github.com/zgiai/zgi/api/pkg/queue"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 func TestWorkflowRoutes_WebAppConfigIsPublic(t *testing.T) {

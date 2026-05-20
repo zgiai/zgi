@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/zgiai/ginext/internal/contracts"
+	"github.com/zgiai/zgi/api/internal/contracts"
 )
 
 // CanonicalMapper transforms parse artifacts into the canonical chunk source

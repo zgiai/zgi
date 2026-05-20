@@ -6,7 +6,7 @@ import (
 	"path"
 	"strings"
 
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 type openAIAnthropicCompatAdapter struct {

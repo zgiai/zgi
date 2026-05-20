@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	extractmineru "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/mineru"
-	"github.com/zgiai/ginext/internal/contracts"
+	extractmineru "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/mineru"
+	"github.com/zgiai/zgi/api/internal/contracts"
 )
 
 func DefaultProviderCatalog() *contracts.ParseProviderCatalog {

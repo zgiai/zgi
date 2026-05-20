@@ -5,7 +5,7 @@ import (
 	"math/rand"
 	"time"
 
-	sentryHelper "github.com/zgiai/ginext/pkg/sentry"
+	sentryHelper "github.com/zgiai/zgi/api/pkg/sentry"
 	"gorm.io/gorm"
 )
 

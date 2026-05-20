@@ -7,10 +7,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/zgiai/ginext/internal/modules/file_process/model"
-	"github.com/zgiai/ginext/internal/modules/file_process/service/extractor"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/modules/file_process/model"
+	"github.com/zgiai/zgi/api/internal/modules/file_process/service/extractor"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 // ContentExtractor defines the interface for extracting text content from files in workflow execution.

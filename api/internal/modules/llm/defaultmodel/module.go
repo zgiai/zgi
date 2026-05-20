@@ -1,11 +1,11 @@
 package defaultmodel
 
 import (
-	defaultmodelhandler "github.com/zgiai/ginext/internal/modules/llm/defaultmodel/handler"
-	defaultmodelrepo "github.com/zgiai/ginext/internal/modules/llm/defaultmodel/repository"
-	defaultmodelservice "github.com/zgiai/ginext/internal/modules/llm/defaultmodel/service"
-	llmmodelrepo "github.com/zgiai/ginext/internal/modules/llm/llmmodel/repository"
-	llmmodelservice "github.com/zgiai/ginext/internal/modules/llm/llmmodel/service"
+	defaultmodelhandler "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/handler"
+	defaultmodelrepo "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/repository"
+	defaultmodelservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
+	llmmodelrepo "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/repository"
+	llmmodelservice "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
 	"gorm.io/gorm"
 )
 
@@ -31,4 +31,3 @@ func NewModule(
 		Handler: handler,
 	}
 }
-

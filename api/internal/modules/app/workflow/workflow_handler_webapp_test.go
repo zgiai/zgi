@@ -10,10 +10,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/app/agents"
-	llmclient "github.com/zgiai/ginext/internal/modules/llm/client"
-	workspace_model "github.com/zgiai/ginext/internal/modules/workspace/model"
-	"github.com/zgiai/ginext/pkg/response"
+	"github.com/zgiai/zgi/api/internal/modules/app/agents"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 type mockCurrentWorkspaceGetter struct {

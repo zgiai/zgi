@@ -7,20 +7,20 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/zgiai/ginext/config"
-	usererrors "github.com/zgiai/ginext/internal/errors"
-	"github.com/zgiai/ginext/pkg/email"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/config"
+	usererrors "github.com/zgiai/zgi/api/internal/errors"
+	"github.com/zgiai/zgi/api/pkg/email"
+	"github.com/zgiai/zgi/api/pkg/logger"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	"github.com/zgiai/ginext/internal/modules/shared/workspacebootstrap"
-	auth_model "github.com/zgiai/ginext/internal/modules/user/auth/model"
-	auth_repo "github.com/zgiai/ginext/internal/modules/user/auth/repository"
-	workspace_model "github.com/zgiai/ginext/internal/modules/workspace/model"
-	"github.com/zgiai/ginext/internal/util"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/internal/modules/shared/workspacebootstrap"
+	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
+	auth_repo "github.com/zgiai/zgi/api/internal/modules/user/auth/repository"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	"github.com/zgiai/zgi/api/internal/util"
 )
 
 type RegisterServiceImpl struct {

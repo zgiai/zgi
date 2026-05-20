@@ -6,11 +6,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zgiai/ginext/internal/modules/app/chat"
+	"github.com/zgiai/zgi/api/internal/modules/app/chat"
 
 	"gorm.io/gorm"
 
-	auth_model "github.com/zgiai/ginext/internal/modules/user/auth/model"
+	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 )
 
 type ConversationRepository interface {

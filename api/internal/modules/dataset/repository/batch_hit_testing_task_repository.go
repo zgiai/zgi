@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/zgiai/ginext/internal/modules/dataset/model"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/model"
 	"gorm.io/gorm"
 )
 

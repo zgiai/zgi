@@ -1,6 +1,6 @@
 package entities
 
-import workflowfile "github.com/zgiai/ginext/internal/modules/app/workflow/file"
+import workflowfile "github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
 
 func (vp *VariablePool) GetFile(selector []string) *FileSegment {
 	variable := vp.Get(selector)

@@ -3,7 +3,7 @@ package service
 import (
 	"strings"
 
-	"github.com/zgiai/ginext/internal/modules/skills"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
 func summarizeSkillToolArguments(skillID string, toolName string, args map[string]interface{}) map[string]interface{} {

@@ -3,9 +3,9 @@ package service
 import (
 	"testing"
 
-	shared_dto "github.com/zgiai/ginext/internal/dto"
-	auth_model "github.com/zgiai/ginext/internal/modules/user/auth/model"
 	"github.com/stretchr/testify/require"
+	shared_dto "github.com/zgiai/zgi/api/internal/dto"
+	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 )
 
 func TestSelectPreferredSSOAccountPrefersEmailMatch(t *testing.T) {

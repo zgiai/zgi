@@ -6,10 +6,10 @@ import (
 	"math"
 	"strings"
 
-	"github.com/zgiai/ginext/internal/dto"
-	llmclient "github.com/zgiai/ginext/internal/modules/llm/client"
-	"github.com/zgiai/ginext/pkg/logger"
-	"github.com/zgiai/ginext/pkg/tokenization"
+	"github.com/zgiai/zgi/api/internal/dto"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/tokenization"
 )
 
 // BaseRerankRunner defines the interface for rerank runners

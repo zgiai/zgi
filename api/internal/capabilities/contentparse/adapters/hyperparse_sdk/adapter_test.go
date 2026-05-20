@@ -14,8 +14,8 @@ import (
 	"strings"
 	"testing"
 
-	extractcommon "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
-	"github.com/zgiai/ginext/internal/contracts"
+	extractcommon "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
+	"github.com/zgiai/zgi/api/internal/contracts"
 )
 
 func TestAdapterParsesPlainTextBytes(t *testing.T) {

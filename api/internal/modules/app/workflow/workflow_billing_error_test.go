@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zgiai/ginext/internal/modules/llm/gateway"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 )
 
 func TestBuildWorkflowStreamErrorPayload_OrganizationBalanceInsufficient(t *testing.T) {

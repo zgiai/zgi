@@ -5,11 +5,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	"github.com/zgiai/ginext/internal/util"
-	jwtpkg "github.com/zgiai/ginext/pkg/jwt"
-	"github.com/zgiai/ginext/pkg/logger"
-	"github.com/zgiai/ginext/pkg/response"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/internal/util"
+	jwtpkg "github.com/zgiai/zgi/api/pkg/jwt"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 // FilePreviewAuthMiddleware handles dual authentication for file preview endpoints

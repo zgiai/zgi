@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zgiai/ginext/internal/dto"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine"
-	automationaction "github.com/zgiai/ginext/internal/modules/automation/service/action"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
+	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
 )
 

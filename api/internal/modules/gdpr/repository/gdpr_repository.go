@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/gdpr/model"
+	"github.com/zgiai/zgi/api/internal/modules/gdpr/model"
 	"gorm.io/gorm"
 )
 

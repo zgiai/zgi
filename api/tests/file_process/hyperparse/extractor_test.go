@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	hyperparseextractor "github.com/zgiai/ginext/internal/modules/file_process/service/extractor/hyperparse"
+	hyperparseextractor "github.com/zgiai/zgi/api/internal/modules/file_process/service/extractor/hyperparse"
 )
 
 func fixturePath(t *testing.T, name string) string {

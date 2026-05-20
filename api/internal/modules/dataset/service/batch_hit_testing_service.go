@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/dto"
-	"github.com/zgiai/ginext/internal/modules/dataset/model"
-	"github.com/zgiai/ginext/internal/modules/dataset/repository"
+	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/model"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/repository"
 )
 
 // TaskContext holds both the context and its cancel function for a task

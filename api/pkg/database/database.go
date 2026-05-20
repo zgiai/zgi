@@ -5,9 +5,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zgiai/ginext/config"
-	"github.com/zgiai/ginext/internal/observability"
-	pkglogger "github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/observability"
+	pkglogger "github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"

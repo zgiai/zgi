@@ -3,7 +3,7 @@ package interfaces
 import (
 	"context"
 
-	auth_model "github.com/zgiai/ginext/internal/modules/user/auth/model"
+	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 )
 
 type TokenManager interface {
@@ -24,4 +24,3 @@ type RateLimiter interface {
 	IsRateLimited(ctx context.Context, email string) (bool, error)
 	IncrementRateLimit(email string)
 }
-

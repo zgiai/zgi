@@ -2,17 +2,17 @@ package v1
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/config"
-	"github.com/zgiai/ginext/internal/container"
-	automationhandler "github.com/zgiai/ginext/internal/modules/automation/handler"
-	automationrepo "github.com/zgiai/ginext/internal/modules/automation/repository"
-	automationscheduler "github.com/zgiai/ginext/internal/modules/automation/scheduler"
-	automationaction "github.com/zgiai/ginext/internal/modules/automation/service/action"
-	automationdefinition "github.com/zgiai/ginext/internal/modules/automation/service/definition"
-	automationnotification "github.com/zgiai/ginext/internal/modules/automation/service/notification"
-	automationruntime "github.com/zgiai/ginext/internal/modules/automation/service/runtime"
-	automationworker "github.com/zgiai/ginext/internal/modules/automation/worker"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/container"
+	automationhandler "github.com/zgiai/zgi/api/internal/modules/automation/handler"
+	automationrepo "github.com/zgiai/zgi/api/internal/modules/automation/repository"
+	automationscheduler "github.com/zgiai/zgi/api/internal/modules/automation/scheduler"
+	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
+	automationdefinition "github.com/zgiai/zgi/api/internal/modules/automation/service/definition"
+	automationnotification "github.com/zgiai/zgi/api/internal/modules/automation/service/notification"
+	automationruntime "github.com/zgiai/zgi/api/internal/modules/automation/service/runtime"
+	automationworker "github.com/zgiai/zgi/api/internal/modules/automation/worker"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 // RegisterAutomationRoutes wires automation MVP routes, workers, and scheduler registration.

@@ -1,10 +1,10 @@
 package credential
 
 import (
-	"github.com/zgiai/ginext/internal/modules/llm/credential/handler"
-	"github.com/zgiai/ginext/internal/modules/llm/credential/repository"
-	"github.com/zgiai/ginext/internal/modules/llm/credential/service"
-	"github.com/zgiai/ginext/internal/modules/llm/shared"
+	"github.com/zgiai/zgi/api/internal/modules/llm/credential/handler"
+	"github.com/zgiai/zgi/api/internal/modules/llm/credential/repository"
+	"github.com/zgiai/zgi/api/internal/modules/llm/credential/service"
+	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 	"gorm.io/gorm"
 )
 

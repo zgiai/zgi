@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/zgiai/ginext/internal/modules/explore/model"
+	"github.com/zgiai/zgi/api/internal/modules/explore/model"
 )
 
 //go:embed data/recommended_apps.json

@@ -6,13 +6,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	chunkexecutor "github.com/zgiai/ginext/internal/capabilities/chunking/executor"
-	contentparsecap "github.com/zgiai/ginext/internal/capabilities/contentparse"
-	"github.com/zgiai/ginext/internal/capabilities/contentparse/routing"
-	"github.com/zgiai/ginext/internal/contracts"
-	"github.com/zgiai/ginext/internal/modules/contentparse/model"
-	"github.com/zgiai/ginext/internal/modules/contentparse/service"
-	"github.com/zgiai/ginext/pkg/response"
+	chunkexecutor "github.com/zgiai/zgi/api/internal/capabilities/chunking/executor"
+	contentparsecap "github.com/zgiai/zgi/api/internal/capabilities/contentparse"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/routing"
+	"github.com/zgiai/zgi/api/internal/contracts"
+	"github.com/zgiai/zgi/api/internal/modules/contentparse/model"
+	"github.com/zgiai/zgi/api/internal/modules/contentparse/service"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 const playgroundMaxFileSize = 64 << 20

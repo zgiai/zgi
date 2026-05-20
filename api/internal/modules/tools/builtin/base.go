@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/zgiai/ginext/internal/modules/tools"
+	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
 
 // BuiltinTool is the base struct for all builtin tools

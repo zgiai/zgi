@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/nyaruka/phonenumbers"
-	shared_dto "github.com/zgiai/ginext/internal/dto"
-	auth_model "github.com/zgiai/ginext/internal/modules/user/auth/model"
+	shared_dto "github.com/zgiai/zgi/api/internal/dto"
+	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 )
 
 var (

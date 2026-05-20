@@ -7,11 +7,11 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/config"
-	shared_dto "github.com/zgiai/ginext/internal/dto"
-	auth_model "github.com/zgiai/ginext/internal/modules/user/auth/model"
-	auth_service "github.com/zgiai/ginext/internal/modules/user/auth/service"
-	"github.com/zgiai/ginext/pkg/response"
+	"github.com/zgiai/zgi/api/config"
+	shared_dto "github.com/zgiai/zgi/api/internal/dto"
+	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
+	auth_service "github.com/zgiai/zgi/api/internal/modules/user/auth/service"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 const (

@@ -3,7 +3,7 @@ package workflow
 import (
 	"time"
 
-	"github.com/zgiai/ginext/internal/dto"
+	"github.com/zgiai/zgi/api/internal/dto"
 
 	"github.com/gin-gonic/gin"
 )

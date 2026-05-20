@@ -7,13 +7,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/zgiai/ginext/internal/modules/tools"
-	"github.com/zgiai/ginext/internal/modules/tools/builtin"
+	"github.com/zgiai/zgi/api/internal/modules/tools"
+	"github.com/zgiai/zgi/api/internal/modules/tools/builtin"
 
 	// Import to trigger init() registration
-	_ "github.com/zgiai/ginext/internal/modules/tools/builtin/calculator"
-	_ "github.com/zgiai/ginext/internal/modules/tools/builtin/filegenerator"
-	_ "github.com/zgiai/ginext/internal/modules/tools/builtin/time"
+	_ "github.com/zgiai/zgi/api/internal/modules/tools/builtin/calculator"
+	_ "github.com/zgiai/zgi/api/internal/modules/tools/builtin/filegenerator"
+	_ "github.com/zgiai/zgi/api/internal/modules/tools/builtin/time"
 )
 
 func TestToolManager_RegisterBuiltinProvider(t *testing.T) {

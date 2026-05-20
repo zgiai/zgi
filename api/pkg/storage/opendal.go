@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	appconfig "github.com/zgiai/ginext/config"
+	appconfig "github.com/zgiai/zgi/api/config"
 )
 
 type LocalStorage struct {

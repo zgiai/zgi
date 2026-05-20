@@ -2,11 +2,11 @@ package conversation
 
 import (
 	"fmt"
-	"github.com/zgiai/ginext/internal/modules/app/chat"
+	"github.com/zgiai/zgi/api/internal/modules/app/chat"
 	"time"
 
 	"github.com/google/uuid"
-	shared_dto "github.com/zgiai/ginext/internal/dto"
+	shared_dto "github.com/zgiai/zgi/api/internal/dto"
 
 	"gorm.io/gorm"
 )

@@ -1,6 +1,6 @@
 package pause
 
-import graphentities "github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/entities"
+import graphentities "github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
 
 func SnapshotVariablePool(pool *graphentities.VariablePool) VariablePoolSnapshot {
 	snapshot := VariablePoolSnapshot{

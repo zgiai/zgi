@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zgiai/ginext/config"
-	consoleintf "github.com/zgiai/ginext/internal/infra/platform/console"
-	channelmodel "github.com/zgiai/ginext/internal/modules/llm/channel/model"
+	"github.com/zgiai/zgi/api/config"
+	consoleintf "github.com/zgiai/zgi/api/internal/infra/platform/console"
+	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	"gorm.io/gorm"
 )
 

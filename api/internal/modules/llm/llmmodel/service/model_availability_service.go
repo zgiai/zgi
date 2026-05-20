@@ -5,11 +5,11 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	channelrepo "github.com/zgiai/ginext/internal/modules/llm/channel/repository"
-	"github.com/zgiai/ginext/internal/modules/llm/llmmodel/dto"
-	"github.com/zgiai/ginext/internal/modules/llm/llmmodel/model"
-	"github.com/zgiai/ginext/internal/modules/llm/llmmodel/repository"
-	providerrepo "github.com/zgiai/ginext/internal/modules/llm/provider/repository"
+	channelrepo "github.com/zgiai/zgi/api/internal/modules/llm/channel/repository"
+	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/dto"
+	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/repository"
+	providerrepo "github.com/zgiai/zgi/api/internal/modules/llm/provider/repository"
 )
 
 // ModelAvailabilityService provides methods to check if models are usable by a tenant

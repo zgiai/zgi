@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/zgiai/ginext/pkg/logger"
-	"github.com/zgiai/ginext/pkg/redis"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/redis"
 	"go.uber.org/zap"
 )
 

@@ -1,8 +1,8 @@
 package scheduler
 
 import (
-	automationdefinition "github.com/zgiai/ginext/internal/modules/automation/service/definition"
-	pkgscheduler "github.com/zgiai/ginext/pkg/scheduler"
+	automationdefinition "github.com/zgiai/zgi/api/internal/modules/automation/service/definition"
+	pkgscheduler "github.com/zgiai/zgi/api/pkg/scheduler"
 )
 
 // RegisterAutomationTasks registers the fixed due-task dispatcher.

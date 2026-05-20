@@ -2,11 +2,11 @@ package v1
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/internal/container"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	workspaceHandler "github.com/zgiai/ginext/internal/modules/workspace/handler"
-	workspaceRepo "github.com/zgiai/ginext/internal/modules/workspace/repository"
-	workspaceService "github.com/zgiai/ginext/internal/modules/workspace/service"
+	"github.com/zgiai/zgi/api/internal/container"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	workspaceHandler "github.com/zgiai/zgi/api/internal/modules/workspace/handler"
+	workspaceRepo "github.com/zgiai/zgi/api/internal/modules/workspace/repository"
+	workspaceService "github.com/zgiai/zgi/api/internal/modules/workspace/service"
 	"gorm.io/gorm"
 )
 

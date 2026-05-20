@@ -163,7 +163,7 @@ services:
         condition: service_healthy
       sandbox:
         condition: service_healthy
-      plugin-runner:
+      runner:
         condition: service_healthy
     ports:
       - "${API_PORT:-2678}:2680"
@@ -178,9 +178,9 @@ services:
       start_period: 40s
     restart: unless-stopped
 
-  plugin-runner:
+  runner:
     build:
-      context: ../plugin-runner
+      context: ../runner
       dockerfile: Dockerfile
       args:
         BUILD_REGION: ${BUILD_REGION:-global}
@@ -191,7 +191,7 @@ services:
         UV_INDEX_URL: ${UV_INDEX_URL:-}
         GOPROXY: ${GOPROXY:-}
     env_file:
-      - ../plugin-runner/.env
+      - ../runner/.env
     ports:
       - "${HOST_PLUGIN_RUNNER_PORT:-15000}:15000"
     depends_on:
@@ -202,9 +202,9 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - plugin-runner-data:/app/plugins
-      - plugin-runner-workspace:/app/workspace
-      - plugin-runner-cache:/app/cache
+      - runner-data:/app/plugins
+      - runner-workspace:/app/workspace
+      - runner-cache:/app/cache
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:15000/healthz"]
       interval: 30s
@@ -252,6 +252,6 @@ volumes:
   neo4j-data:
   neo4j-logs:
   sandbox-data:
-  plugin-runner-data:
-  plugin-runner-workspace:
-  plugin-runner-cache:
+  runner-data:
+  runner-workspace:
+  runner-cache:

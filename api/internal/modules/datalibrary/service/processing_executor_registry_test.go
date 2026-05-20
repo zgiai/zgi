@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/zgiai/ginext/internal/modules/datalibrary/model"
+	"github.com/zgiai/zgi/api/internal/modules/datalibrary/model"
 )
 
 func TestProcessingExecutorRegistryRegistersAndListsExecutors(t *testing.T) {

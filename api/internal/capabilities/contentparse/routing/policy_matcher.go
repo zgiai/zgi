@@ -1,6 +1,6 @@
 package routing
 
-import "github.com/zgiai/ginext/internal/contracts"
+import "github.com/zgiai/zgi/api/internal/contracts"
 
 func normalizeProfile(profile contracts.ParseProfile) contracts.ParseProfile {
 	switch profile {

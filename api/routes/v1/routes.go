@@ -4,10 +4,10 @@ import (
 	"log"
 
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/config"
-	"github.com/zgiai/ginext/internal/container"
-	workspace_service "github.com/zgiai/ginext/internal/modules/workspace/service"
-	"github.com/zgiai/ginext/pkg/database"
+	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/container"
+	workspace_service "github.com/zgiai/zgi/api/internal/modules/workspace/service"
+	"github.com/zgiai/zgi/api/pkg/database"
 )
 
 // RegisterRoutes registers all v1 version routes

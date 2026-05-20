@@ -1,11 +1,11 @@
 package llmmodel
 
 import (
-	channelrepo "github.com/zgiai/ginext/internal/modules/llm/channel/repository"
-	"github.com/zgiai/ginext/internal/modules/llm/llmmodel/handler"
-	"github.com/zgiai/ginext/internal/modules/llm/llmmodel/repository"
-	"github.com/zgiai/ginext/internal/modules/llm/llmmodel/service"
-	providerrepo "github.com/zgiai/ginext/internal/modules/llm/provider/repository"
+	channelrepo "github.com/zgiai/zgi/api/internal/modules/llm/channel/repository"
+	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/handler"
+	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/repository"
+	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
+	providerrepo "github.com/zgiai/zgi/api/internal/modules/llm/provider/repository"
 	"gorm.io/gorm"
 )
 

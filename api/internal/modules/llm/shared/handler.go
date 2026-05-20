@@ -3,7 +3,7 @@ package shared
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/pkg/response"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 // BaseHandler provides common handler utilities for code reuse

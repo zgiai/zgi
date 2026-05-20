@@ -3,10 +3,10 @@ package middleware
 import (
 	"github.com/gin-gonic/gin"
 
-	"github.com/zgiai/ginext/config"
-	system_repo "github.com/zgiai/ginext/internal/modules/system/repository"
-	"github.com/zgiai/ginext/pkg/database"
-	"github.com/zgiai/ginext/pkg/response"
+	"github.com/zgiai/zgi/api/config"
+	system_repo "github.com/zgiai/zgi/api/internal/modules/system/repository"
+	"github.com/zgiai/zgi/api/pkg/database"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 func SetupRequired() gin.HandlerFunc {

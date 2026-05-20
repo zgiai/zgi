@@ -3,9 +3,9 @@ package billing
 import (
 	"context"
 
-	"github.com/zgiai/ginext/internal/observability"
-	"github.com/zgiai/ginext/pkg/logger"
-	pb "github.com/zgiai/ginext/pkg/rpc/v1"
+	"github.com/zgiai/zgi/api/internal/observability"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	pb "github.com/zgiai/zgi/api/pkg/rpc/v1"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"

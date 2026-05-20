@@ -2,9 +2,9 @@ package handler
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/internal/modules/workspace/service"
-	"github.com/zgiai/ginext/middleware"
-	"github.com/zgiai/ginext/pkg/response"
+	"github.com/zgiai/zgi/api/internal/modules/workspace/service"
+	"github.com/zgiai/zgi/api/middleware"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 // WorkspacePermissionFilterHandler handles workspace permission filtering HTTP requests

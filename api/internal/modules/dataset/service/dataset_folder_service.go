@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/zgiai/ginext/internal/dto"
-	"github.com/zgiai/ginext/internal/modules/dataset/model"
-	"github.com/zgiai/ginext/internal/modules/dataset/repository"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/model"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/repository"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 )
 
 // DatasetFolderService defines the interface for dataset folder operations

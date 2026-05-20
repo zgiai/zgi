@@ -9,12 +9,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
-	platformconsole "github.com/zgiai/ginext/internal/infra/platform/console"
-	apikeymodel "github.com/zgiai/ginext/internal/modules/llm/apikey/model"
-	llmerrors "github.com/zgiai/ginext/internal/modules/llm/errors"
-	llmmodel "github.com/zgiai/ginext/internal/modules/llm/llmmodel/model"
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
-	providermodel "github.com/zgiai/ginext/internal/modules/llm/provider/model"
+	platformconsole "github.com/zgiai/zgi/api/internal/infra/platform/console"
+	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
+	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
+	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	providermodel "github.com/zgiai/zgi/api/internal/modules/llm/provider/model"
 )
 
 type fakeBillingProvider struct {

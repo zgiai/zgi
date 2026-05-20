@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/zgiai/ginext/pkg/sql_base/sqlmeta/catalog/tables"
-	"github.com/zgiai/ginext/pkg/sql_base/sqlmeta/types"
+	"github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/catalog/tables"
+	"github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/types"
 )
 
 const tableNamePrefix = "zgi_base_"

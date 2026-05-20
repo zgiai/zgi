@@ -3,13 +3,13 @@ package task
 import (
 	"context"
 
-	"github.com/zgiai/ginext/internal/modules/dataset/graphflow/aligner"
-	"github.com/zgiai/ginext/internal/modules/dataset/graphflow/model"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/aligner"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/model"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 type EntityAlignmentTask struct {
-	aligner  *aligner.CanonicalAligner
+	aligner *aligner.CanonicalAligner
 }
 
 func NewEntityAlignmentTask(aligner *aligner.CanonicalAligner) *EntityAlignmentTask {

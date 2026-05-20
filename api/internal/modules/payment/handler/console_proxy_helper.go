@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	platformconsole "github.com/zgiai/ginext/internal/infra/platform/console"
+	platformconsole "github.com/zgiai/zgi/api/internal/infra/platform/console"
 )
 
 func isConsolePaymentProxyEnabled(cp platformconsole.ConsoleProvider) bool {

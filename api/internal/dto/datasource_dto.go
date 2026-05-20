@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/zgiai/ginext/config"
-	"github.com/zgiai/ginext/internal/modules/datasource/model"
-	shared_model "github.com/zgiai/ginext/internal/modules/shared/model"
-	"github.com/zgiai/ginext/internal/util"
+	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/modules/datasource/model"
+	shared_model "github.com/zgiai/zgi/api/internal/modules/shared/model"
+	"github.com/zgiai/zgi/api/internal/util"
 )
 
 // CreateDataSourceRequest represents the request to create a new data source

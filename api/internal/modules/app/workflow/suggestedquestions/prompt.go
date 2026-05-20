@@ -3,7 +3,7 @@ package suggestedquestions
 import (
 	"encoding/json"
 
-	"github.com/zgiai/ginext/internal/prompt"
+	"github.com/zgiai/zgi/api/internal/prompt"
 )
 
 type userPromptTemplateData struct {

@@ -1,11 +1,11 @@
 package apikey
 
 import (
-	"github.com/zgiai/ginext/internal/modules/llm/apikey/handler"
-	"github.com/zgiai/ginext/internal/modules/llm/apikey/repository"
-	"github.com/zgiai/ginext/internal/modules/llm/apikey/service"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	workspace_repo "github.com/zgiai/ginext/internal/modules/workspace/repository"
+	"github.com/zgiai/zgi/api/internal/modules/llm/apikey/handler"
+	"github.com/zgiai/zgi/api/internal/modules/llm/apikey/repository"
+	"github.com/zgiai/zgi/api/internal/modules/llm/apikey/service"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	workspace_repo "github.com/zgiai/zgi/api/internal/modules/workspace/repository"
 	"gorm.io/gorm"
 )
 

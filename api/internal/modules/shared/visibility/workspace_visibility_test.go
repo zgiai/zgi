@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	workspace_model "github.com/zgiai/ginext/internal/modules/workspace/model"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 )
 
 func TestResolveVisibleWorkspaceIDs_ReturnsAllNormalWorkspacesForOrgAdmin(t *testing.T) {
@@ -140,9 +140,9 @@ func TestResolveVisibleWorkspaceScope_AdminAllowsOrganizationScopedResources(t *
 type stubOrganizationService struct {
 	interfaces.OrganizationService
 
-	isAdmin                         bool
-	workspaces                      []*workspace_model.Workspace
-	permissionsByWorkspaceID        map[string]bool
+	isAdmin                           bool
+	workspaces                        []*workspace_model.Workspace
+	permissionsByWorkspaceID          map[string]bool
 	checkWorkspaceAnyPermissionCalled bool
 }
 

@@ -2,9 +2,9 @@ package interfaces
 
 import (
 	"context"
-	"github.com/zgiai/ginext/internal/dto"
-	"github.com/zgiai/ginext/internal/modules/shared/model"
-	"github.com/zgiai/ginext/pkg/pagination"
+	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/shared/model"
+	"github.com/zgiai/zgi/api/pkg/pagination"
 )
 
 type MessageService interface {

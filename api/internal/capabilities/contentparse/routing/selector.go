@@ -3,7 +3,7 @@ package routing
 import (
 	"sort"
 
-	"github.com/zgiai/ginext/internal/contracts"
+	"github.com/zgiai/zgi/api/internal/contracts"
 )
 
 func configuredProviders(catalog *contracts.ParseProviderCatalog, health *contracts.ParseHealth) []contracts.ParseProviderConfig {

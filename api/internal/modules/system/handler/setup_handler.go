@@ -5,11 +5,11 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/config"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	"github.com/zgiai/ginext/internal/modules/system/model"
-	"github.com/zgiai/ginext/internal/modules/system/service"
-	"github.com/zgiai/ginext/pkg/response"
+	"github.com/zgiai/zgi/api/config"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/internal/modules/system/model"
+	"github.com/zgiai/zgi/api/internal/modules/system/service"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 type SetupHandler struct {

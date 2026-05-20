@@ -3,7 +3,7 @@ package repository
 import (
 	"context"
 
-	"github.com/zgiai/ginext/internal/modules/llm/apikey/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 )
 
 // APIKeyRepository defines the interface for API key operations

@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/xuri/excelize/v2"
-	"github.com/zgiai/ginext/internal/dto"
+	"github.com/zgiai/zgi/api/internal/dto"
 )
 
 func TestParseWorkbookTrimsTrailingEmptyRowsAndRecommendsVisibleSheet(t *testing.T) {

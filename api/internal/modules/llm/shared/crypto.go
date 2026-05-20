@@ -1,8 +1,8 @@
 package shared
 
 import (
-	"github.com/zgiai/ginext/config"
-	"github.com/zgiai/ginext/pkg/security"
+	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/pkg/security"
 )
 
 // CryptoService defines the interface for encryption/decryption operations

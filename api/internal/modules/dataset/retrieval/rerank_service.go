@@ -10,12 +10,12 @@ import (
 	"sort"
 	"time"
 
-	"github.com/zgiai/ginext/internal/dto"
-	llmclient "github.com/zgiai/ginext/internal/modules/llm/client"
-	llmdefaultservice "github.com/zgiai/ginext/internal/modules/llm/defaultmodel/service"
-	llmruntime "github.com/zgiai/ginext/internal/modules/llm/runtime"
-	shared_model "github.com/zgiai/ginext/internal/modules/shared/model"
-	"github.com/zgiai/ginext/internal/observability"
+	"github.com/zgiai/zgi/api/internal/dto"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
+	llmruntime "github.com/zgiai/zgi/api/internal/modules/llm/runtime"
+	shared_model "github.com/zgiai/zgi/api/internal/modules/shared/model"
+	"github.com/zgiai/zgi/api/internal/observability"
 )
 
 // RerankMode represents the reranking mode

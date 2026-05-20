@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/zgiai/ginext/internal/modules/llm/shared/crypto"
+	"github.com/zgiai/zgi/api/internal/modules/llm/shared/crypto"
 )
 
 func TestAESGCMService_EncryptDecrypt(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	workspace_model "github.com/zgiai/ginext/internal/modules/workspace/model"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 )
 
 type mockCurrentWorkspaceLookup struct {

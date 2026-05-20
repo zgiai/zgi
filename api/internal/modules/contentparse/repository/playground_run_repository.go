@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/contentparse/model"
+	"github.com/zgiai/zgi/api/internal/modules/contentparse/model"
 	"gorm.io/gorm"
 )
 

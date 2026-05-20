@@ -3,7 +3,7 @@ package indexing
 import (
 	"testing"
 
-	"github.com/zgiai/ginext/internal/dto"
+	"github.com/zgiai/zgi/api/internal/dto"
 )
 
 func TestCleanDatasetTransformedChunksDropsLowValueParserNoise(t *testing.T) {

@@ -9,9 +9,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/zgiai/ginext/internal/dto"
-	"github.com/zgiai/ginext/internal/modules/app/agents"
-	workflowpkg "github.com/zgiai/ginext/internal/modules/app/workflow"
+	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/app/agents"
+	workflowpkg "github.com/zgiai/zgi/api/internal/modules/app/workflow"
 )
 
 func TestBlockingPathRootVariableMergeConsistency(t *testing.T) {

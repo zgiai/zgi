@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/entities"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/nodes/base"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/shared"
-	automationdto "github.com/zgiai/ginext/internal/modules/automation/dto"
-	automationdefinition "github.com/zgiai/ginext/internal/modules/automation/service/definition"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/base"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
+	automationdto "github.com/zgiai/zgi/api/internal/modules/automation/dto"
+	automationdefinition "github.com/zgiai/zgi/api/internal/modules/automation/service/definition"
 )
 
 type definitionService interface {

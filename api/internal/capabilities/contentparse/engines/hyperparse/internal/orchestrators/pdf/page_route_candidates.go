@@ -7,7 +7,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	pdfadapter "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/adapters/pdf"
+	pdfadapter "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/adapters/pdf"
 )
 
 var (

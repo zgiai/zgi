@@ -1,6 +1,6 @@
 package inspectsvc
 
-import pdforchestrator "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/orchestrators/pdf"
+import pdforchestrator "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/orchestrators/pdf"
 
 func buildInspectNativeTimingDetail(
 	inspectBasicDurationMs int64,

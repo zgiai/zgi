@@ -1,11 +1,11 @@
 package availability
 
 import (
-	"github.com/zgiai/ginext/internal/modules/llm/availability/handler"
-	"github.com/zgiai/ginext/internal/modules/llm/availability/service"
-	channelrepo "github.com/zgiai/ginext/internal/modules/llm/channel/repository"
-	llmrepo "github.com/zgiai/ginext/internal/modules/llm/llmmodel/repository"
-	providerrepo "github.com/zgiai/ginext/internal/modules/llm/provider/repository"
+	"github.com/zgiai/zgi/api/internal/modules/llm/availability/handler"
+	"github.com/zgiai/zgi/api/internal/modules/llm/availability/service"
+	channelrepo "github.com/zgiai/zgi/api/internal/modules/llm/channel/repository"
+	llmrepo "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/repository"
+	providerrepo "github.com/zgiai/zgi/api/internal/modules/llm/provider/repository"
 )
 
 // Module represents the availability module

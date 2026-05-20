@@ -2,7 +2,7 @@ package dto
 
 import (
 	"github.com/google/uuid"
-	channelmodel "github.com/zgiai/ginext/internal/modules/llm/channel/model"
+	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 )
 
 // ============================================================================

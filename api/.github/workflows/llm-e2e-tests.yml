@@ -2,12 +2,12 @@ name: LLM Gateway E2E Tests
 
 on:
   push:
-    branches: [ main, develop/v1 ]
+    branches: [ main ]
     paths:
       - 'internal/modules/llm/**'
       - 'tests/llm/e2e/**'
   pull_request:
-    branches: [ main, develop/v1 ]
+    branches: [ main ]
     paths:
       - 'internal/modules/llm/**'
       - 'tests/llm/e2e/**'

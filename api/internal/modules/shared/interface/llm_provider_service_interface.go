@@ -4,9 +4,9 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/dto"
-	llmmodel "github.com/zgiai/ginext/internal/modules/llm/llmmodel/model"
-	providermodel "github.com/zgiai/ginext/internal/modules/llm/provider/model"
+	"github.com/zgiai/zgi/api/internal/dto"
+	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	providermodel "github.com/zgiai/zgi/api/internal/modules/llm/provider/model"
 )
 
 type LLMProviderService interface {

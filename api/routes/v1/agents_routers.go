@@ -2,14 +2,14 @@ package v1
 
 import (
 	"github.com/gin-gonic/gin"
-	app "github.com/zgiai/ginext/internal/modules/app/agents"
-	workflow "github.com/zgiai/ginext/internal/modules/app/workflow"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine"
-	workflowtest "github.com/zgiai/ginext/internal/modules/app/workflowtest"
-	"github.com/zgiai/ginext/internal/modules/dataset/graphflow"
-	promptservice "github.com/zgiai/ginext/internal/modules/prompts/service"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	"github.com/zgiai/ginext/middleware"
+	app "github.com/zgiai/zgi/api/internal/modules/app/agents"
+	workflow "github.com/zgiai/zgi/api/internal/modules/app/workflow"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
+	workflowtest "github.com/zgiai/zgi/api/internal/modules/app/workflowtest"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
+	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/middleware"
 	"gorm.io/gorm"
 )
 

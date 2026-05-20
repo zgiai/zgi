@@ -10,8 +10,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
-	"github.com/zgiai/ginext/internal/dto"
-	"github.com/zgiai/ginext/internal/util"
+	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/util"
 )
 
 func TestAgentsHandler_UpdateWebAppStatus_PassesContextAndRequest(t *testing.T) {

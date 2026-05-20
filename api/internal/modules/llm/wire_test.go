@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"github.com/zgiai/ginext/config"
-	pconsole "github.com/zgiai/ginext/internal/infra/platform/console"
+	"github.com/zgiai/zgi/api/config"
+	pconsole "github.com/zgiai/zgi/api/internal/infra/platform/console"
 	"gorm.io/gorm"
 )
 

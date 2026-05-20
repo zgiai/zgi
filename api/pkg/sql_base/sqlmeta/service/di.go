@@ -3,11 +3,11 @@ package service
 import (
 	"github.com/samber/do/v2"
 
-	"github.com/zgiai/ginext/pkg/sql_base/sqlmeta/catalog/columns"
-	"github.com/zgiai/ginext/pkg/sql_base/sqlmeta/catalog/indexes"
-	"github.com/zgiai/ginext/pkg/sql_base/sqlmeta/catalog/query"
-	"github.com/zgiai/ginext/pkg/sql_base/sqlmeta/catalog/schemas"
-	"github.com/zgiai/ginext/pkg/sql_base/sqlmeta/catalog/tables"
+	"github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/catalog/columns"
+	"github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/catalog/indexes"
+	"github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/catalog/query"
+	"github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/catalog/schemas"
+	"github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/catalog/tables"
 )
 
 // ProvideTablesService registers the tables service for injection.

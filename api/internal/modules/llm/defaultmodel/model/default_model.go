@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	llmsharedtypes "github.com/zgiai/ginext/internal/modules/llm/shared/types"
+	llmsharedtypes "github.com/zgiai/zgi/api/internal/modules/llm/shared/types"
 	"gorm.io/gorm"
 )
 
@@ -35,4 +35,3 @@ func (m *DefaultModel) BeforeCreate(tx *gorm.DB) error {
 	}
 	return nil
 }
-

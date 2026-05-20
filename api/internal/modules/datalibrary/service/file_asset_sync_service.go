@@ -5,9 +5,9 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/datalibrary/model"
-	"github.com/zgiai/ginext/internal/modules/datalibrary/repository"
-	filemodel "github.com/zgiai/ginext/internal/modules/file_process/model"
+	"github.com/zgiai/zgi/api/internal/modules/datalibrary/model"
+	"github.com/zgiai/zgi/api/internal/modules/datalibrary/repository"
+	filemodel "github.com/zgiai/zgi/api/internal/modules/file_process/model"
 )
 
 var (

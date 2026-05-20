@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/zgiai/ginext/internal/dto"
-	"github.com/zgiai/ginext/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/shared/interface"
 )
 
 type FileProcessor struct {
@@ -25,7 +25,7 @@ func (fp *FileProcessor) ProcessFileForWorkflow(ctx context.Context, fileID stri
 	}
 
 	fileType := fp.determineFileType(uploadFile.Extension)
-	
+
 	workflowFile := NewFile(
 		tenantID,
 		fileType,
@@ -43,7 +43,7 @@ func (fp *FileProcessor) ProcessFileForWorkflow(ctx context.Context, fileID stri
 
 func (fp *FileProcessor) ProcessMultipleFiles(ctx context.Context, fileIDs []string, tenantID string) ([]*File, error) {
 	var files []*File
-	
+
 	for _, fileID := range fileIDs {
 		file, err := fp.ProcessFileForWorkflow(ctx, fileID, tenantID)
 		if err != nil {
@@ -51,7 +51,7 @@ func (fp *FileProcessor) ProcessMultipleFiles(ctx context.Context, fileIDs []str
 		}
 		files = append(files, file)
 	}
-	
+
 	return files, nil
 }
 
@@ -71,19 +71,19 @@ func (fp *FileProcessor) ValidateFileForWorkflow(uploadFile *dto.UploadFile) err
 	if uploadFile == nil {
 		return fmt.Errorf("file is nil")
 	}
-	
+
 	if uploadFile.ID == "" {
 		return fmt.Errorf("file ID is empty")
 	}
-	
+
 	if uploadFile.Name == "" {
 		return fmt.Errorf("file name is empty")
 	}
-	
+
 	fileType := fp.determineFileType(uploadFile.Extension)
 	if !fileType.IsValid() {
 		return fmt.Errorf("unsupported file type: %s", uploadFile.Extension)
 	}
-	
+
 	return nil
 }

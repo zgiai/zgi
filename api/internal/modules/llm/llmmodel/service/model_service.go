@@ -8,12 +8,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
-	channelmodel "github.com/zgiai/ginext/internal/modules/llm/channel/model"
-	"github.com/zgiai/ginext/internal/modules/llm/llmmodel/dto"
-	"github.com/zgiai/ginext/internal/modules/llm/llmmodel/model"
-	"github.com/zgiai/ginext/internal/modules/llm/llmmodel/repository"
-	officialmodel "github.com/zgiai/ginext/internal/modules/llm/officialmodel"
-	providerrepo "github.com/zgiai/ginext/internal/modules/llm/provider/repository"
+	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/dto"
+	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/repository"
+	officialmodel "github.com/zgiai/zgi/api/internal/modules/llm/officialmodel"
+	providerrepo "github.com/zgiai/zgi/api/internal/modules/llm/provider/repository"
 	"gorm.io/gorm"
 )
 

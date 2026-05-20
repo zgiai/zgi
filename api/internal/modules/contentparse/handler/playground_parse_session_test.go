@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/contracts"
-	"github.com/zgiai/ginext/internal/modules/contentparse/service"
+	"github.com/zgiai/zgi/api/internal/contracts"
+	"github.com/zgiai/zgi/api/internal/modules/contentparse/service"
 )
 
 func TestPlaygroundParseSessionCacheKeepsOnlyTrustedLightweightResult(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/zgiai/ginext/internal/contracts"
+	"github.com/zgiai/zgi/api/internal/contracts"
 )
 
 func TestExecutorRunsPartitionsAndStableMerges(t *testing.T) {

@@ -8,11 +8,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zgiai/ginext/internal/modules/skills"
-	"github.com/zgiai/ginext/internal/modules/tools"
-	calculatorpkg "github.com/zgiai/ginext/internal/modules/tools/builtin/calculator"
-	filegeneratorpkg "github.com/zgiai/ginext/internal/modules/tools/builtin/filegenerator"
-	timepkg "github.com/zgiai/ginext/internal/modules/tools/builtin/time"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
+	"github.com/zgiai/zgi/api/internal/modules/tools"
+	calculatorpkg "github.com/zgiai/zgi/api/internal/modules/tools/builtin/calculator"
+	filegeneratorpkg "github.com/zgiai/zgi/api/internal/modules/tools/builtin/filegenerator"
+	timepkg "github.com/zgiai/zgi/api/internal/modules/tools/builtin/time"
 )
 
 func TestRuntime_ResolveEnabledSkills_LoadsCatalogMetadata(t *testing.T) {

@@ -9,14 +9,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/config"
-	apikeymodel "github.com/zgiai/ginext/internal/modules/llm/apikey/model"
-	apikeyrepo "github.com/zgiai/ginext/internal/modules/llm/apikey/repository"
-	llmClient "github.com/zgiai/ginext/internal/modules/llm/client"
-	llmGateway "github.com/zgiai/ginext/internal/modules/llm/gateway"
-	llmAdapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
-	paymentModel "github.com/zgiai/ginext/internal/modules/payment/model"
-	"github.com/zgiai/ginext/pkg/database"
+	"github.com/zgiai/zgi/api/config"
+	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
+	apikeyrepo "github.com/zgiai/zgi/api/internal/modules/llm/apikey/repository"
+	llmClient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	llmGateway "github.com/zgiai/zgi/api/internal/modules/llm/gateway"
+	llmAdapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	paymentModel "github.com/zgiai/zgi/api/internal/modules/payment/model"
+	"github.com/zgiai/zgi/api/pkg/database"
 	"gorm.io/gorm"
 )
 

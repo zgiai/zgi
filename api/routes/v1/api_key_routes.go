@@ -4,10 +4,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	APIKey "github.com/zgiai/ginext/internal/modules/api_key"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	workspace_service "github.com/zgiai/ginext/internal/modules/workspace/service"
-	"github.com/zgiai/ginext/middleware"
+	APIKey "github.com/zgiai/zgi/api/internal/modules/api_key"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	workspace_service "github.com/zgiai/zgi/api/internal/modules/workspace/service"
+	"github.com/zgiai/zgi/api/middleware"
 )
 
 // RegisterAPIKeyRoutes registers API Key management routes

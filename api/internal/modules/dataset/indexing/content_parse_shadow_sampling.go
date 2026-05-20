@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zgiai/ginext/internal/capabilities/contentparse/routing"
-	"github.com/zgiai/ginext/internal/dto"
-	contentparsesvc "github.com/zgiai/ginext/internal/modules/contentparse/service"
-	"github.com/zgiai/ginext/internal/modules/dataset/model"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/routing"
+	"github.com/zgiai/zgi/api/internal/dto"
+	contentparsesvc "github.com/zgiai/zgi/api/internal/modules/contentparse/service"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/model"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 const (

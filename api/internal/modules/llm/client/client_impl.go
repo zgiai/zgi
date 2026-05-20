@@ -8,11 +8,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	apikeymodel "github.com/zgiai/ginext/internal/modules/llm/apikey/model"
-	apikeyrepo "github.com/zgiai/ginext/internal/modules/llm/apikey/repository"
-	"github.com/zgiai/ginext/internal/modules/llm/gateway"
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
-	"github.com/zgiai/ginext/internal/util"
+	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
+	apikeyrepo "github.com/zgiai/zgi/api/internal/modules/llm/apikey/repository"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/util"
 	"gorm.io/gorm"
 )
 

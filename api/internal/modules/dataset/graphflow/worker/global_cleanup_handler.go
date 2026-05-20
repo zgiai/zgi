@@ -6,10 +6,10 @@ import (
 	"time"
 
 	"github.com/hibiken/asynq"
-	"github.com/zgiai/ginext/internal/modules/dataset/graphflow"
-	"github.com/zgiai/ginext/pkg/logger"
-	"github.com/zgiai/ginext/pkg/queue"
-	"github.com/zgiai/ginext/pkg/scheduler"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/queue"
+	"github.com/zgiai/zgi/api/pkg/scheduler"
 )
 
 // GlobalCleanupTask implements scheduler.ScheduledTask for GraphFlow data cleanup

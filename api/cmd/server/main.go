@@ -6,12 +6,12 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/zgiai/ginext/config"
-	"github.com/zgiai/ginext/internal/bootstrap/fxapp"
-	"github.com/zgiai/ginext/internal/migrationsseed"
-	"github.com/zgiai/ginext/internal/migrationsv2"
-	_ "github.com/zgiai/ginext/internal/modules/payment"
-	"github.com/zgiai/ginext/pkg/database"
+	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/bootstrap/fxapp"
+	"github.com/zgiai/zgi/api/internal/migrationsseed"
+	"github.com/zgiai/zgi/api/internal/migrationsv2"
+	_ "github.com/zgiai/zgi/api/internal/modules/payment"
+	"github.com/zgiai/zgi/api/pkg/database"
 )
 
 // @title ZGI-GinKit API

@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zgiai/ginext/internal/modules/app/conversation"
-	graphentities "github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/entities"
-	workflowpause "github.com/zgiai/ginext/internal/modules/app/workflow/pause"
-	"github.com/zgiai/ginext/pkg/database"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
+	graphentities "github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
+	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
+	"github.com/zgiai/zgi/api/pkg/database"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 func persistQuestionAnswerPause(ctx context.Context, tenantID, appID, workflowRunID, nodeID string, reasons []workflowpause.Reason, state workflowpause.State) {

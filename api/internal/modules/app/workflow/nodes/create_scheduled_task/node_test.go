@@ -4,10 +4,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/entities"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/nodes/base"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/shared"
-	automationmodel "github.com/zgiai/ginext/internal/modules/automation/model"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/base"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
+	automationmodel "github.com/zgiai/zgi/api/internal/modules/automation/model"
 )
 
 func TestBuildCreateTaskRequest_CompilesFixedOnceSchedule(t *testing.T) {

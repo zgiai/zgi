@@ -5,7 +5,7 @@ import (
 	"errors"
 	"sort"
 
-	"github.com/zgiai/ginext/internal/modules/datalibrary/model"
+	"github.com/zgiai/zgi/api/internal/modules/datalibrary/model"
 )
 
 var (

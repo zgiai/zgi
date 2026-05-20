@@ -6,9 +6,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	hyperparseengine "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/pkg/hyperparse"
-	"github.com/zgiai/ginext/internal/modules/contentparse/model"
-	"github.com/zgiai/ginext/pkg/response"
+	hyperparseengine "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/hyperparse"
+	"github.com/zgiai/zgi/api/internal/modules/contentparse/model"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 func (h *PlaygroundHandler) RenderSavedRunSource(c *gin.Context) {

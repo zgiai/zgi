@@ -3,7 +3,7 @@ package repository
 import (
 	"context"
 
-	promptmodel "github.com/zgiai/ginext/internal/modules/prompts/model"
+	promptmodel "github.com/zgiai/zgi/api/internal/modules/prompts/model"
 	"gorm.io/gorm"
 )
 

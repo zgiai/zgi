@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/config"
-	v1 "github.com/zgiai/ginext/routes/v1"
+	"github.com/zgiai/zgi/api/config"
+	v1 "github.com/zgiai/zgi/api/routes/v1"
 )
 
 func TestRegisterSetupPathsSelfHostedExposesSetup(t *testing.T) {

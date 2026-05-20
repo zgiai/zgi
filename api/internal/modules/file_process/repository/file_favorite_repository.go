@@ -3,7 +3,7 @@ package repository
 import (
 	"context"
 
-	"github.com/zgiai/ginext/internal/modules/file_process/model"
+	"github.com/zgiai/zgi/api/internal/modules/file_process/model"
 	"gorm.io/gorm"
 )
 

@@ -8,16 +8,16 @@ import (
 
 	"github.com/samber/do/v2"
 
-	"github.com/zgiai/ginext/pkg/logger"
-	"github.com/zgiai/ginext/pkg/sql_base/sqlmeta/driver"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/driver"
 
-	"github.com/zgiai/ginext/pkg/sql_base/sqlmeta/catalog/columns"
-	"github.com/zgiai/ginext/pkg/sql_base/sqlmeta/catalog/query"
-	"github.com/zgiai/ginext/pkg/sql_base/sqlmeta/catalog/schemas"
-	"github.com/zgiai/ginext/pkg/sql_base/sqlmeta/catalog/tables"
+	"github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/catalog/columns"
+	"github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/catalog/query"
+	"github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/catalog/schemas"
+	"github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/catalog/tables"
 
-	metaService "github.com/zgiai/ginext/pkg/sql_base/sqlmeta/service"
-	metaTypes "github.com/zgiai/ginext/pkg/sql_base/sqlmeta/types"
+	metaService "github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/service"
+	metaTypes "github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/types"
 )
 
 type internalClient struct {

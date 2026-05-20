@@ -2,16 +2,16 @@ package llm
 
 import (
 	"github.com/gin-gonic/gin"
-	apikeyhandler "github.com/zgiai/ginext/internal/modules/llm/apikey/handler"
-	availhandler "github.com/zgiai/ginext/internal/modules/llm/availability/handler"
-	channelhandler "github.com/zgiai/ginext/internal/modules/llm/channel/handler"
-	credentialhandler "github.com/zgiai/ginext/internal/modules/llm/credential/handler"
-	defaultmodelhandler "github.com/zgiai/ginext/internal/modules/llm/defaultmodel/handler"
-	llmmodelhandler "github.com/zgiai/ginext/internal/modules/llm/llmmodel/handler"
-	providerhandler "github.com/zgiai/ginext/internal/modules/llm/provider/handler"
-	statisticshandler "github.com/zgiai/ginext/internal/modules/llm/statistics/handler"
-	workspacequotahandler "github.com/zgiai/ginext/internal/modules/llm/workspacequota/handler"
-	middleware "github.com/zgiai/ginext/middleware"
+	apikeyhandler "github.com/zgiai/zgi/api/internal/modules/llm/apikey/handler"
+	availhandler "github.com/zgiai/zgi/api/internal/modules/llm/availability/handler"
+	channelhandler "github.com/zgiai/zgi/api/internal/modules/llm/channel/handler"
+	credentialhandler "github.com/zgiai/zgi/api/internal/modules/llm/credential/handler"
+	defaultmodelhandler "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/handler"
+	llmmodelhandler "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/handler"
+	providerhandler "github.com/zgiai/zgi/api/internal/modules/llm/provider/handler"
+	statisticshandler "github.com/zgiai/zgi/api/internal/modules/llm/statistics/handler"
+	workspacequotahandler "github.com/zgiai/zgi/api/internal/modules/llm/workspacequota/handler"
+	middleware "github.com/zgiai/zgi/api/middleware"
 )
 
 // RegisterConsoleRoutes registers all console/tenant routes

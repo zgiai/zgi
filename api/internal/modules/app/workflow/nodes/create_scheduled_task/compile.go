@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	automationdto "github.com/zgiai/ginext/internal/modules/automation/dto"
-	automationmodel "github.com/zgiai/ginext/internal/modules/automation/model"
-	notificationsms "github.com/zgiai/ginext/internal/modules/notification/sms"
+	automationdto "github.com/zgiai/zgi/api/internal/modules/automation/dto"
+	automationmodel "github.com/zgiai/zgi/api/internal/modules/automation/model"
+	notificationsms "github.com/zgiai/zgi/api/internal/modules/notification/sms"
 )
 
 func (n *Node) buildCreateTaskRequest() (automationdto.CreateTaskRequest, error) {

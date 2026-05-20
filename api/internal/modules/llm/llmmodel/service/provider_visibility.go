@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	providerrepo "github.com/zgiai/ginext/internal/modules/llm/provider/repository"
+	providerrepo "github.com/zgiai/zgi/api/internal/modules/llm/provider/repository"
 )
 
 type providerVisibility struct {

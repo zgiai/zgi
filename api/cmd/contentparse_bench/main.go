@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zgiai/ginext/internal/capabilities/contentparse"
-	"github.com/zgiai/ginext/internal/contracts"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse"
+	"github.com/zgiai/zgi/api/internal/contracts"
 	"gopkg.in/yaml.v3"
 )
 

@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	llmadapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
-	"github.com/zgiai/ginext/internal/modules/tools"
+	llmadapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"gopkg.in/yaml.v3"
 )
 

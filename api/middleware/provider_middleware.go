@@ -5,11 +5,11 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/internal/middleware_depend"
-	"github.com/zgiai/ginext/internal/util"
-	jwtpkg "github.com/zgiai/ginext/pkg/jwt"
-	"github.com/zgiai/ginext/pkg/logger"
-	"github.com/zgiai/ginext/pkg/response"
+	"github.com/zgiai/zgi/api/internal/middleware_depend"
+	"github.com/zgiai/zgi/api/internal/util"
+	jwtpkg "github.com/zgiai/zgi/api/pkg/jwt"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 var globalServiceProvider middleware_depend.ServiceProvider

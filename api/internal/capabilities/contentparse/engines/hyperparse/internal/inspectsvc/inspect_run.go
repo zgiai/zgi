@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	pdfadapter "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/adapters/pdf"
-	"github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/export"
-	pdforchestrator "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/orchestrators/pdf"
+	pdfadapter "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/adapters/pdf"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/export"
+	pdforchestrator "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/orchestrators/pdf"
 )
 
 // PDFInspectInput mirrors the non-progressive playground inspect request.

@@ -1,15 +1,15 @@
 package channel
 
 import (
-	"github.com/zgiai/ginext/internal/infra/platform/console"
-	"github.com/zgiai/ginext/internal/modules/llm/channel/handler"
-	"github.com/zgiai/ginext/internal/modules/llm/channel/repository"
-	"github.com/zgiai/ginext/internal/modules/llm/channel/service"
-	credentialsvc "github.com/zgiai/ginext/internal/modules/llm/credential/service"
-	llmmodelrepo "github.com/zgiai/ginext/internal/modules/llm/llmmodel/repository"
-	llmmodelsvc "github.com/zgiai/ginext/internal/modules/llm/llmmodel/service"
-	providerrepo "github.com/zgiai/ginext/internal/modules/llm/provider/repository"
-	"github.com/zgiai/ginext/internal/modules/llm/shared"
+	"github.com/zgiai/zgi/api/internal/infra/platform/console"
+	"github.com/zgiai/zgi/api/internal/modules/llm/channel/handler"
+	"github.com/zgiai/zgi/api/internal/modules/llm/channel/repository"
+	"github.com/zgiai/zgi/api/internal/modules/llm/channel/service"
+	credentialsvc "github.com/zgiai/zgi/api/internal/modules/llm/credential/service"
+	llmmodelrepo "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/repository"
+	llmmodelsvc "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
+	providerrepo "github.com/zgiai/zgi/api/internal/modules/llm/provider/repository"
+	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 	"gorm.io/gorm"
 )
 

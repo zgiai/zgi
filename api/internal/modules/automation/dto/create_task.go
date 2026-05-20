@@ -1,6 +1,6 @@
 package dto
 
-import automationmodel "github.com/zgiai/ginext/internal/modules/automation/model"
+import automationmodel "github.com/zgiai/zgi/api/internal/modules/automation/model"
 
 // CreateTaskActionRequest defines one action to create alongside a task.
 type CreateTaskActionRequest struct {

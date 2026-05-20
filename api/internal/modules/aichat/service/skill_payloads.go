@@ -5,10 +5,10 @@ import (
 	"strings"
 	"time"
 
-	aichatmodel "github.com/zgiai/ginext/internal/modules/aichat/model"
-	"github.com/zgiai/ginext/internal/modules/skills"
-	"github.com/zgiai/ginext/internal/modules/tools"
-	"github.com/zgiai/ginext/pkg/logger"
+	aichatmodel "github.com/zgiai/zgi/api/internal/modules/aichat/model"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
+	"github.com/zgiai/zgi/api/internal/modules/tools"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 func skillCallStartPayload(prepared *PreparedChat, skillID string, toolName string, argumentsSummary map[string]interface{}) map[string]interface{} {

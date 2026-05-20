@@ -2,13 +2,13 @@ package contentparse
 
 import (
 	"github.com/gin-gonic/gin"
-	contentparsecap "github.com/zgiai/ginext/internal/capabilities/contentparse"
-	systemvlm "github.com/zgiai/ginext/internal/capabilities/contentparse/adapters/system_vlm"
-	"github.com/zgiai/ginext/internal/modules/contentparse/handler"
-	"github.com/zgiai/ginext/internal/modules/contentparse/repository"
-	"github.com/zgiai/ginext/internal/modules/contentparse/service"
-	llmclient "github.com/zgiai/ginext/internal/modules/llm/client"
-	llmdefaultservice "github.com/zgiai/ginext/internal/modules/llm/defaultmodel/service"
+	contentparsecap "github.com/zgiai/zgi/api/internal/capabilities/contentparse"
+	systemvlm "github.com/zgiai/zgi/api/internal/capabilities/contentparse/adapters/system_vlm"
+	"github.com/zgiai/zgi/api/internal/modules/contentparse/handler"
+	"github.com/zgiai/zgi/api/internal/modules/contentparse/repository"
+	"github.com/zgiai/zgi/api/internal/modules/contentparse/service"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	"gorm.io/gorm"
 )
 

@@ -3,8 +3,8 @@ package platform_test
 import (
 	"testing"
 
-	"github.com/zgiai/ginext/config"
-	"github.com/zgiai/ginext/internal/infra/platform"
+	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/infra/platform"
 )
 
 // TestContainerCloudMode tests container initialization in Cloud mode.

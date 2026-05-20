@@ -1,10 +1,10 @@
 package service
 
 import (
-	"github.com/zgiai/ginext/internal/dto"
-	auth_model "github.com/zgiai/ginext/internal/modules/user/auth/model"
-	helper "github.com/zgiai/ginext/internal/util"
-	"github.com/zgiai/ginext/pkg/response"
+	"github.com/zgiai/zgi/api/internal/dto"
+	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
+	helper "github.com/zgiai/zgi/api/internal/util"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 // ResponseType Response type enumeration

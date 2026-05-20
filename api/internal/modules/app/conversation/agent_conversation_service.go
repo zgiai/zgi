@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/app/common"
+	"github.com/zgiai/zgi/api/internal/modules/app/common"
 )
 
 // AgentConversationService defines the interface for agent conversation business logic

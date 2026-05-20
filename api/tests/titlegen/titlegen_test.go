@@ -6,14 +6,14 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	llmclient "github.com/zgiai/ginext/internal/modules/llm/client"
-	defaultmodelmodel "github.com/zgiai/ginext/internal/modules/llm/defaultmodel/model"
-	defaultmodelservice "github.com/zgiai/ginext/internal/modules/llm/defaultmodel/service"
-	llmmodelmodel "github.com/zgiai/ginext/internal/modules/llm/llmmodel/model"
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
-	llmsharedtypes "github.com/zgiai/ginext/internal/modules/llm/shared/types"
-	sharedmodel "github.com/zgiai/ginext/internal/modules/shared/model"
-	"github.com/zgiai/ginext/internal/modules/shared/titlegen"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	defaultmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/model"
+	defaultmodelservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
+	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	llmsharedtypes "github.com/zgiai/zgi/api/internal/modules/llm/shared/types"
+	sharedmodel "github.com/zgiai/zgi/api/internal/modules/shared/model"
+	"github.com/zgiai/zgi/api/internal/modules/shared/titlegen"
 )
 
 func TestGenerateUsesModelTitle(t *testing.T) {

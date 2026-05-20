@@ -6,12 +6,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/datalibrary/model"
-	"github.com/zgiai/ginext/internal/modules/datalibrary/repository"
-	"github.com/zgiai/ginext/internal/modules/datalibrary/service"
-	"github.com/zgiai/ginext/internal/util"
-	"github.com/zgiai/ginext/pkg/logger"
-	"github.com/zgiai/ginext/pkg/response"
+	"github.com/zgiai/zgi/api/internal/modules/datalibrary/model"
+	"github.com/zgiai/zgi/api/internal/modules/datalibrary/repository"
+	"github.com/zgiai/zgi/api/internal/modules/datalibrary/service"
+	"github.com/zgiai/zgi/api/internal/util"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 type DocumentAssetHandler struct {

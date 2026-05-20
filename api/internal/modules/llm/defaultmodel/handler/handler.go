@@ -5,10 +5,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	llmdefaultservice "github.com/zgiai/ginext/internal/modules/llm/defaultmodel/service"
-	llmmodelmodel "github.com/zgiai/ginext/internal/modules/llm/llmmodel/model"
-	llmsharedtypes "github.com/zgiai/ginext/internal/modules/llm/shared/types"
-	"github.com/zgiai/ginext/pkg/response"
+	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
+	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	llmsharedtypes "github.com/zgiai/zgi/api/internal/modules/llm/shared/types"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 type Handler struct {
@@ -16,8 +16,8 @@ type Handler struct {
 }
 
 type upsertDefaultModelRequest struct {
-	Provider string                   `json:"provider" binding:"required"`
-	Model    string                   `json:"model" binding:"required"`
+	Provider string                     `json:"provider" binding:"required"`
+	Model    string                     `json:"model" binding:"required"`
 	Params   *llmsharedtypes.JSONObject `json:"params"`
 }
 
@@ -127,4 +127,3 @@ func getOptionalActorID(c *gin.Context) *uuid.UUID {
 	}
 	return &parsed
 }
-

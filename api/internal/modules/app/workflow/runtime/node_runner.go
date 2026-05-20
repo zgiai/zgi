@@ -4,17 +4,17 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/file"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/subgraph"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/nodes"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/shared"
-	automationdefinition "github.com/zgiai/ginext/internal/modules/automation/service/definition"
-	"github.com/zgiai/ginext/internal/modules/dataset/graphflow"
-	notificationsms "github.com/zgiai/ginext/internal/modules/notification/sms"
-	promptservice "github.com/zgiai/ginext/internal/modules/prompts/service"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/subgraph"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
+	automationdefinition "github.com/zgiai/zgi/api/internal/modules/automation/service/definition"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
+	notificationsms "github.com/zgiai/zgi/api/internal/modules/notification/sms"
+	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 // Dependencies are application-scoped services used by concrete workflow nodes.

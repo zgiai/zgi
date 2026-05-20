@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/file"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/entities"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/nodes/base"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/shared"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/base"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 type Node struct {
@@ -32,7 +32,7 @@ func New(
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Extract ContentExtractor from optional dependencies if provided
 	var contentExtractor file.ContentExtractor
 	if len(optionalDeps) > 0 {
@@ -40,7 +40,7 @@ func New(
 			contentExtractor = ce
 		}
 	}
-	
+
 	return &Node{
 		NodeStruct: base.NodeStruct{
 			InstanceID: id,
@@ -139,19 +139,19 @@ func (n *Node) executeRun(ctx context.Context) (*shared.NodeRunResult, error) {
 	if n.contentExtractor != nil {
 		// Get workflow run ID from system variables for logging
 		workflowRunID := n.getWorkflowRunID()
-		
+
 		logger.Info("File content extraction is enabled, processing file variables",
 			"node_id", n.NodeID,
 			"workflow_run_id", workflowRunID,
 		)
-		
+
 		for key, value := range nodeInputs {
 			// Skip system variables
-			if len(key) > len(base.SYSTEM_VARIABLE_NODE_ID) && 
-			   key[:len(base.SYSTEM_VARIABLE_NODE_ID)] == base.SYSTEM_VARIABLE_NODE_ID {
+			if len(key) > len(base.SYSTEM_VARIABLE_NODE_ID) &&
+				key[:len(base.SYSTEM_VARIABLE_NODE_ID)] == base.SYSTEM_VARIABLE_NODE_ID {
 				continue
 			}
-			
+
 			// Check if this is a file variable
 			if n.isFileVariable(key, value) {
 				logFields := []interface{}{
@@ -162,7 +162,7 @@ func (n *Node) executeRun(ctx context.Context) (*shared.NodeRunResult, error) {
 					logFields = append(logFields, "workflow_run_id", workflowRunID)
 				}
 				logger.Info("Detected file variable, extracting content", logFields...)
-				
+
 				// Process file variable to extract content
 				processedVars, err := n.processFileWithContent(ctx, key, value)
 				if err != nil {
@@ -191,7 +191,7 @@ func (n *Node) executeRun(ctx context.Context) (*shared.NodeRunResult, error) {
 						}
 					}
 				}
-				
+
 				// Add both metadata and content variables to outputs
 				for k, v := range processedVars {
 					outputs[k] = v
@@ -297,8 +297,8 @@ func (n *Node) isFileVariable(key string, value any) bool {
 //
 // Returns:
 //   - map[string]interface{}: Map containing both metadata and content variables
-//       For File: {key: metadata, key_content: text}
-//       For FileList: {key: [metadata array], key_content: combined text}
+//     For File: {key: metadata, key_content: text}
+//     For FileList: {key: [metadata array], key_content: combined text}
 //   - error: Non-nil if processing fails (logged but doesn't stop workflow)
 //
 // Behavior:
@@ -319,22 +319,22 @@ func (n *Node) isFileVariable(key string, value any) bool {
 //	fileData := map[string]interface{}{"upload_file_id": "abc", "name": "doc.pdf"}
 //	result, _ := n.processFileWithContent(ctx, "document", fileData)
 //	// result = {"document": {...}, "document_content": "extracted text..."}
-//	
+//
 //	// File list
 //	fileList := []interface{}{fileData1, fileData2}
 //	result, _ := n.processFileWithContent(ctx, "attachments", fileList)
 //	// result = {"attachments": [...], "attachments_content": "=== File 1 ===\n..."}
 func (n *Node) processFileWithContent(ctx context.Context, key string, value any) (map[string]interface{}, error) {
 	result := make(map[string]interface{})
-	
+
 	// Get workflow run ID for logging
 	workflowRunID := n.getWorkflowRunID()
-	
+
 	// Add workflow run ID to context for ContentExtractor logging
 	if workflowRunID != "" {
 		ctx = context.WithValue(ctx, "workflow_run_id", workflowRunID)
 	}
-	
+
 	// Determine if this is a File or FileList type
 	var isFileList bool
 	for _, variable := range n.Variables {
@@ -343,7 +343,7 @@ func (n *Node) processFileWithContent(ctx context.Context, key string, value any
 			break
 		}
 	}
-	
+
 	if isFileList {
 		// Handle file list
 		fileList, ok := value.([]interface{})
@@ -360,7 +360,7 @@ func (n *Node) processFileWithContent(ctx context.Context, key string, value any
 			result[key+"_content"] = ""
 			return result, fmt.Errorf("invalid file list type")
 		}
-		
+
 		// Extract file IDs for logging
 		fileCount := len(fileList)
 		logFields := []interface{}{
@@ -372,7 +372,7 @@ func (n *Node) processFileWithContent(ctx context.Context, key string, value any
 			logFields = append(logFields, "workflow_run_id", workflowRunID)
 		}
 		logger.Info("Processing file list variable", logFields...)
-		
+
 		// Process file list variable
 		processedVars, err := n.contentExtractor.ProcessFileListVariable(ctx, key, fileList, n.TenantID)
 		if err != nil {
@@ -387,15 +387,15 @@ func (n *Node) processFileWithContent(ctx context.Context, key string, value any
 			}
 			logger.Warn("Failed to extract content for file list variable", logFields...)
 		}
-		
+
 		// Merge processed variables into result
 		for k, v := range processedVars {
 			result[k] = v
 		}
-		
+
 		return result, err
 	}
-	
+
 	// Handle single file
 	fileData, ok := value.(map[string]interface{})
 	if !ok {
@@ -411,7 +411,7 @@ func (n *Node) processFileWithContent(ctx context.Context, key string, value any
 		result[key+"_content"] = ""
 		return result, fmt.Errorf("invalid file data type")
 	}
-	
+
 	// Extract file ID for logging
 	fileID := ""
 	if id, ok := fileData["upload_file_id"].(string); ok {
@@ -421,7 +421,7 @@ func (n *Node) processFileWithContent(ctx context.Context, key string, value any
 	} else if id, ok := fileData["related_id"].(string); ok {
 		fileID = id
 	}
-	
+
 	logFields := []interface{}{
 		"variable_name", key,
 		"node_id", n.NodeID,
@@ -433,7 +433,7 @@ func (n *Node) processFileWithContent(ctx context.Context, key string, value any
 		logFields = append(logFields, "workflow_run_id", workflowRunID)
 	}
 	logger.Info("Processing file variable", logFields...)
-	
+
 	// Process file variable
 	processedVars, err := n.contentExtractor.ProcessFileVariable(ctx, key, fileData, n.TenantID)
 	if err != nil {
@@ -450,12 +450,12 @@ func (n *Node) processFileWithContent(ctx context.Context, key string, value any
 		}
 		logger.Warn("Failed to extract content for file variable", logFields...)
 	}
-	
+
 	// Merge processed variables into result
 	for k, v := range processedVars {
 		result[k] = v
 	}
-	
+
 	return result, err
 }
 
@@ -469,9 +469,9 @@ func (n *Node) getSystemVariables() map[string]any {
 
 // getWorkflowRunID extracts workflow run ID from system variables for logging
 func (n *Node) getWorkflowRunID() string {
-	if n.GraphRuntimeState != nil && 
-	   n.GraphRuntimeState.VariablePool != nil && 
-	   n.GraphRuntimeState.VariablePool.SystemVariables != nil {
+	if n.GraphRuntimeState != nil &&
+		n.GraphRuntimeState.VariablePool != nil &&
+		n.GraphRuntimeState.VariablePool.SystemVariables != nil {
 		return n.GraphRuntimeState.VariablePool.SystemVariables.WorkflowRunID
 	}
 	return ""
@@ -493,18 +493,18 @@ func (n *Node) validateModelConfigVariable(key string, value any) error {
 	if !ok {
 		return fmt.Errorf("model_config variable '%s' must be an object", key)
 	}
-	
+
 	// Validate required fields
 	provider, hasProvider := configMap["provider"]
 	if !hasProvider || provider == "" {
 		return fmt.Errorf("model_config variable '%s' missing required field 'provider'", key)
 	}
-	
+
 	model, hasModel := configMap["model"]
 	if !hasModel || model == "" {
 		return fmt.Errorf("model_config variable '%s' missing required field 'model'", key)
 	}
-	
+
 	// Validate provider and model are strings
 	if _, ok := provider.(string); !ok {
 		return fmt.Errorf("model_config variable '%s' field 'provider' must be a string", key)
@@ -512,7 +512,7 @@ func (n *Node) validateModelConfigVariable(key string, value any) error {
 	if _, ok := model.(string); !ok {
 		return fmt.Errorf("model_config variable '%s' field 'model' must be a string", key)
 	}
-	
+
 	return nil
 }
 

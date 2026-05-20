@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	extractcommon "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
+	extractcommon "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
 )
 
 func recoverWithPopplerTextLayer(ctx context.Context, filename string, data []byte, pageCount int, diag map[string]any) (*extractcommon.DocumentResult, error) {

@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	datasetmodel "github.com/zgiai/ginext/internal/modules/dataset/model"
-	llmclient "github.com/zgiai/ginext/internal/modules/llm/client"
-	llmadapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
+	datasetmodel "github.com/zgiai/zgi/api/internal/modules/dataset/model"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	llmadapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 type mockLLMClientForEmbed struct {

@@ -5,9 +5,9 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/llm/channel/model"
-	officialmodel "github.com/zgiai/ginext/internal/modules/llm/officialmodel"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
+	officialmodel "github.com/zgiai/zgi/api/internal/modules/llm/officialmodel"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )

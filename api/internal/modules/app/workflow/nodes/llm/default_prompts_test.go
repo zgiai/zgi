@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/zgiai/ginext/internal/prompt"
+	"github.com/zgiai/zgi/api/internal/prompt"
 )
 
 func TestGetDefaultConfig_UsesPromptTemplates(t *testing.T) {

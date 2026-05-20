@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/app/conversation"
+	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
 )
 
 func TestBuildChatMessagesResponseIncludesStatus(t *testing.T) {

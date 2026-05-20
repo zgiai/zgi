@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	appconfig "github.com/zgiai/ginext/config"
+	appconfig "github.com/zgiai/zgi/api/config"
 )
 
 // FileInfo represents file metadata returned by List

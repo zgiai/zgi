@@ -3,7 +3,7 @@ package notification
 import (
 	"context"
 
-	automationmodel "github.com/zgiai/ginext/internal/modules/automation/model"
+	automationmodel "github.com/zgiai/zgi/api/internal/modules/automation/model"
 )
 
 // Request represents a normalized notification request.

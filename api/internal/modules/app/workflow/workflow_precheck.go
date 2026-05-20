@@ -6,9 +6,9 @@ import (
 	"sort"
 	"strings"
 
-	workflowshared "github.com/zgiai/ginext/internal/modules/app/workflow/shared"
-	llmclient "github.com/zgiai/ginext/internal/modules/llm/client"
-	"github.com/zgiai/ginext/pkg/response"
+	workflowshared "github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 type WorkflowRunPrecheckStatus string

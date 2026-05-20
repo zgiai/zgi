@@ -3,7 +3,7 @@ package service
 import (
 	"context"
 
-	"github.com/zgiai/ginext/internal/modules/workspace/model"
+	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
 )
 
 // WorkspaceService interface defines the contract for workspace operations

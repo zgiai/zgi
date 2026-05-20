@@ -3,7 +3,7 @@ package modelmeta
 import (
 	"encoding/json"
 
-	llmmodel "github.com/zgiai/ginext/internal/modules/llm/llmmodel/model"
+	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 )
 
 func defaultConfigParameters() llmmodel.ConfigParameters {

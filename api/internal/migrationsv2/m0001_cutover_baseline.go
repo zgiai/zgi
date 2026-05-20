@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/go-gormigrate/gormigrate/v2"
-	baselinepkg "github.com/zgiai/ginext/internal/migrationsv2/baseline"
+	baselinepkg "github.com/zgiai/zgi/api/internal/migrationsv2/baseline"
 	"gorm.io/gorm"
 )
 

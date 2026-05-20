@@ -8,12 +8,12 @@ import (
 	"strings"
 	"testing"
 
-	appconfig "github.com/zgiai/ginext/config"
-	"github.com/zgiai/ginext/internal/dto"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/graph_engine/entities"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/shared"
-	llmClient "github.com/zgiai/ginext/internal/modules/llm/client"
-	llmAdapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
+	appconfig "github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
+	llmClient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	llmAdapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 type mockWorkflowLLMClient struct {

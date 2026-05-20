@@ -5,8 +5,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	aichatmodel "github.com/zgiai/ginext/internal/modules/aichat/model"
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
+	aichatmodel "github.com/zgiai/zgi/api/internal/modules/aichat/model"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"gorm.io/gorm"
 )
 

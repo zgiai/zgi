@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	llmclient "github.com/zgiai/ginext/internal/modules/llm/client"
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 const taskDraftAppType = "automation_task_draft"

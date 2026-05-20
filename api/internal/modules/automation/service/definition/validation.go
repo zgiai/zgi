@@ -3,9 +3,9 @@ package definition
 import (
 	"fmt"
 
-	automationdto "github.com/zgiai/ginext/internal/modules/automation/dto"
-	automationmodel "github.com/zgiai/ginext/internal/modules/automation/model"
-	automationaction "github.com/zgiai/ginext/internal/modules/automation/service/action"
+	automationdto "github.com/zgiai/zgi/api/internal/modules/automation/dto"
+	automationmodel "github.com/zgiai/zgi/api/internal/modules/automation/model"
+	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 )
 
 func validateCreateTaskRequest(req automationdto.CreateTaskRequest) error {

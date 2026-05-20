@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	aichatmodel "github.com/zgiai/ginext/internal/modules/aichat/model"
+	aichatmodel "github.com/zgiai/zgi/api/internal/modules/aichat/model"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )

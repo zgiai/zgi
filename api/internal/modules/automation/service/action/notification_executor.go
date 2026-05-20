@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	automationmodel "github.com/zgiai/ginext/internal/modules/automation/model"
-	automationnotification "github.com/zgiai/ginext/internal/modules/automation/service/notification"
+	automationmodel "github.com/zgiai/zgi/api/internal/modules/automation/model"
+	automationnotification "github.com/zgiai/zgi/api/internal/modules/automation/service/notification"
 )
 
 // NotificationExecutionResult returns normalized execution payloads for action runs.

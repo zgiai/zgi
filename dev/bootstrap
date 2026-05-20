@@ -28,16 +28,96 @@ copy_if_missing() {
   echo "[bootstrap] created $(display_path "$target_path")"
 }
 
-echo "[bootstrap] sync submodules"
-git -C "$ROOT" submodule sync
-git -C "$ROOT" submodule update --init --remote --merge
+generate_secret_32() {
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 16
+    return 0
+  fi
+
+  if command -v shasum >/dev/null 2>&1; then
+    printf '%s' "$(date +%s)-$$-$RANDOM" | shasum -a 256 | cut -c 1-32
+    return 0
+  fi
+
+  if command -v sha256sum >/dev/null 2>&1; then
+    printf '%s' "$(date +%s)-$$-$RANDOM" | sha256sum | cut -c 1-32
+    return 0
+  fi
+
+  printf '%s\n' "zgi-local-docker-api-key-0000001"
+}
+
+is_unset_or_placeholder() {
+  local value="$1"
+  case "$value" in
+    ""|"replace-with-strong-random-secret"|"replace-with-32-byte-random-key"|"change-me-in-production")
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+ensure_env_value() {
+  local target_path="$1"
+  local key="$2"
+  local value="$3"
+  local current=""
+
+  if [ ! -f "$target_path" ]; then
+    echo "[bootstrap] missing env file: $target_path" >&2
+    exit 1
+  fi
+
+  if grep -q "^${key}=" "$target_path"; then
+    current="$(grep "^${key}=" "$target_path" | tail -n 1 | cut -d= -f2-)"
+    if is_unset_or_placeholder "$current"; then
+      sed -i.bak "s|^${key}=.*|${key}=${value}|" "$target_path"
+      rm -f "${target_path}.bak"
+      echo "[bootstrap] updated $(display_path "$target_path") ${key}"
+    fi
+    return 0
+  fi
+
+  printf '\n%s=%s\n' "$key" "$value" >> "$target_path"
+  echo "[bootstrap] added $(display_path "$target_path") ${key}"
+}
+
+replace_env_value_if_current() {
+  local target_path="$1"
+  local key="$2"
+  local old_value="$3"
+  local new_value="$4"
+  local current=""
+
+  if [ ! -f "$target_path" ] || ! grep -q "^${key}=" "$target_path"; then
+    return 0
+  fi
+
+  current="$(grep "^${key}=" "$target_path" | tail -n 1 | cut -d= -f2-)"
+  if [ "$current" = "$old_value" ]; then
+    sed -i.bak "s|^${key}=.*|${key}=${new_value}|" "$target_path"
+    rm -f "${target_path}.bak"
+    echo "[bootstrap] updated $(display_path "$target_path") ${key}"
+  fi
+}
 
 copy_if_missing "$ROOT/docker/.env.example" "$ROOT/docker/.env"
 copy_if_missing "$ROOT/api/.env.example" "$ROOT/api/.env"
 copy_if_missing "$ROOT/api/.env.docker.example" "$ROOT/api/.env.docker"
 copy_if_missing "$ROOT/web/.env.example" "$ROOT/web/.env.local"
 copy_if_missing "$ROOT/sandbox/.env.example" "$ROOT/sandbox/.env"
-copy_if_missing "$ROOT/plugin-runner/.env.example" "$ROOT/plugin-runner/.env"
+copy_if_missing "$ROOT/runner/.env.example" "$ROOT/runner/.env"
+
+api_secret="$(generate_secret_32)"
+api_docker_secret="$(generate_secret_32)"
+ensure_env_value "$ROOT/api/.env" "SECRET_KEY" "$(generate_secret_32)"
+ensure_env_value "$ROOT/api/.env" "API_KEY_ENCRYPTION_KEY" "$api_secret"
+ensure_env_value "$ROOT/api/.env.docker" "SECRET_KEY" "$(generate_secret_32)"
+ensure_env_value "$ROOT/api/.env.docker" "API_KEY_ENCRYPTION_KEY" "$api_docker_secret"
+replace_env_value_if_current "$ROOT/api/.env.docker" "SQL_BASE_INTERNAL_DB" "zgi" "zgi_sql_base"
+replace_env_value_if_current "$ROOT/docker/.env" "HOST_WEAVIATE_PORT" "18080" "18081"
 
 echo "[bootstrap] generate docker compose"
 "$ROOT/docker/generate_docker_compose"

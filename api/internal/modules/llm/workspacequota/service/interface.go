@@ -3,7 +3,7 @@ package service
 import (
 	"context"
 
-	"github.com/zgiai/ginext/internal/modules/llm/workspacequota/dto"
+	"github.com/zgiai/zgi/api/internal/modules/llm/workspacequota/dto"
 )
 
 // WorkspaceQuotaService defines workspace-subject quota management APIs.

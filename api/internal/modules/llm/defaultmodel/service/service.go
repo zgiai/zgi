@@ -8,13 +8,13 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	defaultmodelmodel "github.com/zgiai/ginext/internal/modules/llm/defaultmodel/model"
-	defaultmodelrepo "github.com/zgiai/ginext/internal/modules/llm/defaultmodel/repository"
-	llmmodelmodel "github.com/zgiai/ginext/internal/modules/llm/llmmodel/model"
-	llmmodelrepo "github.com/zgiai/ginext/internal/modules/llm/llmmodel/repository"
-	llmmodelservice "github.com/zgiai/ginext/internal/modules/llm/llmmodel/service"
-	llmsharedtypes "github.com/zgiai/ginext/internal/modules/llm/shared/types"
-	sharedmodel "github.com/zgiai/ginext/internal/modules/shared/model"
+	defaultmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/model"
+	defaultmodelrepo "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/repository"
+	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	llmmodelrepo "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/repository"
+	llmmodelservice "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
+	llmsharedtypes "github.com/zgiai/zgi/api/internal/modules/llm/shared/types"
+	sharedmodel "github.com/zgiai/zgi/api/internal/modules/shared/model"
 	"gorm.io/gorm"
 )
 

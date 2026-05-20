@@ -1,7 +1,7 @@
 package gateway
 
 import (
-	channelmodel "github.com/zgiai/ginext/internal/modules/llm/channel/model"
+	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 )
 
 // ModelMatchingStrategy defines how to determine if a route supports a model

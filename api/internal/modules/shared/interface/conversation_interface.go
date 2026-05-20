@@ -2,7 +2,7 @@ package interfaces
 
 import (
 	"context"
-	"github.com/zgiai/ginext/internal/modules/shared/model"
+	"github.com/zgiai/zgi/api/internal/modules/shared/model"
 )
 
 type ConversationRepositoryInterface interface {

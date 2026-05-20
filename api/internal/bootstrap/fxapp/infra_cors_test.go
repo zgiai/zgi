@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/config"
+	"github.com/zgiai/zgi/api/config"
 )
 
 func TestProvideGinEngine_AllowsSSEConnectionHeaderPreflight(t *testing.T) {

@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	promptdto "github.com/zgiai/ginext/internal/modules/prompts/dto"
-	promptmodel "github.com/zgiai/ginext/internal/modules/prompts/model"
-	shared_visibility "github.com/zgiai/ginext/internal/modules/shared/visibility"
-	workspace_model "github.com/zgiai/ginext/internal/modules/workspace/model"
+	promptdto "github.com/zgiai/zgi/api/internal/modules/prompts/dto"
+	promptmodel "github.com/zgiai/zgi/api/internal/modules/prompts/model"
+	shared_visibility "github.com/zgiai/zgi/api/internal/modules/shared/visibility"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"gorm.io/gorm"
 )
 

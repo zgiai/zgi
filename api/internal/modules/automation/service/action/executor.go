@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	automationmodel "github.com/zgiai/ginext/internal/modules/automation/model"
+	automationmodel "github.com/zgiai/zgi/api/internal/modules/automation/model"
 )
 
 // ActionExecutionRequest contains the task, run, and action snapshots needed to execute one action.

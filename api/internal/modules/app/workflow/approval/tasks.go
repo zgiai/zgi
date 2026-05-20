@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/hibiken/asynq"
-	"github.com/zgiai/ginext/pkg/logger"
-	"github.com/zgiai/ginext/pkg/queue"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/queue"
 )
 
 const (

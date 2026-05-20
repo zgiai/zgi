@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/hibiken/asynq"
-	"github.com/zgiai/ginext/config"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 // Scheduler is a generic scheduled task scheduler

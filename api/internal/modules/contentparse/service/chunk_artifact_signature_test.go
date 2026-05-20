@@ -3,7 +3,7 @@ package service
 import (
 	"testing"
 
-	"github.com/zgiai/ginext/internal/contracts"
+	"github.com/zgiai/zgi/api/internal/contracts"
 )
 
 func TestChunkUnitsContentHashIsStable(t *testing.T) {

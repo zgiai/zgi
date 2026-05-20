@@ -6,12 +6,12 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	"github.com/zgiai/ginext/internal/modules/workspace/model"
-	workspace_service "github.com/zgiai/ginext/internal/modules/workspace/service"
-	"github.com/zgiai/ginext/internal/util"
-	"github.com/zgiai/ginext/middleware"
-	"github.com/zgiai/ginext/pkg/response"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	workspace_service "github.com/zgiai/zgi/api/internal/modules/workspace/service"
+	"github.com/zgiai/zgi/api/internal/util"
+	"github.com/zgiai/zgi/api/middleware"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 // WorkspaceHandler handles workspace-related HTTP requests

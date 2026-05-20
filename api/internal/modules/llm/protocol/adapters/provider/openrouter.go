@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/shopspring/decimal"
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 // OpenRouterAdapter OpenRouter
@@ -447,7 +447,7 @@ func (a *OpenRouterAdapter) buildHeaders() map[string]string {
 	if referer, ok := a.config.CustomParams["http_referer"].(string); ok {
 		headers["HTTP-Referer"] = referer
 	} else {
-		headers["HTTP-Referer"] = "https://github.com/zgiai/ginext"
+		headers["HTTP-Referer"] = "https://github.com/zgiai/zgi/api"
 	}
 
 	if title, ok := a.config.CustomParams["x_title"].(string); ok {

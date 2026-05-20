@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	pdfadapter "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/adapters/pdf"
+	pdfadapter "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/adapters/pdf"
 )
 
 const envForceVLM = "CONTENT_PARSE_FORCE_VLM"

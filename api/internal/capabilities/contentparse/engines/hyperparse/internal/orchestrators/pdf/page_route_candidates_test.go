@@ -3,7 +3,7 @@ package pdf
 import (
 	"testing"
 
-	pdfadapter "github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/adapters/pdf"
+	pdfadapter "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/adapters/pdf"
 )
 
 func TestBuildPageRouteCandidates(t *testing.T) {

@@ -3,7 +3,7 @@ package entities
 import (
 	"sync"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/shared"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 )
 
 type VariablePool struct {

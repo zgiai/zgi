@@ -4,8 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 
-	"github.com/zgiai/ginext/config"
-	"github.com/zgiai/ginext/pkg/security"
+	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/pkg/security"
 )
 
 // aesGCMService implements CryptoService using AES-GCM encryption

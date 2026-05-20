@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"strings"
 
-	appconfig "github.com/zgiai/ginext/config"
+	appconfig "github.com/zgiai/zgi/api/config"
 )
 
 const officialRouteInternalPath = "/v1/internal"

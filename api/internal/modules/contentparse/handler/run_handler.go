@@ -5,8 +5,8 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/internal/modules/contentparse/service"
-	"github.com/zgiai/ginext/pkg/response"
+	"github.com/zgiai/zgi/api/internal/modules/contentparse/service"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 type RunHandler struct {

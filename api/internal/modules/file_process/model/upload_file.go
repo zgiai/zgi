@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/config"
+	"github.com/zgiai/zgi/api/config"
 	"gorm.io/gorm"
 )
 

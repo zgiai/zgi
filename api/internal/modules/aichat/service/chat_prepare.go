@@ -8,13 +8,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	aichatdto "github.com/zgiai/ginext/internal/modules/aichat/dto"
-	aichatmodel "github.com/zgiai/ginext/internal/modules/aichat/model"
-	"github.com/zgiai/ginext/internal/modules/aichat/repository"
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
-	"github.com/zgiai/ginext/internal/modules/shared/titlegen"
-	"github.com/zgiai/ginext/internal/prompt"
-	"github.com/zgiai/ginext/pkg/logger"
+	aichatdto "github.com/zgiai/zgi/api/internal/modules/aichat/dto"
+	aichatmodel "github.com/zgiai/zgi/api/internal/modules/aichat/model"
+	"github.com/zgiai/zgi/api/internal/modules/aichat/repository"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/shared/titlegen"
+	"github.com/zgiai/zgi/api/internal/prompt"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/gorm"
 )
 

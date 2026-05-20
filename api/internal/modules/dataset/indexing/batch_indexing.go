@@ -6,13 +6,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zgiai/ginext/config"
-	"github.com/zgiai/ginext/internal/modules/dataset/model"
-	dataset_repository "github.com/zgiai/ginext/internal/modules/dataset/repository"
-	"github.com/zgiai/ginext/pkg/embedding"
-	"github.com/zgiai/ginext/pkg/logger"
-	"github.com/zgiai/ginext/pkg/sentry"
-	"github.com/zgiai/ginext/pkg/vectordb"
+	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/model"
+	dataset_repository "github.com/zgiai/zgi/api/internal/modules/dataset/repository"
+	"github.com/zgiai/zgi/api/pkg/embedding"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/sentry"
+	"github.com/zgiai/zgi/api/pkg/vectordb"
 )
 
 type indexingItemType string

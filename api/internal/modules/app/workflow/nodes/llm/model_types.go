@@ -1,6 +1,6 @@
 package llm
 
-import shared_model "github.com/zgiai/ginext/internal/modules/shared/model"
+import shared_model "github.com/zgiai/zgi/api/internal/modules/shared/model"
 
 // ModelType identifies the model family used by the workflow node.
 type ModelType string

@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/gdpr/dto"
-	"github.com/zgiai/ginext/internal/modules/gdpr/model"
-	"github.com/zgiai/ginext/internal/modules/gdpr/repository"
+	"github.com/zgiai/zgi/api/internal/modules/gdpr/dto"
+	"github.com/zgiai/zgi/api/internal/modules/gdpr/model"
+	"github.com/zgiai/zgi/api/internal/modules/gdpr/repository"
 	"gorm.io/gorm"
 )
 

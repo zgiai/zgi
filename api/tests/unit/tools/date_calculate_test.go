@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/zgiai/ginext/internal/modules/tools"
-	timepkg "github.com/zgiai/ginext/internal/modules/tools/builtin/time"
+	"github.com/zgiai/zgi/api/internal/modules/tools"
+	timepkg "github.com/zgiai/zgi/api/internal/modules/tools/builtin/time"
 )
 
 func TestDateCalculateTool_ShiftDate(t *testing.T) {

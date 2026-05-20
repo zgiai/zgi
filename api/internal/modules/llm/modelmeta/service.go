@@ -12,9 +12,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
-	appconfig "github.com/zgiai/ginext/config"
-	llmmodel "github.com/zgiai/ginext/internal/modules/llm/llmmodel/model"
-	"github.com/zgiai/ginext/internal/observability"
+	appconfig "github.com/zgiai/zgi/api/config"
+	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	"github.com/zgiai/zgi/api/internal/observability"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )

@@ -7,12 +7,12 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	chunkexecutor "github.com/zgiai/ginext/internal/capabilities/chunking/executor"
-	contentparsecap "github.com/zgiai/ginext/internal/capabilities/contentparse"
-	"github.com/zgiai/ginext/internal/capabilities/contentparse/routing"
-	"github.com/zgiai/ginext/internal/contracts"
-	"github.com/zgiai/ginext/internal/modules/contentparse/service"
-	"github.com/zgiai/ginext/pkg/response"
+	chunkexecutor "github.com/zgiai/zgi/api/internal/capabilities/chunking/executor"
+	contentparsecap "github.com/zgiai/zgi/api/internal/capabilities/contentparse"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/routing"
+	"github.com/zgiai/zgi/api/internal/contracts"
+	"github.com/zgiai/zgi/api/internal/modules/contentparse/service"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 func NewPlaygroundHandler(module *contentparsecap.Module, runServices ...service.PlaygroundRunService) *PlaygroundHandler {

@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	apikeymodel "github.com/zgiai/ginext/internal/modules/llm/apikey/model"
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
-	"github.com/zgiai/ginext/pkg/logger"
+	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"

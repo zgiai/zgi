@@ -3,10 +3,10 @@ package retrieval
 import (
 	"context"
 
-	"github.com/zgiai/ginext/pkg/indexing"
-	"github.com/zgiai/ginext/pkg/logger"
-	"github.com/zgiai/ginext/pkg/tokenization"
-	"github.com/zgiai/ginext/pkg/vectordb"
+	"github.com/zgiai/zgi/api/pkg/indexing"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/tokenization"
+	"github.com/zgiai/zgi/api/pkg/vectordb"
 	"go.uber.org/zap"
 )
 

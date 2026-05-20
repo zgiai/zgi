@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/zgiai/ginext/internal/modules/app/workflow/nodes/base"
-	llmnode "github.com/zgiai/ginext/internal/modules/app/workflow/nodes/llm"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/tool_file"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/base"
+	llmnode "github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/llm"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
 )
 
 const (

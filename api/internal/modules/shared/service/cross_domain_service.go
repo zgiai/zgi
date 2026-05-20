@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	interfaces "github.com/zgiai/ginext/internal/modules/shared/interface"
-	auth_model "github.com/zgiai/ginext/internal/modules/user/auth/model"
-	workspace_model "github.com/zgiai/ginext/internal/modules/workspace/model"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 )
 
 type crossDomainService struct {

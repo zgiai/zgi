@@ -7,11 +7,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	apikeymodel "github.com/zgiai/ginext/internal/modules/llm/apikey/model"
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
-	"github.com/zgiai/ginext/internal/modules/llm/shared"
-	"github.com/zgiai/ginext/pkg/logger"
-	sentryHelper "github.com/zgiai/ginext/pkg/sentry"
+	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	sentryHelper "github.com/zgiai/zgi/api/pkg/sentry"
 	"go.uber.org/zap"
 )
 

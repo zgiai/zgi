@@ -12,11 +12,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	contentparse_model "github.com/zgiai/ginext/internal/modules/contentparse/model"
-	contentparse_service "github.com/zgiai/ginext/internal/modules/contentparse/service"
-	graphflow_model "github.com/zgiai/ginext/internal/modules/dataset/graphflow/model"
-	dataset_indexing "github.com/zgiai/ginext/internal/modules/dataset/indexing"
-	dataset_model "github.com/zgiai/ginext/internal/modules/dataset/model"
+	contentparse_model "github.com/zgiai/zgi/api/internal/modules/contentparse/model"
+	contentparse_service "github.com/zgiai/zgi/api/internal/modules/contentparse/service"
+	graphflow_model "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/model"
+	dataset_indexing "github.com/zgiai/zgi/api/internal/modules/dataset/indexing"
+	dataset_model "github.com/zgiai/zgi/api/internal/modules/dataset/model"
 )
 
 func TestDatasetGraphHandlerRejectsInvalidDatasetIDBeforePermissionCheck(t *testing.T) {

@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/zgiai/ginext/internal/modules/llm/apikey/model"
-	"github.com/zgiai/ginext/internal/util"
-	"github.com/zgiai/ginext/pkg/redis"
+	"github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
+	"github.com/zgiai/zgi/api/internal/util"
+	"github.com/zgiai/zgi/api/pkg/redis"
 	"gorm.io/gorm"
 )
 

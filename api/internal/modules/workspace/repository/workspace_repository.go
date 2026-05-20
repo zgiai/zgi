@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	dataset_model "github.com/zgiai/ginext/internal/modules/dataset/model"
-	"github.com/zgiai/ginext/internal/modules/workspace/model"
+	dataset_model "github.com/zgiai/zgi/api/internal/modules/dataset/model"
+	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"gorm.io/gorm"
 )
 

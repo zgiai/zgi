@@ -13,7 +13,7 @@ import (
 	openaiparam "github.com/openai/openai-go/v3/packages/param"
 	openairesponses "github.com/openai/openai-go/v3/responses"
 	"github.com/shopspring/decimal"
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 // OpenAIAdapter OpenAI adapter

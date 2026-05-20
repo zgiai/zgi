@@ -3,7 +3,7 @@ package conversation
 import (
 	"time"
 
-	"github.com/zgiai/ginext/internal/modules/app/chat"
+	"github.com/zgiai/zgi/api/internal/modules/app/chat"
 )
 
 // ConversationGroup conversation group model

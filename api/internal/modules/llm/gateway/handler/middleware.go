@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	apikeyrepo "github.com/zgiai/ginext/internal/modules/llm/apikey/repository"
-	"github.com/zgiai/ginext/internal/modules/llm/gateway/types"
-	"github.com/zgiai/ginext/pkg/response"
+	apikeyrepo "github.com/zgiai/zgi/api/internal/modules/llm/apikey/repository"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway/types"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 // LLMAPIKeyAuthMiddleware validates LLM API keys

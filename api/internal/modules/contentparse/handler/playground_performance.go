@@ -5,9 +5,9 @@ import (
 	"runtime"
 	"time"
 
-	chunkexecutor "github.com/zgiai/ginext/internal/capabilities/chunking/executor"
-	"github.com/zgiai/ginext/internal/capabilities/contentparse/routing"
-	"github.com/zgiai/ginext/internal/contracts"
+	chunkexecutor "github.com/zgiai/zgi/api/internal/capabilities/chunking/executor"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/routing"
+	"github.com/zgiai/zgi/api/internal/contracts"
 )
 
 type playgroundPerformanceInput struct {

@@ -4,9 +4,9 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/ginext/internal/modules/workspace/model"
-	workspace_service "github.com/zgiai/ginext/internal/modules/workspace/service"
-	"github.com/zgiai/ginext/pkg/response"
+	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	workspace_service "github.com/zgiai/zgi/api/internal/modules/workspace/service"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 // GetOrganizationWorkspaceAvailableMembers lists organization members that can be added to a workspace.

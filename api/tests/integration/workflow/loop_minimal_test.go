@@ -11,11 +11,11 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
-	"github.com/zgiai/ginext/config"
-	"github.com/zgiai/ginext/internal/dto"
-	workflowpkg "github.com/zgiai/ginext/internal/modules/app/workflow"
-	"github.com/zgiai/ginext/internal/modules/app/workflow/shared"
-	"github.com/zgiai/ginext/pkg/database"
+	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/dto"
+	workflowpkg "github.com/zgiai/zgi/api/internal/modules/app/workflow"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
+	"github.com/zgiai/zgi/api/pkg/database"
 )
 
 func TestWorkflowMinimalLoopIntegration(t *testing.T) {

@@ -2,8 +2,8 @@ package pipeline
 
 import (
 	"fmt"
-	"github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/core/apperr"
-	"github.com/zgiai/ginext/internal/capabilities/contentparse/engines/hyperparse/internal/core/model"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/core/apperr"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/core/model"
 	"path/filepath"
 	"strings"
 )

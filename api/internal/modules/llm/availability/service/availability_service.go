@@ -7,12 +7,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/llm/availability/dto"
-	channelmodel "github.com/zgiai/ginext/internal/modules/llm/channel/model"
-	channelrepo "github.com/zgiai/ginext/internal/modules/llm/channel/repository"
-	llmrepo "github.com/zgiai/ginext/internal/modules/llm/llmmodel/repository"
-	providerrepo "github.com/zgiai/ginext/internal/modules/llm/provider/repository"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/modules/llm/availability/dto"
+	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
+	channelrepo "github.com/zgiai/zgi/api/internal/modules/llm/channel/repository"
+	llmrepo "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/repository"
+	providerrepo "github.com/zgiai/zgi/api/internal/modules/llm/provider/repository"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
 )
 

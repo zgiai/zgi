@@ -1,7 +1,7 @@
 package model
 
 import (
-	"github.com/zgiai/ginext/internal/modules/llm/shared/types"
+	"github.com/zgiai/zgi/api/internal/modules/llm/shared/types"
 )
 
 // Type aliases for backward compatibility - all JSON types now use shared/types

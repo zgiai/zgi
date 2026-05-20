@@ -3,7 +3,7 @@ package interfaces
 import (
 	"context"
 
-	"github.com/zgiai/ginext/internal/dto"
+	"github.com/zgiai/zgi/api/internal/dto"
 )
 
 // WorkflowService defines the interface for workflow-related operations

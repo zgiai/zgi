@@ -3,7 +3,7 @@ package service
 import (
 	"gorm.io/gorm"
 
-	"github.com/zgiai/ginext/internal/modules/payment/repository"
+	"github.com/zgiai/zgi/api/internal/modules/payment/repository"
 )
 
 // PaymentServices contains all payment-related services

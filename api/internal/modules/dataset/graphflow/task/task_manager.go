@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/dataset/graphflow/repository"
-	"github.com/zgiai/ginext/pkg/logger"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/repository"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 // TaskStatus represents the status of a GraphFlow task

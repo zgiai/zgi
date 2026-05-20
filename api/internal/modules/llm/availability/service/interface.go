@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/llm/availability/dto"
+	"github.com/zgiai/zgi/api/internal/modules/llm/availability/dto"
 )
 
 // AvailabilityService provides model availability checking

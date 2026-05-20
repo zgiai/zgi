@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/zgiai/ginext/internal/dto"
-	"github.com/zgiai/ginext/internal/modules/file_process/model"
+	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/file_process/model"
 )
 
 // FileSource file source type

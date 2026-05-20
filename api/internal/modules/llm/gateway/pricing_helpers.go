@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/shopspring/decimal"
-	adapter "github.com/zgiai/ginext/internal/modules/llm/protocol/adapters"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 func (s *llmGatewayServiceImpl) pricing() PricingEngine {

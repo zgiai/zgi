@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"sync"
 
-	appConfig "github.com/zgiai/ginext/config"
-	"github.com/zgiai/ginext/pkg/security"
+	appConfig "github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/pkg/security"
 )
 
 var (

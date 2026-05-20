@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/ginext/internal/modules/dataset/graphflow/model"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/model"
 	"gorm.io/gorm"
 )
 
@@ -33,7 +33,7 @@ func (r *EntityMentionRepository) FindPendingByKBID(ctx context.Context, kbID uu
 	var results []*model.EntityMention
 	query := r.db.WithContext(ctx).
 		Where("kb_id = ? AND status = ?", kbID, "pending")
-	
+
 	if limit > 0 {
 		query = query.Limit(limit)
 	}
@@ -92,7 +92,7 @@ func (r *EntityMentionRepository) FindAlignedSync(ctx context.Context, kbID uuid
 	var results []*model.EntityMention
 	query := r.db.WithContext(ctx).
 		Where("kb_id = ? AND status = ?", kbID, "aligned")
-	
+
 	if limit > 0 {
 		query = query.Limit(limit)
 	}
@@ -162,6 +162,7 @@ func (r *EntityMentionRepository) FindMentionsByEntityNames(ctx context.Context,
 		Find(&results).Error
 	return results, err
 }
+
 // FindMentionsByEntityIDs retrieves full entity mention records matching specific canonical entity IDs in a KB
 func (r *EntityMentionRepository) FindMentionsByEntityIDs(ctx context.Context, kbID uuid.UUID, entityIDs []uuid.UUID) ([]*model.EntityMention, error) {
 	if len(entityIDs) == 0 {

@@ -9,8 +9,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
-	"github.com/zgiai/ginext/internal/modules/llm/channel/dto"
-	"github.com/zgiai/ginext/internal/modules/llm/shared"
+	"github.com/zgiai/zgi/api/internal/modules/llm/channel/dto"
+	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
