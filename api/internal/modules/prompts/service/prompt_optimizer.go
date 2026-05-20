@@ -417,7 +417,7 @@ func buildPromptOptimizerChatRequest(
 	temperature := 0.2
 	maxTokens := 1200
 	if goal == promptOptimizerGoalDeep {
-		maxTokens = 1800
+		maxTokens = 2400
 	}
 	return &adapter.ChatRequest{
 		Provider:    strings.TrimSpace(resolvedModel.Provider),
@@ -460,7 +460,7 @@ Output requirements:
 3. Match the primary language of the user's original prompt.
 4. If the original prompt is for a system prompt, agent instruction, workflow node, RAG answer, classifier, extraction task, JSON generation, code task, email, support reply, or other specific scenario, preserve that scenario and optimize for it.
 5. If variables or placeholders are detected and variable preservation is enabled, preserve them exactly. Do not translate, remove, rename, reorder, or change their bracket syntax.
-6. Add role, context, task list, output contract, guardrails, and examples only when useful. Avoid unnecessary verbosity.
+6. The final prompt should usually contain a strong expert role, useful background/context, a concrete task list, output requirements, constraints/guardrails, and example requirements. For very short original prompts, enrich them with reasonable missing context instead of merely rephrasing them.
 7. Do not output a meta-prompt asking another model to optimize the prompt. Output the optimized prompt that should be used directly.`
 }
 
@@ -502,6 +502,12 @@ Use the full internal CRISPE-style method:
 6. Write the final prompt as the user, ready to paste into the target model.
 
 Do not show the method, analysis, or step labels. Output only the optimized prompt.
+
+Quality bar for deep optimization:
+- The result must read like a complete prompt the user can paste into ChatGPT or another LLM.
+- The result should be substantially better than the original, not just a polished rewrite.
+- Include an expert role, inferred context, explicit task list, output format, constraints, and example requirements when the original prompt does not already provide them.
+- Do not use the words "CRISPE", "role and capability", "context explanation", "task statement", "output format", "case requirement", or "optimized prompt" as labels in the final answer.
 
 Optimization goal:
 %s
