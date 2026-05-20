@@ -6,15 +6,18 @@ ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 usage() {
   cat <<'EOF'
-Usage: ./dev/start-docker [--china] [--runtime] [--knowledge] [--full]
+Usage: ./dev/start-docker [--china] [--core] [--runtime] [--knowledge] [--full]
 
 Options:
   --china      Use recommended China mainland mirrors for Docker builds.
-  --runtime    Start optional sandbox and runner services.
-  --knowledge  Start optional Weaviate and Neo4j services.
+  --core       Start only nginx, api, web, Postgres, and Redis.
+  --runtime    Start sandbox and runner services.
+  --knowledge  Start Weaviate and Neo4j services.
   --full       Start all optional services.
 EOF
 }
+
+core_only=false
 
 append_compose_profile() {
   local profile="$1"
@@ -32,6 +35,10 @@ append_compose_profile() {
       fi
       ;;
   esac
+}
+
+set_compose_profiles() {
+  export COMPOSE_PROFILES="$1"
 }
 
 configure_china_build_env() {
@@ -62,10 +69,29 @@ enable_knowledge_profile() {
   echo "[start-docker] enable knowledge profile"
 }
 
+enable_core_stack() {
+  core_only=true
+  set_compose_profiles ""
+  export VECTOR_STORE=mock
+  export WEAVIATE_ENDPOINT=
+  export NEO4J_URI=
+  export CODE_EXECUTION_ENDPOINT=
+  export PLUGIN_RUNNER_ENABLED=false
+  echo "[start-docker] enable core stack"
+}
+
+enable_full_stack() {
+  enable_runtime_profile
+  enable_knowledge_profile
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --china)
       configure_china_build_env
+      ;;
+    --core)
+      enable_core_stack
       ;;
     --runtime)
       enable_runtime_profile
@@ -74,8 +100,7 @@ while [ "$#" -gt 0 ]; do
       enable_knowledge_profile
       ;;
     --full)
-      enable_runtime_profile
-      enable_knowledge_profile
+      enable_full_stack
       ;;
     -h|--help)
       usage
@@ -89,6 +114,10 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
+
+if [ "$core_only" = false ] && [ -z "${COMPOSE_PROFILES:-}" ]; then
+  enable_full_stack
+fi
 
 echo "[start-docker] bootstrap repository"
 "$ROOT/dev/bootstrap"

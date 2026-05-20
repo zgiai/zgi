@@ -1,5 +1,6 @@
 param(
   [switch]$china,
+  [switch]$core,
   [switch]$runtime,
   [switch]$knowledge,
   [switch]$full
@@ -51,6 +52,25 @@ function Enable-KnowledgeProfile {
   Write-Host "[start-docker] enable knowledge profile"
 }
 
+function Enable-CoreStack {
+  $env:COMPOSE_PROFILES = ''
+  $env:VECTOR_STORE = 'mock'
+  $env:WEAVIATE_ENDPOINT = ''
+  $env:NEO4J_URI = ''
+  $env:CODE_EXECUTION_ENDPOINT = ''
+  $env:PLUGIN_RUNNER_ENABLED = 'false'
+  Write-Host "[start-docker] enable core stack"
+}
+
+function Enable-FullStack {
+  Enable-RuntimeProfile
+  Enable-KnowledgeProfile
+}
+
+if ($core) {
+  Enable-CoreStack
+}
+
 if ($runtime) {
   Enable-RuntimeProfile
 }
@@ -60,8 +80,11 @@ if ($knowledge) {
 }
 
 if ($full) {
-  Enable-RuntimeProfile
-  Enable-KnowledgeProfile
+  Enable-FullStack
+}
+
+if (-not $core -and -not $runtime -and -not $knowledge -and -not $full -and -not $env:COMPOSE_PROFILES) {
+  Enable-FullStack
 }
 
 Write-Host "[start-docker] bootstrap repository"

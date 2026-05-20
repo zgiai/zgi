@@ -73,14 +73,14 @@ The application and infrastructure services use internal container ports by defa
 
 - Web: `2680`
 - API: `2670`
-- Sandbox: `2660` when started with `./dev/start-docker --runtime` or `--full`
-- Runner: `2665` when started with `./dev/start-docker --runtime` or `--full`
+- Sandbox: `2660`
+- Runner: `2665`
 - PostgreSQL: `5432`
 - Redis: `6379`
-- Neo4j HTTP: `7474` when started with `./dev/start-docker --knowledge` or `--full`
-- Neo4j Bolt: `7687` when started with `./dev/start-docker --knowledge` or `--full`
+- Neo4j HTTP: `7474`
+- Neo4j Bolt: `7687`
 
-The default Docker stack is intentionally lightweight. Use `./dev/start-docker --full` when you need every optional service.
+The default Docker stack starts the full local experience, including knowledge base, code execution, and plugin services. Use `./dev/start-docker --core` when you only need nginx, API, web, PostgreSQL, and Redis.
 
 Stop the stack:
 
