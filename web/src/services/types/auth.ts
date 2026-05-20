@@ -196,7 +196,7 @@ export interface ApiError {
   status: number;
 }
 
-// API错误响应结构
+// API error response shape
 export interface ErrorResponse {
   code: string;
   message: string;

@@ -1,4 +1,4 @@
-// 通用类型定义
+// Common type definitions
 
 export interface PaginationParams {
   page?: number;

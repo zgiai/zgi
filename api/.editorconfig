@@ -1,37 +1,37 @@
 # EditorConfig is awesome: https://EditorConfig.org
 
-# 顶层配置文件
+# Top-level configuration file
 root = true
 
-# 所有文件通用规则
+# Common rules for all files
 [*]
 charset = utf-8
 end_of_line = lf
 insert_final_newline = true
 trim_trailing_whitespace = true
 
-# Go 文件规则
+# Go file rules
 [*.go]
 indent_style = tab
 indent_size = 4
 
-# YAML 文件规则
+# YAML file rules
 [*.{yml,yaml}]
 indent_style = space
 indent_size = 2
 
-# Markdown 文件规则
+# Markdown file rules
 [*.md]
 indent_style = space
 indent_size = 2
 trim_trailing_whitespace = false
 
-# SQL 文件规则
+# SQL file rules
 [*.sql]
 indent_style = space
 indent_size = 4
 
-# 配置文件规则
+# Configuration file rules
 [*.{json,toml}]
 indent_style = space
 indent_size = 2

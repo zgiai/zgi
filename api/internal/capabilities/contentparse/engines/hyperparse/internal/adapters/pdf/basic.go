@@ -182,7 +182,7 @@ type xrefStreamEntry struct {
 }
 
 // InspectBasic performs minimal PDF structural validation.
-// 1) header(%PDF-x.y) 2) %%EOF 3) startxref 4) xref table/stream。
+// 1) header (%PDF-x.y), 2) %%EOF, 3) startxref, 4) xref table or stream.
 func InspectBasic(path string) (*BasicInfo, error) {
 	return InspectBasicWithMode(path, ValidationModeRelaxed)
 }

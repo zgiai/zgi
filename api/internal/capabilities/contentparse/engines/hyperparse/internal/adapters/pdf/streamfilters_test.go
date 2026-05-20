@@ -51,7 +51,6 @@ func TestDecodeStreamFilters_Flate(t *testing.T) {
 }
 
 func TestDecodeStreamFilters_DCTPassthrough(t *testing.T) {
-	// DCTDecode：无比特变换，流即 JPEG 头。
 	raw := []byte{0xff, 0xd8, 0xff, 0xe0}
 	dict := []byte("<< /Filter /DCTDecode >>")
 	got, err := DecodeStreamFilters(dict, raw)
@@ -64,7 +63,6 @@ func TestDecodeStreamFilters_DCTPassthrough(t *testing.T) {
 }
 
 func TestDecodeRunLengthPDF(t *testing.T) {
-	// 片段：3 字节字面量 + 重复 2 次 0xab + EOD
 	in := []byte{2, 'a', 'b', 'c', 255, 0xab, 128}
 	out, err := decodeRunLengthPDF(in)
 	if err != nil {

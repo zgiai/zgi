@@ -96,13 +96,10 @@ func boxKey(b *BBox) string {
 }
 
 func floatKey(v float64) string {
-	// 精度 6，对齐 round() 调用。
 	return formatF(v)
 }
 
-// 独立的数值格式化，避免依赖 fmt 引入测试噪声。
 func formatF(v float64) string {
-	// 简单 6 位小数字符串。
 	const n = 1e6
 	i := int64(v * n)
 	return itoa(i)

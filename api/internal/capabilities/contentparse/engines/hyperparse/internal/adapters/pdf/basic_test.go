@@ -237,7 +237,6 @@ func TestInspectBasic_PageCountPreferRootPages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InspectBasicWithMode should pass: %v", err)
 	}
-	// 期望优先读取 Root 指向的 obj3(/Count 5)，而不是先出现的 obj2(/Count 1)。
 	if info.PageCount != 5 {
 		t.Fatalf("expected page count 5 from root pages, got %d", info.PageCount)
 	}
@@ -364,7 +363,6 @@ func buildPDFOnePageWithPageBoxes() string {
 }
 
 func buildPDFOnePageIndirectMediaBoxAndCrop() string {
-	// 对象 4、5 为矩形数组；页 3 通过间接引用指向它们。
 	header := "%PDF-1.4\n"
 	obj1 := "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
 	obj2 := "2 0 obj\n<< /Type /Pages /Count 1 /Kids [3 0 R] >>\nendobj\n"
@@ -397,7 +395,6 @@ func buildPDFOnePageIndirectMediaBoxAndCrop() string {
 }
 
 func buildPDFOnePageBracketIndirectMediaBox() string {
-	// /MediaBox [ 4 0 R ] 与直接 n 0 R 等价路径
 	header := "%PDF-1.4\n"
 	obj1 := "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
 	obj2 := "2 0 obj\n<< /Type /Pages /Count 1 /Kids [3 0 R] >>\nendobj\n"
@@ -596,7 +593,6 @@ func TestDetectPageInfos_InheritedAndOverriddenPageBoxes(t *testing.T) {
 		t.Fatalf("len=%d", len(infos))
 	}
 	pi := infos[0]
-	// 子页覆盖 Crop/Art；其余盒继承自 /Pages。
 	if pi.MediaBox != "0 0 300 400" {
 		t.Fatalf("media inherit failed: %+v", pi)
 	}
@@ -1169,7 +1165,6 @@ func buildPDFWithLooseXRefEntry() string {
 	offset2 := len(header + obj1)
 	xrefOffset := len(header + obj1 + obj2)
 
-	// 第三列后面追加 token：宽松模式允许，严格模式不允许。
 	xref := "xref\n0 3\n" +
 		"0000000000 65535 f \n" +
 		fmt.Sprintf("%010d 00000 n \n", offset1) +
@@ -1215,7 +1210,6 @@ func buildPDFWithSmallTrailerSize() string {
 		fmt.Sprintf("%010d 00000 n \n", offset1) +
 		fmt.Sprintf("%010d 00000 n \n", offset2)
 
-	// /Size 故意小于 xref 覆盖范围(3)。
 	trailer := "trailer\n<< /Size 2 /Root 1 0 R >>\n"
 	startxref := fmt.Sprintf("startxref\n%d\n", xrefOffset)
 
@@ -1230,7 +1224,6 @@ func buildPDFWithWrongInUseOffset() string {
 	offset1 := len(header)
 	xrefOffset := len(header + obj1 + obj2)
 
-	// 第二个 in-use 条目故意写成错误偏移(0)，严格模式应检测到不指向 "2 0 obj"。
 	xref := "xref\n0 3\n" +
 		"0000000000 65535 f \n" +
 		fmt.Sprintf("%010d 00000 n \n", offset1) +
@@ -1256,7 +1249,6 @@ func buildPDFWithNonCatalogRoot() string {
 		fmt.Sprintf("%010d 00000 n \n", offset1) +
 		fmt.Sprintf("%010d 00000 n \n", offset2)
 
-	// /Root 指向 obj1，但 obj1 不是 Catalog。
 	trailer := "trailer\n<< /Size 3 /Root 1 0 R >>\n"
 	startxref := fmt.Sprintf("startxref\n%d\n", xrefOffset)
 
@@ -1265,7 +1257,6 @@ func buildPDFWithNonCatalogRoot() string {
 
 func buildPDFWithBrokenCatalogPagesRef() string {
 	header := "%PDF-1.4\n"
-	// Catalog 指向不存在的 Pages 对象 9 0 R。
 	obj1 := "1 0 obj\n<< /Type /Catalog /Pages 9 0 R >>\nendobj\n"
 	obj2 := "2 0 obj\n<< /Type /Pages /Count 1 /Kids [] >>\nendobj\n"
 
@@ -1286,7 +1277,6 @@ func buildPDFWithBrokenCatalogPagesRef() string {
 
 func buildPDFWithInvalidCatalogCount() string {
 	header := "%PDF-1.4\n"
-	// Catalog 指向 obj3，但 obj3 的 /Count 非法；relaxed 可回退扫描 obj2。
 	obj1 := "1 0 obj\n<< /Type /Catalog /Pages 3 0 R >>\nendobj\n"
 	obj2 := "2 0 obj\n<< /Type /Pages /Count 1 /Kids [] >>\nendobj\n"
 	obj3 := "3 0 obj\n<< /Type /Pages /Count X /Kids [] >>\nendobj\n"
@@ -1552,7 +1542,6 @@ func buildPDFWithXRefStreamBadWAlignment() string {
 	obj1 := "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
 	obj2 := "2 0 obj\n<< /Type /Pages /Count 1 /Kids [] >>\nendobj\n"
 	offset3 := len(header + obj1 + obj2)
-	// /W 总宽度=6，但流长度按 /Length 读取为5，应该报长度不对齐。
 	obj3 := "3 0 obj\n<< /Type /XRef /Size 4 /Root 1 0 R /W [1 4 1] /Length 5 >>\nstream\nABCDE\nendstream\nendobj\n"
 	startxref := fmt.Sprintf("startxref\n%d\n", offset3)
 	return header + obj1 + obj2 + obj3 + startxref + "%%EOF\n"
@@ -1564,7 +1553,6 @@ func buildPDFWithXRefStreamBadIndexCoverage() string {
 	obj2 := "2 0 obj\n<< /Type /Pages /Count 1 /Kids [] >>\nendobj\n"
 	offset1 := len(header)
 	offset3 := len(header + obj1 + obj2)
-	// /W 总宽度=6，stream 长度=6 => entries=1；但 /Index 覆盖=2，应报错。
 	stream := xrefStreamEntryType1(offset1, 0)
 	obj3 := fmt.Sprintf("3 0 obj\n<< /Type /XRef /Size 4 /Root 1 0 R /W [1 4 1] /Index [0 2] /Length %d >>\nstream\n%s\nendstream\nendobj\n", len(stream), stream)
 	startxref := fmt.Sprintf("startxref\n%d\n", offset3)
@@ -1577,7 +1565,6 @@ func buildPDFWithXRefStreamInvalidIndexFormat() string {
 	obj2 := "2 0 obj\n<< /Type /Pages /Count 1 /Kids [] >>\nendobj\n"
 	offset1 := len(header)
 	offset3 := len(header + obj1 + obj2)
-	// /Index 数组元素数量为奇数，格式非法。
 	stream := xrefStreamEntryType1(offset1, 0)
 	obj3 := fmt.Sprintf("3 0 obj\n<< /Type /XRef /Size 4 /Root 1 0 R /W [1 4 1] /Index [0 1 2] /Length %d >>\nstream\n%s\nendstream\nendobj\n", len(stream), stream)
 	startxref := fmt.Sprintf("startxref\n%d\n", offset3)
@@ -1602,7 +1589,6 @@ func buildPDFWithXRefStreamZeroOffsetType1() string {
 	obj2 := "2 0 obj\n<< /Type /Pages /Count 1 /Kids [] >>\nendobj\n"
 	offset3 := len(header + obj1 + obj2)
 	stream := xrefStreamEntryType1(0, 0)
-	// /Index 从 1 开始，让该 entry 对应 obj1，触发严格模式零偏移检查。
 	obj3 := fmt.Sprintf("3 0 obj\n<< /Type /XRef /Size 4 /Root 1 0 R /W [1 4 1] /Index [1 1] /Length %d >>\nstream\n%s\nendstream\nendobj\n", len(stream), stream)
 	startxref := fmt.Sprintf("startxref\n%d\n", offset3)
 	return header + obj1 + obj2 + obj3 + startxref + "%%EOF\n"
@@ -1613,7 +1599,6 @@ func buildPDFWithXRefStreamWrongOffsetType1() string {
 	obj1 := "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
 	obj2 := "2 0 obj\n<< /Type /Pages /Count 1 /Kids [] >>\nendobj\n"
 	offset3 := len(header + obj1 + obj2)
-	// 给 obj1 一个非零但错误的偏移。
 	stream := xrefStreamEntryType1(123, 0)
 	obj3 := fmt.Sprintf("3 0 obj\n<< /Type /XRef /Size 4 /Root 1 0 R /W [1 4 1] /Index [1 1] /Length %d >>\nstream\n%s\nendstream\nendobj\n", len(stream), stream)
 	startxref := fmt.Sprintf("startxref\n%d\n", offset3)
@@ -1648,10 +1633,8 @@ func buildPDFWithXRefStreamType2ObjMismatch() string {
 	header := "%PDF-1.5\n"
 	obj1 := "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
 	obj2 := "2 0 obj\n<< /Type /Pages /Count 1 /Kids [] >>\nendobj\n"
-	// ObjStm 里只有 obj 7。
 	obj5 := "5 0 obj\n<< /Type /ObjStm /N 1 /First 4 /Length 32 >>\nstream\n7 0 << /Length 1 >>\nendstream\nendobj\n"
 	offset3 := len(header + obj1 + obj2 + obj5)
-	// xref type2 声明 obj4 在 objstm index0，但 index0 实际是 obj7。
 	stream := xrefStreamEntryType2(5, 0)
 	obj3 := fmt.Sprintf("3 0 obj\n<< /Type /XRef /Size 8 /Root 1 0 R /W [1 4 1] /Index [4 1] /Length %d >>\nstream\n%s\nendstream\nendobj\n", len(stream), stream)
 	startxref := fmt.Sprintf("startxref\n%d\n", offset3)
@@ -1666,11 +1649,9 @@ func buildPDFWithXRefStreamMultiIndex(strictPass bool) string {
 	offset1 := len(header)
 	offset3 := len(header + obj1 + obj2 + obj5)
 
-	// /Index [1 1 6 1] => 第一条对应 obj1(type1)，第二条对应 obj6(type2)。
 	entry1 := xrefStreamEntryType1(offset1, 0)
 	type2Index := 0
 	if !strictPass {
-		// 故意写错：obj6 在 objstm index0，但这里写1，strict 应失败。
 		type2Index = 1
 	}
 	entry2 := xrefStreamEntryType2(5, type2Index)
@@ -1684,7 +1665,6 @@ func buildPDFWithXRefStreamType2ObjStmDecodeFail() string {
 	header := "%PDF-1.5\n"
 	obj1 := "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
 	obj2 := "2 0 obj\n<< /Type /Pages /Count 1 /Kids [] >>\nendobj\n"
-	// 声明 FlateDecode，但流内容不是合法 zlib 数据；strict 应判失败。
 	obj5 := "5 0 obj\n<< /Type /ObjStm /N 1 /First 4 /Length 6 /Filter /FlateDecode >>\nstream\nBADZIP\nendstream\nendobj\n"
 	offset3 := len(header + obj1 + obj2 + obj5)
 	stream := xrefStreamEntryType2(5, 0)
@@ -1698,7 +1678,6 @@ func buildPDFWithXRefStreamType0Valid() string {
 	obj1 := "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
 	obj2 := "2 0 obj\n<< /Type /Pages /Count 1 /Kids [] >>\nendobj\n"
 	offset3 := len(header + obj1 + obj2)
-	// /Index [0 1]，type0，next-free=0，gen=65535（常见 free 头结点形式）。
 	stream := xrefStreamEntryType0(0, 255)
 	obj3 := fmt.Sprintf("3 0 obj\n<< /Type /XRef /Size 4 /Root 1 0 R /W [1 4 1] /Index [0 1] /Length %d >>\nstream\n%s\nendstream\nendobj\n", len(stream), stream)
 	startxref := fmt.Sprintf("startxref\n%d\n", offset3)
@@ -1710,7 +1689,6 @@ func buildPDFWithXRefStreamType0InvalidGen() string {
 	obj1 := "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
 	obj2 := "2 0 obj\n<< /Type /Pages /Count 1 /Kids [] >>\nendobj\n"
 	offset3 := len(header + obj1 + obj2)
-	// /W [1 4 3]，type0，gen=65536(0x010000) 超出 16-bit，strict 应失败。
 	stream := string([]byte{
 		0,          // type
 		0, 0, 0, 0, // next free obj
@@ -1726,7 +1704,6 @@ func buildPDFWithXRefStreamType2MultiObjStm(strictPass bool) string {
 	obj1 := "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
 	obj2 := "2 0 obj\n<< /Type /Pages /Count 1 /Kids [] >>\nendobj\n"
 
-	// ObjStm 中放两个压缩对象：obj6 和 obj7。
 	embedded1 := "<< /Length 1 >>"
 	embedded2 := "<< /Length 2 >>"
 	indexHeader := "6 0 7 " + strconv.Itoa(len(embedded1)+1) + " "
@@ -1735,11 +1712,9 @@ func buildPDFWithXRefStreamType2MultiObjStm(strictPass bool) string {
 	obj5 := fmt.Sprintf("5 0 obj\n<< /Type /ObjStm /N 2 /First %d /Length %d >>\nstream\n%s\nendstream\nendobj\n", first, len(payload), payload)
 
 	offset3 := len(header + obj1 + obj2 + obj5)
-	// /Index [6 2] 两条 entry，分别映射 obj6 与 obj7。
 	entry6 := xrefStreamEntryType2(5, 0)
 	entry7Index := 1
 	if !strictPass {
-		// 故意写错，让 obj7 也指向 index0(实际是 obj6)。
 		entry7Index = 0
 	}
 	entry7 := xrefStreamEntryType2(5, entry7Index)
@@ -1789,7 +1764,6 @@ func buildPDFWithXRefStreamW0DefaultType1(strictPass bool) string {
 	if !strictPass {
 		off = 123
 	}
-	// /W [0 4 1]：type 字段缺失，解析时应默认 type=1。
 	stream := xrefStreamEntryW0(off, 0)
 	obj3 := fmt.Sprintf("3 0 obj\n<< /Type /XRef /Size 4 /Root 1 0 R /W [0 4 1] /Index [1 1] /Length %d >>\nstream\n%s\nendstream\nendobj\n", len(stream), stream)
 	startxref := fmt.Sprintf("startxref\n%d\n", offset3)
@@ -1801,7 +1775,6 @@ func buildPDFWithXRefStreamW1Zero() string {
 	obj1 := "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
 	obj2 := "2 0 obj\n<< /Type /Pages /Count 1 /Kids [] >>\nendobj\n"
 	offset3 := len(header + obj1 + obj2)
-	// /W [1 0 1]：type=1, offset 字段缺失，解析后 f2=0。
 	stream := string([]byte{1, 0})
 	obj3 := fmt.Sprintf("3 0 obj\n<< /Type /XRef /Size 4 /Root 1 0 R /W [1 0 1] /Index [1 1] /Length %d >>\nstream\n%s\nendstream\nendobj\n", len(stream), stream)
 	startxref := fmt.Sprintf("startxref\n%d\n", offset3)
@@ -1813,7 +1786,6 @@ func buildPDFWithXRefStreamW00One() string {
 	obj1 := "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
 	obj2 := "2 0 obj\n<< /Type /Pages /Count 1 /Kids [] >>\nendobj\n"
 	offset3 := len(header + obj1 + obj2)
-	// /W [0 0 1]：type 默认=1，offset 缺失，f2=0；strict 应失败。
 	stream := string([]byte{0})
 	obj3 := fmt.Sprintf("3 0 obj\n<< /Type /XRef /Size 4 /Root 1 0 R /W [0 0 1] /Index [1 1] /Length %d >>\nstream\n%s\nendstream\nendobj\n", len(stream), stream)
 	startxref := fmt.Sprintf("startxref\n%d\n", offset3)
@@ -1825,7 +1797,6 @@ func buildPDFWithXRefStreamIndexOutOfSize() string {
 	obj1 := "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
 	obj2 := "2 0 obj\n<< /Type /Pages /Count 1 /Kids [] >>\nendobj\n"
 	offset3 := len(header + obj1 + obj2)
-	// /Size=4，但 /Index [3 2] 覆盖到 5；entriesCount=2，relaxed 仍可通过。
 	stream := xrefStreamEntryType1(16, 0) + xrefStreamEntryType1(16, 0)
 	obj3 := fmt.Sprintf("3 0 obj\n<< /Type /XRef /Size 4 /Root 1 0 R /W [1 4 1] /Index [3 2] /Length %d >>\nstream\n%s\nendstream\nendobj\n", len(stream), stream)
 	startxref := fmt.Sprintf("startxref\n%d\n", offset3)
@@ -1837,7 +1808,6 @@ func buildPDFWithXRefStreamIndexOverlap() string {
 	obj1 := "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
 	obj2 := "2 0 obj\n<< /Type /Pages /Count 1 /Kids [] >>\nendobj\n"
 	offset3 := len(header + obj1 + obj2)
-	// /Index 两段重叠：[1,3) 与 [2,3)；entriesCount=3，relaxed 可过，strict 应失败。
 	stream := xrefStreamEntryType1(16, 0) + xrefStreamEntryType1(16, 0) + xrefStreamEntryType1(16, 0)
 	obj3 := fmt.Sprintf("3 0 obj\n<< /Type /XRef /Size 6 /Root 1 0 R /W [1 4 1] /Index [1 2 2 1] /Length %d >>\nstream\n%s\nendstream\nendobj\n", len(stream), stream)
 	startxref := fmt.Sprintf("startxref\n%d\n", offset3)

@@ -2,18 +2,14 @@ package export
 
 import "testing"
 
-// 回归测试：BBOX_ALIGNMENT_PLAN.md §1.2 里 "多个 chunk 共用同一 bbox" 的场景
-// 必须被 ClassifyBBoxReliability 识别并降级，而不是被原样下发给前端。
 func TestClassifyBBoxReliability_DowngradesShared(t *testing.T) {
 	shared := map[string]any{
 		"left": 0.768, "top": 0.015, "right": 1.0, "bottom": 0.055,
 	}
 	boxByChunk := map[string]map[string]any{}
-	// 24 个 chunk 共用同一个 bbox（对应方案文档里观察到的数据模式）
 	for i := 0; i < 24; i++ {
 		boxByChunk[chunkID(i)] = shared
 	}
-	// 1 个 chunk 有独立合法 bbox
 	boxByChunk["good"] = map[string]any{"left": 0.1, "top": 0.2, "right": 0.8, "bottom": 0.25}
 
 	rep, unreliable := ClassifyBBoxReliability(boxByChunk)

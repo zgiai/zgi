@@ -14,7 +14,7 @@ func ExampleUsage() {
 
 	err := Produce(ctx, []byte("user_id_123"), []byte("Hello Kafka"))
 	if err != nil {
-		fmt.Printf("发送消息失败: %v\n", err)
+		fmt.Printf("failed to produce message: %v\n", err)
 	}
 
 	type UserEvent struct {
@@ -31,32 +31,32 @@ func ExampleUsage() {
 
 	err = ProduceJSON(ctx, "user_login", event)
 	if err != nil {
-		fmt.Printf("发送 JSON 消息失败: %v\n", err)
+		fmt.Printf("failed to produce JSON message: %v\n", err)
 	}
 
 	err = ProduceJSONWithTopic(ctx, "user_events", "user_login", event)
 	if err != nil {
-		fmt.Printf("发送到指定主题失败: %v\n", err)
+		fmt.Printf("failed to produce message to topic: %v\n", err)
 	}
 
 	msg, err := Consume(ctx)
 	if err == nil {
-		fmt.Printf("收到消息: Key=%s, Value=%s\n", string(msg.Key), string(msg.Value))
+		fmt.Printf("received message: Key=%s, Value=%s\n", string(msg.Key), string(msg.Value))
 	} else {
-		fmt.Printf("消费消息失败: %v\n", err)
+		fmt.Printf("failed to consume message: %v\n", err)
 	}
 
 	var userEvent UserEvent
 	key, err := ConsumeJSON(ctx, &userEvent)
 	if err == nil {
-		fmt.Printf("收到事件: Key=%s, UserID=%s, Action=%s\n",
+		fmt.Printf("received event: Key=%s, UserID=%s, Action=%s\n",
 			key, userEvent.UserID, userEvent.Action)
 	} else {
-		fmt.Printf("消费 JSON 消息失败: %v\n", err)
+		fmt.Printf("failed to consume JSON message: %v\n", err)
 	}
 
 	StartConsumer(ctx, func(msg kafka.Message) error {
-		fmt.Printf("处理消息: Key=%s, Value=%s\n", string(msg.Key), string(msg.Value))
+		fmt.Printf("processing message: Key=%s, Value=%s\n", string(msg.Key), string(msg.Value))
 		return nil
 	})
 
@@ -65,15 +65,15 @@ func ExampleUsage() {
 		if err := json.Unmarshal(value, &event); err != nil {
 			return err
 		}
-		fmt.Printf("处理事件: Key=%s, UserID=%s, Action=%s\n",
+		fmt.Printf("processing event: Key=%s, UserID=%s, Action=%s\n",
 			key, event.UserID, event.Action)
 		return nil
 	})
 
 	StartConsumerWithTopic(ctx, "user_events", "user_service", func(msg kafka.Message) error {
-		fmt.Printf("处理用户事件: Key=%s, Value=%s\n", string(msg.Key), string(msg.Value))
+		fmt.Printf("processing user event: Key=%s, Value=%s\n", string(msg.Key), string(msg.Value))
 		return nil
 	})
 
-	fmt.Println("示例执行完毕")
+	fmt.Println("example completed")
 }

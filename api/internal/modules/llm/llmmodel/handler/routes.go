@@ -11,11 +11,8 @@ func RegisterTenantModelRoutes(r *gin.RouterGroup, handler *ModelHandler, availa
 
 	// Available models API (must come before /:id to avoid route conflict)
 	if availableHandler != nil {
-		println("[DEBUG] Registering /available route with handler:", availableHandler)
 		g.GET("/available", availableHandler.ListAvailable)
 		g.POST("/available/refresh", availableHandler.RefreshCache)
-	} else {
-		println("[DEBUG] WARNING: availableHandler is nil, /available route NOT registered!")
 	}
 
 	g.GET("/configs", handler.ListModelConfigs)

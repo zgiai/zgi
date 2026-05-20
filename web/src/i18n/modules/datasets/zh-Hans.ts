@@ -1183,7 +1183,7 @@ const messages: DatasetMessages = {
     importedQuestionsCount: '成功导入 {count} 个问题',
     fileParsingFailed: '文件解析失败',
 
-    // Graph Retrieval (新增图谱召回相关翻译)
+    // Graph retrieval translations
     vectorResults: '向量召回',
     graphResults: '图谱召回',
     score: '分数',

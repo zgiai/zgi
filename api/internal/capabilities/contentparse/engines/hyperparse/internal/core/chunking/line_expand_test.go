@@ -181,7 +181,6 @@ func TestSplitNativeTextBlocks_HeadingAfterParagraphEndsWithPeriod(t *testing.T)
 }
 
 func TestSplitNativeTextBlocks_ShortHeadingShortFirstBodyLine(t *testing.T) {
-	// 首段正文首行可以不足 40 字，仍应识别「使命」为小标题。
 	body1 := "在AGICTO我们相信人工智能尤其是大型语言模型。"
 	blocks := splitNativeTextBlocks("使命\n" + body1)
 	if len(blocks) != 2 || blocks[0].chunkType != "heading" || blocks[0].text != "使命" {

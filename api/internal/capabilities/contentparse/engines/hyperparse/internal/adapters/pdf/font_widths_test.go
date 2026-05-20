@@ -7,7 +7,6 @@ import (
 )
 
 func TestParseSimpleFontWidths_FromDict(t *testing.T) {
-	// Inline Widths：ASCII 可映射到 WinAnsi 单字节；宽度取典型 narrow/wide 以区分粗估。
 	fontDict := `<< /Type /Font /Subtype /TrueType /BaseFont /TestFont
 /FirstChar 65 /LastChar 67 /Widths [ 600 200 600 ]
 >>`
@@ -30,7 +29,6 @@ func TestGeomHorizontalAdvanceUsesWidthsForLiteral(t *testing.T) {
 	dec := "AB"
 	advW := geomHorizontalAdvanceForTextShow(dec, raw, cm, m, 12, 0, 0, 100)
 	advE := estimateGeomShowAdvance(dec, 12, 0, 0, 100)
-	// 600+200 @12pt → (0.8)*12 = 9.6；粗估两拉丁 ≈ 11.52
 	if advW <= 0 || math.Abs(advW-9.6) > 0.01 {
 		t.Fatalf("width advance got %v want ~9.6", advW)
 	}
@@ -53,7 +51,6 @@ func TestParseCIDWArray_RangeTriplet(t *testing.T) {
 }
 
 func TestBuildPageFontWidthsMap_MinimalPDF(t *testing.T) {
-	// 单页 + 单独对象存 Widths 数组（与常见导出器一致）。
 	content := `%PDF-1.4
 1 0 obj
 << /Type /Catalog /Pages 2 0 R >>
@@ -110,7 +107,7 @@ startxref
 		t.Fatalf("runs: %#v", runs)
 	}
 	gap := runs[1].x - runs[0].x
-	want := 500.0 / 1000 * 12 // 仅第一字 A 的字宽推进后再画 B
+	want := 500.0 / 1000 * 12
 	if math.Abs(gap-want) > 0.02 {
 		t.Fatalf("second x - first x got %v want ~%v (tm advance after A)", gap, want)
 	}

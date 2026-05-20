@@ -12,7 +12,7 @@ const messages: UiMessages = {
     label: '时区',
     placeholder: '选择时区',
   },
-  /** FileUpload 组件 */
+  /** FileUpload component */
   fileUpload: {
     dropHere: '拖拽文件到此或点击上传',
     fileName: '文件名',

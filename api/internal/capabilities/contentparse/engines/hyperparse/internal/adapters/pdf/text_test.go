@@ -145,7 +145,6 @@ func TestExtractGeomTextRuns_TwAddsForSpace(t *testing.T) {
 }
 
 func TestExtractGeomTextRuns_TsAndTL(t *testing.T) {
-	// Ts：相对无 Ts 时 y 抬高 5（单位矩阵 Tm）。
 	withTs := []byte(`BT 1 0 0 1 100 200 Tm 5 Ts (Hi) Tj ET`)
 	noTs := []byte(`BT 1 0 0 1 100 200 Tm (Hi) Tj ET`)
 	rTs := extractGeomTextRuns(withTs, nil, nil, nil)
@@ -156,7 +155,6 @@ func TestExtractGeomTextRuns_TsAndTL(t *testing.T) {
 	if rTs[0].y-rNo[0].y != 5 {
 		t.Fatalf("Ts y delta got %v want 5 (ts=%v no=%v)", rTs[0].y-rNo[0].y, rTs[0].y, rNo[0].y)
 	}
-	// TL + T*：两行在文本空间中相差 leading（此处 Tm 为单位，故用户空间 y 差 12）。
 	tlStar := []byte(`BT 1 0 0 1 0 0 Tm 12 TL 0 -12 Td (A) Tj T* (B) Tj ET`)
 	r2 := extractGeomTextRuns(tlStar, nil, nil, nil)
 	if len(r2) != 2 {
@@ -182,7 +180,6 @@ func TestExtractGeomTextRuns_TdStartsFromLineMatrixNotShownTextAdvance(t *testin
 }
 
 func TestAssembleGeomTextRuns_InsertsSpaceWhenGapWide(t *testing.T) {
-	// 同一行两条 run：x 间距明显大于上一段粗估宽度 → 中间插空格。
 	runs := []geomTextRun{
 		{s: "RIGHT", x: 100, y: 200, b: 1},
 		{s: "ARM", x: 160, y: 200, b: 2},
@@ -194,7 +191,6 @@ func TestAssembleGeomTextRuns_InsertsSpaceWhenGapWide(t *testing.T) {
 }
 
 func TestAssembleGeomTextRuns_MixedCJKLatin_BlockMinXOrder(t *testing.T) {
-	// 流顺序先写汉字再写拉丁，但拉丁在更左侧：按脚本块最左 x 排序应为「拉丁 + 汉字」。
 	runs := []geomTextRun{
 		{s: "使命", x: 80, y: 100, b: 1, fontSizePt: 12},
 		{s: "AGIC", x: 10, y: 100, b: 2, fontSizePt: 12},
@@ -206,7 +202,6 @@ func TestAssembleGeomTextRuns_MixedCJKLatin_BlockMinXOrder(t *testing.T) {
 }
 
 func TestAssembleGeomTextRuns_YSortWithinStream(t *testing.T) {
-	// 流中先写低行再写高行时，按 y 从大到小输出（PDF 用户空间 y 向上）。
 	runs := []geomTextRun{
 		{s: "Bottom", x: 10, y: 50, b: 20},
 		{s: "Top", x: 10, y: 200, b: 5},
@@ -242,7 +237,6 @@ func TestAssembleGeomTextRuns_AttachSuperscript(t *testing.T) {
 }
 
 func TestAssembleGeomTextRuns_AttachSubscript_WideHorizontalGap(t *testing.T) {
-	// 下标 run 的 x 常在基字右侧较远（接近整字宽），对称 |dx| 会漏检。
 	runs := []geomTextRun{
 		{s: "T", x: 100, y: 200, b: 1, fontSizePt: 12, baseFont: "CambriaMath"},
 		{s: "i", x: 116, y: 196, b: 2, fontSizePt: 7, baseFont: "CambriaMath"},
@@ -526,7 +520,6 @@ func TestNormalizeExtractedText(t *testing.T) {
 }
 
 func TestNormalizeExtractedText_CJKPreservesSingleSpaces(t *testing.T) {
-	// 含中文行不用 strings.Fields，避免把版式上的单空格与相邻词一并压没。
 	in := "AGICTO 使命  愿景"
 	got := normalizeExtractedText(in)
 	want := "AGICTO 使命 愿景"
@@ -542,14 +535,12 @@ func TestCollapseSpacedUpperLatinPairsIter(t *testing.T) {
 	if g := collapseSpacedUpperLatinPairsIter("A G IC T O"); g != "AGICTO" {
 		t.Fatalf("got %q", g)
 	}
-	// 单字母 Tj + 整块全大写（runLen≥4），应与「A THE」等三字词区分
 	if g := collapseSpacedUpperLatinPairsIter("在A GICTO我"); g != "在AGICTO我" {
 		t.Fatalf("got %q", g)
 	}
 	if g := collapseSpacedUpperLatinPairsIter("在A THE我"); strings.Contains(g, "ATHE") {
 		t.Fatalf("got %q", g)
 	}
-	// 不误伤 A 与 LLM 之间仅一空格的情形
 	if g := collapseSpacedUpperLatinPairsIter("使用 A LLM 很好"); g != "使用 A LLM 很好" {
 		t.Fatalf("got %q", g)
 	}
@@ -564,7 +555,6 @@ func TestNormalizeExtractedText_SpacedAcronymOnCJKLine(t *testing.T) {
 }
 
 func TestNormalizeExtractedText_SpacedCapsLineWithoutHan(t *testing.T) {
-	// 纯英文行也会出现「一字母一 Tj」；此前仅含汉字的行才合并，标题行会残留空格。
 	in := "A G I C T O"
 	got := normalizeExtractedText(in)
 	if got != "AGICTO" {
@@ -580,7 +570,6 @@ func TestNormalizeExtractedText_NoMergeXYZebra(t *testing.T) {
 }
 
 func TestOrderGeomLineRunsForReadingOrder_CJKUsesStreamOrder(t *testing.T) {
-	// 内容流先后为「我们提 + 供 + ：」，但冒号的 x 落在两字之间；纯按 x 会得到「我们提：供」。
 	ln := []geomTextRun{
 		{s: "我们提", x: 10, y: 100, b: 0},
 		{s: "供", x: 28, y: 100, b: 10},

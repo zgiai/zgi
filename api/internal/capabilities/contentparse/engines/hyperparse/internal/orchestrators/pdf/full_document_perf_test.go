@@ -30,9 +30,6 @@ func findModuleRoot(t *testing.T) string {
 	return ""
 }
 
-// TestFullDocumentTestdocPerf 对仓库根目录下 testdoc/*.pdf 逐个调用 ParseFullDocument 并打印耗时。
-// 需显式开启：DOCSTILL_RUN_PERF=1 go test ./internal/orchestrators/pdf -run TestFullDocumentTestdocPerf -v
-// 或指定目录：DOCSTILL_TESTDOC=D:\path\to\testdoc
 func TestFullDocumentTestdocPerf(t *testing.T) {
 	if os.Getenv("DOCSTILL_RUN_PERF") == "" {
 		t.Skip("set DOCSTILL_RUN_PERF=1 to run testdoc PDF benchmarks (slow)")
@@ -76,7 +73,6 @@ func TestFullDocumentTestdocPerf(t *testing.T) {
 	}
 }
 
-// TestFullDocumentSinglePDF 对单个文件测耗时：DOCSTILL_RUN_PERF=1 DOCSTILL_PERF_PDF=testdoc/作业单.pdf go test -run TestFullDocumentSinglePDF -v
 func TestFullDocumentSinglePDF(t *testing.T) {
 	if os.Getenv("DOCSTILL_RUN_PERF") == "" {
 		t.Skip("set DOCSTILL_RUN_PERF=1 and DOCSTILL_PERF_PDF to a pdf path (slow)")

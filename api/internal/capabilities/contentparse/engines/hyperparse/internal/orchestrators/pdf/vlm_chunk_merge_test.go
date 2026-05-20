@@ -18,7 +18,6 @@ func TestParseVLMChunksJSON_plainAndFence(t *testing.T) {
 	if got[0]["type"] != "table" || got[0]["source"] != "vlm" {
 		t.Fatalf("%+v", got[0])
 	}
-	// 非 | 开头的管道表，不转换，保留原文
 	if got[0]["text"] != "A|B" {
 		t.Fatalf("text=%q", got[0]["text"])
 	}

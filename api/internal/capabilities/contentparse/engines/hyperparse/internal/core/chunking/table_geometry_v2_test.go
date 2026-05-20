@@ -6,7 +6,6 @@ import (
 )
 
 func TestDeriveColumnAnchorsFromCellRows_MinMaxPerRow(t *testing.T) {
-	// 模拟一行内大量微单元 minX 密排：旧逻辑会把整行宽度并成单一锚点。
 	many := make([]cellRun, 0, 30)
 	for i := 0; i < 30; i++ {
 		x := 0.10 + float64(i)*0.02

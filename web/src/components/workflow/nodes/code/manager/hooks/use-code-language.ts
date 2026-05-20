@@ -34,7 +34,7 @@ function main({var1, var2}) {
   return { result: var1 + var2 };
 }
 `,
-      zh_Hans: `// 入口函数，请返回包含输出字段的对象
+      zh_Hans: `// Entry function. Return an object with your outputs
 function main({var1, var2}) {
   return { result: var1 + var2 };
 }
@@ -49,7 +49,7 @@ function main({var1, var2}) {
 def main(var1, var2):
     return { 'result': var1 + var2 }
 `,
-      zh_Hans: `# 入口函数，请返回包含输出字段的字典
+      zh_Hans: `# Entry function. Return a dict with your outputs
 def main(var1, var2):
     return { 'result': var1 + var2 }
 `,

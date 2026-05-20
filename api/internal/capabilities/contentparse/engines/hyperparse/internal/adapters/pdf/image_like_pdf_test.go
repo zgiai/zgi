@@ -6,7 +6,6 @@ import (
 )
 
 func TestBuildImageLikePDFHints_OnePageAnnotPDF_NotLikely(t *testing.T) {
-	// buildOnePagePDFWithAnnot 来自 main 包测试不便复用：短内容流 + 小文件，不应判为 image_like。
 	data := []byte(`%PDF-1.4
 1 0 obj
 << /Type /Catalog /Pages 2 0 R >>
@@ -41,7 +40,6 @@ startxref
 }
 
 func TestBuildImageLikePDFHints_HugeFileThinStream_Likely(t *testing.T) {
-	// 模拟：两页、内容流极短，但文件 padding 很大（类似扫描件体积）。
 	core := []byte(`%PDF-1.4
 1 0 obj
 << /Type /Catalog /Pages 2 0 R >>

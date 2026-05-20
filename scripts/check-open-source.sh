@@ -122,6 +122,22 @@ if [ "${#scan_targets[@]}" -gt 0 ]; then
     failures=$((failures + 1))
   fi
 
+  comment_targets=()
+  for path in "${scan_targets[@]}"; do
+    case "$path" in
+      *.go|*.ts|*.tsx|*.js|*.jsx|*.mjs|*.sh|*.yaml|*.yml|*.toml|*.md|*.editorconfig)
+        comment_targets+=("$path")
+        ;;
+    esac
+  done
+  if [ "${#comment_targets[@]}" -gt 0 ]; then
+    if rg -n --hidden --pcre2 '^\s*(//|/\*|\*|#)\s*.*\p{Han}' "${comment_targets[@]}" ||
+      rg -n --hidden --pcre2 '^\s*.*//.*\p{Han}' "${comment_targets[@]}"; then
+      echo "open-source-check: source comments must be written in English" >&2
+      failures=$((failures + 1))
+    fi
+  fi
+
   sqlite_test_targets=()
   for path in "${scan_targets[@]}"; do
     case "$path" in

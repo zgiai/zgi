@@ -33,7 +33,7 @@ func (c *Classifier) Classify(errMsg string) (ErrorType, string, bool) {
 		if strings.Contains(lowerMsg, "connection refused") || strings.Contains(lowerMsg, "dial tcp") {
 			return ErrorTypeDBError, "数据库连接失败，请检查数据库服务状态及网络配置", true
 		}
-		// 其他 SQL 语法或逻辑错误交给 LLM
+		// Let the LLM classify other SQL syntax or logic errors.
 		return ErrorTypeDBError, "", false
 	}
 
@@ -53,6 +53,6 @@ func (c *Classifier) Classify(errMsg string) (ErrorType, string, bool) {
 		return ErrorTypeUnknown, "代码执行沙箱服务暂时不可用，可能由于网络配置或 DNS 解析异常，请联系管理员", true
 	}
 
-	// 8. UNKNOWN (✔ 调用 LLM)
+	// 8. UNKNOWN (handled by the LLM)
 	return ErrorTypeUnknown, "", false
 }

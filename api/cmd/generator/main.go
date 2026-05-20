@@ -10,11 +10,11 @@ import (
 )
 
 var (
-	modelName   = flag.String("model", "", "模型名称（必填）")
-	tableName   = flag.String("table", "", "数据库表名（可选，默认使用模型名的小写复数形式）")
-	packageName = flag.String("package", "", "包名（可选，默认使用模型名的小写形式）")
-	outputDir   = flag.String("output", "internal", "输出目录（可选，默认为 internal）")
-	force       = flag.Bool("force", false, "是否强制覆盖已存在的文件")
+	modelName   = flag.String("model", "", "model name (required)")
+	tableName   = flag.String("table", "", "database table name (optional; defaults to lower-case plural model name)")
+	packageName = flag.String("package", "", "package name (optional; defaults to lower-case model name)")
+	outputDir   = flag.String("output", "internal", "output directory (optional; defaults to internal)")
+	force       = flag.Bool("force", false, "whether to overwrite existing files")
 )
 
 type TemplateData struct {
@@ -36,7 +36,7 @@ func main() {
 	flag.Parse()
 
 	if *modelName == "" {
-		fmt.Println("错误：必须指定模型名称（使用 -model 参数）")
+		fmt.Println("error: model name is required (use -model)")
 		flag.Usage()
 		os.Exit(1)
 	}
@@ -53,9 +53,9 @@ func main() {
 		TableName:   *tableName,
 		PackageName: *packageName,
 		StructFields: []Field{
-			{Name: "ID", Type: "uint", Tag: "gorm:\"primarykey\"", Comment: "主键ID", IsRequired: true},
-			{Name: "CreatedAt", Type: "time.Time", Tag: "gorm:\"autoCreateTime\"", Comment: "创建时间", IsRequired: true},
-			{Name: "UpdatedAt", Type: "time.Time", Tag: "gorm:\"autoUpdateTime\"", Comment: "更新时间", IsRequired: true},
+			{Name: "ID", Type: "uint", Tag: "gorm:\"primarykey\"", Comment: "primary key ID", IsRequired: true},
+			{Name: "CreatedAt", Type: "time.Time", Tag: "gorm:\"autoCreateTime\"", Comment: "created time", IsRequired: true},
+			{Name: "UpdatedAt", Type: "time.Time", Tag: "gorm:\"autoUpdateTime\"", Comment: "updated time", IsRequired: true},
 		},
 	}
 
@@ -68,28 +68,28 @@ func main() {
 
 	for fileType, filename := range files {
 		if err := generateFile(fileType, filename, data); err != nil {
-			fmt.Printf("生成 %s 文件失败: %v\n", filename, err)
+			fmt.Printf("failed to generate %s: %v\n", filename, err)
 			os.Exit(1)
 		}
 	}
 
-	fmt.Println("代码生成完成！")
+	fmt.Println("code generation complete")
 }
 
 func generateFile(fileType, filename string, data *TemplateData) error {
 	dir := filepath.Join(*outputDir, data.PackageName)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("创建目录失败: %v", err)
+		return fmt.Errorf("failed to create directory: %v", err)
 	}
 
 	filePath := filepath.Join(dir, filename)
 	if _, err := os.Stat(filePath); err == nil && !*force {
-		return fmt.Errorf("文件 %s 已存在，使用 -force 参数强制覆盖", filePath)
+		return fmt.Errorf("file %s already exists; use -force to overwrite", filePath)
 	}
 
 	file, err := os.Create(filePath)
 	if err != nil {
-		return fmt.Errorf("创建文件失败: %v", err)
+		return fmt.Errorf("failed to create file: %v", err)
 	}
 	defer file.Close()
 
@@ -99,10 +99,10 @@ func generateFile(fileType, filename string, data *TemplateData) error {
 	}
 
 	if err := tmpl.Execute(file, data); err != nil {
-		return fmt.Errorf("执行模板失败: %v", err)
+		return fmt.Errorf("failed to execute template: %v", err)
 	}
 
-	fmt.Printf("已生成文件: %s\n", filePath)
+	fmt.Printf("generated file: %s\n", filePath)
 	return nil
 }
 
@@ -118,7 +118,7 @@ func getTemplate(fileType string) (*template.Template, error) {
 	case "repository":
 		tmplStr = repositoryTemplate
 	default:
-		return nil, fmt.Errorf("未知的文件类型: %s", fileType)
+		return nil, fmt.Errorf("unknown file type: %s", fileType)
 	}
 
 	return template.New(fileType).Parse(tmplStr)
@@ -219,13 +219,13 @@ func New{{.ModelName}}Handler(service {{.ModelName}}Service) *{{.ModelName}}Hand
 func (h *{{.ModelName}}Handler) Create(c *gin.Context) {
 	var model {{.ModelName}}
 	if err := c.ShouldBindJSON(&model); err != nil {
-		response.Error(c, http.StatusBadRequest, "无效的请求数据")
+		response.Error(c, http.StatusBadRequest, "invalid request data")
 		return
 	}
 
 	if err := h.service.Create(c.Request.Context(), &model); err != nil {
-		logger.Error("创建 {{.ModelName}} 失败", "error", err)
-		response.Error(c, http.StatusInternalServerError, "创建失败")
+		logger.Error("failed to create {{.ModelName}}", "error", err)
+		response.Error(c, http.StatusInternalServerError, "create failed")
 		return
 	}
 
@@ -235,13 +235,13 @@ func (h *{{.ModelName}}Handler) Create(c *gin.Context) {
 func (h *{{.ModelName}}Handler) Update(c *gin.Context) {
 	var model {{.ModelName}}
 	if err := c.ShouldBindJSON(&model); err != nil {
-		response.Error(c, http.StatusBadRequest, "无效的请求数据")
+		response.Error(c, http.StatusBadRequest, "invalid request data")
 		return
 	}
 
 	if err := h.service.Update(c.Request.Context(), &model); err != nil {
-		logger.Error("更新 {{.ModelName}} 失败", "error", err)
-		response.Error(c, http.StatusInternalServerError, "更新失败")
+		logger.Error("failed to update {{.ModelName}}", "error", err)
+		response.Error(c, http.StatusInternalServerError, "update failed")
 		return
 	}
 
@@ -251,13 +251,13 @@ func (h *{{.ModelName}}Handler) Update(c *gin.Context) {
 func (h *{{.ModelName}}Handler) Delete(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "无效的ID")
+		response.Error(c, http.StatusBadRequest, "invalid ID")
 		return
 	}
 
 	if err := h.service.Delete(c.Request.Context(), uint(id)); err != nil {
-		logger.Error("删除 {{.ModelName}} 失败", "error", err)
-		response.Error(c, http.StatusInternalServerError, "删除失败")
+		logger.Error("failed to delete {{.ModelName}}", "error", err)
+		response.Error(c, http.StatusInternalServerError, "delete failed")
 		return
 	}
 
@@ -267,14 +267,14 @@ func (h *{{.ModelName}}Handler) Delete(c *gin.Context) {
 func (h *{{.ModelName}}Handler) Get(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "无效的ID")
+		response.Error(c, http.StatusBadRequest, "invalid ID")
 		return
 	}
 
 	model, err := h.service.Get(c.Request.Context(), uint(id))
 	if err != nil {
-		logger.Error("获取 {{.ModelName}} 失败", "error", err)
-		response.Error(c, http.StatusInternalServerError, "获取失败")
+		logger.Error("failed to get {{.ModelName}}", "error", err)
+		response.Error(c, http.StatusInternalServerError, "get failed")
 		return
 	}
 
@@ -287,8 +287,8 @@ func (h *{{.ModelName}}Handler) List(c *gin.Context) {
 
 	models, total, err := h.service.List(c.Request.Context(), page, pageSize)
 	if err != nil {
-		logger.Error("获取 {{.ModelName}} 列表失败", "error", err)
-		response.Error(c, http.StatusInternalServerError, "获取列表失败")
+		logger.Error("failed to list {{.ModelName}}", "error", err)
+		response.Error(c, http.StatusInternalServerError, "list failed")
 		return
 	}
 

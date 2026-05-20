@@ -5,13 +5,13 @@ import (
 	"fmt"
 )
 
-// PromptMessage is a minimized role/content structure。
+// PromptMessage is a minimized role/content structure.
 type PromptMessage struct {
 	Role    string
 	Content string
 }
 
-// InvokeRequest captures the fields required for non-streaming LLM calls。
+// InvokeRequest captures the fields required for non-streaming LLM calls.
 type InvokeRequest struct {
 	ModelSlug  string
 	Messages   []PromptMessage
@@ -20,7 +20,7 @@ type InvokeRequest struct {
 	UserID     string
 }
 
-// InvokeResult generate collated results for sql。
+// InvokeResult returns collated SQL generation results.
 type InvokeResult struct {
 	Text       string
 	Finish     string

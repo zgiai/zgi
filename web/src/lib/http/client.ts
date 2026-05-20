@@ -101,10 +101,6 @@ export class HttpClient {
     // Response interceptor - handle errors
     this.instance.interceptors.response.use(
       response => {
-        if (getCurrentEnvironment() === 'development' && typeof window !== 'undefined') {
-          console.log('🔹 Response:', response.config.url, response.status, response.data);
-        }
-
         // Check for business error codes in successful HTTP responses
         const data = response.data;
         if (data && typeof data === 'object' && 'code' in data) {

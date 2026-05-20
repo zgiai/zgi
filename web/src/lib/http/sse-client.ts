@@ -444,11 +444,6 @@ export class SseClient {
     const dataEvent = (dataObj as { event?: unknown }).event;
     const evt = (typeof dataEvent === 'string' && dataEvent) || fallbackEvent || '';
 
-    if (process.env.NODE_ENV !== 'production') {
-      // eslint-disable-next-line no-console
-      console.log('[SSE] event:', evt || '(none)', 'payload:', dataObj);
-    }
-
     const terminalStatusByEvent: Record<string, string | undefined> = {
       workflow_stopped: 'stopped',
       workflow_failed: 'failed',
@@ -492,10 +487,6 @@ export class SseClient {
 
     eventHandlers[evt]?.(payload);
 
-    if (!eventHandlers[evt] && process.env.NODE_ENV !== 'production') {
-      // eslint-disable-next-line no-console
-      console.log('[SSE] unknown event type ignored:', evt, dataObj);
-    }
   }
 }
 

@@ -200,8 +200,8 @@ func convertToAdapterContentPart(c PromptMessageContent) llmAdapter.MessageConte
 	}
 }
 
-// buildChatRequest  LLMInvokeRequest parameters to ChatRequest required by the gateway service。
-// Map only common inference parameters and response formats (response_format/json_schema)。
+// buildChatRequest maps LLMInvokeRequest parameters to the ChatRequest required by the gateway service.
+// Map only common inference parameters and response formats (response_format/json_schema).
 func buildChatRequest(req *LLMInvokeRequest) (*llmAdapter.ChatRequest, bool) {
 	llmReq := &llmAdapter.ChatRequest{
 		Provider: strings.TrimSpace(req.ProviderSlug),

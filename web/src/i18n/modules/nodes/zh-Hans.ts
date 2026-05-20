@@ -812,7 +812,7 @@ const messages: NodesMessages = {
           title: '产品顾问',
           description: '专业的产品咨询和推荐助手',
         },
-        // 面向任务工作流的模板
+        // Templates for task workflows
         translation: {
           title: '内容翻译',
           description: '在保持风格一致的前提下进行多语言翻译',

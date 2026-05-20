@@ -137,7 +137,7 @@ function slugify(text: string): string {
     .replace(/^-|-$/g, '');
 }
 
-// 标题（h1-h6）：统一样式 + 自动 slug + 悬停锚点
+// Headings (h1-h6): consistent styling, generated slugs, and hover anchors
 interface BaseHeadingProps {
   children?: React.ReactNode;
   id?: string;
@@ -256,7 +256,7 @@ export function InlineCode({ children, className }: InlineCodeProps) {
   );
 }
 
-// 列表组件（ul/ol/li）用于 MDX 渲染映射
+// List components (ul/ol/li) used by the MDX render map
 export interface UlProps {
   children?: React.ReactNode;
   className?: string;
