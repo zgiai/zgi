@@ -61,6 +61,15 @@ Local default endpoints:
 
 - Web and API gateway: `http://localhost:${PUBLIC_PORT:-2679}`
 
+On first launch, open the gateway URL and create the first administrator account.
+For local testing, you can use example credentials such as:
+
+- Email: `admin@zgi.ai`
+- Password: `Zgi@2679`
+
+These credentials are examples only. ZGI does not ship with a default administrator account.
+Use your own email and a strong password in production.
+
 Internal Docker network ports:
 
 - Web: `2680`
