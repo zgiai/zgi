@@ -15,6 +15,7 @@ const GROUP_SOURCES = {
   dashboard: 'DASHBOARD_MODULES',
   webapp: 'WEBAPP_MODULES',
   appToken: 'APP_TOKEN_MODULES',
+  announcementToken: 'ANNOUNCEMENT_TOKEN_MODULES',
   profile: 'PROFILE_MODULES',
 };
 
@@ -52,11 +53,23 @@ const GROUP_OWNERS = [
   },
   {
     group: 'webapp',
-    prefixes: ['src/app/webapp/', 'src/components/webapp/', 'src/hooks/webapp/'],
+    prefixes: [
+      'src/app/webapp/',
+      'src/components/webapp/',
+      'src/hooks/webapp/',
+      'src/components/workflow/approval/',
+      'src/components/workflow/question-answer/',
+      'src/components/workflow/ui/workflow-chat-panel/',
+      'src/components/workflow/ui/workflow-run-panel/',
+    ],
   },
   {
     group: 'appToken',
     prefixes: ['src/app/a/'],
+  },
+  {
+    group: 'announcementToken',
+    prefixes: ['src/app/n/'],
   },
   {
     group: 'profile',

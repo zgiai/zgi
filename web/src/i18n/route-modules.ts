@@ -2,8 +2,9 @@ import type { ModuleName } from './loader';
 
 const PUBLIC_MODULES: ModuleName[] = ['common', 'navigation'];
 const AUTH_MODULES: ModuleName[] = ['common', 'auth', 'ui', 'navigation'];
-const WEBAPP_MODULES: ModuleName[] = ['common', 'ui', 'webapp', 'files', 'agents'];
+const WEBAPP_MODULES: ModuleName[] = ['common', 'ui', 'webapp', 'files', 'agents', 'nodes'];
 const APP_TOKEN_MODULES: ModuleName[] = ['common', 'ui', 'webapp', 'files', 'agents', 'nodes'];
+const ANNOUNCEMENT_TOKEN_MODULES: ModuleName[] = ['common', 'ui', 'nodes'];
 const PROFILE_MODULES: ModuleName[] = ['common', 'ui', 'navigation', 'profile'];
 
 const CONSOLE_MODULES: ModuleName[] = [
@@ -73,6 +74,7 @@ function normalizePathname(pathname: string): string {
       'init',
       'invite',
       'login',
+      'n',
       'privacy',
       'profile',
       'register',
@@ -98,6 +100,7 @@ export function getModulesForPathname(pathname: string): ModuleName[] {
   if (firstSegment === 'dashboard') return uniqueModules(DASHBOARD_MODULES);
   if (firstSegment === 'webapp') return uniqueModules(WEBAPP_MODULES);
   if (firstSegment === 'a') return uniqueModules(APP_TOKEN_MODULES);
+  if (firstSegment === 'n') return uniqueModules(ANNOUNCEMENT_TOKEN_MODULES);
   if (firstSegment === 'profile') return uniqueModules(PROFILE_MODULES);
 
   return PUBLIC_MODULES;
