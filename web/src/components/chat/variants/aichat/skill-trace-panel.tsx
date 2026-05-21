@@ -7,7 +7,6 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import type { AIChatSkillInvocation } from '@/services/types/aichat';
@@ -214,8 +213,8 @@ export function AIChatSkillTracePanel({
         </button>
       </CollapsibleTrigger>
       <CollapsibleContent>
-        <div className="mt-2 max-w-xl rounded-md border bg-background/80 p-2">
-          <ScrollArea className="max-h-56 pr-3">
+        <div className="mt-2 max-w-xl overflow-hidden rounded-md border bg-background/80 p-2">
+          <div className="max-h-56 overflow-y-auto pr-2">
             <div className="space-y-2">
               {events.map((event, index) => {
                 const duration = getDurationText(event.invocation.duration_ms);
@@ -259,11 +258,14 @@ export function AIChatSkillTracePanel({
                           if (!formatted) return null;
 
                           return (
-                            <div key={labelKey} className="grid grid-cols-[88px_minmax(0,1fr)] gap-2">
+                            <div
+                              key={labelKey}
+                              className="grid grid-cols-[88px_minmax(0,1fr)] gap-2"
+                            >
                               <dt className="text-muted-foreground">
                                 {t(SKILL_TRACE_DEBUG_LABEL_KEYS[labelKey])}
                               </dt>
-                              <dd className="min-w-0 break-words font-mono text-foreground/80">
+                              <dd className="min-w-0 whitespace-pre-wrap break-all font-mono text-foreground/80">
                                 {formatted}
                               </dd>
                             </div>
@@ -275,7 +277,7 @@ export function AIChatSkillTracePanel({
                 );
               })}
             </div>
-          </ScrollArea>
+          </div>
         </div>
       </CollapsibleContent>
     </Collapsible>
