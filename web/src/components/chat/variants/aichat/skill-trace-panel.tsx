@@ -58,7 +58,10 @@ function getStatusIcon(tone: SkillTraceTone) {
 }
 
 function getDurationText(durationMs: number | undefined): string | null {
-  return typeof durationMs === 'number' && Number.isFinite(durationMs) ? `${durationMs}ms` : null;
+  if (typeof durationMs !== 'number' || !Number.isFinite(durationMs)) return null;
+  if (durationMs < 0) return null;
+  if (durationMs === 0) return '<1ms';
+  return `${durationMs}ms`;
 }
 
 function formatDebugValue(value: unknown): string | null {
