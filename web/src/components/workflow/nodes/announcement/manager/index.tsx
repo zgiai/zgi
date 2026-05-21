@@ -1,14 +1,13 @@
 'use client';
 
 import React from 'react';
-import { CircleAlert } from 'lucide-react';
+import { CircleAlert, Clock, Link2, Megaphone, Variable } from 'lucide-react';
 
 import OutputVariablesView from '@/components/workflow/common/output-variables-view';
 import WorkflowValueInserter from '@/components/workflow/common/workflow-value-inserter';
 import type { VariableInsertValue } from '@/components/workflow/common/workflow-value-inserter/variable-item';
 import { WorkflowValueEditor, type WorkflowValueEditorHandle } from '@/components/workflow/ui';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
@@ -69,8 +68,57 @@ function Section({
   );
 }
 
-function FieldLabel({ children }: { children: React.ReactNode }) {
-  return <Label className="text-xs font-medium text-muted-foreground">{children}</Label>;
+function IntroCard() {
+  const t = useT('nodes');
+  const items = [
+    {
+      icon: Megaphone,
+      title: t('announcement.intro.createLink.title'),
+      description: t('announcement.intro.createLink.description'),
+    },
+    {
+      icon: Variable,
+      title: t('announcement.intro.variables.title'),
+      description: t('announcement.intro.variables.description'),
+    },
+    {
+      icon: Clock,
+      title: t('announcement.intro.expiration.title'),
+      description: t('announcement.intro.expiration.description'),
+    },
+    {
+      icon: Link2,
+      title: t('announcement.intro.outputs.title'),
+      description: t('announcement.intro.outputs.description'),
+    },
+  ];
+
+  return (
+    <div className="rounded-lg border bg-muted/40 p-3">
+      <div className="text-sm font-semibold text-foreground">{t('announcement.intro.title')}</div>
+      <p className="mt-1 text-xs leading-5 text-muted-foreground">
+        {t('announcement.intro.description')}
+      </p>
+      <div className="mt-3 grid gap-2">
+        {items.map(item => {
+          const Icon = item.icon;
+          return (
+            <div key={item.title} className="flex gap-2 rounded-md bg-background/70 p-2">
+              <div className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+                <Icon className="size-3.5" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-xs font-medium text-foreground">{item.title}</div>
+                <div className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                  {item.description}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 export function AnnouncementManager({
@@ -157,9 +205,11 @@ export function AnnouncementManager({
 
   return (
     <div className={cn('space-y-5', className)}>
+      <IntroCard />
+
       <Section
         title={t('announcement.section.title')}
-        description={t('announcement.hint.variableSources')}
+        description={t('announcement.sectionHelp.title')}
       >
         <WorkflowValueInserter
           nodeId={nodeId}
@@ -186,7 +236,7 @@ export function AnnouncementManager({
 
       <Section
         title={t('announcement.section.content')}
-        description={t('announcement.hint.variableSources')}
+        description={t('announcement.sectionHelp.content')}
       >
         <WorkflowValueInserter
           nodeId={nodeId}
@@ -213,7 +263,7 @@ export function AnnouncementManager({
 
       <Section
         title={t('announcement.section.timeout')}
-        description={t('announcement.hint.timeout')}
+        description={t('announcement.sectionHelp.timeout')}
       >
         <div className="grid grid-cols-[1fr_120px] gap-2">
           <Input
@@ -290,8 +340,6 @@ export function AnnouncementManager({
       <Section title={t('common.outputVariables')}>
         <OutputVariablesView variables={outputs} />
       </Section>
-
-      <FieldLabel>{t('announcement.hint.publicLink')}</FieldLabel>
     </div>
   );
 }

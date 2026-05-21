@@ -442,10 +442,40 @@ const messages = {
     },
   },
   announcement: {
+    intro: {
+      title: 'Announcement behavior',
+      description:
+        'Create a short public link for the configured announcement and continue the workflow immediately.',
+      createLink: {
+        title: 'Short public link',
+        description:
+          'Runtime generates an /n/{token} link that can be opened without approval actions.',
+      },
+      variables: {
+        title: 'Variable insertion',
+        description:
+          'Title and content can use upstream outputs, system variables, environment variables, and conversation variables.',
+      },
+      expiration: {
+        title: 'Expiration control',
+        description:
+          'The link becomes unavailable after the configured duration. No background task is required.',
+      },
+      outputs: {
+        title: 'Downstream outputs',
+        description:
+          'Only title, content, expiration_time, and url are exposed to following nodes.',
+      },
+    },
     section: {
       title: 'Announcement Title',
       content: 'Announcement Content',
       timeout: 'Expiration',
+    },
+    sectionHelp: {
+      title: 'This is the public page title after variables are resolved.',
+      content: 'This Markdown body is shown on the public announcement page.',
+      timeout: 'Choose how long the public link remains accessible.',
     },
     defaults: {
       content: 'Please read this announcement.',
@@ -470,12 +500,6 @@ const messages = {
     placeholders: {
       title: 'Write the announcement title. Use / to insert variables.',
       content: 'Write the Markdown announcement content. Use / to insert variables.',
-    },
-    hint: {
-      publicLink: 'The flow creates one public link and continues immediately.',
-      variableSources:
-        'Supports upstream node outputs, system variables, environment variables, and conversation variables.',
-      timeout: 'The announcement link becomes unavailable after the configured duration.',
     },
     validation: {
       titleRequired: 'Announcement node title is required',

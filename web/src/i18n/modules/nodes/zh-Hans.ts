@@ -435,10 +435,35 @@ const messages: NodesMessages = {
     },
   },
   announcement: {
+    intro: {
+      title: '公告节点行为',
+      description: '根据配置生成一个短公开链接，并立即继续执行工作流。',
+      createLink: {
+        title: '短公开链接',
+        description: '运行时生成 /n/{token} 链接，可直接打开，无需审批动作。',
+      },
+      variables: {
+        title: '变量插入',
+        description: '标题和内容支持插入上游输出、系统变量、环境变量和会话变量。',
+      },
+      expiration: {
+        title: '过期控制',
+        description: '链接会在配置时长后不可访问，不需要后台扫描任务。',
+      },
+      outputs: {
+        title: '下游输出',
+        description: '仅向后续节点暴露 title、content、expiration_time 和 url。',
+      },
+    },
     section: {
       title: '公告标题',
       content: '公告内容',
       timeout: '过期时间',
+    },
+    sectionHelp: {
+      title: '变量解析后会作为公开公告页标题展示。',
+      content: '这段 Markdown 内容会展示在公开公告页中。',
+      timeout: '设置公开链接可访问的有效时长。',
     },
     defaults: {
       content: '请阅读这条公告。',
@@ -463,11 +488,6 @@ const messages: NodesMessages = {
     placeholders: {
       title: '填写公告标题，可使用 / 插入变量。',
       content: '填写 Markdown 公告内容，可使用 / 插入变量。',
-    },
-    hint: {
-      publicLink: '流程会创建一个公开链接，并立即继续执行。',
-      variableSources: '支持插入上游节点输出、系统变量、环境变量和会话变量。',
-      timeout: '公告链接会在配置的时长后不可访问。',
     },
     validation: {
       titleRequired: '公告标题不能为空',
