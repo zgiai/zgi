@@ -16,6 +16,7 @@ const (
 
 type Service interface {
 	IsEnabled() bool
+	ValidateTemplateParams(template string, params map[string]string) error
 	Send(ctx context.Context, req Request) (*Result, error)
 }
 
@@ -224,8 +225,18 @@ func (c AliyunTemplateConfig) valid(params []TemplateParamConfig) bool {
 	if strings.TrimSpace(c.TemplateCode) == "" || normalizedParamMode(c.ParamMode, ParamModeMap) != ParamModeMap {
 		return false
 	}
+	if len(c.ParamMap) != len(params) {
+		return false
+	}
+	defined := make(map[string]struct{}, len(params))
 	for _, param := range params {
+		defined[param.Key] = struct{}{}
 		if strings.TrimSpace(c.ParamMap[param.Key]) == "" {
+			return false
+		}
+	}
+	for key := range c.ParamMap {
+		if _, ok := defined[key]; !ok {
 			return false
 		}
 	}
@@ -245,9 +256,16 @@ func (c ChuanglanTemplateConfig) valid(params []TemplateParamConfig) bool {
 		len(c.ParamOrder) == 0 {
 		return false
 	}
+	if len(c.ParamOrder) != len(params) {
+		return false
+	}
 	allowed := make(map[string]struct{}, len(c.ParamOrder))
 	for _, key := range c.ParamOrder {
-		allowed[strings.TrimSpace(key)] = struct{}{}
+		key = strings.TrimSpace(key)
+		if _, exists := allowed[key]; exists {
+			return false
+		}
+		allowed[key] = struct{}{}
 	}
 	for _, param := range params {
 		if _, ok := allowed[param.Key]; !ok {

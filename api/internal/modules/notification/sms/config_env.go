@@ -226,18 +226,32 @@ func validateTemplateProviderParamMappings(template TemplateConfig) error {
 }
 
 func validateAliyunTemplateParamMapping(params []TemplateParamConfig, paramMap map[string]string) error {
+	defined := templateParamKeySet(params)
 	for _, param := range params {
 		if strings.TrimSpace(paramMap[param.Key]) == "" {
 			return fmt.Errorf("aliyun param mapping for %s is required", param.Key)
+		}
+	}
+	for key := range paramMap {
+		if _, ok := defined[key]; !ok {
+			return fmt.Errorf("aliyun param mapping %s is not defined by template params", key)
 		}
 	}
 	return nil
 }
 
 func validateChuanglanTemplateParamOrder(params []TemplateParamConfig, paramOrder []string) error {
+	defined := templateParamKeySet(params)
 	ordered := make(map[string]struct{}, len(paramOrder))
 	for _, key := range paramOrder {
-		ordered[strings.TrimSpace(key)] = struct{}{}
+		key = strings.TrimSpace(key)
+		if _, exists := ordered[key]; exists {
+			return fmt.Errorf("chuanglan param order %s is duplicated", key)
+		}
+		if _, ok := defined[key]; !ok {
+			return fmt.Errorf("chuanglan param order %s is not defined by template params", key)
+		}
+		ordered[key] = struct{}{}
 	}
 	for _, param := range params {
 		if _, ok := ordered[param.Key]; !ok {
@@ -245,6 +259,14 @@ func validateChuanglanTemplateParamOrder(params []TemplateParamConfig, paramOrde
 		}
 	}
 	return nil
+}
+
+func templateParamKeySet(params []TemplateParamConfig) map[string]struct{} {
+	defined := make(map[string]struct{}, len(params))
+	for _, param := range params {
+		defined[param.Key] = struct{}{}
+	}
+	return defined
 }
 
 func trimStringMap(values map[string]string) map[string]string {

@@ -540,6 +540,9 @@ const messages = {
       enabledActionRequired: 'At least one enabled operation is required',
       recipientsRequired: 'At least one recipient is required for operation {index}',
       templateRequired: 'SMS template is required for operation {index}',
+      notificationTitleRequired: 'Notification title is required for operation {index}',
+      linkCodeRequired: 'Link code is required for operation {index}',
+      templateParamRequired: '{label} is required for operation {index}',
       subjectRequired: 'Subject is required for operation {index}',
       bodyTypeRequired: 'A supported body type is required for operation {index}',
       bodyRequired: 'Message body is required for operation {index}',
@@ -561,6 +564,7 @@ const messages = {
       templateRequired: 'SMS template is required',
       notificationTitleRequired: 'Notification title is required',
       linkCodeRequired: 'Link code is required',
+      templateParamRequired: '{label} is required',
     },
   },
   jsonParser: {

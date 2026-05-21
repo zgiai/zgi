@@ -152,6 +152,9 @@ func (n *Node) compileNotificationAction(index int, action TaskActionData, actio
 func (n *Node) compileSMSNotificationAction(index int, action TaskActionData, actionOrder int, recipients []string) (automationdto.CreateTaskActionRequest, error) {
 	template := strings.TrimSpace(action.Notification.Template)
 	templateParams := n.resolveNotificationTemplateParams(action.Notification)
+	if err := n.validateSMSNotificationTemplateParams(index, template, templateParams); err != nil {
+		return automationdto.CreateTaskActionRequest{}, err
+	}
 
 	return automationdto.CreateTaskActionRequest{
 		ActionType:  action.ActionType,

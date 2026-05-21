@@ -1,7 +1,10 @@
-import type { ValidationResult } from '../common/validation';
+import type { ValidationError, ValidationResult } from '../common/validation';
 import {
+  getMissingRequiredNotificationSMSTemplateParams,
   normalizeNotificationSMSTemplateKey,
   NOTIFICATION_SMS_TEMPLATE,
+  type NotificationSMSTemplate,
+  type NotificationSMSTemplateParam,
 } from '@/lib/features/notification-sms';
 
 export interface NotificationSMSNodeData {
@@ -62,9 +65,12 @@ export function normalizeNotificationSMSNodeData(
   };
 }
 
-export const checkValid = (data: NotificationSMSNodeData): ValidationResult => {
+export const checkValid = (
+  data: NotificationSMSNodeData,
+  templates: NotificationSMSTemplate[] = []
+): ValidationResult => {
   const normalized = normalizeNotificationSMSNodeData(data);
-  const errors = [];
+  const errors: ValidationError[] = [];
 
   if (!normalized.phone.trim()) {
     errors.push({ code: 'notificationSms.validation.phoneRequired' as const });
@@ -74,16 +80,38 @@ export const checkValid = (data: NotificationSMSNodeData): ValidationResult => {
     errors.push({ code: 'notificationSms.validation.templateRequired' as const });
   }
 
-  if (normalized.template === NOTIFICATION_SMS_TEMPLATE) {
-    for (const param of PENDING_ACTION_REQUIRED_PARAMS) {
-      if (!normalized.template_params[param.key]?.trim()) {
-        errors.push({ code: param.code });
-      }
-    }
-  }
+  errors.push(...getNotificationSMSTemplateParamValidationErrors(normalized, templates));
 
   return { isValid: errors.length === 0, errors, warnings: [] };
 };
+
+export function getNotificationSMSTemplateParamValidationErrors(
+  data: Pick<NotificationSMSNodeData, 'template' | 'template_params'>,
+  templates: NotificationSMSTemplate[] = []
+): ValidationError[] {
+  return getMissingRequiredNotificationSMSTemplateParams(
+    data.template,
+    data.template_params,
+    templates
+  ).map(param => getTemplateParamRequiredError(data.template, param));
+}
+
+function getTemplateParamRequiredError(
+  templateKey: string,
+  param: NotificationSMSTemplateParam
+): ValidationError {
+  if (templateKey === NOTIFICATION_SMS_TEMPLATE) {
+    const pendingActionParam = PENDING_ACTION_REQUIRED_PARAMS.find(item => item.key === param.key);
+    if (pendingActionParam) {
+      return { code: pendingActionParam.code };
+    }
+  }
+
+  return {
+    code: 'notificationSms.validation.templateParamRequired',
+    params: { label: param.label?.trim() || param.key },
+  };
+}
 
 function normalizeTemplateParams(
   source: Partial<NotificationSMSNodeData> | Record<string, unknown>

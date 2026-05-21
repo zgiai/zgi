@@ -24,6 +24,7 @@ import { useAccountPermissions } from '@/hooks/organization/use-account-permissi
 import { useWorkflowLeaveGuard } from './hooks/use-workflow-leave-guard';
 import { isWorkflowDebugPanelActive } from './hooks/use-debug-focus-mode';
 import { getNodeAbsolutePosition } from './store/helpers/graph';
+import { useAuthStore } from '@/store/auth-store';
 
 // Throttled global mouse tracker to isolate re-renders from WorkflowEditor
 // Uses both requestAnimationFrame and time-based throttling (50ms) to minimize store updates
@@ -89,6 +90,12 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
   const { handleCombinedSave, handlePublish, isSaving, isPublishing, isDirty } =
     useCombinedWorkflowSave(agentId);
   const { isValid } = useWorkflowValidation();
+  const systemFeatures = useAuthStore.use.systemFeatures();
+  const syncRunnableSets = useWorkflowStore.use.syncRunnableSets();
+
+  useEffect(() => {
+    syncRunnableSets();
+  }, [syncRunnableSets, systemFeatures]);
 
   // Initialize keyboard shortcuts with onSave routed to combined save
   const onSave = useCallback(() => {

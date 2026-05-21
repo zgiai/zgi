@@ -6,7 +6,6 @@ import (
 
 	"github.com/robfig/cron/v3"
 	automationmodel "github.com/zgiai/zgi/api/internal/modules/automation/model"
-	notificationsms "github.com/zgiai/zgi/api/internal/modules/notification/sms"
 )
 
 func validateNodeData(nodeData NodeData) error {
@@ -102,16 +101,30 @@ func validateNotificationContent(index int, action TaskActionData) error {
 	if template == "" {
 		return fmt.Errorf("task.actions[%d].notification.template is required", index)
 	}
-	if template != notificationsms.TemplatePendingActionNotification {
-		return nil
-	}
 
-	templateParams := notificationsms.NormalizeTemplateParams(action.Notification.TemplateParams)
-	if strings.TrimSpace(templateParams["notification_title"]) == "" {
-		return fmt.Errorf("task.actions[%d].notification.template_params.notification_title is required", index)
+	return nil
+}
+
+func (n *Node) validateSMSNotificationActions() error {
+	for index, action := range n.nodeData.Task.Actions {
+		if !action.IsEnabled() ||
+			action.ActionType != automationmodel.AutomationActionTypeSendNotification ||
+			action.ChannelType != automationmodel.NotificationChannelTypeSMS {
+			continue
+		}
+		if err := n.validateSMSNotificationTemplateParams(index, action.Notification.Template, action.Notification.TemplateParams); err != nil {
+			return err
+		}
 	}
-	if strings.TrimSpace(templateParams["link_code"]) == "" {
-		return fmt.Errorf("task.actions[%d].notification.template_params.link_code is required", index)
+	return nil
+}
+
+func (n *Node) validateSMSNotificationTemplateParams(index int, template string, params map[string]string) error {
+	if n.notificationSMSService == nil {
+		return fmt.Errorf("notification sms service is required for task.actions[%d]", index)
+	}
+	if err := n.notificationSMSService.ValidateTemplateParams(template, params); err != nil {
+		return fmt.Errorf("task.actions[%d].notification.template_params: %w", index, err)
 	}
 	return nil
 }

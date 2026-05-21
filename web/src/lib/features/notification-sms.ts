@@ -19,6 +19,11 @@ export interface NotificationSMSTemplate {
   params?: NotificationSMSTemplateParam[];
 }
 
+const FALLBACK_PENDING_ACTION_TEMPLATE_PARAMS: NotificationSMSTemplateParam[] = [
+  { key: 'notification_title', label: 'Notification title', required: true },
+  { key: 'link_code', label: 'Link code', required: true },
+];
+
 export function isNotificationSMSEnabled(features?: SystemFeatures | null): boolean {
   if (!features?.notification_sms?.enabled) {
     return false;
@@ -95,4 +100,20 @@ export function normalizeNotificationSMSTemplate(
 
 export function normalizeNotificationSMSTemplateKey(value: string | undefined): string {
   return value?.trim() ?? '';
+}
+
+export function getMissingRequiredNotificationSMSTemplateParams(
+  templateKey: string,
+  templateParams: Record<string, string>,
+  templates: NotificationSMSTemplate[] = []
+): NotificationSMSTemplateParam[] {
+  const normalizedTemplateKey = normalizeNotificationSMSTemplateKey(templateKey);
+  const template = templates.find(item => item.key === normalizedTemplateKey);
+  const params =
+    template?.params ??
+    (normalizedTemplateKey === NOTIFICATION_SMS_TEMPLATE
+      ? FALLBACK_PENDING_ACTION_TEMPLATE_PARAMS
+      : []);
+
+  return params.filter(param => param.required !== false && !templateParams[param.key]?.trim());
 }

@@ -1,8 +1,11 @@
 import type { AutomationBodyType } from '@/services/types/automation';
 import type { ValidationError, ValidationResult } from '../common/validation';
 import {
+  getMissingRequiredNotificationSMSTemplateParams,
   normalizeNotificationSMSTemplateKey,
   NOTIFICATION_SMS_TEMPLATE,
+  type NotificationSMSTemplate,
+  type NotificationSMSTemplateParam,
 } from '@/lib/features/notification-sms';
 import { generateClientId } from '@/utils/client-id';
 
@@ -327,7 +330,8 @@ const SUPPORTED_EMAIL_BODY_TYPES: AutomationBodyType[] = ['text/html', 'text/pla
 
 export function getCreateScheduledTaskActionValidationErrors(
   action: CreateScheduledTaskActionData,
-  index: number
+  index: number,
+  smsTemplates: NotificationSMSTemplate[] = []
 ): CreateScheduledTaskActionValidationErrors {
   const params = { index: index + 1 };
   const errors: CreateScheduledTaskActionValidationErrors = {};
@@ -369,6 +373,20 @@ export function getCreateScheduledTaskActionValidationErrors(
       };
     }
 
+    const missingParams = getMissingRequiredNotificationSMSTemplateParams(
+      notification.template,
+      notification.template_params,
+      smsTemplates
+    );
+    if (missingParams.length > 0) {
+      errors.templateParams = Object.fromEntries(
+        missingParams.map(param => [
+          param.key,
+          getCreateScheduledTaskTemplateParamRequiredError(index, notification.template, param),
+        ])
+      );
+    }
+
     return errors;
   }
 
@@ -393,7 +411,10 @@ export function hasCreateScheduledTaskActionValidationErrors(
   return Object.values(errors).some(Boolean);
 }
 
-export const checkValid = (data: CreateScheduledTaskNodeData): ValidationResult => {
+export const checkValid = (
+  data: CreateScheduledTaskNodeData,
+  smsTemplates: NotificationSMSTemplate[] = []
+): ValidationResult => {
   const normalized = normalizeCreateScheduledTaskNodeData(data);
   const errors: ValidationError[] = [];
   const warnings: ValidationError[] = [];
@@ -428,14 +449,44 @@ export const checkValid = (data: CreateScheduledTaskNodeData): ValidationResult 
   }
 
   enabledActions.forEach(({ action, index }) => {
-    const actionErrors = getCreateScheduledTaskActionValidationErrors(action, index);
-
-    errors.push(
-      ...Object.values(actionErrors).filter(
-        (error): error is ValidationError => typeof error !== 'undefined'
-      )
-    );
+    const actionErrors = getCreateScheduledTaskActionValidationErrors(action, index, smsTemplates);
+    errors.push(...flattenCreateScheduledTaskActionValidationErrors(actionErrors));
   });
 
   return { isValid: errors.length === 0, errors, warnings };
 };
+
+function getCreateScheduledTaskTemplateParamRequiredError(
+  index: number,
+  templateKey: string,
+  param: NotificationSMSTemplateParam
+): ValidationError {
+  const params = { index: index + 1 };
+  if (templateKey === NOTIFICATION_SMS_TEMPLATE) {
+    if (param.key === 'notification_title') {
+      return { code: 'createScheduledTask.validation.notificationTitleRequired', params };
+    }
+    if (param.key === 'link_code') {
+      return { code: 'createScheduledTask.validation.linkCodeRequired', params };
+    }
+  }
+  return {
+    code: 'createScheduledTask.validation.templateParamRequired',
+    params: { ...params, label: param.label?.trim() || param.key },
+  };
+}
+
+function flattenCreateScheduledTaskActionValidationErrors(
+  actionErrors: CreateScheduledTaskActionValidationErrors
+): ValidationError[] {
+  return [
+    actionErrors.actionType,
+    actionErrors.channelType,
+    actionErrors.recipients,
+    actionErrors.template,
+    actionErrors.subject,
+    actionErrors.bodyType,
+    actionErrors.body,
+    ...Object.values(actionErrors.templateParams ?? {}),
+  ].filter((error): error is ValidationError => typeof error !== 'undefined');
+}

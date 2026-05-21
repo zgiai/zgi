@@ -25,6 +25,34 @@ func (s *NotificationSMSService) IsEnabled() bool {
 	return s != nil && s.config.Capability().Enabled
 }
 
+func (s *NotificationSMSService) ValidateTemplateParams(templateKey string, params map[string]string) error {
+	if s == nil {
+		return fmt.Errorf("notification sms is not enabled")
+	}
+	if s.config.ConfigError != "" {
+		return fmt.Errorf("notification sms config is invalid: %s", s.config.ConfigError)
+	}
+	if !s.IsEnabled() {
+		return fmt.Errorf("notification sms is not enabled")
+	}
+
+	templateKey = strings.TrimSpace(templateKey)
+	if templateKey == "" {
+		return fmt.Errorf("template is required")
+	}
+	template, ok := s.config.TemplateByKey(templateKey)
+	if !ok {
+		return fmt.Errorf("notification sms template is not configured: %s", templateKey)
+	}
+
+	provider := strings.TrimSpace(s.config.DefaultProvider)
+	if !template.supportsProvider(provider) {
+		return fmt.Errorf("notification sms template %s is not configured for provider %s", templateKey, provider)
+	}
+
+	return ValidateTemplateParams(template, NormalizeTemplateParams(params))
+}
+
 func (s *NotificationSMSService) Send(ctx context.Context, req Request) (*Result, error) {
 	if s == nil {
 		return nil, fmt.Errorf("notification sms is not enabled")

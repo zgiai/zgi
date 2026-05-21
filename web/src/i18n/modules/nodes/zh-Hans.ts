@@ -529,6 +529,9 @@ const messages: NodesMessages = {
       enabledActionRequired: '至少需要启用一个操作',
       recipientsRequired: '操作 {index} 至少需要一个收件人',
       templateRequired: '操作 {index} 需要选择短信模板',
+      notificationTitleRequired: '操作 {index} 需要填写通知标题',
+      linkCodeRequired: '操作 {index} 需要填写链接参数',
+      templateParamRequired: '操作 {index} 需要填写{label}',
       subjectRequired: '操作 {index} 需要填写主题',
       bodyTypeRequired: '操作 {index} 需要选择受支持的正文类型',
       bodyRequired: '操作 {index} 需要填写消息正文',
@@ -548,6 +551,7 @@ const messages: NodesMessages = {
       templateRequired: '请选择短信模板',
       notificationTitleRequired: '请填写通知标题',
       linkCodeRequired: '请填写链接参数',
+      templateParamRequired: '请填写{label}',
     },
   },
   jsonParser: {

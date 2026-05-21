@@ -19,6 +19,7 @@ import { computeNodeIdToTitle, computeRunnableSets } from '../helpers/graph';
 import { validateWorkflow } from '../helpers/validation-engine';
 import { initialWorkflowData } from '../initial-data';
 import { normalizeApprovalSourceHandle } from '../../nodes/approval/config';
+import { useAuthStore } from '@/store/auth-store';
 
 export interface WorkflowIOSlice {
   workflowData: WorkflowData;
@@ -181,7 +182,8 @@ export function createWorkflowIOSlice(
         sanitizedNodes,
         validatedEdges,
         get().agentType,
-        runnableSets
+        runnableSets,
+        useAuthStore.getState().systemFeatures
       );
 
       set(

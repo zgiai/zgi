@@ -26,6 +26,7 @@ import type {
 } from '../type';
 import { isContainerStartNode } from '../type';
 import { AgentType } from '@/services/types/agent';
+import type { SystemFeatures } from '@/services/types/auth';
 import { checkValid as codeCheck } from '../../nodes/code/config';
 import { checkValid as assignerCheck } from '../../nodes/assigner/config';
 import { checkValid as krCheck } from '../../nodes/knowledge-retrieval/config';
@@ -55,6 +56,7 @@ import { checkValid as approvalCheck } from '../../nodes/approval/config';
 import { checkValid as questionAnswerCheck } from '../../nodes/question-answer/config';
 import type { RunnableSets } from '../store';
 import type { ValidationResult } from '../../nodes/common/validation';
+import { getNotificationSMSTemplates } from '@/lib/features/notification-sms';
 
 /**
  * Pure validation engine for workflow graphs.
@@ -64,10 +66,12 @@ export function validateWorkflow(
   nodes: WorkflowNode[],
   edges: WorkflowEdge[],
   agentType: AgentType,
-  runnableSets: RunnableSets
+  runnableSets: RunnableSets,
+  systemFeatures?: SystemFeatures | null
 ): StoreValidationResults {
   const errors: StoreValidationError[] = [];
   const warnings: StoreValidationError[] = [];
+  const smsTemplates = getNotificationSMSTemplates(systemFeatures);
 
   // 1. Build lookup maps once (O(N + E))
   const nodesMap = new Map(nodes.map(n => [n.id, n]));
@@ -298,10 +302,14 @@ export function validateWorkflow(
           pushNodeValidation(sqlCheck(node.data as SqlGeneratorNodeData));
           break;
         case NODE_TYPES.CREATE_SCHEDULED_TASK:
-          pushNodeValidation(createScheduledTaskCheck(node.data as CreateScheduledTaskNodeData));
+          pushNodeValidation(
+            createScheduledTaskCheck(node.data as CreateScheduledTaskNodeData, smsTemplates)
+          );
           break;
         case NODE_TYPES.NOTIFICATION_SMS:
-          pushNodeValidation(notificationSMSCheck(node.data as NotificationSMSNodeData));
+          pushNodeValidation(
+            notificationSMSCheck(node.data as NotificationSMSNodeData, smsTemplates)
+          );
           break;
         case NODE_TYPES.JSON_PARSER:
           pushNodeValidation(jsonParserCheck(node.data as JsonParserNodeData));
