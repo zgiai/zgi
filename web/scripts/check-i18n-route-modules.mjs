@@ -69,7 +69,7 @@ const GROUP_OWNERS = [
   },
   {
     group: 'announcementToken',
-    prefixes: ['src/app/n/'],
+    prefixes: ['src/app/n/', 'src/components/common/markdown-viewer.tsx'],
   },
   {
     group: 'profile',
