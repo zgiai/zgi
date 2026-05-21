@@ -16,7 +16,7 @@ concurrency:
 jobs:
   sync:
     name: Sync dev to deploy-dev
-    runs-on: [self-hosted, Linux, X64, us, docker]
+    runs-on: ${{ fromJSON(vars.CI_RUNNER_LABELS || '["ubuntu-latest"]') }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
