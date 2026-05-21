@@ -6,7 +6,7 @@ import { Select, SelectContent, SelectTrigger, SelectValue } from '@/components/
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type { ModelUseCase, ModelItem } from '@/services/types/model';
-import { ModelIcon } from '@lobehub/icons';
+import { ModelIcon } from 'modelicons';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useAvailableModels } from '@/hooks/model/use-model';
 import { ModelFeatureIcon } from '@/components/model/model-feature-icon';

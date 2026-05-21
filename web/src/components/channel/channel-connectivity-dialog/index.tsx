@@ -14,7 +14,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ModelIcon } from '@lobehub/icons';
+import { ModelIcon } from 'modelicons';
 import { Info } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useBatchTestChannelModels, useChannel } from '@/hooks';
