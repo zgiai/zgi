@@ -21,6 +21,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install system dependencies
+        run: |
+          if ! command -v make >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+            if command -v sudo >/dev/null 2>&1; then
+              sudo apt-get update
+              sudo apt-get install -y make
+            else
+              apt-get update
+              apt-get install -y make
+            fi
+          fi
+
       - name: Check repository hygiene
         run: make check-open-source
 
@@ -47,6 +59,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          if command -v apt-get >/dev/null 2>&1; then
+            if command -v sudo >/dev/null 2>&1; then
+              sudo apt-get update
+              sudo apt-get install -y make python3-venv
+            else
+              apt-get update
+              apt-get install -y make python3-venv
+            fi
+          fi
 
       - name: Set up Go
         uses: actions/setup-go@v5
