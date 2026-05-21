@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
+	announcementnode "github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/announcement"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/answer"
 	approvalnode "github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/approval"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/calldatabase"
@@ -143,6 +144,10 @@ var NodeTypeClassesMapping = map[shared.NodeType]map[string]NodeFactory{
 	shared.Approval: {
 		LatestVersion: approvalnode.New,
 		Version1:      approvalnode.New,
+	},
+	shared.Announcement: {
+		LatestVersion: announcementnode.New,
+		Version1:      announcementnode.New,
 	},
 	shared.QuestionAnswer: {
 		LatestVersion: questionanswer.New,
