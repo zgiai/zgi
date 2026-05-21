@@ -43,14 +43,11 @@ func (p *AliyunProvider) BuildPayload(req Request) (*AliyunPayload, error) {
 		return nil, fmt.Errorf("unsupported aliyun param mode: %s", p.config.ParamMode)
 	}
 
-	values := map[string]string{
-		"notification_title": req.NotificationTitle,
-		"link_code":          req.LinkCode,
-	}
+	values := normalizeTemplateParams(req)
 	params := make(map[string]string, len(p.config.ParamMap))
 	for internalName, providerName := range p.config.ParamMap {
 		value, ok := values[internalName]
-		if !ok {
+		if !ok || strings.TrimSpace(value) == "" {
 			return nil, fmt.Errorf("unsupported aliyun param mapping key: %s", internalName)
 		}
 		params[providerName] = value

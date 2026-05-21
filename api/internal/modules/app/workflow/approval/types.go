@@ -18,10 +18,13 @@ const (
 	RecipientTypeWebApp        = "webapp"
 	RecipientTypeEmailMember   = "email_member"
 	RecipientTypeEmailExternal = "email_external"
+	RecipientTypeSMSMember     = "sms_member"
+	RecipientTypeSMSExternal   = "sms_external"
 	RecipientTypeConsole       = "console"
 
 	DeliveryTypeWebApp = "webapp"
 	DeliveryTypeEmail  = "email"
+	DeliveryTypeSMS    = "sms"
 )
 
 type NodeConfig struct {
@@ -56,6 +59,7 @@ type Action struct {
 type SubmitMethods struct {
 	WebApp WebAppSubmitMethod `json:"webapp"`
 	Email  EmailSubmitMethod  `json:"email"`
+	SMS    SMSSubmitMethod    `json:"sms"`
 }
 
 type WebAppSubmitMethod struct {
@@ -73,6 +77,21 @@ type EmailRecipient struct {
 	Type      string `json:"type"`
 	AccountID string `json:"account_id,omitempty"`
 	Email     string `json:"email,omitempty"`
+}
+
+type SMSSubmitMethod struct {
+	Enabled           bool              `json:"enabled"`
+	Provider          string            `json:"provider,omitempty"`
+	Template          string            `json:"template,omitempty"`
+	NotificationTitle string            `json:"notification_title"`
+	TemplateParams    map[string]string `json:"template_params,omitempty"`
+	Recipients        []SMSRecipient    `json:"recipients"`
+}
+
+type SMSRecipient struct {
+	Type      string `json:"type"`
+	AccountID string `json:"account_id,omitempty"`
+	Phone     string `json:"phone,omitempty"`
 }
 
 type TimeoutConfig struct {

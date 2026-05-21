@@ -291,6 +291,8 @@ const messages: NodesMessages = {
       actionsTitle: '暂无审查动作',
       actionsDescription: '至少添加一个动作，审查人才能提交处理决定。',
       recipientsDescription: '暂无邮件收件人。',
+      smsRecipientsDescription: '暂无短信收件人。',
+      templateParamsDescription: '暂无额外模板参数。',
       membersDescription: '暂无可选成员。',
     },
     emailDialog: {
@@ -299,6 +301,9 @@ const messages: NodesMessages = {
       urlVariable: '审查链接',
       done: '完成',
     },
+    smsDialog: {
+      title: '短信设置',
+    },
     defaults: {
       content: '请审查以下信息，并提交处理决定。',
       commentLabel: '审查意见',
@@ -306,6 +311,7 @@ const messages: NodesMessages = {
       rejectLabel: '驳回',
       emailSubject: '审查请求',
       emailBody: '请打开链接完成审查：',
+      smsTitle: '审查请求',
       newReplyLabel: '回复 {index}',
       newActionLabel: '动作 {index}',
     },
@@ -345,13 +351,17 @@ const messages: NodesMessages = {
     submit: {
       webapp: 'Web 表单',
       email: '邮件通知',
+      sms: '短信通知',
       subject: '主题',
       body: '正文',
+      smsTitle: '短信标题',
+      templateParams: '额外模板参数',
       recipients: '收件人',
     },
     recipientTypes: {
       member: '成员',
       external: '外部邮箱',
+      externalPhone: '外部手机号',
     },
     timeout: {
       minute: '分钟',
@@ -364,9 +374,13 @@ const messages: NodesMessages = {
       defaultValue: '默认文本',
       emailSubject: '审查请求',
       emailBody: '请打开链接完成审查：',
+      smsTitle: '审查请求',
       member: '选择成员',
       memberSearch: '搜索成员姓名或邮箱',
       externalEmail: 'reviewer@example.com',
+      externalPhone: '13800138000',
+      templateParamKey: '参数名',
+      templateParamValue: '参数值',
     },
     actions: {
       addField: '添加回复字段',
@@ -374,8 +388,11 @@ const messages: NodesMessages = {
       addAction: '添加动作',
       deleteAction: '删除动作',
       editEmail: '编辑',
+      editSMS: '编辑',
       addRecipient: '添加收件人',
       deleteRecipient: '删除收件人',
+      addTemplateParam: '添加模板参数',
+      deleteTemplateParam: '删除模板参数',
       loadMoreMembers: '加载更多成员',
       loadingMembers: '加载成员中',
     },
@@ -402,6 +419,14 @@ const messages: NodesMessages = {
       externalRecipientRequired: '收件人 {index} 必须填写邮箱地址',
       recipientEmailRequired: '收件人 {index} 必须填写邮箱地址',
       recipientEmailInvalid: '收件人 {index} 的邮箱地址格式不正确',
+      smsConfigIncomplete: '短信通知需要短信标题和至少一个收件人。',
+      smsTitleRequired: '短信标题不能为空',
+      smsRecipientRequired: '短信通知至少需要一个收件人',
+      smsMemberRecipientRequired: '短信收件人 {index} 必须选择成员',
+      smsExternalRecipientRequired: '短信收件人 {index} 必须填写手机号',
+      smsTemplateParamKeyRequired: '短信模板参数名不能为空',
+      smsTemplateParamKeyReserved: '短信模板参数 {key} 由系统生成，不能手动配置',
+      smsTemplateParamValueRequired: '短信模板参数 {key} 的值不能为空',
     },
     runtime: {
       paused: '流程已暂停，等待人工审查',
@@ -745,7 +770,8 @@ const messages: NodesMessages = {
     },
     optimizer: {
       sourceLabel: '待优化的系统提示词',
-      sourceHelp: '这里已经自动带入当前节点的系统提示词。你可以直接修改后再优化；如果改乱了，可以点“重新载入当前节点提示词”恢复。',
+      sourceHelp:
+        '这里已经自动带入当前节点的系统提示词。你可以直接修改后再优化；如果改乱了，可以点“重新载入当前节点提示词”恢复。',
       resetSource: '重新载入当前节点提示词',
     },
     variableGuide: {
@@ -753,7 +779,8 @@ const messages: NodesMessages = {
       selectBlock: '先点击要编辑的那一段，变量会插入到当前光标位置。',
       insertMethods: '可以直接输入 “/” 搜索变量，或者点击每段右上角的“插入变量”按钮。',
       quickVariables: '也可以直接点击下面的“快捷变量”标签来插入。',
-      bestPractice: '推荐写法：系统提示词用来写角色、规则和输出要求；用户输入模板更适合放开始节点、知识检索或上游节点的变量。',
+      bestPractice:
+        '推荐写法：系统提示词用来写角色、规则和输出要求；用户输入模板更适合放开始节点、知识检索或上游节点的变量。',
       fallback: '如果没有先选中某一段，快捷变量会默认插入到第一段系统提示词。',
       noManualSyntax: '变量会自动插入成可识别的标签，一般不需要自己手写花括号语法。',
     },
@@ -764,7 +791,8 @@ const messages: NodesMessages = {
       managed: '来自提示词库',
       inline: '当前节点副本',
       currentUsing: '当前正在使用：{name}',
-      managedDescription: '当前节点正在使用提示词库里的共享提示词。这里仅展示内容预览；如果只想改这个节点，请先改成当前节点可编辑。',
+      managedDescription:
+        '当前节点正在使用提示词库里的共享提示词。这里仅展示内容预览；如果只想改这个节点，请先改成当前节点可编辑。',
       managedPreview: '只读预览',
       emptyContent: '暂无内容',
       inlineDescription: '当前节点正在使用自己的提示词副本，你可以直接编辑，也可以保存回提示词库。',

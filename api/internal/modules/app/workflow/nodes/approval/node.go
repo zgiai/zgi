@@ -11,6 +11,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/base"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
+	notificationsms "github.com/zgiai/zgi/api/internal/modules/notification/sms"
 	"github.com/zgiai/zgi/api/pkg/database"
 )
 
@@ -39,6 +40,13 @@ func New(
 	if err != nil {
 		return nil, err
 	}
+	var smsSender notificationsms.Service
+	for _, dep := range optionalDeps {
+		if candidate, ok := dep.(notificationsms.Service); ok {
+			smsSender = candidate
+			break
+		}
+	}
 
 	return &Node{
 		NodeStruct: base.NodeStruct{
@@ -59,7 +67,8 @@ func New(
 			GraphRuntimeState: graphRuntimeState,
 			PreviousNodeID:    previousNodeID,
 		},
-		NodeData: nodeData,
+		NodeData:  nodeData,
+		smsSender: smsSender,
 	}, nil
 }
 
@@ -116,10 +125,10 @@ func (n *Node) executeRun(ctx context.Context) (*shared.NodeRunResult, error) {
 	}
 
 	rendered := n.GraphRuntimeState.VariablePool.ConvertTemplate(config.Content).Markdown()
-	config = renderApprovalEmailTemplates(n.GraphRuntimeState.VariablePool, config)
+	config = renderApprovalNotificationTemplates(n.GraphRuntimeState.VariablePool, config)
 	defaultValues := n.resolveDefaultValues(config)
 
-	service := approvalruntime.NewService(database.GetDB())
+	service := approvalruntime.NewServiceWithSenders(database.GetDB(), nil, n.smsSender)
 	runtimeForm, err := service.CreateOrGetRuntimeForm(ctx, approvalruntime.CreateRuntimeFormParams{
 		TenantID:      n.TenantID,
 		AppID:         n.APPID,
@@ -179,12 +188,23 @@ func (n *Node) executeRun(ctx context.Context) (*shared.NodeRunResult, error) {
 	}, nil
 }
 
-func renderApprovalEmailTemplates(variablePool *entities.VariablePool, config approvalruntime.NodeConfig) approvalruntime.NodeConfig {
-	if variablePool == nil || !config.SubmitMethods.Email.Enabled {
+func renderApprovalNotificationTemplates(variablePool *entities.VariablePool, config approvalruntime.NodeConfig) approvalruntime.NodeConfig {
+	if variablePool == nil {
 		return config
 	}
-	config.SubmitMethods.Email.Subject = renderApprovalEmailTemplate(variablePool, config.SubmitMethods.Email.Subject)
-	config.SubmitMethods.Email.Body = renderApprovalEmailTemplate(variablePool, config.SubmitMethods.Email.Body)
+	if config.SubmitMethods.Email.Enabled {
+		config.SubmitMethods.Email.Subject = renderApprovalEmailTemplate(variablePool, config.SubmitMethods.Email.Subject)
+		config.SubmitMethods.Email.Body = renderApprovalEmailTemplate(variablePool, config.SubmitMethods.Email.Body)
+	}
+	if config.SubmitMethods.SMS.Enabled {
+		config.SubmitMethods.SMS.NotificationTitle = renderApprovalTextTemplate(variablePool, config.SubmitMethods.SMS.NotificationTitle)
+		for key, value := range config.SubmitMethods.SMS.TemplateParams {
+			config.SubmitMethods.SMS.TemplateParams[key] = renderApprovalTextTemplate(variablePool, value)
+		}
+		for index := range config.SubmitMethods.SMS.Recipients {
+			config.SubmitMethods.SMS.Recipients[index].Phone = renderApprovalTextTemplate(variablePool, config.SubmitMethods.SMS.Recipients[index].Phone)
+		}
+	}
 	return config
 }
 
@@ -195,6 +215,13 @@ func renderApprovalEmailTemplate(variablePool *entities.VariablePool, template s
 	protected := strings.ReplaceAll(template, approvalEmailURLPlaceholder, approvalEmailURLSentinel)
 	rendered := variablePool.ConvertTemplate(protected).Text()
 	return strings.ReplaceAll(rendered, approvalEmailURLSentinel, approvalEmailURLPlaceholder)
+}
+
+func renderApprovalTextTemplate(variablePool *entities.VariablePool, template string) string {
+	if variablePool == nil || template == "" {
+		return template
+	}
+	return variablePool.ConvertTemplate(template).Text()
 }
 
 func actionLabel(actions []approvalruntime.Action, id string) string {

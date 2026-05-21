@@ -47,14 +47,11 @@ func (p *ChuanglanProvider) BuildPayload(req Request) (*ChuanglanPayload, error)
 		return nil, fmt.Errorf("chuanglan template placeholder count %d does not match param order count %d", placeholderCount, len(p.config.ParamOrder))
 	}
 
-	values := map[string]string{
-		"notification_title": req.NotificationTitle,
-		"link_code":          req.LinkCode,
-	}
+	values := normalizeTemplateParams(req)
 	ordered := make(map[string]string, len(p.config.ParamOrder))
 	for index, internalName := range p.config.ParamOrder {
 		value, ok := values[internalName]
-		if !ok {
+		if !ok || strings.TrimSpace(value) == "" {
 			return nil, fmt.Errorf("unsupported chuanglan param order key: %s", internalName)
 		}
 		ordered[fmt.Sprintf("param%d", index+1)] = value
@@ -135,13 +132,4 @@ func (p *ChuanglanProvider) SendNotification(ctx context.Context, req Request) (
 		MessageID: messageID,
 		RawCode:   upstream.Code,
 	}, nil
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }

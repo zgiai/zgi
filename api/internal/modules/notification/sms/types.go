@@ -8,6 +8,9 @@ import (
 const (
 	FeatureNotificationSMS            = "notification_sms"
 	TemplatePendingActionNotification = "pending_action_notification"
+	TemplateParamNotificationTitle    = "notification_title"
+	TemplateParamLinkSuffix           = "link_suffix"
+	TemplateParamLinkCode             = "link_code"
 	ProviderAliyun                    = "aliyun"
 	ProviderChuanglan                 = "chuanglan"
 	ParamModeMap                      = "map"
@@ -28,6 +31,7 @@ type Request struct {
 	Provider          string
 	Phone             string
 	Template          string
+	TemplateParams    map[string]string
 	NotificationTitle string
 	LinkCode          string
 	Source            string
@@ -122,8 +126,7 @@ func (c AliyunConfig) valid() bool {
 		strings.TrimSpace(c.SignName) != "" &&
 		strings.TrimSpace(c.TemplateCode) != "" &&
 		strings.TrimSpace(c.ParamMode) == ParamModeMap &&
-		c.ParamMap["notification_title"] != "" &&
-		c.ParamMap["link_code"] != ""
+		hasRequiredNotificationParamsFromMap(c.ParamMap)
 }
 
 func (c ChuanglanConfig) valid() bool {
@@ -133,5 +136,5 @@ func (c ChuanglanConfig) valid() bool {
 		strings.TrimSpace(c.TemplateID) != "" &&
 		strings.TrimSpace(c.TemplateText) != "" &&
 		strings.TrimSpace(c.ParamMode) == ParamModeOrderedParam &&
-		len(c.ParamOrder) > 0
+		hasRequiredNotificationParamsFromList(c.ParamOrder)
 }
