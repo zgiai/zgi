@@ -48,17 +48,23 @@ export class SseClient {
     const signal = this.bridgeAbortSignal(options.abortSignal, controller);
     const endpointCfg = options.endpoint ? getEndpointConfig(options.endpoint) : this.endpoint;
 
-    // Prepare auth header
-    const authHeader = await this.buildAuthHeader(options.skipAuth);
-
     // Build URL with query params
     const urlObj = this.buildUrl(path, endpointCfg.baseURL, options.query);
+
+    const method = options.method || 'GET';
+
+    // Prepare auth header
+    let authHeader: Record<string, string>;
+    try {
+      authHeader = await this.buildAuthHeader(options.skipAuth);
+    } catch (error) {
+      return this.handleAuthError(error, options, urlObj, method, controller, endpointCfg);
+    }
 
     // Prepare headers
     const headers = this.buildHeaders(authHeader, options.headers);
 
     // Prepare fetch init
-    const method = options.method || 'GET';
     const init = this.buildFetchInit(method, headers, signal, options.body);
 
     // Execute fetch
@@ -139,12 +145,13 @@ export class SseClient {
 
   private async buildAuthHeader(skipAuth?: boolean): Promise<Record<string, string>> {
     if (skipAuth) return {};
-    try {
-      const token = await this.ensureValidToken();
-      return token ? { Authorization: `Bearer ${token}` } : {};
-    } catch {
-      return {};
+    const token = await this.ensureValidToken();
+    if (!token) {
+      const err = new Error('Authentication session is not available');
+      (err as SseRequestError).code = 'ERR_AUTH_SESSION_MISSING';
+      throw err;
     }
+    return { Authorization: `Bearer ${token}` };
   }
 
   private buildUrl(
@@ -224,6 +231,32 @@ export class SseClient {
     }
     Sentry.withScope(scope => {
       scope.setContext('http', { url: urlObj.toString(), method });
+      scope.setTag('endpoint', endpointCfg.name);
+    });
+    Sentry.captureException(err);
+    options.onError?.(err);
+    return { close: () => controller.abort() };
+  }
+
+  private handleAuthError<TOut>(
+    error: unknown,
+    options: SseOptions<unknown, TOut>,
+    urlObj: URL,
+    method: string,
+    controller: AbortController,
+    endpointCfg: ApiEndpoint
+  ): { close: () => void } {
+    const err: SseRequestError =
+      error instanceof Error ? error : new Error('Authentication session is not available');
+    err.code = err.code || 'ERR_AUTH_SESSION_MISSING';
+    err.status = err.status || 401;
+    Sentry.withScope(scope => {
+      scope.setContext('http', {
+        url: urlObj.toString(),
+        method,
+        status: err.status,
+        code: err.code,
+      });
       scope.setTag('endpoint', endpointCfg.name);
     });
     Sentry.captureException(err);
