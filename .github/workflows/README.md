@@ -4,7 +4,7 @@ This directory contains the public CI workflows for the monorepo.
 
 Current checks:
 
-- Repository hygiene checks from `make check-open-source`
+- Repository hygiene checks from `./scripts/check-open-source.sh --worktree`
 - Web TypeScript checks
 
 Release workflows:
