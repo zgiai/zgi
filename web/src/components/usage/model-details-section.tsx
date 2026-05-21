@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { ModelIcon } from '@lobehub/icons';
+import { ModelIcon } from 'modelicons';
 import { Inbox } from 'lucide-react';
 import { useLocale } from 'next-intl';
 

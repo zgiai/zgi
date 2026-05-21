@@ -103,6 +103,17 @@ replace_env_value_if_current() {
   fi
 }
 
+get_env_value() {
+  local target_path="$1"
+  local key="$2"
+
+  if [ ! -f "$target_path" ] || ! grep -q "^${key}=" "$target_path"; then
+    return 1
+  fi
+
+  grep "^${key}=" "$target_path" | tail -n 1 | cut -d= -f2-
+}
+
 copy_if_missing "$ROOT/docker/.env.example" "$ROOT/docker/.env"
 copy_if_missing "$ROOT/api/.env.example" "$ROOT/api/.env"
 copy_if_missing "$ROOT/api/.env.docker.example" "$ROOT/api/.env.docker"
@@ -118,7 +129,8 @@ ensure_env_value "$ROOT/api/.env.docker" "SECRET_KEY" "$(generate_secret_32)"
 ensure_env_value "$ROOT/api/.env.docker" "API_KEY_ENCRYPTION_KEY" "$api_docker_secret"
 replace_env_value_if_current "$ROOT/api/.env.docker" "SQL_BASE_INTERNAL_DB" "zgi" "zgi_sql_base"
 ensure_env_value "$ROOT/docker/.env" "PUBLIC_PORT" "2679"
-ensure_env_value "$ROOT/docker/.env" "PUBLIC_URL" "http://localhost:2679"
+public_port="$(get_env_value "$ROOT/docker/.env" "PUBLIC_PORT" || printf '%s' "2679")"
+ensure_env_value "$ROOT/docker/.env" "PUBLIC_URL" "http://localhost:${public_port}"
 
 echo "[bootstrap] generate docker compose"
 "$ROOT/docker/generate_docker_compose"

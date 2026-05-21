@@ -2,7 +2,7 @@
 
 import { memo } from 'react';
 import { Cpu, Sparkles, LayoutGrid } from 'lucide-react';
-import { ModelIcon } from '@lobehub/icons';
+import { ModelIcon } from 'modelicons';
 import type { ModelItem, ModelUseCase } from '@/services/types/model';
 import { ModelFeatureIcon } from '@/components/model/model-feature-icon';
 import { ModelUseCaseIcon } from '@/components/model/model-use-case-icon';

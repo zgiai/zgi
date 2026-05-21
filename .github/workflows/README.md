@@ -5,13 +5,12 @@ This directory contains the public CI workflows for the monorepo.
 Current checks:
 
 - Repository hygiene checks from `make check-open-source`
-- API targeted Go tests for migrations, SQL metadata, workflow, model gateway, and content parsing packages
-- PostgreSQL migration smoke test against a fresh database
-- Runner targeted Go tests
 - Web TypeScript checks
 
 Release workflows:
 
+- `vercel-web-deploy.yml` deploys the `web/` Next.js app to Vercel from `deploy-dev`.
+- Required repository secrets: `VERCEL_TOKEN`, `VERCEL_ORG_ID`, and `VERCEL_PROJECT_ID`.
 - `docker-release.yml` publishes `zgiai/zgi-api`, `zgiai/zgi-web`, `zgiai/zgi-sandbox`, and `zgiai/zgi-runner` to Docker Hub.
 - Required repository secrets: `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`.
 - Pushing a `v*` tag publishes `version`, `latest`, and `sha-xxxxxxx` tags.

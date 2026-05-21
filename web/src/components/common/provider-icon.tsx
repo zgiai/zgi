@@ -1,16 +1,16 @@
 'use client';
 
-import { ProviderIcon as LobeProviderIcon } from '@lobehub/icons';
+import { ProviderIcon as ModeliconsProviderIcon } from 'modelicons';
 import type { ComponentProps } from 'react';
 import { resolveProviderIconKey } from '@/utils/provider/meta';
 
-type LobeProviderIconProps = ComponentProps<typeof LobeProviderIcon>;
+type ModeliconsProviderIconProps = ComponentProps<typeof ModeliconsProviderIcon>;
 
-export interface ProviderIconProps extends Omit<LobeProviderIconProps, 'provider'> {
+export interface ProviderIconProps extends Omit<ModeliconsProviderIconProps, 'provider'> {
   provider?: string | null;
 }
 
 export function ProviderIcon({ provider, ...props }: ProviderIconProps): JSX.Element {
   const mappedProvider = resolveProviderIconKey(provider);
-  return <LobeProviderIcon provider={mappedProvider} {...props} />;
+  return <ModeliconsProviderIcon provider={mappedProvider} {...props} />;
 }
