@@ -64,13 +64,12 @@ type TaskActionData struct {
 }
 
 type NotificationData struct {
-	Recipients        []string `json:"recipients"`
-	Subject           string   `json:"subject"`
-	Body              string   `json:"body"`
-	BodyType          string   `json:"body_type"`
-	Template          string   `json:"template"`
-	NotificationTitle string   `json:"notification_title"`
-	LinkCode          string   `json:"link_code"`
+	Recipients     []string          `json:"recipients"`
+	Subject        string            `json:"subject"`
+	Body           string            `json:"body"`
+	BodyType       string            `json:"body_type"`
+	Template       string            `json:"template"`
+	TemplateParams map[string]string `json:"template_params"`
 }
 
 type WorkflowActionData struct {

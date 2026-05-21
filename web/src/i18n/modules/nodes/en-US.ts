@@ -539,11 +539,8 @@ const messages = {
       actionRequired: 'At least one operation is required',
       enabledActionRequired: 'At least one enabled operation is required',
       recipientsRequired: 'At least one recipient is required for operation {index}',
+      templateRequired: 'SMS template is required for operation {index}',
       subjectRequired: 'Subject is required for operation {index}',
-      notificationTitleRequired: 'Notification title is required for operation {index}',
-      linkCodeRequired: 'Link code is required for operation {index}',
-      linkCodeInvalid:
-        'Link code for operation {index} must use letters and numbers, for example abc123',
       bodyTypeRequired: 'A supported body type is required for operation {index}',
       bodyRequired: 'Message body is required for operation {index}',
       unsupportedActionType:
@@ -556,14 +553,12 @@ const messages = {
     preview: {
       phone: 'Phone',
       title: 'Title',
+      template: 'Template',
       notConfigured: 'Not configured',
     },
     validation: {
       phoneRequired: 'Phone number is required',
-      notificationTitleRequired: 'Notification title is required',
-      linkCodeRequired: 'Link code is required',
-      linkCodeInvalid:
-        'Use letters and numbers only, for example abc123. Do not enter -, _, Chinese characters, or a full URL',
+      templateRequired: 'SMS template is required',
     },
   },
   jsonParser: {

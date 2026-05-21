@@ -26,16 +26,31 @@ func (s *NotificationSMSService) IsEnabled() bool {
 }
 
 func (s *NotificationSMSService) Send(ctx context.Context, req Request) (*Result, error) {
-	if s == nil || !s.IsEnabled() {
+	if s == nil {
+		return nil, fmt.Errorf("notification sms is not enabled")
+	}
+	if s.config.ConfigError != "" {
+		return nil, fmt.Errorf("notification sms config is invalid: %s", s.config.ConfigError)
+	}
+	if !s.IsEnabled() {
 		return nil, fmt.Errorf("notification sms is not enabled")
 	}
 	if strings.TrimSpace(req.Provider) == "" {
 		req.Provider = s.config.DefaultProvider
 	}
-	if strings.TrimSpace(req.Template) == "" {
-		req.Template = TemplatePendingActionNotification
+	req.Template = strings.TrimSpace(req.Template)
+	if req.Template == "" {
+		return nil, fmt.Errorf("template is required")
 	}
-	if err := validateRequest(req); err != nil {
+	req.TemplateParams = NormalizeTemplateParams(req.TemplateParams)
+	template, ok := s.config.TemplateByKey(req.Template)
+	if !ok {
+		return nil, fmt.Errorf("notification sms template is not configured: %s", req.Template)
+	}
+	if !template.supportsProvider(req.Provider) {
+		return nil, fmt.Errorf("notification sms template %s is not configured for provider %s", req.Template, req.Provider)
+	}
+	if err := validateRequest(req, template); err != nil {
 		return nil, err
 	}
 
@@ -43,5 +58,5 @@ func (s *NotificationSMSService) Send(ctx context.Context, req Request) (*Result
 	if !ok {
 		return nil, fmt.Errorf("notification sms provider is not configured: %s", req.Provider)
 	}
-	return provider.SendNotification(ctx, req)
+	return provider.SendNotification(ctx, req, template)
 }

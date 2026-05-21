@@ -127,7 +127,7 @@ func buildNotificationRequest(config map[string]interface{}) (*automationnotific
 		if err != nil {
 			return nil, err
 		}
-		templateParams, err := requiredStringMap(config, "template_params")
+		templateParams, err := optionalStringMap(config, "template_params")
 		if err != nil {
 			return nil, err
 		}
@@ -219,10 +219,10 @@ func requiredStringSlice(config map[string]interface{}, key string) ([]string, e
 	}
 }
 
-func requiredStringMap(config map[string]interface{}, key string) (map[string]string, error) {
+func optionalStringMap(config map[string]interface{}, key string) (map[string]string, error) {
 	value, ok := config[key]
 	if !ok {
-		return nil, fmt.Errorf("notification config missing %s", key)
+		return map[string]string{}, nil
 	}
 
 	result := make(map[string]string)
@@ -244,9 +244,6 @@ func requiredStringMap(config map[string]interface{}, key string) (map[string]st
 		}
 	default:
 		return nil, fmt.Errorf("notification config %s must be a string map", key)
-	}
-	if len(result) == 0 {
-		return nil, fmt.Errorf("notification config %s must not be empty", key)
 	}
 	return result, nil
 }

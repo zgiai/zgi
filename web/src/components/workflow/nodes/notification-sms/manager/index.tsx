@@ -4,6 +4,7 @@ import React from 'react';
 import { useLocalNodeData } from '../../../hooks';
 import { NotificationSMSEditor } from '@/components/notification-sms/notification-sms-editor';
 import type { NotificationSMSDraft } from '@/components/notification-sms/types';
+import { NOTIFICATION_SMS_TEMPLATE } from '@/lib/features/notification-sms';
 
 interface NotificationSMSManagerProps {
   id: string;
@@ -20,32 +21,33 @@ const NotificationSMSManager: React.FC<NotificationSMSManagerProps> = ({
     path: 'phone',
     delay: 300,
   });
-  const { localData: notificationTitle, setLocalData: setNotificationTitle } =
-    useLocalNodeData<string>(id, {
-      path: 'notification_title',
-      delay: 300,
-    });
-  const { localData: linkCode, setLocalData: setLinkCode } = useLocalNodeData<string>(id, {
-    path: 'link_code',
+  const { localData: template, setLocalData: setTemplate } = useLocalNodeData<string>(id, {
+    path: 'template',
+    delay: 300,
+  });
+  const { localData: templateParams, setLocalData: setTemplateParams } = useLocalNodeData<
+    Record<string, string>
+  >(id, {
+    path: 'template_params',
     delay: 300,
   });
 
   const value = React.useMemo<NotificationSMSDraft>(
     () => ({
       recipients: [phone || ''],
-      notificationTitle: notificationTitle || '',
-      linkCode: linkCode || '',
+      template: template || NOTIFICATION_SMS_TEMPLATE,
+      templateParams: templateParams ?? {},
     }),
-    [linkCode, notificationTitle, phone]
+    [phone, template, templateParams]
   );
 
   const handleChange = React.useCallback(
     (next: NotificationSMSDraft) => {
       setPhone(next.recipients[0] ?? '');
-      setNotificationTitle(next.notificationTitle);
-      setLinkCode(next.linkCode);
+      setTemplate(next.template);
+      setTemplateParams(next.templateParams);
     },
-    [setLinkCode, setNotificationTitle, setPhone]
+    [setPhone, setTemplate, setTemplateParams]
   );
 
   return (

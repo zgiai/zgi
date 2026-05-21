@@ -176,9 +176,10 @@ workflow:
               subject: '工作流跟进提醒：{{#parameter_node.follow_up_reason#}}'
               body: '请查看工作流输出，并跟进：{{#parameter_node.follow_up_reason#}}'
               body_type: text/plain
-              template: notification_sms
-              notification_title: 需要跟进
-              link_code: "{{#sys.workflow_run_id#}}"
+              template: pending_action_notification
+              template_params:
+                notification_title: 需要跟进
+                link_code: "{{#sys.workflow_run_id#}}"
             raw_config:
         isInLoop: false
         isInIteration: false

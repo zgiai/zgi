@@ -96,8 +96,8 @@ interface TaskEditorActionDialogProps {
   onSubjectChange: (value: string) => void;
   onBodyTypeChange: (value: AutomationBodyType) => void;
   onBodyChange: (value: string) => void;
-  onSmsNotificationTitleChange: (value: string) => void;
-  onSmsLinkCodeChange: (value: string) => void;
+  onSmsTemplateChange: (value: string) => void;
+  onSmsTemplateParamsChange: (value: Record<string, string>) => void;
   onWorkflowAgentChange: (value: string) => void;
   onWorkflowVersionStrategyChange: (value: AutomationWorkflowVersionStrategy) => void;
   onWorkflowVersionUuidChange: (value: string) => void;
@@ -279,8 +279,8 @@ interface SendNotificationActionEditorProps {
   onSubjectChange: (value: string) => void;
   onBodyTypeChange: (value: AutomationBodyType) => void;
   onBodyChange: (value: string) => void;
-  onSmsNotificationTitleChange: (value: string) => void;
-  onSmsLinkCodeChange: (value: string) => void;
+  onSmsTemplateChange: (value: string) => void;
+  onSmsTemplateParamsChange: (value: Record<string, string>) => void;
 }
 
 function SendNotificationActionEditor({
@@ -293,8 +293,8 @@ function SendNotificationActionEditor({
   onSubjectChange,
   onBodyTypeChange,
   onBodyChange,
-  onSmsNotificationTitleChange,
-  onSmsLinkCodeChange,
+  onSmsTemplateChange,
+  onSmsTemplateParamsChange,
 }: SendNotificationActionEditorProps) {
   const t = useT('automation');
   const renderEmailEditor = action.channelType === 'email';
@@ -354,19 +354,19 @@ function SendNotificationActionEditor({
             recipientMode="list"
             value={{
               recipients: action.recipients,
-              notificationTitle: action.smsNotificationTitle,
-              linkCode: action.smsLinkCode,
+              template: action.smsTemplate,
+              templateParams: action.smsTemplateParams,
             }}
             errors={{
               recipients: errors.recipients,
-              notificationTitle: errors.smsNotificationTitle,
-              linkCode: errors.smsLinkCode,
+              template: errors.smsTemplate,
+              templateParams: errors.smsTemplateParams,
             }}
             readOnly={!editable}
             onChange={next => {
               onRecipientsChange(next.recipients);
-              onSmsNotificationTitleChange(next.notificationTitle);
-              onSmsLinkCodeChange(next.linkCode);
+              onSmsTemplateChange(next.template);
+              onSmsTemplateParamsChange(next.templateParams);
             }}
           />
         ) : (
@@ -918,8 +918,8 @@ export function TaskEditorActionDialog({
   onSubjectChange,
   onBodyTypeChange,
   onBodyChange,
-  onSmsNotificationTitleChange,
-  onSmsLinkCodeChange,
+  onSmsTemplateChange,
+  onSmsTemplateParamsChange,
   onWorkflowAgentChange,
   onWorkflowVersionStrategyChange,
   onWorkflowVersionUuidChange,
@@ -998,8 +998,8 @@ export function TaskEditorActionDialog({
                   onSubjectChange={onSubjectChange}
                   onBodyTypeChange={onBodyTypeChange}
                   onBodyChange={onBodyChange}
-                  onSmsNotificationTitleChange={onSmsNotificationTitleChange}
-                  onSmsLinkCodeChange={onSmsLinkCodeChange}
+                  onSmsTemplateChange={onSmsTemplateChange}
+                  onSmsTemplateParamsChange={onSmsTemplateParamsChange}
                 />
               ) : draft.actionType === 'run_workflow' ? (
                 <RunWorkflowActionEditor

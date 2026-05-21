@@ -34,27 +34,24 @@ func (p *ChuanglanProvider) Provider() string {
 	return ProviderChuanglan
 }
 
-func (p *ChuanglanProvider) BuildPayload(req Request) (*ChuanglanPayload, error) {
-	if err := validateRequest(req); err != nil {
+func (p *ChuanglanProvider) BuildPayload(req Request, template TemplateConfig) (*ChuanglanPayload, error) {
+	if err := validateRequest(req, template); err != nil {
 		return nil, err
 	}
-	if p.config.ParamMode != ParamModeOrderedParam {
-		return nil, fmt.Errorf("unsupported chuanglan param mode: %s", p.config.ParamMode)
+	providerTemplate := template.Chuanglan
+	if normalizedParamMode(providerTemplate.ParamMode, ParamModeOrderedParam) != ParamModeOrderedParam {
+		return nil, fmt.Errorf("unsupported chuanglan param mode: %s", providerTemplate.ParamMode)
 	}
 
-	placeholderCount := strings.Count(p.config.TemplateText, "{s}")
-	if placeholderCount != len(p.config.ParamOrder) {
-		return nil, fmt.Errorf("chuanglan template placeholder count %d does not match param order count %d", placeholderCount, len(p.config.ParamOrder))
+	placeholderCount := strings.Count(providerTemplate.TemplateText, "{s}")
+	if placeholderCount != len(providerTemplate.ParamOrder) {
+		return nil, fmt.Errorf("chuanglan template placeholder count %d does not match param order count %d", placeholderCount, len(providerTemplate.ParamOrder))
 	}
 
-	values := map[string]string{
-		"notification_title": req.NotificationTitle,
-		"link_code":          req.LinkCode,
-	}
-	ordered := make(map[string]string, len(p.config.ParamOrder))
-	for index, internalName := range p.config.ParamOrder {
-		value, ok := values[internalName]
-		if !ok {
+	ordered := make(map[string]string, len(providerTemplate.ParamOrder))
+	for index, internalName := range providerTemplate.ParamOrder {
+		value, ok := req.TemplateParams[internalName]
+		if !ok || strings.TrimSpace(value) == "" {
 			return nil, fmt.Errorf("unsupported chuanglan param order key: %s", internalName)
 		}
 		ordered[fmt.Sprintf("param%d", index+1)] = value
@@ -73,7 +70,7 @@ func (p *ChuanglanProvider) BuildPayload(req Request) (*ChuanglanPayload, error)
 		Account:           p.config.Account,
 		Password:          p.config.Password,
 		PhoneNumbers:      NormalizePhoneNumbers(req.Phone),
-		TemplateID:        p.config.TemplateID,
+		TemplateID:        providerTemplate.TemplateID,
 		TemplateParamJSON: string(paramJSON),
 		Signature:         p.config.Signature,
 		Report:            report,
@@ -81,8 +78,8 @@ func (p *ChuanglanProvider) BuildPayload(req Request) (*ChuanglanPayload, error)
 	}, nil
 }
 
-func (p *ChuanglanProvider) SendNotification(ctx context.Context, req Request) (*Result, error) {
-	payload, err := p.BuildPayload(req)
+func (p *ChuanglanProvider) SendNotification(ctx context.Context, req Request, template TemplateConfig) (*Result, error) {
+	payload, err := p.BuildPayload(req, template)
 	if err != nil {
 		return nil, err
 	}

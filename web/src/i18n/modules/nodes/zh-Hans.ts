@@ -528,10 +528,8 @@ const messages: NodesMessages = {
       actionRequired: '至少需要一个操作',
       enabledActionRequired: '至少需要启用一个操作',
       recipientsRequired: '操作 {index} 至少需要一个收件人',
+      templateRequired: '操作 {index} 需要选择短信模板',
       subjectRequired: '操作 {index} 需要填写主题',
-      notificationTitleRequired: '操作 {index} 需要填写通知标题',
-      linkCodeRequired: '操作 {index} 需要填写链接参数',
-      linkCodeInvalid: '操作 {index} 的链接参数只能填写字母或数字，例如 abc123',
       bodyTypeRequired: '操作 {index} 需要选择受支持的正文类型',
       bodyRequired: '操作 {index} 需要填写消息正文',
       unsupportedActionType: '操作 {index} 使用了当前节点版本不支持的操作类型',
@@ -542,13 +540,12 @@ const messages: NodesMessages = {
     preview: {
       phone: '手机号',
       title: '标题',
+      template: '模板',
       notConfigured: '未配置',
     },
     validation: {
       phoneRequired: '请填写手机号',
-      notificationTitleRequired: '请填写通知标题',
-      linkCodeRequired: '请填写链接参数',
-      linkCodeInvalid: '链接参数只能填写字母或数字，例如 abc123。不要输入 -、_、中文或完整链接',
+      templateRequired: '请选择短信模板',
     },
   },
   jsonParser: {
@@ -745,7 +742,8 @@ const messages: NodesMessages = {
     },
     optimizer: {
       sourceLabel: '待优化的系统提示词',
-      sourceHelp: '这里已经自动带入当前节点的系统提示词。你可以直接修改后再优化；如果改乱了，可以点“重新载入当前节点提示词”恢复。',
+      sourceHelp:
+        '这里已经自动带入当前节点的系统提示词。你可以直接修改后再优化；如果改乱了，可以点“重新载入当前节点提示词”恢复。',
       resetSource: '重新载入当前节点提示词',
     },
     variableGuide: {
@@ -753,7 +751,8 @@ const messages: NodesMessages = {
       selectBlock: '先点击要编辑的那一段，变量会插入到当前光标位置。',
       insertMethods: '可以直接输入 “/” 搜索变量，或者点击每段右上角的“插入变量”按钮。',
       quickVariables: '也可以直接点击下面的“快捷变量”标签来插入。',
-      bestPractice: '推荐写法：系统提示词用来写角色、规则和输出要求；用户输入模板更适合放开始节点、知识检索或上游节点的变量。',
+      bestPractice:
+        '推荐写法：系统提示词用来写角色、规则和输出要求；用户输入模板更适合放开始节点、知识检索或上游节点的变量。',
       fallback: '如果没有先选中某一段，快捷变量会默认插入到第一段系统提示词。',
       noManualSyntax: '变量会自动插入成可识别的标签，一般不需要自己手写花括号语法。',
     },
@@ -764,7 +763,8 @@ const messages: NodesMessages = {
       managed: '来自提示词库',
       inline: '当前节点副本',
       currentUsing: '当前正在使用：{name}',
-      managedDescription: '当前节点正在使用提示词库里的共享提示词。这里仅展示内容预览；如果只想改这个节点，请先改成当前节点可编辑。',
+      managedDescription:
+        '当前节点正在使用提示词库里的共享提示词。这里仅展示内容预览；如果只想改这个节点，请先改成当前节点可编辑。',
       managedPreview: '只读预览',
       emptyContent: '暂无内容',
       inlineDescription: '当前节点正在使用自己的提示词副本，你可以直接编辑，也可以保存回提示词库。',

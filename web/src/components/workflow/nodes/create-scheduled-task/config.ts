@@ -1,7 +1,9 @@
 import type { AutomationBodyType } from '@/services/types/automation';
 import type { ValidationError, ValidationResult } from '../common/validation';
-import { isNotificationSMSLinkCodeValid } from '@/components/notification-sms/validation';
-import { NOTIFICATION_SMS_TEMPLATE } from '@/lib/features/notification-sms';
+import {
+  normalizeNotificationSMSTemplateKey,
+  NOTIFICATION_SMS_TEMPLATE,
+} from '@/lib/features/notification-sms';
 import { generateClientId } from '@/utils/client-id';
 
 export type CreateScheduledTaskScheduleType = 'once' | 'cron';
@@ -23,9 +25,8 @@ export interface ScheduledTaskNotificationDraft {
   subject: string;
   body: string;
   body_type: AutomationBodyType;
-  template: typeof NOTIFICATION_SMS_TEMPLATE;
-  notification_title: string;
-  link_code: string;
+  template: string;
+  template_params: Record<string, string>;
 }
 
 export interface CreateScheduledTaskActionData {
@@ -41,11 +42,11 @@ export interface CreateScheduledTaskActionValidationErrors {
   actionType?: ValidationError;
   channelType?: ValidationError;
   recipients?: ValidationError;
+  template?: ValidationError;
   subject?: ValidationError;
   bodyType?: ValidationError;
   body?: ValidationError;
-  notificationTitle?: ValidationError;
-  linkCode?: ValidationError;
+  templateParams?: Record<string, ValidationError | undefined>;
 }
 
 export interface CreateScheduledTaskNodeData {
@@ -74,8 +75,10 @@ export function createDefaultScheduledTaskNotificationDraft(): ScheduledTaskNoti
     body: '',
     body_type: 'text/html',
     template: NOTIFICATION_SMS_TEMPLATE,
-    notification_title: '',
-    link_code: '',
+    template_params: {
+      notification_title: '',
+      link_code: '',
+    },
   };
 }
 
@@ -151,6 +154,12 @@ function normalizeRecipients(value: unknown): string[] {
   return recipients.length > 0 ? recipients : [''];
 }
 
+function normalizeTemplateParams(value: Record<string, unknown>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+  );
+}
+
 function normalizeAction(action: unknown): CreateScheduledTaskActionData {
   const fallback = createDefaultScheduledTaskActionDraft();
 
@@ -161,10 +170,8 @@ function normalizeAction(action: unknown): CreateScheduledTaskActionData {
   const notificationSource = isRecord(action.notification) ? action.notification : {};
   const templateParams = isRecord(notificationSource.template_params)
     ? notificationSource.template_params
-    : isRecord(action.template_params)
-      ? action.template_params
-      : {};
-
+    : {};
+  const normalizedTemplateParams = normalizeTemplateParams(templateParams);
   return {
     client_id:
       typeof action.client_id === 'string' && action.client_id.trim()
@@ -182,35 +189,24 @@ function normalizeAction(action: unknown): CreateScheduledTaskActionData {
           ? notificationSource.subject
           : typeof action.subject === 'string'
             ? action.subject
-            : fallback.notification?.subject ?? '',
+            : (fallback.notification?.subject ?? ''),
       body:
         typeof notificationSource.body === 'string'
           ? notificationSource.body
           : typeof action.body === 'string'
             ? action.body
-            : fallback.notification?.body ?? '',
+            : (fallback.notification?.body ?? ''),
       body_type: isBodyType(notificationSource.body_type)
         ? notificationSource.body_type
         : isBodyType(action.body_type)
           ? action.body_type
-          : fallback.notification?.body_type ?? 'text/html',
-      template: NOTIFICATION_SMS_TEMPLATE,
-      notification_title:
-        typeof notificationSource.notification_title === 'string'
-          ? notificationSource.notification_title
-          : typeof templateParams.notification_title === 'string'
-            ? templateParams.notification_title
-            : typeof templateParams.name === 'string'
-              ? templateParams.name
-              : fallback.notification?.notification_title ?? '',
-      link_code:
-        typeof notificationSource.link_code === 'string'
-          ? notificationSource.link_code
-          : typeof templateParams.link_code === 'string'
-            ? templateParams.link_code
-            : typeof templateParams.code === 'string'
-              ? templateParams.code
-              : fallback.notification?.link_code ?? '',
+          : (fallback.notification?.body_type ?? 'text/html'),
+      template: normalizeNotificationSMSTemplateKey(
+        typeof notificationSource.template === 'string'
+          ? notificationSource.template
+          : fallback.notification?.template
+      ),
+      template_params: normalizedTemplateParams,
     },
     raw_config: isRecord(action.raw_config) ? action.raw_config : null,
   };
@@ -366,19 +362,11 @@ export function getCreateScheduledTaskActionValidationErrors(
   }
 
   if (action.channel_type === 'sms') {
-    if (!notification.notification_title.trim()) {
-      errors.notificationTitle = {
-        code: 'createScheduledTask.validation.notificationTitleRequired',
+    if (!notification.template.trim()) {
+      errors.template = {
+        code: 'createScheduledTask.validation.templateRequired',
         params,
       };
-    }
-
-    if (!notification.link_code.trim()) {
-      errors.linkCode = { code: 'createScheduledTask.validation.linkCodeRequired', params };
-    } else if (
-      !isNotificationSMSLinkCodeValid(notification.link_code, { allowWorkflowToken: true })
-    ) {
-      errors.linkCode = { code: 'createScheduledTask.validation.linkCodeInvalid', params };
     }
 
     return errors;

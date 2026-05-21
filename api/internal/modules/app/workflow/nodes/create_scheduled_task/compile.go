@@ -150,31 +150,32 @@ func (n *Node) compileNotificationAction(index int, action TaskActionData, actio
 }
 
 func (n *Node) compileSMSNotificationAction(index int, action TaskActionData, actionOrder int, recipients []string) (automationdto.CreateTaskActionRequest, error) {
-	notificationTitle := strings.TrimSpace(n.resolveTemplateVariables(action.Notification.NotificationTitle))
-	linkCode := strings.TrimSpace(n.resolveTemplateVariables(action.Notification.LinkCode))
-
 	template := strings.TrimSpace(action.Notification.Template)
-	if template == "" {
-		template = notificationsms.TemplatePendingActionNotification
-	}
-	if err := notificationsms.ValidateNotificationContent(template, notificationTitle, linkCode); err != nil {
-		return automationdto.CreateTaskActionRequest{}, fmt.Errorf("task.actions[%d].notification: %w", index, err)
-	}
+	templateParams := n.resolveNotificationTemplateParams(action.Notification)
 
 	return automationdto.CreateTaskActionRequest{
 		ActionType:  action.ActionType,
 		ActionOrder: actionOrder,
 		Enabled:     boolPtr(true),
 		Config: map[string]interface{}{
-			"channel_type": action.ChannelType,
-			"to":           recipients,
-			"template":     template,
-			"template_params": map[string]string{
-				"notification_title": notificationTitle,
-				"link_code":          linkCode,
-			},
+			"channel_type":    action.ChannelType,
+			"to":              recipients,
+			"template":        template,
+			"template_params": templateParams,
 		},
 	}, nil
+}
+
+func (n *Node) resolveNotificationTemplateParams(notification NotificationData) map[string]string {
+	resolved := make(map[string]string, len(notification.TemplateParams))
+	for key, value := range notification.TemplateParams {
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(n.resolveTemplateVariables(value))
+		if key != "" && value != "" {
+			resolved[key] = value
+		}
+	}
+	return notificationsms.NormalizeTemplateParams(resolved)
 }
 
 func (n *Node) compileRunWorkflowAction(action TaskActionData, actionOrder int) automationdto.CreateTaskActionRequest {

@@ -35,22 +35,19 @@ func (p *AliyunProvider) Provider() string {
 	return ProviderAliyun
 }
 
-func (p *AliyunProvider) BuildPayload(req Request) (*AliyunPayload, error) {
-	if err := validateRequest(req); err != nil {
+func (p *AliyunProvider) BuildPayload(req Request, template TemplateConfig) (*AliyunPayload, error) {
+	if err := validateRequest(req, template); err != nil {
 		return nil, err
 	}
-	if p.config.ParamMode != ParamModeMap {
-		return nil, fmt.Errorf("unsupported aliyun param mode: %s", p.config.ParamMode)
+	providerTemplate := template.Aliyun
+	if normalizedParamMode(providerTemplate.ParamMode, ParamModeMap) != ParamModeMap {
+		return nil, fmt.Errorf("unsupported aliyun param mode: %s", providerTemplate.ParamMode)
 	}
 
-	values := map[string]string{
-		"notification_title": req.NotificationTitle,
-		"link_code":          req.LinkCode,
-	}
-	params := make(map[string]string, len(p.config.ParamMap))
-	for internalName, providerName := range p.config.ParamMap {
-		value, ok := values[internalName]
-		if !ok {
+	params := make(map[string]string, len(providerTemplate.ParamMap))
+	for internalName, providerName := range providerTemplate.ParamMap {
+		value, ok := req.TemplateParams[internalName]
+		if !ok || strings.TrimSpace(value) == "" {
 			return nil, fmt.Errorf("unsupported aliyun param mapping key: %s", internalName)
 		}
 		params[providerName] = value
@@ -63,13 +60,13 @@ func (p *AliyunProvider) BuildPayload(req Request) (*AliyunPayload, error) {
 	return &AliyunPayload{
 		PhoneNumbers:  NormalizePhoneNumbers(req.Phone),
 		SignName:      p.config.SignName,
-		TemplateCode:  p.config.TemplateCode,
+		TemplateCode:  providerTemplate.TemplateCode,
 		TemplateParam: string(templateParam),
 	}, nil
 }
 
-func (p *AliyunProvider) SendNotification(ctx context.Context, req Request) (*Result, error) {
-	payload, err := p.BuildPayload(req)
+func (p *AliyunProvider) SendNotification(ctx context.Context, req Request, template TemplateConfig) (*Result, error) {
+	payload, err := p.BuildPayload(req, template)
 	if err != nil {
 		return nil, err
 	}

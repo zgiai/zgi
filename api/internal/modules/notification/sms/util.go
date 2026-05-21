@@ -34,34 +34,66 @@ func NormalizePhoneNumbers(phone string) string {
 	return strings.Join(splitPhoneNumbers(phone), ",")
 }
 
-func ValidateNotificationContent(template, notificationTitle, linkCode string) error {
-	if strings.TrimSpace(template) == "" {
-		template = TemplatePendingActionNotification
+func NormalizeTemplateParams(params map[string]string) map[string]string {
+	normalized := make(map[string]string, len(params))
+	for key, value := range params {
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key != "" && value != "" {
+			normalized[key] = value
+		}
 	}
-	if template != TemplatePendingActionNotification {
-		return fmt.Errorf("unsupported notification sms template: %s", template)
+	return normalized
+}
+
+func ValidateTemplateParams(template TemplateConfig, params map[string]string) error {
+	if strings.TrimSpace(template.Key) == "" {
+		return fmt.Errorf("notification sms template key is required")
 	}
-	if strings.TrimSpace(notificationTitle) == "" {
-		return fmt.Errorf("notification_title is required")
+
+	known := make(map[string]TemplateParamConfig, len(template.Params))
+	for _, param := range template.Params {
+		known[param.Key] = param
+		value := strings.TrimSpace(params[param.Key])
+		if param.Required && value == "" {
+			return fmt.Errorf("template param %s is required", param.Key)
+		}
+		if value == "" {
+			continue
+		}
+		if param.MaxLength > 0 && len([]rune(value)) > param.MaxLength {
+			return fmt.Errorf("template param %s must be at most %d characters", param.Key, param.MaxLength)
+		}
+		if param.Pattern != "" {
+			pattern, err := regexp.Compile(param.Pattern)
+			if err != nil {
+				return fmt.Errorf("template param %s pattern is invalid: %w", param.Key, err)
+			}
+			if !pattern.MatchString(value) {
+				return fmt.Errorf("template param %s contains unsupported characters", param.Key)
+			}
+		}
 	}
-	if len([]rune(notificationTitle)) > maxNotificationTitleRunes {
-		return fmt.Errorf("notification_title must be at most %d characters", maxNotificationTitleRunes)
-	}
-	linkCode = strings.TrimSpace(linkCode)
-	if linkCode == "" {
-		return fmt.Errorf("link_code is required")
-	}
-	if !linkCodePattern.MatchString(linkCode) {
-		return fmt.Errorf("link_code contains unsupported characters")
+
+	for key, value := range params {
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		if _, ok := known[key]; !ok {
+			return fmt.Errorf("template param %s is not defined by template %s", key, template.Key)
+		}
 	}
 	return nil
 }
 
-func validateRequest(req Request) error {
+func validateRequest(req Request, template TemplateConfig) error {
 	if NormalizePhoneNumbers(req.Phone) == "" {
 		return fmt.Errorf("phone is required")
 	}
-	return ValidateNotificationContent(req.Template, req.NotificationTitle, req.LinkCode)
+	if strings.TrimSpace(req.Template) == "" {
+		return fmt.Errorf("template is required")
+	}
+	return ValidateTemplateParams(template, req.TemplateParams)
 }
 
 func splitPhoneNumbers(phone string) []string {

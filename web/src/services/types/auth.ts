@@ -159,7 +159,20 @@ export interface SystemFeatures {
   is_public_deployment: boolean;
   notification_sms?: {
     enabled?: boolean;
+    template?: string;
     preview_template?: string;
+    templates?: Array<{
+      key: string;
+      name?: string;
+      preview_template?: string;
+      params?: Array<{
+        key: string;
+        label?: string;
+        required?: boolean;
+        max_length?: number;
+        pattern?: string;
+      }>;
+    }>;
   };
   workflow_nodes?: Record<string, { enabled?: boolean }>;
   automation_channels?: Record<string, { enabled?: boolean }>;

@@ -99,14 +99,19 @@ func validateNotificationContent(index int, action TaskActionData) error {
 	}
 
 	template := strings.TrimSpace(action.Notification.Template)
-	if template != "" && template != notificationsms.TemplatePendingActionNotification {
-		return fmt.Errorf("task.actions[%d].notification.template %q is not supported", index, action.Notification.Template)
+	if template == "" {
+		return fmt.Errorf("task.actions[%d].notification.template is required", index)
 	}
-	if strings.TrimSpace(action.Notification.NotificationTitle) == "" {
-		return fmt.Errorf("task.actions[%d].notification.notification_title is required", index)
+	if template != notificationsms.TemplatePendingActionNotification {
+		return nil
 	}
-	if strings.TrimSpace(action.Notification.LinkCode) == "" {
-		return fmt.Errorf("task.actions[%d].notification.link_code is required", index)
+
+	templateParams := notificationsms.NormalizeTemplateParams(action.Notification.TemplateParams)
+	if strings.TrimSpace(templateParams["notification_title"]) == "" {
+		return fmt.Errorf("task.actions[%d].notification.template_params.notification_title is required", index)
+	}
+	if strings.TrimSpace(templateParams["link_code"]) == "" {
+		return fmt.Errorf("task.actions[%d].notification.template_params.link_code is required", index)
 	}
 	return nil
 }

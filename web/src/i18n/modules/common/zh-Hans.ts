@@ -258,6 +258,12 @@ const messages: CommonMessages = {
   notificationSms: {
     fields: {
       recipients: '手机号',
+      template: '短信模板',
+    },
+    templates: {
+      pendingActionNotification: '待办通知',
+    },
+    params: {
       notificationTitle: '通知标题',
       linkCode: '链接参数',
     },
@@ -266,6 +272,7 @@ const messages: CommonMessages = {
       recipientSingle: '手机号，多个用英文逗号分隔',
       notificationTitle: '您有一项新的任务待处理',
       linkCode: '任务或通知链接参数',
+      param: '请输入{label}',
     },
     actions: {
       addRecipient: '添加手机号',
@@ -276,14 +283,13 @@ const messages: CommonMessages = {
       linkCode: '建议填写短码，例如 abc123；不要包含 -、_、中文或完整链接。',
     },
     validation: {
-      linkCodeInvalid: '链接参数只能填写字母或数字，例如 abc123。不要输入 -、_、中文或完整链接。',
+      paramRequired: '请填写{label}。',
+      paramInvalid: '{label}格式不正确。',
+      paramTooLong: '{label}不能超过 {max} 个字符。',
     },
     preview: '模板预览',
-    previewBody:
-      '您好，您有一项新的任务待处理：{title}。请打开后端已配置的审核链接，链接参数为 {code}。',
     previewHint: '实际短信内容以后端配置的服务商审核模板为准。',
-    previewTitlePlaceholder: '通知标题',
-    previewCodePlaceholder: '链接参数',
+    previewUnavailable: '当前模板没有配置预览文案。',
   },
 
   // Form elements
