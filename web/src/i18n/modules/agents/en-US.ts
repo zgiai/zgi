@@ -733,6 +733,9 @@ const messages = {
       dialogueCount: 'Dialogue count',
       technicalFieldsHidden: 'Only technical fields are available. Open raw data to inspect them.',
       debugDetails: 'Debug details',
+      openNodeRuntimeLog: 'Show run details',
+      closeNodeRuntimeLog: 'Hide run details',
+      runningNow: 'Running',
     },
     runErrorsDialog: {
       title: 'Unresolved Errors Detected',
