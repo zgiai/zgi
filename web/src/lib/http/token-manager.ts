@@ -2,9 +2,9 @@
 
 import type { AxiosInstance } from 'axios';
 import { AxiosError } from 'axios';
-import * as Sentry from '@sentry/nextjs';
 import { willTokenExpireSoon } from '@/utils/jwt';
 import { withBasePath } from '@/lib/config';
+import { captureException } from '@/lib/sentry/client';
 import { consumePendingLogoutRedirect } from '@/utils/logout-redirect';
 import { sessionManager } from '@/lib/auth/session-manager';
 import { isLogoutInProgress, markAuthRedirectInProgress } from '@/lib/auth/logout-state';
@@ -248,7 +248,7 @@ export class TokenManager {
         }
       }
 
-      Sentry.withScope(scope => {
+      captureException(error, scope => {
         const status = error instanceof AxiosError ? error.response?.status : undefined;
         scope.setContext('http', {
           url: '/console/api/refresh-token',
@@ -258,7 +258,6 @@ export class TokenManager {
         scope.setContext('auth', { reason: 'refresh_request_failed' });
         scope.setTag('endpoint', this.endpointName);
       });
-      Sentry.captureException(error);
       throw error;
     }
   }
