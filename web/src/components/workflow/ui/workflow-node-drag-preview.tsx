@@ -30,6 +30,8 @@ import JsonParserContent from '../nodes/json-parser';
 import ImageGenContent from '../nodes/image-gen';
 import type { ApprovalNodeData } from '../nodes/approval/config';
 import { normalizeApprovalNodeData } from '../nodes/approval/config';
+import type { AnnouncementNodeData } from '../nodes/announcement/config';
+import { normalizeAnnouncementNodeData } from '../nodes/announcement/config';
 import QuestionAnswerContent from '../nodes/question-answer';
 
 const DEFAULT_PREVIEW_WIDTH = 280;
@@ -178,6 +180,44 @@ function ApprovalPreviewBody({ data }: { data: ApprovalNodeData }) {
         <div className="flex items-center justify-end border-t py-2 text-xs">
           <span className="font-mono font-semibold">{t('approval.preview.timeout')}</span>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function AnnouncementPreviewBody({ data }: { data: AnnouncementNodeData }) {
+  const t = useT('nodes');
+  const normalized = normalizeAnnouncementNodeData(data);
+  const title = normalized.announcement.title.trim();
+  const content = normalized.announcement.content.trim();
+  const expiration = t('announcement.preview.expirationValue', {
+    duration: normalized.timeout.duration,
+    unit: t(`announcement.timeout.${normalized.timeout.unit}`),
+  });
+
+  return (
+    <div className="mt-1 space-y-2">
+      <div className="space-y-1 rounded-md border bg-background/80 px-2 py-1.5">
+        <div className="text-[10px] font-medium uppercase text-muted-foreground">
+          {t('announcement.preview.title')}
+        </div>
+        <div className="truncate text-xs font-medium">
+          {title || t('announcement.preview.emptyTitle')}
+        </div>
+      </div>
+      <div className="space-y-1 rounded-md border bg-background/80 px-2 py-1.5">
+        <div className="text-[10px] font-medium uppercase text-muted-foreground">
+          {t('announcement.preview.content')}
+        </div>
+        <div className="line-clamp-2 text-xs leading-relaxed text-foreground break-words whitespace-pre-wrap">
+          {content || t('announcement.preview.emptyContent')}
+        </div>
+      </div>
+      <div className="space-y-1 rounded-md border bg-background/80 px-2 py-1.5">
+        <div className="text-[10px] font-medium uppercase text-muted-foreground">
+          {t('announcement.preview.expiration')}
+        </div>
+        <div className="truncate text-xs font-medium text-muted-foreground">{expiration}</div>
       </div>
     </div>
   );
@@ -370,6 +410,8 @@ function InitialDataPreviewContent({
       return <ImageGenContent nodeId={PREVIEW_NODE_ID} data={data} />;
     case 'approval':
       return <ApprovalPreviewBody data={data} />;
+    case 'announcement':
+      return <AnnouncementPreviewBody data={data} />;
     case 'question-answer':
       return <QuestionAnswerContent nodeId={PREVIEW_NODE_ID} data={data} />;
     default:

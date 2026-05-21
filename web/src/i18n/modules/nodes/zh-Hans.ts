@@ -121,6 +121,11 @@ const messages: NodesMessages = {
       description: '暂停流程并收集人工审查决策',
       label: '审查',
     },
+    announcement: {
+      title: '公告',
+      description: '创建公开公告链接，并继续执行流程',
+      label: '公告',
+    },
     'question-answer': {
       title: '问答',
       description: '暂停工作流，在同一会话中收集用户回答',
@@ -193,6 +198,13 @@ const messages: NodesMessages = {
       approval_action_id: '审查人选择的审查动作 ID，超时时为 expired',
       approval_action_label: '审查人选择的审查动作文案，超时时为 Expired',
       approval_rendered_content: '变量与提交值替换后的审查正文',
+    },
+    announcement: {
+      title: '变量解析后的公告标题',
+      content: '变量解析后的公告内容',
+      expiration_time: '可直接展示的公告过期时间',
+      token: '用于自行拼接短链接的公告 token',
+      url: '公告公开链接',
     },
     questionAnswer: {
       question: '当前问题或追问',
@@ -420,6 +432,72 @@ const messages: NodesMessages = {
       expiredDescription: '审查表单已过期，流程将沿超时分支继续。',
       finished: '流程已恢复',
       finishedDescription: '该审查已处理完成。',
+      expiresAt: '过期时间：{time}',
+    },
+  },
+  announcement: {
+    intro: {
+      title: '生成可访问的公告短链接',
+      description: '这个节点用于把你配置的公告标题和内容生成一个可打开的短链接展示页。',
+    },
+    section: {
+      variables: '变量',
+      title: '公告标题',
+      content: '公告内容',
+      timeout: '过期时间',
+    },
+    sectionHelp: {
+      variables: '先点击标题或内容输入框，选择变量后会插入到当前光标位置。',
+      title: '变量解析后会作为公开公告页标题展示。',
+      content: '这段 Markdown 内容会展示在公开公告页中。',
+      timeout: '设置公开链接可访问的有效时长。',
+    },
+    variables: {
+      activeTarget: '当前插入位置：{target}',
+      targets: {
+        title: '公告标题',
+        content: '公告内容',
+      },
+    },
+    defaults: {
+      content: '请阅读这条公告。',
+    },
+    preview: {
+      title: '标题',
+      content: '内容',
+      expiration: '过期时间',
+      emptyTitle: '尚未配置公告标题',
+      emptyContent: '尚未配置公告内容',
+      expirationValue: '{duration} {unit}',
+    },
+    timeout: {
+      hour: '小时',
+      day: '天',
+    },
+    presets: {
+      oneDay: '1 天',
+      threeDays: '3 天',
+      oneWeek: '1 周',
+    },
+    placeholders: {
+      title: '填写公告标题，可使用 / 插入变量。',
+      content: '填写 Markdown 公告内容，可使用 / 插入变量。',
+    },
+    length: {
+      titleCounter: '{count}/{max} 字符',
+    },
+    validation: {
+      titleRequired: '公告标题不能为空',
+      titleTooLong: '公告标题不能超过 {max} 个字符',
+      contentRequired: '公告内容不能为空',
+      timeoutDurationInvalid: '过期时长必须是正整数',
+      timeoutDurationTooLong: '过期时间不能超过 1 周',
+      timeoutUnitInvalid: '过期单位必须是小时或天',
+    },
+    runtime: {
+      unavailable: '公告不可访问',
+      unavailableDescription: '公告可能已经过期，或链接无效。',
+      retry: '重试',
       expiresAt: '过期时间：{time}',
     },
   },
@@ -745,7 +823,8 @@ const messages: NodesMessages = {
     },
     optimizer: {
       sourceLabel: '待优化的系统提示词',
-      sourceHelp: '这里已经自动带入当前节点的系统提示词。你可以直接修改后再优化；如果改乱了，可以点“重新载入当前节点提示词”恢复。',
+      sourceHelp:
+        '这里已经自动带入当前节点的系统提示词。你可以直接修改后再优化；如果改乱了，可以点“重新载入当前节点提示词”恢复。',
       resetSource: '重新载入当前节点提示词',
     },
     variableGuide: {
@@ -753,7 +832,8 @@ const messages: NodesMessages = {
       selectBlock: '先点击要编辑的那一段，变量会插入到当前光标位置。',
       insertMethods: '可以直接输入 “/” 搜索变量，或者点击每段右上角的“插入变量”按钮。',
       quickVariables: '也可以直接点击下面的“快捷变量”标签来插入。',
-      bestPractice: '推荐写法：系统提示词用来写角色、规则和输出要求；用户输入模板更适合放开始节点、知识检索或上游节点的变量。',
+      bestPractice:
+        '推荐写法：系统提示词用来写角色、规则和输出要求；用户输入模板更适合放开始节点、知识检索或上游节点的变量。',
       fallback: '如果没有先选中某一段，快捷变量会默认插入到第一段系统提示词。',
       noManualSyntax: '变量会自动插入成可识别的标签，一般不需要自己手写花括号语法。',
     },
@@ -764,7 +844,8 @@ const messages: NodesMessages = {
       managed: '来自提示词库',
       inline: '当前节点副本',
       currentUsing: '当前正在使用：{name}',
-      managedDescription: '当前节点正在使用提示词库里的共享提示词。这里仅展示内容预览；如果只想改这个节点，请先改成当前节点可编辑。',
+      managedDescription:
+        '当前节点正在使用提示词库里的共享提示词。这里仅展示内容预览；如果只想改这个节点，请先改成当前节点可编辑。',
       managedPreview: '只读预览',
       emptyContent: '暂无内容',
       inlineDescription: '当前节点正在使用自己的提示词副本，你可以直接编辑，也可以保存回提示词库。',

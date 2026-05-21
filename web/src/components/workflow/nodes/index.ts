@@ -32,6 +32,7 @@ export const nodeTypes = {
   'json-parser': CustomNode,
   'image-gen': CustomNode,
   approval: CustomNode,
+  announcement: CustomNode,
   'question-answer': CustomNode,
   'custom-iteration-start': IterationStartNode,
   'custom-loop-start': LoopStartNode,
@@ -66,6 +67,7 @@ export const NODE_TYPES = {
   JSON_PARSER: 'json-parser',
   IMAGE_GEN: 'image-gen',
   APPROVAL: 'approval',
+  ANNOUNCEMENT: 'announcement',
   QUESTION_ANSWER: 'question-answer',
   NOTE: 'note',
 } as const;

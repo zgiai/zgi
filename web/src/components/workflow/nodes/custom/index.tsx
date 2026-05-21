@@ -36,6 +36,7 @@ import ParameterExtractorContent from '../parameter-extractor';
 import JsonParserContent from '../json-parser';
 import ImageGenContent from '../image-gen';
 import ApprovalContent from '../approval';
+import AnnouncementContent from '../announcement';
 import QuestionAnswerContent from '../question-answer';
 import type { QuestionAnswerNodeData } from '../question-answer/config';
 
@@ -341,6 +342,13 @@ const CustomNode: React.FC<CustomNodeProps> = ({ id, data, selected }) => {
           <ApprovalContent
             nodeId={id as string}
             data={data as Extract<WorkflowNodeData, { type: 'approval' }>}
+          />
+        );
+      case 'announcement':
+        return (
+          <AnnouncementContent
+            nodeId={id as string}
+            data={data as Extract<WorkflowNodeData, { type: 'announcement' }>}
           />
         );
       case 'question-answer':

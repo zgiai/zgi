@@ -453,7 +453,10 @@ export function createGraphSlice(set: StoreSet, get: () => GraphGet): GraphSlice
       const node: WorkflowNode = {
         id,
         type:
-          nodeType === 'note' || nodeType === 'approval' || nodeType === 'question-answer'
+          nodeType === 'note' ||
+          nodeType === 'approval' ||
+          nodeType === 'announcement' ||
+          nodeType === 'question-answer'
             ? nodeType
             : 'custom',
         position: finalPos,
@@ -548,7 +551,10 @@ export function createGraphSlice(set: StoreSet, get: () => GraphGet): GraphSlice
         const node: WorkflowNode = {
           id,
           type:
-            dataType === 'note' || dataType === 'approval' || dataType === 'question-answer'
+            dataType === 'note' ||
+            dataType === 'approval' ||
+            dataType === 'announcement' ||
+            dataType === 'question-answer'
               ? dataType
               : 'custom',
           position: finalPos,
@@ -905,9 +911,10 @@ export function createGraphSlice(set: StoreSet, get: () => GraphGet): GraphSlice
 
       if (!didChange) return;
 
-      const { past, future } = pushHistory && !get().isHistoryBatching
-        ? histPushHistory(get().historyPast, get().nodes, get().edges)
-        : { past: get().historyPast, future: get().historyFuture };
+      const { past, future } =
+        pushHistory && !get().isHistoryBatching
+          ? histPushHistory(get().historyPast, get().nodes, get().edges)
+          : { past: get().historyPast, future: get().historyFuture };
 
       set(
         {

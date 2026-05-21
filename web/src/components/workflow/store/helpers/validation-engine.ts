@@ -22,6 +22,7 @@ import type {
   SqlGeneratorNodeData,
   DocumentExtractorNodeData,
   ApprovalNodeData,
+  AnnouncementNodeData,
   QuestionAnswerNodeData,
 } from '../type';
 import { isContainerStartNode } from '../type';
@@ -52,6 +53,7 @@ import {
   type JsonParserNodeData,
 } from '../../nodes/json-parser/config';
 import { checkValid as approvalCheck } from '../../nodes/approval/config';
+import { checkValid as announcementCheck } from '../../nodes/announcement/config';
 import { checkValid as questionAnswerCheck } from '../../nodes/question-answer/config';
 import type { RunnableSets } from '../store';
 import type { ValidationResult } from '../../nodes/common/validation';
@@ -308,6 +310,9 @@ export function validateWorkflow(
           break;
         case NODE_TYPES.APPROVAL:
           pushNodeValidation(approvalCheck(node.data as ApprovalNodeData));
+          break;
+        case NODE_TYPES.ANNOUNCEMENT:
+          pushNodeValidation(announcementCheck(node.data as AnnouncementNodeData));
           break;
         case NODE_TYPES.QUESTION_ANSWER:
           pushNodeValidation(questionAnswerCheck(node.data as QuestionAnswerNodeData));

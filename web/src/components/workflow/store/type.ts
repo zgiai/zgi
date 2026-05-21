@@ -23,6 +23,7 @@ import type { LoopEndNodeData } from '../nodes/loop-end/config';
 import type { JsonParserNodeData } from '../nodes/json-parser/config';
 import type { ImageGenNodeData } from '../nodes/image-gen/config';
 import type { ApprovalNodeData } from '../nodes/approval/config';
+import type { AnnouncementNodeData } from '../nodes/announcement/config';
 import type { QuestionAnswerNodeData } from '../nodes/question-answer/config';
 import type { IterationStartNodeData } from '../nodes/iteration-start';
 import type { LoopStartNodeData } from '../nodes/loop-start';
@@ -188,6 +189,7 @@ export type {
   JsonParserNodeData,
   ImageGenNodeData,
   ApprovalNodeData,
+  AnnouncementNodeData,
   QuestionAnswerNodeData,
   NoteNodeData,
 };
@@ -240,6 +242,7 @@ export type WorkflowNodeData =
   | JsonParserNodeData
   | ImageGenNodeData
   | ApprovalNodeData
+  | AnnouncementNodeData
   | QuestionAnswerNodeData
   | NoteNodeData;
 
