@@ -440,14 +440,23 @@ const messages: NodesMessages = {
       description: '这个节点用于把你配置的公告标题和内容生成一个可打开的短链接展示页。',
     },
     section: {
+      variables: '变量',
       title: '公告标题',
       content: '公告内容',
       timeout: '过期时间',
     },
     sectionHelp: {
+      variables: '先点击标题或内容输入框，选择变量后会插入到当前光标位置。',
       title: '变量解析后会作为公开公告页标题展示。',
       content: '这段 Markdown 内容会展示在公开公告页中。',
       timeout: '设置公开链接可访问的有效时长。',
+    },
+    variables: {
+      activeTarget: '当前插入位置：{target}',
+      targets: {
+        title: '公告标题',
+        content: '公告内容',
+      },
     },
     defaults: {
       content: '请阅读这条公告。',

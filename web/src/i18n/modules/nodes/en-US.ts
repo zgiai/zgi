@@ -448,14 +448,24 @@ const messages = {
         'Use this node to turn your announcement title and content into a short display page link.',
     },
     section: {
+      variables: 'Variables',
       title: 'Announcement Title',
       content: 'Announcement Content',
       timeout: 'Expiration',
     },
     sectionHelp: {
+      variables:
+        'Click the title or content field first. Selected variables are inserted at that cursor position.',
       title: 'This is the public page title after variables are resolved.',
       content: 'This Markdown body is shown on the public announcement page.',
       timeout: 'Choose how long the public link remains accessible.',
+    },
+    variables: {
+      activeTarget: 'Current insert target: {target}',
+      targets: {
+        title: 'announcement title',
+        content: 'announcement content',
+      },
     },
     defaults: {
       content: 'Please read this announcement.',

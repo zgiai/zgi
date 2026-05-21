@@ -34,6 +34,8 @@ interface AnnouncementManagerProps {
   readOnly?: boolean;
 }
 
+type AnnouncementEditorTarget = 'title' | 'content';
+
 function Section({
   title,
   description,
@@ -95,6 +97,7 @@ export function AnnouncementManager({
   const t = useT('nodes');
   const titleEditorRef = React.useRef<WorkflowValueEditorHandle>(null);
   const contentEditorRef = React.useRef<WorkflowValueEditorHandle>(null);
+  const activeEditorRef = React.useRef<WorkflowValueEditorHandle | null>(null);
   const nodeData = useNodeData<AnnouncementNodeData>(nodeId);
   const updateData = useNodeDataUpdate<AnnouncementNodeData>(nodeId);
   const outputs = useNodeOutputVariables(nodeId);
@@ -102,6 +105,8 @@ export function AnnouncementManager({
   const [timeoutDurationInput, setTimeoutDurationInput] = React.useState(
     String(data.timeout.duration)
   );
+  const [activeEditorTarget, setActiveEditorTarget] =
+    React.useState<AnnouncementEditorTarget>('content');
   const titleLength = Array.from(data.announcement.title.trim()).length;
   const titleTooLong = titleLength > ANNOUNCEMENT_TITLE_MAX_LENGTH;
 
@@ -117,24 +122,25 @@ export function AnnouncementManager({
     [data, readOnly, updateData]
   );
 
-  const handleTitleVariableInsert = React.useCallback(
-    (value: VariableInsertValue) => {
-      if (readOnly) return;
-      const key =
-        value.sourceId === 'sys' && value.key.startsWith('sys.') ? value.key.slice(4) : value.key;
-      titleEditorRef.current?.insertToken(value.sourceId, key);
-      titleEditorRef.current?.focus();
-    },
-    [readOnly]
-  );
+  const handleEditorFocused = React.useCallback((target: AnnouncementEditorTarget) => {
+    const editor = target === 'title' ? titleEditorRef.current : contentEditorRef.current;
+    if (editor) {
+      activeEditorRef.current = editor;
+    }
+    setActiveEditorTarget(target);
+  }, []);
 
-  const handleContentVariableInsert = React.useCallback(
+  const handleVariableInsert = React.useCallback(
     (value: VariableInsertValue) => {
       if (readOnly) return;
       const key =
         value.sourceId === 'sys' && value.key.startsWith('sys.') ? value.key.slice(4) : value.key;
-      contentEditorRef.current?.insertToken(value.sourceId, key);
-      contentEditorRef.current?.focus();
+      const editor = activeEditorRef.current ?? contentEditorRef.current ?? titleEditorRef.current;
+      editor?.insertToken(value.sourceId, key);
+      editor?.focus();
+      if (!activeEditorRef.current && contentEditorRef.current) {
+        setActiveEditorTarget('content');
+      }
     },
     [readOnly]
   );
@@ -176,16 +182,27 @@ export function AnnouncementManager({
       <IntroCard />
 
       <Section
-        title={t('announcement.section.title')}
-        description={t('announcement.sectionHelp.title')}
+        title={t('announcement.section.variables')}
+        description={t('announcement.sectionHelp.variables')}
       >
         <WorkflowValueInserter
           nodeId={nodeId}
           className="w-full"
-          onInsert={handleTitleVariableInsert}
+          onInsert={handleVariableInsert}
           disabled={readOnly}
-          defaultCollapsed={false}
+          defaultCollapsed
         />
+        <div className="rounded-md bg-muted/40 px-3 py-2 text-xs leading-5 text-muted-foreground">
+          {t('announcement.variables.activeTarget', {
+            target: t(`announcement.variables.targets.${activeEditorTarget}`),
+          })}
+        </div>
+      </Section>
+
+      <Section
+        title={t('announcement.section.title')}
+        description={t('announcement.sectionHelp.title')}
+      >
         <WorkflowValueEditor
           ref={titleEditorRef}
           value={data.announcement.title}
@@ -199,6 +216,7 @@ export function AnnouncementManager({
           nodeId={nodeId}
           placeholder={t('announcement.placeholders.title')}
           editorClassName="min-h-10"
+          onFocus={() => handleEditorFocused('title')}
         />
         <div
           className={cn(
@@ -217,13 +235,6 @@ export function AnnouncementManager({
         title={t('announcement.section.content')}
         description={t('announcement.sectionHelp.content')}
       >
-        <WorkflowValueInserter
-          nodeId={nodeId}
-          className="w-full"
-          onInsert={handleContentVariableInsert}
-          disabled={readOnly}
-          defaultCollapsed={false}
-        />
         <WorkflowValueEditor
           ref={contentEditorRef}
           value={data.announcement.content}
@@ -237,6 +248,7 @@ export function AnnouncementManager({
           nodeId={nodeId}
           placeholder={t('announcement.placeholders.content')}
           editorClassName="min-h-[160px]"
+          onFocus={() => handleEditorFocused('content')}
         />
       </Section>
 
