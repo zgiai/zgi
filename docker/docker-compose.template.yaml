@@ -183,6 +183,8 @@ services:
       CODE_EXECUTION_ENDPOINT: ${CODE_EXECUTION_ENDPOINT:-http://zgi-sandbox:2660}
       PLUGIN_RUNNER_ENABLED: ${PLUGIN_RUNNER_ENABLED:-true}
       PLUGIN_RUNNER_URL: ${PLUGIN_RUNNER_URL:-http://runner:2665}
+      MARKETPLACE_API_URL: ${MARKETPLACE_API_URL:-https://market.zgiai.com}
+      MARKETPLACE_BASE_URL: ${MARKETPLACE_BASE_URL:-${MARKETPLACE_API_URL:-https://market.zgiai.com}}
     depends_on:
       postgres:
         condition: service_healthy

@@ -23,7 +23,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /out/runner ./cmd/exec
 # ============================================================
 # Stage 2: Runtime image
 # ============================================================
-FROM debian:bookworm-slim
+FROM node:20-bookworm-slim
 
 WORKDIR /app
 
@@ -50,8 +50,6 @@ RUN apt-get update -o Acquire::Retries=5 \
     python3 \
     python3-pip \
     python3-venv \
-    nodejs \
-    npm \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/python3 /usr/bin/python
 
