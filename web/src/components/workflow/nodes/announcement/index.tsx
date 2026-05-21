@@ -68,7 +68,7 @@ function PreviewField({
     <div className={cn('space-y-1.5 rounded-md border bg-background/80 px-2 py-1.5', className)}>
       <div className="text-[10px] font-medium uppercase text-muted-foreground">{label}</div>
       <div
-        className="nowheel max-h-[84px] overflow-y-auto text-xs leading-relaxed text-foreground break-words whitespace-pre-wrap scrollbar-thin"
+        className="nowheel max-h-[84px] overflow-y-auto break-words text-xs leading-relaxed text-foreground [overflow-wrap:anywhere] whitespace-pre-wrap scrollbar-thin"
         title={value}
         onWheelCapture={event => event.stopPropagation()}
       >

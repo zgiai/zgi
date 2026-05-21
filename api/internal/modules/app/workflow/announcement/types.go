@@ -3,6 +3,7 @@ package announcement
 const (
 	NodeTypeAnnouncement = "announcement"
 
+	MaxTitleLength         = 255
 	defaultTimeoutDuration = 36
 	defaultTimeoutUnit     = "hour"
 	announcementURLPath    = "/n/"

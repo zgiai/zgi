@@ -22,6 +22,7 @@ export interface AnnouncementNodeData {
 }
 
 export const ANNOUNCEMENT_MAX_TIMEOUT_HOURS = 168;
+export const ANNOUNCEMENT_TITLE_MAX_LENGTH = 255;
 
 export const DEFAULT_ANNOUNCEMENT_NODE_DATA: AnnouncementNodeData = {
   type: 'announcement',
@@ -97,6 +98,13 @@ export function checkValid(data: AnnouncementNodeData): ValidationResult {
 
   if (!normalized.announcement.title.trim()) {
     errors.push({ code: 'announcement.validation.titleRequired' });
+  } else if (
+    Array.from(normalized.announcement.title.trim()).length > ANNOUNCEMENT_TITLE_MAX_LENGTH
+  ) {
+    errors.push({
+      code: 'announcement.validation.titleTooLong',
+      params: { max: ANNOUNCEMENT_TITLE_MAX_LENGTH },
+    });
   }
   if (!normalized.announcement.content.trim()) {
     errors.push({ code: 'announcement.validation.contentRequired' });

@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { CircleAlert, Clock, Link2, Megaphone, Variable } from 'lucide-react';
+import { CircleAlert, Megaphone } from 'lucide-react';
 
 import OutputVariablesView from '@/components/workflow/common/output-variables-view';
 import WorkflowValueInserter from '@/components/workflow/common/workflow-value-inserter';
@@ -21,6 +21,7 @@ import { cn } from '@/lib/utils';
 
 import { useNodeData, useNodeDataUpdate, useNodeOutputVariables } from '../../../hooks';
 import {
+  ANNOUNCEMENT_TITLE_MAX_LENGTH,
   getAnnouncementTimeoutMaxDuration,
   normalizeAnnouncementNodeData,
   type AnnouncementNodeData,
@@ -70,52 +71,17 @@ function Section({
 
 function IntroCard() {
   const t = useT('nodes');
-  const items = [
-    {
-      icon: Megaphone,
-      title: t('announcement.intro.createLink.title'),
-      description: t('announcement.intro.createLink.description'),
-    },
-    {
-      icon: Variable,
-      title: t('announcement.intro.variables.title'),
-      description: t('announcement.intro.variables.description'),
-    },
-    {
-      icon: Clock,
-      title: t('announcement.intro.expiration.title'),
-      description: t('announcement.intro.expiration.description'),
-    },
-    {
-      icon: Link2,
-      title: t('announcement.intro.outputs.title'),
-      description: t('announcement.intro.outputs.description'),
-    },
-  ];
 
   return (
-    <div className="rounded-lg border bg-muted/40 p-3">
-      <div className="text-sm font-semibold text-foreground">{t('announcement.intro.title')}</div>
-      <p className="mt-1 text-xs leading-5 text-muted-foreground">
-        {t('announcement.intro.description')}
-      </p>
-      <div className="mt-3 grid gap-2">
-        {items.map(item => {
-          const Icon = item.icon;
-          return (
-            <div key={item.title} className="flex gap-2 rounded-md bg-background/70 p-2">
-              <div className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-                <Icon className="size-3.5" />
-              </div>
-              <div className="min-w-0">
-                <div className="text-xs font-medium text-foreground">{item.title}</div>
-                <div className="mt-0.5 text-xs leading-5 text-muted-foreground">
-                  {item.description}
-                </div>
-              </div>
-            </div>
-          );
-        })}
+    <div className="flex gap-3 rounded-lg border bg-muted/40 p-3">
+      <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-background text-muted-foreground">
+        <Megaphone className="size-4" />
+      </div>
+      <div className="min-w-0">
+        <div className="text-sm font-semibold text-foreground">{t('announcement.intro.title')}</div>
+        <p className="mt-1 text-xs leading-5 text-muted-foreground">
+          {t('announcement.intro.description')}
+        </p>
       </div>
     </div>
   );
@@ -136,6 +102,8 @@ export function AnnouncementManager({
   const [timeoutDurationInput, setTimeoutDurationInput] = React.useState(
     String(data.timeout.duration)
   );
+  const titleLength = Array.from(data.announcement.title.trim()).length;
+  const titleTooLong = titleLength > ANNOUNCEMENT_TITLE_MAX_LENGTH;
 
   React.useEffect(() => {
     setTimeoutDurationInput(String(data.timeout.duration));
@@ -232,6 +200,17 @@ export function AnnouncementManager({
           placeholder={t('announcement.placeholders.title')}
           editorClassName="min-h-10"
         />
+        <div
+          className={cn(
+            'text-right text-xs text-muted-foreground',
+            titleTooLong && 'text-destructive'
+          )}
+        >
+          {t('announcement.length.titleCounter', {
+            count: titleLength,
+            max: ANNOUNCEMENT_TITLE_MAX_LENGTH,
+          })}
+        </div>
       </Section>
 
       <Section

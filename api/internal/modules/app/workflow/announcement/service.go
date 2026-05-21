@@ -151,12 +151,19 @@ func validateRuntimeParams(params CreateRuntimeAnnouncementParams) error {
 	if strings.TrimSpace(params.NodeID) == "" {
 		return fmt.Errorf("node_id is required")
 	}
+	if len([]rune(strings.TrimSpace(params.NodeTitle))) > MaxTitleLength {
+		return fmt.Errorf("announcement title cannot exceed %d characters", MaxTitleLength)
+	}
 	return ValidateConfig(params.Config)
 }
 
 func ValidateConfig(config NodeConfig) error {
-	if strings.TrimSpace(config.Title) == "" {
+	title := strings.TrimSpace(config.Title)
+	if title == "" {
 		return fmt.Errorf("announcement title is required")
+	}
+	if len([]rune(title)) > MaxTitleLength {
+		return fmt.Errorf("announcement title cannot exceed %d characters", MaxTitleLength)
 	}
 	if strings.TrimSpace(config.Content) == "" {
 		return fmt.Errorf("announcement content is required")

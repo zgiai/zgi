@@ -18,15 +18,17 @@ export function AnnouncementPageClient({ token }: AnnouncementPageClientProps) {
   const announcement = announcementQuery.data;
 
   return (
-    <main className="min-h-screen bg-background px-4 py-8 text-foreground">
+    <main className="min-h-screen bg-background px-4 py-6 text-foreground sm:px-6 sm:py-10">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
         {announcementQuery.isLoading ? (
           <div className="flex min-h-[320px] items-center justify-center rounded-lg border">
             <Loader2 className="size-5 animate-spin text-muted-foreground" />
           </div>
         ) : announcementQuery.error || !announcement || announcement.expired ? (
-          <div className="rounded-lg border p-6 text-center">
-            <h1 className="text-lg font-semibold">{t('announcement.runtime.unavailable')}</h1>
+          <div className="rounded-lg border p-4 text-center sm:p-6">
+            <h1 className="break-words text-lg font-semibold [overflow-wrap:anywhere]">
+              {t('announcement.runtime.unavailable')}
+            </h1>
             <p className="mt-2 text-sm text-muted-foreground">
               {announcementQuery.error instanceof Error
                 ? announcementQuery.error.message
@@ -37,9 +39,9 @@ export function AnnouncementPageClient({ token }: AnnouncementPageClientProps) {
             </Button>
           </div>
         ) : (
-          <div className="rounded-lg border bg-card p-5 shadow-sm">
+          <div className="rounded-lg border bg-card p-4 shadow-sm sm:p-6">
             <div className="space-y-1">
-              <h1 className="text-lg font-semibold">
+              <h1 className="break-words text-xl font-semibold leading-snug [overflow-wrap:anywhere] sm:text-2xl">
                 {announcement.title || announcement.node_title}
               </h1>
               {announcement.expiration_at ? (
@@ -53,7 +55,7 @@ export function AnnouncementPageClient({ token }: AnnouncementPageClientProps) {
             <div className="mt-5 rounded-lg border bg-background p-3">
               <MarkdownViewer
                 content={announcement.content || ''}
-                className="md-viewer break-words"
+                className="md-viewer max-w-full break-words [overflow-wrap:anywhere]"
               />
             </div>
           </div>

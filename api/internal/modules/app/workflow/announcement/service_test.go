@@ -1,6 +1,9 @@
 package announcement
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestGenerateToken(t *testing.T) {
 	token, err := generateToken()
@@ -72,6 +75,14 @@ func TestValidateConfig(t *testing.T) {
 					Duration: 8,
 					Unit:     "day",
 				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "rejects title over max length",
+			config: NodeConfig{
+				Title:   strings.Repeat("a", MaxTitleLength+1),
+				Content: "Release window starts at 10:00.",
 			},
 			wantErr: true,
 		},

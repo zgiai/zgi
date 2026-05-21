@@ -443,29 +443,9 @@ const messages = {
   },
   announcement: {
     intro: {
-      title: 'Announcement behavior',
+      title: 'Create a public announcement link',
       description:
-        'Create a short public link for the configured announcement and continue the workflow immediately.',
-      createLink: {
-        title: 'Short public link',
-        description:
-          'Runtime generates an /n/{token} link that can be opened without approval actions.',
-      },
-      variables: {
-        title: 'Variable insertion',
-        description:
-          'Title and content can use upstream outputs, system variables, environment variables, and conversation variables.',
-      },
-      expiration: {
-        title: 'Expiration control',
-        description:
-          'The link becomes unavailable after the configured duration. No background task is required.',
-      },
-      outputs: {
-        title: 'Downstream outputs',
-        description:
-          'Only title, content, expiration_time, and url are exposed to following nodes.',
-      },
+        'Use this node to turn your announcement title and content into a short display page link.',
     },
     section: {
       title: 'Announcement Title',
@@ -501,8 +481,12 @@ const messages = {
       title: 'Write the announcement title. Use / to insert variables.',
       content: 'Write the Markdown announcement content. Use / to insert variables.',
     },
+    length: {
+      titleCounter: '{count}/{max} characters',
+    },
     validation: {
       titleRequired: 'Announcement node title is required',
+      titleTooLong: 'Announcement title cannot exceed {max} characters',
       contentRequired: 'Announcement content is required',
       timeoutDurationInvalid: 'Expiration duration must be a positive integer',
       timeoutDurationTooLong: 'Expiration cannot exceed 1 week',
