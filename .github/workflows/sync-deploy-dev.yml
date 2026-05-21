@@ -16,7 +16,7 @@ concurrency:
 jobs:
   sync:
     name: Sync dev to deploy-dev
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNNER_LABELS || '["ubuntu-latest"]') }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -26,8 +26,8 @@ jobs:
 
       - name: Configure deploy identity
         run: |
-          git config user.name "starkwang"
-          git config user.email "starkwanglab@gmail.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Push deploy-dev
         run: |
