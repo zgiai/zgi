@@ -55,7 +55,7 @@ func ValidateTemplateParams(template TemplateConfig, params map[string]string) e
 	for _, param := range template.Params {
 		known[param.Key] = param
 		value := strings.TrimSpace(params[param.Key])
-		if param.Required && value == "" {
+		if param.IsRequired() && value == "" {
 			return fmt.Errorf("template param %s is required", param.Key)
 		}
 		if value == "" {
@@ -84,6 +84,14 @@ func ValidateTemplateParams(template TemplateConfig, params map[string]string) e
 		}
 	}
 	return nil
+}
+
+func templateParamConfigs(params []TemplateParamConfig) map[string]TemplateParamConfig {
+	configs := make(map[string]TemplateParamConfig, len(params))
+	for _, param := range params {
+		configs[param.Key] = param
+	}
+	return configs
 }
 
 func validateRequest(req Request, template TemplateConfig) error {

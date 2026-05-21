@@ -48,11 +48,19 @@ func (p *ChuanglanProvider) BuildPayload(req Request, template TemplateConfig) (
 		return nil, fmt.Errorf("chuanglan template placeholder count %d does not match param order count %d", placeholderCount, len(providerTemplate.ParamOrder))
 	}
 
+	templateParams := templateParamConfigs(template.Params)
 	ordered := make(map[string]string, len(providerTemplate.ParamOrder))
 	for index, internalName := range providerTemplate.ParamOrder {
-		value, ok := req.TemplateParams[internalName]
-		if !ok || strings.TrimSpace(value) == "" {
-			return nil, fmt.Errorf("unsupported chuanglan param order key: %s", internalName)
+		param, ok := templateParams[internalName]
+		if !ok {
+			return nil, fmt.Errorf("chuanglan param order key %s is not defined by template", internalName)
+		}
+		value := strings.TrimSpace(req.TemplateParams[internalName])
+		if value == "" {
+			if param.IsRequired() {
+				return nil, fmt.Errorf("chuanglan param order key %s is empty", internalName)
+			}
+			continue
 		}
 		ordered[fmt.Sprintf("param%d", index+1)] = value
 	}

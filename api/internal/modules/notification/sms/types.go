@@ -79,9 +79,17 @@ type TemplateConfig struct {
 type TemplateParamConfig struct {
 	Key       string `json:"key"`
 	Label     string `json:"label,omitempty"`
-	Required  bool   `json:"required"`
+	Required  *bool  `json:"required,omitempty"`
 	MaxLength int    `json:"max_length,omitempty"`
 	Pattern   string `json:"pattern,omitempty"`
+}
+
+func (p TemplateParamConfig) IsRequired() bool {
+	return p.Required == nil || *p.Required
+}
+
+func boolPtr(value bool) *bool {
+	return &value
 }
 
 type AliyunConfig struct {
@@ -217,7 +225,7 @@ func (c AliyunTemplateConfig) valid(params []TemplateParamConfig) bool {
 		return false
 	}
 	for _, param := range params {
-		if param.Required && strings.TrimSpace(c.ParamMap[param.Key]) == "" {
+		if param.IsRequired() && strings.TrimSpace(c.ParamMap[param.Key]) == "" {
 			return false
 		}
 	}
@@ -242,7 +250,7 @@ func (c ChuanglanTemplateConfig) valid(params []TemplateParamConfig) bool {
 		allowed[strings.TrimSpace(key)] = struct{}{}
 	}
 	for _, param := range params {
-		if !param.Required {
+		if !param.IsRequired() {
 			continue
 		}
 		if _, ok := allowed[param.Key]; !ok {

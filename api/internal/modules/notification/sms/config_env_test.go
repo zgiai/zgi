@@ -2,6 +2,7 @@ package sms
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 )
 
@@ -71,6 +72,129 @@ func TestConfigFromLookupRequiresTemplateCatalogWhenEnabled(t *testing.T) {
 	}
 	if cfg.Capability().Enabled {
 		t.Fatalf("expected sms capability to be disabled without template catalog")
+	}
+}
+
+func TestConfigFromLookupPreservesOptionalTemplateParams(t *testing.T) {
+	env := map[string]string{
+		"NOTIFICATION_SMS_ENABLED":                  "true",
+		"NOTIFICATION_SMS_PROVIDERS":                "aliyun",
+		"NOTIFICATION_SMS_DEFAULT_PROVIDER":         "aliyun",
+		"NOTIFICATION_SMS_ALIYUN_ACCESS_KEY_ID":     "ak",
+		"NOTIFICATION_SMS_ALIYUN_ACCESS_KEY_SECRET": "sk",
+		"NOTIFICATION_SMS_ALIYUN_SIGN_NAME":         "ZGI",
+		"NOTIFICATION_SMS_TEMPLATES_JSON": `[
+			{
+				"key":"approval_notice",
+				"params":[
+					{"key":"title","required":true},
+					{"key":"remark","required":false}
+				],
+				"aliyun":{"template_code":"SMS_APPROVAL","param_map":{"title":"title","remark":"remark"}}
+			}
+		]`,
+	}
+
+	cfg := ConfigFromLookup(func(key string) (string, bool) {
+		value, ok := env[key]
+		return value, ok
+	})
+
+	if cfg.ConfigError != "" {
+		t.Fatalf("ConfigError = %q", cfg.ConfigError)
+	}
+	if len(cfg.Templates) != 1 || len(cfg.Templates[0].Params) != 2 {
+		t.Fatalf("unexpected templates: %#v", cfg.Templates)
+	}
+	if cfg.Templates[0].Params[1].IsRequired() {
+		t.Fatalf("expected required:false to be preserved, got %#v", cfg.Templates[0].Params[1])
+	}
+}
+
+func TestValidateTemplateParamsDefaultsMissingRequiredToRequired(t *testing.T) {
+	err := ValidateTemplateParams(TemplateConfig{
+		Key:    "approval_notice",
+		Params: []TemplateParamConfig{{Key: "title"}},
+	}, map[string]string{})
+
+	if err == nil {
+		t.Fatalf("expected param without required field to default to required")
+	}
+}
+
+func TestAliyunBuildPayloadSkipsEmptyOptionalTemplateParam(t *testing.T) {
+	provider := NewAliyunProvider(AliyunConfig{SignName: "ZGI"})
+	template := TemplateConfig{
+		Key: "approval_notice",
+		Params: []TemplateParamConfig{
+			{Key: "title", Required: boolPtr(true)},
+			{Key: "remark", Required: boolPtr(false)},
+		},
+		Aliyun: AliyunTemplateConfig{
+			TemplateCode: "SMS_APPROVAL",
+			ParamMode:    ParamModeMap,
+			ParamMap:     map[string]string{"title": "title", "remark": "remark"},
+		},
+	}
+
+	payload, err := provider.BuildPayload(Request{
+		Phone:          "13800138000",
+		Template:       "approval_notice",
+		TemplateParams: map[string]string{"title": "审批待办"},
+	}, template)
+	if err != nil {
+		t.Fatalf("BuildPayload() error = %v", err)
+	}
+
+	var params map[string]string
+	if err := json.Unmarshal([]byte(payload.TemplateParam), &params); err != nil {
+		t.Fatalf("unmarshal TemplateParam: %v", err)
+	}
+	if params["title"] != "审批待办" {
+		t.Fatalf("expected title param, got %#v", params)
+	}
+	if _, ok := params["remark"]; ok {
+		t.Fatalf("expected empty optional remark to be skipped, got %#v", params)
+	}
+}
+
+func TestChuanglanBuildPayloadSkipsEmptyOptionalTemplateParam(t *testing.T) {
+	provider := NewChuanglanProvider(ChuanglanConfig{Account: "account", Password: "password", APIURL: "https://example.com"})
+	template := TemplateConfig{
+		Key: "approval_notice",
+		Params: []TemplateParamConfig{
+			{Key: "title", Required: boolPtr(true)},
+			{Key: "remark", Required: boolPtr(false)},
+		},
+		Chuanglan: ChuanglanTemplateConfig{
+			TemplateID:   "CL_APPROVAL",
+			TemplateText: "审批：{s}，备注：{s}",
+			ParamMode:    ParamModeOrderedParam,
+			ParamOrder:   []string{"title", "remark"},
+		},
+	}
+
+	payload, err := provider.BuildPayload(Request{
+		Phone:          "13800138000",
+		Template:       "approval_notice",
+		TemplateParams: map[string]string{"title": "审批待办"},
+	}, template)
+	if err != nil {
+		t.Fatalf("BuildPayload() error = %v", err)
+	}
+
+	var params []map[string]string
+	if err := json.Unmarshal([]byte(payload.TemplateParamJSON), &params); err != nil {
+		t.Fatalf("unmarshal TemplateParamJSON: %v", err)
+	}
+	if len(params) != 1 {
+		t.Fatalf("expected one template param object, got %#v", params)
+	}
+	if params[0]["param1"] != "审批待办" {
+		t.Fatalf("expected param1, got %#v", params[0])
+	}
+	if _, ok := params[0]["param2"]; ok {
+		t.Fatalf("expected empty optional param2 to be skipped, got %#v", params[0])
 	}
 }
 
@@ -171,8 +295,8 @@ func testSMSConfig() Config {
 				Key:  TemplatePendingActionNotification,
 				Name: "待办提醒",
 				Params: []TemplateParamConfig{
-					{Key: "notification_title", Required: true, MaxLength: maxNotificationTitleRunes},
-					{Key: "link_code", Required: true, Pattern: linkCodePattern.String()},
+					{Key: "notification_title", Required: boolPtr(true), MaxLength: maxNotificationTitleRunes},
+					{Key: "link_code", Required: boolPtr(true), Pattern: linkCodePattern.String()},
 				},
 				Aliyun: AliyunTemplateConfig{
 					TemplateCode: "SMS_PENDING",
@@ -183,7 +307,7 @@ func testSMSConfig() Config {
 			{
 				Key:    "verify_code",
 				Name:   "验证码",
-				Params: []TemplateParamConfig{{Key: "code", Required: true}},
+				Params: []TemplateParamConfig{{Key: "code", Required: boolPtr(true)}},
 				Aliyun: AliyunTemplateConfig{
 					TemplateCode: "SMS_CODE",
 					ParamMode:    ParamModeMap,

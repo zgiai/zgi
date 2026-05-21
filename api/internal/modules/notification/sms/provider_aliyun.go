@@ -44,11 +44,19 @@ func (p *AliyunProvider) BuildPayload(req Request, template TemplateConfig) (*Al
 		return nil, fmt.Errorf("unsupported aliyun param mode: %s", providerTemplate.ParamMode)
 	}
 
+	templateParams := templateParamConfigs(template.Params)
 	params := make(map[string]string, len(providerTemplate.ParamMap))
 	for internalName, providerName := range providerTemplate.ParamMap {
-		value, ok := req.TemplateParams[internalName]
-		if !ok || strings.TrimSpace(value) == "" {
-			return nil, fmt.Errorf("unsupported aliyun param mapping key: %s", internalName)
+		param, ok := templateParams[internalName]
+		if !ok {
+			return nil, fmt.Errorf("aliyun param mapping key %s is not defined by template", internalName)
+		}
+		value := strings.TrimSpace(req.TemplateParams[internalName])
+		if value == "" {
+			if param.IsRequired() {
+				return nil, fmt.Errorf("aliyun param mapping key %s is empty", internalName)
+			}
+			continue
 		}
 		params[providerName] = value
 	}

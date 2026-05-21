@@ -176,7 +176,7 @@ func normalizeTemplateParams(params []TemplateParamConfig, aliyun AliyunTemplate
 		}
 		params = make([]TemplateParamConfig, 0, len(keys))
 		for _, key := range keys {
-			params = append(params, TemplateParamConfig{Key: key, Label: key, Required: true})
+			params = append(params, TemplateParamConfig{Key: key, Label: key, Required: boolPtr(true)})
 		}
 	}
 
@@ -195,7 +195,6 @@ func normalizeTemplateParams(params []TemplateParamConfig, aliyun AliyunTemplate
 		if param.Label == "" {
 			param.Label = param.Key
 		}
-		param.Required = true
 		param.Pattern = strings.TrimSpace(param.Pattern)
 		if param.Pattern != "" {
 			if _, err := regexp.Compile(param.Pattern); err != nil {
