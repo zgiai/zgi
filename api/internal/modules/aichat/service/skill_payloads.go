@@ -185,12 +185,16 @@ func blockedSkillGuardrailTrace(skillID string, toolName string, message string)
 	}
 }
 
-func metadataExposedTrace(skillIDs []string) skills.SkillTrace {
+func metadataExposedTrace(skillIDs []string, stats skills.SkillMetadataPromptStats) skills.SkillTrace {
 	return skills.SkillTrace{
 		Kind:   "metadata_exposed",
 		Status: "success",
 		Arguments: map[string]interface{}{
-			"skill_ids": strings.Join(skillIDs, ","),
+			"skill_ids":     strings.Join(skillIDs, ","),
+			"enabled_count": stats.EnabledCount,
+			"exposed_count": stats.ExposedCount,
+			"omitted_count": stats.OmittedCount,
+			"truncated":     stats.Truncated,
 		},
 	}
 }

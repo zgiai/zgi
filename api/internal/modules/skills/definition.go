@@ -82,6 +82,13 @@ type SkillPromptMetadata struct {
 	TimeoutSeconds   int    `json:"timeout_seconds"`
 }
 
+type SkillMetadataPromptStats struct {
+	EnabledCount int
+	ExposedCount int
+	OmittedCount int
+	Truncated    bool
+}
+
 type SkillDiscoveryMetadata struct {
 	ID               string               `json:"skill_id"`
 	Source           string               `json:"source"`

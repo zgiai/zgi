@@ -49,9 +49,13 @@ func (s *service) runPreparedSkillStream(
 	}
 
 	messages := append([]adapter.Message{}, prepared.LLMRequest.Messages...)
-	messages = append(messages, skills.SkillMetadataSystemMessage(resolved.PromptMetadata()))
+	metadataMessage, metadataStats := skills.SkillMetadataSystemMessageWithBudget(
+		resolved.PromptMetadata(),
+		skills.DefaultSkillMetadataPromptBudgetChars,
+	)
+	messages = append(messages, metadataMessage)
 	metaTools := skills.MetaToolsForSkills(resolved)
-	traces := []skills.SkillTrace{metadataExposedTrace(resolved.SkillIDs())}
+	traces := []skills.SkillTrace{metadataExposedTrace(resolved.SkillIDs(), metadataStats)}
 	s.persistSkillTracesBestEffort(persistCtx, prepared, traces)
 	logger.DebugContext(ctx, "aichat skill metadata exposed",
 		"conversation_id", prepared.Conversation.ID.String(),
