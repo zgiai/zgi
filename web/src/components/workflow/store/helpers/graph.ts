@@ -592,6 +592,11 @@ export function collectForNode(node: WorkflowNode, agentType: AgentType): Upstre
           descriptionKey: 'outputDescriptions.announcement.expiration_time',
         },
         {
+          key: 'token',
+          type: 'string',
+          descriptionKey: 'outputDescriptions.announcement.token',
+        },
+        {
           key: 'url',
           type: 'string',
           descriptionKey: 'outputDescriptions.announcement.url',
