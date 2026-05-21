@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1
+
 # ============================================================
 # ZGI Web Platform - Multi-stage Docker Build
 # ============================================================
@@ -8,10 +10,12 @@ FROM node:20-alpine3.20 AS base
 # China mirror (uncomment if needed)
 # RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
 
-RUN apk add --no-cache tzdata wget bash \
-    && npm install -g pnpm@10.12.1
+RUN apk add --no-cache tzdata wget bash
+RUN --mount=type=cache,target=/root/.npm \
+    npm install -g pnpm@10.12.1
 
 ENV PNPM_HOME="/pnpm"
+ENV PNPM_STORE_DIR="/pnpm/store"
 ENV PATH="$PNPM_HOME:$PATH"
 
 
@@ -23,7 +27,9 @@ COPY package.json pnpm-lock.yaml ./
 
 # China registry (uncomment if needed)
 # RUN pnpm install --frozen-lockfile --registry https://registry.npmmirror.com/
-RUN pnpm install --frozen-lockfile
+RUN --mount=type=cache,target=/pnpm/store \
+    pnpm config set store-dir /pnpm/store \
+    && pnpm install --frozen-lockfile
 
 
 # --- Builder Stage ---
@@ -54,7 +60,8 @@ ENV NEXT_PUBLIC_ICON_TEXT=${NEXT_PUBLIC_ICON_TEXT}
 ENV NEXT_PUBLIC_IS_CLOUD=${NEXT_PUBLIC_IS_CLOUD}
 ENV CUSTOMER_OVERLAY_DIR=${CUSTOMER_OVERLAY_DIR}
 ENV NODE_OPTIONS="--max-old-space-size=4096"
-RUN if [ -z "$NEXT_PUBLIC_BASE_PATH" ] && [ -n "$BASE_PATH" ]; then export NEXT_PUBLIC_BASE_PATH="$BASE_PATH"; fi; pnpm build
+RUN --mount=type=cache,target=/app/web/.next/cache \
+    if [ -z "$NEXT_PUBLIC_BASE_PATH" ] && [ -n "$BASE_PATH" ]; then export NEXT_PUBLIC_BASE_PATH="$BASE_PATH"; fi; pnpm build
 
 
 # --- Production Stage ---
