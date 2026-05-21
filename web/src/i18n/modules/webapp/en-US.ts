@@ -186,6 +186,16 @@ const messages = {
         error: '{skill} failed',
         eventCount: '{count} events',
         summarySuccess: 'Completed {count} skill events',
+        debug: {
+          kind: 'Kind',
+          skillId: 'Skill ID',
+          toolName: 'Tool',
+          path: 'Path',
+          duration: 'Duration',
+          arguments: 'Arguments',
+          message: 'Message',
+          error: 'Error',
+        },
       },
     },
     attachments: {

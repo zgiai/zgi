@@ -178,6 +178,16 @@ const messages: WebappMessages = {
         error: '{skill} 调用失败',
         eventCount: '{count} 个事件',
         summarySuccess: '已完成 {count} 个 Skill 事件',
+        debug: {
+          kind: '类型',
+          skillId: 'Skill ID',
+          toolName: '工具',
+          path: '路径',
+          duration: '耗时',
+          arguments: '参数',
+          message: '消息',
+          error: '错误',
+        },
       },
     },
     attachments: {
