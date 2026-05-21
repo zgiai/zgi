@@ -113,7 +113,7 @@ env_key_exists() {
   local wanted_key="$2"
 
   parse_env_file "$file_path" | awk -F '\t' -v wanted="$wanted_key" '
-    $1 == wanted { found = 1; exit }
+    $1 == wanted { found = 1 }
     END { exit found ? 0 : 1 }
   '
 }

@@ -533,6 +533,7 @@ const messages: DashboardMessages = {
       status: {
         enabled: '已启用',
         disabled: '未启用',
+        invalid: '无效',
       },
       autoSave: {
         ready: '自动保存',
@@ -556,11 +557,21 @@ const messages: DashboardMessages = {
         confirm: '删除',
         cancel: '取消',
       },
+      importPreview: {
+        title: '预览 Skill 包',
+        description: '导入前先检查包的验证结果。',
+        fileCount: '文件',
+        totalSize: '大小',
+        references: '参考资料',
+        confirm: '导入',
+        cancel: '取消',
+      },
       messages: {
         saved: 'AIChat Skill 设置已保存',
         saveFailed: 'AIChat Skill 设置保存失败',
         reset: '已重置更改',
         imported: '{skill} 已导入，默认未启用。',
+        previewFailed: 'Skill 包验证失败',
         importFailed: 'Skill 导入失败',
         deleted: '自定义 Skill 已删除',
         deleteFailed: '自定义 Skill 删除失败',

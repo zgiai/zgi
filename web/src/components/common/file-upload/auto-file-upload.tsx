@@ -164,6 +164,12 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
     useEffect(() => {
       onChangeRef.current = onChange;
     }, [onChange]);
+    const valueRef = useRef(value);
+    const controlledRef = useRef(controlled);
+    useEffect(() => {
+      valueRef.current = value;
+      controlledRef.current = controlled;
+    }, [controlled, value]);
 
     // Expose methods to parent via ref
     useImperativeHandle(
@@ -254,10 +260,10 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
         .map(it => it.serverFile)
         .filter((file): file is UploadedFile => file !== undefined);
 
-      // In controlled mode, only call onChange if the successFiles are different from current value
-      if (controlled) {
-        // Compare with current value to avoid infinite loops
-        const currentIds = value.map(f => f.id).sort();
+      // In controlled mode, compare against refs so external value reference changes do not
+      // re-run this notification effect.
+      if (controlledRef.current) {
+        const currentIds = valueRef.current.map(f => f.id).sort();
         const newIds = successFiles.map(f => f.id).sort();
         const hasChanged =
           currentIds.length !== newIds.length ||
@@ -270,8 +276,7 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
         // Call immediately in non-controlled mode
         onChangeRef.current(successFiles);
       }
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [items, controlled, value]);
+    }, [items]);
 
     const inputRef = useRef<HTMLInputElement>(null);
 

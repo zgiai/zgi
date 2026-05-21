@@ -17,7 +17,7 @@ import { pickLocale, mapParametersToFormFields, createInitialBindings } from '@/
 import { useT, type Locale } from '@/lib/i18n';
 
 const CONTAINER_PAD = 24;
-const CONTAINER_DROP_BLOCKED_NODE_TYPES = new Set(['approval']);
+const CONTAINER_DROP_BLOCKED_NODE_TYPES = new Set(['approval', 'announcement']);
 
 interface ContainerOverlayItemProps {
   containerNode: WorkflowNode;

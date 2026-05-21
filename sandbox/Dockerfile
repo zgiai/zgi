@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1
+
 FROM --platform=$BUILDPLATFORM golang:1.26.2-bookworm AS builder
 
 ARG TARGETOS
@@ -10,14 +12,17 @@ WORKDIR /src
 ENV GOPROXY=${GOPROXY}
 
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -o /out/zgi-sandbox ./cmd/server
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/zgi-sandbox ./cmd/server
 
-FROM --platform=$TARGETPLATFORM node:20-bookworm-slim AS node-runtime
+FROM node:20-bookworm-slim AS node-runtime
 
-FROM --platform=$TARGETPLATFORM python:3.11-slim-bookworm
+FROM python:3.11-slim-bookworm
 
 WORKDIR /app
 

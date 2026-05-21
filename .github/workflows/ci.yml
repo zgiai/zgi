@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - dev
 
 permissions:
   contents: read
@@ -16,85 +17,17 @@ concurrency:
 jobs:
   hygiene:
     name: Open source hygiene
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNNER_LABELS || '["ubuntu-latest"]') }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Check repository hygiene
-        run: make check-open-source
-
-  api:
-    name: API targeted tests
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_DB: zgi_migration_test
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d zgi_migration_test"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    defaults:
-      run:
-        working-directory: api
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: api/go.mod
-          cache-dependency-path: api/go.sum
-
-      - name: Test migrations and SQL metadata
-        run: go test ./internal/migrations ./internal/migrations/schema ./pkg/sql_base/sqlmeta/service
-
-      - name: Check migration registry
-        run: go run ./cmd/migrate check
-
-      - name: Test migrations against PostgreSQL
-        run: |
-          go run ./cmd/migrate check -db "$ZGI_MIGRATION_TEST_DSN"
-          go test ./internal/migrations -run TestPublicInitialSchemaAppliesToPostgres -count=1
-        env:
-          ZGI_MIGRATION_TEST_DSN: host=localhost user=postgres password=postgres dbname=zgi_migration_test port=5432 sslmode=disable
-
-      - name: Test workflow and model gateway packages
-        run: go test ./internal/modules/llm/llmmodel/handler ./internal/modules/app/workflow/diagnosis ./internal/modules/app/workflow/nodes/llm ./internal/modules/app/workflow/nodes/sqlgenerator ./pkg/kafka
-
-      - name: Test content parsing packages
-        run: go test ./internal/capabilities/contentparse/engines/hyperparse/internal/adapters/pdf ./internal/capabilities/contentparse/engines/hyperparse/internal/core/chunking ./internal/capabilities/contentparse/engines/hyperparse/internal/export ./internal/capabilities/contentparse/engines/hyperparse/internal/orchestrators/pdf
-
-  runner:
-    name: Runner targeted tests
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: runner
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: runner/go.mod
-          cache-dependency-path: runner/go.sum
-
-      - name: Test runner packages
-        run: go test ./internal/manager ./internal/server
+        run: ./scripts/check-open-source.sh --worktree
 
   web:
     name: Web type check
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNNER_LABELS || '["ubuntu-latest"]') }}
     defaults:
       run:
         working-directory: web

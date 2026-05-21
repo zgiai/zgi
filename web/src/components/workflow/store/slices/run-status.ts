@@ -39,6 +39,9 @@ export interface RuntimeLogItem {
 export interface RunStatusSlice {
   runStatusByNodeId: Record<string, RunStatus>;
   runtimeLogItemsByNodeId: Record<string, RuntimeLogItem[]>;
+  runtimeLogPopoverOpenByNodeId: Record<string, boolean>;
+  runtimeLogPopoverManualByNodeId: Record<string, boolean>;
+  runtimeLogAutoOpenEnabled: boolean;
   isAutoFollow: boolean;
   currentRunningNodeId: string | null;
   lastDebugInputs: Record<string, unknown> | null;
@@ -50,6 +53,11 @@ export interface RunStatusSlice {
   setNodeRunStatus: (nodeId: string, status: RunStatus) => void;
   setRuntimeLogItems: (items: RuntimeLogItem[]) => void;
   resetRuntimeLogItems: () => void;
+  setRuntimeLogPopoverOpen: (nodeId: string, open: boolean) => void;
+  beginRuntimeLogPopoverAutoOpen: () => void;
+  openRuntimeLogPopoversForActiveRun: (nodeIds: string[]) => void;
+  finalizeRuntimeLogPopoversAfterRun: () => void;
+  resetRuntimeLogPopovers: () => void;
   resetRunStatus: (nodeIds?: string[]) => void;
   setAutoFollow: (enabled: boolean) => void;
   setCurrentRunningNodeId: (nodeId: string | null) => void;
@@ -64,6 +72,9 @@ export type StoreSet = (
     | Partial<{
         runStatusByNodeId: Record<string, RunStatus>;
         runtimeLogItemsByNodeId: Record<string, RuntimeLogItem[]>;
+        runtimeLogPopoverOpenByNodeId: Record<string, boolean>;
+        runtimeLogPopoverManualByNodeId: Record<string, boolean>;
+        runtimeLogAutoOpenEnabled: boolean;
         isAutoFollow: boolean;
         currentRunningNodeId: string | null;
         lastDebugInputs: Record<string, unknown> | null;
@@ -73,6 +84,9 @@ export type StoreSet = (
     | ((state: {
         runStatusByNodeId: Record<string, RunStatus>;
         runtimeLogItemsByNodeId: Record<string, RuntimeLogItem[]>;
+        runtimeLogPopoverOpenByNodeId: Record<string, boolean>;
+        runtimeLogPopoverManualByNodeId: Record<string, boolean>;
+        runtimeLogAutoOpenEnabled: boolean;
         isAutoFollow: boolean;
         currentRunningNodeId: string | null;
         lastDebugInputs: Record<string, unknown> | null;
@@ -81,6 +95,9 @@ export type StoreSet = (
       }) => Partial<{
         runStatusByNodeId: Record<string, RunStatus>;
         runtimeLogItemsByNodeId: Record<string, RuntimeLogItem[]>;
+        runtimeLogPopoverOpenByNodeId: Record<string, boolean>;
+        runtimeLogPopoverManualByNodeId: Record<string, boolean>;
+        runtimeLogAutoOpenEnabled: boolean;
         isAutoFollow: boolean;
         currentRunningNodeId: string | null;
         activeOutputHandleByNodeId: Record<string, string | null>;
@@ -94,6 +111,9 @@ export function createRunStatusSlice(set: StoreSet, _get: () => unknown): RunSta
   return {
     runStatusByNodeId: {},
     runtimeLogItemsByNodeId: {},
+    runtimeLogPopoverOpenByNodeId: {},
+    runtimeLogPopoverManualByNodeId: {},
+    runtimeLogAutoOpenEnabled: false,
     isAutoFollow: false,
     currentRunningNodeId: null,
     lastDebugInputs: null,
@@ -114,23 +134,163 @@ export function createRunStatusSlice(set: StoreSet, _get: () => unknown): RunSta
 
     setRuntimeLogItems: items =>
       set(
-        () => {
+        (state: {
+          runtimeLogPopoverOpenByNodeId: Record<string, boolean>;
+          runtimeLogPopoverManualByNodeId: Record<string, boolean>;
+          runtimeLogAutoOpenEnabled: boolean;
+        }) => {
+          if (items.length === 0) {
+            return {
+              runtimeLogItemsByNodeId: {},
+              runtimeLogPopoverOpenByNodeId: {},
+              runtimeLogPopoverManualByNodeId: {},
+              runtimeLogAutoOpenEnabled: state.runtimeLogAutoOpenEnabled,
+            };
+          }
           const grouped: Record<string, RuntimeLogItem[]> = {};
+          const nodeIds = new Set<string>();
           const appendItem = (item: RuntimeLogItem) => {
             if (item.nodeId) {
               grouped[item.nodeId] = [...(grouped[item.nodeId] ?? []), item];
+              nodeIds.add(item.nodeId);
             }
             item.iterationRounds?.forEach(round => round.nodes.forEach(appendItem));
             item.loopRounds?.forEach(round => round.nodes.forEach(appendItem));
           };
           items.forEach(appendItem);
-          return { runtimeLogItemsByNodeId: grouped };
+          const nextOpen = { ...state.runtimeLogPopoverOpenByNodeId };
+          if (state.runtimeLogAutoOpenEnabled) {
+            for (const nodeId of nodeIds) {
+              if (!state.runtimeLogPopoverManualByNodeId[nodeId]) nextOpen[nodeId] = true;
+            }
+          }
+          return { runtimeLogItemsByNodeId: grouped, runtimeLogPopoverOpenByNodeId: nextOpen };
         },
         false,
         'setRuntimeLogItems'
       ),
 
-    resetRuntimeLogItems: () => set({ runtimeLogItemsByNodeId: {} }, false, 'resetRuntimeLogItems'),
+    resetRuntimeLogItems: () =>
+      set(
+        {
+          runtimeLogItemsByNodeId: {},
+          runtimeLogPopoverOpenByNodeId: {},
+          runtimeLogPopoverManualByNodeId: {},
+          runtimeLogAutoOpenEnabled: false,
+        },
+        false,
+        'resetRuntimeLogItems'
+      ),
+
+    setRuntimeLogPopoverOpen: (nodeId, open) =>
+      set(
+        (state: {
+          runtimeLogPopoverOpenByNodeId: Record<string, boolean>;
+          runtimeLogPopoverManualByNodeId: Record<string, boolean>;
+        }) => ({
+          runtimeLogPopoverOpenByNodeId: {
+            ...state.runtimeLogPopoverOpenByNodeId,
+            [nodeId]: open,
+          },
+          runtimeLogPopoverManualByNodeId: {
+            ...state.runtimeLogPopoverManualByNodeId,
+            [nodeId]: true,
+          },
+        }),
+        false,
+        'setRuntimeLogPopoverOpen'
+      ),
+
+    beginRuntimeLogPopoverAutoOpen: () =>
+      set(
+        {
+          runtimeLogPopoverOpenByNodeId: {},
+          runtimeLogPopoverManualByNodeId: {},
+          runtimeLogAutoOpenEnabled: true,
+        },
+        false,
+        'beginRuntimeLogPopoverAutoOpen'
+      ),
+
+    openRuntimeLogPopoversForActiveRun: nodeIds =>
+      set(
+        (state: {
+          runtimeLogPopoverOpenByNodeId: Record<string, boolean>;
+          runtimeLogPopoverManualByNodeId: Record<string, boolean>;
+          runtimeLogAutoOpenEnabled: boolean;
+        }) => {
+          const next = { ...state.runtimeLogPopoverOpenByNodeId };
+          if (state.runtimeLogAutoOpenEnabled) {
+            for (const nodeId of nodeIds) {
+              if (!state.runtimeLogPopoverManualByNodeId[nodeId]) next[nodeId] = true;
+            }
+          }
+          return { runtimeLogPopoverOpenByNodeId: next };
+        },
+        false,
+        'openRuntimeLogPopoversForActiveRun'
+      ),
+
+    finalizeRuntimeLogPopoversAfterRun: () =>
+      set(
+        (state: {
+          runStatusByNodeId: Record<string, RunStatus>;
+          runtimeLogItemsByNodeId: Record<string, RuntimeLogItem[]>;
+        }) => {
+          const failedNodeIds = new Set<string>();
+          let latestNodeId: string | null = null;
+          let latestOrder = -1;
+          let latestTime = -1;
+          const appendFailed = (item: RuntimeLogItem) => {
+            if (item.nodeId && item.status === 'failed') failedNodeIds.add(item.nodeId);
+            if (item.nodeId) {
+              const itemOrder = item.receivedOrder ?? -1;
+              const itemTime = item.createdAtMs ?? -1;
+              if (
+                latestNodeId === null ||
+                itemOrder > latestOrder ||
+                (itemOrder === latestOrder && itemTime >= latestTime)
+              ) {
+                latestNodeId = item.nodeId;
+                latestOrder = itemOrder;
+                latestTime = itemTime;
+              }
+            }
+            item.iterationRounds?.forEach(round => round.nodes.forEach(appendFailed));
+            item.loopRounds?.forEach(round => round.nodes.forEach(appendFailed));
+          };
+          for (const [nodeId, status] of Object.entries(state.runStatusByNodeId)) {
+            if (status === 'failed') failedNodeIds.add(nodeId);
+          }
+          Object.values(state.runtimeLogItemsByNodeId).forEach(items =>
+            items.forEach(appendFailed)
+          );
+
+          const nextOpen: Record<string, boolean> = {};
+          failedNodeIds.forEach(nodeId => {
+            nextOpen[nodeId] = true;
+          });
+          if (latestNodeId) nextOpen[latestNodeId] = true;
+          return {
+            runtimeLogPopoverOpenByNodeId: nextOpen,
+            runtimeLogPopoverManualByNodeId: {},
+            runtimeLogAutoOpenEnabled: false,
+          };
+        },
+        false,
+        'finalizeRuntimeLogPopoversAfterRun'
+      ),
+
+    resetRuntimeLogPopovers: () =>
+      set(
+        {
+          runtimeLogPopoverOpenByNodeId: {},
+          runtimeLogPopoverManualByNodeId: {},
+          runtimeLogAutoOpenEnabled: false,
+        },
+        false,
+        'resetRuntimeLogPopovers'
+      ),
 
     resetRunStatus: nodeIds =>
       set(
@@ -138,12 +298,18 @@ export function createRunStatusSlice(set: StoreSet, _get: () => unknown): RunSta
           runStatusByNodeId: Record<string, RunStatus>;
           runtimeLogItemsByNodeId: Record<string, RuntimeLogItem[]>;
           activeOutputHandleByNodeId: Record<string, string | null>;
+          runtimeLogPopoverOpenByNodeId: Record<string, boolean>;
+          runtimeLogPopoverManualByNodeId: Record<string, boolean>;
+          runtimeLogAutoOpenEnabled: boolean;
         }) => {
           if (!nodeIds || nodeIds.length === 0) {
             return {
               runStatusByNodeId: {},
               runtimeLogItemsByNodeId: {},
               activeOutputHandleByNodeId: {},
+              runtimeLogPopoverOpenByNodeId: {},
+              runtimeLogPopoverManualByNodeId: {},
+              runtimeLogAutoOpenEnabled: false,
             };
           }
           const next: Record<string, RunStatus> = { ...state.runStatusByNodeId };
@@ -153,13 +319,24 @@ export function createRunStatusSlice(set: StoreSet, _get: () => unknown): RunSta
           const nextOutputHandles: Record<string, string | null> = {
             ...state.activeOutputHandleByNodeId,
           };
+          const nextPopoverOpen: Record<string, boolean> = {
+            ...state.runtimeLogPopoverOpenByNodeId,
+          };
+          const nextPopoverManual: Record<string, boolean> = {
+            ...state.runtimeLogPopoverManualByNodeId,
+          };
           for (const id of nodeIds) delete next[id];
           for (const id of nodeIds) delete nextRuntimeLogs[id];
           for (const id of nodeIds) delete nextOutputHandles[id];
+          for (const id of nodeIds) delete nextPopoverOpen[id];
+          for (const id of nodeIds) delete nextPopoverManual[id];
           return {
             runStatusByNodeId: next,
             runtimeLogItemsByNodeId: nextRuntimeLogs,
             activeOutputHandleByNodeId: nextOutputHandles,
+            runtimeLogPopoverOpenByNodeId: nextPopoverOpen,
+            runtimeLogPopoverManualByNodeId: nextPopoverManual,
+            runtimeLogAutoOpenEnabled: state.runtimeLogAutoOpenEnabled,
           };
         },
         false,

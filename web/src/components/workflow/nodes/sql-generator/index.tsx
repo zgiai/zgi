@@ -1,7 +1,7 @@
 import React from 'react';
 import type { WorkflowNodeData } from '../../store';
 import { cn } from '@/lib/utils';
-import { ModelIcon } from '@lobehub/icons';
+import { ModelIcon } from 'modelicons';
 
 type SqlGeneratorData = Extract<WorkflowNodeData, { type: 'sql-generator' }>;
 type SqlGeneratorInnerData = SqlGeneratorData['data'];

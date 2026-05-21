@@ -123,6 +123,10 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
   const setNodeRunStatus = useWorkflowStore.use.setNodeRunStatus();
   const setActiveOutputHandle = useWorkflowStore.use.setActiveOutputHandle();
   const resetActiveOutputHandles = useWorkflowStore.use.resetActiveOutputHandles();
+  const beginRuntimeLogPopoverAutoOpen =
+    useWorkflowStore.use.beginRuntimeLogPopoverAutoOpen();
+  const finalizeRuntimeLogPopoversAfterRun =
+    useWorkflowStore.use.finalizeRuntimeLogPopoversAfterRun();
   const setAutoFollow = useWorkflowStore.use.setAutoFollow();
   const setRuntimeLogItems = useWorkflowStore.use.setRuntimeLogItems();
   // const isAutoFollow = useWorkflowStore.use.isAutoFollow();
@@ -220,7 +224,7 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
   const runtimeLogSignatureRef = useRef('');
 
   useEffect(() => {
-    const items = open ? (isHistory ? historyExecutionItems : runItems) : [];
+    const items = isHistory ? (open ? historyExecutionItems : []) : runItems;
     const signature = items
       .map(item => {
         let payloadSignature = '';
@@ -251,10 +255,6 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
       .join('|');
     if (runtimeLogSignatureRef.current === signature) return;
     runtimeLogSignatureRef.current = signature;
-    if (!open) {
-      setRuntimeLogItems([]);
-      return;
-    }
     setRuntimeLogItems(items);
   }, [historyExecutionItems, isHistory, open, runItems, setRuntimeLogItems]);
 
@@ -335,6 +335,8 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
     setNodeRunStatus,
     setActiveOutputHandle,
     resetActiveOutputHandles,
+    beginRuntimeLogPopoverAutoOpen,
+    finalizeRuntimeLogPopoversAfterRun,
     setAutoFollow,
     setCurrentRunningNodeId,
     lastInputs: lastInputs as unknown as Record<string, unknown> | undefined,

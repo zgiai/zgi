@@ -39,6 +39,7 @@ import { useDebouncedCommit } from '../hooks/use-debounced-commit';
 import LoopManager from '../nodes/loop/manager';
 import ImageGenManager from '../nodes/image-gen/manager';
 import ApprovalManager from '../nodes/approval/manager';
+import AnnouncementManager from '../nodes/announcement/manager';
 import QuestionAnswerManager from '../nodes/question-answer/manager';
 import { getRightPanelMotionClassName, getRightPanelMotionStyle } from './right-panel-motion';
 import NodeDebugActions from './node-debug-actions';
@@ -292,6 +293,8 @@ export function NodeFloatingPanel({ temporarilyHidden = false }: NodeFloatingPan
           return <ImageGenManager id={node.id} readOnly={isReadOnly} />;
         case 'approval':
           return <ApprovalManager id={node.id} readOnly={isReadOnly} />;
+        case 'announcement':
+          return <AnnouncementManager id={node.id} readOnly={isReadOnly} />;
         case 'question-answer':
           return <QuestionAnswerManager id={node.id} readOnly={isReadOnly} />;
         default:

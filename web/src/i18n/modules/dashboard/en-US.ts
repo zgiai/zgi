@@ -545,6 +545,7 @@ const messages = {
       status: {
         enabled: 'Enabled',
         disabled: 'Disabled',
+        invalid: 'Invalid',
       },
       autoSave: {
         ready: 'Auto-save on',
@@ -568,11 +569,21 @@ const messages = {
         confirm: 'Delete',
         cancel: 'Cancel',
       },
+      importPreview: {
+        title: 'Review Skill package',
+        description: 'Check the package validation result before importing it.',
+        fileCount: 'Files',
+        totalSize: 'Size',
+        references: 'References',
+        confirm: 'Import',
+        cancel: 'Cancel',
+      },
       messages: {
         saved: 'AIChat Skill settings saved',
         saveFailed: 'Failed to save AIChat Skill settings',
         reset: 'Changes reset',
         imported: '{skill} imported. It is disabled by default.',
+        previewFailed: 'Failed to validate Skill package',
         importFailed: 'Failed to import Skill',
         deleted: 'Custom Skill deleted',
         deleteFailed: 'Failed to delete custom Skill',

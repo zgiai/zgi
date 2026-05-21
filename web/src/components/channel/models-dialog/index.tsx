@@ -12,7 +12,7 @@ import {
   DialogBody,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { ModelIcon } from '@lobehub/icons';
+import { ModelIcon } from 'modelicons';
 import type { ChannelDetail, ChannelItem } from '@/services/types/channel';
 
 interface ModelsDialogProps {

@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1
+
 # ============================================================
 # Stage 1: Build the Go binary
 # ============================================================
@@ -12,13 +14,16 @@ ENV GOPROXY=${GOPROXY}
 
 # Copy go mod files first for better layer caching
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
 
 # Copy source code
 COPY . .
 
 # Build the binary with optimizations
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /out/runner ./cmd/executor
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-w -s" -o /out/runner ./cmd/executor
 
 # ============================================================
 # Stage 2: Runtime image

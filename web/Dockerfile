@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1
+
 # ============================================================
 # ZGI Web Platform - Multi-stage Docker Build
 # ============================================================
@@ -8,10 +10,12 @@ FROM node:20-alpine3.20 AS base
 # China mirror (uncomment if needed)
 # RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
 
-RUN apk add --no-cache tzdata wget bash \
-    && npm install -g pnpm@10.12.1
+RUN apk add --no-cache tzdata wget bash
+RUN --mount=type=cache,target=/root/.npm \
+    npm install -g pnpm@10.12.1
 
 ENV PNPM_HOME="/pnpm"
+ENV PNPM_STORE_DIR="/pnpm/store"
 ENV PATH="$PNPM_HOME:$PATH"
 
 
@@ -23,7 +27,9 @@ COPY package.json pnpm-lock.yaml ./
 
 # China registry (uncomment if needed)
 # RUN pnpm install --frozen-lockfile --registry https://registry.npmmirror.com/
-RUN pnpm install --frozen-lockfile
+RUN --mount=type=cache,target=/pnpm/store \
+    pnpm config set store-dir /pnpm/store \
+    && pnpm install --frozen-lockfile
 
 
 # --- Builder Stage ---
@@ -43,6 +49,11 @@ ARG NEXT_PUBLIC_FAVICON_URL
 ARG NEXT_PUBLIC_ICON_TEXT
 ARG NEXT_PUBLIC_IS_CLOUD
 ARG CUSTOMER_OVERLAY_DIR
+ARG NEXT_BUILD_CPUS=2
+ARG NEXT_STATIC_GENERATION_MAX_CONCURRENCY=2
+ARG NEXT_TURBOPACK_MEMORY_LIMIT_MB=2048
+ARG NEXT_BUILD_NODE_MEMORY_MB=2048
+ARG NEXT_WEBPACK_MEMORY_OPTIMIZATIONS=true
 ENV BASE_PATH=${BASE_PATH}
 ENV NEXT_PUBLIC_BASE_PATH=${NEXT_PUBLIC_BASE_PATH}
 ENV NEXT_PUBLIC_APP_NAME=${NEXT_PUBLIC_APP_NAME}
@@ -53,8 +64,13 @@ ENV NEXT_PUBLIC_FAVICON_URL=${NEXT_PUBLIC_FAVICON_URL}
 ENV NEXT_PUBLIC_ICON_TEXT=${NEXT_PUBLIC_ICON_TEXT}
 ENV NEXT_PUBLIC_IS_CLOUD=${NEXT_PUBLIC_IS_CLOUD}
 ENV CUSTOMER_OVERLAY_DIR=${CUSTOMER_OVERLAY_DIR}
-ENV NODE_OPTIONS="--max-old-space-size=4096"
-RUN if [ -z "$NEXT_PUBLIC_BASE_PATH" ] && [ -n "$BASE_PATH" ]; then export NEXT_PUBLIC_BASE_PATH="$BASE_PATH"; fi; pnpm build
+ENV NEXT_BUILD_CPUS=${NEXT_BUILD_CPUS}
+ENV NEXT_STATIC_GENERATION_MAX_CONCURRENCY=${NEXT_STATIC_GENERATION_MAX_CONCURRENCY}
+ENV NEXT_TURBOPACK_MEMORY_LIMIT_MB=${NEXT_TURBOPACK_MEMORY_LIMIT_MB}
+ENV NEXT_WEBPACK_MEMORY_OPTIMIZATIONS=${NEXT_WEBPACK_MEMORY_OPTIMIZATIONS}
+ENV NODE_OPTIONS="--max-old-space-size=${NEXT_BUILD_NODE_MEMORY_MB}"
+RUN --mount=type=cache,target=/app/web/.next/cache \
+    if [ -z "$NEXT_PUBLIC_BASE_PATH" ] && [ -n "$BASE_PATH" ]; then export NEXT_PUBLIC_BASE_PATH="$BASE_PATH"; fi; pnpm build
 
 
 # --- Production Stage ---

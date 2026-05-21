@@ -31,10 +31,28 @@ func (r *customSkillRepository) ListByOrganization(ctx context.Context, organiza
 	return skills, nil
 }
 
+func (r *customSkillRepository) ListManageableByOrganization(ctx context.Context, organizationID uuid.UUID) ([]*aichatmodel.CustomSkill, error) {
+	var skills []*aichatmodel.CustomSkill
+	err := r.db.WithContext(ctx).
+		Where("organization_id = ? AND status IN ?", organizationID, []string{
+			aichatmodel.CustomSkillStatusActive,
+			aichatmodel.CustomSkillStatusInvalid,
+		}).
+		Order("skill_id ASC").
+		Find(&skills).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to list custom skills: %w", err)
+	}
+	return skills, nil
+}
+
 func (r *customSkillRepository) GetBySkillID(ctx context.Context, organizationID uuid.UUID, skillID string) (*aichatmodel.CustomSkill, error) {
 	var skill aichatmodel.CustomSkill
 	err := r.db.WithContext(ctx).
-		Where("organization_id = ? AND skill_id = ? AND status = ?", organizationID, normalizeRepositorySkillID(skillID), aichatmodel.CustomSkillStatusActive).
+		Where("organization_id = ? AND skill_id = ? AND status IN ?", organizationID, normalizeRepositorySkillID(skillID), []string{
+			aichatmodel.CustomSkillStatusActive,
+			aichatmodel.CustomSkillStatusInvalid,
+		}).
 		First(&skill).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {

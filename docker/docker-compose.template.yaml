@@ -150,6 +150,8 @@ services:
         condition: service_healthy
     volumes:
       - sandbox-data:/var/lib/zgi-sandbox
+    ports:
+      - "${SANDBOX_PORT:-2660}:2660"
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:2660/health').getcode() == 200 else 1)\""]
       interval: 15s
@@ -235,6 +237,8 @@ services:
       - runner-data:/app/plugins
       - runner-workspace:/app/workspace
       - runner-cache:/app/cache
+    ports:
+      - "${RUNNER_PORT:-2665}:2665"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:2665/healthz"]
       interval: 30s
@@ -252,6 +256,11 @@ services:
         BUILD_REGION: ${BUILD_REGION:-global}
         APK_MIRROR: ${APK_MIRROR:-}
         NPM_REGISTRY: ${NPM_REGISTRY:-}
+        NEXT_BUILD_CPUS: ${NEXT_BUILD_CPUS:-2}
+        NEXT_STATIC_GENERATION_MAX_CONCURRENCY: ${NEXT_STATIC_GENERATION_MAX_CONCURRENCY:-2}
+        NEXT_TURBOPACK_MEMORY_LIMIT_MB: ${NEXT_TURBOPACK_MEMORY_LIMIT_MB:-2048}
+        NEXT_BUILD_NODE_MEMORY_MB: ${NEXT_BUILD_NODE_MEMORY_MB:-2048}
+        NEXT_WEBPACK_MEMORY_OPTIMIZATIONS: ${NEXT_WEBPACK_MEMORY_OPTIMIZATIONS:-true}
     env_file:
       - ../web/.env.local
     environment:

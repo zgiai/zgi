@@ -54,6 +54,7 @@ const CreateNodeModal: React.FC<CreateNodeModalProps> = ({
     addJsonParserNode,
     addImageGenNode,
     addApprovalNode,
+    addAnnouncementNode,
     addQuestionAnswerNode,
   } = useWorkflowOperations();
   const hasStartNode = useWorkflowStore(state =>
@@ -118,6 +119,7 @@ const CreateNodeModal: React.FC<CreateNodeModalProps> = ({
         addJsonParserNode,
         addImageGenNode,
         addApprovalNode,
+        addAnnouncementNode,
         addQuestionAnswerNode,
       }),
     [
@@ -144,6 +146,7 @@ const CreateNodeModal: React.FC<CreateNodeModalProps> = ({
       addJsonParserNode,
       addImageGenNode,
       addApprovalNode,
+      addAnnouncementNode,
       addQuestionAnswerNode,
     ]
   );
@@ -191,6 +194,7 @@ const CreateNodeModal: React.FC<CreateNodeModalProps> = ({
           nt.type === 'start' ||
           nt.type === 'end' ||
           nt.type === 'approval' ||
+          nt.type === 'announcement' ||
           nt.type === 'question-answer' ||
           nt.type === 'iteration' ||
           nt.type === 'loop'

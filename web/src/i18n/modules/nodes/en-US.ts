@@ -120,6 +120,11 @@ const messages = {
       description: 'Pause the flow and collect a human review decision',
       label: 'Approval',
     },
+    announcement: {
+      title: 'Announcement',
+      description: 'Create a public announcement link and continue the flow',
+      label: 'Announcement',
+    },
     'question-answer': {
       title: 'Question Answer',
       description: 'Pause the workflow and collect a user answer in the same conversation',
@@ -195,6 +200,13 @@ const messages = {
         'Label of the approval action selected by the reviewer. Expired approvals use Expired.',
       approval_rendered_content:
         'Approval content rendered after variables and submitted values resolve',
+    },
+    announcement: {
+      title: 'Announcement title rendered after variables resolve',
+      content: 'Announcement content rendered after variables resolve',
+      expiration_time: 'Announcement expiration time formatted for display',
+      token: 'Short announcement token for building custom links',
+      url: 'Public announcement URL',
     },
     questionAnswer: {
       question: 'Current question or follow-up question',
@@ -427,6 +439,74 @@ const messages = {
         'The approval form has expired. The flow will continue through the timeout branch.',
       finished: 'Flow resumed',
       finishedDescription: 'The approval has been processed and the flow has finished.',
+      expiresAt: 'Expires at {time}',
+    },
+  },
+  announcement: {
+    intro: {
+      title: 'Create a public announcement link',
+      description:
+        'Use this node to turn your announcement title and content into a short display page link.',
+    },
+    section: {
+      variables: 'Variables',
+      title: 'Announcement Title',
+      content: 'Announcement Content',
+      timeout: 'Expiration',
+    },
+    sectionHelp: {
+      variables:
+        'Click the title or content field first. Selected variables are inserted at that cursor position.',
+      title: 'This is the public page title after variables are resolved.',
+      content: 'This Markdown body is shown on the public announcement page.',
+      timeout: 'Choose how long the public link remains accessible.',
+    },
+    variables: {
+      activeTarget: 'Current insert target: {target}',
+      targets: {
+        title: 'announcement title',
+        content: 'announcement content',
+      },
+    },
+    defaults: {
+      content: 'Please read this announcement.',
+    },
+    preview: {
+      title: 'Title',
+      content: 'Content',
+      expiration: 'Expiration',
+      emptyTitle: 'No announcement title configured',
+      emptyContent: 'No announcement content configured',
+      expirationValue: '{duration} {unit}',
+    },
+    timeout: {
+      hour: 'Hours',
+      day: 'Days',
+    },
+    presets: {
+      oneDay: '1 day',
+      threeDays: '3 days',
+      oneWeek: '1 week',
+    },
+    placeholders: {
+      title: 'Write the announcement title. Use / to insert variables.',
+      content: 'Write the Markdown announcement content. Use / to insert variables.',
+    },
+    length: {
+      titleCounter: '{count}/{max} characters',
+    },
+    validation: {
+      titleRequired: 'Announcement node title is required',
+      titleTooLong: 'Announcement title cannot exceed {max} characters',
+      contentRequired: 'Announcement content is required',
+      timeoutDurationInvalid: 'Expiration duration must be a positive integer',
+      timeoutDurationTooLong: 'Expiration cannot exceed 1 week',
+      timeoutUnitInvalid: 'Expiration unit must be hours or days',
+    },
+    runtime: {
+      unavailable: 'Announcement unavailable',
+      unavailableDescription: 'The announcement may have expired or the link is invalid.',
+      retry: 'Retry',
       expiresAt: 'Expires at {time}',
     },
   },

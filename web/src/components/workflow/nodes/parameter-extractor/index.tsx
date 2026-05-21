@@ -1,6 +1,6 @@
 ﻿import React from 'react';
 import type { ParameterExtractorNodeData } from './config';
-import { ModelIcon } from '@lobehub/icons';
+import { ModelIcon } from 'modelicons';
 import OutputVariablesView from '../../common/output-variables-view';
 import { useNodeOutputVariables } from '../../hooks';
 
