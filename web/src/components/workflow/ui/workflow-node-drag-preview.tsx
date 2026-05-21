@@ -188,20 +188,36 @@ function ApprovalPreviewBody({ data }: { data: ApprovalNodeData }) {
 function AnnouncementPreviewBody({ data }: { data: AnnouncementNodeData }) {
   const t = useT('nodes');
   const normalized = normalizeAnnouncementNodeData(data);
+  const title = normalized.announcement.title.trim();
   const content = normalized.announcement.content.trim();
+  const expiration = t('announcement.preview.expirationValue', {
+    duration: normalized.timeout.duration,
+    unit: t(`announcement.timeout.${normalized.timeout.unit}`),
+  });
 
   return (
     <div className="mt-1 space-y-2">
-      <div className="max-h-[160px] min-h-8 overflow-hidden rounded-md bg-muted/70 p-1.5 text-xs leading-relaxed text-secondary-foreground break-words whitespace-pre-wrap">
-        {content || (
-          <span className="text-muted-foreground">{t('announcement.preview.emptyContent')}</span>
-        )}
+      <div className="space-y-1 rounded-md border bg-background/80 px-2 py-1.5">
+        <div className="text-[10px] font-medium uppercase text-muted-foreground">
+          {t('announcement.preview.title')}
+        </div>
+        <div className="truncate text-xs font-medium">
+          {title || t('announcement.preview.emptyTitle')}
+        </div>
       </div>
-      <div className="flex items-center justify-between border-t py-2 text-xs">
-        <span className="font-medium">{t('announcement.preview.publicLink')}</span>
-        <span className="text-muted-foreground">
-          {t(`announcement.timeout.${normalized.timeout.unit}`)}
-        </span>
+      <div className="space-y-1 rounded-md border bg-background/80 px-2 py-1.5">
+        <div className="text-[10px] font-medium uppercase text-muted-foreground">
+          {t('announcement.preview.content')}
+        </div>
+        <div className="line-clamp-2 text-xs leading-relaxed text-foreground break-words whitespace-pre-wrap">
+          {content || t('announcement.preview.emptyContent')}
+        </div>
+      </div>
+      <div className="space-y-1 rounded-md border bg-background/80 px-2 py-1.5">
+        <div className="text-[10px] font-medium uppercase text-muted-foreground">
+          {t('announcement.preview.expiration')}
+        </div>
+        <div className="truncate text-xs font-medium text-muted-foreground">{expiration}</div>
       </div>
     </div>
   );

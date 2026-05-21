@@ -122,9 +122,9 @@ const messages: NodesMessages = {
       label: '审查',
     },
     announcement: {
-      title: 'Announcement',
-      description: 'Create a public announcement link and continue the flow',
-      label: 'Announcement',
+      title: '公告',
+      description: '创建公开公告链接，并继续执行流程',
+      label: '公告',
     },
     'question-answer': {
       title: '问答',
@@ -444,8 +444,12 @@ const messages: NodesMessages = {
       content: '请阅读这条公告。',
     },
     preview: {
+      title: '标题',
+      content: '内容',
+      expiration: '过期时间',
+      emptyTitle: '尚未配置公告标题',
       emptyContent: '尚未配置公告内容',
-      publicLink: '公开链接',
+      expirationValue: '{duration} {unit}',
     },
     timeout: {
       hour: '小时',
@@ -462,6 +466,8 @@ const messages: NodesMessages = {
     },
     hint: {
       publicLink: '流程会创建一个公开链接，并立即继续执行。',
+      variableSources: '支持插入上游节点输出、系统变量、环境变量和会话变量。',
+      timeout: '公告链接会在配置的时长后不可访问。',
     },
     validation: {
       titleRequired: '公告标题不能为空',

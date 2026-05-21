@@ -448,7 +448,7 @@ export const NODE_THEMES: Record<WorkflowNodeData['type'] | 'default', NodeTheme
     icon: Megaphone,
     badgeText: 'Announcement',
     width: 280,
-    height: 132,
+    height: 176,
     classNames: {
       ...COMMON_LOGIC_CLASSES,
       iconBg: NODE_ICON_TONES.logic,
@@ -514,4 +514,5 @@ export const NODE_CONFIG: Record<string, { handleKey?: string }> = {
   'json-parser': { handleKey: 'jsonParser' },
   'create-scheduled-task': { handleKey: 'createScheduledTask' },
   'notification-sms': { handleKey: 'notificationSms' },
+  announcement: { handleKey: 'announcement' },
 };

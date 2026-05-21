@@ -1,10 +1,8 @@
 import React from 'react';
-import { Position } from '@xyflow/react';
-import { Clock, Megaphone } from 'lucide-react';
 
-import CustomHandle from '../../ui/custom-handle';
 import ValueBadge from '@/components/workflow/ui/value-badge';
 import { useT } from '@/i18n';
+import { cn } from '@/lib/utils';
 import { normalizeAnnouncementNodeData, type AnnouncementNodeData } from './config';
 
 export interface AnnouncementContentProps {
@@ -55,42 +53,52 @@ function renderAnnouncementContent(
   return parts.length > 0 ? parts : t('announcement.preview.emptyContent');
 }
 
+function PreviewField({
+  label,
+  value,
+  children,
+  className,
+}: {
+  label: string;
+  value?: string;
+  children?: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={cn('space-y-1.5 rounded-md border bg-background/80 px-2 py-1.5', className)}>
+      <div className="text-[10px] font-medium uppercase text-muted-foreground">{label}</div>
+      <div
+        className="nowheel max-h-[84px] overflow-y-auto text-xs leading-relaxed text-foreground break-words whitespace-pre-wrap scrollbar-thin"
+        title={value}
+        onWheelCapture={event => event.stopPropagation()}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
 export default function AnnouncementContent({ nodeId, data }: AnnouncementContentProps) {
   const t = useT('nodes');
   const normalized = normalizeAnnouncementNodeData(data);
   const title = normalized.announcement.title.trim();
   const content = normalized.announcement.content.trim();
+  const expiration = t('announcement.preview.expirationValue', {
+    duration: normalized.timeout.duration,
+    unit: t(`announcement.timeout.${normalized.timeout.unit}`),
+  });
 
   return (
-    <div className="mt-1">
-      <CustomHandle type="target" position={Position.Left} id="target" style={{ top: -18 }} />
-      <div className="space-y-2">
-        <div className="rounded-md bg-muted/40 px-2 py-1.5 text-xs font-medium leading-relaxed text-foreground break-words whitespace-pre-wrap">
-          {renderAnnouncementContent(title, nodeId, t)}
-        </div>
-        <div
-          className="nowheel mt-1 max-h-[160px] min-h-8 overflow-y-auto rounded-md bg-muted/70 p-1.5 text-xs leading-relaxed text-secondary-foreground break-words whitespace-pre-wrap scrollbar-thin"
-          onWheelCapture={event => event.stopPropagation()}
-        >
-          {renderAnnouncementContent(content, nodeId, t)}
-        </div>
-        <div className="relative flex items-center justify-between border-t py-2 text-xs">
-          <span className="flex min-w-0 items-center gap-1">
-            <Megaphone className="size-3 shrink-0" />
-            <span className="font-medium">{t('announcement.preview.publicLink')}</span>
-          </span>
-          <span className="flex min-w-0 items-center gap-1 text-muted-foreground">
-            <Clock className="size-3 shrink-0" />
-            <span>{t(`announcement.timeout.${normalized.timeout.unit}`)}</span>
-          </span>
-          <CustomHandle
-            type="source"
-            position={Position.Right}
-            id="source"
-            style={{ top: '50%', right: -15 }}
-          />
-        </div>
-      </div>
+    <div className="mt-1 space-y-2">
+      <PreviewField label={t('announcement.preview.title')} value={title}>
+        <span className="font-medium">{renderAnnouncementContent(title, nodeId, t)}</span>
+      </PreviewField>
+      <PreviewField label={t('announcement.preview.content')} value={content}>
+        {renderAnnouncementContent(content, nodeId, t)}
+      </PreviewField>
+      <PreviewField label={t('announcement.preview.expiration')} value={expiration}>
+        <span className="font-medium text-muted-foreground">{expiration}</span>
+      </PreviewField>
     </div>
   );
 }

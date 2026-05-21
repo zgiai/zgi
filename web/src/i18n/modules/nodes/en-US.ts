@@ -451,8 +451,12 @@ const messages = {
       content: 'Please read this announcement.',
     },
     preview: {
+      title: 'Title',
+      content: 'Content',
+      expiration: 'Expiration',
+      emptyTitle: 'No announcement title configured',
       emptyContent: 'No announcement content configured',
-      publicLink: 'Public link',
+      expirationValue: '{duration} {unit}',
     },
     timeout: {
       hour: 'Hours',
@@ -469,6 +473,9 @@ const messages = {
     },
     hint: {
       publicLink: 'The flow creates one public link and continues immediately.',
+      variableSources:
+        'Supports upstream node outputs, system variables, environment variables, and conversation variables.',
+      timeout: 'The announcement link becomes unavailable after the configured duration.',
     },
     validation: {
       titleRequired: 'Announcement node title is required',

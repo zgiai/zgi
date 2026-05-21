@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { CircleAlert } from 'lucide-react';
 
 import OutputVariablesView from '@/components/workflow/common/output-variables-view';
 import WorkflowValueInserter from '@/components/workflow/common/workflow-value-inserter';
@@ -15,6 +16,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 
@@ -34,16 +36,34 @@ interface AnnouncementManagerProps {
 
 function Section({
   title,
+  description,
   children,
   className,
 }: {
   title: string;
+  description?: string;
   children: React.ReactNode;
   className?: string;
 }) {
   return (
     <section className={cn('space-y-3', className)}>
-      <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+      <div className="flex min-w-0 items-center gap-1.5">
+        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+        {description ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                className="inline-flex size-5 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+                aria-label={description}
+              >
+                <CircleAlert className="size-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-72 leading-5">{description}</TooltipContent>
+          </Tooltip>
+        ) : null}
+      </div>
       {children}
     </section>
   );
@@ -137,12 +157,16 @@ export function AnnouncementManager({
 
   return (
     <div className={cn('space-y-5', className)}>
-      <Section title={t('announcement.section.title')}>
+      <Section
+        title={t('announcement.section.title')}
+        description={t('announcement.hint.variableSources')}
+      >
         <WorkflowValueInserter
           nodeId={nodeId}
           className="w-full"
           onInsert={handleTitleVariableInsert}
           disabled={readOnly}
+          defaultCollapsed={false}
         />
         <WorkflowValueEditor
           ref={titleEditorRef}
@@ -160,12 +184,16 @@ export function AnnouncementManager({
         />
       </Section>
 
-      <Section title={t('announcement.section.content')}>
+      <Section
+        title={t('announcement.section.content')}
+        description={t('announcement.hint.variableSources')}
+      >
         <WorkflowValueInserter
           nodeId={nodeId}
           className="w-full"
           onInsert={handleContentVariableInsert}
           disabled={readOnly}
+          defaultCollapsed={false}
         />
         <WorkflowValueEditor
           ref={contentEditorRef}
@@ -183,7 +211,10 @@ export function AnnouncementManager({
         />
       </Section>
 
-      <Section title={t('announcement.section.timeout')}>
+      <Section
+        title={t('announcement.section.timeout')}
+        description={t('announcement.hint.timeout')}
+      >
         <div className="grid grid-cols-[1fr_120px] gap-2">
           <Input
             type="number"
