@@ -87,6 +87,23 @@ func TestRuntime_ListSkills_ReturnsSortedLightweightMetadata(t *testing.T) {
 	}
 }
 
+func TestRuntime_ResolveEnabledSkills_AcceptsCRLFSkillMarkdown(t *testing.T) {
+	catalogDir := t.TempDir()
+	writeSkillMarkdown(t, catalogDir, "calculator", strings.ReplaceAll(testCalculatorSkillMarkdown(), "\n", "\r\n"))
+	runtime := newSkillRuntimeFromCatalog(t, catalogDir)
+
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{"calculator"})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	if len(resolved.Skills) != 1 {
+		t.Fatalf("skills = %d, want 1", len(resolved.Skills))
+	}
+	if resolved.Skills[0].Metadata.ID != "calculator" {
+		t.Fatalf("skill id = %q, want calculator", resolved.Skills[0].Metadata.ID)
+	}
+}
+
 func TestRuntime_GetSkillMetadata_ReturnsLightweightMetadata(t *testing.T) {
 	catalogDir := t.TempDir()
 	writeCalculatorSkill(t, catalogDir)
@@ -408,13 +425,7 @@ func writeTimeSkill(t *testing.T, catalogDir string) {
 
 func writeCalculatorSkill(t *testing.T, catalogDir string) {
 	t.Helper()
-	calculatorDir := filepath.Join(catalogDir, "calculator")
-	if err := os.MkdirAll(calculatorDir, 0o755); err != nil {
-		t.Fatalf("mkdir calculator skill: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(calculatorDir, "SKILL.md"), []byte(testCalculatorSkillMarkdown()), 0o644); err != nil {
-		t.Fatalf("write calculator skill: %v", err)
-	}
+	writeSkillMarkdown(t, catalogDir, "calculator", testCalculatorSkillMarkdown())
 }
 
 func writeFileGeneratorSkill(t *testing.T, catalogDir string) {
@@ -425,6 +436,17 @@ func writeFileGeneratorSkill(t *testing.T, catalogDir string) {
 	}
 	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(testFileGeneratorSkillMarkdown()), 0o644); err != nil {
 		t.Fatalf("write file generator skill: %v", err)
+	}
+}
+
+func writeSkillMarkdown(t *testing.T, catalogDir string, skillID string, markdown string) {
+	t.Helper()
+	skillDir := filepath.Join(catalogDir, skillID)
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatalf("mkdir %s skill: %v", skillID, err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(markdown), 0o644); err != nil {
+		t.Fatalf("write %s skill: %v", skillID, err)
 	}
 }
 
