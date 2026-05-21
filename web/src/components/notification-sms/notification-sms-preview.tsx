@@ -54,5 +54,6 @@ function renderPreviewTemplate(
 
   return template
     .replace(/\{\{\s*notification_title\s*\}\}/g, notificationTitle)
-    .replace(/\{\{\s*link_suffix\s*\}\}/g, linkSuffix);
+    .replace(/\{\{\s*link_suffix\s*\}\}/g, linkSuffix)
+    .replace(/\{\{\s*link_code\s*\}\}/g, linkSuffix);
 }
