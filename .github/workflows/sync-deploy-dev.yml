@@ -1,0 +1,37 @@
+name: Sync deploy-dev
+
+on:
+  push:
+    branches:
+      - dev
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-deploy-dev
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    name: Sync dev to deploy-dev
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.DEPLOY_GITHUB_TOKEN || github.token }}
+
+      - name: Configure deploy identity
+        run: |
+          git config user.name "starkwang"
+          git config user.email "starkwanglab@gmail.com"
+
+      - name: Push deploy-dev
+        run: |
+          git fetch origin dev
+          git checkout -B deploy-dev origin/dev
+          git commit --allow-empty -m "chore: trigger dev deployment"
+          git push --force-with-lease origin deploy-dev
