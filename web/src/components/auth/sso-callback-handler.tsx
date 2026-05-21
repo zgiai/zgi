@@ -3,10 +3,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useT } from '@/i18n';
-import { useConsumeCasdoorTicket } from '@/hooks';
+import { useConsumeCasdoorTicket } from '@/hooks/auth/use-consume-casdoor-ticket';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardTitle } from '@/components/ui/card';
-import { Icons } from '@/components/ui/icons';
+import { AlertCircle, ArrowRight, CheckCircle, Loader2 } from 'lucide-react';
 import { withBasePath } from '@/lib/config';
 import { buildSsoStartUrl } from '@/utils/auth-sso';
 
@@ -164,7 +164,7 @@ export function SSOCallbackHandler() {
           <div className="space-y-6">
             <div className="flex justify-center">
               <div className="flex size-16 items-center justify-center rounded-full bg-primary/10 text-primary">
-                <Icons.Loader className="size-7 animate-spin" />
+                <Loader2 className="size-7 animate-spin" />
               </div>
             </div>
             <div className="space-y-2 text-center">
@@ -173,15 +173,15 @@ export function SSOCallbackHandler() {
             </div>
             <div className="space-y-3 rounded-xl border border-border/60 bg-muted/30 p-4">
               <div className="flex items-center gap-3 text-sm">
-                <Icons.CheckCircle className="size-4 text-primary" />
+                <CheckCircle className="size-4 text-primary" />
                 <span>{t('ssoProcessingStepAuthorize')}</span>
               </div>
               <div className="flex items-center gap-3 text-sm">
-                <Icons.Loader className="size-4 animate-spin text-primary" />
+                <Loader2 className="size-4 animate-spin text-primary" />
                 <span>{t('ssoProcessingStepExchange')}</span>
               </div>
               <div className="flex items-center gap-3 text-sm text-muted-foreground">
-                <Icons.ArrowRight className="size-4" />
+                <ArrowRight className="size-4" />
                 <span>{t('ssoProcessingStepRedirect')}</span>
               </div>
             </div>
@@ -189,7 +189,7 @@ export function SSOCallbackHandler() {
         ) : isSuccess ? (
           <div className="space-y-5">
             <div className="flex items-start gap-3 rounded-lg border border-primary/20 bg-primary/5 p-4 text-primary">
-              <Icons.CheckCircle className="mt-0.5 size-4 shrink-0" />
+              <CheckCircle className="mt-0.5 size-4 shrink-0" />
               <div className="space-y-1">
                 <p className="text-sm font-medium leading-6">{t('ssoSuccess')}</p>
                 <p className="text-sm leading-6">{message}</p>
@@ -210,7 +210,7 @@ export function SSOCallbackHandler() {
         ) : (
           <div className="space-y-5">
             <div className="flex items-start gap-3 rounded-lg border border-destructive/20 bg-destructive/5 p-4 text-destructive">
-              <Icons.AlertCircle className="mt-0.5 size-4 shrink-0" />
+              <AlertCircle className="mt-0.5 size-4 shrink-0" />
               <p className="text-sm leading-6">{message}</p>
             </div>
             <Button

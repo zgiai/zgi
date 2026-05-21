@@ -9,9 +9,12 @@ import React, {
   type ReactNode,
 } from 'react';
 import { NextIntlClientProvider } from 'next-intl';
-import { loadAllModules } from '@/i18n/loader';
+import { loadModules } from '@/i18n/loader';
+import { getModulesForPathname } from '@/i18n/route-modules';
 import type { Locale } from '@/i18n/config';
 import { defaultLocale, isLanguageSwitchEnabled } from '@/lib/i18n';
+
+type I18nMessages = Record<string, unknown>;
 
 interface I18nContextType {
   locale: Locale;
@@ -32,7 +35,7 @@ export function useI18n() {
 interface I18nClientProviderProps {
   children: ReactNode;
   initialLocale: Locale;
-  initialMessages: any;
+  initialMessages: I18nMessages;
 }
 
 export function I18nClientProvider({
@@ -53,7 +56,11 @@ export function I18nClientProvider({
       if (newLocale === locale) return;
 
       // Load new messages package in the background
-      const newMessages = await loadAllModules(newLocale);
+      const pathname = typeof window !== 'undefined' ? window.location.pathname : '/';
+      const newMessages = (await loadModules(
+        getModulesForPathname(pathname),
+        newLocale
+      )) as I18nMessages;
 
       startTransition(() => {
         // Update cookie for future server-side renders or reloads

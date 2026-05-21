@@ -3,13 +3,13 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useT } from '@/i18n';
-import { useCreateSetupAdmin, useSetupStatus } from '@/hooks';
+import { useCreateSetupAdmin, useSetupStatus } from '@/hooks/use-setup';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input, PasswordInput } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Icons } from '@/components/ui/icons';
+import { Info } from 'lucide-react';
 import {
   Form,
   FormControl,
@@ -138,7 +138,7 @@ export default function InitPage() {
                         <PasswordInput placeholder={t('auth.passwordPlaceholder')} {...field} />
                       </FormControl>
                       <Alert className="border-border/70 bg-muted/30 text-foreground">
-                        <Icons.Info className="h-4 w-4" />
+                        <Info className="h-4 w-4" />
                         <AlertDescription className="space-y-1 text-xs leading-5">
                           <div className="font-medium">{t('auth.passwordRequirements')}</div>
                           <ul className="space-y-1 text-muted-foreground">
