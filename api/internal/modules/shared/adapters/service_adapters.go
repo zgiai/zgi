@@ -250,11 +250,11 @@ func (a *AccountServiceAdapter) GetUserThroughEmail(ctx context.Context, email s
 	return a.accountService.GetUserThroughEmail(ctx, email)
 }
 
-func (a *AccountServiceAdapter) IssueSSOState(ctx context.Context) (string, error) {
-	return a.accountService.IssueSSOState(ctx)
+func (a *AccountServiceAdapter) IssueSSOState(ctx context.Context, callbackURL string) (string, error) {
+	return a.accountService.IssueSSOState(ctx, callbackURL)
 }
 
-func (a *AccountServiceAdapter) ConsumeSSOState(ctx context.Context, state string) error {
+func (a *AccountServiceAdapter) ConsumeSSOState(ctx context.Context, state string) (string, error) {
 	return a.accountService.ConsumeSSOState(ctx, state)
 }
 

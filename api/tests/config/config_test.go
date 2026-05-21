@@ -36,6 +36,40 @@ func TestLoadUsesDefaultGRPCServerConfig(t *testing.T) {
 	}
 }
 
+func TestLoadReadsNamedSSOFrontendCallbacks(t *testing.T) {
+	cfg, err := config.LoadFromFile(writeEnvFile(t, map[string]string{
+		"SERVER_MODE":                              "release",
+		"ENV":                                      "production",
+		"SECRET_KEY":                               "test-secret",
+		"EMAIL_MAIL_DEFAULT_SEND_FROM":             "noreply@example.com",
+		"EMAIL_RESEND_API_KEY":                     "test-api-key",
+		"SSO_FRONTEND_CALLBACK_URL":                "https://app.example.com/sso/callback",
+		"SSO_FRONTEND_CALLBACK_URL_FC_7Q2K9M":      "https://region-a.example.com/sso/callback",
+		"SSO_FRONTEND_CALLBACK_URL_FC_M4X8T2P":     "https://region-b.example.com/sso/callback",
+		"SSO_FRONTEND_CALLBACK_URL_EMPTY_IGNORED":  "",
+		"SSO_FRONTEND_CALLBACK_URL_TRAILING_SPACE": " https://region-c.example.com/sso/callback ",
+	}))
+	if err != nil {
+		t.Fatalf("config.LoadFromFile() error = %v, want nil", err)
+	}
+
+	if got := cfg.Auth.SSO.FrontendCallbackURL; got != "https://app.example.com/sso/callback" {
+		t.Fatalf("cfg.Auth.SSO.FrontendCallbackURL = %q", got)
+	}
+	if got := cfg.Auth.SSO.FrontendCallbackURLs["FC_7Q2K9M"]; got != "https://region-a.example.com/sso/callback" {
+		t.Fatalf("cfg.Auth.SSO.FrontendCallbackURLs[FC_7Q2K9M] = %q", got)
+	}
+	if got := cfg.Auth.SSO.FrontendCallbackURLs["FC_M4X8T2P"]; got != "https://region-b.example.com/sso/callback" {
+		t.Fatalf("cfg.Auth.SSO.FrontendCallbackURLs[FC_M4X8T2P] = %q", got)
+	}
+	if _, ok := cfg.Auth.SSO.FrontendCallbackURLs["EMPTY_IGNORED"]; ok {
+		t.Fatal("cfg.Auth.SSO.FrontendCallbackURLs contains EMPTY_IGNORED, want omitted")
+	}
+	if got := cfg.Auth.SSO.FrontendCallbackURLs["TRAILING_SPACE"]; got != "https://region-c.example.com/sso/callback" {
+		t.Fatalf("cfg.Auth.SSO.FrontendCallbackURLs[TRAILING_SPACE] = %q", got)
+	}
+}
+
 func TestLoadIgnoresInvalidGRPCPortWhenDisabled(t *testing.T) {
 	cfg, err := config.LoadFromFile(writeEnvFile(t, map[string]string{
 		"SERVER_MODE":                  "release",
