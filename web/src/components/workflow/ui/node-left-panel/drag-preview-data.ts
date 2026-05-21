@@ -9,6 +9,7 @@ import { DEFAULT_KNOWLEDGE_RETRIEVAL_NODE } from '../../nodes/knowledge-retrieva
 import { DEFAULT_JSON_PARSER_NODE } from '../../nodes/json-parser/config';
 import { DEFAULT_IMAGE_GEN_NODE_DATA } from '../../nodes/image-gen/config';
 import { createApprovalActionId, DEFAULT_APPROVAL_NODE_DATA } from '../../nodes/approval/config';
+import { DEFAULT_ANNOUNCEMENT_NODE_DATA } from '../../nodes/announcement/config';
 import { DEFAULT_QUESTION_ANSWER_NODE_DATA } from '../../nodes/question-answer/config';
 import { DEFAULT_VARIABLE_AGGREGATOR_NODE_DATA } from '../../nodes/variable-aggregator/config';
 import { DEFAULT_SQL_GENERATOR_NODE_DATA } from '../../nodes/sql-generator/config';
@@ -61,6 +62,7 @@ const DRAG_PREVIEW_TITLE_KEYS: Record<string, string> = {
   'json-parser': 'catalog.json-parser.title',
   'image-gen': 'catalog.image-gen.title',
   approval: 'catalog.approval.title',
+  announcement: 'catalog.announcement.title',
   'question-answer': 'catalog.question-answer.title',
   'variable-aggregator': 'catalog.variable-aggregator.title',
   'sql-generator': 'catalog.sql-generator.title',
@@ -202,6 +204,17 @@ export function createDragPreviewNodeData({
         },
       };
     }
+    case 'announcement':
+      return {
+        ...DEFAULT_ANNOUNCEMENT_NODE_DATA,
+        type: 'announcement',
+        title,
+        desc: '',
+        announcement: {
+          ...DEFAULT_ANNOUNCEMENT_NODE_DATA.announcement,
+          content: DEFAULT_ANNOUNCEMENT_NODE_DATA.announcement.content,
+        },
+      };
     case 'question-answer':
       return {
         ...DEFAULT_QUESTION_ANSWER_NODE_DATA,

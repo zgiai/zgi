@@ -18,6 +18,7 @@ import {
   StickyNote,
   Image as ImageIcon,
   ClipboardCheck,
+  Megaphone,
   MessageCircleQuestion,
   Smartphone,
 } from 'lucide-react';
@@ -69,14 +70,11 @@ const COMMON_LOGIC_CLASSES = {
 const NODE_ICON_TONES = {
   agent:
     'bg-[#EAF1FF] text-[#111827] shadow-[inset_0_0_0_1px_rgba(42,111,219,0.06),0_1px_2px_rgba(15,23,42,0.04)] [&_svg]:text-[#111827]',
-  flow:
-    'bg-[#CFF8E9] text-[#111827] shadow-[inset_0_0_0_1px_rgba(22,134,92,0.08),0_1px_2px_rgba(15,23,42,0.05)] [&_svg]:text-[#111827]',
+  flow: 'bg-[#CFF8E9] text-[#111827] shadow-[inset_0_0_0_1px_rgba(22,134,92,0.08),0_1px_2px_rgba(15,23,42,0.05)] [&_svg]:text-[#111827]',
   logic:
     'bg-[#FFF6C7] text-[#111827] shadow-[inset_0_0_0_1px_rgba(184,148,0,0.06),0_1px_2px_rgba(15,23,42,0.035)] [&_svg]:text-[#111827]',
-  data:
-    'bg-[#F0E5FF] text-[#111827] shadow-[inset_0_0_0_1px_rgba(106,69,194,0.07),0_1px_2px_rgba(15,23,42,0.04)] [&_svg]:text-[#111827]',
-  tool:
-    'bg-[#FFE97A] text-[#111827] shadow-[inset_0_0_0_1px_rgba(138,106,0,0.09),0_1px_2px_rgba(15,23,42,0.05)] [&_svg]:text-[#111827]',
+  data: 'bg-[#F0E5FF] text-[#111827] shadow-[inset_0_0_0_1px_rgba(106,69,194,0.07),0_1px_2px_rgba(15,23,42,0.04)] [&_svg]:text-[#111827]',
+  tool: 'bg-[#FFE97A] text-[#111827] shadow-[inset_0_0_0_1px_rgba(138,106,0,0.09),0_1px_2px_rgba(15,23,42,0.05)] [&_svg]:text-[#111827]',
   extension:
     'bg-[#E8F3FF] text-[#111827] shadow-[inset_0_0_0_1px_rgba(42,111,219,0.07),0_1px_2px_rgba(15,23,42,0.04)] [&_svg]:text-[#111827]',
   terminal:
@@ -443,6 +441,20 @@ export const NODE_THEMES: Record<WorkflowNodeData['type'] | 'default', NodeTheme
     },
     miniMapColor: '#f59e0b',
     handles: 'source',
+    resizable: false,
+    autoHeight: true,
+  },
+  announcement: {
+    icon: Megaphone,
+    badgeText: 'Announcement',
+    width: 280,
+    height: 132,
+    classNames: {
+      ...COMMON_LOGIC_CLASSES,
+      iconBg: NODE_ICON_TONES.logic,
+    },
+    miniMapColor: '#eab308',
+    handles: 'both',
     resizable: false,
     autoHeight: true,
   },

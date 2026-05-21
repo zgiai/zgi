@@ -158,6 +158,15 @@ export function useNodeTypesI18n(): NodeType[] {
         group: 'flow',
       },
       {
+        type: NODE_TYPES.ANNOUNCEMENT,
+        title: t('catalog.announcement.title'),
+        description: t('catalog.announcement.description'),
+        icon: React.createElement(NODE_THEMES.announcement.icon, { size: iconSize }),
+        bgColor: NODE_THEMES.announcement.classNames.iconBg ?? 'bg-yellow-500',
+        io: true,
+        group: 'flow',
+      },
+      {
         type: NODE_TYPES.QUESTION_ANSWER,
         title: t('catalog.question-answer.title'),
         description: t('catalog.question-answer.description'),

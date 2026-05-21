@@ -30,6 +30,8 @@ import JsonParserContent from '../nodes/json-parser';
 import ImageGenContent from '../nodes/image-gen';
 import type { ApprovalNodeData } from '../nodes/approval/config';
 import { normalizeApprovalNodeData } from '../nodes/approval/config';
+import type { AnnouncementNodeData } from '../nodes/announcement/config';
+import { normalizeAnnouncementNodeData } from '../nodes/announcement/config';
 import QuestionAnswerContent from '../nodes/question-answer';
 
 const DEFAULT_PREVIEW_WIDTH = 280;
@@ -178,6 +180,28 @@ function ApprovalPreviewBody({ data }: { data: ApprovalNodeData }) {
         <div className="flex items-center justify-end border-t py-2 text-xs">
           <span className="font-mono font-semibold">{t('approval.preview.timeout')}</span>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function AnnouncementPreviewBody({ data }: { data: AnnouncementNodeData }) {
+  const t = useT('nodes');
+  const normalized = normalizeAnnouncementNodeData(data);
+  const content = normalized.announcement.content.trim();
+
+  return (
+    <div className="mt-1 space-y-2">
+      <div className="max-h-[160px] min-h-8 overflow-hidden rounded-md bg-muted/70 p-1.5 text-xs leading-relaxed text-secondary-foreground break-words whitespace-pre-wrap">
+        {content || (
+          <span className="text-muted-foreground">{t('announcement.preview.emptyContent')}</span>
+        )}
+      </div>
+      <div className="flex items-center justify-between border-t py-2 text-xs">
+        <span className="font-medium">{t('announcement.preview.publicLink')}</span>
+        <span className="text-muted-foreground">
+          {t(`announcement.timeout.${normalized.timeout.unit}`)}
+        </span>
       </div>
     </div>
   );
@@ -370,6 +394,8 @@ function InitialDataPreviewContent({
       return <ImageGenContent nodeId={PREVIEW_NODE_ID} data={data} />;
     case 'approval':
       return <ApprovalPreviewBody data={data} />;
+    case 'announcement':
+      return <AnnouncementPreviewBody data={data} />;
     case 'question-answer':
       return <QuestionAnswerContent nodeId={PREVIEW_NODE_ID} data={data} />;
     default:

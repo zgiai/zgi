@@ -121,6 +121,11 @@ const messages: NodesMessages = {
       description: '暂停流程并收集人工审查决策',
       label: '审查',
     },
+    announcement: {
+      title: 'Announcement',
+      description: 'Create a public announcement link and continue the flow',
+      label: 'Announcement',
+    },
     'question-answer': {
       title: '问答',
       description: '暂停工作流，在同一会话中收集用户回答',
@@ -193,6 +198,13 @@ const messages: NodesMessages = {
       approval_action_id: '审查人选择的审查动作 ID，超时时为 expired',
       approval_action_label: '审查人选择的审查动作文案，超时时为 Expired',
       approval_rendered_content: '变量与提交值替换后的审查正文',
+    },
+    announcement: {
+      announcement_id: 'Created announcement ID',
+      announcement_token: 'Short public announcement token',
+      announcement_url: 'Public announcement URL',
+      announcement_expires_at: 'Announcement expiration time as Unix seconds',
+      announcement_rendered_content: 'Announcement content rendered after variables resolve',
     },
     questionAnswer: {
       question: '当前问题或追问',
@@ -421,6 +433,47 @@ const messages: NodesMessages = {
       finished: '流程已恢复',
       finishedDescription: '该审查已处理完成。',
       expiresAt: '过期时间：{time}',
+    },
+  },
+  announcement: {
+    section: {
+      content: 'Announcement Content',
+      timeout: 'Expiration',
+    },
+    defaults: {
+      content: 'Please read this announcement.',
+    },
+    preview: {
+      emptyContent: 'No announcement content configured',
+      publicLink: 'Public link',
+    },
+    timeout: {
+      hour: 'Hours',
+      day: 'Days',
+    },
+    presets: {
+      oneDay: '1 day',
+      threeDays: '3 days',
+      oneWeek: '1 week',
+    },
+    placeholders: {
+      content: 'Write the Markdown announcement content. Use / to insert variables.',
+    },
+    hint: {
+      publicLink: 'The flow creates one public link and continues immediately.',
+    },
+    validation: {
+      titleRequired: 'Announcement node title is required',
+      contentRequired: 'Announcement content is required',
+      timeoutDurationInvalid: 'Expiration duration must be a positive integer',
+      timeoutDurationTooLong: 'Expiration cannot exceed 1 week',
+      timeoutUnitInvalid: 'Expiration unit must be hours or days',
+    },
+    runtime: {
+      unavailable: 'Announcement unavailable',
+      unavailableDescription: 'The announcement may have expired or the link is invalid.',
+      retry: 'Retry',
+      expiresAt: 'Expires at {time}',
     },
   },
   createScheduledTask: {
@@ -745,7 +798,8 @@ const messages: NodesMessages = {
     },
     optimizer: {
       sourceLabel: '待优化的系统提示词',
-      sourceHelp: '这里已经自动带入当前节点的系统提示词。你可以直接修改后再优化；如果改乱了，可以点“重新载入当前节点提示词”恢复。',
+      sourceHelp:
+        '这里已经自动带入当前节点的系统提示词。你可以直接修改后再优化；如果改乱了，可以点“重新载入当前节点提示词”恢复。',
       resetSource: '重新载入当前节点提示词',
     },
     variableGuide: {
@@ -753,7 +807,8 @@ const messages: NodesMessages = {
       selectBlock: '先点击要编辑的那一段，变量会插入到当前光标位置。',
       insertMethods: '可以直接输入 “/” 搜索变量，或者点击每段右上角的“插入变量”按钮。',
       quickVariables: '也可以直接点击下面的“快捷变量”标签来插入。',
-      bestPractice: '推荐写法：系统提示词用来写角色、规则和输出要求；用户输入模板更适合放开始节点、知识检索或上游节点的变量。',
+      bestPractice:
+        '推荐写法：系统提示词用来写角色、规则和输出要求；用户输入模板更适合放开始节点、知识检索或上游节点的变量。',
       fallback: '如果没有先选中某一段，快捷变量会默认插入到第一段系统提示词。',
       noManualSyntax: '变量会自动插入成可识别的标签，一般不需要自己手写花括号语法。',
     },
@@ -764,7 +819,8 @@ const messages: NodesMessages = {
       managed: '来自提示词库',
       inline: '当前节点副本',
       currentUsing: '当前正在使用：{name}',
-      managedDescription: '当前节点正在使用提示词库里的共享提示词。这里仅展示内容预览；如果只想改这个节点，请先改成当前节点可编辑。',
+      managedDescription:
+        '当前节点正在使用提示词库里的共享提示词。这里仅展示内容预览；如果只想改这个节点，请先改成当前节点可编辑。',
       managedPreview: '只读预览',
       emptyContent: '暂无内容',
       inlineDescription: '当前节点正在使用自己的提示词副本，你可以直接编辑，也可以保存回提示词库。',

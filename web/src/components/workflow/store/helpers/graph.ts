@@ -574,6 +574,36 @@ export function collectForNode(node: WorkflowNode, agentType: AgentType): Upstre
       ];
       break;
     }
+    case 'announcement': {
+      base.variables = [
+        {
+          key: 'announcement_id',
+          type: 'string',
+          descriptionKey: 'outputDescriptions.announcement.announcement_id',
+        },
+        {
+          key: 'announcement_token',
+          type: 'string',
+          descriptionKey: 'outputDescriptions.announcement.announcement_token',
+        },
+        {
+          key: 'announcement_url',
+          type: 'string',
+          descriptionKey: 'outputDescriptions.announcement.announcement_url',
+        },
+        {
+          key: 'announcement_expires_at',
+          type: 'number',
+          descriptionKey: 'outputDescriptions.announcement.announcement_expires_at',
+        },
+        {
+          key: 'announcement_rendered_content',
+          type: 'string',
+          descriptionKey: 'outputDescriptions.announcement.announcement_rendered_content',
+        },
+      ];
+      break;
+    }
     case 'question-answer': {
       const data = node.data as QuestionAnswerNodeData;
       base.variables = [
@@ -630,17 +660,18 @@ export function collectForNode(node: WorkflowNode, agentType: AgentType): Upstre
                 {
                   key: 'extracted_fields',
                   type: 'object' as PrimitiveType,
-                  descriptionKey: 'outputDescriptions.questionAnswer.extracted_fields' as NodesSuffix,
+                  descriptionKey:
+                    'outputDescriptions.questionAnswer.extracted_fields' as NodesSuffix,
                 },
-                ...((data.extraction_fields || [])
+                ...(data.extraction_fields || [])
                   .filter(field => field.name?.trim())
                   .map(field => ({
                     key: field.name.trim(),
                     type: field.type as PrimitiveType,
                     description: field.description,
-                  }))),
+                  })),
               ]
-          : []),
+            : []),
       ];
       break;
     }

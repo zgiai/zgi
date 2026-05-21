@@ -120,6 +120,11 @@ const messages = {
       description: 'Pause the flow and collect a human review decision',
       label: 'Approval',
     },
+    announcement: {
+      title: 'Announcement',
+      description: 'Create a public announcement link and continue the flow',
+      label: 'Announcement',
+    },
     'question-answer': {
       title: 'Question Answer',
       description: 'Pause the workflow and collect a user answer in the same conversation',
@@ -195,6 +200,13 @@ const messages = {
         'Label of the approval action selected by the reviewer. Expired approvals use Expired.',
       approval_rendered_content:
         'Approval content rendered after variables and submitted values resolve',
+    },
+    announcement: {
+      announcement_id: 'Created announcement ID',
+      announcement_token: 'Short public announcement token',
+      announcement_url: 'Public announcement URL',
+      announcement_expires_at: 'Announcement expiration time as Unix seconds',
+      announcement_rendered_content: 'Announcement content rendered after variables resolve',
     },
     questionAnswer: {
       question: 'Current question or follow-up question',
@@ -427,6 +439,47 @@ const messages = {
         'The approval form has expired. The flow will continue through the timeout branch.',
       finished: 'Flow resumed',
       finishedDescription: 'The approval has been processed and the flow has finished.',
+      expiresAt: 'Expires at {time}',
+    },
+  },
+  announcement: {
+    section: {
+      content: 'Announcement Content',
+      timeout: 'Expiration',
+    },
+    defaults: {
+      content: 'Please read this announcement.',
+    },
+    preview: {
+      emptyContent: 'No announcement content configured',
+      publicLink: 'Public link',
+    },
+    timeout: {
+      hour: 'Hours',
+      day: 'Days',
+    },
+    presets: {
+      oneDay: '1 day',
+      threeDays: '3 days',
+      oneWeek: '1 week',
+    },
+    placeholders: {
+      content: 'Write the Markdown announcement content. Use / to insert variables.',
+    },
+    hint: {
+      publicLink: 'The flow creates one public link and continues immediately.',
+    },
+    validation: {
+      titleRequired: 'Announcement node title is required',
+      contentRequired: 'Announcement content is required',
+      timeoutDurationInvalid: 'Expiration duration must be a positive integer',
+      timeoutDurationTooLong: 'Expiration cannot exceed 1 week',
+      timeoutUnitInvalid: 'Expiration unit must be hours or days',
+    },
+    runtime: {
+      unavailable: 'Announcement unavailable',
+      unavailableDescription: 'The announcement may have expired or the link is invalid.',
+      retry: 'Retry',
       expiresAt: 'Expires at {time}',
     },
   },

@@ -93,7 +93,7 @@ export function createWorkflowIOSlice(
             const httpData = sanitizedData as HttpRequestNodeData & Record<string, unknown>;
             const incomingBody = (httpData as { body?: unknown }).body;
 
-              let normalizedBody: HttpRequestBody = { type: 'none', data: [] };
+            let normalizedBody: HttpRequestBody = { type: 'none', data: [] };
 
             if (
               typeof incomingBody === 'object' &&
@@ -154,6 +154,7 @@ export function createWorkflowIOSlice(
               node.type ||
               (dataType === 'note' ||
               dataType === 'approval' ||
+              dataType === 'announcement' ||
               dataType === 'question-answer'
                 ? dataType
                 : 'custom'),
