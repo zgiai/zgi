@@ -10,15 +10,21 @@ import (
 	"github.com/google/uuid"
 	aichatmodel "github.com/zgiai/zgi/api/internal/modules/aichat/model"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 func (s *service) catalogSkillMetadata(ctx context.Context, organizationID uuid.UUID) ([]skills.SkillDiscoveryMetadata, error) {
-	if s.skillRuntime == nil {
-		return []skills.SkillDiscoveryMetadata{}, nil
-	}
-	systemMetadata, err := s.skillRuntime.ListSkills(ctx)
-	if err != nil {
-		return nil, err
+	systemMetadata := []skills.SkillDiscoveryMetadata{}
+	if s.skillRuntime != nil {
+		var err error
+		systemMetadata, err = s.skillRuntime.ListSkills(ctx)
+		if err != nil {
+			logger.WarnContext(ctx, "failed to list aichat system skills; falling back to best-effort catalog", err)
+			systemMetadata, err = s.skillRuntime.ListSystemSkillsBestEffort(ctx)
+			if err != nil {
+				logger.WarnContext(ctx, "aichat system skill catalog has invalid entries", err)
+			}
+		}
 	}
 	customMetadata, err := s.customSkillDiscoveryMetadata(ctx, organizationID)
 	if err != nil {
@@ -63,9 +69,9 @@ func (s *service) customSkillDiscoveryMetadata(ctx context.Context, organization
 		if item == nil {
 			continue
 		}
-		entry := skills.CustomSkillCatalogEntry{SkillID: item.SkillID, Root: item.StoragePath}
-		loaded, err := s.skillRuntime.GetSkillMetadataWithCustom(ctx, item.SkillID, []skills.CustomSkillCatalogEntry{entry})
+		doc, err := skills.LoadCustomSkillDocument(item.StoragePath)
 		if err == nil {
+			loaded := skillDiscoveryMetadataPtr(doc)
 			metadata = append(metadata, *loaded)
 			continue
 		}

@@ -44,6 +44,7 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	skillManagement.POST("/import", h.ImportSkill)
 	skillManagement.POST("/import/preview", h.PreviewImportSkill)
 	skillManagement.POST("/import/confirm", h.ConfirmImportSkill)
+	skillManagement.DELETE("/import/preview/:import_id", h.CancelImportSkillPreview)
 	skillManagement.PUT("/config", h.UpdateSkillConfig)
 	skillManagement.DELETE("/:id", h.DeleteSkill)
 	group.GET("/conversations", h.ListConversations)
@@ -178,6 +179,23 @@ func (h *Handler) ConfirmImportSkill(c *gin.Context) {
 		return
 	}
 	response.Success(c, skillResponse(*metadata))
+}
+
+func (h *Handler) CancelImportSkillPreview(c *gin.Context) {
+	scope, ok := h.scope(c)
+	if !ok {
+		return
+	}
+	importID := strings.TrimSpace(c.Param("import_id"))
+	if importID == "" {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if err := h.service.CancelCustomSkillImportPreview(c.Request.Context(), scope, importID); err != nil {
+		h.fail(c, err)
+		return
+	}
+	response.Success(c, gin.H{"canceled": true})
 }
 
 func (h *Handler) DeleteSkill(c *gin.Context) {

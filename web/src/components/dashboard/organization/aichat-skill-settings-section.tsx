@@ -35,6 +35,7 @@ import {
   useDeleteAIChatSkill,
   useAIChatSkillConfig,
   useAIChatSkills,
+  useCancelImportAIChatSkillPreview,
   useConfirmImportAIChatSkill,
   usePreviewImportAIChatSkill,
   useUpdateAIChatSkillConfig,
@@ -242,7 +243,13 @@ function AIChatSkillCard({
           variant={invalid ? 'destructive' : enabled ? 'success' : 'subtle'}
           className="rounded-md font-normal"
         >
-          {t(invalid ? STATUS_LABEL_KEYS.invalid : enabled ? STATUS_LABEL_KEYS.enabled : STATUS_LABEL_KEYS.disabled)}
+          {t(
+            invalid
+              ? STATUS_LABEL_KEYS.invalid
+              : enabled
+                ? STATUS_LABEL_KEYS.enabled
+                : STATUS_LABEL_KEYS.disabled
+          )}
         </Badge>
       </div>
 
@@ -451,9 +458,7 @@ function SkillImportPreviewDialog({
                   {t(RUNTIME_LABEL_KEYS[skill.runtime_type])}
                 </Badge>
               </div>
-              <p className="mt-3 text-sm leading-5 text-muted-foreground">
-                {skill.description}
-              </p>
+              <p className="mt-3 text-sm leading-5 text-muted-foreground">{skill.description}</p>
             </div>
           ) : null}
 
@@ -543,6 +548,7 @@ export function AIChatSkillSettingsSection() {
   const updateConfig = useUpdateAIChatSkillConfig();
   const previewImportSkill = usePreviewImportAIChatSkill();
   const confirmImportSkill = useConfirmImportAIChatSkill();
+  const cancelImportPreview = useCancelImportAIChatSkillPreview();
   const deleteSkill = useDeleteAIChatSkill();
   const [enabledSkillIds, setEnabledSkillIds] = useState<string[]>([]);
   const [persistedSkillIds, setPersistedSkillIds] = useState<string[]>([]);
@@ -557,6 +563,7 @@ export function AIChatSkillSettingsSection() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const saveSequenceRef = useRef(0);
   const updateConfigRef = useRef(updateConfig.mutateAsync);
+  const importConfirmedRef = useRef(false);
 
   const initialEnabledSkillIds = useMemo(
     () => getInitialEnabledSkillIds(skills, config?.enabled_skill_ids),
@@ -688,11 +695,7 @@ export function AIChatSkillSettingsSection() {
   const importButton =
     activeTab === 'custom' && customSkills.length > 0 ? (
       <Button size="sm" disabled={isMutating} onClick={handleImportClick}>
-        {isImporting ? (
-          <Loader2 className="size-4 animate-spin" />
-        ) : (
-          <Upload className="size-4" />
-        )}
+        {isImporting ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
         {isImporting
           ? t('organization.aichatSkills.actions.importing')
           : t('organization.aichatSkills.actions.import')}
@@ -713,6 +716,7 @@ export function AIChatSkillSettingsSection() {
 
     try {
       const response = await previewImportSkill.mutateAsync(file);
+      importConfirmedRef.current = false;
       setImportPreview(response.data);
       setIsImportPreviewOpen(true);
       if (fileInputRef.current) {
@@ -733,6 +737,11 @@ export function AIChatSkillSettingsSection() {
   const handleImportPreviewOpenChange = (open: boolean) => {
     setIsImportPreviewOpen(open);
     if (!open && !confirmImportSkill.isPending) {
+      const importId = importPreview?.import_id;
+      if (importId && !importConfirmedRef.current) {
+        cancelImportPreview.mutate(importId);
+      }
+      importConfirmedRef.current = false;
       setImportPreview(null);
     }
   };
@@ -741,6 +750,7 @@ export function AIChatSkillSettingsSection() {
     if (!importPreview?.import_id) return;
     try {
       await confirmImportSkill.mutateAsync({ import_id: importPreview.import_id });
+      importConfirmedRef.current = true;
       setIsImportPreviewOpen(false);
       setImportPreview(null);
     } catch {

@@ -3,7 +3,10 @@ import { toast } from 'sonner';
 import { AICHAT_KEYS } from '@/hooks/query-keys';
 import { useT } from '@/i18n/translations';
 import { aichatService } from '@/services/aichat.service';
-import type { AIChatConfirmImportSkillRequest, AIChatSkillOrganizationConfig } from '@/services/types/aichat';
+import type {
+  AIChatConfirmImportSkillRequest,
+  AIChatSkillOrganizationConfig,
+} from '@/services/types/aichat';
 
 interface UpdateAIChatSkillConfigVariables {
   payload: AIChatSkillOrganizationConfig;
@@ -169,6 +172,16 @@ export function useConfirmImportAIChatSkill() {
           : t('organization.aichatSkills.messages.importFailed')
       );
     },
+  });
+}
+
+/**
+ * @hook useCancelImportAIChatSkillPreview
+ * @description Best-effort cleanup for a previously previewed custom AIChat Skill package.
+ */
+export function useCancelImportAIChatSkillPreview() {
+  return useMutation({
+    mutationFn: (importId: string) => aichatService.cancelImportSkillPreview(importId),
   });
 }
 

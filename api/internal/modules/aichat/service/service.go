@@ -80,8 +80,10 @@ type Service interface {
 	PreviewImportCustomSkill(ctx context.Context, scope Scope, fileHeader *multipart.FileHeader) (*SkillImportPreview, error)
 	ConfirmCustomSkillImport(ctx context.Context, scope Scope, importID string) (*skills.SkillDiscoveryMetadata, error)
 	ImportCustomSkill(ctx context.Context, scope Scope, fileHeader *multipart.FileHeader) (*skills.SkillDiscoveryMetadata, error)
+	CancelCustomSkillImportPreview(ctx context.Context, scope Scope, importID string) error
 	DeleteSkill(ctx context.Context, scope Scope, skillID string) error
 	CleanupStaleActiveMessages(ctx context.Context) (int64, error)
+	CleanupExpiredCustomSkillImportPreviews(ctx context.Context) error
 	MigrateWebAppConversation(ctx context.Context, scope Scope, sourceConversationID uuid.UUID) (*aichatmodel.Conversation, error)
 }
 

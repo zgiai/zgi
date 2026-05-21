@@ -144,23 +144,35 @@ func (s *service) ConfirmCustomSkillImport(ctx context.Context, scope Scope, imp
 		return nil, err
 	}
 	published.cleanup()
-	metadata, err := s.skillRuntime.GetSkillMetadataWithCustom(ctx, doc.Metadata.ID, []skills.CustomSkillCatalogEntry{{
-		SkillID: doc.Metadata.ID,
-		Root:    finalRoot,
-	}})
-	if err != nil {
-		return nil, err
-	}
+	metadata := skillDiscoveryMetadataPtr(doc)
 	metadata.Enabled = s.isOrganizationSkillEnabled(ctx, scope.OrganizationID, metadata.ID)
 	return metadata, nil
 }
 
+func (s *service) CancelCustomSkillImportPreview(ctx context.Context, scope Scope, importID string) error {
+	if err := s.ensureMember(ctx, scope); err != nil {
+		return err
+	}
+	if s.customSkillStorage == nil {
+		return fmt.Errorf("custom skill storage is not configured")
+	}
+	return s.customSkillStorage.DeletePreview(ctx, scope.OrganizationID, importID)
+}
+
+func (s *service) CleanupExpiredCustomSkillImportPreviews(ctx context.Context) error {
+	if s.customSkillStorage == nil {
+		return nil
+	}
+	s.customSkillStorage.CleanupExpiredPreviews(ctx, time.Now())
+	return nil
+}
+
 func (s *service) customSkillIDConflictsWithSystem(ctx context.Context, skillID string) bool {
+	_ = ctx
 	if s.skillRuntime == nil {
 		return false
 	}
-	metadata, err := s.skillRuntime.GetSkillMetadata(ctx, skillID)
-	return err == nil && metadata != nil && metadata.Source == skills.SkillSourceSystem
+	return s.skillRuntime.SystemSkillExists(skillID)
 }
 
 func (s *service) DeleteSkill(ctx context.Context, scope Scope, skillID string) error {

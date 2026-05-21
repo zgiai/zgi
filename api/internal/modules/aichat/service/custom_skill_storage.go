@@ -21,8 +21,10 @@ type customSkillStorage interface {
 	SavePreviewPackage(ctx context.Context, organizationID uuid.UUID, importID string, data []byte) (*storedSkillPreview, error)
 	LoadPreview(ctx context.Context, organizationID uuid.UUID, importID string) (*storedSkillPreview, error)
 	PublishPreview(ctx context.Context, preview *storedSkillPreview, skillID string) (*publishedCustomSkillDirectory, string, error)
+	DeletePreview(ctx context.Context, organizationID uuid.UUID, importID string) error
 	DeleteSkill(ctx context.Context, storagePath string) error
-	CleanupExpiredPreviews(ctx context.Context, organizationID uuid.UUID, now time.Time)
+	CleanupExpiredPreviews(ctx context.Context, now time.Time)
+	CleanupOrganizationExpiredPreviews(ctx context.Context, organizationID uuid.UUID, now time.Time)
 }
 
 type filesystemCustomSkillStorage struct {
@@ -44,7 +46,7 @@ func newFilesystemCustomSkillStorage(root string) customSkillStorage {
 
 func (s *filesystemCustomSkillStorage) SavePreviewPackage(ctx context.Context, organizationID uuid.UUID, importID string, data []byte) (*storedSkillPreview, error) {
 	_ = ctx
-	s.CleanupExpiredPreviews(ctx, organizationID, time.Now())
+	s.CleanupOrganizationExpiredPreviews(ctx, organizationID, time.Now())
 	tempRoot := s.previewRoot(organizationID, importID)
 	if err := os.RemoveAll(tempRoot); err != nil {
 		return nil, fmt.Errorf("failed to prepare custom skill import directory: %w", err)
@@ -122,9 +124,48 @@ func (s *filesystemCustomSkillStorage) DeleteSkill(ctx context.Context, storageP
 	return os.RemoveAll(storagePath)
 }
 
-func (s *filesystemCustomSkillStorage) CleanupExpiredPreviews(ctx context.Context, organizationID uuid.UUID, now time.Time) {
+func (s *filesystemCustomSkillStorage) DeletePreview(ctx context.Context, organizationID uuid.UUID, importID string) error {
 	_ = ctx
-	importsRoot := filepath.Join(s.organizationRoot(organizationID), ".imports")
+	id := strings.TrimSpace(importID)
+	if _, err := uuid.Parse(id); err != nil {
+		return fmt.Errorf("%w: invalid import id", ErrInvalidInput)
+	}
+	importsRoot := s.importsRoot(organizationID)
+	root := filepath.Join(importsRoot, id)
+	rel, err := filepath.Rel(importsRoot, root)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		return fmt.Errorf("%w: invalid import id", ErrInvalidInput)
+	}
+	if err := os.RemoveAll(root); err != nil {
+		return fmt.Errorf("failed to delete custom skill import preview: %w", err)
+	}
+	return nil
+}
+
+func (s *filesystemCustomSkillStorage) CleanupExpiredPreviews(ctx context.Context, now time.Time) {
+	_ = ctx
+	entries, err := os.ReadDir(s.root)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		orgID, err := uuid.Parse(entry.Name())
+		if err != nil {
+			continue
+		}
+		s.cleanupExpiredPreviewsInRoot(filepath.Join(s.root, orgID.String(), ".imports"), now)
+	}
+}
+
+func (s *filesystemCustomSkillStorage) CleanupOrganizationExpiredPreviews(ctx context.Context, organizationID uuid.UUID, now time.Time) {
+	_ = ctx
+	s.cleanupExpiredPreviewsInRoot(s.importsRoot(organizationID), now)
+}
+
+func (s *filesystemCustomSkillStorage) cleanupExpiredPreviewsInRoot(importsRoot string, now time.Time) {
 	entries, err := os.ReadDir(importsRoot)
 	if err != nil {
 		return
@@ -149,11 +190,15 @@ func (s *filesystemCustomSkillStorage) CleanupExpiredPreviews(ctx context.Contex
 }
 
 func (s *filesystemCustomSkillStorage) previewRoot(organizationID uuid.UUID, importID string) string {
-	return filepath.Join(s.organizationRoot(organizationID), ".imports", strings.TrimSpace(importID))
+	return filepath.Join(s.importsRoot(organizationID), strings.TrimSpace(importID))
 }
 
 func (s *filesystemCustomSkillStorage) organizationRoot(organizationID uuid.UUID) string {
 	return filepath.Join(s.root, organizationID.String())
+}
+
+func (s *filesystemCustomSkillStorage) importsRoot(organizationID uuid.UUID) string {
+	return filepath.Join(s.organizationRoot(organizationID), ".imports")
 }
 
 func (s *filesystemCustomSkillStorage) organizationRootFromPreview(preview *storedSkillPreview) string {

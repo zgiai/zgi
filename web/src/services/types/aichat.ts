@@ -67,8 +67,14 @@ export interface AIChatDeleteSkillResponseData {
   deleted: boolean;
 }
 
+export interface AIChatCancelImportSkillPreviewResponseData {
+  canceled: boolean;
+}
+
 export type AIChatImportSkillResponse = ApiResponseData<AIChatSkillMetadata>;
 export type AIChatDeleteSkillResponse = ApiResponseData<AIChatDeleteSkillResponseData>;
+export type AIChatCancelImportSkillPreviewResponse =
+  ApiResponseData<AIChatCancelImportSkillPreviewResponseData>;
 
 export interface AIChatImportSkillPreviewFile {
   path: string;
