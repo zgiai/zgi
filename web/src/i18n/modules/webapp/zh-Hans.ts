@@ -167,7 +167,7 @@ const messages: WebappMessages = {
     nextBranch: '下一个分支',
     skills: {
       trace: {
-        unknownSkill: '技能',
+        unknownSkill: 'Skill',
         unknownTool: '工具',
         unknownReference: '参考资料',
         loading: '正在加载 {skill}',
