@@ -107,8 +107,6 @@ export function AnnouncementManager({
   );
   const [activeEditorTarget, setActiveEditorTarget] =
     React.useState<AnnouncementEditorTarget>('content');
-  const titleLength = Array.from(data.announcement.title.trim()).length;
-  const titleTooLong = titleLength > ANNOUNCEMENT_TITLE_MAX_LENGTH;
 
   React.useEffect(() => {
     setTimeoutDurationInput(String(data.timeout.duration));
@@ -217,18 +215,15 @@ export function AnnouncementManager({
           placeholder={t('announcement.placeholders.title')}
           editorClassName="min-h-10"
           onFocus={() => handleEditorFocused('title')}
+          showCharacterCount
+          maxLength={ANNOUNCEMENT_TITLE_MAX_LENGTH}
+          characterCountFormatter={(count, max) =>
+            t('announcement.length.titleCounter', {
+              count,
+              max,
+            })
+          }
         />
-        <div
-          className={cn(
-            'text-right text-xs text-muted-foreground',
-            titleTooLong && 'text-destructive'
-          )}
-        >
-          {t('announcement.length.titleCounter', {
-            count: titleLength,
-            max: ANNOUNCEMENT_TITLE_MAX_LENGTH,
-          })}
-        </div>
       </Section>
 
       <Section
