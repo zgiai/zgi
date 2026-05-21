@@ -95,11 +95,7 @@ export const APPROVAL_MAX_TIMEOUT_HOURS = 72;
 export const APPROVAL_ACTION_MAX_LENGTH = 20;
 export const APPROVAL_SMS_TEMPLATE = 'pending_action_notification';
 
-const APPROVAL_SMS_RESERVED_TEMPLATE_PARAMS = new Set([
-  'notification_title',
-  'link_suffix',
-  'link_code',
-]);
+const APPROVAL_SMS_RESERVED_TEMPLATE_PARAMS = new Set(['notification_title', 'link_suffix']);
 
 export const APPROVAL_SYSTEM_OUTPUT_KEYS = new Set([
   'approval_action_id',

@@ -424,6 +424,7 @@ const messages = {
       externalRecipientRequired: 'Recipient {index} must enter an email address',
       recipientEmailRequired: 'Recipient {index} must enter an email address',
       recipientEmailInvalid: 'Recipient {index} email address is invalid',
+      smsUnavailable: 'SMS notifications are not enabled for this deployment.',
       smsConfigIncomplete: 'SMS notification requires an SMS title and at least one recipient.',
       smsTitleRequired: 'SMS title is required',
       smsRecipientRequired: 'At least one SMS recipient is required',
@@ -567,9 +568,9 @@ const messages = {
       recipientsRequired: 'At least one recipient is required for operation {index}',
       subjectRequired: 'Subject is required for operation {index}',
       notificationTitleRequired: 'Notification title is required for operation {index}',
-      linkCodeRequired: 'Link code is required for operation {index}',
+      linkCodeRequired: 'Link suffix is required for operation {index}',
       linkCodeInvalid:
-        'Link code for operation {index} must use letters and numbers, for example abc123',
+        'Link suffix for operation {index} is invalid, for example /a/abc123. Do not enter a full URL, Chinese characters, or spaces',
       bodyTypeRequired: 'A supported body type is required for operation {index}',
       bodyRequired: 'Message body is required for operation {index}',
       unsupportedActionType:
@@ -587,9 +588,9 @@ const messages = {
     validation: {
       phoneRequired: 'Phone number is required',
       notificationTitleRequired: 'Notification title is required',
-      linkCodeRequired: 'Link code is required',
+      linkCodeRequired: 'Link suffix is required',
       linkCodeInvalid:
-        'Use letters and numbers only, for example abc123. Do not enter -, _, Chinese characters, or a full URL',
+        'Invalid link suffix, for example /a/abc123. Do not enter a full URL, Chinese characters, or spaces',
     },
   },
   jsonParser: {

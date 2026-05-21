@@ -419,6 +419,7 @@ const messages: NodesMessages = {
       externalRecipientRequired: '收件人 {index} 必须填写邮箱地址',
       recipientEmailRequired: '收件人 {index} 必须填写邮箱地址',
       recipientEmailInvalid: '收件人 {index} 的邮箱地址格式不正确',
+      smsUnavailable: '当前部署未启用短信通知，不能开启审批短信。',
       smsConfigIncomplete: '短信通知需要短信标题和至少一个收件人。',
       smsTitleRequired: '短信标题不能为空',
       smsRecipientRequired: '短信通知至少需要一个收件人',
@@ -555,8 +556,9 @@ const messages: NodesMessages = {
       recipientsRequired: '操作 {index} 至少需要一个收件人',
       subjectRequired: '操作 {index} 需要填写主题',
       notificationTitleRequired: '操作 {index} 需要填写通知标题',
-      linkCodeRequired: '操作 {index} 需要填写链接参数',
-      linkCodeInvalid: '操作 {index} 的链接参数只能填写字母或数字，例如 abc123',
+      linkCodeRequired: '操作 {index} 需要填写链接后缀',
+      linkCodeInvalid:
+        '操作 {index} 的链接后缀格式不正确，例如 /a/abc123。不要输入完整链接、中文或空格',
       bodyTypeRequired: '操作 {index} 需要选择受支持的正文类型',
       bodyRequired: '操作 {index} 需要填写消息正文',
       unsupportedActionType: '操作 {index} 使用了当前节点版本不支持的操作类型',
@@ -572,8 +574,8 @@ const messages: NodesMessages = {
     validation: {
       phoneRequired: '请填写手机号',
       notificationTitleRequired: '请填写通知标题',
-      linkCodeRequired: '请填写链接参数',
-      linkCodeInvalid: '链接参数只能填写字母或数字，例如 abc123。不要输入 -、_、中文或完整链接',
+      linkCodeRequired: '请填写链接后缀',
+      linkCodeInvalid: '链接后缀格式不正确，例如 /a/abc123。不要输入完整链接、中文或空格',
     },
   },
   jsonParser: {

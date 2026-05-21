@@ -34,11 +34,10 @@ func NormalizePhoneNumbers(phone string) string {
 	return strings.Join(splitPhoneNumbers(phone), ",")
 }
 
-func ValidateNotificationContent(template, notificationTitle, linkCode string) error {
+func ValidateNotificationContent(template, notificationTitle, linkSuffix string) error {
 	return ValidateNotificationTemplateParams(template, map[string]string{
 		TemplateParamNotificationTitle: strings.TrimSpace(notificationTitle),
-		TemplateParamLinkCode:          strings.TrimSpace(linkCode),
-		TemplateParamLinkSuffix:        strings.TrimSpace(linkCode),
+		TemplateParamLinkSuffix:        strings.TrimSpace(linkSuffix),
 	})
 }
 
@@ -56,7 +55,7 @@ func ValidateNotificationTemplateParams(template string, params map[string]strin
 	if len([]rune(notificationTitle)) > maxNotificationTitleRunes {
 		return fmt.Errorf("notification_title must be at most %d characters", maxNotificationTitleRunes)
 	}
-	linkSuffix := firstNonEmpty(params[TemplateParamLinkSuffix], params[TemplateParamLinkCode])
+	linkSuffix := params[TemplateParamLinkSuffix]
 	if err := validateLinkSuffix(linkSuffix); err != nil {
 		return err
 	}
@@ -71,7 +70,7 @@ func validateRequest(req Request) error {
 }
 
 func normalizeTemplateParams(req Request) map[string]string {
-	params := make(map[string]string, len(req.TemplateParams)+3)
+	params := make(map[string]string, len(req.TemplateParams)+1)
 	for key, value := range req.TemplateParams {
 		key = strings.TrimSpace(key)
 		value = strings.TrimSpace(value)
@@ -81,20 +80,6 @@ func normalizeTemplateParams(req Request) map[string]string {
 	}
 	if value := strings.TrimSpace(req.NotificationTitle); value != "" && params[TemplateParamNotificationTitle] == "" {
 		params[TemplateParamNotificationTitle] = value
-	}
-	if value := strings.TrimSpace(req.LinkCode); value != "" {
-		if params[TemplateParamLinkCode] == "" {
-			params[TemplateParamLinkCode] = value
-		}
-		if params[TemplateParamLinkSuffix] == "" {
-			params[TemplateParamLinkSuffix] = value
-		}
-	}
-	if params[TemplateParamLinkSuffix] != "" && params[TemplateParamLinkCode] == "" {
-		params[TemplateParamLinkCode] = params[TemplateParamLinkSuffix]
-	}
-	if params[TemplateParamLinkCode] != "" && params[TemplateParamLinkSuffix] == "" {
-		params[TemplateParamLinkSuffix] = params[TemplateParamLinkCode]
 	}
 	return params
 }
@@ -141,7 +126,7 @@ func firstNonEmpty(values ...string) string {
 
 func hasRequiredNotificationParamsFromMap(params map[string]string) bool {
 	return strings.TrimSpace(params[TemplateParamNotificationTitle]) != "" &&
-		(strings.TrimSpace(params[TemplateParamLinkSuffix]) != "" || strings.TrimSpace(params[TemplateParamLinkCode]) != "")
+		strings.TrimSpace(params[TemplateParamLinkSuffix]) != ""
 }
 
 func hasRequiredNotificationParamsFromList(params []string) bool {
@@ -151,7 +136,7 @@ func hasRequiredNotificationParamsFromList(params []string) bool {
 		switch strings.TrimSpace(param) {
 		case TemplateParamNotificationTitle:
 			hasTitle = true
-		case TemplateParamLinkSuffix, TemplateParamLinkCode:
+		case TemplateParamLinkSuffix:
 			hasLink = true
 		}
 	}

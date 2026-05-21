@@ -182,18 +182,18 @@ function normalizeAction(action: unknown): CreateScheduledTaskActionData {
           ? notificationSource.subject
           : typeof action.subject === 'string'
             ? action.subject
-            : fallback.notification?.subject ?? '',
+            : (fallback.notification?.subject ?? ''),
       body:
         typeof notificationSource.body === 'string'
           ? notificationSource.body
           : typeof action.body === 'string'
             ? action.body
-            : fallback.notification?.body ?? '',
+            : (fallback.notification?.body ?? ''),
       body_type: isBodyType(notificationSource.body_type)
         ? notificationSource.body_type
         : isBodyType(action.body_type)
           ? action.body_type
-          : fallback.notification?.body_type ?? 'text/html',
+          : (fallback.notification?.body_type ?? 'text/html'),
       template: NOTIFICATION_SMS_TEMPLATE,
       notification_title:
         typeof notificationSource.notification_title === 'string'
@@ -202,15 +202,13 @@ function normalizeAction(action: unknown): CreateScheduledTaskActionData {
             ? templateParams.notification_title
             : typeof templateParams.name === 'string'
               ? templateParams.name
-              : fallback.notification?.notification_title ?? '',
+              : (fallback.notification?.notification_title ?? ''),
       link_code:
         typeof notificationSource.link_code === 'string'
           ? notificationSource.link_code
-          : typeof templateParams.link_code === 'string'
-            ? templateParams.link_code
-            : typeof templateParams.code === 'string'
-              ? templateParams.code
-              : fallback.notification?.link_code ?? '',
+          : typeof templateParams.link_suffix === 'string'
+            ? templateParams.link_suffix
+            : (fallback.notification?.link_code ?? ''),
     },
     raw_config: isRecord(action.raw_config) ? action.raw_config : null,
   };

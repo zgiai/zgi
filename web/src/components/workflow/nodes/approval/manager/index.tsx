@@ -50,6 +50,7 @@ import type { VariableInsertValue } from '@/components/workflow/common/workflow-
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useWorkspaceMembersInfinite } from '@/hooks/workspace/use-workspace-members';
 import { useT } from '@/i18n';
+import { isNotificationSMSEnabled } from '@/lib/features/notification-sms';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/store/auth-store';
 import { isValidEmail } from '@/utils/validation';
@@ -351,6 +352,8 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
   const setEdges = useWorkflowStore.use.setEdges();
   const outputs = useNodeOutputVariables(nodeId);
   const currentUser = useAuthStore.use.user();
+  const systemFeatures = useAuthStore.use.systemFeatures();
+  const approvalSMSEnabled = isNotificationSMSEnabled(systemFeatures);
   const [timeoutDurationInput, setTimeoutDurationInput] = React.useState('');
   const [memberKeyword, setMemberKeyword] = React.useState('');
   const debouncedMemberKeyword = useDebouncedValue(memberKeyword, 300);
@@ -507,6 +510,22 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
     },
     [applyApprovalUpdate, readOnly, updateData]
   );
+
+  React.useEffect(() => {
+    if (approvalSMSEnabled || !data.submit_methods.sms.enabled || readOnly) {
+      return;
+    }
+    commitApprovalNow(current => ({
+      ...current,
+      submit_methods: {
+        ...current.submit_methods,
+        sms: {
+          ...current.submit_methods.sms,
+          enabled: false,
+        },
+      },
+    }));
+  }, [approvalSMSEnabled, commitApprovalNow, data.submit_methods.sms.enabled, readOnly]);
 
   const updateActionDraft = React.useCallback(
     (index: number, updater: (action: ApprovalAction) => ApprovalAction) => {
@@ -862,6 +881,7 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
     (!data.submit_methods.sms.notification_title.trim() ||
       data.submit_methods.sms.recipients.length === 0);
   const smsTemplateParams = Object.entries(data.submit_methods.sms.template_params);
+  const smsControlsDisabled = readOnly || !approvalSMSEnabled;
 
   return (
     <div className={cn('space-y-6', className)}>
@@ -1155,13 +1175,17 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
             <div className="flex min-w-0 items-center gap-2">
               <Smartphone className="size-4 text-muted-foreground" />
               <span>{t('approval.submit.sms')}</span>
-              {smsConfigIncomplete ? (
+              {!approvalSMSEnabled || smsConfigIncomplete ? (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <CircleAlert className="size-3.5 text-amber-600" />
                   </TooltipTrigger>
                   <TooltipContent className="max-w-72 leading-5">
-                    {t('approval.validation.smsConfigIncomplete')}
+                    {t(
+                      !approvalSMSEnabled
+                        ? 'approval.validation.smsUnavailable'
+                        : 'approval.validation.smsConfigIncomplete'
+                    )}
                   </TooltipContent>
                 </Tooltip>
               ) : null}
@@ -1175,7 +1199,7 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
                 }}
               >
                 <DialogTrigger asChild>
-                  <Button type="button" variant="outline" size="sm" disabled={readOnly}>
+                  <Button type="button" variant="outline" size="sm" disabled={smsControlsDisabled}>
                     {t('approval.actions.editSMS')}
                   </Button>
                 </DialogTrigger>
@@ -1188,7 +1212,7 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
                       <FieldLabel>{t('approval.submit.smsTitle')}</FieldLabel>
                       <Input
                         value={data.submit_methods.sms.notification_title}
-                        disabled={readOnly}
+                        disabled={smsControlsDisabled}
                         onChange={event =>
                           updateApprovalDraft(current => ({
                             ...current,
@@ -1223,7 +1247,7 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
                           variant="ghost"
                           size="sm"
                           isIcon
-                          disabled={readOnly}
+                          disabled={smsControlsDisabled}
                           onClick={() =>
                             commitApprovalNow(current => {
                               const key = createTemplateParamKey(
@@ -1262,7 +1286,7 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
                         >
                           <Input
                             value={key}
-                            disabled={readOnly}
+                            disabled={smsControlsDisabled}
                             onChange={event => updateSMSTemplateParamKey(key, event.target.value)}
                             onBlur={flushApprovalPendingEdits}
                             placeholder={t('approval.placeholders.templateParamKey')}
@@ -1270,7 +1294,7 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
                           />
                           <Input
                             value={value}
-                            disabled={readOnly}
+                            disabled={smsControlsDisabled}
                             onChange={event => updateSMSTemplateParamValue(key, event.target.value)}
                             onBlur={flushApprovalPendingEdits}
                             placeholder={t('approval.placeholders.templateParamValue')}
@@ -1279,7 +1303,7 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
                           <Button
                             variant="ghost"
                             isIcon
-                            disabled={readOnly}
+                            disabled={smsControlsDisabled}
                             onClick={() =>
                               commitApprovalNow(current => {
                                 const nextParams = {
@@ -1315,7 +1339,7 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
                           variant="ghost"
                           size="sm"
                           isIcon
-                          disabled={readOnly}
+                          disabled={smsControlsDisabled}
                           onClick={() =>
                             commitApprovalNow(current => ({
                               ...current,
@@ -1357,7 +1381,7 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
                           <div key={index} className="grid grid-cols-[110px_1fr_32px] gap-2">
                             <Select
                               value={recipientType}
-                              disabled={readOnly}
+                              disabled={smsControlsDisabled}
                               onValueChange={value =>
                                 commitSMSRecipientNow(index, item => {
                                   if (value === 'member') {
@@ -1389,7 +1413,7 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
                             {recipientType === 'member' ? (
                               <MemberRecipientSelector
                                 value={selectedMemberAccountId}
-                                disabled={readOnly}
+                                disabled={smsControlsDisabled}
                                 options={memberOptions}
                                 keyword={memberKeyword}
                                 isLoading={membersLoading}
@@ -1409,7 +1433,7 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
                             ) : (
                               <Input
                                 value={externalPhone}
-                                disabled={readOnly}
+                                disabled={smsControlsDisabled}
                                 onChange={event =>
                                   updateSMSRecipientDraft(index, () =>
                                     createExternalSMSRecipient(event.target.value)
@@ -1429,7 +1453,7 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
                             <Button
                               variant="ghost"
                               isIcon
-                              disabled={readOnly}
+                              disabled={smsControlsDisabled}
                               onClick={() =>
                                 commitApprovalNow(current => ({
                                   ...current,
@@ -1465,8 +1489,11 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
               </Dialog>
               <Switch
                 checked={data.submit_methods.sms.enabled}
-                disabled={readOnly}
-                onCheckedChange={enabled =>
+                disabled={smsControlsDisabled}
+                onCheckedChange={enabled => {
+                  if (!approvalSMSEnabled) {
+                    return;
+                  }
                   commitApprovalNow(current => {
                     const shouldAddCurrentUser =
                       enabled &&
@@ -1489,8 +1516,8 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
                         },
                       },
                     };
-                  })
-                }
+                  });
+                }}
               />
             </div>
           </div>

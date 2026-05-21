@@ -42,7 +42,7 @@ export interface AutomationSMSNotificationActionConfig {
   template: 'pending_action_notification';
   template_params: {
     notification_title: string;
-    link_code: string;
+    link_suffix: string;
   };
 }
 

@@ -19,7 +19,7 @@ const (
 
 var (
 	jsonFencePattern    = regexp.MustCompile("(?s)```(?:json)?\\s*(.*?)\\s*```")
-	missingFieldPattern = regexp.MustCompile(`^actions\.(\d+)\.(to|subject|body|notification_title|sms_link_code|workflow_agent_id)$`)
+	missingFieldPattern = regexp.MustCompile(`^actions\.(\d+)\.(to|subject|body|notification_title|sms_link_suffix|workflow_agent_id)$`)
 )
 
 type modelOutput struct {
@@ -165,7 +165,7 @@ func parseAction(action modelAction, order int, locale string) (automationdto.Cr
 		if notificationTitle == "" {
 			missingFields = append(missingFields, fmt.Sprintf("actions.%d.notification_title", order))
 		}
-		missingFields = append(missingFields, fmt.Sprintf("actions.%d.sms_link_code", order))
+		missingFields = append(missingFields, fmt.Sprintf("actions.%d.sms_link_suffix", order))
 		warnings = append(warnings, localizedWarning(locale, "sms_config"))
 		return automationdto.CreateTaskActionRequest{
 			ActionType:  automationmodel.AutomationActionTypeSendNotification,
@@ -177,7 +177,7 @@ func parseAction(action modelAction, order int, locale string) (automationdto.Cr
 				"template":     "pending_action_notification",
 				"template_params": map[string]interface{}{
 					"notification_title": notificationTitle,
-					"link_code":          "",
+					"link_suffix":        "",
 				},
 			},
 		}, missingFields, warnings

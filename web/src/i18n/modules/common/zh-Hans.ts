@@ -259,13 +259,13 @@ const messages: CommonMessages = {
     fields: {
       recipients: '手机号',
       notificationTitle: '通知标题',
-      linkCode: '链接参数',
+      linkCode: '链接后缀',
     },
     placeholders: {
       recipient: '手机号 {index}',
       recipientSingle: '手机号，多个用英文逗号分隔',
       notificationTitle: '您有一项新的任务待处理',
-      linkCode: '任务或通知链接参数',
+      linkCode: '例如 /a/abc123',
     },
     actions: {
       addRecipient: '添加手机号',
@@ -273,17 +273,17 @@ const messages: CommonMessages = {
     },
     help: {
       recipients: '支持单个手机号、英文逗号分隔的多个手机号，也支持可解析为手机号的变量。',
-      linkCode: '建议填写短码，例如 abc123；不要包含 -、_、中文或完整链接。',
+      linkCode: '填写 base URL 后面的部分，例如 /a/abc123；不要输入完整链接或空格。',
     },
     validation: {
-      linkCodeInvalid: '链接参数只能填写字母或数字，例如 abc123。不要输入 -、_、中文或完整链接。',
+      linkCodeInvalid: '链接后缀格式不正确，例如 /a/abc123。不要输入完整链接、中文或空格。',
     },
     preview: '模板预览',
     previewBody:
-      '您好，您有一项新的任务待处理：{title}。请打开后端已配置的审核链接，链接参数为 {code}。',
+      '您好，您有一项新的任务待处理：{title}。请打开后端已配置的审核链接，链接后缀为 {code}。',
     previewHint: '实际短信内容以后端配置的服务商审核模板为准。',
     previewTitlePlaceholder: '通知标题',
-    previewCodePlaceholder: '链接参数',
+    previewCodePlaceholder: '链接后缀',
   },
 
   // Form elements

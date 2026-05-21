@@ -47,10 +47,11 @@ export function NotificationSMSEditor({
   const linkCodeInvalidMessage = getCommonMessage(
     t,
     'notificationSms.validation.linkCodeInvalid',
-    '链接参数只能填写字母或数字，例如 abc123。不要输入 -、_、中文或完整链接。'
+    '链接后缀格式不正确，例如 /a/abc123。不要输入完整链接、中文或空格。'
   );
   const localLinkCodeError =
-    value.linkCode.trim() && !isNotificationSMSLinkCodeValid(value.linkCode, {
+    value.linkCode.trim() &&
+    !isNotificationSMSLinkCodeValid(value.linkCode, {
       allowWorkflowToken: canUseWorkflowValues,
     })
       ? linkCodeInvalidMessage
@@ -59,7 +60,10 @@ export function NotificationSMSEditor({
 
   const setRecipients = React.useCallback(
     (recipients: string[]) => {
-      onChange({ ...value, recipients: recipientMode === 'single' ? [recipients[0] ?? ''] : recipients });
+      onChange({
+        ...value,
+        recipients: recipientMode === 'single' ? [recipients[0] ?? ''] : recipients,
+      });
     },
     [onChange, recipientMode, value]
   );
@@ -92,16 +96,21 @@ export function NotificationSMSEditor({
             readOnly={readOnly}
             addButtonPlacement="header"
             labels={{
-                title: t('notificationSms.fields.recipients' as never),
-                add: t('notificationSms.actions.addRecipient' as never),
-                placeholder: index =>
-                  t('notificationSms.placeholders.recipient' as never, { index: index + 1 } as never),
-                remove: index =>
-                  t('notificationSms.actions.removeRecipient' as never, { index: index + 1 } as never),
+              title: t('notificationSms.fields.recipients' as never),
+              add: t('notificationSms.actions.addRecipient' as never),
+              placeholder: index =>
+                t('notificationSms.placeholders.recipient' as never, { index: index + 1 } as never),
+              remove: index =>
+                t(
+                  'notificationSms.actions.removeRecipient' as never,
+                  { index: index + 1 } as never
+                ),
             }}
           />
         ) : (
-          <div className={cn(!readOnly && 'space-y-1.5', readOnly && 'pointer-events-none opacity-70')}>
+          <div
+            className={cn(!readOnly && 'space-y-1.5', readOnly && 'pointer-events-none opacity-70')}
+          >
             <OptionEditor
               addButtonPlacement="header"
               options={recipientMode === 'single' ? [value.recipients[0] ?? ''] : value.recipients}
@@ -199,7 +208,7 @@ export function NotificationSMSEditor({
 
       <NotificationSMSPreview
         notificationTitle={value.notificationTitle}
-        linkCode={value.linkCode}
+        linkSuffix={value.linkCode}
         previewTemplate={previewTemplate}
       />
     </div>

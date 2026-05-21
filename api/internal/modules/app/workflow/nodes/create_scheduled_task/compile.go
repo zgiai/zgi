@@ -151,13 +151,13 @@ func (n *Node) compileNotificationAction(index int, action TaskActionData, actio
 
 func (n *Node) compileSMSNotificationAction(index int, action TaskActionData, actionOrder int, recipients []string) (automationdto.CreateTaskActionRequest, error) {
 	notificationTitle := strings.TrimSpace(n.resolveTemplateVariables(action.Notification.NotificationTitle))
-	linkCode := strings.TrimSpace(n.resolveTemplateVariables(action.Notification.LinkCode))
+	linkSuffix := strings.TrimSpace(n.resolveTemplateVariables(action.Notification.LinkCode))
 
 	template := strings.TrimSpace(action.Notification.Template)
 	if template == "" {
 		template = notificationsms.TemplatePendingActionNotification
 	}
-	if err := notificationsms.ValidateNotificationContent(template, notificationTitle, linkCode); err != nil {
+	if err := notificationsms.ValidateNotificationContent(template, notificationTitle, linkSuffix); err != nil {
 		return automationdto.CreateTaskActionRequest{}, fmt.Errorf("task.actions[%d].notification: %w", index, err)
 	}
 
@@ -171,7 +171,7 @@ func (n *Node) compileSMSNotificationAction(index int, action TaskActionData, ac
 			"template":     template,
 			"template_params": map[string]string{
 				"notification_title": notificationTitle,
-				"link_code":          linkCode,
+				"link_suffix":        linkSuffix,
 			},
 		},
 	}, nil

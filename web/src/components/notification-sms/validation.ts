@@ -1,4 +1,4 @@
-const LINK_CODE_PATTERN = /^[A-Za-z0-9]+$/;
+const LINK_SUFFIX_PATTERN = /^[A-Za-z0-9/_?=&.%+-]+$/;
 const WORKFLOW_VALUE_TOKEN_PATTERN = /^\{\{#[^#]+#\}\}$/;
 
 interface LinkCodeValidationOptions {
@@ -19,9 +19,13 @@ export function isNotificationSMSLinkCodeValid(
     return false;
   }
 
-  if (LINK_CODE_PATTERN.test(trimmed)) {
+  if (/^(https?:)?\/\//i.test(trimmed) || /\s/.test(trimmed)) {
+    return false;
+  }
+
+  if (options.allowWorkflowToken && isWorkflowValueToken(trimmed)) {
     return true;
   }
 
-  return Boolean(options.allowWorkflowToken && isWorkflowValueToken(trimmed));
+  return LINK_SUFFIX_PATTERN.test(trimmed);
 }

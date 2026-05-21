@@ -65,8 +65,7 @@ const messages = {
     serverBusy: 'The service is temporarily unavailable. Please try again later.',
     timeout: 'The request took too long. Please try again.',
     sessionExpired: 'Your session expired. Please sign in again.',
-    passwordValidation:
-      'The password does not meet the requirements. Please check and try again.',
+    passwordValidation: 'The password does not meet the requirements. Please check and try again.',
   },
 
   // Pagination
@@ -264,13 +263,13 @@ const messages = {
     fields: {
       recipients: 'Phone numbers',
       notificationTitle: 'Notification title',
-      linkCode: 'Link code',
+      linkCode: 'Link suffix',
     },
     placeholders: {
       recipient: 'Phone number {index}',
       recipientSingle: 'Phone numbers, separated by commas',
       notificationTitle: 'New task pending',
-      linkCode: 'task or notice link code',
+      linkCode: 'For example /a/abc123',
     },
     actions: {
       addRecipient: 'Add phone',
@@ -280,11 +279,11 @@ const messages = {
       recipients:
         'Supports one phone number, comma-separated phone numbers, or a variable that resolves to phone numbers.',
       linkCode:
-        'Use a short code such as abc123. Do not include -, _, Chinese characters, or a full URL.',
+        'Enter the part after the base URL, for example /a/abc123. Do not enter a full URL or spaces.',
     },
     validation: {
       linkCodeInvalid:
-        'Use letters and numbers only, for example abc123. Do not enter -, _, Chinese characters, or a full URL.',
+        'Invalid link suffix, for example /a/abc123. Do not enter a full URL, Chinese characters, or spaces.',
     },
     preview: 'Template preview',
     previewBody:
@@ -292,7 +291,7 @@ const messages = {
     previewHint:
       'The actual SMS content follows the provider-approved template configured on the backend.',
     previewTitlePlaceholder: 'notification title',
-    previewCodePlaceholder: 'link code',
+    previewCodePlaceholder: 'link suffix',
   },
 
   // Form elements

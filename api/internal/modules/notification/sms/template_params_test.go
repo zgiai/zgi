@@ -59,3 +59,13 @@ func TestValidateNotificationTemplateParamsAllowsPathSuffix(t *testing.T) {
 		t.Fatalf("expected path suffix to be valid: %v", err)
 	}
 }
+
+func TestValidateNotificationTemplateParamsRequiresLinkSuffix(t *testing.T) {
+	err := ValidateNotificationTemplateParams(TemplatePendingActionNotification, map[string]string{
+		TemplateParamNotificationTitle: "待处理任务",
+		"link_code":                    "/a/AbC12345",
+	})
+	if err == nil {
+		t.Fatal("expected link_code-only params to be rejected")
+	}
+}

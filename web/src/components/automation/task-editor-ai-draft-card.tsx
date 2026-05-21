@@ -36,7 +36,7 @@ function formatMissingFieldLabel(
         body: 'content',
         notification_title: 'smsTitle',
         workflow_agent_id: 'workflow',
-        sms_link_code: 'smsLinkCode',
+        sms_link_suffix: 'smsLinkCode',
       }[actionField] ?? 'action';
 
     return t(`aiDraft.fields.${mappedActionField}` as never, { index: actionIndex });

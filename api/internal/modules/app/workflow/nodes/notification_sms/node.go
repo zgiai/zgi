@@ -114,13 +114,15 @@ func (n *Node) executeRun(ctx context.Context) (*shared.NodeRunResult, error) {
 	}
 
 	req := notificationsms.Request{
-		Phone:             n.resolveText(n.Phone),
-		Provider:          strings.TrimSpace(n.Provider),
-		Template:          strings.TrimSpace(n.Template),
-		NotificationTitle: n.resolveText(n.NotificationTitle),
-		LinkCode:          n.resolveText(n.LinkCode),
-		Source:            "workflow",
-		SourceID:          n.WorkflowID,
+		Phone:    n.resolveText(n.Phone),
+		Provider: strings.TrimSpace(n.Provider),
+		Template: strings.TrimSpace(n.Template),
+		TemplateParams: map[string]string{
+			notificationsms.TemplateParamNotificationTitle: n.resolveText(n.NotificationTitle),
+			notificationsms.TemplateParamLinkSuffix:        n.resolveText(n.LinkCode),
+		},
+		Source:   "workflow",
+		SourceID: n.WorkflowID,
 	}
 	result, err := n.service.Send(ctx, req)
 	if err != nil {

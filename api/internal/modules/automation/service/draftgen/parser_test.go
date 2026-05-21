@@ -143,7 +143,7 @@ func TestParseDraftSmsMarksRequiredFields(t *testing.T) {
 	for _, field := range []string{
 		"actions.1.to",
 		"actions.1.notification_title",
-		"actions.1.sms_link_code",
+		"actions.1.sms_link_suffix",
 	} {
 		if !containsString(result.MissingFields, field) {
 			t.Fatalf("expected missing field %s, got %#v", field, result.MissingFields)

@@ -5,19 +5,19 @@ import { useT } from '@/i18n';
 
 interface NotificationSMSPreviewProps {
   notificationTitle: string;
-  linkCode: string;
+  linkSuffix: string;
   previewTemplate?: string;
 }
 
 export function NotificationSMSPreview({
   notificationTitle,
-  linkCode,
+  linkSuffix,
   previewTemplate,
 }: NotificationSMSPreviewProps) {
   const t = useT('common');
   const title = notificationTitle.trim() || t('notificationSms.previewTitlePlaceholder' as never);
-  const code = linkCode.trim() || t('notificationSms.previewCodePlaceholder' as never);
-  const previewBody = renderPreviewTemplate(previewTemplate, title, code);
+  const suffix = linkSuffix.trim() || t('notificationSms.previewCodePlaceholder' as never);
+  const previewBody = renderPreviewTemplate(previewTemplate, title, suffix);
 
   return (
     <div className="rounded-xl border border-border/70 bg-background p-3">
@@ -30,7 +30,8 @@ export function NotificationSMSPreview({
             {t('notificationSms.preview' as never)}
           </p>
           <p className="break-words text-xs leading-5 text-foreground">
-            {previewBody ?? t('notificationSms.previewBody' as never, { title, code } as never)}
+            {previewBody ??
+              t('notificationSms.previewBody' as never, { title, code: suffix } as never)}
           </p>
           <p className="text-[10px] leading-4.5 text-muted-foreground">
             {t('notificationSms.previewHint' as never)}
@@ -44,7 +45,7 @@ export function NotificationSMSPreview({
 function renderPreviewTemplate(
   previewTemplate: string | undefined,
   notificationTitle: string,
-  linkCode: string
+  linkSuffix: string
 ): string | undefined {
   const template = previewTemplate?.trim();
   if (!template) {
@@ -53,5 +54,5 @@ function renderPreviewTemplate(
 
   return template
     .replace(/\{\{\s*notification_title\s*\}\}/g, notificationTitle)
-    .replace(/\{\{\s*link_code\s*\}\}/g, linkCode);
+    .replace(/\{\{\s*link_suffix\s*\}\}/g, linkSuffix);
 }

@@ -703,7 +703,7 @@ export function taskDetailToDraft(taskDetail: AutomationTaskDetailData): TaskDra
             (notificationConfig as { content?: string } | undefined)?.content ??
             '',
           smsNotificationTitle: templateParams?.notification_title ?? '',
-          smsLinkCode: templateParams?.link_code ?? '',
+          smsLinkCode: templateParams?.link_suffix ?? '',
           rawConfig: extractRawObject(item.config),
         };
       })
@@ -755,7 +755,7 @@ export function draftToCreateRequest(
           template: NOTIFICATION_SMS_TEMPLATE,
           template_params: {
             notification_title: action.smsNotificationTitle.trim(),
-            link_code: action.smsLinkCode.trim(),
+            link_suffix: action.smsLinkCode.trim(),
           },
         },
       };

@@ -10,7 +10,6 @@ const (
 	TemplatePendingActionNotification = "pending_action_notification"
 	TemplateParamNotificationTitle    = "notification_title"
 	TemplateParamLinkSuffix           = "link_suffix"
-	TemplateParamLinkCode             = "link_code"
 	ProviderAliyun                    = "aliyun"
 	ProviderChuanglan                 = "chuanglan"
 	ParamModeMap                      = "map"
@@ -33,7 +32,6 @@ type Request struct {
 	Template          string
 	TemplateParams    map[string]string
 	NotificationTitle string
-	LinkCode          string
 	Source            string
 	SourceID          string
 }
