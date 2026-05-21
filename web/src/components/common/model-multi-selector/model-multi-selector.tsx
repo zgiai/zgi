@@ -12,7 +12,7 @@ import type { ModelItem, ModelList } from '@/services/types/model';
 import { Search, X, ChevronDown, Info } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n';
-import { ModelIcon } from '@lobehub/icons';
+import { ModelIcon } from 'modelicons';
 import { ProviderIcon } from '@/components/common/provider-icon';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ModelTooltipContent } from '@/components/model/model-tooltip-content';
