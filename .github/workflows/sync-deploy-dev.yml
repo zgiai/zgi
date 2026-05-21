@@ -4,6 +4,11 @@ on:
   push:
     branches:
       - dev
+    paths:
+      - "web/**"
+      - "vercel.json"
+      - ".github/workflows/sync-deploy-dev.yml"
+      - ".github/workflows/vercel-web-deploy.yml"
   workflow_dispatch:
 
 permissions:
@@ -33,5 +38,5 @@ jobs:
         run: |
           git fetch origin dev
           git checkout -B deploy-dev origin/dev
-          git commit --allow-empty -m "chore: trigger dev deployment"
+          git commit --allow-empty -m "chore: trigger web deployment"
           git push --force-with-lease origin deploy-dev
