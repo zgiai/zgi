@@ -225,7 +225,7 @@ func (c AliyunTemplateConfig) valid(params []TemplateParamConfig) bool {
 		return false
 	}
 	for _, param := range params {
-		if param.IsRequired() && strings.TrimSpace(c.ParamMap[param.Key]) == "" {
+		if strings.TrimSpace(c.ParamMap[param.Key]) == "" {
 			return false
 		}
 	}
@@ -250,9 +250,6 @@ func (c ChuanglanTemplateConfig) valid(params []TemplateParamConfig) bool {
 		allowed[strings.TrimSpace(key)] = struct{}{}
 	}
 	for _, param := range params {
-		if !param.IsRequired() {
-			continue
-		}
 		if _, ok := allowed[param.Key]; !ok {
 			return false
 		}

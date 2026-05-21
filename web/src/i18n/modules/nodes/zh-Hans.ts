@@ -546,6 +546,8 @@ const messages: NodesMessages = {
     validation: {
       phoneRequired: '请填写手机号',
       templateRequired: '请选择短信模板',
+      notificationTitleRequired: '请填写通知标题',
+      linkCodeRequired: '请填写链接参数',
     },
   },
   jsonParser: {

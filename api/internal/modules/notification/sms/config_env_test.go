@@ -111,6 +111,69 @@ func TestConfigFromLookupPreservesOptionalTemplateParams(t *testing.T) {
 	}
 }
 
+func TestConfigFromLookupRejectsOptionalParamMissingAliyunMapping(t *testing.T) {
+	env := map[string]string{
+		"NOTIFICATION_SMS_ENABLED":                  "true",
+		"NOTIFICATION_SMS_PROVIDERS":                "aliyun",
+		"NOTIFICATION_SMS_DEFAULT_PROVIDER":         "aliyun",
+		"NOTIFICATION_SMS_ALIYUN_ACCESS_KEY_ID":     "ak",
+		"NOTIFICATION_SMS_ALIYUN_ACCESS_KEY_SECRET": "sk",
+		"NOTIFICATION_SMS_ALIYUN_SIGN_NAME":         "ZGI",
+		"NOTIFICATION_SMS_TEMPLATES_JSON": `[
+			{
+				"key":"approval_notice",
+				"params":[
+					{"key":"title","required":true},
+					{"key":"remark","required":false}
+				],
+				"aliyun":{"template_code":"SMS_APPROVAL","param_map":{"title":"title"}}
+			}
+		]`,
+	}
+
+	cfg := ConfigFromLookup(func(key string) (string, bool) {
+		value, ok := env[key]
+		return value, ok
+	})
+
+	if cfg.ConfigError == "" {
+		t.Fatalf("expected config error for optional param missing aliyun mapping")
+	}
+}
+
+func TestConfigFromLookupRejectsOptionalParamMissingChuanglanOrder(t *testing.T) {
+	env := map[string]string{
+		"NOTIFICATION_SMS_ENABLED":            "true",
+		"NOTIFICATION_SMS_PROVIDERS":          "chuanglan",
+		"NOTIFICATION_SMS_DEFAULT_PROVIDER":   "chuanglan",
+		"NOTIFICATION_SMS_CHUANGLAN_ACCOUNT":  "account",
+		"NOTIFICATION_SMS_CHUANGLAN_PASSWORD": "password",
+		"NOTIFICATION_SMS_TEMPLATES_JSON": `[
+			{
+				"key":"approval_notice",
+				"params":[
+					{"key":"title","required":true},
+					{"key":"remark","required":false}
+				],
+				"chuanglan":{
+					"template_id":"CL_APPROVAL",
+					"template_text":"审批：{s}，备注：{s}",
+					"param_order":["title"]
+				}
+			}
+		]`,
+	}
+
+	cfg := ConfigFromLookup(func(key string) (string, bool) {
+		value, ok := env[key]
+		return value, ok
+	})
+
+	if cfg.ConfigError == "" {
+		t.Fatalf("expected config error for optional param missing chuanglan order")
+	}
+}
+
 func TestValidateTemplateParamsDefaultsMissingRequiredToRequired(t *testing.T) {
 	err := ValidateTemplateParams(TemplateConfig{
 		Key:    "approval_notice",

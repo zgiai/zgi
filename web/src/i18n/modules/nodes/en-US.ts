@@ -559,6 +559,8 @@ const messages = {
     validation: {
       phoneRequired: 'Phone number is required',
       templateRequired: 'SMS template is required',
+      notificationTitleRequired: 'Notification title is required',
+      linkCodeRequired: 'Link code is required',
     },
   },
   jsonParser: {

@@ -29,6 +29,17 @@ export const DEFAULT_NOTIFICATION_SMS_NODE_DATA: NotificationSMSNodeData = {
   isInIteration: false,
 };
 
+const PENDING_ACTION_REQUIRED_PARAMS = [
+  {
+    key: 'notification_title',
+    code: 'notificationSms.validation.notificationTitleRequired',
+  },
+  {
+    key: 'link_code',
+    code: 'notificationSms.validation.linkCodeRequired',
+  },
+] as const;
+
 export function normalizeNotificationSMSNodeData(
   value: Partial<NotificationSMSNodeData> | Record<string, unknown> | null | undefined
 ): NotificationSMSNodeData {
@@ -61,6 +72,14 @@ export const checkValid = (data: NotificationSMSNodeData): ValidationResult => {
 
   if (!normalized.template.trim()) {
     errors.push({ code: 'notificationSms.validation.templateRequired' as const });
+  }
+
+  if (normalized.template === NOTIFICATION_SMS_TEMPLATE) {
+    for (const param of PENDING_ACTION_REQUIRED_PARAMS) {
+      if (!normalized.template_params[param.key]?.trim()) {
+        errors.push({ code: param.code });
+      }
+    }
   }
 
   return { isValid: errors.length === 0, errors, warnings: [] };

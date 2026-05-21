@@ -137,6 +137,9 @@ func normalizeTemplateConfigs(input []TemplateConfig) ([]TemplateConfig, error) 
 			return nil, fmt.Errorf("notification sms template %q: %w", template.Key, err)
 		}
 		template.Params = params
+		if err := validateTemplateProviderParamMappings(template); err != nil {
+			return nil, fmt.Errorf("notification sms template %q: %w", template.Key, err)
+		}
 		templates = append(templates, template)
 	}
 	return templates, nil
@@ -204,6 +207,44 @@ func normalizeTemplateParams(params []TemplateParamConfig, aliyun AliyunTemplate
 		normalized = append(normalized, param)
 	}
 	return normalized, nil
+}
+
+func validateTemplateProviderParamMappings(template TemplateConfig) error {
+	if strings.TrimSpace(template.Aliyun.TemplateCode) != "" {
+		if err := validateAliyunTemplateParamMapping(template.Params, template.Aliyun.ParamMap); err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(template.Chuanglan.TemplateID) != "" ||
+		strings.TrimSpace(template.Chuanglan.TemplateText) != "" ||
+		len(template.Chuanglan.ParamOrder) > 0 {
+		if err := validateChuanglanTemplateParamOrder(template.Params, template.Chuanglan.ParamOrder); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateAliyunTemplateParamMapping(params []TemplateParamConfig, paramMap map[string]string) error {
+	for _, param := range params {
+		if strings.TrimSpace(paramMap[param.Key]) == "" {
+			return fmt.Errorf("aliyun param mapping for %s is required", param.Key)
+		}
+	}
+	return nil
+}
+
+func validateChuanglanTemplateParamOrder(params []TemplateParamConfig, paramOrder []string) error {
+	ordered := make(map[string]struct{}, len(paramOrder))
+	for _, key := range paramOrder {
+		ordered[strings.TrimSpace(key)] = struct{}{}
+	}
+	for _, param := range params {
+		if _, ok := ordered[param.Key]; !ok {
+			return fmt.Errorf("chuanglan param order for %s is required", param.Key)
+		}
+	}
+	return nil
 }
 
 func trimStringMap(values map[string]string) map[string]string {
