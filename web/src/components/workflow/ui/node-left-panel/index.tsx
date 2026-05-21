@@ -51,6 +51,7 @@ const NodeLeftPanel: React.FC<NodeLeftPanelProps> = ({ focusModeActive = false }
     addJsonParserNode,
     addImageGenNode,
     addApprovalNode,
+    addAnnouncementNode,
     addQuestionAnswerNode,
     addLoopNode,
   } = useWorkflowOperations();
@@ -114,6 +115,7 @@ const NodeLeftPanel: React.FC<NodeLeftPanelProps> = ({ focusModeActive = false }
     addJsonParserNode,
     addImageGenNode,
     addApprovalNode,
+    addAnnouncementNode,
     addQuestionAnswerNode,
     addLoopNode,
   });

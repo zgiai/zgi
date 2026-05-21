@@ -82,9 +82,13 @@ export const useCreationActions = ({
     (type: string, pos: { x: number; y: number }, initialData?: any) => {
       if (
         containerContextId &&
-        (type === 'iteration' || type === 'approval' || type === 'question-answer')
-      )
+        (type === 'iteration' ||
+          type === 'approval' ||
+          type === 'announcement' ||
+          type === 'question-answer')
+      ) {
         return null;
+      }
       return createNodeByType(type, pos, containerContextId, initialData);
     },
     [containerContextId, createNodeByType]

@@ -132,6 +132,10 @@ export interface WorkflowValueEditorProps {
   onFocus?: () => void;
   // Optional portal root for rendering the variable suggest panel
   portalRoot?: React.ComponentProps<typeof VariableSuggestPanel>['portalRoot'];
+  // Optional character counter. It is display-only; validation remains with the caller.
+  showCharacterCount?: boolean;
+  maxLength?: number;
+  characterCountFormatter?: (count: number, maxLength: number) => React.ReactNode;
 }
 
 // VariableToken node and value transform functions are imported from local modules to keep this file focused on editor wiring.
@@ -162,6 +166,9 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
       extraGroupTitle,
       onFocus,
       portalRoot,
+      showCharacterCount = false,
+      maxLength,
+      characterCountFormatter,
     },
     ref
   ) => {
@@ -172,6 +179,10 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
     // We avoid subscribing to nodeIdToTitle directly to prevent re-renders when nodes move.
     const graphVersion = useWorkflowStore.use.graphVersion();
     const t = useT();
+    const shouldShowCharacterCount = showCharacterCount && typeof maxLength === 'number';
+    const characterCount = shouldShowCharacterCount ? Array.from(value || '').length : 0;
+    const isCharacterCountExceeded =
+      shouldShowCharacterCount && characterCount > (maxLength as number);
 
     // Helper to resolve description from descriptionKey
     const resolveDescription = useCallback(
@@ -500,28 +511,25 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
 
     const editorRef = useRef<TiptapEditor | null>(null);
 
-    const buildSuggestCommand = useCallback(
-      (replaceRange?: { from: number; to: number }) => {
-        return (item: SuggestItem) => {
-          if (!item.sourceId || !editorRef.current) return;
-          const chain = editorRef.current.chain().focus();
-          if (replaceRange) {
-            chain.deleteRange(replaceRange);
-          }
-          chain
-            .insertContent({
-              type: 'variableToken',
-              attrs: {
-                sourceId: item.sourceId,
-                key: item.key,
-                title: idToTitleRef.current.get(item.sourceId) || item.sourceId,
-              },
-            })
-            .run();
-        };
-      },
-      []
-    );
+    const buildSuggestCommand = useCallback((replaceRange?: { from: number; to: number }) => {
+      return (item: SuggestItem) => {
+        if (!item.sourceId || !editorRef.current) return;
+        const chain = editorRef.current.chain().focus();
+        if (replaceRange) {
+          chain.deleteRange(replaceRange);
+        }
+        chain
+          .insertContent({
+            type: 'variableToken',
+            attrs: {
+              sourceId: item.sourceId,
+              key: item.key,
+              title: idToTitleRef.current.get(item.sourceId) || item.sourceId,
+            },
+          })
+          .run();
+      };
+    }, []);
 
     const openManualSuggest = useCallback(() => {
       if (!suggestEnabled || !editorRef.current) return;
@@ -952,7 +960,10 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
           className={cn(
             'relative w-full min-w-0 overflow-x-hidden overflow-y-auto rounded-sm border bg-background px-2.5 py-1.5 text-sm ring-offset-background focus-within:outline-none flex flex-col',
             readOnly ? 'cursor-default' : 'cursor-text',
-            editorClassName
+            shouldShowCharacterCount && 'pb-6',
+            editorClassName,
+            isCharacterCountExceeded &&
+              'border-destructive/70 focus-within:border-destructive focus-within:ring-1 focus-within:ring-destructive/20'
           )}
           onClick={() => {
             if (!readOnly) {
@@ -972,6 +983,18 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
           }}
         >
           <EditorContent editor={editor} className="min-h-[1.5em] min-w-0" />
+          {shouldShowCharacterCount ? (
+            <div
+              className={cn(
+                'pointer-events-none absolute bottom-1.5 right-2.5 rounded-sm bg-background/90 px-1 text-[11px] leading-4 text-muted-foreground shadow-sm',
+                isCharacterCountExceeded && 'text-destructive'
+              )}
+            >
+              {characterCountFormatter
+                ? characterCountFormatter(characterCount, maxLength as number)
+                : `${characterCount}/${maxLength}`}
+            </div>
+          ) : null}
         </div>
 
         {suggestState && (

@@ -32,6 +32,8 @@ import { MarkdownMermaid } from '@/components/common/markdown-mermaid';
 interface MarkdownViewerProps {
   content: string;
   className?: string;
+  /** Render raw HTML embedded in Markdown. Disable for public or untrusted content. */
+  allowRawHtml?: boolean;
   /** Optional highlight terms. Matching occurrences will be highlighted. */
   highlights?: string[];
 }
@@ -42,6 +44,10 @@ const remarkPluginsList: PluggableList = [remarkGfm, remarkMath];
 const rehypePluginsList: PluggableList = [
   [rehypeHighlight, { ignoreMissing: true }],
   rehypeRaw,
+  rehypeKatex,
+];
+const safeRehypePluginsList: PluggableList = [
+  [rehypeHighlight, { ignoreMissing: true }],
   rehypeKatex,
 ];
 
@@ -188,7 +194,10 @@ function normalizeMinerUImageSource(src: string): string {
     return `${normalizeApiBaseUrl()}${value}`;
   }
 
-  if ((isWindowsAbsolutePath(value) || isMinerULocalImagePath(value)) && hasLocalImageExtension(value)) {
+  if (
+    (isWindowsAbsolutePath(value) || isMinerULocalImagePath(value)) &&
+    hasLocalImageExtension(value)
+  ) {
     return buildMinerUImageUrl(value);
   }
 
@@ -203,7 +212,12 @@ function rewriteMinerUImageSources(markdown: string): string {
   });
 }
 
-const MarkdownViewer: React.FC<MarkdownViewerProps> = ({ content, className, highlights }) => {
+const MarkdownViewer: React.FC<MarkdownViewerProps> = ({
+  content,
+  className,
+  allowRawHtml = true,
+  highlights,
+}) => {
   const [copiedText, setCopiedText] = React.useState<string | null>(null);
   const t = useT('webapp');
   const thinkSummary = t('chat.thoughtProcess');
@@ -368,7 +382,7 @@ const MarkdownViewer: React.FC<MarkdownViewerProps> = ({ content, className, hig
     <div ref={viewerRef} className={cn('md-viewer', className)}>
       <ReactMarkdown
         remarkPlugins={remarkPluginsList}
-        rehypePlugins={rehypePluginsList}
+        rehypePlugins={allowRawHtml ? rehypePluginsList : safeRehypePluginsList}
         components={{
           h1: renderHeading('h1'),
           h2: renderHeading('h2'),
