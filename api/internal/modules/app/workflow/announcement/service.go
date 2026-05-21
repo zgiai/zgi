@@ -129,6 +129,7 @@ func announcementPayload(announcement *Announcement) AnnouncementPayload {
 		ID:           announcement.ID,
 		Token:        announcement.AccessToken,
 		NodeID:       announcement.NodeID,
+		Title:        announcement.NodeTitle,
 		NodeTitle:    announcement.NodeTitle,
 		Content:      announcement.RenderedContent,
 		ExpirationAt: announcement.ExpirationTime.Unix(),
@@ -154,6 +155,9 @@ func validateRuntimeParams(params CreateRuntimeAnnouncementParams) error {
 }
 
 func ValidateConfig(config NodeConfig) error {
+	if strings.TrimSpace(config.Title) == "" {
+		return fmt.Errorf("announcement title is required")
+	}
 	if strings.TrimSpace(config.Content) == "" {
 		return fmt.Errorf("announcement content is required")
 	}

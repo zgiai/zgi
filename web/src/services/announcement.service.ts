@@ -5,6 +5,7 @@ export interface AnnouncementRuntimePayload {
   id: string;
   token: string;
   node_id: string;
+  title?: string;
   node_title?: string;
   content: string;
   expiration_at: number;

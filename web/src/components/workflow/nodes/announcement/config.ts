@@ -13,6 +13,7 @@ export interface AnnouncementNodeData {
   desc: string;
   version: 'v1';
   announcement: {
+    title: string;
     content: string;
   };
   timeout: AnnouncementTimeout;
@@ -28,6 +29,7 @@ export const DEFAULT_ANNOUNCEMENT_NODE_DATA: AnnouncementNodeData = {
   desc: '',
   version: 'v1',
   announcement: {
+    title: '',
     content: '',
   },
   timeout: {
@@ -65,6 +67,12 @@ export function normalizeAnnouncementNodeData(
     desc: typeof value.desc === 'string' ? value.desc : fallback.desc,
     version: 'v1',
     announcement: {
+      title:
+        typeof announcement.title === 'string'
+          ? announcement.title
+          : typeof value.title === 'string'
+            ? value.title
+            : fallback.announcement.title,
       content:
         typeof announcement.content === 'string'
           ? announcement.content
@@ -87,7 +95,7 @@ export function checkValid(data: AnnouncementNodeData): ValidationResult {
   const errors: ValidationError[] = [];
   const warnings: ValidationError[] = [];
 
-  if (!normalized.title.trim()) {
+  if (!normalized.announcement.title.trim()) {
     errors.push({ code: 'announcement.validation.titleRequired' });
   }
   if (!normalized.announcement.content.trim()) {

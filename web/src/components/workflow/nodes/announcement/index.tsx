@@ -58,12 +58,16 @@ function renderAnnouncementContent(
 export default function AnnouncementContent({ nodeId, data }: AnnouncementContentProps) {
   const t = useT('nodes');
   const normalized = normalizeAnnouncementNodeData(data);
+  const title = normalized.announcement.title.trim();
   const content = normalized.announcement.content.trim();
 
   return (
     <div className="mt-1">
       <CustomHandle type="target" position={Position.Left} id="target" style={{ top: -18 }} />
       <div className="space-y-2">
+        <div className="rounded-md bg-muted/40 px-2 py-1.5 text-xs font-medium leading-relaxed text-foreground break-words whitespace-pre-wrap">
+          {renderAnnouncementContent(title, nodeId, t)}
+        </div>
         <div
           className="nowheel mt-1 max-h-[160px] min-h-8 overflow-y-auto rounded-md bg-muted/70 p-1.5 text-xs leading-relaxed text-secondary-foreground break-words whitespace-pre-wrap scrollbar-thin"
           onWheelCapture={event => event.stopPropagation()}

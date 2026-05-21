@@ -202,11 +202,10 @@ const messages = {
         'Approval content rendered after variables and submitted values resolve',
     },
     announcement: {
-      announcement_id: 'Created announcement ID',
-      announcement_token: 'Short public announcement token',
-      announcement_url: 'Public announcement URL',
-      announcement_expires_at: 'Announcement expiration time as Unix seconds',
-      announcement_rendered_content: 'Announcement content rendered after variables resolve',
+      title: 'Announcement title rendered after variables resolve',
+      content: 'Announcement content rendered after variables resolve',
+      expiration_time: 'Announcement expiration time as Unix seconds',
+      url: 'Public announcement URL',
     },
     questionAnswer: {
       question: 'Current question or follow-up question',
@@ -444,6 +443,7 @@ const messages = {
   },
   announcement: {
     section: {
+      title: 'Announcement Title',
       content: 'Announcement Content',
       timeout: 'Expiration',
     },
@@ -464,6 +464,7 @@ const messages = {
       oneWeek: '1 week',
     },
     placeholders: {
+      title: 'Write the announcement title. Use / to insert variables.',
       content: 'Write the Markdown announcement content. Use / to insert variables.',
     },
     hint: {

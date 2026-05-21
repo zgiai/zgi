@@ -26,12 +26,14 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "accepts default timeout",
 			config: NodeConfig{
+				Title:   "Release notice",
 				Content: "Release window starts at 10:00.",
 			},
 		},
 		{
 			name: "accepts one week",
 			config: NodeConfig{
+				Title:   "Release notice",
 				Content: "Release window starts at 10:00.",
 				Timeout: TimeoutConfig{
 					Duration: 7,
@@ -42,6 +44,18 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "requires content",
 			config: NodeConfig{
+				Title: "Release notice",
+				Timeout: TimeoutConfig{
+					Duration: 1,
+					Unit:     "day",
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "requires title",
+			config: NodeConfig{
+				Content: "Release window starts at 10:00.",
 				Timeout: TimeoutConfig{
 					Duration: 1,
 					Unit:     "day",
@@ -52,6 +66,7 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "rejects over one week",
 			config: NodeConfig{
+				Title:   "Release notice",
 				Content: "Release window starts at 10:00.",
 				Timeout: TimeoutConfig{
 					Duration: 8,
@@ -63,6 +78,7 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "rejects unsupported unit",
 			config: NodeConfig{
+				Title:   "Release notice",
 				Content: "Release window starts at 10:00.",
 				Timeout: TimeoutConfig{
 					Duration: 1,

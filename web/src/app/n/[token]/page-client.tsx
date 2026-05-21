@@ -39,7 +39,9 @@ export function AnnouncementPageClient({ token }: AnnouncementPageClientProps) {
         ) : (
           <div className="rounded-lg border bg-card p-5 shadow-sm">
             <div className="space-y-1">
-              <h1 className="text-lg font-semibold">{announcement.node_title}</h1>
+              <h1 className="text-lg font-semibold">
+                {announcement.title || announcement.node_title}
+              </h1>
               {announcement.expiration_at ? (
                 <p className="text-xs text-muted-foreground">
                   {t('announcement.runtime.expiresAt', {

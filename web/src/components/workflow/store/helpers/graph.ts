@@ -577,29 +577,24 @@ export function collectForNode(node: WorkflowNode, agentType: AgentType): Upstre
     case 'announcement': {
       base.variables = [
         {
-          key: 'announcement_id',
+          key: 'title',
           type: 'string',
-          descriptionKey: 'outputDescriptions.announcement.announcement_id',
+          descriptionKey: 'outputDescriptions.announcement.title',
         },
         {
-          key: 'announcement_token',
+          key: 'content',
           type: 'string',
-          descriptionKey: 'outputDescriptions.announcement.announcement_token',
+          descriptionKey: 'outputDescriptions.announcement.content',
         },
         {
-          key: 'announcement_url',
-          type: 'string',
-          descriptionKey: 'outputDescriptions.announcement.announcement_url',
-        },
-        {
-          key: 'announcement_expires_at',
+          key: 'expiration_time',
           type: 'number',
-          descriptionKey: 'outputDescriptions.announcement.announcement_expires_at',
+          descriptionKey: 'outputDescriptions.announcement.expiration_time',
         },
         {
-          key: 'announcement_rendered_content',
+          key: 'url',
           type: 'string',
-          descriptionKey: 'outputDescriptions.announcement.announcement_rendered_content',
+          descriptionKey: 'outputDescriptions.announcement.url',
         },
       ];
       break;

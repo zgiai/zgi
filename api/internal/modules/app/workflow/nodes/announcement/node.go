@@ -14,11 +14,10 @@ import (
 )
 
 const (
-	outputAnnouncementID              = "announcement_id"
-	outputAnnouncementToken           = "announcement_token"
-	outputAnnouncementURL             = "announcement_url"
-	outputAnnouncementExpiresAt       = "announcement_expires_at"
-	outputAnnouncementRenderedContent = "announcement_rendered_content"
+	outputTitle          = "title"
+	outputContent        = "content"
+	outputExpirationTime = "expiration_time"
+	outputURL            = "url"
 )
 
 func New(
@@ -103,22 +102,25 @@ func (n *Node) executeRun(ctx context.Context) (*shared.NodeRunResult, error) {
 	}
 
 	config := n.NodeData.Announcement
-	config.Title = n.NodeData.Title
+	if config.Title == "" {
+		config.Title = n.NodeData.Title
+	}
 	config.Timeout = n.NodeData.Timeout
 	if err := announcementruntime.ValidateConfig(config); err != nil {
 		return nil, err
 	}
 
-	rendered := n.GraphRuntimeState.VariablePool.ConvertTemplate(config.Content).Markdown()
+	renderedTitle := n.GraphRuntimeState.VariablePool.ConvertTemplate(config.Title).Text()
+	renderedContent := n.GraphRuntimeState.VariablePool.ConvertTemplate(config.Content).Markdown()
 	service := announcementruntime.NewService(database.GetDB())
 	runtimeAnnouncement, err := service.CreateOrGetRuntimeAnnouncement(ctx, announcementruntime.CreateRuntimeAnnouncementParams{
 		TenantID:      n.TenantID,
 		AppID:         n.APPID,
 		WorkflowRunID: n.GraphRuntimeState.VariablePool.SystemVariables.WorkflowRunID,
 		NodeID:        n.NodeID,
-		NodeTitle:     n.NodeData.Title,
+		NodeTitle:     renderedTitle,
 		Config:        config,
-		Rendered:      rendered,
+		Rendered:      renderedContent,
 	})
 	if err != nil {
 		return nil, err
@@ -126,11 +128,10 @@ func (n *Node) executeRun(ctx context.Context) (*shared.NodeRunResult, error) {
 
 	payload := runtimeAnnouncement.Payload
 	outputs := map[string]any{
-		outputAnnouncementID:              payload.ID,
-		outputAnnouncementToken:           payload.Token,
-		outputAnnouncementURL:             payload.URL,
-		outputAnnouncementExpiresAt:       payload.ExpirationAt,
-		outputAnnouncementRenderedContent: payload.Content,
+		outputTitle:          payload.NodeTitle,
+		outputContent:        payload.Content,
+		outputExpirationTime: payload.ExpirationAt,
+		outputURL:            payload.URL,
 	}
 	return &shared.NodeRunResult{
 		Status:           shared.SUCCEEDED,

@@ -309,6 +309,7 @@ const useWorkflowOperations = () => {
           desc: '',
           announcement: {
             ...DEFAULT_ANNOUNCEMENT_NODE_DATA.announcement,
+            title: t('catalog.announcement.title'),
             content: t('announcement.defaults.content'),
           },
         },

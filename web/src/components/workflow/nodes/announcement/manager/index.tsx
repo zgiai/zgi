@@ -59,6 +59,7 @@ export function AnnouncementManager({
   readOnly = false,
 }: AnnouncementManagerProps) {
   const t = useT('nodes');
+  const titleEditorRef = React.useRef<WorkflowValueEditorHandle>(null);
   const contentEditorRef = React.useRef<WorkflowValueEditorHandle>(null);
   const nodeData = useNodeData<AnnouncementNodeData>(nodeId);
   const updateData = useNodeDataUpdate<AnnouncementNodeData>(nodeId);
@@ -78,6 +79,17 @@ export function AnnouncementManager({
       updateData(updater(data));
     },
     [data, readOnly, updateData]
+  );
+
+  const handleTitleVariableInsert = React.useCallback(
+    (value: VariableInsertValue) => {
+      if (readOnly) return;
+      const key =
+        value.sourceId === 'sys' && value.key.startsWith('sys.') ? value.key.slice(4) : value.key;
+      titleEditorRef.current?.insertToken(value.sourceId, key);
+      titleEditorRef.current?.focus();
+    },
+    [readOnly]
   );
 
   const handleContentVariableInsert = React.useCallback(
@@ -125,6 +137,29 @@ export function AnnouncementManager({
 
   return (
     <div className={cn('space-y-5', className)}>
+      <Section title={t('announcement.section.title')}>
+        <WorkflowValueInserter
+          nodeId={nodeId}
+          className="w-full"
+          onInsert={handleTitleVariableInsert}
+          disabled={readOnly}
+        />
+        <WorkflowValueEditor
+          ref={titleEditorRef}
+          value={data.announcement.title}
+          onChange={title =>
+            updateAnnouncement(current => ({
+              ...current,
+              announcement: { ...current.announcement, title },
+            }))
+          }
+          readOnly={readOnly}
+          nodeId={nodeId}
+          placeholder={t('announcement.placeholders.title')}
+          editorClassName="min-h-10"
+        />
+      </Section>
+
       <Section title={t('announcement.section.content')}>
         <WorkflowValueInserter
           nodeId={nodeId}
