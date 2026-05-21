@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -44,11 +43,7 @@ func (s *service) ListSkills(ctx context.Context, scope Scope) ([]skills.SkillDi
 	if s.skillRuntime == nil {
 		return []skills.SkillDiscoveryMetadata{}, nil
 	}
-	custom, err := s.customSkillCatalogEntries(ctx, scope.OrganizationID)
-	if err != nil {
-		return nil, err
-	}
-	metadata, err := s.skillRuntime.ListSkillsWithCustom(ctx, custom)
+	metadata, err := s.catalogSkillMetadata(ctx, scope.OrganizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -71,19 +66,22 @@ func (s *service) GetSkill(ctx context.Context, scope Scope, skillID string) (*s
 	if s.skillRuntime == nil {
 		return nil, fmt.Errorf("%w: skill not found", ErrNotFound)
 	}
-	custom, err := s.customSkillCatalogEntries(ctx, scope.OrganizationID)
+	catalog, err := s.catalogSkillMetadata(ctx, scope.OrganizationID)
 	if err != nil {
 		return nil, err
 	}
-	metadata, err := s.skillRuntime.GetSkillMetadataWithCustom(ctx, skillID, custom)
-	if err != nil {
-		if errors.Is(err, skills.ErrSkillNotFound) {
-			return nil, fmt.Errorf("%w: skill not found", ErrNotFound)
+	normalized := strings.ToLower(strings.TrimSpace(skillID))
+	for idx := range catalog {
+		if catalog[idx].ID != normalized {
+			continue
 		}
-		return nil, err
+		catalog[idx].Enabled = s.isOrganizationSkillEnabled(ctx, scope.OrganizationID, catalog[idx].ID)
+		if catalog[idx].Status == skills.SkillStatusInvalid {
+			catalog[idx].Enabled = false
+		}
+		return &catalog[idx], nil
 	}
-	metadata.Enabled = s.isOrganizationSkillEnabled(ctx, scope.OrganizationID, metadata.ID)
-	return metadata, nil
+	return nil, fmt.Errorf("%w: skill not found", ErrNotFound)
 }
 
 func (s *service) GetSkillConfig(ctx context.Context, scope Scope) (*SkillConfig, error) {

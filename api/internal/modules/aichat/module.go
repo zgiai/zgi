@@ -44,7 +44,7 @@ func NewModuleWithDependencies(
 	}
 	if skillRuntime != nil {
 		if err := skillRuntime.ValidateCatalog(context.Background()); err != nil {
-			logger.Warn("failed to validate aichat skill catalog", err)
+			logger.Error("failed to validate aichat skill catalog", err)
 		}
 	}
 	svc := service.NewServiceWithSkillRuntime(
@@ -59,6 +59,9 @@ func NewModuleWithDependencies(
 	)
 	if _, err := svc.CleanupStaleActiveMessages(context.Background()); err != nil {
 		logger.Warn("failed to cleanup stale aichat messages", err)
+	}
+	if err := svc.CleanupExpiredCustomSkillImportPreviews(context.Background()); err != nil {
+		logger.Warn("failed to cleanup expired aichat skill import previews", err)
 	}
 	return &Module{
 		Handler: handler.NewHandler(svc),
