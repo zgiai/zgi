@@ -471,10 +471,16 @@ func metaTools(includeToolCaller bool) []llmadapter.Tool {
 }
 
 func SkillMetadataSystemMessage(metadata []SkillPromptMetadata) llmadapter.Message {
+	message, _ := SkillMetadataSystemMessageWithBudget(metadata, DefaultSkillMetadataPromptBudgetChars)
+	return message
+}
+
+func SkillMetadataSystemMessageWithBudget(metadata []SkillPromptMetadata, budgetChars int) (llmadapter.Message, SkillMetadataPromptStats) {
+	content, stats := skillMetadataPromptWithBudget(metadata, budgetChars)
 	return llmadapter.Message{
 		Role:    "system",
-		Content: skillMetadataPrompt(metadata),
-	}
+		Content: content,
+	}, stats
 }
 
 func ToolResultMessage(callID string, payload interface{}) llmadapter.Message {

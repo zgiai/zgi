@@ -71,7 +71,6 @@ export interface AIChatCancelImportSkillPreviewResponseData {
   canceled: boolean;
 }
 
-export type AIChatImportSkillResponse = ApiResponseData<AIChatSkillMetadata>;
 export type AIChatDeleteSkillResponse = ApiResponseData<AIChatDeleteSkillResponseData>;
 export type AIChatCancelImportSkillPreviewResponse =
   ApiResponseData<AIChatCancelImportSkillPreviewResponseData>;
@@ -85,6 +84,8 @@ export interface AIChatImportSkillPreview {
   import_id?: string;
   expires_at?: number;
   skill?: AIChatSkillMetadata;
+  will_overwrite: boolean;
+  existing_skill?: AIChatExistingSkill;
   file_count: number;
   total_size: number;
   files: AIChatImportSkillPreviewFile[];
@@ -98,9 +99,16 @@ export interface AIChatImportSkillPreview {
 
 export interface AIChatConfirmImportSkillRequest {
   import_id: string;
+  overwrite_confirmed?: boolean;
 }
 
 export type AIChatImportSkillPreviewResponse = ApiResponseData<AIChatImportSkillPreview>;
+
+export interface AIChatExistingSkill {
+  skill_id: string;
+  name: string;
+  updated_at?: number;
+}
 
 export interface AIChatSkillInvocation {
   kind?: AIChatSkillInvocationKind;

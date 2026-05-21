@@ -374,13 +374,25 @@ func (s *service) finalizePreparedError(ctx context.Context, prepared *PreparedC
 	if prepared == nil || prepared.Message == nil || prepared.Conversation == nil || cause == nil {
 		return
 	}
-	if err := s.repos.Message.UpdateError(ctx, prepared.Message.ID, cause.Error()); err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		logger.WarnContext(ctx, "failed to mark aichat message error", "message_id", prepared.Message.ID.String(), err)
-	}
-	if err := s.clearPreparedRuntime(ctx, prepared); err != nil {
-		logger.WarnContext(ctx, "failed to clear aichat conversation runtime", "conversation_id", prepared.Conversation.ID.String(), err)
+	if err := s.completePreparedError(ctx, prepared, cause.Error()); err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			logger.WarnContext(ctx, "failed to finalize aichat message error", "message_id", prepared.Message.ID.String(), err)
+		}
+		if clearErr := s.clearPreparedRuntime(ctx, prepared); clearErr != nil {
+			logger.WarnContext(ctx, "failed to clear aichat conversation runtime", "conversation_id", prepared.Conversation.ID.String(), clearErr)
+		}
 	}
 	s.appendStreamEventBestEffort(ctx, prepared.Message.ID, prepared.Conversation.ID, streamEventError, messageErrorPayload(prepared, cause.Error()))
+}
+
+func (s *service) completePreparedError(ctx context.Context, prepared *PreparedChat, message string) error {
+	if err := s.repos.Message.UpdateError(ctx, prepared.Message.ID, message); err != nil {
+		return err
+	}
+	if prepared.ReplaceRoot {
+		return s.repos.Conversation.CompleteRootReplacement(ctx, prepared.Conversation.ID, prepared.Message.ID)
+	}
+	return s.repos.Conversation.UpdateAfterMessage(ctx, prepared.Conversation.ID, prepared.Message.ID)
 }
 
 func (s *service) clearPreparedRuntime(ctx context.Context, prepared *PreparedChat) error {
