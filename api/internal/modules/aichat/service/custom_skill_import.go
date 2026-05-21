@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -51,7 +52,7 @@ func (s *service) ImportCustomSkill(ctx context.Context, scope Scope, fileHeader
 	if preview == nil || !preview.CanImport || preview.ImportID == "" {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidInput, strings.Join(previewValidationErrors(preview), "; "))
 	}
-	return s.ConfirmCustomSkillImport(ctx, scope, preview.ImportID)
+	return s.confirmCustomSkillImport(ctx, scope, preview.ImportID, true)
 }
 
 func (s *service) PreviewImportCustomSkill(ctx context.Context, scope Scope, fileHeader *multipart.FileHeader) (*SkillImportPreview, error) {
@@ -102,6 +103,13 @@ func (s *service) PreviewImportCustomSkill(ctx context.Context, scope Scope, fil
 	result.References = skillReferencePaths(doc)
 	result.HasScripts = doc.Metadata.HasScripts
 	result.ScriptsSupported = doc.Metadata.ScriptsSupported
+	if existing, err := s.existingCustomSkill(ctx, scope.OrganizationID, doc.Metadata.ID); err != nil {
+		_ = s.customSkillStorage.DeleteSkill(ctx, preview.Root)
+		return nil, err
+	} else if existing != nil {
+		result.WillOverwrite = true
+		result.ExistingSkill = existingSkillPreview(existing)
+	}
 	if doc.Metadata.HasScripts && !doc.Metadata.ScriptsSupported {
 		result.Warnings = append(result.Warnings, "scripts are present but are not supported for custom skills")
 	}
@@ -109,7 +117,11 @@ func (s *service) PreviewImportCustomSkill(ctx context.Context, scope Scope, fil
 	return result, nil
 }
 
-func (s *service) ConfirmCustomSkillImport(ctx context.Context, scope Scope, importID string) (*skills.SkillDiscoveryMetadata, error) {
+func (s *service) ConfirmCustomSkillImport(ctx context.Context, scope Scope, importID string, overwriteConfirmed bool) (*skills.SkillDiscoveryMetadata, error) {
+	return s.confirmCustomSkillImport(ctx, scope, importID, overwriteConfirmed)
+}
+
+func (s *service) confirmCustomSkillImport(ctx context.Context, scope Scope, importID string, overwriteConfirmed bool) (*skills.SkillDiscoveryMetadata, error) {
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, err
 	}
@@ -133,6 +145,13 @@ func (s *service) ConfirmCustomSkillImport(ctx context.Context, scope Scope, imp
 	if s.customSkillIDConflictsWithSystem(ctx, doc.Metadata.ID) {
 		return nil, fmt.Errorf("%w: custom skill id conflicts with a system skill", ErrInvalidInput)
 	}
+	existing, err := s.existingCustomSkill(ctx, scope.OrganizationID, doc.Metadata.ID)
+	if err != nil {
+		return nil, err
+	}
+	if existing != nil && !overwriteConfirmed {
+		return nil, fmt.Errorf("%w: custom skill already exists; confirm overwrite before importing", ErrInvalidInput)
+	}
 	published, finalRoot, err := s.customSkillStorage.PublishPreview(ctx, preview, doc.Metadata.ID)
 	if err != nil {
 		return nil, err
@@ -147,6 +166,20 @@ func (s *service) ConfirmCustomSkillImport(ctx context.Context, scope Scope, imp
 	metadata := skillDiscoveryMetadataPtr(doc)
 	metadata.Enabled = s.isOrganizationSkillEnabled(ctx, scope.OrganizationID, metadata.ID)
 	return metadata, nil
+}
+
+func (s *service) existingCustomSkill(ctx context.Context, organizationID uuid.UUID, skillID string) (*aichatmodel.CustomSkill, error) {
+	if s.repos == nil || s.repos.CustomSkill == nil {
+		return nil, fmt.Errorf("custom skill repository is not configured")
+	}
+	existing, err := s.repos.CustomSkill.GetBySkillID(ctx, organizationID, skillID)
+	if err == nil {
+		return existing, nil
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(mapRepoError(err), ErrNotFound) {
+		return nil, nil
+	}
+	return nil, err
 }
 
 func (s *service) CancelCustomSkillImportPreview(ctx context.Context, scope Scope, importID string) error {
@@ -461,6 +494,17 @@ func skillImportPreviewFromStored(preview *storedSkillPreview) *SkillImportPrevi
 		Warnings:         []string{},
 		ValidationErrors: []string{},
 		CanImport:        false,
+	}
+}
+
+func existingSkillPreview(skill *aichatmodel.CustomSkill) *ExistingSkill {
+	if skill == nil {
+		return nil
+	}
+	return &ExistingSkill{
+		SkillID:   strings.ToLower(strings.TrimSpace(skill.SkillID)),
+		Name:      strings.TrimSpace(skill.Name),
+		UpdatedAt: skill.UpdatedAt,
 	}
 }
 

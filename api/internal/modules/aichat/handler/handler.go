@@ -173,7 +173,7 @@ func (h *Handler) ConfirmImportSkill(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	metadata, err := h.service.ConfirmCustomSkillImport(c.Request.Context(), scope, req.ImportID)
+	metadata, err := h.service.ConfirmCustomSkillImport(c.Request.Context(), scope, req.ImportID, req.OverwriteConfirmed)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -720,6 +720,16 @@ func skillImportPreviewResponse(preview *aichatservice.SkillImportPreview) aicha
 		value := skillResponse(*preview.Skill)
 		skill = &value
 	}
+	var existingSkill *aichatdto.ExistingSkillResponse
+	if preview.ExistingSkill != nil {
+		existingSkill = &aichatdto.ExistingSkillResponse{
+			SkillID: preview.ExistingSkill.SkillID,
+			Name:    preview.ExistingSkill.Name,
+		}
+		if !preview.ExistingSkill.UpdatedAt.IsZero() {
+			existingSkill.UpdatedAt = preview.ExistingSkill.UpdatedAt.Unix()
+		}
+	}
 	expiresAt := int64(0)
 	if !preview.ExpiresAt.IsZero() {
 		expiresAt = preview.ExpiresAt.Unix()
@@ -728,6 +738,8 @@ func skillImportPreviewResponse(preview *aichatservice.SkillImportPreview) aicha
 		ImportID:         preview.ImportID,
 		ExpiresAt:        expiresAt,
 		Skill:            skill,
+		WillOverwrite:    preview.WillOverwrite,
+		ExistingSkill:    existingSkill,
 		FileCount:        preview.FileCount,
 		TotalSize:        preview.TotalSize,
 		Files:            files,

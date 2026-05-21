@@ -564,7 +564,10 @@ const messages: DashboardMessages = {
         totalSize: '大小',
         references: '参考资料',
         confirm: '导入',
+        confirmOverwrite: '确认覆盖并导入',
         cancel: '取消',
+        overwriteTitle: '将覆盖现有 Skill',
+        overwriteDescription: '组织中已存在 “{skill}”。确认导入后，现有 Skill 包会被新的包替换。',
       },
       messages: {
         saved: 'AIChat Skill 设置已保存',

@@ -576,7 +576,11 @@ const messages = {
         totalSize: 'Size',
         references: 'References',
         confirm: 'Import',
+        confirmOverwrite: 'Confirm overwrite and import',
         cancel: 'Cancel',
+        overwriteTitle: 'This will overwrite an existing Skill',
+        overwriteDescription:
+          '"{skill}" already exists in this organization. Importing this package will replace the existing Skill package.',
       },
       messages: {
         saved: 'AIChat Skill settings saved',

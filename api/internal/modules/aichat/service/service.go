@@ -78,7 +78,7 @@ type Service interface {
 	GetSkillConfig(ctx context.Context, scope Scope) (*SkillConfig, error)
 	UpdateSkillConfig(ctx context.Context, scope Scope, req aichatdto.UpdateSkillConfigRequest) (*SkillConfig, error)
 	PreviewImportCustomSkill(ctx context.Context, scope Scope, fileHeader *multipart.FileHeader) (*SkillImportPreview, error)
-	ConfirmCustomSkillImport(ctx context.Context, scope Scope, importID string) (*skills.SkillDiscoveryMetadata, error)
+	ConfirmCustomSkillImport(ctx context.Context, scope Scope, importID string, overwriteConfirmed bool) (*skills.SkillDiscoveryMetadata, error)
 	ImportCustomSkill(ctx context.Context, scope Scope, fileHeader *multipart.FileHeader) (*skills.SkillDiscoveryMetadata, error)
 	CancelCustomSkillImportPreview(ctx context.Context, scope Scope, importID string) error
 	DeleteSkill(ctx context.Context, scope Scope, skillID string) error
@@ -191,6 +191,8 @@ type SkillImportPreview struct {
 	ImportID         string
 	ExpiresAt        time.Time
 	Skill            *skills.SkillDiscoveryMetadata
+	WillOverwrite    bool
+	ExistingSkill    *ExistingSkill
 	FileCount        int
 	TotalSize        int64
 	Files            []SkillImportPreviewFile
@@ -200,6 +202,12 @@ type SkillImportPreview struct {
 	Warnings         []string
 	ValidationErrors []string
 	CanImport        bool
+}
+
+type ExistingSkill struct {
+	SkillID   string
+	Name      string
+	UpdatedAt time.Time
 }
 
 type chatRequestParts struct {

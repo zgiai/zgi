@@ -434,6 +434,8 @@ function SkillImportPreviewDialog({
   const references = previewReferences(preview);
   const warnings = previewWarnings(preview);
   const validationErrors = previewValidationErrors(preview);
+  const existingSkillName =
+    preview?.existing_skill?.name || preview?.existing_skill?.skill_id || skill?.skill_id || '';
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -485,6 +487,24 @@ function SkillImportPreviewDialog({
             </div>
           ) : null}
 
+          {preview?.will_overwrite ? (
+            <div className="rounded-md border border-amber-300/70 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+              <div className="flex gap-2">
+                <AlertCircle className="mt-0.5 size-4 shrink-0" />
+                <div className="min-w-0">
+                  <p className="font-medium">
+                    {t('organization.aichatSkills.importPreview.overwriteTitle')}
+                  </p>
+                  <p className="mt-1 leading-5">
+                    {t('organization.aichatSkills.importPreview.overwriteDescription', {
+                      skill: existingSkillName,
+                    })}
+                  </p>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
           {warnings.length ? (
             <div className="rounded-md border border-amber-300/60 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
               {warnings.map(warning => (
@@ -523,7 +543,9 @@ function SkillImportPreviewDialog({
             {loading ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
             {loading
               ? t('organization.aichatSkills.actions.importing')
-              : t('organization.aichatSkills.importPreview.confirm')}
+              : preview?.will_overwrite
+                ? t('organization.aichatSkills.importPreview.confirmOverwrite')
+                : t('organization.aichatSkills.importPreview.confirm')}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -749,7 +771,10 @@ export function AIChatSkillSettingsSection() {
   const handleConfirmImport = async () => {
     if (!importPreview?.import_id) return;
     try {
-      await confirmImportSkill.mutateAsync({ import_id: importPreview.import_id });
+      await confirmImportSkill.mutateAsync({
+        import_id: importPreview.import_id,
+        overwrite_confirmed: Boolean(importPreview.will_overwrite),
+      });
       importConfirmedRef.current = true;
       setIsImportPreviewOpen(false);
       setImportPreview(null);
