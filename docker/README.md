@@ -92,6 +92,8 @@ PowerShell also supports `-Core`, `-Runtime`, `-Knowledge`, and `-Full` for serv
 Local default endpoints:
 
 - Web and API gateway: `http://localhost:${PUBLIC_PORT:-2679}`
+- API direct port: `http://localhost:${API_PORT:-2670}`
+- Web direct port: `http://localhost:${WEB_PORT:-2680}`
 
 On first launch, open the gateway URL and create the first administrator account.
 For local testing, you can use example credentials such as:
@@ -101,6 +103,22 @@ For local testing, you can use example credentials such as:
 
 These credentials are examples only. ZGI does not ship with a default administrator account.
 Use your own email and a strong password in production.
+
+Host ports can be changed in `docker/.env`:
+
+- Gateway: `${PUBLIC_PORT:-2679}`
+- API: `${API_PORT:-2670}`
+- Web: `${WEB_PORT:-2680}`
+- PostgreSQL: `${POSTGRES_PORT:-5434}`
+- Redis: `${REDIS_HOST_PORT:-6381}`
+- Weaviate: `${WEAVIATE_PORT:-18080}`
+- Neo4j HTTP: `${NEO4J_HTTP_PORT:-7474}`
+- Neo4j Bolt: `${NEO4J_BOLT_PORT:-7687}`
+
+Application images can also be changed in `docker/.env` with `API_IMAGE_NAME`,
+`WEB_IMAGE_NAME`, `SANDBOX_IMAGE_NAME`, `RUNNER_IMAGE_NAME`, and `IMAGE_TAG`.
+This lets sibling worktrees reuse the same images while keeping compose project
+names, containers, volumes, and ports isolated.
 
 Internal Docker network ports:
 
@@ -128,4 +146,4 @@ Internal Docker network ports:
 - `sandbox` is wired differently in product mode versus standalone mode:
   product mode reuses the shared root Postgres / Redis, while standalone mode keeps its own bundled Postgres / Redis.
 - `./dev/start-docker --china` currently wires China mainland build mirrors for `api`, `sandbox`, and `runner` through compose build args.
-- `PUBLIC_PORT` defaults to `2679`; app and infrastructure services stay on the internal Docker network.
+- `PUBLIC_PORT` defaults to `2679`; app and infrastructure service host ports are configurable in `docker/.env`.

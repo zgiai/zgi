@@ -30,6 +30,8 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "${POSTGRES_PORT:-5434}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-zgi}"]
       interval: 5s
@@ -65,6 +67,8 @@ services:
     command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-zgiai123456}
     volumes:
       - redis-data:/data
+    ports:
+      - "${REDIS_HOST_PORT:-6381}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-zgiai123456}", "ping"]
       interval: 5s
@@ -89,6 +93,8 @@ services:
       CLUSTER_HOSTNAME: node1
     volumes:
       - weaviate-data:/var/lib/weaviate
+    ports:
+      - "${WEAVIATE_PORT:-18080}:8080"
     restart: unless-stopped
 
   neo4j:
@@ -107,6 +113,9 @@ services:
     volumes:
       - neo4j-data:/data
       - neo4j-logs:/logs
+    ports:
+      - "${NEO4J_HTTP_PORT:-7474}:7474"
+      - "${NEO4J_BOLT_PORT:-7687}:7687"
     healthcheck:
       test: ["CMD", "cypher-shell", "-u", "${NEO4J_USERNAME:-neo4j}", "-p", "${NEO4J_PASSWORD:-neo4j123456}", "RETURN 1"]
       interval: 10s
@@ -117,6 +126,7 @@ services:
   sandbox:
     profiles:
       - runtime
+    image: ${SANDBOX_IMAGE_NAME:-zgi-sandbox}:${IMAGE_TAG:-latest}
     build:
       context: ../sandbox
       dockerfile: Dockerfile
@@ -153,6 +163,7 @@ services:
           - zgi-sandbox
 
   api:
+    image: ${API_IMAGE_NAME:-docker.io/zgiai/zgi-api}:${IMAGE_TAG:-latest}
     build:
       context: ../api
       dockerfile: Dockerfile
@@ -182,6 +193,8 @@ services:
     volumes:
       - api-storage:/app/storage
       - api-logs:/app/logs
+    ports:
+      - "${API_PORT:-2670}:2670"
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:2670/ping || exit 1"]
       interval: 15s
@@ -193,6 +206,7 @@ services:
   runner:
     profiles:
       - runtime
+    image: ${RUNNER_IMAGE_NAME:-zgi-runner}:${IMAGE_TAG:-latest}
     build:
       context: ../runner
       dockerfile: Dockerfile
@@ -228,6 +242,7 @@ services:
     restart: unless-stopped
 
   web:
+    image: ${WEB_IMAGE_NAME:-zgi-web}:${IMAGE_TAG:-latest}
     build:
       context: ../web
       dockerfile: Dockerfile
@@ -249,6 +264,8 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    ports:
+      - "${WEB_PORT:-2680}:2680"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:2680/env.js').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 20s
