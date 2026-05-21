@@ -150,6 +150,8 @@ services:
         condition: service_healthy
     volumes:
       - sandbox-data:/var/lib/zgi-sandbox
+    ports:
+      - "${SANDBOX_PORT:-2660}:2660"
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:2660/health').getcode() == 200 else 1)\""]
       interval: 15s
@@ -235,6 +237,8 @@ services:
       - runner-data:/app/plugins
       - runner-workspace:/app/workspace
       - runner-cache:/app/cache
+    ports:
+      - "${RUNNER_PORT:-2665}:2665"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:2665/healthz"]
       interval: 30s
