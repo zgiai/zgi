@@ -44,17 +44,6 @@ type extractedSkillPackage struct {
 	FileDetails []extractedSkillFile
 }
 
-func (s *service) ImportCustomSkill(ctx context.Context, scope Scope, fileHeader *multipart.FileHeader) (*skills.SkillDiscoveryMetadata, error) {
-	preview, err := s.PreviewImportCustomSkill(ctx, scope, fileHeader)
-	if err != nil {
-		return nil, err
-	}
-	if preview == nil || !preview.CanImport || preview.ImportID == "" {
-		return nil, fmt.Errorf("%w: %s", ErrInvalidInput, strings.Join(previewValidationErrors(preview), "; "))
-	}
-	return s.confirmCustomSkillImport(ctx, scope, preview.ImportID, true)
-}
-
 func (s *service) PreviewImportCustomSkill(ctx context.Context, scope Scope, fileHeader *multipart.FileHeader) (*SkillImportPreview, error) {
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, err

@@ -41,7 +41,6 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	group.GET("/skills/config", h.GetSkillConfig)
 	group.GET("/skills/:id", h.GetSkill)
 	skillManagement := group.Group("/skills", middleware.EnterpriseAdminOrOwnerRequired())
-	skillManagement.POST("/import", h.ImportSkill)
 	skillManagement.POST("/import/preview", h.PreviewImportSkill)
 	skillManagement.POST("/import/confirm", h.ConfirmImportSkill)
 	skillManagement.DELETE("/import/preview/:import_id", h.CancelImportSkillPreview)
@@ -125,24 +124,6 @@ func (h *Handler) UpdateSkillConfig(c *gin.Context) {
 		return
 	}
 	response.Success(c, skillConfigResponse(config))
-}
-
-func (h *Handler) ImportSkill(c *gin.Context) {
-	scope, ok := h.scope(c)
-	if !ok {
-		return
-	}
-	fileHeader, err := c.FormFile("file")
-	if err != nil {
-		response.Fail(c, response.ErrInvalidParam)
-		return
-	}
-	metadata, err := h.service.ImportCustomSkill(c.Request.Context(), scope, fileHeader)
-	if err != nil {
-		h.fail(c, err)
-		return
-	}
-	response.Success(c, skillResponse(*metadata))
 }
 
 func (h *Handler) PreviewImportSkill(c *gin.Context) {

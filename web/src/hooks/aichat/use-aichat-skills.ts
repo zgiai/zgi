@@ -94,37 +94,6 @@ export function useUpdateAIChatSkillConfig() {
 }
 
 /**
- * @hook useImportAIChatSkill
- * @description Import a custom organization AIChat Skill from a zip package.
- */
-export function useImportAIChatSkill() {
-  const queryClient = useQueryClient();
-  const t = useT('dashboard');
-
-  return useMutation({
-    mutationFn: (file: File) => aichatService.importSkill(file),
-    onSuccess: async response => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: AICHAT_KEYS.skills() }),
-        queryClient.invalidateQueries({ queryKey: AICHAT_KEYS.skillConfig() }),
-      ]);
-      toast.success(
-        t('organization.aichatSkills.messages.imported', {
-          skill: response.data.name || response.data.skill_id,
-        })
-      );
-    },
-    onError: error => {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : t('organization.aichatSkills.messages.importFailed')
-      );
-    },
-  });
-}
-
-/**
  * @hook usePreviewImportAIChatSkill
  * @description Validate a custom AIChat Skill zip package before publishing it.
  */
