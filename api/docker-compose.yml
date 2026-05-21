@@ -34,7 +34,7 @@ services:
     image: ${IMAGE_NAME:-docker.io/zgiai/zgi-api}:${IMAGE_TAG:-latest}
     container_name: zgi-api
     ports:
-      - "2680:2680"
+      - "${SERVER_PORT:-2670}:${SERVER_PORT:-2670}"
       - "50052:50052"  # gRPC port
     env_file:
       - .env.docker
