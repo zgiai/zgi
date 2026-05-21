@@ -30,14 +30,31 @@ const (
 	customSkillMaxFileCount   = 200
 )
 
+type extractedSkillFile struct {
+	Path string `json:"path"`
+	Size int64  `json:"size"`
+}
+
 type extractedSkillPackage struct {
-	Root      string
-	FileCount int
-	TotalSize int64
-	Files     []string
+	Root        string
+	FileCount   int
+	TotalSize   int64
+	Files       []string
+	FileDetails []extractedSkillFile
 }
 
 func (s *service) ImportCustomSkill(ctx context.Context, scope Scope, fileHeader *multipart.FileHeader) (*skills.SkillDiscoveryMetadata, error) {
+	preview, err := s.PreviewImportCustomSkill(ctx, scope, fileHeader)
+	if err != nil {
+		return nil, err
+	}
+	if preview == nil || !preview.CanImport || preview.ImportID == "" {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidInput, strings.Join(previewValidationErrors(preview), "; "))
+	}
+	return s.ConfirmCustomSkillImport(ctx, scope, preview.ImportID)
+}
+
+func (s *service) PreviewImportCustomSkill(ctx context.Context, scope Scope, fileHeader *multipart.FileHeader) (*SkillImportPreview, error) {
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, err
 	}
@@ -50,35 +67,77 @@ func (s *service) ImportCustomSkill(ctx context.Context, scope Scope, fileHeader
 	if s.repos == nil || s.repos.CustomSkill == nil {
 		return nil, fmt.Errorf("custom skill repository is not configured")
 	}
+	if s.customSkillStorage == nil {
+		return nil, fmt.Errorf("custom skill storage is not configured")
+	}
 	data, err := readUploadedSkillPackage(fileHeader)
 	if err != nil {
 		return nil, err
 	}
 	importID := uuid.New().String()
-	tempRoot := filepath.Join(customSkillStorageRoot, scope.OrganizationID.String(), ".imports", importID)
-	if err := os.RemoveAll(tempRoot); err != nil {
-		return nil, fmt.Errorf("failed to prepare custom skill import directory: %w", err)
-	}
-	extracted, err := extractSkillZip(data, tempRoot)
+	preview, err := s.customSkillStorage.SavePreviewPackage(ctx, scope.OrganizationID, importID, data)
 	if err != nil {
-		_ = os.RemoveAll(tempRoot)
 		return nil, err
 	}
-	doc, err := skills.LoadCustomSkillDocument(extracted.Root)
+	result := skillImportPreviewFromStored(preview)
+	doc, err := skills.LoadCustomSkillDocument(preview.Root)
 	if err != nil {
-		_ = os.RemoveAll(tempRoot)
+		_ = s.customSkillStorage.DeleteSkill(ctx, preview.Root)
+		result.ImportID = ""
+		result.ExpiresAt = time.Time{}
+		result.ValidationErrors = []string{err.Error()}
+		result.CanImport = false
+		return result, nil
+	}
+	if s.customSkillIDConflictsWithSystem(ctx, doc.Metadata.ID) {
+		_ = s.customSkillStorage.DeleteSkill(ctx, preview.Root)
+		result.ImportID = ""
+		result.ExpiresAt = time.Time{}
+		result.Skill = skillDiscoveryMetadataPtr(doc)
+		result.ValidationErrors = []string{"custom skill id conflicts with a system skill"}
+		result.CanImport = false
+		return result, nil
+	}
+	result.Skill = skillDiscoveryMetadataPtr(doc)
+	result.References = skillReferencePaths(doc)
+	result.HasScripts = doc.Metadata.HasScripts
+	result.ScriptsSupported = doc.Metadata.ScriptsSupported
+	if doc.Metadata.HasScripts && !doc.Metadata.ScriptsSupported {
+		result.Warnings = append(result.Warnings, "scripts are present but are not supported for custom skills")
+	}
+	result.CanImport = true
+	return result, nil
+}
+
+func (s *service) ConfirmCustomSkillImport(ctx context.Context, scope Scope, importID string) (*skills.SkillDiscoveryMetadata, error) {
+	if err := s.ensureMember(ctx, scope); err != nil {
+		return nil, err
+	}
+	if s.skillRuntime == nil {
+		return nil, fmt.Errorf("%w: skill runtime is not configured", ErrInvalidInput)
+	}
+	if s.repos == nil || s.repos.CustomSkill == nil {
+		return nil, fmt.Errorf("custom skill repository is not configured")
+	}
+	if s.customSkillStorage == nil {
+		return nil, fmt.Errorf("custom skill storage is not configured")
+	}
+	preview, err := s.customSkillStorage.LoadPreview(ctx, scope.OrganizationID, importID)
+	if err != nil {
+		return nil, err
+	}
+	doc, err := skills.LoadCustomSkillDocument(preview.Root)
+	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidInput, err)
 	}
-	if _, err := s.skillRuntime.GetSkillMetadata(ctx, doc.Metadata.ID); err == nil {
-		_ = os.RemoveAll(tempRoot)
+	if s.customSkillIDConflictsWithSystem(ctx, doc.Metadata.ID) {
 		return nil, fmt.Errorf("%w: custom skill id conflicts with a system skill", ErrInvalidInput)
 	}
-	finalRoot := filepath.Join(customSkillStorageRoot, scope.OrganizationID.String(), doc.Metadata.ID, "current")
-	published, err := replaceCustomSkillDirectory(extracted.Root, finalRoot)
+	published, finalRoot, err := s.customSkillStorage.PublishPreview(ctx, preview, doc.Metadata.ID)
 	if err != nil {
-		_ = os.RemoveAll(tempRoot)
 		return nil, err
 	}
+	extracted := extractedSkillPackageFromPreview(preview)
 	record := customSkillRecordFromDocument(scope, doc, finalRoot, extracted)
 	if err := s.repos.CustomSkill.Upsert(ctx, record); err != nil {
 		published.rollback()
@@ -94,6 +153,14 @@ func (s *service) ImportCustomSkill(ctx context.Context, scope Scope, fileHeader
 	}
 	metadata.Enabled = s.isOrganizationSkillEnabled(ctx, scope.OrganizationID, metadata.ID)
 	return metadata, nil
+}
+
+func (s *service) customSkillIDConflictsWithSystem(ctx context.Context, skillID string) bool {
+	if s.skillRuntime == nil {
+		return false
+	}
+	metadata, err := s.skillRuntime.GetSkillMetadata(ctx, skillID)
+	return err == nil && metadata != nil && metadata.Source == skills.SkillSourceSystem
 }
 
 func (s *service) DeleteSkill(ctx context.Context, scope Scope, skillID string) error {
@@ -129,7 +196,7 @@ func (s *service) DeleteSkill(ctx context.Context, scope Scope, skillID string) 
 		return err
 	}
 	if strings.TrimSpace(record.StoragePath) != "" {
-		if err := os.RemoveAll(record.StoragePath); err != nil {
+		if err := s.customSkillStorage.DeleteSkill(ctx, record.StoragePath); err != nil {
 			logger.WarnContext(ctx, "failed to remove custom skill directory", "skill_id", id, "path", record.StoragePath, err)
 		}
 	}
@@ -170,6 +237,7 @@ func extractSkillZip(data []byte, targetRoot string) (*extractedSkillPackage, er
 	var fileCount int
 	var totalSize int64
 	files := make([]string, 0, len(reader.File))
+	fileDetails := make([]extractedSkillFile, 0, len(reader.File))
 	for _, file := range reader.File {
 		clean, ok := cleanZipPath(file.Name)
 		if !ok {
@@ -205,12 +273,14 @@ func extractSkillZip(data []byte, targetRoot string) (*extractedSkillPackage, er
 			return nil, err
 		}
 		files = append(files, clean)
+		fileDetails = append(fileDetails, extractedSkillFile{Path: clean, Size: int64(file.UncompressedSize64)})
 	}
 	if fileCount == 0 {
 		return nil, fmt.Errorf("%w: skill package is empty", ErrInvalidInput)
 	}
 	sort.Strings(files)
-	return &extractedSkillPackage{Root: targetRoot, FileCount: fileCount, TotalSize: totalSize, Files: files}, nil
+	sort.Slice(fileDetails, func(i, j int) bool { return fileDetails[i].Path < fileDetails[j].Path })
+	return &extractedSkillPackage{Root: targetRoot, FileCount: fileCount, TotalSize: totalSize, Files: files, FileDetails: fileDetails}, nil
 }
 
 func detectSkillZipRoot(files []*zip.File) (string, error) {
@@ -359,6 +429,81 @@ func customSkillManifest(doc skills.SkillDocument, extracted *extractedSkillPack
 		manifest["files"] = append([]string(nil), extracted.Files...)
 	}
 	return manifest
+}
+
+func skillImportPreviewFromStored(preview *storedSkillPreview) *SkillImportPreview {
+	if preview == nil {
+		return &SkillImportPreview{Files: []SkillImportPreviewFile{}, References: []string{}, Warnings: []string{}, ValidationErrors: []string{}}
+	}
+	files := make([]SkillImportPreviewFile, 0, len(preview.Files))
+	for _, file := range preview.Files {
+		files = append(files, SkillImportPreviewFile{Path: file.Path, Size: file.Size})
+	}
+	return &SkillImportPreview{
+		ImportID:         preview.ImportID,
+		ExpiresAt:        preview.ExpiresAt,
+		FileCount:        preview.FileCount,
+		TotalSize:        preview.TotalSize,
+		Files:            files,
+		References:       []string{},
+		Warnings:         []string{},
+		ValidationErrors: []string{},
+		CanImport:        false,
+	}
+}
+
+func extractedSkillPackageFromPreview(preview *storedSkillPreview) *extractedSkillPackage {
+	if preview == nil {
+		return nil
+	}
+	files := make([]string, 0, len(preview.Files))
+	for _, file := range preview.Files {
+		files = append(files, file.Path)
+	}
+	sort.Strings(files)
+	return &extractedSkillPackage{
+		Root:        preview.Root,
+		FileCount:   preview.FileCount,
+		TotalSize:   preview.TotalSize,
+		Files:       files,
+		FileDetails: append([]extractedSkillFile(nil), preview.Files...),
+	}
+}
+
+func skillDiscoveryMetadataPtr(doc skills.SkillDocument) *skills.SkillDiscoveryMetadata {
+	metadata := skills.SkillDiscoveryMetadata{
+		ID:               doc.Metadata.ID,
+		Source:           doc.Metadata.Source,
+		Name:             doc.Metadata.Name,
+		Description:      doc.Metadata.Description,
+		WhenToUse:        doc.Metadata.WhenToUse,
+		Display:          doc.Metadata.Display,
+		RuntimeType:      doc.Metadata.RuntimeType,
+		HasTools:         len(doc.Tools) > 0,
+		HasReferences:    len(doc.Metadata.References) > 0,
+		HasScripts:       doc.Metadata.HasScripts,
+		ScriptsSupported: doc.Metadata.ScriptsSupported,
+		MaxCallsPerTurn:  doc.Metadata.MaxCallsPerTurn,
+		TimeoutSeconds:   doc.Metadata.TimeoutSeconds,
+		Status:           skills.SkillStatusActive,
+	}
+	return &metadata
+}
+
+func skillReferencePaths(doc skills.SkillDocument) []string {
+	references := make([]string, 0, len(doc.Metadata.References))
+	for _, ref := range doc.Metadata.References {
+		references = append(references, ref.Path)
+	}
+	sort.Strings(references)
+	return references
+}
+
+func previewValidationErrors(preview *SkillImportPreview) []string {
+	if preview == nil || len(preview.ValidationErrors) == 0 {
+		return []string{"skill package cannot be imported"}
+	}
+	return preview.ValidationErrors
 }
 
 func skillDisplayMap(display skills.SkillDisplayMetadata) map[string]interface{} {

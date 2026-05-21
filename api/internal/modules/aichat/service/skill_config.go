@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -15,11 +16,17 @@ func (s *service) catalogSkillMetadata(ctx context.Context, organizationID uuid.
 	if s.skillRuntime == nil {
 		return []skills.SkillDiscoveryMetadata{}, nil
 	}
-	custom, err := s.customSkillCatalogEntries(ctx, organizationID)
+	systemMetadata, err := s.skillRuntime.ListSkills(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return s.skillRuntime.ListSkillsWithCustom(ctx, custom)
+	customMetadata, err := s.customSkillDiscoveryMetadata(ctx, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	metadata := append(systemMetadata, customMetadata...)
+	sort.Slice(metadata, func(i, j int) bool { return metadata[i].ID < metadata[j].ID })
+	return metadata, nil
 }
 
 func (s *service) customSkillCatalogEntries(ctx context.Context, organizationID uuid.UUID) ([]skills.CustomSkillCatalogEntry, error) {
@@ -41,6 +48,30 @@ func (s *service) customSkillCatalogEntries(ctx context.Context, organizationID 
 		})
 	}
 	return entries, nil
+}
+
+func (s *service) customSkillDiscoveryMetadata(ctx context.Context, organizationID uuid.UUID) ([]skills.SkillDiscoveryMetadata, error) {
+	if s.repos == nil || s.repos.CustomSkill == nil {
+		return []skills.SkillDiscoveryMetadata{}, nil
+	}
+	customSkills, err := s.repos.CustomSkill.ListManageableByOrganization(ctx, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	metadata := make([]skills.SkillDiscoveryMetadata, 0, len(customSkills))
+	for _, item := range customSkills {
+		if item == nil {
+			continue
+		}
+		entry := skills.CustomSkillCatalogEntry{SkillID: item.SkillID, Root: item.StoragePath}
+		loaded, err := s.skillRuntime.GetSkillMetadataWithCustom(ctx, item.SkillID, []skills.CustomSkillCatalogEntry{entry})
+		if err == nil {
+			metadata = append(metadata, *loaded)
+			continue
+		}
+		metadata = append(metadata, invalidCustomSkillMetadata(item, err))
+	}
+	return metadata, nil
 }
 
 func (s *service) effectiveOrganizationSkillIDs(ctx context.Context, organizationID uuid.UUID, catalog []skills.SkillDiscoveryMetadata) ([]string, error) {
@@ -127,6 +158,10 @@ func markEnabledSkills(metadata []skills.SkillDiscoveryMetadata, enabled []strin
 	enabledSet := stringSet(enabled)
 	for idx := range metadata {
 		id := strings.ToLower(strings.TrimSpace(metadata[idx].ID))
+		if metadata[idx].Status == skills.SkillStatusInvalid {
+			metadata[idx].Enabled = false
+			continue
+		}
 		_, metadata[idx].Enabled = enabledSet[id]
 	}
 }
@@ -151,6 +186,9 @@ func filterSkillsForModel(enabled []string, catalog []skills.SkillDiscoveryMetad
 		}
 		metadata, ok := metadataByID[id]
 		if !ok {
+			continue
+		}
+		if metadata.Status == skills.SkillStatusInvalid {
 			continue
 		}
 		runtimeType := strings.ToLower(strings.TrimSpace(metadata.RuntimeType))
@@ -183,12 +221,71 @@ func defaultEnabledSkillIDs(catalog []skills.SkillDiscoveryMetadata) []string {
 func catalogSkillIDSet(catalog []skills.SkillDiscoveryMetadata) map[string]struct{} {
 	out := make(map[string]struct{}, len(catalog))
 	for _, item := range catalog {
+		if item.Status == skills.SkillStatusInvalid {
+			continue
+		}
 		id := strings.ToLower(strings.TrimSpace(item.ID))
 		if id != "" {
 			out[id] = struct{}{}
 		}
 	}
 	return out
+}
+
+func invalidCustomSkillMetadata(item *aichatmodel.CustomSkill, loadErr error) skills.SkillDiscoveryMetadata {
+	validationError := strings.TrimSpace(item.ValidationError)
+	if validationError == "" && loadErr != nil {
+		validationError = loadErr.Error()
+	}
+	runtimeType := strings.TrimSpace(item.RuntimeType)
+	if runtimeType == "" {
+		runtimeType = skills.SkillRuntimeTypePrompt
+	}
+	return skills.SkillDiscoveryMetadata{
+		ID:               strings.ToLower(strings.TrimSpace(item.SkillID)),
+		Source:           skills.SkillSourceCustom,
+		Name:             strings.TrimSpace(item.Name),
+		Description:      strings.TrimSpace(item.Description),
+		WhenToUse:        strings.TrimSpace(item.WhenToUse),
+		Display:          customSkillDisplayFromRecord(item),
+		RuntimeType:      runtimeType,
+		Enabled:          false,
+		HasTools:         false,
+		HasReferences:    false,
+		HasScripts:       boolManifestValue(item.Manifest, "has_scripts"),
+		ScriptsSupported: false,
+		MaxCallsPerTurn:  0,
+		TimeoutSeconds:   0,
+		Status:           skills.SkillStatusInvalid,
+		ValidationError:  validationError,
+	}
+}
+
+func customSkillDisplayFromRecord(item *aichatmodel.CustomSkill) skills.SkillDisplayMetadata {
+	if item == nil || len(item.Display) == 0 {
+		return skills.SkillDisplayMetadata{}
+	}
+	data, err := json.Marshal(item.Display)
+	if err != nil {
+		return skills.SkillDisplayMetadata{}
+	}
+	var display skills.SkillDisplayMetadata
+	if err := json.Unmarshal(data, &display); err != nil {
+		return skills.SkillDisplayMetadata{}
+	}
+	return display
+}
+
+func boolManifestValue(manifest map[string]interface{}, key string) bool {
+	if manifest == nil {
+		return false
+	}
+	value, ok := manifest[key]
+	if !ok {
+		return false
+	}
+	typed, ok := value.(bool)
+	return ok && typed
 }
 
 func stringSet(values []string) map[string]struct{} {

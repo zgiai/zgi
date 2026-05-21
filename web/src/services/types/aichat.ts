@@ -14,6 +14,7 @@ export interface AIChatUsage {
 export type AIChatSkillMode = 'disabled' | 'auto' | 'required';
 export type AIChatSkillSource = 'system' | 'custom';
 export type AIChatSkillRuntimeType = 'tool' | 'prompt' | 'hybrid';
+export type AIChatSkillStatus = 'active' | 'invalid';
 export type AIChatSkillActivityStatus = 'loading' | 'loaded' | 'running' | 'success' | 'error';
 export type AIChatSkillInvocationKind =
   | 'metadata_exposed'
@@ -49,6 +50,8 @@ export interface AIChatSkillMetadata {
   scripts_supported: boolean;
   max_calls_per_turn: number;
   timeout_seconds: number;
+  status?: AIChatSkillStatus;
+  validation_error?: string;
 }
 
 export type AIChatSkillListResponse = ApiResponseData<AIChatSkillMetadata[]>;
@@ -66,6 +69,32 @@ export interface AIChatDeleteSkillResponseData {
 
 export type AIChatImportSkillResponse = ApiResponseData<AIChatSkillMetadata>;
 export type AIChatDeleteSkillResponse = ApiResponseData<AIChatDeleteSkillResponseData>;
+
+export interface AIChatImportSkillPreviewFile {
+  path: string;
+  size: number;
+}
+
+export interface AIChatImportSkillPreview {
+  import_id?: string;
+  expires_at?: number;
+  skill?: AIChatSkillMetadata;
+  file_count: number;
+  total_size: number;
+  files: AIChatImportSkillPreviewFile[];
+  references: string[];
+  has_scripts: boolean;
+  scripts_supported: boolean;
+  warnings: string[];
+  validation_errors: string[];
+  can_import: boolean;
+}
+
+export interface AIChatConfirmImportSkillRequest {
+  import_id: string;
+}
+
+export type AIChatImportSkillPreviewResponse = ApiResponseData<AIChatImportSkillPreview>;
 
 export interface AIChatSkillInvocation {
   kind?: AIChatSkillInvocationKind;

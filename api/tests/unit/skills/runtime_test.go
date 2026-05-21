@@ -104,6 +104,21 @@ func TestRuntime_ResolveEnabledSkills_AcceptsCRLFSkillMarkdown(t *testing.T) {
 	}
 }
 
+func TestRuntime_ResolveEnabledSkills_AcceptsBOMAndCRSkillMarkdown(t *testing.T) {
+	catalogDir := t.TempDir()
+	markdown := "\ufeff" + strings.ReplaceAll(testCalculatorSkillMarkdown(), "\n", "\r")
+	writeSkillMarkdown(t, catalogDir, "calculator", markdown)
+	runtime := newSkillRuntimeFromCatalog(t, catalogDir)
+
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{"calculator"})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	if len(resolved.Skills) != 1 || resolved.Skills[0].Metadata.ID != "calculator" {
+		t.Fatalf("resolved skills = %#v, want calculator", resolved.Skills)
+	}
+}
+
 func TestRuntime_GetSkillMetadata_ReturnsLightweightMetadata(t *testing.T) {
 	catalogDir := t.TempDir()
 	writeCalculatorSkill(t, catalogDir)

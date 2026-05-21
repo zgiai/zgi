@@ -44,7 +44,8 @@ func NewModuleWithDependencies(
 	}
 	if skillRuntime != nil {
 		if err := skillRuntime.ValidateCatalog(context.Background()); err != nil {
-			logger.Warn("failed to validate aichat skill catalog", err)
+			logger.Error("failed to validate aichat skill catalog; disabling aichat skill runtime", err)
+			skillRuntime = nil
 		}
 	}
 	svc := service.NewServiceWithSkillRuntime(

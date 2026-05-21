@@ -548,7 +548,9 @@ func buildSkillDocument(id string, root string, source string, frontmatter Skill
 }
 
 func parseSkillMarkdown(raw []byte) (SkillFrontmatter, string, error) {
-	text := strings.ReplaceAll(string(raw), "\r\n", "\n")
+	text := strings.TrimPrefix(string(raw), "\ufeff")
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
 	if !strings.HasPrefix(text, "---\n") {
 		return SkillFrontmatter{}, "", fmt.Errorf("missing yaml frontmatter")
 	}

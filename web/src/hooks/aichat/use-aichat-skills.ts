@@ -3,7 +3,7 @@ import { toast } from 'sonner';
 import { AICHAT_KEYS } from '@/hooks/query-keys';
 import { useT } from '@/i18n/translations';
 import { aichatService } from '@/services/aichat.service';
-import type { AIChatSkillOrganizationConfig } from '@/services/types/aichat';
+import type { AIChatConfirmImportSkillRequest, AIChatSkillOrganizationConfig } from '@/services/types/aichat';
 
 interface UpdateAIChatSkillConfigVariables {
   payload: AIChatSkillOrganizationConfig;
@@ -100,6 +100,57 @@ export function useImportAIChatSkill() {
 
   return useMutation({
     mutationFn: (file: File) => aichatService.importSkill(file),
+    onSuccess: async response => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: AICHAT_KEYS.skills() }),
+        queryClient.invalidateQueries({ queryKey: AICHAT_KEYS.skillConfig() }),
+      ]);
+      toast.success(
+        t('organization.aichatSkills.messages.imported', {
+          skill: response.data.name || response.data.skill_id,
+        })
+      );
+    },
+    onError: error => {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : t('organization.aichatSkills.messages.importFailed')
+      );
+    },
+  });
+}
+
+/**
+ * @hook usePreviewImportAIChatSkill
+ * @description Validate a custom AIChat Skill zip package before publishing it.
+ */
+export function usePreviewImportAIChatSkill() {
+  const t = useT('dashboard');
+
+  return useMutation({
+    mutationFn: (file: File) => aichatService.previewImportSkill(file),
+    onError: error => {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : t('organization.aichatSkills.messages.previewFailed')
+      );
+    },
+  });
+}
+
+/**
+ * @hook useConfirmImportAIChatSkill
+ * @description Publish a previously previewed custom organization AIChat Skill.
+ */
+export function useConfirmImportAIChatSkill() {
+  const queryClient = useQueryClient();
+  const t = useT('dashboard');
+
+  return useMutation({
+    mutationFn: (payload: AIChatConfirmImportSkillRequest) =>
+      aichatService.confirmImportSkill(payload),
     onSuccess: async response => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: AICHAT_KEYS.skills() }),

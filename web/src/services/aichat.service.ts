@@ -13,9 +13,11 @@ import type {
   AIChatChatRequest,
   AIChatConversation,
   AIChatConversationListResponse,
+  AIChatConfirmImportSkillRequest,
   AIChatCreateConversationRequest,
   AIChatDeleteSkillResponse,
   AIChatImportSkillResponse,
+  AIChatImportSkillPreviewResponse,
   AIChatMessage,
   AIChatMessageListResponse,
   AIChatRegenerateMessageRequest,
@@ -194,6 +196,22 @@ export const aichatService = {
     const formData = new FormData();
     formData.append('file', file);
     return http.upload<AIChatImportSkillResponse>(`${AICHAT_BASE_PATH}/skills/import`, formData);
+  },
+
+  previewImportSkill(file: File) {
+    const formData = new FormData();
+    formData.append('file', file);
+    return http.upload<AIChatImportSkillPreviewResponse>(
+      `${AICHAT_BASE_PATH}/skills/import/preview`,
+      formData
+    );
+  },
+
+  confirmImportSkill(payload: AIChatConfirmImportSkillRequest) {
+    return http.post<AIChatImportSkillResponse>(
+      `${AICHAT_BASE_PATH}/skills/import/confirm`,
+      payload
+    );
   },
 
   deleteSkill(id: string) {

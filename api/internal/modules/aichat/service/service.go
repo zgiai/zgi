@@ -77,6 +77,8 @@ type Service interface {
 	GetSkill(ctx context.Context, scope Scope, skillID string) (*skills.SkillDiscoveryMetadata, error)
 	GetSkillConfig(ctx context.Context, scope Scope) (*SkillConfig, error)
 	UpdateSkillConfig(ctx context.Context, scope Scope, req aichatdto.UpdateSkillConfigRequest) (*SkillConfig, error)
+	PreviewImportCustomSkill(ctx context.Context, scope Scope, fileHeader *multipart.FileHeader) (*SkillImportPreview, error)
+	ConfirmCustomSkillImport(ctx context.Context, scope Scope, importID string) (*skills.SkillDiscoveryMetadata, error)
 	ImportCustomSkill(ctx context.Context, scope Scope, fileHeader *multipart.FileHeader) (*skills.SkillDiscoveryMetadata, error)
 	DeleteSkill(ctx context.Context, scope Scope, skillID string) error
 	CleanupStaleActiveMessages(ctx context.Context) (int64, error)
@@ -84,17 +86,18 @@ type Service interface {
 }
 
 type service struct {
-	repos             *repository.Repositories
-	llmClient         llmclient.LLMClient
-	streams           *streamRegistry
-	events            *streamEventStore
-	titleGen          titlegen.Service
-	modelSpecResolver ModelSpecResolver
-	tokenEstimator    *tokenestimate.Estimator
-	fileService       FileLookupService
-	contentExtractor  ContentExtractionService
-	workspacePerms    WorkspacePermissionService
-	skillRuntime      *skills.Runtime
+	repos              *repository.Repositories
+	llmClient          llmclient.LLMClient
+	streams            *streamRegistry
+	events             *streamEventStore
+	titleGen           titlegen.Service
+	modelSpecResolver  ModelSpecResolver
+	tokenEstimator     *tokenestimate.Estimator
+	fileService        FileLookupService
+	contentExtractor   ContentExtractionService
+	workspacePerms     WorkspacePermissionService
+	skillRuntime       *skills.Runtime
+	customSkillStorage customSkillStorage
 }
 
 func NewService(repos *repository.Repositories, llmClient llmclient.LLMClient) Service {
@@ -137,17 +140,18 @@ func NewServiceWithSkillRuntime(
 	skillRuntime *skills.Runtime,
 ) Service {
 	return &service{
-		repos:             repos,
-		llmClient:         llmClient,
-		streams:           newStreamRegistry(),
-		events:            newStreamEventStore(redisutil.GetClient()),
-		titleGen:          titleGen,
-		modelSpecResolver: modelSpecResolver,
-		tokenEstimator:    newTokenEstimator(),
-		fileService:       fileService,
-		contentExtractor:  contentExtractor,
-		workspacePerms:    workspacePerms,
-		skillRuntime:      skillRuntime,
+		repos:              repos,
+		llmClient:          llmClient,
+		streams:            newStreamRegistry(),
+		events:             newStreamEventStore(redisutil.GetClient()),
+		titleGen:           titleGen,
+		modelSpecResolver:  modelSpecResolver,
+		tokenEstimator:     newTokenEstimator(),
+		fileService:        fileService,
+		contentExtractor:   contentExtractor,
+		workspacePerms:     workspacePerms,
+		skillRuntime:       skillRuntime,
+		customSkillStorage: newFilesystemCustomSkillStorage(customSkillStorageRoot),
 	}
 }
 
@@ -174,6 +178,26 @@ type StopConversationResult struct {
 
 type SkillConfig struct {
 	EnabledSkillIDs []string
+}
+
+type SkillImportPreviewFile struct {
+	Path string
+	Size int64
+}
+
+type SkillImportPreview struct {
+	ImportID         string
+	ExpiresAt        time.Time
+	Skill            *skills.SkillDiscoveryMetadata
+	FileCount        int
+	TotalSize        int64
+	Files            []SkillImportPreviewFile
+	References       []string
+	HasScripts       bool
+	ScriptsSupported bool
+	Warnings         []string
+	ValidationErrors []string
+	CanImport        bool
 }
 
 type chatRequestParts struct {
