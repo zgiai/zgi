@@ -10,8 +10,17 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { AgentType } from '@/services/types/agent';
 import { ICON_BG, ICON_TEXT } from '@/lib/config';
+import { Providers } from '@/providers';
 
 export default function WebappVersionLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <Providers>
+      <WebappVersionLayoutContent>{children}</WebappVersionLayoutContent>
+    </Providers>
+  );
+}
+
+function WebappVersionLayoutContent({ children }: { children: React.ReactNode }) {
   const { version_uuid } = useParams<{ version_uuid: string }>();
   useMaybeMigrateUser();
   const { data, isLoading } = useWebAppConfig(version_uuid);
