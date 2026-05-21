@@ -12,13 +12,11 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
-import { Icons } from '@/components/ui/icons';
-import {
-  useVerifyRegister,
-  useVerifyForgotPassword,
-  useForgotPassword,
-  useStartRegister,
-} from '@/hooks';
+import { Loader2 } from 'lucide-react';
+import { useForgotPassword } from '@/hooks/auth/use-forgot-password';
+import { useStartRegister } from '@/hooks/auth/use-start-register';
+import { useVerifyForgotPassword } from '@/hooks/auth/use-verify-forgot-password';
+import { useVerifyRegister } from '@/hooks/auth/use-verify-register';
 import { VerificationCodeInput } from '@/components/ui/verification-code-input';
 import type { ForgotPasswordInitResponse, RegisterInitResponse } from '@/services/types/auth';
 
@@ -340,7 +338,7 @@ export function VerificationForm({ className }: VerificationFormProps) {
               className="w-full"
               disabled={formLoading || verificationCode.length !== 6}
             >
-              {formLoading && <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />}
+              {formLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {t('verifyCodeButtonText')}
             </Button>
           </form>
@@ -357,7 +355,7 @@ export function VerificationForm({ className }: VerificationFormProps) {
               >
                 {isResending ? (
                   <>
-                    <Icons.Spinner className="mr-1 h-3 w-3 animate-spin" />
+                    <Loader2 className="mr-1 h-3 w-3 animate-spin" />
                     {t('resending')}
                   </>
                 ) : (

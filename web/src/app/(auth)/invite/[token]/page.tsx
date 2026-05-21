@@ -15,8 +15,8 @@ import { Button } from '@/components/ui/button';
 import { Input, PasswordInput } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Icons } from '@/components/ui/icons';
-import { useInviteInfo, useAcceptInvite } from '@/hooks';
+import { AlertCircle, Info, Loader2, Users } from 'lucide-react';
+import { useAcceptInvite, useInviteInfo } from '@/hooks/auth/use-invite';
 import { authenticationService } from '@/services/auth.service';
 import { useAuthStore } from '@/store/auth-store';
 import { clearSessionBoundClientState } from '@/lib/auth/client-state';
@@ -150,7 +150,7 @@ export default function InvitePage() {
   if (loading) {
     return (
       <div>
-        <Icons.Spinner className="h-8 w-8 animate-spin" />
+        <Loader2 className="h-8 w-8 animate-spin" />
       </div>
     );
   }
@@ -165,7 +165,7 @@ export default function InvitePage() {
           </CardHeader>
           <CardContent>
             <Alert variant="destructive">
-              <Icons.AlertCircle className="h-4 w-4" />
+              <AlertCircle className="h-4 w-4" />
               <AlertTitle>{t('common.error')}</AlertTitle>
               <AlertDescription>{error?.message || t('auth.invalidInviteDesc')}</AlertDescription>
             </Alert>
@@ -186,7 +186,7 @@ export default function InvitePage() {
       <Card className="w-full max-w-md">
         <CardHeader className="text-center space-y-2">
           <div className="mx-auto bg-primary/10 p-3 rounded-full w-fit mb-2">
-            <Icons.Users className="h-8 w-8 text-primary" />
+            <Users className="h-8 w-8 text-primary" />
           </div>
           <CardTitle className="text-2xl">{t('auth.joinOrganization')}</CardTitle>
           <p className="text-muted-foreground">
@@ -206,12 +206,12 @@ export default function InvitePage() {
             // User is already logged in, show direct accept button
             <div className="space-y-4">
               <Alert>
-                <Icons.Info className="h-4 w-4" />
+                <Info className="h-4 w-4" />
                 <AlertTitle>{t('auth.alreadyLoggedIn')}</AlertTitle>
                 <AlertDescription>{t('auth.clickToJoinOrganization')}</AlertDescription>
               </Alert>
               <Button onClick={handleDirectAccept} className="w-full" disabled={isFormLoading}>
-                {isFormLoading && <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />}
+                {isFormLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {t('auth.joinOrganization')}
               </Button>
             </div>
@@ -238,7 +238,7 @@ export default function InvitePage() {
                 />
               </div>
               <Button type="submit" className="w-full" disabled={isFormLoading}>
-                {isFormLoading && <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />}
+                {isFormLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {t('auth.continue')}
               </Button>
             </form>
@@ -279,7 +279,7 @@ export default function InvitePage() {
               </div>
 
               <Button type="submit" className="w-full" disabled={isFormLoading}>
-                {isFormLoading && <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />}
+                {isFormLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {t('auth.signIn')}
               </Button>
             </form>
