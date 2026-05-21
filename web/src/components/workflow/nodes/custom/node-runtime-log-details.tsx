@@ -8,6 +8,7 @@ import {
 } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n';
+import type { ScopedTranslations } from '@/i18n/translations';
 import { formatMs } from '@/utils/format';
 import WorkflowRunNodesList from '../../ui/workflow-run-nodes-list';
 import type { RuntimeLogItem, RunStatus } from '../../store/slices/run-status';
@@ -57,11 +58,14 @@ const getLatestRuntimeItem = (items: RuntimeLogItem[]): RuntimeLogItem | null =>
   });
 };
 
-function getStatusMeta(status: RunStatus, t: ReturnType<typeof useT>): RuntimeStatusMeta {
+function getStatusMeta(
+  status: RunStatus,
+  t: ScopedTranslations<'agents'>
+): RuntimeStatusMeta {
   switch (status) {
     case 'running':
       return {
-        label: t('agents.workflow.running'),
+        label: t('workflow.running'),
         dotClassName: 'bg-sky-500 shadow-[0_0_0_3px_rgba(14,165,233,0.12)]',
         textClassName: 'text-sky-700 dark:text-sky-300',
         barClassName: 'border-sky-200/80 bg-sky-50/80 dark:border-sky-500/20 dark:bg-sky-500/10',
@@ -69,7 +73,7 @@ function getStatusMeta(status: RunStatus, t: ReturnType<typeof useT>): RuntimeSt
       };
     case 'failed':
       return {
-        label: t('agents.workflow.failed'),
+        label: t('workflow.failed'),
         dotClassName: 'bg-rose-500 shadow-[0_0_0_3px_rgba(244,63,94,0.12)]',
         textClassName: 'text-rose-700 dark:text-rose-300',
         barClassName:
@@ -78,7 +82,7 @@ function getStatusMeta(status: RunStatus, t: ReturnType<typeof useT>): RuntimeSt
       };
     case 'paused':
       return {
-        label: t('agents.workflow.paused'),
+        label: t('workflow.paused'),
         dotClassName: 'bg-amber-500 shadow-[0_0_0_3px_rgba(245,158,11,0.12)]',
         textClassName: 'text-amber-700 dark:text-amber-300',
         barClassName:
@@ -87,7 +91,7 @@ function getStatusMeta(status: RunStatus, t: ReturnType<typeof useT>): RuntimeSt
       };
     case 'stopped':
       return {
-        label: t('agents.workflow.stopped'),
+        label: t('workflow.stopped'),
         dotClassName: 'bg-slate-400 shadow-[0_0_0_3px_rgba(100,116,139,0.12)]',
         textClassName: 'text-slate-600 dark:text-slate-300',
         barClassName:
@@ -98,7 +102,7 @@ function getStatusMeta(status: RunStatus, t: ReturnType<typeof useT>): RuntimeSt
     case 'idle':
     default:
       return {
-        label: t('agents.workflow.succeeded'),
+        label: t('workflow.succeeded'),
         dotClassName: 'bg-emerald-500 shadow-[0_0_0_3px_rgba(16,185,129,0.12)]',
         textClassName: 'text-emerald-700 dark:text-emerald-300',
         barClassName:
@@ -114,7 +118,7 @@ const NodeRuntimeLogDetails: React.FC<NodeRuntimeLogDetailsProps> = ({
   open,
   onOpenChange,
 }) => {
-  const t = useT();
+  const t = useT('agents');
   const [shouldRenderDetails, setShouldRenderDetails] = React.useState(open);
   const [detailsVisible, setDetailsVisible] = React.useState(open);
 
@@ -139,9 +143,9 @@ const NodeRuntimeLogDetails: React.FC<NodeRuntimeLogDetailsProps> = ({
   const meta = getStatusMeta(latest.status, t);
   const duration = latest.status === 'running' ? null : formatMs(latest.elapsedTime ?? 0);
   const actionLabel = open
-    ? t('agents.workflow.runtimeLog.closeNodeRuntimeLog')
-    : t('agents.workflow.runtimeLog.openNodeRuntimeLog');
-  const tooltipLabel = t('agents.workflow.runtimeLog.openNodeRuntimeLog');
+    ? t('workflow.runtimeLog.closeNodeRuntimeLog')
+    : t('workflow.runtimeLog.openNodeRuntimeLog');
+  const tooltipLabel = t('workflow.runtimeLog.openNodeRuntimeLog');
 
   return (
     <>
@@ -180,7 +184,7 @@ const NodeRuntimeLogDetails: React.FC<NodeRuntimeLogDetailsProps> = ({
             {meta.label}
           </span>
           <span className="ml-auto shrink-0 tabular-nums text-muted-foreground/70">
-            {duration ?? t('agents.workflow.runtimeLog.runningNow')}
+            {duration ?? t('workflow.runtimeLog.runningNow')}
           </span>
           <TooltipProvider>
             <Tooltip>
