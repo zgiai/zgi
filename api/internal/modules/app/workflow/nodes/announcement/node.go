@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	announcementruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/announcement"
@@ -18,6 +19,8 @@ const (
 	outputContent        = "content"
 	outputExpirationTime = "expiration_time"
 	outputURL            = "url"
+
+	expirationTimeOutputLayout = "2006-01-02 15:04:05"
 )
 
 func New(
@@ -127,10 +130,14 @@ func (n *Node) executeRun(ctx context.Context) (*shared.NodeRunResult, error) {
 	}
 
 	payload := runtimeAnnouncement.Payload
+	expiration := time.Unix(payload.ExpirationAt, 0)
+	if runtimeAnnouncement.Announcement != nil {
+		expiration = runtimeAnnouncement.Announcement.ExpirationTime
+	}
 	outputs := map[string]any{
 		outputTitle:          payload.NodeTitle,
 		outputContent:        payload.Content,
-		outputExpirationTime: payload.ExpirationAt,
+		outputExpirationTime: n.formatExpirationTimeForOutput(ctx, expiration),
 		outputURL:            payload.URL,
 	}
 	return &shared.NodeRunResult{
@@ -164,4 +171,54 @@ func parseNodeDataFromConfig(config map[string]any) (NodeData, string, error) {
 		return NodeData{}, "", fmt.Errorf("unmarshal announcement node data: %w", err)
 	}
 	return nodeData, nodeID, nil
+}
+
+func (n *Node) formatExpirationTimeForOutput(ctx context.Context, expiration time.Time) string {
+	location, timezone := n.accountTimezoneLocation(ctx)
+	if location == nil {
+		location = time.Local
+		timezone = location.String()
+	}
+	return formatExpirationTimeForOutput(expiration, location, timezone)
+}
+
+func (n *Node) accountTimezoneLocation(ctx context.Context) (*time.Location, string) {
+	if n.UserFrom != string(entities.UserFromAccount) || strings.TrimSpace(n.UserID) == "" {
+		return nil, ""
+	}
+
+	var account struct {
+		Timezone *string `gorm:"column:timezone"`
+	}
+	err := database.GetDB().
+		WithContext(ctx).
+		Table("accounts").
+		Select("timezone").
+		Where("id = ?", n.UserID).
+		Take(&account).
+		Error
+	if err != nil || account.Timezone == nil {
+		return nil, ""
+	}
+
+	timezone := strings.TrimSpace(*account.Timezone)
+	if timezone == "" {
+		return nil, ""
+	}
+	location, err := time.LoadLocation(timezone)
+	if err != nil {
+		return nil, ""
+	}
+	return location, timezone
+}
+
+func formatExpirationTimeForOutput(expiration time.Time, location *time.Location, timezone string) string {
+	if location == nil {
+		location = time.Local
+	}
+	timezone = strings.TrimSpace(timezone)
+	if timezone == "" {
+		timezone = location.String()
+	}
+	return fmt.Sprintf("%s %s", expiration.In(location).Format(expirationTimeOutputLayout), timezone)
 }

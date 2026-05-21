@@ -588,7 +588,7 @@ export function collectForNode(node: WorkflowNode, agentType: AgentType): Upstre
         },
         {
           key: 'expiration_time',
-          type: 'number',
+          type: 'string',
           descriptionKey: 'outputDescriptions.announcement.expiration_time',
         },
         {

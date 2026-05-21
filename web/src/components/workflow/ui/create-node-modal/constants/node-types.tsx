@@ -113,6 +113,15 @@ export function useNodeTypesI18n(): NodeType[] {
           ]
         : []),
       {
+        type: NODE_TYPES.ANNOUNCEMENT,
+        title: t('catalog.announcement.title'),
+        description: t('catalog.announcement.description'),
+        icon: React.createElement(NODE_THEMES.announcement.icon, { size: iconSize }),
+        bgColor: NODE_THEMES.announcement.classNames.iconBg ?? 'bg-slate-500',
+        io: true,
+        group: 'tool',
+      },
+      {
         type: NODE_TYPES.CALL_DATABASE,
         title: t('catalog.call-database.title'),
         description: t('catalog.call-database.description'),
@@ -154,15 +163,6 @@ export function useNodeTypesI18n(): NodeType[] {
         description: t('catalog.approval.description'),
         icon: React.createElement(NODE_THEMES.approval.icon, { size: iconSize }),
         bgColor: NODE_THEMES.approval.classNames.iconBg ?? 'bg-amber-500',
-        io: true,
-        group: 'flow',
-      },
-      {
-        type: NODE_TYPES.ANNOUNCEMENT,
-        title: t('catalog.announcement.title'),
-        description: t('catalog.announcement.description'),
-        icon: React.createElement(NODE_THEMES.announcement.icon, { size: iconSize }),
-        bgColor: NODE_THEMES.announcement.classNames.iconBg ?? 'bg-yellow-500',
         io: true,
         group: 'flow',
       },

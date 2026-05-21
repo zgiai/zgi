@@ -204,7 +204,7 @@ const messages = {
     announcement: {
       title: 'Announcement title rendered after variables resolve',
       content: 'Announcement content rendered after variables resolve',
-      expiration_time: 'Announcement expiration time as Unix seconds',
+      expiration_time: 'Announcement expiration time formatted for display',
       url: 'Public announcement URL',
     },
     questionAnswer: {

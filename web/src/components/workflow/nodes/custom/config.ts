@@ -451,9 +451,9 @@ export const NODE_THEMES: Record<WorkflowNodeData['type'] | 'default', NodeTheme
     height: 176,
     classNames: {
       ...COMMON_LOGIC_CLASSES,
-      iconBg: NODE_ICON_TONES.logic,
+      iconBg: NODE_ICON_TONES.extension,
     },
-    miniMapColor: '#eab308',
+    miniMapColor: '#64748b',
     handles: 'both',
     resizable: false,
     autoHeight: true,

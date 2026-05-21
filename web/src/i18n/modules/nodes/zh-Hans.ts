@@ -202,7 +202,7 @@ const messages: NodesMessages = {
     announcement: {
       title: '变量解析后的公告标题',
       content: '变量解析后的公告内容',
-      expiration_time: '公告过期时间（Unix 秒）',
+      expiration_time: '可直接展示的公告过期时间',
       url: '公告公开链接',
     },
     questionAnswer: {
