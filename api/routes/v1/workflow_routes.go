@@ -139,6 +139,7 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, accountService interfaces.A
 	approvalRoutes.POST("/forms/:token/submit", approvalHandler.SubmitForm)
 
 	announcementService := announcementruntime.NewService(db)
+	registerAnnouncementScheduledTasks(scheduler, announcementService)
 	announcementHandler := announcementruntime.NewHandler(announcementService)
 	announcementRoutes := router.Group("/announcements")
 	announcementRoutes.Use(middleware.SetupRequired())

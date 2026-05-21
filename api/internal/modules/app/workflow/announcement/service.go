@@ -29,12 +29,9 @@ func (s *Service) CreateOrGetRuntimeAnnouncement(ctx context.Context, params Cre
 		return nil, err
 	}
 
-	var existing Announcement
-	err := s.db.WithContext(ctx).
-		Where("tenant_id = ? AND workflow_run_id = ? AND node_id = ?", params.TenantID, params.WorkflowRunID, params.NodeID).
-		First(&existing).Error
+	existing, err := s.loadRuntimeAnnouncement(ctx, params.TenantID, params.WorkflowRunID, params.NodeID)
 	if err == nil {
-		return s.runtimeAnnouncementPayload(&existing), nil
+		return s.runtimeAnnouncementPayload(existing), nil
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, fmt.Errorf("load announcement: %w", err)
@@ -44,10 +41,11 @@ func (s *Service) CreateOrGetRuntimeAnnouncement(ctx context.Context, params Cre
 	if err != nil {
 		return nil, err
 	}
-	if err := s.createRuntimeAnnouncementWithTokenRetry(ctx, announcement); err != nil {
+	created, err := s.createRuntimeAnnouncementWithTokenRetry(ctx, announcement)
+	if err != nil {
 		return nil, err
 	}
-	return s.runtimeAnnouncementPayload(announcement), nil
+	return s.runtimeAnnouncementPayload(created), nil
 }
 
 func (s *Service) GetByToken(ctx context.Context, token string) (*AnnouncementPayload, error) {
@@ -73,25 +71,57 @@ func (s *Service) GetByToken(ctx context.Context, token string) (*AnnouncementPa
 	return &payload, nil
 }
 
-func (s *Service) createRuntimeAnnouncementWithTokenRetry(ctx context.Context, announcement *Announcement) error {
+func (s *Service) createRuntimeAnnouncementWithTokenRetry(ctx context.Context, announcement *Announcement) (*Announcement, error) {
 	var createErr error
 	for attempt := 0; attempt < tokenCreateMaxAttempts; attempt++ {
 		if attempt > 0 {
 			token, err := newAnnouncementToken()
 			if err != nil {
-				return err
+				return nil, err
 			}
 			announcement.AccessToken = token
 		}
 		createErr = s.db.WithContext(ctx).Create(announcement).Error
 		if createErr == nil {
-			return nil
+			return announcement, nil
+		}
+		if isAnnouncementRunNodeConflict(createErr) {
+			existing, err := s.loadRuntimeAnnouncement(ctx, announcement.TenantID, announcement.WorkflowRunID, announcement.NodeID)
+			if err != nil {
+				return nil, fmt.Errorf("load announcement after run/node conflict: %w", err)
+			}
+			return existing, nil
 		}
 		if !isAnnouncementTokenConflict(createErr) {
-			return fmt.Errorf("create announcement: %w", createErr)
+			return nil, fmt.Errorf("create announcement: %w", createErr)
 		}
 	}
-	return fmt.Errorf("create announcement after token retries: %w", createErr)
+	return nil, fmt.Errorf("create announcement after token retries: %w", createErr)
+}
+
+func (s *Service) loadRuntimeAnnouncement(ctx context.Context, tenantID, workflowRunID, nodeID string) (*Announcement, error) {
+	var existing Announcement
+	err := s.db.WithContext(ctx).
+		Where("tenant_id = ? AND workflow_run_id = ? AND node_id = ?", tenantID, workflowRunID, nodeID).
+		First(&existing).Error
+	if err != nil {
+		return nil, err
+	}
+	return &existing, nil
+}
+
+func (s *Service) CleanupExpiredAnnouncements(ctx context.Context, before time.Time) (int64, error) {
+	if s == nil || s.db == nil {
+		return 0, fmt.Errorf("announcement service is not initialized")
+	}
+	if before.IsZero() {
+		before = time.Now()
+	}
+	result := s.db.WithContext(ctx).Where("expiration_time <= ?", before).Delete(&Announcement{})
+	if result.Error != nil {
+		return 0, fmt.Errorf("cleanup expired announcements: %w", result.Error)
+	}
+	return result.RowsAffected, nil
 }
 
 func (s *Service) runtimeAnnouncementPayload(announcement *Announcement) *RuntimeAnnouncement {

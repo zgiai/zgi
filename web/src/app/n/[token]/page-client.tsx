@@ -56,6 +56,7 @@ export function AnnouncementPageClient({ token }: AnnouncementPageClientProps) {
               <MarkdownViewer
                 content={announcement.content || ''}
                 className="md-viewer max-w-full break-words [overflow-wrap:anywhere]"
+                allowRawHtml={false}
               />
             </div>
           </div>

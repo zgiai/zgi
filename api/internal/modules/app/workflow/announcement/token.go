@@ -22,12 +22,30 @@ func isAnnouncementTokenConflict(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, gorm.ErrDuplicatedKey) {
-		return true
-	}
 	message := strings.ToLower(err.Error())
 	if !strings.Contains(message, "access_token") {
 		return false
+	}
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return true
+	}
+	return strings.Contains(message, "unique") ||
+		strings.Contains(message, "duplicate") ||
+		strings.Contains(message, "duplicated")
+}
+
+func isAnnouncementRunNodeConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	if !strings.Contains(message, "idx_announcements_run_node") &&
+		!strings.Contains(message, "workflow_run_id") &&
+		!strings.Contains(message, "node_id") {
+		return false
+	}
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return true
 	}
 	return strings.Contains(message, "unique") ||
 		strings.Contains(message, "duplicate") ||
