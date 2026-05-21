@@ -67,6 +67,7 @@ interface RuntimeLogPreviewRow {
   label: string;
   value: unknown;
   tone?: 'input' | 'output' | 'meta' | 'warning';
+  maxRecordEntries?: number;
 }
 
 type RuntimeLabel = (key: string, params?: Record<string, string | number>) => string;
@@ -422,6 +423,25 @@ const getCanvasPreviewRows = (
         'output'
       );
       break;
+    case 'announcement':
+      {
+        const announcementOutput = pickRecordKeys(item.nodeOutput, [
+          'title',
+          'content',
+          'expiration_time',
+          'url',
+          'token',
+        ]);
+        if (announcementOutput) {
+          rows.push({
+            label: runtimeLabel('output'),
+            value: announcementOutput,
+            tone: 'output',
+            maxRecordEntries: 5,
+          });
+        }
+      }
+      break;
     default:
       push(runtimeLabel('input'), item.nodeInput, 'input');
       push(runtimeLabel('output'), item.nodeOutput, 'output');
@@ -443,8 +463,9 @@ const RuntimeValuePreview: React.FC<{
   value: unknown;
   lines?: number;
   expandable?: boolean;
+  maxRecordEntries?: number;
   runtimeLabel: RuntimeLabel;
-}> = ({ value, lines = 2, expandable = false, runtimeLabel }) => {
+}> = ({ value, lines = 2, expandable = false, maxRecordEntries = 3, runtimeLabel }) => {
   const [expanded, setExpanded] = useState(false);
   const textValue =
     typeof value === 'string'
@@ -456,7 +477,7 @@ const RuntimeValuePreview: React.FC<{
   const canExpand = Boolean(expandable && normalizedTextValue && normalizedTextValue.length > 90);
 
   if (isRecord(value)) {
-    const entries = getReadableRecordEntries(value, runtimeLabel).slice(0, 3);
+    const entries = getReadableRecordEntries(value, runtimeLabel).slice(0, maxRecordEntries);
     return (
       <div className="grid gap-1">
         {entries.map(([key, label, entryValue]) => (
@@ -862,6 +883,7 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                           : 2
                       }
                       expandable
+                      maxRecordEntries={row.maxRecordEntries}
                       runtimeLabel={runtimeLabel}
                     />
                   </div>
