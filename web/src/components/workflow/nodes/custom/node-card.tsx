@@ -29,6 +29,8 @@ interface NodeCardProps {
   onClick?: () => void;
   children?: React.ReactNode; // Main content inside CardContent
   after?: React.ReactNode; // Content rendered after the Card but inside wrapper
+  runtimeFooter?: React.ReactNode; // Runtime status strip inside the node chrome
+  runtimeDetails?: React.ReactNode; // Runtime details overlay attached to the node
   // Enable bottom-right L-shaped resize handle
   showResizeHandle?: boolean;
 }
@@ -50,6 +52,8 @@ const NodeCard: React.FC<NodeCardProps> = ({
   onClick,
   children,
   after,
+  runtimeFooter,
+  runtimeDetails,
   showResizeHandle = false,
 }) => {
   return (
@@ -125,8 +129,11 @@ const NodeCard: React.FC<NodeCardProps> = ({
 
           {/* Body area - padding/layout provided via contentClassName (from theme) */}
           {children && <div className={cn('grow relative', contentClassName)}>{children}</div>}
+          {runtimeFooter}
         </CardContent>
       </Card>
+
+      {runtimeDetails}
 
       {showResizeHandle && <ManualResizeHandle minWidth={300} minHeight={200} />}
 
