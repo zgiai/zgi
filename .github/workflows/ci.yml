@@ -16,7 +16,7 @@ concurrency:
 jobs:
   hygiene:
     name: Open source hygiene
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, us, docker]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -26,7 +26,7 @@ jobs:
 
   api:
     name: API targeted tests
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, us, docker]
     services:
       postgres:
         image: postgres:16-alpine
@@ -75,7 +75,7 @@ jobs:
 
   runner:
     name: Runner targeted tests
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, us, docker]
     defaults:
       run:
         working-directory: runner
@@ -94,7 +94,7 @@ jobs:
 
   web:
     name: Web type check
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, us, docker]
     defaults:
       run:
         working-directory: web

@@ -16,7 +16,7 @@ concurrency:
 jobs:
   sync:
     name: Sync dev to deploy-dev
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, us, docker]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
