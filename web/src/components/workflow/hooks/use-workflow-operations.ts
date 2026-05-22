@@ -451,11 +451,18 @@ const useWorkflowOperations = () => {
                 group_kind: 'current_user' as const,
               },
             ]
-          : []),
+          : [
+              {
+                id: 'task-input',
+                role: 'user' as const,
+                text: '',
+                group_id: 'task-input',
+              },
+            ]),
       ];
       const promptLayoutItems = isConversational
         ? [{ type: 'group' as const, group_id: 'current-user' }]
-        : [];
+        : [{ type: 'group' as const, group_id: 'task-input' }];
 
       const baseData = {
         ...DEFAULT_LLM_NODE_DATA,
