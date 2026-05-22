@@ -178,9 +178,10 @@ workflow:
               subject: 'Workflow follow-up required: {{#parameter_node.follow_up_reason#}}'
               body: 'Please review the workflow output and follow up on: {{#parameter_node.follow_up_reason#}}'
               body_type: text/plain
-              template: notification_sms
-              notification_title: Follow-up required
-              link_code: "{{#sys.workflow_run_id#}}"
+              template: pending_action_notification
+              template_params:
+                notification_title: Follow-up required
+                link_code: "{{#sys.workflow_run_id#}}"
             raw_config:
         isInLoop: false
         isInIteration: false

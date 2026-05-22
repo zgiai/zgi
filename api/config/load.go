@@ -946,7 +946,8 @@ func loadAuthConfig(cfg *Config, source *envSource) {
 			Scopes:       source.scopeList([]string{"openid", "profile", "email"}, envCasdoorScopes),
 		},
 		SSO: SSOConfig{
-			FrontendCallbackURL: source.string("", envSSOFrontendCallbackURL),
+			FrontendCallbackURL:  source.string("", envSSOFrontendCallbackURL),
+			FrontendCallbackURLs: source.prefixedStrings(envSSOFrontendCallbackURLPrefix),
 		},
 	}
 }

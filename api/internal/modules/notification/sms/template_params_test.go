@@ -7,23 +7,32 @@ import (
 
 func TestAliyunPayloadUsesTemplateParams(t *testing.T) {
 	provider := NewAliyunProvider(AliyunConfig{
-		SignName:     "ZGI",
-		TemplateCode: "SMS_123",
-		ParamMode:    ParamModeMap,
-		ParamMap: map[string]string{
-			TemplateParamNotificationTitle: "title",
-			TemplateParamLinkSuffix:        "link",
-		},
+		SignName: "ZGI",
 	})
+	template := TemplateConfig{
+		Key: TemplatePendingActionNotification,
+		Params: []TemplateParamConfig{
+			{Key: TemplateParamNotificationTitle, Required: boolPtr(true)},
+			{Key: TemplateParamLinkCode, Required: boolPtr(true), Pattern: linkCodePattern.String()},
+		},
+		Aliyun: AliyunTemplateConfig{
+			TemplateCode: "SMS_123",
+			ParamMode:    ParamModeMap,
+			ParamMap: map[string]string{
+				TemplateParamNotificationTitle: "title",
+				TemplateParamLinkCode:          "link",
+			},
+		},
+	}
 
 	payload, err := provider.BuildPayload(Request{
 		Phone:    "13800138000",
 		Template: TemplatePendingActionNotification,
 		TemplateParams: map[string]string{
-			TemplateParamNotificationTitle: "材料待人工智能",
-			TemplateParamLinkSuffix:        "/a/AbC12345",
+			TemplateParamNotificationTitle: "title",
+			TemplateParamLinkCode:          "AbC12345",
 		},
-	})
+	}, template)
 	if err != nil {
 		t.Fatalf("BuildPayload returned error: %v", err)
 	}
@@ -32,40 +41,49 @@ func TestAliyunPayloadUsesTemplateParams(t *testing.T) {
 	if err := json.Unmarshal([]byte(payload.TemplateParam), &params); err != nil {
 		t.Fatalf("decode template params: %v", err)
 	}
-	if params["title"] != "材料待人工智能" {
+	if params["title"] != "title" {
 		t.Fatalf("title param = %q", params["title"])
 	}
-	if params["link"] != "/a/AbC12345" {
+	if params["link"] != "AbC12345" {
 		t.Fatalf("link param = %q", params["link"])
 	}
 }
 
-func TestValidateNotificationTemplateParamsRejectsFullURL(t *testing.T) {
-	err := ValidateNotificationTemplateParams(TemplatePendingActionNotification, map[string]string{
+func TestValidateTemplateParamsRejectsInvalidLinkCode(t *testing.T) {
+	err := ValidateTemplateParams(pendingActionTemplateForTest(), map[string]string{
 		TemplateParamNotificationTitle: "待处理任务",
-		TemplateParamLinkSuffix:        "https://notice.example.com/a/AbC12345",
+		TemplateParamLinkCode:          "/a/AbC12345",
 	})
 	if err == nil {
-		t.Fatal("expected full URL link_suffix to be rejected")
+		t.Fatal("expected non-code link_code to be rejected")
 	}
 }
 
-func TestValidateNotificationTemplateParamsAllowsPathSuffix(t *testing.T) {
-	err := ValidateNotificationTemplateParams(TemplatePendingActionNotification, map[string]string{
+func TestValidateTemplateParamsAllowsLinkCode(t *testing.T) {
+	err := ValidateTemplateParams(pendingActionTemplateForTest(), map[string]string{
 		TemplateParamNotificationTitle: "待处理任务",
-		TemplateParamLinkSuffix:        "/a/AbC12345",
+		TemplateParamLinkCode:          "AbC12345",
 	})
 	if err != nil {
-		t.Fatalf("expected path suffix to be valid: %v", err)
+		t.Fatalf("expected link code to be valid: %v", err)
 	}
 }
 
-func TestValidateNotificationTemplateParamsRequiresLinkSuffix(t *testing.T) {
-	err := ValidateNotificationTemplateParams(TemplatePendingActionNotification, map[string]string{
+func TestValidateTemplateParamsRequiresLinkCode(t *testing.T) {
+	err := ValidateTemplateParams(pendingActionTemplateForTest(), map[string]string{
 		TemplateParamNotificationTitle: "待处理任务",
-		"link_code":                    "/a/AbC12345",
 	})
 	if err == nil {
-		t.Fatal("expected link_code-only params to be rejected")
+		t.Fatal("expected missing link_code to be rejected")
+	}
+}
+
+func pendingActionTemplateForTest() TemplateConfig {
+	return TemplateConfig{
+		Key: TemplatePendingActionNotification,
+		Params: []TemplateParamConfig{
+			{Key: TemplateParamNotificationTitle, Required: boolPtr(true), MaxLength: maxNotificationTitleRunes},
+			{Key: TemplateParamLinkCode, Required: boolPtr(true), Pattern: linkCodePattern.String()},
+		},
 	}
 }

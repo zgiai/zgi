@@ -267,6 +267,7 @@ export interface HandleOption {
     | 'image-gen'
     | 'create-scheduled-task'
     | 'notification-sms'
+    | 'announcement'
     | 'question-answer'
     | 'loop';
   // Optional style to allow fixed visual positioning (e.g., top offset)
@@ -299,7 +300,8 @@ export const HandleConfigs: Record<
   | 'jsonParser'
   | 'imageGen'
   | 'createScheduledTask'
-  | 'notificationSms',
+  | 'notificationSms'
+  | 'announcement',
   HandleConfig
 > = {
   start: {
@@ -422,6 +424,22 @@ export const HandleConfigs: Record<
       position: Position.Right,
       id: 'source',
       nodeType: 'notification-sms',
+      style: { top: 20, right: 0 },
+    },
+  },
+  announcement: {
+    target: {
+      type: 'target',
+      position: Position.Left,
+      id: 'target',
+      nodeType: 'announcement',
+      style: { top: 20, right: 0 },
+    },
+    source: {
+      type: 'source',
+      position: Position.Right,
+      id: 'source',
+      nodeType: 'announcement',
       style: { top: 20, right: 0 },
     },
   },

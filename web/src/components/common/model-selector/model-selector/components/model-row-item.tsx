@@ -4,7 +4,7 @@ import { memo } from 'react';
 import { Info } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { SelectItem } from '@/components/ui/select';
-import { ModelIcon } from '@lobehub/icons';
+import { ModelIcon } from 'modelicons';
 import type { ModelItem } from '@/services/types/model';
 import type { FeatureLabels } from '../types';
 import { serializeValue } from '../utils';

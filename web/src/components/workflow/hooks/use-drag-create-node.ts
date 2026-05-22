@@ -47,6 +47,7 @@ export function useDragCreateNode({ isReadOnly, viewViewport }: UseDragCreateNod
     addJsonParserNode,
     addImageGenNode,
     addApprovalNode,
+    addAnnouncementNode,
     addQuestionAnswerNode,
     addLoopNode,
   } = useWorkflowOperations();
@@ -75,6 +76,7 @@ export function useDragCreateNode({ isReadOnly, viewViewport }: UseDragCreateNod
         addJsonParserNode,
         addImageGenNode,
         addApprovalNode,
+        addAnnouncementNode,
         addQuestionAnswerNode,
         addLoopNode,
       }),
@@ -100,6 +102,7 @@ export function useDragCreateNode({ isReadOnly, viewViewport }: UseDragCreateNod
       addJsonParserNode,
       addImageGenNode,
       addApprovalNode,
+      addAnnouncementNode,
       addQuestionAnswerNode,
       addLoopNode,
     ]

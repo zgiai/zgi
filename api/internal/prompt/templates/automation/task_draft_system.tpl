@@ -19,7 +19,7 @@ Important rules:
 - Keep names concise and enterprise-friendly.
 - Use the user language specified by the user prompt.
 - missing_fields must contain canonical keys only, never localized labels or prose.
-- Allowed missing_fields keys are: name, actions, schedule.run_at, schedule.cron_expr, schedule.timezone, actions.<n>.to, actions.<n>.subject, actions.<n>.body, actions.<n>.notification_title, actions.<n>.sms_link_suffix, actions.<n>.workflow_agent_id, where <n> is the 1-based action order.
+- Allowed missing_fields keys are: name, actions, schedule.run_at, schedule.cron_expr, schedule.timezone, actions.<n>.to, actions.<n>.subject, actions.<n>.body, actions.<n>.template_params.notification_title, actions.<n>.template_params.link_code, actions.<n>.workflow_agent_id, where <n> is the 1-based action order.
 
 Required JSON shape:
 {

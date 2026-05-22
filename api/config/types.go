@@ -346,7 +346,8 @@ type CasdoorConfig struct {
 }
 
 type SSOConfig struct {
-	FrontendCallbackURL string `json:"frontend_callback_url"`
+	FrontendCallbackURL  string            `json:"frontend_callback_url"`
+	FrontendCallbackURLs map[string]string `json:"frontend_callback_urls"`
 }
 
 type KnowledgeConfig struct {

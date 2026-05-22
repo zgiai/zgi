@@ -23,7 +23,7 @@ const messages = {
     workspaces: 'Workspace Management',
     contacts: 'Contacts',
     permissions: 'Permissions',
-    aichatSkills: 'General Chat Skills',
+    aichatSkills: 'Skill Management',
     modelSettings: 'Default Model Management',
     marketplace: 'Marketplace',
   },
@@ -495,13 +495,13 @@ const messages = {
   },
   organization: {
     aichatSkills: {
-      pageTitle: 'General Chat Skills',
+      pageTitle: 'Organization Skills',
       pageSubtitle:
-        'Manage which AIChat Skills are available to users in the current organization.',
-      title: 'General Chat Skills',
-      description: 'Choose which Skills are enabled for AIChat across the current organization.',
-      enabledCount: '{count} enabled',
-      sectionCount: '{count} total',
+        'Skills are AI capability packages an organization can enable. The model can read instructions, references, or call tools when needed.',
+      title: 'Organization Skills',
+      description: 'Choose which Skills are available to AIChat across the current organization.',
+      enabledCount: '{count} Skills enabled',
+      sectionCount: '{count} Skills',
       empty: 'No Skills are available.',
       loadFailed: 'Failed to load AIChat Skills.',
       toggleAria: 'Toggle {skill}',
@@ -521,21 +521,21 @@ const messages = {
       sections: {
         system: {
           title: 'System Skills',
-          description: 'Provided and maintained by the platform, ready to enable for general chat.',
+          description: 'Provided and maintained by the platform, ready to enable for AIChat.',
           empty: 'No built-in Skills are available.',
         },
         custom: {
-          title: 'User Custom Skills',
+          title: 'Custom Skills',
           description:
-            'Upload organization-owned Skill packages, then review and enable them for general chat.',
+            'Upload organization-owned Skill packages, then review and enable them for AIChat.',
           emptyTitle: 'No custom Skills yet',
           emptyDescription:
             'Upload a zip Skill package here. Imported Skills stay disabled until you enable them.',
         },
       },
       runtime: {
-        tool: 'Tool',
-        prompt: 'Prompt',
+        tool: 'Tool-based',
+        prompt: 'Prompt-based',
         hybrid: 'Hybrid',
       },
       source: {
@@ -545,6 +545,7 @@ const messages = {
       status: {
         enabled: 'Enabled',
         disabled: 'Disabled',
+        invalid: 'Invalid',
       },
       autoSave: {
         ready: 'Auto-save on',
@@ -556,7 +557,7 @@ const messages = {
         save: 'Save',
         saving: 'Saving...',
         reset: 'Reset',
-        import: 'Import Skill',
+        import: 'Import Skill package',
         importing: 'Importing...',
         clearFilters: 'Clear filters',
         delete: 'Delete',
@@ -568,11 +569,25 @@ const messages = {
         confirm: 'Delete',
         cancel: 'Cancel',
       },
+      importPreview: {
+        title: 'Review Skill package',
+        description: 'Check the package validation result before importing it.',
+        fileCount: 'Files',
+        totalSize: 'Size',
+        references: 'References',
+        confirm: 'Import',
+        confirmOverwrite: 'Confirm overwrite and import',
+        cancel: 'Cancel',
+        overwriteTitle: 'This will overwrite an existing Skill',
+        overwriteDescription:
+          '"{skill}" already exists in this organization. Importing this package will replace the existing Skill package.',
+      },
       messages: {
         saved: 'AIChat Skill settings saved',
         saveFailed: 'Failed to save AIChat Skill settings',
         reset: 'Changes reset',
         imported: '{skill} imported. It is disabled by default.',
+        previewFailed: 'Failed to validate Skill package',
         importFailed: 'Failed to import Skill',
         deleted: 'Custom Skill deleted',
         deleteFailed: 'Failed to delete custom Skill',

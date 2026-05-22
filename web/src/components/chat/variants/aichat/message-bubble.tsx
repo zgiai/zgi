@@ -1,6 +1,6 @@
 'use client';
 
-import { ModelIcon } from '@lobehub/icons';
+import { ModelIcon } from 'modelicons';
 import { useState } from 'react';
 import { AlertCircle, CheckCircle2, Download, FileImage, FileText, Loader2 } from 'lucide-react';
 import MarkdownViewer from '@/components/common/markdown-viewer';

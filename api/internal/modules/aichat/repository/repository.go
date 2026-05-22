@@ -61,6 +61,7 @@ type OrganizationSkillConfigRepository interface {
 
 type CustomSkillRepository interface {
 	ListByOrganization(ctx context.Context, organizationID uuid.UUID) ([]*aichatmodel.CustomSkill, error)
+	ListManageableByOrganization(ctx context.Context, organizationID uuid.UUID) ([]*aichatmodel.CustomSkill, error)
 	GetBySkillID(ctx context.Context, organizationID uuid.UUID, skillID string) (*aichatmodel.CustomSkill, error)
 	Upsert(ctx context.Context, skill *aichatmodel.CustomSkill) error
 	DeleteBySkillID(ctx context.Context, organizationID uuid.UUID, skillID string) error

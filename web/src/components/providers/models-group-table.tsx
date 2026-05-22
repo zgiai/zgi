@@ -17,7 +17,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
-import { ModelIcon } from '@lobehub/icons';
+import { ModelIcon } from 'modelicons';
 import type { ModelItem } from '@/services/types/model';
 import { Pencil, SearchX, ShieldCheck, Trash2 } from 'lucide-react';
 import { ModelFeatureIcon } from '@/components/model/model-feature-icon';

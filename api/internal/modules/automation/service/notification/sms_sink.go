@@ -39,9 +39,6 @@ func (s *NotificationSMSSink) Send(ctx context.Context, req *Request) (*Result, 
 	if len(req.To) == 0 {
 		return nil, fmt.Errorf("sms notification recipients are empty")
 	}
-	if req.Template != notificationsms.TemplatePendingActionNotification {
-		return nil, fmt.Errorf("unsupported sms notification template: %s", req.Template)
-	}
 
 	result, err := s.service.Send(ctx, notificationsms.Request{
 		Provider:       req.Provider,

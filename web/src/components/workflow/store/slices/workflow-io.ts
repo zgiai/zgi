@@ -19,6 +19,7 @@ import { computeNodeIdToTitle, computeRunnableSets } from '../helpers/graph';
 import { validateWorkflow } from '../helpers/validation-engine';
 import { initialWorkflowData } from '../initial-data';
 import { normalizeApprovalSourceHandle } from '../../nodes/approval/config';
+import { useAuthStore } from '@/store/auth-store';
 
 export interface WorkflowIOSlice {
   workflowData: WorkflowData;
@@ -93,7 +94,7 @@ export function createWorkflowIOSlice(
             const httpData = sanitizedData as HttpRequestNodeData & Record<string, unknown>;
             const incomingBody = (httpData as { body?: unknown }).body;
 
-              let normalizedBody: HttpRequestBody = { type: 'none', data: [] };
+            let normalizedBody: HttpRequestBody = { type: 'none', data: [] };
 
             if (
               typeof incomingBody === 'object' &&
@@ -154,6 +155,7 @@ export function createWorkflowIOSlice(
               node.type ||
               (dataType === 'note' ||
               dataType === 'approval' ||
+              dataType === 'announcement' ||
               dataType === 'question-answer'
                 ? dataType
                 : 'custom'),
@@ -181,7 +183,8 @@ export function createWorkflowIOSlice(
         sanitizedNodes,
         validatedEdges,
         get().agentType,
-        runnableSets
+        runnableSets,
+        useAuthStore.getState().systemFeatures
       );
 
       set(

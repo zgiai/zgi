@@ -8,7 +8,7 @@ import (
 
 const maxNotificationTitleRunes = 64
 
-var linkSuffixPattern = regexp.MustCompile(`^[A-Za-z0-9/_?=&.%+-]+$`)
+var linkCodePattern = regexp.MustCompile(`^[A-Za-z0-9]+$`)
 
 func MaskPhone(phone string) string {
 	phones := splitPhoneNumbers(phone)
@@ -34,72 +34,74 @@ func NormalizePhoneNumbers(phone string) string {
 	return strings.Join(splitPhoneNumbers(phone), ",")
 }
 
-func ValidateNotificationContent(template, notificationTitle, linkSuffix string) error {
-	return ValidateNotificationTemplateParams(template, map[string]string{
-		TemplateParamNotificationTitle: strings.TrimSpace(notificationTitle),
-		TemplateParamLinkSuffix:        strings.TrimSpace(linkSuffix),
-	})
-}
-
-func ValidateNotificationTemplateParams(template string, params map[string]string) error {
-	if strings.TrimSpace(template) == "" {
-		template = TemplatePendingActionNotification
-	}
-	if template != TemplatePendingActionNotification {
-		return fmt.Errorf("unsupported notification sms template: %s", template)
-	}
-	notificationTitle := strings.TrimSpace(params[TemplateParamNotificationTitle])
-	if strings.TrimSpace(notificationTitle) == "" {
-		return fmt.Errorf("notification_title is required")
-	}
-	if len([]rune(notificationTitle)) > maxNotificationTitleRunes {
-		return fmt.Errorf("notification_title must be at most %d characters", maxNotificationTitleRunes)
-	}
-	linkSuffix := params[TemplateParamLinkSuffix]
-	if err := validateLinkSuffix(linkSuffix); err != nil {
-		return err
-	}
-	return nil
-}
-
-func validateRequest(req Request) error {
-	if NormalizePhoneNumbers(req.Phone) == "" {
-		return fmt.Errorf("phone is required")
-	}
-	return ValidateNotificationTemplateParams(req.Template, normalizeTemplateParams(req))
-}
-
-func normalizeTemplateParams(req Request) map[string]string {
-	params := make(map[string]string, len(req.TemplateParams)+1)
-	for key, value := range req.TemplateParams {
+func NormalizeTemplateParams(params map[string]string) map[string]string {
+	normalized := make(map[string]string, len(params))
+	for key, value := range params {
 		key = strings.TrimSpace(key)
 		value = strings.TrimSpace(value)
 		if key != "" && value != "" {
-			params[key] = value
+			normalized[key] = value
 		}
 	}
-	if value := strings.TrimSpace(req.NotificationTitle); value != "" && params[TemplateParamNotificationTitle] == "" {
-		params[TemplateParamNotificationTitle] = value
-	}
-	return params
+	return normalized
 }
 
-func validateLinkSuffix(value string) error {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return fmt.Errorf("link_suffix is required")
+func ValidateTemplateParams(template TemplateConfig, params map[string]string) error {
+	if strings.TrimSpace(template.Key) == "" {
+		return fmt.Errorf("notification sms template key is required")
 	}
-	lower := strings.ToLower(value)
-	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") || strings.HasPrefix(value, "//") {
-		return fmt.Errorf("link_suffix must not be a full URL")
+
+	known := make(map[string]TemplateParamConfig, len(template.Params))
+	for _, param := range template.Params {
+		known[param.Key] = param
+		value := strings.TrimSpace(params[param.Key])
+		if param.IsRequired() && value == "" {
+			return fmt.Errorf("template param %s is required", param.Key)
+		}
+		if value == "" {
+			continue
+		}
+		if param.MaxLength > 0 && len([]rune(value)) > param.MaxLength {
+			return fmt.Errorf("template param %s must be at most %d characters", param.Key, param.MaxLength)
+		}
+		if param.Pattern != "" {
+			pattern, err := regexp.Compile(param.Pattern)
+			if err != nil {
+				return fmt.Errorf("template param %s pattern is invalid: %w", param.Key, err)
+			}
+			if !pattern.MatchString(value) {
+				return fmt.Errorf("template param %s contains unsupported characters", param.Key)
+			}
+		}
 	}
-	if strings.ContainsAny(value, " \t\r\n") {
-		return fmt.Errorf("link_suffix contains whitespace")
-	}
-	if !linkSuffixPattern.MatchString(value) {
-		return fmt.Errorf("link_suffix contains unsupported characters")
+
+	for key, value := range params {
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		if _, ok := known[key]; !ok {
+			return fmt.Errorf("template param %s is not defined by template %s", key, template.Key)
+		}
 	}
 	return nil
+}
+
+func templateParamConfigs(params []TemplateParamConfig) map[string]TemplateParamConfig {
+	configs := make(map[string]TemplateParamConfig, len(params))
+	for _, param := range params {
+		configs[param.Key] = param
+	}
+	return configs
+}
+
+func validateRequest(req Request, template TemplateConfig) error {
+	if NormalizePhoneNumbers(req.Phone) == "" {
+		return fmt.Errorf("phone is required")
+	}
+	if strings.TrimSpace(req.Template) == "" {
+		return fmt.Errorf("template is required")
+	}
+	return ValidateTemplateParams(template, req.TemplateParams)
 }
 
 func splitPhoneNumbers(phone string) []string {
@@ -113,32 +115,4 @@ func splitPhoneNumbers(phone string) []string {
 		}
 	}
 	return phones
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-func hasRequiredNotificationParamsFromMap(params map[string]string) bool {
-	return strings.TrimSpace(params[TemplateParamNotificationTitle]) != "" &&
-		strings.TrimSpace(params[TemplateParamLinkSuffix]) != ""
-}
-
-func hasRequiredNotificationParamsFromList(params []string) bool {
-	hasTitle := false
-	hasLink := false
-	for _, param := range params {
-		switch strings.TrimSpace(param) {
-		case TemplateParamNotificationTitle:
-			hasTitle = true
-		case TemplateParamLinkSuffix:
-			hasLink = true
-		}
-	}
-	return hasTitle && hasLink
 }

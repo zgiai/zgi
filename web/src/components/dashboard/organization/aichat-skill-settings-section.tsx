@@ -11,6 +11,15 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { SearchInput } from '@/components/ui/input';
 import {
   Select,
@@ -26,7 +35,9 @@ import {
   useDeleteAIChatSkill,
   useAIChatSkillConfig,
   useAIChatSkills,
-  useImportAIChatSkill,
+  useCancelImportAIChatSkillPreview,
+  useConfirmImportAIChatSkill,
+  usePreviewImportAIChatSkill,
   useUpdateAIChatSkillConfig,
 } from '@/hooks/aichat/use-aichat-skills';
 import { useLocale } from '@/hooks/use-locale';
@@ -34,6 +45,7 @@ import { useT, type DashboardSuffix } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import type {
   AIChatSkillMetadata,
+  AIChatImportSkillPreview,
   AIChatSkillRuntimeType,
   AIChatSkillSource,
 } from '@/services/types/aichat';
@@ -42,7 +54,7 @@ const AUTO_SAVE_DELAY_MS = 450;
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 type RuntimeFilter = 'all' | AIChatSkillRuntimeType;
-type StatusFilter = 'all' | 'enabled' | 'disabled';
+type StatusFilter = 'all' | 'enabled' | 'disabled' | 'invalid';
 
 const RUNTIME_LABEL_KEYS: Record<AIChatSkillRuntimeType, DashboardSuffix> = {
   tool: 'organization.aichatSkills.runtime.tool',
@@ -53,6 +65,7 @@ const RUNTIME_LABEL_KEYS: Record<AIChatSkillRuntimeType, DashboardSuffix> = {
 const STATUS_LABEL_KEYS = {
   enabled: 'organization.aichatSkills.status.enabled',
   disabled: 'organization.aichatSkills.status.disabled',
+  invalid: 'organization.aichatSkills.status.invalid',
 } as const satisfies Record<string, DashboardSuffix>;
 
 const AUTO_SAVE_LABEL_KEYS = {
@@ -82,6 +95,10 @@ function getInitialEnabledSkillIds(
 
 function getSkillSource(skill: AIChatSkillMetadata): AIChatSkillSource {
   return skill.source ?? 'system';
+}
+
+function isInvalidSkill(skill: AIChatSkillMetadata): boolean {
+  return skill.status === 'invalid';
 }
 
 function getFilterSearchText(
@@ -118,8 +135,10 @@ function filterSkills(
     if (runtimeFilter !== 'all' && skill.runtime_type !== runtimeFilter) return false;
 
     const enabled = enabledSet.has(skill.skill_id);
-    if (statusFilter === 'enabled' && !enabled) return false;
-    if (statusFilter === 'disabled' && enabled) return false;
+    const invalid = isInvalidSkill(skill);
+    if (statusFilter === 'enabled' && (!enabled || invalid)) return false;
+    if (statusFilter === 'disabled' && (enabled || invalid)) return false;
+    if (statusFilter === 'invalid' && !invalid) return false;
 
     if (!query) return true;
     return getFilterSearchText(skill, displays[skill.skill_id]).includes(query);
@@ -128,6 +147,34 @@ function filterSkills(
 
 function formatTabCount(filteredCount: number, totalCount: number, hasActiveFilters: boolean) {
   return hasActiveFilters ? `${filteredCount}/${totalCount}` : String(totalCount);
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
+}
+
+function previewFiles(preview: AIChatImportSkillPreview | null) {
+  return preview?.files ?? [];
+}
+
+function previewReferences(preview: AIChatImportSkillPreview | null) {
+  return preview?.references ?? [];
+}
+
+function previewWarnings(preview: AIChatImportSkillPreview | null) {
+  return preview?.warnings ?? [];
+}
+
+function previewValidationErrors(preview: AIChatImportSkillPreview | null) {
+  return preview?.validation_errors ?? [];
 }
 
 interface AIChatSkillCardProps {
@@ -159,12 +206,13 @@ function AIChatSkillCard({
   const t = useT('dashboard');
   const runtimeLabel = t(RUNTIME_LABEL_KEYS[skill.runtime_type]);
   const isCustom = getSkillSource(skill) === 'custom';
+  const invalid = isInvalidSkill(skill);
 
   return (
     <article
       className={cn(
         'flex h-full flex-col rounded-md border border-border bg-card p-3.5 shadow-sm transition-colors hover:border-primary/25',
-        disabled ? 'opacity-75' : ''
+        disabled || invalid ? 'opacity-75' : ''
       )}
     >
       <div className="flex items-start gap-3">
@@ -179,7 +227,7 @@ function AIChatSkillCard({
             </div>
             <Switch
               checked={enabled}
-              disabled={disabled}
+              disabled={disabled || invalid}
               aria-label={t('organization.aichatSkills.toggleAria', { skill: display.label })}
               onCheckedChange={checked => onToggle(skill.skill_id, checked)}
             />
@@ -191,14 +239,29 @@ function AIChatSkillCard({
         <Badge variant="outline" className="rounded-md font-normal">
           {runtimeLabel}
         </Badge>
-        <Badge variant={enabled ? 'success' : 'subtle'} className="rounded-md font-normal">
-          {t(enabled ? STATUS_LABEL_KEYS.enabled : STATUS_LABEL_KEYS.disabled)}
+        <Badge
+          variant={invalid ? 'destructive' : enabled ? 'success' : 'subtle'}
+          className="rounded-md font-normal"
+        >
+          {t(
+            invalid
+              ? STATUS_LABEL_KEYS.invalid
+              : enabled
+                ? STATUS_LABEL_KEYS.enabled
+                : STATUS_LABEL_KEYS.disabled
+          )}
         </Badge>
       </div>
 
       <p className="mt-2.5 line-clamp-2 min-h-10 text-sm leading-5 text-muted-foreground">
         {display.description}
       </p>
+
+      {invalid && skill.validation_error ? (
+        <div className="mt-2.5 rounded-md border border-destructive/30 bg-destructive/10 p-2 text-xs leading-5 text-destructive">
+          {skill.validation_error}
+        </div>
+      ) : null}
 
       {display.tags.length > 0 ? (
         <div className="mt-2.5 flex flex-wrap gap-1.5">
@@ -336,6 +399,7 @@ function SkillFilterToolbar({
             <SelectItem value="all">{t('organization.aichatSkills.filters.allStatus')}</SelectItem>
             <SelectItem value="enabled">{t(STATUS_LABEL_KEYS.enabled)}</SelectItem>
             <SelectItem value="disabled">{t(STATUS_LABEL_KEYS.disabled)}</SelectItem>
+            <SelectItem value="invalid">{t(STATUS_LABEL_KEYS.invalid)}</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -345,6 +409,147 @@ function SkillFilterToolbar({
         </Button>
       ) : null}
     </div>
+  );
+}
+
+interface SkillImportPreviewDialogProps {
+  preview: AIChatImportSkillPreview | null;
+  open: boolean;
+  loading: boolean;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: () => void;
+}
+
+function SkillImportPreviewDialog({
+  preview,
+  open,
+  loading,
+  onOpenChange,
+  onConfirm,
+}: SkillImportPreviewDialogProps) {
+  const t = useT('dashboard');
+  const skill = preview?.skill;
+  const canImport = Boolean(preview?.can_import && preview.import_id);
+  const files = previewFiles(preview);
+  const references = previewReferences(preview);
+  const warnings = previewWarnings(preview);
+  const validationErrors = previewValidationErrors(preview);
+  const existingSkillName =
+    preview?.existing_skill?.name || preview?.existing_skill?.skill_id || skill?.skill_id || '';
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent size="lg">
+        <DialogHeader>
+          <DialogTitle>{t('organization.aichatSkills.importPreview.title')}</DialogTitle>
+          <DialogDescription>
+            {t('organization.aichatSkills.importPreview.description')}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogBody className="space-y-4">
+          {skill ? (
+            <div className="rounded-md border p-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
+                  <h3 className="truncate text-sm font-semibold text-foreground">
+                    {skill.name || skill.skill_id}
+                  </h3>
+                  <p className="mt-1 text-xs text-muted-foreground">{skill.skill_id}</p>
+                </div>
+                <Badge variant="outline" className="w-fit rounded-md font-normal">
+                  {t(RUNTIME_LABEL_KEYS[skill.runtime_type])}
+                </Badge>
+              </div>
+              <p className="mt-3 text-sm leading-5 text-muted-foreground">{skill.description}</p>
+            </div>
+          ) : null}
+
+          {preview ? (
+            <div className="grid gap-2 sm:grid-cols-3">
+              <div className="rounded-md border p-3">
+                <p className="text-xs text-muted-foreground">
+                  {t('organization.aichatSkills.importPreview.fileCount')}
+                </p>
+                <p className="mt-1 text-sm font-medium">{preview.file_count}</p>
+              </div>
+              <div className="rounded-md border p-3">
+                <p className="text-xs text-muted-foreground">
+                  {t('organization.aichatSkills.importPreview.totalSize')}
+                </p>
+                <p className="mt-1 text-sm font-medium">{formatBytes(preview.total_size)}</p>
+              </div>
+              <div className="rounded-md border p-3">
+                <p className="text-xs text-muted-foreground">
+                  {t('organization.aichatSkills.importPreview.references')}
+                </p>
+                <p className="mt-1 text-sm font-medium">{references.length}</p>
+              </div>
+            </div>
+          ) : null}
+
+          {preview?.will_overwrite ? (
+            <div className="rounded-md border border-amber-300/70 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+              <div className="flex gap-2">
+                <AlertCircle className="mt-0.5 size-4 shrink-0" />
+                <div className="min-w-0">
+                  <p className="font-medium">
+                    {t('organization.aichatSkills.importPreview.overwriteTitle')}
+                  </p>
+                  <p className="mt-1 leading-5">
+                    {t('organization.aichatSkills.importPreview.overwriteDescription', {
+                      skill: existingSkillName,
+                    })}
+                  </p>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {warnings.length ? (
+            <div className="rounded-md border border-amber-300/60 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+              {warnings.map(warning => (
+                <p key={warning}>{warning}</p>
+              ))}
+            </div>
+          ) : null}
+
+          {validationErrors.length ? (
+            <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+              {validationErrors.map(error => (
+                <p key={error}>{error}</p>
+              ))}
+            </div>
+          ) : null}
+
+          {files.length ? (
+            <div className="max-h-44 overflow-auto rounded-md border">
+              {files.slice(0, 40).map(file => (
+                <div
+                  key={file.path}
+                  className="flex items-center justify-between gap-3 border-b px-3 py-2 text-xs last:border-b-0"
+                >
+                  <span className="min-w-0 truncate text-muted-foreground">{file.path}</span>
+                  <span className="shrink-0 text-muted-foreground">{formatBytes(file.size)}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="ghost" disabled={loading} onClick={() => onOpenChange(false)}>
+            {t('organization.aichatSkills.importPreview.cancel')}
+          </Button>
+          <Button disabled={!canImport || loading} onClick={onConfirm}>
+            {loading ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+            {loading
+              ? t('organization.aichatSkills.actions.importing')
+              : preview?.will_overwrite
+                ? t('organization.aichatSkills.importPreview.confirmOverwrite')
+                : t('organization.aichatSkills.importPreview.confirm')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -363,7 +568,9 @@ export function AIChatSkillSettingsSection() {
   const { data: skills = [], isLoading: isLoadingSkills, isError } = useAIChatSkills();
   const { data: config, isLoading: isLoadingConfig } = useAIChatSkillConfig();
   const updateConfig = useUpdateAIChatSkillConfig();
-  const importSkill = useImportAIChatSkill();
+  const previewImportSkill = usePreviewImportAIChatSkill();
+  const confirmImportSkill = useConfirmImportAIChatSkill();
+  const cancelImportPreview = useCancelImportAIChatSkillPreview();
   const deleteSkill = useDeleteAIChatSkill();
   const [enabledSkillIds, setEnabledSkillIds] = useState<string[]>([]);
   const [persistedSkillIds, setPersistedSkillIds] = useState<string[]>([]);
@@ -373,9 +580,12 @@ export function AIChatSkillSettingsSection() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [activeTab, setActiveTab] = useState<'system' | 'custom'>('system');
   const [skillToDelete, setSkillToDelete] = useState<AIChatSkillMetadata | null>(null);
+  const [importPreview, setImportPreview] = useState<AIChatImportSkillPreview | null>(null);
+  const [isImportPreviewOpen, setIsImportPreviewOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const saveSequenceRef = useRef(0);
   const updateConfigRef = useRef(updateConfig.mutateAsync);
+  const importConfirmedRef = useRef(false);
 
   const initialEnabledSkillIds = useMemo(
     () => getInitialEnabledSkillIds(skills, config?.enabled_skill_ids),
@@ -392,7 +602,8 @@ export function AIChatSkillSettingsSection() {
   );
 
   const isLoading = isLoadingSkills || isLoadingConfig;
-  const isMutating = updateConfig.isPending || importSkill.isPending || deleteSkill.isPending;
+  const isImporting = previewImportSkill.isPending || confirmImportSkill.isPending;
+  const isMutating = updateConfig.isPending || isImporting || deleteSkill.isPending;
   const enabledCount = enabledSkillIds.length;
   const systemSkills = useMemo(
     () => skills.filter(skill => getSkillSource(skill) === 'system'),
@@ -506,12 +717,8 @@ export function AIChatSkillSettingsSection() {
   const importButton =
     activeTab === 'custom' && customSkills.length > 0 ? (
       <Button size="sm" disabled={isMutating} onClick={handleImportClick}>
-        {importSkill.isPending ? (
-          <Loader2 className="size-4 animate-spin" />
-        ) : (
-          <Upload className="size-4" />
-        )}
-        {importSkill.isPending
+        {isImporting ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+        {isImporting
           ? t('organization.aichatSkills.actions.importing')
           : t('organization.aichatSkills.actions.import')}
       </Button>
@@ -530,7 +737,10 @@ export function AIChatSkillSettingsSection() {
     }
 
     try {
-      await importSkill.mutateAsync(file);
+      const response = await previewImportSkill.mutateAsync(file);
+      importConfirmedRef.current = false;
+      setImportPreview(response.data);
+      setIsImportPreviewOpen(true);
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
@@ -544,6 +754,33 @@ export function AIChatSkillSettingsSection() {
     if (!file) return;
     void handleImportFile(file);
     event.target.value = '';
+  };
+
+  const handleImportPreviewOpenChange = (open: boolean) => {
+    setIsImportPreviewOpen(open);
+    if (!open && !confirmImportSkill.isPending) {
+      const importId = importPreview?.import_id;
+      if (importId && !importConfirmedRef.current) {
+        cancelImportPreview.mutate(importId);
+      }
+      importConfirmedRef.current = false;
+      setImportPreview(null);
+    }
+  };
+
+  const handleConfirmImport = async () => {
+    if (!importPreview?.import_id) return;
+    try {
+      await confirmImportSkill.mutateAsync({
+        import_id: importPreview.import_id,
+        overwrite_confirmed: Boolean(importPreview.will_overwrite),
+      });
+      importConfirmedRef.current = true;
+      setIsImportPreviewOpen(false);
+      setImportPreview(null);
+    } catch {
+      // The mutation hook owns user-facing error feedback.
+    }
   };
 
   const handleConfirmDelete = async () => {
@@ -723,12 +960,12 @@ export function AIChatSkillSettingsSection() {
                       disabled={isMutating}
                       onClick={handleImportClick}
                     >
-                      {importSkill.isPending ? (
+                      {isImporting ? (
                         <Loader2 className="size-4 animate-spin" />
                       ) : (
                         <Upload className="size-4" />
                       )}
-                      {importSkill.isPending
+                      {isImporting
                         ? t('organization.aichatSkills.actions.importing')
                         : t('organization.aichatSkills.actions.import')}
                     </Button>
@@ -758,6 +995,14 @@ export function AIChatSkillSettingsSection() {
         cancelText={t('organization.aichatSkills.deleteConfirm.cancel')}
         onConfirm={handleConfirmDelete}
         loading={deleteSkill.isPending}
+      />
+
+      <SkillImportPreviewDialog
+        preview={importPreview}
+        open={isImportPreviewOpen}
+        loading={confirmImportSkill.isPending}
+        onOpenChange={handleImportPreviewOpenChange}
+        onConfirm={handleConfirmImport}
       />
     </div>
   );

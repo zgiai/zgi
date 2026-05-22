@@ -9,6 +9,7 @@ import (
 	agentsHandlerPkg "github.com/zgiai/zgi/api/internal/modules/app/agents"
 	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
 	workflowHandlerPkg "github.com/zgiai/zgi/api/internal/modules/app/workflow"
+	announcementruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/announcement"
 	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/diagnosis"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
@@ -136,6 +137,13 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, accountService interfaces.A
 	approvalRoutes.GET("/forms/:token", approvalHandler.GetForm)
 	approvalRoutes.GET("/forms/:token/events", approvalHandler.GetRunEvents)
 	approvalRoutes.POST("/forms/:token/submit", approvalHandler.SubmitForm)
+
+	announcementService := announcementruntime.NewService(db)
+	registerAnnouncementScheduledTasks(scheduler, announcementService)
+	announcementHandler := announcementruntime.NewHandler(announcementService)
+	announcementRoutes := router.Group("/announcements")
+	announcementRoutes.Use(middleware.SetupRequired())
+	announcementRoutes.GET("/:token", announcementHandler.GetAnnouncement)
 
 	workflowRunEvents := router.Group("/workflow-runs")
 	workflowRunEvents.Use(middleware.SetupRequired())

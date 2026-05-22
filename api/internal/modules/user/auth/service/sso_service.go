@@ -17,11 +17,12 @@ const (
 	TokenTypeSSOState       = "sso_state"
 	TokenTypeSSOLoginTicket = "sso_login_ticket"
 
-	ssoLoginTicketIssuedAtUnixKey = "issued_at_unix"
-	ssoLoginTicketProviderKey     = "provider"
-	ssoLoginTicketIDTokenKey      = "id_token"
-	ssoLoginTicketMaxConsumeCount = 2
-	ssoLoginTicketGraceWindow     = 3 * time.Minute
+	ssoStateFrontendCallbackURLKey = "frontend_callback_url"
+	ssoLoginTicketIssuedAtUnixKey  = "issued_at_unix"
+	ssoLoginTicketProviderKey      = "provider"
+	ssoLoginTicketIDTokenKey       = "id_token"
+	ssoLoginTicketMaxConsumeCount  = 2
+	ssoLoginTicketGraceWindow      = 3 * time.Minute
 )
 
 var (
@@ -32,23 +33,33 @@ var (
 	errSSOLoginTicketConsumed  = errors.New("sso login ticket consumed too many times")
 )
 
-func (s *AccountService) IssueSSOState(ctx context.Context) (string, error) {
+func (s *AccountService) IssueSSOState(ctx context.Context, callbackURL string) (string, error) {
 	if s.tokenMgr == nil {
 		return "", errSSOTokenManagerRequired
 	}
 
 	emptyEmail := ""
-	return s.tokenMgr.GenerateToken(ctx, TokenTypeSSOState, nil, &emptyEmail, nil)
+	var extra map[string]any
+	callbackURL = strings.TrimSpace(callbackURL)
+	if callbackURL != "" {
+		extra = map[string]any{ssoStateFrontendCallbackURLKey: callbackURL}
+	}
+	return s.tokenMgr.GenerateToken(ctx, TokenTypeSSOState, nil, &emptyEmail, extra)
 }
 
-func (s *AccountService) ConsumeSSOState(ctx context.Context, state string) error {
+func (s *AccountService) ConsumeSSOState(ctx context.Context, state string) (string, error) {
 	if s.tokenMgr == nil {
-		return errSSOTokenManagerRequired
+		return "", errSSOTokenManagerRequired
 	}
-	if _, err := s.tokenMgr.GetTokenData(state, TokenTypeSSOState); err != nil {
-		return err
+	tokenData, err := s.tokenMgr.GetTokenData(state, TokenTypeSSOState)
+	if err != nil {
+		return "", err
 	}
-	return s.tokenMgr.RevokeToken(state, TokenTypeSSOState)
+	callbackURL := ssoStateCallbackURLFromExtra(tokenData.Extra)
+	if err := s.tokenMgr.RevokeToken(state, TokenTypeSSOState); err != nil {
+		return "", err
+	}
+	return callbackURL, nil
 }
 
 func (s *AccountService) ResolveOrCreateSSOAccount(ctx context.Context, identity *shared_dto.SSOIdentity) (*auth_model.Account, error) {
@@ -257,6 +268,11 @@ func ssoProviderTokenFromExtra(extra map[string]any) *shared_dto.SSOProviderToke
 		Provider: provider,
 		IDToken:  idToken,
 	}
+}
+
+func ssoStateCallbackURLFromExtra(extra map[string]any) string {
+	callbackURL, _ := stringFromAny(extra[ssoStateFrontendCallbackURLKey])
+	return callbackURL
 }
 
 func stringFromAny(value any) (string, bool) {

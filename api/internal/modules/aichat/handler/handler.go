@@ -41,7 +41,9 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	group.GET("/skills/config", h.GetSkillConfig)
 	group.GET("/skills/:id", h.GetSkill)
 	skillManagement := group.Group("/skills", middleware.EnterpriseAdminOrOwnerRequired())
-	skillManagement.POST("/import", h.ImportSkill)
+	skillManagement.POST("/import/preview", h.PreviewImportSkill)
+	skillManagement.POST("/import/confirm", h.ConfirmImportSkill)
+	skillManagement.DELETE("/import/preview/:import_id", h.CancelImportSkillPreview)
 	skillManagement.PUT("/config", h.UpdateSkillConfig)
 	skillManagement.DELETE("/:id", h.DeleteSkill)
 	group.GET("/conversations", h.ListConversations)
@@ -124,7 +126,7 @@ func (h *Handler) UpdateSkillConfig(c *gin.Context) {
 	response.Success(c, skillConfigResponse(config))
 }
 
-func (h *Handler) ImportSkill(c *gin.Context) {
+func (h *Handler) PreviewImportSkill(c *gin.Context) {
 	scope, ok := h.scope(c)
 	if !ok {
 		return
@@ -134,12 +136,47 @@ func (h *Handler) ImportSkill(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	metadata, err := h.service.ImportCustomSkill(c.Request.Context(), scope, fileHeader)
+	preview, err := h.service.PreviewImportCustomSkill(c.Request.Context(), scope, fileHeader)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	response.Success(c, skillImportPreviewResponse(preview))
+}
+
+func (h *Handler) ConfirmImportSkill(c *gin.Context) {
+	scope, ok := h.scope(c)
+	if !ok {
+		return
+	}
+	var req aichatdto.ConfirmImportSkillRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	metadata, err := h.service.ConfirmCustomSkillImport(c.Request.Context(), scope, req.ImportID, req.OverwriteConfirmed)
 	if err != nil {
 		h.fail(c, err)
 		return
 	}
 	response.Success(c, skillResponse(*metadata))
+}
+
+func (h *Handler) CancelImportSkillPreview(c *gin.Context) {
+	scope, ok := h.scope(c)
+	if !ok {
+		return
+	}
+	importID := strings.TrimSpace(c.Param("import_id"))
+	if importID == "" {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if err := h.service.CancelCustomSkillImportPreview(c.Request.Context(), scope, importID); err != nil {
+		h.fail(c, err)
+		return
+	}
+	response.Success(c, gin.H{"canceled": true})
 }
 
 func (h *Handler) DeleteSkill(c *gin.Context) {
@@ -641,7 +678,66 @@ func skillResponse(metadata skills.SkillDiscoveryMetadata) aichatdto.SkillRespon
 		ScriptsSupported: metadata.ScriptsSupported,
 		MaxCallsPerTurn:  metadata.MaxCallsPerTurn,
 		TimeoutSeconds:   metadata.TimeoutSeconds,
+		Status:           metadata.Status,
+		ValidationError:  metadata.ValidationError,
 	}
+}
+
+func skillImportPreviewResponse(preview *aichatservice.SkillImportPreview) aichatdto.ImportSkillPreviewResponse {
+	if preview == nil {
+		return aichatdto.ImportSkillPreviewResponse{
+			Files:            []aichatdto.ImportSkillPreviewFile{},
+			References:       []string{},
+			Warnings:         []string{},
+			ValidationErrors: []string{},
+		}
+	}
+	files := make([]aichatdto.ImportSkillPreviewFile, 0, len(preview.Files))
+	for _, file := range preview.Files {
+		files = append(files, aichatdto.ImportSkillPreviewFile{Path: file.Path, Size: file.Size})
+	}
+	var skill *aichatdto.SkillResponse
+	if preview.Skill != nil {
+		value := skillResponse(*preview.Skill)
+		skill = &value
+	}
+	var existingSkill *aichatdto.ExistingSkillResponse
+	if preview.ExistingSkill != nil {
+		existingSkill = &aichatdto.ExistingSkillResponse{
+			SkillID: preview.ExistingSkill.SkillID,
+			Name:    preview.ExistingSkill.Name,
+		}
+		if !preview.ExistingSkill.UpdatedAt.IsZero() {
+			existingSkill.UpdatedAt = preview.ExistingSkill.UpdatedAt.Unix()
+		}
+	}
+	expiresAt := int64(0)
+	if !preview.ExpiresAt.IsZero() {
+		expiresAt = preview.ExpiresAt.Unix()
+	}
+	return aichatdto.ImportSkillPreviewResponse{
+		ImportID:         preview.ImportID,
+		ExpiresAt:        expiresAt,
+		Skill:            skill,
+		WillOverwrite:    preview.WillOverwrite,
+		ExistingSkill:    existingSkill,
+		FileCount:        preview.FileCount,
+		TotalSize:        preview.TotalSize,
+		Files:            files,
+		References:       copyStringSlice(preview.References),
+		HasScripts:       preview.HasScripts,
+		ScriptsSupported: preview.ScriptsSupported,
+		Warnings:         copyStringSlice(preview.Warnings),
+		ValidationErrors: copyStringSlice(preview.ValidationErrors),
+		CanImport:        preview.CanImport,
+	}
+}
+
+func copyStringSlice(values []string) []string {
+	if len(values) == 0 {
+		return []string{}
+	}
+	return append([]string(nil), values...)
 }
 
 func skillConfigResponse(config *aichatservice.SkillConfig) aichatdto.SkillConfigResponse {

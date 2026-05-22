@@ -120,6 +120,11 @@ const messages = {
       description: 'Pause the flow and collect a human review decision',
       label: 'Approval',
     },
+    announcement: {
+      title: 'Announcement',
+      description: 'Create a public announcement link and continue the flow',
+      label: 'Announcement',
+    },
     'question-answer': {
       title: 'Question Answer',
       description: 'Pause the workflow and collect a user answer in the same conversation',
@@ -195,6 +200,13 @@ const messages = {
         'Label of the approval action selected by the reviewer. Expired approvals use Expired.',
       approval_rendered_content:
         'Approval content rendered after variables and submitted values resolve',
+    },
+    announcement: {
+      title: 'Announcement title rendered after variables resolve',
+      content: 'Announcement content rendered after variables resolve',
+      expiration_time: 'Announcement expiration time formatted for display',
+      token: 'Short announcement token for building custom links',
+      url: 'Public announcement URL',
     },
     questionAnswer: {
       question: 'Current question or follow-up question',
@@ -457,6 +469,74 @@ const messages = {
       expiresAt: 'Expires at {time}',
     },
   },
+  announcement: {
+    intro: {
+      title: 'Create a public announcement link',
+      description:
+        'Use this node to turn your announcement title and content into a short display page link.',
+    },
+    section: {
+      variables: 'Variables',
+      title: 'Announcement Title',
+      content: 'Announcement Content',
+      timeout: 'Expiration',
+    },
+    sectionHelp: {
+      variables:
+        'Click the title or content field first. Selected variables are inserted at that cursor position.',
+      title: 'This is the public page title after variables are resolved.',
+      content: 'This Markdown body is shown on the public announcement page.',
+      timeout: 'Choose how long the public link remains accessible.',
+    },
+    variables: {
+      activeTarget: 'Current insert target: {target}',
+      targets: {
+        title: 'announcement title',
+        content: 'announcement content',
+      },
+    },
+    defaults: {
+      content: 'Please read this announcement.',
+    },
+    preview: {
+      title: 'Title',
+      content: 'Content',
+      expiration: 'Expiration',
+      emptyTitle: 'No announcement title configured',
+      emptyContent: 'No announcement content configured',
+      expirationValue: '{duration} {unit}',
+    },
+    timeout: {
+      hour: 'Hours',
+      day: 'Days',
+    },
+    presets: {
+      oneDay: '1 day',
+      threeDays: '3 days',
+      oneWeek: '1 week',
+    },
+    placeholders: {
+      title: 'Write the announcement title. Use / to insert variables.',
+      content: 'Write the Markdown announcement content. Use / to insert variables.',
+    },
+    length: {
+      titleCounter: '{count}/{max} characters',
+    },
+    validation: {
+      titleRequired: 'Announcement node title is required',
+      titleTooLong: 'Announcement title cannot exceed {max} characters',
+      contentRequired: 'Announcement content is required',
+      timeoutDurationInvalid: 'Expiration duration must be a positive integer',
+      timeoutDurationTooLong: 'Expiration cannot exceed 1 week',
+      timeoutUnitInvalid: 'Expiration unit must be hours or days',
+    },
+    runtime: {
+      unavailable: 'Announcement unavailable',
+      unavailableDescription: 'The announcement may have expired or the link is invalid.',
+      retry: 'Retry',
+      expiresAt: 'Expires at {time}',
+    },
+  },
   createScheduledTask: {
     section: {
       basic: 'Basic Info',
@@ -566,11 +646,16 @@ const messages = {
       actionRequired: 'At least one operation is required',
       enabledActionRequired: 'At least one enabled operation is required',
       recipientsRequired: 'At least one recipient is required for operation {index}',
-      subjectRequired: 'Subject is required for operation {index}',
+      templateRequired: 'SMS template is required for operation {index}',
       notificationTitleRequired: 'Notification title is required for operation {index}',
-      linkCodeRequired: 'Link suffix is required for operation {index}',
-      linkCodeInvalid:
-        'Link suffix for operation {index} is invalid, for example /a/abc123. Do not enter a full URL, Chinese characters, or spaces',
+      linkCodeRequired: 'Link code is required for operation {index}',
+      notificationTitleTooLong:
+        'Notification title for operation {index} must be at most {max} characters',
+      linkCodeInvalid: 'Link code for operation {index} has an invalid format',
+      templateParamRequired: '{label} is required for operation {index}',
+      templateParamTooLong: '{label} for operation {index} must be at most {max} characters',
+      templateParamInvalid: '{label} for operation {index} has an invalid format',
+      subjectRequired: 'Subject is required for operation {index}',
       bodyTypeRequired: 'A supported body type is required for operation {index}',
       bodyRequired: 'Message body is required for operation {index}',
       unsupportedActionType:
@@ -583,14 +668,19 @@ const messages = {
     preview: {
       phone: 'Phone',
       title: 'Title',
+      template: 'Template',
       notConfigured: 'Not configured',
     },
     validation: {
       phoneRequired: 'Phone number is required',
+      templateRequired: 'SMS template is required',
       notificationTitleRequired: 'Notification title is required',
-      linkCodeRequired: 'Link suffix is required',
-      linkCodeInvalid:
-        'Invalid link suffix, for example /a/abc123. Do not enter a full URL, Chinese characters, or spaces',
+      linkCodeRequired: 'Link code is required',
+      notificationTitleTooLong: 'Notification title must be at most {max} characters',
+      linkCodeInvalid: 'Link code has an invalid format',
+      templateParamRequired: '{label} is required',
+      templateParamTooLong: '{label} must be at most {max} characters',
+      templateParamInvalid: '{label} has an invalid format',
     },
   },
   jsonParser: {

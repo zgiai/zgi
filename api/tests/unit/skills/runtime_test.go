@@ -39,6 +39,57 @@ func TestRuntime_ResolveEnabledSkills_LoadsCatalogMetadata(t *testing.T) {
 	}
 }
 
+func TestSkillMetadataSystemMessageWithBudget_TruncatesLongFields(t *testing.T) {
+	longDescription := strings.Repeat("description ", 120)
+	message, stats := skills.SkillMetadataSystemMessageWithBudget([]skills.SkillPromptMetadata{
+		{
+			ID:          "long-skill",
+			Source:      skills.SkillSourceCustom,
+			Name:        "Long Skill",
+			Description: longDescription,
+			WhenToUse:   strings.Repeat("when ", 120),
+			RuntimeType: skills.SkillRuntimeTypePrompt,
+		},
+	}, 1200)
+
+	content := message.Content.(string)
+	if !stats.Truncated || stats.ExposedCount != 1 || stats.OmittedCount != 0 {
+		t.Fatalf("stats = %#v, want one exposed truncated skill", stats)
+	}
+	if strings.Contains(content, longDescription) {
+		t.Fatal("metadata prompt contains the full long description, want truncated content")
+	}
+	if !strings.Contains(content, "long-skill") {
+		t.Fatal("metadata prompt omitted the skill id, want it preserved")
+	}
+}
+
+func TestSkillMetadataSystemMessageWithBudget_OmitsSkillsOverBudget(t *testing.T) {
+	metadata := make([]skills.SkillPromptMetadata, 0, 20)
+	for i := range 20 {
+		metadata = append(metadata, skills.SkillPromptMetadata{
+			ID:          fmt.Sprintf("skill-%02d", i),
+			Source:      skills.SkillSourceCustom,
+			Name:        fmt.Sprintf("Skill %02d", i),
+			Description: strings.Repeat("description ", 20),
+			WhenToUse:   strings.Repeat("when ", 20),
+			RuntimeType: skills.SkillRuntimeTypePrompt,
+		})
+	}
+
+	message, stats := skills.SkillMetadataSystemMessageWithBudget(metadata, 900)
+	content := message.Content.(string)
+	if stats.EnabledCount != len(metadata) || stats.ExposedCount == 0 || stats.ExposedCount >= len(metadata) || stats.OmittedCount == 0 {
+		t.Fatalf("stats = %#v, want partial exposure with omitted skills", stats)
+	}
+	if !stats.Truncated {
+		t.Fatalf("stats.Truncated = false, want true when skills are omitted")
+	}
+	if strings.Contains(content, "skill-19") {
+		t.Fatal("metadata prompt contains omitted skill-19")
+	}
+}
+
 func TestRuntime_ResolveEnabledSkills_NotFound_ReturnsError(t *testing.T) {
 	runtime := newSkillRuntime(t)
 
@@ -101,6 +152,21 @@ func TestRuntime_ResolveEnabledSkills_AcceptsCRLFSkillMarkdown(t *testing.T) {
 	}
 	if resolved.Skills[0].Metadata.ID != "calculator" {
 		t.Fatalf("skill id = %q, want calculator", resolved.Skills[0].Metadata.ID)
+	}
+}
+
+func TestRuntime_ResolveEnabledSkills_AcceptsBOMAndCRSkillMarkdown(t *testing.T) {
+	catalogDir := t.TempDir()
+	markdown := "\ufeff" + strings.ReplaceAll(testCalculatorSkillMarkdown(), "\n", "\r")
+	writeSkillMarkdown(t, catalogDir, "calculator", markdown)
+	runtime := newSkillRuntimeFromCatalog(t, catalogDir)
+
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{"calculator"})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	if len(resolved.Skills) != 1 || resolved.Skills[0].Metadata.ID != "calculator" {
+		t.Fatalf("resolved skills = %#v, want calculator", resolved.Skills)
 	}
 }
 
@@ -198,6 +264,54 @@ func TestRuntime_ListSkillsWithCustom_MergesSystemAndCustomSkills(t *testing.T) 
 	}
 	if metadata[1].ID != "time" || metadata[1].Source != skills.SkillSourceSystem {
 		t.Fatalf("system metadata = %#v", metadata[1])
+	}
+}
+
+func TestRuntime_ListSystemSkillsBestEffort_SkipsBrokenSkill(t *testing.T) {
+	catalogDir := t.TempDir()
+	writeTimeSkill(t, catalogDir)
+	writeSkillMarkdown(t, catalogDir, "broken", `---
+name: broken
+description: Broken system skill.
+provider_type: builtin
+provider_id: missing
+tools:
+  - missing_tool
+---
+
+# Broken
+`)
+	runtime := newSkillRuntimeFromCatalog(t, catalogDir)
+
+	metadata, err := runtime.ListSystemSkillsBestEffort(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "broken") {
+		t.Fatalf("ListSystemSkillsBestEffort() error = %v, want broken skill error", err)
+	}
+	if len(metadata) != 1 || metadata[0].ID != "time" {
+		t.Fatalf("metadata = %#v, want only time", metadata)
+	}
+}
+
+func TestRuntime_SystemSkillExists_DoesNotParseSkillMarkdown(t *testing.T) {
+	catalogDir := t.TempDir()
+	writeSkillMarkdown(t, catalogDir, "broken", `---
+name: broken
+description: Broken system skill.
+provider_type: builtin
+provider_id: missing
+tools:
+  - missing_tool
+---
+
+# Broken
+`)
+	runtime := newSkillRuntimeFromCatalog(t, catalogDir)
+
+	if !runtime.SystemSkillExists("broken") {
+		t.Fatal("SystemSkillExists() = false, want true for existing broken skill directory")
+	}
+	if runtime.SystemSkillExists("missing") {
+		t.Fatal("SystemSkillExists(missing) = true, want false")
 	}
 }
 

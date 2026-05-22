@@ -11,8 +11,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Icons } from '@/components/ui/icons';
-import { Check } from 'lucide-react';
+import { Check, Languages } from 'lucide-react';
 import { useUpdateInterfaceLanguage } from '@/hooks/use-update-interface-language';
 import { useAuthStore } from '@/store/auth-store';
 
@@ -34,7 +33,7 @@ export function LanguageSwitcher({ className }: { className?: string }) {
 
   const trigger = (
     <Button variant="ghost" size="sm" className={className} aria-label="Switch language">
-      <Icons.languages className="h-4 w-4" />
+      <Languages className="h-4 w-4" />
       <span className="hidden sm:inline-block">{getLocaleLabel(locale)}</span>
     </Button>
   );

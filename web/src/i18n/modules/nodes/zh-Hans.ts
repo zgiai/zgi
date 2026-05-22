@@ -121,6 +121,11 @@ const messages: NodesMessages = {
       description: '暂停流程并收集人工审查决策',
       label: '审查',
     },
+    announcement: {
+      title: '公告',
+      description: '创建公开公告链接，并继续执行流程',
+      label: '公告',
+    },
     'question-answer': {
       title: '问答',
       description: '暂停工作流，在同一会话中收集用户回答',
@@ -193,6 +198,13 @@ const messages: NodesMessages = {
       approval_action_id: '审查人选择的审查动作 ID，超时时为 expired',
       approval_action_label: '审查人选择的审查动作文案，超时时为 Expired',
       approval_rendered_content: '变量与提交值替换后的审查正文',
+    },
+    announcement: {
+      title: '变量解析后的公告标题',
+      content: '变量解析后的公告内容',
+      expiration_time: '可直接展示的公告过期时间',
+      token: '用于自行拼接短链接的公告 token',
+      url: '公告公开链接',
     },
     questionAnswer: {
       question: '当前问题或追问',
@@ -449,6 +461,72 @@ const messages: NodesMessages = {
       expiresAt: '过期时间：{time}',
     },
   },
+  announcement: {
+    intro: {
+      title: '生成可访问的公告短链接',
+      description: '这个节点用于把你配置的公告标题和内容生成一个可打开的短链接展示页。',
+    },
+    section: {
+      variables: '变量',
+      title: '公告标题',
+      content: '公告内容',
+      timeout: '过期时间',
+    },
+    sectionHelp: {
+      variables: '先点击标题或内容输入框，选择变量后会插入到当前光标位置。',
+      title: '变量解析后会作为公开公告页标题展示。',
+      content: '这段 Markdown 内容会展示在公开公告页中。',
+      timeout: '设置公开链接可访问的有效时长。',
+    },
+    variables: {
+      activeTarget: '当前插入位置：{target}',
+      targets: {
+        title: '公告标题',
+        content: '公告内容',
+      },
+    },
+    defaults: {
+      content: '请阅读这条公告。',
+    },
+    preview: {
+      title: '标题',
+      content: '内容',
+      expiration: '过期时间',
+      emptyTitle: '尚未配置公告标题',
+      emptyContent: '尚未配置公告内容',
+      expirationValue: '{duration} {unit}',
+    },
+    timeout: {
+      hour: '小时',
+      day: '天',
+    },
+    presets: {
+      oneDay: '1 天',
+      threeDays: '3 天',
+      oneWeek: '1 周',
+    },
+    placeholders: {
+      title: '填写公告标题，可使用 / 插入变量。',
+      content: '填写 Markdown 公告内容，可使用 / 插入变量。',
+    },
+    length: {
+      titleCounter: '{count}/{max} 字符',
+    },
+    validation: {
+      titleRequired: '公告标题不能为空',
+      titleTooLong: '公告标题不能超过 {max} 个字符',
+      contentRequired: '公告内容不能为空',
+      timeoutDurationInvalid: '过期时长必须是正整数',
+      timeoutDurationTooLong: '过期时间不能超过 1 周',
+      timeoutUnitInvalid: '过期单位必须是小时或天',
+    },
+    runtime: {
+      unavailable: '公告不可访问',
+      unavailableDescription: '公告可能已经过期，或链接无效。',
+      retry: '重试',
+      expiresAt: '过期时间：{time}',
+    },
+  },
   createScheduledTask: {
     section: {
       basic: '基础信息',
@@ -554,11 +632,15 @@ const messages: NodesMessages = {
       actionRequired: '至少需要一个操作',
       enabledActionRequired: '至少需要启用一个操作',
       recipientsRequired: '操作 {index} 至少需要一个收件人',
-      subjectRequired: '操作 {index} 需要填写主题',
+      templateRequired: '操作 {index} 需要选择短信模板',
       notificationTitleRequired: '操作 {index} 需要填写通知标题',
-      linkCodeRequired: '操作 {index} 需要填写链接后缀',
-      linkCodeInvalid:
-        '操作 {index} 的链接后缀格式不正确，例如 /a/abc123。不要输入完整链接、中文或空格',
+      linkCodeRequired: '操作 {index} 需要填写链接参数',
+      notificationTitleTooLong: '操作 {index} 的通知标题不能超过 {max} 个字符',
+      linkCodeInvalid: '操作 {index} 的链接参数格式不正确',
+      templateParamRequired: '操作 {index} 需要填写{label}',
+      templateParamTooLong: '操作 {index} 的{label}不能超过 {max} 个字符',
+      templateParamInvalid: '操作 {index} 的{label}格式不正确',
+      subjectRequired: '操作 {index} 需要填写主题',
       bodyTypeRequired: '操作 {index} 需要选择受支持的正文类型',
       bodyRequired: '操作 {index} 需要填写消息正文',
       unsupportedActionType: '操作 {index} 使用了当前节点版本不支持的操作类型',
@@ -569,13 +651,19 @@ const messages: NodesMessages = {
     preview: {
       phone: '手机号',
       title: '标题',
+      template: '模板',
       notConfigured: '未配置',
     },
     validation: {
       phoneRequired: '请填写手机号',
+      templateRequired: '请选择短信模板',
       notificationTitleRequired: '请填写通知标题',
-      linkCodeRequired: '请填写链接后缀',
-      linkCodeInvalid: '链接后缀格式不正确，例如 /a/abc123。不要输入完整链接、中文或空格',
+      linkCodeRequired: '请填写链接参数',
+      notificationTitleTooLong: '通知标题不能超过 {max} 个字符',
+      linkCodeInvalid: '链接参数格式不正确',
+      templateParamRequired: '请填写{label}',
+      templateParamTooLong: '{label}不能超过 {max} 个字符',
+      templateParamInvalid: '{label}格式不正确',
     },
   },
   jsonParser: {

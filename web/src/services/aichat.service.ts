@@ -11,11 +11,13 @@ import {
 import type { ApiResponseData, SuccessResponse } from './types/common';
 import type {
   AIChatChatRequest,
+  AIChatCancelImportSkillPreviewResponse,
   AIChatConversation,
   AIChatConversationListResponse,
+  AIChatConfirmImportSkillRequest,
   AIChatCreateConversationRequest,
   AIChatDeleteSkillResponse,
-  AIChatImportSkillResponse,
+  AIChatImportSkillPreviewResponse,
   AIChatMessage,
   AIChatMessageListResponse,
   AIChatRegenerateMessageRequest,
@@ -72,7 +74,8 @@ function isAIChatTerminalMessage(message: SseMessage<unknown>): boolean {
     typeof message.data === 'string'
       ? (safeJsonParse(message.data) as AIChatSseEnvelope)
       : message.data;
-  const record = envelope && typeof envelope === 'object' ? (envelope as Record<string, unknown>) : {};
+  const record =
+    envelope && typeof envelope === 'object' ? (envelope as Record<string, unknown>) : {};
   const event =
     (typeof record.event === 'string' && record.event) ||
     (typeof message.event === 'string' ? message.event : '');
@@ -190,10 +193,26 @@ export const aichatService = {
     return http.put<AIChatSkillConfigResponse>(`${AICHAT_BASE_PATH}/skills/config`, payload);
   },
 
-  importSkill(file: File) {
+  previewImportSkill(file: File) {
     const formData = new FormData();
     formData.append('file', file);
-    return http.upload<AIChatImportSkillResponse>(`${AICHAT_BASE_PATH}/skills/import`, formData);
+    return http.upload<AIChatImportSkillPreviewResponse>(
+      `${AICHAT_BASE_PATH}/skills/import/preview`,
+      formData
+    );
+  },
+
+  confirmImportSkill(payload: AIChatConfirmImportSkillRequest) {
+    return http.post<AIChatSkillDetailResponse>(
+      `${AICHAT_BASE_PATH}/skills/import/confirm`,
+      payload
+    );
+  },
+
+  cancelImportSkillPreview(importId: string) {
+    return http.delete<AIChatCancelImportSkillPreviewResponse>(
+      `${AICHAT_BASE_PATH}/skills/import/preview/${encodeURIComponent(importId)}`
+    );
   },
 
   deleteSkill(id: string) {

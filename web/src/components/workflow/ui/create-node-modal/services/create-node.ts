@@ -29,6 +29,7 @@ export function createNodeByTypeFactory(ops: {
   addJsonParserNode?: (pos: { x: number; y: number }, parentId?: string) => string | null;
   addImageGenNode?: (pos: { x: number; y: number }, parentId?: string) => string | null;
   addApprovalNode?: (pos: { x: number; y: number }, parentId?: string) => string | null;
+  addAnnouncementNode?: (pos: { x: number; y: number }, parentId?: string) => string | null;
   addQuestionAnswerNode?: (pos: { x: number; y: number }, parentId?: string) => string | null;
 }) {
   return (
@@ -53,7 +54,9 @@ export function createNodeByTypeFactory(ops: {
       case 'tool':
         return ops.addToolNode ? ops.addToolNode(pos, parentId, initialData) : null;
       case 'create-scheduled-task':
-        return ops.addCreateScheduledTaskNode ? ops.addCreateScheduledTaskNode(pos, parentId) : null;
+        return ops.addCreateScheduledTaskNode
+          ? ops.addCreateScheduledTaskNode(pos, parentId)
+          : null;
       case 'notification-sms':
         return ops.addNotificationSMSNode ? ops.addNotificationSMSNode(pos, parentId) : null;
       case 'if-else':
@@ -87,6 +90,8 @@ export function createNodeByTypeFactory(ops: {
         return ops.addImageGenNode ? ops.addImageGenNode(pos, parentId) : null;
       case 'approval':
         return ops.addApprovalNode ? ops.addApprovalNode(pos, parentId) : null;
+      case 'announcement':
+        return ops.addAnnouncementNode ? ops.addAnnouncementNode(pos, parentId) : null;
       case 'question-answer':
         return ops.addQuestionAnswerNode ? ops.addQuestionAnswerNode(pos, parentId) : null;
       default:

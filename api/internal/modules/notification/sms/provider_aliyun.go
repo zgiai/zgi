@@ -35,20 +35,28 @@ func (p *AliyunProvider) Provider() string {
 	return ProviderAliyun
 }
 
-func (p *AliyunProvider) BuildPayload(req Request) (*AliyunPayload, error) {
-	if err := validateRequest(req); err != nil {
+func (p *AliyunProvider) BuildPayload(req Request, template TemplateConfig) (*AliyunPayload, error) {
+	if err := validateRequest(req, template); err != nil {
 		return nil, err
 	}
-	if p.config.ParamMode != ParamModeMap {
-		return nil, fmt.Errorf("unsupported aliyun param mode: %s", p.config.ParamMode)
+	providerTemplate := template.Aliyun
+	if normalizedParamMode(providerTemplate.ParamMode, ParamModeMap) != ParamModeMap {
+		return nil, fmt.Errorf("unsupported aliyun param mode: %s", providerTemplate.ParamMode)
 	}
 
-	values := normalizeTemplateParams(req)
-	params := make(map[string]string, len(p.config.ParamMap))
-	for internalName, providerName := range p.config.ParamMap {
-		value, ok := values[internalName]
-		if !ok || strings.TrimSpace(value) == "" {
-			return nil, fmt.Errorf("unsupported aliyun param mapping key: %s", internalName)
+	templateParams := templateParamConfigs(template.Params)
+	params := make(map[string]string, len(providerTemplate.ParamMap))
+	for internalName, providerName := range providerTemplate.ParamMap {
+		param, ok := templateParams[internalName]
+		if !ok {
+			return nil, fmt.Errorf("aliyun param mapping key %s is not defined by template", internalName)
+		}
+		value := strings.TrimSpace(req.TemplateParams[internalName])
+		if value == "" {
+			if param.IsRequired() {
+				return nil, fmt.Errorf("aliyun param mapping key %s is empty", internalName)
+			}
+			continue
 		}
 		params[providerName] = value
 	}
@@ -60,13 +68,13 @@ func (p *AliyunProvider) BuildPayload(req Request) (*AliyunPayload, error) {
 	return &AliyunPayload{
 		PhoneNumbers:  NormalizePhoneNumbers(req.Phone),
 		SignName:      p.config.SignName,
-		TemplateCode:  p.config.TemplateCode,
+		TemplateCode:  providerTemplate.TemplateCode,
 		TemplateParam: string(templateParam),
 	}, nil
 }
 
-func (p *AliyunProvider) SendNotification(ctx context.Context, req Request) (*Result, error) {
-	payload, err := p.BuildPayload(req)
+func (p *AliyunProvider) SendNotification(ctx context.Context, req Request, template TemplateConfig) (*Result, error) {
+	payload, err := p.BuildPayload(req, template)
 	if err != nil {
 		return nil, err
 	}

@@ -3,11 +3,10 @@
 import type { AxiosInstance, AxiosResponse } from 'axios';
 import { AxiosError } from 'axios';
 import axios from 'axios';
-import * as Sentry from '@sentry/nextjs';
 import { ErrorNotificationService } from '@/utils/error-notifications';
 import { isAuthRedirectInProgress, isLogoutInProgress } from '@/lib/auth/logout-state';
+import { captureException } from '@/lib/sentry/client';
 import {
-  getCurrentEnvironment,
   getEndpointConfig,
   getHttpConfig,
   type ApiEndpoint,
@@ -239,7 +238,7 @@ export class HttpClient {
     config: ExtendedRequestConfig | undefined,
     reason: string
   ): void {
-    Sentry.withScope(scope => {
+    captureException(error, scope => {
       scope.setContext('http', {
         url: config?.url || '',
         baseURL: config?.baseURL || '',
@@ -254,7 +253,6 @@ export class HttpClient {
           : undefined;
       if (errorData?.code) scope.setTag('business_code', errorData.code);
     });
-    Sentry.captureException(error);
   }
 
   private shouldRetry(error: AxiosError, config?: ExtendedRequestConfig): boolean {

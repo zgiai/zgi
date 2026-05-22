@@ -37,6 +37,7 @@ const (
 	JSONParser          NodeType = "json-parser"
 	CreateScheduledTask NodeType = "create-scheduled-task"
 	Approval            NodeType = "approval"
+	Announcement        NodeType = "announcement"
 	QuestionAnswer      NodeType = "question-answer"
 	NotificationSMS     NodeType = "notification-sms"
 )
@@ -66,6 +67,7 @@ var executableNodeTypes = map[NodeType]struct{}{
 	JSONParser:          {},
 	CreateScheduledTask: {},
 	Approval:            {},
+	Announcement:        {},
 	QuestionAnswer:      {},
 	NotificationSMS:     {},
 }

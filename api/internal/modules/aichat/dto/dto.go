@@ -49,6 +49,8 @@ type SkillResponse struct {
 	ScriptsSupported bool                 `json:"scripts_supported"`
 	MaxCallsPerTurn  int                  `json:"max_calls_per_turn"`
 	TimeoutSeconds   int                  `json:"timeout_seconds"`
+	Status           string               `json:"status"`
+	ValidationError  string               `json:"validation_error,omitempty"`
 }
 
 type SkillConfigResponse struct {
@@ -57,6 +59,39 @@ type SkillConfigResponse struct {
 
 type UpdateSkillConfigRequest struct {
 	EnabledSkillIDs []string `json:"enabled_skill_ids"`
+}
+
+type ImportSkillPreviewFile struct {
+	Path string `json:"path"`
+	Size int64  `json:"size"`
+}
+
+type ImportSkillPreviewResponse struct {
+	ImportID         string                   `json:"import_id,omitempty"`
+	ExpiresAt        int64                    `json:"expires_at,omitempty"`
+	Skill            *SkillResponse           `json:"skill,omitempty"`
+	WillOverwrite    bool                     `json:"will_overwrite"`
+	ExistingSkill    *ExistingSkillResponse   `json:"existing_skill,omitempty"`
+	FileCount        int                      `json:"file_count"`
+	TotalSize        int64                    `json:"total_size"`
+	Files            []ImportSkillPreviewFile `json:"files"`
+	References       []string                 `json:"references"`
+	HasScripts       bool                     `json:"has_scripts"`
+	ScriptsSupported bool                     `json:"scripts_supported"`
+	Warnings         []string                 `json:"warnings"`
+	ValidationErrors []string                 `json:"validation_errors"`
+	CanImport        bool                     `json:"can_import"`
+}
+
+type ConfirmImportSkillRequest struct {
+	ImportID           string `json:"import_id" binding:"required"`
+	OverwriteConfirmed bool   `json:"overwrite_confirmed,omitempty"`
+}
+
+type ExistingSkillResponse struct {
+	SkillID   string `json:"skill_id"`
+	Name      string `json:"name"`
+	UpdatedAt int64  `json:"updated_at,omitempty"`
 }
 
 type SkillDisplayResponse struct {

@@ -201,21 +201,23 @@ export function TaskOverviewTab({ taskDetail, showUnsupportedHint }: TaskOvervie
                         <div className="rounded-2xl border border-border/70 bg-background p-4">
                           <div className="mb-2 flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.12em] text-primary">
                             <Workflow className="size-3.5" />
-                            {t('actions.smsNotificationTitle')}
+                            {t('actions.smsTemplate')}
                           </div>
                           <p className="break-words text-sm leading-6 text-foreground">
-                            {selectedAction.config.template_params.notification_title ||
-                              t('misc.notAvailable')}
+                            {selectedAction.config.template || t('misc.notAvailable')}
                           </p>
                         </div>
                         <div className="rounded-2xl border border-border/70 bg-background p-4">
                           <div className="mb-2 text-[11px] font-medium uppercase tracking-[0.12em] text-primary">
-                            {t('actions.smsLinkCode')}
+                            {t('actions.smsTemplateParams')}
                           </div>
-                          <p className="break-all text-sm leading-6 text-foreground">
-                            {selectedAction.config.template_params.link_suffix ||
-                              t('misc.notAvailable')}
-                          </p>
+                          {Object.keys(selectedAction.config.template_params ?? {}).length > 0 ? (
+                            <JsonBlock value={selectedAction.config.template_params} />
+                          ) : (
+                            <p className="text-sm leading-6 text-muted-foreground">
+                              {t('misc.notAvailable')}
+                            </p>
+                          )}
                         </div>
                       </>
                     ) : (

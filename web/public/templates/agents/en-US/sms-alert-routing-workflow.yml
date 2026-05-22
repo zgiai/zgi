@@ -161,9 +161,10 @@ workflow:
         title: SMS Notification
         desc: ''
         phone: "{{#start_node.phone#}}"
-        template: notification_sms
-        notification_title: Urgent workflow alert
-        link_code: "{{#sys.workflow_run_id#}}"
+        template: pending_action_notification
+        template_params:
+          notification_title: Urgent workflow alert
+          link_code: "{{#sys.workflow_run_id#}}"
         isInLoop: false
         isInIteration: false
     - id: sms_end

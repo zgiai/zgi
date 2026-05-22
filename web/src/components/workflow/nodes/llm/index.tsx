@@ -1,6 +1,6 @@
 ﻿import React from 'react';
 import type { LLMNodeData } from './config';
-import { ModelIcon } from '@lobehub/icons';
+import { ModelIcon } from 'modelicons';
 
 export interface LLMContentProps {
   nodeId: string;

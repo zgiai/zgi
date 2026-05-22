@@ -262,14 +262,21 @@ const messages = {
   notificationSms: {
     fields: {
       recipients: 'Phone numbers',
+      template: 'SMS template',
+    },
+    templates: {
+      pendingActionNotification: 'Pending action notification',
+    },
+    params: {
       notificationTitle: 'Notification title',
-      linkCode: 'Link suffix',
+      linkCode: 'Link code',
     },
     placeholders: {
       recipient: 'Phone number {index}',
       recipientSingle: 'Phone numbers, separated by commas',
       notificationTitle: 'New task pending',
-      linkCode: 'For example /a/abc123',
+      linkCode: 'task or notice link code',
+      param: 'Enter {label}',
     },
     actions: {
       addRecipient: 'Add phone',
@@ -279,19 +286,17 @@ const messages = {
       recipients:
         'Supports one phone number, comma-separated phone numbers, or a variable that resolves to phone numbers.',
       linkCode:
-        'Enter the part after the base URL, for example /a/abc123. Do not enter a full URL or spaces.',
+        'Use a short code such as abc123. Do not include -, _, Chinese characters, or a full URL.',
     },
     validation: {
-      linkCodeInvalid:
-        'Invalid link suffix, for example /a/abc123. Do not enter a full URL, Chinese characters, or spaces.',
+      paramRequired: '{label} is required.',
+      paramInvalid: '{label} has an invalid format.',
+      paramTooLong: '{label} must be at most {max} characters.',
     },
     preview: 'Template preview',
-    previewBody:
-      'Hello, you have a new task pending: {title}. Open the configured approved link with code {code}.',
     previewHint:
       'The actual SMS content follows the provider-approved template configured on the backend.',
-    previewTitlePlaceholder: 'notification title',
-    previewCodePlaceholder: 'link suffix',
+    previewUnavailable: 'No preview text is configured for this template.',
   },
 
   // Form elements

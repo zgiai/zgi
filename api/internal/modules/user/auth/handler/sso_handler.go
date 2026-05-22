@@ -17,6 +17,7 @@ import (
 const (
 	ssoFeatureSocialOAuthLogin   = "social_oauth_login"
 	ssoQueryCode                 = "code"
+	ssoQueryFrontend             = "frontend"
 	ssoQueryState                = "state"
 	ssoQueryReason               = "reason"
 	ssoErrorDisabled             = "disabled"
@@ -31,14 +32,13 @@ const (
 	ssoReasonSubjectClaim        = "subject_claim_required"
 	ssoDisabledMessage           = "social oauth login is disabled"
 	ssoNotConfiguredMessage      = "casdoor sso is not configured"
-	ssoFrontendCallbackEnvKey    = "SSO_FRONTEND_CALLBACK_URL"
-	ssoConsoleWebURLEnvKey       = "EMAIL_CONSOLE_WEB_URL"
+	ssoFrontendUnknownMessage    = "frontend callback url is not configured"
 	ssoFrontendCallbackPath      = "/sso/callback"
 )
 
 type ssoService interface {
-	IssueSSOState(ctx context.Context) (string, error)
-	ConsumeSSOState(ctx context.Context, state string) error
+	IssueSSOState(ctx context.Context, callbackURL string) (string, error)
+	ConsumeSSOState(ctx context.Context, state string) (string, error)
 	ResolveOrCreateSSOAccount(ctx context.Context, identity *shared_dto.SSOIdentity) (*auth_model.Account, error)
 	IssueSSOLoginTicket(ctx context.Context, account *auth_model.Account, sso *shared_dto.SSOProviderToken) (string, error)
 	ConsumeSSOLoginTicket(ctx context.Context, ticket, ipAddress string) (*shared_dto.LoginResponse, error)
@@ -59,7 +59,13 @@ func (h *AuthHandler) StartCasdoorSSO(c *gin.Context) {
 		return
 	}
 
-	state, err := h.ssoService.IssueSSOState(c.Request.Context())
+	callbackURL, ok := h.ssoFrontendCallbackURL(c.Query(ssoQueryFrontend))
+	if !ok {
+		response.FailWithMessage(c, response.ErrInvalidParam, ssoFrontendUnknownMessage)
+		return
+	}
+
+	state, err := h.ssoService.IssueSSOState(c.Request.Context(), callbackURL)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
 		return
@@ -75,50 +81,55 @@ func (h *AuthHandler) StartCasdoorSSO(c *gin.Context) {
 }
 
 func (h *AuthHandler) HandleCasdoorCallback(c *gin.Context) {
+	callbackURL, _ := h.ssoFrontendCallbackURL("")
 	if !h.isSSOEnabled() {
-		h.redirectSSOError(c, ssoErrorDisabled, "")
+		h.redirectSSOError(c, callbackURL, ssoErrorDisabled, "")
 		return
 	}
 	if h.ssoService == nil || h.casdoorClient == nil {
-		h.redirectSSOError(c, ssoErrorNotConfigured, "")
+		h.redirectSSOError(c, callbackURL, ssoErrorNotConfigured, "")
 		return
 	}
 
 	code := strings.TrimSpace(c.Query(ssoQueryCode))
 	state := strings.TrimSpace(c.Query(ssoQueryState))
 	if code == "" || state == "" {
-		h.redirectSSOError(c, ssoErrorMissingCodeOrState, "")
+		h.redirectSSOError(c, callbackURL, ssoErrorMissingCodeOrState, "")
 		return
 	}
 
-	if err := h.ssoService.ConsumeSSOState(c.Request.Context(), state); err != nil {
-		h.redirectSSOError(c, ssoErrorInvalidState, "")
+	stateCallbackURL, err := h.ssoService.ConsumeSSOState(c.Request.Context(), state)
+	if err != nil {
+		h.redirectSSOError(c, callbackURL, ssoErrorInvalidState, "")
 		return
+	}
+	if stateCallbackURL != "" {
+		callbackURL = stateCallbackURL
 	}
 
 	exchangeResult, err := h.casdoorClient.ExchangeCode(c.Request.Context(), code)
 	if err != nil {
-		h.redirectSSOError(c, ssoErrorExchangeFailed, classifySSOExchangeReason(err))
+		h.redirectSSOError(c, callbackURL, ssoErrorExchangeFailed, classifySSOExchangeReason(err))
 		return
 	}
 	if exchangeResult == nil || exchangeResult.Identity == nil {
-		h.redirectSSOError(c, ssoErrorExchangeFailed, "")
+		h.redirectSSOError(c, callbackURL, ssoErrorExchangeFailed, "")
 		return
 	}
 
 	account, err := h.ssoService.ResolveOrCreateSSOAccount(c.Request.Context(), exchangeResult.Identity)
 	if err != nil {
-		h.redirectSSOError(c, ssoErrorAccountResolveFailed, "")
+		h.redirectSSOError(c, callbackURL, ssoErrorAccountResolveFailed, "")
 		return
 	}
 
 	ticket, err := h.ssoService.IssueSSOLoginTicket(c.Request.Context(), account, exchangeResult.Token)
 	if err != nil {
-		h.redirectSSOError(c, ssoErrorTicketIssueFailed, "")
+		h.redirectSSOError(c, callbackURL, ssoErrorTicketIssueFailed, "")
 		return
 	}
 
-	redirectURL, err := auth_service.BuildFrontendSSORedirect(h.ssoFrontendCallbackURL(), ticket, "", "")
+	redirectURL, err := auth_service.BuildFrontendSSORedirect(callbackURL, ticket, "", "")
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
 		return
@@ -169,8 +180,7 @@ func (h *AuthHandler) isSSOEnabled() bool {
 	return h.featureService.IsFeatureEnabled(ssoFeatureSocialOAuthLogin)
 }
 
-func (h *AuthHandler) redirectSSOError(c *gin.Context, errCode, reason string) {
-	callbackURL := h.ssoFrontendCallbackURL()
+func (h *AuthHandler) redirectSSOError(c *gin.Context, callbackURL, errCode, reason string) {
 	if callbackURL == "" {
 		message := errCode
 		if reason != "" {
@@ -189,17 +199,45 @@ func (h *AuthHandler) redirectSSOError(c *gin.Context, errCode, reason string) {
 	c.Redirect(http.StatusFound, redirectURL)
 }
 
-func (h *AuthHandler) ssoFrontendCallbackURL() string {
+func (h *AuthHandler) ssoFrontendCallbackURL(frontend string) (string, bool) {
 	cfg := config.Current()
+	frontend = strings.TrimSpace(frontend)
+	if frontend != "" {
+		frontendKey := normalizeSSOFrontendKey(frontend)
+		if frontendKey == "" {
+			return "", false
+		}
+		callbackURL := strings.TrimSpace(cfg.Auth.SSO.FrontendCallbackURLs[frontendKey])
+		if callbackURL == "" {
+			return "", false
+		}
+		return callbackURL, true
+	}
+
 	if callbackURL := strings.TrimSpace(cfg.Auth.SSO.FrontendCallbackURL); callbackURL != "" {
-		return callbackURL
+		return callbackURL, true
 	}
 
 	if consoleURL := strings.TrimRight(strings.TrimSpace(cfg.Console.WebURL), "/"); consoleURL != "" {
-		return consoleURL + ssoFrontendCallbackPath
+		return consoleURL + ssoFrontendCallbackPath, true
 	}
 
-	return ""
+	return "", true
+}
+
+func normalizeSSOFrontendKey(frontend string) string {
+	normalized := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(frontend), "-", "_"))
+	if normalized == "" {
+		return ""
+	}
+	for _, r := range normalized {
+		isUpperLetter := r >= 'A' && r <= 'Z'
+		isDigit := r >= '0' && r <= '9'
+		if !isUpperLetter && !isDigit && r != '_' {
+			return ""
+		}
+	}
+	return normalized
 }
 
 func classifySSOExchangeReason(err error) string {

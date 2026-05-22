@@ -138,7 +138,7 @@ export function resolveProviderCanonicalKey(provider?: string | null): string {
 }
 
 /**
- * @util Resolve a provider identifier into a @lobehub/icons provider key.
+ * @util Resolve a provider identifier into an icon provider key.
  */
 export function resolveProviderIconKey(provider?: string | null): string {
   const canonicalKey = resolveProviderCanonicalKey(provider);

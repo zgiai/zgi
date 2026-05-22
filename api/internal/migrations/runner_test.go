@@ -13,8 +13,8 @@ import (
 
 func TestAllMigrationsStartsAtPublicInitialSchema(t *testing.T) {
 	got := allMigrations()
-	if len(got) != 1 {
-		t.Fatalf("expected one public baseline migration, got %d", len(got))
+	if len(got) == 0 {
+		t.Fatal("expected at least one public migration")
 	}
 	if got[0].ID != initialSchemaMigrationID {
 		t.Fatalf("expected initial migration %s, got %s", initialSchemaMigrationID, got[0].ID)

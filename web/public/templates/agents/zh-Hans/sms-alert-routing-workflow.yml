@@ -160,9 +160,10 @@ workflow:
         title: 短信通知
         desc: ''
         phone: "{{#start_node.phone#}}"
-        template: notification_sms
-        notification_title: 紧急工作流提醒
-        link_code: "{{#sys.workflow_run_id#}}"
+        template: pending_action_notification
+        template_params:
+          notification_title: 紧急工作流提醒
+          link_code: "{{#sys.workflow_run_id#}}"
         isInLoop: false
         isInIteration: false
     - id: sms_end

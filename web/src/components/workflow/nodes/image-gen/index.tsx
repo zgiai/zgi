@@ -1,6 +1,6 @@
 import React from 'react';
 import type { ImageGenNodeData } from './config';
-import { ModelIcon } from '@lobehub/icons';
+import { ModelIcon } from 'modelicons';
 
 export interface ImageGenContentProps {
   nodeId: string;

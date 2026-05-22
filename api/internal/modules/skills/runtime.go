@@ -99,6 +99,45 @@ func (r *Runtime) ListSkills(ctx context.Context) ([]SkillDiscoveryMetadata, err
 	return r.ListSkillsWithCustom(ctx, nil)
 }
 
+func (r *Runtime) ListSystemSkillsBestEffort(ctx context.Context) ([]SkillDiscoveryMetadata, error) {
+	_ = ctx
+	if r == nil {
+		return nil, fmt.Errorf("skill runtime is not configured")
+	}
+	entries, err := os.ReadDir(r.catalogDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read skill catalog: %w", err)
+	}
+	metadata := make([]SkillDiscoveryMetadata, 0, len(entries))
+	errs := make([]error, 0)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := strings.TrimSpace(entry.Name())
+		if name == "" {
+			continue
+		}
+		if !isValidSkillName(name) {
+			errs = append(errs, fmt.Errorf("invalid skill directory %s: use lowercase letters, numbers, and hyphens only", entry.Name()))
+			continue
+		}
+		id := normalizeSkillID(name)
+		doc, err := r.loadSkillDocumentFromLocation(skillLocation{
+			ID:     id,
+			Root:   filepath.Join(r.catalogDir, name),
+			Source: SkillSourceSystem,
+		})
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		metadata = append(metadata, skillDiscoveryMetadata(doc))
+	}
+	sort.Slice(metadata, func(i, j int) bool { return metadata[i].ID < metadata[j].ID })
+	return metadata, errors.Join(errs...)
+}
+
 func (r *Runtime) ListSkillsWithCustom(ctx context.Context, custom []CustomSkillCatalogEntry) ([]SkillDiscoveryMetadata, error) {
 	_ = ctx
 	if r == nil {
@@ -122,6 +161,18 @@ func (r *Runtime) ListSkillsWithCustom(ctx context.Context, custom []CustomSkill
 		metadata = append(metadata, skillDiscoveryMetadata(doc))
 	}
 	return metadata, nil
+}
+
+func (r *Runtime) SystemSkillExists(skillID string) bool {
+	if r == nil {
+		return false
+	}
+	id := normalizeSkillID(skillID)
+	if id == "" || !isValidSkillName(id) {
+		return false
+	}
+	info, err := os.Stat(filepath.Join(r.catalogDir, id))
+	return err == nil && info.IsDir()
 }
 
 func (r *Runtime) GetSkillMetadata(ctx context.Context, skillID string) (*SkillDiscoveryMetadata, error) {
@@ -420,10 +471,16 @@ func metaTools(includeToolCaller bool) []llmadapter.Tool {
 }
 
 func SkillMetadataSystemMessage(metadata []SkillPromptMetadata) llmadapter.Message {
+	message, _ := SkillMetadataSystemMessageWithBudget(metadata, DefaultSkillMetadataPromptBudgetChars)
+	return message
+}
+
+func SkillMetadataSystemMessageWithBudget(metadata []SkillPromptMetadata, budgetChars int) (llmadapter.Message, SkillMetadataPromptStats) {
+	content, stats := skillMetadataPromptWithBudget(metadata, budgetChars)
 	return llmadapter.Message{
 		Role:    "system",
-		Content: skillMetadataPrompt(metadata),
-	}
+		Content: content,
+	}, stats
 }
 
 func ToolResultMessage(callID string, payload interface{}) llmadapter.Message {
@@ -548,7 +605,9 @@ func buildSkillDocument(id string, root string, source string, frontmatter Skill
 }
 
 func parseSkillMarkdown(raw []byte) (SkillFrontmatter, string, error) {
-	text := strings.ReplaceAll(string(raw), "\r\n", "\n")
+	text := strings.TrimPrefix(string(raw), "\ufeff")
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
 	if !strings.HasPrefix(text, "---\n") {
 		return SkillFrontmatter{}, "", fmt.Errorf("missing yaml frontmatter")
 	}

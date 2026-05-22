@@ -21,11 +21,10 @@ type Node struct {
 
 type NodeData struct {
 	base.NodeData
-	Phone             string `json:"phone"`
-	Provider          string `json:"provider"`
-	Template          string `json:"template"`
-	NotificationTitle string `json:"notification_title"`
-	LinkCode          string `json:"link_code"`
+	Phone          string            `json:"phone"`
+	Provider       string            `json:"provider"`
+	Template       string            `json:"template"`
+	TemplateParams map[string]string `json:"template_params"`
 }
 
 func New(
@@ -114,15 +113,12 @@ func (n *Node) executeRun(ctx context.Context) (*shared.NodeRunResult, error) {
 	}
 
 	req := notificationsms.Request{
-		Phone:    n.resolveText(n.Phone),
-		Provider: strings.TrimSpace(n.Provider),
-		Template: strings.TrimSpace(n.Template),
-		TemplateParams: map[string]string{
-			notificationsms.TemplateParamNotificationTitle: n.resolveText(n.NotificationTitle),
-			notificationsms.TemplateParamLinkSuffix:        n.resolveText(n.LinkCode),
-		},
-		Source:   "workflow",
-		SourceID: n.WorkflowID,
+		Phone:          n.resolveText(n.Phone),
+		Provider:       strings.TrimSpace(n.Provider),
+		Template:       strings.TrimSpace(n.Template),
+		TemplateParams: n.resolveTemplateParams(n.TemplateParams),
+		Source:         "workflow",
+		SourceID:       n.WorkflowID,
 	}
 	result, err := n.service.Send(ctx, req)
 	if err != nil {
@@ -130,16 +126,17 @@ func (n *Node) executeRun(ctx context.Context) (*shared.NodeRunResult, error) {
 	}
 
 	outputs := map[string]any{
-		"accepted":   result.Accepted,
-		"provider":   result.Provider,
-		"message_id": result.MessageID,
-		"raw_code":   result.RawCode,
-		"phone":      notificationsms.MaskPhone(req.Phone),
-		"template":   req.Template,
+		"accepted":        result.Accepted,
+		"provider":        result.Provider,
+		"message_id":      result.MessageID,
+		"raw_code":        result.RawCode,
+		"phone":           notificationsms.MaskPhone(req.Phone),
+		"template":        req.Template,
+		"template_params": req.TemplateParams,
 	}
 	return &shared.NodeRunResult{
 		Status:  shared.SUCCEEDED,
-		Inputs:  map[string]any{"phone": notificationsms.MaskPhone(req.Phone), "provider": req.Provider, "template": req.Template},
+		Inputs:  map[string]any{"phone": notificationsms.MaskPhone(req.Phone), "provider": req.Provider, "template": req.Template, "template_params": req.TemplateParams},
 		Outputs: outputs,
 	}, nil
 }
@@ -149,6 +146,21 @@ func (n *Node) resolveText(value string) string {
 		return strings.TrimSpace(value)
 	}
 	return strings.TrimSpace(segmentGroupToText(n.GraphRuntimeState.VariablePool.ConvertTemplate(value)))
+}
+
+func (n *Node) resolveTemplateParams(params map[string]string) map[string]string {
+	if len(params) == 0 {
+		return nil
+	}
+	resolved := make(map[string]string, len(params))
+	for key, value := range params {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		resolved[key] = n.resolveText(value)
+	}
+	return resolved
 }
 
 func parseNodeData(config map[string]any) (NodeData, string, error) {
@@ -168,9 +180,6 @@ func parseNodeData(config map[string]any) (NodeData, string, error) {
 	var nodeData NodeData
 	if err := json.Unmarshal(payload, &nodeData); err != nil {
 		return NodeData{}, "", fmt.Errorf("unmarshal node data: %w", err)
-	}
-	if strings.TrimSpace(nodeData.Template) == "" {
-		nodeData.Template = notificationsms.TemplatePendingActionNotification
 	}
 	return nodeData, nodeID, nil
 }

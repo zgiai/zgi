@@ -35,18 +35,18 @@ func (f fakeFeatureService) IsFeatureEnabled(featureName string) bool {
 }
 
 type fakeSSOService struct {
-	issueStateFn     func(ctx context.Context) (string, error)
-	consumeStateFn   func(ctx context.Context, state string) error
+	issueStateFn     func(ctx context.Context, callbackURL string) (string, error)
+	consumeStateFn   func(ctx context.Context, state string) (string, error)
 	resolveAccountFn func(ctx context.Context, identity *shared_dto.SSOIdentity) (*auth_model.Account, error)
 	issueTicketFn    func(ctx context.Context, account *auth_model.Account, sso *shared_dto.SSOProviderToken) (string, error)
 	consumeTicketFn  func(ctx context.Context, ticket, ipAddress string) (*shared_dto.LoginResponse, error)
 }
 
-func (f fakeSSOService) IssueSSOState(ctx context.Context) (string, error) {
-	return f.issueStateFn(ctx)
+func (f fakeSSOService) IssueSSOState(ctx context.Context, callbackURL string) (string, error) {
+	return f.issueStateFn(ctx, callbackURL)
 }
 
-func (f fakeSSOService) ConsumeSSOState(ctx context.Context, state string) error {
+func (f fakeSSOService) ConsumeSSOState(ctx context.Context, state string) (string, error) {
 	return f.consumeStateFn(ctx, state)
 }
 
@@ -80,10 +80,13 @@ func (f fakeCasdoorClient) ExchangeCode(ctx context.Context, code string) (*shar
 }
 
 func TestStartCasdoorSSORedirectsToProvider(t *testing.T) {
+	setSSOHandlerTestConfig(t, "https://app.example.com/sso/callback", nil)
+
 	h := &AuthHandler{
 		featureService: fakeFeatureService{enabled: true},
 		ssoService: fakeSSOService{
-			issueStateFn: func(ctx context.Context) (string, error) {
+			issueStateFn: func(ctx context.Context, callbackURL string) (string, error) {
+				require.Equal(t, "https://app.example.com/sso/callback", callbackURL)
 				return "state-1", nil
 			},
 		},
@@ -97,15 +100,59 @@ func TestStartCasdoorSSORedirectsToProvider(t *testing.T) {
 	require.Equal(t, "https://door.example.com/login/oauth/authorize?state=state-1", recorder.Header().Get("Location"))
 }
 
-func TestCasdoorCallbackRedirectsWithTicket(t *testing.T) {
-	setSSOHandlerTestConfig(t, "https://app.example.com/sso/callback")
+func TestStartCasdoorSSOUsesNamedFrontendCallback(t *testing.T) {
+	setSSOHandlerTestConfig(t, "https://app.example.com/sso/callback", map[string]string{
+		"FC_7Q2K9M": "https://region-a.example.com/sso/callback",
+	})
 
 	h := &AuthHandler{
 		featureService: fakeFeatureService{enabled: true},
 		ssoService: fakeSSOService{
-			consumeStateFn: func(ctx context.Context, state string) error {
+			issueStateFn: func(ctx context.Context, callbackURL string) (string, error) {
+				require.Equal(t, "https://region-a.example.com/sso/callback", callbackURL)
+				return "state-1", nil
+			},
+		},
+		casdoorClient: fakeCasdoorClient{authURL: "https://door.example.com/login/oauth/authorize"},
+	}
+
+	c, recorder := newAuthHandlerTestContext(http.MethodGet, "/sso/casdoor/start?frontend=fc-7q2k9m", nil)
+	h.StartCasdoorSSO(c)
+
+	require.Equal(t, http.StatusFound, recorder.Code)
+	require.Equal(t, "https://door.example.com/login/oauth/authorize?state=state-1", recorder.Header().Get("Location"))
+}
+
+func TestStartCasdoorSSORejectsUnknownNamedFrontend(t *testing.T) {
+	setSSOHandlerTestConfig(t, "https://app.example.com/sso/callback", nil)
+
+	h := &AuthHandler{
+		featureService: fakeFeatureService{enabled: true},
+		ssoService: fakeSSOService{
+			issueStateFn: func(ctx context.Context, callbackURL string) (string, error) {
+				t.Fatal("IssueSSOState should not be called for unknown frontend")
+				return "", nil
+			},
+		},
+		casdoorClient: fakeCasdoorClient{authURL: "https://door.example.com/login/oauth/authorize"},
+	}
+
+	c, recorder := newAuthHandlerTestContext(http.MethodGet, "/sso/casdoor/start?frontend=missing", nil)
+	h.StartCasdoorSSO(c)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "frontend callback url is not configured")
+}
+
+func TestCasdoorCallbackRedirectsWithTicket(t *testing.T) {
+	setSSOHandlerTestConfig(t, "https://app.example.com/sso/callback", nil)
+
+	h := &AuthHandler{
+		featureService: fakeFeatureService{enabled: true},
+		ssoService: fakeSSOService{
+			consumeStateFn: func(ctx context.Context, state string) (string, error) {
 				require.Equal(t, "state-1", state)
-				return nil
+				return "https://region-a.example.com/sso/callback", nil
 			},
 			resolveAccountFn: func(ctx context.Context, identity *shared_dto.SSOIdentity) (*auth_model.Account, error) {
 				require.Equal(t, "sub-1", identity.Subject)
@@ -138,17 +185,17 @@ func TestCasdoorCallbackRedirectsWithTicket(t *testing.T) {
 	h.HandleCasdoorCallback(c)
 
 	require.Equal(t, http.StatusFound, recorder.Code)
-	require.Equal(t, "https://app.example.com/sso/callback?ticket=ticket-1", recorder.Header().Get("Location"))
+	require.Equal(t, "https://region-a.example.com/sso/callback?ticket=ticket-1", recorder.Header().Get("Location"))
 }
 
 func TestCasdoorCallbackRedirectsWithExchangeReason(t *testing.T) {
-	setSSOHandlerTestConfig(t, "https://app.example.com/sso/callback")
+	setSSOHandlerTestConfig(t, "https://app.example.com/sso/callback", nil)
 
 	h := &AuthHandler{
 		featureService: fakeFeatureService{enabled: true},
 		ssoService: fakeSSOService{
-			consumeStateFn: func(ctx context.Context, state string) error {
-				return nil
+			consumeStateFn: func(ctx context.Context, state string) (string, error) {
+				return "", nil
 			},
 		},
 		casdoorClient: fakeCasdoorClient{
@@ -167,12 +214,15 @@ func TestCasdoorCallbackRedirectsWithExchangeReason(t *testing.T) {
 	require.Equal(t, "identity_contact_required", redirectURL.Query().Get("reason"))
 }
 
-func setSSOHandlerTestConfig(t *testing.T, callbackURL string) {
+func setSSOHandlerTestConfig(t *testing.T, callbackURL string, callbackURLs map[string]string) {
 	t.Helper()
 	oldConfig := config.GlobalConfig
 	config.GlobalConfig = &config.Config{
 		Auth: config.AuthConfig{
-			SSO: config.SSOConfig{FrontendCallbackURL: callbackURL},
+			SSO: config.SSOConfig{
+				FrontendCallbackURL:  callbackURL,
+				FrontendCallbackURLs: callbackURLs,
+			},
 		},
 	}
 	t.Cleanup(func() {

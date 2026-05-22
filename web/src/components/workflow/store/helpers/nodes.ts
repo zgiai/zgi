@@ -60,7 +60,9 @@ export function sanitizeNodes(nodes: WorkflowNode[]): WorkflowNode[] {
       ...n,
       type: (() => {
         const dataType = (n.data as { type?: string } | undefined)?.type;
-        return dataType === 'approval' || dataType === 'question-answer'
+        return dataType === 'approval' ||
+          dataType === 'announcement' ||
+          dataType === 'question-answer'
           ? dataType
           : n.type || 'custom';
       })(),

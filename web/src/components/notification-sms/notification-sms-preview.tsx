@@ -2,22 +2,24 @@
 
 import { MessageSquareText } from 'lucide-react';
 import { useT } from '@/i18n';
+import type {
+  NotificationSMSTemplate,
+  NotificationSMSTemplateParam,
+} from '@/lib/features/notification-sms';
 
 interface NotificationSMSPreviewProps {
-  notificationTitle: string;
-  linkSuffix: string;
-  previewTemplate?: string;
+  template?: NotificationSMSTemplate;
+  templateParams: Record<string, string>;
 }
 
-export function NotificationSMSPreview({
-  notificationTitle,
-  linkSuffix,
-  previewTemplate,
-}: NotificationSMSPreviewProps) {
+export function NotificationSMSPreview({ template, templateParams }: NotificationSMSPreviewProps) {
   const t = useT('common');
-  const title = notificationTitle.trim() || t('notificationSms.previewTitlePlaceholder' as never);
-  const suffix = linkSuffix.trim() || t('notificationSms.previewCodePlaceholder' as never);
-  const previewBody = renderPreviewTemplate(previewTemplate, title, suffix);
+  const previewBody = renderPreviewTemplate(
+    t,
+    template?.preview_template,
+    template,
+    templateParams
+  );
 
   return (
     <div className="rounded-xl border border-border/70 bg-background p-3">
@@ -30,8 +32,7 @@ export function NotificationSMSPreview({
             {t('notificationSms.preview' as never)}
           </p>
           <p className="break-words text-xs leading-5 text-foreground">
-            {previewBody ??
-              t('notificationSms.previewBody' as never, { title, code: suffix } as never)}
+            {previewBody ?? t('notificationSms.previewUnavailable' as never)}
           </p>
           <p className="text-[10px] leading-4.5 text-muted-foreground">
             {t('notificationSms.previewHint' as never)}
@@ -43,17 +44,35 @@ export function NotificationSMSPreview({
 }
 
 function renderPreviewTemplate(
+  t: ReturnType<typeof useT<'common'>>,
   previewTemplate: string | undefined,
-  notificationTitle: string,
-  linkSuffix: string
+  template: NotificationSMSTemplate | undefined,
+  templateParams: Record<string, string>
 ): string | undefined {
-  const template = previewTemplate?.trim();
-  if (!template) {
+  const text = previewTemplate?.trim();
+  if (!text) {
     return undefined;
   }
 
-  return template
-    .replace(/\{\{\s*notification_title\s*\}\}/g, notificationTitle)
-    .replace(/\{\{\s*link_suffix\s*\}\}/g, linkSuffix)
-    .replace(/\{\{\s*link_code\s*\}\}/g, linkSuffix);
+  return text.replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (_, key: string) => {
+    const value = templateParams[key]?.trim();
+    if (value) {
+      return value;
+    }
+    const param = template?.params?.find(item => item.key === key);
+    return param ? getParamLabel(t, param) : key;
+  });
+}
+
+function getParamLabel(
+  t: ReturnType<typeof useT<'common'>>,
+  param: NotificationSMSTemplateParam
+): string {
+  if (param.key === 'notification_title') {
+    return t('notificationSms.params.notificationTitle' as never);
+  }
+  if (param.key === 'link_code') {
+    return t('notificationSms.params.linkCode' as never);
+  }
+  return param.label || param.key;
 }

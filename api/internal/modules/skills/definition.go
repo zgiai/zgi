@@ -14,6 +14,9 @@ const (
 	SkillSourceSystem = "system"
 	SkillSourceCustom = "custom"
 
+	SkillStatusActive  = "active"
+	SkillStatusInvalid = "invalid"
+
 	SkillRuntimeTypeTool   = "tool"
 	SkillRuntimeTypePrompt = "prompt"
 	SkillRuntimeTypeHybrid = "hybrid"
@@ -79,6 +82,13 @@ type SkillPromptMetadata struct {
 	TimeoutSeconds   int    `json:"timeout_seconds"`
 }
 
+type SkillMetadataPromptStats struct {
+	EnabledCount int
+	ExposedCount int
+	OmittedCount int
+	Truncated    bool
+}
+
 type SkillDiscoveryMetadata struct {
 	ID               string               `json:"skill_id"`
 	Source           string               `json:"source"`
@@ -94,6 +104,8 @@ type SkillDiscoveryMetadata struct {
 	ScriptsSupported bool                 `json:"scripts_supported"`
 	MaxCallsPerTurn  int                  `json:"max_calls_per_turn"`
 	TimeoutSeconds   int                  `json:"timeout_seconds"`
+	Status           string               `json:"status"`
+	ValidationError  string               `json:"validation_error,omitempty"`
 }
 
 type SkillDocument struct {
@@ -211,5 +223,6 @@ func skillDiscoveryMetadata(skill SkillDocument) SkillDiscoveryMetadata {
 		ScriptsSupported: metadata.ScriptsSupported,
 		MaxCallsPerTurn:  metadata.MaxCallsPerTurn,
 		TimeoutSeconds:   metadata.TimeoutSeconds,
+		Status:           SkillStatusActive,
 	}
 }

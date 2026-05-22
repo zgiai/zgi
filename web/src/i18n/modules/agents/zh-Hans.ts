@@ -707,6 +707,9 @@ const messages: AgentsMessages = {
       dialogueCount: '对话轮次',
       technicalFieldsHidden: '仅包含技术字段，可展开原始数据查看。',
       debugDetails: '调试详情',
+      openNodeRuntimeLog: '查看运行详情',
+      closeNodeRuntimeLog: '收起运行详情',
+      runningNow: '运行中',
     },
     runErrorsDialog: {
       title: '存在未解决的错误',

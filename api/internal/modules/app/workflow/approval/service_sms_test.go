@@ -2,6 +2,7 @@ package approval
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -11,12 +12,17 @@ import (
 )
 
 type recordingSMSService struct {
-	enabled  bool
-	requests []notificationsms.Request
+	enabled     bool
+	validateErr error
+	requests    []notificationsms.Request
 }
 
 func (s *recordingSMSService) IsEnabled() bool {
 	return s.enabled
+}
+
+func (s *recordingSMSService) ValidateTemplateParams(_ string, _ map[string]string) error {
+	return s.validateErr
 }
 
 func (s *recordingSMSService) Send(ctx context.Context, req notificationsms.Request) (*notificationsms.Result, error) {
@@ -25,7 +31,7 @@ func (s *recordingSMSService) Send(ctx context.Context, req notificationsms.Requ
 	return &notificationsms.Result{Provider: req.Provider, Accepted: true, MessageID: "msg-1"}, nil
 }
 
-func TestCreateRuntimeFormSendsApprovalSMSWithLinkSuffix(t *testing.T) {
+func TestCreateRuntimeFormSendsApprovalSMSWithLinkCode(t *testing.T) {
 	db := newApprovalTestDB(t)
 	restore := stubApprovalTokens(t, "smsTok01")
 	defer restore()
@@ -70,8 +76,48 @@ func TestCreateRuntimeFormSendsApprovalSMSWithLinkSuffix(t *testing.T) {
 	if req.TemplateParams[notificationsms.TemplateParamNotificationTitle] != "材料待人工智能" {
 		t.Fatalf("notification title param = %q", req.TemplateParams[notificationsms.TemplateParamNotificationTitle])
 	}
-	if req.TemplateParams[notificationsms.TemplateParamLinkSuffix] != "/a/smsTok01" {
-		t.Fatalf("link suffix param = %q", req.TemplateParams[notificationsms.TemplateParamLinkSuffix])
+	if req.TemplateParams[notificationsms.TemplateParamLinkCode] != "smsTok01" {
+		t.Fatalf("link code param = %q", req.TemplateParams[notificationsms.TemplateParamLinkCode])
+	}
+}
+
+func TestCreateRuntimeFormFailsWhenApprovalSMSTemplateParamsAreInvalid(t *testing.T) {
+	db := newApprovalTestDB(t)
+	smsService := &recordingSMSService{enabled: true, validateErr: errors.New("template param link_code is required")}
+	service := NewServiceWithSenders(db, nil, smsService)
+	webappDisabled := false
+
+	_, err := service.CreateOrGetRuntimeForm(context.Background(), CreateRuntimeFormParams{
+		TenantID:      "11111111-1111-1111-1111-111111111111",
+		AppID:         "22222222-2222-2222-2222-222222222222",
+		WorkflowRunID: "run-1",
+		NodeID:        "approval-1",
+		NodeTitle:     "人工审批",
+		Rendered:      "请审批",
+		Config: NodeConfig{
+			Content: "请审批",
+			Actions: []Action{{ID: "approve", Label: "通过"}},
+			SubmitMethods: SubmitMethods{
+				WebApp: WebAppSubmitMethod{Enabled: &webappDisabled},
+				SMS: SMSSubmitMethod{
+					Enabled:           true,
+					NotificationTitle: "材料待人工智能",
+					Recipients: []SMSRecipient{{
+						Type:  "external",
+						Phone: "13800138000",
+					}},
+				},
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected invalid sms template params to fail")
+	}
+	if !strings.Contains(err.Error(), "approval sms") {
+		t.Fatalf("error = %v", err)
+	}
+	if len(smsService.requests) != 0 {
+		t.Fatalf("sms requests = %d, want 0", len(smsService.requests))
 	}
 }
 

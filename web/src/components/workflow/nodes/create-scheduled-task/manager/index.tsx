@@ -14,6 +14,8 @@ import {
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n';
+import { getNotificationSMSTemplates } from '@/lib/features/notification-sms';
+import { useAuthStore } from '@/store/auth-store';
 import OutputVariablesView from '../../../common/output-variables-view';
 import { useNodeData, useNodeDataUpdate, useNodeOutputVariables } from '../../../hooks';
 import { WorkflowValueEditor } from '../../../ui';
@@ -78,6 +80,11 @@ export function CreateScheduledTaskManager({
 }: CreateScheduledTaskManagerProps) {
   const t = useT('nodes');
   const tCommon = useT('common');
+  const systemFeatures = useAuthStore.use.systemFeatures();
+  const smsTemplates = React.useMemo(
+    () => getNotificationSMSTemplates(systemFeatures),
+    [systemFeatures]
+  );
   const updateData = useNodeDataUpdate<CreateScheduledTaskNodeData>(nodeId);
   const selfNodeData = useNodeData<CreateScheduledTaskNodeData>(nodeId);
 
@@ -253,7 +260,8 @@ export function CreateScheduledTaskManager({
         : nodeData.task.actions.findIndex(action => action.client_id === draftAction.client_id);
     const nextErrors = getCreateScheduledTaskActionValidationErrors(
       draftAction,
-      actionIndex >= 0 ? actionIndex : nodeData.task.actions.length
+      actionIndex >= 0 ? actionIndex : nodeData.task.actions.length,
+      smsTemplates
     );
 
     if (hasCreateScheduledTaskActionValidationErrors(nextErrors)) {
@@ -272,7 +280,14 @@ export function CreateScheduledTaskManager({
 
     setSelectedActionId(draftAction.client_id);
     closeActionDialog();
-  }, [actionDialog, closeActionDialog, nodeData.task.actions, updateSelectedAction, updateTask]);
+  }, [
+    actionDialog,
+    closeActionDialog,
+    nodeData.task.actions,
+    smsTemplates,
+    updateSelectedAction,
+    updateTask,
+  ]);
 
   const dialogAction = actionDialog.draft;
   const dialogActionMeta = dialogAction

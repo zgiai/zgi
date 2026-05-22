@@ -1,7 +1,6 @@
 import { getLocale, getMessages } from 'next-intl/server';
 import type { Metadata } from 'next';
 import { FaviconSync } from '@/components/common/favicon-sync';
-import { Providers } from '@/providers';
 import { I18nClientProvider } from '@/providers/i18n-client-provider';
 import { APP_NAME, FAVICON_URL, withBasePath } from '@/lib/config';
 import Script from 'next/script';
@@ -50,7 +49,7 @@ export default async function RootLayout({
           />
           <Script src={withBasePath('/env.js')} strategy="beforeInteractive" />
           <FaviconSync faviconUrl={FAVICON_URL} />
-          <Providers>{children}</Providers>
+          {children}
         </I18nClientProvider>
       </body>
     </html>

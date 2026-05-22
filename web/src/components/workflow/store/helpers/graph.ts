@@ -574,6 +574,36 @@ export function collectForNode(node: WorkflowNode, agentType: AgentType): Upstre
       ];
       break;
     }
+    case 'announcement': {
+      base.variables = [
+        {
+          key: 'title',
+          type: 'string',
+          descriptionKey: 'outputDescriptions.announcement.title',
+        },
+        {
+          key: 'content',
+          type: 'string',
+          descriptionKey: 'outputDescriptions.announcement.content',
+        },
+        {
+          key: 'expiration_time',
+          type: 'string',
+          descriptionKey: 'outputDescriptions.announcement.expiration_time',
+        },
+        {
+          key: 'token',
+          type: 'string',
+          descriptionKey: 'outputDescriptions.announcement.token',
+        },
+        {
+          key: 'url',
+          type: 'string',
+          descriptionKey: 'outputDescriptions.announcement.url',
+        },
+      ];
+      break;
+    }
     case 'question-answer': {
       const data = node.data as QuestionAnswerNodeData;
       base.variables = [
@@ -630,17 +660,18 @@ export function collectForNode(node: WorkflowNode, agentType: AgentType): Upstre
                 {
                   key: 'extracted_fields',
                   type: 'object' as PrimitiveType,
-                  descriptionKey: 'outputDescriptions.questionAnswer.extracted_fields' as NodesSuffix,
+                  descriptionKey:
+                    'outputDescriptions.questionAnswer.extracted_fields' as NodesSuffix,
                 },
-                ...((data.extraction_fields || [])
+                ...(data.extraction_fields || [])
                   .filter(field => field.name?.trim())
                   .map(field => ({
                     key: field.name.trim(),
                     type: field.type as PrimitiveType,
                     description: field.description,
-                  }))),
+                  })),
               ]
-          : []),
+            : []),
       ];
       break;
     }

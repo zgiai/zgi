@@ -13,8 +13,9 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardTitle } from '@/components/ui/card';
 import { Input, PasswordInput } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Icons } from '@/components/ui/icons';
-import { useLogin, useSystemFeatures } from '@/hooks';
+import { Info, Shield } from 'lucide-react';
+import { useLogin } from '@/hooks/auth/use-login';
+import { useSystemFeatures } from '@/hooks/auth/use-system-features';
 import { Label } from '../ui/label';
 import { withBasePathIfInternal } from '@/lib/config';
 import { buildSsoStartUrl } from '@/utils/auth-sso';
@@ -132,7 +133,7 @@ export function LoginForm({ className }: LoginFormProps) {
                 mounted ? 'animate-in fade-in zoom-in-95 duration-500' : 'opacity-0'
               )}
             >
-              <Icons.Info className="h-4 w-4" />
+              <Info className="h-4 w-4" />
               <AlertDescription>{t('inviteLoginHint')}</AlertDescription>
             </Alert>
           )}
@@ -231,7 +232,7 @@ export function LoginForm({ className }: LoginFormProps) {
                   className="glass-panel border-border/30 hover:bg-muted/50 transition-all gap-2"
                   onClick={onSsoLogin}
                 >
-                  <Icons.Shield className="h-5 w-5" />
+                  <Shield className="h-5 w-5" />
                   <span>{t('signInWithSSO')}</span>
                 </Button>
               </div>

@@ -26,6 +26,7 @@ import { DEFAULT_KNOWLEDGE_RETRIEVAL_NODE } from '../nodes/knowledge-retrieval/c
 import { DEFAULT_JSON_PARSER_NODE } from '../nodes/json-parser/config';
 import { DEFAULT_IMAGE_GEN_NODE_DATA } from '../nodes/image-gen/config';
 import { createApprovalActionId, DEFAULT_APPROVAL_NODE_DATA } from '../nodes/approval/config';
+import { DEFAULT_ANNOUNCEMENT_NODE_DATA } from '../nodes/announcement/config';
 import { DEFAULT_QUESTION_ANSWER_NODE_DATA } from '../nodes/question-answer/config';
 import { DEFAULT_VARIABLE_AGGREGATOR_NODE_DATA } from '../nodes/variable-aggregator/config';
 import { DEFAULT_SQL_GENERATOR_NODE_DATA } from '../nodes/sql-generator/config';
@@ -284,6 +285,37 @@ const useWorkflowOperations = () => {
         parentId
       );
       return id;
+    },
+    [addNodeWithContainerCheck, t]
+  );
+
+  const addAnnouncementNode = useCallback(
+    (position: { x: number; y: number }, parentId?: string): string | null => {
+      if (parentId) {
+        return null;
+      }
+
+      return addNodeWithContainerCheck(
+        {
+          ...DEFAULT_ANNOUNCEMENT_NODE_DATA,
+          type: 'announcement',
+          title: (() => {
+            try {
+              return t('catalog.announcement.title');
+            } catch (_e) {
+              return 'Announcement';
+            }
+          })(),
+          desc: '',
+          announcement: {
+            ...DEFAULT_ANNOUNCEMENT_NODE_DATA.announcement,
+            title: t('catalog.announcement.title'),
+            content: t('announcement.defaults.content'),
+          },
+        },
+        position,
+        parentId
+      );
     },
     [addNodeWithContainerCheck, t]
   );
@@ -1419,6 +1451,7 @@ const useWorkflowOperations = () => {
       addJsonParserNode,
       addImageGenNode,
       addApprovalNode,
+      addAnnouncementNode,
       addQuestionAnswerNode,
       deleteNodeSafe,
       deleteSelectedNode,
@@ -1460,6 +1493,7 @@ const useWorkflowOperations = () => {
       addJsonParserNode,
       addImageGenNode,
       addApprovalNode,
+      addAnnouncementNode,
       addQuestionAnswerNode,
       deleteNodeSafe,
       deleteSelectedNode,
