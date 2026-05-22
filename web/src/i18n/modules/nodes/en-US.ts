@@ -992,7 +992,7 @@ const messages = {
       helpTipText:
         'Most workflows work well with the default order. If you want the model to mimic a standard exchange, add an example conversation between history and the current input.',
       systemFixedDescription: 'System prompt is fixed at the beginning and is edited in the main panel.',
-      contextPlaceholder: 'Context',
+      contextPlaceholder: 'Extra context',
       contextPlaceholderDescription: 'Provide the model with more information or answer examples.',
       historyPanelHint:
         'Conversation history is fixed after the system prompt; adjust only the switch and round count here.',

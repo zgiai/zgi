@@ -944,7 +944,7 @@ const messages: NodesMessages = {
       helpTipTitle: '小建议：',
       helpTipText: '大多数场景保持默认顺序就很好；如果你想让模型模仿一段标准问答，可以在历史对话和本轮输入之间加入示例对话。',
       systemFixedDescription: '系统提示词固定在最前方，在主面板中编辑。',
-      contextPlaceholder: '上下文',
+      contextPlaceholder: '额外上下文',
       contextPlaceholderDescription: '为模型提供更多的信息或回答示例。',
       historyPanelHint: '历史对话固定在系统提示词之后，只需要在这里调整开关和轮数。',
       historyRoundsPreview: '最多插入最近 {count} 轮历史对话。',
