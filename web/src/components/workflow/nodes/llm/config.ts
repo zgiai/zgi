@@ -96,10 +96,7 @@ export const DEFAULT_LLM_NODE_DATA: LLMNodeData = {
   ],
   prompt_layout: {
     version: 1,
-    items: [
-      { type: 'history', id: 'conversation_history' },
-      { type: 'group', group_id: 'current-user' },
-    ],
+    items: [{ type: 'group', group_id: 'current-user' }],
   },
   prompt_source: 'inline',
   prompt_config: {

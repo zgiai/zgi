@@ -357,9 +357,10 @@ type PromptBlock = LLMNodeData['prompt_template'][number];
 type PromptOptimizerTarget =
   | { type: 'node' }
   | { type: 'draft'; blockId: string };
-type PromptOrderRemoveTarget =
-  | { type: 'history' }
-  | { type: 'group'; groupId: string };
+interface PromptOrderRemoveTarget {
+  type: 'group';
+  groupId: string;
+}
 
 type PromptOrderViewItem =
   | { type: 'history'; id: 'conversation_history'; key: string }
@@ -568,7 +569,10 @@ const materializePromptLayout = (data: LLMNodeData): Pick<LLMNodeData, 'prompt_t
     ...block,
     id: block.id || generateClientId('prompt'),
   }));
-  const viewItems = buildPromptOrderView({ ...data, prompt_template: blocks });
+  const viewItems = buildPromptOrderView(
+    { ...data, prompt_template: blocks },
+    { includeHistory: false }
+  );
   const nextBlocks = blocks.map(block => ({ ...block }));
 
   viewItems.forEach(item => {
@@ -602,9 +606,6 @@ const materializePromptLayout = (data: LLMNodeData): Pick<LLMNodeData, 'prompt_t
         layoutItems.push(visibleItem);
         visibleByKey.delete(key);
         return;
-      }
-      if (item.type === 'history') {
-        layoutItems.push(item);
       }
     });
     visibleByKey.forEach(item => layoutItems.push(item));
@@ -947,8 +948,6 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
   const [orderHelpOpen, setOrderHelpOpen] = useState(false);
   const [draftOrderItems, setDraftOrderItems] = useState<LLMPromptLayoutItem[]>([]);
   const [draftPromptBlocks, setDraftPromptBlocks] = useState<LLMNodeData['prompt_template']>([]);
-  const [draftConversationHistoryEnabled, setDraftConversationHistoryEnabled] = useState(false);
-  const [draftConversationHistoryWindow, setDraftConversationHistoryWindow] = useState(3);
   const [orderDialogDirty, setOrderDialogDirty] = useState(false);
   const [orderLeaveConfirmOpen, setOrderLeaveConfirmOpen] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<PromptOrderRemoveTarget | null>(null);
@@ -1051,7 +1050,7 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
   const handleConversationHistoryToggle = useCallback(
     (enabled: boolean) => {
       if (readOnly) return;
-      updateData((prev: LLMNodeData) => {
+      updateData(() => {
         const next: Partial<LLMNodeData> = {
           conversation_history: {
             enabled,
@@ -1060,20 +1059,6 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
             ),
           },
         };
-        if (
-          supportsPromptConversationContext &&
-          enabled &&
-          prev.prompt_layout &&
-          !prev.prompt_layout.items.some(item => item.type === 'history')
-        ) {
-          next.prompt_layout = {
-            version: 1,
-            items: [
-              { type: 'history', id: 'conversation_history' },
-              ...prev.prompt_layout.items,
-            ],
-          };
-        }
         return next;
       });
     },
@@ -1082,7 +1067,6 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
       readOnly,
       safeNodeData.conversation_history?.history_window_size,
       clampConversationHistoryWindow,
-      supportsPromptConversationContext,
     ]
   );
 
@@ -1138,10 +1122,10 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
     () =>
       isChatMode
         ? buildPromptOrderView(safeNodeData, {
-            includeHistory: supportsPromptConversationContext,
+            includeHistory: false,
           })
         : [],
-    [isChatMode, safeNodeData, supportsPromptConversationContext]
+    [isChatMode, safeNodeData]
   );
   const systemPromptBlocks = useMemo(
     () =>
@@ -1181,10 +1165,12 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
   );
   const contextPreviewCount = contextPreviewItems.length;
   const nonHistoryContextPreviewCount = nonHistoryContextPreviewItems.length;
+  const hasConversationHistoryPromptContext =
+    supportsPromptConversationContext && (safeNodeData.conversation_history?.enabled ?? false);
   const canRemoveCurrentUserPrompt = contextPreviewCount === 0;
   const shouldShowMissingUserQuestionTip =
     isChatMode &&
-    contextPreviewCount > 0 &&
+    (nonHistoryContextPreviewCount > 0 || hasConversationHistoryPromptContext) &&
     !hasCurrentUserPrompt;
   const addPromptBlock = useCallback(() => {
     if (readOnly) return;
@@ -1275,7 +1261,7 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
             ...prev,
             ...materialized,
           },
-          { includeHistory: supportsPromptConversationContext }
+          { includeHistory: false }
         ).some(item => item.type === 'history' || item.groupKind !== 'current_user');
         if (removingCurrentUser && hasOtherContext) return {};
         const removedGroupID = currentPromptTemplate[idx]?.group_id;
@@ -1296,7 +1282,7 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
         };
       });
     },
-    [updateData, readOnly, supportsPromptConversationContext]
+    [updateData, readOnly]
   );
 
   const handleInsert = useCallback(
@@ -1534,27 +1520,12 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
       buildPromptOrderView(
         {
           ...safeNodeData,
-          conversation_history: {
-            enabled: draftConversationHistoryEnabled,
-            history_window_size: draftConversationHistoryWindow,
-          },
           prompt_template: draftPromptBlocks,
           prompt_layout: { version: 1, items: draftOrderItems },
         },
-        { includeHistory: supportsPromptConversationContext }
+        { includeHistory: false }
       ),
-    [
-      draftConversationHistoryEnabled,
-      draftConversationHistoryWindow,
-      draftOrderItems,
-      draftPromptBlocks,
-      safeNodeData,
-      supportsPromptConversationContext,
-    ]
-  );
-  const draftHasHistoryOrderItem = useMemo(
-    () => draftOrderItems.some(item => item.type === 'history'),
-    [draftOrderItems]
+    [draftOrderItems, draftPromptBlocks, safeNodeData]
   );
   const draftSystemPromptBlocks = useMemo(
     () => draftPromptBlocks.filter(block => block.role === 'system'),
@@ -1573,13 +1544,7 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
   const promptOrderItemLabels = useMemo(() => {
     const labels = new Map<string, { label: string; description: string }>();
     draftPromptOrderViewItems.forEach(item => {
-      if (item.type === 'history') {
-        labels.set('history', {
-          label: t('nodes.llm.promptOrder.history'),
-          description: t('nodes.llm.promptOrder.historyDescription'),
-        });
-        return;
-      }
+      if (item.type !== 'group') return;
       const label = promptOrderLabels[getPromptGroupLabelKind(item)];
       labels.set(`group:${item.groupId}`, {
         label,
@@ -1589,7 +1554,7 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
       });
     });
     return labels;
-  }, [draftPromptOrderViewItems, promptOrderLabels, roleLabels, t]);
+  }, [draftPromptOrderViewItems, promptOrderLabels, roleLabels]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -1613,11 +1578,6 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
   useEffect(() => {
     if (!orderDialogOpen) return;
     const nodeData = safeNodeData as LLMNodeData;
-    const historyEnabled =
-      supportsPromptConversationContext && (nodeData.conversation_history?.enabled ?? false);
-    const historyWindow = clampConversationHistoryWindow(
-      nodeData.conversation_history?.history_window_size ?? 3
-    );
     const normalized = normalizePromptLayoutForArrangement(nodeData);
     const visibleKeys = new Set(
       buildPromptOrderView(
@@ -1625,11 +1585,9 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
           ...nodeData,
           ...normalized,
         },
-        { includeHistory: supportsPromptConversationContext }
+        { includeHistory: false }
       ).map(item => (item.type === 'history' ? 'history' : `group:${item.groupId}`))
     );
-    setDraftConversationHistoryEnabled(historyEnabled);
-    setDraftConversationHistoryWindow(historyWindow);
     setDraftPromptBlocks(normalized.prompt_template || []);
     setDraftOrderItems(
       (normalized.prompt_layout?.items || []).filter(item =>
@@ -1638,12 +1596,7 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
     );
     setOrderDialogDirty(false);
     setRemoveTarget(null);
-  }, [
-    clampConversationHistoryWindow,
-    orderDialogOpen,
-    safeNodeData,
-    supportsPromptConversationContext,
-  ]);
+  }, [orderDialogOpen, safeNodeData]);
 
   const draftOrderIDs = useMemo(
     () => sortableDraftOrderItems.map(promptLayoutItemKey),
@@ -1739,85 +1692,37 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
     );
   }, [markPromptOrderDirty]);
 
-  const handleAddDraftHistory = useCallback(() => {
-    if (!supportsPromptConversationContext) return;
-    if (!draftPromptBlocks.some(block => block.group_kind === 'current_user')) return;
-    markPromptOrderDirty();
-    setDraftConversationHistoryEnabled(true);
-    setDraftConversationHistoryWindow(window =>
-      clampConversationHistoryWindow(window || safeNodeData.conversation_history?.history_window_size || 3)
-    );
-    setDraftOrderItems(items => {
-      if (items.some(item => item.type === 'history')) return items;
-      return [{ type: 'history', id: 'conversation_history' }, ...items];
-    });
-  }, [
-    clampConversationHistoryWindow,
-    draftPromptBlocks,
-    markPromptOrderDirty,
-    safeNodeData.conversation_history?.history_window_size,
-    supportsPromptConversationContext,
-  ]);
-
-  const handleRemoveDraftHistory = useCallback(() => {
-    markPromptOrderDirty();
-    setDraftConversationHistoryEnabled(false);
-    setDraftOrderItems(items => items.filter(item => item.type !== 'history'));
-  }, [markPromptOrderDirty]);
-
   const handleConfirmRemovePromptOrderItem = useCallback(() => {
     if (!removeTarget) return;
-    if (removeTarget.type === 'history') {
-      handleRemoveDraftHistory();
-    } else {
-      handleRemoveDraftGroup(removeTarget.groupId);
-    }
+    handleRemoveDraftGroup(removeTarget.groupId);
     setRemoveTarget(null);
-  }, [handleRemoveDraftGroup, handleRemoveDraftHistory, removeTarget]);
+  }, [handleRemoveDraftGroup, removeTarget]);
 
   const handleSavePromptOrder = useCallback(() => {
     if (readOnly) return;
-    updateData((prev: LLMNodeData) => {
+    updateData(() => {
       const nextOrderItems = [
         ...draftOrderItems.filter(item => {
           if (promptLayoutItemIsCurrentUser(item, draftPromptBlocks)) return false;
-          if (item.type === 'history') {
-            return supportsPromptConversationContext && draftConversationHistoryEnabled;
-          }
+          if (item.type === 'history') return false;
           return true;
         }),
         ...draftOrderItems.filter(item => promptLayoutItemIsCurrentUser(item, draftPromptBlocks)),
       ];
-      const preservedHistoryItems =
-        supportsPromptConversationContext || !prev.prompt_layout
-          ? []
-          : prev.prompt_layout.items.filter(item => item.type === 'history');
       return {
         prompt_template: draftPromptBlocks,
         prompt_layout: {
           version: 1,
-          items: [...preservedHistoryItems, ...nextOrderItems],
+          items: nextOrderItems,
         },
-        ...(supportsPromptConversationContext
-          ? {
-              conversation_history: {
-                enabled: draftConversationHistoryEnabled,
-                history_window_size: clampConversationHistoryWindow(draftConversationHistoryWindow),
-              },
-            }
-          : {}),
       };
     });
     setOrderDialogDirty(false);
     setOrderDialogOpen(false);
   }, [
-    clampConversationHistoryWindow,
-    draftConversationHistoryEnabled,
-    draftConversationHistoryWindow,
     draftOrderItems,
     draftPromptBlocks,
     readOnly,
-    supportsPromptConversationContext,
     updateData,
   ]);
 
@@ -2312,8 +2217,7 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
                     onFocusedEditor={handleEditorFocused}
                   />
                 ))}
-                {supportsPromptConversationContext &&
-                safeNodeData.conversation_history?.enabled ? (
+                {supportsPromptConversationContext ? (
                   <div className="overflow-hidden rounded-lg border border-sky-200 border-l-4 border-l-sky-500 bg-sky-50/50">
                     <div className="flex items-start justify-between gap-3 px-3 py-2">
                       <div className="min-w-0">
@@ -2332,68 +2236,48 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
                           {t('nodes.llm.promptOrder.historyDescription')}
                         </div>
                       </div>
-                      <div className="flex shrink-0 items-center gap-1">
-                        <Switch
-                          checked={safeNodeData.conversation_history?.enabled ?? false}
-                          onCheckedChange={handleConversationHistoryToggle}
-                          disabled={readOnly}
-                        />
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <span className="inline-flex">
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                isIcon
-                                onClick={() => setOrderDialogOpen(true)}
-                                disabled={readOnly}
-                                aria-label={t('nodes.llm.actions.changePromptOrder')}
-                              >
-                                <Pencil className="h-4 w-4" />
-                              </Button>
-                            </span>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            {t('nodes.llm.actions.changePromptOrder')}
-                          </TooltipContent>
-                        </Tooltip>
-                      </div>
+                      <Switch
+                        checked={safeNodeData.conversation_history?.enabled ?? false}
+                        onCheckedChange={handleConversationHistoryToggle}
+                        disabled={readOnly}
+                      />
                     </div>
-                    <div className="grid gap-2 border-t border-sky-100 bg-background/70 px-3 py-3">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-medium text-muted-foreground">
-                          {t('nodes.llm.labels.conversationHistoryRounds')}
-                        </span>
-                        <Input
-                          type="number"
-                          inputMode="numeric"
+                    {safeNodeData.conversation_history?.enabled ? (
+                      <div className="grid gap-2 border-t border-sky-100 bg-background/70 px-3 py-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-medium text-muted-foreground">
+                            {t('nodes.llm.labels.conversationHistoryRounds')}
+                          </span>
+                          <Input
+                            type="number"
+                            inputMode="numeric"
+                            min={1}
+                            max={50}
+                            step={1}
+                            className="h-7 w-16 bg-background text-center"
+                            value={String(
+                              safeNodeData.conversation_history?.history_window_size ?? 3
+                            )}
+                            onChange={e =>
+                              handleConversationHistoryWindowChange(e.currentTarget.valueAsNumber)
+                            }
+                            disabled={readOnly}
+                          />
+                        </div>
+                        <Slider
                           min={1}
                           max={50}
                           step={1}
-                          className="h-7 w-16 bg-background text-center"
-                          value={String(
-                            safeNodeData.conversation_history?.history_window_size ?? 3
-                          )}
-                          onChange={e =>
-                            handleConversationHistoryWindowChange(e.currentTarget.valueAsNumber)
+                          value={[safeNodeData.conversation_history?.history_window_size ?? 3]}
+                          onValueChange={vals =>
+                            handleConversationHistoryWindowChange(
+                              Array.isArray(vals) && typeof vals[0] === 'number' ? vals[0] : 3
+                            )
                           }
                           disabled={readOnly}
                         />
                       </div>
-                      <Slider
-                        min={1}
-                        max={50}
-                        step={1}
-                        value={[safeNodeData.conversation_history?.history_window_size ?? 3]}
-                        onValueChange={vals =>
-                          handleConversationHistoryWindowChange(
-                            Array.isArray(vals) && typeof vals[0] === 'number' ? vals[0] : 3
-                          )
-                        }
-                        disabled={readOnly}
-                      />
-                    </div>
+                    ) : null}
                   </div>
                 ) : null}
                 {nonHistoryContextPreviewCount > 0 ? (
@@ -2613,7 +2497,7 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
                     const id = promptLayoutItemKey(item);
                     const labelInfo = promptOrderItemLabels.get(id);
                     const viewItem = draftPromptOrderViewItems.find(view =>
-                      view.type === 'history' ? id === 'history' : id === `group:${view.groupId}`
+                      view.type === 'group' && id === `group:${view.groupId}`
                     );
                     return (
                       <SortablePromptOrderRow
@@ -2621,12 +2505,10 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
                         id={id}
                         label={labelInfo?.label || id}
                         description={labelInfo?.description || ''}
-                        variant={viewItem?.type === 'history' ? 'history' : 'default'}
+                        variant="default"
                         onRemove={() =>
                           setRemoveTarget(
-                            viewItem?.type === 'history'
-                              ? { type: 'history' }
-                              : viewItem?.type === 'group'
+                            viewItem?.type === 'group'
                               ? { type: 'group', groupId: viewItem.groupId }
                               : null
                           )
@@ -2635,48 +2517,7 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
                         readOnly={readOnly}
                         contentClassName={viewItem?.type === 'group' ? 'p-0' : undefined}
                       >
-                        {viewItem?.type === 'history' ? (
-                          <div className="grid gap-2 rounded-md bg-muted/30 p-3">
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs font-medium text-muted-foreground">
-                                {t('nodes.llm.labels.conversationHistoryRounds')}
-                              </span>
-                              <Input
-                                type="number"
-                                inputMode="numeric"
-                                min={1}
-                                max={50}
-                                step={1}
-                                className="h-7 w-16 bg-background text-center"
-                                value={String(draftConversationHistoryWindow)}
-                                onChange={e => {
-                                  markPromptOrderDirty();
-                                  setDraftConversationHistoryWindow(
-                                    clampConversationHistoryWindow(e.currentTarget.valueAsNumber)
-                                  );
-                                }}
-                                disabled={readOnly}
-                              />
-                            </div>
-                            <Slider
-                              min={1}
-                              max={50}
-                              step={1}
-                              value={[draftConversationHistoryWindow]}
-                              onValueChange={vals => {
-                                markPromptOrderDirty();
-                                setDraftConversationHistoryWindow(
-                                  clampConversationHistoryWindow(
-                                    Array.isArray(vals) && typeof vals[0] === 'number'
-                                      ? vals[0]
-                                      : 3
-                                  )
-                                );
-                              }}
-                              disabled={readOnly}
-                            />
-                          </div>
-                        ) : viewItem?.type === 'group' && viewItem.groupKind === 'current_user' ? (
+                        {viewItem?.type === 'group' && viewItem.groupKind === 'current_user' ? (
                           <div className="text-sm leading-6">
                             <span className="font-medium">
                               {t('nodes.llm.promptOrder.userLine')}
@@ -2741,7 +2582,9 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
                 </div>
               </SortableContext>
             </DndContext>
-            {supportsPromptConversationContext && draftHasContextItems && !draftHasCurrentUserPrompt ? (
+            {supportsPromptConversationContext &&
+            (draftHasContextItems || (safeNodeData.conversation_history?.enabled ?? false)) &&
+            !draftHasCurrentUserPrompt ? (
               <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
                 <Info className="mt-0.5 h-4 w-4 shrink-0" />
                 <div>
@@ -2755,22 +2598,7 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
               </div>
             ) : null}
             {draftHasCurrentUserPrompt ? (
-              <div className={cn(
-                'grid grid-cols-1 gap-2',
-                supportsPromptConversationContext && !draftHasHistoryOrderItem && 'sm:grid-cols-2'
-              )}>
-                {supportsPromptConversationContext && !draftHasHistoryOrderItem && (
-                  <Button
-                    className="w-full"
-                    variant="outline"
-                    size="sm"
-                    onClick={handleAddDraftHistory}
-                    disabled={readOnly}
-                  >
-                    <Plus className="mr-2 h-4 w-4" />
-                    {t('nodes.llm.actions.addHistoryContext')}
-                  </Button>
-                )}
+              <div className="grid grid-cols-1 gap-2">
                 <Button
                   className="w-full"
                   variant="outline"
@@ -3058,11 +2886,7 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
           if (!open) setRemoveTarget(null);
         }}
         title={t('nodes.llm.promptOrder.removeConfirmTitle')}
-        description={
-          removeTarget?.type === 'history'
-            ? t('nodes.llm.promptOrder.removeHistoryConfirmDescription')
-            : t('nodes.llm.promptOrder.removeGroupConfirmDescription')
-        }
+        description={t('nodes.llm.promptOrder.removeGroupConfirmDescription')}
         confirmText={t('nodes.common.remove')}
         cancelText={t('common.cancel')}
         onConfirm={handleConfirmRemovePromptOrderItem}

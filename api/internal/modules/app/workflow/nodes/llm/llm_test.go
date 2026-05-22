@@ -645,7 +645,7 @@ func assertPromptMessageSequence(t *testing.T, got []PromptMessage, want []promp
 	}
 }
 
-func TestFetchPromptMessages_WithPromptLayoutPlacesHistoryAfterCurrentUser(t *testing.T) {
+func TestFetchPromptMessages_WithPromptLayoutPlacesHistoryAfterSystem(t *testing.T) {
 	node := &Node{
 		nodeData: NodeData{
 			PromptLayout: &PromptLayout{
@@ -694,9 +694,9 @@ func TestFetchPromptMessages_WithPromptLayoutPlacesHistoryAfterCurrentUser(t *te
 
 	assertPromptMessageSequence(t, promptMessages, []promptMessageExpectation{
 		{role: PromptMessageRoleSystem, content: "system"},
-		{role: PromptMessageRoleUser, content: "current query"},
 		{role: PromptMessageRoleUser, content: "history question"},
 		{role: PromptMessageRoleAssistant, content: "history answer"},
+		{role: PromptMessageRoleUser, content: "current query"},
 	})
 }
 
@@ -705,9 +705,7 @@ func TestFetchPromptMessages_WithPromptLayoutAppendsCurrentQueryWhenMissing(t *t
 		nodeData: NodeData{
 			PromptLayout: &PromptLayout{
 				Version: 1,
-				Items: []PromptLayoutItem{
-					{Type: PromptLayoutItemHistory, ID: "conversation_history"},
-				},
+				Items:   []PromptLayoutItem{},
 			},
 		},
 	}

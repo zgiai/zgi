@@ -297,10 +297,7 @@ export function createDragPreviewNodeData({
         ],
         prompt_layout: {
           version: 1,
-          items: [
-            { type: 'history', id: 'conversation_history' },
-            { type: 'group', group_id: 'current-user' },
-          ],
+          items: [{ type: 'group', group_id: 'current-user' }],
         },
         prompt_config: {
           jinja2_variables: [],

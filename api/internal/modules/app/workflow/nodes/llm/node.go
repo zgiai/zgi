@@ -1443,12 +1443,13 @@ func (n *Node) fetchChatPromptMessagesWithLayout(
 		memoryConfig,
 		modelConfig,
 	)
+	promptMessages = append(promptMessages, memoryMessages...)
 	currentUserAdded := false
 
 	for _, item := range n.nodeData.PromptLayout.Items {
 		switch item.Type {
 		case PromptLayoutItemHistory:
-			promptMessages = append(promptMessages, memoryMessages...)
+			continue
 		case PromptLayoutItemGroup:
 			groupMessages := groups[item.GroupID]
 			if len(groupMessages) == 0 {

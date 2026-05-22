@@ -252,10 +252,7 @@ export function useWorkflowLifecycle({
         ],
         prompt_layout: {
           version: 1 as const,
-          items: [
-            { type: 'history' as const, id: 'conversation_history' as const },
-            { type: 'group' as const, group_id: `${llmId}-current-user` },
-          ],
+          items: [{ type: 'group' as const, group_id: `${llmId}-current-user` }],
         },
         prompt_source: 'inline',
         prompt_reference: undefined,

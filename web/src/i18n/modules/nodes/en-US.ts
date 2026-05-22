@@ -919,13 +919,13 @@ const messages = {
       positionLabel: 'Position {index}',
       orderDialogTitle: 'Arrange context',
       orderDialogDescription:
-        'Drag items to control the message order after the system prompt. Example conversations can only be edited here.',
+        'Drag example conversations to control the extra context order between conversation history and the current user input. Example conversations can only be edited here.',
       helpEntryDescription:
         'For ordinary use, you do not need extra arrangement; the default setup is enough. Use this only when you need more information or examples.',
       helpEntryButton: 'View example',
       helpTitle: 'How does context arrangement work?',
       helpDescription:
-        'For ordinary use, you do not need extra context arrangement; keeping the default setup works well. This is for cases where you need extra material, sample answers, or precise message order.',
+        'For ordinary use, you do not need extra context arrangement; keeping the default setup works well. This is for cases where you need extra material or sample answers.',
       helpBeginnerTab: 'Start from basics',
       helpPracticalTab: 'Copy a real setup',
       helpConceptContextTitle: 'What is context?',
@@ -961,13 +961,13 @@ const messages = {
         'Finally, give the real task. The model uses everything above as context and focuses on this message.',
       helpBenefitOrderTitle: 'Control the order',
       helpBenefitOrderText:
-        'You decide whether history, examples, or the current input comes first, so the model does not have to guess the priority.',
+        'You decide which example conversation comes first, so the model does not have to guess which pattern matters most.',
       helpBenefitExampleTitle: 'Stabilize the style',
       helpBenefitExampleText:
         'Example conversations act like a sample answer, helping the model match your tone, structure, and detail level.',
       helpBenefitDebugTitle: 'Debug faster',
       helpBenefitDebugText:
-        'If the answer feels wrong, you can quickly see whether history is too heavy, the example is too strong, or the current input is unclear.',
+        'If the answer feels wrong, you can quickly see whether the example is too strong, material is missing, or the current input is unclear.',
       helpCopyTitle: 'A setup you can copy',
       helpCopyPurposePrefix: 'Purpose: ',
       helpCopySystemLabel: 'System prompt',
@@ -976,7 +976,7 @@ const messages = {
       helpCopySystemPurpose:
         'Locks the model role, tone, and answer structure before any business content is read.',
       helpCopyHistoryLabel: 'Conversation history',
-      helpCopyHistoryValue: 'Enabled; history rounds: 3; place it before the example conversation.',
+      helpCopyHistoryValue: 'Enabled; history rounds: 3; fixed after the system prompt.',
       helpCopyHistoryPurpose:
         'Lets the model understand what was discussed earlier and resolve phrases like "the plan from last time".',
       helpCopyExampleLabel: 'Example conversation',
@@ -990,19 +990,19 @@ const messages = {
         'Places the real current user request last, so the model answers it using the rules, history, and example above.',
       helpTipTitle: 'Tip: ',
       helpTipText:
-        'Most workflows work well with conversation history before the current input. If you want the model to mimic a standard exchange first, place the example conversation between history and the current input.',
+        'Most workflows work well with the default order. If you want the model to mimic a standard exchange, add an example conversation between history and the current input.',
       systemFixedDescription: 'System prompt is fixed at the beginning and is edited in the main panel.',
       contextPlaceholder: 'Context',
       contextPlaceholderDescription: 'Provide the model with more information or answer examples.',
       historyPanelHint:
-        'Use context arrangement when you need to move conversation history or add example conversations.',
+        'Conversation history is fixed after the system prompt; adjust only the switch and round count here.',
       historyRoundsPreview: 'Insert up to {count} recent conversation round(s).',
       userLine: 'User: ',
       assistantLine: 'Assistant: ',
       currentUserEditHint: 'Edit this content in the main panel.',
       removeConfirmTitle: 'Remove this context item?',
       removeHistoryConfirmDescription:
-        'This node will no longer insert conversation history at this position. You can add it back before saving.',
+        'This node will no longer insert conversation history. You can turn it back on in the main panel.',
       removeGroupConfirmDescription:
         'This example conversation will be removed as a group. You can still cancel the dialog to discard this change.',
       unsavedChangesTitle: 'You have unsaved changes. Save them?',

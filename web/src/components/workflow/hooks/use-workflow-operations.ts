@@ -461,12 +461,7 @@ const useWorkflowOperations = () => {
         ],
         prompt_layout: {
           version: 1 as const,
-          items: isConversational
-            ? [
-                { type: 'history' as const, id: 'conversation_history' as const },
-                { type: 'group' as const, group_id: 'current-user' },
-              ]
-            : [{ type: 'group' as const, group_id: 'current-user' }],
+          items: [{ type: 'group' as const, group_id: 'current-user' }],
         },
         prompt_config: {
           jinja2_variables: [],
