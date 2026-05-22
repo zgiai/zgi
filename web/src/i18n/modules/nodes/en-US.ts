@@ -821,6 +821,7 @@ const messages = {
       promptPreview: 'Preview',
       memory: 'Memory',
       context: 'Context',
+      conversationHistory: 'Conversation Context',
       vision: 'Vision',
     },
     roles: {
@@ -833,6 +834,7 @@ const messages = {
       high: 'High',
       low: 'Low',
       visionVariable: 'Vision Variable',
+      conversationHistoryRounds: 'History rounds',
     },
     fields: {
       providerModel: 'Provider & Model',
@@ -874,6 +876,8 @@ const messages = {
     tips: {
       cannotRemoveFirstSystem: 'The first system prompt cannot be removed',
       visionDescription: 'The selected vision variable will be used as the image input.',
+      conversationHistoryDescription:
+        'Carry recent conversation history for this LLM node. One round is one historical user and assistant message pair.',
     },
     playground: {
       currentPrompt: 'Current node prompt',

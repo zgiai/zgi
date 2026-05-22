@@ -453,9 +453,9 @@ const useWorkflowOperations = () => {
         prompt_config: {
           jinja2_variables: [],
         },
-        context: {
-          enabled: false,
-          variable_selector: [],
+        conversation_history: {
+          enabled: true,
+          history_window_size: 3,
         },
         vision: {
           enabled: false,

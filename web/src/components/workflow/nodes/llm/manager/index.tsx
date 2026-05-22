@@ -3,6 +3,9 @@
 import React, { useCallback, useMemo, useEffect, useState, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Slider } from '@/components/ui/slider';
+import { Switch } from '@/components/ui/switch';
 import ModelSelectorParameter from '@/components/common/model-selector/model-selector-parameter';
 import type { LLMNodeData } from '../config';
 import { cn } from '@/lib/utils';
@@ -396,6 +399,10 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
         })(),
       },
       prompt_config: selfNodeData?.prompt_config ?? undefined,
+      conversation_history: selfNodeData?.conversation_history ?? {
+        enabled: false,
+        history_window_size: 3,
+      },
       structured_output_enabled: selfNodeData?.structured_output_enabled ?? false,
     }),
     [selfNodeData]
@@ -414,6 +421,50 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
       });
     },
     [updateData, safeNodeData.model]
+  );
+
+  const clampConversationHistoryWindow = useCallback((value: number) => {
+    const fallback = 3;
+    const n = Number.isFinite(value) ? Math.round(value) : fallback;
+    return Math.max(1, Math.min(50, n));
+  }, []);
+
+  const handleConversationHistoryToggle = useCallback(
+    (enabled: boolean) => {
+      if (readOnly) return;
+      updateData({
+        conversation_history: {
+          enabled,
+          history_window_size: clampConversationHistoryWindow(
+            safeNodeData.conversation_history?.history_window_size ?? 3
+          ),
+        },
+      });
+    },
+    [
+      updateData,
+      readOnly,
+      safeNodeData.conversation_history?.history_window_size,
+      clampConversationHistoryWindow,
+    ]
+  );
+
+  const handleConversationHistoryWindowChange = useCallback(
+    (value: number) => {
+      if (readOnly) return;
+      updateData({
+        conversation_history: {
+          enabled: safeNodeData.conversation_history?.enabled ?? true,
+          history_window_size: clampConversationHistoryWindow(value),
+        },
+      });
+    },
+    [
+      updateData,
+      readOnly,
+      safeNodeData.conversation_history?.enabled,
+      clampConversationHistoryWindow,
+    ]
   );
 
   const { models: providerModels } = useProviderModelsAll(safeNodeData.model.provider || '', {
@@ -854,6 +905,69 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1">
+            <h3 className="text-sm font-medium text-muted-foreground">
+              {t('nodes.llm.section.conversationHistory')}
+            </h3>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Info className="size-3.5 text-muted-foreground cursor-help" />
+              </TooltipTrigger>
+              <TooltipContent side="top" className="max-w-xs">
+                <p>{t('nodes.llm.tips.conversationHistoryDescription')}</p>
+              </TooltipContent>
+            </Tooltip>
+          </div>
+          <Switch
+            checked={safeNodeData.conversation_history?.enabled ?? false}
+            onCheckedChange={handleConversationHistoryToggle}
+            disabled={readOnly}
+          />
+        </div>
+        {safeNodeData.conversation_history?.enabled ? (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="text-xs font-medium text-muted-foreground">
+                {t('nodes.llm.labels.conversationHistoryRounds')}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {String(safeNodeData.conversation_history?.history_window_size ?? 3)}
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Slider
+                min={1}
+                max={50}
+                step={1}
+                value={[safeNodeData.conversation_history?.history_window_size ?? 3]}
+                onValueChange={vals =>
+                  handleConversationHistoryWindowChange(
+                    Array.isArray(vals) && typeof vals[0] === 'number' ? vals[0] : 3
+                  )
+                }
+                disabled={readOnly}
+                className="flex-1"
+              />
+              <Input
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={50}
+                step={1}
+                className="h-8 w-20 text-center"
+                value={String(safeNodeData.conversation_history?.history_window_size ?? 3)}
+                onChange={e =>
+                  handleConversationHistoryWindowChange(e.currentTarget.valueAsNumber)
+                }
+                disabled={readOnly}
+              />
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {selectedModalMode === 'image' && (

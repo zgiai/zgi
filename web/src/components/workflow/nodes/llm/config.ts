@@ -13,6 +13,11 @@ export interface LLMVision {
   configs?: LLMVisionConfig;
 }
 
+export interface LLMConversationHistory {
+  enabled: boolean;
+  history_window_size: number;
+}
+
 export interface LLMManagedPromptReference {
   prompt_id: string;
   prompt_name?: string;
@@ -41,6 +46,7 @@ export interface LLMNodeData {
   prompt_source?: 'inline' | 'managed';
   prompt_reference?: LLMManagedPromptReference;
   prompt_config: PromptConfig;
+  conversation_history?: LLMConversationHistory;
   vision: LLMVision;
   structured_output_enabled: boolean;
   structured_output?: { schema: JSONSchema };
@@ -69,6 +75,10 @@ export const DEFAULT_LLM_NODE_DATA: LLMNodeData = {
   prompt_source: 'inline',
   prompt_config: {
     jinja2_variables: [],
+  },
+  conversation_history: {
+    enabled: true,
+    history_window_size: 3,
   },
   vision: {
     enabled: false,

@@ -801,6 +801,7 @@ const messages: NodesMessages = {
       promptPreview: '内容预览',
       memory: '记忆',
       context: '上下文',
+      conversationHistory: '对话上下文',
       vision: '图片输入',
     },
     roles: {
@@ -813,6 +814,7 @@ const messages: NodesMessages = {
       high: '高',
       low: '低',
       visionVariable: '图片输入变量',
+      conversationHistoryRounds: '历史轮数',
     },
     fields: {
       providerModel: '服务商与模型',
@@ -854,6 +856,8 @@ const messages: NodesMessages = {
     tips: {
       cannotRemoveFirstSystem: '首个系统提示不可删除',
       visionDescription: '选中的图片输入变量将作为图片输入源。',
+      conversationHistoryDescription:
+        '为当前 LLM 节点携带最近的对话历史。一轮表示一条历史 user + assistant 消息记录。',
     },
     playground: {
       currentPrompt: '当前节点提示词',

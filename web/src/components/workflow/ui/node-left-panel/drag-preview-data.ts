@@ -290,10 +290,6 @@ export function createDragPreviewNodeData({
         prompt_config: {
           jinja2_variables: [],
         },
-        context: {
-          enabled: false,
-          variable_selector: [],
-        },
         vision: {
           enabled: false,
         },

@@ -419,9 +419,9 @@ const messages = {
       sensitiveLabel: 'Content Moderation',
       sensitiveDesc: 'Moderate user input and AI output to filter inappropriate content.',
       conversationHistory: {
-        label: 'Conversation Context',
-        desc: 'Carry context during the conversation.',
-        windowLabel: 'Rounds',
+        label: 'Legacy Conversation Context (Compatibility)',
+        desc: 'Only applies to old LLM nodes without node-level conversation context. Configure new nodes in the LLM node panel.',
+        windowLabel: 'Legacy rounds',
       },
       openingStatement: {
         label: 'Opening Statement',

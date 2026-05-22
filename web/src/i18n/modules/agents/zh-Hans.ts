@@ -402,9 +402,9 @@ const messages: AgentsMessages = {
       sensitiveLabel: '内容审查',
       sensitiveDesc: '对用户输入和AI输出进行内容审查，过滤不当内容。',
       conversationHistory: {
-        label: '会话上下文',
-        desc: '在对话过程中携带上下文进行对话。',
-        windowLabel: '会话轮数',
+        label: '旧版对话上下文（兼容）',
+        desc: '仅对未配置节点级对话上下文的旧 LLM 节点生效。新节点请在 LLM 节点面板中设置。',
+        windowLabel: '兼容轮数',
       },
       openingStatement: {
         label: '首页引导语',
