@@ -3,6 +3,7 @@
 import { ProtectedRoute } from '@/components/auth/protected-route';
 import type { ReactNode } from 'react';
 import { customerAdapter } from '@/customer';
+import { Providers } from '@/providers';
 
 /**
  * Console layout with authentication protection
@@ -12,8 +13,10 @@ export default function ConsoleLayout({ children }: { children: ReactNode }) {
   const ConsoleShell = customerAdapter.ConsoleShell;
 
   return (
-    <ProtectedRoute>
-      <ConsoleShell>{children}</ConsoleShell>
-    </ProtectedRoute>
+    <Providers>
+      <ProtectedRoute>
+        <ConsoleShell>{children}</ConsoleShell>
+      </ProtectedRoute>
+    </Providers>
   );
 }

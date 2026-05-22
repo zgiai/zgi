@@ -10,6 +10,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 	automationdto "github.com/zgiai/zgi/api/internal/modules/automation/dto"
 	automationdefinition "github.com/zgiai/zgi/api/internal/modules/automation/service/definition"
+	notificationsms "github.com/zgiai/zgi/api/internal/modules/notification/sms"
 )
 
 type definitionService interface {
@@ -18,8 +19,9 @@ type definitionService interface {
 
 type Node struct {
 	base.NodeStruct
-	nodeData          NodeData
-	definitionService definitionService
+	nodeData               NodeData
+	definitionService      definitionService
+	notificationSMSService notificationsms.Service
 }
 
 func New(
@@ -62,16 +64,22 @@ func New(
 	for _, dep := range optionalDeps {
 		if svc, ok := dep.(automationdefinition.Service); ok {
 			node.definitionService = svc
-			break
+			continue
 		}
 		if svc, ok := dep.(definitionService); ok {
 			node.definitionService = svc
-			break
+			continue
+		}
+		if svc, ok := dep.(notificationsms.Service); ok {
+			node.notificationSMSService = svc
 		}
 	}
 
 	if node.definitionService == nil {
 		return nil, fmt.Errorf("automation definition service is required for create-scheduled-task node")
+	}
+	if err := node.validateSMSNotificationActions(); err != nil {
+		return nil, err
 	}
 
 	return node, nil

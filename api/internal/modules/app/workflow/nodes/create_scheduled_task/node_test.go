@@ -1,13 +1,16 @@
 package createscheduledtask
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/base"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
+	automationdto "github.com/zgiai/zgi/api/internal/modules/automation/dto"
 	automationmodel "github.com/zgiai/zgi/api/internal/modules/automation/model"
+	notificationsms "github.com/zgiai/zgi/api/internal/modules/notification/sms"
 )
 
 func TestBuildCreateTaskRequest_CompilesFixedOnceSchedule(t *testing.T) {
@@ -292,6 +295,41 @@ func TestParseNodeDataFromConfig_AllowsDisabledDraftActionWithoutRecipients(t *t
 	}
 }
 
+func TestNewRejectsSMSActionMissingCustomTemplateRequiredParam(t *testing.T) {
+	_, err := New(
+		"create-task-node-7",
+		newSMSCreateTaskConfig(map[string]string{"title": ""}),
+		entities.GraphInitParams{},
+		nil,
+		nil,
+		nil,
+		&stubDefinitionService{},
+		newCreateTaskTestSMSService(),
+	)
+	if err == nil {
+		t.Fatal("New returned nil error, want missing custom sms template param validation failure")
+	}
+	if got := err.Error(); !strings.Contains(got, "template param title is required") {
+		t.Fatalf("error = %q, want missing title validation context", got)
+	}
+}
+
+func TestNewAcceptsSMSActionWithCustomTemplateRequiredParam(t *testing.T) {
+	_, err := New(
+		"create-task-node-8",
+		newSMSCreateTaskConfig(map[string]string{"title": "审批待办"}),
+		entities.GraphInitParams{},
+		nil,
+		nil,
+		nil,
+		&stubDefinitionService{},
+		newCreateTaskTestSMSService(),
+	)
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+}
+
 func newTestNodeFromConfig(t *testing.T, config map[string]any, vp *entities.VariablePool) *Node {
 	t.Helper()
 
@@ -320,4 +358,65 @@ func newTestNodeFromConfig(t *testing.T, config map[string]any, vp *entities.Var
 		},
 		nodeData: nodeData,
 	}
+}
+
+func newSMSCreateTaskConfig(templateParams map[string]string) map[string]any {
+	return map[string]any{
+		"id": "create-task-node-sms",
+		"data": map[string]any{
+			"type": "create-scheduled-task",
+			"task": map[string]any{
+				"name": "SMS reminder",
+				"schedule": map[string]any{
+					"type": "once",
+					"once": map[string]any{
+						"input_mode": "fixed",
+						"run_at":     "2026-04-11T10:00:00+08:00",
+					},
+				},
+				"actions": []map[string]any{
+					{
+						"action_type":  "send_notification",
+						"channel_type": "sms",
+						"notification": map[string]any{
+							"recipients":      []string{"13800138000"},
+							"template":        "approval_notice",
+							"template_params": templateParams,
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func newCreateTaskTestSMSService() notificationsms.Service {
+	return notificationsms.NewService(notificationsms.Config{
+		Enabled:         true,
+		Providers:       []string{notificationsms.ProviderAliyun},
+		DefaultProvider: notificationsms.ProviderAliyun,
+		Aliyun: notificationsms.AliyunConfig{
+			AccessKeyID:     "ak",
+			AccessKeySecret: "sk",
+			SignName:        "ZGI",
+		},
+		Templates: []notificationsms.TemplateConfig{
+			{
+				Key:    "approval_notice",
+				Name:   "审批提醒",
+				Params: []notificationsms.TemplateParamConfig{{Key: "title", Required: boolPtr(true)}},
+				Aliyun: notificationsms.AliyunTemplateConfig{
+					TemplateCode: "SMS_APPROVAL",
+					ParamMode:    notificationsms.ParamModeMap,
+					ParamMap:     map[string]string{"title": "title"},
+				},
+			},
+		},
+	})
+}
+
+type stubDefinitionService struct{}
+
+func (s *stubDefinitionService) CreateTask(context.Context, automationdto.CreateTaskRequest) (*automationdto.CreateTaskResult, error) {
+	return nil, nil
 }

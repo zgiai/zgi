@@ -130,6 +130,7 @@ export interface WorkflowInputFormHandle {
 
 const FORM_LABEL_CLASS =
   'flex items-center gap-1 mb-1.5 text-[13px] font-medium text-muted-foreground';
+const EMPTY_UPLOADED_FILES: UploadedFile[] = [];
 
 function toPositiveNumber(value: unknown): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
@@ -138,6 +139,31 @@ function toPositiveNumber(value: unknown): number | undefined {
     if (Number.isFinite(parsed) && parsed > 0) return parsed;
   }
   return undefined;
+}
+
+function getInitialFileIds(value: unknown): string[] {
+  const values = Array.isArray(value) ? value : [value];
+  return values
+    .map(item => {
+      if (typeof item === 'string') return item;
+      if (
+        item &&
+        typeof item === 'object' &&
+        'upload_file_id' in item &&
+        typeof (item as { upload_file_id?: unknown }).upload_file_id === 'string'
+      ) {
+        return (item as { upload_file_id: string }).upload_file_id;
+      }
+      return '';
+    })
+    .map(id => id.trim())
+    .filter(Boolean);
+}
+
+function areSameFileIds(files: UploadedFile[] | undefined, ids: string[]): boolean {
+  const currentIds = (files ?? []).map(file => file.id);
+  if (currentIds.length !== ids.length) return false;
+  return currentIds.every((id, index) => id === ids[index]);
 }
 
 const WorkflowInputForm = React.forwardRef<WorkflowInputFormHandle, WorkflowInputFormProps>(
@@ -288,7 +314,7 @@ const WorkflowInputForm = React.forwardRef<WorkflowInputFormHandle, WorkflowInpu
     useEffect(() => {
       onValidChange?.(form.formState.isValid);
     }, [form.formState.isValid, onValidChange]);
-    // Hydrate file states from initialValues IDs
+    // Hydrate file states from initialValues IDs only when the target IDs change.
     useEffect(() => {
       if (!initialValues) return;
 
@@ -296,28 +322,16 @@ const WorkflowInputForm = React.forwardRef<WorkflowInputFormHandle, WorkflowInpu
         const fileVars = startVariables.filter(v => v.type === 'file' || v.type === 'file-list');
         if (fileVars.length === 0) return;
 
-        // Collect all needed file IDs
-        const idsToFetch: string[] = [];
         const varMap: Record<string, string[]> = {};
 
         fileVars.forEach(v => {
-          const val = initialValues[v.variable];
-          if (!val) return;
-
-          // Skip if we already have state for this variable
-          if (fileStatesRef.current[v.variable]?.length > 0) return;
-
-          const ids = Array.isArray(val) ? (val as string[]) : [val as string];
-          // Filter out IDs that look like file objects (just in case) or empty strings
-          const cleanIds = ids.filter(id => typeof id === 'string' && id.trim().length > 0);
-
-          if (cleanIds.length > 0) {
-            idsToFetch.push(...cleanIds);
+          const cleanIds = getInitialFileIds(initialValues[v.variable]);
+          if (!areSameFileIds(fileStatesRef.current[v.variable], cleanIds)) {
             varMap[v.variable] = cleanIds;
           }
         });
 
-        if (idsToFetch.length === 0) return;
+        if (Object.keys(varMap).length === 0) return;
 
         try {
           setFileStates(prev => {
@@ -594,7 +608,7 @@ const WorkflowInputForm = React.forwardRef<WorkflowInputFormHandle, WorkflowInpu
               input.allowed_file_types ?? [],
               input.allowed_file_extensions ?? []
             );
-            const valueFiles = fileStates[input.variable] ?? [];
+            const valueFiles = fileStates[input.variable] ?? EMPTY_UPLOADED_FILES;
             return (
               <FormField
                 key={input.variable}

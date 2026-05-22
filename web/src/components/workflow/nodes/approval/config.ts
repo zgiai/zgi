@@ -38,12 +38,30 @@ export interface ApprovalSubmitMethods {
     body: string;
     recipients: ApprovalEmailRecipient[];
   };
+  sms: {
+    enabled: boolean;
+    provider: string;
+    template: string;
+    notification_title: string;
+    template_params: Record<string, string>;
+    recipients: ApprovalSMSRecipient[];
+  };
 }
 
 export type ApprovalEmailRecipient =
   | {
       type: 'external';
       email: string;
+    }
+  | {
+      type: 'member';
+      account_id: string;
+    };
+
+export type ApprovalSMSRecipient =
+  | {
+      type: 'external';
+      phone: string;
     }
   | {
       type: 'member';
@@ -75,6 +93,13 @@ export const APPROVAL_TIMEOUT_HANDLE = 'expired';
 export const APPROVAL_LEGACY_TIMEOUT_HANDLE = '__timeout';
 export const APPROVAL_MAX_TIMEOUT_HOURS = 72;
 export const APPROVAL_ACTION_MAX_LENGTH = 20;
+export const APPROVAL_SMS_TEMPLATE = 'pending_action_notification';
+
+const APPROVAL_SMS_RESERVED_TEMPLATE_PARAMS = new Set([
+  'notification_title',
+  'link_code',
+  'link_suffix',
+]);
 
 export const APPROVAL_SYSTEM_OUTPUT_KEYS = new Set([
   'approval_action_id',
@@ -153,6 +178,14 @@ export const DEFAULT_APPROVAL_NODE_DATA: ApprovalNodeData = {
       enabled: false,
       subject: '',
       body: 'Please open the link to complete the review: {{#url#}}',
+      recipients: [],
+    },
+    sms: {
+      enabled: false,
+      provider: '',
+      template: APPROVAL_SMS_TEMPLATE,
+      notification_title: '',
+      template_params: {},
       recipients: [],
     },
   },
@@ -249,7 +282,7 @@ function normalizeActions(value: unknown): ApprovalAction[] {
   return actions;
 }
 
-function normalizeRecipients(value: unknown): ApprovalEmailRecipient[] {
+function normalizeEmailRecipients(value: unknown): ApprovalEmailRecipient[] {
   if (!Array.isArray(value)) return [];
 
   const recipients: ApprovalEmailRecipient[] = [];
@@ -283,6 +316,53 @@ function normalizeRecipients(value: unknown): ApprovalEmailRecipient[] {
   return recipients;
 }
 
+function normalizeSMSRecipients(value: unknown): ApprovalSMSRecipient[] {
+  if (!Array.isArray(value)) return [];
+
+  const recipients: ApprovalSMSRecipient[] = [];
+  const seen = new Set<string>();
+  value.forEach(item => {
+    if (!isRecord(item)) return;
+
+    const recipient =
+      item.type === 'member'
+        ? ({
+            type: 'member',
+            account_id: typeof item.account_id === 'string' ? item.account_id.trim() : '',
+          } satisfies ApprovalSMSRecipient)
+        : item.type === 'external'
+          ? ({
+              type: 'external',
+              phone: typeof item.phone === 'string' ? item.phone.trim() : '',
+            } satisfies ApprovalSMSRecipient)
+          : null;
+
+    if (!recipient) return;
+    const key =
+      recipient.type === 'member'
+        ? `member:${recipient.account_id}`
+        : `external:${recipient.phone}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    recipients.push(recipient);
+  });
+
+  return recipients;
+}
+
+function normalizeTemplateParams(value: unknown): Record<string, string> {
+  if (!isRecord(value)) return {};
+
+  return Object.entries(value).reduce<Record<string, string>>((acc, [key, paramValue]) => {
+    const normalizedKey = key.trim();
+    const normalizedValue = typeof paramValue === 'string' ? paramValue.trim() : '';
+    if (normalizedKey) {
+      acc[normalizedKey] = normalizedValue;
+    }
+    return acc;
+  }, {});
+}
+
 export function normalizeApprovalNodeData(
   value: Partial<ApprovalNodeData> | Record<string, unknown> | null | undefined
 ): ApprovalNodeData {
@@ -293,6 +373,7 @@ export function normalizeApprovalNodeData(
   const submitMethods = isRecord(value.submit_methods) ? value.submit_methods : {};
   const webapp = isRecord(submitMethods.webapp) ? submitMethods.webapp : {};
   const email = isRecord(submitMethods.email) ? submitMethods.email : {};
+  const sms = isRecord(submitMethods.sms) ? submitMethods.sms : {};
   const timeout = isRecord(value.timeout) ? value.timeout : {};
 
   return {
@@ -320,7 +401,21 @@ export function normalizeApprovalNodeData(
         subject:
           typeof email.subject === 'string' ? email.subject : fallback.submit_methods.email.subject,
         body: typeof email.body === 'string' ? email.body : fallback.submit_methods.email.body,
-        recipients: normalizeRecipients(email.recipients),
+        recipients: normalizeEmailRecipients(email.recipients),
+      },
+      sms: {
+        enabled:
+          typeof sms.enabled === 'boolean' ? sms.enabled : fallback.submit_methods.sms.enabled,
+        provider:
+          typeof sms.provider === 'string' ? sms.provider : fallback.submit_methods.sms.provider,
+        template:
+          typeof sms.template === 'string' ? sms.template : fallback.submit_methods.sms.template,
+        notification_title:
+          typeof sms.notification_title === 'string'
+            ? sms.notification_title
+            : fallback.submit_methods.sms.notification_title,
+        template_params: normalizeTemplateParams(sms.template_params),
+        recipients: normalizeSMSRecipients(sms.recipients),
       },
     },
     timeout: {
@@ -424,6 +519,39 @@ export function checkValid(data: ApprovalNodeData): ValidationResult {
         errors.push({ code: 'approval.validation.recipientEmailRequired', params });
       } else if (!isValidEmail(recipient.email)) {
         errors.push({ code: 'approval.validation.recipientEmailInvalid', params });
+      }
+    });
+  }
+
+  if (normalized.submit_methods.sms.enabled) {
+    if (!normalized.submit_methods.sms.notification_title.trim()) {
+      errors.push({ code: 'approval.validation.smsTitleRequired' });
+    }
+    if (normalized.submit_methods.sms.recipients.length === 0) {
+      errors.push({ code: 'approval.validation.smsRecipientRequired' });
+    }
+    Object.keys(normalized.submit_methods.sms.template_params).forEach(key => {
+      const normalizedKey = key.trim();
+      const params = { key: normalizedKey };
+      if (!normalizedKey) {
+        errors.push({ code: 'approval.validation.smsTemplateParamKeyRequired' });
+      } else if (APPROVAL_SMS_RESERVED_TEMPLATE_PARAMS.has(normalizedKey)) {
+        errors.push({ code: 'approval.validation.smsTemplateParamKeyReserved', params });
+      } else if (!normalized.submit_methods.sms.template_params[key].trim()) {
+        errors.push({ code: 'approval.validation.smsTemplateParamValueRequired', params });
+      }
+    });
+    normalized.submit_methods.sms.recipients.forEach((recipient, index) => {
+      const params = { index: index + 1 };
+      if (recipient.type === 'member') {
+        if (!recipient.account_id.trim()) {
+          errors.push({ code: 'approval.validation.smsMemberRecipientRequired', params });
+        }
+        return;
+      }
+
+      if (!recipient.phone.trim()) {
+        errors.push({ code: 'approval.validation.smsExternalRecipientRequired', params });
       }
     });
   }

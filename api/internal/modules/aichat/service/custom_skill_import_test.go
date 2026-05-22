@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"mime/multipart"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +14,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	aichatmodel "github.com/zgiai/zgi/api/internal/modules/aichat/model"
+	"github.com/zgiai/zgi/api/internal/modules/aichat/repository"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
@@ -171,6 +175,79 @@ tools:
 	}
 }
 
+func TestPreviewImportCustomSkillReturnsOverwriteInfo(t *testing.T) {
+	svc, scope, customRepo := testCustomSkillService(t)
+	existing := &aichatmodel.CustomSkill{
+		OrganizationID: scope.OrganizationID,
+		SkillID:        "brief-writer",
+		Name:           "Existing Brief Writer",
+		Status:         aichatmodel.CustomSkillStatusActive,
+		UpdatedAt:      time.Unix(123, 0),
+	}
+	customRepo.items[existing.SkillID] = existing
+
+	preview, err := svc.PreviewImportCustomSkill(context.Background(), scope, testSkillFileHeader(t, testSkillZip(t, map[string]string{
+		"SKILL.md": testCustomSkillMarkdown(),
+	})))
+	if err != nil {
+		t.Fatalf("PreviewImportCustomSkill() error = %v", err)
+	}
+	if !preview.WillOverwrite {
+		t.Fatal("PreviewImportCustomSkill().WillOverwrite = false, want true")
+	}
+	if preview.ExistingSkill == nil || preview.ExistingSkill.SkillID != "brief-writer" || preview.ExistingSkill.Name != "Existing Brief Writer" {
+		t.Fatalf("PreviewImportCustomSkill().ExistingSkill = %#v, want existing skill summary", preview.ExistingSkill)
+	}
+}
+
+func TestConfirmCustomSkillImportRequiresOverwriteConfirmation(t *testing.T) {
+	svc, scope, customRepo := testCustomSkillService(t)
+	customRepo.items["brief-writer"] = &aichatmodel.CustomSkill{
+		OrganizationID: scope.OrganizationID,
+		SkillID:        "brief-writer",
+		Name:           "Existing Brief Writer",
+		Status:         aichatmodel.CustomSkillStatusActive,
+	}
+	preview, err := svc.PreviewImportCustomSkill(context.Background(), scope, testSkillFileHeader(t, testSkillZip(t, map[string]string{
+		"SKILL.md": testCustomSkillMarkdown(),
+	})))
+	if err != nil {
+		t.Fatalf("PreviewImportCustomSkill() error = %v", err)
+	}
+
+	_, err = svc.ConfirmCustomSkillImport(context.Background(), scope, preview.ImportID, false)
+	if err == nil || !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("ConfirmCustomSkillImport() error = %v, want invalid input", err)
+	}
+}
+
+func TestConfirmCustomSkillImportAllowsConfirmedOverwrite(t *testing.T) {
+	svc, scope, customRepo := testCustomSkillService(t)
+	customRepo.items["brief-writer"] = &aichatmodel.CustomSkill{
+		OrganizationID: scope.OrganizationID,
+		SkillID:        "brief-writer",
+		Name:           "Existing Brief Writer",
+		Status:         aichatmodel.CustomSkillStatusActive,
+	}
+	preview, err := svc.PreviewImportCustomSkill(context.Background(), scope, testSkillFileHeader(t, testSkillZip(t, map[string]string{
+		"SKILL.md": strings.Replace(testCustomSkillMarkdown(), "Help draft short writing briefs.", "Updated brief writer.", 1),
+	})))
+	if err != nil {
+		t.Fatalf("PreviewImportCustomSkill() error = %v", err)
+	}
+
+	metadata, err := svc.ConfirmCustomSkillImport(context.Background(), scope, preview.ImportID, true)
+	if err != nil {
+		t.Fatalf("ConfirmCustomSkillImport() error = %v", err)
+	}
+	if metadata.ID != "brief-writer" {
+		t.Fatalf("ConfirmCustomSkillImport().ID = %q, want brief-writer", metadata.ID)
+	}
+	if got := customRepo.items["brief-writer"].Description; got != "Updated brief writer." {
+		t.Fatalf("updated custom skill description = %q, want updated value", got)
+	}
+}
+
 func testSkillZip(t *testing.T, files map[string]string) []byte {
 	t.Helper()
 	var buffer bytes.Buffer
@@ -188,6 +265,112 @@ func testSkillZip(t *testing.T, files map[string]string) []byte {
 		t.Fatalf("close zip: %v", err)
 	}
 	return buffer.Bytes()
+}
+
+func testSkillFileHeader(t *testing.T, data []byte) *multipart.FileHeader {
+	t.Helper()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", "skill.zip")
+	if err != nil {
+		t.Fatalf("CreateFormFile() error = %v", err)
+	}
+	if _, err := part.Write(data); err != nil {
+		t.Fatalf("write multipart file: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+	request, err := http.NewRequest(http.MethodPost, "/skills/import/preview", &body)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	if err := request.ParseMultipartForm(int64(body.Len()) + 1024); err != nil {
+		t.Fatalf("ParseMultipartForm() error = %v", err)
+	}
+	files := request.MultipartForm.File["file"]
+	if len(files) != 1 {
+		t.Fatalf("multipart files = %d, want 1", len(files))
+	}
+	return files[0]
+}
+
+func testCustomSkillService(t *testing.T) (*service, Scope, *fakeCustomSkillRepository) {
+	t.Helper()
+	catalogDir := t.TempDir()
+	customRepo := &fakeCustomSkillRepository{items: map[string]*aichatmodel.CustomSkill{}}
+	svc := &service{
+		repos: &repository.Repositories{
+			Access:      fakeAccessRepository{},
+			CustomSkill: customRepo,
+			SkillConfig: fakeSkillConfigRepository{},
+		},
+		skillRuntime:       skills.NewRuntimeWithCatalog(tools.NewToolEngine(tools.NewToolManager(nil)), tools.NewToolManager(nil), catalogDir),
+		customSkillStorage: newFilesystemCustomSkillStorage(t.TempDir()),
+	}
+	return svc, Scope{OrganizationID: uuid.New(), AccountID: uuid.New()}, customRepo
+}
+
+type fakeAccessRepository struct{}
+
+func (fakeAccessRepository) IsOrganizationMember(context.Context, uuid.UUID, uuid.UUID) (bool, error) {
+	return true, nil
+}
+
+func (fakeAccessRepository) GetCurrentWorkspaceID(context.Context, uuid.UUID) (*uuid.UUID, error) {
+	return nil, nil
+}
+
+type fakeCustomSkillRepository struct {
+	items map[string]*aichatmodel.CustomSkill
+}
+
+func (r *fakeCustomSkillRepository) ListByOrganization(context.Context, uuid.UUID) ([]*aichatmodel.CustomSkill, error) {
+	return nil, nil
+}
+
+func (r *fakeCustomSkillRepository) ListManageableByOrganization(context.Context, uuid.UUID) ([]*aichatmodel.CustomSkill, error) {
+	items := make([]*aichatmodel.CustomSkill, 0, len(r.items))
+	for _, item := range r.items {
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+func (r *fakeCustomSkillRepository) GetBySkillID(_ context.Context, _ uuid.UUID, skillID string) (*aichatmodel.CustomSkill, error) {
+	item, ok := r.items[strings.ToLower(strings.TrimSpace(skillID))]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return item, nil
+}
+
+func (r *fakeCustomSkillRepository) Upsert(_ context.Context, skill *aichatmodel.CustomSkill) error {
+	if skill == nil {
+		return nil
+	}
+	r.items[strings.ToLower(strings.TrimSpace(skill.SkillID))] = skill
+	return nil
+}
+
+func (r *fakeCustomSkillRepository) DeleteBySkillID(_ context.Context, _ uuid.UUID, skillID string) error {
+	delete(r.items, strings.ToLower(strings.TrimSpace(skillID)))
+	return nil
+}
+
+type fakeSkillConfigRepository struct{}
+
+func (fakeSkillConfigRepository) ListByOrganization(context.Context, uuid.UUID) ([]*aichatmodel.OrganizationSkillConfig, error) {
+	return nil, nil
+}
+
+func (fakeSkillConfigRepository) ReplaceForOrganization(context.Context, uuid.UUID, []*aichatmodel.OrganizationSkillConfig) error {
+	return nil
+}
+
+func (fakeSkillConfigRepository) DeleteByOrganizationAndSkill(context.Context, uuid.UUID, string) error {
+	return nil
 }
 
 func testCustomSkillMarkdown() string {

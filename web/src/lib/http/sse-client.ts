@@ -1,7 +1,7 @@
 // Server-Sent Events (SSE) client implementation
 
-import * as Sentry from '@sentry/nextjs';
 import { ErrorNotificationService } from '@/utils/error-notifications';
+import { captureException } from '@/lib/sentry/client';
 import { getEndpointConfig, type ApiEndpoint } from './config';
 import type { SseOptions, SseMessage, SsePostOptions, SseEventCallbacks } from './types';
 import { parseSseRawEvent, SseParser, type SseRawEvent } from './sse-parser';
@@ -229,11 +229,10 @@ export class SseClient {
     if (!options.skipErrorHandling) {
       ErrorNotificationService.showNetworkError();
     }
-    Sentry.withScope(scope => {
+    captureException(err, scope => {
       scope.setContext('http', { url: urlObj.toString(), method });
       scope.setTag('endpoint', endpointCfg.name);
     });
-    Sentry.captureException(err);
     options.onError?.(err);
     return { close: () => controller.abort() };
   }
@@ -250,7 +249,7 @@ export class SseClient {
       error instanceof Error ? error : new Error('Authentication session is not available');
     err.code = err.code || 'ERR_AUTH_SESSION_MISSING';
     err.status = err.status || 401;
-    Sentry.withScope(scope => {
+    captureException(err, scope => {
       scope.setContext('http', {
         url: urlObj.toString(),
         method,
@@ -259,7 +258,6 @@ export class SseClient {
       });
       scope.setTag('endpoint', endpointCfg.name);
     });
-    Sentry.captureException(err);
     options.onError?.(err);
     return { close: () => controller.abort() };
   }
@@ -298,7 +296,7 @@ export class SseClient {
     err.status = response.status;
     err.code = code;
     err.details = responseText || undefined;
-    Sentry.withScope(scope => {
+    captureException(err, scope => {
       scope.setContext('http', {
         url: urlObj.toString(),
         method,
@@ -308,7 +306,6 @@ export class SseClient {
       });
       scope.setTag('endpoint', endpointCfg.name);
     });
-    Sentry.captureException(err);
     options.onError?.(err);
     return { close: () => controller.abort() };
   }
@@ -330,11 +327,10 @@ export class SseClient {
       'Invalid SSE response: missing text/event-stream content-type'
     );
     err.status = response.status;
-    Sentry.withScope(scope => {
+    captureException(err, scope => {
       scope.setContext('http', { url: urlObj.toString(), method, status: response.status });
       scope.setTag('endpoint', endpointCfg.name);
     });
-    Sentry.captureException(err);
     options.onError?.(err);
     return { close: () => controller.abort() };
   }
@@ -453,7 +449,7 @@ export class SseClient {
     if (!options.skipErrorHandling) {
       ErrorNotificationService.showNetworkError();
     }
-    Sentry.withScope(scope => {
+    captureException(err, scope => {
       scope.setContext('http', {
         url: urlObj.toString(),
         method,
@@ -462,7 +458,6 @@ export class SseClient {
       });
       scope.setTag('endpoint', endpointCfg.name);
     });
-    Sentry.captureException(err);
     options.onTransportError?.(err, meta);
     options.onError?.(err);
   }

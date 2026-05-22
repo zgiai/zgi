@@ -143,9 +143,15 @@ func (r *NodeRunner) optionalDependencies(nodeID string, nodeType shared.NodeTyp
 		} else {
 			logger.Warn("No AutomationDefinitionService available for %s node: %s", nodeType, nodeID)
 		}
+		if r.deps.NotificationSMSService != nil {
+			optionalDeps = append(optionalDeps, r.deps.NotificationSMSService)
+			logger.Info("Passing NotificationSMSService to %s node: %s", nodeType, nodeID)
+		} else {
+			logger.Warn("No NotificationSMSService available for %s node: %s", nodeType, nodeID)
+		}
 	}
 
-	if nodeType == shared.NotificationSMS {
+	if nodeType == shared.NotificationSMS || nodeType == shared.Approval {
 		if r.deps.NotificationSMSService != nil {
 			optionalDeps = append(optionalDeps, r.deps.NotificationSMSService)
 			logger.Info("Passing NotificationSMSService to %s node: %s", nodeType, nodeID)

@@ -213,8 +213,8 @@
     bodyTypePlainTextDescription:
       'Plain text is sent as-is and will not render HTML tags or styles.',
     content: 'Email content',
-    smsNotificationTitle: 'Notification title',
-    smsLinkCode: 'Link code',
+    smsTemplate: 'SMS template',
+    smsTemplateParams: 'SMS template params',
     disabled: 'Disabled',
     enabledLabel: 'Enable this operation',
     enabledDescription:
@@ -278,10 +278,10 @@
       recipientsInvalid: 'Use valid email addresses only.',
       subjectRequired: 'Subject is required.',
       contentRequired: 'Email content is required.',
-      smsNotificationTitleRequired: 'Notification title is required.',
-      smsLinkCodeRequired: 'Link code is required.',
-      smsLinkCodeInvalid:
-        'Use letters and numbers only, for example abc123. Do not enter -, _, Chinese characters, or a full URL.',
+      smsTemplateRequired: 'SMS template is required.',
+      smsTemplateParamRequired: '{label} is required.',
+      smsTemplateParamInvalid: '{label} has an invalid format.',
+      smsTemplateParamTooLong: '{label} must be at most {max} characters.',
       workflowAgentRequired: 'Choose a target workflow.',
       workflowVersionUuidRequired: 'Version UUID is required for pinned execution.',
       workflowInputsInvalid: 'Workflow inputs must be a valid JSON object.',

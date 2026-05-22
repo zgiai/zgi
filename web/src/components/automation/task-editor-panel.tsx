@@ -648,21 +648,21 @@ export function TaskEditorPanel({
     [updateActionDialogDraft]
   );
 
-  const handleDialogSmsNotificationTitleChange = React.useCallback(
+  const handleDialogSmsTemplateChange = React.useCallback(
     (value: string) => {
       updateActionDialogDraft(current => ({
         ...current,
-        smsNotificationTitle: value,
+        smsTemplate: value,
       }));
     },
     [updateActionDialogDraft]
   );
 
-  const handleDialogSmsLinkCodeChange = React.useCallback(
-    (value: string) => {
+  const handleDialogSmsTemplateParamsChange = React.useCallback(
+    (value: Record<string, string>) => {
       updateActionDialogDraft(current => ({
         ...current,
-        smsLinkCode: value,
+        smsTemplateParams: value,
       }));
     },
     [updateActionDialogDraft]
@@ -739,7 +739,7 @@ export function TaskEditorPanel({
             ),
           };
 
-    const nextErrors = validateTaskDraft(nextDraft, translate);
+    const nextErrors = validateTaskDraft(nextDraft, translate, systemFeatures);
     const currentActionErrors: TaskDraftActionErrors = {
       ...(nextErrors.actionErrors?.[dialogDraft.clientId] ?? {}),
     };
@@ -796,13 +796,14 @@ export function TaskEditorPanel({
     closeActionDialog,
     dialogDraft,
     draft,
+    systemFeatures,
     translate,
     workflowInputVariables,
     workflowInputVariablesError,
   ]);
 
   const handleSubmit = React.useCallback(async () => {
-    const nextErrors = validateTaskDraft(draft, translate);
+    const nextErrors = validateTaskDraft(draft, translate, systemFeatures);
     setErrors(nextErrors);
 
     if (Object.keys(nextErrors).length > 0 || !editable) {
@@ -832,6 +833,7 @@ export function TaskEditorPanel({
     onCreate,
     onSubmitted,
     onUpdate,
+    systemFeatures,
     taskDetail?.task.id,
     translate,
     workspaceId,
@@ -1103,8 +1105,8 @@ export function TaskEditorPanel({
         onSubjectChange={handleDialogSubjectChange}
         onBodyTypeChange={handleDialogBodyTypeChange}
         onBodyChange={handleDialogBodyChange}
-        onSmsNotificationTitleChange={handleDialogSmsNotificationTitleChange}
-        onSmsLinkCodeChange={handleDialogSmsLinkCodeChange}
+        onSmsTemplateChange={handleDialogSmsTemplateChange}
+        onSmsTemplateParamsChange={handleDialogSmsTemplateParamsChange}
         onWorkflowAgentChange={handleDialogWorkflowAgentChange}
         onWorkflowVersionStrategyChange={handleDialogWorkflowVersionStrategyChange}
         onWorkflowVersionUuidChange={handleDialogWorkflowVersionUuidChange}

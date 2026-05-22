@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useT } from '@/i18n';
 import { Button } from '@/components/ui/button';
 import { RefreshCw, AlertTriangle, ArrowLeft, Home, Copy, Bug } from 'lucide-react';
-import * as Sentry from '@sentry/nextjs';
+import { captureException } from '@/lib/sentry/client';
 
 export default function Error({
   error,
@@ -27,8 +27,7 @@ export default function Error({
   }, [error]);
 
   useEffect(() => {
-    // Log error to Sentry
-    Sentry.captureException(error);
+    captureException(error);
   }, [error]);
 
   const copyDiagnostics = async () => {

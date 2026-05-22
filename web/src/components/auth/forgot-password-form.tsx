@@ -14,8 +14,8 @@ import { Card, CardContent, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Icons } from '@/components/ui/icons';
-import { useForgotPassword } from '@/hooks';
+import { CheckCircle } from 'lucide-react';
+import { useForgotPassword } from '@/hooks/auth/use-forgot-password';
 import { useT } from '@/i18n';
 
 interface ForgotPasswordFormProps {
@@ -91,7 +91,7 @@ export function ForgotPasswordForm({ className }: ForgotPasswordFormProps) {
           {/* Success Alert */}
           {isCodeSent && (
             <Alert className="bg-success/5 border-success/20 text-success animate-in fade-in zoom-in-95 duration-500">
-              <Icons.CheckCircle className="h-4 w-4" />
+              <CheckCircle className="h-4 w-4" />
               <AlertDescription>{t('codeSentToEmail')}</AlertDescription>
             </Alert>
           )}

@@ -7,7 +7,7 @@ import NodeCard from './node-card';
 import { NODE_THEMES, type NodeTheme } from './config';
 import { NODE_CONFIG } from './config';
 import { useWorkflowStore } from '../../store/store';
-import WorkflowRunNodesList from '../../ui/workflow-run-nodes-list';
+import NodeRuntimeLogDetails from './node-runtime-log-details';
 
 // Import content-only components per node type
 import StartContent from '../start';
@@ -101,6 +101,10 @@ const CustomNode: React.FC<CustomNodeProps> = ({ id, data, selected }) => {
   const runtimeLogItems =
     useWorkflowStore(state => state.runtimeLogItemsByNodeId[id as string]) ??
     EMPTY_RUNTIME_LOG_ITEMS;
+  const runtimeLogPopoverOpen = useWorkflowStore(
+    state => state.runtimeLogPopoverOpenByNodeId[id as string] ?? false
+  );
+  const setRuntimeLogPopoverOpen = useWorkflowStore.use.setRuntimeLogPopoverOpen();
   const updateNodeInternals = useUpdateNodeInternals();
   // Use cached runnableSets from store with granular selector
   const isComment = useWorkflowStore(state => state.runnableSets.commentSet.has(id as string));
@@ -414,22 +418,20 @@ const CustomNode: React.FC<CustomNodeProps> = ({ id, data, selected }) => {
           descClassName={cn(theme.classNames.desc)}
           contentClassName={cn(theme.classNames.content, theme.resizable && 'grow')}
           after={handles}
+          runtimeFooter={
+            runtimeLogItems.length > 0 ? (
+              <NodeRuntimeLogDetails
+                nodeId={id as string}
+                items={runtimeLogItems}
+                open={runtimeLogPopoverOpen}
+                onOpenChange={open => setRuntimeLogPopoverOpen(id as string, open)}
+              />
+            ) : null
+          }
           showResizeHandle={theme.resizable}
         >
           {renderContent()}
         </NodeCard>
-        {runtimeLogItems.length > 0 ? (
-          <div
-            data-workflow-runtime-log="true"
-            className="nodrag nowheel mt-2 w-[280px]"
-            onClick={event => event.stopPropagation()}
-            onDoubleClick={event => event.stopPropagation()}
-            onMouseDown={event => event.stopPropagation()}
-            onPointerDown={event => event.stopPropagation()}
-          >
-            <WorkflowRunNodesList items={runtimeLogItems} showDetail={false} variant="canvas" />
-          </div>
-        ) : null}
       </div>
     </>
   );

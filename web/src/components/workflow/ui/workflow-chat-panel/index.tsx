@@ -206,6 +206,10 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
   const setNodeRunStatus = useWorkflowStore.use.setNodeRunStatus();
   const setActiveOutputHandle = useWorkflowStore.use.setActiveOutputHandle();
   const resetActiveOutputHandles = useWorkflowStore.use.resetActiveOutputHandles();
+  const beginRuntimeLogPopoverAutoOpen =
+    useWorkflowStore.use.beginRuntimeLogPopoverAutoOpen();
+  const finalizeRuntimeLogPopoversAfterRun =
+    useWorkflowStore.use.finalizeRuntimeLogPopoversAfterRun();
   const setAutoFollow = useWorkflowStore.use.setAutoFollow();
   const setRuntimeLogItems = useWorkflowStore.use.setRuntimeLogItems();
   const setCurrentRunningNodeId = useWorkflowStore.use.setCurrentRunningNodeId();
@@ -257,6 +261,8 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
     setNodeRunStatus,
     setActiveOutputHandle,
     resetActiveOutputHandles,
+    beginRuntimeLogPopoverAutoOpen,
+    finalizeRuntimeLogPopoversAfterRun,
     setAutoFollow,
     setCurrentRunningNodeId,
     lastInputs: undefined,

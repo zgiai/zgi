@@ -39,11 +39,8 @@ export interface AutomationEmailNotificationActionConfig {
 export interface AutomationSMSNotificationActionConfig {
   channel_type: 'sms';
   to: string[];
-  template: 'pending_action_notification';
-  template_params: {
-    notification_title: string;
-    link_code: string;
-  };
+  template: string;
+  template_params: Record<string, string>;
 }
 
 export type AutomationNotificationActionConfig =

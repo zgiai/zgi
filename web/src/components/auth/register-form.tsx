@@ -15,8 +15,9 @@ import { Card, CardContent, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Icons } from '@/components/ui/icons';
-import { useStartRegister, useSystemFeatures } from '@/hooks';
+import { Info, Loader2 } from 'lucide-react';
+import { useStartRegister } from '@/hooks/auth/use-start-register';
+import { useSystemFeatures } from '@/hooks/auth/use-system-features';
 
 interface RegisterFormProps {
   className?: string;
@@ -102,12 +103,12 @@ export function RegisterForm({ className }: RegisterFormProps) {
       <Card>
         <CardContent className="p-6">
           <Alert>
-            <Icons.Info className="h-4 w-4" />
+            <Info className="h-4 w-4" />
             <AlertDescription>{t('registrationDisabled')}</AlertDescription>
           </Alert>
           <div className="mt-4 flex justify-end">
             <Button onClick={onRefresh} disabled={refreshing} className="min-w-28">
-              {refreshing && <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />}
+              {refreshing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {tCommon('refresh')}
             </Button>
           </div>

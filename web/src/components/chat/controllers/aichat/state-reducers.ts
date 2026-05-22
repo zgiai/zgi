@@ -960,6 +960,7 @@ export function applyStreamErrorState(
   const messageId = payload.message_id;
   const message = payload.message || 'AIChat stream error';
   const messages = conversationId ? current.messagesByConversation[conversationId] ?? [] : [];
+  const erroredMessage = messageId ? messages.find(item => item.id === messageId) : undefined;
   const nextStreamingByMessageId = { ...current.streamingByMessageId };
   if (messageId) {
     delete nextStreamingByMessageId[messageId];
@@ -967,7 +968,7 @@ export function applyStreamErrorState(
 
   return {
     ...current,
-    error: message,
+    error: messageId ? null : message,
     isSending: getNextActiveSendingState(current, conversationId, false),
     conversations: conversationId
       ? current.conversations.map(conversation =>
@@ -976,6 +977,11 @@ export function applyStreamErrorState(
                 ...conversation,
                 runtime_status: 'idle' as const,
                 active_message_id: undefined,
+                current_leaf_message_id: messageId || conversation.current_leaf_message_id,
+                dialogue_count:
+                  messageId && erroredMessage && !erroredMessage.parent_id
+                    ? 1
+                    : conversation.dialogue_count,
               }
             : conversation
         )

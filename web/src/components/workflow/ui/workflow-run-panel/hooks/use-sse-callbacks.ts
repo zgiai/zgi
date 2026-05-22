@@ -41,6 +41,8 @@ interface UseSseCallbacksParams {
   ) => void;
   setActiveOutputHandle: (nodeId: string, outputHandle: string | null) => void;
   resetActiveOutputHandles: () => void;
+  beginRuntimeLogPopoverAutoOpen: () => void;
+  finalizeRuntimeLogPopoversAfterRun: () => void;
   setAutoFollow: (enabled: boolean) => void;
   setCurrentRunningNodeId: (nodeId: string | null) => void;
   lastInputs: Record<string, unknown> | undefined;
@@ -62,6 +64,8 @@ export function useSseCallbacks(params: UseSseCallbacksParams): WorkflowRunSseCa
     setNodeRunStatus,
     setActiveOutputHandle,
     resetActiveOutputHandles,
+    beginRuntimeLogPopoverAutoOpen,
+    finalizeRuntimeLogPopoversAfterRun,
     setAutoFollow,
     setCurrentRunningNodeId,
     lastInputs,
@@ -188,6 +192,7 @@ export function useSseCallbacks(params: UseSseCallbacksParams): WorkflowRunSseCa
           receiveOrderRef.current = 0;
 
           resetRunStatus();
+          beginRuntimeLogPopoverAutoOpen();
           resetActiveOutputHandles();
           setAutoFollow(true);
           setCurrentRunningNodeId(null);
@@ -1002,6 +1007,7 @@ export function useSseCallbacks(params: UseSseCallbacksParams): WorkflowRunSseCa
           setFinalResult(result);
           setAutoFollow(false);
           setCurrentRunningNodeId(null);
+          finalizeRuntimeLogPopoversAfterRun();
           throttler.flush();
         } catch (e) {
           // eslint-disable-next-line no-console
@@ -1078,6 +1084,8 @@ export function useSseCallbacks(params: UseSseCallbacksParams): WorkflowRunSseCa
       setNodeRunStatus,
       setActiveOutputHandle,
       resetActiveOutputHandles,
+      beginRuntimeLogPopoverAutoOpen,
+      finalizeRuntimeLogPopoversAfterRun,
       setAutoFollow,
       setCurrentRunningNodeId,
       lastInputs,

@@ -24,6 +24,16 @@ export type ApprovalEmailRecipient =
       account_id: string;
     };
 
+export type ApprovalSMSRecipient =
+  | {
+      type: 'external';
+      phone: string;
+    }
+  | {
+      type: 'member';
+      account_id: string;
+    };
+
 export interface ApprovalRuntimeForm {
   id: string;
   token: string;
@@ -39,6 +49,14 @@ export interface ApprovalRuntimeForm {
       subject?: string;
       body?: string;
       recipients?: ApprovalEmailRecipient[];
+    };
+    sms?: {
+      enabled?: boolean;
+      provider?: string;
+      template?: string;
+      notification_title?: string;
+      template_params?: Record<string, string>;
+      recipients?: ApprovalSMSRecipient[];
     };
   };
   resolved_default_values?: Record<string, unknown>;

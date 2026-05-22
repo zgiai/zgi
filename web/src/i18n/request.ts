@@ -2,9 +2,13 @@ import { getRequestConfig } from 'next-intl/server';
 import { cookies, headers } from 'next/headers';
 import { DEFAULT_LOCALE, ENABLE_LANG_SWITCH } from '@/lib/config';
 import { locales, defaultLocale, localeMapping, type Locale } from './config';
-import { loadAllModules } from './loader';
+import { loadModules } from './loader';
+import { getModulesForPathname } from './route-modules';
 
 export default getRequestConfig(async () => {
+  const headerStore = await headers();
+  const pathname = headerStore.get('x-zgi-pathname') || '/';
+  const modules = getModulesForPathname(pathname);
   const fallbackLocale =
     (localeMapping[DEFAULT_LOCALE] ??
       localeMapping[DEFAULT_LOCALE.toLowerCase()] ??
@@ -15,7 +19,7 @@ export default getRequestConfig(async () => {
   if (!ENABLE_LANG_SWITCH) {
     return {
       locale: fallbackLocale,
-      messages: await loadAllModules(fallbackLocale),
+      messages: await loadModules(modules, fallbackLocale),
     };
   }
 
@@ -30,7 +34,6 @@ export default getRequestConfig(async () => {
     locale = localeCookie;
   } else {
     // Try Accept-Language header
-    const headerStore = await headers();
     const acceptLanguage = headerStore.get('accept-language');
 
     if (acceptLanguage) {
@@ -55,7 +58,7 @@ export default getRequestConfig(async () => {
 
   return {
     locale,
-    messages: await loadAllModules(locale),
+    messages: await loadModules(modules, locale),
   };
 });
 

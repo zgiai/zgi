@@ -978,6 +978,9 @@ func approvalRequestedSubmitMethods(methods approvalruntime.SubmitMethods) map[s
 		"email": map[string]interface{}{
 			"enabled": methods.Email.Enabled,
 		},
+		"sms": map[string]interface{}{
+			"enabled": methods.SMS.Enabled,
+		},
 	}
 }
 
