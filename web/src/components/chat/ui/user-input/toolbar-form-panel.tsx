@@ -47,6 +47,7 @@ const ToolbarFormPanel = forwardRef<WorkflowInputFormHandle, ToolbarFormPanelPro
         JSON.stringify(
           visibleVariables.map(v => ({
             variable: v.variable,
+            description: v.description ?? undefined,
             type: v.type,
             required: Boolean(v.required),
             options: v.options ?? [],

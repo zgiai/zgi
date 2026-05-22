@@ -45,6 +45,7 @@ function toInputVars(vars: WebAppVariable[]): InputVar[] {
     type: v.type as InputVar['type'],
     variable: v.variable,
     label: v.label,
+    description: v.description,
     required: v.required,
     max_length: v.max_length,
     default: v.default,

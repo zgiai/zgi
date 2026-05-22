@@ -1972,6 +1972,7 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
       JSON.stringify(
         startVariables.map(v => ({
           variable: v.variable,
+          description: v.description ?? undefined,
           type: v.type,
           required: Boolean(v.required),
           options: v.options ?? [],

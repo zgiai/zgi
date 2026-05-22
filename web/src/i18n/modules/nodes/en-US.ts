@@ -1098,6 +1098,7 @@ const messages = {
       fields: {
         variableName: 'Variable Name',
         label: 'Label',
+        description: 'Input Hint',
         variableType: 'Variable Type',
         defaultValue: 'Default Value',
         maxLength: 'Max Length',
@@ -1124,6 +1125,7 @@ const messages = {
       placeholders: {
         variableName: 'Enter variable name',
         label: 'Enter label',
+        description: 'Shown as the input placeholder',
         defaultValue: 'Enter default value',
         allowedFileExtensions: 'pdf,docx,txt',
       },

@@ -135,6 +135,12 @@ const VariableEditModal: React.FC<VariableEditModalProps> = ({
       };
     }
 
+    const trimmedDescription = nextVariable.description?.trim();
+    nextVariable = {
+      ...nextVariable,
+      description: trimmedDescription || undefined,
+    };
+
     onSave(nextVariable);
     onClose();
   };
@@ -265,6 +271,20 @@ const VariableEditModal: React.FC<VariableEditModalProps> = ({
                   placeholder={t('nodes.start.modal.placeholders.label')}
                 />
               </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="description" className="text-sm font-bold px-0.5">
+                {t('nodes.start.modal.fields.description')}
+              </Label>
+              <Input
+                id="description"
+                value={localVariable.description ?? ''}
+                className="h-10 shadow-sm font-medium"
+                onChange={e => updateLocalVariable({ description: e.target.value })}
+                maxLength={100}
+                placeholder={t('nodes.start.modal.placeholders.description')}
+              />
             </div>
 
             <div className="space-y-2">

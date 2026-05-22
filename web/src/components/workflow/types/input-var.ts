@@ -114,6 +114,7 @@ export interface InputVar {
   type: InputVarType;
   variable: string;
   label: string;
+  description?: string;
   max_length?: number;
   default?: string | boolean;
   required: boolean;

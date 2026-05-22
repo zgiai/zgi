@@ -1063,6 +1063,7 @@ const messages: NodesMessages = {
       fields: {
         variableName: '变量名',
         label: '显示名称',
+        description: '填写说明',
         variableType: '变量类型',
         defaultValue: '默认值',
         maxLength: '最大长度',
@@ -1089,6 +1090,7 @@ const messages: NodesMessages = {
       placeholders: {
         variableName: '请输入变量名',
         label: '请输入显示名称',
+        description: '例如：如需新增记账单可填写',
         defaultValue: '请输入默认值',
         allowedFileExtensions: 'pdf,docx,txt',
       },
