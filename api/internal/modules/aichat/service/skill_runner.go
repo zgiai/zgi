@@ -67,7 +67,6 @@ func (s *service) runPreparedSkillStream(
 	)
 	messages = append(messages, metadataMessage)
 	messages = append(messages, agenticSkillLoopSystemMessage())
-	metaTools := skills.MetaToolsForSkills(resolved)
 	traces := []skills.SkillTrace{metadataExposedTrace(resolved.SkillIDs(), metadataStats)}
 	s.persistSkillTracesBestEffort(persistCtx, prepared, traces)
 	logger.DebugContext(ctx, "aichat skill metadata exposed",
@@ -90,7 +89,7 @@ func (s *service) runPreparedSkillStream(
 		planningReq := cloneChatRequest(prepared.LLMRequest)
 		planningReq.Messages = messages
 		planningReq.Stream = false
-		planningReq.Tools = metaTools
+		planningReq.Tools = skills.MetaToolsForSkillState(resolved, loadedSkills)
 		planningReq.ToolChoice = "auto"
 
 		planningResp, err := s.llmClient.AppChat(ctx, newBillingAppContext(prepared), planningReq)
@@ -219,11 +218,47 @@ func (s *service) handleProgressiveSkillCall(
 			return fatalSkillStep(trace, skills.ToolResultMessage(call.ID, errorPayload(err)), err)
 		}
 		return s.handleCallSkillTool(ctx, prepared, resolved, call.ID, args, execCtx, onEvent)
+	case skills.MetaToolIntermediateAnswer:
+		return s.handleIntermediateAnswerCall(ctx, prepared, call.ID, args, onEvent)
 	default:
 		err := fmt.Errorf("%w: unsupported skill meta tool %s", ErrInvalidInput, call.Function.Name)
 		trace := failedSkillTrace("meta_tool", call.Function.Name, err)
-		return recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, recoverableErrorPayload(err, "use one of load_skill, read_skill_reference, or call_skill_tool")), false, false)
+		return recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, recoverableErrorPayload(err, "use one of load_skill, read_skill_reference, call_skill_tool, or submit_intermediate_answer")), false, false)
 	}
+}
+
+func (s *service) handleIntermediateAnswerCall(
+	ctx context.Context,
+	prepared *PreparedChat,
+	callID string,
+	args map[string]interface{},
+	onEvent func(StreamEvent) error,
+) skillStepResult {
+	content := strings.TrimSpace(stringArg(args, "content"))
+	if content == "" {
+		err := fmt.Errorf("%w: intermediate answer content is required", ErrInvalidInput)
+		trace := failedSkillTrace("intermediate_answer", "", err)
+		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "call submit_intermediate_answer again with non-empty content")), false, false)
+	}
+	title := strings.TrimSpace(stringArg(args, "title"))
+	trace := skills.SkillTrace{
+		Kind:    "intermediate_answer",
+		Title:   title,
+		Message: content,
+		Status:  "success",
+		Arguments: map[string]interface{}{
+			"title": title,
+		},
+	}
+	s.emitPreparedEvent(ctx, prepared, streamEventIntermediateAnswer, intermediateAnswerPayload(prepared, trace), onEvent)
+	return successfulSkillStep(trace, skills.ToolResultMessage(callID, map[string]interface{}{
+		"status": "recorded",
+		"instruction": strings.Join([]string{
+			"The intermediate answer is visible to the user and saved in the run trace.",
+			"Continue with any remaining tool calls.",
+			"Your eventual user-facing reply must still be complete and self-contained; do not say see above.",
+		}, " "),
+	}), false, false)
 }
 
 func (s *service) handleLoadSkillCall(
@@ -401,7 +436,13 @@ func agenticSkillLoopSystemMessage() adapter.Message {
 		Content: strings.Join([]string{
 			"When using skills or tools, briefly explain your next action to the user before calling a skill/tool.",
 			"After each skill/tool result, summarize what happened. If a tool call fails, explain the likely cause, fix the arguments, and retry when possible.",
-			"Keep progress updates concise and finish with a clear final answer.",
+			"Progress text sent together with tool calls is transient status text. Keep it short and do not place substantial user deliverables there.",
+			"If the user request has multiple ordered phases and a phase produces a user-facing deliverable before later tool/skill calls, you MUST call submit_intermediate_answer for that deliverable before continuing.",
+			"Examples of user-facing deliverables that MUST use submit_intermediate_answer when followed by more tool/skill calls: novel outlines, long-form drafts, plans, tables, code sketches, analysis sections, or generated content the user asked for.",
+			"Do not skip submit_intermediate_answer by postponing or summarizing that deliverable if the user explicitly asked for it as an intermediate phase.",
+			"When no more tool or skill calls are needed, send a natural user-facing reply that is complete and self-contained. If you did not call submit_intermediate_answer for a requested deliverable, that reply MUST include the deliverable in full, not a compressed summary.",
+			"Do not label the user-facing reply with protocol wording such as Final Answer, final result, or their Chinese equivalents unless the user explicitly asks for that wording.",
+			"Never refer to intermediate or progress content as above, earlier, or previously.",
 		}, "\n"),
 	}
 }
@@ -583,9 +624,11 @@ func mergeSkillTraceMetadata(source map[string]interface{}, traces []skills.Skil
 			"kind":        trace.Kind,
 			"skill_id":    trace.SkillID,
 			"tool_name":   trace.ToolName,
+			"title":       trace.Title,
 			"status":      trace.Status,
 			"duration_ms": trace.DurationMS,
 			"arguments":   trace.Arguments,
+			"message":     trace.Message,
 			"error":       trace.Error,
 		})
 	}
@@ -607,7 +650,7 @@ func countSkillActionTraces(traces []skills.SkillTrace) int {
 	count := 0
 	for _, trace := range traces {
 		switch trace.Kind {
-		case "skill_load", "reference_read", "tool_call", "guardrail":
+		case "skill_load", "reference_read", "tool_call", "guardrail", "intermediate_answer":
 			count++
 		}
 	}

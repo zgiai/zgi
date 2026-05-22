@@ -344,6 +344,222 @@ Write concise briefs.
 	}
 }
 
+func TestRunPreparedSkillStreamRecordsIntermediateAnswer(t *testing.T) {
+	catalogDir := t.TempDir()
+	writeTestSkill(t, catalogDir, "brief-writer", `---
+name: brief-writer
+description: Help draft short writing briefs.
+when_to_use: Use when writing a concise brief.
+---
+
+# Brief Writer
+
+Write concise briefs.
+`)
+	fakeLLM := &fakeAgenticLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_1",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name: skills.MetaToolIntermediateAnswer,
+								Arguments: `{
+									"title":"Outline",
+									"content":"## Outline\n\nA useful draft."
+								}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{Role: "assistant", Content: "Final answer."},
+				}},
+			},
+		},
+	}
+	svc := &service{
+		repos: &repository.Repositories{
+			Message:     &recordingMessageRepository{},
+			CustomSkill: &fakeCustomSkillRepository{items: map[string]*aichatmodel.CustomSkill{}},
+		},
+		llmClient:    fakeLLM,
+		events:       newStreamEventStore(nil),
+		skillRuntime: skills.NewRuntimeWithCatalog(tools.NewToolEngine(tools.NewToolManager(nil)), tools.NewToolManager(nil), catalogDir),
+	}
+	prepared := &PreparedChat{
+		Conversation: &aichatmodel.Conversation{
+			ID:             uuid.New(),
+			OrganizationID: uuid.New(),
+			AccountID:      uuid.New(),
+		},
+		Message: &aichatmodel.Message{
+			ID:       uuid.New(),
+			Metadata: map[string]interface{}{},
+		},
+		LLMRequest: &adapter.ChatRequest{
+			Messages: []adapter.Message{{Role: "user", Content: "write an outline then continue"}},
+		},
+		Scope: Scope{
+			OrganizationID: uuid.New(),
+			AccountID:      uuid.New(),
+		},
+		parts: &chatRequestParts{
+			SkillMode: skillModeAuto,
+			SkillIDs:  []string{"brief-writer"},
+		},
+	}
+	events := make([]StreamEvent, 0)
+
+	answer, _, err := svc.runPreparedSkillStream(context.Background(), context.Background(), prepared, nil, func(event StreamEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("runPreparedSkillStream() error = %v", err)
+	}
+	if answer != "Final answer." {
+		t.Fatalf("answer = %q, want final answer only", answer)
+	}
+	var intermediateContent string
+	for _, event := range events {
+		if event.EventType == streamEventIntermediateAnswer {
+			intermediateContent, _ = event.Payload["content"].(string)
+			break
+		}
+	}
+	if intermediateContent != "## Outline\n\nA useful draft." {
+		t.Fatalf("intermediate content = %q, want submitted draft", intermediateContent)
+	}
+	invocations, _ := prepared.Message.Metadata["skill_invocations"].([]interface{})
+	if len(invocations) == 0 {
+		t.Fatalf("skill_invocations is empty, want intermediate answer trace")
+	}
+	last, _ := invocations[len(invocations)-1].(map[string]interface{})
+	if last["kind"] != "intermediate_answer" || last["message"] != "## Outline\n\nA useful draft." {
+		t.Fatalf("last invocation = %#v, want intermediate answer trace", last)
+	}
+}
+
+func TestRunPreparedSkillStreamStagesSkillToolSchema(t *testing.T) {
+	catalogDir := t.TempDir()
+	writeTestSkill(t, catalogDir, "clock", `---
+name: clock
+description: Look up current time.
+when_to_use: Use when time is needed.
+provider_type: builtin
+provider_id: time
+runtime_type: tool
+tools:
+  - current_time
+---
+
+# Clock
+
+Use the current_time tool after loading this skill.
+`)
+	fakeLLM := &fakeAgenticLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_1",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolLoadSkill,
+								Arguments: `{"skill_id":"clock"}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{Role: "assistant", Content: "Clock skill is ready."},
+				}},
+			},
+		},
+	}
+	svc := &service{
+		repos: &repository.Repositories{
+			Message:     &recordingMessageRepository{},
+			CustomSkill: &fakeCustomSkillRepository{items: map[string]*aichatmodel.CustomSkill{}},
+		},
+		llmClient:    fakeLLM,
+		events:       newStreamEventStore(nil),
+		skillRuntime: skills.NewRuntimeWithCatalog(tools.NewToolEngine(tools.NewToolManager(nil)), tools.NewToolManager(nil), catalogDir),
+	}
+	prepared := &PreparedChat{
+		Conversation: &aichatmodel.Conversation{
+			ID:             uuid.New(),
+			OrganizationID: uuid.New(),
+			AccountID:      uuid.New(),
+		},
+		Message: &aichatmodel.Message{
+			ID:       uuid.New(),
+			Metadata: map[string]interface{}{},
+		},
+		LLMRequest: &adapter.ChatRequest{
+			Messages: []adapter.Message{{Role: "user", Content: "what time is it"}},
+		},
+		Scope: Scope{
+			OrganizationID: uuid.New(),
+			AccountID:      uuid.New(),
+		},
+		parts: &chatRequestParts{
+			SkillMode: skillModeAuto,
+			SkillIDs:  []string{"clock"},
+		},
+	}
+
+	if _, _, err := svc.runPreparedSkillStream(context.Background(), context.Background(), prepared, nil, nil); err != nil {
+		t.Fatalf("runPreparedSkillStream() error = %v", err)
+	}
+	if len(fakeLLM.appChatRequests) != 2 {
+		t.Fatalf("recorded AppChat requests = %d, want 2", len(fakeLLM.appChatRequests))
+	}
+	firstTools := toolNamesFromRequest(fakeLLM.appChatRequests[0])
+	if containsString(firstTools, skills.MetaToolCallSkillTool) {
+		t.Fatalf("first planning tools = %#v, want no call_skill_tool before load_skill", firstTools)
+	}
+	secondTools := toolNamesFromRequest(fakeLLM.appChatRequests[1])
+	if !containsString(secondTools, skills.MetaToolCallSkillTool) {
+		t.Fatalf("second planning tools = %#v, want call_skill_tool after load_skill", secondTools)
+	}
+	callTool := findToolByName(fakeLLM.appChatRequests[1].Tools, skills.MetaToolCallSkillTool)
+	properties := toolParameterProperties(callTool)
+	skillEnum, _ := properties["skill_id"].(map[string]interface{})["enum"].([]string)
+	toolEnum, _ := properties["tool_name"].(map[string]interface{})["enum"].([]string)
+	if !containsString(skillEnum, "clock") || !containsString(toolEnum, "current_time") {
+		t.Fatalf("call_skill_tool enum skill=%#v tool=%#v, want clock/current_time", skillEnum, toolEnum)
+	}
+}
+
+func TestAgenticSkillLoopSystemMessageRequiresIntermediateAnswers(t *testing.T) {
+	message := agenticSkillLoopSystemMessage()
+	content, _ := message.Content.(string)
+
+	requiredPhrases := []string{
+		"MUST call submit_intermediate_answer",
+		"multiple ordered phases",
+		"that reply MUST include the deliverable in full",
+		"not a compressed summary",
+		"Do not label the user-facing reply",
+	}
+	for _, phrase := range requiredPhrases {
+		if !strings.Contains(content, phrase) {
+			t.Fatalf("agentic skill loop system message missing %q: %s", phrase, content)
+		}
+	}
+}
+
 type recordingConversationRepository struct {
 	updateAfterConversationID  uuid.UUID
 	updateAfterLeafID          uuid.UUID
@@ -465,8 +681,44 @@ func writeTestSkill(t *testing.T, catalogDir string, skillID string, content str
 	}
 }
 
+func toolNamesFromRequest(req *adapter.ChatRequest) []string {
+	if req == nil {
+		return nil
+	}
+	out := make([]string, 0, len(req.Tools))
+	for _, tool := range req.Tools {
+		out = append(out, tool.Function.Name)
+	}
+	return out
+}
+
+func findToolByName(tools []adapter.Tool, name string) adapter.Tool {
+	for _, tool := range tools {
+		if tool.Function.Name == name {
+			return tool
+		}
+	}
+	return adapter.Tool{}
+}
+
+func toolParameterProperties(tool adapter.Tool) map[string]interface{} {
+	parameters, _ := tool.Function.Parameters.(map[string]interface{})
+	properties, _ := parameters["properties"].(map[string]interface{})
+	return properties
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
 type fakeAgenticLLMClient struct {
 	appChatResponses []*adapter.ChatResponse
+	appChatRequests  []*adapter.ChatRequest
 	appChatCalls     int
 }
 
@@ -498,6 +750,8 @@ func (f *fakeAgenticLLMClient) AppChat(ctx context.Context, appCtx *llmclient.Ap
 	if f.appChatCalls >= len(f.appChatResponses) {
 		return nil, errors.New("unexpected AppChat call")
 	}
+	cloned := cloneChatRequest(req)
+	f.appChatRequests = append(f.appChatRequests, cloned)
 	resp := f.appChatResponses[f.appChatCalls]
 	f.appChatCalls++
 	return resp, nil
