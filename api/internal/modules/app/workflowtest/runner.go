@@ -35,12 +35,18 @@ func (r *WorkflowServiceRunner) RunCase(ctx context.Context, req RunCaseRequest)
 	if r == nil || r.WorkflowService == nil {
 		return nil, fmt.Errorf("workflow service runner is not configured")
 	}
-	textInputName := r.resolvePrimaryTextInputName(ctx, req.AgentID)
+	draft := r.resolveDraftWorkflow(ctx, req.AgentID)
+	startInputs := startInputVariablesFromDraft(draft)
+	isChatDraft := draftWorkflowType(draft) == "chat"
+	textInputName := primaryTextInputNameFromVariables(startInputs)
+	if textInputName == "" {
+		textInputName = "input1"
+	}
 	turns := runnableCaseTurns(req.CaseSnapshot)
 	var lastResult *RunCaseResult
 	turnResults := make([]map[string]interface{}, 0, len(turns))
 	for index, turn := range turns {
-		result, err := r.runTurn(ctx, req.AgentID, turn, textInputName)
+		result, err := r.runTurn(ctx, req.AgentID, turn, textInputName, startInputs, isChatDraft)
 		if err != nil {
 			return nil, err
 		}
@@ -89,11 +95,32 @@ func runnableCaseTurns(snapshot CaseSnapshot) CaseTurns {
 	return turns
 }
 
+type startInputVariable struct {
+	Name string
+	Type string
+}
+
 func (r *WorkflowServiceRunner) resolvePrimaryTextInputName(ctx context.Context, agentID string) string {
-	draft, err := r.WorkflowService.GetDraftWorkflow(ctx, agentID, true)
-	if err != nil {
+	name := primaryTextInputNameFromVariables(r.resolveStartInputVariables(ctx, agentID))
+	if name == "" {
 		return "input1"
 	}
+	return name
+}
+
+func (r *WorkflowServiceRunner) resolveStartInputVariables(ctx context.Context, agentID string) []startInputVariable {
+	return startInputVariablesFromDraft(r.resolveDraftWorkflow(ctx, agentID))
+}
+
+func (r *WorkflowServiceRunner) resolveDraftWorkflow(ctx context.Context, agentID string) interface{} {
+	draft, err := r.WorkflowService.GetDraftWorkflow(ctx, agentID, true)
+	if err != nil {
+		return nil
+	}
+	return draft
+}
+
+func startInputVariablesFromDraft(draft interface{}) []startInputVariable {
 	var graph map[string]interface{}
 	switch data := draft.(type) {
 	case dto.WorkflowDetail:
@@ -107,17 +134,45 @@ func (r *WorkflowServiceRunner) resolvePrimaryTextInputName(ctx context.Context,
 			graph = value
 		}
 	}
-	name := primaryTextInputNameFromGraph(graph)
-	if name == "" {
-		return "input1"
+	return startInputVariablesFromGraph(graph)
+}
+
+func draftWorkflowType(draft interface{}) string {
+	switch data := draft.(type) {
+	case map[string]interface{}:
+		if value, ok := data["type"].(string); ok {
+			return strings.TrimSpace(value)
+		}
+	case dto.WorkflowDetail:
+		return strings.TrimSpace(string(data.Type))
+	case *dto.WorkflowDetail:
+		if data != nil {
+			return strings.TrimSpace(string(data.Type))
+		}
 	}
-	return name
+	return ""
 }
 
 func primaryTextInputNameFromGraph(graph map[string]interface{}) string {
+	return primaryTextInputNameFromVariables(startInputVariablesFromGraph(graph))
+}
+
+func primaryTextInputNameFromVariables(variables []startInputVariable) string {
+	for _, variable := range variables {
+		if variable.Type != "" && variable.Type != "text-input" && variable.Type != "paragraph" && variable.Type != "string" {
+			continue
+		}
+		if variable.Name != "" {
+			return variable.Name
+		}
+	}
+	return ""
+}
+
+func startInputVariablesFromGraph(graph map[string]interface{}) []startInputVariable {
 	nodes, ok := graph["nodes"].([]interface{})
 	if !ok {
-		return ""
+		return nil
 	}
 	for _, node := range nodes {
 		nodeMap, ok := node.(map[string]interface{})
@@ -130,28 +185,31 @@ func primaryTextInputNameFromGraph(graph map[string]interface{}) string {
 		}
 		variables, ok := data["variables"].([]interface{})
 		if !ok {
-			return ""
+			return nil
 		}
+		result := make([]startInputVariable, 0, len(variables))
 		for _, item := range variables {
 			variable, ok := item.(map[string]interface{})
 			if !ok {
 				continue
 			}
 			varType, _ := variable["type"].(string)
-			if varType != "" && varType != "text-input" && varType != "paragraph" && varType != "string" {
-				continue
-			}
 			for _, key := range []string{"variable", "name"} {
 				if name, ok := variable[key].(string); ok && strings.TrimSpace(name) != "" {
-					return strings.TrimSpace(name)
+					result = append(result, startInputVariable{
+						Name: strings.TrimSpace(name),
+						Type: strings.TrimSpace(varType),
+					})
+					break
 				}
 			}
 		}
+		return result
 	}
-	return ""
+	return nil
 }
 
-func (r *WorkflowServiceRunner) runTurn(ctx context.Context, agentID string, turn CaseTurn, textInputName string) (*RunCaseResult, error) {
+func (r *WorkflowServiceRunner) runTurn(ctx context.Context, agentID string, turn CaseTurn, textInputName string, startInputs []startInputVariable, isChatDraft bool) (*RunCaseResult, error) {
 	inputs := map[string]interface{}{
 		"sys.query": turn.Content,
 	}
@@ -186,6 +244,17 @@ func (r *WorkflowServiceRunner) runTurn(ctx context.Context, agentID string, tur
 	if len(fileInputs) > 0 {
 		inputs["#files#"] = fileInputs
 		inputs["sys.files"] = fileInputs
+		assignAttachmentsToStartFileInputs(inputs, startInputs, fileInputs)
+	}
+	if isChatDraft {
+		inputs["query"] = turn.Content
+		inputs["sys.workflow_type"] = "chat"
+		inputs["sys.dialogue_count"] = 1
+		inputs["sys.parent_message_id"] = ""
+		inputs["conversation_params"] = map[string]interface{}{
+			"from_source": "account",
+			"invoke_from": "debugger",
+		}
 	}
 	runReq := &dto.DraftWorkflowRunRequest{
 		Inputs:       inputs,
@@ -198,6 +267,54 @@ func (r *WorkflowServiceRunner) runTurn(ctx context.Context, agentID string, tur
 		return nil, err
 	}
 	return normalizeWorkflowRunResult(result), nil
+}
+
+func assignAttachmentsToStartFileInputs(inputs map[string]interface{}, variables []startInputVariable, fileInputs []interface{}) {
+	if len(fileInputs) == 0 {
+		return
+	}
+	for _, variable := range variables {
+		if !isFileListInputType(variable.Type) {
+			continue
+		}
+		if _, exists := inputs[variable.Name]; exists {
+			continue
+		}
+		inputs[variable.Name] = fileInputs
+		return
+	}
+	fileIndex := 0
+	for _, variable := range variables {
+		if !isFileInputType(variable.Type) {
+			continue
+		}
+		if _, exists := inputs[variable.Name]; exists {
+			continue
+		}
+		if fileIndex >= len(fileInputs) {
+			return
+		}
+		inputs[variable.Name] = fileInputs[fileIndex]
+		fileIndex++
+	}
+}
+
+func isFileInputType(value string) bool {
+	switch value {
+	case "file", "file-input":
+		return true
+	default:
+		return false
+	}
+}
+
+func isFileListInputType(value string) bool {
+	switch value {
+	case "file-list", "array[file]":
+		return true
+	default:
+		return false
+	}
 }
 
 func normalizeWorkflowRunResult(result interface{}) *RunCaseResult {
