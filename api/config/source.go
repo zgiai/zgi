@@ -106,6 +106,53 @@ func (s *envSource) string(defaultValue string, keys ...string) string {
 	return defaultValue
 }
 
+func (s *envSource) prefixedStrings(prefix string) map[string]string {
+	if s == nil || prefix == "" {
+		return nil
+	}
+
+	normalizedPrefix := strings.ToUpper(prefix)
+	values := make(map[string]string)
+	if s.v != nil {
+		for _, key := range s.v.AllKeys() {
+			normalizedKey := strings.ToUpper(strings.TrimSpace(key))
+			if !strings.HasPrefix(normalizedKey, normalizedPrefix) {
+				continue
+			}
+			name := strings.TrimPrefix(normalizedKey, normalizedPrefix)
+			value := strings.TrimSpace(s.v.GetString(key))
+			if name != "" && value != "" {
+				values[name] = value
+			}
+		}
+		return nilIfEmpty(values)
+	}
+
+	for _, item := range os.Environ() {
+		key, value, ok := strings.Cut(item, "=")
+		if !ok {
+			continue
+		}
+		normalizedKey := strings.ToUpper(strings.TrimSpace(key))
+		if !strings.HasPrefix(normalizedKey, normalizedPrefix) {
+			continue
+		}
+		name := strings.TrimPrefix(normalizedKey, normalizedPrefix)
+		value = strings.TrimSpace(value)
+		if name != "" && value != "" {
+			values[name] = value
+		}
+	}
+	return nilIfEmpty(values)
+}
+
+func nilIfEmpty(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	return values
+}
+
 func (s *envSource) int(defaultValue int, keys ...string) (int, error) {
 	value, ok := s.lookup(keys...)
 	if !ok || value == "" {
