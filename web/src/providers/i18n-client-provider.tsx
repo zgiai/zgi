@@ -18,12 +18,10 @@ import { defaultLocale, isLanguageSwitchEnabled } from '@/lib/i18n';
 
 type I18nMessages = Record<string, unknown>;
 
-function getRouteKey(pathname: string, locale: Locale): string {
-  return `${locale}:${pathname}`;
-}
-
 function hasRouteMessages(messages: I18nMessages, pathname: string): boolean {
-  return getModulesForPathname(pathname).every(module =>
+  const modules = getModulesForPathname(pathname);
+
+  return modules.every(module =>
     Object.prototype.hasOwnProperty.call(messages, module)
   );
 }
@@ -61,11 +59,7 @@ export function I18nClientProvider({
   const [isPending, startTransition] = useTransition();
   const languageSwitchEnabled = isLanguageSwitchEnabled();
   const resolvedLocale = languageSwitchEnabled ? locale : defaultLocale;
-  const currentRouteKey = getRouteKey(pathname, resolvedLocale);
-  const [loadedRouteKey, setLoadedRouteKey] = useState(() =>
-    hasRouteMessages(initialMessages, pathname) ? currentRouteKey : ''
-  );
-  const isRouteMessagesReady = loadedRouteKey === currentRouteKey;
+  const isRouteMessagesReady = hasRouteMessages(messages, pathname);
 
   useEffect(() => {
     if (isRouteMessagesReady) {
@@ -89,7 +83,6 @@ export function I18nClientProvider({
           ...currentMessages,
           ...routeMessages,
         }));
-        setLoadedRouteKey(currentRouteKey);
       });
     }
 
@@ -98,7 +91,7 @@ export function I18nClientProvider({
     return () => {
       isCancelled = true;
     };
-  }, [currentRouteKey, isRouteMessagesReady, pathname, resolvedLocale]);
+  }, [isRouteMessagesReady, pathname, resolvedLocale]);
 
   const setLocale = useCallback(
     async (newLocale: Locale) => {
@@ -122,7 +115,6 @@ export function I18nClientProvider({
         // Update state to trigger soft-replacement of translations
         setLocaleState(newLocale);
         setMessages(newMessages);
-        setLoadedRouteKey(getRouteKey(pathname, newLocale));
       });
     },
     [languageSwitchEnabled, locale, pathname]
