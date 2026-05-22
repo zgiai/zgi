@@ -31,10 +31,15 @@ func TestFinalizePreparedErrorSetsFailedMessageAsCurrentLeaf(t *testing.T) {
 		events: newStreamEventStore(nil),
 	}
 
+	events := make([]StreamEvent, 0)
+
 	svc.finalizePreparedError(context.Background(), &PreparedChat{
 		Conversation: &aichatmodel.Conversation{ID: conversationID},
 		Message:      &aichatmodel.Message{ID: messageID},
-	}, errors.New("tool failed"))
+	}, errors.New("tool failed"), func(event StreamEvent) error {
+		events = append(events, event)
+		return nil
+	})
 
 	if messageRepo.updateErrorID != messageID || messageRepo.updateErrorMessage != "tool failed" {
 		t.Fatalf("UpdateError(%s, %q), want (%s, %q)", messageRepo.updateErrorID, messageRepo.updateErrorMessage, messageID, "tool failed")
@@ -44,6 +49,12 @@ func TestFinalizePreparedErrorSetsFailedMessageAsCurrentLeaf(t *testing.T) {
 	}
 	if conversationRepo.finishActiveCalls != 0 {
 		t.Fatalf("FinishActiveMessage calls = %d, want 0", conversationRepo.finishActiveCalls)
+	}
+	if len(events) != 1 || events[0].EventType != streamEventError {
+		t.Fatalf("events = %#v, want one stream error event", events)
+	}
+	if got, _ := events[0].Payload["message"].(string); got != "tool failed" {
+		t.Fatalf("stream error message = %q, want %q", got, "tool failed")
 	}
 }
 
@@ -71,6 +82,18 @@ func TestFinalizePreparedErrorCompletesRootReplacement(t *testing.T) {
 	}
 	if conversationRepo.updateAfterConversationID != uuid.Nil {
 		t.Fatalf("UpdateAfterMessage was called for root replacement")
+	}
+}
+
+func TestFinalizedStreamErrorWrapsCause(t *testing.T) {
+	cause := errors.New("provider failed")
+	err := newFinalizedStreamError(cause)
+
+	if !IsFinalizedStreamError(err) {
+		t.Fatalf("IsFinalizedStreamError(%v) = false, want true", err)
+	}
+	if !errors.Is(err, cause) {
+		t.Fatalf("errors.Is(%v, cause) = false, want true", err)
 	}
 }
 
