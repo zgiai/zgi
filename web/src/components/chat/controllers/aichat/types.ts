@@ -175,6 +175,7 @@ export interface AIChatController {
     model: AIChatModelSelection;
     files?: AIChatMessageFile[];
     parentId?: string | null;
+    useMemory?: boolean;
   }) => Promise<void>;
   stop: () => Promise<void>;
   regenerate: (messageId: string, model: AIChatModelSelection) => Promise<void>;

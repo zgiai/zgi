@@ -1406,11 +1406,13 @@ export function useAIChatController(): AIChatController {
       model,
       files = [],
       parentId: parentIdOverride,
+      useMemory = false,
     }: {
       query: string;
       model: AIChatModelSelection;
       files?: AIChatMessageFile[];
       parentId?: string | null;
+      useMemory?: boolean;
     }) => {
       const trimmedQuery = query.trim();
       const currentState = stateRef.current;
@@ -1525,6 +1527,7 @@ export function useAIChatController(): AIChatController {
             ...(files.length > 0 ? { file_ids: files.map(file => file.id) } : {}),
             response_mode: 'streaming',
             parameters: toAIChatParameters(model.parameters),
+            use_memory: useMemory,
           },
           {
             onMessageStart: (payload, eventId) => {

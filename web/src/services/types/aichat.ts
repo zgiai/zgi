@@ -277,6 +277,7 @@ export interface AIChatChatRequest {
   file_ids?: string[];
   response_mode: 'streaming';
   parameters?: AIChatModelParameters;
+  use_memory?: boolean;
 }
 
 export interface AIChatRegenerateMessageRequest {

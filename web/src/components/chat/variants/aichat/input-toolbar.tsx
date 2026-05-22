@@ -17,6 +17,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import { formatExtensionsForDisplay } from '@/utils/file-helpers';
+import { AIChatMemoryModule } from '@/components/chat/variants/aichat/memory-module';
 import type { AIChatModelValue } from '@/components/chat/variants/aichat/types';
 
 interface AIChatInputToolbarProps {
@@ -40,6 +41,7 @@ interface AIChatInputToolbarProps {
   onUploadDocument: () => void;
   onUploadImage: () => void;
   onSelectFromFiles: () => void;
+  onMemoryEnabledChange: (enabled: boolean) => void;
   onSend: () => void;
   onStop: () => void;
 }
@@ -74,6 +76,7 @@ export function AIChatInputToolbar({
   onUploadDocument,
   onUploadImage,
   onSelectFromFiles,
+  onMemoryEnabledChange,
   onSend,
   onStop,
 }: AIChatInputToolbarProps) {
@@ -108,6 +111,10 @@ export function AIChatInputToolbar({
         ) : null}
       </div>
       <div className="flex shrink-0 items-center gap-1">
+        <AIChatMemoryModule
+          disabled={isSending}
+          onEnabledChange={onMemoryEnabledChange}
+        />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button

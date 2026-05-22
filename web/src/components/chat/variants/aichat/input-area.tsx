@@ -55,7 +55,7 @@ interface AIChatInputAreaProps {
   isSending: boolean;
   isStopping: boolean;
   onInputChange: (value: string) => void;
-  onSend: (files: AIChatMessageFile[]) => void;
+  onSend: (files: AIChatMessageFile[], useMemory: boolean) => void;
   onStop: () => void;
   onModelChange: (value: ModelSelectorValue) => void;
   onHeightChange?: (height: number) => void;
@@ -95,6 +95,7 @@ export function AIChatInputArea({
   const [selectedModelProps, setSelectedModelProps] = useState<ModelSelectorModelProps | null>(
     null
   );
+  const [useMemory, setUseMemory] = useState(false);
   const { data: uploadConfig } = useUploadConfig({ enabled: true });
   const allowedExtensions = useMemo(
     () => filterLowercaseExtensions([...AICHAT_DOCUMENT_EXTENSIONS]),
@@ -338,9 +339,9 @@ export function AIChatInputArea({
 
   const handleSend = useCallback(() => {
     if (!input.trim() || isUploading || hasUploadError) return;
-    onSend(uploadedFiles);
+    onSend(uploadedFiles, useMemory);
     setAttachments([]);
-  }, [hasUploadError, input, isUploading, onSend, uploadedFiles]);
+  }, [hasUploadError, input, isUploading, onSend, uploadedFiles, useMemory]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -500,6 +501,7 @@ export function AIChatInputArea({
               onUploadDocument={() => fileInputRef.current?.click()}
               onUploadImage={handleImageUpload}
               onSelectFromFiles={() => setIsFileSelectorOpen(true)}
+              onMemoryEnabledChange={setUseMemory}
               onSend={handleSend}
               onStop={onStop}
             />

@@ -206,7 +206,7 @@ export function AIChatShell({
   }, [isMobile]);
 
   const handleSend = useCallback(
-    (files: AIChatMessageFile[] = []) => {
+    (files: AIChatMessageFile[] = [], useMemory = false) => {
       const query = input.trim();
       if (!query || isSending) return;
       if (!modelSelectorValue.model) {
@@ -223,6 +223,7 @@ export function AIChatShell({
           model: modelSelectorValue.model,
           parameters: modelSelectorValue.params,
         },
+        useMemory,
       });
     },
     [controller, input, isSending, modelSelectorValue, t]
