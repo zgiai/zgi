@@ -170,58 +170,26 @@ func (n *Node) executeSingleGroupMode(variablePool *entities.VariablePool) (map[
 		"output_type", n.OutputType,
 	)
 
-	// Check if we have multiple variables - if so, aggregate all of them
-	// Multiple variables are automatically aggregated into a single output
+	// Check if we have multiple variables - if so, aggregate all of them.
+	// Multiple variables are automatically aggregated into a single output.
 	if len(n.Variables) > 1 {
-		// Multi-variable mode: aggregate all variables
+		// Multi-variable mode: aggregate all valid variables.
 		selectedVars := []string{}
 		aggregatedOutput := make(map[string]any)
 
 		for i, selector := range n.Variables {
-			variable := variablePool.GetWithPath(selector)
-
-			// Skip if variable not found
-			if variable == nil {
-				logger.Debug("Variable not found",
-					"node_id", n.NodeID,
-					"tenant_id", n.TenantID,
-					"selector", n.selectorToString(selector),
-					"selector_path", selector,
-					"index", i,
-				)
+			selectorName := n.selectorToString(selector)
+			value, ok := n.resolveCompatibleValue(variablePool, selector, n.OutputType, i)
+			if !ok {
 				continue
 			}
 
-			// Check type compatibility
-			if !n.isTypeCompatible(variable.GetType(), n.OutputType) {
-				logger.Debug("Variable type incompatible",
-					"node_id", n.NodeID,
-					"tenant_id", n.TenantID,
-					"selector", n.selectorToString(selector),
-					"variable_type", variable.GetType(),
-					"expected_type", n.OutputType,
-					"index", i,
-				)
-				continue
-			}
-
-			// Get the variable name (last part of selector)
-			varName := selector[len(selector)-1]
-			aggregatedOutput[varName] = variable.ToObject()
-			inputs[n.selectorToString(selector)] = variable.ToObject()
-			selectedVars = append(selectedVars, n.selectorToString(selector))
-
-			logger.Info("Variable aggregated",
-				"node_id", n.NodeID,
-				"tenant_id", n.TenantID,
-				"selector", n.selectorToString(selector),
-				"var_name", varName,
-				"type", variable.GetType(),
-				"index", i,
-			)
+			aggregatedOutput[n.selectorOutputName(selector)] = value
+			inputs[selectorName] = value
+			selectedVars = append(selectedVars, selectorName)
 		}
 
-		// Store aggregated output
+		// Store aggregated output.
 		if len(aggregatedOutput) > 0 {
 			outputs["output"] = aggregatedOutput
 			processData["selected_variables"] = selectedVars
@@ -245,48 +213,25 @@ func (n *Node) executeSingleGroupMode(variablePool *entities.VariablePool) (map[
 			)
 		}
 	} else {
-		// Single variable mode: priority selection (original behavior)
+		// Single variable mode: priority selection (original behavior).
 		for i, selector := range n.Variables {
-			variable := variablePool.GetWithPath(selector)
-
-			// Skip if variable not found
-			if variable == nil {
-				logger.Debug("Variable not found",
-					"node_id", n.NodeID,
-					"tenant_id", n.TenantID,
-					"selector", n.selectorToString(selector),
-					"selector_path", selector,
-					"index", i,
-				)
+			value, ok := n.resolveCompatibleValue(variablePool, selector, n.OutputType, i)
+			selectorName := n.selectorToString(selector)
+			if !ok {
 				continue
 			}
 
-			// Check type compatibility
-			if !n.isTypeCompatible(variable.GetType(), n.OutputType) {
-				logger.Debug("Variable type incompatible",
-					"node_id", n.NodeID,
-					"tenant_id", n.TenantID,
-					"selector", n.selectorToString(selector),
-					"variable_type", variable.GetType(),
-					"expected_type", n.OutputType,
-					"index", i,
-				)
-				continue
-			}
-
-			// Found first valid variable
-			outputs["output"] = variable.ToObject()
-			inputs[n.selectorToString(selector)] = variable.ToObject()
-			processData["selected_variable"] = n.selectorToString(selector)
+			// Found first valid variable.
+			outputs["output"] = value
+			inputs[selectorName] = value
+			processData["selected_variable"] = selectorName
 			processData["selected_index"] = i
-			processData["variable_type"] = string(variable.GetType())
 			processData["mode"] = "priority_selection"
 
 			logger.Info("Variable selected",
 				"node_id", n.NodeID,
 				"tenant_id", n.TenantID,
-				"selector", n.selectorToString(selector),
-				"type", variable.GetType(),
+				"selector", selectorName,
 				"index", i,
 				"output_type", n.OutputType,
 			)
@@ -294,7 +239,7 @@ func (n *Node) executeSingleGroupMode(variablePool *entities.VariablePool) (map[
 			break
 		}
 
-		// If no variable was selected, outputs remain empty
+		// If no variable was selected, outputs remain empty.
 		if len(outputs) == 0 {
 			processData["selected_variable"] = "none"
 			processData["mode"] = "priority_selection"
@@ -335,88 +280,56 @@ func (n *Node) executeMultiGroupMode(variablePool *entities.VariablePool) (map[s
 		groupOutput := make(map[string]any)
 		selectedVars := []string{}
 
-		// Auto-detect mode: if multiple variables, aggregate all; if single variable, select it
+		// Auto-detect mode: if multiple variables, aggregate all; if single variable, select it.
 		shouldAggregateAll := len(group.Variables) > 1
 
-		// Iterate through variables in this group
+		// Iterate through variables in this group.
 		for i, selector := range group.Variables {
-			variable := variablePool.GetWithPath(selector)
-
-			// Skip if variable not found
-			if variable == nil {
-				logger.Debug("Variable not found in group",
-					"node_id", n.NodeID,
-					"tenant_id", n.TenantID,
-					"group", group.GroupName,
-					"selector", n.selectorToString(selector),
-					"selector_path", selector,
-					"index", i,
-				)
-				continue
-			}
-
-			// Check type compatibility
-			if !n.isTypeCompatible(variable.GetType(), group.OutputType) {
-				logger.Debug("Variable type incompatible in group",
-					"node_id", n.NodeID,
-					"tenant_id", n.TenantID,
-					"group", group.GroupName,
-					"selector", n.selectorToString(selector),
-					"variable_type", variable.GetType(),
-					"expected_type", group.OutputType,
-					"index", i,
-				)
-				continue
-			}
-
-			// Get the variable name (last part of selector)
-			varName := selector[len(selector)-1]
+			selectorName := n.selectorToString(selector)
+			value, ok := n.resolveCompatibleValue(variablePool, selector, group.OutputType, i)
 
 			if shouldAggregateAll {
-				// Multi-variable mode: aggregate all variables
-				groupOutput[varName] = variable.ToObject()
-				inputs[fmt.Sprintf("%s.%s", group.GroupName, n.selectorToString(selector))] = variable.ToObject()
-				selectedVars = append(selectedVars, n.selectorToString(selector))
-
-				logger.Info("Variable aggregated in group",
-					"node_id", n.NodeID,
-					"tenant_id", n.TenantID,
-					"group", group.GroupName,
-					"selector", n.selectorToString(selector),
-					"var_name", varName,
-					"type", variable.GetType(),
-					"index", i,
-				)
-			} else {
-				// Single-variable mode: select first valid variable
-				groupOutput["output"] = variable.ToObject()
-				inputs[fmt.Sprintf("%s.%s", group.GroupName, n.selectorToString(selector))] = variable.ToObject()
-				groupResults[group.GroupName] = map[string]any{
-					"selected_variable": n.selectorToString(selector),
-					"selected_index":    i,
-					"variable_type":     string(variable.GetType()),
+				if !ok {
+					continue
 				}
 
-				logger.Info("Variable selected for group",
-					"node_id", n.NodeID,
-					"tenant_id", n.TenantID,
-					"group", group.GroupName,
-					"selector", n.selectorToString(selector),
-					"type", variable.GetType(),
-					"index", i,
-					"output_type", group.OutputType,
-				)
-
-				break
+				// Multi-variable mode: aggregate all valid variables.
+				groupOutput[n.selectorOutputName(selector)] = value
+				inputs[fmt.Sprintf("%s.%s", group.GroupName, selectorName)] = value
+				selectedVars = append(selectedVars, selectorName)
+				continue
 			}
+
+			if !ok {
+				continue
+			}
+
+			// Single-variable mode: select first valid variable.
+			groupOutput["output"] = value
+			inputs[fmt.Sprintf("%s.%s", group.GroupName, selectorName)] = value
+			selectedVars = append(selectedVars, selectorName)
+			break
 		}
 
-		// For multi-variable mode, record all selected variables
+		// For multi-variable mode, record all selected variables.
 		if shouldAggregateAll && len(selectedVars) > 0 {
 			groupResults[group.GroupName] = map[string]any{
 				"selected_variables": selectedVars,
 				"count":              len(selectedVars),
 				"mode":               "aggregate_all",
+			}
+			logger.Info("Variables aggregated for group",
+				"node_id", n.NodeID,
+				"tenant_id", n.TenantID,
+				"group", group.GroupName,
+				"count", len(selectedVars),
+				"output_type", group.OutputType,
+			)
+		} else if !shouldAggregateAll && len(selectedVars) > 0 {
+			groupResults[group.GroupName] = map[string]any{
+				"selected_variables": selectedVars,
+				"count":              len(selectedVars),
+				"mode":               "priority_selection",
 			}
 		}
 
@@ -425,7 +338,7 @@ func (n *Node) executeMultiGroupMode(variablePool *entities.VariablePool) (map[s
 		// the entire aggregated object.
 		outputs[group.GroupName] = buildGroupOutput(groupOutput, shouldAggregateAll)
 
-		// Log if no variable was selected for this group
+		// Log if no variable was selected for this group.
 		if len(groupOutput) == 0 {
 			groupResults[group.GroupName] = map[string]any{
 				"selected_variable": "none",
@@ -471,8 +384,47 @@ func cloneAnyMap(input map[string]any) map[string]any {
 	return clone
 }
 
+func (n *Node) resolveCompatibleValue(variablePool *entities.VariablePool, selector []string, outputType shared.SegmentType, index int) (any, bool) {
+	variable := variablePool.GetWithPath(selector)
+	if variable == nil {
+		logger.Debug("Variable not found",
+			"node_id", n.NodeID,
+			"tenant_id", n.TenantID,
+			"selector", n.selectorToString(selector),
+			"selector_path", selector,
+			"index", index,
+		)
+		return nil, false
+	}
+
+	if !n.isTypeCompatible(variable.GetType(), outputType) {
+		logger.Debug("Variable type incompatible",
+			"node_id", n.NodeID,
+			"tenant_id", n.TenantID,
+			"selector", n.selectorToString(selector),
+			"variable_type", variable.GetType(),
+			"expected_type", outputType,
+			"index", index,
+		)
+		return nil, false
+	}
+
+	return variable.ToObject(), true
+}
+
+func (n *Node) groupModeName(shouldAggregateAll bool) string {
+	if shouldAggregateAll {
+		return "aggregate_all"
+	}
+	return "priority_selection"
+}
+
 // isTypeCompatible checks if a variable type is compatible with the expected output type
 func (n *Node) isTypeCompatible(variableType, expectedType shared.SegmentType) bool {
+	if expectedType == "" {
+		return true
+	}
+
 	// "any" type accepts all types
 	if expectedType == shared.SegmentTypeAny {
 		return true
@@ -481,6 +433,18 @@ func (n *Node) isTypeCompatible(variableType, expectedType shared.SegmentType) b
 	// Variables with "any" type are accepted by all expected types
 	if variableType == shared.SegmentTypeAny {
 		return true
+	}
+
+	if expectedType == shared.SegmentTypeNumber {
+		return variableType == shared.SegmentTypeNumber ||
+			variableType == shared.SegmentTypeFloat ||
+			variableType == shared.SegmentTypeInteger
+	}
+
+	if variableType == shared.SegmentTypeNumber {
+		return expectedType == shared.SegmentTypeNumber ||
+			expectedType == shared.SegmentTypeFloat ||
+			expectedType == shared.SegmentTypeInteger
 	}
 
 	// Exact type match required
@@ -497,4 +461,11 @@ func (n *Node) selectorToString(selector []string) string {
 		result += "." + selector[i]
 	}
 	return result
+}
+
+func (n *Node) selectorOutputName(selector []string) string {
+	if len(selector) == 0 {
+		return ""
+	}
+	return selector[len(selector)-1]
 }
