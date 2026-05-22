@@ -518,6 +518,29 @@ func TestFetchMemory_LegacyFallbackDisabledDoesNotLoadHistory(t *testing.T) {
 	}
 }
 
+func TestFetchMemory_LegacyFallbackZeroWindowDoesNotLoadHistory(t *testing.T) {
+	variablePool := entities.NewVariablePool()
+	variablePool.Add([]string{"sys", "conversation_id"}, uuid.NewString())
+
+	node := &Node{
+		NodeStruct: base.NodeStruct{
+			GraphConfig: map[string]any{
+				"features": map[string]interface{}{
+					"conversation_history": map[string]interface{}{
+						"enabled":             true,
+						"history_window_size": float64(0),
+					},
+				},
+			},
+		},
+	}
+
+	memory, _ := node.fetchMemory(context.Background(), variablePool, "", nil, nil)
+	if len(memory.Messages) != 0 {
+		t.Fatalf("memory messages = %d, want 0", len(memory.Messages))
+	}
+}
+
 func TestTokenBufferMemory_DoesNotImplicitlyLoadConversationHistory(t *testing.T) {
 	memory := NewTokenBufferMemory(
 		map[string]any{

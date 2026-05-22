@@ -1118,6 +1118,10 @@ func (n *Node) fetchMemory(ctx context.Context, variablePool *entities.VariableP
 		}
 
 		if fallback, ok := n.legacyWorkflowConversationHistoryConfig(); ok && fallback.Enabled {
+			if fallback.HistoryWindowSize == 0 {
+				logger.DebugContext(ctx, "LLM node legacy workflow conversation history disabled by zero window")
+				break
+			}
 			windowSize := clampConversationHistoryWindowSize(fallback.HistoryWindowSize)
 			var err error
 			messages, err = n.loadConversationHistoryPromptMessages(ctx, conversationID, windowSize)

@@ -63,7 +63,7 @@ func (h *WorkflowHandler) RunAdvancedChatDraftWorkflow(c *gin.Context) {
 		return
 	}
 
-	if err := h.updateAgentWorkflowConfig(c.Request.Context(), appID, req.ConversationID, req.HistoryWindowSize, req.Inputs); err != nil {
+	if err := h.updateAgentWorkflowConfig(c.Request.Context(), appID, req.ConversationID, req.Inputs); err != nil {
 		logger.ErrorContext(c.Request.Context(), "failed to update agent workflow config", "agent_id", appID, err)
 	}
 
@@ -206,13 +206,12 @@ func (h *WorkflowHandler) RunAdvancedChatWorkflow(c *gin.Context) {
 
 		// Convert API request to internal format
 		req = dto.AdvancedChatDraftWorkflowRunRequest{
-			Query:             apiReq.Query,
-			Inputs:            apiReq.Inputs,
-			ResponseMode:      "streaming", // Force streaming for API calls
-			UserID:            apiReq.User,
-			ConversationID:    apiReq.ConversationID,
-			HistoryWindowSize: apiReq.HistoryWindowSize,
-			Files:             files,
+			Query:          apiReq.Query,
+			Inputs:         apiReq.Inputs,
+			ResponseMode:   "streaming", // Force streaming for API calls
+			UserID:         apiReq.User,
+			ConversationID: apiReq.ConversationID,
+			Files:          files,
 		}
 
 		logger.Info("API Key call converted to internal format", "originalResponseMode", apiReq.ResponseMode, "forcedResponseMode", req.ResponseMode)
