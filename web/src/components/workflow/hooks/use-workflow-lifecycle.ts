@@ -384,15 +384,12 @@ export function useWorkflowLifecycle({
         ],
         prompt_layout: {
           version: 1 as const,
-          items: [
-            { type: 'history' as const, id: 'conversation_history' as const },
-            { type: 'group' as const, group_id: `${llmId}-current-user` },
-          ],
+          items: [{ type: 'group' as const, group_id: `${llmId}-current-user` }],
         },
         prompt_source: 'inline',
         prompt_reference: undefined,
         prompt_config: { jinja2_variables: [] },
-        conversation_history: { enabled: true, history_window_size: 3 },
+        conversation_history: { enabled: false, history_window_size: 3 },
         vision: { enabled: false },
         structured_output_enabled: false,
         isInLoop: false,

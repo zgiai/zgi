@@ -426,6 +426,7 @@ const useWorkflowOperations = () => {
 
   const addLLMNode = useCallback(
     (position: { x: number; y: number }, parentId?: string): string | null => {
+      const isConversational = agentType === AgentType.CONVERSATIONAL_AGENT;
       const baseData = {
         ...DEFAULT_LLM_NODE_DATA,
         type: 'llm' as const,
@@ -460,16 +461,18 @@ const useWorkflowOperations = () => {
         ],
         prompt_layout: {
           version: 1 as const,
-          items: [
-            { type: 'history' as const, id: 'conversation_history' as const },
-            { type: 'group' as const, group_id: 'current-user' },
-          ],
+          items: isConversational
+            ? [
+                { type: 'history' as const, id: 'conversation_history' as const },
+                { type: 'group' as const, group_id: 'current-user' },
+              ]
+            : [{ type: 'group' as const, group_id: 'current-user' }],
         },
         prompt_config: {
           jinja2_variables: [],
         },
         conversation_history: {
-          enabled: true,
+          enabled: isConversational,
           history_window_size: 3,
         },
         vision: {
@@ -481,7 +484,7 @@ const useWorkflowOperations = () => {
       const id = addNodeWithContainerCheck(baseData, position, parentId);
       return id;
     },
-    [addNodeWithContainerCheck, defaultLlmName, defaultLlmProvider, t]
+    [addNodeWithContainerCheck, agentType, defaultLlmName, defaultLlmProvider, t]
   );
 
   const addHttpRequestNode = useCallback(
