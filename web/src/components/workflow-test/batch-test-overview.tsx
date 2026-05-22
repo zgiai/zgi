@@ -4,12 +4,13 @@ import * as React from 'react';
 import Link from 'next/link';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Ban, WandSparkles, Plus, Settings2, MoreHorizontal } from 'lucide-react';
+import { Ban, Loader2, WandSparkles, Plus, Settings2, MoreHorizontal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import { Progress } from '@/components/ui/progress';
 import {
   Select,
   SelectContent,
@@ -111,6 +112,24 @@ function batchResultText(
   });
 }
 
+function batchFinishedCount(batch: {
+  passed_count: number;
+  failed_count: number;
+  review_count: number;
+}) {
+  return batch.passed_count + batch.failed_count + batch.review_count;
+}
+
+function batchProgressValue(batch: {
+  case_count: number;
+  passed_count: number;
+  failed_count: number;
+  review_count: number;
+}) {
+  if (batch.case_count <= 0) return 0;
+  return Math.min(100, Math.round((batchFinishedCount(batch) / batch.case_count) * 100));
+}
+
 function isFileInputType(type: unknown) {
   return type === 'file' || type === 'file-list' || type === 'array[file]';
 }
@@ -175,6 +194,14 @@ export function BatchTestOverview({
     batchStatusFilter === 'all'
       ? batches
       : batches.filter(item => item.status === batchStatusFilter);
+  const runningBatch = batches.find(item => item.status === 'running') ?? null;
+  const shouldShowRunningBatch =
+    view === 'batches' &&
+    !!runningBatch &&
+    (batchStatusFilter === 'all' || batchStatusFilter === 'running');
+  const tableBatches = shouldShowRunningBatch
+    ? filteredBatches.filter(item => item.id !== runningBatch.id)
+    : filteredBatches;
   const selectedCases = cases.filter(item => selectedCaseIds.includes(item.id));
   const supportsAttachments = draftSupportsFileInputs(workflowDraft);
   const allCasesSelected =
@@ -590,6 +617,53 @@ export function BatchTestOverview({
               </div>
             </CardHeader>
             <CardContent className="p-0">
+              {shouldShowRunningBatch && runningBatch ? (
+                <div className="border-t border-slate-200 p-4">
+                  <div className="rounded-xl border border-blue-100 bg-blue-50/50 px-4 py-3">
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="truncate text-sm font-medium text-slate-950">
+                            {t('batches.activeTitle', { name: runningBatch.name })}
+                          </div>
+                          <Badge className="bg-blue-100 text-blue-700">
+                            <Loader2 className="mr-1 size-3 animate-spin" />
+                            {batchStatusT('running')}
+                          </Badge>
+                        </div>
+                        <div className="mt-3 flex items-center gap-3">
+                          <Progress
+                            value={batchProgressValue(runningBatch)}
+                            className="h-1.5 max-w-md flex-1 bg-white"
+                          />
+                          <span className="shrink-0 text-xs text-slate-500">
+                            {t('batches.activeProgress', {
+                              done: batchFinishedCount(runningBatch),
+                              total: runningBatch.case_count,
+                            })}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <Button variant="outline" size="sm" asChild>
+                          <Link href={`/console/agents/${agentId}/batch-test/${runningBatch.id}`}>
+                            {t('batchActions.viewProgress')}
+                          </Link>
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={cancelBatch.isPending}
+                          onClick={() => cancelBatch.mutate(runningBatch.id)}
+                        >
+                          <Ban className="mr-1 size-4" />
+                          {commonT('cancel')}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -607,14 +681,14 @@ export function BatchTestOverview({
                         {t('batches.empty')}
                       </TableCell>
                     </TableRow>
-                  ) : filteredBatches.length === 0 ? (
+                  ) : tableBatches.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={5} className="h-28 text-center text-slate-500">
                         {t('batches.filteredEmpty')}
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filteredBatches.map(batch => (
+                    tableBatches.map(batch => (
                       <TableRow key={batch.id}>
                         <TableCell>
                           <div className="font-semibold text-slate-950">{batch.name}</div>

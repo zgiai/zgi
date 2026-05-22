@@ -7,3 +7,4 @@ tmp/
 docker/docker-compose.yaml
 .qa-state.json
 qa-artifacts/
+.local/

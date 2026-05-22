@@ -271,11 +271,23 @@ export function useRetestWorkflowTestBatch(agentId: string) {
   const t = useT('agents.workflowTest.toasts');
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ batchId, data }: { batchId: string; data?: RetestWorkflowTestBatchRequest }) =>
-      workflowTestService.retestBatch(agentId, batchId, data),
-    onSuccess: () => {
-      toast.success(t('batchRetestCreated'));
+    mutationFn: async ({
+      batchId,
+      data,
+    }: {
+      batchId: string;
+      data?: RetestWorkflowTestBatchRequest;
+    }) => {
+      const response = await workflowTestService.retestBatch(agentId, batchId, data);
+      await workflowTestService.executeBatch(agentId, response.data.id);
+      return response;
+    },
+    onSuccess: response => {
+      toast.success(t('batchStarted'));
       queryClient.invalidateQueries({ queryKey: WORKFLOW_TEST_KEYS.batches(agentId) });
+      queryClient.invalidateQueries({
+        queryKey: WORKFLOW_TEST_KEYS.batchItems(agentId, response.data.id),
+      });
     },
     onError: error => {
       toast.error(getErrorMessage(error) || t('batchRetestFailed'));

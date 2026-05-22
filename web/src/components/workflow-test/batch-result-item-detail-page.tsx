@@ -2,7 +2,8 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { ArrowLeft, ChevronLeft, ChevronRight, ExternalLink, RefreshCcw } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, Copy, ExternalLink, RefreshCcw } from 'lucide-react';
+import { toast } from 'sonner';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -14,12 +15,13 @@ import {
   useWorkflowTestBatches,
   useWorkflowTestScenarios,
 } from '@/hooks/workflow-test/use-workflow-test';
-import { useWorkflowChatMessages, useWorkflowRunDetail, useWorkflowRunsInfinite } from '@/hooks';
 import { useT } from '@/i18n';
 import { getErrorMessage } from '@/utils/error-notifications';
 import { formatWorkflowElapsedMs } from '@/utils/format';
 import type { WorkflowTestBatchItem } from '@/services/types/workflow-test';
-import type { WorkflowChatMessageItem } from '@/services/types/workflow';
+import { useWorkflowDraft } from '@/hooks/workflow/use-workflow';
+import { NODE_THEMES } from '@/components/workflow/nodes/custom/config';
+import { cn } from '@/lib/utils';
 import { formatQuestionTypeLabel } from './question-type';
 
 interface BatchResultItemDetailPageProps {
@@ -80,6 +82,20 @@ function stringifyJson(value: unknown, none: string) {
   return JSON.stringify(value, null, 2);
 }
 
+function hasExecutionFailure(outputs: Record<string, unknown>) {
+  if (typeof outputs.error === 'string' && outputs.error.trim()) {
+    return true;
+  }
+  if (outputs.status === 'failed') {
+    return true;
+  }
+  const nodeErrors = outputs.node_errors;
+  if (nodeErrors && typeof nodeErrors === 'object' && Object.keys(nodeErrors).length > 0) {
+    return true;
+  }
+  return false;
+}
+
 function hasAttachments(item: WorkflowTestBatchItem) {
   return item.case_snapshot.turns?.some(turn => turn.attachments?.length) ?? false;
 }
@@ -97,19 +113,32 @@ function formatResponseTime(item: WorkflowTestBatchItem, none: string) {
 }
 
 function normalizeJudgeScore(value: number) {
-  if (!Number.isFinite(value) || value <= 0) {
+  if (!Number.isFinite(value)) {
     return 0;
   }
-  if (value <= 1) {
-    return value * 5;
+  return Math.max(0, Math.min(1, value));
+}
+
+function deriveJudgeScore(item: WorkflowTestBatchItem, outputs: Record<string, unknown>) {
+  if (item.error || hasExecutionFailure(outputs)) {
+    return 0;
   }
-  if (value <= 5) {
-    return value;
+  const confidence = normalizeJudgeScore(item.judge_confidence || 0);
+  switch (item.status) {
+    case 'passed':
+      return 4 + confidence;
+    case 'review':
+      return 2.5 + (1 - confidence);
+    case 'failed':
+      return 1.5 * (1 - confidence);
+    default:
+      return 0;
   }
-  if (value <= 100) {
-    return value / 20;
-  }
-  return value;
+}
+
+function formatJudgeScore(value: number) {
+  const score = Math.max(0, Math.min(5, value));
+  return `${Number.isInteger(score) ? score.toFixed(0) : score.toFixed(1)} / 5`;
 }
 
 function extractExecutionNodes(outputs: Record<string, unknown>) {
@@ -131,13 +160,47 @@ function extractExecutionNodes(outputs: Record<string, unknown>) {
     .sort((a, b) => a.startTime.localeCompare(b.startTime));
 }
 
-function formatExecutionStepLabel(nodeId: string) {
-  if (!nodeId) return nodeId;
-  if (nodeId.includes('start')) return '开始节点';
-  if (nodeId.includes('answer') || nodeId.includes('reply')) return '回复生成';
-  if (nodeId.includes('llm')) return 'LLM';
-  if (nodeId.includes('branch')) return '分支节点';
-  return nodeId;
+type WorkflowDraftNodeMeta = {
+  id: string;
+  title: string;
+  type: string;
+};
+
+function getNodeDataString(node: unknown, key: string) {
+  if (!node || typeof node !== 'object') return '';
+  const data = (node as { data?: unknown }).data;
+  if (!data || typeof data !== 'object') return '';
+  const value = (data as Record<string, unknown>)[key];
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function buildWorkflowDraftNodeMetaMap(draft: { graph?: { nodes?: unknown[] } } | undefined) {
+  const nodes = draft?.graph?.nodes;
+  const result = new Map<string, WorkflowDraftNodeMeta>();
+  if (!Array.isArray(nodes)) {
+    return result;
+  }
+  nodes.forEach(node => {
+    if (!node || typeof node !== 'object') return;
+    const idValue = (node as { id?: unknown }).id;
+    if (typeof idValue !== 'string' || !idValue) return;
+    const type = getNodeDataString(node, 'type');
+    result.set(idValue, {
+      id: idValue,
+      title: getNodeDataString(node, 'title') || type || idValue,
+      type,
+    });
+  });
+  return result;
+}
+
+function fallbackExecutionStepMeta(nodeId: string): WorkflowDraftNodeMeta {
+  if (!nodeId) return { id: nodeId, title: nodeId, type: '' };
+  if (nodeId.includes('start')) return { id: nodeId, title: '开始节点', type: 'start' };
+  if (nodeId.includes('answer') || nodeId.includes('reply')) return { id: nodeId, title: '回复生成', type: 'answer' };
+  if (nodeId.includes('llm')) return { id: nodeId, title: 'LLM', type: 'llm' };
+  if (nodeId.includes('branch')) return { id: nodeId, title: '分支节点', type: 'if-else' };
+  return { id: nodeId, title: nodeId, type: '' };
 }
 
 function buildTurnTitle(role: string, index: number) {
@@ -145,16 +208,88 @@ function buildTurnTitle(role: string, index: number) {
   return `第 ${index + 1} 轮 · ${roleLabel}`;
 }
 
-function getMessageText(message: WorkflowChatMessageItem | null | undefined, none: string) {
-  if (!message) return none;
-  const answer = typeof message.answer === 'string' ? message.answer.trim() : '';
-  return answer || none;
+type TurnResultSnapshot = {
+  turnIndex: number;
+  content: string;
+  workflowRunId: string;
+  outputs: Record<string, unknown>;
+};
+
+type ConversationTurnSnapshot = TurnResultSnapshot & {
+  answer: string;
+};
+
+function extractTurnResultSnapshots(outputs: Record<string, unknown>): TurnResultSnapshot[] {
+  const rawTurnResults = outputs.turn_results;
+  if (!Array.isArray(rawTurnResults)) {
+    return [];
+  }
+
+  return rawTurnResults
+    .map((raw, index) => {
+      if (!raw || typeof raw !== 'object') {
+        return null;
+      }
+      const value = raw as Record<string, unknown>;
+      const outputsValue = value.outputs;
+      return {
+        turnIndex: typeof value.turn_index === 'number' ? value.turn_index : index + 1,
+        content: typeof value.content === 'string' ? value.content : '',
+        workflowRunId: typeof value.workflow_run_id === 'string' ? value.workflow_run_id : '',
+        outputs:
+          outputsValue && typeof outputsValue === 'object' && !Array.isArray(outputsValue)
+            ? (outputsValue as Record<string, unknown>)
+            : {},
+      };
+    })
+    .filter((item): item is TurnResultSnapshot => item !== null);
 }
 
-function getMessageQuery(message: WorkflowChatMessageItem | null | undefined, none: string) {
-  if (!message) return none;
-  const query = typeof message.query === 'string' ? message.query.trim() : '';
-  return query || none;
+function outputAnswer(outputs: Record<string, unknown>) {
+  if (hasExecutionFailure(outputs)) {
+    return '';
+  }
+  const direct = stringifyOutput(outputs, '');
+  if (direct.trim()) {
+    return direct;
+  }
+  const nestedOutputs = outputs.outputs;
+  if (nestedOutputs && typeof nestedOutputs === 'object' && !Array.isArray(nestedOutputs)) {
+    return stringifyOutput(nestedOutputs as Record<string, unknown>, '');
+  }
+  return '';
+}
+
+function buildConversationTurnSnapshots(
+  outputs: Record<string, unknown>,
+  item: WorkflowTestBatchItem
+): ConversationTurnSnapshot[] {
+  const turnResults = extractTurnResultSnapshots(outputs);
+  if (turnResults.length > 0) {
+    return turnResults.map((turn, index) => {
+      const fallbackTurn = item.case_snapshot.turns?.[index];
+      return {
+        ...turn,
+        content: turn.content || fallbackTurn?.content || item.case_snapshot.content || '',
+        answer: outputAnswer(turn.outputs),
+      };
+    });
+  }
+
+  const answer = outputAnswer(outputs);
+  if (!answer.trim()) {
+    return [];
+  }
+  const firstTurn = item.case_snapshot.turns?.[0];
+  return [
+    {
+      turnIndex: 1,
+      content: firstTurn?.content || item.case_snapshot.content || '',
+      workflowRunId: item.workflow_run_id || '',
+      outputs,
+      answer,
+    },
+  ];
 }
 
 type RawViewPayload = {
@@ -171,6 +306,7 @@ export function BatchResultItemDetailPage({
   const t = useT('agents.workflowTest.detail');
   const commonT = useT('agents.workflowTest.common');
   const typeT = useT('agents.workflowTest.questionTypes');
+  const { data: workflowDraft } = useWorkflowDraft(agentId);
   const {
     data: batchesData,
     isLoading: batchesLoading,
@@ -191,37 +327,6 @@ export function BatchResultItemDetailPage({
   const scenarios = scenariosData?.data?.items ?? [];
   const itemIndex = items.findIndex(item => item.id === itemId);
   const selectedItem = itemIndex >= 0 ? items[itemIndex] : null;
-  const { detail: runDetail } = useWorkflowRunDetail(
-    { agentId, runId: selectedItem?.workflow_run_id ?? null },
-    { enabled: Boolean(selectedItem?.workflow_run_id) }
-  );
-  const {
-    pages: runPages,
-    isLoading: runListLoading,
-    isFetching: runListFetching,
-  } = useWorkflowRunsInfinite(
-    { agentId, limit: 50, query: { triggered_from: 'debugging' } },
-    { enabled: Boolean(selectedItem?.workflow_run_id), refetchOnWindowFocus: false }
-  );
-  const runListConversationId = React.useMemo(() => {
-    if (!selectedItem?.workflow_run_id) return null;
-    for (const page of runPages) {
-      const matched = page.find(run => run.id === selectedItem.workflow_run_id);
-      if (matched?.conversation_id) {
-        return matched.conversation_id;
-      }
-    }
-    return null;
-  }, [runPages, selectedItem?.workflow_run_id]);
-  const conversationId = runDetail?.conversation_id ?? runListConversationId ?? null;
-  const {
-    messages: chatMessages,
-    isLoading: chatMessagesLoading,
-    isFetching: chatMessagesFetching,
-  } = useWorkflowChatMessages(
-    { agentId, conversationId, page: 1, limit: 100 },
-    { enabled: Boolean(conversationId), refetchOnWindowFocus: false }
-  );
   const previousItem = itemIndex > 0 ? items[itemIndex - 1] : null;
   const nextItem = itemIndex >= 0 && itemIndex < items.length - 1 ? items[itemIndex + 1] : null;
   const [rawView, setRawView] = React.useState<RawViewPayload | null>(null);
@@ -231,6 +336,10 @@ export function BatchResultItemDetailPage({
     () => new Map(scenarios.map(scenario => [scenario.id, scenario.name])),
     [scenarios]
   );
+  const draftNodeMetaById = React.useMemo(
+    () => buildWorkflowDraftNodeMetaMap(workflowDraft),
+    [workflowDraft]
+  );
   const getScenarioName = React.useCallback(
     (item: WorkflowTestBatchItem) => {
       const scenarioId = item.case_snapshot.scenario_id;
@@ -239,21 +348,18 @@ export function BatchResultItemDetailPage({
     [commonT, scenarioNameById]
   );
   const itemPosition = itemIndex >= 0 ? `${itemIndex + 1} / ${items.length}` : '';
-  const conversationMessages = React.useMemo(
-    () => {
-      const runId = selectedItem?.workflow_run_id;
-      const matchedMessages = runId
-        ? chatMessages.filter(message => message.workflow_run_id === runId)
-        : chatMessages;
-      const sourceMessages = matchedMessages.length > 0 ? matchedMessages : chatMessages;
-      return [...sourceMessages].sort((a, b) => {
-        const aTime = typeof a.created_at === 'number' ? a.created_at : 0;
-        const bTime = typeof b.created_at === 'number' ? b.created_at : 0;
-        return aTime - bTime;
-      });
-    },
-    [chatMessages, selectedItem?.workflow_run_id]
-  );
+  const rawViewText = stringifyJson(rawView?.content, commonT('none'));
+  const copyRawView = React.useCallback(async () => {
+    if (!rawViewText || rawViewText === commonT('none')) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(rawViewText);
+      toast.success(t('rawCopied'));
+    } catch {
+      toast.error(t('rawCopyFailed'));
+    }
+  }, [commonT, rawViewText, t]);
 
   if (isLoading) {
     return (
@@ -293,15 +399,23 @@ export function BatchResultItemDetailPage({
 
   const outputs = selectedItem.outputs || {};
   const executionNodes = extractExecutionNodes(outputs);
-  const judgeScore = normalizeJudgeScore(selectedItem.judge_confidence || 0);
-  const judgeScoreText = `${Number.isInteger(judgeScore) ? judgeScore.toFixed(0) : judgeScore.toFixed(1)} / 5`;
+  const conversationTurns = buildConversationTurnSnapshots(outputs, selectedItem);
+  const judgeScore = deriveJudgeScore(selectedItem, outputs);
+  const judgeScoreText = formatJudgeScore(judgeScore);
   const questionSnapshot = selectedItem.case_snapshot.content || commonT('none');
   const expectedResult = selectedItem.case_snapshot.expected_result || commonT('none');
   const reasonText =
-    selectedItem.error || selectedItem.judge_reason || (selectedItem.status === 'passed' ? '本轮测试已通过。' : commonT('none'));
+    selectedItem.error ||
+    selectedItem.judge_reason ||
+    (selectedItem.status === 'passed' ? t('passedReasonFallback') : commonT('none'));
+  const reasonTitle = selectedItem.status === 'passed' && !selectedItem.error ? t('passConclusion') : t('issueReason');
+  const reasonToneClass =
+    selectedItem.status === 'passed' && !selectedItem.error
+      ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+      : 'border-red-200 bg-red-50 text-red-800';
+  const reasonTitleClass =
+    selectedItem.status === 'passed' && !selectedItem.error ? 'text-emerald-600' : 'text-red-500';
   const openRawView = (title: string, content: RawViewPayload['content']) => setRawView({ title, content });
-  const isConversationLoading =
-    chatMessagesLoading || chatMessagesFetching || (!conversationId && (runListLoading || runListFetching));
 
   return (
     <div className="min-h-full bg-slate-50 px-8 py-8">
@@ -326,25 +440,25 @@ export function BatchResultItemDetailPage({
                     <Button variant="outline" size="sm" asChild>
                       <Link href={`/console/agents/${agentId}/batch-test/${batchId}/items/${previousItem.id}`}>
                         <ChevronLeft className="mr-1 size-4" />
-                        上一条
+                        {t('previousItem')}
                       </Link>
                     </Button>
                   ) : (
                     <Button variant="outline" size="sm" disabled>
                       <ChevronLeft className="mr-1 size-4" />
-                      上一条
+                      {t('previousItem')}
                     </Button>
                   )}
                   {nextItem ? (
                     <Button variant="outline" size="sm" asChild>
                       <Link href={`/console/agents/${agentId}/batch-test/${batchId}/items/${nextItem.id}`}>
-                        下一条
+                        {t('nextItem')}
                         <ChevronRight className="ml-1 size-4" />
                       </Link>
                     </Button>
                   ) : (
                     <Button variant="outline" size="sm" disabled>
-                      下一条
+                      {t('nextItem')}
                       <ChevronRight className="ml-1 size-4" />
                     </Button>
                   )}
@@ -405,54 +519,48 @@ export function BatchResultItemDetailPage({
                 <div className="whitespace-pre-wrap">{expectedResult}</div>
               </div>
               <div className="flex items-center justify-between gap-3">
-                <h2 className="text-lg font-semibold text-slate-950">对话内容</h2>
+                <h2 className="text-lg font-semibold text-slate-950">{t('conversationContent')}</h2>
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => openRawView('原始输出', outputs as Record<string, unknown>)}
+                  onClick={() => openRawView(t('rawOutput'), outputs as Record<string, unknown>)}
                 >
                   <ExternalLink className="mr-2 size-4" />
-                  原始数据
+                  {t('rawData')}
                 </Button>
               </div>
-              {isConversationLoading ? (
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-6 text-sm text-slate-500">
-                  正在加载会话记录...
-                </div>
-              ) : conversationMessages.length > 0 ? (
+              {conversationTurns.length > 0 ? (
                 <div className="space-y-4">
-                  {conversationMessages.map((message, index) => {
+                  {conversationTurns.map((turn, index) => {
                     const turnSnapshot = selectedItem.case_snapshot.turns?.[index];
                     return (
-                      <div key={message.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+                      <div key={`${turn.workflowRunId || 'turn'}-${turn.turnIndex}`} className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
                         <div className="flex items-center justify-between gap-3">
                           <div className="text-base font-medium text-slate-950">
                             {buildTurnTitle(turnSnapshot?.role || 'user', index)}
                           </div>
-                          <Badge variant="outline">{turnSnapshot?.role || 'user'}</Badge>
+                          <Badge variant="outline">{turn.workflowRunId || `第 ${turn.turnIndex} 轮`}</Badge>
                         </div>
                         <div className="mt-3 space-y-3">
                           <div className="rounded-xl border border-slate-200 bg-white p-4">
                             <div className="mb-2 text-xs font-medium text-slate-500">{t('questionSnapshot')}</div>
                             <div className="whitespace-pre-wrap text-sm text-slate-800">
-                              {getMessageQuery(message, commonT('none'))}
+                              {turn.content || turnSnapshot?.content || commonT('none')}
                             </div>
                           </div>
                           <div className="rounded-xl border border-slate-200 bg-white p-4">
-                            <div className="mb-2 text-xs font-medium text-slate-500">系统回复</div>
+                            <div className="mb-2 text-xs font-medium text-slate-500">{t('systemReply')}</div>
                             <div className="whitespace-pre-wrap text-sm text-slate-800">
-                              {getMessageText(message, commonT('none'))}
+                              {turn.answer || commonT('none')}
                             </div>
                           </div>
-                          {message.inputs && Object.keys(message.inputs).length > 0 ? (
-                            <button
-                              type="button"
-                              onClick={() => openRawView(`第 ${index + 1} 轮输入`, message.inputs as Record<string, unknown>)}
-                              className="text-left text-xs text-slate-500 underline-offset-4 hover:underline"
-                            >
-                              查看本轮输入原始数据
-                            </button>
-                          ) : null}
+                          <button
+                            type="button"
+                            onClick={() => openRawView(`第 ${turn.turnIndex} 轮输出`, turn.outputs)}
+                            className="text-left text-xs text-slate-500 underline-offset-4 hover:underline"
+                          >
+                            {t('viewTurnOutputRaw')}
+                          </button>
                         </div>
                       </div>
                     );
@@ -460,7 +568,7 @@ export function BatchResultItemDetailPage({
                 </div>
               ) : (
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-6 text-sm text-slate-500">
-                  暂无会话记录，已回退显示测试快照。
+                  {t('conversationSnapshotFallback')}
                 </div>
               )}
             </section>
@@ -469,11 +577,18 @@ export function BatchResultItemDetailPage({
               <h2 className="text-lg font-semibold text-slate-950">{t('judgeDetail')}</h2>
               <div className="grid gap-4 lg:grid-cols-[160px_minmax(0,1fr)]">
                 <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                  <div className="text-sm text-slate-500">AI 评分</div>
-                  <div className="mt-3 text-3xl font-semibold text-red-600">{judgeScoreText}</div>
+                  <div className="text-sm text-slate-500">{t('judgeScore')}</div>
+                  <div
+                    className={cn(
+                      'mt-3 text-3xl font-semibold',
+                      selectedItem.status === 'passed' ? 'text-emerald-600' : 'text-slate-700'
+                    )}
+                  >
+                    {judgeScoreText}
+                  </div>
                 </div>
                 <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-800">
-                  <div className="text-slate-500">评价意见</div>
+                  <div className="text-slate-500">{t('judgeOpinion')}</div>
                   <div className="mt-2 whitespace-pre-wrap">{selectedItem.judge_reason || commonT('none')}</div>
                   {selectedItem.judge_suggestion ? (
                     <div className="mt-4 rounded-xl bg-amber-50 p-4 text-amber-800">
@@ -486,23 +601,41 @@ export function BatchResultItemDetailPage({
             </section>
 
             <section className="space-y-3">
-              <h2 className="text-lg font-semibold text-slate-950">执行记录</h2>
-              <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-                <div className="text-xs text-red-500">问题原因</div>
+              <h2 className="text-lg font-semibold text-slate-950">{t('executionRecord')}</h2>
+              <div className={cn('rounded-2xl border p-4 text-sm', reasonToneClass)}>
+                <div className={cn('text-xs', reasonTitleClass)}>{reasonTitle}</div>
                 <div className="mt-1 font-medium">{reasonText}</div>
               </div>
               <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                <div className="text-xs text-slate-500">执行路径</div>
+                <div className="text-xs text-slate-500">{t('executionPath')}</div>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   {executionNodes.length > 0 ? (
-                    executionNodes.map((node, index) => (
-                      <React.Fragment key={node.id}>
-                        <Badge variant="outline" className="rounded-full px-3 py-1 text-slate-700">
-                          {formatExecutionStepLabel(node.id)}
-                        </Badge>
-                        {index < executionNodes.length - 1 ? <span className="text-slate-300">›</span> : null}
-                      </React.Fragment>
-                    ))
+                    executionNodes.map((node, index) => {
+                      const meta = draftNodeMetaById.get(node.id) || fallbackExecutionStepMeta(node.id);
+                      const theme =
+                        meta.type in NODE_THEMES
+                          ? NODE_THEMES[meta.type as keyof typeof NODE_THEMES]
+                          : undefined;
+                      const Icon = theme?.icon;
+                      return (
+                        <React.Fragment key={node.id}>
+                          <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-sm font-medium text-slate-700">
+                            {Icon ? (
+                              <span
+                                className={cn(
+                                  'flex size-5 items-center justify-center rounded-md',
+                                  theme?.classNames.iconBg
+                                )}
+                              >
+                                <Icon className="size-3" />
+                              </span>
+                            ) : null}
+                            <span>{meta.title}</span>
+                          </div>
+                          {index < executionNodes.length - 1 ? <span className="text-slate-300">›</span> : null}
+                        </React.Fragment>
+                      );
+                    })
                   ) : (
                     <span className="text-sm text-slate-500">{commonT('none')}</span>
                   )}
@@ -520,12 +653,16 @@ export function BatchResultItemDetailPage({
           </DialogHeader>
           <DialogBody>
             <pre className="max-h-[70vh] overflow-auto whitespace-pre-wrap rounded-2xl border border-slate-200 bg-slate-50 p-5 text-xs text-slate-700">
-              {stringifyJson(rawView?.content, commonT('none'))}
+              {rawViewText}
             </pre>
           </DialogBody>
           <DialogFooter>
+            <Button variant="outline" onClick={copyRawView} disabled={!rawView}>
+              <Copy className="mr-2 size-4" />
+              {t('copyRawData')}
+            </Button>
             <Button variant="outline" onClick={() => setRawView(null)}>
-              关闭
+              {t('close')}
             </Button>
           </DialogFooter>
         </DialogContent>
