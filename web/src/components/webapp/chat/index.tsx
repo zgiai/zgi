@@ -33,7 +33,6 @@ import { SUGGESTED_QUESTIONS_LIMIT } from '@/constants/suggested-questions';
 interface WebappChatProps {
   versionUuid: string;
   config: WebAppWorkflowConfig;
-  historyWindowSize?: number;
   /** Agent ID for stop functionality */
   agentId?: string;
   enablePrecheck?: boolean;
@@ -291,13 +290,6 @@ const WebappChat: React.FC<WebappChatProps> = ({
 
   const features = useMemo(() => toChatFeatures(config), [config]);
 
-  const historyWindowSize = useMemo(() => {
-    const ch = config?.features?.conversation_history;
-    if (!ch || !ch.enabled) return 0;
-    const n = typeof ch.history_window_size === 'number' ? ch.history_window_size : 1;
-    return Math.max(1, Math.min(50, Math.floor(n)));
-  }, [config]);
-
   const webappWorkflowConfig = useMemo(
     () => ({
       allow_view_run_detail:
@@ -370,10 +362,9 @@ const WebappChat: React.FC<WebappChatProps> = ({
       controller.send({
         query,
         inputs: { question_answer_option_id: choice.id },
-        historyWindowSize,
       });
     },
-    [activeConversationId, controller, historyWindowSize]
+    [activeConversationId, controller]
   );
 
   useEffect(() => {
@@ -514,7 +505,6 @@ const WebappChat: React.FC<WebappChatProps> = ({
         suggestionsTitle={suggestionsTitle}
         toolbarForm={toolbarFormSpec}
         webappMeta={config.config}
-        historyWindowSize={historyWindowSize}
         showWorkflowRunHeader={webappWorkflowConfig.allow_view_run_detail}
         showWorkflowDetail={webappWorkflowConfig.allow_view_run_detail}
         hideCompletedWorkflowDetail

@@ -195,6 +195,9 @@ func mergeRootVariablesIntoGraph(workflowMap map[string]any) (map[string]any, er
 	if convVars, exists := workflowMap["conversation_variables"]; exists {
 		graphData["conversation_variables"] = convVars
 	}
+	if features, exists := workflowMap["features"]; exists {
+		graphData["features"] = features
+	}
 
 	return graphData, nil
 }

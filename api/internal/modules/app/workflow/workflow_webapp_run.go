@@ -121,9 +121,6 @@ func (h *WorkflowHandler) RunWorkflowByVersionUUID(c *gin.Context) {
 	}
 	req.Inputs["query"] = chatReq.Query
 	req.Inputs["conversation_id"] = chatReq.ConversationID
-	if chatReq.HistoryWindowSize != nil {
-		req.Inputs["history_window_size"] = *chatReq.HistoryWindowSize
-	}
 
 	h.runWorkflowByVersionUUIDInternal(c, versionUUID, agentID, workspaceID, accountID, workflowType, &req)
 }
@@ -178,19 +175,6 @@ func (h *WorkflowHandler) runWorkflowByVersionUUIDInternal(c *gin.Context, versi
 				if err == nil && latestMessageID != "" {
 					req.Inputs["sys.parent_message_id"] = latestMessageID
 					logger.DebugContext(c.Request.Context(), "workflow version run parent message set", zap.Bool("has_parent_message_id", true))
-				}
-
-				var historyWindowSize *int
-				if hws, ok := req.Inputs["history_window_size"].(float64); ok {
-					size := int(hws)
-					historyWindowSize = &size
-				}
-				conversationHistory, err := h.loadConversationHistory(conversationID, historyWindowSize)
-				if err == nil {
-					req.Inputs["sys.conversation_history"] = conversationHistory
-					logger.DebugContext(c.Request.Context(), "workflow version run conversation history loaded",
-						zap.Int("history_messages_count", len(conversationHistory)),
-					)
 				}
 
 				req.Inputs["sys.conversation_id"] = conversationID
@@ -350,9 +334,6 @@ func (h *WorkflowHandler) RunWorkflowByWebAppID(c *gin.Context) {
 	}
 	req.Inputs["query"] = chatReq.Query
 	req.Inputs["conversation_id"] = chatReq.ConversationID
-	if chatReq.HistoryWindowSize != nil {
-		req.Inputs["history_window_size"] = *chatReq.HistoryWindowSize
-	}
 	if runScope.OrganizationID != "" {
 		req.Inputs["sys.organization_id"] = runScope.OrganizationID
 	}
@@ -412,19 +393,6 @@ func (h *WorkflowHandler) runWorkflowByWebAppIDInternal(c *gin.Context, webAppID
 			if err == nil && latestMessageID != "" {
 				req.Inputs["sys.parent_message_id"] = latestMessageID
 				logger.DebugContext(c.Request.Context(), "web app workflow run parent message set", zap.Bool("has_parent_message_id", true))
-			}
-
-			var historyWindowSize *int
-			if hws, ok := req.Inputs["history_window_size"].(float64); ok {
-				size := int(hws)
-				historyWindowSize = &size
-			}
-			conversationHistory, err := h.loadConversationHistory(conversationID, historyWindowSize)
-			if err == nil {
-				req.Inputs["sys.conversation_history"] = conversationHistory
-				logger.DebugContext(c.Request.Context(), "web app workflow run conversation history loaded",
-					zap.Int("history_messages_count", len(conversationHistory)),
-				)
 			}
 
 			req.Inputs["sys.conversation_id"] = conversationID
