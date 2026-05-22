@@ -1558,9 +1558,9 @@ const messages: NodesMessages = {
     validation: {
       providerRequired: '请选择工具服务商',
       toolRequired: '请选择工具名称',
-      paramBindingMissing: '参数 {name} 需要绑定值',
-      paramValueRequired: '参数 {name} 的常量值不能为空',
-      paramVariableRequired: '参数 {name} 需要绑定变量',
+      paramBindingMissing: '请配置{name}',
+      paramValueRequired: '请填写{name}',
+      paramVariableRequired: '请绑定{name}变量',
     },
   },
   documentExtractor: {
