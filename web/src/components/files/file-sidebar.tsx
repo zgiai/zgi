@@ -1,4 +1,4 @@
-import { memo, useState, useCallback } from 'react';
+import { memo, useState, useCallback, useEffect } from 'react';
 import { FolderPlus, Upload, Files, FolderOpen } from 'lucide-react';
 import { useT, type FilesSuffix } from '@/i18n';
 import { Button } from '@/components/ui/button';
@@ -6,6 +6,7 @@ import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { useStorageUsage, useFileFolders } from '@/hooks/use-files';
+import { fileManageService } from '@/services/file-manage.service';
 import { FolderTreeNode } from './folder-tree-node';
 import type { FileFolder } from '@/services/types/file';
 
@@ -39,6 +40,8 @@ const DEFAULT_ITEMS: FileSidebarItem[] = [
   { id: 'default', labelKey: 'sidebar.defaultFolders', icon: FolderOpen },
 ];
 
+const SYSTEM_FILE_CATEGORIES = new Set(['all', 'uploaded', 'default']);
+
 /**
  * File sidebar component - displays navigation and storage info
  */
@@ -60,6 +63,50 @@ function FileSidebarBase({
 
   // Track which folders are expanded
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!activeItemId || SYSTEM_FILE_CATEGORIES.has(activeItemId)) return;
+
+    let ignore = false;
+
+    const expandActiveAncestors = async () => {
+      try {
+        const ancestorIds: string[] = [];
+        let currentId = activeItemId;
+
+        while (currentId) {
+          const response = await fileManageService.getFileFolder(currentId);
+          const parentId = response.data?.parent_id;
+          if (!parentId) break;
+
+          ancestorIds.push(parentId);
+          currentId = parentId;
+        }
+
+        if (ignore || ancestorIds.length === 0) return;
+
+        setExpandedFolders(prev => {
+          const next = new Set(prev);
+          let changed = false;
+          ancestorIds.forEach(id => {
+            if (!next.has(id)) {
+              next.add(id);
+              changed = true;
+            }
+          });
+          return changed ? next : prev;
+        });
+      } catch {
+        // Keep the current expansion state if ancestor lookup fails.
+      }
+    };
+
+    void expandActiveAncestors();
+
+    return () => {
+      ignore = true;
+    };
+  }, [activeItemId]);
 
   // Toggle folder expand/collapse
   const handleToggleExpand = useCallback((folderId: string) => {

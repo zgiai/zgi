@@ -759,16 +759,21 @@ export function useCreateFolder(): {
     onSuccess: (_, variables) => {
       toast.success(t('toast.createFolderSuccess'));
       const targetWorkspaceId = variables.workspace_id || currentWorkspaceId;
-      // Invalidate if unfiltered or current workspace
       queryClient.invalidateQueries({
         queryKey: [FILE_FOLDERS_KEY],
         predicate: query => {
           const key = query.queryKey;
           if (key[0] !== FILE_FOLDERS_KEY) return false;
           if (key[1] === 'detail') return false;
-          // Note: FileFolders hook key structure is [FILE_FOLDERS_KEY, workspaceId]
-          const tId = key[1];
-          return !tId || tId === targetWorkspaceId;
+
+          if (key[1] === 'children') {
+            const parentId = key[2];
+            const workspaceId = key[3];
+            return parentId === variables.parent_id && (!workspaceId || workspaceId === targetWorkspaceId);
+          }
+
+          const workspaceId = key[1];
+          return !workspaceId || workspaceId === targetWorkspaceId;
         },
       });
     },
