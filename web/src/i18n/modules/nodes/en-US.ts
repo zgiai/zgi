@@ -826,8 +826,8 @@ const messages = {
     },
     roles: {
       system: 'System prompt',
-      user: 'User input template',
-      assistant: 'Assistant reply template',
+      user: 'User message',
+      assistant: 'Assistant message',
     },
     labels: {
       detail: 'Resolution',
@@ -846,8 +846,9 @@ const messages = {
     actions: {
       addBlock: 'Add Block',
       addUserQuestion: 'Add user question',
-      addCustomContext: 'Add custom context',
-      changePromptOrder: 'Change context order',
+      addHistoryContext: 'Add conversation history',
+      addCustomContext: 'Add example conversation',
+      changePromptOrder: 'Arrange context',
       applyPromptTemplate: 'Apply and keep editing',
       collapseBlock: 'Collapse block',
       changePromptReference: 'Choose another',
@@ -908,15 +909,33 @@ const messages = {
     },
     promptOrder: {
       systemPrompt: 'System prompt',
-      history: 'History context',
+      history: 'Conversation history',
       historyDescription: 'Recent conversation history inserted by this node.',
-      currentUser: 'User question',
-      customContext: 'Custom context',
-      legacyContext: 'Legacy context',
+      currentUser: 'Current user input',
+      customContext: 'Example conversation',
+      legacyContext: 'Existing message group',
+      singleUserMessage: 'User message',
       positionLabel: 'Position {index}',
-      orderDialogTitle: 'Change context order',
+      orderDialogTitle: 'Arrange context',
       orderDialogDescription:
-        'Drag items to control the order sent after the system prompt.',
+        'Drag items to control the message order after the system prompt. Example conversations can only be edited here.',
+      systemFixedDescription: 'System prompt is fixed at the beginning and is edited in the main panel.',
+      contextPlaceholder: 'Context',
+      contextPlaceholderDescription: '{count} context item(s) will be inserted between the system prompt and current user input.',
+      historyRoundsPreview: 'Insert up to {count} recent conversation round(s).',
+      userLine: 'User: ',
+      assistantLine: 'Assistant: ',
+      currentUserEditHint: 'Edit this content in the main panel.',
+      removeConfirmTitle: 'Remove this context item?',
+      removeHistoryConfirmDescription:
+        'This node will no longer insert conversation history at this position. You can add it back before saving.',
+      removeGroupConfirmDescription:
+        'This example conversation will be removed as a group. You can still cancel the dialog to discard this change.',
+      unsavedChangesTitle: 'You have unsaved changes. Save them?',
+      unsavedChangesDescription:
+        'The context arrangement has been changed. Leaving now will discard those edits.',
+      saveAndClose: 'Save and close',
+      discardChanges: 'Discard',
       missingUserQuestionTitle: 'Add a user question',
       missingUserQuestionDescription:
         'Recommended when history is enabled. Otherwise the current user input will be appended automatically, making the final prompt order harder to judge.',
