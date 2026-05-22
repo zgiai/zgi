@@ -33,6 +33,7 @@ const messages: NodesMessages = {
     'notification-sms': {
       title: '发送短信',
       description: '通过后端配置的短信服务商发送基于模板的短信通知',
+      setupRequired: '短信通知还未配置。请先完成短信服务商、短信签名和短信模板配置。',
       label: '短信',
     },
     code: {

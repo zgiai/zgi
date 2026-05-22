@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { OptionEditor } from '@/components/ui/option-editor';
@@ -16,8 +17,11 @@ import { WorkflowValueListEditor } from '@/components/workflow/common/workflow-v
 import { useT } from '@/i18n';
 import {
   getDefaultNotificationSMSTemplateKey,
+  getNotificationSMSParamDisplayKey,
   getNotificationSMSTemplates,
+  isNotificationSMSConfigured,
   NOTIFICATION_SMS_TEMPLATE,
+  NOTIFICATION_SMS_WORKFLOW_ALERT_TEMPLATE,
   type NotificationSMSTemplate,
   type NotificationSMSTemplateParam,
 } from '@/lib/features/notification-sms';
@@ -54,6 +58,8 @@ export function NotificationSMSEditor({
     () => getNotificationSMSTemplates(systemFeatures),
     [systemFeatures]
   );
+  const smsConfigured = isNotificationSMSConfigured(systemFeatures);
+  const editorReadOnly = readOnly || !smsConfigured;
   const defaultTemplateKey = getDefaultNotificationSMSTemplateKey(systemFeatures);
   const selectedTemplate =
     templates.find(template => template.key === value.template) ??
@@ -104,22 +110,39 @@ export function NotificationSMSEditor({
 
   return (
     <div className={cn('space-y-3', className)}>
+      {!smsConfigured ? (
+        <Alert className="rounded-xl border-amber-200 bg-amber-50 text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+          <AlertTitle className="text-sm">
+            {t('notificationSms.setup.title' as never)}
+          </AlertTitle>
+          <AlertDescription className="text-xs leading-5">
+            {t('notificationSms.setup.description' as never)}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
       <div className="space-y-1.5">
         <Label className="text-[13px] font-medium">
           {t('notificationSms.fields.template' as never)}
         </Label>
-        <Select value={selectedTemplateKey} onValueChange={setTemplate} disabled={readOnly}>
-          <SelectTrigger className="h-9 rounded-xl border-border bg-background shadow-none hover:border-border">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {templates.map(template => (
-              <SelectItem key={template.key} value={template.key}>
-                {getTemplateLabel(t, template)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        {templates.length > 0 ? (
+          <Select value={selectedTemplateKey} onValueChange={setTemplate} disabled={editorReadOnly}>
+            <SelectTrigger className="h-9 rounded-xl border-border bg-background shadow-none hover:border-border">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {templates.map(template => (
+                <SelectItem key={template.key} value={template.key}>
+                  {getTemplateLabel(t, template)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : (
+          <div className="flex h-9 items-center rounded-xl border border-border bg-muted/40 px-3 text-sm text-muted-foreground">
+            {t('notificationSms.setup.templatePlaceholder' as never)}
+          </div>
+        )}
         {errors?.template ? (
           <p className="text-xs font-medium text-destructive">{errors.template}</p>
         ) : null}
@@ -136,7 +159,7 @@ export function NotificationSMSEditor({
               portalRoot={portalRoot}
               value={value.recipients[0] ?? ''}
               onChange={recipient => setRecipients([recipient])}
-              readOnly={readOnly}
+              readOnly={editorReadOnly}
               placeholder={recipientPlaceholder}
               className="w-full"
               editorClassName="min-h-[40px] rounded-xl border-border bg-background px-3 py-2 shadow-none hover:border-border focus-within:border-primary/70"
@@ -148,7 +171,7 @@ export function NotificationSMSEditor({
             portalRoot={portalRoot}
             value={value.recipients}
             onChange={setRecipients}
-            readOnly={readOnly}
+            readOnly={editorReadOnly}
             addButtonPlacement="header"
             labels={{
               title: t('notificationSms.fields.recipients' as never),
@@ -164,7 +187,10 @@ export function NotificationSMSEditor({
           />
         ) : (
           <div
-            className={cn(!readOnly && 'space-y-1.5', readOnly && 'pointer-events-none opacity-70')}
+            className={cn(
+              !editorReadOnly && 'space-y-1.5',
+              editorReadOnly && 'pointer-events-none opacity-70'
+            )}
           >
             <OptionEditor
               addButtonPlacement="header"
@@ -214,7 +240,7 @@ export function NotificationSMSEditor({
                 portalRoot={portalRoot}
                 value={paramValue}
                 onChange={nextValue => setTemplateParam(param.key, nextValue)}
-                readOnly={readOnly}
+                readOnly={editorReadOnly}
                 placeholder={getParamPlaceholder(t, param)}
                 className="w-full"
                 editorClassName="min-h-[36px] rounded-xl border-border bg-background px-3 py-2 shadow-none hover:border-border focus-within:border-primary/70"
@@ -225,7 +251,7 @@ export function NotificationSMSEditor({
                 onChange={event => setTemplateParam(param.key, event.target.value)}
                 placeholder={getParamPlaceholder(t, param)}
                 errorText={paramError}
-                disabled={readOnly}
+                disabled={editorReadOnly}
               />
             )}
             {canUseWorkflowValues && paramError ? (
@@ -312,11 +338,18 @@ function getParamPlaceholder(
   t: ReturnType<typeof useT<'common'>>,
   param: NotificationSMSTemplateParam
 ): string {
-  if (param.key === 'notification_title') {
+  const displayKey = getNotificationSMSParamDisplayKey(param);
+  if (displayKey === 'notificationTitle') {
     return t('notificationSms.placeholders.notificationTitle' as never);
   }
-  if (param.key === 'link_code') {
+  if (displayKey === 'linkCode') {
     return t('notificationSms.placeholders.linkCode' as never);
+  }
+  if (displayKey === 'remark') {
+    return t('notificationSms.placeholders.remark' as never);
+  }
+  if (displayKey === 'summary') {
+    return t('notificationSms.placeholders.summary' as never);
   }
   return t(
     'notificationSms.placeholders.param' as never,
@@ -333,6 +366,9 @@ function getTemplateLabel(
   if (template.key === NOTIFICATION_SMS_TEMPLATE) {
     return t('notificationSms.templates.pendingActionNotification' as never);
   }
+  if (template.key === NOTIFICATION_SMS_WORKFLOW_ALERT_TEMPLATE) {
+    return t('notificationSms.templates.workflowAlert' as never);
+  }
   return template.name || template.key;
 }
 
@@ -340,11 +376,18 @@ function getParamLabel(
   t: ReturnType<typeof useT<'common'>>,
   param: NotificationSMSTemplateParam
 ): string {
-  if (param.key === 'notification_title') {
+  const displayKey = getNotificationSMSParamDisplayKey(param);
+  if (displayKey === 'notificationTitle') {
     return t('notificationSms.params.notificationTitle' as never);
   }
-  if (param.key === 'link_code') {
+  if (displayKey === 'linkCode') {
     return t('notificationSms.params.linkCode' as never);
   }
-  return param.label || param.key;
+  if (displayKey === 'remark') {
+    return t('notificationSms.params.remark' as never);
+  }
+  if (displayKey === 'summary') {
+    return t('notificationSms.params.summary' as never);
+  }
+  return t('notificationSms.params.templateParam' as never);
 }

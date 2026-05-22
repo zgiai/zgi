@@ -2,9 +2,10 @@
 
 import { MessageSquareText } from 'lucide-react';
 import { useT } from '@/i18n';
-import type {
-  NotificationSMSTemplate,
-  NotificationSMSTemplateParam,
+import {
+  getNotificationSMSParamDisplayKey,
+  type NotificationSMSTemplate,
+  type NotificationSMSTemplateParam,
 } from '@/lib/features/notification-sms';
 
 interface NotificationSMSPreviewProps {
@@ -68,11 +69,18 @@ function getParamLabel(
   t: ReturnType<typeof useT<'common'>>,
   param: NotificationSMSTemplateParam
 ): string {
-  if (param.key === 'notification_title') {
+  const displayKey = getNotificationSMSParamDisplayKey(param);
+  if (displayKey === 'notificationTitle') {
     return t('notificationSms.params.notificationTitle' as never);
   }
-  if (param.key === 'link_code') {
+  if (displayKey === 'linkCode') {
     return t('notificationSms.params.linkCode' as never);
   }
-  return param.label || param.key;
+  if (displayKey === 'remark') {
+    return t('notificationSms.params.remark' as never);
+  }
+  if (displayKey === 'summary') {
+    return t('notificationSms.params.summary' as never);
+  }
+  return t('notificationSms.params.templateParam' as never);
 }
