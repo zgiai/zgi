@@ -925,6 +925,23 @@ const messages = {
       helpTitle: 'How does context arrangement work?',
       helpDescription:
         'Think of this as building an open-book packet for the model: rules first, clues and examples next, then the current question.',
+      helpBeginnerTab: 'Start from basics',
+      helpPracticalTab: 'Copy a real setup',
+      helpConceptContextTitle: 'What is context?',
+      helpConceptContextText:
+        'Context is the material the model can read before answering. If you do not send it, the model will not magically know it.',
+      helpConceptModelTitle: 'How the model gets info',
+      helpConceptModelText:
+        'The model does not browse your workflow by itself. It reads the message list you send in this run, in order.',
+      helpConceptWhyTitle: 'Why fill this in?',
+      helpConceptWhyText:
+        'Role, history, examples, and the current question become a clear task brief, so the answer is much more stable.',
+      helpBeginnerStoryTitle: 'A simple mental model',
+      helpBeginnerStoryText:
+        'Treat the model like a teammate walking into a meeting. Tell it who it is, what happened earlier, what answer style to copy, and what needs solving now.',
+      helpBeginnerTipTitle: 'Remember this: ',
+      helpBeginnerTipText:
+        'Context arrangement is not about adding more and more text. It is about placing the necessary information in the order you want the model to read it.',
       helpExampleTitle: 'Example question',
       helpExampleQuestion:
         '"The customer said the plan we recommended last time is too expensive. Help me reply with a better option for a 30-person team and a steadier budget."',
@@ -950,6 +967,26 @@ const messages = {
       helpBenefitDebugTitle: 'Debug faster',
       helpBenefitDebugText:
         'If the answer feels wrong, you can quickly see whether history is too heavy, the example is too strong, or the current input is unclear.',
+      helpCopyTitle: 'A setup you can copy',
+      helpCopyPurposePrefix: 'Purpose: ',
+      helpCopySystemLabel: 'System prompt',
+      helpCopySystemValue:
+        'You are an enterprise customer success assistant. First restate the customer need, then provide actionable advice. Keep the tone professional, concise, and avoid overpromising.',
+      helpCopySystemPurpose:
+        'Locks the model role, tone, and answer structure before any business content is read.',
+      helpCopyHistoryLabel: 'Conversation history',
+      helpCopyHistoryValue: 'Enabled; history rounds: 3; place it before the example conversation.',
+      helpCopyHistoryPurpose:
+        'Lets the model understand what was discussed earlier and resolve phrases like "the plan from last time".',
+      helpCopyExampleLabel: 'Example conversation',
+      helpCopyExampleValue:
+        'User message: How should we reply when the customer thinks the price is high?\nAssistant message: Acknowledge the budget pressure, offer an alternative, then ask a next-step confirmation question.',
+      helpCopyExamplePurpose:
+        'Gives the model an answer pattern to imitate, especially useful for support, sales, review, or policy-driven replies.',
+      helpCopyCurrentLabel: 'Current user input',
+      helpCopyCurrentValue: 'System variable (query)',
+      helpCopyCurrentPurpose:
+        'Places the real current user request last, so the model answers it using the rules, history, and example above.',
       helpTipTitle: 'Tip: ',
       helpTipText:
         'Most workflows work well with conversation history before the current input. If you want the model to mimic a standard exchange first, place the example conversation between history and the current input.',
