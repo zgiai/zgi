@@ -52,15 +52,28 @@ export interface MarketplacePluginVersionListResponse {
   page_size: number;
 }
 
+export interface MarketplacePluginDisplayMetadata {
+  name: string;
+  short_description: string;
+  description: string;
+  tags: string[];
+  official_labels: string[];
+}
+
 export interface MarketplacePlugin {
   id: string;
   developer_id: string;
   unique_identifier: string;
   name: string;
+  short_description?: string;
   description: string;
   icon: string;
   category: MarketplacePluginCategory;
   tags: string[];
+  official_labels?: string[];
+  locale?: string;
+  default_metadata?: MarketplacePluginDisplayMetadata;
+  localized?: MarketplacePluginDisplayMetadata;
   download_count: number;
   rating: number;
   rating_count: number;

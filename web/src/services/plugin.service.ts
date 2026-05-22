@@ -68,6 +68,7 @@ class PluginService extends BaseService {
     category?: MarketplacePluginCategory;
     search?: string;
     developer_id?: string;
+    locale?: string;
     sort?: 'downloads' | 'newest' | 'rating';
     is_featured?: boolean;
     is_official?: boolean;
@@ -83,6 +84,7 @@ class PluginService extends BaseService {
         category: params.category,
         search: params.search,
         developer_id: params.developer_id,
+        locale: params.locale,
         sort: params.sort,
         is_featured: params.is_featured !== undefined ? params.is_featured.toString() : undefined,
         is_official: params.is_official !== undefined ? params.is_official.toString() : undefined,
@@ -95,11 +97,19 @@ class PluginService extends BaseService {
    * Get plugin detail from marketplace
    * GET /v1/market/plugins/{id}
    */
-  getMarketplacePluginDetail(id: string): Promise<ApiResponseData<MarketplacePlugin>> {
+  getMarketplacePluginDetail(
+    id: string,
+    params?: {
+      locale?: string;
+    }
+  ): Promise<ApiResponseData<MarketplacePlugin>> {
     return this.request('get', `v1/market/plugins/${id}`, undefined, {
       skipAuth: true,
       skipErrorHandling: true,
       endpoint: 'market',
+      params: {
+        locale: params?.locale,
+      },
     });
   }
 

@@ -4,6 +4,7 @@ import type { MarketplacePlugin, MarketplacePluginCategory } from '@/services/ty
 import { useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { PLUGIN_KEYS } from '@/hooks/query-keys';
+import { useLocale } from '@/hooks/use-locale';
 
 /**
  * Hook to get marketplace plugins using new API
@@ -14,6 +15,7 @@ export interface UseMarketplacePluginsParams {
   category?: MarketplacePluginCategory;
   search?: string;
   developer_id?: string;
+  locale?: string;
   sort?: 'downloads' | 'newest' | 'rating';
   is_featured?: boolean;
   is_official?: boolean;
@@ -51,6 +53,7 @@ export function useMarketplacePlugins(
         category: params.category,
         search: params.search,
         developer_id: params.developer_id,
+        locale: params.locale,
         sort: params.sort,
         is_featured: params.is_featured,
         is_official: params.is_official,
@@ -91,11 +94,13 @@ export function useMarketplacePlugins(
  * Hook to get marketplace plugin detail
  */
 export function useMarketplacePluginDetail(id: string | null, enabled = true) {
+  const { locale } = useLocale();
+
   const query = useQuery({
-    queryKey: PLUGIN_KEYS.marketplaceDetail(id || ''),
+    queryKey: [...PLUGIN_KEYS.marketplaceDetail(id || ''), locale],
     queryFn: async () => {
       if (!id) return null;
-      const response = await pluginService.getMarketplacePluginDetail(id);
+      const response = await pluginService.getMarketplacePluginDetail(id, { locale });
       return response.data;
     },
     enabled: enabled && !!id,

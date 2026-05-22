@@ -13,6 +13,7 @@ import type { MarketplacePlugin, MarketplacePluginCategory } from '@/services/ty
 import { useInfiniteObserver } from '@/hooks/use-infinite-observer';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useLocale } from '@/hooks/use-locale';
 
 type PluginCategory = '' | MarketplacePluginCategory;
 
@@ -25,6 +26,7 @@ const PLUGIN_CATEGORIES: Array<{ value: PluginCategory; label: string }> = [
 
 export default function PluginsPage() {
   const t = useT();
+  const { locale } = useLocale();
   const [searchKeyword, setSearchKeyword] = useState('');
   const [selectedPlugin, setSelectedPlugin] = useState<MarketplacePlugin | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -45,6 +47,7 @@ export default function PluginsPage() {
     page_size: 20,
     category: selectedType || undefined,
     search: debouncedSearchKeyword || undefined,
+    locale,
     sort: 'downloads',
   });
 
@@ -55,7 +58,7 @@ export default function PluginsPage() {
     setAllPlugins([]);
     setCurrentPage(1);
     lastProcessedPage.current = 0;
-  }, [debouncedSearchKeyword, selectedType]);
+  }, [debouncedSearchKeyword, selectedType, locale]);
 
   useEffect(() => {
     if (pagePlugins.length > 0 && currentPage !== lastProcessedPage.current) {
