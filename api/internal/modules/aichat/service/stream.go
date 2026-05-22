@@ -37,7 +37,7 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 			_ = s.persistStoppedAnswer(persistCtx, prepared, "", nil)
 			return nil, ErrMessageStopped
 		}
-		s.finalizePreparedError(persistCtx, prepared, err)
+		s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
 		return nil, err
 	}
 
@@ -52,7 +52,7 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 				_ = s.persistStoppedAnswer(persistCtx, prepared, answer, usage)
 				return nil, ErrMessageStopped
 			}
-			s.finalizePreparedError(persistCtx, prepared, err)
+			s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
 			return nil, err
 		}
 		if s.streams.IsStopped(prepared.Message.ID) {
@@ -74,7 +74,7 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 			_ = s.persistStoppedAnswer(persistCtx, prepared, "", nil)
 			return nil, ErrMessageStopped
 		}
-		s.finalizePreparedError(persistCtx, prepared, err)
+		s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
 		return nil, err
 	}
 	answer, usage, err := s.collectStreamAnswer(runCtx, prepared, stream, onChunk)
@@ -83,7 +83,7 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 			_ = s.clearPreparedRuntime(persistCtx, prepared)
 			return nil, err
 		}
-		s.finalizePreparedError(persistCtx, prepared, err)
+		s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
 		return nil, err
 	}
 	if s.streams.IsStopped(prepared.Message.ID) {
@@ -370,10 +370,11 @@ func (s *service) completePreparedChat(ctx context.Context, prepared *PreparedCh
 	return nil
 }
 
-func (s *service) finalizePreparedError(ctx context.Context, prepared *PreparedChat, cause error) {
+func (s *service) finalizePreparedError(ctx context.Context, prepared *PreparedChat, cause error, onEvent ...func(StreamEvent) error) {
 	if prepared == nil || prepared.Message == nil || prepared.Conversation == nil || cause == nil {
 		return
 	}
+	eventCallback := firstStreamEventCallback(onEvent)
 	if err := s.completePreparedError(ctx, prepared, cause.Error()); err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			logger.WarnContext(ctx, "failed to finalize aichat message error", "message_id", prepared.Message.ID.String(), err)
@@ -382,7 +383,7 @@ func (s *service) finalizePreparedError(ctx context.Context, prepared *PreparedC
 			logger.WarnContext(ctx, "failed to clear aichat conversation runtime", "conversation_id", prepared.Conversation.ID.String(), clearErr)
 		}
 	}
-	s.appendStreamEventBestEffort(ctx, prepared.Message.ID, prepared.Conversation.ID, streamEventError, messageErrorPayload(prepared, cause.Error()))
+	s.emitPreparedEvent(ctx, prepared, streamEventError, messageErrorPayload(prepared, cause.Error()), eventCallback)
 }
 
 func (s *service) completePreparedError(ctx context.Context, prepared *PreparedChat, message string) error {
