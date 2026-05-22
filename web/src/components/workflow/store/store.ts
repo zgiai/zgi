@@ -23,6 +23,7 @@ import { createModeSelectionSlice, type ModeSelectionSlice } from './slices/mode
 import { createWorkflowIOSlice, type WorkflowIOSlice } from './slices/workflow-io';
 import { createRunStatusSlice, type RunStatusSlice } from './slices/run-status';
 import { debounce } from '@/lib/utils';
+import { useAuthStore } from '@/store/auth-store';
 
 export type { UpstreamExportItem } from './helpers/graph';
 
@@ -294,7 +295,13 @@ export const useWorkflowStoreBase = create<WorkflowStore>()(
         // const start = performance.now();
         const runnable = computeRunnableSets(nodes, edges);
         // const mid = performance.now();
-        const validation = validateWorkflow(nodes, edges, agentType, runnable);
+        const validation = validateWorkflow(
+          nodes,
+          edges,
+          agentType,
+          runnable,
+          useAuthStore.getState().systemFeatures
+        );
         // const end = performance.now();
 
         // console.log(

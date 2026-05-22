@@ -619,11 +619,16 @@ const messages = {
       actionRequired: 'At least one operation is required',
       enabledActionRequired: 'At least one enabled operation is required',
       recipientsRequired: 'At least one recipient is required for operation {index}',
-      subjectRequired: 'Subject is required for operation {index}',
+      templateRequired: 'SMS template is required for operation {index}',
       notificationTitleRequired: 'Notification title is required for operation {index}',
       linkCodeRequired: 'Link code is required for operation {index}',
-      linkCodeInvalid:
-        'Link code for operation {index} must use letters and numbers, for example abc123',
+      notificationTitleTooLong:
+        'Notification title for operation {index} must be at most {max} characters',
+      linkCodeInvalid: 'Link code for operation {index} has an invalid format',
+      templateParamRequired: '{label} is required for operation {index}',
+      templateParamTooLong: '{label} for operation {index} must be at most {max} characters',
+      templateParamInvalid: '{label} for operation {index} has an invalid format',
+      subjectRequired: 'Subject is required for operation {index}',
       bodyTypeRequired: 'A supported body type is required for operation {index}',
       bodyRequired: 'Message body is required for operation {index}',
       unsupportedActionType:
@@ -636,14 +641,19 @@ const messages = {
     preview: {
       phone: 'Phone',
       title: 'Title',
+      template: 'Template',
       notConfigured: 'Not configured',
     },
     validation: {
       phoneRequired: 'Phone number is required',
+      templateRequired: 'SMS template is required',
       notificationTitleRequired: 'Notification title is required',
       linkCodeRequired: 'Link code is required',
-      linkCodeInvalid:
-        'Use letters and numbers only, for example abc123. Do not enter -, _, Chinese characters, or a full URL',
+      notificationTitleTooLong: 'Notification title must be at most {max} characters',
+      linkCodeInvalid: 'Link code has an invalid format',
+      templateParamRequired: '{label} is required',
+      templateParamTooLong: '{label} must be at most {max} characters',
+      templateParamInvalid: '{label} has an invalid format',
     },
   },
   jsonParser: {

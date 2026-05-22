@@ -48,13 +48,12 @@ export function TaskOverviewTab({ taskDetail, showUnsupportedHint }: TaskOvervie
   const t = useT('automation');
   const tCommon = useT('common');
   const translate = React.useCallback(
-    (key: string, values?: Record<string, string | number>) =>
-      t(key as never, values as never),
+    (key: string, values?: Record<string, string | number>) => t(key as never, values as never),
     [t]
   );
   const [selectedActionIndex, setSelectedActionIndex] = React.useState<number | null>(null);
   const selectedAction =
-    selectedActionIndex === null ? null : taskDetail.actions[selectedActionIndex] ?? null;
+    selectedActionIndex === null ? null : (taskDetail.actions[selectedActionIndex] ?? null);
 
   return (
     <div className="space-y-4">
@@ -119,10 +118,7 @@ export function TaskOverviewTab({ taskDetail, showUnsupportedHint }: TaskOvervie
           <CardContent className="space-y-4">
             <JsonBlock value={taskDetail.task.schedule_config} />
             {taskDetail.actions.map((action, index) => (
-              <JsonBlock
-                key={`raw-action-${action.id || index}`}
-                value={action.config}
-              />
+              <JsonBlock key={`raw-action-${action.id || index}`} value={action.config} />
             ))}
           </CardContent>
         </Card>
@@ -205,21 +201,23 @@ export function TaskOverviewTab({ taskDetail, showUnsupportedHint }: TaskOvervie
                         <div className="rounded-2xl border border-border/70 bg-background p-4">
                           <div className="mb-2 flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.12em] text-primary">
                             <Workflow className="size-3.5" />
-                            {t('actions.smsNotificationTitle')}
+                            {t('actions.smsTemplate')}
                           </div>
                           <p className="break-words text-sm leading-6 text-foreground">
-                            {selectedAction.config.template_params.notification_title ||
-                              t('misc.notAvailable')}
+                            {selectedAction.config.template || t('misc.notAvailable')}
                           </p>
                         </div>
                         <div className="rounded-2xl border border-border/70 bg-background p-4">
                           <div className="mb-2 text-[11px] font-medium uppercase tracking-[0.12em] text-primary">
-                            {t('actions.smsLinkCode')}
+                            {t('actions.smsTemplateParams')}
                           </div>
-                          <p className="break-all text-sm leading-6 text-foreground">
-                            {selectedAction.config.template_params.link_code ||
-                              t('misc.notAvailable')}
-                          </p>
+                          {Object.keys(selectedAction.config.template_params ?? {}).length > 0 ? (
+                            <JsonBlock value={selectedAction.config.template_params} />
+                          ) : (
+                            <p className="text-sm leading-6 text-muted-foreground">
+                              {t('misc.notAvailable')}
+                            </p>
+                          )}
                         </div>
                       </>
                     ) : (
@@ -282,8 +280,7 @@ export function TaskOverviewTab({ taskDetail, showUnsupportedHint }: TaskOvervie
                         {t('actions.timeoutSeconds')}
                       </div>
                       <p className="text-sm leading-6 text-foreground">
-                        {selectedAction.config.execution?.timeout_seconds ??
-                          t('misc.notAvailable')}
+                        {selectedAction.config.execution?.timeout_seconds ?? t('misc.notAvailable')}
                       </p>
                     </div>
 

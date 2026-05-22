@@ -1,11 +1,11 @@
 export interface NotificationSMSDraft {
   recipients: string[];
-  notificationTitle: string;
-  linkCode: string;
+  template: string;
+  templateParams: Record<string, string>;
 }
 
 export interface NotificationSMSErrors {
   recipients?: string;
-  notificationTitle?: string;
-  linkCode?: string;
+  template?: string;
+  templateParams?: Record<string, string | undefined>;
 }
