@@ -257,12 +257,13 @@ type OutputContent struct {
 
 // Message message structure
 type Message struct {
-	Role         string        `json:"role,omitempty"`    // system, user, assistant, function, tool
-	Content      interface{}   `json:"content,omitempty"` // string or []MessageContentPart for multimodal
-	Name         string        `json:"name,omitempty"`
-	FunctionCall *FunctionCall `json:"function_call,omitempty"`
-	ToolCalls    []ToolCall    `json:"tool_calls,omitempty"`
-	ToolCallID   string        `json:"tool_call_id,omitempty"`
+	Role             string        `json:"role,omitempty"`    // system, user, assistant, function, tool
+	Content          interface{}   `json:"content,omitempty"` // string or []MessageContentPart for multimodal
+	Name             string        `json:"name,omitempty"`
+	FunctionCall     *FunctionCall `json:"function_call,omitempty"`
+	ToolCalls        []ToolCall    `json:"tool_calls,omitempty"`
+	ToolCallID       string        `json:"tool_call_id,omitempty"`
+	ReasoningContent string        `json:"reasoning_content,omitempty"` // DeepSeek thinking-mode round trip
 }
 
 // MessageContentPart represents a content part in multimodal messages (OpenAI format)

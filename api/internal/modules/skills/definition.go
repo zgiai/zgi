@@ -124,6 +124,8 @@ type SkillTrace struct {
 	Kind       string                 `json:"kind"`
 	SkillID    string                 `json:"skill_id,omitempty"`
 	ToolName   string                 `json:"tool_name,omitempty"`
+	Title      string                 `json:"title,omitempty"`
+	Message    string                 `json:"message,omitempty"`
 	Status     string                 `json:"status"`
 	DurationMS int64                  `json:"duration_ms,omitempty"`
 	Arguments  map[string]interface{} `json:"arguments,omitempty"`

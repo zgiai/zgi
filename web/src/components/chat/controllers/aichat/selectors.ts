@@ -1,6 +1,7 @@
 import type { AIChatConversation, AIChatMessage } from '@/services/types/aichat';
 import {
   DEFAULT_AICHAT_MESSAGE_PAGINATION,
+  type AIChatAgenticTimelineItem,
   type AIChatControllerState,
   type AIChatPagination,
   type AIChatStreamingMessageState,
@@ -82,6 +83,69 @@ export function mergeSelectedMessagesWithStreamingState(
   };
 
   return upsertAIChatMessage(incomingMessages, preservedMessage);
+}
+
+export function timelineFromAIChatMessage(message: AIChatMessage): AIChatAgenticTimelineItem[] {
+  const invocations = (message.metadata?.skill_invocations ?? []).filter(
+    invocation => invocation.kind !== 'metadata_exposed'
+  );
+
+  return invocations.map((invocation, index) => {
+    if (invocation.kind === 'intermediate_answer' && invocation.message) {
+      return {
+        id: `history-intermediate-${message.id}-${index}`,
+        type: 'intermediate_answer',
+        title: invocation.title,
+        content: invocation.message,
+        created_at: invocation.created_at,
+      };
+    }
+    return {
+      id: `history-skill-${message.id}-${index}`,
+      type: 'skill_event',
+      invocation,
+      created_at: invocation.created_at,
+    };
+  });
+}
+
+export function seedStreamingTimelineFromMessages(
+  conversation: AIChatConversation,
+  messages: AIChatMessage[],
+  streamingByMessageId: Record<string, AIChatStreamingMessageState>
+): Record<string, AIChatStreamingMessageState> {
+  const messageId = conversation.active_message_id;
+  if (conversation.runtime_status !== 'streaming' || !messageId) {
+    return streamingByMessageId;
+  }
+  const message = messages.find(item => item.id === messageId);
+  if (!message) {
+    return streamingByMessageId;
+  }
+  const timeline = timelineFromAIChatMessage(message);
+  if (timeline.length === 0) {
+    return streamingByMessageId;
+  }
+  const previous = streamingByMessageId[messageId];
+  if (previous?.timeline?.length) {
+    return streamingByMessageId;
+  }
+
+  return {
+    ...streamingByMessageId,
+    [messageId]: {
+      conversation_id: conversation.id,
+      message_id: messageId,
+      answer: previous?.answer ?? message.answer,
+      status: 'streaming',
+      timeline,
+      last_event_id: previous?.last_event_id,
+      replay_base_answer: previous?.replay_base_answer,
+      replay_offset: previous?.replay_offset,
+      replace: previous?.replace,
+      sensitiveOutputBlocked: previous?.sensitiveOutputBlocked,
+    },
+  };
 }
 
 export function isTerminalReplaceableMessageStatus(status: AIChatMessage['status']): boolean {

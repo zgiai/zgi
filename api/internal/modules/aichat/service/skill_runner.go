@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
@@ -11,8 +12,19 @@ import (
 )
 
 const (
-	defaultMaxSkillStepsPerTurn = 6
+	defaultMaxSkillPlanningRounds       = 12
+	defaultMaxSkillStepsPerTurn         = 24
+	defaultMaxBusinessToolCallsPerSkill = 6
 )
+
+type skillStepResult struct {
+	trace       skills.SkillTrace
+	toolMessage adapter.Message
+	usedSkill   bool
+	usedTool    bool
+	recoverable bool
+	fatalErr    error
+}
 
 func (p *PreparedChat) skillsEnabled() bool {
 	if p == nil || p.parts == nil {
@@ -54,7 +66,7 @@ func (s *service) runPreparedSkillStream(
 		skills.DefaultSkillMetadataPromptBudgetChars,
 	)
 	messages = append(messages, metadataMessage)
-	metaTools := skills.MetaToolsForSkills(resolved)
+	messages = append(messages, agenticSkillLoopSystemMessage())
 	traces := []skills.SkillTrace{metadataExposedTrace(resolved.SkillIDs(), metadataStats)}
 	s.persistSkillTracesBestEffort(persistCtx, prepared, traces)
 	logger.DebugContext(ctx, "aichat skill metadata exposed",
@@ -70,31 +82,42 @@ func (s *service) runPreparedSkillStream(
 	skillUsed := false
 	loadedSkills := map[string]struct{}{}
 	maxSkillSteps := maxSkillStepsForTurn(resolved)
+	var answerBuilder strings.Builder
+	var usage *adapter.Usage
 
-	for {
+	for round := 0; round < defaultMaxSkillPlanningRounds; round++ {
 		planningReq := cloneChatRequest(prepared.LLMRequest)
 		planningReq.Messages = messages
 		planningReq.Stream = false
-		planningReq.Tools = metaTools
+		planningReq.Tools = skills.MetaToolsForSkillState(resolved, loadedSkills)
 		planningReq.ToolChoice = "auto"
 
 		planningResp, err := s.llmClient.AppChat(ctx, newBillingAppContext(prepared), planningReq)
 		if err != nil {
-			return "", nil, err
+			return answerBuilder.String(), usage, err
 		}
+		usage = mergeUsage(usage, planningRespUsage(planningResp))
 		planningMessage := firstPlanningMessage(planningResp)
 		toolCalls := normalizeToolCalls(planningMessage.ToolCalls)
+		text := assistantMessageText(planningMessage)
+		if text != "" && len(toolCalls) > 0 {
+			s.emitAgentProgress(ctx, prepared, text, onEvent)
+		}
+		if len(toolCalls) == 0 && prepared.parts.SkillMode == skillModeRequired && !skillUsed {
+			return answerBuilder.String(), usage, fmt.Errorf("%w: required skill was not used", ErrInvalidInput)
+		}
+		if text != "" && len(toolCalls) == 0 {
+			answerBuilder.WriteString(text)
+			s.emitAnswerChunk(ctx, prepared, text, onChunk)
+		}
 		if len(toolCalls) == 0 {
-			if prepared.parts.SkillMode == skillModeRequired && !skillUsed {
-				return "", nil, fmt.Errorf("%w: required skill was not used", ErrInvalidInput)
-			}
 			logger.DebugContext(ctx, "aichat skill planning completed",
 				"conversation_id", prepared.Conversation.ID.String(),
 				"message_id", prepared.Message.ID.String(),
 				"skill_step_count", stepCount,
 				"tool_call_count", toolCallCount,
 			)
-			break
+			return answerBuilder.String(), usage, nil
 		}
 		if stepCount+len(toolCalls) > maxSkillSteps {
 			logger.WarnContext(ctx, "aichat skill step limit exceeded",
@@ -104,7 +127,7 @@ func (s *service) runPreparedSkillStream(
 				"requested_tool_calls", len(toolCalls),
 				"max_steps", maxSkillSteps,
 			)
-			return "", nil, fmt.Errorf("%w: too many skill steps", ErrInvalidInput)
+			return answerBuilder.String(), usage, fmt.Errorf("%w: too many skill steps", ErrInvalidInput)
 		}
 		logger.DebugContext(ctx, "aichat skill planning requested tool calls",
 			"conversation_id", prepared.Conversation.ID.String(),
@@ -119,37 +142,31 @@ func (s *service) runPreparedSkillStream(
 
 		for _, call := range toolCalls {
 			stepCount++
-			trace, toolMessage, usedSkill, usedTool, err := s.handleProgressiveSkillCall(ctx, prepared, resolved, call, execCtx, toolCallCount, skillToolCallCounts, loadedSkills, onEvent)
-			traces = append(traces, trace)
+			result := s.handleProgressiveSkillCall(ctx, prepared, resolved, call, execCtx, toolCallCount, skillToolCallCounts, loadedSkills, onEvent)
+			traces = append(traces, result.trace)
 			s.persistSkillTracesBestEffort(persistCtx, prepared, traces)
-			s.logSkillTrace(ctx, prepared, trace)
-			if err != nil {
-				s.emitSkillError(ctx, prepared, trace, onEvent)
-				return "", nil, err
+			s.logSkillTrace(ctx, prepared, result.trace)
+			if result.recoverable {
+				s.emitSkillError(ctx, prepared, result.trace, onEvent)
 			}
-			if usedSkill {
+			if result.fatalErr != nil {
+				if !result.recoverable {
+					s.emitSkillError(ctx, prepared, result.trace, onEvent)
+				}
+				return answerBuilder.String(), usage, result.fatalErr
+			}
+			if result.usedSkill {
 				skillUsed = true
 			}
-			if usedTool {
+			if result.usedTool {
 				toolCallCount++
-				incrementSkillToolCallCount(skillToolCallCounts, trace.SkillID)
+				incrementSkillToolCallCount(skillToolCallCounts, result.trace.SkillID)
 			}
-			messages = append(messages, toolMessage)
+			messages = append(messages, result.toolMessage)
 		}
 	}
 
-	finalReq := cloneChatRequest(prepared.LLMRequest)
-	finalReq.Messages = messages
-	finalReq.Stream = true
-	finalReq.Tools = nil
-	finalReq.ToolChoice = nil
-	prepared.LLMRequest = finalReq
-
-	stream, err := s.openChatStream(ctx, prepared)
-	if err != nil {
-		return "", nil, err
-	}
-	return s.collectStreamAnswer(ctx, prepared, stream, onChunk)
+	return answerBuilder.String(), usage, fmt.Errorf("%w: too many skill planning rounds", ErrInvalidInput)
 }
 
 func (s *service) handleProgressiveSkillCall(
@@ -162,11 +179,11 @@ func (s *service) handleProgressiveSkillCall(
 	skillToolCallCounts map[string]int,
 	loadedSkills map[string]struct{},
 	onEvent func(StreamEvent) error,
-) (skills.SkillTrace, adapter.Message, bool, bool, error) {
+) skillStepResult {
 	args, err := skills.ParseArguments(call.Function.Arguments)
 	if err != nil {
 		trace := failedSkillTrace("meta_tool", call.Function.Name, err)
-		return trace, skills.ToolResultMessage(call.ID, errorPayload(err)), false, false, err
+		return recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, recoverableErrorPayload(err, "fix the JSON arguments and retry the same tool call")), false, false)
 	}
 	switch call.Function.Name {
 	case skills.MetaToolLoadSkill:
@@ -175,7 +192,7 @@ func (s *service) handleProgressiveSkillCall(
 		if _, ok := loadedSkills[normalizedSkillArg(args, "skill_id")]; !ok {
 			trace := blockedSkillGuardrailTrace(stringArg(args, "skill_id"), "", "skill must be loaded before reading references")
 			trace.SkillID = stringArg(args, "skill_id")
-			return trace, skills.ToolResultMessage(call.ID, guardrailPayload(trace)), false, false, nil
+			return successfulSkillStep(trace, skills.ToolResultMessage(call.ID, guardrailPayload(trace)), false, false)
 		}
 		return s.handleReadReferenceCall(ctx, prepared, resolved, call.ID, args, onEvent)
 	case skills.MetaToolCallSkillTool:
@@ -184,28 +201,64 @@ func (s *service) handleProgressiveSkillCall(
 		toolArgs := mapArg(args, "arguments")
 		if _, ok := loadedSkills[skillID]; !ok {
 			trace := blockedSkillGuardrailTrace(stringArg(args, "skill_id"), toolName, "skill must be loaded before calling its tools")
-			return trace, skills.ToolResultMessage(call.ID, guardrailPayload(trace)), false, false, nil
+			return successfulSkillStep(trace, skills.ToolResultMessage(call.ID, guardrailPayload(trace)), false, false)
 		}
 		if doc, ok := resolved.Get(skillID); ok && len(doc.Tools) == 0 {
 			trace := blockedSkillGuardrailTrace(skillID, toolName, "skill does not provide callable tools")
-			return trace, skills.ToolResultMessage(call.ID, guardrailPayload(trace)), true, false, nil
+			return successfulSkillStep(trace, skills.ToolResultMessage(call.ID, guardrailPayload(trace)), true, false)
 		}
 		if currentToolCalls >= maxBusinessToolCalls(resolved) {
 			err := fmt.Errorf("%w: too many skill tool calls", ErrInvalidInput)
 			trace := skillToolLimitExceededTrace(skillID, toolName, toolArgs, err)
-			return trace, skills.ToolResultMessage(call.ID, errorPayload(err)), false, false, err
+			return fatalSkillStep(trace, skills.ToolResultMessage(call.ID, errorPayload(err)), err)
 		}
 		if skillToolCallCounts[skillID] >= maxBusinessToolCallsForSkill(resolved, skillID) {
 			err := fmt.Errorf("%w: too many skill tool calls for skill %s", ErrInvalidInput, skillID)
 			trace := skillToolLimitExceededTrace(skillID, toolName, toolArgs, err)
-			return trace, skills.ToolResultMessage(call.ID, errorPayload(err)), false, false, err
+			return fatalSkillStep(trace, skills.ToolResultMessage(call.ID, errorPayload(err)), err)
 		}
 		return s.handleCallSkillTool(ctx, prepared, resolved, call.ID, args, execCtx, onEvent)
+	case skills.MetaToolIntermediateAnswer:
+		return s.handleIntermediateAnswerCall(ctx, prepared, call.ID, args, onEvent)
 	default:
 		err := fmt.Errorf("%w: unsupported skill meta tool %s", ErrInvalidInput, call.Function.Name)
 		trace := failedSkillTrace("meta_tool", call.Function.Name, err)
-		return trace, skills.ToolResultMessage(call.ID, errorPayload(err)), false, false, err
+		return recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, recoverableErrorPayload(err, "use one of load_skill, read_skill_reference, call_skill_tool, or submit_intermediate_answer")), false, false)
 	}
+}
+
+func (s *service) handleIntermediateAnswerCall(
+	ctx context.Context,
+	prepared *PreparedChat,
+	callID string,
+	args map[string]interface{},
+	onEvent func(StreamEvent) error,
+) skillStepResult {
+	content := strings.TrimSpace(stringArg(args, "content"))
+	if content == "" {
+		err := fmt.Errorf("%w: intermediate answer content is required", ErrInvalidInput)
+		trace := failedSkillTrace("intermediate_answer", "", err)
+		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "call submit_intermediate_answer again with non-empty content")), false, false)
+	}
+	title := strings.TrimSpace(stringArg(args, "title"))
+	trace := skills.SkillTrace{
+		Kind:    "intermediate_answer",
+		Title:   title,
+		Message: content,
+		Status:  "success",
+		Arguments: map[string]interface{}{
+			"title": title,
+		},
+	}
+	s.emitPreparedEvent(ctx, prepared, streamEventIntermediateAnswer, intermediateAnswerPayload(prepared, trace), onEvent)
+	return successfulSkillStep(trace, skills.ToolResultMessage(callID, map[string]interface{}{
+		"status": "recorded",
+		"instruction": strings.Join([]string{
+			"The intermediate answer is visible to the user and saved in the run trace.",
+			"Continue with any remaining tool calls.",
+			"Your eventual user-facing reply must still be complete and self-contained; do not say see above.",
+		}, " "),
+	}), false, false)
 }
 
 func (s *service) handleLoadSkillCall(
@@ -216,12 +269,12 @@ func (s *service) handleLoadSkillCall(
 	args map[string]interface{},
 	loadedSkills map[string]struct{},
 	onEvent func(StreamEvent) error,
-) (skills.SkillTrace, adapter.Message, bool, bool, error) {
+) skillStepResult {
 	skillID := stringArg(args, "skill_id")
 	s.emitPreparedEvent(ctx, prepared, streamEventSkillLoadStart, skillLoadPayload(prepared, skillID), onEvent)
 	doc, trace, err := s.skillRuntime.LoadSkill(ctx, resolved, skillID)
 	if err != nil {
-		return trace, skills.ToolResultMessage(callID, errorPayload(err)), false, false, err
+		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "choose an enabled skill_id from the exposed metadata and retry")), false, false)
 	}
 	loadedSkills[doc.Metadata.ID] = struct{}{}
 	logger.DebugContext(ctx, "aichat skill loaded",
@@ -230,7 +283,7 @@ func (s *service) handleLoadSkillCall(
 		"skill_id", doc.Metadata.ID,
 	)
 	s.emitPreparedEvent(ctx, prepared, streamEventSkillLoadEnd, skillLoadEndPayload(prepared, trace), onEvent)
-	return trace, skills.ToolResultMessage(callID, skillDocumentPayload(doc)), true, false, nil
+	return successfulSkillStep(trace, skills.ToolResultMessage(callID, skillDocumentPayload(doc)), true, false)
 }
 
 func (s *service) handleReadReferenceCall(
@@ -240,12 +293,12 @@ func (s *service) handleReadReferenceCall(
 	callID string,
 	args map[string]interface{},
 	onEvent func(StreamEvent) error,
-) (skills.SkillTrace, adapter.Message, bool, bool, error) {
+) skillStepResult {
 	skillID := stringArg(args, "skill_id")
 	path := stringArg(args, "path")
 	content, trace, err := s.skillRuntime.ReadReference(ctx, resolved, skillID, path)
 	if err != nil {
-		return trace, skills.ToolResultMessage(callID, errorPayload(err)), false, false, err
+		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "use a reference path listed in the loaded SKILL.md and retry")), true, false)
 	}
 	logger.DebugContext(ctx, "aichat skill reference read",
 		"conversation_id", prepared.Conversation.ID.String(),
@@ -255,11 +308,11 @@ func (s *service) handleReadReferenceCall(
 		"duration_ms", trace.DurationMS,
 	)
 	s.emitPreparedEvent(ctx, prepared, streamEventSkillReferenceRead, skillReferenceReadPayload(prepared, trace, path), onEvent)
-	return trace, skills.ToolResultMessage(callID, map[string]interface{}{
+	return successfulSkillStep(trace, skills.ToolResultMessage(callID, map[string]interface{}{
 		"skill_id": skillID,
 		"path":     path,
 		"content":  content,
-	}), true, false, nil
+	}), true, false)
 }
 
 func (s *service) handleCallSkillTool(
@@ -270,7 +323,7 @@ func (s *service) handleCallSkillTool(
 	args map[string]interface{},
 	execCtx skills.ExecutionContext,
 	onEvent func(StreamEvent) error,
-) (skills.SkillTrace, adapter.Message, bool, bool, error) {
+) skillStepResult {
 	skillID := stringArg(args, "skill_id")
 	toolName := stringArg(args, "tool_name")
 	toolArgs := mapArg(args, "arguments")
@@ -278,14 +331,17 @@ func (s *service) handleCallSkillTool(
 	s.emitPreparedEvent(ctx, prepared, streamEventSkillCallStart, skillCallStartPayload(prepared, skillID, toolName, argumentSummary), onEvent)
 	invocation, err := s.skillRuntime.CallSkillTool(ctx, resolved, skillID, toolName, toolArgs, execCtx, callID)
 	if invocation == nil {
+		if err == nil {
+			err = fmt.Errorf("%w: skill tool returned no invocation result", ErrInvalidInput)
+		}
 		trace := failedSkillTrace("tool_call", toolName, err)
 		trace.SkillID = skillID
 		trace.Arguments = argumentSummary
-		return trace, skills.ToolResultMessage(callID, errorPayload(err)), false, false, err
+		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "fix the tool_name or arguments and retry")), true, true)
 	}
 	invocation.Trace.Arguments = argumentSummary
 	if err != nil {
-		return invocation.Trace, skills.ToolResultMessage(callID, errorPayload(err)), false, false, err
+		return recoverableSkillStep(invocation.Trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "fix the tool arguments based on the error and retry")), true, true)
 	}
 	logger.DebugContext(ctx, "aichat skill tool completed",
 		"conversation_id", prepared.Conversation.ID.String(),
@@ -299,7 +355,34 @@ func (s *service) handleCallSkillTool(
 		s.persistGeneratedArtifactBestEffort(ctx, prepared, artifact)
 		s.emitPreparedEvent(ctx, prepared, streamEventSkillArtifactCreated, artifact, onEvent)
 	}
-	return invocation.Trace, invocation.ToolMessage, true, true, nil
+	return successfulSkillStep(invocation.Trace, invocation.ToolMessage, true, true)
+}
+
+func successfulSkillStep(trace skills.SkillTrace, toolMessage adapter.Message, usedSkill bool, usedTool bool) skillStepResult {
+	return skillStepResult{
+		trace:       trace,
+		toolMessage: toolMessage,
+		usedSkill:   usedSkill,
+		usedTool:    usedTool,
+	}
+}
+
+func recoverableSkillStep(trace skills.SkillTrace, toolMessage adapter.Message, usedSkill bool, usedTool bool) skillStepResult {
+	return skillStepResult{
+		trace:       trace,
+		toolMessage: toolMessage,
+		usedSkill:   usedSkill,
+		usedTool:    usedTool,
+		recoverable: true,
+	}
+}
+
+func fatalSkillStep(trace skills.SkillTrace, toolMessage adapter.Message, err error) skillStepResult {
+	return skillStepResult{
+		trace:       trace,
+		toolMessage: toolMessage,
+		fatalErr:    err,
+	}
 }
 
 func (s *service) skillExecutionContext(prepared *PreparedChat) skills.ExecutionContext {
@@ -313,6 +396,54 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 		ConversationID: prepared.Conversation.ID.String(),
 		AppID:          prepared.Conversation.ID.String(),
 		MessageID:      prepared.Message.ID.String(),
+	}
+}
+
+func (s *service) emitAnswerChunk(ctx context.Context, prepared *PreparedChat, text string, onChunk func(string) error) {
+	if strings.TrimSpace(text) == "" {
+		return
+	}
+	payload := map[string]interface{}{
+		"conversation_id": prepared.Conversation.ID.String(),
+		"message_id":      prepared.Message.ID.String(),
+		"answer":          text,
+	}
+	s.appendStreamEventBestEffort(ctx, prepared.Message.ID, prepared.Conversation.ID, streamEventMessage, payload)
+	if onChunk == nil {
+		return
+	}
+	if err := onChunk(text); err != nil {
+		logger.WarnContext(ctx, "failed to deliver aichat stream chunk to client", "message_id", prepared.Message.ID.String(), err)
+	}
+}
+
+func (s *service) emitAgentProgress(ctx context.Context, prepared *PreparedChat, text string, onEvent func(StreamEvent) error) {
+	content := strings.TrimSpace(text)
+	if content == "" {
+		return
+	}
+	s.emitPreparedEvent(ctx, prepared, streamEventAgentProgress, map[string]interface{}{
+		"conversation_id": prepared.Conversation.ID.String(),
+		"message_id":      prepared.Message.ID.String(),
+		"content":         content,
+		"created_at":      time.Now().Unix(),
+	}, onEvent)
+}
+
+func agenticSkillLoopSystemMessage() adapter.Message {
+	return adapter.Message{
+		Role: "system",
+		Content: strings.Join([]string{
+			"When using skills or tools, briefly explain your next action to the user before calling a skill/tool.",
+			"After each skill/tool result, summarize what happened. If a tool call fails, explain the likely cause, fix the arguments, and retry when possible.",
+			"Progress text sent together with tool calls is transient status text. Keep it short and do not place substantial user deliverables there.",
+			"If the user request has multiple ordered phases and a phase produces a user-facing deliverable before later tool/skill calls, you MUST call submit_intermediate_answer for that deliverable before continuing.",
+			"Examples of user-facing deliverables that MUST use submit_intermediate_answer when followed by more tool/skill calls: novel outlines, long-form drafts, plans, tables, code sketches, analysis sections, or generated content the user asked for.",
+			"Do not skip submit_intermediate_answer by postponing or summarizing that deliverable if the user explicitly asked for it as an intermediate phase.",
+			"When no more tool or skill calls are needed, send a natural user-facing reply that is complete and self-contained. If you did not call submit_intermediate_answer for a requested deliverable, that reply MUST include the deliverable in full, not a compressed summary.",
+			"Do not label the user-facing reply with protocol wording such as Final Answer, final result, or their Chinese equivalents unless the user explicitly asks for that wording.",
+			"Never refer to intermediate or progress content as above, earlier, or previously.",
+		}, "\n"),
 	}
 }
 
@@ -335,6 +466,27 @@ func cloneChatRequest(source *adapter.ChatRequest) *adapter.ChatRequest {
 	return &cloned
 }
 
+func planningRespUsage(resp *adapter.ChatResponse) *adapter.Usage {
+	if resp == nil {
+		return nil
+	}
+	return resp.Usage
+}
+
+func mergeUsage(current *adapter.Usage, next *adapter.Usage) *adapter.Usage {
+	if next == nil {
+		return current
+	}
+	if current == nil {
+		cloned := *next
+		return &cloned
+	}
+	current.PromptTokens += next.PromptTokens
+	current.CompletionTokens += next.CompletionTokens
+	current.TotalTokens += next.TotalTokens
+	return current
+}
+
 func firstPlanningMessage(resp *adapter.ChatResponse) adapter.Message {
 	if resp == nil || len(resp.Choices) == 0 {
 		return adapter.Message{Role: "assistant"}
@@ -344,6 +496,23 @@ func firstPlanningMessage(resp *adapter.ChatResponse) adapter.Message {
 		message.Role = "assistant"
 	}
 	return message
+}
+
+func assistantMessageText(message adapter.Message) string {
+	switch typed := message.Content.(type) {
+	case string:
+		return typed
+	case []adapter.MessageContentPart:
+		parts := make([]string, 0, len(typed))
+		for _, part := range typed {
+			if part.Type == "text" && strings.TrimSpace(part.Text) != "" {
+				parts = append(parts, part.Text)
+			}
+		}
+		return strings.Join(parts, "")
+	default:
+		return ""
+	}
 }
 
 func normalizeToolCalls(calls []adapter.ToolCall) []adapter.ToolCall {
@@ -455,9 +624,11 @@ func mergeSkillTraceMetadata(source map[string]interface{}, traces []skills.Skil
 			"kind":        trace.Kind,
 			"skill_id":    trace.SkillID,
 			"tool_name":   trace.ToolName,
+			"title":       trace.Title,
 			"status":      trace.Status,
 			"duration_ms": trace.DurationMS,
 			"arguments":   trace.Arguments,
+			"message":     trace.Message,
 			"error":       trace.Error,
 		})
 	}
@@ -479,7 +650,7 @@ func countSkillActionTraces(traces []skills.SkillTrace) int {
 	count := 0
 	for _, trace := range traces {
 		switch trace.Kind {
-		case "skill_load", "reference_read", "tool_call", "guardrail":
+		case "skill_load", "reference_read", "tool_call", "guardrail", "intermediate_answer":
 			count++
 		}
 	}
@@ -570,25 +741,25 @@ func stringFromAny(value interface{}) string {
 
 func maxBusinessToolCalls(resolved *skills.ResolvedSkills) int {
 	if resolved == nil || len(resolved.Skills) == 0 {
-		return 3
+		return defaultMaxBusinessToolCallsPerSkill
 	}
 	total := 0
 	for _, doc := range resolved.Skills {
 		if doc.Metadata.MaxCallsPerTurn <= 0 {
-			total += 3
+			total += defaultMaxBusinessToolCallsPerSkill
 			continue
 		}
 		total += doc.Metadata.MaxCallsPerTurn
 	}
 	if total <= 0 {
-		return 3
+		return defaultMaxBusinessToolCallsPerSkill
 	}
 	return total
 }
 
 func maxBusinessToolCallsForSkill(resolved *skills.ResolvedSkills, skillID string) int {
 	if resolved == nil {
-		return 3
+		return defaultMaxBusinessToolCallsPerSkill
 	}
 	skillID = strings.ToLower(strings.TrimSpace(skillID))
 	for _, doc := range resolved.Skills {
@@ -598,9 +769,9 @@ func maxBusinessToolCallsForSkill(resolved *skills.ResolvedSkills, skillID strin
 		if doc.Metadata.MaxCallsPerTurn > 0 {
 			return doc.Metadata.MaxCallsPerTurn
 		}
-		return 3
+		return defaultMaxBusinessToolCallsPerSkill
 	}
-	return 3
+	return defaultMaxBusinessToolCallsPerSkill
 }
 
 func incrementSkillToolCallCount(counts map[string]int, skillID string) {

@@ -3,12 +3,14 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useStore } from 'zustand';
 import type {
+  AIChatAgentProgressEventData,
   AIChatConversation,
   AIChatErrorEventData,
   AIChatFileParseEndEventData,
   AIChatFileParseErrorEventData,
   AIChatFileParseStartEventData,
   AIChatMessage,
+  AIChatIntermediateAnswerEventData,
   AIChatMessageChunkEventData,
   AIChatMessageEndEventData,
   AIChatMessageFile,
@@ -51,6 +53,7 @@ import {
   canReplaceRootMessage,
   getNextActiveSendingState,
   mergeSelectedMessagesWithStreamingState,
+  seedStreamingTimelineFromMessages,
   selectActiveConversation,
   selectActiveMessagePagination,
   selectActiveMessages,
@@ -64,6 +67,8 @@ import {
 } from '@/components/chat/controllers/aichat/selectors';
 import {
   applyMessageChunkState,
+  applyAgentProgressState,
+  applyIntermediateAnswerState,
   applyFileParseEndState,
   applyFileParseErrorState,
   applyFileParseStartState,
@@ -97,6 +102,20 @@ const AICHAT_STREAM_EVENTS_EXPIRED = 'stream events expired';
 
 function createClientDraftId(prefix: string): string {
   return generateClientId(prefix);
+}
+
+function removeRunningStreamingStateByConversation(
+  streamingByMessageId: AIChatControllerState['streamingByMessageId'],
+  conversationId: string
+): AIChatControllerState['streamingByMessageId'] {
+  const nextStreamingByMessageId = { ...streamingByMessageId };
+  Object.values(streamingByMessageId).forEach(streaming => {
+    if (streaming.conversation_id !== conversationId) return;
+    if (streaming.status === 'streaming' || !streaming.timeline?.length) {
+      delete nextStreamingByMessageId[streaming.message_id];
+    }
+  });
+  return nextStreamingByMessageId;
 }
 
 /**
@@ -219,7 +238,7 @@ export function useAIChatController(): AIChatController {
             return {
               ...nextState,
               isSending: getNextActiveSendingState(current, conversationId, false),
-              streamingByMessageId: removeStreamingStateByConversation(
+              streamingByMessageId: removeRunningStreamingStateByConversation(
                 current.streamingByMessageId,
                 conversationId
               ),
@@ -412,6 +431,22 @@ export function useAIChatController(): AIChatController {
       }
 
       setControllerState(current => applySkillArtifactCreatedState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
+  const applyAgentProgress = useCallback(
+    (payload: AIChatAgentProgressEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id || !payload.content) return;
+      setControllerState(current => applyAgentProgressState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
+  const applyIntermediateAnswer = useCallback(
+    (payload: AIChatIntermediateAnswerEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id || !payload.content) return;
+      setControllerState(current => applyIntermediateAnswerState(current, payload, eventId));
     },
     [setControllerState]
   );
@@ -620,6 +655,7 @@ export function useAIChatController(): AIChatController {
                 message_id: messageId,
                 answer: nextMessage.answer,
                 status: 'streaming',
+                timeline: previousStreaming?.timeline ?? [],
                 last_event_id: afterId,
                 replay_base_answer: shouldDedupeReplay
                   ? preservedAnswer
@@ -672,6 +708,14 @@ export function useAIChatController(): AIChatController {
                   { resetAnswer: false, mode: getCurrentMode(), moveToTop: false },
                   eventId
                 );
+              },
+              onAgentProgress: (payload, eventId) => {
+                if (abortController.signal.aborted) return;
+                applyAgentProgress(payload, eventId);
+              },
+              onIntermediateAnswer: (payload, eventId) => {
+                if (abortController.signal.aborted) return;
+                applyIntermediateAnswer(payload, eventId);
               },
               onFileParseStart: (payload, eventId) => {
                 if (abortController.signal.aborted) return;
@@ -763,6 +807,8 @@ export function useAIChatController(): AIChatController {
       connect(0);
     },
     [
+      applyAgentProgress,
+      applyIntermediateAnswer,
       applyFileParseEnd,
       applyFileParseError,
       applyFileParseStart,
@@ -816,13 +862,26 @@ export function useAIChatController(): AIChatController {
       }
       const hasCachedMessages =
         (previousState.messagesByConversation[conversationId]?.length ?? 0) > 0;
-      setControllerState(current => ({
-        ...current,
-        activeConversationId: conversationId,
-        isLoadingMessages: !hasCachedMessages,
-        isSending: shouldTreatConversationAsRunning(current, conversationId),
-        error: null,
-      }));
+      setControllerState(current => {
+        const cachedConversation = current.conversations.find(
+          conversation => conversation.id === conversationId
+        );
+        const cachedMessages = current.messagesByConversation[conversationId] ?? [];
+        return {
+          ...current,
+          activeConversationId: conversationId,
+          isLoadingMessages: !hasCachedMessages,
+          isSending: shouldTreatConversationAsRunning(current, conversationId),
+          streamingByMessageId: cachedConversation
+            ? seedStreamingTimelineFromMessages(
+                cachedConversation,
+                cachedMessages,
+                current.streamingByMessageId
+              )
+            : current.streamingByMessageId,
+          error: null,
+        };
+      });
 
       try {
         const { conversation, messages, messagePagination } =
@@ -852,7 +911,11 @@ export function useAIChatController(): AIChatController {
               [conversationId]: messagePagination,
             },
             streamingByMessageId: isStreamingConversation
-              ? current.streamingByMessageId
+              ? seedStreamingTimelineFromMessages(
+                  conversation,
+                  mergeSelectedMessagesWithStreamingState(conversation, messages, current),
+                  current.streamingByMessageId
+                )
               : removeStreamingStateByConversation(current.streamingByMessageId, conversationId),
             recoveringByConversation: isStreamingConversation
               ? current.recoveringByConversation
@@ -881,7 +944,11 @@ export function useAIChatController(): AIChatController {
             current
           );
           const nextStreamingByMessageId = isStreamingConversation
-            ? current.streamingByMessageId
+            ? seedStreamingTimelineFromMessages(
+                conversation,
+                nextMessages,
+                current.streamingByMessageId
+              )
             : removeStreamingStateByConversation(current.streamingByMessageId, conversationId);
 
           return {
@@ -1439,6 +1506,7 @@ export function useAIChatController(): AIChatController {
               message_id: draftMessageId,
               answer: '',
               status: 'streaming',
+              timeline: [],
             },
           },
           isSending: true,
@@ -1479,6 +1547,14 @@ export function useAIChatController(): AIChatController {
                 },
                 eventId
               );
+            },
+            onAgentProgress: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              applyAgentProgress(payload, eventId);
+            },
+            onIntermediateAnswer: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              applyIntermediateAnswer(payload, eventId);
             },
             onFileParseStart: (payload, eventId) => {
               if (abortController.signal.aborted) return;
@@ -1600,6 +1676,8 @@ export function useAIChatController(): AIChatController {
       }
     },
     [
+      applyAgentProgress,
+      applyIntermediateAnswer,
       applyFileParseEnd,
       applyFileParseError,
       applyFileParseStart,
@@ -1685,6 +1763,14 @@ export function useAIChatController(): AIChatController {
                 },
                 eventId
               );
+            },
+            onAgentProgress: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              applyAgentProgress(payload, eventId);
+            },
+            onIntermediateAnswer: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              applyIntermediateAnswer(payload, eventId);
             },
             onFileParseStart: (payload, eventId) => {
               if (abortController.signal.aborted) return;
@@ -1780,6 +1866,8 @@ export function useAIChatController(): AIChatController {
       }
     },
     [
+      applyAgentProgress,
+      applyIntermediateAnswer,
       applyFileParseEnd,
       applyFileParseError,
       applyFileParseStart,
@@ -1860,6 +1948,7 @@ export function useAIChatController(): AIChatController {
   const activeConversationId = useStore(store, state => state.activeConversationId);
   const activeConversation = useStore(store, selectActiveConversation);
   const messages = useStore(store, selectActiveMessages);
+  const streamingByMessageId = useStore(store, state => state.streamingByMessageId);
   const activeMessagePagination = useStore(store, selectActiveMessagePagination);
   const isLoadingList = useStore(store, state => state.isLoadingList);
   const isLoadingMessages = useStore(store, state => state.isLoadingMessages);
@@ -1903,6 +1992,7 @@ export function useAIChatController(): AIChatController {
     activeConversationId,
     activeConversation,
     messages,
+    streamingByMessageId,
     displayMessageIds,
     displayMessages,
     branchNavigationByMessageId,

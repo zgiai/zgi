@@ -122,6 +122,17 @@ func skillReferenceReadPayload(prepared *PreparedChat, trace skills.SkillTrace, 
 	}
 }
 
+func intermediateAnswerPayload(prepared *PreparedChat, trace skills.SkillTrace) map[string]interface{} {
+	return map[string]interface{}{
+		"conversation_id": prepared.Conversation.ID.String(),
+		"message_id":      prepared.Message.ID.String(),
+		"title":           trace.Title,
+		"content":         trace.Message,
+		"status":          trace.Status,
+		"created_at":      time.Now().Unix(),
+	}
+}
+
 func (s *service) emitSkillError(ctx context.Context, prepared *PreparedChat, trace skills.SkillTrace, onEvent func(StreamEvent) error) {
 	s.emitPreparedEvent(ctx, prepared, streamEventSkillCallError, skillCallErrorPayload(prepared, trace), onEvent)
 }
@@ -222,6 +233,13 @@ func errorPayload(err error) map[string]interface{} {
 	return map[string]interface{}{
 		"error": message,
 	}
+}
+
+func recoverableErrorPayload(err error, nextAction string) map[string]interface{} {
+	payload := errorPayload(err)
+	payload["recoverable"] = true
+	payload["next_action"] = strings.TrimSpace(nextAction)
+	return payload
 }
 
 func guardrailPayload(trace skills.SkillTrace) map[string]interface{} {

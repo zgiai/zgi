@@ -1,7 +1,7 @@
 'use client';
 
 import { ModelIcon } from 'modelicons';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, Download, FileImage, FileText, Loader2 } from 'lucide-react';
 import MarkdownViewer from '@/components/common/markdown-viewer';
 import {
@@ -28,13 +28,16 @@ import {
   UserEditToolbar,
   UserMessageToolbar,
 } from '@/components/chat/variants/aichat/message-toolbars';
-import { AIChatSkillTracePanel } from '@/components/chat/variants/aichat/skill-trace-panel';
+import { AIChatAgenticTimeline } from '@/components/chat/variants/aichat/agentic-timeline';
 import type { AIChatSkillDisplayMap } from '@/components/chat/variants/aichat/skill-display';
+import type { AIChatAgenticTimelineItem } from '@/components/chat/controllers/aichat';
+import { timelineFromAIChatMessage } from '@/components/chat/controllers/aichat/selectors';
 import { MAX_AICHAT_BRANCHES } from '@/components/chat/variants/aichat/types';
 
 interface AIChatMessageBubbleProps {
   message: AIChatMessage;
   isSending?: boolean;
+  timeline?: AIChatAgenticTimelineItem[];
   skillDisplayById: AIChatSkillDisplayMap;
   isLastMessage?: boolean;
   canReplaceRoot?: boolean;
@@ -228,6 +231,7 @@ function AIChatGeneratedFileCard({ file }: AIChatGeneratedFileCardProps) {
 export function AIChatMessageBubble({
   message,
   isSending = false,
+  timeline = [],
   skillDisplayById,
   isLastMessage = false,
   canReplaceRoot = false,
@@ -266,9 +270,19 @@ export function AIChatMessageBubble({
   const generatedFiles = message.metadata?.generated_files ?? [];
   const imageFiles = files.filter(file => file.kind === 'image');
   const documentFiles = files.filter(file => file.kind !== 'image');
-  const skillInvocations = (message.metadata?.skill_invocations ?? []).filter(
-    invocation => invocation.kind !== 'metadata_exposed'
+  const historicalTimeline = useMemo<AIChatAgenticTimelineItem[]>(
+    () => timelineFromAIChatMessage(message),
+    [message]
   );
+  const displayTimeline = timeline.length > 0 ? timeline : historicalTimeline;
+  const hasTimeline = displayTimeline.length > 0;
+  const shouldOpenTimelineByDefault =
+    isStreaming ||
+    displayTimeline.some(
+      item =>
+        item.type === 'skill_event' &&
+        (item.invocation.status === 'error' || item.invocation.status === 'blocked')
+    );
 
   return (
     <div className="group space-y-3">
@@ -405,10 +419,14 @@ export function AIChatMessageBubble({
             {isStopped ? <span>{t('consoleChat.stopped')}</span> : null}
           </div>
 
-          <AIChatSkillTracePanel
-            invocations={skillInvocations}
-            skillDisplayById={skillDisplayById}
-          />
+          {hasTimeline ? (
+            <AIChatAgenticTimeline
+              key={`${message.id}-${isStreaming ? 'streaming' : 'history'}-${shouldOpenTimelineByDefault ? 'open' : 'closed'}`}
+              timeline={displayTimeline}
+              skillDisplayById={skillDisplayById}
+              defaultOpen={shouldOpenTimelineByDefault}
+            />
+          ) : null}
 
           {generatedFiles.length > 0 ? (
             <div className="mb-3 flex flex-wrap gap-2">
@@ -434,7 +452,7 @@ export function AIChatMessageBubble({
                 />
               )}
             </div>
-          ) : isStreaming ? (
+          ) : isStreaming && !hasTimeline ? (
             <div className="space-y-2 pt-1">
               <Skeleton className="h-4 w-2/3" />
               <Skeleton className="h-4 w-1/2" />

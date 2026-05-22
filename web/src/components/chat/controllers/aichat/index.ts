@@ -2,6 +2,7 @@ export type {
   AIChatController,
   AIChatControllerState,
   AIChatControllerStore,
+  AIChatAgenticTimelineItem,
   AIChatMessageStartContext,
   AIChatModelSelection,
   AIChatPagination,
