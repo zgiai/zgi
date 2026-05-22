@@ -435,6 +435,28 @@ const useWorkflowOperations = () => {
       const defaultPrompt = isConversational
         ? defaultConversationalPrompt
         : defaultStandardPrompt;
+      const promptTemplate = [
+        {
+          id: 'system',
+          role: 'system' as const,
+          text: defaultPrompt.text,
+        },
+        ...(isConversational
+          ? [
+              {
+                id: 'current-user',
+                role: 'user' as const,
+                text: '{{#sys.query#}}',
+                group_id: 'current-user',
+                group_kind: 'current_user' as const,
+              },
+            ]
+          : []),
+      ];
+      const promptLayoutItems = isConversational
+        ? [{ type: 'group' as const, group_id: 'current-user' }]
+        : [];
+
       const baseData = {
         ...DEFAULT_LLM_NODE_DATA,
         type: 'llm' as const,
@@ -453,23 +475,10 @@ const useWorkflowOperations = () => {
           mode: 'chat' as const,
           completion_params: {},
         },
-        prompt_template: [
-          {
-            id: 'system',
-            role: 'system' as const,
-            text: defaultPrompt.text,
-          },
-          {
-            id: 'current-user',
-            role: 'user' as const,
-            text: isConversational ? '{{#sys.query#}}' : '',
-            group_id: 'current-user',
-            group_kind: 'current_user' as const,
-          },
-        ],
+        prompt_template: promptTemplate,
         prompt_layout: {
           version: 1 as const,
-          items: [{ type: 'group' as const, group_id: 'current-user' }],
+          items: promptLayoutItems,
         },
         prompt_config: {
           jinja2_variables: [],

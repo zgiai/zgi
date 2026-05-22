@@ -338,17 +338,10 @@ export function useWorkflowLifecycle({
             role: 'system' as const,
             text: defaultStandardPrompt.text,
           },
-          {
-            id: `${llmId}-u1`,
-            role: 'user' as const,
-            text: `{{#${startId}.input#}}`,
-            group_id: `${llmId}-current-user`,
-            group_kind: 'current_user' as const,
-          },
         ],
         prompt_layout: {
           version: 1 as const,
-          items: [{ type: 'group' as const, group_id: `${llmId}-current-user` }],
+          items: [],
         },
         prompt_source: 'inline',
         prompt_reference: undefined,
