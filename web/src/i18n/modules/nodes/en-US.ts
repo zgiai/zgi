@@ -994,6 +994,8 @@ const messages = {
       systemFixedDescription: 'System prompt is fixed at the beginning and is edited in the main panel.',
       contextPlaceholder: 'Context',
       contextPlaceholderDescription: 'Provide the model with more information or answer examples.',
+      historyPanelHint:
+        'Use context arrangement when you need to move conversation history or add example conversations.',
       historyRoundsPreview: 'Insert up to {count} recent conversation round(s).',
       userLine: 'User: ',
       assistantLine: 'Assistant: ',

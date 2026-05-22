@@ -946,6 +946,7 @@ const messages: NodesMessages = {
       systemFixedDescription: '系统提示词固定在最前方，在主面板中编辑。',
       contextPlaceholder: '上下文',
       contextPlaceholderDescription: '为模型提供更多的信息或回答示例。',
+      historyPanelHint: '需要调整历史对话和示例对话的位置时，可以进入上下文编排。',
       historyRoundsPreview: '最多插入最近 {count} 轮历史对话。',
       userLine: '用户：',
       assistantLine: '回答：',
