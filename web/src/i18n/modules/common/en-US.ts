@@ -264,18 +264,29 @@ const messages = {
       recipients: 'Phone numbers',
       template: 'SMS template',
     },
+    setup: {
+      title: 'SMS service is not configured',
+      description:
+        'Configure the SMS provider, SMS signature, and SMS templates before using SMS notifications.',
+      templatePlaceholder: 'SMS templates are not configured',
+    },
     templates: {
       pendingActionNotification: 'Pending action notification',
+      workflowAlert: 'Workflow alert',
     },
     params: {
       notificationTitle: 'Notification title',
       linkCode: 'Link code',
+      remark: 'Remark',
+      summary: 'Summary',
     },
     placeholders: {
       recipient: 'Phone number {index}',
       recipientSingle: 'Phone numbers, separated by commas',
       notificationTitle: 'New task pending',
       linkCode: 'task or notice link code',
+      remark: 'Enter remark',
+      summary: 'Enter summary',
       param: 'Enter {label}',
     },
     actions: {

@@ -32,6 +32,8 @@ const messages = {
     'notification-sms': {
       title: 'Send SMS',
       description: 'Send a template-based SMS notification through the backend configured provider',
+      setupRequired:
+        'SMS notifications are not configured. Configure the SMS provider, SMS signature, and SMS templates first.',
       label: 'SMS',
     },
     code: {
