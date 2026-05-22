@@ -48,6 +48,7 @@ const messages = {
     cancelAction: 'Cancel',
     errorDetails: 'View error details',
     invalidFileToast: '{file}: {reason}',
+    duplicateFile: '{file} is already in the list and was skipped',
   },
 };
 

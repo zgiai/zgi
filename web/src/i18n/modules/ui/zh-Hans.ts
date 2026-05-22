@@ -50,6 +50,7 @@ const messages: UiMessages = {
     cancelAction: '取消',
     errorDetails: '查看错误详情',
     invalidFileToast: '{file}：{reason}',
+    duplicateFile: '{file} 已在列表中，已跳过重复添加',
   },
 };
 
