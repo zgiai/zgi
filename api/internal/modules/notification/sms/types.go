@@ -8,6 +8,8 @@ import (
 const (
 	FeatureNotificationSMS            = "notification_sms"
 	TemplatePendingActionNotification = "pending_action_notification"
+	TemplateParamNotificationTitle    = "notification_title"
+	TemplateParamLinkCode             = "link_code"
 	ProviderAliyun                    = "aliyun"
 	ProviderChuanglan                 = "chuanglan"
 	ParamModeMap                      = "map"

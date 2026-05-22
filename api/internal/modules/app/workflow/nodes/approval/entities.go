@@ -3,6 +3,7 @@ package approval
 import (
 	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/base"
+	notificationsms "github.com/zgiai/zgi/api/internal/modules/notification/sms"
 )
 
 type NodeData struct {
@@ -14,5 +15,6 @@ type NodeData struct {
 
 type Node struct {
 	base.NodeStruct
-	NodeData NodeData
+	NodeData  NodeData
+	smsSender notificationsms.Service
 }

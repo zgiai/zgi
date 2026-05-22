@@ -151,7 +151,7 @@ func (r *NodeRunner) optionalDependencies(nodeID string, nodeType shared.NodeTyp
 		}
 	}
 
-	if nodeType == shared.NotificationSMS {
+	if nodeType == shared.NotificationSMS || nodeType == shared.Approval {
 		if r.deps.NotificationSMSService != nil {
 			optionalDeps = append(optionalDeps, r.deps.NotificationSMSService)
 			logger.Info("Passing NotificationSMSService to %s node: %s", nodeType, nodeID)
