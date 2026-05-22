@@ -101,6 +101,20 @@ function createClientDraftId(prefix: string): string {
   return generateClientId(prefix);
 }
 
+function removeRunningStreamingStateByConversation(
+  streamingByMessageId: AIChatControllerState['streamingByMessageId'],
+  conversationId: string
+): AIChatControllerState['streamingByMessageId'] {
+  const nextStreamingByMessageId = { ...streamingByMessageId };
+  Object.values(streamingByMessageId).forEach(streaming => {
+    if (streaming.conversation_id !== conversationId) return;
+    if (streaming.status === 'streaming' || !streaming.timeline?.length) {
+      delete nextStreamingByMessageId[streaming.message_id];
+    }
+  });
+  return nextStreamingByMessageId;
+}
+
 /**
  * @hook useAIChatController
  * @description Dedicated controller for the standalone AIChat console page.
@@ -221,7 +235,7 @@ export function useAIChatController(): AIChatController {
             return {
               ...nextState,
               isSending: getNextActiveSendingState(current, conversationId, false),
-              streamingByMessageId: removeStreamingStateByConversation(
+              streamingByMessageId: removeRunningStreamingStateByConversation(
                 current.streamingByMessageId,
                 conversationId
               ),
