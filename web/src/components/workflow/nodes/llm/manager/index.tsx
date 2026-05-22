@@ -45,6 +45,9 @@ import {
   ChevronDown,
   ChevronUp,
   Plus,
+  BookOpenText,
+  MessageSquareText,
+  Sparkles,
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import WorkflowValueInserter from '@/components/workflow/common/workflow-value-inserter';
@@ -935,6 +938,7 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
   const [variableGuideOpen, setVariableGuideOpen] = useState(false);
   const [contextPreviewOpen, setContextPreviewOpen] = useState(false);
   const [orderDialogOpen, setOrderDialogOpen] = useState(false);
+  const [orderHelpOpen, setOrderHelpOpen] = useState(false);
   const [draftOrderItems, setDraftOrderItems] = useState<LLMPromptLayoutItem[]>([]);
   const [draftPromptBlocks, setDraftPromptBlocks] = useState<LLMNodeData['prompt_template']>([]);
   const [draftConversationHistoryEnabled, setDraftConversationHistoryEnabled] = useState(false);
@@ -2423,6 +2427,21 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
             <DialogDescription>
               {t('nodes.llm.promptOrder.orderDialogDescription')}
             </DialogDescription>
+            <div className="mt-3 flex flex-col gap-2 rounded-lg border bg-muted/20 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0 text-sm text-muted-foreground">
+                {t('nodes.llm.promptOrder.helpEntryDescription')}
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                onClick={() => setOrderHelpOpen(true)}
+              >
+                <BookOpenText className="h-4 w-4" />
+                {t('nodes.llm.promptOrder.helpEntryButton')}
+              </Button>
+            </div>
           </DialogHeader>
           <DialogBody className="space-y-3 overflow-x-hidden">
             <div className="space-y-2">
@@ -2645,6 +2664,115 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
             </Button>
             <Button onClick={handleSavePromptOrder}>
               {t('common.save')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={orderHelpOpen} onOpenChange={setOrderHelpOpen}>
+        <DialogContent size="lg">
+          <DialogHeader>
+            <DialogTitle>{t('nodes.llm.promptOrder.helpTitle')}</DialogTitle>
+            <DialogDescription>
+              {t('nodes.llm.promptOrder.helpDescription')}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogBody className="space-y-4">
+            <div className="rounded-lg border bg-primary/5 p-4">
+              <div className="flex items-center gap-2 text-sm font-semibold text-primary">
+                <MessageSquareText className="h-4 w-4" />
+                {t('nodes.llm.promptOrder.helpExampleTitle')}
+              </div>
+              <div className="mt-2 rounded-md bg-background px-3 py-2 text-sm leading-6">
+                {t('nodes.llm.promptOrder.helpExampleQuestion')}
+              </div>
+            </div>
+
+            <div className="grid gap-3">
+              <div className="text-sm font-semibold">
+                {t('nodes.llm.promptOrder.helpFlowTitle')}
+              </div>
+              <div className="grid gap-2">
+                {[
+                  {
+                    label: t('nodes.llm.promptOrder.helpFlowSystemLabel'),
+                    text: t('nodes.llm.promptOrder.helpFlowSystemText'),
+                    tone: 'border-slate-200 bg-slate-50',
+                  },
+                  {
+                    label: t('nodes.llm.promptOrder.helpFlowHistoryLabel'),
+                    text: t('nodes.llm.promptOrder.helpFlowHistoryText'),
+                    tone: 'border-sky-200 bg-sky-50',
+                  },
+                  {
+                    label: t('nodes.llm.promptOrder.helpFlowExampleLabel'),
+                    text: t('nodes.llm.promptOrder.helpFlowExampleText'),
+                    tone: 'border-violet-200 bg-violet-50',
+                  },
+                  {
+                    label: t('nodes.llm.promptOrder.helpFlowCurrentLabel'),
+                    text: t('nodes.llm.promptOrder.helpFlowCurrentText'),
+                    tone: 'border-emerald-200 bg-emerald-50',
+                  },
+                ].map((item, index, arr) => (
+                  <div key={item.label}>
+                    <div className={cn('rounded-lg border px-3 py-2', item.tone)}>
+                      <div className="flex items-center gap-2">
+                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-background text-xs font-semibold">
+                          {index + 1}
+                        </span>
+                        <span className="text-sm font-semibold">{item.label}</span>
+                      </div>
+                      <div className="mt-1 pl-7 text-xs leading-5 text-muted-foreground">
+                        {item.text}
+                      </div>
+                    </div>
+                    {index < arr.length - 1 ? (
+                      <div className="flex h-5 items-center justify-center text-muted-foreground">
+                        ↓
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-3">
+              {[
+                {
+                  title: t('nodes.llm.promptOrder.helpBenefitOrderTitle'),
+                  text: t('nodes.llm.promptOrder.helpBenefitOrderText'),
+                },
+                {
+                  title: t('nodes.llm.promptOrder.helpBenefitExampleTitle'),
+                  text: t('nodes.llm.promptOrder.helpBenefitExampleText'),
+                },
+                {
+                  title: t('nodes.llm.promptOrder.helpBenefitDebugTitle'),
+                  text: t('nodes.llm.promptOrder.helpBenefitDebugText'),
+                },
+              ].map(item => (
+                <div key={item.title} className="rounded-lg border bg-background p-3">
+                  <div className="flex items-center gap-2 text-sm font-semibold">
+                    <Sparkles className="h-4 w-4 text-primary" />
+                    {item.title}
+                  </div>
+                  <div className="mt-1 text-xs leading-5 text-muted-foreground">
+                    {item.text}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm leading-6 text-amber-950">
+              <span className="font-semibold">
+                {t('nodes.llm.promptOrder.helpTipTitle')}
+              </span>
+              {t('nodes.llm.promptOrder.helpTipText')}
+            </div>
+          </DialogBody>
+          <DialogFooter>
+            <Button onClick={() => setOrderHelpOpen(false)}>
+              {t('common.confirm')}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -919,6 +919,40 @@ const messages = {
       orderDialogTitle: 'Arrange context',
       orderDialogDescription:
         'Drag items to control the message order after the system prompt. Example conversations can only be edited here.',
+      helpEntryDescription:
+        'New to this? Open a short example to see exactly what the model receives.',
+      helpEntryButton: 'View example',
+      helpTitle: 'How does context arrangement work?',
+      helpDescription:
+        'Think of this as building an open-book packet for the model: rules first, clues and examples next, then the current question.',
+      helpExampleTitle: 'Example question',
+      helpExampleQuestion:
+        '"The customer said the plan we recommended last time is too expensive. Help me reply with a better option for a 30-person team and a steadier budget."',
+      helpFlowTitle: 'After arrangement, the model reads in this order',
+      helpFlowSystemLabel: 'System prompt',
+      helpFlowSystemText:
+        'First, set the role and boundaries: be a business assistant, answer clearly, stay actionable, and use the right tone.',
+      helpFlowHistoryLabel: 'Conversation history',
+      helpFlowHistoryText:
+        'Next, add old clues: the model knows what was recommended before and why the customer pushed back.',
+      helpFlowExampleLabel: 'Example conversation',
+      helpFlowExampleText:
+        'Then show a sample: how you want it to ask, answer, and phrase things. This is the pattern to imitate.',
+      helpFlowCurrentLabel: 'Current user input',
+      helpFlowCurrentText:
+        'Finally, give the real task. The model uses everything above as context and focuses on this message.',
+      helpBenefitOrderTitle: 'Control the order',
+      helpBenefitOrderText:
+        'You decide whether history, examples, or the current input comes first, so the model does not have to guess the priority.',
+      helpBenefitExampleTitle: 'Stabilize the style',
+      helpBenefitExampleText:
+        'Example conversations act like a sample answer, helping the model match your tone, structure, and detail level.',
+      helpBenefitDebugTitle: 'Debug faster',
+      helpBenefitDebugText:
+        'If the answer feels wrong, you can quickly see whether history is too heavy, the example is too strong, or the current input is unclear.',
+      helpTipTitle: 'Tip: ',
+      helpTipText:
+        'Most workflows work well with conversation history before the current input. If you want the model to mimic a standard exchange first, place the example conversation between history and the current input.',
       systemFixedDescription: 'System prompt is fixed at the beginning and is edited in the main panel.',
       contextPlaceholder: 'Context',
       contextPlaceholderDescription: '{count} context item(s) will be inserted between the system prompt and current user input.',
