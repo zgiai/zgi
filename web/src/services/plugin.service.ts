@@ -1,4 +1,5 @@
 import { BaseService } from '@/lib/http/services';
+import { MARKETPLACE_CHANNEL } from '@/lib/config';
 import type {
   InstalledPlugin,
   UninstallResult,
@@ -85,6 +86,7 @@ class PluginService extends BaseService {
         sort: params.sort,
         is_featured: params.is_featured !== undefined ? params.is_featured.toString() : undefined,
         is_official: params.is_official !== undefined ? params.is_official.toString() : undefined,
+        channel: MARKETPLACE_CHANNEL || undefined,
       },
     });
   }
