@@ -1,9 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { ZgiLoadingScreen } from '@/components/brand/zgi-loading-screen';
 import { useSetupStatus } from '@/hooks/use-setup';
+import { withBasePathIfInternal } from '@/lib/config';
 import { AuthRouteProviders } from '@/providers/auth-route-providers';
 import { useAuthLoading, useIsAuthenticated, useIsInitialized } from '@/store/auth-store';
 
@@ -16,7 +16,6 @@ export default function HomePage() {
 }
 
 function HomePageContent() {
-  const router = useRouter();
   const [isMounted, setIsMounted] = useState(false);
   const { isInitialized: isSetupInitialized, isLoading: isSetupLoading } = useSetupStatus();
   const isAuthInitialized = useIsInitialized();
@@ -31,16 +30,16 @@ function HomePageContent() {
     if (isSetupLoading || isAuthLoading || !isAuthInitialized) return;
 
     if (!isSetupInitialized) {
-      router.replace('/init');
+      window.location.replace(withBasePathIfInternal('/init'));
       return;
     }
 
     if (isAuthenticated) {
-      router.replace('/console');
+      window.location.replace(withBasePathIfInternal('/console'));
     } else {
-      router.replace('/login');
+      window.location.replace(withBasePathIfInternal('/login'));
     }
-  }, [isAuthInitialized, isAuthLoading, isAuthenticated, isSetupInitialized, isSetupLoading, router]);
+  }, [isAuthInitialized, isAuthLoading, isAuthenticated, isSetupInitialized, isSetupLoading]);
 
   const phase =
     !isMounted || isSetupLoading
