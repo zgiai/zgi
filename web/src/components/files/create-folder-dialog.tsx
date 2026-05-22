@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useT } from '@/i18n';
 import { FolderOpen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -22,11 +22,15 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useFileFolders } from '@/hooks/use-files';
+import { fileManageService } from '@/services/file-manage.service';
+import type { FileFolder } from '@/services/types/file';
 import {
   WorkspaceSelector,
   type WorkspaceSelectorValue,
 } from '@/components/common/workspace-selector';
 import { useCurrentWorkspace, useIsOrganizationMode } from '@/store';
+
+type FolderOption = FileFolder & { depth: number };
 
 /**
  * Create folder form data
@@ -44,13 +48,35 @@ export interface CreateFolderDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onConfirm: (data: CreateFolderData) => void;
+  initialParentId?: string;
+}
+
+async function getFolderPath(folderId: string) {
+  const path: FileFolder[] = [];
+  let currentId = folderId;
+
+  while (currentId) {
+    const response = await fileManageService.getFileFolder(currentId);
+    const folder = response.data;
+    path.unshift(folder);
+
+    if (!folder.parent_id) break;
+    currentId = folder.parent_id;
+  }
+
+  return path;
 }
 
 /**
  * Create Folder Dialog Component
  * Allows users to create a new folder with permissions and parent selection
  */
-export function CreateFolderDialog({ open, onOpenChange, onConfirm }: CreateFolderDialogProps) {
+export function CreateFolderDialog({
+  open,
+  onOpenChange,
+  onConfirm,
+  initialParentId = '',
+}: CreateFolderDialogProps) {
   const t = useT();
   const currentWorkspace = useCurrentWorkspace();
   const isOrganizationMode = useIsOrganizationMode();
@@ -63,6 +89,64 @@ export function CreateFolderDialog({ open, onOpenChange, onConfirm }: CreateFold
   // Form state
   const [folderName, setFolderName] = useState('');
   const [parentId, setParentId] = useState('root');
+  const [folderOptions, setFolderOptions] = useState<FolderOption[]>([]);
+  const [isFolderOptionsLoading, setIsFolderOptionsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setParentId(initialParentId || 'root');
+
+    let ignore = false;
+
+    const loadFolderOptions = async () => {
+      setIsFolderOptionsLoading(true);
+      const options: FolderOption[] = folders.map(folder => ({ ...folder, depth: 1 }));
+
+      try {
+        let nextParentId = 'root';
+        if (initialParentId) {
+          const existingInitialParent = options.find(folder => folder.id === initialParentId);
+          if (existingInitialParent) {
+            nextParentId = initialParentId;
+          } else {
+            const initialParentPath = await getFolderPath(initialParentId);
+            if (initialParentPath.length <= 1) {
+              const initialParentFolder = initialParentPath.at(-1);
+              if (
+                initialParentFolder &&
+                !options.some(folder => folder.id === initialParentFolder.id)
+              ) {
+                options.push({ ...initialParentFolder, depth: initialParentPath.length });
+              }
+              nextParentId = initialParentId;
+            }
+          }
+        }
+
+        if (!ignore) {
+          setFolderOptions(options);
+          setParentId(nextParentId);
+        }
+      } catch {
+        if (!ignore) {
+          setFolderOptions(options);
+          setParentId(
+            options.some(folder => folder.id === initialParentId) ? initialParentId : 'root'
+          );
+        }
+      } finally {
+        if (!ignore) {
+          setIsFolderOptionsLoading(false);
+        }
+      }
+    };
+
+    void loadFolderOptions();
+
+    return () => {
+      ignore = true;
+    };
+  }, [effectiveWorkspaceId, folders, initialParentId, open]);
 
   // Reset form when dialog closes
   const handleOpenChange = (newOpen: boolean) => {
@@ -70,6 +154,7 @@ export function CreateFolderDialog({ open, onOpenChange, onConfirm }: CreateFold
       // Reset form
       setFolderName('');
       setParentId('root');
+      setFolderOptions([]);
       setSelectedWorkspace(undefined);
     }
     onOpenChange(newOpen);
@@ -94,10 +179,12 @@ export function CreateFolderDialog({ open, onOpenChange, onConfirm }: CreateFold
   const handleWorkspaceChange = (workspace: WorkspaceSelectorValue) => {
     setSelectedWorkspace(workspace);
     setParentId('root');
+    setFolderOptions([]);
   };
 
   // Check if can create
   const canCreate = folderName.trim().length > 0 && !!effectiveWorkspaceId;
+  const isParentFolderLoading = isLoading || isFolderOptionsLoading;
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -157,9 +244,13 @@ export function CreateFolderDialog({ open, onOpenChange, onConfirm }: CreateFold
               <Select
                 value={parentId}
                 onValueChange={setParentId}
-                disabled={isLoading || !effectiveWorkspaceId}
+                disabled={isParentFolderLoading || !effectiveWorkspaceId}
               >
-                <SelectTrigger id="parent-folder" isLoading={isLoading} className="h-11 shadow-sm">
+                <SelectTrigger
+                  id="parent-folder"
+                  isLoading={isParentFolderLoading}
+                  className="h-11 shadow-sm"
+                >
                   <SelectValue placeholder={t('files.folder.selectParentFolder')} />
                 </SelectTrigger>
                 <SelectContent>
@@ -168,13 +259,18 @@ export function CreateFolderDialog({ open, onOpenChange, onConfirm }: CreateFold
                     <SelectItem value="root" className="rounded-md">
                       <div className="flex items-center gap-2 py-1">
                         <FolderOpen className="size-4 text-muted-foreground" />
-                        <span className="font-medium text-sm">{t('files.folder.rootFolder')}</span>
+                        <span className="font-medium text-sm">
+                          {t('files.upload.defaultFolder')}
+                        </span>
                       </div>
                     </SelectItem>
                     {/* Existing folders - as children of root */}
-                    {folders.map(folder => (
+                    {folderOptions.map(folder => (
                       <SelectItem key={folder.id} value={folder.id} className="rounded-md">
-                        <div className="flex items-center gap-2 py-1">
+                        <div
+                          className="flex items-center gap-2 py-1"
+                          style={{ paddingLeft: `${(folder.depth - 1) * 16}px` }}
+                        >
                           <FolderOpen className="size-4 text-muted-foreground" />
                           <span className="font-medium text-sm">{folder.name}</span>
                         </div>

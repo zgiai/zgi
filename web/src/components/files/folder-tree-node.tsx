@@ -17,7 +17,7 @@ export interface FolderTreeNodeProps {
   onItemClick?: (itemId: string) => void;
   expandedFolders: Set<string>;
   onToggleExpand: (folderId: string) => void;
-  maxLevel?: number; // Maximum depth level, default is 1 (2 levels)
+  maxLevel?: number; // Maximum rendered folder level under default folder, default is 1 (3 business levels)
   variant?: 'sidebar' | 'dialog'; // UI variant
   onDelete?: (folder: FileFolder) => void;
   workspaceId?: string;
@@ -44,22 +44,25 @@ export function FolderTreeNode({
 
   const isMaxLevel = level >= maxLevel;
 
-  // Fetch child folders when this folder is clicked/expanded (only if not at max level)
+  // Fetch child folders for expandable folders so empty folders do not show an expand icon.
   const { folders: childFolders, isLoading: isLoadingChildren } = useChildFolders(
-    !isMaxLevel && isExpanded ? folder.id : undefined,
+    !isMaxLevel ? folder.id : undefined,
     workspaceId
   );
+  const hasChildFolders = childFolders.length > 0;
+  const canToggleExpand = !isMaxLevel && (hasChildFolders || isLoadingChildren);
 
   const handleClick = useCallback(() => {
     onItemClick?.(folder.id);
-    // Toggle expand/collapse when clicking folder (only if not at max level)
-    if (!isMaxLevel) {
+
+    if (!canToggleExpand) return;
+
+    if (!isExpanded || isFolderActive) {
       onToggleExpand(folder.id);
     }
-  }, [folder.id, onItemClick, isMaxLevel, onToggleExpand]);
+  }, [canToggleExpand, folder.id, isExpanded, isFolderActive, onItemClick, onToggleExpand]);
 
-  // Keep expandable folder affordance visible before children are lazy-loaded.
-  const shouldShowArrow = !isMaxLevel;
+  const shouldShowArrow = !isMaxLevel && (hasChildFolders || isLoadingChildren);
 
   // Styling based on variant
   const paddingLeft = variant === 'sidebar' ? level * 10 + 10 : level * 16 + 12;
@@ -95,7 +98,7 @@ export function FolderTreeNode({
       >
         <div className="flex items-center gap-1.5 flex-1 min-w-0">
           {shouldShowArrow &&
-            (isExpanded && isLoadingChildren ? (
+            (isLoadingChildren ? (
               <div className={cn('flex items-center justify-center', iconSize)}>
                 <div className="h-2 w-2 rounded-full bg-gray-400 animate-pulse" />
               </div>
@@ -135,7 +138,7 @@ export function FolderTreeNode({
       </div>
 
       {/* Render children when expanded - child folders will also display settings and delete buttons */}
-      {isExpanded && (
+      {isExpanded && hasChildFolders && (
         <div className="space-y-1">
           {!isLoadingChildren &&
             childFolders.map(childFolder => (

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useT } from '@/i18n';
 import { FolderOpen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -17,6 +17,7 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { useFileFolders } from '@/hooks/use-files';
+import { fileManageService } from '@/services/file-manage.service';
 import { FolderTreeNode } from './folder-tree-node';
 import {
   WorkspaceSelector,
@@ -45,13 +46,51 @@ export interface UploadDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onConfirm: (config: UploadConfig) => void;
+  initialFolderId?: string;
 }
 
 /**
  * File Upload Dialog Component
  * Allows users to select storage location and upload source type
  */
-export function UploadDialog({ open, onOpenChange, onConfirm }: UploadDialogProps) {
+function getAncestorFolderIds(
+  folders: Array<{ id: string; parent_id: string | null }>,
+  folderId: string
+) {
+  const folderById = new Map(folders.map(folder => [folder.id, folder]));
+  const ancestorIds: string[] = [];
+  let current = folderById.get(folderId);
+
+  while (current?.parent_id) {
+    ancestorIds.push(current.parent_id);
+    current = folderById.get(current.parent_id);
+  }
+
+  return ancestorIds;
+}
+
+async function getAncestorFolderIdsByRequest(folderId: string) {
+  const ancestorIds: string[] = [];
+  let currentId = folderId;
+
+  while (currentId) {
+    const response = await fileManageService.getFileFolder(currentId);
+    const parentId = response.data?.parent_id;
+
+    if (!parentId) break;
+    ancestorIds.push(parentId);
+    currentId = parentId;
+  }
+
+  return ancestorIds;
+}
+
+export function UploadDialog({
+  open,
+  onOpenChange,
+  onConfirm,
+  initialFolderId = '',
+}: UploadDialogProps) {
   const t = useT();
   const currentWorkspace = useCurrentWorkspace();
   const isOrganizationMode = useIsOrganizationMode();
@@ -65,6 +104,45 @@ export function UploadDialog({ open, onOpenChange, onConfirm }: UploadDialogProp
   const [addMode, setAddMode] = useState<UploadMode>('file');
   const [selectedFolderId, setSelectedFolderId] = useState<string>('');
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!open) return;
+    setSelectedFolderId(initialFolderId);
+  }, [initialFolderId, open]);
+
+  useEffect(() => {
+    if (!open || !initialFolderId) return;
+    let ignore = false;
+
+    const expandAncestors = async () => {
+      const knownAncestorIds = getAncestorFolderIds(folders, initialFolderId);
+      const ancestorIds =
+        knownAncestorIds.length > 0
+          ? knownAncestorIds
+          : await getAncestorFolderIdsByRequest(initialFolderId);
+
+      if (ignore || ancestorIds.length === 0) return;
+
+      setExpandedFolders(prev => {
+        const next = new Set(prev);
+        let changed = false;
+        ancestorIds.forEach(id => {
+          if (!next.has(id)) {
+            next.add(id);
+            changed = true;
+          }
+        });
+        if (!changed) return prev;
+        return next;
+      });
+    };
+
+    void expandAncestors();
+
+    return () => {
+      ignore = true;
+    };
+  }, [folders, initialFolderId, open]);
 
   const handleWorkspaceChange = useCallback((workspace: WorkspaceSelectorValue) => {
     setSelectedWorkspace(workspace);
