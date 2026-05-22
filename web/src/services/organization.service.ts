@@ -19,6 +19,9 @@ import type {
   CreateDepartmentRequest,
   UpdateDepartmentRequest,
   CheckMemberNameResponse,
+  WorkspaceAssetMovePreviewResponse,
+  WorkspaceAssetMoveRequest,
+  WorkspaceAssetMoveResponse,
 } from './types/organization';
 
 export type * from './types/organization';
@@ -74,6 +77,24 @@ class OrganizationService extends BaseService {
     const response = await this.request<ApiResponseData<Organization>>(
       'get',
       '/organizations/current'
+    );
+    return response.data;
+  }
+
+  async previewWorkspaceAssetMove(data: WorkspaceAssetMoveRequest) {
+    const response = await this.request<ApiResponseData<WorkspaceAssetMovePreviewResponse>>(
+      'post',
+      '/organizations/current/assets/move/preview',
+      data
+    );
+    return response.data;
+  }
+
+  async moveWorkspaceAssets(data: WorkspaceAssetMoveRequest) {
+    const response = await this.request<ApiResponseData<WorkspaceAssetMoveResponse>>(
+      'post',
+      '/organizations/current/assets/move',
+      data
     );
     return response.data;
   }

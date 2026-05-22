@@ -330,3 +330,41 @@ export interface CreateMemberRequest {
 export interface CheckMemberNameResponse {
   is_exist: boolean;
 }
+
+export type WorkspaceAssetMoveType = 'agent' | 'workflow' | 'dataset' | 'file' | 'database';
+
+export interface WorkspaceAssetMoveItem {
+  type: WorkspaceAssetMoveType;
+  id: string;
+}
+
+export interface WorkspaceAssetMoveRequest {
+  target_workspace_id: string;
+  target_folder_id?: string;
+  items: WorkspaceAssetMoveItem[];
+}
+
+export interface WorkspaceAssetMoveWorkspace {
+  id: string;
+  name?: string;
+}
+
+export interface WorkspaceAssetMovePreviewItem {
+  type: WorkspaceAssetMoveType;
+  id: string;
+  from_workspace?: WorkspaceAssetMoveWorkspace;
+  target_workspace?: WorkspaceAssetMoveWorkspace;
+  movable: boolean;
+  blockers: string[];
+  warnings: string[];
+}
+
+export interface WorkspaceAssetMovePreviewResponse {
+  movable: boolean;
+  items: WorkspaceAssetMovePreviewItem[];
+}
+
+export interface WorkspaceAssetMoveResponse {
+  moved: boolean;
+  preview: WorkspaceAssetMovePreviewResponse;
+}
