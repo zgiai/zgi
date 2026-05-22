@@ -1,10 +1,11 @@
 import type { ValidationError, ValidationResult } from '../common/validation';
 import {
-  getMissingRequiredNotificationSMSTemplateParams,
+  getNotificationSMSTemplateParamValidationIssues,
   normalizeNotificationSMSTemplateKey,
   NOTIFICATION_SMS_TEMPLATE,
   type NotificationSMSTemplate,
   type NotificationSMSTemplateParam,
+  type NotificationSMSTemplateParamValidationIssue,
 } from '@/lib/features/notification-sms';
 
 export interface NotificationSMSNodeData {
@@ -89,28 +90,55 @@ export function getNotificationSMSTemplateParamValidationErrors(
   data: Pick<NotificationSMSNodeData, 'template' | 'template_params'>,
   templates: NotificationSMSTemplate[] = []
 ): ValidationError[] {
-  return getMissingRequiredNotificationSMSTemplateParams(
+  return getNotificationSMSTemplateParamValidationIssues(
     data.template,
     data.template_params,
     templates
-  ).map(param => getTemplateParamRequiredError(data.template, param));
+  ).map(issue => getTemplateParamValidationError(data.template, issue));
 }
 
-function getTemplateParamRequiredError(
+function getTemplateParamValidationError(
   templateKey: string,
-  param: NotificationSMSTemplateParam
+  issue: NotificationSMSTemplateParamValidationIssue
 ): ValidationError {
+  const { param, reason } = issue;
   if (templateKey === NOTIFICATION_SMS_TEMPLATE) {
     const pendingActionParam = PENDING_ACTION_REQUIRED_PARAMS.find(item => item.key === param.key);
-    if (pendingActionParam) {
+    if (reason === 'required' && pendingActionParam) {
       return { code: pendingActionParam.code };
     }
+    if (reason === 'max_length' && param.key === 'notification_title') {
+      return {
+        code: 'notificationSms.validation.notificationTitleTooLong',
+        params: { max: issue.max ?? param.max_length ?? 0 },
+      };
+    }
+    if (reason === 'pattern' && param.key === 'link_code') {
+      return { code: 'notificationSms.validation.linkCodeInvalid' };
+    }
+  }
+
+  if (reason === 'max_length') {
+    return {
+      code: 'notificationSms.validation.templateParamTooLong',
+      params: { label: getTemplateParamLabel(param), max: issue.max ?? param.max_length ?? 0 },
+    };
+  }
+  if (reason === 'pattern') {
+    return {
+      code: 'notificationSms.validation.templateParamInvalid',
+      params: { label: getTemplateParamLabel(param) },
+    };
   }
 
   return {
     code: 'notificationSms.validation.templateParamRequired',
-    params: { label: param.label?.trim() || param.key },
+    params: { label: getTemplateParamLabel(param) },
   };
+}
+
+function getTemplateParamLabel(param: NotificationSMSTemplateParam): string {
+  return param.label?.trim() || param.key;
 }
 
 function normalizeTemplateParams(

@@ -19,10 +19,20 @@ export interface NotificationSMSTemplate {
   params?: NotificationSMSTemplateParam[];
 }
 
+export type NotificationSMSTemplateParamValidationReason = 'required' | 'max_length' | 'pattern';
+
+export interface NotificationSMSTemplateParamValidationIssue {
+  param: NotificationSMSTemplateParam;
+  reason: NotificationSMSTemplateParamValidationReason;
+  max?: number;
+}
+
 const FALLBACK_PENDING_ACTION_TEMPLATE_PARAMS: NotificationSMSTemplateParam[] = [
-  { key: 'notification_title', label: 'Notification title', required: true },
-  { key: 'link_code', label: 'Link code', required: true },
+  { key: 'notification_title', label: 'Notification title', required: true, max_length: 64 },
+  { key: 'link_code', label: 'Link code', required: true, pattern: '^[A-Za-z0-9]+$' },
 ];
+
+const WORKFLOW_VALUE_TOKEN_PATTERN = /^\{\{#[^#]+#\}\}$/;
 
 export function isNotificationSMSEnabled(features?: SystemFeatures | null): boolean {
   if (!features?.notification_sms?.enabled) {
@@ -102,11 +112,11 @@ export function normalizeNotificationSMSTemplateKey(value: string | undefined): 
   return value?.trim() ?? '';
 }
 
-export function getMissingRequiredNotificationSMSTemplateParams(
+export function getNotificationSMSTemplateParamValidationIssues(
   templateKey: string,
   templateParams: Record<string, string>,
   templates: NotificationSMSTemplate[] = []
-): NotificationSMSTemplateParam[] {
+): NotificationSMSTemplateParamValidationIssue[] {
   const normalizedTemplateKey = normalizeNotificationSMSTemplateKey(templateKey);
   const template = templates.find(item => item.key === normalizedTemplateKey);
   const params =
@@ -115,5 +125,35 @@ export function getMissingRequiredNotificationSMSTemplateParams(
       ? FALLBACK_PENDING_ACTION_TEMPLATE_PARAMS
       : []);
 
-  return params.filter(param => param.required !== false && !templateParams[param.key]?.trim());
+  const issues: NotificationSMSTemplateParamValidationIssue[] = [];
+  for (const param of params) {
+    const value = templateParams[param.key]?.trim() ?? '';
+    if (param.required !== false && !value) {
+      issues.push({ param, reason: 'required' });
+      continue;
+    }
+    if (!value || isNotificationSMSWorkflowValueToken(value)) {
+      continue;
+    }
+    if (param.max_length && [...value].length > param.max_length) {
+      issues.push({ param, reason: 'max_length', max: param.max_length });
+      continue;
+    }
+    if (param.pattern && !matchesNotificationSMSPattern(value, param.pattern)) {
+      issues.push({ param, reason: 'pattern' });
+    }
+  }
+  return issues;
+}
+
+export function isNotificationSMSWorkflowValueToken(value: string): boolean {
+  return WORKFLOW_VALUE_TOKEN_PATTERN.test(value.trim());
+}
+
+function matchesNotificationSMSPattern(value: string, pattern: string): boolean {
+  try {
+    return new RegExp(pattern).test(value);
+  } catch {
+    return true;
+  }
 }

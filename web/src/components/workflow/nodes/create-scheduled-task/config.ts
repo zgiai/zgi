@@ -1,11 +1,12 @@
 import type { AutomationBodyType } from '@/services/types/automation';
 import type { ValidationError, ValidationResult } from '../common/validation';
 import {
-  getMissingRequiredNotificationSMSTemplateParams,
+  getNotificationSMSTemplateParamValidationIssues,
   normalizeNotificationSMSTemplateKey,
   NOTIFICATION_SMS_TEMPLATE,
   type NotificationSMSTemplate,
   type NotificationSMSTemplateParam,
+  type NotificationSMSTemplateParamValidationIssue,
 } from '@/lib/features/notification-sms';
 import { generateClientId } from '@/utils/client-id';
 
@@ -373,16 +374,16 @@ export function getCreateScheduledTaskActionValidationErrors(
       };
     }
 
-    const missingParams = getMissingRequiredNotificationSMSTemplateParams(
+    const paramIssues = getNotificationSMSTemplateParamValidationIssues(
       notification.template,
       notification.template_params,
       smsTemplates
     );
-    if (missingParams.length > 0) {
+    if (paramIssues.length > 0) {
       errors.templateParams = Object.fromEntries(
-        missingParams.map(param => [
-          param.key,
-          getCreateScheduledTaskTemplateParamRequiredError(index, notification.template, param),
+        paramIssues.map(issue => [
+          issue.param.key,
+          getCreateScheduledTaskTemplateParamValidationError(index, notification.template, issue),
         ])
       );
     }
@@ -456,24 +457,54 @@ export const checkValid = (
   return { isValid: errors.length === 0, errors, warnings };
 };
 
-function getCreateScheduledTaskTemplateParamRequiredError(
+function getCreateScheduledTaskTemplateParamValidationError(
   index: number,
   templateKey: string,
-  param: NotificationSMSTemplateParam
+  issue: NotificationSMSTemplateParamValidationIssue
 ): ValidationError {
   const params = { index: index + 1 };
+  const { param, reason } = issue;
   if (templateKey === NOTIFICATION_SMS_TEMPLATE) {
-    if (param.key === 'notification_title') {
+    if (reason === 'required' && param.key === 'notification_title') {
       return { code: 'createScheduledTask.validation.notificationTitleRequired', params };
     }
-    if (param.key === 'link_code') {
+    if (reason === 'required' && param.key === 'link_code') {
       return { code: 'createScheduledTask.validation.linkCodeRequired', params };
     }
+    if (reason === 'max_length' && param.key === 'notification_title') {
+      return {
+        code: 'createScheduledTask.validation.notificationTitleTooLong',
+        params: { ...params, max: issue.max ?? param.max_length ?? 0 },
+      };
+    }
+    if (reason === 'pattern' && param.key === 'link_code') {
+      return { code: 'createScheduledTask.validation.linkCodeInvalid', params };
+    }
+  }
+  if (reason === 'max_length') {
+    return {
+      code: 'createScheduledTask.validation.templateParamTooLong',
+      params: {
+        ...params,
+        label: getCreateScheduledTaskTemplateParamLabel(param),
+        max: issue.max ?? param.max_length ?? 0,
+      },
+    };
+  }
+  if (reason === 'pattern') {
+    return {
+      code: 'createScheduledTask.validation.templateParamInvalid',
+      params: { ...params, label: getCreateScheduledTaskTemplateParamLabel(param) },
+    };
   }
   return {
     code: 'createScheduledTask.validation.templateParamRequired',
-    params: { ...params, label: param.label?.trim() || param.key },
+    params: { ...params, label: getCreateScheduledTaskTemplateParamLabel(param) },
   };
+}
+
+function getCreateScheduledTaskTemplateParamLabel(param: NotificationSMSTemplateParam): string {
+  return param.label?.trim() || param.key;
 }
 
 function flattenCreateScheduledTaskActionValidationErrors(
