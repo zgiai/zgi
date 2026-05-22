@@ -41,13 +41,13 @@ import {
   WandSparkles,
   MoreHorizontal,
   GripVertical,
-  ArrowUpDown,
   ChevronDown,
   ChevronUp,
   Plus,
   BookOpenText,
   MessageSquareText,
   Sparkles,
+  Pencil,
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import WorkflowValueInserter from '@/components/workflow/common/workflow-value-inserter';
@@ -1168,21 +1168,6 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
     isChatMode &&
     isConversationHistoryEnabled(safeNodeData) &&
     !hasCurrentUserPrompt;
-  const sortablePromptOrderItems = useMemo(
-    () =>
-      promptOrderViewItems.map(item =>
-        item.type === 'history'
-          ? ({ type: 'history', id: 'conversation_history' } as LLMPromptLayoutItem)
-          : ({ type: 'group', group_id: item.groupId } as LLMPromptLayoutItem)
-      ),
-    [promptOrderViewItems]
-  );
-  const canChangePromptOrder =
-    isChatMode &&
-    !isManagedPrompt &&
-    !readOnly &&
-    sortablePromptOrderItems.length >= 2;
-
   const addPromptBlock = useCallback(() => {
     if (readOnly) return;
     updateData((prev: LLMNodeData) => {
@@ -2257,13 +2242,14 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
                     onFocusedEditor={handleEditorFocused}
                   />
                 ))}
-                {contextPreviewCount > 0 && (
+                {contextPreviewCount > 0 ? (
                   <div className="rounded-xl border bg-muted/10">
-                    <button
-                      type="button"
-                      className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
-                      onClick={() => setContextPreviewOpen(prev => !prev)}
-                    >
+                    <div className="flex items-center justify-between gap-3 px-4 py-3">
+                      <button
+                        type="button"
+                        className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left"
+                        onClick={() => setContextPreviewOpen(prev => !prev)}
+                      >
                       <div className="min-w-0">
                         <div className="text-sm font-medium">
                           {t('nodes.llm.promptOrder.contextPlaceholder')}
@@ -2279,7 +2265,26 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
                       ) : (
                         <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
                       )}
-                    </button>
+                      </button>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="inline-flex">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              isIcon
+                              onClick={() => setOrderDialogOpen(true)}
+                              disabled={readOnly}
+                              aria-label={t('nodes.llm.actions.changePromptOrder')}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent>{t('nodes.llm.actions.changePromptOrder')}</TooltipContent>
+                      </Tooltip>
+                    </div>
                     {contextPreviewOpen && (
                       <div className="space-y-2 border-t px-4 py-3">
                         {contextPreviewItems.map(item => {
@@ -2334,6 +2339,17 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
                       </div>
                     )}
                   </div>
+                ) : (
+                  <Button
+                    className="w-full"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setOrderDialogOpen(true)}
+                    disabled={readOnly}
+                  >
+                    <Plus className="mr-2 h-4 w-4" />
+                    {t('nodes.llm.actions.insertExtraContext')}
+                  </Button>
                 )}
                 {shouldShowMissingUserQuestionTip && (
                   <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
@@ -2366,18 +2382,6 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
                   />
                 ) : null}
                 <div className="grid gap-2">
-                  {canChangePromptOrder || contextPreviewCount > 0 || hasCurrentUserPrompt ? (
-                    <Button
-                      className="w-full"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setOrderDialogOpen(true)}
-                      disabled={readOnly}
-                    >
-                      <ArrowUpDown className="mr-2 h-4 w-4" />
-                      {t('nodes.llm.actions.changePromptOrder')}
-                    </Button>
-                  ) : null}
                   {!hasCurrentUserPrompt && (
                     <Button
                       className="w-full"

@@ -848,6 +848,7 @@ const messages = {
       addUserQuestion: 'Add user question',
       addHistoryContext: 'Add conversation history',
       addCustomContext: 'Add example conversation',
+      insertExtraContext: 'Insert extra context',
       changePromptOrder: 'Arrange context',
       applyPromptTemplate: 'Apply and keep editing',
       collapseBlock: 'Collapse block',
@@ -920,11 +921,11 @@ const messages = {
       orderDialogDescription:
         'Drag items to control the message order after the system prompt. Example conversations can only be edited here.',
       helpEntryDescription:
-        'New to this? Open a short example to see exactly what the model receives.',
+        'For ordinary use, you do not need extra arrangement; the default setup is enough. Use this only when you need more information or examples.',
       helpEntryButton: 'View example',
       helpTitle: 'How does context arrangement work?',
       helpDescription:
-        'Think of this as building an open-book packet for the model: rules first, clues and examples next, then the current question.',
+        'For ordinary use, you do not need extra context arrangement; keeping the default setup works well. This is for cases where you need extra material, sample answers, or precise message order.',
       helpBeginnerTab: 'Start from basics',
       helpPracticalTab: 'Copy a real setup',
       helpConceptContextTitle: 'What is context?',
@@ -992,7 +993,7 @@ const messages = {
         'Most workflows work well with conversation history before the current input. If you want the model to mimic a standard exchange first, place the example conversation between history and the current input.',
       systemFixedDescription: 'System prompt is fixed at the beginning and is edited in the main panel.',
       contextPlaceholder: 'Context',
-      contextPlaceholderDescription: '{count} context item(s) will be inserted between the system prompt and current user input.',
+      contextPlaceholderDescription: 'Provide the model with more information or answer examples.',
       historyRoundsPreview: 'Insert up to {count} recent conversation round(s).',
       userLine: 'User: ',
       assistantLine: 'Assistant: ',
