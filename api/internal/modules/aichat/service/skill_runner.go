@@ -103,14 +103,14 @@ func (s *service) runPreparedSkillStream(
 		if text != "" && len(toolCalls) > 0 {
 			s.emitAgentProgress(ctx, prepared, text, onEvent)
 		}
+		if len(toolCalls) == 0 && prepared.parts.SkillMode == skillModeRequired && !skillUsed {
+			return answerBuilder.String(), usage, fmt.Errorf("%w: required skill was not used", ErrInvalidInput)
+		}
 		if text != "" && len(toolCalls) == 0 {
 			answerBuilder.WriteString(text)
 			s.emitAnswerChunk(ctx, prepared, text, onChunk)
 		}
 		if len(toolCalls) == 0 {
-			if prepared.parts.SkillMode == skillModeRequired && !skillUsed {
-				return answerBuilder.String(), usage, fmt.Errorf("%w: required skill was not used", ErrInvalidInput)
-			}
 			logger.DebugContext(ctx, "aichat skill planning completed",
 				"conversation_id", prepared.Conversation.ID.String(),
 				"message_id", prepared.Message.ID.String(),

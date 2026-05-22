@@ -252,6 +252,74 @@ Write concise briefs.
 	}
 }
 
+func TestRunPreparedSkillStreamRequiredModeDoesNotEmitAnswerBeforeSkillUseError(t *testing.T) {
+	catalogDir := t.TempDir()
+	writeTestSkill(t, catalogDir, "brief-writer", `---
+name: brief-writer
+description: Help draft short writing briefs.
+when_to_use: Use when writing a concise brief.
+---
+
+# Brief Writer
+
+Write concise briefs.
+`)
+	svc := &service{
+		repos: &repository.Repositories{
+			Message:     &recordingMessageRepository{},
+			CustomSkill: &fakeCustomSkillRepository{items: map[string]*aichatmodel.CustomSkill{}},
+		},
+		llmClient: &fakeAgenticLLMClient{
+			appChatResponses: []*adapter.ChatResponse{
+				{
+					Choices: []adapter.Choice{{
+						Message: adapter.Message{Role: "assistant", Content: "I can answer directly."},
+					}},
+				},
+			},
+		},
+		events:       newStreamEventStore(nil),
+		skillRuntime: skills.NewRuntimeWithCatalog(tools.NewToolEngine(tools.NewToolManager(nil)), tools.NewToolManager(nil), catalogDir),
+	}
+	prepared := &PreparedChat{
+		Conversation: &aichatmodel.Conversation{
+			ID:             uuid.New(),
+			OrganizationID: uuid.New(),
+			AccountID:      uuid.New(),
+		},
+		Message: &aichatmodel.Message{
+			ID:       uuid.New(),
+			Metadata: map[string]interface{}{},
+		},
+		LLMRequest: &adapter.ChatRequest{
+			Messages: []adapter.Message{{Role: "user", Content: "write a brief"}},
+		},
+		Scope: Scope{
+			OrganizationID: uuid.New(),
+			AccountID:      uuid.New(),
+		},
+		parts: &chatRequestParts{
+			SkillMode: skillModeRequired,
+			SkillIDs:  []string{"brief-writer"},
+		},
+	}
+	chunks := make([]string, 0)
+
+	answer, _, err := svc.runPreparedSkillStream(context.Background(), context.Background(), prepared, func(chunk string) error {
+		chunks = append(chunks, chunk)
+		return nil
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), "required skill was not used") {
+		t.Fatalf("runPreparedSkillStream() error = %v, want required skill error", err)
+	}
+	if answer != "" {
+		t.Fatalf("answer = %q, want empty answer", answer)
+	}
+	if len(chunks) != 0 {
+		t.Fatalf("chunks = %#v, want no streamed answer chunks", chunks)
+	}
+}
+
 func TestRunPreparedSkillStreamEmitsAgentProgressForContentWithToolCalls(t *testing.T) {
 	catalogDir := t.TempDir()
 	writeTestSkill(t, catalogDir, "brief-writer", `---

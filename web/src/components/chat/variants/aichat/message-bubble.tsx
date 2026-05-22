@@ -31,6 +31,7 @@ import {
 import { AIChatAgenticTimeline } from '@/components/chat/variants/aichat/agentic-timeline';
 import type { AIChatSkillDisplayMap } from '@/components/chat/variants/aichat/skill-display';
 import type { AIChatAgenticTimelineItem } from '@/components/chat/controllers/aichat';
+import { timelineFromAIChatMessage } from '@/components/chat/controllers/aichat/selectors';
 import { MAX_AICHAT_BRANCHES } from '@/components/chat/variants/aichat/types';
 
 interface AIChatMessageBubbleProps {
@@ -269,29 +270,9 @@ export function AIChatMessageBubble({
   const generatedFiles = message.metadata?.generated_files ?? [];
   const imageFiles = files.filter(file => file.kind === 'image');
   const documentFiles = files.filter(file => file.kind !== 'image');
-  const skillInvocations = (message.metadata?.skill_invocations ?? []).filter(
-    invocation => invocation.kind !== 'metadata_exposed'
-  );
   const historicalTimeline = useMemo<AIChatAgenticTimelineItem[]>(
-    () =>
-      skillInvocations.map((invocation, index) => {
-        if (invocation.kind === 'intermediate_answer' && invocation.message) {
-          return {
-            id: `history-intermediate-${message.id}-${index}`,
-            type: 'intermediate_answer',
-            title: invocation.title,
-            content: invocation.message,
-            created_at: invocation.created_at,
-          };
-        }
-        return {
-          id: `history-skill-${message.id}-${index}`,
-          type: 'skill_event',
-          invocation,
-          created_at: invocation.created_at,
-        };
-      }),
-    [message.id, skillInvocations]
+    () => timelineFromAIChatMessage(message),
+    [message]
   );
   const displayTimeline = timeline.length > 0 ? timeline : historicalTimeline;
   const hasTimeline = displayTimeline.length > 0;

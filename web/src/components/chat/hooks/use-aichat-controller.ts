@@ -53,6 +53,7 @@ import {
   canReplaceRootMessage,
   getNextActiveSendingState,
   mergeSelectedMessagesWithStreamingState,
+  seedStreamingTimelineFromMessages,
   selectActiveConversation,
   selectActiveMessagePagination,
   selectActiveMessages,
@@ -861,13 +862,26 @@ export function useAIChatController(): AIChatController {
       }
       const hasCachedMessages =
         (previousState.messagesByConversation[conversationId]?.length ?? 0) > 0;
-      setControllerState(current => ({
-        ...current,
-        activeConversationId: conversationId,
-        isLoadingMessages: !hasCachedMessages,
-        isSending: shouldTreatConversationAsRunning(current, conversationId),
-        error: null,
-      }));
+      setControllerState(current => {
+        const cachedConversation = current.conversations.find(
+          conversation => conversation.id === conversationId
+        );
+        const cachedMessages = current.messagesByConversation[conversationId] ?? [];
+        return {
+          ...current,
+          activeConversationId: conversationId,
+          isLoadingMessages: !hasCachedMessages,
+          isSending: shouldTreatConversationAsRunning(current, conversationId),
+          streamingByMessageId: cachedConversation
+            ? seedStreamingTimelineFromMessages(
+                cachedConversation,
+                cachedMessages,
+                current.streamingByMessageId
+              )
+            : current.streamingByMessageId,
+          error: null,
+        };
+      });
 
       try {
         const { conversation, messages, messagePagination } =
@@ -897,7 +911,11 @@ export function useAIChatController(): AIChatController {
               [conversationId]: messagePagination,
             },
             streamingByMessageId: isStreamingConversation
-              ? current.streamingByMessageId
+              ? seedStreamingTimelineFromMessages(
+                  conversation,
+                  mergeSelectedMessagesWithStreamingState(conversation, messages, current),
+                  current.streamingByMessageId
+                )
               : removeStreamingStateByConversation(current.streamingByMessageId, conversationId),
             recoveringByConversation: isStreamingConversation
               ? current.recoveringByConversation
@@ -926,7 +944,11 @@ export function useAIChatController(): AIChatController {
             current
           );
           const nextStreamingByMessageId = isStreamingConversation
-            ? current.streamingByMessageId
+            ? seedStreamingTimelineFromMessages(
+                conversation,
+                nextMessages,
+                current.streamingByMessageId
+              )
             : removeStreamingStateByConversation(current.streamingByMessageId, conversationId);
 
           return {
