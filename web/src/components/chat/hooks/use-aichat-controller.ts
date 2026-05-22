@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useStore } from 'zustand';
 import type {
+  AIChatAgentProgressEventData,
   AIChatConversation,
   AIChatErrorEventData,
   AIChatFileParseEndEventData,
@@ -64,6 +65,7 @@ import {
 } from '@/components/chat/controllers/aichat/selectors';
 import {
   applyMessageChunkState,
+  applyAgentProgressState,
   applyFileParseEndState,
   applyFileParseErrorState,
   applyFileParseStartState,
@@ -416,6 +418,14 @@ export function useAIChatController(): AIChatController {
     [setControllerState]
   );
 
+  const applyAgentProgress = useCallback(
+    (payload: AIChatAgentProgressEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id || !payload.content) return;
+      setControllerState(current => applyAgentProgressState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
   const applyMessageEnd = useCallback(
     (payload: AIChatMessageEndEventData, _eventId?: string | null) => {
       if (!payload.conversation_id || !payload.message_id) return;
@@ -620,6 +630,7 @@ export function useAIChatController(): AIChatController {
                 message_id: messageId,
                 answer: nextMessage.answer,
                 status: 'streaming',
+                timeline: previousStreaming?.timeline ?? [],
                 last_event_id: afterId,
                 replay_base_answer: shouldDedupeReplay
                   ? preservedAnswer
@@ -672,6 +683,10 @@ export function useAIChatController(): AIChatController {
                   { resetAnswer: false, mode: getCurrentMode(), moveToTop: false },
                   eventId
                 );
+              },
+              onAgentProgress: (payload, eventId) => {
+                if (abortController.signal.aborted) return;
+                applyAgentProgress(payload, eventId);
               },
               onFileParseStart: (payload, eventId) => {
                 if (abortController.signal.aborted) return;
@@ -763,6 +778,7 @@ export function useAIChatController(): AIChatController {
       connect(0);
     },
     [
+      applyAgentProgress,
       applyFileParseEnd,
       applyFileParseError,
       applyFileParseStart,
@@ -1439,6 +1455,7 @@ export function useAIChatController(): AIChatController {
               message_id: draftMessageId,
               answer: '',
               status: 'streaming',
+              timeline: [],
             },
           },
           isSending: true,
@@ -1479,6 +1496,10 @@ export function useAIChatController(): AIChatController {
                 },
                 eventId
               );
+            },
+            onAgentProgress: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              applyAgentProgress(payload, eventId);
             },
             onFileParseStart: (payload, eventId) => {
               if (abortController.signal.aborted) return;
@@ -1600,6 +1621,7 @@ export function useAIChatController(): AIChatController {
       }
     },
     [
+      applyAgentProgress,
       applyFileParseEnd,
       applyFileParseError,
       applyFileParseStart,
@@ -1685,6 +1707,10 @@ export function useAIChatController(): AIChatController {
                 },
                 eventId
               );
+            },
+            onAgentProgress: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              applyAgentProgress(payload, eventId);
             },
             onFileParseStart: (payload, eventId) => {
               if (abortController.signal.aborted) return;
@@ -1780,6 +1806,7 @@ export function useAIChatController(): AIChatController {
       }
     },
     [
+      applyAgentProgress,
       applyFileParseEnd,
       applyFileParseError,
       applyFileParseStart,
@@ -1860,6 +1887,7 @@ export function useAIChatController(): AIChatController {
   const activeConversationId = useStore(store, state => state.activeConversationId);
   const activeConversation = useStore(store, selectActiveConversation);
   const messages = useStore(store, selectActiveMessages);
+  const streamingByMessageId = useStore(store, state => state.streamingByMessageId);
   const activeMessagePagination = useStore(store, selectActiveMessagePagination);
   const isLoadingList = useStore(store, state => state.isLoadingList);
   const isLoadingMessages = useStore(store, state => state.isLoadingMessages);
@@ -1903,6 +1931,7 @@ export function useAIChatController(): AIChatController {
     activeConversationId,
     activeConversation,
     messages,
+    streamingByMessageId,
     displayMessageIds,
     displayMessages,
     branchNavigationByMessageId,

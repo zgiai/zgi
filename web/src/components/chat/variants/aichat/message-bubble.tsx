@@ -29,12 +29,15 @@ import {
   UserMessageToolbar,
 } from '@/components/chat/variants/aichat/message-toolbars';
 import { AIChatSkillTracePanel } from '@/components/chat/variants/aichat/skill-trace-panel';
+import { AIChatAgenticTimeline } from '@/components/chat/variants/aichat/agentic-timeline';
 import type { AIChatSkillDisplayMap } from '@/components/chat/variants/aichat/skill-display';
+import type { AIChatAgenticTimelineItem } from '@/components/chat/controllers/aichat';
 import { MAX_AICHAT_BRANCHES } from '@/components/chat/variants/aichat/types';
 
 interface AIChatMessageBubbleProps {
   message: AIChatMessage;
   isSending?: boolean;
+  timeline?: AIChatAgenticTimelineItem[];
   skillDisplayById: AIChatSkillDisplayMap;
   isLastMessage?: boolean;
   canReplaceRoot?: boolean;
@@ -228,6 +231,7 @@ function AIChatGeneratedFileCard({ file }: AIChatGeneratedFileCardProps) {
 export function AIChatMessageBubble({
   message,
   isSending = false,
+  timeline = [],
   skillDisplayById,
   isLastMessage = false,
   canReplaceRoot = false,
@@ -269,6 +273,7 @@ export function AIChatMessageBubble({
   const skillInvocations = (message.metadata?.skill_invocations ?? []).filter(
     invocation => invocation.kind !== 'metadata_exposed'
   );
+  const hasRealtimeTimeline = timeline.length > 0;
 
   return (
     <div className="group space-y-3">
@@ -405,10 +410,14 @@ export function AIChatMessageBubble({
             {isStopped ? <span>{t('consoleChat.stopped')}</span> : null}
           </div>
 
-          <AIChatSkillTracePanel
-            invocations={skillInvocations}
-            skillDisplayById={skillDisplayById}
-          />
+          {hasRealtimeTimeline ? (
+            <AIChatAgenticTimeline timeline={timeline} skillDisplayById={skillDisplayById} />
+          ) : (
+            <AIChatSkillTracePanel
+              invocations={skillInvocations}
+              skillDisplayById={skillDisplayById}
+            />
+          )}
 
           {generatedFiles.length > 0 ? (
             <div className="mb-3 flex flex-wrap gap-2">
@@ -434,7 +443,7 @@ export function AIChatMessageBubble({
                 />
               )}
             </div>
-          ) : isStreaming ? (
+          ) : isStreaming && !hasRealtimeTimeline ? (
             <div className="space-y-2 pt-1">
               <Skeleton className="h-4 w-2/3" />
               <Skeleton className="h-4 w-1/2" />

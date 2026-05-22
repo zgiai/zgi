@@ -1,5 +1,6 @@
 import type {
   AIChatConversation,
+  AIChatAgentProgressEventData,
   AIChatErrorEventData,
   AIChatFileParseEndEventData,
   AIChatFileParseErrorEventData,
@@ -9,6 +10,7 @@ import type {
   AIChatMessageChunkEventData,
   AIChatMessageEndEventData,
   AIChatMessageStartEventData,
+  AIChatSkillInvocation,
 } from '@/services/types/aichat';
 import type { ChatBranchNavigation } from '@/components/chat/utils/message-tree';
 import type { StoreApi } from 'zustand/vanilla';
@@ -31,12 +33,29 @@ export interface AIChatStreamingMessageState {
   message_id: string;
   answer: string;
   status: 'streaming' | 'completed' | 'stopped' | 'error';
+  timeline?: AIChatAgenticTimelineItem[];
   last_event_id?: string;
   replay_base_answer?: string;
   replay_offset?: number;
   replace?: boolean;
   sensitiveOutputBlocked?: boolean;
 }
+
+export type AIChatAgenticTimelineItem =
+  | {
+      id: string;
+      type: 'progress_text';
+      content: string;
+      created_at?: number;
+      event_id?: string | null;
+    }
+  | {
+      id: string;
+      type: 'skill_event';
+      invocation: AIChatSkillInvocation;
+      created_at?: number;
+      event_id?: string | null;
+    };
 
 export type AIChatRecoveryMode = 'active' | 'background';
 
@@ -78,6 +97,10 @@ export interface AIChatControllerStore extends AIChatControllerState {
     payload: AIChatMessageChunkEventData,
     eventId?: string | null
   ) => void;
+  applyAgentProgress: (
+    payload: AIChatAgentProgressEventData,
+    eventId?: string | null
+  ) => void;
   applyFileParseStart: (
     payload: AIChatFileParseStartEventData,
     eventId?: string | null
@@ -111,6 +134,7 @@ export interface AIChatController {
   activeConversationId: string | null;
   activeConversation: AIChatConversation | null;
   messages: AIChatMessage[];
+  streamingByMessageId: Record<string, AIChatStreamingMessageState>;
   displayMessageIds: string[];
   displayMessages: AIChatMessage[];
   branchNavigationByMessageId: Map<string, ChatBranchNavigation>;

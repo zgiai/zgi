@@ -386,6 +386,13 @@ export interface AIChatSkillArtifactCreatedEventData extends Partial<AIChatGener
   file?: AIChatSkillArtifactFile;
 }
 
+export interface AIChatAgentProgressEventData {
+  conversation_id: string;
+  message_id: string;
+  content?: string;
+  created_at?: number;
+}
+
 export interface AIChatFileParseStartEventData {
   conversation_id: string;
   message_id: string;
@@ -434,6 +441,7 @@ export interface AIChatStopConversationResponseData {
 
 export type AIChatSseEventName =
   | 'message_start'
+  | 'agent_progress'
   | 'skill_load_start'
   | 'skill_load_end'
   | 'skill_reference_read'

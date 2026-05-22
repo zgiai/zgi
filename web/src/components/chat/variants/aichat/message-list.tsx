@@ -6,6 +6,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { ChatBranchNavigation } from '@/components/chat/utils/message-tree';
 import type { AIChatConversation, AIChatMessage } from '@/services/types/aichat';
+import type { AIChatStreamingMessageState } from '@/components/chat/controllers/aichat';
 import { AIChatMessageBubble } from '@/components/chat/variants/aichat/message-bubble';
 import type { AIChatSkillDisplayMap } from '@/components/chat/variants/aichat/skill-display';
 
@@ -17,6 +18,7 @@ interface AIChatMessageListProps {
   isLoadingMessages: boolean;
   isLoadingOlderMessages: boolean;
   isSending: boolean;
+  streamingByMessageId: Record<string, AIChatStreamingMessageState>;
   skillDisplayById: AIChatSkillDisplayMap;
   editingMessageId: string | null;
   editingQuery: string;
@@ -70,6 +72,7 @@ export function AIChatMessageList({
   isLoadingMessages,
   isLoadingOlderMessages,
   isSending,
+  streamingByMessageId,
   skillDisplayById,
   editingMessageId,
   editingQuery,
@@ -112,6 +115,7 @@ export function AIChatMessageList({
                 key={message.id}
                 message={message}
                 isSending={isSending}
+                timeline={streamingByMessageId[message.id]?.timeline ?? []}
                 skillDisplayById={skillDisplayById}
                 isLastMessage={index === messages.length - 1}
                 canReplaceRoot={canReplaceRootMessage(
