@@ -36,6 +36,7 @@ interface BatchResultDetailProps {
 type BatchStatusKey = 'queued' | 'running' | 'completed' | 'stopped' | 'canceled';
 type BatchItemStatusKey = 'pending' | 'running' | 'passed' | 'failed' | 'review' | 'canceled';
 type SummaryKey = 'running' | 'allPassed' | 'hasIssues';
+type WorkflowVersionLabelKey = 'currentDraft' | 'latestPublished' | 'specificPublished';
 
 function itemStatusLabel(status: string, t: (key: BatchItemStatusKey) => string, none: string) {
   const map: Record<string, string> = {
@@ -66,6 +67,23 @@ function batchStatusLabel(status: string, t: (key: BatchStatusKey) => string, no
     canceled: t('canceled'),
   };
   return map[status] || status || none;
+}
+
+function workflowVersionLabel(
+  label: string,
+  mode: string,
+  t: (key: WorkflowVersionLabelKey) => string,
+  none: string
+) {
+  const value = label || mode;
+  const map: Record<string, WorkflowVersionLabelKey> = {
+    current_draft: 'currentDraft',
+    draft: 'currentDraft',
+    latest_published: 'latestPublished',
+    specific_published: 'specificPublished',
+  };
+  const key = map[value];
+  return key ? t(key) : value || none;
 }
 
 function stringifyOutput(outputs: Record<string, unknown>, none: string) {
@@ -132,6 +150,7 @@ export function BatchResultDetail({ agentId, batchId, agentName }: BatchResultDe
   const batchStatusT = useT('agents.workflowTest.batchStatus');
   const summaryT = useT('agents.workflowTest.detail.summary');
   const itemStatusT = useT('agents.workflowTest.detail.itemStatus');
+  const workflowVersionT = useT('agents.workflowTest.detail.workflowVersion');
   const {
     data: batchesData,
     isLoading: batchesLoading,
@@ -241,9 +260,14 @@ export function BatchResultDetail({ agentId, batchId, agentName }: BatchResultDe
                   </div>
                 </div>
                 <div className="mt-4 text-sm text-slate-600">
-                  <span className="text-slate-500">测试版本：</span>
+                  <span className="text-slate-500">{t('workflowVersionLabel')}</span>
                   <span className="font-medium text-slate-950">
-                    {batch.workflow_version_label || commonT('currentDraftSnapshot')}
+                    {workflowVersionLabel(
+                      batch.workflow_version_label,
+                      batch.workflow_version_mode,
+                      workflowVersionT,
+                      commonT('none')
+                    )}
                   </span>
                 </div>
               </div>

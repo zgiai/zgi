@@ -668,7 +668,7 @@ func (s *WorkflowService) RunDraftWorkflow(ctx context.Context, workspaceID, age
 		}()
 
 		// Check if this is a conversation workflow
-		if workflowType, exists := workflowMap["type"].(string); exists && workflowType == "chat" {
+		if workflowType := workflowTypeString(workflowMap["type"]); workflowType == "chat" {
 			// Extract conversation parameters from inputs
 			fromSource := "account"                  // default
 			invokeFrom := string(InvokeFromDebugger) // For draft workflow, always use debugger
@@ -2499,6 +2499,17 @@ func getStringPointerValue(s *string) *string {
 
 func newStringPointer(value string) *string {
 	return &value
+}
+
+func workflowTypeString(value interface{}) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case fmt.Stringer:
+		return strings.TrimSpace(typed.String())
+	default:
+		return strings.TrimSpace(fmt.Sprint(typed))
+	}
 }
 
 func workflowRunElapsedMilliseconds(log WorkflowRunLog) float64 {
