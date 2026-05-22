@@ -13,6 +13,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/aichat/repository"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/shared/titlegen"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/prompt"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/gorm"
@@ -272,6 +273,10 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 	if err != nil {
 		return nil, err
 	}
+	systemPrompt, memoryMetadata, err := s.appendUserMemoryContext(ctx, scope, parts, systemPrompt)
+	if err != nil {
+		return nil, err
+	}
 	if s.modelSpecResolver != nil {
 		spec, ok, err := s.modelSpecResolver.Resolve(ctx, scope.OrganizationID, parts.Provider, parts.ModelName)
 		if err != nil {
@@ -285,11 +290,17 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 			if err != nil {
 				return nil, err
 			}
-			return s.buildTokenBudgetMessages(ctx, spec, parts, systemPrompt, branch)
+			result, err := s.buildTokenBudgetMessages(ctx, spec, parts, systemPrompt, branch)
+			if err != nil {
+				return nil, err
+			}
+			result.Metadata = mergeUserMemoryMetadata(result.Metadata, memoryMetadata)
+			return result, nil
 		}
 	}
 	currentContent, contextMetadata := s.buildFallbackCurrentUserContent(parts)
 	messages := []adapter.Message{{Role: "system", Content: systemPrompt}}
+	contextMetadata = mergeUserMemoryMetadata(contextMetadata, memoryMetadata)
 	if parentID != nil && *parentID != uuid.Nil {
 		branch, err := s.repos.Message.ListBranch(ctx, *parentID, maxContextMessages)
 		if err != nil {
@@ -368,6 +379,9 @@ func (s *service) applyOrganizationSkillConfig(ctx context.Context, scope Scope,
 		return err
 	}
 	parts.SkillIDs, parts.ToolSkillIDs = filterSkillsForModel(enabled, catalog, parts)
+	if parts.UseMemory {
+		appendUserMemorySkill(ctx, parts, catalog)
+	}
 	if len(parts.SkillIDs) == 0 {
 		parts.SkillMode = skillModeDisabled
 		return nil
@@ -416,6 +430,7 @@ func normalizeChatRequest(req aichatdto.ChatRequest) (*chatRequestParts, error) 
 		Provider:    provider,
 		ProviderPtr: providerPtr,
 		Parameters:  params,
+		UseMemory:   req.UseMemory,
 	}, nil
 }
 
@@ -521,11 +536,78 @@ func streamingMessageMetadata(parts *chatRequestParts) map[string]interface{} {
 	if parts.ContextControl != nil {
 		metadata["context_control"] = parts.ContextControl
 	}
+	if parts.UseMemory {
+		metadata["use_memory"] = true
+	}
 	if parts.Attachments != nil && len(parts.Attachments.Files) > 0 {
 		metadata["files"] = parts.Attachments.metadataFiles()
 		metadata["file_count"] = len(parts.Attachments.Files)
 	}
 	return metadata
+}
+
+func (s *service) appendUserMemoryContext(ctx context.Context, scope Scope, parts *chatRequestParts, systemPrompt string) (string, map[string]interface{}, error) {
+	if parts == nil || !parts.UseMemory {
+		return systemPrompt, nil, nil
+	}
+	if s.memoryService == nil {
+		return systemPrompt, map[string]interface{}{"user_memory": map[string]interface{}{"enabled": true, "available": false}}, nil
+	}
+	rendered, err := s.memoryService.RenderContext(ctx, scope.AccountID, userMemoryContextBudgetChars)
+	if err != nil {
+		return "", nil, err
+	}
+	metadata := map[string]interface{}{
+		"user_memory": map[string]interface{}{
+			"enabled":   true,
+			"available": strings.TrimSpace(rendered) != "",
+		},
+	}
+	if strings.TrimSpace(rendered) == "" {
+		return systemPrompt, metadata, nil
+	}
+	return strings.TrimSpace(systemPrompt) + "\n\n" + rendered, metadata, nil
+}
+
+func mergeUserMemoryMetadata(metadata map[string]interface{}, memoryMetadata map[string]interface{}) map[string]interface{} {
+	if len(memoryMetadata) == 0 {
+		return metadata
+	}
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	for key, value := range memoryMetadata {
+		metadata[key] = value
+	}
+	return metadata
+}
+
+func appendUserMemorySkill(ctx context.Context, parts *chatRequestParts, catalog []skills.SkillDiscoveryMetadata) {
+	_ = ctx
+	if parts == nil {
+		return
+	}
+	id := userMemorySkillID()
+	for _, item := range catalog {
+		if strings.EqualFold(strings.TrimSpace(item.ID), id) && item.Status != skills.SkillStatusInvalid {
+			parts.SkillIDs = appendUniqueSkillID(parts.SkillIDs, id)
+			parts.ToolSkillIDs = appendUniqueSkillID(parts.ToolSkillIDs, id)
+			return
+		}
+	}
+}
+
+func appendUniqueSkillID(values []string, id string) []string {
+	normalized := strings.ToLower(strings.TrimSpace(id))
+	if normalized == "" {
+		return values
+	}
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), normalized) {
+			return values
+		}
+	}
+	return append(values, normalized)
 }
 
 func newLLMChatRequest(parts *chatRequestParts, messages []adapter.Message) *adapter.ChatRequest {

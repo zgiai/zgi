@@ -224,6 +224,17 @@ func defaultEnabledSkillIDs(catalog []skills.SkillDiscoveryMetadata) []string {
 	return enabled
 }
 
+func visibleSkillMetadata(metadata []skills.SkillDiscoveryMetadata) []skills.SkillDiscoveryMetadata {
+	out := make([]skills.SkillDiscoveryMetadata, 0, len(metadata))
+	for _, item := range metadata {
+		if strings.EqualFold(strings.TrimSpace(item.ID), userMemorySkillID()) {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
 func catalogSkillIDSet(catalog []skills.SkillDiscoveryMetadata) map[string]struct{} {
 	out := make(map[string]struct{}, len(catalog))
 	for _, item := range catalog {
