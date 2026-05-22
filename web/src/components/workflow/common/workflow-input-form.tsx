@@ -326,6 +326,7 @@ const WorkflowInputForm = React.forwardRef<WorkflowInputFormHandle, WorkflowInpu
 
         fileVars.forEach(v => {
           const cleanIds = getInitialFileIds(initialValues[v.variable]);
+          if (cleanIds.length === 0) return;
           if (!areSameFileIds(fileStatesRef.current[v.variable], cleanIds)) {
             varMap[v.variable] = cleanIds;
           }
@@ -356,7 +357,7 @@ const WorkflowInputForm = React.forwardRef<WorkflowInputFormHandle, WorkflowInpu
       };
 
       hydrateFiles();
-    }, [initialValues, startVariables, t]); // Removed fileStates from deps to avoid loop, handled inside
+    }, [initialValues, startVariables]); // Removed fileStates from deps to avoid loop, handled inside
 
     // Submit wrapper to emit values upstream
     const handleSubmit = useCallback(
