@@ -959,7 +959,7 @@ const messages: NodesMessages = {
       discardChanges: '不保存',
       missingUserQuestionTitle: '建议增加用户提问',
       missingUserQuestionDescription:
-        '开启历史上下文时建议明确本轮输入的位置。否则当前用户输入会由系统自动追加，用户不容易判断最终发送顺序。',
+        '有上下文但没有本轮用户输入时，模型在多轮对话中可能会把上一轮的问题当作本轮问题，造成回答错位。',
     },
     states: {
       emptyBlock: '这段还没有内容',

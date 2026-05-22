@@ -1010,7 +1010,7 @@ const messages = {
       discardChanges: 'Discard',
       missingUserQuestionTitle: 'Add a user question',
       missingUserQuestionDescription:
-        'Recommended when history is enabled. Otherwise the current user input will be appended automatically, making the final prompt order harder to judge.',
+        'When context exists without a current user input, the model may treat the previous round question as the current one in multi-turn chats, causing mismatched answers.',
     },
     states: {
       emptyBlock: 'This block is empty',

@@ -1166,7 +1166,7 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
   const canRemoveCurrentUserPrompt = contextPreviewCount === 0;
   const shouldShowMissingUserQuestionTip =
     isChatMode &&
-    isConversationHistoryEnabled(safeNodeData) &&
+    contextPreviewCount > 0 &&
     !hasCurrentUserPrompt;
   const addPromptBlock = useCallback(() => {
     if (readOnly) return;
@@ -1541,10 +1541,12 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
     () => draftOrderItems.filter(item => promptLayoutItemIsCurrentUser(item, draftPromptBlocks)),
     [draftOrderItems, draftPromptBlocks]
   );
+  const draftHasCurrentUserPrompt = fixedCurrentUserOrderItems.length > 0;
   const sortableDraftOrderItems = useMemo(
     () => draftOrderItems.filter(item => !promptLayoutItemIsCurrentUser(item, draftPromptBlocks)),
     [draftOrderItems, draftPromptBlocks]
   );
+  const draftHasContextItems = sortableDraftOrderItems.length > 0;
   const promptOrderItemLabels = useMemo(() => {
     const labels = new Map<string, { label: string; description: string }>();
     draftPromptOrderViewItems.forEach(item => {
@@ -1643,7 +1645,23 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
     [markPromptOrderDirty]
   );
 
+  const handleAddDraftCurrentUser = useCallback(() => {
+    if (draftPromptBlocks.some(block => block.group_kind === 'current_user')) return;
+    markPromptOrderDirty();
+    const groupId = generateClientId('current-user');
+    const newBlock: PromptBlock = {
+      id: generateClientId('prompt'),
+      role: 'user',
+      text: '{{#sys.query#}}',
+      group_id: groupId,
+      group_kind: 'current_user',
+    };
+    setDraftPromptBlocks(blocks => [...blocks, newBlock]);
+    setDraftOrderItems(items => [...items, { type: 'group', group_id: groupId }]);
+  }, [draftPromptBlocks, markPromptOrderDirty]);
+
   const handleAddDraftContextGroup = useCallback(() => {
+    if (!draftPromptBlocks.some(block => block.group_kind === 'current_user')) return;
     markPromptOrderDirty();
     const groupId = generateClientId('context-group');
     const newBlocks: LLMNodeData['prompt_template'] = [
@@ -1690,6 +1708,7 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
   }, [markPromptOrderDirty]);
 
   const handleAddDraftHistory = useCallback(() => {
+    if (!draftPromptBlocks.some(block => block.group_kind === 'current_user')) return;
     markPromptOrderDirty();
     setDraftConversationHistoryEnabled(true);
     setDraftConversationHistoryWindow(window =>
@@ -1699,7 +1718,12 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
       if (items.some(item => item.type === 'history')) return items;
       return [{ type: 'history', id: 'conversation_history' }, ...items];
     });
-  }, [clampConversationHistoryWindow, markPromptOrderDirty, safeNodeData.conversation_history?.history_window_size]);
+  }, [
+    clampConversationHistoryWindow,
+    draftPromptBlocks,
+    markPromptOrderDirty,
+    safeNodeData.conversation_history?.history_window_size,
+  ]);
 
   const handleRemoveDraftHistory = useCallback(() => {
     markPromptOrderDirty();
@@ -2339,7 +2363,7 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
                       </div>
                     )}
                   </div>
-                ) : (
+                ) : hasCurrentUserPrompt ? (
                   <Button
                     className="w-full"
                     variant="outline"
@@ -2350,7 +2374,7 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
                     <Plus className="mr-2 h-4 w-4" />
                     {t('nodes.llm.actions.insertExtraContext')}
                   </Button>
-                )}
+                ) : null}
                 {shouldShowMissingUserQuestionTip && (
                   <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
                     <Info className="mt-0.5 h-4 w-4 shrink-0" />
@@ -2605,6 +2629,58 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
                 </div>
               </SortableContext>
             </DndContext>
+            {draftHasContextItems && !draftHasCurrentUserPrompt ? (
+              <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                <Info className="mt-0.5 h-4 w-4 shrink-0" />
+                <div>
+                  <div className="font-medium">
+                    {t('nodes.llm.promptOrder.missingUserQuestionTitle')}
+                  </div>
+                  <div className="mt-0.5">
+                    {t('nodes.llm.promptOrder.missingUserQuestionDescription')}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+            {draftHasCurrentUserPrompt ? (
+              <div className={cn(
+                'grid grid-cols-1 gap-2',
+                !draftHasHistoryOrderItem && 'sm:grid-cols-2'
+              )}>
+                {!draftHasHistoryOrderItem && (
+                  <Button
+                    className="w-full"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleAddDraftHistory}
+                    disabled={readOnly}
+                  >
+                    <Plus className="mr-2 h-4 w-4" />
+                    {t('nodes.llm.actions.addHistoryContext')}
+                  </Button>
+                )}
+                <Button
+                  className="w-full"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleAddDraftContextGroup}
+                  disabled={readOnly}
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  {t('nodes.llm.actions.addCustomContext')}
+                </Button>
+              </div>
+            ) : (
+              <Button
+                className="w-full"
+                variant="outline"
+                size="sm"
+                onClick={handleAddDraftCurrentUser}
+                disabled={readOnly}
+              >
+                {t('nodes.llm.actions.addUserQuestion')}
+              </Button>
+            )}
             {fixedCurrentUserOrderItems.map(item => {
               const id = promptLayoutItemKey(item);
               const labelInfo = promptOrderItemLabels.get(id);
@@ -2634,33 +2710,6 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
                 </div>
               );
             })}
-            <div className={cn(
-              'grid grid-cols-1 gap-2',
-              !draftHasHistoryOrderItem && 'sm:grid-cols-2'
-            )}>
-              {!draftHasHistoryOrderItem && (
-                <Button
-                  className="w-full"
-                  variant="outline"
-                  size="sm"
-                  onClick={handleAddDraftHistory}
-                  disabled={readOnly}
-                >
-                  <Plus className="mr-2 h-4 w-4" />
-                  {t('nodes.llm.actions.addHistoryContext')}
-                </Button>
-              )}
-              <Button
-                className="w-full"
-                variant="outline"
-                size="sm"
-                onClick={handleAddDraftContextGroup}
-                disabled={readOnly}
-              >
-                <Plus className="mr-2 h-4 w-4" />
-                {t('nodes.llm.actions.addCustomContext')}
-              </Button>
-            </div>
           </DialogBody>
           <DialogFooter>
             <Button variant="outline" onClick={requestClosePromptOrderDialog}>
