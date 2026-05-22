@@ -10,7 +10,7 @@ import React, {
   useCallback,
   type ReactNode,
 } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import { NextIntlClientProvider } from 'next-intl';
 import { flushSync } from 'react-dom';
 import { loadModules } from '@/i18n/loader';
@@ -32,10 +32,6 @@ function getMissingRouteModules(messages: I18nMessages, pathname: string) {
   return getModulesForPathname(pathname).filter(
     module => !Object.prototype.hasOwnProperty.call(messages, module)
   );
-}
-
-function isDashboardPathname(pathname: string): boolean {
-  return pathname.split('/').filter(Boolean).includes('dashboard');
 }
 
 interface I18nContextType {
@@ -66,7 +62,6 @@ export function I18nClientProvider({
   initialMessages,
 }: I18nClientProviderProps) {
   const pathname = usePathname() || '/';
-  const router = useRouter();
   const [locale, setLocaleState] = useState<Locale>(initialLocale);
   const [messages, setMessages] = useState(initialMessages);
   const [isPending, startTransition] = useTransition();
@@ -172,7 +167,6 @@ export function I18nClientProvider({
 
       return {
         href: rawHref && rawHref.startsWith('/') ? rawHref : internalHref,
-        hardHref: anchor.href,
         pathname: url.pathname,
       };
     }
@@ -187,51 +181,14 @@ export function I18nClientProvider({
       void ensureRouteMessages(link.pathname);
     }
 
-    function handleInternalLinkClick(event: MouseEvent) {
-      if (
-        event.defaultPrevented ||
-        event.button !== 0 ||
-        event.metaKey ||
-        event.ctrlKey ||
-        event.shiftKey ||
-        event.altKey
-      ) {
-        return;
-      }
-
-      const link = getInternalLink(event);
-      const needsRouteMessages = link
-        ? !hasRouteMessages(messagesRef.current, link.pathname)
-        : false;
-      const shouldUseDocumentNavigation = link ? isDashboardPathname(link.pathname) : false;
-
-      if (!link || (!needsRouteMessages && !shouldUseDocumentNavigation)) {
-        return;
-      }
-
-      event.preventDefault();
-      event.stopImmediatePropagation();
-
-      void ensureRouteMessages(link.pathname, { sync: true }).then(() => {
-        if (shouldUseDocumentNavigation) {
-          window.location.assign(link.hardHref);
-          return;
-        }
-
-        router.push(link.href);
-      });
-    }
-
     document.addEventListener('pointerover', preloadRouteMessages, true);
     document.addEventListener('focusin', preloadRouteMessages, true);
-    document.addEventListener('click', handleInternalLinkClick, true);
 
     return () => {
       document.removeEventListener('pointerover', preloadRouteMessages, true);
       document.removeEventListener('focusin', preloadRouteMessages, true);
-      document.removeEventListener('click', handleInternalLinkClick, true);
     };
-  }, [ensureRouteMessages, router]);
+  }, [ensureRouteMessages]);
 
   const setLocale = useCallback(
     async (newLocale: Locale) => {
