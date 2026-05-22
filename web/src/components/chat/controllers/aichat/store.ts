@@ -4,6 +4,7 @@ import {
   applyFileParseErrorState,
   applyFileParseStartState,
   applyAgentProgressState,
+  applyIntermediateAnswerState,
   applyMessageChunkState,
   applyMessageEndState,
   applyMessageStartState,
@@ -53,6 +54,8 @@ export function createAIChatControllerStore() {
       set(current => applyMessageChunkState(current, payload, eventId)),
     applyAgentProgress: (payload, eventId) =>
       set(current => applyAgentProgressState(current, payload, eventId)),
+    applyIntermediateAnswer: (payload, eventId) =>
+      set(current => applyIntermediateAnswerState(current, payload, eventId)),
     applyFileParseStart: (payload, eventId) =>
       set(current => applyFileParseStartState(current, payload, eventId)),
     applyFileParseEnd: (payload, eventId) =>

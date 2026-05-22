@@ -1,7 +1,7 @@
 'use client';
 
 import { ModelIcon } from 'modelicons';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, Download, FileImage, FileText, Loader2 } from 'lucide-react';
 import MarkdownViewer from '@/components/common/markdown-viewer';
 import {
@@ -28,7 +28,6 @@ import {
   UserEditToolbar,
   UserMessageToolbar,
 } from '@/components/chat/variants/aichat/message-toolbars';
-import { AIChatSkillTracePanel } from '@/components/chat/variants/aichat/skill-trace-panel';
 import { AIChatAgenticTimeline } from '@/components/chat/variants/aichat/agentic-timeline';
 import type { AIChatSkillDisplayMap } from '@/components/chat/variants/aichat/skill-display';
 import type { AIChatAgenticTimelineItem } from '@/components/chat/controllers/aichat';
@@ -273,7 +272,36 @@ export function AIChatMessageBubble({
   const skillInvocations = (message.metadata?.skill_invocations ?? []).filter(
     invocation => invocation.kind !== 'metadata_exposed'
   );
-  const hasRealtimeTimeline = timeline.length > 0;
+  const historicalTimeline = useMemo<AIChatAgenticTimelineItem[]>(
+    () =>
+      skillInvocations.map((invocation, index) => {
+        if (invocation.kind === 'intermediate_answer' && invocation.message) {
+          return {
+            id: `history-intermediate-${message.id}-${index}`,
+            type: 'intermediate_answer',
+            title: invocation.title,
+            content: invocation.message,
+            created_at: invocation.created_at,
+          };
+        }
+        return {
+          id: `history-skill-${message.id}-${index}`,
+          type: 'skill_event',
+          invocation,
+          created_at: invocation.created_at,
+        };
+      }),
+    [message.id, skillInvocations]
+  );
+  const displayTimeline = timeline.length > 0 ? timeline : historicalTimeline;
+  const hasTimeline = displayTimeline.length > 0;
+  const shouldOpenTimelineByDefault =
+    isStreaming ||
+    displayTimeline.some(
+      item =>
+        item.type === 'skill_event' &&
+        (item.invocation.status === 'error' || item.invocation.status === 'blocked')
+    );
 
   return (
     <div className="group space-y-3">
@@ -410,14 +438,14 @@ export function AIChatMessageBubble({
             {isStopped ? <span>{t('consoleChat.stopped')}</span> : null}
           </div>
 
-          {hasRealtimeTimeline ? (
-            <AIChatAgenticTimeline timeline={timeline} skillDisplayById={skillDisplayById} />
-          ) : (
-            <AIChatSkillTracePanel
-              invocations={skillInvocations}
+          {hasTimeline ? (
+            <AIChatAgenticTimeline
+              key={`${message.id}-${isStreaming ? 'streaming' : 'history'}-${shouldOpenTimelineByDefault ? 'open' : 'closed'}`}
+              timeline={displayTimeline}
               skillDisplayById={skillDisplayById}
+              defaultOpen={shouldOpenTimelineByDefault}
             />
-          )}
+          ) : null}
 
           {generatedFiles.length > 0 ? (
             <div className="mb-3 flex flex-wrap gap-2">
@@ -443,7 +471,7 @@ export function AIChatMessageBubble({
                 />
               )}
             </div>
-          ) : isStreaming && !hasRealtimeTimeline ? (
+          ) : isStreaming && !hasTimeline ? (
             <div className="space-y-2 pt-1">
               <Skeleton className="h-4 w-2/3" />
               <Skeleton className="h-4 w-1/2" />

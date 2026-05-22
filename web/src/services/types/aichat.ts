@@ -15,12 +15,19 @@ export type AIChatSkillMode = 'disabled' | 'auto' | 'required';
 export type AIChatSkillSource = 'system' | 'custom';
 export type AIChatSkillRuntimeType = 'tool' | 'prompt' | 'hybrid';
 export type AIChatSkillStatus = 'active' | 'invalid';
-export type AIChatSkillActivityStatus = 'loading' | 'loaded' | 'running' | 'success' | 'error';
+export type AIChatSkillActivityStatus =
+  | 'loading'
+  | 'loaded'
+  | 'running'
+  | 'success'
+  | 'blocked'
+  | 'error';
 export type AIChatSkillInvocationKind =
   | 'metadata_exposed'
   | 'skill_load'
   | 'reference_read'
-  | 'tool_call';
+  | 'tool_call'
+  | 'intermediate_answer';
 
 export interface AIChatConversationMetadata {
   [key: string]: unknown;
@@ -114,6 +121,7 @@ export interface AIChatSkillInvocation {
   kind?: AIChatSkillInvocationKind;
   skill_id: string;
   tool_name?: string;
+  title?: string;
   status: AIChatSkillActivityStatus;
   duration_ms?: number;
   arguments?: Record<string, unknown> | null;
@@ -393,6 +401,15 @@ export interface AIChatAgentProgressEventData {
   created_at?: number;
 }
 
+export interface AIChatIntermediateAnswerEventData {
+  conversation_id: string;
+  message_id: string;
+  title?: string;
+  content?: string;
+  status?: 'success';
+  created_at?: number;
+}
+
 export interface AIChatFileParseStartEventData {
   conversation_id: string;
   message_id: string;
@@ -442,6 +459,7 @@ export interface AIChatStopConversationResponseData {
 export type AIChatSseEventName =
   | 'message_start'
   | 'agent_progress'
+  | 'agent_intermediate_answer'
   | 'skill_load_start'
   | 'skill_load_end'
   | 'skill_reference_read'

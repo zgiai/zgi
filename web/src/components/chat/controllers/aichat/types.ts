@@ -2,6 +2,7 @@ import type {
   AIChatConversation,
   AIChatAgentProgressEventData,
   AIChatErrorEventData,
+  AIChatIntermediateAnswerEventData,
   AIChatFileParseEndEventData,
   AIChatFileParseErrorEventData,
   AIChatFileParseStartEventData,
@@ -55,6 +56,14 @@ export type AIChatAgenticTimelineItem =
       invocation: AIChatSkillInvocation;
       created_at?: number;
       event_id?: string | null;
+    }
+  | {
+      id: string;
+      type: 'intermediate_answer';
+      title?: string;
+      content: string;
+      created_at?: number;
+      event_id?: string | null;
     };
 
 export type AIChatRecoveryMode = 'active' | 'background';
@@ -99,6 +108,10 @@ export interface AIChatControllerStore extends AIChatControllerState {
   ) => void;
   applyAgentProgress: (
     payload: AIChatAgentProgressEventData,
+    eventId?: string | null
+  ) => void;
+  applyIntermediateAnswer: (
+    payload: AIChatIntermediateAnswerEventData,
     eventId?: string | null
   ) => void;
   applyFileParseStart: (

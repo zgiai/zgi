@@ -6,6 +6,7 @@ import type {
   AIChatFileParseErrorEventData,
   AIChatFileParseStartEventData,
   AIChatGeneratedFile,
+  AIChatIntermediateAnswerEventData,
   AIChatMessage,
   AIChatMessageChunkEventData,
   AIChatMessageEndEventData,
@@ -165,6 +166,22 @@ function upsertSkillTimelineItem(
   incoming: AIChatSkillInvocation,
   eventId: string | null | undefined
 ): AIChatAgenticTimelineItem[] {
+  if (incoming.kind === 'intermediate_answer') {
+    return [
+      ...(timeline ?? []),
+      {
+        id:
+          eventId ??
+          `intermediate-${incoming.created_at ?? Date.now()}-${timeline?.length ?? 0}`,
+        type: 'intermediate_answer',
+        title: incoming.title,
+        content: incoming.message ?? '',
+        created_at: incoming.created_at,
+        event_id: eventId ?? null,
+      },
+    ];
+  }
+
   const next = timeline?.slice() ?? [];
   const incomingIdentity = getSkillInvocationIdentity(incoming);
   const reverseIndex = [...next].reverse().findIndex(item => {
@@ -320,6 +337,32 @@ export function applyAgentProgressState(
       },
     },
   };
+}
+
+export function applyIntermediateAnswerState(
+  current: AIChatControllerState,
+  payload: AIChatIntermediateAnswerEventData,
+  eventId?: string | null
+): AIChatControllerState {
+  const content = (payload.content ?? '').trim();
+  if (!content || !payload.conversation_id || !payload.message_id) {
+    return current;
+  }
+
+  return updateSkillInvocationMetadata(
+    current,
+    payload.conversation_id,
+    payload.message_id,
+    eventId,
+    {
+      kind: 'intermediate_answer',
+      skill_id: '',
+      title: payload.title,
+      status: 'success',
+      message: content,
+      created_at: payload.created_at,
+    }
+  );
 }
 
 function inferExtension(filename: string): string {

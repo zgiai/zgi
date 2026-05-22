@@ -10,6 +10,7 @@ import type {
   AIChatFileParseErrorEventData,
   AIChatFileParseStartEventData,
   AIChatMessage,
+  AIChatIntermediateAnswerEventData,
   AIChatMessageChunkEventData,
   AIChatMessageEndEventData,
   AIChatMessageFile,
@@ -66,6 +67,7 @@ import {
 import {
   applyMessageChunkState,
   applyAgentProgressState,
+  applyIntermediateAnswerState,
   applyFileParseEndState,
   applyFileParseErrorState,
   applyFileParseStartState,
@@ -440,6 +442,14 @@ export function useAIChatController(): AIChatController {
     [setControllerState]
   );
 
+  const applyIntermediateAnswer = useCallback(
+    (payload: AIChatIntermediateAnswerEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id || !payload.content) return;
+      setControllerState(current => applyIntermediateAnswerState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
   const applyMessageEnd = useCallback(
     (payload: AIChatMessageEndEventData, _eventId?: string | null) => {
       if (!payload.conversation_id || !payload.message_id) return;
@@ -702,6 +712,10 @@ export function useAIChatController(): AIChatController {
                 if (abortController.signal.aborted) return;
                 applyAgentProgress(payload, eventId);
               },
+              onIntermediateAnswer: (payload, eventId) => {
+                if (abortController.signal.aborted) return;
+                applyIntermediateAnswer(payload, eventId);
+              },
               onFileParseStart: (payload, eventId) => {
                 if (abortController.signal.aborted) return;
                 applyFileParseStart(payload, eventId);
@@ -793,6 +807,7 @@ export function useAIChatController(): AIChatController {
     },
     [
       applyAgentProgress,
+      applyIntermediateAnswer,
       applyFileParseEnd,
       applyFileParseError,
       applyFileParseStart,
@@ -1515,6 +1530,10 @@ export function useAIChatController(): AIChatController {
               if (abortController.signal.aborted) return;
               applyAgentProgress(payload, eventId);
             },
+            onIntermediateAnswer: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              applyIntermediateAnswer(payload, eventId);
+            },
             onFileParseStart: (payload, eventId) => {
               if (abortController.signal.aborted) return;
               applyFileParseStart(payload, eventId);
@@ -1636,6 +1655,7 @@ export function useAIChatController(): AIChatController {
     },
     [
       applyAgentProgress,
+      applyIntermediateAnswer,
       applyFileParseEnd,
       applyFileParseError,
       applyFileParseStart,
@@ -1725,6 +1745,10 @@ export function useAIChatController(): AIChatController {
             onAgentProgress: (payload, eventId) => {
               if (abortController.signal.aborted) return;
               applyAgentProgress(payload, eventId);
+            },
+            onIntermediateAnswer: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              applyIntermediateAnswer(payload, eventId);
             },
             onFileParseStart: (payload, eventId) => {
               if (abortController.signal.aborted) return;
@@ -1821,6 +1845,7 @@ export function useAIChatController(): AIChatController {
     },
     [
       applyAgentProgress,
+      applyIntermediateAnswer,
       applyFileParseEnd,
       applyFileParseError,
       applyFileParseStart,

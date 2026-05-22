@@ -8,6 +8,7 @@ import {
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
 import { Button } from '@/components/ui/button';
+import MarkdownViewer from '@/components/common/markdown-viewer';
 import { useT } from '@/i18n/translations';
 import type { ScopedTranslations } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
@@ -38,6 +39,7 @@ const TIMELINE_DEBUG_LABEL_KEYS = {
 interface AIChatAgenticTimelineProps {
   timeline: AIChatAgenticTimelineItem[];
   skillDisplayById: AIChatSkillDisplayMap;
+  defaultOpen?: boolean;
 }
 
 interface SkillTimelineViewModel {
@@ -50,7 +52,7 @@ interface SkillTimelineViewModel {
 
 function getInvocationTone(invocation: AIChatSkillInvocation): TimelineTone {
   if (invocation.status === 'loading' || invocation.status === 'running') return 'running';
-  if (invocation.status === 'error') return 'error';
+  if (invocation.status === 'error' || invocation.status === 'blocked') return 'error';
   return 'success';
 }
 
@@ -213,17 +215,25 @@ function isProgressTextItem(
   return 'type' in item && item.type === 'progress_text';
 }
 
+function isIntermediateAnswerItem(
+  item: AIChatAgenticTimelineItem | SkillTimelineViewModel
+): item is Extract<AIChatAgenticTimelineItem, { type: 'intermediate_answer' }> {
+  return 'type' in item && item.type === 'intermediate_answer';
+}
+
 export function AIChatAgenticTimeline({
   timeline,
   skillDisplayById,
+  defaultOpen = true,
 }: AIChatAgenticTimelineProps) {
   const t = useT('webapp');
-  const [isOpen, setIsOpen] = useState(true);
+  const [isOpen, setIsOpen] = useState(defaultOpen);
 
   const events = useMemo(
     () =>
       timeline.map(item => {
         if (item.type === 'progress_text') return item;
+        if (item.type === 'intermediate_answer') return item;
 
         const skillId = item.invocation.skill_id || t('consoleChat.skills.trace.unknownSkill');
         const skill = skillDisplayById[skillId] ?? getFallbackAIChatSkillDisplayInfo(skillId);
@@ -274,6 +284,17 @@ export function AIChatAgenticTimeline({
                 className="whitespace-pre-wrap break-words border-l-2 border-muted-foreground/20 pl-3 text-sm text-muted-foreground"
               >
                 {item.content}
+              </div>
+            ) : isIntermediateAnswerItem(item) ? (
+              <div key={item.id} className="rounded-md border bg-background/80 p-3">
+                {item.title ? (
+                  <div className="mb-2 text-xs font-medium text-muted-foreground">
+                    {item.title}
+                  </div>
+                ) : null}
+                <div className="prose prose-sm max-w-none dark:prose-invert">
+                  <MarkdownViewer className="md-viewer break-words" content={item.content} />
+                </div>
               </div>
             ) : (
               <SkillTimelineRow key={item.item.id} event={item} />
