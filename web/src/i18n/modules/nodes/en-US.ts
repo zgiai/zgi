@@ -845,6 +845,9 @@ const messages = {
     },
     actions: {
       addBlock: 'Add Block',
+      addUserQuestion: 'Add user question',
+      addCustomContext: 'Add custom context',
+      changePromptOrder: 'Change context order',
       applyPromptTemplate: 'Apply and keep editing',
       collapseBlock: 'Collapse block',
       changePromptReference: 'Choose another',
@@ -902,6 +905,21 @@ const messages = {
         'If no block is selected first, quick variables will be inserted into the first system prompt block by default.',
       noManualSyntax:
         'Variables are inserted as recognized tokens automatically, so you usually do not need to type the bracket syntax by hand.',
+    },
+    promptOrder: {
+      systemPrompt: 'System prompt',
+      history: 'History context',
+      historyDescription: 'Recent conversation history inserted by this node.',
+      currentUser: 'User question',
+      customContext: 'Custom context',
+      legacyContext: 'Legacy context',
+      positionLabel: 'Position {index}',
+      orderDialogTitle: 'Change context order',
+      orderDialogDescription:
+        'Drag items to control the order sent after the system prompt.',
+      missingUserQuestionTitle: 'Add a user question',
+      missingUserQuestionDescription:
+        'Recommended when history is enabled. Otherwise the current user input will be appended automatically, making the final prompt order harder to judge.',
     },
     states: {
       emptyBlock: 'This block is empty',

@@ -163,10 +163,43 @@ type MemoryConfig struct {
 	QueryPromptTemplate string       `json:"query_prompt_template,omitempty"`
 }
 
+// PromptLayoutItemType represents a virtual prompt layout item.
+type PromptLayoutItemType string
+
+const (
+	PromptLayoutItemHistory PromptLayoutItemType = "history"
+	PromptLayoutItemGroup   PromptLayoutItemType = "group"
+)
+
+// PromptLayoutItem represents a sortable unit after system messages.
+type PromptLayoutItem struct {
+	Type    PromptLayoutItemType `json:"type"`
+	ID      string               `json:"id,omitempty"`
+	GroupID string               `json:"group_id,omitempty"`
+}
+
+// PromptLayout controls prompt message order for chat mode.
+type PromptLayout struct {
+	Version int                `json:"version"`
+	Items   []PromptLayoutItem `json:"items"`
+}
+
+// PromptGroupKind marks frontend-defined prompt groups.
+type PromptGroupKind string
+
+const (
+	PromptGroupKindCurrentUser   PromptGroupKind = "current_user"
+	PromptGroupKindCustomContext PromptGroupKind = "custom_context"
+	PromptGroupKindLegacyContext PromptGroupKind = "legacy_context"
+)
+
 // NodeChatModelMessage represents a chat model message for LLM node
 type NodeChatModelMessage struct {
 	Role         PromptMessageRole `json:"role"`
 	Text         string            `json:"text"`
+	ID           string            `json:"id,omitempty"`
+	GroupID      string            `json:"group_id,omitempty"`
+	GroupKind    PromptGroupKind   `json:"group_kind,omitempty"`
 	TemplateText *string           `json:"template_text,omitempty"`
 	EditionType  string            `json:"edition_type,omitempty"`
 }

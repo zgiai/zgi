@@ -446,10 +446,25 @@ const useWorkflowOperations = () => {
         },
         prompt_template: [
           {
+            id: 'system',
             role: 'system' as const,
             text: '',
           },
+          {
+            id: 'current-user',
+            role: 'user' as const,
+            text: '{{#sys.query#}}',
+            group_id: 'current-user',
+            group_kind: 'current_user' as const,
+          },
         ],
+        prompt_layout: {
+          version: 1 as const,
+          items: [
+            { type: 'history' as const, id: 'conversation_history' as const },
+            { type: 'group' as const, group_id: 'current-user' },
+          ],
+        },
         prompt_config: {
           jinja2_variables: [],
         },

@@ -283,10 +283,25 @@ export function createDragPreviewNodeData({
         },
         prompt_template: [
           {
+            id: 'system',
             role: 'system',
             text: '',
           },
+          {
+            id: 'current-user',
+            role: 'user',
+            text: '{{#sys.query#}}',
+            group_id: 'current-user',
+            group_kind: 'current_user',
+          },
         ],
+        prompt_layout: {
+          version: 1,
+          items: [
+            { type: 'history', id: 'conversation_history' },
+            { type: 'group', group_id: 'current-user' },
+          ],
+        },
         prompt_config: {
           jinja2_variables: [],
         },

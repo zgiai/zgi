@@ -16,6 +16,7 @@ type NodeData struct {
 	PromptSource             string                     `json:"prompt_source,omitempty"`
 	PromptReference          *PromptReference           `json:"prompt_reference,omitempty"`
 	PromptConfig             PromptConfig               `json:"prompt_config"`
+	PromptLayout             *PromptLayout              `json:"prompt_layout,omitempty"`
 	Memory                   *MemoryConfig              `json:"memory,omitempty"`
 	Context                  ContextConfig              `json:"context"`
 	ConversationHistory      *ConversationHistoryConfig `json:"conversation_history,omitempty"`

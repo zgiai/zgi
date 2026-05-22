@@ -6,8 +6,17 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import ModelSelectorParameter from '@/components/common/model-selector/model-selector-parameter';
-import type { LLMNodeData } from '../config';
+import type { LLMNodeData, LLMPromptLayoutItem } from '../config';
 import { cn } from '@/lib/utils';
 import { generateClientId } from '@/utils/client-id';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -25,7 +34,7 @@ import { useInitializeDefaultModelByUseCase } from '@/hooks/model/use-default-mo
 import PromptEditor from './prompt-editor';
 import type { PromptEditorHandle } from './prompt-editor';
 import type { WorkflowValueEditorHandle } from '@/components/workflow/ui';
-import { Braces, Trash2, Info, WandSparkles, MoreHorizontal, ChevronDown, ChevronRight } from 'lucide-react';
+import { Braces, Trash2, Info, WandSparkles, MoreHorizontal, GripVertical, ArrowUpDown } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import WorkflowValueInserter from '@/components/workflow/common/workflow-value-inserter';
 import type { VariableInsertValue } from '@/components/workflow/common/workflow-value-inserter/variable-item';
@@ -44,6 +53,23 @@ import { useNodeData, useNodeDataUpdate, useNodeOutputVariables } from '../../..
 import { useCreatePrompt } from '@/hooks/prompt/use-prompts';
 import { useCurrentWorkspace } from '@/store/workspace-store';
 import type { CreatePromptRequest, PromptPickerSelection } from '@/services/types/prompt';
+import {
+  DndContext,
+  PointerSensor,
+  KeyboardSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 interface LLMManagerProps {
   id: string;
@@ -55,13 +81,13 @@ interface PromptBlockRowProps {
   idx: number;
   role: LLMNodeData['prompt_template'][number]['role'];
   text: string;
+  title?: string;
   nodeId: string;
   readOnly: boolean;
   onUpdate: (idx: number, patch: Partial<LLMNodeData['prompt_template'][number]>) => void;
   onRemove: (idx: number) => void;
   // Bubble active editor handle up so parent can route inserts to caret
   onFocusedEditor: (idx: number, handle: WorkflowValueEditorHandle) => void;
-  defaultCollapsed?: boolean;
 }
 
 // Prompt block row with local state and debounced text update to reduce global store writes
@@ -69,12 +95,12 @@ const PromptBlockRowComponent: React.FC<PromptBlockRowProps> = ({
   idx,
   role,
   text,
+  title,
   nodeId,
   readOnly,
   onUpdate,
   onRemove,
   onFocusedEditor,
-  defaultCollapsed = false,
 }) => {
   // Keep local role/text for smooth typing; sync when parent changes
   const [localRole, setLocalRole] = useState(role);
@@ -82,7 +108,6 @@ const PromptBlockRowComponent: React.FC<PromptBlockRowProps> = ({
   const t = useT();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pendingTemplate, setPendingTemplate] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState(defaultCollapsed);
 
   const lastPushedTextRef = useRef(text);
 
@@ -112,8 +137,9 @@ const PromptBlockRowComponent: React.FC<PromptBlockRowProps> = ({
 
   const editorRef = useRef<PromptEditorHandle | null>(null);
 
-  // First system prompt is locked: cannot change role or remove
+  // System prompts are fixed at the top of the final chat prompt.
   const isFirstSystem = idx === 0 && localRole === 'system';
+  const isSystemPrompt = localRole === 'system';
 
   // Build upstream variable menu for direct insertion
   const getUpstreamVariables = useWorkflowStore(s => s.getUpstreamVariables);
@@ -144,53 +170,26 @@ const PromptBlockRowComponent: React.FC<PromptBlockRowProps> = ({
     [upstreams]
   );
 
-  const roleLabels = {
-    system: t('nodes.llm.roles.system'),
-    user: t('nodes.llm.roles.user'),
-    assistant: t('nodes.llm.roles.assistant'),
-  } as const;
-
-  const previewText = localText.trim().replace(/\s+/g, ' ');
-
-  if (collapsed && !isFirstSystem) {
-    return (
-      <div className="theme-surface border border-muted rounded-xl overflow-hidden shadow-sm">
-        <div className="flex items-center justify-between gap-3 px-3 py-2.5">
-          <div className="min-w-0 flex items-center gap-2">
-            <Badge variant="secondary">{roleLabels[localRole]}</Badge>
-            <div className="min-w-0 text-sm text-muted-foreground truncate">
-              {previewText || t('nodes.llm.states.emptyBlock')}
-            </div>
-          </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setCollapsed(false)}
-            className="shrink-0"
-          >
-            <ChevronRight className="h-4 w-4" />
-            {t('nodes.llm.actions.expandBlock')}
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="theme-surface border border-muted rounded-xl overflow-hidden shadow-sm hover:border-primary/30 transition-all duration-300">
+      {title ? (
+        <div className="border-b bg-muted/30 px-3 py-2 text-xs font-medium text-muted-foreground">
+          {title}
+        </div>
+      ) : null}
       <PromptEditor
         ref={editorRef}
         role={localRole}
         value={localText}
         nodeId={nodeId}
         onChangeRole={nextRole => {
-          if (readOnly || isFirstSystem) return; // locked
+          if (readOnly || isSystemPrompt) return; // locked
           setLocalRole(nextRole);
           onUpdate(idx, { role: nextRole });
         }}
         onChange={val => setLocalText(val)}
         readOnly={readOnly}
-        roleLocked={isFirstSystem}
+        roleLocked={isSystemPrompt}
         allowedRoles={
           idx === 0
             ? (['system', 'user', 'assistant'] as Array<
@@ -201,25 +200,6 @@ const PromptBlockRowComponent: React.FC<PromptBlockRowProps> = ({
         placeholder={t('nodes.llm.placeholders.promptTemplate')}
         actions={
           <div className="flex items-center gap-1.5 bg-muted/30 rounded-lg">
-            {!isFirstSystem && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className="inline-flex">
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      isIcon
-                      className="hover:bg-background"
-                      onClick={() => setCollapsed(true)}
-                      aria-label={t('nodes.llm.actions.collapseBlock')}
-                    >
-                      <ChevronDown className="h-4 w-4" />
-                    </Button>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>{t('nodes.llm.actions.collapseBlock')}</TooltipContent>
-              </Tooltip>
-            )}
             <Tooltip>
               <TooltipTrigger asChild>
                 <span className="inline-flex">
@@ -275,7 +255,7 @@ const PromptBlockRowComponent: React.FC<PromptBlockRowProps> = ({
               </>
             )}
 
-            {!isFirstSystem && (
+            {!isSystemPrompt && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <span className="inline-flex">
@@ -286,9 +266,9 @@ const PromptBlockRowComponent: React.FC<PromptBlockRowProps> = ({
                       className="hover:bg-destructive/10 hover:text-destructive"
                       onClick={() => onRemove(idx)}
                       aria-label={t('nodes.common.remove')}
-                      disabled={readOnly || isFirstSystem}
+                      disabled={readOnly || isSystemPrompt}
                       title={
-                        isFirstSystem ? t('nodes.llm.tips.cannotRemoveFirstSystem') : undefined
+                        isSystemPrompt ? t('nodes.llm.tips.cannotRemoveFirstSystem') : undefined
                       }
                     >
                       <Trash2 className="h-4 w-4" />
@@ -296,7 +276,7 @@ const PromptBlockRowComponent: React.FC<PromptBlockRowProps> = ({
                   </span>
                 </TooltipTrigger>
                 <TooltipContent>
-                  {isFirstSystem
+                  {isSystemPrompt
                     ? t('nodes.llm.tips.cannotRemoveFirstSystem')
                     : t('nodes.common.remove')}
                 </TooltipContent>
@@ -312,6 +292,222 @@ const PromptBlockRowComponent: React.FC<PromptBlockRowProps> = ({
 
 const PromptBlockRow = React.memo(PromptBlockRowComponent);
 PromptBlockRow.displayName = 'PromptBlockRow';
+
+type PromptBlock = LLMNodeData['prompt_template'][number];
+
+type PromptOrderViewItem =
+  | { type: 'history'; id: 'conversation_history'; key: string }
+  | {
+      type: 'group';
+      key: string;
+      groupId: string;
+      groupKind: NonNullable<PromptBlock['group_kind']>;
+      blocks: Array<{ block: PromptBlock; index: number }>;
+    };
+
+const isCurrentUserBlock = (block: PromptBlock) =>
+  block.group_kind === 'current_user' ||
+  (block.role === 'user' && block.text.includes('#sys.query#'));
+
+const isConversationHistoryEnabled = (data?: Partial<LLMNodeData>) =>
+  data?.conversation_history?.enabled === true;
+
+const buildLegacyPromptGroups = (
+  blocks: PromptBlock[]
+): Array<Omit<Extract<PromptOrderViewItem, { type: 'group' }>, 'key'>> => {
+  const nonSystem = blocks
+    .map((block, index) => ({ block, index }))
+    .filter(item => item.block.role !== 'system');
+  if (nonSystem.length === 0) return [];
+
+  const currentUserIndex = (() => {
+    for (let i = nonSystem.length - 1; i >= 0; i--) {
+      if (isCurrentUserBlock(nonSystem[i].block)) return nonSystem[i].index;
+    }
+    for (let i = nonSystem.length - 1; i >= 0; i--) {
+      if (nonSystem[i].block.role === 'user') return nonSystem[i].index;
+    }
+    return -1;
+  })();
+
+  const groups: Array<Omit<Extract<PromptOrderViewItem, { type: 'group' }>, 'key'>> = [];
+  const legacyBlocks = nonSystem.filter(item => item.index !== currentUserIndex);
+  if (legacyBlocks.length > 0) {
+    groups.push({
+      type: 'group',
+      groupId: legacyBlocks[0]?.block.group_id || `legacy-${legacyBlocks[0]?.index ?? 0}`,
+      groupKind: 'legacy_context',
+      blocks: legacyBlocks,
+    });
+  }
+
+  if (currentUserIndex >= 0) {
+    const current = nonSystem.find(item => item.index === currentUserIndex);
+    if (current) {
+      groups.push({
+        type: 'group',
+        groupId: current.block.group_id || 'current-user',
+        groupKind: 'current_user',
+        blocks: [current],
+      });
+    }
+  }
+
+  return groups;
+};
+
+const buildPromptOrderView = (data?: Partial<LLMNodeData>): PromptOrderViewItem[] => {
+  const blocks = data?.prompt_template || [];
+  const historyEnabled = isConversationHistoryEnabled(data);
+  const promptLayout = data?.prompt_layout;
+
+  if (!promptLayout) {
+    const items: PromptOrderViewItem[] = [];
+    if (historyEnabled) {
+      items.push({ type: 'history', id: 'conversation_history', key: 'history' });
+    }
+    buildLegacyPromptGroups(blocks).forEach(group => {
+      items.push({ ...group, key: `group:${group.groupId}` });
+    });
+    return items;
+  }
+
+  const groups = new Map<string, Extract<PromptOrderViewItem, { type: 'group' }>>();
+  blocks.forEach((block, index) => {
+    if (block.role === 'system' || !block.group_id) return;
+    const existing = groups.get(block.group_id);
+    if (existing) {
+      existing.blocks.push({ block, index });
+      return;
+    }
+    groups.set(block.group_id, {
+      type: 'group',
+      key: `group:${block.group_id}`,
+      groupId: block.group_id,
+      groupKind: block.group_kind || 'legacy_context',
+      blocks: [{ block, index }],
+    });
+  });
+
+  const items: PromptOrderViewItem[] = [];
+  let hasHistoryItem = false;
+  promptLayout.items.forEach(item => {
+    if (item.type === 'history') {
+      hasHistoryItem = true;
+      if (historyEnabled) {
+        items.push({ type: 'history', id: 'conversation_history', key: 'history' });
+      }
+      return;
+    }
+    const group = groups.get(item.group_id);
+    if (group) items.push(group);
+  });
+  if (historyEnabled && !hasHistoryItem) {
+    items.unshift({ type: 'history', id: 'conversation_history', key: 'history' });
+  }
+  return items;
+};
+
+const materializePromptLayout = (data: LLMNodeData): Pick<LLMNodeData, 'prompt_template' | 'prompt_layout'> => {
+  const blocks = (data.prompt_template || []).map(block => ({
+    ...block,
+    id: block.id || generateClientId('prompt'),
+  }));
+  const viewItems = buildPromptOrderView({ ...data, prompt_template: blocks });
+  const nextBlocks = blocks.map(block => ({ ...block }));
+
+  viewItems.forEach(item => {
+    if (item.type !== 'group') return;
+    item.blocks.forEach(({ index }) => {
+      nextBlocks[index] = {
+        ...nextBlocks[index],
+        group_id: item.groupId,
+        group_kind: item.groupKind,
+      };
+    });
+  });
+
+  const visibleLayoutItems: LLMPromptLayoutItem[] = viewItems.map(item =>
+    item.type === 'history'
+      ? { type: 'history', id: 'conversation_history' }
+      : { type: 'group', group_id: item.groupId }
+  );
+  const layoutItems: LLMPromptLayoutItem[] = [];
+  if (data.prompt_layout) {
+    const visibleByKey = new Map(
+      visibleLayoutItems.map(item => [
+        item.type === 'history' ? 'history' : `group:${item.group_id}`,
+        item,
+      ])
+    );
+    data.prompt_layout.items.forEach(item => {
+      const key = item.type === 'history' ? 'history' : `group:${item.group_id}`;
+      const visibleItem = visibleByKey.get(key);
+      if (visibleItem) {
+        layoutItems.push(visibleItem);
+        visibleByKey.delete(key);
+        return;
+      }
+      if (item.type === 'history') {
+        layoutItems.push(item);
+      }
+    });
+    visibleByKey.forEach(item => layoutItems.push(item));
+  } else {
+    layoutItems.push(...visibleLayoutItems);
+  }
+
+  return {
+    prompt_template: nextBlocks,
+    prompt_layout: {
+      version: 1,
+      items: layoutItems,
+    },
+  };
+};
+
+interface SortablePromptOrderRowProps {
+  id: string;
+  label: string;
+  description: string;
+}
+
+const SortablePromptOrderRow: React.FC<SortablePromptOrderRowProps> = ({
+  id,
+  label,
+  description,
+}) => {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id,
+  });
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={cn(
+        'flex items-center gap-3 rounded-lg border bg-background px-3 py-2 shadow-sm',
+        isDragging && 'opacity-70'
+      )}
+    >
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        isIcon
+        className="cursor-grab"
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical className="h-4 w-4" />
+      </Button>
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium">{label}</div>
+        <div className="truncate text-xs text-muted-foreground">{description}</div>
+      </div>
+    </div>
+  );
+};
 
 /**
  * LLMManager - Manage LLM node data state with cohesive UI sections
@@ -333,6 +529,8 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
   const [playgroundOpen, setPlaygroundOpen] = useState(false);
   const [managedPreviewOpen, setManagedPreviewOpen] = useState(false);
   const [variableGuideOpen, setVariableGuideOpen] = useState(false);
+  const [orderDialogOpen, setOrderDialogOpen] = useState(false);
+  const [draftOrderItems, setDraftOrderItems] = useState<LLMPromptLayoutItem[]>([]);
   const currentWorkspace = useCurrentWorkspace();
   const createPrompt = useCreatePrompt();
 
@@ -432,13 +630,29 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
   const handleConversationHistoryToggle = useCallback(
     (enabled: boolean) => {
       if (readOnly) return;
-      updateData({
-        conversation_history: {
-          enabled,
-          history_window_size: clampConversationHistoryWindow(
-            safeNodeData.conversation_history?.history_window_size ?? 3
-          ),
-        },
+      updateData((prev: LLMNodeData) => {
+        const next: Partial<LLMNodeData> = {
+          conversation_history: {
+            enabled,
+            history_window_size: clampConversationHistoryWindow(
+              safeNodeData.conversation_history?.history_window_size ?? 3
+            ),
+          },
+        };
+        if (
+          enabled &&
+          prev.prompt_layout &&
+          !prev.prompt_layout.items.some(item => item.type === 'history')
+        ) {
+          next.prompt_layout = {
+            version: 1,
+            items: [
+              { type: 'history', id: 'conversation_history' },
+              ...prev.prompt_layout.items,
+            ],
+          };
+        }
+        return next;
       });
     },
     [
@@ -480,6 +694,8 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
   const supportsVision =
     selectedModel?.features.vision === true || selectedModel?.endpoints.vision === true;
   const supportsTextChat = selectedModel?.use_cases?.includes('text-chat') ?? true;
+  const isManagedPrompt = selfNodeData?.prompt_source === 'managed';
+  const isChatMode = safeNodeData.model.mode === 'chat';
 
   const updatePromptTemplate = useCallback(
     (idx: number, patch: Partial<LLMNodeData['prompt_template'][number]>) => {
@@ -495,29 +711,102 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
     [updateData]
   );
 
+  const promptOrderViewItems = useMemo(
+    () => (isChatMode ? buildPromptOrderView(safeNodeData) : []),
+    [isChatMode, safeNodeData]
+  );
+  const systemPromptBlocks = useMemo(
+    () =>
+      (isChatMode ? safeNodeData.prompt_template || [] : [])
+        .map((block, index) => ({ block, index }))
+        .filter(item => item.block.role === 'system'),
+    [isChatMode, safeNodeData.prompt_template]
+  );
+  const hasCurrentUserPrompt = useMemo(
+    () =>
+      promptOrderViewItems.some(
+        item => item.type === 'group' && item.groupKind === 'current_user'
+      ),
+    [promptOrderViewItems]
+  );
+  const shouldShowMissingUserQuestionTip =
+    isChatMode &&
+    isConversationHistoryEnabled(safeNodeData) &&
+    !hasCurrentUserPrompt;
+  const sortablePromptOrderItems = useMemo(
+    () =>
+      promptOrderViewItems.map(item =>
+        item.type === 'history'
+          ? ({ type: 'history', id: 'conversation_history' } as LLMPromptLayoutItem)
+          : ({ type: 'group', group_id: item.groupId } as LLMPromptLayoutItem)
+      ),
+    [promptOrderViewItems]
+  );
+  const canChangePromptOrder =
+    isChatMode &&
+    !isManagedPrompt &&
+    !readOnly &&
+    sortablePromptOrderItems.length >= 2;
+
   const addPromptBlock = useCallback(() => {
     if (readOnly) return;
     updateData((prev: LLMNodeData) => {
-      const currentPromptTemplate = prev.prompt_template || [];
-      const nextRole: LLMNodeData['prompt_template'][number]['role'] = (() => {
-        for (let i = currentPromptTemplate.length - 1; i >= 0; i--) {
-          const r = currentPromptTemplate[i]?.role;
-          if (r && r !== 'system') {
-            return r === 'user' ? 'assistant' : 'user';
-          }
-        }
-        return 'user';
-      })();
+      if (prev.model?.mode === 'completion') {
+        return {
+          prompt_template: [
+            ...(prev.prompt_template || []),
+            { id: generateClientId('prompt'), role: 'user', text: '' },
+          ],
+        };
+      }
+
+      const materialized = materializePromptLayout(prev);
+      const currentPromptTemplate = materialized.prompt_template || [];
+      const existingCurrentUser = currentPromptTemplate.some(
+        block => block.role !== 'system' && isCurrentUserBlock(block)
+      );
+
+      const groupId = generateClientId(existingCurrentUser ? 'context-group' : 'current-user');
+      const newBlocks: LLMNodeData['prompt_template'] = existingCurrentUser
+        ? [
+            {
+              id: generateClientId('prompt'),
+              role: 'user',
+              text: '',
+              group_id: groupId,
+              group_kind: 'custom_context',
+            },
+            {
+              id: generateClientId('prompt'),
+              role: 'assistant',
+              text: '',
+              group_id: groupId,
+              group_kind: 'custom_context',
+            },
+          ]
+        : [
+            {
+              id: generateClientId('prompt'),
+              role: 'user',
+              text: '{{#sys.query#}}',
+              group_id: groupId,
+              group_kind: 'current_user',
+            },
+          ];
 
       return {
+        ...materialized,
         prompt_template: [
           ...currentPromptTemplate,
-          {
-            id: generateClientId('prompt'),
-            role: nextRole,
-            text: '',
-          },
+          ...newBlocks,
         ],
+        prompt_layout: {
+          version: 1,
+          items: [
+            ...(materialized.prompt_layout?.items || []),
+            { type: 'group', group_id: groupId },
+          ],
+        },
       };
     });
   }, [updateData, readOnly]);
@@ -526,10 +815,25 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
     (idx: number) => {
       if (readOnly) return;
       updateData((prev: LLMNodeData) => {
-        const currentPromptTemplate = prev.prompt_template || [];
+        const materialized = materializePromptLayout(prev);
+        const currentPromptTemplate = materialized.prompt_template || [];
         if (idx === 0 && currentPromptTemplate[0]?.role === 'system') return {};
+        const removedGroupID = currentPromptTemplate[idx]?.group_id;
         const next = currentPromptTemplate.filter((_, i) => i !== idx);
-        return { prompt_template: next };
+        const remainingGroupIDs = new Set(
+          next.map(block => block.group_id).filter((groupID): groupID is string => !!groupID)
+        );
+        const nextLayoutItems = (materialized.prompt_layout?.items || []).filter(item => {
+          if (item.type !== 'group') return true;
+          return item.group_id !== removedGroupID || remainingGroupIDs.has(item.group_id);
+        });
+        return {
+          prompt_template: next,
+          prompt_layout: {
+            version: 1,
+            items: nextLayoutItems,
+          },
+        };
       });
     },
     [updateData, readOnly]
@@ -669,14 +973,22 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
       }
 
       if (version.prompt_type === 'chat' && Array.isArray(version.content)) {
-        updateData({
-          prompt_template: version.content.map(message => ({
+        const chatContent = version.content;
+        updateData((prev: LLMNodeData) => {
+          const promptTemplate = chatContent.map(message => ({
             id: generateClientId(),
             role: message.role as LLMNodeData['prompt_template'][number]['role'],
             text: message.content,
-          })),
-          prompt_source: 'inline',
-          prompt_reference: undefined,
+          }));
+          const materialized = materializePromptLayout({
+            ...prev,
+            prompt_template: promptTemplate,
+          });
+          return {
+            ...materialized,
+            prompt_source: 'inline',
+            prompt_reference: undefined,
+          };
         });
       }
     },
@@ -738,7 +1050,6 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
     };
   }, [availableTextChatModels, safeNodeData.model.name, safeNodeData.model.provider]);
 
-  const isManagedPrompt = selfNodeData?.prompt_source === 'managed';
   const roleLabels = useMemo(
     () => ({
       system: t('nodes.llm.roles.system'),
@@ -747,6 +1058,79 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
     }),
     [t]
   );
+  const promptOrderItemLabels = useMemo(() => {
+    const labels = new Map<string, { label: string; description: string }>();
+    promptOrderViewItems.forEach(item => {
+      if (item.type === 'history') {
+        labels.set('history', {
+          label: t('nodes.llm.promptOrder.history'),
+          description: t('nodes.llm.promptOrder.historyDescription'),
+        });
+        return;
+      }
+      const label =
+        item.groupKind === 'current_user'
+          ? t('nodes.llm.promptOrder.currentUser')
+          : item.groupKind === 'custom_context'
+            ? t('nodes.llm.promptOrder.customContext')
+            : t('nodes.llm.promptOrder.legacyContext');
+      labels.set(`group:${item.groupId}`, {
+        label,
+        description: item.blocks
+          .map(({ block }) => roleLabels[block.role])
+          .join(' + '),
+      });
+    });
+    return labels;
+  }, [promptOrderViewItems, roleLabels, t]);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+
+  useEffect(() => {
+    if (!orderDialogOpen) return;
+    setDraftOrderItems(sortablePromptOrderItems);
+  }, [orderDialogOpen, sortablePromptOrderItems]);
+
+  const draftOrderIDs = useMemo(
+    () =>
+      draftOrderItems.map(item =>
+        item.type === 'history' ? 'history' : `group:${item.group_id}`
+      ),
+    [draftOrderItems]
+  );
+
+  const handlePromptOrderDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    setDraftOrderItems(items => {
+      const oldIndex = items.findIndex(item =>
+        item.type === 'history' ? active.id === 'history' : active.id === `group:${item.group_id}`
+      );
+      const newIndex = items.findIndex(item =>
+        item.type === 'history' ? over.id === 'history' : over.id === `group:${item.group_id}`
+      );
+      if (oldIndex < 0 || newIndex < 0) return items;
+      return arrayMove(items, oldIndex, newIndex);
+    });
+  }, []);
+
+  const handleSavePromptOrder = useCallback(() => {
+    if (readOnly) return;
+    updateData((prev: LLMNodeData) => {
+      const materialized = materializePromptLayout(prev);
+      return {
+        ...materialized,
+        prompt_layout: {
+          version: 1,
+          items: draftOrderItems,
+        },
+      };
+    });
+    setOrderDialogOpen(false);
+  }, [draftOrderItems, readOnly, updateData]);
 
   const releaseLabelText = useCallback(
     (label?: string) => {
@@ -1195,36 +1579,191 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
               nodeId={nodeId}
               onInsert={handleInsert}
               disabled={readOnly}
-              defaultCollapsed
             />
-            <div className="space-y-2">
-              {(selfNodeData?.prompt_template || []).map((blk, idx) => (
+            {isChatMode ? (
+              <div className="space-y-2">
+              {systemPromptBlocks.map(({ block: blk, index: idx }) => (
                 <PromptBlockRow
                   key={blk.id || idx}
                   idx={idx}
                   role={blk.role}
                   text={blk.text}
+                  title={t('nodes.llm.promptOrder.systemPrompt')}
                   nodeId={nodeId}
                   readOnly={readOnly}
                   onUpdate={updatePromptTemplate}
                   onRemove={removePromptBlock}
                   onFocusedEditor={handleEditorFocused}
-                  defaultCollapsed={idx > 0}
                 />
               ))}
-              <Button
-                className="w-full"
-                variant="outline"
-                size="sm"
-                onClick={addPromptBlock}
-                disabled={readOnly}
-              >
-                {t('nodes.llm.actions.addBlock')}
-              </Button>
-            </div>
+              {shouldShowMissingUserQuestionTip && (
+                <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                  <Info className="mt-0.5 h-4 w-4 shrink-0" />
+                  <div>
+                    <div className="font-medium">
+                      {t('nodes.llm.promptOrder.missingUserQuestionTitle')}
+                    </div>
+                    <div className="mt-0.5">
+                      {t('nodes.llm.promptOrder.missingUserQuestionDescription')}
+                    </div>
+                  </div>
+                </div>
+              )}
+              {promptOrderViewItems.map((item, orderIndex) => {
+                if (item.type === 'history') {
+                  return (
+                    <div
+                      key={item.key}
+                      className="rounded-xl border border-dashed bg-muted/20 px-4 py-3"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-medium">
+                            {t('nodes.llm.promptOrder.history')}
+                          </div>
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            {t('nodes.llm.promptOrder.historyDescription')}
+                          </div>
+                        </div>
+                        <Badge variant="secondary">
+                          {t('nodes.llm.promptOrder.positionLabel', {
+                            index: orderIndex + 1,
+                          })}
+                        </Badge>
+                      </div>
+                    </div>
+                  );
+                }
+
+                const groupTitle =
+                  item.groupKind === 'current_user'
+                    ? t('nodes.llm.promptOrder.currentUser')
+                    : item.groupKind === 'custom_context'
+                      ? t('nodes.llm.promptOrder.customContext')
+                      : t('nodes.llm.promptOrder.legacyContext');
+
+                return (
+                  <div key={item.key} className="space-y-2">
+                    {item.blocks.map(({ block: blk, index: idx }, blockIndex) => (
+                      <PromptBlockRow
+                        key={blk.id || `${item.groupId}-${idx}`}
+                        idx={idx}
+                        role={blk.role}
+                        text={blk.text}
+                        title={
+                          blockIndex === 0
+                            ? `${groupTitle} - ${t('nodes.llm.promptOrder.positionLabel', {
+                                index: orderIndex + 1,
+                              })}`
+                            : undefined
+                        }
+                        nodeId={nodeId}
+                        readOnly={readOnly}
+                        onUpdate={updatePromptTemplate}
+                        onRemove={removePromptBlock}
+                        onFocusedEditor={handleEditorFocused}
+                      />
+                    ))}
+                  </div>
+                );
+              })}
+              <div className="grid gap-2">
+                {canChangePromptOrder && (
+                  <Button
+                    className="w-full"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setOrderDialogOpen(true)}
+                    disabled={readOnly}
+                  >
+                    <ArrowUpDown className="mr-2 h-4 w-4" />
+                    {t('nodes.llm.actions.changePromptOrder')}
+                  </Button>
+                )}
+                <Button
+                  className="w-full"
+                  variant="outline"
+                  size="sm"
+                  onClick={addPromptBlock}
+                  disabled={readOnly}
+                >
+                  {hasCurrentUserPrompt
+                    ? t('nodes.llm.actions.addCustomContext')
+                  : t('nodes.llm.actions.addUserQuestion')}
+                </Button>
+              </div>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {(selfNodeData?.prompt_template || []).map((blk, idx) => (
+                  <PromptBlockRow
+                    key={blk.id || idx}
+                    idx={idx}
+                    role={blk.role}
+                    text={blk.text}
+                    nodeId={nodeId}
+                    readOnly={readOnly}
+                    onUpdate={updatePromptTemplate}
+                    onRemove={removePromptBlock}
+                    onFocusedEditor={handleEditorFocused}
+                  />
+                ))}
+                <Button
+                  className="w-full"
+                  variant="outline"
+                  size="sm"
+                  onClick={addPromptBlock}
+                  disabled={readOnly}
+                >
+                  {t('nodes.llm.actions.addBlock')}
+                </Button>
+              </div>
+            )}
           </>
         )}
       </div>
+      <Dialog open={orderDialogOpen} onOpenChange={setOrderDialogOpen}>
+        <DialogContent size="lg">
+          <DialogHeader>
+            <DialogTitle>{t('nodes.llm.promptOrder.orderDialogTitle')}</DialogTitle>
+            <DialogDescription>
+              {t('nodes.llm.promptOrder.orderDialogDescription')}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogBody>
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handlePromptOrderDragEnd}
+            >
+              <SortableContext items={draftOrderIDs} strategy={verticalListSortingStrategy}>
+                <div className="space-y-2">
+                  {draftOrderItems.map(item => {
+                    const id = item.type === 'history' ? 'history' : `group:${item.group_id}`;
+                    const labelInfo = promptOrderItemLabels.get(id);
+                    return (
+                      <SortablePromptOrderRow
+                        key={id}
+                        id={id}
+                        label={labelInfo?.label || id}
+                        description={labelInfo?.description || ''}
+                      />
+                    );
+                  })}
+                </div>
+              </SortableContext>
+            </DndContext>
+          </DialogBody>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOrderDialogOpen(false)}>
+              {t('common.cancel')}
+            </Button>
+            <Button onClick={handleSavePromptOrder}>
+              {t('common.save')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <OutputVariablesView variables={outputs} />
       <PromptPickerDialog
         open={promptPickerOpen}

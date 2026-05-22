@@ -27,6 +27,17 @@ export interface LLMManagedPromptReference {
   source?: PromptSource;
 }
 
+export type LLMPromptGroupKind = 'current_user' | 'custom_context' | 'legacy_context';
+
+export type LLMPromptLayoutItem =
+  | { type: 'history'; id: 'conversation_history' }
+  | { type: 'group'; group_id: string };
+
+export interface LLMPromptLayout {
+  version: 1;
+  items: LLMPromptLayoutItem[];
+}
+
 export interface LLMNodeData {
   type: 'llm';
   title: string;
@@ -42,10 +53,13 @@ export interface LLMNodeData {
     role: 'system' | 'user' | 'assistant';
     text: string;
     id?: string;
+    group_id?: string;
+    group_kind?: LLMPromptGroupKind;
   }>;
   prompt_source?: 'inline' | 'managed';
   prompt_reference?: LLMManagedPromptReference;
   prompt_config: PromptConfig;
+  prompt_layout?: LLMPromptLayout;
   conversation_history?: LLMConversationHistory;
   vision: LLMVision;
   structured_output_enabled: boolean;
@@ -68,10 +82,25 @@ export const DEFAULT_LLM_NODE_DATA: LLMNodeData = {
   },
   prompt_template: [
     {
+      id: 'system',
       role: 'system' as const,
       text: '',
     },
+    {
+      id: 'current-user',
+      role: 'user' as const,
+      text: '{{#sys.query#}}',
+      group_id: 'current-user',
+      group_kind: 'current_user',
+    },
   ],
+  prompt_layout: {
+    version: 1,
+    items: [
+      { type: 'history', id: 'conversation_history' },
+      { type: 'group', group_id: 'current-user' },
+    ],
+  },
   prompt_source: 'inline',
   prompt_config: {
     jinja2_variables: [],

@@ -561,6 +561,232 @@ func TestPromptMessagesFromAgentMessagesExpandsRounds(t *testing.T) {
 	}
 }
 
+func TestFetchPromptMessages_LegacyOrderWithoutPromptLayout(t *testing.T) {
+	node := &Node{}
+	variablePool := entities.NewVariablePool()
+	memory := explicitTestMemory([]PromptMessage{
+		{Role: PromptMessageRoleUser, Content: "history question"},
+		{Role: PromptMessageRoleAssistant, Content: "history answer"},
+	})
+
+	messages := []NodeChatModelMessage{
+		{Role: PromptMessageRoleSystem, Text: "system", EditionType: "basic"},
+		{Role: PromptMessageRoleUser, Text: "user template", EditionType: "basic"},
+	}
+
+	promptMessages, _, _, err := node.fetchPromptMessages(
+		"current query",
+		nil,
+		"",
+		memory,
+		&ModelConfigWithCredentialsEntity{},
+		messages,
+		testMemoryConfig(false, 0),
+		false,
+		ImageDetailAuto,
+		variablePool,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("fetchPromptMessages() error = %v", err)
+	}
+
+	assertPromptMessageSequence(t, promptMessages, []promptMessageExpectation{
+		{role: PromptMessageRoleSystem, content: "system"},
+		{role: PromptMessageRoleUser, content: "history question"},
+		{role: PromptMessageRoleAssistant, content: "history answer"},
+		{role: PromptMessageRoleUser, content: "user template"},
+	})
+}
+
+type promptMessageExpectation struct {
+	role    PromptMessageRole
+	content string
+}
+
+func explicitTestMemory(messages []PromptMessage) *TokenBufferMemory {
+	return &TokenBufferMemory{
+		Messages:                  messages,
+		HistoryExplicitlyProvided: true,
+	}
+}
+
+func testMemoryConfig(windowEnabled bool, windowSize int) *MemoryConfig {
+	return &MemoryConfig{
+		RolePrefix: RolePrefix{
+			User:      "Human",
+			Assistant: "Assistant",
+		},
+		Window: WindowConfig{
+			Enabled: windowEnabled,
+			Size:    windowSize,
+		},
+	}
+}
+
+func assertPromptMessageSequence(t *testing.T, got []PromptMessage, want []promptMessageExpectation) {
+	t.Helper()
+
+	if len(got) != len(want) {
+		t.Fatalf("prompt messages length = %d, want %d: %#v", len(got), len(want), got)
+	}
+
+	for i := range want {
+		if got[i].Role != want[i].role {
+			t.Fatalf("prompt message[%d].Role = %q, want %q", i, got[i].Role, want[i].role)
+		}
+		content, ok := got[i].Content.(string)
+		if !ok {
+			t.Fatalf("prompt message[%d].Content type = %T, want string", i, got[i].Content)
+		}
+		if content != want[i].content {
+			t.Fatalf("prompt message[%d].Content = %q, want %q", i, content, want[i].content)
+		}
+	}
+}
+
+func TestFetchPromptMessages_WithPromptLayoutPlacesHistoryAfterCurrentUser(t *testing.T) {
+	node := &Node{
+		nodeData: NodeData{
+			PromptLayout: &PromptLayout{
+				Version: 1,
+				Items: []PromptLayoutItem{
+					{Type: PromptLayoutItemGroup, GroupID: "current-user"},
+					{Type: PromptLayoutItemHistory, ID: "conversation_history"},
+				},
+			},
+		},
+	}
+	variablePool := entities.NewVariablePool()
+	variablePool.Add([]string{"sys", "query"}, "current query")
+	memory := explicitTestMemory([]PromptMessage{
+		{Role: PromptMessageRoleUser, Content: "history question"},
+		{Role: PromptMessageRoleAssistant, Content: "history answer"},
+	})
+
+	messages := []NodeChatModelMessage{
+		{Role: PromptMessageRoleSystem, Text: "system", EditionType: "basic"},
+		{
+			Role:        PromptMessageRoleUser,
+			Text:        "{{#sys.query#}}",
+			GroupID:     "current-user",
+			GroupKind:   PromptGroupKindCurrentUser,
+			EditionType: "basic",
+		},
+	}
+
+	promptMessages, _, _, err := node.fetchPromptMessages(
+		"current query",
+		nil,
+		"",
+		memory,
+		&ModelConfigWithCredentialsEntity{},
+		messages,
+		testMemoryConfig(false, 0),
+		false,
+		ImageDetailAuto,
+		variablePool,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("fetchPromptMessages() error = %v", err)
+	}
+
+	assertPromptMessageSequence(t, promptMessages, []promptMessageExpectation{
+		{role: PromptMessageRoleSystem, content: "system"},
+		{role: PromptMessageRoleUser, content: "current query"},
+		{role: PromptMessageRoleUser, content: "history question"},
+		{role: PromptMessageRoleAssistant, content: "history answer"},
+	})
+}
+
+func TestFetchPromptMessages_WithPromptLayoutAppendsCurrentQueryWhenMissing(t *testing.T) {
+	node := &Node{
+		nodeData: NodeData{
+			PromptLayout: &PromptLayout{
+				Version: 1,
+				Items: []PromptLayoutItem{
+					{Type: PromptLayoutItemHistory, ID: "conversation_history"},
+				},
+			},
+		},
+	}
+	variablePool := entities.NewVariablePool()
+	memory := explicitTestMemory([]PromptMessage{
+		{Role: PromptMessageRoleUser, Content: "history question"},
+	})
+
+	messages := []NodeChatModelMessage{
+		{Role: PromptMessageRoleSystem, Text: "system", EditionType: "basic"},
+	}
+
+	promptMessages, _, _, err := node.fetchPromptMessages(
+		"current query",
+		nil,
+		"",
+		memory,
+		&ModelConfigWithCredentialsEntity{},
+		messages,
+		testMemoryConfig(false, 0),
+		false,
+		ImageDetailAuto,
+		variablePool,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("fetchPromptMessages() error = %v", err)
+	}
+
+	assertPromptMessageSequence(t, promptMessages, []promptMessageExpectation{
+		{role: PromptMessageRoleSystem, content: "system"},
+		{role: PromptMessageRoleUser, content: "history question"},
+		{role: PromptMessageRoleUser, content: "current query"},
+	})
+}
+
+func TestFetchPromptMessages_LegacyMalformedSequenceWithoutLayoutPreservesOldOrder(t *testing.T) {
+	node := &Node{}
+	variablePool := entities.NewVariablePool()
+	memory := explicitTestMemory(nil)
+
+	messages := []NodeChatModelMessage{
+		{Role: PromptMessageRoleSystem, Text: "system", EditionType: "basic"},
+		{Role: PromptMessageRoleUser, Text: "u1", EditionType: "basic"},
+		{Role: PromptMessageRoleUser, Text: "u2", EditionType: "basic"},
+		{Role: PromptMessageRoleAssistant, Text: "a1", EditionType: "basic"},
+		{Role: PromptMessageRoleAssistant, Text: "a2", EditionType: "basic"},
+		{Role: PromptMessageRoleAssistant, Text: "a3", EditionType: "basic"},
+		{Role: PromptMessageRoleUser, Text: "u3", EditionType: "basic"},
+	}
+
+	promptMessages, _, _, err := node.fetchPromptMessages(
+		"current query",
+		nil,
+		"",
+		memory,
+		&ModelConfigWithCredentialsEntity{},
+		messages,
+		testMemoryConfig(false, 0),
+		false,
+		ImageDetailAuto,
+		variablePool,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("fetchPromptMessages() error = %v", err)
+	}
+
+	assertPromptMessageSequence(t, promptMessages, []promptMessageExpectation{
+		{role: PromptMessageRoleSystem, content: "system"},
+		{role: PromptMessageRoleUser, content: "u1"},
+		{role: PromptMessageRoleUser, content: "u2"},
+		{role: PromptMessageRoleAssistant, content: "a1"},
+		{role: PromptMessageRoleAssistant, content: "a2"},
+		{role: PromptMessageRoleAssistant, content: "a3"},
+		{role: PromptMessageRoleUser, content: "u3"},
+	})
+}
+
 func TestRenderTemplateMessage_UsesNestedTemplateVariableSelector(t *testing.T) {
 	variablePool := entities.NewVariablePool()
 	variablePool.Add([]string{"iter_1", "item"}, map[string]any{

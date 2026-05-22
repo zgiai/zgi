@@ -238,10 +238,25 @@ export function useWorkflowLifecycle({
         },
         prompt_template: [
           {
+            id: `${llmId}-system`,
             role: 'system' as const,
             text: defaultConversationalPrompt.text,
           },
+          {
+            id: `${llmId}-current-user`,
+            role: 'user' as const,
+            text: '{{#sys.query#}}',
+            group_id: `${llmId}-current-user`,
+            group_kind: 'current_user' as const,
+          },
         ],
+        prompt_layout: {
+          version: 1 as const,
+          items: [
+            { type: 'history' as const, id: 'conversation_history' as const },
+            { type: 'group' as const, group_id: `${llmId}-current-user` },
+          ],
+        },
         prompt_source: 'inline',
         prompt_reference: undefined,
         prompt_config: { jinja2_variables: [] },
@@ -355,11 +370,25 @@ export function useWorkflowLifecycle({
         },
         prompt_template: [
           {
+            id: `${llmId}-system`,
             role: 'system' as const,
             text: defaultStandardPrompt.text,
           },
-          { id: `${llmId}-u1`, role: 'user' as const, text: `{{#${startId}.input#}}` },
+          {
+            id: `${llmId}-u1`,
+            role: 'user' as const,
+            text: `{{#${startId}.input#}}`,
+            group_id: `${llmId}-current-user`,
+            group_kind: 'current_user' as const,
+          },
         ],
+        prompt_layout: {
+          version: 1 as const,
+          items: [
+            { type: 'history' as const, id: 'conversation_history' as const },
+            { type: 'group' as const, group_id: `${llmId}-current-user` },
+          ],
+        },
         prompt_source: 'inline',
         prompt_reference: undefined,
         prompt_config: { jinja2_variables: [] },

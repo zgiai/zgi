@@ -1398,6 +1398,109 @@ func promptMessagesFromAgentMessages(records []*conversation.AgentMessage) []Pro
 	return messages
 }
 
+func (n *Node) fetchChatPromptMessagesWithLayout(
+	messages []NodeChatModelMessage,
+	sysQuery string,
+	contextText string,
+	memory *TokenBufferMemory,
+	modelConfig *ModelConfigWithCredentialsEntity,
+	memoryConfig *MemoryConfig,
+	variablePool *entities.VariablePool,
+	templateVariables []VariableSelector,
+	visionDetail ImagePromptMessageContentDetail,
+) ([]PromptMessage, error) {
+	promptMessages := make([]PromptMessage, 0, 20)
+
+	var systemMessages []NodeChatModelMessage
+	groups := make(map[string][]NodeChatModelMessage)
+	for _, msg := range messages {
+		if msg.Role == PromptMessageRoleSystem {
+			systemMessages = append(systemMessages, msg)
+			continue
+		}
+		if msg.GroupID == "" {
+			continue
+		}
+		groups[msg.GroupID] = append(groups[msg.GroupID], msg)
+	}
+
+	if len(systemMessages) > 0 {
+		renderedSystemMessages, err := n.handleChatModelTemplate(
+			systemMessages,
+			contextText,
+			templateVariables,
+			variablePool,
+			visionDetail,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to handle system template: %v", err)
+		}
+		promptMessages = append(promptMessages, renderedSystemMessages...)
+	}
+
+	memoryMessages := n.handleMemoryForChatMode(
+		memory,
+		memoryConfig,
+		modelConfig,
+	)
+	currentUserAdded := false
+
+	for _, item := range n.nodeData.PromptLayout.Items {
+		switch item.Type {
+		case PromptLayoutItemHistory:
+			promptMessages = append(promptMessages, memoryMessages...)
+		case PromptLayoutItemGroup:
+			groupMessages := groups[item.GroupID]
+			if len(groupMessages) == 0 {
+				continue
+			}
+			if promptGroupContainsCurrentUser(groupMessages) {
+				currentUserAdded = true
+			}
+			renderedGroupMessages, err := n.handleChatModelTemplate(
+				groupMessages,
+				contextText,
+				templateVariables,
+				variablePool,
+				visionDetail,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("failed to handle prompt group %s: %v", item.GroupID, err)
+			}
+			promptMessages = append(promptMessages, renderedGroupMessages...)
+		}
+	}
+
+	if !currentUserAdded && sysQuery != "" {
+		queryMessages, err := n.addCurrentQueryForChat(
+			sysQuery,
+			variablePool,
+			visionDetail,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to add current query for chat: %v", err)
+		}
+		promptMessages = append(promptMessages, queryMessages...)
+	}
+
+	return promptMessages, nil
+}
+
+func promptGroupContainsCurrentUser(messages []NodeChatModelMessage) bool {
+	for _, msg := range messages {
+		if msg.GroupKind == PromptGroupKindCurrentUser {
+			return true
+		}
+		if msg.Role == PromptMessageRoleUser && strings.Contains(msg.Text, "#sys.query#") {
+			return true
+		}
+		if msg.Role == PromptMessageRoleUser && msg.TemplateText != nil && strings.Contains(*msg.TemplateText, "sys.query") {
+			return true
+		}
+	}
+	return false
+}
+
 // convertConversationToMemoryFormat converts a conversation model to memory format
 func (n *Node) convertConversationToMemoryFormat(conv *chat.Conversation) map[string]any {
 	if conv == nil {
@@ -3066,6 +3169,24 @@ func (n *Node) convertInterfaceArrayToChatMessages(interfaceArray []interface{})
 			Text: text,
 		}
 
+		if id, exists := itemMap["id"]; exists && id != nil {
+			if idStr, ok := id.(string); ok {
+				message.ID = idStr
+			}
+		}
+
+		if groupID, exists := itemMap["group_id"]; exists && groupID != nil {
+			if groupIDStr, ok := groupID.(string); ok {
+				message.GroupID = groupIDStr
+			}
+		}
+
+		if groupKind, exists := itemMap["group_kind"]; exists && groupKind != nil {
+			if groupKindStr, ok := groupKind.(string); ok {
+				message.GroupKind = PromptGroupKind(groupKindStr)
+			}
+		}
+
 		// Handle optional fields
 		if templateText, exists := itemMap["template_text"]; exists && templateText != nil {
 			if templateTextStr, ok := templateText.(string); ok {
@@ -3107,6 +3228,24 @@ func (n *Node) fetchPromptMessages(
 	// 1. According to the template type selection processing path
 	switch pt := promptTemplate.(type) {
 	case []NodeChatModelMessage:
+		if n.nodeData.PromptLayout != nil {
+			promptMessages, err = n.fetchChatPromptMessagesWithLayout(
+				pt,
+				sysQuery,
+				contextText,
+				memory,
+				modelConfig,
+				memoryConfig,
+				variablePool,
+				templateVariables,
+				visionDetail,
+			)
+			if err != nil {
+				return nil, nil, false, err
+			}
+			break
+		}
+
 		// Chat mode processing
 		// Split template messages into system and user parts for correct ordering:
 		// system messages -> history messages -> user messages
@@ -3183,6 +3322,23 @@ func (n *Node) fetchPromptMessages(
 		chatMessages, err := n.convertInterfaceArrayToChatMessages(pt)
 		if err != nil {
 			return nil, nil, false, fmt.Errorf("failed to convert interface array to chat messages: %v", err)
+		}
+		if n.nodeData.PromptLayout != nil {
+			promptMessages, err = n.fetchChatPromptMessagesWithLayout(
+				chatMessages,
+				sysQuery,
+				contextText,
+				memory,
+				modelConfig,
+				memoryConfig,
+				variablePool,
+				templateVariables,
+				visionDetail,
+			)
+			if err != nil {
+				return nil, nil, false, err
+			}
+			break
 		}
 
 		// Split template messages into system and user parts for correct ordering:

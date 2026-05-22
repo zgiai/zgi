@@ -825,6 +825,9 @@ const messages: NodesMessages = {
     },
     actions: {
       addBlock: '添加区块',
+      addUserQuestion: '增加用户提问',
+      addCustomContext: '增加自定义上下文',
+      changePromptOrder: '变更上下文顺序',
       applyPromptTemplate: '应用并继续编辑',
       collapseBlock: '收起这一段',
       changePromptReference: '重新选择',
@@ -877,6 +880,20 @@ const messages: NodesMessages = {
         '推荐写法：系统提示词用来写角色、规则和输出要求；用户输入模板更适合放开始节点、知识检索或上游节点的变量。',
       fallback: '如果没有先选中某一段，快捷变量会默认插入到第一段系统提示词。',
       noManualSyntax: '变量会自动插入成可识别的标签，一般不需要自己手写花括号语法。',
+    },
+    promptOrder: {
+      systemPrompt: '系统提示词',
+      history: '历史上下文',
+      historyDescription: '由当前节点插入的最近对话历史。',
+      currentUser: '用户提问',
+      customContext: '自定义上下文',
+      legacyContext: '旧版上下文',
+      positionLabel: '位置 {index}',
+      orderDialogTitle: '变更上下文顺序',
+      orderDialogDescription: '拖动条目，控制系统提示词之后发送给模型的上下文顺序。',
+      missingUserQuestionTitle: '建议增加用户提问',
+      missingUserQuestionDescription:
+        '开启历史上下文时建议明确本轮输入的位置。否则当前用户输入会由系统自动追加，用户不容易判断最终发送顺序。',
     },
     states: {
       emptyBlock: '这段还没有内容',
