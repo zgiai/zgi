@@ -38,7 +38,7 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 			return nil, ErrMessageStopped
 		}
 		s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
-		return nil, err
+		return nil, newFinalizedStreamError(err)
 	}
 
 	if prepared.skillsEnabled() {
@@ -53,7 +53,7 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 				return nil, ErrMessageStopped
 			}
 			s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
-			return nil, err
+			return nil, newFinalizedStreamError(err)
 		}
 		if s.streams.IsStopped(prepared.Message.ID) {
 			_ = s.persistStoppedAnswer(persistCtx, prepared, answer, usage)
@@ -75,7 +75,7 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 			return nil, ErrMessageStopped
 		}
 		s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
-		return nil, err
+		return nil, newFinalizedStreamError(err)
 	}
 	answer, usage, err := s.collectStreamAnswer(runCtx, prepared, stream, onChunk)
 	if err != nil {
@@ -84,7 +84,7 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 			return nil, err
 		}
 		s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
-		return nil, err
+		return nil, newFinalizedStreamError(err)
 	}
 	if s.streams.IsStopped(prepared.Message.ID) {
 		_ = s.persistStoppedAnswer(persistCtx, prepared, answer, usage)

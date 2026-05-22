@@ -85,6 +85,18 @@ func TestFinalizePreparedErrorCompletesRootReplacement(t *testing.T) {
 	}
 }
 
+func TestFinalizedStreamErrorWrapsCause(t *testing.T) {
+	cause := errors.New("provider failed")
+	err := newFinalizedStreamError(cause)
+
+	if !IsFinalizedStreamError(err) {
+		t.Fatalf("IsFinalizedStreamError(%v) = false, want true", err)
+	}
+	if !errors.Is(err, cause) {
+		t.Fatalf("errors.Is(%v, cause) = false, want true", err)
+	}
+}
+
 func TestHandleProgressiveSkillCallReturnsRecoverableArgumentError(t *testing.T) {
 	svc := &service{}
 	call := adapter.ToolCall{
