@@ -542,6 +542,98 @@ Use the current_time tool after loading this skill.
 	}
 }
 
+func TestRunPreparedSkillStreamPreservesReasoningContentForToolRounds(t *testing.T) {
+	catalogDir := t.TempDir()
+	writeTestSkill(t, catalogDir, "clock", `---
+name: clock
+description: Look up current time.
+when_to_use: Use when time is needed.
+provider_type: builtin
+provider_id: time
+runtime_type: tool
+tools:
+  - current_time
+---
+
+# Clock
+
+Use the current_time tool after loading this skill.
+`)
+	fakeLLM := &fakeAgenticLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role:             "assistant",
+						ReasoningContent: "I should load the clock skill first.",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_1",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolLoadSkill,
+								Arguments: `{"skill_id":"clock"}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{Role: "assistant", Content: "Clock skill is ready."},
+				}},
+			},
+		},
+	}
+	svc := &service{
+		repos: &repository.Repositories{
+			Message:     &recordingMessageRepository{},
+			CustomSkill: &fakeCustomSkillRepository{items: map[string]*aichatmodel.CustomSkill{}},
+		},
+		llmClient:    fakeLLM,
+		events:       newStreamEventStore(nil),
+		skillRuntime: skills.NewRuntimeWithCatalog(tools.NewToolEngine(tools.NewToolManager(nil)), tools.NewToolManager(nil), catalogDir),
+	}
+	prepared := &PreparedChat{
+		Conversation: &aichatmodel.Conversation{
+			ID:             uuid.New(),
+			OrganizationID: uuid.New(),
+			AccountID:      uuid.New(),
+		},
+		Message: &aichatmodel.Message{
+			ID:       uuid.New(),
+			Metadata: map[string]interface{}{},
+		},
+		LLMRequest: &adapter.ChatRequest{
+			Messages: []adapter.Message{{Role: "user", Content: "what time is it"}},
+		},
+		Scope: Scope{
+			OrganizationID: uuid.New(),
+			AccountID:      uuid.New(),
+		},
+		parts: &chatRequestParts{
+			SkillMode: skillModeAuto,
+			SkillIDs:  []string{"clock"},
+		},
+	}
+
+	if _, _, err := svc.runPreparedSkillStream(context.Background(), context.Background(), prepared, nil, nil); err != nil {
+		t.Fatalf("runPreparedSkillStream() error = %v", err)
+	}
+	if len(fakeLLM.appChatRequests) != 2 {
+		t.Fatalf("recorded AppChat requests = %d, want 2", len(fakeLLM.appChatRequests))
+	}
+	var found bool
+	for _, message := range fakeLLM.appChatRequests[1].Messages {
+		if message.Role == "assistant" && message.ReasoningContent == "I should load the clock skill first." {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("second planning request did not preserve assistant reasoning_content: %#v", fakeLLM.appChatRequests[1].Messages)
+	}
+}
+
 func TestAgenticSkillLoopSystemMessageRequiresIntermediateAnswers(t *testing.T) {
 	message := agenticSkillLoopSystemMessage()
 	content, _ := message.Content.(string)
