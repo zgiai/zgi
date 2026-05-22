@@ -201,7 +201,7 @@ export function UploadDialog({ open, onOpenChange, onConfirm }: UploadDialogProp
                       )}
                     />
                     <span className="flex-1 truncate font-semibold">
-                      {t('files.folder.rootFolder')}
+                      {t('files.upload.defaultFolder')}
                     </span>
                   </button>
 

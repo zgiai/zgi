@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useCallback } from 'react';
 import { FolderOpen, ChevronDown, ChevronUp, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useChildFolders } from '@/hooks/use-files';
@@ -41,8 +41,6 @@ export function FolderTreeNode({
 }: FolderTreeNodeProps) {
   const isFolderActive = activeItemId === folder.id;
   const isExpanded = expandedFolders.has(folder.id);
-  const [hasBeenExpanded, setHasBeenExpanded] = useState(false);
-  const [hasChildrenCache, setHasChildrenCache] = useState(false);
 
   const isMaxLevel = level >= maxLevel;
 
@@ -52,19 +50,6 @@ export function FolderTreeNode({
     workspaceId
   );
 
-  // Update hasBeenExpanded and hasChildrenCache when folder is expanded
-  useEffect(() => {
-    if (isExpanded && !isLoadingChildren) {
-      if (!hasBeenExpanded) {
-        setHasBeenExpanded(true);
-      }
-      // Cache whether this folder has children
-      if (childFolders.length > 0) {
-        setHasChildrenCache(true);
-      }
-    }
-  }, [isExpanded, isLoadingChildren, hasBeenExpanded, childFolders.length]);
-
   const handleClick = useCallback(() => {
     onItemClick?.(folder.id);
     // Toggle expand/collapse when clicking folder (only if not at max level)
@@ -73,9 +58,8 @@ export function FolderTreeNode({
     }
   }, [folder.id, onItemClick, isMaxLevel, onToggleExpand]);
 
-  // Determine which icon to show
-  // Show arrow only if has children, otherwise show folder icon
-  const shouldShowArrow = !isMaxLevel && hasChildrenCache;
+  // Keep expandable folder affordance visible before children are lazy-loaded.
+  const shouldShowArrow = !isMaxLevel;
 
   // Styling based on variant
   const paddingLeft = variant === 'sidebar' ? level * 10 + 10 : level * 16 + 12;
@@ -87,7 +71,7 @@ export function FolderTreeNode({
     <div>
       <div
         className={cn(
-          'w-full flex items-center justify-between rounded-md font-medium transition-colors group',
+          'w-full flex items-center justify-between rounded-md font-medium transition-colors group cursor-pointer',
           padding,
           textSize,
           variant === 'sidebar'
@@ -99,29 +83,34 @@ export function FolderTreeNode({
               : 'hover:bg-gray-100 text-gray-700'
         )}
         style={{ paddingLeft: `${paddingLeft}px` }}
+        role="button"
+        tabIndex={0}
+        onClick={handleClick}
+        onKeyDown={event => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            handleClick();
+          }
+        }}
       >
-        <div
-          className="flex items-center gap-1.5 flex-1 min-w-0 cursor-pointer"
-          onClick={handleClick}
-        >
-          {/* Show arrow when has children, otherwise show folder icon */}
-          {isExpanded && isLoadingChildren ? (
-            <div className={cn('flex items-center justify-center', iconSize)}>
-              <div className="h-2 w-2 rounded-full bg-gray-400 animate-pulse" />
-            </div>
-          ) : shouldShowArrow ? (
-            <div className="flex-shrink-0 hover:bg-gray-200 rounded p-0.5 cursor-pointer">
-              {isExpanded ? (
-                <ChevronDown className={iconSize} />
-              ) : (
-                <ChevronUp className={iconSize} />
-              )}
-            </div>
-          ) : (
-            <FolderOpen
-              className={cn(iconSize, 'flex-shrink-0', variant === 'dialog' && 'text-gray-500')}
-            />
-          )}
+        <div className="flex items-center gap-1.5 flex-1 min-w-0">
+          {shouldShowArrow &&
+            (isExpanded && isLoadingChildren ? (
+              <div className={cn('flex items-center justify-center', iconSize)}>
+                <div className="h-2 w-2 rounded-full bg-gray-400 animate-pulse" />
+              </div>
+            ) : (
+              <div className="flex-shrink-0 hover:bg-gray-200 rounded p-0.5">
+                {isExpanded ? (
+                  <ChevronDown className={iconSize} />
+                ) : (
+                  <ChevronUp className={iconSize} />
+                )}
+              </div>
+            ))}
+          <FolderOpen
+            className={cn(iconSize, 'flex-shrink-0', variant === 'dialog' && 'text-gray-500')}
+          />
           <span className={cn('truncate', variant === 'dialog' && 'flex-1')}>{folder.name}</span>
         </div>
 
