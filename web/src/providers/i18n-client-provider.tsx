@@ -3,11 +3,13 @@
 import React, {
   createContext,
   useContext,
+  useEffect,
   useState,
   useTransition,
   useCallback,
   type ReactNode,
 } from 'react';
+import { usePathname } from 'next/navigation';
 import { NextIntlClientProvider } from 'next-intl';
 import { loadModules } from '@/i18n/loader';
 import { getModulesForPathname } from '@/i18n/route-modules';
@@ -15,6 +17,14 @@ import type { Locale } from '@/i18n/config';
 import { defaultLocale, isLanguageSwitchEnabled } from '@/lib/i18n';
 
 type I18nMessages = Record<string, unknown>;
+
+function hasRouteMessages(messages: I18nMessages, pathname: string): boolean {
+  const modules = getModulesForPathname(pathname);
+
+  return modules.every(module =>
+    Object.prototype.hasOwnProperty.call(messages, module)
+  );
+}
 
 interface I18nContextType {
   locale: Locale;
@@ -43,20 +53,54 @@ export function I18nClientProvider({
   initialLocale,
   initialMessages,
 }: I18nClientProviderProps) {
+  const pathname = usePathname() || '/';
   const [locale, setLocaleState] = useState<Locale>(initialLocale);
   const [messages, setMessages] = useState(initialMessages);
   const [isPending, startTransition] = useTransition();
+  const languageSwitchEnabled = isLanguageSwitchEnabled();
+  const resolvedLocale = languageSwitchEnabled ? locale : defaultLocale;
+  const isRouteMessagesReady = hasRouteMessages(messages, pathname);
+
+  useEffect(() => {
+    if (isRouteMessagesReady) {
+      return;
+    }
+
+    let isCancelled = false;
+
+    async function syncRouteMessages() {
+      const routeMessages = (await loadModules(
+        getModulesForPathname(pathname),
+        resolvedLocale
+      )) as I18nMessages;
+
+      if (isCancelled) {
+        return;
+      }
+
+      startTransition(() => {
+        setMessages(currentMessages => ({
+          ...currentMessages,
+          ...routeMessages,
+        }));
+      });
+    }
+
+    void syncRouteMessages();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [isRouteMessagesReady, pathname, resolvedLocale]);
 
   const setLocale = useCallback(
     async (newLocale: Locale) => {
-      if (!isLanguageSwitchEnabled()) {
+      if (!languageSwitchEnabled) {
         return;
       }
 
       if (newLocale === locale) return;
 
-      // Load new messages package in the background
-      const pathname = typeof window !== 'undefined' ? window.location.pathname : '/';
       const newMessages = (await loadModules(
         getModulesForPathname(pathname),
         newLocale
@@ -73,20 +117,17 @@ export function I18nClientProvider({
         setMessages(newMessages);
       });
     },
-    [locale]
+    [languageSwitchEnabled, locale, pathname]
   );
-
-  const resolvedLocale = isLanguageSwitchEnabled() ? locale : defaultLocale;
-  const resolvedMessages = isLanguageSwitchEnabled() ? messages : initialMessages;
 
   return (
     <I18nContext.Provider value={{ locale: resolvedLocale, setLocale, isPending }}>
       <NextIntlClientProvider
         locale={resolvedLocale}
-        messages={resolvedMessages}
+        messages={messages}
         timeZone="Asia/Shanghai"
       >
-        {children}
+        {isRouteMessagesReady ? children : null}
       </NextIntlClientProvider>
     </I18nContext.Provider>
   );
