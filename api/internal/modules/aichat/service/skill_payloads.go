@@ -224,6 +224,13 @@ func errorPayload(err error) map[string]interface{} {
 	}
 }
 
+func recoverableErrorPayload(err error, nextAction string) map[string]interface{} {
+	payload := errorPayload(err)
+	payload["recoverable"] = true
+	payload["next_action"] = strings.TrimSpace(nextAction)
+	return payload
+}
+
 func guardrailPayload(trace skills.SkillTrace) map[string]interface{} {
 	return map[string]interface{}{
 		"error":     trace.Error,

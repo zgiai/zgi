@@ -31,6 +31,7 @@ const (
 	streamEventMessage              = "message"
 	streamEventMessageEnd           = "message_end"
 	streamEventError                = "error"
+	streamEventAgentProgress        = "agent_progress"
 	streamEventFileParseStart       = "file_parse_start"
 	streamEventFileParseEnd         = "file_parse_end"
 	streamEventFileParseError       = "file_parse_error"
