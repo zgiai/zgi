@@ -11,17 +11,18 @@ const (
 // NodeData represents the data structure for LLM nodes
 type NodeData struct {
 	base.NodeData
-	Model                    ModelConfig      `json:"model"`
-	PromptTemplate           any              `json:"prompt_template"` // Can be []NodeChatModelMessage or NodeCompletionModelPromptTemplate
-	PromptSource             string           `json:"prompt_source,omitempty"`
-	PromptReference          *PromptReference `json:"prompt_reference,omitempty"`
-	PromptConfig             PromptConfig     `json:"prompt_config"`
-	Memory                   *MemoryConfig    `json:"memory,omitempty"`
-	Context                  ContextConfig    `json:"context"`
-	Vision                   VisionConfig     `json:"vision"`
-	StructuredOutput         map[string]any   `json:"structured_output,omitempty"`
-	StructuredOutputSwitchOn bool             `json:"structured_output_switch_on"`
-	ModelOverrideVariable    *string          `json:"model_override_variable,omitempty"` // Reference to variable pool variable for model override
+	Model                    ModelConfig                `json:"model"`
+	PromptTemplate           any                        `json:"prompt_template"` // Can be []NodeChatModelMessage or NodeCompletionModelPromptTemplate
+	PromptSource             string                     `json:"prompt_source,omitempty"`
+	PromptReference          *PromptReference           `json:"prompt_reference,omitempty"`
+	PromptConfig             PromptConfig               `json:"prompt_config"`
+	Memory                   *MemoryConfig              `json:"memory,omitempty"`
+	Context                  ContextConfig              `json:"context"`
+	ConversationHistory      *ConversationHistoryConfig `json:"conversation_history,omitempty"`
+	Vision                   VisionConfig               `json:"vision"`
+	StructuredOutput         map[string]any             `json:"structured_output,omitempty"`
+	StructuredOutputSwitchOn bool                       `json:"structured_output_switch_on"`
+	ModelOverrideVariable    *string                    `json:"model_override_variable,omitempty"` // Reference to variable pool variable for model override
 }
 
 type PromptReference struct {

@@ -51,6 +51,12 @@ type ContextConfig struct {
 	VariableSelectorRaw json.RawMessage `json:"-"`
 }
 
+// ConversationHistoryConfig represents node-level conversation history configuration.
+type ConversationHistoryConfig struct {
+	Enabled           bool `json:"enabled"`
+	HistoryWindowSize int  `json:"history_window_size"`
+}
+
 // UnmarshalJSON custom unmarshaler to handle both formats
 func (c *ContextConfig) UnmarshalJSON(data []byte) error {
 	type Alias ContextConfig

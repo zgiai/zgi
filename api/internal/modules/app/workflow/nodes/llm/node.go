@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"github.com/zgiai/zgi/api/internal/modules/app/chat"
 	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
@@ -45,6 +46,11 @@ type Node struct {
 	promptResolver     promptservice.PromptService
 	resolvedPromptMeta map[string]any
 }
+
+const (
+	defaultConversationHistoryWindowSize = 3
+	maxConversationHistoryWindowSize     = 50
+)
 
 type fileDownloader interface {
 	DownloadFile(ctx context.Context, fileID string) ([]byte, error)
@@ -243,18 +249,9 @@ func (n *Node) executeRun(ctx context.Context, eventChan chan *shared.NodeEventC
 		}
 	}
 
-	// Fetch c if enabled
-	var c string
-	if n.nodeData.Context.Enabled {
-		ctxStr, err := n.fetchContext(n.nodeData, eventChan)
-		if err != nil {
-			return nil, fmt.Errorf("failed to fetch c: %v", err)
-		}
-		c = ctxStr
-		if c != "" {
-			nodeInputs["#c#"] = c
-		}
-	}
+	// Legacy node context is intentionally ignored. Conversation context is resolved
+	// through node-level conversation_history below or legacy workflow fallback.
+	c := ""
 
 	// Resolve model configuration with priority (override vs default)
 	workflowRunID := n.getWorkflowRunID()
@@ -294,8 +291,8 @@ func (n *Node) executeRun(ctx context.Context, eventChan chan *shared.NodeEventC
 	)
 	logger.DebugContext(logCtx, "LLM node model config resolved")
 
-	// Fetch memory
-	memory := n.fetchMemory(logCtx, variablePool, n.APPID, n.nodeData.Memory, nil)
+	// Fetch conversation history memory.
+	memory, resolvedMemoryConfig := n.fetchMemory(logCtx, variablePool, n.APPID, n.nodeData.Memory, nil)
 
 	// Get query from memory or system variable
 	var query string
@@ -335,7 +332,7 @@ func (n *Node) executeRun(ctx context.Context, eventChan chan *shared.NodeEventC
 		memory,
 		modelConfig,
 		n.nodeData.PromptTemplate,
-		n.nodeData.Memory,
+		resolvedMemoryConfig,
 		n.nodeData.Vision.Enabled,
 		n.nodeData.Vision.Configs.Detail,
 		variablePool,
@@ -1082,174 +1079,80 @@ func (n *Node) fetchContext(nodeData NodeData, eventChan chan *shared.NodeEventC
 	}
 }
 
-// fetchMemory fetches memory for conversation history
-func (n *Node) fetchMemory(ctx context.Context, variablePool *entities.VariablePool, appID string, memoryConfig *MemoryConfig, modelInstance *ModelInstance) *TokenBufferMemory {
-	if memoryConfig == nil {
-		logger.DebugContext(ctx, "LLM node memory config missing, using defaults")
-		memoryConfig = &MemoryConfig{
-			RolePrefix: RolePrefix{
-				User:      "Human",
-				Assistant: "Assistant",
-			},
-			Window: WindowConfig{
-				Enabled: true,
-				Size:    10,
-			},
-		}
-	}
+// fetchMemory fetches memory for conversation history.
+func (n *Node) fetchMemory(ctx context.Context, variablePool *entities.VariablePool, appID string, memoryConfig *MemoryConfig, modelInstance *ModelInstance) (*TokenBufferMemory, *MemoryConfig) {
+	resolvedMemoryConfig := n.memoryConfigForConversationHistory(memoryConfig)
+	conversationID := n.getConversationIDFromVariablePool(variablePool)
+	messages := make([]PromptMessage, 0)
 
-	// Try to get conversation ID from variable pool or node context
-	var conversationID string
-	var convData any
-
-	useProvidedHistory := false
-	historyVar := variablePool.Get([]string{"sys", "conversation_history"})
-	if historyVar != nil {
-		logger.DebugContext(ctx, "LLM node found conversation history in variable pool",
-			zap.String("history_type", fmt.Sprintf("%T", historyVar.ToObject())),
-		)
-		if history, ok := historyVar.ToObject().([]map[string]interface{}); ok {
-			logger.DebugContext(ctx, "LLM node using provided conversation history",
-				zap.Int("history_messages_count", len(history)),
-			)
-			// Only use provided history if it's not empty
-			// Empty array means explicitly "no history"
-			if len(history) > 0 {
-				messages := make([]any, 0, len(history))
-				for _, msg := range history {
-					messages = append(messages, msg)
-				}
-
-				if conversationVar := variablePool.Get([]string{"sys", "conversation_id"}); conversationVar != nil {
-					conversationID = conversationVar.ToObject().(string)
-				}
-
-				convData = map[string]any{
-					"id":       conversationID,
-					"messages": messages,
-				}
-				useProvidedHistory = true
-			} else {
-				logger.DebugContext(ctx, "LLM node received empty provided conversation history")
-				// Empty history provided explicitly - don't load from database
-				if conversationVar := variablePool.Get([]string{"sys", "conversation_id"}); conversationVar != nil {
-					conversationID = conversationVar.ToObject().(string)
-				}
-				convData = map[string]any{
-					"id":       conversationID,
-					"messages": []any{},
-				}
-				useProvidedHistory = true
-			}
-		} else if history, ok := historyVar.ToObject().([]interface{}); ok {
-			logger.DebugContext(ctx, "LLM node using interface conversation history",
-				zap.Int("history_messages_count", len(history)),
-			)
-			// Only use provided history if it's not empty
-			if len(history) > 0 {
-				messages := make([]any, 0, len(history))
-				for _, msg := range history {
-					if msgMap, ok := msg.(map[string]interface{}); ok {
-						messages = append(messages, msgMap)
-					}
-				}
-
-				if conversationVar := variablePool.Get([]string{"sys", "conversation_id"}); conversationVar != nil {
-					conversationID = conversationVar.ToObject().(string)
-				}
-
-				convData = map[string]any{
-					"id":       conversationID,
-					"messages": messages,
-				}
-				useProvidedHistory = true
-			} else {
-				logger.DebugContext(ctx, "LLM node received empty interface conversation history")
-				// Empty history provided explicitly - don't load from database
-				if conversationVar := variablePool.Get([]string{"sys", "conversation_id"}); conversationVar != nil {
-					conversationID = conversationVar.ToObject().(string)
-				}
-				convData = map[string]any{
-					"id":       conversationID,
-					"messages": []any{},
-				}
-				useProvidedHistory = true
-			}
-		} else {
-			logger.WarnContext(ctx, "LLM node conversation history has unsupported type",
-				zap.String("history_type", fmt.Sprintf("%T", historyVar.ToObject())),
-			)
-		}
-	}
-
-	if !useProvidedHistory {
-		logger.DebugContext(ctx, "LLM node will load conversation history from database if needed")
-
-		if n.WorkflowType != "advanced-chat" && n.WorkflowType != "chat" {
-			logger.DebugContext(ctx, "LLM node skipped database conversation history for non-chat workflow",
-				zap.String("workflow_type", n.WorkflowType),
-			)
-			convData = map[string]any{
-				"id":       "",
-				"messages": []any{},
-			}
-		} else {
-			logger.DebugContext(ctx, "LLM node can load database conversation history",
-				zap.String("workflow_type", n.WorkflowType),
-			)
-
-			// First, try to get conversation ID from system variables
-			if conversationVar := variablePool.Get([]string{"sys", "conversation_id"}); conversationVar != nil {
-				conversationID = conversationVar.ToObject().(string)
-			}
-
-			// If no conversation ID found in variables, check if we have one in the node context
-			if conversationID == "" {
-				// Create an empty conversation if no conversation ID is available
-				logger.DebugContext(ctx, "LLM node has no conversation id, using empty history")
-				convData = map[string]any{
-					"id":       "",
-					"messages": []any{},
-				}
-			} else {
-				convData = map[string]any{
-					"id":       conversationID,
-					"messages": []any{},
-				}
-
-				// Load conversation from database (only for chat workflows)
-				logger.DebugContext(ctx, "LLM node loading conversation history from database",
+	switch {
+	case n.nodeData.ConversationHistory != nil:
+		if n.nodeData.ConversationHistory.Enabled {
+			windowSize := clampConversationHistoryWindowSize(n.nodeData.ConversationHistory.HistoryWindowSize)
+			var err error
+			messages, err = n.loadConversationHistoryPromptMessages(ctx, conversationID, windowSize)
+			if err != nil {
+				logger.WarnContext(ctx, "LLM node failed to load node-level conversation history",
+					err,
 					zap.String("conversation_id", conversationID),
+					zap.Int("history_window_size", windowSize),
 				)
-				conversationRepo := conversation.NewConversationRepository(n.db)
-				conv, err := conversationRepo.GetConversationDetailWithMessages(appID, conversationID)
-				if err != nil {
-					// Log error and use empty conversation
-					logger.WarnContext(ctx, "LLM node failed to load conversation history",
-						err,
-						zap.String("conversation_id", conversationID),
-					)
-					convData = map[string]any{"id": conversationID, "messages": []any{}}
-				} else {
-					logger.DebugContext(ctx, "LLM node loaded conversation history",
-						zap.String("conversation_id", conversationID),
-						zap.Int("messages_count", len(conv.Messages)),
-					)
-					convData = n.convertConversationToMemoryFormat(conv)
-				}
+				messages = []PromptMessage{}
 			}
+			logger.DebugContext(ctx, "LLM node resolved node-level conversation history",
+				zap.Bool("enabled", true),
+				zap.Int("history_window_size", windowSize),
+				zap.Int("prompt_messages_count", len(messages)),
+			)
+		} else {
+			logger.DebugContext(ctx, "LLM node conversation history disabled by node config")
 		}
+
+	default:
+		if providedMessages, ok := n.promptMessagesFromProvidedHistory(ctx, variablePool); ok {
+			messages = providedMessages
+			logger.DebugContext(ctx, "LLM node using explicitly provided conversation history",
+				zap.Int("prompt_messages_count", len(messages)),
+			)
+			break
+		}
+
+		if fallback, ok := n.legacyWorkflowConversationHistoryConfig(); ok && fallback.Enabled {
+			windowSize := clampConversationHistoryWindowSize(fallback.HistoryWindowSize)
+			var err error
+			messages, err = n.loadConversationHistoryPromptMessages(ctx, conversationID, windowSize)
+			if err != nil {
+				logger.WarnContext(ctx, "LLM node failed to load legacy workflow conversation history",
+					err,
+					zap.String("conversation_id", conversationID),
+					zap.Int("history_window_size", windowSize),
+				)
+				messages = []PromptMessage{}
+			}
+			logger.DebugContext(ctx, "LLM node resolved legacy workflow conversation history",
+				zap.Bool("enabled", true),
+				zap.Int("history_window_size", windowSize),
+				zap.Int("prompt_messages_count", len(messages)),
+			)
+		} else {
+			logger.DebugContext(ctx, "LLM node has no conversation history config; using empty history")
+		}
+	}
+
+	convData := map[string]any{
+		"id":       conversationID,
+		"messages": []any{},
 	}
 
 	// TODO: the maxTokens 4000 is a fallback value, it should be calculated based on the model context
 	// Calculate max tokens based on memory configuration and model context
 	maxTokens := 4000 // Default fallback
-	if memoryConfig.Window.Size != 0 {
+	if resolvedMemoryConfig.Window.Size != 0 {
 		// Calculate tokens more accurately based on:
 		// - Window size (number of messages to keep)
 		// - Average tokens per message (varies by content type)
 		// - Model context size (if available)
-		windowSize := memoryConfig.Window.Size
+		windowSize := resolvedMemoryConfig.Window.Size
 
 		// Estimate average tokens per message based on typical conversation patterns
 		// - Simple text messages: ~50-100 tokens
@@ -1278,43 +1181,221 @@ func (n *Node) fetchMemory(ctx context.Context, variablePool *entities.VariableP
 		n.APPID,
 		n.UserID,
 	)
+	memory.HistoryExplicitlyProvided = true
+	memory.Messages = append(memory.Messages, messages...)
 
-	// Set flag to prevent database loading when history is explicitly provided (even if empty)
-	// This is critical for history_window_size=0 to work correctly
-	memory.HistoryExplicitlyProvided = useProvidedHistory
+	return memory, resolvedMemoryConfig
+}
 
-	if useProvidedHistory {
-		logger.DebugContext(ctx, "LLM node loading provided conversation history into memory")
-		if conversationMap, ok := convData.(map[string]any); ok {
-			if messages, ok := conversationMap["messages"].([]any); ok {
-				for _, msg := range messages {
-					if msgMap, ok := msg.(map[string]any); ok {
-						role := PromptMessageRoleUser
-						if r, exists := msgMap["role"]; exists {
-							if roleStr, ok := r.(string); ok {
-								role = PromptMessageRole(roleStr)
-							}
-						}
-
-						content := ""
-						if c, exists := msgMap["content"]; exists {
-							content = fmt.Sprintf("%v", c)
-						}
-
-						memory.Messages = append(memory.Messages, PromptMessage{
-							Role:    role,
-							Content: content,
-						})
-					}
-				}
-				logger.DebugContext(ctx, "LLM node loaded provided conversation history into memory",
-					zap.Int("messages_count", len(memory.Messages)),
-				)
-			}
+func (n *Node) memoryConfigForConversationHistory(memoryConfig *MemoryConfig) *MemoryConfig {
+	rolePrefix := RolePrefix{
+		User:      "Human",
+		Assistant: "Assistant",
+	}
+	queryPromptTemplate := ""
+	if memoryConfig != nil {
+		if memoryConfig.RolePrefix.User != "" {
+			rolePrefix.User = memoryConfig.RolePrefix.User
 		}
+		if memoryConfig.RolePrefix.Assistant != "" {
+			rolePrefix.Assistant = memoryConfig.RolePrefix.Assistant
+		}
+		queryPromptTemplate = memoryConfig.QueryPromptTemplate
 	}
 
-	return memory
+	return &MemoryConfig{
+		RolePrefix: rolePrefix,
+		Window: WindowConfig{
+			Enabled: false,
+			Size:    0,
+		},
+		QueryPromptTemplate: queryPromptTemplate,
+	}
+}
+
+func clampConversationHistoryWindowSize(size int) int {
+	if size <= 0 {
+		return defaultConversationHistoryWindowSize
+	}
+	if size > maxConversationHistoryWindowSize {
+		return maxConversationHistoryWindowSize
+	}
+	return size
+}
+
+func (n *Node) getConversationIDFromVariablePool(variablePool *entities.VariablePool) string {
+	if variablePool == nil {
+		return ""
+	}
+	conversationVar := variablePool.Get([]string{"sys", "conversation_id"})
+	if conversationVar == nil {
+		return ""
+	}
+	conversationID, ok := conversationVar.ToObject().(string)
+	if !ok {
+		return ""
+	}
+	return conversationID
+}
+
+func (n *Node) promptMessagesFromProvidedHistory(ctx context.Context, variablePool *entities.VariablePool) ([]PromptMessage, bool) {
+	if variablePool == nil {
+		return nil, false
+	}
+	historyVar := variablePool.Get([]string{"sys", "conversation_history"})
+	if historyVar == nil {
+		return nil, false
+	}
+
+	historyObject := historyVar.ToObject()
+	logger.DebugContext(ctx, "LLM node found explicit conversation history in variable pool",
+		zap.String("history_type", fmt.Sprintf("%T", historyObject)),
+	)
+
+	switch history := historyObject.(type) {
+	case []map[string]interface{}:
+		return promptMessagesFromHistoryMaps(history), true
+	case []interface{}:
+		items := make([]map[string]interface{}, 0, len(history))
+		for _, raw := range history {
+			if msg, ok := raw.(map[string]interface{}); ok {
+				items = append(items, msg)
+			}
+		}
+		return promptMessagesFromHistoryMaps(items), true
+	default:
+		logger.WarnContext(ctx, "LLM node explicit conversation history has unsupported type",
+			zap.String("history_type", fmt.Sprintf("%T", historyObject)),
+		)
+		return []PromptMessage{}, true
+	}
+}
+
+func promptMessagesFromHistoryMaps(history []map[string]interface{}) []PromptMessage {
+	messages := make([]PromptMessage, 0, len(history))
+	for _, msgMap := range history {
+		role := PromptMessageRoleUser
+		if rawRole, exists := msgMap["role"]; exists {
+			if roleStr, ok := rawRole.(string); ok {
+				role = PromptMessageRole(roleStr)
+			}
+		}
+
+		content := ""
+		if rawContent, exists := msgMap["content"]; exists {
+			content = fmt.Sprintf("%v", rawContent)
+		}
+		if content == "" {
+			continue
+		}
+
+		messages = append(messages, PromptMessage{
+			Role:    role,
+			Content: content,
+		})
+	}
+	return messages
+}
+
+func (n *Node) legacyWorkflowConversationHistoryConfig() (*ConversationHistoryConfig, bool) {
+	if n.GraphConfig == nil {
+		return nil, false
+	}
+
+	featuresRaw, ok := n.GraphConfig["features"]
+	if !ok {
+		return nil, false
+	}
+	features, ok := featuresRaw.(map[string]interface{})
+	if !ok {
+		return nil, false
+	}
+	conversationHistoryRaw, ok := features["conversation_history"]
+	if !ok {
+		return nil, false
+	}
+	conversationHistory, ok := conversationHistoryRaw.(map[string]interface{})
+	if !ok {
+		return nil, false
+	}
+
+	enabled, _ := conversationHistory["enabled"].(bool)
+	return &ConversationHistoryConfig{
+		Enabled:           enabled,
+		HistoryWindowSize: intFromAny(conversationHistory["history_window_size"], defaultConversationHistoryWindowSize),
+	}, true
+}
+
+func intFromAny(value any, fallback int) int {
+	switch v := value.(type) {
+	case int:
+		return v
+	case int32:
+		return int(v)
+	case int64:
+		return int(v)
+	case float32:
+		return int(v)
+	case float64:
+		return int(v)
+	case json.Number:
+		if i, err := v.Int64(); err == nil {
+			return int(i)
+		}
+	}
+	return fallback
+}
+
+func (n *Node) loadConversationHistoryPromptMessages(ctx context.Context, conversationID string, windowSize int) ([]PromptMessage, error) {
+	if conversationID == "" {
+		return []PromptMessage{}, nil
+	}
+	conversationUUID, err := uuid.Parse(conversationID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid conversation id: %w", err)
+	}
+
+	repo := conversation.NewAgentMessageRepository(n.db)
+	_, total, err := repo.GetByConversationID(ctx, conversationUUID, 1, 0)
+	if err != nil {
+		return nil, err
+	}
+	if total <= 0 {
+		return []PromptMessage{}, nil
+	}
+
+	limit := clampConversationHistoryWindowSize(windowSize)
+	offset := int(total) - limit
+	if offset < 0 {
+		offset = 0
+	}
+	records, _, err := repo.GetByConversationID(ctx, conversationUUID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return promptMessagesFromAgentMessages(records), nil
+}
+
+func promptMessagesFromAgentMessages(records []*conversation.AgentMessage) []PromptMessage {
+	messages := make([]PromptMessage, 0, len(records)*2)
+	for _, record := range records {
+		if record == nil {
+			continue
+		}
+		if record.Query != "" {
+			messages = append(messages, PromptMessage{
+				Role:    PromptMessageRoleUser,
+				Content: record.Query,
+			})
+		}
+		if record.Answer != "" {
+			messages = append(messages, PromptMessage{
+				Role:    PromptMessageRoleAssistant,
+				Content: record.Answer,
+			})
+		}
+	}
+	return messages
 }
 
 // convertConversationToMemoryFormat converts a conversation model to memory format
@@ -2846,11 +2927,6 @@ func (n *Node) extractVariableSelectorToVariableMapping(
 		for _, selector := range querySelectors {
 			variableMapping[selector.Variable] = selector.ValueSelector
 		}
-	}
-
-	// Add context variable
-	if typedNodeData.Context.Enabled && len(typedNodeData.Context.VariableSelectors) > 0 {
-		variableMapping["#context#"] = typedNodeData.Context.VariableSelectors[0].ValueSelector
 	}
 
 	// Add files variable

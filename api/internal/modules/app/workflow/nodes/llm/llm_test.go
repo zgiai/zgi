@@ -7,7 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	appconfig "github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/base"
@@ -442,6 +444,120 @@ func TestReplaceContextPlaceholder_ReplacesWrappedAndLegacySyntax(t *testing.T) 
 	want := "wrapped=ctx legacy=ctx"
 	if got != want {
 		t.Fatalf("replaceContextPlaceholder() = %q, want %q", got, want)
+	}
+}
+
+func TestFetchMemory_NewNodeDisabledIgnoresProvidedHistory(t *testing.T) {
+	variablePool := entities.NewVariablePool()
+	variablePool.Add([]string{"sys", "conversation_history"}, []map[string]interface{}{
+		{"role": "user", "content": "old question"},
+		{"role": "assistant", "content": "old answer"},
+	})
+
+	node := &Node{
+		nodeData: NodeData{
+			ConversationHistory: &ConversationHistoryConfig{
+				Enabled:           false,
+				HistoryWindowSize: 3,
+			},
+		},
+	}
+
+	memory, memoryConfig := node.fetchMemory(context.Background(), variablePool, "", nil, nil)
+	if len(memory.Messages) != 0 {
+		t.Fatalf("memory messages = %d, want 0", len(memory.Messages))
+	}
+	if !memory.HistoryExplicitlyProvided {
+		t.Fatal("HistoryExplicitlyProvided = false, want true")
+	}
+	if memoryConfig.Window.Enabled {
+		t.Fatal("memory window enabled = true, want false")
+	}
+}
+
+func TestFetchMemory_LegacyNodeUsesExplicitProvidedHistory(t *testing.T) {
+	variablePool := entities.NewVariablePool()
+	variablePool.Add([]string{"sys", "conversation_history"}, []map[string]interface{}{
+		{"role": "user", "content": "old question"},
+		{"role": "assistant", "content": "old answer"},
+	})
+
+	node := &Node{}
+	memory, _ := node.fetchMemory(context.Background(), variablePool, "", nil, nil)
+	if len(memory.Messages) != 2 {
+		t.Fatalf("memory messages = %d, want 2", len(memory.Messages))
+	}
+	if memory.Messages[0].Role != PromptMessageRoleUser || memory.Messages[0].Content != "old question" {
+		t.Fatalf("first message = %#v", memory.Messages[0])
+	}
+	if memory.Messages[1].Role != PromptMessageRoleAssistant || memory.Messages[1].Content != "old answer" {
+		t.Fatalf("second message = %#v", memory.Messages[1])
+	}
+}
+
+func TestFetchMemory_LegacyFallbackDisabledDoesNotLoadHistory(t *testing.T) {
+	variablePool := entities.NewVariablePool()
+	variablePool.Add([]string{"sys", "conversation_id"}, uuid.NewString())
+
+	node := &Node{
+		NodeStruct: base.NodeStruct{
+			GraphConfig: map[string]any{
+				"features": map[string]interface{}{
+					"conversation_history": map[string]interface{}{
+						"enabled":             false,
+						"history_window_size": float64(3),
+					},
+				},
+			},
+		},
+	}
+
+	memory, _ := node.fetchMemory(context.Background(), variablePool, "", nil, nil)
+	if len(memory.Messages) != 0 {
+		t.Fatalf("memory messages = %d, want 0", len(memory.Messages))
+	}
+}
+
+func TestTokenBufferMemory_DoesNotImplicitlyLoadConversationHistory(t *testing.T) {
+	memory := NewTokenBufferMemory(
+		map[string]any{
+			"messages": []any{
+				map[string]any{"role": "user", "content": "old question"},
+			},
+		},
+		nil,
+		4000,
+		"",
+		"",
+	)
+
+	messages := memory.GetHistoryPromptMessages(4000, -1)
+	if len(messages) != 0 {
+		t.Fatalf("history messages = %d, want 0", len(messages))
+	}
+}
+
+func TestPromptMessagesFromAgentMessagesExpandsRounds(t *testing.T) {
+	records := []*conversation.AgentMessage{
+		{Query: "q1", Answer: "a1"},
+		{Query: "q2", Answer: "a2"},
+	}
+
+	messages := promptMessagesFromAgentMessages(records)
+	if len(messages) != 4 {
+		t.Fatalf("messages = %d, want 4", len(messages))
+	}
+	if messages[0].Role != PromptMessageRoleUser || messages[0].Content != "q1" {
+		t.Fatalf("message[0] = %#v", messages[0])
+	}
+	if messages[1].Role != PromptMessageRoleAssistant || messages[1].Content != "a1" {
+		t.Fatalf("message[1] = %#v", messages[1])
+	}
+	if messages[2].Role != PromptMessageRoleUser || messages[2].Content != "q2" {
+		t.Fatalf("message[2] = %#v", messages[2])
+	}
+	if messages[3].Role != PromptMessageRoleAssistant || messages[3].Content != "a2" {
+		t.Fatalf("message[3] = %#v", messages[3])
 	}
 }
 
