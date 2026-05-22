@@ -389,5 +389,5 @@ function getParamLabel(
   if (displayKey === 'summary') {
     return t('notificationSms.params.summary' as never);
   }
-  return t('notificationSms.params.templateParam' as never);
+  return param.label?.trim() || param.key;
 }

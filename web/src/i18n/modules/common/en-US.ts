@@ -279,7 +279,6 @@ const messages = {
       linkCode: 'Link code',
       remark: 'Remark',
       summary: 'Summary',
-      templateParam: 'Template parameter',
     },
     placeholders: {
       recipient: 'Phone number {index}',

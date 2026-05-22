@@ -274,7 +274,6 @@ const messages: CommonMessages = {
       linkCode: '链接参数',
       remark: '备注',
       summary: '摘要',
-      templateParam: '模板参数',
     },
     placeholders: {
       recipient: '手机号 {index}',
