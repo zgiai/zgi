@@ -303,7 +303,7 @@ function DocxPreview({ previewUrl }: { previewUrl: string }) {
         ]);
         if (!response.ok) throw new Error(loadErrorText);
 
-        const buffer = await response.arrayBuffer();
+        const buffer = await readOfficePreviewBuffer(response, officeTooLargeText);
         await loadOfficeZipPreview(buffer, jszip.default, officeTooLargeText);
         if (cancelled) return;
 
@@ -465,7 +465,7 @@ function SpreadsheetPreview({ previewUrl }: { previewUrl: string }) {
         ]);
         if (!response.ok) throw new Error(loadErrorText);
 
-        const buffer = await response.arrayBuffer();
+        const buffer = await readOfficePreviewBuffer(response, officeTooLargeText);
         const sheets = await readXlsxWorkbookPreview(buffer, jszip.default, officeTooLargeText);
         const firstSheet = sheets[0];
         if (!cancelled) {
@@ -823,6 +823,75 @@ function countCsvPreviewRows(text: string, limit: number): number {
   }
 
   return rows;
+}
+
+async function readOfficePreviewBuffer(
+  response: Response,
+  limitErrorText: string
+): Promise<ArrayBuffer> {
+  return readLimitedResponseArrayBuffer(response, maxOfficePreviewBytes, limitErrorText);
+}
+
+async function readLimitedResponseArrayBuffer(
+  response: Response,
+  maxBytes: number,
+  limitErrorText: string
+): Promise<ArrayBuffer> {
+  const contentLength = readContentLength(response);
+  if (contentLength !== null && contentLength > maxBytes) {
+    throw new Error(limitErrorText);
+  }
+
+  if (!response.body) {
+    if (contentLength === null) throw new Error(limitErrorText);
+
+    const buffer = await response.arrayBuffer();
+    if (buffer.byteLength > maxBytes) throw new Error(limitErrorText);
+    return buffer;
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let receivedBytes = 0;
+
+  try {
+    let shouldRead = true;
+    while (shouldRead) {
+      const { done, value } = await reader.read();
+      if (done) {
+        shouldRead = false;
+        continue;
+      }
+      if (!value) continue;
+
+      if (receivedBytes + value.byteLength > maxBytes) {
+        await reader.cancel();
+        throw new Error(limitErrorText);
+      }
+
+      chunks.push(value);
+      receivedBytes += value.byteLength;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const merged = new Uint8Array(receivedBytes);
+  let offset = 0;
+  chunks.forEach(chunk => {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  });
+  return merged.buffer;
+}
+
+function readContentLength(response: Response): number | null {
+  const raw = response.headers.get('content-length');
+  if (!raw) return null;
+
+  const size = Number(raw);
+  if (!Number.isFinite(size) || size < 0) return null;
+  return size;
 }
 
 async function readXlsxWorkbookPreview(
