@@ -115,11 +115,6 @@ function PluginCard({ plugin, branding, className, onClick }: PluginCardProps) {
         )}
 
         <div className="flex min-h-6 flex-wrap items-center gap-2">
-          {plugin.is_official && (
-            <Badge variant="secondary" className="h-6 rounded-md px-2 text-xs font-normal">
-              {t('plugins.official')}
-            </Badge>
-          )}
           {visibleLabels.map(label => (
             <Badge
               key={label}
