@@ -23,7 +23,8 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useLocale } from '@/hooks/use-locale';
 
 type PluginCategory = '' | MarketplacePluginCategory;
-type PluginSort = 'downloads' | 'newest' | 'rating';
+type PluginSort = 'downloads' | 'newest';
+type PluginSource = 'all' | 'official' | 'third_party';
 
 const PLUGIN_CATEGORIES: Array<{ value: PluginCategory; label: string }> = [
   { value: '', label: 'all' },
@@ -43,8 +44,11 @@ export default function PluginsPage() {
   const [totalCount, setTotalCount] = useState(0);
   const [selectedType, setSelectedType] = useState<PluginCategory>('');
   const [selectedSort, setSelectedSort] = useState<PluginSort>('downloads');
+  const [selectedSource, setSelectedSource] = useState<PluginSource>('all');
   const debouncedSearchKeyword = useDebouncedValue(searchKeyword, 500);
   const branding = useMarketplaceBranding();
+  const sourceOfficial =
+    selectedSource === 'official' ? true : selectedSource === 'third_party' ? false : undefined;
 
   const {
     plugins: pagePlugins,
@@ -59,6 +63,7 @@ export default function PluginsPage() {
     search: debouncedSearchKeyword || undefined,
     locale,
     sort: selectedSort,
+    is_official: sourceOfficial,
   });
 
   const lastProcessedPage = useRef(0);
@@ -68,7 +73,7 @@ export default function PluginsPage() {
     setAllPlugins([]);
     setCurrentPage(1);
     lastProcessedPage.current = 0;
-  }, [debouncedSearchKeyword, selectedType, selectedSort, locale]);
+  }, [debouncedSearchKeyword, selectedType, selectedSort, selectedSource, locale]);
 
   useEffect(() => {
     if (currentPage === lastProcessedPage.current || isLoading) {
@@ -185,19 +190,23 @@ export default function PluginsPage() {
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-              <Select value="all">
+              <Select
+                value={selectedSource}
+                onValueChange={value => setSelectedSource(value as PluginSource)}
+              >
                 <SelectTrigger className="h-9 w-full rounded-lg bg-background text-muted-foreground shadow-sm sm:w-[156px]">
                   <SelectValue placeholder={t('market.plugins.sourceType.all')} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">
-                    {t('market.plugins.sourceType.label')} {t('market.plugins.sourceType.all')}
+                  <SelectItem value="all">{t('market.plugins.sourceType.all')}</SelectItem>
+                  <SelectItem value="official">
+                    {t('market.plugins.sourceType.official')}
+                  </SelectItem>
+                  <SelectItem value="third_party">
+                    {t('market.plugins.sourceType.thirdParty')}
                   </SelectItem>
                 </SelectContent>
               </Select>
-              <div className="text-sm text-muted-foreground">
-                {t('market.plugins.resultCount', { count: totalCount })}
-              </div>
             </div>
 
             <Select
@@ -210,7 +219,6 @@ export default function PluginsPage() {
               <SelectContent>
                 <SelectItem value="downloads">{t('market.plugins.sort.downloads')}</SelectItem>
                 <SelectItem value="newest">{t('market.plugins.sort.newest')}</SelectItem>
-                <SelectItem value="rating">{t('market.plugins.sort.rating')}</SelectItem>
               </SelectContent>
             </Select>
           </div>

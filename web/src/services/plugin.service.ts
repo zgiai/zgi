@@ -70,7 +70,7 @@ class PluginService extends BaseService {
     search?: string;
     developer_id?: string;
     locale?: string;
-    sort?: 'downloads' | 'newest' | 'rating';
+    sort?: 'downloads' | 'newest';
     is_featured?: boolean;
     is_official?: boolean;
   }): Promise<ApiResponseData<MarketplacePluginListResponse>> {

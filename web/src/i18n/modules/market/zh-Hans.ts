@@ -18,14 +18,14 @@ const messages: MarketMessages = {
     applyUpload: '申请上传插件',
     resultCount: '共 {count} 个插件',
     sourceType: {
-      label: '来源类型',
       all: '全部',
+      official: '官方',
+      thirdParty: '第三方',
     },
     sort: {
       label: '排序',
       downloads: '最受欢迎',
       newest: '最新发布',
-      rating: '评分最高',
     },
     metrics: {
       installs: '安装次数',

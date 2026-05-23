@@ -16,14 +16,14 @@ const messages = {
     applyUpload: 'Submit plugin',
     resultCount: '{count} plugins',
     sourceType: {
-      label: 'Source Type',
       all: 'All',
+      official: 'Official',
+      thirdParty: 'Third-party',
     },
     sort: {
       label: 'Sort',
       downloads: 'Most popular',
       newest: 'Newest',
-      rating: 'Top rated',
     },
     metrics: {
       installs: 'Installs',
