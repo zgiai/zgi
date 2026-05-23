@@ -145,6 +145,13 @@ func TestWorkflowRoutes_ConversationListAcceptsUUIDBearerIdentity(t *testing.T) 
 	data, ok := body["data"].(map[string]any)
 	require.True(t, ok)
 	require.Len(t, data["data"], 1)
+
+	items, ok := data["data"].([]any)
+	require.True(t, ok)
+	item, ok := items[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "退款进度查询", item["name"])
+	require.Equal(t, float64(1), item["dialogue_count"])
 }
 
 func TestWorkflowRoutes_ConversationListRejectsInactiveWebApp(t *testing.T) {
@@ -180,6 +187,8 @@ func TestWorkflowRoutes_ConversationDetailAcceptsOwner(t *testing.T) {
 	data, ok := body["data"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, conversationID, data["id"])
+	require.Equal(t, "退款进度查询", data["name"])
+	require.Equal(t, float64(1), data["dialogue_count"])
 	require.IsType(t, []any{}, data["messages"])
 }
 
@@ -590,7 +599,7 @@ func conversationRows(conversationID, ownerID string) *sqlmock.Rows {
 		conversationID,
 		agentID.String(),
 		"advanced-chat",
-		"hello conversation",
+		"退款进度查询",
 		`{"query":"你好"}`,
 		"normal",
 		"web-app",
