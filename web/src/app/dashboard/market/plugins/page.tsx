@@ -212,7 +212,7 @@ export default function PluginsPage() {
         )}
 
         {allPlugins.length > 0 && (
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,360px),1fr))] gap-4">
             {allPlugins.map(plugin => (
               <PluginCard
                 key={plugin.id}

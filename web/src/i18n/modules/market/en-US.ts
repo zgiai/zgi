@@ -18,6 +18,13 @@ const messages = {
       newest: 'Newest',
       rating: 'Top rated',
     },
+    metrics: {
+      installs: 'Installs',
+      runs: 'Executions',
+      avgRuntime: 'Average runtime',
+      successRate: 'Success rate',
+      favorites: 'Favorites',
+    },
     installError: 'Plugin identifier not found',
     installSuccess: 'Plugin installed successfully',
     installFailed: 'Failed to install plugin',

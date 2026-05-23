@@ -20,6 +20,13 @@ const messages: MarketMessages = {
       newest: '最新发布',
       rating: '评分最高',
     },
+    metrics: {
+      installs: '安装次数',
+      runs: '执行次数',
+      avgRuntime: '平均运行时长',
+      successRate: '成功执行率',
+      favorites: '收藏数',
+    },
     installError: '插件标识未找到',
     installSuccess: '插件安装成功',
     installFailed: '插件安装失败',
