@@ -101,6 +101,28 @@ func TestRenderContentGeneratesValidOfficeAndPDF(t *testing.T) {
 	})
 }
 
+func TestRenderContentGeneratesRunnableHTML(t *testing.T) {
+	t.Run("preserves full document", func(t *testing.T) {
+		content := "<!doctype html>\n<html><head><script>window.ready = true;</script></head><body><button>Run</button></body></html>"
+
+		data, err := renderContent(content, "html", "Ignored")
+		require.NoError(t, err)
+		require.Equal(t, content, string(data))
+		require.Contains(t, string(data), "<script>window.ready = true;</script>")
+		require.NotContains(t, string(data), "&lt;script&gt;")
+	})
+
+	t.Run("wraps html fragment without escaping", func(t *testing.T) {
+		data, err := renderContent("<main><h1>Hello</h1></main>", "html", "Report <Draft>")
+		require.NoError(t, err)
+
+		html := string(data)
+		require.Contains(t, html, "<title>Report &lt;Draft&gt;</title>")
+		require.Contains(t, html, "<main><h1>Hello</h1></main>")
+		require.NotContains(t, html, "&lt;main&gt;")
+	})
+}
+
 func TestGenerateFileToolReturnsDownloadableOfficeFileMetadata(t *testing.T) {
 	db, mock, cleanup := openFileGeneratorMockDB(t)
 	defer cleanup()
