@@ -61,6 +61,24 @@ const messages: MarketMessages = {
     },
     uninstallSuccess: '插件卸载成功',
     uninstallFailed: '插件卸载失败',
+    feedbackDialog: {
+      title: '插件反馈',
+      requestType: '反馈类型',
+      officialPlugin: '选择官方插件',
+      content: '反馈内容',
+      contentPlaceholder: '请输入反馈内容',
+      cancel: '取消',
+      submit: '提交',
+      submitting: '提交中...',
+      submitted: '反馈已提交',
+      submitFailed: '反馈提交失败',
+      required: '必填',
+      types: {
+        existingOfficial: '已有官方插件功能反馈',
+        missingPlugin: '找不到想要的插件',
+        other: '其他反馈',
+      },
+    },
   },
 };
 

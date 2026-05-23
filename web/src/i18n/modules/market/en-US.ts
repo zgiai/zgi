@@ -59,6 +59,24 @@ const messages = {
     },
     uninstallSuccess: 'Plugin uninstalled successfully',
     uninstallFailed: 'Failed to uninstall plugin',
+    feedbackDialog: {
+      title: 'Plugin feedback',
+      requestType: 'Request type',
+      officialPlugin: 'Select official plugin',
+      content: 'Feedback content',
+      contentPlaceholder: 'Please enter the feedback content',
+      cancel: 'Cancel',
+      submit: 'Submit',
+      submitting: 'Submitting...',
+      submitted: 'Feedback submitted',
+      submitFailed: 'Failed to submit feedback',
+      required: 'Required',
+      types: {
+        existingOfficial: 'Feedback on existing official plugin functionality',
+        missingPlugin: 'Unable to find the plugin',
+        other: 'Other feedback',
+      },
+    },
   },
 };
 

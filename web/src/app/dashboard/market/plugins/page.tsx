@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { toast } from 'sonner';
 import { MessageSquareText, Search, Upload } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -22,6 +23,18 @@ import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useLocale } from '@/hooks/use-locale';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { pluginService } from '@/services/plugin.service';
+import type { MarketplacePluginFeedbackRequestType } from '@/services/types/plugin';
 
 type PluginCategory = '' | MarketplacePluginCategory;
 type PluginSort = 'downloads' | 'newest';
@@ -46,6 +59,7 @@ export default function PluginsPage() {
   const [selectedType, setSelectedType] = useState<PluginCategory>('');
   const [selectedSort, setSelectedSort] = useState<PluginSort>('downloads');
   const [selectedSource, setSelectedSource] = useState<PluginSource>('all');
+  const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
   const debouncedSearchKeyword = useDebouncedValue(searchKeyword, 500);
   const branding = useMarketplaceBranding();
   const sourceOfficial =
@@ -65,6 +79,14 @@ export default function PluginsPage() {
     locale,
     sort: selectedSort,
     is_official: sourceOfficial,
+  });
+
+  const { plugins: officialPlugins } = useMarketplacePlugins({
+    page: 1,
+    page_size: 100,
+    locale,
+    sort: 'downloads',
+    is_official: true,
   });
 
   const lastProcessedPage = useRef(0);
@@ -148,12 +170,10 @@ export default function PluginsPage() {
                     <Button
                       variant="outline"
                       className="h-10 w-10 shrink-0 rounded-lg bg-background p-0 shadow-sm"
-                      asChild
+                      onClick={() => setIsFeedbackOpen(true)}
                     >
-                      <a href={branding.feedback_url || '#'} target="_blank" rel="noreferrer">
-                        <MessageSquareText className="h-4 w-4" />
-                        <span className="sr-only">{t('market.plugins.feedback')}</span>
-                      </a>
+                      <MessageSquareText className="h-4 w-4" />
+                      <span className="sr-only">{t('market.plugins.feedback')}</span>
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>{t('market.plugins.feedback')}</TooltipContent>
@@ -309,6 +329,152 @@ export default function PluginsPage() {
           pluginId={selectedPlugin?.id || null}
         />
       )}
+
+      <PluginFeedbackDialog
+        open={isFeedbackOpen}
+        onOpenChange={setIsFeedbackOpen}
+        officialPlugins={officialPlugins}
+      />
     </div>
+  );
+}
+
+function PluginFeedbackDialog({
+  open,
+  onOpenChange,
+  officialPlugins,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  officialPlugins: MarketplacePlugin[];
+}) {
+  const t = useT();
+  const [requestType, setRequestType] =
+    useState<MarketplacePluginFeedbackRequestType>('existing_official');
+  const [pluginId, setPluginId] = useState('');
+  const [content, setContent] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const needsPlugin = requestType === 'existing_official';
+
+  const selectedPluginId = useMemo(() => {
+    if (!needsPlugin) return '';
+    return pluginId || officialPlugins[0]?.id || '';
+  }, [needsPlugin, officialPlugins, pluginId]);
+
+  useEffect(() => {
+    if (open && needsPlugin && !pluginId && officialPlugins[0]?.id) {
+      setPluginId(officialPlugins[0].id);
+    }
+  }, [needsPlugin, officialPlugins, open, pluginId]);
+
+  const handleSubmit = async () => {
+    if (!content.trim() || (needsPlugin && !selectedPluginId)) {
+      toast.error(t('market.plugins.feedbackDialog.required'));
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      await pluginService.submitMarketplacePluginFeedback({
+        request_type: requestType,
+        plugin_id: needsPlugin ? selectedPluginId : undefined,
+        content: content.trim(),
+      });
+      toast.success(t('market.plugins.feedbackDialog.submitted'));
+      setContent('');
+      setRequestType('existing_official');
+      setPluginId('');
+      onOpenChange(false);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : t('market.plugins.feedbackDialog.submitFailed')
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle>{t('market.plugins.feedbackDialog.title')}</DialogTitle>
+        </DialogHeader>
+        <DialogBody className="grid gap-5">
+          <div className="grid gap-2">
+            <Label>
+              {t('market.plugins.feedbackDialog.requestType')}
+              <span className="text-destructive">*</span>
+            </Label>
+            <Select
+              value={requestType}
+              onValueChange={value => setRequestType(value as MarketplacePluginFeedbackRequestType)}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="existing_official">
+                  {t('market.plugins.feedbackDialog.types.existingOfficial')}
+                </SelectItem>
+                <SelectItem value="missing_plugin">
+                  {t('market.plugins.feedbackDialog.types.missingPlugin')}
+                </SelectItem>
+                <SelectItem value="other">
+                  {t('market.plugins.feedbackDialog.types.other')}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {needsPlugin && (
+            <div className="grid gap-2">
+              <Label>
+                {t('market.plugins.feedbackDialog.officialPlugin')}
+                <span className="text-destructive">*</span>
+              </Label>
+              <Select value={selectedPluginId} onValueChange={setPluginId}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {officialPlugins.map(plugin => (
+                    <SelectItem key={plugin.id} value={plugin.id}>
+                      {plugin.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          <div className="grid gap-2">
+            <Label>
+              {t('market.plugins.feedbackDialog.content')}
+              <span className="text-destructive">*</span>
+            </Label>
+            <Textarea
+              value={content}
+              maxLength={2000}
+              rows={5}
+              className="min-h-32 max-h-60"
+              placeholder={t('market.plugins.feedbackDialog.contentPlaceholder')}
+              onChange={event => setContent(event.target.value)}
+            />
+            <div className="text-right text-xs text-muted-foreground">{content.length}/2000</div>
+          </div>
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={isSubmitting}>
+            {t('market.plugins.feedbackDialog.cancel')}
+          </Button>
+          <Button onClick={handleSubmit} disabled={isSubmitting}>
+            {isSubmitting
+              ? t('market.plugins.feedbackDialog.submitting')
+              : t('market.plugins.feedbackDialog.submit')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

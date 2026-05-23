@@ -27,6 +27,14 @@ export interface MarketplaceBrandingSettings {
   upload_application_url?: string;
 }
 
+export type MarketplacePluginFeedbackRequestType = 'existing_official' | 'missing_plugin' | 'other';
+
+export interface SubmitMarketplacePluginFeedbackRequest {
+  request_type: MarketplacePluginFeedbackRequestType;
+  plugin_id?: string;
+  content: string;
+}
+
 export interface MarketplacePluginVersion {
   id: string;
   version: string;

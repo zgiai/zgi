@@ -8,6 +8,7 @@ import type {
   MarketplacePlugin,
   MarketplaceBrandingSettings,
   MarketplacePluginVersionListResponse,
+  SubmitMarketplacePluginFeedbackRequest,
 } from './types/plugin';
 import type { ApiResponseData } from './types/common';
 
@@ -91,6 +92,17 @@ class PluginService extends BaseService {
         is_official: params.is_official !== undefined ? params.is_official.toString() : undefined,
         channel: MARKETPLACE_CHANNEL || undefined,
       },
+    });
+  }
+
+  submitMarketplacePluginFeedback(
+    data: SubmitMarketplacePluginFeedbackRequest
+  ): Promise<ApiResponseData<{ id: string }>> {
+    return this.request('post', 'v1/market/feedback', data, {
+      skipAuth: true,
+      skipErrorHandling: true,
+      endpoint: 'market',
+      timeout: 60000,
     });
   }
 
