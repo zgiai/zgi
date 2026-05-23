@@ -1,5 +1,9 @@
 import { pluginService } from '@/services/plugin.service';
-import type { MarketplacePlugin, MarketplacePluginCategory } from '@/services/types/plugin';
+import type {
+  MarketplaceBrandingSettings,
+  MarketplacePlugin,
+  MarketplacePluginCategory,
+} from '@/services/types/plugin';
 
 import { useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -88,6 +92,19 @@ export function useMarketplacePlugins(
       await query.refetch();
     },
   };
+}
+
+export function useMarketplaceBranding(): MarketplaceBrandingSettings {
+  const query = useQuery({
+    queryKey: PLUGIN_KEYS.marketplaceBranding(),
+    queryFn: () => pluginService.getMarketplaceBrandingConfig(),
+    staleTime: 5 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+  });
+
+  return query.data ?? {};
 }
 
 /**

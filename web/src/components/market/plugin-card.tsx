@@ -2,7 +2,7 @@
 
 import { memo } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
-import type { MarketplacePlugin } from '@/services/types/plugin';
+import type { MarketplaceBrandingSettings, MarketplacePlugin } from '@/services/types/plugin';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n';
 import { Badge } from '@/components/ui/badge';
@@ -11,16 +11,28 @@ import { Bot, Clock3, Download, MessageSquareText, Star } from 'lucide-react';
 
 interface PluginCardProps {
   plugin: MarketplacePlugin;
+  branding?: MarketplaceBrandingSettings;
   className?: string;
   onClick?: () => void;
 }
 
-function PluginCard({ plugin, className, onClick }: PluginCardProps) {
+const DEFAULT_BLUE_V_ICON =
+  'data:image/svg+xml,%3Csvg width=%2216%22 height=%2216%22 viewBox=%220 0 16 16%22 fill=%22none%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Ccircle cx=%228%22 cy=%228%22 r=%227%22 fill=%22%232F6BFF%22/%3E%3Cpath d=%22M4.75 8.1L6.9 10.25L11.4 5.75%22 stroke=%22white%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/%3E%3C/svg%3E';
+const DEFAULT_YELLOW_V_ICON =
+  'data:image/svg+xml,%3Csvg width=%2216%22 height=%2216%22 viewBox=%220 0 16 16%22 fill=%22none%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Ccircle cx=%228%22 cy=%228%22 r=%227%22 fill=%22%23F5A400%22/%3E%3Cpath d=%22M4.75 8.1L6.9 10.25L11.4 5.75%22 stroke=%22white%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/%3E%3C/svg%3E';
+
+function PluginCard({ plugin, branding, className, onClick }: PluginCardProps) {
   const t = useT('market');
 
   const pluginName = plugin.name;
   const pluginDescription = plugin.short_description || plugin.description;
   const pluginDeveloper = plugin.developer?.organization_name;
+  const developerLogo = plugin.developer?.logo_url;
+  const blueVIcon = branding?.blue_v_icon_url || DEFAULT_BLUE_V_ICON;
+  const yellowVIcon = branding?.yellow_v_icon_url || DEFAULT_YELLOW_V_ICON;
+  const showOfficialToolBadge = plugin.is_official;
+  const showCertifiedBadge =
+    Boolean(plugin.developer?.is_verified) || Boolean(plugin.official_labels?.length);
   const pluginLabels = Array.from(
     new Set(
       [...(plugin.official_labels || []), ...(plugin.tags || [])].filter(Boolean).filter(label => {
@@ -65,16 +77,25 @@ function PluginCard({ plugin, className, onClick }: PluginCardProps) {
           )}
 
           <div className="min-w-0 flex-1">
-            <h3
-              className="line-clamp-1 text-base font-semibold leading-6 transition-colors group-hover:text-primary"
-              title={pluginName}
-            >
-              {pluginName}
-            </h3>
+            <div className="flex min-w-0 items-center gap-1.5">
+              <h3
+                className="min-w-0 truncate text-base font-semibold leading-6 transition-colors group-hover:text-primary"
+                title={pluginName}
+              >
+                {pluginName}
+              </h3>
+              {showOfficialToolBadge && (
+                <VerificationIcon src={blueVIcon} label={t('plugins.official')} />
+              )}
+            </div>
             {pluginDeveloper && (
-              <p className="mt-1 line-clamp-1 text-sm text-muted-foreground">
-                {t('plugins.modal.by')} {pluginDeveloper}
-              </p>
+              <div className="mt-1 flex min-w-0 items-center gap-1.5 text-sm text-muted-foreground">
+                <DeveloperAvatar name={pluginDeveloper} src={developerLogo} />
+                <span className="min-w-0 truncate">{pluginDeveloper}</span>
+                {showCertifiedBadge && (
+                  <VerificationIcon src={yellowVIcon} label={t('plugins.certified')} />
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -131,6 +152,37 @@ function PluginCard({ plugin, className, onClick }: PluginCardProps) {
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function DeveloperAvatar({ name, src }: { name: string; src?: string }) {
+  const initials = name.trim().slice(0, 1).toUpperCase();
+
+  return (
+    <span className="relative flex h-5 w-5 shrink-0 items-center justify-center overflow-hidden rounded-full border bg-muted text-[10px] font-semibold text-muted-foreground">
+      <span>{initials}</span>
+      {src ? (
+        <img
+          src={src}
+          alt={name}
+          className="absolute inset-0 h-full w-full object-cover"
+          onError={e => {
+            e.currentTarget.style.display = 'none';
+          }}
+        />
+      ) : null}
+    </span>
+  );
+}
+
+function VerificationIcon({ src, label }: { src: string; label: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <img src={src} alt={label} className="h-4 w-4 shrink-0" />
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   );
 }
 

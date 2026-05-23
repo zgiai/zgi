@@ -13,6 +13,7 @@ const messages: MarketMessages = {
     scrollHint: '继续向下滚动加载更多',
     noMoreData: '没有更多插件了',
     official: '官方',
+    certified: '认证',
     resultCount: '共 {count} 个插件',
     sort: {
       label: '排序',

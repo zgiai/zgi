@@ -11,6 +11,7 @@ const messages = {
     scrollHint: 'Keep scrolling to load more',
     noMoreData: 'No more plugins',
     official: 'Official',
+    certified: 'Certified',
     resultCount: '{count} plugins',
     sort: {
       label: 'Sort',

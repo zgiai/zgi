@@ -6,6 +6,7 @@ import type {
   MarketplacePluginCategory,
   MarketplacePluginListResponse,
   MarketplacePlugin,
+  MarketplaceBrandingSettings,
   MarketplacePluginVersionListResponse,
 } from './types/plugin';
 import type { ApiResponseData } from './types/common';
@@ -91,6 +92,32 @@ class PluginService extends BaseService {
         channel: MARKETPLACE_CHANNEL || undefined,
       },
     });
+  }
+
+  /**
+   * Get public marketplace branding settings from console.
+   * GET /v1/public/settings
+   */
+  getMarketplaceBrandingSettings(): Promise<
+    ApiResponseData<{ settings: Record<string, string>; updated: string }>
+  > {
+    return this.request('get', 'v1/public/settings', undefined, {
+      skipAuth: true,
+      skipErrorHandling: true,
+      endpoint: 'market',
+      timeout: 60000,
+    });
+  }
+
+  async getMarketplaceBrandingConfig(): Promise<MarketplaceBrandingSettings> {
+    const response = await this.getMarketplaceBrandingSettings();
+    const settings = response.data?.settings ?? {};
+
+    return {
+      official_logo_url: settings['marketplace.official_logo_url'],
+      blue_v_icon_url: settings['marketplace.blue_v_icon_url'],
+      yellow_v_icon_url: settings['marketplace.yellow_v_icon_url'],
+    };
   }
 
   /**

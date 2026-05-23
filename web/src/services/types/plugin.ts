@@ -13,7 +13,14 @@ export interface MarketplacePluginDeveloper {
   id: string;
   organization_name: string;
   organization_slug: string;
+  logo_url?: string;
   is_verified: boolean;
+}
+
+export interface MarketplaceBrandingSettings {
+  official_logo_url?: string;
+  blue_v_icon_url?: string;
+  yellow_v_icon_url?: string;
 }
 
 export interface MarketplacePluginVersion {

@@ -12,7 +12,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useT } from '@/i18n';
-import { useMarketplacePlugins } from '@/hooks/use-plugins';
+import { useMarketplaceBranding, useMarketplacePlugins } from '@/hooks/use-plugins';
 import PluginCard from '@/components/market/plugin-card';
 import PluginDetailModal from '@/components/market/plugin-detail-modal';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
@@ -44,6 +44,7 @@ export default function PluginsPage() {
   const [selectedType, setSelectedType] = useState<PluginCategory>('');
   const [selectedSort, setSelectedSort] = useState<PluginSort>('downloads');
   const debouncedSearchKeyword = useDebouncedValue(searchKeyword, 500);
+  const branding = useMarketplaceBranding();
 
   const {
     plugins: pagePlugins,
@@ -212,11 +213,12 @@ export default function PluginsPage() {
         )}
 
         {allPlugins.length > 0 && (
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,360px),1fr))] gap-4">
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,360px),1fr))] gap-4">
             {allPlugins.map(plugin => (
               <PluginCard
                 key={plugin.id}
                 plugin={plugin}
+                branding={branding}
                 onClick={() => handlePluginCardClick(plugin)}
               />
             ))}

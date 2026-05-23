@@ -244,6 +244,7 @@ export const PLUGIN_KEYS = {
   all: ['plugins'] as const,
   marketplace: () => [...PLUGIN_KEYS.all, 'marketplace'] as const,
   marketplaceList: (params: unknown) => [...PLUGIN_KEYS.marketplace(), 'list', params] as const,
+  marketplaceBranding: () => [...PLUGIN_KEYS.marketplace(), 'branding'] as const,
   marketplaceDetail: (id: string) => [...PLUGIN_KEYS.marketplace(), 'detail', id] as const,
   marketplaceVersions: (pluginId: string, params: unknown) =>
     [...PLUGIN_KEYS.marketplace(), 'versions', pluginId, params] as const,
