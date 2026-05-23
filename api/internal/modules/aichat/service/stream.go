@@ -11,8 +11,10 @@ import (
 	aichatmodel "github.com/zgiai/zgi/api/internal/modules/aichat/model"
 	"github.com/zgiai/zgi/api/internal/modules/aichat/repository"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/response"
 	"gorm.io/gorm"
 )
 
@@ -383,7 +385,7 @@ func (s *service) finalizePreparedError(ctx context.Context, prepared *PreparedC
 			logger.WarnContext(ctx, "failed to clear aichat conversation runtime", "conversation_id", prepared.Conversation.ID.String(), clearErr)
 		}
 	}
-	s.emitPreparedEvent(ctx, prepared, streamEventError, messageErrorPayload(prepared, cause.Error()), eventCallback)
+	s.emitPreparedEvent(ctx, prepared, streamEventError, BuildStreamErrorPayload(prepared, cause), eventCallback)
 }
 
 func (s *service) completePreparedError(ctx context.Context, prepared *PreparedChat, message string) error {
@@ -423,27 +425,41 @@ func (s *service) persistStoppedAnswer(ctx context.Context, prepared *PreparedCh
 	return nil
 }
 
-func (s *service) appendStreamEventBestEffort(ctx context.Context, messageID uuid.UUID, conversationID uuid.UUID, eventType string, payload map[string]interface{}) {
-	if _, err := s.events.append(ctx, messageID, conversationID, eventType, payload); err != nil {
+func (s *service) appendStreamEventBestEffort(ctx context.Context, messageID uuid.UUID, conversationID uuid.UUID, eventType string, payload map[string]interface{}) *StreamEvent {
+	if s.events == nil {
+		return nil
+	}
+	event, err := s.events.append(ctx, messageID, conversationID, eventType, payload)
+	if err != nil {
 		if errors.Is(err, ErrStreamEventsUnavailable) {
-			return
+			return nil
 		}
 		logger.WarnContext(ctx, "failed to append aichat stream event", "message_id", messageID.String(), "event_type", eventType, err)
+		return nil
 	}
+	return event
 }
 
 func (s *service) emitPreparedEvent(ctx context.Context, prepared *PreparedChat, eventType string, payload map[string]interface{}, onEvent func(StreamEvent) error) {
 	if prepared == nil || prepared.Message == nil || prepared.Conversation == nil {
 		return
 	}
-	s.appendStreamEventBestEffort(ctx, prepared.Message.ID, prepared.Conversation.ID, eventType, payload)
+	event := s.appendStreamEventBestEffort(ctx, prepared.Message.ID, prepared.Conversation.ID, eventType, payload)
 	if onEvent == nil {
 		return
 	}
+	if event == nil {
+		event = &StreamEvent{
+			EventType: eventType,
+			Payload:   payload,
+			CreatedAt: time.Now().Unix(),
+		}
+	}
 	if err := onEvent(StreamEvent{
-		EventType: eventType,
-		Payload:   payload,
-		CreatedAt: time.Now().Unix(),
+		ID:        event.ID,
+		EventType: event.EventType,
+		Payload:   event.Payload,
+		CreatedAt: event.CreatedAt,
 	}); err != nil {
 		logger.WarnContext(ctx, "failed to deliver aichat stream event", "message_id", prepared.Message.ID.String(), "event_type", eventType, err)
 	}
@@ -521,11 +537,44 @@ func messageEndPayload(prepared *PreparedChat, metadata map[string]interface{}) 
 	}
 }
 
-func messageErrorPayload(prepared *PreparedChat, message string) map[string]interface{} {
-	return map[string]interface{}{
+// BuildStreamErrorPayload returns the public SSE error payload for an AIChat turn.
+func BuildStreamErrorPayload(prepared *PreparedChat, err error) map[string]interface{} {
+	message := streamFallbackErrorMessage(err)
+	payload := map[string]interface{}{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
 		"message":         message,
+	}
+	if code, billingMessage, ok := aichatBillingErrorCodeAndMessage(err); ok {
+		payload["message"] = billingMessage
+		payload["code"] = code
+		payload["params"] = map[string]interface{}{}
+	}
+	return payload
+}
+
+func streamFallbackErrorMessage(err error) string {
+	if err == nil {
+		return "unknown error"
+	}
+	return err.Error()
+}
+
+func aichatBillingErrorCodeAndMessage(err error) (int, string, bool) {
+	var userErr *gateway.BillingUserError
+	if !errors.As(err, &userErr) || userErr == nil {
+		return 0, "", false
+	}
+
+	switch userErr.Kind {
+	case gateway.BillingUserErrorKindOrganizationBalanceInsufficient:
+		return response.ErrWorkflowOrganizationBalanceInsufficient.Code, response.ErrWorkflowOrganizationBalanceInsufficient.Message, true
+	case gateway.BillingUserErrorKindWorkspaceQuotaInsufficient:
+		return response.ErrWorkflowWorkspaceQuotaInsufficient.Code, response.ErrWorkflowWorkspaceQuotaInsufficient.Message, true
+	case gateway.BillingUserErrorKindPrivateChannelBalanceInsufficient:
+		return response.ErrWorkflowPrivateChannelBalanceInsufficient.Code, response.ErrWorkflowPrivateChannelBalanceInsufficient.Message, true
+	default:
+		return 0, "", false
 	}
 }
 

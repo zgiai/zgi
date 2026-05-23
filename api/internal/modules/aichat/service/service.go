@@ -30,6 +30,7 @@ const (
 
 	streamEventMessageStart         = "message_start"
 	streamEventMessage              = "message"
+	streamEventMessageRetract       = "message_retract"
 	streamEventMessageEnd           = "message_end"
 	streamEventError                = "error"
 	streamEventAgentProgress        = "agent_progress"

@@ -467,7 +467,7 @@ func intermediateAnswerMetaTool() llmadapter.Tool {
 		Type: "function",
 		Function: llmadapter.Function{
 			Name:        MetaToolIntermediateAnswer,
-			Description: "Submit a substantial intermediate answer or draft that should be visible to the user before continuing with more skill/tool calls.",
+			Description: "Submit a substantial new intermediate answer or draft that should be visible to the user before continuing with more skill/tool calls. Do not use this to repeat content that was already visible in an earlier assistant answer; for export/save/convert/file-generation requests, pass the existing content directly to the relevant tool instead.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{

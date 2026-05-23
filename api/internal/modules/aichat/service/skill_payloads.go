@@ -17,6 +17,7 @@ func skillCallStartPayload(prepared *PreparedChat, skillID string, toolName stri
 		"message_id":        prepared.Message.ID.String(),
 		"skill_id":          skillID,
 		"tool_name":         toolName,
+		"arguments":         argumentsSummary,
 		"arguments_summary": argumentsSummary,
 		"created_at":        time.Now().Unix(),
 	}
@@ -122,13 +123,17 @@ func skillReferenceReadPayload(prepared *PreparedChat, trace skills.SkillTrace, 
 	}
 }
 
-func intermediateAnswerPayload(prepared *PreparedChat, trace skills.SkillTrace) map[string]interface{} {
+func intermediateAnswerPayload(prepared *PreparedChat, trace skills.SkillTrace, answerID string, content string, index int, done bool, status string) map[string]interface{} {
 	return map[string]interface{}{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
+		"answer_id":       answerID,
 		"title":           trace.Title,
-		"content":         trace.Message,
-		"status":          trace.Status,
+		"content":         content,
+		"delta":           true,
+		"index":           index,
+		"done":            done,
+		"status":          status,
 		"created_at":      time.Now().Unix(),
 	}
 }

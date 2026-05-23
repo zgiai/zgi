@@ -53,7 +53,7 @@ func NewGenerateFileTool(tenantID string) *GenerateFileTool {
 				"en_US":   "Generate a downloadable file from provided content.",
 				"zh_Hans": "根据提供的内容生成可下载文件。",
 			},
-			LLM: "Generate a file from provided content. Supported formats: txt, md, html, json, csv, docx, xlsx, and pdf.",
+			LLM: "Generate a file from provided content. Supported formats: txt, md, html, json, csv, docx, xlsx, and pdf. When the user asks to export or save existing conversation content, pass that existing content here directly; do not first repeat it with submit_intermediate_answer.",
 		},
 		Parameters: []tools.ToolParameter{
 			{
