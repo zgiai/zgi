@@ -24,6 +24,7 @@ services:
     environment:
       BASE_PATH: ${BASE_PATH:-${NEXT_PUBLIC_BASE_PATH:-}}
       NEXT_PUBLIC_BASE_PATH: ${BASE_PATH:-${NEXT_PUBLIC_BASE_PATH:-}}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:2670}
       TZ: ${TZ:-Asia/Shanghai}
       PORT: ${PORT:-2680}
       PM2_INSTANCES: ${PM2_INSTANCES:-2}
