@@ -75,6 +75,11 @@ const messages = {
     htmlLimitedTitle: 'HTML is shown in isolated preview mode',
     htmlLimitedDescription:
       'Page scripts can run for animations, while forms, popups, network requests, embedded frames, and navigation stay blocked.',
+    htmlOpenRiskTitle: 'Open original HTML in a new tab?',
+    htmlOpenRiskDescription:
+      'The new tab will load the original HTML outside the isolated preview. It may run scripts, navigate, or contact external resources from that page. Only continue if you trust this file.',
+    htmlOpenRiskConfirm: 'Open Anyway',
+    htmlOpenRiskCancel: 'Cancel',
     htmlTooLargeTitle: 'This HTML file is too large to preview safely',
     officeUnsupportedTitle: 'Preview is not available for this Office format',
     officeTooLargeTitle: 'This Office file is too large to preview',

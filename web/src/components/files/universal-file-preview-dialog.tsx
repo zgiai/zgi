@@ -5,6 +5,7 @@ import type JSZip from 'jszip';
 import {
   AlertCircle,
   Download,
+  ExternalLink,
   FileText,
   Image as ImageIcon,
   Loader2,
@@ -23,6 +24,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
   getOriginalPreviewKind,
   isOriginalPreviewImage,
@@ -108,10 +110,12 @@ export function UniversalFilePreviewDialog({
     previewUrl: string;
     downloadUrl: string;
   } | null>(null);
+  const [htmlOpenConfirmOpen, setHtmlOpenConfirmOpen] = useState(false);
 
   useEffect(() => {
     if (!open) {
       setPreviewSession(null);
+      setHtmlOpenConfirmOpen(false);
       return;
     }
     if (!file) return;
@@ -137,6 +141,12 @@ export function UniversalFilePreviewDialog({
   const isImage = isOriginalPreviewImage(activeFile?.extension, activeFile?.mimeType);
   const isPdf = isOriginalPreviewPdf(activeFile?.extension, activeFile?.mimeType);
   const previewKind = getOriginalPreviewKind(activeFile?.extension, activeFile?.mimeType);
+  const canOpenHtmlExternally = previewKind === 'html' && Boolean(downloadUrl);
+
+  const openHtmlInNewTab = () => {
+    if (!downloadUrl) return;
+    window.open(downloadUrl, '_blank', 'noopener,noreferrer');
+  };
 
   const renderPreview = () => {
     if (!activeFile) {
@@ -234,41 +244,60 @@ export function UniversalFilePreviewDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent size="full" className="gap-0 overflow-hidden p-0">
-        <DialogHeader className="border-b px-5 py-4">
-          <div className="flex min-w-0 items-start gap-3 pr-8">
-            <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-              {isImage ? <ImageIcon className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent size="full" className="gap-0 overflow-hidden p-0">
+          <DialogHeader className="border-b px-5 py-4">
+            <div className="flex min-w-0 items-start gap-3 pr-8">
+              <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                {isImage ? <ImageIcon className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
+              </div>
+              <div className="min-w-0">
+                <DialogTitle className="truncate text-base leading-6">{title}</DialogTitle>
+                <DialogDescription className="mt-1">
+                  {extension ? t('preview.fileMeta', { extension }) : t('preview.description')}
+                </DialogDescription>
+              </div>
             </div>
-            <div className="min-w-0">
-              <DialogTitle className="truncate text-base leading-6">{title}</DialogTitle>
-              <DialogDescription className="mt-1">
-                {extension ? t('preview.fileMeta', { extension }) : t('preview.description')}
-              </DialogDescription>
-            </div>
-          </div>
-        </DialogHeader>
+          </DialogHeader>
 
-        <DialogBody className="min-h-0 overflow-hidden p-0">{renderPreview()}</DialogBody>
+          <DialogBody className="min-h-0 overflow-hidden p-0">{renderPreview()}</DialogBody>
 
-        <DialogFooter className="border-t px-5 py-3">
-          {downloadUrl ? (
-            <Button variant="outline" asChild>
-              <a href={downloadUrl} download={activeFile?.name}>
+          <DialogFooter className="border-t px-5 py-3">
+            {canOpenHtmlExternally ? (
+              <Button variant="outline" onClick={() => setHtmlOpenConfirmOpen(true)}>
+                <ExternalLink className="mr-2 h-4 w-4" />
+                {t('preview.openInNewTab')}
+              </Button>
+            ) : null}
+            {downloadUrl ? (
+              <Button variant="outline" asChild>
+                <a href={downloadUrl} download={activeFile?.name}>
+                  <Download className="mr-2 h-4 w-4" />
+                  {t('actions.downloadFile')}
+                </a>
+              </Button>
+            ) : file && onDownload ? (
+              <Button variant="outline" onClick={onDownload} disabled={isDownloading}>
                 <Download className="mr-2 h-4 w-4" />
                 {t('actions.downloadFile')}
-              </a>
-            </Button>
-          ) : file && onDownload ? (
-            <Button variant="outline" onClick={onDownload} disabled={isDownloading}>
-              <Download className="mr-2 h-4 w-4" />
-              {t('actions.downloadFile')}
-            </Button>
-          ) : null}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+              </Button>
+            ) : null}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <ConfirmDialog
+        open={htmlOpenConfirmOpen}
+        onOpenChange={setHtmlOpenConfirmOpen}
+        title={t('preview.htmlOpenRiskTitle')}
+        description={t('preview.htmlOpenRiskDescription')}
+        confirmText={t('preview.htmlOpenRiskConfirm')}
+        cancelText={t('preview.htmlOpenRiskCancel')}
+        variant="warning"
+        onConfirm={openHtmlInNewTab}
+      />
+    </>
   );
 }
 
