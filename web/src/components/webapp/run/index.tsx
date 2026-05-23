@@ -147,7 +147,6 @@ export const WebappRun: React.FC<WebappRunProps> = ({
   const [streamedText, setStreamedText] = useState<string>('');
   const [isRunning, setIsRunning] = useState(false);
   const [finalResult, setFinalResult] = useState<HistoryResult | null>(null);
-  const [isFormValid, setIsFormValid] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState('input');
   const [precheckWarnings, setPrecheckWarnings] = useState<WorkflowPrecheckWarning[]>([]);
   const [approvalPaused, setApprovalPaused] = useState(false);
@@ -1673,7 +1672,6 @@ export const WebappRun: React.FC<WebappRunProps> = ({
         questionAnswerSubmitting
       }
       onSubmit={handleSubmit}
-      onValidChange={setIsFormValid}
       hideSubmitButton
       fileUploadAccessMode={isAuthenticated ? 'enabled' : 'login-required'}
       allowWorkspaceSwitch
@@ -1786,7 +1784,6 @@ export const WebappRun: React.FC<WebappRunProps> = ({
               isStarting ||
               questionAnswerSubmitting ||
               isApprovalPending ||
-              !isFormValid ||
               (!isQuestionAnswerPending && hasRequiredAnonymousFileInputs)
             }
             className="w-full shadow-lg transition-all duration-300 hover:shadow-xl hover:shadow-primary/30 font-medium h-11"
