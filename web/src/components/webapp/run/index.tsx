@@ -83,6 +83,7 @@ function toInputVars(vars: WebAppVariable[], fileUploadLimit?: number): InputVar
     type: v.type as InputVar['type'],
     variable: v.variable,
     label: v.label,
+    description: v.description,
     required: v.required,
     max_length:
       v.type === 'file-list' && (typeof v.max_length !== 'number' || v.max_length <= 0)
@@ -231,6 +232,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
       JSON.stringify(
         startVariables.map(v => ({
           variable: v.variable,
+          description: v.description ?? undefined,
           type: v.type,
           required: Boolean(v.required),
           options: v.options ?? [],
