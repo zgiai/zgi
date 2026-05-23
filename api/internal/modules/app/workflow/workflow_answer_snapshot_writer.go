@@ -124,6 +124,7 @@ func (h *WorkflowHandler) persistWorkflowConversationAnswerSnapshot(ctx context.
 			logger.ErrorContext(ctx, "failed to update workflow answer snapshot", "conversation_id", conversationID, "workflow_run_id", workflowRunID, err)
 			return false
 		}
+		h.enqueueWebAppConversationTitleGeneration(ctx, systemInputs, requestInputs, messageData)
 		return true
 	}
 
@@ -145,6 +146,7 @@ func (h *WorkflowHandler) persistWorkflowConversationAnswerSnapshot(ctx context.
 		logger.ErrorContext(ctx, "failed to create workflow answer snapshot", "conversation_id", conversationID, "workflow_run_id", workflowRunID, err)
 		return false
 	}
+	h.enqueueWebAppConversationTitleGeneration(ctx, systemInputs, requestInputs, messageData)
 	return true
 }
 
