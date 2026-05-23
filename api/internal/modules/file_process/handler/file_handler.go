@@ -685,6 +685,9 @@ func isOriginalPreviewSupported(uploadFile *dto.UploadFile) bool {
 	if extension == "pdf" || file_model.IsImageExtension(extension) {
 		return true
 	}
+	if isOfficeOriginalPreviewExtension(extension) {
+		return true
+	}
 	if isTextOriginalPreviewExtension(extension) {
 		return true
 	}
@@ -692,12 +695,13 @@ func isOriginalPreviewSupported(uploadFile *dto.UploadFile) bool {
 	mimeType := strings.ToLower(uploadFile.MimeType)
 	return mimeType == "application/pdf" ||
 		strings.HasPrefix(mimeType, "image/") ||
+		isOfficeOriginalPreviewMIMEType(mimeType) ||
 		isTextOriginalPreviewMIMEType(mimeType)
 }
 
 func isTextOriginalPreviewExtension(extension string) bool {
 	switch extension {
-	case "txt", "md", "markdown", "mdx", "csv", "xml":
+	case "txt", "md", "markdown", "mdx", "json", "csv", "html", "htm", "xml":
 		return true
 	default:
 		return false
@@ -708,10 +712,33 @@ func isTextOriginalPreviewMIMEType(mimeType string) bool {
 	switch strings.TrimSpace(strings.Split(mimeType, ";")[0]) {
 	case "text/plain",
 		"text/markdown",
+		"text/html",
+		"application/json",
 		"text/csv",
 		"application/csv",
 		"text/xml",
 		"application/xml":
+		return true
+	default:
+		return false
+	}
+}
+
+func isOfficeOriginalPreviewExtension(extension string) bool {
+	switch extension {
+	case "doc", "docx", "xls", "xlsx":
+		return true
+	default:
+		return false
+	}
+}
+
+func isOfficeOriginalPreviewMIMEType(mimeType string) bool {
+	switch strings.TrimSpace(strings.Split(mimeType, ";")[0]) {
+	case "application/msword",
+		"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		"application/vnd.ms-excel",
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
 		return true
 	default:
 		return false
