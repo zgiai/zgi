@@ -2,6 +2,32 @@ package config
 
 import "testing"
 
+func TestExpandEnvUsesConfigSource(t *testing.T) {
+	prev := GlobalConfig
+	t.Cleanup(func() {
+		GlobalConfig = prev
+	})
+	GlobalConfig = &Config{
+		source: &envSource{
+			lookupEnv: func(key string) (string, bool) {
+				switch key {
+				case "FIXTURE_ROOT":
+					return "/tmp/fixtures", true
+				case "MISSING":
+					return "", false
+				default:
+					return "", false
+				}
+			},
+		},
+	}
+
+	got := ExpandEnv("$FIXTURE_ROOT/a/${MISSING}/b")
+	if got != "/tmp/fixtures/a//b" {
+		t.Fatalf("ExpandEnv() = %q, want /tmp/fixtures/a//b", got)
+	}
+}
+
 func TestLoadSentryConfigUsesEnvironmentOverride(t *testing.T) {
 	cfg := &Config{
 		Server: ServerConfig{Environment: "production"},

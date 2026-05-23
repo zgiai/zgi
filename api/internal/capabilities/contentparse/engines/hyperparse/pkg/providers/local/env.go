@@ -1,13 +1,12 @@
 package local
 
 import (
-	"os"
-	"strings"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/envconfig"
 )
 
 func firstNonEmptyEnv(keys ...string) string {
 	for _, key := range keys {
-		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		if v := envconfig.String(key); v != "" {
 			return v
 		}
 	}

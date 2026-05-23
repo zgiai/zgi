@@ -10,12 +10,13 @@ import (
 	"strings"
 	"time"
 
+	"gorm.io/gorm"
+
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/migrations"
 	"github.com/zgiai/zgi/api/internal/seeders"
 	"github.com/zgiai/zgi/api/pkg/database"
 	"github.com/zgiai/zgi/api/pkg/logger"
-	"gorm.io/gorm"
 )
 
 func main() {
@@ -135,7 +136,7 @@ func runCheckCommand() {
 
 	dsn := strings.TrimSpace(*dbURL)
 	if dsn == "" {
-		dsn = strings.TrimSpace(os.Getenv("ZGI_MIGRATION_CHECK_DSN"))
+		dsn = strings.TrimSpace(config.GetString("ZGI_MIGRATION_CHECK_DSN", ""))
 	}
 
 	result, err := migrations.Check(migrations.CheckOptions{PostgresDSN: dsn})

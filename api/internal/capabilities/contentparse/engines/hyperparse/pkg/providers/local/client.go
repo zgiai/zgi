@@ -13,6 +13,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/hyperparse"
 	extractcommon "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
 	extractvlm "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/vlm"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/envconfig"
 )
 
 // Client is the local parser entry point.
@@ -136,7 +137,7 @@ func localImageVLMEnabled() bool {
 }
 
 func localImageVLMSetting() string {
-	raw := strings.ToLower(strings.TrimSpace(os.Getenv("LOCAL_IMAGE_VLM")))
+	raw := strings.ToLower(envconfig.String("LOCAL_IMAGE_VLM"))
 	switch raw {
 	case "1", "true", "yes", "on", "force", "always":
 		return "force"

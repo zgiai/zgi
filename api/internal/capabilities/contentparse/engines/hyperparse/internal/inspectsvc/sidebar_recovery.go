@@ -8,14 +8,16 @@ import (
 	"image"
 	"image/png"
 	"log"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 	"unicode"
 
-	localocr "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/ocr"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/envconfig"
+
 	"golang.org/x/image/draw"
+
+	localocr "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/ocr"
 )
 
 type sidebarRegionSpec struct {
@@ -575,10 +577,10 @@ func sidebarOCRLangForEngine(engine string) string {
 	if v := contentParseEnv("CONTENT_PARSE_OCR_LANG"); v != "" {
 		return v
 	}
-	if v := strings.TrimSpace(os.Getenv("LOCAL_SIDEBAR_OCR_LANG")); v != "" {
+	if v := envconfig.String("LOCAL_SIDEBAR_OCR_LANG"); v != "" {
 		return v
 	}
-	if v := strings.TrimSpace(os.Getenv("LOCAL_OCR_LANG")); v != "" {
+	if v := envconfig.String("LOCAL_OCR_LANG"); v != "" {
 		return v
 	}
 	if v := contentParseEnv("CONTENT_PARSE_LOCAL_OCR_LANG"); v != "" {
@@ -591,7 +593,7 @@ func sidebarOCRLangForEngine(engine string) string {
 }
 
 func sidebarOCRTimeout() time.Duration {
-	if v := strings.TrimSpace(os.Getenv("LOCAL_SIDEBAR_OCR_TIMEOUT_SECONDS")); v != "" {
+	if v := envconfig.String("LOCAL_SIDEBAR_OCR_TIMEOUT_SECONDS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			return time.Duration(n) * time.Second
 		}

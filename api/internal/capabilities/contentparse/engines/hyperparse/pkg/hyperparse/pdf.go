@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -13,6 +12,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/export"
 	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/inspectsvc"
 	pdforchestrator "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/orchestrators/pdf"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/envconfig"
 )
 
 const (
@@ -77,24 +77,17 @@ func inspectPDFFullDocumentNativeOnly(data []byte, name string, mode string, bas
 	nativeOnlyForceVLMEnvMu.Lock()
 	defer nativeOnlyForceVLMEnvMu.Unlock()
 
-	prev, hadPrev := os.LookupEnv(envContentParseForceVLM)
-	legacyPrev, legacyHadPrev := os.LookupEnv(envLegacyForceVLM)
-	_ = os.Setenv(envContentParseForceVLM, "0")
-	_ = os.Setenv(envLegacyForceVLM, "0")
-	defer func() {
-		if hadPrev {
-			_ = os.Setenv(envContentParseForceVLM, prev)
-		} else {
-			_ = os.Unsetenv(envContentParseForceVLM)
-		}
-		if legacyHadPrev {
-			_ = os.Setenv(envLegacyForceVLM, legacyPrev)
-		} else {
-			_ = os.Unsetenv(envLegacyForceVLM)
-		}
-	}()
-
-	return pdforchestrator.ParseFullDocumentBytesWithBasic(data, name, mode, basic)
+	var (
+		result map[string]any
+		err    error
+	)
+	envconfig.WithOverrides(map[string]string{
+		envContentParseForceVLM: "0",
+		envLegacyForceVLM:       "0",
+	}, func() {
+		result, err = pdforchestrator.ParseFullDocumentBytesWithBasic(data, name, mode, basic)
+	})
+	return result, err
 }
 
 // BuildDPTExport converts a full_document result into the DPT-style export object.

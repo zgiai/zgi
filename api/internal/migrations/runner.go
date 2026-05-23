@@ -4,12 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"os"
 
 	"github.com/go-gormigrate/gormigrate/v2"
+	"gorm.io/gorm"
+
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/pkg/database"
-	"gorm.io/gorm"
 )
 
 const advisoryLockKey = "zgi:migrations"
@@ -86,7 +86,7 @@ func RunWithOptions(db *gorm.DB, options RunOptions) error {
 
 func migrationLock(db *gorm.DB, noLock bool) (func(), error) {
 	if noLock {
-		if os.Getenv("ZGI_UNSAFE_NO_MIGRATION_LOCK") != "1" {
+		if config.GetString("ZGI_UNSAFE_NO_MIGRATION_LOCK", "") != "1" {
 			return nil, errors.New("disabling the migration lock requires ZGI_UNSAFE_NO_MIGRATION_LOCK=1")
 		}
 		return nil, nil
