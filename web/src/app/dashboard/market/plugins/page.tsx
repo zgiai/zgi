@@ -21,6 +21,7 @@ import { useInfiniteObserver } from '@/hooks/use-infinite-observer';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useLocale } from '@/hooks/use-locale';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 type PluginCategory = '' | MarketplacePluginCategory;
 type PluginSort = 'downloads' | 'newest';
@@ -125,12 +126,12 @@ export default function PluginsPage() {
     <div className="h-full overflow-y-auto bg-background">
       <div className="mx-auto flex w-full max-w-[1680px] flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
         <div className="space-y-8">
-          <div className="grid gap-3 lg:grid-cols-[220px_minmax(320px,560px)_auto] lg:items-center">
-            <h1 className="flex h-10 items-center text-xl font-semibold tracking-tight">
+          <div className="relative grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center min-[920px]:min-h-10">
+            <h1 className="flex h-10 w-fit items-center text-xl font-semibold tracking-tight sm:col-start-1 sm:row-start-1">
               {t('market.plugins.title')}
             </h1>
 
-            <div className="relative min-w-0">
+            <div className="relative min-w-0 sm:col-span-2 sm:row-start-2 min-[920px]:absolute min-[920px]:left-1/2 min-[920px]:top-0 min-[920px]:col-span-1 min-[920px]:row-start-1 min-[920px]:w-[min(48vw,560px)] min-[920px]:-translate-x-1/2">
               <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 placeholder={t('market.plugins.searchPlaceholder')}
@@ -140,19 +141,23 @@ export default function PluginsPage() {
               />
             </div>
 
-            <div className="flex min-w-0 items-center justify-start gap-2 lg:justify-end">
+            <div className="flex min-w-0 items-center justify-start gap-2 sm:col-start-2 sm:row-start-1 sm:justify-end">
               {branding.feedback_enabled !== false && (
-                <Button
-                  variant="outline"
-                  className="h-10 w-10 shrink-0 rounded-lg bg-background p-0 shadow-sm"
-                  title={t('market.plugins.feedback')}
-                  asChild
-                >
-                  <a href={branding.feedback_url || '#'} target="_blank" rel="noreferrer">
-                    <MessageSquareText className="h-4 w-4" />
-                    <span className="sr-only">{t('market.plugins.feedback')}</span>
-                  </a>
-                </Button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="outline"
+                      className="h-10 w-10 shrink-0 rounded-lg bg-background p-0 shadow-sm"
+                      asChild
+                    >
+                      <a href={branding.feedback_url || '#'} target="_blank" rel="noreferrer">
+                        <MessageSquareText className="h-4 w-4" />
+                        <span className="sr-only">{t('market.plugins.feedback')}</span>
+                      </a>
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t('market.plugins.feedback')}</TooltipContent>
+                </Tooltip>
               )}
               {branding.upload_application_enabled !== false && (
                 <Button
@@ -162,7 +167,7 @@ export default function PluginsPage() {
                 >
                   <a href={branding.upload_application_url || '#'} target="_blank" rel="noreferrer">
                     <Upload className="mr-2 h-4 w-4 shrink-0" />
-                    {t('market.plugins.applyUpload')}
+                    {t('market.plugins.publishPlugin')}
                   </a>
                 </Button>
               )}

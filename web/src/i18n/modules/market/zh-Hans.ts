@@ -16,6 +16,7 @@ const messages: MarketMessages = {
     certified: '认证',
     feedback: '反馈',
     applyUpload: '申请上传插件',
+    publishPlugin: '发布插件',
     resultCount: '共 {count} 个插件',
     sourceType: {
       all: '全部',

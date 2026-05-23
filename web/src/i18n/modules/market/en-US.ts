@@ -14,6 +14,7 @@ const messages = {
     certified: 'Certified',
     feedback: 'Feedback',
     applyUpload: 'Submit plugin',
+    publishPlugin: 'Publish plugin',
     resultCount: '{count} plugins',
     sourceType: {
       all: 'All',
