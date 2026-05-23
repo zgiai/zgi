@@ -4,6 +4,7 @@ import { memo } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import type { MarketplaceBrandingSettings, MarketplacePlugin } from '@/services/types/plugin';
 import { cn } from '@/lib/utils';
+import { APP_NAME } from '@/lib/config';
 import { useT } from '@/i18n';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -26,8 +27,10 @@ function PluginCard({ plugin, branding, className, onClick }: PluginCardProps) {
 
   const pluginName = plugin.name;
   const pluginDescription = plugin.short_description || plugin.description;
-  const pluginDeveloper = plugin.developer?.organization_name;
-  const developerLogo = plugin.developer?.logo_url;
+  const pluginDeveloper = plugin.is_official ? APP_NAME : plugin.developer?.organization_name;
+  const developerLogo = plugin.is_official
+    ? branding?.official_logo_url || plugin.developer?.logo_url
+    : plugin.developer?.logo_url;
   const blueVIcon = branding?.blue_v_icon_url || DEFAULT_BLUE_V_ICON;
   const yellowVIcon = branding?.yellow_v_icon_url || DEFAULT_YELLOW_V_ICON;
   const isCertified =

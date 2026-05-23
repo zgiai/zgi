@@ -203,7 +203,7 @@ export default function PluginsPage() {
 
         {/* Loading State - Only show skeleton on initial load */}
         {isLoading && allPlugins.length === 0 && (
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 min-[760px]:grid-cols-2 min-[1040px]:grid-cols-3 min-[1440px]:grid-cols-4">
             {Array.from({ length: 12 }).map((_, idx) => (
               <Skeleton key={idx} className="h-44 w-full rounded-xl" />
             ))}
@@ -229,7 +229,7 @@ export default function PluginsPage() {
         )}
 
         {allPlugins.length > 0 && (
-          <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,360px),1fr))] gap-4">
+          <div className="grid grid-cols-1 gap-4 min-[760px]:grid-cols-2 min-[1040px]:grid-cols-3 min-[1440px]:grid-cols-4">
             {allPlugins.map(plugin => (
               <PluginCard
                 key={plugin.id}
