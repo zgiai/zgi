@@ -15,6 +15,10 @@ const messages = {
     feedback: 'Feedback',
     applyUpload: 'Submit plugin',
     resultCount: '{count} plugins',
+    sourceType: {
+      label: 'Source Type',
+      all: 'All',
+    },
     sort: {
       label: 'Sort',
       downloads: 'Most popular',

@@ -119,79 +119,101 @@ export default function PluginsPage() {
   return (
     <div className="h-full overflow-y-auto bg-background">
       <div className="mx-auto flex w-full max-w-[1680px] flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-          <div className="shrink-0">
-            <h1 className="flex h-11 items-center text-2xl font-semibold tracking-tight">
+        <div className="space-y-8">
+          <div className="grid gap-3 lg:grid-cols-[220px_minmax(320px,560px)_auto] lg:items-center">
+            <h1 className="flex h-10 items-center text-xl font-semibold tracking-tight">
               {t('market.plugins.title')}
             </h1>
+
+            <div className="relative min-w-0">
+              <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder={t('market.plugins.searchPlaceholder')}
+                value={searchKeyword}
+                onChange={e => setSearchKeyword(e.target.value)}
+                className="h-10 w-full rounded-lg bg-background pl-10 text-sm shadow-sm"
+              />
+            </div>
+
+            <div className="flex min-w-0 items-center justify-start gap-2 lg:justify-end">
+              {branding.feedback_enabled !== false && (
+                <Button
+                  variant="outline"
+                  className="h-10 w-10 shrink-0 rounded-lg bg-background p-0 shadow-sm"
+                  title={t('market.plugins.feedback')}
+                  asChild
+                >
+                  <a href={branding.feedback_url || '#'} target="_blank" rel="noreferrer">
+                    <MessageSquareText className="h-4 w-4" />
+                    <span className="sr-only">{t('market.plugins.feedback')}</span>
+                  </a>
+                </Button>
+              )}
+              {branding.upload_application_enabled !== false && (
+                <Button
+                  variant="default"
+                  className="h-10 shrink-0 rounded-lg px-4 shadow-sm"
+                  asChild
+                >
+                  <a href={branding.upload_application_url || '#'} target="_blank" rel="noreferrer">
+                    <Upload className="mr-2 h-4 w-4 shrink-0" />
+                    {t('market.plugins.applyUpload')}
+                  </a>
+                </Button>
+              )}
+            </div>
           </div>
 
-          <div className="relative min-w-[240px] flex-1">
-            <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder={t('market.plugins.searchPlaceholder')}
-              value={searchKeyword}
-              onChange={e => setSearchKeyword(e.target.value)}
-              className="h-11 w-full rounded-xl bg-background pl-11 text-sm shadow-sm"
-            />
-          </div>
-
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
-            {branding.feedback_enabled !== false && (
-              <Button variant="outline" className="h-11 rounded-xl" asChild>
-                <a href={branding.feedback_url || '#'} target="_blank" rel="noreferrer">
-                  <MessageSquareText className="mr-2 h-4 w-4" />
-                  {t('market.plugins.feedback')}
-                </a>
-              </Button>
-            )}
-            {branding.upload_application_enabled !== false && (
-              <Button variant="default" className="h-11 rounded-xl" asChild>
-                <a href={branding.upload_application_url || '#'} target="_blank" rel="noreferrer">
-                  <Upload className="mr-2 h-4 w-4" />
-                  {t('market.plugins.applyUpload')}
-                </a>
-              </Button>
-            )}
-          </div>
-        </div>
-
-        <Tabs
-          value={selectedType}
-          onValueChange={value => setSelectedType(value as PluginCategory)}
-        >
-          <TabsList className="h-auto w-full justify-start gap-2 overflow-x-auto border-0 bg-transparent p-0">
-            {PLUGIN_CATEGORIES.map(category => (
-              <TabsTrigger
-                key={category.value || 'all'}
-                value={category.value}
-                className="rounded-lg border border-transparent px-4 py-2 data-[state=active]:border-primary/20 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none"
-              >
-                {t(
-                  `market.plugins.categories.${category.label as 'all' | 'tool' | 'extension' | 'integration'}`
-                )}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
-
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="text-sm text-muted-foreground">
-            {t('market.plugins.resultCount', { count: totalCount })}
-          </div>
-          <Select
-            value={selectedSort}
-            onValueChange={value => setSelectedSort(value as PluginSort)}
+          <Tabs
+            value={selectedType}
+            onValueChange={value => setSelectedType(value as PluginCategory)}
           >
-            <SelectTrigger className="h-9 w-full rounded-lg sm:w-[160px]">
-              <SelectValue placeholder={t('market.plugins.sort.label')} />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="downloads">{t('market.plugins.sort.downloads')}</SelectItem>
-              <SelectItem value="newest">{t('market.plugins.sort.newest')}</SelectItem>
-              <SelectItem value="rating">{t('market.plugins.sort.rating')}</SelectItem>
-            </SelectContent>
-          </Select>
+            <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto border-0 bg-transparent p-0">
+              {PLUGIN_CATEGORIES.map(category => (
+                <TabsTrigger
+                  key={category.value || 'all'}
+                  value={category.value}
+                  className="h-10 rounded-lg border border-transparent px-4 text-sm font-medium text-muted-foreground data-[state=active]:border-transparent data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none"
+                >
+                  {t(
+                    `market.plugins.categories.${category.label as 'all' | 'tool' | 'extension' | 'integration'}`
+                  )}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <Select value="all">
+                <SelectTrigger className="h-9 w-full rounded-lg bg-background text-muted-foreground shadow-sm sm:w-[156px]">
+                  <SelectValue placeholder={t('market.plugins.sourceType.all')} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">
+                    {t('market.plugins.sourceType.label')} {t('market.plugins.sourceType.all')}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <div className="text-sm text-muted-foreground">
+                {t('market.plugins.resultCount', { count: totalCount })}
+              </div>
+            </div>
+
+            <Select
+              value={selectedSort}
+              onValueChange={value => setSelectedSort(value as PluginSort)}
+            >
+              <SelectTrigger className="h-9 w-full rounded-lg bg-background shadow-sm sm:w-[160px]">
+                <SelectValue placeholder={t('market.plugins.sort.label')} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="downloads">{t('market.plugins.sort.downloads')}</SelectItem>
+                <SelectItem value="newest">{t('market.plugins.sort.newest')}</SelectItem>
+                <SelectItem value="rating">{t('market.plugins.sort.rating')}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
 
         {/* Error State */}
