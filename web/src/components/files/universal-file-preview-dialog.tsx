@@ -36,6 +36,7 @@ const maxOfficeZipEntries = 256;
 const maxOfficeZipUncompressedBytes = 50 * 1024 * 1024;
 const maxOfficeZipEntryBytes = 10 * 1024 * 1024;
 const maxOfficeXmlEntryBytes = 8 * 1024 * 1024;
+const maxCsvPreviewBytes = 1024 * 1024;
 const maxSpreadsheetPreviewRows = 200;
 const maxSpreadsheetPreviewColumns = 100;
 const maxCsvPreviewRows = 500;
@@ -181,8 +182,8 @@ export function UniversalFilePreviewDialog({
         <iframe
           src={resolvedPreviewUrl}
           title={activeFile.name}
-          sandbox={previewKind === 'html' ? '' : undefined}
-          referrerPolicy={previewKind === 'html' ? 'no-referrer' : undefined}
+          sandbox=""
+          referrerPolicy="no-referrer"
           className="h-full min-h-[60vh] w-full border-0 bg-background"
         />
       );
@@ -615,7 +616,7 @@ function CsvPreview({ previewUrl }: { previewUrl: string }) {
         });
         if (!response.ok) throw new Error(loadErrorText);
 
-        const text = await response.text();
+        const text = await readCsvPreviewText(response, abortController, loadErrorText);
         if (!cancelled) {
           setRows(parseCsvPreviewRows(text));
         }
@@ -745,6 +746,79 @@ function parseCsvPreviewRows(text: string): string[][] {
     row.push(cell);
     if (row.some(value => value.trim() !== '')) {
       rows.push(row.slice(0, maxCsvPreviewColumns));
+    }
+  }
+
+  return rows;
+}
+
+async function readCsvPreviewText(
+  response: Response,
+  abortController: AbortController,
+  limitErrorText: string
+): Promise<string> {
+  const contentLength = Number(response.headers.get('content-length') ?? 0);
+  if (contentLength > maxCsvPreviewBytes && !response.body) {
+    throw new Error(limitErrorText);
+  }
+  if (!response.body) {
+    return response.text();
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let receivedBytes = 0;
+  let text = '';
+
+  try {
+    let shouldRead = true;
+    while (shouldRead) {
+      const { done, value } = await reader.read();
+      if (done) {
+        shouldRead = false;
+        continue;
+      }
+      if (!value) continue;
+
+      receivedBytes += value.byteLength;
+      if (receivedBytes > maxCsvPreviewBytes) {
+        throw new Error(limitErrorText);
+      }
+
+      text += decoder.decode(value, { stream: true });
+      if (countCsvPreviewRows(text, maxCsvPreviewRows + 1) >= maxCsvPreviewRows + 1) {
+        abortController.abort();
+        shouldRead = false;
+      }
+    }
+    text += decoder.decode();
+    return text;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+function countCsvPreviewRows(text: string, limit: number): number {
+  let rows = 0;
+  let inQuotes = false;
+
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index];
+    const next = text[index + 1];
+
+    if (char === '"') {
+      if (inQuotes && next === '"') {
+        index++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if ((char === '\n' || char === '\r') && !inQuotes) {
+      if (char === '\r' && next === '\n') index++;
+      rows++;
+      if (rows >= limit) return rows;
     }
   }
 
@@ -888,9 +962,7 @@ function validateOfficeZipPreviewBudget(zip: JSZip, limitErrorText: string) {
 
   let totalUncompressedSize = 0;
   entries.forEach(entry => {
-    const size = getZipEntryUncompressedSize(entry);
-    if (size === null) return;
-
+    const size = getZipEntryUncompressedSize(entry, limitErrorText);
     if (size > maxOfficeZipEntryBytes) throw new Error(limitErrorText);
     totalUncompressedSize += size;
   });
@@ -905,18 +977,21 @@ async function readZipText(
   const entry = zip.file(path);
   if (!entry) return null;
 
-  const size = getZipEntryUncompressedSize(entry);
-  if (size !== null && size > maxOfficeXmlEntryBytes) throw new Error(limitErrorText);
+  const size = getZipEntryUncompressedSize(entry, limitErrorText);
+  if (size > maxOfficeXmlEntryBytes) throw new Error(limitErrorText);
 
   return entry.async('text');
 }
 
-function getZipEntryUncompressedSize(entry: JSZip.JSZipObject): number | null {
+function getZipEntryUncompressedSize(entry: JSZip.JSZipObject, limitErrorText: string): number {
   const maybeEntry = entry as JSZip.JSZipObject & {
     _data?: { uncompressedSize?: number };
   };
   const size = maybeEntry._data?.uncompressedSize;
-  return typeof size === 'number' && Number.isFinite(size) ? size : null;
+  if (typeof size !== 'number' || !Number.isFinite(size)) {
+    throw new Error(limitErrorText);
+  }
+  return size;
 }
 
 function parseXml(xml: string): XMLDocument {

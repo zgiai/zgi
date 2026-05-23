@@ -681,6 +681,14 @@ func getUploadFileWorkspaceID(uploadFile *dto.UploadFile) string {
 }
 
 func isOriginalPreviewSupported(uploadFile *dto.UploadFile) bool {
+	mimeType := strings.TrimSpace(strings.ToLower(strings.Split(uploadFile.MimeType, ";")[0]))
+	if mimeType != "" && mimeType != "application/octet-stream" {
+		return mimeType == "application/pdf" ||
+			strings.HasPrefix(mimeType, "image/") ||
+			isOfficeOriginalPreviewMIMEType(mimeType) ||
+			isTextOriginalPreviewMIMEType(mimeType)
+	}
+
 	extension := strings.ToLower(strings.TrimPrefix(uploadFile.Extension, "."))
 	if extension == "pdf" || file_model.IsImageExtension(extension) {
 		return true
@@ -691,12 +699,7 @@ func isOriginalPreviewSupported(uploadFile *dto.UploadFile) bool {
 	if isTextOriginalPreviewExtension(extension) {
 		return true
 	}
-
-	mimeType := strings.ToLower(uploadFile.MimeType)
-	return mimeType == "application/pdf" ||
-		strings.HasPrefix(mimeType, "image/") ||
-		isOfficeOriginalPreviewMIMEType(mimeType) ||
-		isTextOriginalPreviewMIMEType(mimeType)
+	return false
 }
 
 func isTextOriginalPreviewExtension(extension string) bool {
