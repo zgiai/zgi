@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useStore } from 'zustand';
 import type {
   AIChatAgentProgressEventData,
@@ -86,6 +87,7 @@ import {
   removeStreamingStateByConversation,
 } from '@/components/chat/controllers/aichat/state-reducers';
 import { useAIChatStreamRuntime } from '@/components/chat/controllers/aichat/stream-runtime';
+import { MEMORY_KEYS } from '@/hooks/query-keys';
 import { generateClientId } from '@/utils/client-id';
 
 function getErrorMessage(error: unknown): string {
@@ -99,6 +101,12 @@ function isAbortError(error: unknown): boolean {
 
 const AICHAT_RECOVERY_RETRY_DELAYS = [800, 1600, 3200] as const;
 const AICHAT_STREAM_EVENTS_EXPIRED = 'stream events expired';
+const USER_MEMORY_SKILL_ID = 'user-memory';
+const USER_MEMORY_MUTATION_TOOLS = new Set([
+  'add_user_memory',
+  'update_user_memory',
+  'delete_user_memory',
+]);
 
 function createClientDraftId(prefix: string): string {
   return generateClientId(prefix);
@@ -123,6 +131,7 @@ function removeRunningStreamingStateByConversation(
  * @description Dedicated controller for the standalone AIChat console page.
  */
 export function useAIChatController(): AIChatController {
+  const queryClient = useQueryClient();
   const storeRef = useRef<ReturnType<typeof createAIChatControllerStore> | null>(null);
   if (!storeRef.current) {
     storeRef.current = createAIChatControllerStore();
@@ -166,6 +175,19 @@ export function useAIChatController(): AIChatController {
     setBackgroundConversation,
     setRecoveryMode,
   } = useAIChatStreamRuntime(setControllerState);
+
+  const refreshAccountMemoryAfterToolCall = useCallback(
+    (payload: AIChatSkillCallEndEventData) => {
+      if (
+        payload.skill_id !== USER_MEMORY_SKILL_ID ||
+        !USER_MEMORY_MUTATION_TOOLS.has(payload.tool_name)
+      ) {
+        return;
+      }
+      void queryClient.invalidateQueries({ queryKey: MEMORY_KEYS.me() });
+    },
+    [queryClient]
+  );
 
   const markSelectionTarget = useCallback((conversationId: string | null) => {
     const nextSeq = selectionSeqRef.current + 1;
@@ -748,6 +770,7 @@ export function useAIChatController(): AIChatController {
               onSkillCallEnd: (payload, eventId) => {
                 if (abortController.signal.aborted) return;
                 applySkillCallEnd(payload, eventId);
+                refreshAccountMemoryAfterToolCall(payload);
               },
               onSkillCallError: (payload, eventId) => {
                 if (abortController.signal.aborted) return;
@@ -828,6 +851,7 @@ export function useAIChatController(): AIChatController {
       recoveryAbortByConversationRef,
       recoveryModeByConversationRef,
       recoveryRetryTimeoutsRef,
+      refreshAccountMemoryAfterToolCall,
       setRecoveryMode,
       setControllerState,
     ]
@@ -1590,6 +1614,7 @@ export function useAIChatController(): AIChatController {
             onSkillCallEnd: (payload, eventId) => {
               if (abortController.signal.aborted) return;
               applySkillCallEnd(payload, eventId);
+              refreshAccountMemoryAfterToolCall(payload);
             },
             onSkillCallError: (payload, eventId) => {
               if (abortController.signal.aborted) return;
@@ -1697,6 +1722,7 @@ export function useAIChatController(): AIChatController {
       applyStreamError,
       markSelectionTarget,
       pendingStreamAbortRef,
+      refreshAccountMemoryAfterToolCall,
       setControllerState,
       streamAbortByConversationRef,
       streamingMessageRef,
@@ -1806,6 +1832,7 @@ export function useAIChatController(): AIChatController {
             onSkillCallEnd: (payload, eventId) => {
               if (abortController.signal.aborted) return;
               applySkillCallEnd(payload, eventId);
+              refreshAccountMemoryAfterToolCall(payload);
             },
             onSkillCallError: (payload, eventId) => {
               if (abortController.signal.aborted) return;
@@ -1886,6 +1913,7 @@ export function useAIChatController(): AIChatController {
       applySkillReferenceRead,
       applyStreamError,
       markSelectionTarget,
+      refreshAccountMemoryAfterToolCall,
       setControllerState,
       streamAbortByConversationRef,
       streamingMessageRef,
