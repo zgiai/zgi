@@ -80,6 +80,25 @@ func (s *Service) GetMe(ctx context.Context, accountID uuid.UUID) (*MemoryMeResp
 	return memoryMeResponse(setting, entries), nil
 }
 
+func (s *Service) GetModelState(ctx context.Context, accountID uuid.UUID) (*MemoryMeResponse, error) {
+	if accountID == uuid.Nil {
+		return nil, ErrUnauthorized
+	}
+	setting, err := s.repo.GetSetting(ctx, accountID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			setting = &AccountMemorySetting{AccountID: accountID, Enabled: false}
+		} else {
+			return nil, fmt.Errorf("get memory setting: %w", err)
+		}
+	}
+	entries, err := s.repo.ListEntries(ctx, accountID, true)
+	if err != nil {
+		return nil, fmt.Errorf("list enabled memory entries: %w", err)
+	}
+	return memoryMeResponse(setting, entries), nil
+}
+
 func (s *Service) IsEnabled(ctx context.Context, accountID uuid.UUID) (bool, error) {
 	if accountID == uuid.Nil {
 		return false, ErrUnauthorized
@@ -316,7 +335,7 @@ func (s *Service) ListTemporaryEntries(ctx context.Context, accountID uuid.UUID,
 		limit = 20
 	}
 	status = normalizeTemporaryStatus(status)
-	entries, err := s.repo.ListEntries(ctx, accountID, false)
+	entries, err := s.repo.ListEntries(ctx, accountID, true)
 	if err != nil {
 		return nil, fmt.Errorf("list temporary memories: %w", err)
 	}

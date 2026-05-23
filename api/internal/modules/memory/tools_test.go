@@ -87,6 +87,50 @@ func TestMemoryToolListsExpiredTemporaryMemories(t *testing.T) {
 	}
 }
 
+func TestMemoryToolListTemporaryMemoriesOmitsDisabledEntries(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newTestService()
+	accountID := uuid.New()
+	if _, err := svc.SetEnabled(ctx, accountID, true); err != nil {
+		t.Fatalf("SetEnabled() error = %v", err)
+	}
+	expiresAt := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	created, err := svc.CreateEntry(ctx, accountID, CreateEntryRequest{
+		Content:    "Bring a badge to the meeting.",
+		MemoryType: MemoryTypeTemporary,
+		ExpiresAt:  expiresAt,
+	})
+	if err != nil {
+		t.Fatalf("CreateEntry() error = %v", err)
+	}
+	entryID, err := uuid.Parse(created.ID)
+	if err != nil {
+		t.Fatalf("parse entry id: %v", err)
+	}
+	disabled := false
+	if _, err := svc.UpdateEntry(ctx, accountID, entryID, UpdateEntryRequest{Enabled: &disabled}); err != nil {
+		t.Fatalf("UpdateEntry(disable) error = %v", err)
+	}
+
+	messages, err := aiChatMemoryTool(newListTemporaryMemoriesTool(svc)).Invoke(ctx, accountID.String(), map[string]interface{}{
+		"status": memoryStatusActive,
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke(list temporary) error = %v", err)
+	}
+	var payload struct {
+		Entries []struct {
+			ID string `json:"id"`
+		} `json:"entries"`
+	}
+	if err := json.Unmarshal([]byte(messages[0].Text), &payload); err != nil {
+		t.Fatalf("decode tool response: %v", err)
+	}
+	if len(payload.Entries) != 0 {
+		t.Fatalf("len(entries) = %d, want 0", len(payload.Entries))
+	}
+}
+
 func TestMemoryToolAddAcceptsMemoryAlias(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newTestService()
@@ -156,6 +200,60 @@ func TestMemoryToolReadReturnsEntryIDAlias(t *testing.T) {
 	}
 	if payload.Entries[0].ID != created.ID || payload.Entries[0].EntryID != created.ID {
 		t.Fatalf("ids = (%q, %q), want %q", payload.Entries[0].ID, payload.Entries[0].EntryID, created.ID)
+	}
+}
+
+func TestMemoryToolReadOmitsDisabledEntries(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newTestService()
+	accountID := uuid.New()
+	if _, err := svc.SetEnabled(ctx, accountID, true); err != nil {
+		t.Fatalf("SetEnabled() error = %v", err)
+	}
+	enabledEntry, err := svc.CreateEntry(ctx, accountID, CreateEntryRequest{
+		Content:  "Prefers concise answers.",
+		Category: CategoryPreference,
+	})
+	if err != nil {
+		t.Fatalf("CreateEntry(enabled) error = %v", err)
+	}
+	disabledEntry, err := svc.CreateEntry(ctx, accountID, CreateEntryRequest{
+		Content:  "This entry should stay hidden from model tools.",
+		Category: CategoryFact,
+	})
+	if err != nil {
+		t.Fatalf("CreateEntry(disabled) error = %v", err)
+	}
+	disabledID, err := uuid.Parse(disabledEntry.ID)
+	if err != nil {
+		t.Fatalf("parse disabled entry id: %v", err)
+	}
+	disabled := false
+	if _, err := svc.UpdateEntry(ctx, accountID, disabledID, UpdateEntryRequest{Enabled: &disabled}); err != nil {
+		t.Fatalf("UpdateEntry(disable) error = %v", err)
+	}
+
+	messages, err := aiChatMemoryTool(newReadMemoryTool(svc)).Invoke(ctx, accountID.String(), nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke(read) error = %v", err)
+	}
+	var payload struct {
+		Entries []struct {
+			ID      string `json:"id"`
+			Content string `json:"content"`
+		} `json:"entries"`
+	}
+	if err := json.Unmarshal([]byte(messages[0].Text), &payload); err != nil {
+		t.Fatalf("decode tool response: %v", err)
+	}
+	if len(payload.Entries) != 1 {
+		t.Fatalf("len(entries) = %d, want 1", len(payload.Entries))
+	}
+	if payload.Entries[0].ID != enabledEntry.ID {
+		t.Fatalf("entry id = %s, want enabled entry %s", payload.Entries[0].ID, enabledEntry.ID)
+	}
+	if strings.Contains(messages[0].Text, disabledEntry.Content) {
+		t.Fatalf("tool response exposes disabled entry: %q", messages[0].Text)
 	}
 }
 

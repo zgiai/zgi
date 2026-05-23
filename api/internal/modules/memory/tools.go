@@ -143,7 +143,7 @@ func (t *memoryTool) Invoke(ctx context.Context, userID string, params map[strin
 	}
 	switch t.kind {
 	case "read_user_memory":
-		state, err := t.service.GetMe(ctx, accountID)
+		state, err := t.service.GetModelState(ctx, accountID)
 		if err != nil {
 			return nil, err
 		}
