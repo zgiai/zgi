@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Check, Copy, Download, Eye, FileText } from 'lucide-react';
 import { FileIcon } from '@/components/ui/file-icon';
 import { UniversalFilePreviewDialog } from '@/components/files/universal-file-preview-dialog';
+import { API_URL } from '@/lib/config';
 import { useT } from '@/i18n';
 import { useLocale } from '@/hooks/use-locale';
 import { formatFileSize } from '@/utils/format';
@@ -37,6 +38,7 @@ interface GeneratedFileOutput {
   filename: string;
   url: string;
   downloadUrl: string;
+  previewUrl?: string;
   extension?: string;
   mimeType?: string;
   size?: number | null;
@@ -138,13 +140,57 @@ function normalizeExtension(extension?: string, filename?: string): string | und
   return rawExtension.replace(/^\./, '').toLowerCase();
 }
 
+function getTrustedPreviewURL(url?: string): string | undefined {
+  if (typeof window === 'undefined' || !url) return undefined;
+
+  try {
+    const parsed = new URL(url, window.location.origin);
+    if (!isAllowedPreviewOrigin(parsed.origin)) return undefined;
+    if (isToolFilePreviewPath(parsed.pathname)) return url;
+    if (isSignedFilePreviewPath(parsed)) return url;
+  } catch {
+    return undefined;
+  }
+
+  return undefined;
+}
+
+function isAllowedPreviewOrigin(origin: string): boolean {
+  const allowedOrigins = new Set<string>([window.location.origin]);
+  try {
+    allowedOrigins.add(new URL(API_URL, window.location.origin).origin);
+  } catch {
+    // Ignore invalid runtime API configuration and fall back to same-origin only.
+  }
+  return allowedOrigins.has(origin);
+}
+
+function isToolFilePreviewPath(pathname: string): boolean {
+  return pathname.startsWith('/console/api/files/tools/');
+}
+
+function isSignedFilePreviewPath(url: URL): boolean {
+  return (
+    pathnameMatchesSignedFilePreview(url.pathname) &&
+    url.searchParams.has('timestamp') &&
+    url.searchParams.has('nonce') &&
+    url.searchParams.has('sign')
+  );
+}
+
+function pathnameMatchesSignedFilePreview(pathname: string): boolean {
+  return pathname.startsWith('/console/api/files/') && pathname.endsWith('/file-preview');
+}
+
 function getGeneratedFileOutput(
   record: Record<string, unknown>,
   fallbackKey: string
 ): GeneratedFileOutput | null {
-  const url = getStringField(record, ['url', 'remote_url', 'download_url']);
-  if (!url) return null;
-  const downloadUrl = getStringField(record, ['download_url', 'url', 'remote_url']) ?? url;
+  const url = getStringField(record, ['url']);
+  const remoteUrl = getStringField(record, ['remote_url']);
+  const downloadUrl = getStringField(record, ['download_url', 'url', 'remote_url']);
+  const displayUrl = url || remoteUrl || downloadUrl;
+  if (!displayUrl || !downloadUrl) return null;
 
   const rawFilename = getStringField(record, ['filename', 'file_name', 'name', 'title']);
   const extension = normalizeExtension(
@@ -161,10 +207,11 @@ function getGeneratedFileOutput(
     (extension ? `generated-file.${extension}` : id ? `generated-file-${id}` : 'generated-file');
 
   return {
-    key: id || url || fallbackKey,
+    key: id || displayUrl || fallbackKey,
     filename,
-    url,
+    url: displayUrl,
     downloadUrl,
+    previewUrl: getTrustedPreviewURL(url),
     extension,
     mimeType: getStringField(record, ['mime_type', 'mimeType']),
     size: getNumberField(record, ['size', 'file_size']),
@@ -325,18 +372,20 @@ const Results: React.FC<ResultsProps> = ({
                 {file.size ? <span>{formatFileSize(file.size)}</span> : null}
               </div>
             </div>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="shrink-0"
-              aria-label={`${locale.startsWith('zh') ? '预览' : 'Preview'} ${file.filename}`}
-              title={`${locale.startsWith('zh') ? '预览' : 'Preview'} ${file.filename}`}
-              onClick={() => setPreviewFile(file)}
-            >
-              <Eye className="h-4 w-4" />
-              <span>{locale.startsWith('zh') ? '预览' : 'Preview'}</span>
-            </Button>
+            {file.previewUrl ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                aria-label={`${locale.startsWith('zh') ? '预览' : 'Preview'} ${file.filename}`}
+                title={`${locale.startsWith('zh') ? '预览' : 'Preview'} ${file.filename}`}
+                onClick={() => setPreviewFile(file)}
+              >
+                <Eye className="h-4 w-4" />
+                <span>{locale.startsWith('zh') ? '预览' : 'Preview'}</span>
+              </Button>
+            ) : null}
             <Button
               asChild
               type="button"
@@ -465,7 +514,7 @@ const Results: React.FC<ResultsProps> = ({
                 extension: previewFile.extension,
                 mimeType: previewFile.mimeType,
                 size: previewFile.size,
-                previewUrl: previewFile.url,
+                previewUrl: previewFile.previewUrl,
                 downloadUrl: previewFile.downloadUrl,
               }
             : null
