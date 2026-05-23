@@ -33,9 +33,9 @@ func allMigrations() []*gormigrate.Migration {
 	return registeredMigrations()
 }
 
-func migrationOptions() *gormigrate.Options {
+func migrationOptions(validateUnknownMigrations bool) *gormigrate.Options {
 	options := *gormigrate.DefaultOptions
-	options.ValidateUnknownMigrations = true
+	options.ValidateUnknownMigrations = validateUnknownMigrations
 	return &options
 }
 
@@ -74,10 +74,31 @@ func RunWithOptions(db *gorm.DB, options RunOptions) error {
 		return PrintStatusWithDB(db)
 	}
 
-	m := gormigrate.New(db, migrationOptions(), allMigrations())
+	plan, err := resolveMigrationPlan(db)
+	if err != nil {
+		log.Printf("failed to resolve migration plan: %v", err)
+		return err
+	}
+	log.Printf("using migration plan %s with %d migrations", plan.name, len(plan.migrations))
+
+	if plan.beforeRun != nil {
+		if err := plan.beforeRun(db); err != nil {
+			log.Printf("migration plan %s preflight failed: %v", plan.name, err)
+			return err
+		}
+	}
+
+	m := gormigrate.New(db, migrationOptions(plan.validateUnknownMigrations), plan.migrations)
 	if err := m.Migrate(); err != nil {
 		log.Printf("migrations failed: %v", err)
 		return err
+	}
+
+	if plan.afterRun != nil {
+		if err := plan.afterRun(db); err != nil {
+			log.Printf("migration plan %s verification failed: %v", plan.name, err)
+			return err
+		}
 	}
 
 	log.Println("migrations completed successfully")
@@ -144,7 +165,13 @@ func RollbackWithOptions(db *gorm.DB, options RollbackOptions) error {
 		defer unlock()
 	}
 
-	m := gormigrate.New(db, migrationOptions(), allMigrations())
+	plan, err := resolveMigrationPlan(db)
+	if err != nil {
+		log.Printf("failed to resolve migration rollback plan: %v", err)
+		return err
+	}
+
+	m := gormigrate.New(db, migrationOptions(plan.validateUnknownMigrations), plan.migrations)
 	if err := m.RollbackLast(); err != nil {
 		log.Printf("migrations rollback failed: %v", err)
 		return err

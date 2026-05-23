@@ -40,6 +40,9 @@ ZGI's public migration history starts from one initial schema migration:
 - Future schema changes must be append-only migrations with timestamp IDs.
 
 Closed-source pre-public migration history is intentionally not included in the open repository.
+The migration runner still supports recognized legacy databases through a bridge plan:
+it validates the required schema shape, records the public baseline marker without replaying the initial schema SQL, and then runs public append-only migrations.
+Unknown or partially migrated legacy databases fail before any public migration runs.
 The initial schema migration refuses to run on a non-empty public schema, so existing deployments are never silently overwritten or deleted.
 
 The migration schema builder lives under `internal/migrations/schema` on purpose. It is a contributor-facing migration DSL, not a public Go package for runtime application code.
@@ -70,6 +73,7 @@ ZGI follows Laravel's production-safety ideas but adapts them to PostgreSQL:
 - Rollbacks created through `registerSchemaMigration` run with `AllowDestructive`, because rollback is the only normal path where dropping a newly created table or column is expected.
 - Rollback commands require the exact latest migration ID via `--confirm`, so AI agents and operators cannot accidentally roll back with a short command.
 - The initial public baseline refuses to run on a non-empty public schema, so existing deployments are not silently overwritten.
+- Recognized legacy databases are bridged into the public migration chain only after schema-shape checks pass.
 - `make` generates a migration whose `up` and `down` both fail with `not implemented` until the author fills in the migration body.
 
 ## Writing Migrations
