@@ -61,27 +61,36 @@ export default function PluginsPage() {
   }, [debouncedSearchKeyword, selectedType, locale]);
 
   useEffect(() => {
-    if (pagePlugins.length > 0 && currentPage !== lastProcessedPage.current) {
-      lastProcessedPage.current = currentPage;
-
-      setAllPlugins(prev => {
-        if (currentPage === 1) {
-          return pagePlugins;
-        }
-
-        const newArray = [...prev, ...pagePlugins];
-        return newArray;
-      });
-
-      setTotalCount(total);
+    if (currentPage === lastProcessedPage.current || isLoading) {
+      return;
     }
-  }, [pagePlugins, total, currentPage, isLoading, isFetching]);
+
+    lastProcessedPage.current = currentPage;
+    setTotalCount(total);
+
+    setAllPlugins(prev => {
+      if (currentPage === 1) {
+        return pagePlugins;
+      }
+
+      const existingIds = new Set(prev.map(plugin => plugin.id));
+      const nextPlugins = pagePlugins.filter(plugin => !existingIds.has(plugin.id));
+      return [...prev, ...nextPlugins];
+    });
+  }, [pagePlugins, total, currentPage, isLoading]);
+
+  useEffect(() => {
+    if (currentPage !== 1 || isFetching || isLoading) {
+      return;
+    }
+    setTotalCount(total);
+  }, [total, currentPage, isFetching, isLoading]);
 
   const loadNextPage = useCallback(async () => {
-    if (!isFetching && allPlugins.length < totalCount) {
+    if (!isFetching && !isLoading && allPlugins.length < totalCount) {
       setCurrentPage(prev => prev + 1);
     }
-  }, [isFetching, allPlugins.length, totalCount]);
+  }, [isFetching, isLoading, allPlugins.length, totalCount]);
 
   const hasNextPage = allPlugins.length < totalCount && totalCount > 0;
 
@@ -98,7 +107,7 @@ export default function PluginsPage() {
   }, []);
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 space-y-6 flex flex-col h-full overflow-y-auto bg-background">
+    <div className="flex h-full flex-col gap-6 overflow-y-auto bg-background p-4 sm:p-6 lg:p-8">
       {/* Header */}
       <div className="space-y-2">
         <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
@@ -109,7 +118,7 @@ export default function PluginsPage() {
 
       {/* Category Tabs */}
       <Tabs value={selectedType} onValueChange={value => setSelectedType(value as PluginCategory)}>
-        <TabsList className="w-full justify-start overflow-x-auto flex-wrap h-auto">
+        <TabsList className="h-auto w-full justify-start overflow-x-auto rounded-xl border bg-muted/30 p-1">
           {PLUGIN_CATEGORIES.map(category => (
             <TabsTrigger key={category.value || 'all'} value={category.value} className="gap-2">
               {t(
@@ -121,7 +130,7 @@ export default function PluginsPage() {
       </Tabs>
 
       {/* Search Bar */}
-      <div className="flex items-center justify-end">
+      <div className="flex items-center justify-center">
         <div className="relative w-full sm:max-w-md">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -142,9 +151,9 @@ export default function PluginsPage() {
 
       {/* Loading State - Only show skeleton on initial load */}
       {isLoading && allPlugins.length === 0 && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">
           {Array.from({ length: 12 }).map((_, idx) => (
-            <Skeleton key={idx} className="h-40 w-full" />
+            <Skeleton key={idx} className="h-44 w-full rounded-xl" />
           ))}
         </div>
       )}
@@ -168,7 +177,7 @@ export default function PluginsPage() {
       )}
 
       {allPlugins.length > 0 && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">
           {allPlugins.map(plugin => (
             <PluginCard
               key={plugin.id}
@@ -181,13 +190,17 @@ export default function PluginsPage() {
 
       {/* Infinite Scroll Sentinel */}
       {allPlugins.length > 0 && hasNextPage && (
-        <div ref={sentinelRef} className="flex justify-center py-8">
-          {isFetching && (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-              {t('market.plugins.loading')}
-            </div>
-          )}
+        <div ref={sentinelRef} className="flex min-h-16 justify-center py-8">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            {isFetching ? (
+              <>
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                {t('market.plugins.loading')}
+              </>
+            ) : (
+              t('market.plugins.scrollHint')
+            )}
+          </div>
         </div>
       )}
 

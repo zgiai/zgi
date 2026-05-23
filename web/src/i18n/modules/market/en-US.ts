@@ -1,14 +1,16 @@
 const messages = {
   plugins: {
-    title: 'System Plugins',
-    description: 'View and use various functional plugins provided by the system',
+    title: 'Plugin Marketplace',
+    description: 'Discover, install, and manage functional plugins provided by the system',
     searchPlaceholder: 'Search plugins',
     noResults: 'No plugins found',
     noResultsDescription: 'No plugins found related to "{keyword}"',
     noPluginsDescription: 'No plugins available',
     clearSearch: 'Clear search',
     loading: 'Loading...',
+    scrollHint: 'Keep scrolling to load more',
     noMoreData: 'No more plugins',
+    official: 'Official',
     installError: 'Plugin identifier not found',
     installSuccess: 'Plugin installed successfully',
     installFailed: 'Failed to install plugin',
