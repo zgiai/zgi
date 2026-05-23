@@ -196,7 +196,18 @@ export function UniversalFilePreviewDialog({
       );
     }
 
-    if (isPdf || previewKind === 'browser') {
+    if (isPdf) {
+      return (
+        <iframe
+          src={resolvedPreviewUrl}
+          title={activeFile.name}
+          referrerPolicy="no-referrer"
+          className="h-full min-h-[60vh] w-full border-0 bg-background"
+        />
+      );
+    }
+
+    if (previewKind === 'browser') {
       return (
         <iframe
           src={resolvedPreviewUrl}
