@@ -14,6 +14,8 @@ const messages: MarketMessages = {
     noMoreData: '没有更多插件了',
     official: '官方',
     certified: '认证',
+    feedback: '反馈',
+    applyUpload: '申请上传插件',
     resultCount: '共 {count} 个插件',
     sort: {
       label: '排序',

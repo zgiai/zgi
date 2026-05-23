@@ -21,6 +21,10 @@ export interface MarketplaceBrandingSettings {
   official_logo_url?: string;
   blue_v_icon_url?: string;
   yellow_v_icon_url?: string;
+  feedback_enabled?: boolean;
+  feedback_url?: string;
+  upload_application_enabled?: boolean;
+  upload_application_url?: string;
 }
 
 export interface MarketplacePluginVersion {

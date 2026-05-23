@@ -12,6 +12,8 @@ const messages = {
     noMoreData: 'No more plugins',
     official: 'Official',
     certified: 'Certified',
+    feedback: 'Feedback',
+    applyUpload: 'Submit plugin',
     resultCount: '{count} plugins',
     sort: {
       label: 'Sort',

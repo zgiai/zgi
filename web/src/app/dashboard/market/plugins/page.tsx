@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { Search } from 'lucide-react';
+import { MessageSquareText, Search, Upload } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -119,14 +119,14 @@ export default function PluginsPage() {
   return (
     <div className="h-full overflow-y-auto bg-background">
       <div className="mx-auto flex w-full max-w-[1680px] flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
-        <div className="grid gap-4 lg:grid-cols-[minmax(180px,1fr)_minmax(320px,520px)_minmax(180px,1fr)] lg:items-center">
-          <div className="space-y-1">
-            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+          <div className="shrink-0">
+            <h1 className="flex h-11 items-center text-2xl font-semibold tracking-tight">
               {t('market.plugins.title')}
             </h1>
           </div>
 
-          <div className="relative w-full">
+          <div className="relative min-w-[240px] flex-1">
             <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               placeholder={t('market.plugins.searchPlaceholder')}
@@ -136,7 +136,24 @@ export default function PluginsPage() {
             />
           </div>
 
-          <div className="hidden lg:block" />
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            {branding.feedback_enabled !== false && (
+              <Button variant="outline" className="h-11 rounded-xl" asChild>
+                <a href={branding.feedback_url || '#'} target="_blank" rel="noreferrer">
+                  <MessageSquareText className="mr-2 h-4 w-4" />
+                  {t('market.plugins.feedback')}
+                </a>
+              </Button>
+            )}
+            {branding.upload_application_enabled !== false && (
+              <Button variant="default" className="h-11 rounded-xl" asChild>
+                <a href={branding.upload_application_url || '#'} target="_blank" rel="noreferrer">
+                  <Upload className="mr-2 h-4 w-4" />
+                  {t('market.plugins.applyUpload')}
+                </a>
+              </Button>
+            )}
+          </div>
         </div>
 
         <Tabs

@@ -117,6 +117,10 @@ class PluginService extends BaseService {
       official_logo_url: settings['marketplace.official_logo_url'],
       blue_v_icon_url: settings['marketplace.blue_v_icon_url'],
       yellow_v_icon_url: settings['marketplace.yellow_v_icon_url'],
+      feedback_enabled: settings['marketplace.feedback_enabled'] !== 'false',
+      feedback_url: settings['marketplace.feedback_url'],
+      upload_application_enabled: settings['marketplace.upload_application_enabled'] !== 'false',
+      upload_application_url: settings['marketplace.upload_application_url'],
     };
   }
 
