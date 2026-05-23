@@ -1,6 +1,6 @@
 const messages = {
   plugins: {
-    title: 'Plugin Marketplace',
+    title: 'Plugin Store',
     description: 'Discover, install, and manage functional plugins provided by the system',
     searchPlaceholder: 'Search plugins',
     noResults: 'No plugins found',

@@ -124,7 +124,6 @@ export default function PluginsPage() {
             <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
               {t('market.plugins.title')}
             </h1>
-            <p className="text-sm text-muted-foreground">{t('market.plugins.description')}</p>
           </div>
 
           <div className="relative w-full">
