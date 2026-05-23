@@ -4,6 +4,13 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { useT } from '@/i18n';
 import { useMarketplacePlugins } from '@/hooks/use-plugins';
 import PluginCard from '@/components/market/plugin-card';
@@ -16,6 +23,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useLocale } from '@/hooks/use-locale';
 
 type PluginCategory = '' | MarketplacePluginCategory;
+type PluginSort = 'downloads' | 'newest' | 'rating';
 
 const PLUGIN_CATEGORIES: Array<{ value: PluginCategory; label: string }> = [
   { value: '', label: 'all' },
@@ -34,6 +42,7 @@ export default function PluginsPage() {
   const [allPlugins, setAllPlugins] = useState<MarketplacePlugin[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [selectedType, setSelectedType] = useState<PluginCategory>('');
+  const [selectedSort, setSelectedSort] = useState<PluginSort>('downloads');
   const debouncedSearchKeyword = useDebouncedValue(searchKeyword, 500);
 
   const {
@@ -48,7 +57,7 @@ export default function PluginsPage() {
     category: selectedType || undefined,
     search: debouncedSearchKeyword || undefined,
     locale,
-    sort: 'downloads',
+    sort: selectedSort,
   });
 
   const lastProcessedPage = useRef(0);
@@ -58,7 +67,7 @@ export default function PluginsPage() {
     setAllPlugins([]);
     setCurrentPage(1);
     lastProcessedPage.current = 0;
-  }, [debouncedSearchKeyword, selectedType, locale]);
+  }, [debouncedSearchKeyword, selectedType, selectedSort, locale]);
 
   useEffect(() => {
     if (currentPage === lastProcessedPage.current || isLoading) {
@@ -107,111 +116,138 @@ export default function PluginsPage() {
   }, []);
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto bg-background p-4 sm:p-6 lg:p-8">
-      {/* Header */}
-      <div className="space-y-2">
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
-          {t('market.plugins.title')}
-        </h1>
-        <p className="text-sm text-muted-foreground">{t('market.plugins.description')}</p>
-      </div>
+    <div className="h-full overflow-y-auto bg-background">
+      <div className="mx-auto flex w-full max-w-[1680px] flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
+        <div className="grid gap-4 lg:grid-cols-[minmax(180px,1fr)_minmax(320px,520px)_minmax(180px,1fr)] lg:items-center">
+          <div className="space-y-1">
+            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+              {t('market.plugins.title')}
+            </h1>
+            <p className="text-sm text-muted-foreground">{t('market.plugins.description')}</p>
+          </div>
 
-      {/* Category Tabs */}
-      <Tabs value={selectedType} onValueChange={value => setSelectedType(value as PluginCategory)}>
-        <TabsList className="h-auto w-full justify-start overflow-x-auto rounded-xl border bg-muted/30 p-1">
-          {PLUGIN_CATEGORIES.map(category => (
-            <TabsTrigger key={category.value || 'all'} value={category.value} className="gap-2">
-              {t(
-                `market.plugins.categories.${category.label as 'all' | 'tool' | 'extension' | 'integration'}`
-              )}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </Tabs>
-
-      {/* Search Bar */}
-      <div className="flex items-center justify-center">
-        <div className="relative w-full sm:max-w-md">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder={t('market.plugins.searchPlaceholder')}
-            value={searchKeyword}
-            onChange={e => setSearchKeyword(e.target.value)}
-            className="pl-9 bg-background rounded-lg text-sm w-full"
-          />
-        </div>
-      </div>
-
-      {/* Error State */}
-      {error && (
-        <div className="flex flex-col items-center justify-center py-12 text-center">
-          <p className="text-destructive mb-4">{error}</p>
-        </div>
-      )}
-
-      {/* Loading State - Only show skeleton on initial load */}
-      {isLoading && allPlugins.length === 0 && (
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">
-          {Array.from({ length: 12 }).map((_, idx) => (
-            <Skeleton key={idx} className="h-44 w-full rounded-xl" />
-          ))}
-        </div>
-      )}
-
-      {/* Empty State */}
-      {!isLoading && allPlugins.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-12 text-center">
-          <Search className="h-12 w-12 text-muted-foreground mb-4" />
-          <h3 className="text-lg font-medium mb-2">{t('market.plugins.noResults')}</h3>
-          <p className="text-muted-foreground mb-4 max-w-sm">
-            {debouncedSearchKeyword
-              ? t('market.plugins.noResultsDescription', { keyword: debouncedSearchKeyword })
-              : t('market.plugins.noPluginsDescription')}
-          </p>
-          {debouncedSearchKeyword && (
-            <Button variant="outline" onClick={() => setSearchKeyword('')}>
-              {t('market.plugins.clearSearch')}
-            </Button>
-          )}
-        </div>
-      )}
-
-      {allPlugins.length > 0 && (
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">
-          {allPlugins.map(plugin => (
-            <PluginCard
-              key={plugin.id}
-              plugin={plugin}
-              onClick={() => handlePluginCardClick(plugin)}
+          <div className="relative w-full">
+            <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder={t('market.plugins.searchPlaceholder')}
+              value={searchKeyword}
+              onChange={e => setSearchKeyword(e.target.value)}
+              className="h-11 w-full rounded-xl bg-background pl-11 text-sm shadow-sm"
             />
-          ))}
-        </div>
-      )}
+          </div>
 
-      {/* Infinite Scroll Sentinel */}
-      {allPlugins.length > 0 && hasNextPage && (
-        <div ref={sentinelRef} className="flex min-h-16 justify-center py-8">
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            {isFetching ? (
-              <>
-                <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                {t('market.plugins.loading')}
-              </>
-            ) : (
-              t('market.plugins.scrollHint')
+          <div className="hidden lg:block" />
+        </div>
+
+        <Tabs
+          value={selectedType}
+          onValueChange={value => setSelectedType(value as PluginCategory)}
+        >
+          <TabsList className="h-auto w-full justify-start gap-2 overflow-x-auto border-0 bg-transparent p-0">
+            {PLUGIN_CATEGORIES.map(category => (
+              <TabsTrigger
+                key={category.value || 'all'}
+                value={category.value}
+                className="rounded-lg border border-transparent px-4 py-2 data-[state=active]:border-primary/20 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none"
+              >
+                {t(
+                  `market.plugins.categories.${category.label as 'all' | 'tool' | 'extension' | 'integration'}`
+                )}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="text-sm text-muted-foreground">
+            {t('market.plugins.resultCount', { count: totalCount })}
+          </div>
+          <Select
+            value={selectedSort}
+            onValueChange={value => setSelectedSort(value as PluginSort)}
+          >
+            <SelectTrigger className="h-9 w-full rounded-lg sm:w-[160px]">
+              <SelectValue placeholder={t('market.plugins.sort.label')} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="downloads">{t('market.plugins.sort.downloads')}</SelectItem>
+              <SelectItem value="newest">{t('market.plugins.sort.newest')}</SelectItem>
+              <SelectItem value="rating">{t('market.plugins.sort.rating')}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* Error State */}
+        {error && (
+          <div className="flex flex-col items-center justify-center rounded-xl border border-destructive/30 py-12 text-center">
+            <p className="mb-4 text-destructive">{error}</p>
+          </div>
+        )}
+
+        {/* Loading State - Only show skeleton on initial load */}
+        {isLoading && allPlugins.length === 0 && (
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">
+            {Array.from({ length: 12 }).map((_, idx) => (
+              <Skeleton key={idx} className="h-44 w-full rounded-xl" />
+            ))}
+          </div>
+        )}
+
+        {/* Empty State */}
+        {!isLoading && allPlugins.length === 0 && (
+          <div className="flex flex-col items-center justify-center rounded-xl border py-16 text-center">
+            <Search className="mb-4 h-12 w-12 text-muted-foreground" />
+            <h3 className="mb-2 text-lg font-medium">{t('market.plugins.noResults')}</h3>
+            <p className="mb-4 max-w-sm text-muted-foreground">
+              {debouncedSearchKeyword
+                ? t('market.plugins.noResultsDescription', { keyword: debouncedSearchKeyword })
+                : t('market.plugins.noPluginsDescription')}
+            </p>
+            {debouncedSearchKeyword && (
+              <Button variant="outline" onClick={() => setSearchKeyword('')}>
+                {t('market.plugins.clearSearch')}
+              </Button>
             )}
           </div>
-        </div>
-      )}
+        )}
 
-      {/* No More Data Indicator */}
-      {allPlugins.length > 0 && !hasNextPage && (
-        <div className="flex justify-center py-8">
-          <div className="text-sm text-muted-foreground">
-            {t('market.plugins.noMoreData') || 'No more plugins'}
+        {allPlugins.length > 0 && (
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">
+            {allPlugins.map(plugin => (
+              <PluginCard
+                key={plugin.id}
+                plugin={plugin}
+                onClick={() => handlePluginCardClick(plugin)}
+              />
+            ))}
           </div>
-        </div>
-      )}
+        )}
+
+        {/* Infinite Scroll Sentinel */}
+        {allPlugins.length > 0 && hasNextPage && (
+          <div ref={sentinelRef} className="flex min-h-16 justify-center py-8">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              {isFetching ? (
+                <>
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                  {t('market.plugins.loading')}
+                </>
+              ) : (
+                t('market.plugins.scrollHint')
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* No More Data Indicator */}
+        {allPlugins.length > 0 && !hasNextPage && (
+          <div className="flex justify-center py-8">
+            <div className="text-sm text-muted-foreground">
+              {t('market.plugins.noMoreData') || 'No more plugins'}
+            </div>
+          </div>
+        )}
+      </div>
 
       {isModalOpen && (
         <PluginDetailModal

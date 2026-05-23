@@ -11,6 +11,13 @@ const messages = {
     scrollHint: 'Keep scrolling to load more',
     noMoreData: 'No more plugins',
     official: 'Official',
+    resultCount: '{count} plugins',
+    sort: {
+      label: 'Sort',
+      downloads: 'Most popular',
+      newest: 'Newest',
+      rating: 'Top rated',
+    },
     installError: 'Plugin identifier not found',
     installSuccess: 'Plugin installed successfully',
     installFailed: 'Failed to install plugin',

@@ -13,6 +13,13 @@ const messages: MarketMessages = {
     scrollHint: '继续向下滚动加载更多',
     noMoreData: '没有更多插件了',
     official: '官方',
+    resultCount: '共 {count} 个插件',
+    sort: {
+      label: '排序',
+      downloads: '最受欢迎',
+      newest: '最新发布',
+      rating: '评分最高',
+    },
     installError: '插件标识未找到',
     installSuccess: '插件安装成功',
     installFailed: '插件安装失败',
