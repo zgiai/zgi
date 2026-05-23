@@ -32,7 +32,8 @@ display:
 
 # File Generator Skill
 
-Use this skill when the user wants content delivered as a generated file.
+Use this skill when the user wants an answer delivered as a downloadable file artifact.
+This skill turns text content into a workflow file; it does not write to a local filesystem path.
 
 ## Workflow
 
@@ -43,10 +44,10 @@ Use this skill when the user wants content delivered as a generated file.
    - Use `xlsx` when the user explicitly asks for Excel or a spreadsheet workbook. Provide valid CSV content.
    - Use `pdf` when the user explicitly asks for PDF or a simple read-only distribution file.
    - Use `txt` for plain text without formatting.
-   - Use `html` for simple previewable web documents.
+   - Use `html` for runnable HTML pages or previewable web documents.
    - Use `json` for machine-readable structured data.
    - Use `csv` for table-like data.
-3. Read the reference document for the selected format before calling the tool.
+3. Read the reference document for the selected format before calling `generate_file`.
 4. Shape `content`, `title`, and `filename` according to that reference.
 5. Call `call_skill_tool` with `tool_name` set to `generate_file`.
 6. Use `persistent` lifecycle by default unless the user asks for a temporary file.
@@ -55,24 +56,28 @@ Use this skill when the user wants content delivered as a generated file.
 
 ## References
 
-Read only the reference needed for the selected target format:
+Read exactly one reference after choosing the target format:
 
-- `format-txt.md` for `txt` or `text`
-- `format-md.md` for `md` or `markdown`
-- `format-html.md` for `html` or `htm`
-- `format-json.md` for `json`
-- `format-csv.md` for `csv`
-- `format-docx.md` for `docx` or `word`
-- `format-xlsx.md` for `xlsx` or `excel`
-- `format-pdf.md` for `pdf`
+| Requested format | Read reference |
+| --- | --- |
+| `txt`, `text` | `format-txt.md` |
+| `md`, `markdown` | `format-md.md` |
+| `html`, `htm` | `format-html.md` |
+| `json` | `format-json.md` |
+| `csv` | `format-csv.md` |
+| `docx`, `word` | `format-docx.md` |
+| `xlsx`, `excel` | `format-xlsx.md` |
+| `pdf` | `format-pdf.md` |
 
 ## Constraints
 
 - The tool has one unified parameter schema for every format. Format-specific expectations live in the reference documents.
+- Do not call `generate_file` until the selected format reference has been read.
 - The tool accepts only the documented parameters below. Do not invent format-specific parameters such as `sheets`, `styles`, `pages`, `columns`, `headers`, or `metadata`.
 - Generated file content must fit within the backend file size limit.
 - Do not include filesystem paths in filenames.
 - Do not claim a file was generated unless the `generate_file` tool call succeeded.
+- If the user asks for advanced document features that the selected reference says are unsupported, generate the closest basic file only when that still satisfies the request.
 
 ## Tool Usage
 
