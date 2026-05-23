@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from 'react';
 import { useT } from '@/i18n';
+import { useLocale } from '@/hooks/use-locale';
 import { useWorkflowStore } from '../store';
 import type { WorkflowEdge, WorkflowNode, WorkflowNodeData, ToolNodeData } from '../store/type';
 import {
@@ -31,6 +32,7 @@ import { DEFAULT_QUESTION_ANSWER_NODE_DATA } from '../nodes/question-answer/conf
 import { DEFAULT_VARIABLE_AGGREGATOR_NODE_DATA } from '../nodes/variable-aggregator/config';
 import { DEFAULT_SQL_GENERATOR_NODE_DATA } from '../nodes/sql-generator/config';
 import { DEFAULT_LLM_NODE_DATA } from '../nodes/llm/config';
+import { getDefaultWorkflowPrompts } from '../nodes/llm/default-prompts';
 import { DEFAULT_HTTP_REQUEST_NODE_DATA } from '../nodes/http-request/config';
 import { DEFAULT_TOOL_NODE_DATA } from '../nodes/tool/config';
 import { createDefaultCreateScheduledTaskNodeData } from '../nodes/create-scheduled-task/config';
@@ -47,6 +49,7 @@ import { DEFAULT_DOCUMENT_EXTRACTOR_NODE_DATA } from '../nodes/document-extracto
  */
 const useWorkflowOperations = () => {
   const t = useT('nodes');
+  const { locale } = useLocale();
   // Fine-grained selectors for minimize re-renders
   const addNode = useWorkflowStore.use.addNode();
   const addNodes = useWorkflowStore.use.addNodes();
@@ -75,6 +78,8 @@ const useWorkflowOperations = () => {
   const { value: defaultLlm } = useDefaultModelByUseCase('text-chat');
   const defaultLlmProvider = defaultLlm?.provider ?? '';
   const defaultLlmName = defaultLlm?.model ?? '';
+  const { conversational: defaultConversationalPrompt, standard: defaultStandardPrompt } =
+    useMemo(() => getDefaultWorkflowPrompts(locale), [locale]);
 
   // side effects moved to useWorkflowInitializer
 
@@ -426,6 +431,39 @@ const useWorkflowOperations = () => {
 
   const addLLMNode = useCallback(
     (position: { x: number; y: number }, parentId?: string): string | null => {
+      const isConversational = agentType === AgentType.CONVERSATIONAL_AGENT;
+      const defaultPrompt = isConversational
+        ? defaultConversationalPrompt
+        : defaultStandardPrompt;
+      const promptTemplate = [
+        {
+          id: 'system',
+          role: 'system' as const,
+          text: defaultPrompt.text,
+        },
+        ...(isConversational
+          ? [
+              {
+                id: 'current-user',
+                role: 'user' as const,
+                text: '{{#sys.query#}}',
+                group_id: 'current-user',
+                group_kind: 'current_user' as const,
+              },
+            ]
+          : [
+              {
+                id: 'task-input',
+                role: 'user' as const,
+                text: '',
+                group_id: 'task-input',
+              },
+            ]),
+      ];
+      const promptLayoutItems = isConversational
+        ? [{ type: 'group' as const, group_id: 'current-user' }]
+        : [{ type: 'group' as const, group_id: 'task-input' }];
+
       const baseData = {
         ...DEFAULT_LLM_NODE_DATA,
         type: 'llm' as const,
@@ -444,18 +482,17 @@ const useWorkflowOperations = () => {
           mode: 'chat' as const,
           completion_params: {},
         },
-        prompt_template: [
-          {
-            role: 'system' as const,
-            text: '',
-          },
-        ],
+        prompt_template: promptTemplate,
+        prompt_layout: {
+          version: 1 as const,
+          items: promptLayoutItems,
+        },
         prompt_config: {
           jinja2_variables: [],
         },
-        context: {
-          enabled: false,
-          variable_selector: [],
+        conversation_history: {
+          enabled: isConversational,
+          history_window_size: 3,
         },
         vision: {
           enabled: false,
@@ -466,7 +503,15 @@ const useWorkflowOperations = () => {
       const id = addNodeWithContainerCheck(baseData, position, parentId);
       return id;
     },
-    [addNodeWithContainerCheck, defaultLlmName, defaultLlmProvider, t]
+    [
+      addNodeWithContainerCheck,
+      agentType,
+      defaultConversationalPrompt,
+      defaultLlmName,
+      defaultLlmProvider,
+      defaultStandardPrompt,
+      t,
+    ]
   );
 
   const addHttpRequestNode = useCallback(

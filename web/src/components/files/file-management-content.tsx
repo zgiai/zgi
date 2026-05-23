@@ -54,7 +54,10 @@ import {
   useCreateTextFile,
   useFileFolders,
   useDeleteFolder,
+  FILE_FOLDERS_KEY,
+  STORAGE_USAGE_KEY,
 } from '@/hooks/use-files';
+import { useQueryClient } from '@tanstack/react-query';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -68,6 +71,7 @@ import { cn } from '@/lib/utils';
 import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { useJoinedWorkspaces } from '@/hooks/workspace/use-joined-workspaces';
 import { useUpdateCurrentWorkspace } from '@/hooks/workspace/use-update-current-workspace';
+import { fileManageService } from '@/services/file-manage.service';
 import type { Organization } from '@/services/types/organization';
 import type { Workspace } from '@/store/workspace-store';
 
@@ -86,6 +90,29 @@ export interface FileManagementContentProps {
   acceptExt?: string[];
   /** Enable workspace switcher inside file selector empty state */
   allowWorkspaceSwitch?: boolean;
+}
+
+const SYSTEM_FILE_CATEGORIES = new Set(['all', 'uploaded', 'default']);
+
+const waitForMinimumRefreshDuration = () =>
+  new Promise<void>(resolve => {
+    setTimeout(resolve, 1000);
+  });
+
+async function getFolderDepth(folderId: string) {
+  let depth = 0;
+  let currentId = folderId;
+
+  while (currentId) {
+    const response = await fileManageService.getFileFolder(currentId);
+    const folder = response.data;
+    depth += 1;
+
+    if (!folder.parent_id) break;
+    currentId = folder.parent_id;
+  }
+
+  return depth;
 }
 
 interface FileSelectorWorkspaceSwitcherProps {
@@ -402,11 +429,15 @@ const FileManagementContent = ({
 }: FileManagementContentProps): React.ReactNode => {
   const [searchValue, setSearchValue] = useState('');
   const [activeCategory, setActiveCategory] = useState('all');
+  const [activeFolderDepth, setActiveFolderDepth] = useState(0);
+  const [createFolderInitialParentId, setCreateFolderInitialParentId] = useState('');
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<string[]>(selectedFileIds);
   const [spaceSwitcherOpen, setSpaceSwitcherOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const t = useT();
   const tNavigation = useT('navigation');
+  const queryClient = useQueryClient();
   const isMobile = useIsMobile();
   const isAuthenticated = useAuthStore.use.isAuthenticated();
   const { currentWorkspace, isOrganizationMode } = useWorkspaceStore();
@@ -423,6 +454,7 @@ const FileManagementContent = ({
   const canManage = hasPermission('file.manage');
   const canCreateFolder = hasPermission('file.move_create');
   const canUpload = hasPermission('file.upload_create');
+  const canCreateInActiveFolder = canCreateFolder && activeFolderDepth >= 0 && activeFolderDepth < 2;
   const { organizations } = useOrganizations(isAuthenticated);
   const showOrganizationSwitcher = isAuthenticated && organizations.length > 1;
   const currentSpaceLabel = isOrganizationMode
@@ -492,9 +524,25 @@ const FileManagementContent = ({
     }
   }, [selectionMode, selectedFiles, onSelectionChange, files]);
 
-  const handleRefresh = () => {
+  const isRefreshPending = isRefreshing || isFetching;
+
+  const handleRefresh = async () => {
+    if (isRefreshing) return;
+
+    setIsRefreshing(true);
     goToPage(1);
-    reload();
+    try {
+      await Promise.all([
+        Promise.all([
+          reload(),
+          queryClient.invalidateQueries({ queryKey: [FILE_FOLDERS_KEY] }),
+          queryClient.invalidateQueries({ queryKey: [STORAGE_USAGE_KEY] }),
+        ]),
+        waitForMinimumRefreshDuration(),
+      ]);
+    } finally {
+      setIsRefreshing(false);
+    }
   };
 
   const handleSelectionChange = (selectedIds: string[]) => {
@@ -507,26 +555,67 @@ const FileManagementContent = ({
     setMobileSidebarOpen(false);
   }, []);
 
+  useEffect(() => {
+    if (SYSTEM_FILE_CATEGORIES.has(activeCategory)) {
+      setActiveFolderDepth(0);
+      return;
+    }
+
+    let ignore = false;
+    setActiveFolderDepth(-1);
+
+    const loadActiveFolderDepth = async () => {
+      try {
+        const depth = await getFolderDepth(activeCategory);
+        if (!ignore) {
+          setActiveFolderDepth(depth);
+        }
+      } catch {
+        if (!ignore) {
+          setActiveFolderDepth(0);
+        }
+      }
+    };
+
+    void loadActiveFolderDepth();
+
+    return () => {
+      ignore = true;
+    };
+  }, [activeCategory]);
+
   const [createFolderDialogOpen, setCreateFolderDialogOpen] = useState(false);
 
-  const handleNewFolder = useCallback(() => {
+  const handleNewFolder = useCallback(async () => {
+    if (SYSTEM_FILE_CATEGORIES.has(activeCategory)) {
+      setCreateFolderInitialParentId('');
+      setCreateFolderDialogOpen(true);
+      return;
+    }
+
+    try {
+      const depth = await getFolderDepth(activeCategory);
+      setCreateFolderInitialParentId(depth <= 1 ? activeCategory : '');
+    } catch {
+      setCreateFolderInitialParentId('');
+    }
     setCreateFolderDialogOpen(true);
-  }, []);
+  }, [activeCategory]);
 
   const handleCreateFolderConfirm = useCallback(
     async (data: CreateFolderData) => {
-      await createFolder({
+      const createdFolder = await createFolder({
         name: data.name,
         parent_id: data.parent_id,
         workspace_id: data.workspaceId,
       });
       setCreateFolderDialogOpen(false);
-      // Refresh file list after creating folder
-      if (selectionMode) {
-        goToPage(1);
-      }
+      setActiveCategory(createdFolder.id);
+      setSelectedFiles([]);
+      reload();
+      goToPage(1);
     },
-    [createFolder, selectionMode, goToPage]
+    [createFolder, goToPage, reload]
   );
 
   const handleUpload = () => {
@@ -582,6 +671,9 @@ const FileManagementContent = ({
     goToPage(1);
   }, [goToPage, reload]);
 
+  const initialUploadFolderId =
+    SYSTEM_FILE_CATEGORIES.has(activeCategory) ? '' : activeCategory;
+
   const selectedFolder = folders.find(f => f.id === selectedFolderId);
   const selectedFolderName = selectedFolder?.name || t('files.upload.defaultFolder');
 
@@ -609,7 +701,7 @@ const FileManagementContent = ({
     <FileSidebar
       activeItemId={activeCategory}
       onItemClick={handleCategoryChange}
-      onNewFolder={selectionMode && canCreateFolder ? handleNewFolder : undefined}
+      onNewFolder={selectionMode && canCreateInActiveFolder ? handleNewFolder : undefined}
       onUpload={selectionMode && canUpload ? handleUpload : undefined}
       onFolderDelete={canManage ? handleFolderDelete : undefined}
       workspaceId={workspaceId}
@@ -879,9 +971,12 @@ const FileManagementContent = ({
                   variant="ghost"
                   className="size-7 cursor-pointer rounded-sm hover:bg-muted"
                   onClick={handleRefresh}
-                  disabled={isFetching}
+                  disabled={isRefreshPending}
                 >
-                  <RefreshCw size={16} className={`${isFetching ? 'animate-spin' : ''} h-4 w-4`} />
+                  <RefreshCw
+                    size={16}
+                    className={`${isRefreshPending ? 'animate-spin' : ''} h-4 w-4`}
+                  />
                 </Button>
               </div>
 
@@ -942,12 +1037,12 @@ const FileManagementContent = ({
                     variant="outline"
                     className="size-9 rounded-md bg-background shadow-none"
                     onClick={handleRefresh}
-                    disabled={isFetching}
+                    disabled={isRefreshPending}
                     aria-label={t('common.refresh')}
                   >
-                    <RefreshCw className={`${isFetching ? 'animate-spin' : ''} h-4 w-4`} />
+                    <RefreshCw className={`${isRefreshPending ? 'animate-spin' : ''} h-4 w-4`} />
                   </Button>
-                  {canCreateFolder ? (
+                  {canCreateInActiveFolder ? (
                     <Button
                       variant="outline"
                       className="h-9 gap-2 rounded-md bg-background px-3 shadow-none"
@@ -1001,12 +1096,14 @@ const FileManagementContent = ({
         open={addDialogOpen}
         onOpenChange={setAddDialogOpen}
         onConfirm={handleUploadConfirm}
+        initialFolderId={initialUploadFolderId}
       />
       {/* Create Folder Dialog */}
       <CreateFolderDialog
         open={createFolderDialogOpen}
         onOpenChange={setCreateFolderDialogOpen}
         onConfirm={handleCreateFolderConfirm}
+        initialParentId={createFolderInitialParentId}
       />
       {/* Create Text File Dialog */}
       <CreateTextFileDialog

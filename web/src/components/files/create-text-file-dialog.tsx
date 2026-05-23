@@ -14,7 +14,10 @@ import {
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { RefreshCw } from 'lucide-react';
+import { fileManageService } from '@/services/file-manage.service';
+import type { FileFolder } from '@/services/types/file';
 
 /**
  * Create text file data
@@ -37,6 +40,22 @@ export interface CreateTextFileDialogProps {
   isCreating?: boolean;
 }
 
+async function getFolderPath(folderId: string) {
+  const path: FileFolder[] = [];
+  let currentId = folderId;
+
+  while (currentId) {
+    const response = await fileManageService.getFileFolder(currentId);
+    const folder = response.data;
+    path.unshift(folder);
+
+    if (!folder.parent_id) break;
+    currentId = folder.parent_id;
+  }
+
+  return path;
+}
+
 /**
  * Create Text File Dialog Component
  * Allows users to create a new text file with name and content
@@ -54,6 +73,7 @@ export function CreateTextFileDialog({
   // Local state
   const [filename, setFilename] = useState<string>('');
   const [content, setContent] = useState<string>('');
+  const [folderPath, setFolderPath] = useState<FileFolder[]>([]);
 
   // Calculate statistics
   const charCount = content.length;
@@ -66,9 +86,38 @@ export function CreateTextFileDialog({
       setTimeout(() => {
         setFilename('');
         setContent('');
+        setFolderPath([]);
       }, 200);
     }
   }, [open]);
+
+  useEffect(() => {
+    if (!open || !folderId) {
+      setFolderPath([]);
+      return;
+    }
+
+    let ignore = false;
+
+    const loadFolderPath = async () => {
+      try {
+        const path = await getFolderPath(folderId);
+        if (!ignore) {
+          setFolderPath(path);
+        }
+      } catch {
+        if (!ignore) {
+          setFolderPath([]);
+        }
+      }
+    };
+
+    void loadFolderPath();
+
+    return () => {
+      ignore = true;
+    };
+  }, [folderId, open]);
 
   // Handle confirm
   const handleConfirm = async () => {
@@ -90,6 +139,14 @@ export function CreateTextFileDialog({
 
   // Check if form is valid
   const isValid = filename.trim().length > 0 && content.trim().length > 0;
+  const defaultFolderName = t('files.upload.defaultFolder');
+  const storageFolderName = folderId
+    ? folderPath.at(-1)?.name || folderName || defaultFolderName
+    : defaultFolderName;
+  const storageFolderPath =
+    folderId && folderPath.length > 0
+      ? [defaultFolderName, ...folderPath.map(folder => folder.name)].join(' / ')
+      : defaultFolderName;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -152,12 +209,17 @@ export function CreateTextFileDialog({
           </form>
 
           {/* Storage Location Info */}
-          {folderName && (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground bg-neutral-50 px-3 py-2 rounded-lg w-fit">
-              <span className="font-medium">{t('files.text.storageLocation')}:</span>
-              <span className="font-bold text-primary">{folderName}</span>
-            </div>
-          )}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="flex max-w-full w-fit items-center gap-2 rounded-lg bg-neutral-50 px-3 py-2 text-xs text-muted-foreground">
+                <span className="shrink-0 font-medium">{t('files.text.storageLocation')}:</span>
+                <span className="truncate font-bold text-primary">{storageFolderName}</span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="max-w-[360px] break-words">
+              {storageFolderPath}
+            </TooltipContent>
+          </Tooltip>
         </DialogBody>
 
         <DialogFooter className="bg-neutral-50/50 pt-4 pb-6">

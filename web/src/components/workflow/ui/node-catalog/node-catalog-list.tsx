@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { Plus } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
@@ -128,6 +129,11 @@ export function NodeCatalogList({
   const handleNodeDragStart = React.useCallback(
     (event: React.DragEvent<HTMLDivElement>, nodeType: NodeType) => {
       if (!isDragInteraction) return;
+      if (nodeType.disabledReason) {
+        event.preventDefault();
+        toast.warning(nodeType.disabledReason);
+        return;
+      }
       event.dataTransfer?.setData('application/x-workflow-node-type', nodeType.type);
       event.dataTransfer.effectAllowed = 'copy';
       setTransparentDragImage(event.dataTransfer);
@@ -163,6 +169,10 @@ export function NodeCatalogList({
     clearDraggingNodePreview();
   }, [clearDraggingNodePreview, isDragInteraction]);
 
+  const handleUnavailableNode = React.useCallback((reason: string) => {
+    toast.warning(reason);
+  }, []);
+
   return (
     <>
       <div className={cn(classes.root, className)}>
@@ -174,15 +184,22 @@ export function NodeCatalogList({
                 <Tooltip key={nodeType.type}>
                   <TooltipTrigger asChild>
                     <div
+                      aria-disabled={Boolean(nodeType.disabledReason)}
                       className={cn(
                         'group flex w-full items-center text-left transition-all duration-200',
                         classes.row,
-                        isDragInteraction
-                          ? 'cursor-grab hover:bg-muted/80 hover:shadow-sm active:scale-[0.98]'
-                          : 'cursor-pointer hover:bg-accent hover:text-accent-foreground'
+                        nodeType.disabledReason
+                          ? 'cursor-not-allowed opacity-60 hover:bg-muted/40'
+                          : isDragInteraction
+                            ? 'cursor-grab hover:bg-muted/80 hover:shadow-sm active:scale-[0.98]'
+                            : 'cursor-pointer hover:bg-accent hover:text-accent-foreground'
                       )}
                       draggable={isDragInteraction}
                       onClick={() => {
+                        if (nodeType.disabledReason) {
+                          handleUnavailableNode(nodeType.disabledReason);
+                          return;
+                        }
                         if (!isDragInteraction) onSelect(nodeType.type);
                       }}
                       onDragStart={event => handleNodeDragStart(event, nodeType)}
@@ -193,6 +210,10 @@ export function NodeCatalogList({
                       onKeyDown={event => {
                         if (event.key === 'Enter' || event.key === ' ') {
                           event.preventDefault();
+                          if (nodeType.disabledReason) {
+                            handleUnavailableNode(nodeType.disabledReason);
+                            return;
+                          }
                           onSelect(nodeType.type);
                         }
                       }}
@@ -221,6 +242,10 @@ export function NodeCatalogList({
                           )}
                           onClick={event => {
                             event.stopPropagation();
+                            if (nodeType.disabledReason) {
+                              handleUnavailableNode(nodeType.disabledReason);
+                              return;
+                            }
                             onSelect(nodeType.type);
                           }}
                           aria-label={nodeType.title}
@@ -233,6 +258,11 @@ export function NodeCatalogList({
                   <TooltipContent side={tooltipSide} className={classes.tooltip}>
                     <p className="mb-1 font-semibold">{nodeType.title}</p>
                     <p className="leading-relaxed text-muted-foreground">{nodeType.description}</p>
+                    {nodeType.disabledReason ? (
+                      <p className="mt-2 leading-relaxed text-foreground">
+                        {nodeType.disabledReason}
+                      </p>
+                    ) : null}
                   </TooltipContent>
                 </Tooltip>
               ))}

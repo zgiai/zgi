@@ -17,6 +17,7 @@ export interface NodeType {
   io: boolean;
   // Group for catalog display
   group: NodeGroupKey;
+  disabledReason?: string;
 }
 
 export function useNodeTypesI18n(): NodeType[] {
@@ -24,6 +25,9 @@ export function useNodeTypesI18n(): NodeType[] {
   const iconSize = 18;
   const systemFeatures = useAuthStore.use.systemFeatures();
   const notificationSMSEnabled = isNotificationSMSWorkflowNodeEnabled(systemFeatures);
+  const notificationSMSDisabledReason = notificationSMSEnabled
+    ? undefined
+    : t('catalog.notification-sms.setupRequired');
 
   return React.useMemo(() => {
     const types: NodeType[] = [
@@ -99,19 +103,16 @@ export function useNodeTypesI18n(): NodeType[] {
         io: true,
         group: 'tool',
       },
-      ...(notificationSMSEnabled
-        ? [
-            {
-              type: NODE_TYPES.NOTIFICATION_SMS,
-              title: t('catalog.notification-sms.title'),
-              description: t('catalog.notification-sms.description'),
-              icon: React.createElement(NODE_THEMES['notification-sms'].icon, { size: iconSize }),
-              bgColor: NODE_THEMES['notification-sms'].classNames.iconBg ?? 'bg-slate-500',
-              io: true,
-              group: 'tool' as const,
-            },
-          ]
-        : []),
+      {
+        type: NODE_TYPES.NOTIFICATION_SMS,
+        title: t('catalog.notification-sms.title'),
+        description: t('catalog.notification-sms.description'),
+        icon: React.createElement(NODE_THEMES['notification-sms'].icon, { size: iconSize }),
+        bgColor: NODE_THEMES['notification-sms'].classNames.iconBg ?? 'bg-slate-500',
+        io: true,
+        group: 'tool',
+        disabledReason: notificationSMSDisabledReason,
+      },
       {
         type: NODE_TYPES.ANNOUNCEMENT,
         title: t('catalog.announcement.title'),
@@ -250,5 +251,5 @@ export function useNodeTypesI18n(): NodeType[] {
     ];
 
     return types;
-  }, [notificationSMSEnabled, t]);
+  }, [notificationSMSDisabledReason, t]);
 }

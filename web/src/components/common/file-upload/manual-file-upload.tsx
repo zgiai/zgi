@@ -21,6 +21,12 @@ import {
 } from '@/utils/file-helpers';
 import { generateClientId } from '@/utils/client-id';
 import { FileList } from '@/components/common/file-upload/file-list';
+import {
+  calculateFileHash,
+  getExistingFileKeys,
+  getFileFallbackKey,
+  hasAnyFileKey,
+} from './file-dedup';
 
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
@@ -67,6 +73,7 @@ export interface ManualFileUploadRef {
 interface UploadItem {
   id: string;
   file: File;
+  contentHash?: string;
   progress: number; // 0-100
   status: 'pending' | 'uploading' | 'success' | 'error';
   serverFile?: UploadedFile;
@@ -271,7 +278,7 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
     );
 
     const enqueueFiles = useCallback(
-      (files: FileList | File[]) => {
+      async (files: FileList | File[]) => {
         const currentCount = items.length;
 
         if (currentCount >= maxCount) {
@@ -289,8 +296,10 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
           toast.error(t('fileUpload.exceedCount', { max: maxCount }));
         }
 
-        // Process all files, including invalid ones
-        const newItems: UploadItem[] = filesToProcess.map(file => {
+        const existingKeys = getExistingFileKeys(items);
+        const newItems: UploadItem[] = [];
+
+        for (const file of filesToProcess) {
           const validation = validateFile(file);
 
           if (!validation.isValid) {
@@ -302,23 +311,32 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
               })
             );
             // Create item with error status immediately
-            return {
+            newItems.push({
               id: genId(),
               file,
               progress: 0,
               status: 'error' as const,
               errorMsg,
-            };
+            });
+            continue;
           }
 
-          // Create valid item ready for upload (but don't upload yet)
-          return {
+          const contentHash = await calculateFileHash(file);
+          const duplicateKeys = [`hash:${contentHash}`, `local:${getFileFallbackKey(file)}`];
+          if (hasAnyFileKey(existingKeys, duplicateKeys)) {
+            toast.info(t('fileUpload.duplicateFile', { file: file.name }));
+            continue;
+          }
+
+          duplicateKeys.forEach(key => existingKeys.add(key));
+          newItems.push({
             id: genId(),
             file,
+            contentHash,
             progress: 0,
             status: 'pending' as const,
-          };
-        });
+          });
+        }
 
         if (!newItems.length) {
           return;

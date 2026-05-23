@@ -147,7 +147,7 @@ type AdvancedChatDraftWorkflowRunRequest struct {
 	ResponseMode      string                 `json:"response_mode,omitempty"` // streaming, blocking
 	UserID            string                 `json:"user_id,omitempty"`
 	ConversationID    string                 `json:"conversation_id,omitempty"`
-	HistoryWindowSize *int                   `json:"history_window_size,omitempty"` // conversation history limit (number of message pairs), nil means load all
+	HistoryWindowSize *int                   `json:"history_window_size,omitempty"` // deprecated: accepted for compatibility, LLM node conversation_history controls history
 	Files             []FileInfo             `json:"files,omitempty"`
 }
 

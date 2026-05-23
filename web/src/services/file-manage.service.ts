@@ -9,6 +9,7 @@ import type {
   GetAllFilesRequest,
   RelatedResourcesResponse,
   StorageUsage,
+  FileFolder,
   FileFoldersResponse,
   UploadFileRequest,
   UploadFileResponse,
@@ -105,6 +106,13 @@ class FileManageService extends BaseService {
   async getFileFolders(workspaceId?: string): Promise<ApiResponseData<FileFoldersResponse>> {
     const params = workspaceId ? { workspace_id: workspaceId } : {};
     return this.request('get', '/console/api/file-folders', undefined, { params });
+  }
+
+  /**
+   * Get a file folder by ID
+   */
+  async getFileFolder(folderId: string): Promise<ApiResponseData<FileFolder>> {
+    return this.request('get', `/console/api/file-folders/${folderId}`);
   }
 
   /**

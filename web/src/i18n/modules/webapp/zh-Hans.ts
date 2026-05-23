@@ -189,6 +189,17 @@ const messages: WebappMessages = {
           error: '错误',
         },
       },
+      agentic: {
+        showProcess: '显示过程',
+        hideProcess: '隐藏过程',
+        loadingSkill: '加载 {skill}',
+        loadedSkill: '{skill} 已加载',
+        loadFailed: '{skill} 加载失败',
+        referenceRead: '读取 {skill} 资料 {path}',
+        callingTool: '调用 {skill} {tool}',
+        toolSucceeded: '{skill} {tool} 调用成功',
+        toolFailed: '{skill} {tool} 调用失败',
+      },
     },
     attachments: {
       upload: '上传文件',

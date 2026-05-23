@@ -37,7 +37,7 @@ type ChatWorkflowRunRequest struct {
 	ResponseMode      string                 `json:"response_mode" binding:"required"`
 	User              string                 `json:"user,omitempty"` // Changed to optional field
 	ConversationID    string                 `json:"conversation_id,omitempty"`
-	HistoryWindowSize *int                   `json:"history_window_size,omitempty"`
+	HistoryWindowSize *int                   `json:"history_window_size,omitempty"` // deprecated: accepted for compatibility, LLM node conversation_history controls history
 	Files             []interface{}          `json:"files,omitempty"`
 }
 
@@ -222,12 +222,11 @@ func (h *ExternalWorkflowHandler) RunChatWorkflow(c *gin.Context) {
 
 	// Convert to internal advanced chat request format
 	internalReq := &dto.AdvancedChatDraftWorkflowRunRequest{
-		Query:             req.Query,
-		Inputs:            req.Inputs,
-		ResponseMode:      req.ResponseMode,
-		UserID:            req.User,
-		ConversationID:    req.ConversationID,
-		HistoryWindowSize: req.HistoryWindowSize,
+		Query:          req.Query,
+		Inputs:         req.Inputs,
+		ResponseMode:   req.ResponseMode,
+		UserID:         req.User,
+		ConversationID: req.ConversationID,
 	}
 
 	// Convert files if present

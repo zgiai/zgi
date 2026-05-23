@@ -27,6 +27,13 @@ import { useRouter, usePathname } from 'next/navigation';
 import { useAuthStore } from '@/store/auth-store';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import dynamic from 'next/dynamic';
+import {
+  calculateFileHash,
+  getExistingFileKeys,
+  getFileFallbackKey,
+  getUploadedFileKeys,
+  hasAnyFileKey,
+} from './file-dedup';
 
 const FileSelectorDialog = dynamic(() => import('@/components/files/file-selector-dialog'), {
   ssr: false,
@@ -83,6 +90,7 @@ export interface AutoFileUploadRef {
 interface UploadItem {
   id: string;
   file: File;
+  contentHash?: string;
   progress: number; // 0-100
   status: 'pending' | 'uploading' | 'success' | 'error';
   serverFile?: UploadedFile;
@@ -129,35 +137,49 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
     const [isLoginDialogOpen, setIsLoginDialogOpen] = useState(false);
     const inputAccept = buildFileInputAcceptAttribute(acceptExt);
 
-    const handleSystemSelectConfirm = useCallback((files: FileItem[]) => {
-      const newItems: UploadItem[] = files.map(file => ({
-        id: file.id,
-        file: new File([], file.name, { type: file.mime_type }),
-        progress: 100,
-        status: 'success' as const,
-        serverFile: {
-          id: file.id,
-          name: file.name,
-          size: file.size,
-          extension: file.extension,
-          mime_type: file.mime_type,
-          hash: file.hash,
-          created_by: file.created_by,
-          created_at: file.created_at,
-          url: file.source_url,
-        },
-      }));
+    const handleSystemSelectConfirm = useCallback(
+      (files: FileItem[]) => {
+        const existingKeys = getExistingFileKeys(items);
+        const uniqueNewItems: UploadItem[] = [];
 
-      setItems(prev => {
-        const existingIds = new Set(
-          prev.map(p => p.serverFile?.id).filter((id): id is string => !!id)
-        );
-        const uniqueNewItems = newItems.filter(
-          item => item.serverFile?.id && !existingIds.has(item.serverFile.id)
-        );
-        return [...prev, ...uniqueNewItems];
-      });
-    }, []);
+        files.forEach(file => {
+          const serverFile: UploadedFile = {
+            id: file.id,
+            name: file.name,
+            size: file.size,
+            extension: file.extension,
+            mime_type: file.mime_type,
+            hash: file.hash,
+            created_by: file.created_by,
+            created_at: file.created_at,
+            url: file.source_url,
+          };
+          const keys = getUploadedFileKeys(serverFile);
+
+          if (hasAnyFileKey(existingKeys, keys)) {
+            toast.info(t('fileUpload.duplicateFile', { file: file.name }));
+            return;
+          }
+
+          keys.forEach(key => existingKeys.add(key));
+          uniqueNewItems.push({
+            id: file.id,
+            file: new File([], file.name, { type: file.mime_type }),
+            contentHash: file.hash,
+            progress: 100,
+            status: 'success' as const,
+            serverFile,
+          });
+        });
+
+        if (!uniqueNewItems.length) {
+          return;
+        }
+
+        setItems(prev => [...prev, ...uniqueNewItems]);
+      },
+      [items, t]
+    );
 
     // Keep latest onChange in ref to avoid effect dependency loop
     const onChangeRef = useRef<typeof onChange>();
@@ -193,7 +215,7 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
           setItems([]);
         },
       }),
-      [items, folderId, workspaceId]
+      [items]
     );
 
     // Initialize/sync items from external value in controlled mode without dropping in-flight uploads
@@ -317,71 +339,9 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
       [acceptExt, maxSizeMB, t]
     );
 
-    const enqueueFiles = useCallback(
-      (files: FileList | File[]) => {
-        const currentCount = items.length;
-
-        if (currentCount >= maxCount) {
-          toast.error(t('fileUpload.exceedCount', { max: maxCount }));
-          return;
-        }
-
-        const arr = Array.from(files);
-
-        // Check if trying to add too many files
-        const availableSlots = maxCount - currentCount;
-        const filesToProcess = arr.slice(0, availableSlots);
-
-        if (arr.length > availableSlots) {
-          toast.error(t('fileUpload.exceedCount', { max: maxCount }));
-        }
-
-        // Process all files, including invalid ones
-        const newItems: UploadItem[] = filesToProcess.map(file => {
-          const validation = validateFile(file);
-
-          if (!validation.isValid) {
-            const errorMsg = validation.errorMsg ?? t('fileUpload.error');
-            toast.error(
-              t('fileUpload.invalidFileToast', {
-                file: file.name,
-                reason: errorMsg,
-              })
-            );
-            // Create item with error status immediately
-            return {
-              id: genId(),
-              file,
-              progress: 0,
-              status: 'error' as const,
-              errorMsg,
-            };
-          }
-
-          // Create valid item for upload
-          return {
-            id: genId(),
-            file,
-            progress: 0,
-            status: 'pending' as const,
-          };
-        });
-
-        if (!newItems.length) {
-          return;
-        }
-
-        setItems(prev => [...prev, ...newItems]);
-
-        // Only start upload for valid files
-        newItems.filter(item => item.status === 'pending').forEach(startUpload);
-      },
-      [items, maxCount, validateFile, t]
-    );
-
     /* ------------------------------- uploading ------------------------------- */
 
-    const startUpload = (item: UploadItem) => {
+    const startUpload = useCallback((item: UploadItem) => {
       setItems(prev => prev.map(it => (it.id === item.id ? { ...it, status: 'uploading' } : it)));
 
       uploadService
@@ -423,7 +383,80 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
             )
           );
         });
-    };
+    }, [folderId, isTemporary, workspaceId]);
+
+    const enqueueFiles = useCallback(
+      async (files: FileList | File[]) => {
+        const currentCount = items.length;
+
+        if (currentCount >= maxCount) {
+          toast.error(t('fileUpload.exceedCount', { max: maxCount }));
+          return;
+        }
+
+        const arr = Array.from(files);
+
+        // Check if trying to add too many files
+        const availableSlots = maxCount - currentCount;
+        const filesToProcess = arr.slice(0, availableSlots);
+
+        if (arr.length > availableSlots) {
+          toast.error(t('fileUpload.exceedCount', { max: maxCount }));
+        }
+
+        const existingKeys = getExistingFileKeys(items);
+        const newItems: UploadItem[] = [];
+
+        for (const file of filesToProcess) {
+          const validation = validateFile(file);
+
+          if (!validation.isValid) {
+            const errorMsg = validation.errorMsg ?? t('fileUpload.error');
+            toast.error(
+              t('fileUpload.invalidFileToast', {
+                file: file.name,
+                reason: errorMsg,
+              })
+            );
+            // Create item with error status immediately
+            newItems.push({
+              id: genId(),
+              file,
+              progress: 0,
+              status: 'error' as const,
+              errorMsg,
+            });
+            continue;
+          }
+
+          const contentHash = await calculateFileHash(file);
+          const duplicateKeys = [`hash:${contentHash}`, `local:${getFileFallbackKey(file)}`];
+          if (hasAnyFileKey(existingKeys, duplicateKeys)) {
+            toast.info(t('fileUpload.duplicateFile', { file: file.name }));
+            continue;
+          }
+
+          duplicateKeys.forEach(key => existingKeys.add(key));
+          newItems.push({
+            id: genId(),
+            file,
+            contentHash,
+            progress: 0,
+            status: 'pending' as const,
+          });
+        }
+
+        if (!newItems.length) {
+          return;
+        }
+
+        setItems(prev => [...prev, ...newItems]);
+
+        // Only start upload for valid files
+        newItems.filter(item => item.status === 'pending').forEach(startUpload);
+      },
+      [items, maxCount, startUpload, validateFile, t]
+    );
 
     const removeItem = (id: string) => {
       setItems(prev => {

@@ -63,7 +63,7 @@ func (h *WorkflowHandler) RunAdvancedChatDraftWorkflow(c *gin.Context) {
 		return
 	}
 
-	if err := h.updateAgentWorkflowConfig(c.Request.Context(), appID, req.ConversationID, req.HistoryWindowSize, req.Inputs); err != nil {
+	if err := h.updateAgentWorkflowConfig(c.Request.Context(), appID, req.ConversationID, req.Inputs); err != nil {
 		logger.ErrorContext(c.Request.Context(), "failed to update agent workflow config", "agent_id", appID, err)
 	}
 
@@ -95,20 +95,6 @@ func (h *WorkflowHandler) RunAdvancedChatDraftWorkflow(c *gin.Context) {
 			)
 		}
 
-		conversationHistory, err := h.loadConversationHistory(req.ConversationID, req.HistoryWindowSize)
-		if err == nil {
-			draftReq.Inputs["sys.conversation_history"] = conversationHistory
-			logger.DebugContext(c.Request.Context(), "advanced chat draft loaded conversation history",
-				zap.String("conversation_id", req.ConversationID),
-				zap.Int("history_messages_count", len(conversationHistory)),
-				zap.Any("history_window_size", req.HistoryWindowSize),
-			)
-		} else {
-			logger.WarnContext(c.Request.Context(), "advanced chat draft failed to load conversation history",
-				err,
-				zap.String("conversation_id", req.ConversationID),
-			)
-		}
 	} else {
 		draftReq.Inputs["sys.parent_message_id"] = ""
 		logger.DebugContext(c.Request.Context(), "advanced chat draft starting new conversation")
@@ -220,13 +206,12 @@ func (h *WorkflowHandler) RunAdvancedChatWorkflow(c *gin.Context) {
 
 		// Convert API request to internal format
 		req = dto.AdvancedChatDraftWorkflowRunRequest{
-			Query:             apiReq.Query,
-			Inputs:            apiReq.Inputs,
-			ResponseMode:      "streaming", // Force streaming for API calls
-			UserID:            apiReq.User,
-			ConversationID:    apiReq.ConversationID,
-			HistoryWindowSize: apiReq.HistoryWindowSize,
-			Files:             files,
+			Query:          apiReq.Query,
+			Inputs:         apiReq.Inputs,
+			ResponseMode:   "streaming", // Force streaming for API calls
+			UserID:         apiReq.User,
+			ConversationID: apiReq.ConversationID,
+			Files:          files,
 		}
 
 		logger.Info("API Key call converted to internal format", "originalResponseMode", apiReq.ResponseMode, "forcedResponseMode", req.ResponseMode)
@@ -299,20 +284,6 @@ func (h *WorkflowHandler) RunAdvancedChatWorkflow(c *gin.Context) {
 				)
 			}
 
-			conversationHistory, err := h.loadConversationHistory(req.ConversationID, req.HistoryWindowSize)
-			if err == nil {
-				draftReq.Inputs["sys.conversation_history"] = conversationHistory
-				logger.DebugContext(ctx, "advanced chat loaded conversation history",
-					zap.String("conversation_id", req.ConversationID),
-					zap.Int("history_messages_count", len(conversationHistory)),
-					zap.Any("history_window_size", req.HistoryWindowSize),
-				)
-			} else {
-				logger.WarnContext(ctx, "advanced chat failed to load conversation history",
-					err,
-					zap.String("conversation_id", req.ConversationID),
-				)
-			}
 		} else {
 			draftReq.Inputs["sys.parent_message_id"] = ""
 			logger.DebugContext(ctx, "advanced chat starting new conversation")

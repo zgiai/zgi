@@ -100,6 +100,11 @@ func (h *WorkflowHandler) createConversationRecordWithParams(workspaceID, appID,
 }
 
 func (h *WorkflowHandler) loadConversationHistory(conversationID string, maxRounds *int) ([]map[string]interface{}, error) {
+	if maxRounds != nil && *maxRounds == 0 {
+		logger.Debug("conversation history window is zero", zap.String("conversation_id", conversationID))
+		return []map[string]interface{}{}, nil
+	}
+
 	messages, err := h.advancedChatHandler.GetConversationMessages(uuid.MustParse(conversationID))
 	if err != nil {
 		return nil, err
@@ -125,10 +130,7 @@ func (h *WorkflowHandler) loadConversationHistory(conversationID string, maxRoun
 	}
 
 	if maxRounds != nil {
-		if *maxRounds == 0 {
-			logger.Debug("conversation history window is zero", zap.String("conversation_id", conversationID))
-			return []map[string]interface{}{}, nil
-		} else if *maxRounds > 0 {
+		if *maxRounds > 0 {
 			maxMessages := (*maxRounds) * 2
 			if len(history) > maxMessages {
 				history = history[len(history)-maxMessages:]
@@ -161,8 +163,9 @@ func (h *WorkflowHandler) getLatestMessageID(conversationID string) (string, err
 	return messages[len(messages)-1].ID.String(), nil
 }
 
-// updateAgentWorkflowConfig updates the workflow_config for an agent during debugging
-func (h *WorkflowHandler) updateAgentWorkflowConfig(ctx context.Context, agentID, conversationID string, historyWindowSize *int, inputs map[string]interface{}) error {
+// updateAgentWorkflowConfig updates the workflow_config for an agent during debugging.
+// Request-level history_window_size is intentionally ignored; LLM nodes own history settings.
+func (h *WorkflowHandler) updateAgentWorkflowConfig(ctx context.Context, agentID, conversationID string, inputs map[string]interface{}) error {
 	// Get workflow service with agents repository
 	ws, ok := h.workflowService.(*WorkflowService)
 	if !ok || ws.agentsRepo == nil {
@@ -187,10 +190,7 @@ func (h *WorkflowHandler) updateAgentWorkflowConfig(ctx context.Context, agentID
 		workflowConfig = make(map[string]interface{})
 	}
 
-	// Update history_window_size if provided
-	if historyWindowSize != nil {
-		workflowConfig["history_window_size"] = *historyWindowSize
-	} else if _, exists := workflowConfig["history_window_size"]; !exists {
+	if _, exists := workflowConfig["history_window_size"]; !exists {
 		workflowConfig["history_window_size"] = 10 // default value
 	}
 
@@ -234,6 +234,6 @@ func (h *WorkflowHandler) updateAgentWorkflowConfig(ctx context.Context, agentID
 		return fmt.Errorf("failed to update agent workflow_config: %w", err)
 	}
 
-	logger.Info("Updated agent workflow_config", "agentID", agentID, "conversationID", conversationID, "historyWindowSize", historyWindowSize)
+	logger.Info("Updated agent workflow_config", "agentID", agentID, "conversationID", conversationID)
 	return nil
 }

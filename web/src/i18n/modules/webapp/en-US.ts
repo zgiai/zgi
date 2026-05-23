@@ -197,6 +197,17 @@ const messages = {
           error: 'Error',
         },
       },
+      agentic: {
+        showProcess: 'Show process',
+        hideProcess: 'Hide process',
+        loadingSkill: 'Loading {skill}',
+        loadedSkill: '{skill} loaded',
+        loadFailed: '{skill} load failed',
+        referenceRead: 'Read {skill} reference {path}',
+        callingTool: 'Calling {skill} {tool}',
+        toolSucceeded: '{skill} {tool} completed',
+        toolFailed: '{skill} {tool} failed',
+      },
     },
     attachments: {
       upload: 'Upload files',

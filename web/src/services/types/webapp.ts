@@ -64,6 +64,7 @@ export interface WebAppVariable {
   type: WebAppInputVarType;
   variable: string;
   label: string;
+  description?: string;
   required: boolean;
   max_length?: number;
   default?: string | boolean;

@@ -1611,12 +1611,6 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
     retriever_resource: wfFeatures.retriever_resource,
   };
 
-  const computedHistoryWindowSize = useMemo<number>(() => {
-    const conv = wfFeatures?.conversation_history;
-    if (!conv || !conv.enabled) return 0;
-    const n = typeof conv.history_window_size === 'number' ? conv.history_window_size : 1;
-    return Math.max(1, Math.min(50, Math.floor(n)));
-  }, [wfFeatures]);
   const openingGuide = useMemo(() => getOpeningGuide(wfFeatures), [wfFeatures]);
   const suggestedQuestions = useMemo(
     () =>
@@ -1639,7 +1633,6 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
       query: string;
       files?: ChatAttachment[];
       inputs: Record<string, unknown>;
-      history_window_size?: number;
     };
   } | null>(null);
 
@@ -1712,7 +1705,6 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
         query: string;
         files?: ChatAttachment[];
         inputs: Record<string, unknown>;
-        history_window_size?: number;
       }
     ) => {
       if (!chatConv) {
@@ -1730,7 +1722,6 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
         const payload: {
           query: string;
           conversation_id?: string;
-          history_window_size?: number;
           files?: ChatAttachment[];
           inputs: Record<string, unknown>;
         } = {
@@ -1739,9 +1730,6 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
           files: userInput.files,
           inputs: userInput.inputs ?? {},
         };
-        if (typeof userInput.history_window_size === 'number') {
-          payload.history_window_size = userInput.history_window_size;
-        }
 
         const activeQuestionAnswerPrompt = questionAnswerPrompt;
         const isQuestionAnswerResume = Boolean(activeQuestionAnswerPrompt);
@@ -1858,7 +1846,6 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
         query: string;
         files?: ChatAttachment[];
         inputs: Record<string, unknown>;
-        history_window_size?: number;
       }
     ) => {
       if (isConversationPaused && !questionAnswerPrompt) return;
@@ -1978,6 +1965,7 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
       JSON.stringify(
         startVariables.map(v => ({
           variable: v.variable,
+          description: v.description ?? undefined,
           type: v.type,
           required: Boolean(v.required),
           options: v.options ?? [],
@@ -2076,7 +2064,6 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
                 ) : null)
               }
               inputReplacement={approvalInputReplacement}
-              historyWindowSize={computedHistoryWindowSize}
               sendDisabled={Boolean(
                 isStarting ||
                   (isConversationPaused && !questionAnswerPrompt) ||

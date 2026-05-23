@@ -398,6 +398,9 @@ func (h *Handler) RegenerateMessage(c *gin.Context) {
 			writeChatStopped(c, prepared)
 			return
 		}
+		if aichatservice.IsFinalizedStreamError(err) {
+			return
+		}
 		writeChatError(c, prepared, err)
 		return
 	}
@@ -433,6 +436,9 @@ func (h *Handler) Chat(c *gin.Context) {
 	if err != nil {
 		if errors.Is(err, aichatservice.ErrMessageStopped) {
 			writeChatStopped(c, prepared)
+			return
+		}
+		if aichatservice.IsFinalizedStreamError(err) {
 			return
 		}
 		writeChatError(c, prepared, err)

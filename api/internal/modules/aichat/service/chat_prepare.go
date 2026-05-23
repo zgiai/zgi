@@ -307,6 +307,13 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 				messages = append(messages, adapter.Message{Role: "assistant", Content: item.Answer})
 			}
 		}
+		if recentExecutionContext, recentExecutionMetadata := buildRecentExecutionContextMessage(branch); recentExecutionContext != nil {
+			messages = append(messages, *recentExecutionContext)
+			if contextMetadata == nil {
+				contextMetadata = map[string]interface{}{}
+			}
+			mergeRecentExecutionContextMetadata(contextMetadata, recentExecutionMetadata)
+		}
 	}
 	messages = append(messages, adapter.Message{Role: "user", Content: currentContent})
 	return &contextBudgetResult{Messages: messages, Metadata: contextMetadata}, nil
