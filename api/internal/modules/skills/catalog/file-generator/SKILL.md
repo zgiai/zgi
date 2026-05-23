@@ -7,7 +7,7 @@ provider_id: file_generator
 runtime_type: tool
 tools:
   - generate_file
-max_calls_per_turn: 3
+max_calls_per_turn: 5
 timeout_seconds: 5
 display:
   icon: file-plus

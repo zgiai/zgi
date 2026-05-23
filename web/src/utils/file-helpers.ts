@@ -113,7 +113,14 @@ export function isOriginalPreviewText(extension?: string | null): boolean {
   return ORIGINAL_PREVIEW_TEXT_EXTENSIONS.includes(extension.toLowerCase().replace(/^\./, ''));
 }
 
-export type OriginalPreviewKind = 'image' | 'pdf' | 'browser' | 'html' | 'office' | 'unsupported';
+export type OriginalPreviewKind =
+  | 'image'
+  | 'pdf'
+  | 'browser'
+  | 'html'
+  | 'csv'
+  | 'office'
+  | 'unsupported';
 
 /**
  * @util Resolve the browser preview renderer kind for an original file.
@@ -131,6 +138,12 @@ export function getOriginalPreviewKind(
   if (normalizedMimeType === 'application/pdf' || normalizedExtension === 'pdf') return 'pdf';
   if (normalizedMimeType === 'text/html' || ['html', 'htm'].includes(normalizedExtension)) {
     return 'html';
+  }
+  if (
+    normalizedExtension === 'csv' ||
+    ['application/csv', 'text/csv'].includes(normalizedMimeType)
+  ) {
+    return 'csv';
   }
   if (
     ORIGINAL_PREVIEW_TEXT_EXTENSIONS.includes(normalizedExtension) ||

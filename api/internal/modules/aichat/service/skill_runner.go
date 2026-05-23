@@ -12,9 +12,9 @@ import (
 )
 
 const (
-	defaultMaxSkillPlanningRounds       = 12
-	defaultMaxSkillStepsPerTurn         = 24
-	defaultMaxBusinessToolCallsPerSkill = 6
+	defaultMaxSkillPlanningRounds       = 100
+	defaultMaxSkillStepsPerTurn         = 320
+	defaultMaxBusinessToolCallsPerSkill = 100
 )
 
 type skillStepResult struct {
@@ -337,11 +337,11 @@ func (s *service) handleCallSkillTool(
 		trace := failedSkillTrace("tool_call", toolName, err)
 		trace.SkillID = skillID
 		trace.Arguments = argumentSummary
-		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "fix the tool_name or arguments and retry")), true, true)
+		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "fix the tool_name or arguments and retry")), true, false)
 	}
 	invocation.Trace.Arguments = argumentSummary
 	if err != nil {
-		return recoverableSkillStep(invocation.Trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "fix the tool arguments based on the error and retry")), true, true)
+		return recoverableSkillStep(invocation.Trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "fix the tool arguments based on the error and retry")), true, false)
 	}
 	logger.DebugContext(ctx, "aichat skill tool completed",
 		"conversation_id", prepared.Conversation.ID.String(),

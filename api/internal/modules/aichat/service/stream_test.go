@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +18,7 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
+	"github.com/zgiai/zgi/api/internal/modules/tools/builtin/calculator"
 )
 
 func TestFinalizePreparedErrorSetsFailedMessageAsCurrentLeaf(t *testing.T) {
@@ -272,6 +275,117 @@ Write concise briefs.
 	}
 	if fakeLLM.appChatCalls != 2 {
 		t.Fatalf("AppChat calls = %d, want 2", fakeLLM.appChatCalls)
+	}
+}
+
+func TestRunPreparedSkillStreamCountsOnlySuccessfulSkillToolCalls(t *testing.T) {
+	catalogDir := t.TempDir()
+	writeTestSkill(t, catalogDir, "limited-calculator", `---
+name: limited-calculator
+description: Calculate with a low per-turn success limit.
+when_to_use: Use when testing tool call limits.
+provider_type: builtin
+provider_id: calculator
+runtime_type: tool
+tools:
+  - evaluate_expression
+max_calls_per_turn: 5
+---
+
+# Limited Calculator
+
+Use the calculator tool.
+`)
+	toolCalls := []adapter.ToolCall{
+		testSkillToolCall("call_bad", "limited-calculator", "evaluate_expression", map[string]interface{}{
+			"expression": "1/",
+		}),
+	}
+	for i := 1; i <= 5; i++ {
+		toolCalls = append(toolCalls, testSkillToolCall(
+			fmt.Sprintf("call_ok_%d", i),
+			"limited-calculator",
+			"evaluate_expression",
+			map[string]interface{}{"expression": fmt.Sprintf("%d+1", i)},
+		))
+	}
+	fakeLLM := &fakeAgenticLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_load",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolLoadSkill,
+								Arguments: `{"skill_id":"limited-calculator"}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role:      "assistant",
+						ToolCalls: toolCalls,
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{Role: "assistant", Content: "done"},
+				}},
+			},
+		},
+	}
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(calculator.NewProvider()); err != nil {
+		t.Fatalf("register calculator provider: %v", err)
+	}
+	svc := &service{
+		repos: &repository.Repositories{
+			Message:     &recordingMessageRepository{},
+			CustomSkill: &fakeCustomSkillRepository{items: map[string]*aichatmodel.CustomSkill{}},
+		},
+		llmClient:    fakeLLM,
+		events:       newStreamEventStore(nil),
+		skillRuntime: skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir),
+	}
+	prepared := &PreparedChat{
+		Conversation: &aichatmodel.Conversation{
+			ID:             uuid.New(),
+			OrganizationID: uuid.New(),
+			AccountID:      uuid.New(),
+		},
+		Message: &aichatmodel.Message{
+			ID:       uuid.New(),
+			Metadata: map[string]interface{}{},
+		},
+		LLMRequest: &adapter.ChatRequest{
+			Messages: []adapter.Message{{Role: "user", Content: "calculate several expressions"}},
+		},
+		Scope: Scope{
+			OrganizationID: uuid.New(),
+			AccountID:      uuid.New(),
+		},
+		parts: &chatRequestParts{
+			SkillMode: skillModeAuto,
+			SkillIDs:  []string{"limited-calculator"},
+		},
+	}
+
+	answer, _, err := svc.runPreparedSkillStream(context.Background(), context.Background(), prepared, nil, nil)
+	if err != nil {
+		t.Fatalf("runPreparedSkillStream() error = %v, want failed tool attempt not to consume success limit", err)
+	}
+	if answer != "done" {
+		t.Fatalf("answer = %q, want done", answer)
+	}
+	if fakeLLM.appChatCalls != 3 {
+		t.Fatalf("AppChat calls = %d, want 3", fakeLLM.appChatCalls)
 	}
 }
 
@@ -861,6 +975,22 @@ func writeTestSkill(t *testing.T, catalogDir string, skillID string, content str
 	}
 	if err := os.WriteFile(filepath.Join(root, "SKILL.md"), []byte(content), 0o644); err != nil {
 		t.Fatalf("write SKILL.md: %v", err)
+	}
+}
+
+func testSkillToolCall(callID string, skillID string, toolName string, arguments map[string]interface{}) adapter.ToolCall {
+	payload, _ := json.Marshal(map[string]interface{}{
+		"skill_id":  skillID,
+		"tool_name": toolName,
+		"arguments": arguments,
+	})
+	return adapter.ToolCall{
+		ID:   callID,
+		Type: "function",
+		Function: adapter.FunctionCall{
+			Name:      skills.MetaToolCallSkillTool,
+			Arguments: string(payload),
+		},
 	}
 }
 

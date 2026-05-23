@@ -75,6 +75,17 @@ func TestRenderContentGeneratesValidOfficeAndPDF(t *testing.T) {
 	t.Run("docx", func(t *testing.T) {
 		data, err := renderContent("Hello\n中文", "docx", "Report")
 		require.NoError(t, err)
+		requireZipEntries(t, data,
+			"[Content_Types].xml",
+			"_rels/.rels",
+			"docProps/app.xml",
+			"docProps/core.xml",
+			"word/_rels/document.xml.rels",
+			"word/document.xml",
+			"word/fontTable.xml",
+			"word/styles.xml",
+			"word/theme/theme1.xml",
+		)
 		requireZipEntryContains(t, data, "word/document.xml", "Hello")
 		requireZipEntryContains(t, data, "word/document.xml", "中文")
 	})
@@ -292,4 +303,26 @@ func requireZipEntryContains(t *testing.T, data []byte, entryName string, want s
 		names = append(names, file.Name)
 	}
 	require.Failf(t, "missing zip entry", "entry %s not found in %s", entryName, strings.Join(names, ", "))
+}
+
+func requireZipEntries(t *testing.T, data []byte, entryNames ...string) {
+	t.Helper()
+
+	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	require.NoError(t, err)
+
+	entries := make(map[string]struct{}, len(reader.File))
+	for _, file := range reader.File {
+		entries[file.Name] = struct{}{}
+	}
+
+	for _, entryName := range entryNames {
+		if _, ok := entries[entryName]; !ok {
+			names := make([]string, 0, len(reader.File))
+			for _, file := range reader.File {
+				names = append(names, file.Name)
+			}
+			require.Failf(t, "missing zip entry", "entry %s not found in %s", entryName, strings.Join(names, ", "))
+		}
+	}
 }

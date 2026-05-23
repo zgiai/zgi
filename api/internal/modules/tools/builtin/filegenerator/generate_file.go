@@ -309,7 +309,7 @@ func renderContent(content string, format string, title string) ([]byte, error) 
 }
 
 func renderDocx(content string) ([]byte, error) {
-	doc := docx.New()
+	doc := docx.New().WithDefaultTheme()
 	for _, line := range splitDocumentLines(content) {
 		doc.AddParagraph().AddText(line)
 	}

@@ -9,6 +9,9 @@ import {
   FileText,
   Image as ImageIcon,
   Loader2,
+  RotateCcw,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 import { useT } from '@/i18n';
 import { Button } from '@/components/ui/button';
@@ -32,6 +35,12 @@ import { cn } from '@/lib/utils';
 const maxOfficePreviewBytes = 10 * 1024 * 1024;
 const maxSpreadsheetPreviewRows = 200;
 const maxSpreadsheetPreviewColumns = 100;
+const maxCsvPreviewRows = 500;
+const maxCsvPreviewColumns = 100;
+const defaultDocxPreviewZoom = 1.15;
+const minDocxPreviewZoom = 0.75;
+const maxDocxPreviewZoom = 1.8;
+const docxPreviewZoomStep = 0.1;
 
 export interface UniversalFilePreviewDescriptor {
   id?: string;
@@ -71,17 +80,43 @@ export function UniversalFilePreviewDialog({
   isDownloading = false,
 }: UniversalFilePreviewDialogProps) {
   const t = useT('files');
-  const resolvedPreviewUrl = previewUrl || file?.previewUrl || '';
-  const downloadUrl = file?.downloadUrl || resolvedPreviewUrl;
-  const isSupported = isOriginalPreviewSupported(file?.extension, file?.mimeType);
-  const extension = file?.extension?.replace(/^\./, '').toUpperCase() || '';
-  const title = file?.name || t('preview.title');
-  const isImage = isOriginalPreviewImage(file?.extension, file?.mimeType);
-  const isPdf = isOriginalPreviewPdf(file?.extension, file?.mimeType);
-  const previewKind = getOriginalPreviewKind(file?.extension, file?.mimeType);
+  const [previewSession, setPreviewSession] = useState<{
+    file: UniversalFilePreviewDescriptor;
+    previewUrl: string;
+    downloadUrl: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      setPreviewSession(null);
+      return;
+    }
+    if (!file) return;
+
+    setPreviewSession(current => {
+      if (current) return current;
+
+      const sessionPreviewUrl = previewUrl || file.previewUrl || '';
+      return {
+        file,
+        previewUrl: sessionPreviewUrl,
+        downloadUrl: file.downloadUrl || sessionPreviewUrl,
+      };
+    });
+  }, [file, open, previewUrl]);
+
+  const activeFile = previewSession?.file ?? file;
+  const resolvedPreviewUrl = previewSession?.previewUrl ?? previewUrl ?? file?.previewUrl ?? '';
+  const downloadUrl = previewSession?.downloadUrl ?? file?.downloadUrl ?? resolvedPreviewUrl;
+  const isSupported = isOriginalPreviewSupported(activeFile?.extension, activeFile?.mimeType);
+  const extension = activeFile?.extension?.replace(/^\./, '').toUpperCase() || '';
+  const title = activeFile?.name || t('preview.title');
+  const isImage = isOriginalPreviewImage(activeFile?.extension, activeFile?.mimeType);
+  const isPdf = isOriginalPreviewPdf(activeFile?.extension, activeFile?.mimeType);
+  const previewKind = getOriginalPreviewKind(activeFile?.extension, activeFile?.mimeType);
 
   const renderPreview = () => {
-    if (!file) {
+    if (!activeFile) {
       return (
         <PreviewMessage
           icon={<AlertCircle className="h-5 w-5" />}
@@ -123,7 +158,7 @@ export function UniversalFilePreviewDialog({
         <div className="flex h-full min-h-0 items-center justify-center overflow-auto bg-muted/30 p-4">
           <img
             src={resolvedPreviewUrl}
-            alt={file.name}
+            alt={activeFile.name}
             className="max-h-full max-w-full object-contain"
           />
         </div>
@@ -131,14 +166,18 @@ export function UniversalFilePreviewDialog({
     }
 
     if (previewKind === 'office') {
-      return <OfficePreview file={file} previewUrl={resolvedPreviewUrl} />;
+      return <OfficePreview file={activeFile} previewUrl={resolvedPreviewUrl} />;
+    }
+
+    if (previewKind === 'csv') {
+      return <CsvPreview previewUrl={resolvedPreviewUrl} />;
     }
 
     if (isPdf || previewKind === 'browser' || previewKind === 'html') {
       return (
         <iframe
           src={resolvedPreviewUrl}
-          title={file.name}
+          title={activeFile.name}
           sandbox={
             previewKind === 'html'
               ? 'allow-downloads allow-forms allow-popups allow-scripts'
@@ -188,7 +227,7 @@ export function UniversalFilePreviewDialog({
           ) : null}
           {downloadUrl ? (
             <Button variant="outline" asChild>
-              <a href={downloadUrl} download={file?.name}>
+              <a href={downloadUrl} download={activeFile?.name}>
                 <Download className="mr-2 h-4 w-4" />
                 {t('actions.downloadFile')}
               </a>
@@ -243,23 +282,31 @@ function DocxPreview({ previewUrl }: { previewUrl: string }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [zoom, setZoom] = useState(defaultDocxPreviewZoom);
+  const loadErrorText = t('preview.loadError');
+
+  const updateZoom = (next: number) => {
+    setZoom(Math.min(maxDocxPreviewZoom, Math.max(minDocxPreviewZoom, Number(next.toFixed(2)))));
+  };
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
     let cancelled = false;
+    const abortController = new AbortController();
     setIsLoading(true);
     setError(null);
     container.innerHTML = '';
+    setZoom(defaultDocxPreviewZoom);
 
     const render = async () => {
       try {
         const [response, docxPreview] = await Promise.all([
-          fetch(previewUrl, { credentials: 'include' }),
+          fetch(previewUrl, { credentials: 'include', signal: abortController.signal }),
           import('docx-preview'),
         ]);
-        if (!response.ok) throw new Error(t('preview.loadError'));
+        if (!response.ok) throw new Error(loadErrorText);
 
         const blob = await response.blob();
         if (cancelled) return;
@@ -271,8 +318,9 @@ function DocxPreview({ previewUrl }: { previewUrl: string }) {
           ignoreHeight: false,
         });
       } catch (err) {
+        if (abortController.signal.aborted) return;
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : t('preview.loadError'));
+          setError(err instanceof Error ? err.message : loadErrorText);
         }
       } finally {
         if (!cancelled) setIsLoading(false);
@@ -282,8 +330,9 @@ function DocxPreview({ previewUrl }: { previewUrl: string }) {
     void render();
     return () => {
       cancelled = true;
+      abortController.abort();
     };
-  }, [previewUrl, t]);
+  }, [previewUrl, loadErrorText]);
 
   if (error) {
     return (
@@ -296,7 +345,50 @@ function DocxPreview({ previewUrl }: { previewUrl: string }) {
   }
 
   return (
-    <div className="relative h-full min-h-[60vh] overflow-auto bg-muted/30 p-4">
+    <div className="relative flex h-full min-h-[60vh] flex-col overflow-hidden bg-[#f5f6f8]">
+      <div className="flex min-h-12 items-center justify-center border-b bg-background/90 px-4">
+        <div className="inline-flex items-center gap-1 rounded-md border bg-background p-1 shadow-sm">
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            isIcon
+            aria-label="Zoom out"
+            title="Zoom out"
+            disabled={zoom <= minDocxPreviewZoom}
+            onClick={() => updateZoom(zoom - docxPreviewZoomStep)}
+          >
+            <ZoomOut className="h-3.5 w-3.5" />
+          </Button>
+          <div className="min-w-14 px-2 text-center text-xs font-medium text-muted-foreground">
+            {Math.round(zoom * 100)}%
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            isIcon
+            aria-label="Zoom in"
+            title="Zoom in"
+            disabled={zoom >= maxDocxPreviewZoom}
+            onClick={() => updateZoom(zoom + docxPreviewZoomStep)}
+          >
+            <ZoomIn className="h-3.5 w-3.5" />
+          </Button>
+          <div className="mx-1 h-5 w-px bg-border" />
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            isIcon
+            aria-label="Reset zoom"
+            title="Reset zoom"
+            onClick={() => updateZoom(defaultDocxPreviewZoom)}
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </div>
       {isLoading ? (
         <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/70">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -305,10 +397,28 @@ function DocxPreview({ previewUrl }: { previewUrl: string }) {
           </div>
         </div>
       ) : null}
-      <div
-        ref={containerRef}
-        className="mx-auto w-fit max-w-full overflow-auto rounded-md bg-background shadow-sm [&_.zgi-docx-preview-wrapper]:bg-transparent"
-      />
+      <div className="min-h-0 flex-1 overflow-auto px-6 py-8">
+        <div
+          className="mx-auto w-fit max-w-full origin-top"
+          style={{ zoom } as React.CSSProperties}
+        >
+          <div
+            ref={containerRef}
+            className={cn(
+              'mx-auto w-fit max-w-full',
+              '[&_.zgi-docx-preview-wrapper]:bg-transparent',
+              '[&_.zgi-docx-preview]:!m-0',
+              '[&_.zgi-docx-preview]:overflow-hidden',
+              '[&_.zgi-docx-preview]:rounded-[3px]',
+              '[&_.zgi-docx-preview]:border',
+              '[&_.zgi-docx-preview]:border-black/5',
+              '[&_.zgi-docx-preview]:bg-white',
+              '[&_.zgi-docx-preview]:shadow-[0_18px_45px_rgba(15,23,42,0.12),0_1px_3px_rgba(15,23,42,0.10)]',
+              '[&_.zgi-docx-preview+_.zgi-docx-preview]:mt-8'
+            )}
+          />
+        </div>
+      </div>
     </div>
   );
 }
@@ -336,25 +446,28 @@ function SpreadsheetPreview({ previewUrl }: { previewUrl: string }) {
   const [activeSheet, setActiveSheet] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const loadErrorText = t('preview.loadError');
+  const emptyWorkbookText = t('preview.emptyWorkbook');
 
   useEffect(() => {
     let cancelled = false;
+    const abortController = new AbortController();
     setIsLoading(true);
     setError(null);
 
     const load = async () => {
       try {
         const [response, jszip] = await Promise.all([
-          fetch(previewUrl, { credentials: 'include' }),
+          fetch(previewUrl, { credentials: 'include', signal: abortController.signal }),
           import('jszip'),
         ]);
-        if (!response.ok) throw new Error(t('preview.loadError'));
+        if (!response.ok) throw new Error(loadErrorText);
 
         const buffer = await response.arrayBuffer();
         const sheets = await readXlsxWorkbookPreview(buffer, jszip.default);
         const firstSheet = sheets[0];
         if (!cancelled) {
-          if (!firstSheet) throw new Error(t('preview.emptyWorkbook'));
+          if (!firstSheet) throw new Error(emptyWorkbookText);
 
           setActiveSheet(firstSheet.name);
           setState({
@@ -363,8 +476,9 @@ function SpreadsheetPreview({ previewUrl }: { previewUrl: string }) {
           });
         }
       } catch (err) {
+        if (abortController.signal.aborted) return;
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : t('preview.loadError'));
+          setError(err instanceof Error ? err.message : loadErrorText);
         }
       } finally {
         if (!cancelled) setIsLoading(false);
@@ -374,8 +488,9 @@ function SpreadsheetPreview({ previewUrl }: { previewUrl: string }) {
     void load();
     return () => {
       cancelled = true;
+      abortController.abort();
     };
-  }, [previewUrl, t]);
+  }, [previewUrl, loadErrorText, emptyWorkbookText]);
 
   const currentSheet = useMemo(
     () => state?.sheets.find(item => item.name === activeSheet) ?? state?.sheets[0],
@@ -476,6 +591,166 @@ function SpreadsheetPreview({ previewUrl }: { previewUrl: string }) {
       </div>
     </div>
   );
+}
+
+function CsvPreview({ previewUrl }: { previewUrl: string }) {
+  const t = useT('files');
+  const [rows, setRows] = useState<string[][] | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const loadErrorText = t('preview.loadError');
+
+  useEffect(() => {
+    let cancelled = false;
+    const abortController = new AbortController();
+    setIsLoading(true);
+    setError(null);
+
+    const load = async () => {
+      try {
+        const response = await fetch(previewUrl, {
+          credentials: 'include',
+          signal: abortController.signal,
+        });
+        if (!response.ok) throw new Error(loadErrorText);
+
+        const text = await response.text();
+        if (!cancelled) {
+          setRows(parseCsvPreviewRows(text));
+        }
+      } catch (err) {
+        if (abortController.signal.aborted) return;
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : loadErrorText);
+        }
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    };
+
+    void load();
+    return () => {
+      cancelled = true;
+      abortController.abort();
+    };
+  }, [previewUrl, loadErrorText]);
+
+  if (isLoading && !rows) {
+    return (
+      <PreviewMessage
+        icon={<Loader2 className="h-5 w-5 animate-spin" />}
+        title={t('preview.loading')}
+      />
+    );
+  }
+
+  if (error || !rows) {
+    return (
+      <PreviewMessage
+        icon={<AlertCircle className="h-5 w-5" />}
+        title={error || t('preview.loadError')}
+      />
+    );
+  }
+
+  const maxColumns = Math.min(
+    Math.max(0, ...rows.map(row => row.length)),
+    maxCsvPreviewColumns
+  );
+  const visibleRows = rows.slice(0, maxCsvPreviewRows);
+
+  return (
+    <div className="flex h-full min-h-[60vh] flex-col bg-background">
+      <div className="min-h-0 flex-1 overflow-auto p-3">
+        {visibleRows.length > 0 && maxColumns > 0 ? (
+          <table className="w-max border-collapse text-xs">
+            <tbody>
+              {visibleRows.map((row, rowIndex) => (
+                <tr key={`csv-row-${rowIndex}`} className={rowIndex === 0 ? 'bg-muted/60' : ''}>
+                  <th className="sticky left-0 z-10 h-8 w-12 min-w-12 border bg-muted/80 px-2 text-right font-medium text-muted-foreground">
+                    {rowIndex + 1}
+                  </th>
+                  {Array.from({ length: maxColumns }).map((_, columnIndex) => (
+                    <td
+                      key={`${rowIndex}-${columnIndex}`}
+                      className={cn(
+                        'h-8 min-w-28 max-w-72 border bg-background px-2 py-1 align-top',
+                        rowIndex === 0 ? 'font-medium text-foreground' : 'text-foreground'
+                      )}
+                    >
+                      <div className="max-h-24 overflow-hidden whitespace-pre-wrap break-words">
+                        {row[columnIndex] ?? ''}
+                      </div>
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <div className="flex h-full min-h-[360px] items-center justify-center text-sm text-muted-foreground">
+            {t('preview.emptySheet')}
+          </div>
+        )}
+        {rows.length > visibleRows.length ? (
+          <div className="mt-3 text-xs text-muted-foreground">
+            {t('preview.rowLimit', { count: visibleRows.length })}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function parseCsvPreviewRows(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = '';
+  let inQuotes = false;
+
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index];
+    const next = text[index + 1];
+
+    if (char === '"') {
+      if (inQuotes && next === '"') {
+        cell += '"';
+        index++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (char === ',' && !inQuotes) {
+      row.push(cell);
+      cell = '';
+      continue;
+    }
+
+    if ((char === '\n' || char === '\r') && !inQuotes) {
+      if (char === '\r' && next === '\n') index++;
+      row.push(cell);
+      if (row.some(value => value.trim() !== '')) {
+        rows.push(row.slice(0, maxCsvPreviewColumns));
+      }
+      row = [];
+      cell = '';
+      if (rows.length >= maxCsvPreviewRows + 1) break;
+      continue;
+    }
+
+    cell += char;
+  }
+
+  if (cell !== '' || row.length > 0) {
+    row.push(cell);
+    if (row.some(value => value.trim() !== '')) {
+      rows.push(row.slice(0, maxCsvPreviewColumns));
+    }
+  }
+
+  return rows;
 }
 
 async function readXlsxWorkbookPreview(
