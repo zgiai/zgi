@@ -5,7 +5,6 @@ import type JSZip from 'jszip';
 import {
   AlertCircle,
   Download,
-  ExternalLink,
   FileText,
   Image as ImageIcon,
   Loader2,
@@ -33,6 +32,10 @@ import {
 import { cn } from '@/lib/utils';
 
 const maxOfficePreviewBytes = 10 * 1024 * 1024;
+const maxOfficeZipEntries = 256;
+const maxOfficeZipUncompressedBytes = 50 * 1024 * 1024;
+const maxOfficeZipEntryBytes = 10 * 1024 * 1024;
+const maxOfficeXmlEntryBytes = 8 * 1024 * 1024;
 const maxSpreadsheetPreviewRows = 200;
 const maxSpreadsheetPreviewColumns = 100;
 const maxCsvPreviewRows = 500;
@@ -178,11 +181,8 @@ export function UniversalFilePreviewDialog({
         <iframe
           src={resolvedPreviewUrl}
           title={activeFile.name}
-          sandbox={
-            previewKind === 'html'
-              ? 'allow-downloads allow-forms allow-popups allow-scripts'
-              : undefined
-          }
+          sandbox={previewKind === 'html' ? '' : undefined}
+          referrerPolicy={previewKind === 'html' ? 'no-referrer' : undefined}
           className="h-full min-h-[60vh] w-full border-0 bg-background"
         />
       );
@@ -217,14 +217,6 @@ export function UniversalFilePreviewDialog({
         <DialogBody className="min-h-0 overflow-hidden p-0">{renderPreview()}</DialogBody>
 
         <DialogFooter className="border-t px-5 py-3">
-          {resolvedPreviewUrl ? (
-            <Button variant="outline" asChild>
-              <a href={resolvedPreviewUrl} target="_blank" rel="noreferrer">
-                <ExternalLink className="mr-2 h-4 w-4" />
-                {t('preview.openInNewTab')}
-              </a>
-            </Button>
-          ) : null}
           {downloadUrl ? (
             <Button variant="outline" asChild>
               <a href={downloadUrl} download={activeFile?.name}>
@@ -284,6 +276,7 @@ function DocxPreview({ previewUrl }: { previewUrl: string }) {
   const [error, setError] = useState<string | null>(null);
   const [zoom, setZoom] = useState(defaultDocxPreviewZoom);
   const loadErrorText = t('preview.loadError');
+  const officeTooLargeText = t('preview.officeTooLargeTitle');
 
   const updateZoom = (next: number) => {
     setZoom(Math.min(maxDocxPreviewZoom, Math.max(minDocxPreviewZoom, Number(next.toFixed(2)))));
@@ -302,15 +295,22 @@ function DocxPreview({ previewUrl }: { previewUrl: string }) {
 
     const render = async () => {
       try {
-        const [response, docxPreview] = await Promise.all([
+        const [response, docxPreview, jszip] = await Promise.all([
           fetch(previewUrl, { credentials: 'include', signal: abortController.signal }),
           import('docx-preview'),
+          import('jszip'),
         ]);
         if (!response.ok) throw new Error(loadErrorText);
 
-        const blob = await response.blob();
+        const buffer = await response.arrayBuffer();
+        await loadOfficeZipPreview(buffer, jszip.default, officeTooLargeText);
         if (cancelled) return;
 
+        const blob = new Blob([buffer], {
+          type:
+            response.headers.get('content-type') ||
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        });
         await docxPreview.renderAsync(blob, container, undefined, {
           className: 'zgi-docx-preview',
           inWrapper: false,
@@ -332,7 +332,7 @@ function DocxPreview({ previewUrl }: { previewUrl: string }) {
       cancelled = true;
       abortController.abort();
     };
-  }, [previewUrl, loadErrorText]);
+  }, [previewUrl, loadErrorText, officeTooLargeText]);
 
   if (error) {
     return (
@@ -448,6 +448,7 @@ function SpreadsheetPreview({ previewUrl }: { previewUrl: string }) {
   const [error, setError] = useState<string | null>(null);
   const loadErrorText = t('preview.loadError');
   const emptyWorkbookText = t('preview.emptyWorkbook');
+  const officeTooLargeText = t('preview.officeTooLargeTitle');
 
   useEffect(() => {
     let cancelled = false;
@@ -464,7 +465,7 @@ function SpreadsheetPreview({ previewUrl }: { previewUrl: string }) {
         if (!response.ok) throw new Error(loadErrorText);
 
         const buffer = await response.arrayBuffer();
-        const sheets = await readXlsxWorkbookPreview(buffer, jszip.default);
+        const sheets = await readXlsxWorkbookPreview(buffer, jszip.default, officeTooLargeText);
         const firstSheet = sheets[0];
         if (!cancelled) {
           if (!firstSheet) throw new Error(emptyWorkbookText);
@@ -490,7 +491,7 @@ function SpreadsheetPreview({ previewUrl }: { previewUrl: string }) {
       cancelled = true;
       abortController.abort();
     };
-  }, [previewUrl, loadErrorText, emptyWorkbookText]);
+  }, [previewUrl, loadErrorText, emptyWorkbookText, officeTooLargeText]);
 
   const currentSheet = useMemo(
     () => state?.sheets.find(item => item.name === activeSheet) ?? state?.sheets[0],
@@ -527,7 +528,7 @@ function SpreadsheetPreview({ previewUrl }: { previewUrl: string }) {
             type="button"
             className={cn(
               'h-8 shrink-0 rounded-md px-3 text-xs font-medium transition-colors',
-                (currentSheet?.name ?? activeSheet) === sheet.name
+              (currentSheet?.name ?? activeSheet) === sheet.name
                 ? 'bg-primary text-primary-foreground'
                 : 'bg-muted text-muted-foreground hover:text-foreground'
             )}
@@ -653,10 +654,7 @@ function CsvPreview({ previewUrl }: { previewUrl: string }) {
     );
   }
 
-  const maxColumns = Math.min(
-    Math.max(0, ...rows.map(row => row.length)),
-    maxCsvPreviewColumns
-  );
+  const maxColumns = Math.min(Math.max(0, ...rows.map(row => row.length)), maxCsvPreviewColumns);
   const visibleRows = rows.slice(0, maxCsvPreviewRows);
 
   return (
@@ -755,12 +753,13 @@ function parseCsvPreviewRows(text: string): string[][] {
 
 async function readXlsxWorkbookPreview(
   buffer: ArrayBuffer,
-  JSZipCtor: typeof JSZip
+  JSZipCtor: typeof JSZip,
+  limitErrorText: string
 ): Promise<SpreadsheetSheetPreview[]> {
-  const zip = await JSZipCtor.loadAsync(buffer);
-  const workbookXml = await readZipText(zip, 'xl/workbook.xml');
-  const workbookRelsXml = await readZipText(zip, 'xl/_rels/workbook.xml.rels');
-  const sharedStrings = await readSharedStrings(zip);
+  const zip = await loadOfficeZipPreview(buffer, JSZipCtor, limitErrorText);
+  const workbookXml = await readZipText(zip, 'xl/workbook.xml', limitErrorText);
+  const workbookRelsXml = await readZipText(zip, 'xl/_rels/workbook.xml.rels', limitErrorText);
+  const sharedStrings = await readSharedStrings(zip, limitErrorText);
 
   if (!workbookXml || !workbookRelsXml) return [];
 
@@ -786,7 +785,7 @@ async function readXlsxWorkbookPreview(
       const target = relationshipId ? relationshipTargets.get(relationshipId) : null;
       if (!target) return null;
 
-      const worksheetXml = await readZipText(zip, resolveWorkbookTarget(target));
+      const worksheetXml = await readZipText(zip, resolveWorkbookTarget(target), limitErrorText);
       if (!worksheetXml) return null;
       return readWorksheetPreview(name, worksheetXml, sharedStrings);
     })
@@ -795,8 +794,8 @@ async function readXlsxWorkbookPreview(
   return sheets.filter((sheet): sheet is SpreadsheetSheetPreview => sheet !== null);
 }
 
-async function readSharedStrings(zip: JSZip): Promise<string[]> {
-  const sharedStringsXml = await readZipText(zip, 'xl/sharedStrings.xml');
+async function readSharedStrings(zip: JSZip, limitErrorText: string): Promise<string[]> {
+  const sharedStringsXml = await readZipText(zip, 'xl/sharedStrings.xml', limitErrorText);
   if (!sharedStringsXml) return [];
 
   const sharedStringsDoc = parseXml(sharedStringsXml);
@@ -826,10 +825,7 @@ function readWorksheetPreview(
       const columnIndex = readColumnIndex(cellNode.getAttribute('r')) || cellIndex + 1;
       if (columnIndex > maxSpreadsheetPreviewColumns) return;
 
-      columnCount = Math.min(
-        Math.max(columnCount, columnIndex),
-        maxSpreadsheetPreviewColumns
-      );
+      columnCount = Math.min(Math.max(columnCount, columnIndex), maxSpreadsheetPreviewColumns);
       cells[columnIndex - 1] = readCellValue(cellNode, sharedStrings);
     });
 
@@ -876,8 +872,51 @@ function getSpreadsheetColumnLabel(index: number): string {
   return column;
 }
 
-async function readZipText(zip: JSZip, path: string): Promise<string | null> {
-  return (await zip.file(path)?.async('text')) ?? null;
+async function loadOfficeZipPreview(
+  buffer: ArrayBuffer,
+  JSZipCtor: typeof JSZip,
+  limitErrorText: string
+): Promise<JSZip> {
+  const zip = await JSZipCtor.loadAsync(buffer);
+  validateOfficeZipPreviewBudget(zip, limitErrorText);
+  return zip;
+}
+
+function validateOfficeZipPreviewBudget(zip: JSZip, limitErrorText: string) {
+  const entries = Object.values(zip.files).filter(entry => !entry.dir);
+  if (entries.length > maxOfficeZipEntries) throw new Error(limitErrorText);
+
+  let totalUncompressedSize = 0;
+  entries.forEach(entry => {
+    const size = getZipEntryUncompressedSize(entry);
+    if (size === null) return;
+
+    if (size > maxOfficeZipEntryBytes) throw new Error(limitErrorText);
+    totalUncompressedSize += size;
+  });
+  if (totalUncompressedSize > maxOfficeZipUncompressedBytes) throw new Error(limitErrorText);
+}
+
+async function readZipText(
+  zip: JSZip,
+  path: string,
+  limitErrorText: string
+): Promise<string | null> {
+  const entry = zip.file(path);
+  if (!entry) return null;
+
+  const size = getZipEntryUncompressedSize(entry);
+  if (size !== null && size > maxOfficeXmlEntryBytes) throw new Error(limitErrorText);
+
+  return entry.async('text');
+}
+
+function getZipEntryUncompressedSize(entry: JSZip.JSZipObject): number | null {
+  const maybeEntry = entry as JSZip.JSZipObject & {
+    _data?: { uncompressedSize?: number };
+  };
+  const size = maybeEntry._data?.uncompressedSize;
+  return typeof size === 'number' && Number.isFinite(size) ? size : null;
 }
 
 function parseXml(xml: string): XMLDocument {
@@ -895,7 +934,8 @@ function getDirectChildrenByLocalName(element: Element, localName: string): Elem
 function resolveWorkbookTarget(target: string): string {
   const path = target.startsWith('/') ? target.slice(1) : `xl/${target}`;
   const normalizedSegments: string[] = [];
-  path.replace(/\\/g, '/')
+  path
+    .replace(/\\/g, '/')
     .split('/')
     .forEach(segment => {
       if (!segment || segment === '.') return;

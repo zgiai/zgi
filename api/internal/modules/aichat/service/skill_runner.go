@@ -12,9 +12,11 @@ import (
 )
 
 const (
-	defaultMaxSkillPlanningRounds       = 100
-	defaultMaxSkillStepsPerTurn         = 320
-	defaultMaxBusinessToolCallsPerSkill = 100
+	defaultMaxSkillPlanningRounds            = 50
+	defaultMaxSkillStepsPerTurn              = 160
+	defaultMaxBusinessToolCallsPerSkill      = 20
+	defaultMaxRecoverableSkillFailures       = 20
+	defaultMaxConsecutiveRecoverableFailures = 5
 )
 
 type skillStepResult struct {
@@ -78,6 +80,8 @@ func (s *service) runPreparedSkillStream(
 
 	stepCount := 0
 	toolCallCount := 0
+	recoverableFailureCount := 0
+	consecutiveRecoverableFailures := 0
 	skillToolCallCounts := map[string]int{}
 	skillUsed := false
 	loadedSkills := map[string]struct{}{}
@@ -148,6 +152,19 @@ func (s *service) runPreparedSkillStream(
 			s.logSkillTrace(ctx, prepared, result.trace)
 			if result.recoverable {
 				s.emitSkillError(ctx, prepared, result.trace, onEvent)
+				recoverableFailureCount++
+				consecutiveRecoverableFailures++
+				if recoverableFailureCount > defaultMaxRecoverableSkillFailures ||
+					consecutiveRecoverableFailures > defaultMaxConsecutiveRecoverableFailures {
+					err := fmt.Errorf("%w: too many failed skill calls", ErrInvalidInput)
+					trace := failedSkillTrace(result.trace.Kind, result.trace.ToolName, err)
+					trace.SkillID = result.trace.SkillID
+					trace.Arguments = result.trace.Arguments
+					s.emitSkillError(ctx, prepared, trace, onEvent)
+					return answerBuilder.String(), usage, err
+				}
+			} else {
+				consecutiveRecoverableFailures = 0
 			}
 			if result.fatalErr != nil {
 				if !result.recoverable {

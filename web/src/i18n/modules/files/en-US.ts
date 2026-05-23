@@ -72,7 +72,7 @@ const messages = {
     openInNewTab: 'Open in New Tab',
     officeUnsupportedTitle: 'Preview is not available for this Office format',
     officeTooLargeTitle: 'This Office file is too large to preview',
-    officeFallback: 'Open the file in a new tab or download it to view the original document.',
+    officeFallback: 'Download the file to view the original document.',
     emptyWorkbook: 'The workbook has no sheets',
     emptySheet: 'This sheet has no visible rows',
     rowLimit: 'Showing the first {count} rows.',

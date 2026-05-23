@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	defaultMaxCallsPerTurn = 100
+	defaultMaxCallsPerTurn = 20
 	defaultTimeoutSeconds  = 5
 	defaultCatalogDir      = "internal/modules/skills/catalog"
 	defaultDisplayIcon     = "sparkles"

@@ -26,7 +26,7 @@ export const ORIGINAL_PREVIEW_TEXT_EXTENSIONS: readonly string[] = [
   'xml',
 ];
 
-export const ORIGINAL_PREVIEW_OFFICE_EXTENSIONS: readonly string[] = ['doc', 'docx', 'xls', 'xlsx'];
+export const ORIGINAL_PREVIEW_OFFICE_EXTENSIONS: readonly string[] = ['docx', 'xlsx'];
 
 export const ORIGINAL_PREVIEW_EXTENSIONS: readonly string[] = [
   'pdf',
