@@ -352,6 +352,9 @@ const Results: React.FC<ResultsProps> = ({
 
     const generatedFileLabel = locale.startsWith('zh') ? '生成文件' : 'Generated files';
     const downloadLabel = locale.startsWith('zh') ? '下载' : 'Download';
+    const downloadOnlyLabel = locale.startsWith('zh')
+      ? '外部链接仅支持下载'
+      : 'External links can be downloaded only';
 
     return (
       <div className="mb-3 space-y-2">
@@ -370,6 +373,7 @@ const Results: React.FC<ResultsProps> = ({
               <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                 {file.extension ? <span>.{file.extension}</span> : null}
                 {file.size ? <span>{formatFileSize(file.size)}</span> : null}
+                {!file.previewUrl ? <span>{downloadOnlyLabel}</span> : null}
               </div>
             </div>
             {file.previewUrl ? (

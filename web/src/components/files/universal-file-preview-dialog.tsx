@@ -152,7 +152,8 @@ export function UniversalFilePreviewDialog({
       return (
         <PreviewMessage
           icon={<AlertCircle className="h-5 w-5" />}
-          title={error || t('preview.loadError')}
+          title={error || t('preview.unavailableTitle')}
+          description={t('preview.downloadOnlyDescription')}
         />
       );
     }
@@ -177,7 +178,25 @@ export function UniversalFilePreviewDialog({
       return <CsvPreview previewUrl={resolvedPreviewUrl} />;
     }
 
-    if (isPdf || previewKind === 'browser' || previewKind === 'html') {
+    if (previewKind === 'html') {
+      return (
+        <div className="flex h-full min-h-[60vh] flex-col bg-background">
+          <div className="border-b bg-muted/30 px-4 py-3 text-xs text-muted-foreground">
+            <div className="font-medium text-foreground">{t('preview.htmlLimitedTitle')}</div>
+            <div className="mt-1">{t('preview.htmlLimitedDescription')}</div>
+          </div>
+          <iframe
+            src={resolvedPreviewUrl}
+            title={activeFile.name}
+            sandbox=""
+            referrerPolicy="no-referrer"
+            className="min-h-0 flex-1 border-0 bg-background"
+          />
+        </div>
+      );
+    }
+
+    if (isPdf || previewKind === 'browser') {
       return (
         <iframe
           src={resolvedPreviewUrl}
@@ -601,6 +620,7 @@ function CsvPreview({ previewUrl }: { previewUrl: string }) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const loadErrorText = t('preview.loadError');
+  const textTooLargeText = t('preview.textTooLargeTitle');
 
   useEffect(() => {
     let cancelled = false;
@@ -616,7 +636,7 @@ function CsvPreview({ previewUrl }: { previewUrl: string }) {
         });
         if (!response.ok) throw new Error(loadErrorText);
 
-        const text = await readCsvPreviewText(response, abortController, loadErrorText);
+        const text = await readCsvPreviewText(response, abortController, textTooLargeText);
         if (!cancelled) {
           setRows(parseCsvPreviewRows(text));
         }
@@ -635,7 +655,7 @@ function CsvPreview({ previewUrl }: { previewUrl: string }) {
       cancelled = true;
       abortController.abort();
     };
-  }, [previewUrl, loadErrorText]);
+  }, [previewUrl, loadErrorText, textTooLargeText]);
 
   if (isLoading && !rows) {
     return (
@@ -651,6 +671,7 @@ function CsvPreview({ previewUrl }: { previewUrl: string }) {
       <PreviewMessage
         icon={<AlertCircle className="h-5 w-5" />}
         title={error || t('preview.loadError')}
+        description={t('preview.textFallback')}
       />
     );
   }
