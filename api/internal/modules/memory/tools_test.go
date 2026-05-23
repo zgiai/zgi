@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
 
 func TestMemoryToolUpdateAcceptsIDAlias(t *testing.T) {
@@ -26,7 +27,7 @@ func TestMemoryToolUpdateAcceptsIDAlias(t *testing.T) {
 		t.Fatalf("CreateEntry() error = %v", err)
 	}
 
-	tool := newUpdateMemoryTool(svc)
+	tool := aiChatMemoryTool(newUpdateMemoryTool(svc))
 	_, err = tool.Invoke(ctx, accountID.String(), map[string]interface{}{
 		"id":      created.ID,
 		"content": "Remember the updated value.",
@@ -62,7 +63,7 @@ func TestMemoryToolListsExpiredTemporaryMemories(t *testing.T) {
 		t.Fatalf("CreateEntry() error = %v", err)
 	}
 
-	messages, err := newListTemporaryMemoriesTool(svc).Invoke(ctx, accountID.String(), map[string]interface{}{
+	messages, err := aiChatMemoryTool(newListTemporaryMemoriesTool(svc)).Invoke(ctx, accountID.String(), map[string]interface{}{
 		"status": memoryStatusExpired,
 	}, nil, nil, nil)
 	if err != nil {
@@ -94,7 +95,7 @@ func TestMemoryToolAddAcceptsMemoryAlias(t *testing.T) {
 		t.Fatalf("SetEnabled() error = %v", err)
 	}
 
-	tool := newAddMemoryTool(svc)
+	tool := aiChatMemoryTool(newAddMemoryTool(svc))
 	_, err := tool.Invoke(ctx, accountID.String(), map[string]interface{}{
 		"memory":   "The user's birthday is May 24.",
 		"category": CategoryProfile,
@@ -130,7 +131,7 @@ func TestMemoryToolReadReturnsEntryIDAlias(t *testing.T) {
 		t.Fatalf("CreateEntry() error = %v", err)
 	}
 
-	messages, err := newReadMemoryTool(svc).Invoke(ctx, accountID.String(), nil, nil, nil, nil)
+	messages, err := aiChatMemoryTool(newReadMemoryTool(svc)).Invoke(ctx, accountID.String(), nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("Invoke(read) error = %v", err)
 	}
@@ -166,8 +167,67 @@ func TestMemoryToolRejectsWhenMemoryDisabled(t *testing.T) {
 		t.Fatalf("SetEnabled() error = %v", err)
 	}
 
-	_, err := newReadMemoryTool(svc).Invoke(ctx, accountID.String(), nil, nil, nil, nil)
+	_, err := aiChatMemoryTool(newReadMemoryTool(svc)).Invoke(ctx, accountID.String(), nil, nil, nil, nil)
 	if !errors.Is(err, ErrDisabled) {
 		t.Fatalf("Invoke(read disabled) error = %v, want ErrDisabled", err)
 	}
+}
+
+func TestMemoryToolRejectsWorkflowRuntime(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newTestService()
+	accountID := uuid.New()
+	if _, err := svc.SetEnabled(ctx, accountID, true); err != nil {
+		t.Fatalf("SetEnabled() error = %v", err)
+	}
+
+	tool := newReadMemoryTool(svc).ForkToolRuntime(&tools.ToolRuntime{
+		InvokeFrom: tools.ToolInvokeFromWorkflow,
+	})
+	_, err := tool.Invoke(ctx, accountID.String(), nil, nil, nil, nil)
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("Invoke(read workflow) error = %v, want ErrUnauthorized", err)
+	}
+}
+
+func TestMemoryToolRejectsMissingRuntime(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newTestService()
+	accountID := uuid.New()
+	if _, err := svc.SetEnabled(ctx, accountID, true); err != nil {
+		t.Fatalf("SetEnabled() error = %v", err)
+	}
+
+	_, err := newReadMemoryTool(svc).Invoke(ctx, accountID.String(), nil, nil, nil, nil)
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("Invoke(read without runtime) error = %v, want ErrUnauthorized", err)
+	}
+}
+
+func TestMemoryToolAuditSourceUsesRuntime(t *testing.T) {
+	ctx := context.Background()
+	svc, store := newTestService()
+	accountID := uuid.New()
+	if _, err := svc.SetEnabled(ctx, accountID, true); err != nil {
+		t.Fatalf("SetEnabled() error = %v", err)
+	}
+
+	_, err := aiChatMemoryTool(newAddMemoryTool(svc)).Invoke(ctx, accountID.String(), map[string]interface{}{
+		"content": "Prefers concise answers.",
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke(add) error = %v", err)
+	}
+	if len(store.events) < 2 {
+		t.Fatalf("len(events) = %d, want at least 2", len(store.events))
+	}
+	if got := store.events[len(store.events)-1].Source; got != EventSourceAIChat {
+		t.Fatalf("event source = %s, want %s", got, EventSourceAIChat)
+	}
+}
+
+func aiChatMemoryTool(tool tools.Tool) tools.Tool {
+	return tool.ForkToolRuntime(&tools.ToolRuntime{
+		InvokeFrom: tools.ToolInvokeFromAIChat,
+	})
 }

@@ -126,6 +126,10 @@ func newMemoryTool(service *Service, name, label, description string, params []t
 }
 
 func (t *memoryTool) Invoke(ctx context.Context, userID string, params map[string]interface{}, conversationID *string, appID *string, messageID *string) ([]tools.ToolInvokeMessage, error) {
+	runtime := t.Runtime()
+	if runtime == nil || runtime.InvokeFrom != tools.ToolInvokeFromAIChat {
+		return nil, ErrUnauthorized
+	}
 	accountID, err := ResolveToolAccountID(userID)
 	if err != nil {
 		return nil, err
@@ -151,7 +155,7 @@ func (t *memoryTool) Invoke(ctx context.Context, userID string, params map[strin
 			Category:   stringValue(params, "category"),
 			MemoryType: stringValue(params, "memory_type"),
 			ExpiresAt:  stringValue(params, "expires_at"),
-		}, toolMutationMetadata(conversationID, messageID))
+		}, toolMutationMetadata(runtime, conversationID, messageID))
 		if err != nil {
 			return nil, err
 		}
@@ -177,7 +181,7 @@ func (t *memoryTool) Invoke(ctx context.Context, userID string, params map[strin
 		if enabled, ok := boolValue(params, "enabled"); ok {
 			req.Enabled = &enabled
 		}
-		entry, err := t.service.UpdateEntryWithMetadata(ctx, accountID, entryID, req, toolMutationMetadata(conversationID, messageID))
+		entry, err := t.service.UpdateEntryWithMetadata(ctx, accountID, entryID, req, toolMutationMetadata(runtime, conversationID, messageID))
 		if err != nil {
 			return nil, err
 		}
@@ -187,7 +191,7 @@ func (t *memoryTool) Invoke(ctx context.Context, userID string, params map[strin
 		if err != nil {
 			return nil, err
 		}
-		if err := t.service.DeleteEntryWithMetadata(ctx, accountID, entryID, toolMutationMetadata(conversationID, messageID)); err != nil {
+		if err := t.service.DeleteEntryWithMetadata(ctx, accountID, entryID, toolMutationMetadata(runtime, conversationID, messageID)); err != nil {
 			return nil, err
 		}
 		return jsonMessages(map[string]interface{}{"result": "success", "entry_id": entryID.String()})
@@ -374,10 +378,10 @@ func intValue(params map[string]interface{}, key string) int {
 	}
 }
 
-func toolMutationMetadata(conversationID *string, messageID *string) MutationMetadata {
+func toolMutationMetadata(runtime *tools.ToolRuntime, conversationID *string, messageID *string) MutationMetadata {
 	meta := MutationMetadata{
 		ActorType: EventActorModel,
-		Source:    EventSourceAIChat,
+		Source:    memoryEventSourceForRuntime(runtime),
 	}
 	if conversationID != nil {
 		if id, err := uuid.Parse(*conversationID); err == nil {
@@ -390,6 +394,20 @@ func toolMutationMetadata(conversationID *string, messageID *string) MutationMet
 		}
 	}
 	return meta
+}
+
+func memoryEventSourceForRuntime(runtime *tools.ToolRuntime) string {
+	if runtime == nil {
+		return EventSourceAPI
+	}
+	switch runtime.InvokeFrom {
+	case tools.ToolInvokeFromAIChat:
+		return EventSourceAIChat
+	case tools.ToolInvokeFromWorkflow:
+		return EventSourceWorkflow
+	default:
+		return EventSourceAPI
+	}
 }
 
 func jsonMessages(value interface{}) ([]tools.ToolInvokeMessage, error) {
