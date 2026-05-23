@@ -141,11 +141,12 @@ export function UniversalFilePreviewDialog({
   const isImage = isOriginalPreviewImage(activeFile?.extension, activeFile?.mimeType);
   const isPdf = isOriginalPreviewPdf(activeFile?.extension, activeFile?.mimeType);
   const previewKind = getOriginalPreviewKind(activeFile?.extension, activeFile?.mimeType);
-  const canOpenHtmlExternally = previewKind === 'html' && Boolean(downloadUrl);
+  const htmlExternalOpenUrl = previewKind === 'html' ? resolvedPreviewUrl : '';
+  const canOpenHtmlExternally = Boolean(htmlExternalOpenUrl);
 
   const openHtmlInNewTab = () => {
-    if (!downloadUrl) return;
-    window.open(downloadUrl, '_blank', 'noopener,noreferrer');
+    if (!htmlExternalOpenUrl) return;
+    window.open(htmlExternalOpenUrl, '_blank', 'noopener,noreferrer');
   };
 
   const renderPreview = () => {
