@@ -35,6 +35,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { pluginService } from '@/services/plugin.service';
 import type { MarketplacePluginFeedbackRequestType } from '@/services/types/plugin';
+import { useAuthStore, useOrganizationStore } from '@/store';
 
 type PluginCategory = '' | MarketplacePluginCategory;
 type PluginSort = 'downloads' | 'newest';
@@ -349,6 +350,8 @@ function PluginFeedbackDialog({
   officialPlugins: MarketplacePlugin[];
 }) {
   const t = useT();
+  const user = useAuthStore.use.user();
+  const currentOrganization = useOrganizationStore.use.currentOrganization();
   const [requestType, setRequestType] =
     useState<MarketplacePluginFeedbackRequestType>('existing_official');
   const [pluginId, setPluginId] = useState('');
@@ -379,6 +382,11 @@ function PluginFeedbackDialog({
         request_type: requestType,
         plugin_id: needsPlugin ? selectedPluginId : undefined,
         content: content.trim(),
+        submitter_id: user?.id,
+        submitter_name: user?.name || user?.email,
+        submitter_email: user?.email,
+        submitter_organization_id: currentOrganization?.id,
+        submitter_organization_name: currentOrganization?.name,
       });
       toast.success(t('market.plugins.feedbackDialog.submitted'));
       setContent('');

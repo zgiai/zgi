@@ -33,6 +33,11 @@ export interface SubmitMarketplacePluginFeedbackRequest {
   request_type: MarketplacePluginFeedbackRequestType;
   plugin_id?: string;
   content: string;
+  submitter_id?: string;
+  submitter_name?: string;
+  submitter_email?: string;
+  submitter_organization_id?: string;
+  submitter_organization_name?: string;
 }
 
 export interface MarketplacePluginVersion {
