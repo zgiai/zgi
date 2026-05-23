@@ -208,6 +208,7 @@ const messages: WebappMessages = {
       selectFromFiles: '从文件管理选择',
       remove: '移除文件',
       generatedFile: '生成文件',
+      previewGeneratedFile: '预览生成文件',
       downloadGeneratedFile: '下载生成文件',
       uploading: '上传中',
       parsing: '正在解析',

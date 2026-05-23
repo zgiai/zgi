@@ -60,7 +60,7 @@ func NewGenerateFileTool(tenantID string) *GenerateFileTool {
 				Name:             "content",
 				Label:            tools.I18nText{"en_US": "Content", "zh_Hans": "内容"},
 				HumanDescription: tools.I18nText{"en_US": "Text content to write into the generated file. Use CSV content for XLSX.", "zh_Hans": "要写入生成文件的文本内容。生成 XLSX 时请传入 CSV 内容。"},
-				LLMDescription:   "Text content to write into the generated file. Use valid CSV content when format is xlsx.",
+				LLMDescription:   "Content to write into the generated file. Use runnable HTML content when format is html, and valid CSV content when format is xlsx.",
 				Type:             tools.ToolParameterTypeString,
 				Form:             tools.ToolParameterFormLLM,
 				Required:         true,
@@ -279,7 +279,7 @@ func resolveFormat(raw string) (string, formatSpec, error) {
 func renderContent(content string, format string, title string) ([]byte, error) {
 	switch format {
 	case "html":
-		return []byte(renderSafeHTML(content, title)), nil
+		return []byte(renderHTML(content, title)), nil
 	case "json":
 		var parsed interface{}
 		if err := json.Unmarshal([]byte(content), &parsed); err != nil {
@@ -309,7 +309,7 @@ func renderContent(content string, format string, title string) ([]byte, error) 
 }
 
 func renderDocx(content string) ([]byte, error) {
-	doc := docx.New()
+	doc := docx.New().WithDefaultTheme()
 	for _, line := range splitDocumentLines(content) {
 		doc.AddParagraph().AddText(line)
 	}
@@ -456,16 +456,28 @@ func encodePDFTextHex(text string) string {
 	return builder.String()
 }
 
-func renderSafeHTML(content string, title string) string {
+func renderHTML(content string, title string) string {
+	normalized := normalizeLineEndings(content)
+	if isFullHTMLDocument(normalized) {
+		return normalized
+	}
+
 	title = strings.TrimSpace(title)
 	if title == "" {
 		title = "Generated File"
 	}
 	escapedTitle := html.EscapeString(title)
-	escapedContent := html.EscapeString(content)
-	escapedContent = strings.ReplaceAll(escapedContent, "\r\n", "\n")
-	escapedContent = strings.ReplaceAll(escapedContent, "\n", "<br>\n")
-	return "<!doctype html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>" + escapedTitle + "</title>\n</head>\n<body>\n" + escapedContent + "\n</body>\n</html>\n"
+	return "<!doctype html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>" + escapedTitle + "</title>\n</head>\n<body>\n" + normalized + "\n</body>\n</html>\n"
+}
+
+func normalizeLineEndings(content string) string {
+	normalized := strings.ReplaceAll(content, "\r\n", "\n")
+	return strings.ReplaceAll(normalized, "\r", "\n")
+}
+
+func isFullHTMLDocument(content string) bool {
+	trimmed := strings.ToLower(strings.TrimSpace(content))
+	return strings.HasPrefix(trimmed, "<!doctype") || strings.Contains(trimmed, "<html")
 }
 
 func resolveToolFileLifecycle(raw string) (tool_file.ToolFileLifecycle, error) {

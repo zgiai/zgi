@@ -9,7 +9,7 @@ tools:
   - evaluate_expression
   - calculate
   - percentage
-max_calls_per_turn: 8
+max_calls_per_turn: 20
 timeout_seconds: 5
 display:
   icon: calculator

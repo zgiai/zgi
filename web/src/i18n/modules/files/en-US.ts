@@ -68,8 +68,20 @@ const messages = {
     noFileSelected: 'No file selected',
     unsupportedTitle: 'Preview is not available for this file',
     unsupportedDescription:
-      'Original preview currently supports PDF, image, and lightweight text-like files.',
+      'Original preview supports images, PDF, HTML, text-like files, DOCX, and XLSX.',
     openInNewTab: 'Open in New Tab',
+    unavailableTitle: 'Preview is unavailable',
+    downloadOnlyDescription: 'Download the file to view it outside the browser preview.',
+    htmlLimitedTitle: 'HTML is shown in restricted preview mode',
+    htmlLimitedDescription: 'Scripts, forms, popups, downloads, and page navigation are disabled.',
+    officeUnsupportedTitle: 'Preview is not available for this Office format',
+    officeTooLargeTitle: 'This Office file is too large to preview',
+    officeFallback: 'Download the file to view the original document.',
+    textTooLargeTitle: 'This text file is too large to preview',
+    textFallback: 'Download the file to view the full content.',
+    emptyWorkbook: 'The workbook has no sheets',
+    emptySheet: 'This sheet has no visible rows',
+    rowLimit: 'Showing the first {count} rows.',
   },
 
   // Delete dialog

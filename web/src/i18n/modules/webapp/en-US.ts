@@ -216,6 +216,7 @@ const messages = {
       selectFromFiles: 'Select from file manager',
       remove: 'Remove file',
       generatedFile: 'Generated file',
+      previewGeneratedFile: 'Preview generated file',
       downloadGeneratedFile: 'Download generated file',
       uploading: 'Uploading',
       parsing: 'Parsing',

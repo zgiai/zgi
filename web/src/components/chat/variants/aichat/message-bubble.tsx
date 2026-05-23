@@ -2,7 +2,7 @@
 
 import { ModelIcon } from 'modelicons';
 import { useMemo, useState } from 'react';
-import { AlertCircle, CheckCircle2, Download, FileImage, FileText, Loader2 } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Download, Eye, FileImage, FileText, Loader2 } from 'lucide-react';
 import MarkdownViewer from '@/components/common/markdown-viewer';
 import {
   Dialog,
@@ -28,6 +28,7 @@ import {
   UserEditToolbar,
   UserMessageToolbar,
 } from '@/components/chat/variants/aichat/message-toolbars';
+import { UniversalFilePreviewDialog } from '@/components/files/universal-file-preview-dialog';
 import { AIChatAgenticTimeline } from '@/components/chat/variants/aichat/agentic-timeline';
 import type { AIChatSkillDisplayMap } from '@/components/chat/variants/aichat/skill-display';
 import type { AIChatAgenticTimelineItem } from '@/components/chat/controllers/aichat';
@@ -183,39 +184,67 @@ interface AIChatGeneratedFileCardProps {
  */
 function AIChatGeneratedFileCard({ file }: AIChatGeneratedFileCardProps) {
   const t = useT('webapp');
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const extension = formatGeneratedFileExtension(file);
   const downloadUrl = file.download_url || file.url;
+  const previewUrl = file.url || downloadUrl;
 
   return (
-    <div
-      className="flex min-w-0 max-w-sm items-center gap-3 rounded-md border bg-background px-3 py-2 text-sm shadow-sm"
-      title={file.filename}
-    >
-      <div className="flex size-9 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-        <FileText className="size-4" />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="truncate font-medium text-foreground">{file.filename}</div>
-        <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-          <span>{t('consoleChat.attachments.generatedFile')}</span>
-          {extension ? <span>{extension}</span> : null}
-          <span>{formatFileSize(file.size)}</span>
-        </div>
-      </div>
-      <Button
-        asChild
-        type="button"
-        isIcon
-        variant="ghost"
-        className="size-8 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
-        aria-label={t('consoleChat.attachments.downloadGeneratedFile')}
-        title={t('consoleChat.attachments.downloadGeneratedFile')}
+    <>
+      <div
+        className="flex min-w-0 max-w-sm items-center gap-3 rounded-md border bg-background px-3 py-2 text-sm shadow-sm"
+        title={file.filename}
       >
-        <a href={downloadUrl} download={file.filename}>
-          <Download className="size-4" />
-        </a>
-      </Button>
-    </div>
+        <div className="flex size-9 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+          <FileText className="size-4" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate font-medium text-foreground">{file.filename}</div>
+          <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+            <span>{t('consoleChat.attachments.generatedFile')}</span>
+            {extension ? <span>{extension}</span> : null}
+            <span>{formatFileSize(file.size)}</span>
+          </div>
+        </div>
+        <Button
+          type="button"
+          isIcon
+          variant="ghost"
+          className="size-8 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
+          aria-label={t('consoleChat.attachments.previewGeneratedFile')}
+          title={t('consoleChat.attachments.previewGeneratedFile')}
+          onClick={() => setIsPreviewOpen(true)}
+        >
+          <Eye className="size-4" />
+        </Button>
+        <Button
+          asChild
+          type="button"
+          isIcon
+          variant="ghost"
+          className="size-8 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
+          aria-label={t('consoleChat.attachments.downloadGeneratedFile')}
+          title={t('consoleChat.attachments.downloadGeneratedFile')}
+        >
+          <a href={downloadUrl} download={file.filename}>
+            <Download className="size-4" />
+          </a>
+        </Button>
+      </div>
+      <UniversalFilePreviewDialog
+        open={isPreviewOpen}
+        onOpenChange={setIsPreviewOpen}
+        file={{
+          id: file.file_id,
+          name: file.filename,
+          extension: file.extension,
+          mimeType: file.mime_type,
+          size: file.size,
+          previewUrl,
+          downloadUrl,
+        }}
+      />
+    </>
   );
 }
 
