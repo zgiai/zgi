@@ -142,7 +142,7 @@ const messages: WebappMessages = {
         description: '请先为渠道充值或切换渠道，再重试。',
         action: '前往渠道管理',
       },
-      contactAdmin: '请联系组织管理员补充余额或额度后再试。',
+      contactAdmin: '当前余额或额度不足，请联系组织管理员充值或调整额度后再试。',
     },
   },
   consoleChat: {
@@ -249,6 +249,8 @@ const messages: WebappMessages = {
       empty: '无可提取文本',
       parseFailed: '解析失败',
       uploadFailed: '上传失败',
+      retry: '重试上传',
+      retryUnavailable: '无法重试该文件，请移除后重新添加。',
       uploadUnavailable: '回复生成或文件上传过程中暂不能添加附件。',
       dropToUpload: '释放文件以添加附件',
       dropHint: '还可添加 {count} 个文件。支持：{types}。',

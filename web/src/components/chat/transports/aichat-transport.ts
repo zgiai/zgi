@@ -14,6 +14,7 @@ import type {
   AIChatMessage,
   AIChatMessageChunkEventData,
   AIChatMessageEndEventData,
+  AIChatMessageRetractEventData,
   AIChatMessageStartEventData,
   AIChatIntermediateAnswerEventData,
   AIChatRegenerateMessageRequest,
@@ -90,6 +91,10 @@ export interface AIChatStreamCallbacks {
     eventId?: string | null
   ) => void;
   onMessageChunk: (payload: AIChatMessageChunkEventData, eventId?: string | null) => void;
+  onMessageRetract: (
+    payload: AIChatMessageRetractEventData,
+    eventId?: string | null
+  ) => void;
   onMessageEnd: (payload: AIChatMessageEndEventData, eventId?: string | null) => void;
   onErrorEvent: (payload: AIChatErrorEventData, eventId?: string | null) => void;
   onRequestError: (error: Error) => void;
@@ -147,6 +152,9 @@ function dispatchAIChatStreamEvent(
       break;
     case 'message':
       callbacks.onMessageChunk((data ?? {}) as AIChatMessageChunkEventData, eventId);
+      break;
+    case 'message_retract':
+      callbacks.onMessageRetract((data ?? {}) as AIChatMessageRetractEventData, eventId);
       break;
     case 'message_end':
       callbacks.onMessageEnd((data ?? {}) as AIChatMessageEndEventData, eventId);
@@ -220,7 +228,11 @@ export class AIChatTransport {
 
   async updateConversation(
     conversationId: string,
-    payload: { title?: string; status?: AIChatConversation['status'] }
+    payload: {
+      title?: string;
+      status?: AIChatConversation['status'];
+      current_leaf_message_id?: string;
+    }
   ): Promise<AIChatConversation> {
     const response = await aichatService.updateConversation(conversationId, payload);
     return response.data;

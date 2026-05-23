@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { useStore } from 'zustand';
 import type { ModelSelectorValue } from '@/components/common/model-selector';
@@ -23,6 +24,7 @@ import { useAIChatSkills } from '@/hooks/aichat/use-aichat-skills';
 import { useLocale } from '@/hooks/use-locale';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useT } from '@/i18n/translations';
+import { useWorkspaceStore } from '@/store/workspace-store';
 import type { AIChatMessage, AIChatMessageFile } from '@/services/types/aichat';
 import {
   buildChatMessageTopology,
@@ -35,6 +37,14 @@ import { AIChatInputArea } from '@/components/chat/variants/aichat/input-area';
 import { AIChatMessageList } from '@/components/chat/variants/aichat/message-list';
 import { buildAIChatSkillDisplayMap } from '@/components/chat/variants/aichat/skill-display';
 import { useAIChatScroll } from '@/components/chat/variants/aichat/use-aichat-scroll';
+import {
+  getAIChatMessageErrorInput,
+  resolveAIChatErrorMessage,
+} from '@/components/chat/variants/aichat/error-utils';
+import {
+  WorkflowBillingToastAction,
+  workflowBillingToastClassNames,
+} from '@/components/workflow/common/workflow-billing-toast-action';
 import { AICHAT_SIDEBAR_BG_IMAGE } from '@/lib/config';
 import {
   MAX_AICHAT_BRANCHES,
@@ -65,7 +75,9 @@ export function AIChatShell({
   modelSelectorValue,
   onModelChange,
 }: AIChatShellProps) {
+  const router = useRouter();
   const t = useT('webapp');
+  const tGlobal = useT();
   const { locale } = useLocale();
   const isMobile = useIsMobile();
   const [input, setInput] = useState('');
@@ -89,6 +101,9 @@ export function AIChatShell({
   const isSending = useStore(controller.store, state => state.isSending);
   const streamingByMessageId = useStore(controller.store, state => state.streamingByMessageId);
   const error = useStore(controller.store, state => state.error);
+  const currentWorkspace = useWorkspaceStore.use.currentWorkspace();
+  const organizationRole = useWorkspaceStore.use.permissionState().organizationRole;
+  const isBillingAdmin = organizationRole === 'owner' || organizationRole === 'admin';
   const { data: availableSkills = [] } = useAIChatSkills();
   const skillDisplayById = useMemo(
     () => buildAIChatSkillDisplayMap(availableSkills, locale),
@@ -137,13 +152,41 @@ export function AIChatShell({
       return;
     }
 
-    if (lastErrorToastRef.current === error) {
+    const matchingErrorMessage = [...activeMessages]
+      .reverse()
+      .find(message => message.status === 'error' && message.error === error);
+    const errorInput = matchingErrorMessage
+      ? getAIChatMessageErrorInput(matchingErrorMessage)
+      : { message: error };
+    const resolvedError = resolveAIChatErrorMessage(
+      (key, values) => tGlobal(key as never, values),
+      errorInput,
+      {
+        isAdmin: isBillingAdmin,
+        workspaceId: currentWorkspace?.id,
+      }
+    );
+    const toastKey = `${resolvedError.code ?? 'unknown'}:${error}`;
+
+    if (lastErrorToastRef.current === toastKey) {
       return;
     }
 
-    lastErrorToastRef.current = error;
-    toast.error(error);
-  }, [error]);
+    lastErrorToastRef.current = toastKey;
+    const toastFn = resolvedError.isBilling ? toast.warning : toast.error;
+    toastFn(resolvedError.title || resolvedError.description, {
+      id: resolvedError.code ? `aichat-billing-${resolvedError.code}` : undefined,
+      description: resolvedError.title ? resolvedError.description : undefined,
+      classNames: resolvedError.isBilling ? workflowBillingToastClassNames : undefined,
+      action:
+        isBillingAdmin && resolvedError.href && resolvedError.actionLabel
+          ? createElement(WorkflowBillingToastAction, {
+              label: resolvedError.actionLabel,
+              onClick: () => router.push(resolvedError.href as string),
+            })
+          : undefined,
+    });
+  }, [activeMessages, currentWorkspace?.id, error, isBillingAdmin, router, tGlobal]);
 
   const conversationSummaries = useMemo<ConversationSummary[]>(
     () =>

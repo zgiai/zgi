@@ -149,7 +149,8 @@ const messages = {
         description: 'Recharge the channel balance or switch channel, then try again.',
         action: 'Go to Channel',
       },
-      contactAdmin: 'Please contact an organization administrator to add balance or quota.',
+      contactAdmin:
+        'The current balance or quota is insufficient. Please contact an organization administrator to recharge or adjust quota.',
     },
   },
   consoleChat: {
@@ -259,6 +260,8 @@ const messages = {
       empty: 'No extractable text',
       parseFailed: 'Parse failed',
       uploadFailed: 'Upload failed',
+      retry: 'Retry upload',
+      retryUnavailable: 'This file can no longer be retried. Remove it and attach it again.',
       uploadUnavailable: 'Files cannot be attached while a response or upload is in progress.',
       dropToUpload: 'Drop files to attach',
       dropHint: '{count} slots remaining. Supported: {types}.',

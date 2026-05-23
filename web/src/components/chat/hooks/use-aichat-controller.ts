@@ -15,6 +15,7 @@ import type {
   AIChatMessageChunkEventData,
   AIChatMessageEndEventData,
   AIChatMessageFile,
+  AIChatMessageRetractEventData,
   AIChatMessageStartEventData,
   AIChatSkillCallEndEventData,
   AIChatSkillCallErrorEventData,
@@ -68,6 +69,7 @@ import {
 } from '@/components/chat/controllers/aichat/selectors';
 import {
   applyMessageChunkState,
+  applyMessageRetractState,
   applyAgentProgressState,
   applyIntermediateAnswerState,
   applyFileParseEndState,
@@ -374,6 +376,14 @@ export function useAIChatController(): AIChatController {
     [setControllerState]
   );
 
+  const applyMessageRetract = useCallback(
+    (payload: AIChatMessageRetractEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id) return;
+      setControllerState(current => applyMessageRetractState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
   const applyFileParseStart = useCallback(
     (payload: AIChatFileParseStartEventData, eventId?: string | null) => {
       if (!payload.conversation_id || !payload.message_id || !payload.file_id) return;
@@ -467,7 +477,8 @@ export function useAIChatController(): AIChatController {
 
   const applyIntermediateAnswer = useCallback(
     (payload: AIChatIntermediateAnswerEventData, eventId?: string | null) => {
-      if (!payload.conversation_id || !payload.message_id || !payload.content) return;
+      if (!payload.conversation_id || !payload.message_id) return;
+      if (!payload.content && payload.done !== true) return;
       setControllerState(current => applyIntermediateAnswerState(current, payload, eventId));
     },
     [setControllerState]
@@ -784,6 +795,10 @@ export function useAIChatController(): AIChatController {
                 if (abortController.signal.aborted) return;
                 applyMessageChunk(payload, eventId);
               },
+              onMessageRetract: (payload, eventId) => {
+                if (abortController.signal.aborted) return;
+                applyMessageRetract(payload, eventId);
+              },
               onMessageEnd: (payload, eventId) => {
                 if (abortController.signal.aborted) return;
                 reachedTerminalEvent = true;
@@ -836,6 +851,7 @@ export function useAIChatController(): AIChatController {
       applyFileParseError,
       applyFileParseStart,
       applyMessageChunk,
+      applyMessageRetract,
       applyMessageEnd,
       applyMessageStart,
       applySkillCallEnd,
@@ -1628,6 +1644,10 @@ export function useAIChatController(): AIChatController {
               if (abortController.signal.aborted) return;
               applyMessageChunk(payload, eventId);
             },
+            onMessageRetract: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              applyMessageRetract(payload, eventId);
+            },
             onMessageEnd: (payload, eventId) => {
               if (abortController.signal.aborted) return;
               applyMessageEnd(payload, eventId);
@@ -1710,6 +1730,7 @@ export function useAIChatController(): AIChatController {
       applyFileParseError,
       applyFileParseStart,
       applyMessageChunk,
+      applyMessageRetract,
       applyMessageEnd,
       applyMessageStart,
       applySkillCallEnd,
@@ -1759,13 +1780,93 @@ export function useAIChatController(): AIChatController {
         return;
       }
       const sourceMessage = source;
+      const sourceConversation = activeConversation;
 
       const abortController = new AbortController();
       streamAbortByConversationRef.current[activeConversationId]?.abort();
       streamAbortByConversationRef.current[activeConversationId] = abortController;
       markSelectionTarget(activeConversationId);
 
-      setControllerState(current => ({ ...current, isSending: true, error: null }));
+      let streamStarted = false;
+      const restoreOriginalMessage = (errorMessage?: string) => {
+        setControllerState(current => {
+          const nextStreamingByMessageId = { ...current.streamingByMessageId };
+          delete nextStreamingByMessageId[messageId];
+
+          return {
+            ...current,
+            error:
+              errorMessage && current.activeConversationId === activeConversationId
+                ? errorMessage
+                : current.error,
+            isSending: getNextActiveSendingState(current, activeConversationId, false),
+            conversations: sourceConversation
+              ? current.conversations.map(item =>
+                  item.id === activeConversationId ? sourceConversation : item
+                )
+              : current.conversations,
+            messagesByConversation: {
+              ...current.messagesByConversation,
+              [activeConversationId]: upsertAIChatMessage(
+                current.messagesByConversation[activeConversationId] ?? [],
+                sourceMessage
+              ),
+            },
+            streamingByMessageId: nextStreamingByMessageId,
+          };
+        });
+      };
+
+      setControllerState(current => {
+        const now = Math.floor(Date.now() / 1000);
+        const nextMetadata = sourceMessage.metadata ? { ...sourceMessage.metadata } : undefined;
+        if (nextMetadata) {
+          delete nextMetadata.sensitiveOutputBlocked;
+        }
+        const nextMessage: AIChatMessage = {
+          ...sourceMessage,
+          answer: '',
+          status: 'streaming',
+          error: undefined,
+          metadata: nextMetadata,
+          updated_at: now,
+        };
+
+        return {
+          ...current,
+          error: null,
+          isSending: true,
+          conversations: current.conversations.map(item =>
+            item.id === activeConversationId
+              ? {
+                  ...item,
+                  current_leaf_message_id: messageId,
+                  runtime_status: 'streaming',
+                  active_message_id: messageId,
+                  updated_at: now,
+                }
+              : item
+          ),
+          messagesByConversation: {
+            ...current.messagesByConversation,
+            [activeConversationId]: upsertAIChatMessage(
+              current.messagesByConversation[activeConversationId] ?? [],
+              nextMessage
+            ),
+          },
+          streamingByMessageId: {
+            ...current.streamingByMessageId,
+            [messageId]: {
+              conversation_id: activeConversationId,
+              message_id: messageId,
+              answer: '',
+              status: 'streaming',
+              timeline: [],
+              replace: true,
+            },
+          },
+        };
+      });
 
       try {
         await aichatTransport.regenerateMessage(
@@ -1779,6 +1880,7 @@ export function useAIChatController(): AIChatController {
           {
             onMessageStart: (payload, eventId) => {
               if (abortController.signal.aborted) return;
+              streamStarted = true;
               applyMessageStart(
                 {
                   ...payload,
@@ -1846,6 +1948,10 @@ export function useAIChatController(): AIChatController {
               if (abortController.signal.aborted) return;
               applyMessageChunk(payload, eventId);
             },
+            onMessageRetract: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              applyMessageRetract(payload, eventId);
+            },
             onMessageEnd: (payload, eventId) => {
               if (abortController.signal.aborted) return;
               applyMessageEnd(payload, eventId);
@@ -1856,6 +1962,10 @@ export function useAIChatController(): AIChatController {
             },
             onRequestError: error => {
               if (isAbortError(error)) return;
+              if (!streamStarted) {
+                restoreOriginalMessage(error.message);
+                return;
+              }
               setControllerState(current => ({
                 ...current,
                 error:
@@ -1884,6 +1994,10 @@ export function useAIChatController(): AIChatController {
         );
       } catch (error) {
         if (!isAbortError(error)) {
+          if (!streamStarted) {
+            restoreOriginalMessage(getErrorMessage(error));
+            return;
+          }
           setControllerState(current => ({
             ...current,
             error:
@@ -1902,6 +2016,7 @@ export function useAIChatController(): AIChatController {
       applyFileParseError,
       applyFileParseStart,
       applyMessageChunk,
+      applyMessageRetract,
       applyMessageEnd,
       applyMessageStart,
       applySkillCallEnd,
@@ -1950,13 +2065,17 @@ export function useAIChatController(): AIChatController {
       const activeConversationId = stateRef.current.activeConversationId;
       if (!activeConversationId || !messageId || stateRef.current.isSending) return;
 
+      let previousLeafId: string | undefined;
+      let nextLeafId: string | undefined;
       setControllerState(current => {
         const messages = current.messagesByConversation[activeConversationId] ?? [];
         const conversation = current.conversations.find(item => item.id === activeConversationId);
         if (!conversation || !messages.some(message => message.id === messageId)) return current;
 
-        const nextLeafId = findChatBranchLeaf(messageId, messages);
-        if (conversation.current_leaf_message_id === nextLeafId) return current;
+        const resolvedLeafId = findChatBranchLeaf(messageId, messages);
+        if (conversation.current_leaf_message_id === resolvedLeafId) return current;
+        previousLeafId = conversation.current_leaf_message_id;
+        nextLeafId = resolvedLeafId;
 
         return {
           ...current,
@@ -1964,12 +2083,43 @@ export function useAIChatController(): AIChatController {
             item.id === activeConversationId
               ? {
                   ...item,
-                  current_leaf_message_id: nextLeafId,
+                  current_leaf_message_id: resolvedLeafId,
                 }
               : item
           ),
         };
       });
+
+      if (!nextLeafId) return;
+      void aichatTransport
+        .updateConversation(activeConversationId, {
+          current_leaf_message_id: nextLeafId,
+        })
+        .then(conversation => {
+          setControllerState(current => ({
+            ...current,
+            conversations: replaceAIChatConversation(current.conversations, conversation, {
+              moveToTop: false,
+            }),
+          }));
+        })
+        .catch(error => {
+          setControllerState(current => ({
+            ...current,
+            error:
+              current.activeConversationId === activeConversationId
+                ? getErrorMessage(error)
+                : current.error,
+            conversations: current.conversations.map(item =>
+              item.id === activeConversationId && item.current_leaf_message_id === nextLeafId
+                ? {
+                    ...item,
+                    current_leaf_message_id: previousLeafId,
+                  }
+                : item
+            ),
+          }));
+        });
     },
     [setControllerState]
   );

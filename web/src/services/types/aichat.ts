@@ -119,6 +119,7 @@ export interface AIChatExistingSkill {
 
 export interface AIChatSkillInvocation {
   kind?: AIChatSkillInvocationKind;
+  answer_id?: string;
   skill_id: string;
   tool_name?: string;
   title?: string;
@@ -255,6 +256,7 @@ export interface AIChatCreateConversationRequest {
 export interface AIChatUpdateConversationRequest {
   title?: string;
   status?: AIChatConversationStatus;
+  current_leaf_message_id?: string;
 }
 
 export interface AIChatModelParameters {
@@ -304,6 +306,14 @@ export interface AIChatMessageChunkEventData {
   __sensitiveOutputBlocked?: boolean;
 }
 
+export interface AIChatMessageRetractEventData {
+  conversation_id: string;
+  message_id: string;
+  content?: string;
+  length?: number;
+  created_at?: number;
+}
+
 export interface AIChatMessageEndEventData {
   conversation_id: string;
   message_id: string;
@@ -315,6 +325,8 @@ export interface AIChatErrorEventData {
   conversation_id?: string;
   message_id?: string;
   message?: string;
+  code?: string | number;
+  params?: Record<string, unknown>;
 }
 
 export interface AIChatSkillLoadStartEventData {
@@ -349,6 +361,7 @@ export interface AIChatSkillCallStartEventData {
   skill_id: string;
   tool_name: string;
   arguments?: Record<string, unknown>;
+  arguments_summary?: Record<string, unknown>;
   created_at?: number;
 }
 
@@ -405,9 +418,13 @@ export interface AIChatAgentProgressEventData {
 export interface AIChatIntermediateAnswerEventData {
   conversation_id: string;
   message_id: string;
+  answer_id?: string;
   title?: string;
   content?: string;
-  status?: 'success';
+  delta?: boolean;
+  index?: number;
+  done?: boolean;
+  status?: 'streaming' | 'success';
   created_at?: number;
 }
 
@@ -472,6 +489,7 @@ export type AIChatSseEventName =
   | 'file_parse_end'
   | 'file_parse_error'
   | 'message'
+  | 'message_retract'
   | 'message_end'
   | 'error';
 

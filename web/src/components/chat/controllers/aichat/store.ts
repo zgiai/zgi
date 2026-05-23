@@ -7,6 +7,7 @@ import {
   applyIntermediateAnswerState,
   applyMessageChunkState,
   applyMessageEndState,
+  applyMessageRetractState,
   applyMessageStartState,
   applyStreamErrorState,
   mergeAIChatMessages,
@@ -52,6 +53,8 @@ export function createAIChatControllerStore() {
       set(current => applyMessageStartState(current, payload, context, eventId)),
     applyMessageChunk: (payload, eventId) =>
       set(current => applyMessageChunkState(current, payload, eventId)),
+    applyMessageRetract: (payload, eventId) =>
+      set(current => applyMessageRetractState(current, payload, eventId)),
     applyAgentProgress: (payload, eventId) =>
       set(current => applyAgentProgressState(current, payload, eventId)),
     applyIntermediateAnswer: (payload, eventId) =>
