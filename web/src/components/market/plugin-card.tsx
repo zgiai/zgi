@@ -30,9 +30,12 @@ function PluginCard({ plugin, branding, className, onClick }: PluginCardProps) {
   const developerLogo = plugin.developer?.logo_url;
   const blueVIcon = branding?.blue_v_icon_url || DEFAULT_BLUE_V_ICON;
   const yellowVIcon = branding?.yellow_v_icon_url || DEFAULT_YELLOW_V_ICON;
-  const showOfficialToolBadge = plugin.is_official;
-  const showCertifiedBadge =
+  const isCertified =
     Boolean(plugin.developer?.is_verified) || Boolean(plugin.official_labels?.length);
+  const authorVerificationIcon = plugin.is_official ? blueVIcon : isCertified ? yellowVIcon : null;
+  const authorVerificationLabel = plugin.is_official
+    ? t('plugins.official')
+    : t('plugins.certified');
   const pluginLabels = Array.from(
     new Set(
       [...(plugin.official_labels || []), ...(plugin.tags || [])].filter(Boolean).filter(label => {
@@ -77,23 +80,18 @@ function PluginCard({ plugin, branding, className, onClick }: PluginCardProps) {
           )}
 
           <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 items-center gap-1.5">
-              <h3
-                className="min-w-0 truncate text-base font-semibold leading-6 transition-colors group-hover:text-primary"
-                title={pluginName}
-              >
-                {pluginName}
-              </h3>
-              {showOfficialToolBadge && (
-                <VerificationIcon src={blueVIcon} label={t('plugins.official')} />
-              )}
-            </div>
+            <h3
+              className="truncate text-base font-semibold leading-6 transition-colors group-hover:text-primary"
+              title={pluginName}
+            >
+              {pluginName}
+            </h3>
             {pluginDeveloper && (
               <div className="mt-1 flex min-w-0 items-center gap-1.5 text-sm text-muted-foreground">
                 <DeveloperAvatar name={pluginDeveloper} src={developerLogo} />
                 <span className="min-w-0 truncate">{pluginDeveloper}</span>
-                {showCertifiedBadge && (
-                  <VerificationIcon src={yellowVIcon} label={t('plugins.certified')} />
+                {authorVerificationIcon && (
+                  <VerificationIcon src={authorVerificationIcon} label={authorVerificationLabel} />
                 )}
               </div>
             )}
