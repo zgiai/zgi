@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,8 @@ type fakeStore struct {
 	settings map[uuid.UUID]*AccountMemorySetting
 	entries  map[uuid.UUID]*AccountMemoryEntry
 	events   []*AccountMemoryEvent
+
+	failCreateEvent bool
 }
 
 func newFakeStore() *fakeStore {
@@ -30,6 +33,19 @@ func newTestService() (*Service, *fakeStore) {
 	return &Service{repo: store}, store
 }
 
+func (f *fakeStore) WithTransaction(ctx context.Context, fn func(store) error) error {
+	settings := cloneSettings(f.settings)
+	entries := cloneEntries(f.entries)
+	events := append([]*AccountMemoryEvent(nil), f.events...)
+	if err := fn(f); err != nil {
+		f.settings = settings
+		f.entries = entries
+		f.events = events
+		return err
+	}
+	return nil
+}
+
 func (f *fakeStore) GetSetting(ctx context.Context, accountID uuid.UUID) (*AccountMemorySetting, error) {
 	setting, ok := f.settings[accountID]
 	if !ok {
@@ -42,6 +58,19 @@ func (f *fakeStore) GetSetting(ctx context.Context, accountID uuid.UUID) (*Accou
 func (f *fakeStore) UpsertSetting(ctx context.Context, setting *AccountMemorySetting) error {
 	cp := *setting
 	f.settings[setting.AccountID] = &cp
+	return nil
+}
+
+func (f *fakeStore) LockAccount(ctx context.Context, accountID uuid.UUID) error {
+	if _, ok := f.settings[accountID]; !ok {
+		now := time.Now()
+		f.settings[accountID] = &AccountMemorySetting{
+			AccountID: accountID,
+			Enabled:   false,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+	}
 	return nil
 }
 
@@ -119,6 +148,9 @@ func (f *fakeStore) DeleteEntryScoped(ctx context.Context, accountID, entryID uu
 }
 
 func (f *fakeStore) CreateEvent(ctx context.Context, event *AccountMemoryEvent) error {
+	if f.failCreateEvent {
+		return fmt.Errorf("forced event failure")
+	}
 	cp := *event
 	if cp.ID == uuid.Nil {
 		cp.ID = uuid.New()
@@ -128,6 +160,30 @@ func (f *fakeStore) CreateEvent(ctx context.Context, event *AccountMemoryEvent) 
 	}
 	f.events = append(f.events, &cp)
 	return nil
+}
+
+func cloneSettings(input map[uuid.UUID]*AccountMemorySetting) map[uuid.UUID]*AccountMemorySetting {
+	out := make(map[uuid.UUID]*AccountMemorySetting, len(input))
+	for id, setting := range input {
+		if setting == nil {
+			continue
+		}
+		cp := *setting
+		out[id] = &cp
+	}
+	return out
+}
+
+func cloneEntries(input map[uuid.UUID]*AccountMemoryEntry) map[uuid.UUID]*AccountMemoryEntry {
+	out := make(map[uuid.UUID]*AccountMemoryEntry, len(input))
+	for id, entry := range input {
+		if entry == nil {
+			continue
+		}
+		cp := *entry
+		out[id] = &cp
+	}
+	return out
 }
 
 func TestServiceScopesEntriesToCurrentAccount(t *testing.T) {
@@ -172,6 +228,9 @@ func TestRenderContextUsesEnabledEntriesAndBudget(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newTestService()
 	accountID := uuid.New()
+	if _, err := svc.SetEnabled(ctx, accountID, true); err != nil {
+		t.Fatalf("SetEnabled() error = %v", err)
+	}
 
 	first, err := svc.CreateEntry(ctx, accountID, CreateEntryRequest{
 		Content:  "Prefers concise answers.",
@@ -271,6 +330,9 @@ func TestRenderContextGroupsByCategoryPolicy(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newTestService()
 	accountID := uuid.New()
+	if _, err := svc.SetEnabled(ctx, accountID, true); err != nil {
+		t.Fatalf("SetEnabled() error = %v", err)
+	}
 
 	_, _ = svc.CreateEntry(ctx, accountID, CreateEntryRequest{Content: "Stable project fact.", Category: CategoryFact})
 	_, _ = svc.CreateEntry(ctx, accountID, CreateEntryRequest{Content: "Always answer in Chinese.", Category: CategoryInstruction})
@@ -310,6 +372,9 @@ func TestRenderContextIncludesOnlyActiveTemporaryMemory(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newTestService()
 	accountID := uuid.New()
+	if _, err := svc.SetEnabled(ctx, accountID, true); err != nil {
+		t.Fatalf("SetEnabled() error = %v", err)
+	}
 	future := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
 	past := time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339)
 
@@ -341,6 +406,29 @@ func TestRenderContextIncludesOnlyActiveTemporaryMemory(t *testing.T) {
 	}
 	if strings.Contains(rendered, expired.Content) {
 		t.Fatalf("rendered context = %q, want expired temporary memory omitted", rendered)
+	}
+}
+
+func TestRenderContextReturnsEmptyWhenMemoryDisabled(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newTestService()
+	accountID := uuid.New()
+	if _, err := svc.SetEnabled(ctx, accountID, false); err != nil {
+		t.Fatalf("SetEnabled() error = %v", err)
+	}
+	if _, err := svc.CreateEntry(ctx, accountID, CreateEntryRequest{
+		Content:  "Call the user Captain.",
+		Category: CategoryPreference,
+	}); err != nil {
+		t.Fatalf("CreateEntry() error = %v", err)
+	}
+
+	rendered, err := svc.RenderContext(ctx, accountID, 1000)
+	if err != nil {
+		t.Fatalf("RenderContext() error = %v", err)
+	}
+	if rendered != "" {
+		t.Fatalf("RenderContext() = %q, want empty when disabled", rendered)
 	}
 }
 
@@ -424,6 +512,27 @@ func TestMemoryMutationsRecordAuditEvents(t *testing.T) {
 	}
 	if store.events[2].Action != EventActionDelete {
 		t.Fatalf("third event action = %s, want delete", store.events[2].Action)
+	}
+}
+
+func TestCreateEntryRollsBackWhenAuditEventFails(t *testing.T) {
+	ctx := context.Background()
+	svc, store := newTestService()
+	accountID := uuid.New()
+	store.failCreateEvent = true
+
+	_, err := svc.CreateEntry(ctx, accountID, CreateEntryRequest{
+		Content:  "Prefers short answers.",
+		Category: CategoryPreference,
+	})
+	if err == nil {
+		t.Fatal("CreateEntry() error = nil, want forced audit failure")
+	}
+	if len(store.entries) != 0 {
+		t.Fatalf("len(entries) = %d, want rollback to 0", len(store.entries))
+	}
+	if len(store.events) != 0 {
+		t.Fatalf("len(events) = %d, want rollback to 0", len(store.events))
 	}
 }
 

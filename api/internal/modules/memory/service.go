@@ -30,6 +30,7 @@ var (
 	ErrInvalidInput = errors.New("invalid memory input")
 	ErrNotFound     = errors.New("memory not found")
 	ErrUnauthorized = errors.New("memory requester is unauthorized")
+	ErrDisabled     = errors.New("memory is disabled")
 )
 
 type Service struct {
@@ -41,8 +42,10 @@ func NewService(db *gorm.DB) *Service {
 }
 
 type store interface {
+	WithTransaction(ctx context.Context, fn func(store) error) error
 	GetSetting(ctx context.Context, accountID uuid.UUID) (*AccountMemorySetting, error)
 	UpsertSetting(ctx context.Context, setting *AccountMemorySetting) error
+	LockAccount(ctx context.Context, accountID uuid.UUID) error
 	ListEntries(ctx context.Context, accountID uuid.UUID, enabledOnly bool) ([]*AccountMemoryEntry, error)
 	CreateEntry(ctx context.Context, entry *AccountMemoryEntry) error
 	GetEntryScoped(ctx context.Context, accountID, entryID uuid.UUID) (*AccountMemoryEntry, error)
@@ -77,25 +80,42 @@ func (s *Service) GetMe(ctx context.Context, accountID uuid.UUID) (*MemoryMeResp
 	return memoryMeResponse(setting, entries), nil
 }
 
+func (s *Service) IsEnabled(ctx context.Context, accountID uuid.UUID) (bool, error) {
+	if accountID == uuid.Nil {
+		return false, ErrUnauthorized
+	}
+	setting, err := s.repo.GetSetting(ctx, accountID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		return false, fmt.Errorf("get memory setting: %w", err)
+	}
+	return setting.Enabled, nil
+}
+
 func (s *Service) SetEnabled(ctx context.Context, accountID uuid.UUID, enabled bool) (*MemoryMeResponse, error) {
 	if accountID == uuid.Nil {
 		return nil, ErrUnauthorized
 	}
-	before, err := s.repo.GetSetting(ctx, accountID)
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, fmt.Errorf("get memory setting: %w", err)
-	}
-	now := time.Now()
-	setting := &AccountMemorySetting{
-		AccountID: accountID,
-		Enabled:   enabled,
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-	if err := s.repo.UpsertSetting(ctx, setting); err != nil {
-		return nil, fmt.Errorf("update memory setting: %w", err)
-	}
-	if err := s.recordEvent(ctx, accountID, nil, settingAction(enabled), defaultMutationMetadata(), settingSnapshot(before), settingSnapshot(setting)); err != nil {
+
+	if err := s.repo.WithTransaction(ctx, func(tx store) error {
+		before, err := tx.GetSetting(ctx, accountID)
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("get memory setting: %w", err)
+		}
+		now := time.Now()
+		setting := &AccountMemorySetting{
+			AccountID: accountID,
+			Enabled:   enabled,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		if err := tx.UpsertSetting(ctx, setting); err != nil {
+			return fmt.Errorf("update memory setting: %w", err)
+		}
+		return recordEvent(ctx, tx, accountID, nil, settingAction(enabled), defaultMutationMetadata(), settingSnapshot(before), settingSnapshot(setting))
+	}); err != nil {
 		return nil, err
 	}
 	return s.GetMe(ctx, accountID)
@@ -118,49 +138,60 @@ func (s *Service) CreateEntryWithMetadata(ctx context.Context, accountID uuid.UU
 	if err != nil {
 		return nil, err
 	}
-	existingEntries, err := s.repo.ListEntries(ctx, accountID, false)
-	if err != nil {
-		return nil, fmt.Errorf("list memory entries: %w", err)
-	}
-	if existing := findMergeCandidate(content, category, memoryType, existingEntries); existing != nil {
-		before := *existing
-		values := map[string]interface{}{
-			"content":     content,
-			"category":    chooseMergedCategory(existing.Category, category),
-			"memory_type": memoryType,
-			"expires_at":  expiresAt,
-			"enabled":     true,
-			"updated_at":  time.Now(),
+	var response *MemoryEntryResponse
+	if err := s.repo.WithTransaction(ctx, func(tx store) error {
+		if err := tx.LockAccount(ctx, accountID); err != nil {
+			return fmt.Errorf("lock memory account: %w", err)
 		}
-		entry, err := s.repo.UpdateEntryScoped(ctx, accountID, existing.ID, values)
+		existingEntries, err := tx.ListEntries(ctx, accountID, false)
 		if err != nil {
-			return nil, mapRepoError(err, "merge memory entry")
+			return fmt.Errorf("list memory entries: %w", err)
 		}
-		if err := s.recordEntryEvent(ctx, accountID, &entry.ID, EventActionUpdate, meta, &before, entry); err != nil {
-			return nil, err
+		if existing := findMergeCandidate(content, category, memoryType, existingEntries); existing != nil {
+			before := *existing
+			values := map[string]interface{}{
+				"content":     content,
+				"category":    chooseMergedCategory(existing.Category, category),
+				"memory_type": memoryType,
+				"expires_at":  expiresAt,
+				"enabled":     true,
+				"updated_at":  time.Now(),
+			}
+			entry, err := tx.UpdateEntryScoped(ctx, accountID, existing.ID, values)
+			if err != nil {
+				return mapRepoError(err, "merge memory entry")
+			}
+			if err := recordEntryEvent(ctx, tx, accountID, &entry.ID, EventActionUpdate, meta, &before, entry); err != nil {
+				return err
+			}
+			resp := memoryEntryResponse(entry)
+			response = &resp
+			return nil
+		}
+		if len(existingEntries) >= maxMemoryEntriesPerAccount {
+			return fmt.Errorf("%w: memory entry limit reached", ErrInvalidInput)
+		}
+		entry := &AccountMemoryEntry{
+			AccountID:  accountID,
+			Content:    content,
+			Category:   category,
+			MemoryType: memoryType,
+			ExpiresAt:  expiresAt,
+			Enabled:    true,
+		}
+		if err := tx.CreateEntry(ctx, entry); err != nil {
+			return fmt.Errorf("create memory entry: %w", err)
+		}
+		if err := recordEntryEvent(ctx, tx, accountID, &entry.ID, EventActionCreate, meta, nil, entry); err != nil {
+			return err
 		}
 		resp := memoryEntryResponse(entry)
-		return &resp, nil
-	}
-	if len(existingEntries) >= maxMemoryEntriesPerAccount {
-		return nil, fmt.Errorf("%w: memory entry limit reached", ErrInvalidInput)
-	}
-	entry := &AccountMemoryEntry{
-		AccountID:  accountID,
-		Content:    content,
-		Category:   category,
-		MemoryType: memoryType,
-		ExpiresAt:  expiresAt,
-		Enabled:    true,
-	}
-	if err := s.repo.CreateEntry(ctx, entry); err != nil {
-		return nil, fmt.Errorf("create memory entry: %w", err)
-	}
-	if err := s.recordEntryEvent(ctx, accountID, &entry.ID, EventActionCreate, meta, nil, entry); err != nil {
+		response = &resp
+		return nil
+	}); err != nil {
 		return nil, err
 	}
-	resp := memoryEntryResponse(entry)
-	return &resp, nil
+	return response, nil
 }
 
 func (s *Service) UpdateEntry(ctx context.Context, accountID, entryID uuid.UUID, req UpdateEntryRequest) (*MemoryEntryResponse, error) {
@@ -174,45 +205,55 @@ func (s *Service) UpdateEntryWithMetadata(ctx context.Context, accountID, entryI
 	if entryID == uuid.Nil {
 		return nil, fmt.Errorf("%w: entry id is required", ErrInvalidInput)
 	}
-	before, err := s.repo.GetEntryScoped(ctx, accountID, entryID)
-	if err != nil {
-		return nil, mapRepoError(err, "get memory entry")
-	}
-	values := map[string]interface{}{"updated_at": time.Now()}
-	var nextContent string
-	if req.Content != nil {
-		content, err := normalizeContent(*req.Content)
+	var response *MemoryEntryResponse
+	if err := s.repo.WithTransaction(ctx, func(tx store) error {
+		if err := tx.LockAccount(ctx, accountID); err != nil {
+			return fmt.Errorf("lock memory account: %w", err)
+		}
+		lockedBefore, err := tx.GetEntryScoped(ctx, accountID, entryID)
 		if err != nil {
-			return nil, err
+			return mapRepoError(err, "get memory entry")
 		}
-		values["content"] = content
-		nextContent = content
-	}
-	if req.Category != nil {
-		contentForCategory := nextContent
-		if contentForCategory == "" {
-			contentForCategory = before.Content
+		values := map[string]interface{}{"updated_at": time.Now()}
+		var nextContent string
+		if req.Content != nil {
+			content, err := normalizeContent(*req.Content)
+			if err != nil {
+				return err
+			}
+			values["content"] = content
+			nextContent = content
 		}
-		values["category"] = resolveCategory(*req.Category, contentForCategory)
-	}
-	memoryType, expiresAt, err := resolveUpdateTiming(before, req.MemoryType, req.ExpiresAt)
-	if err != nil {
+		if req.Category != nil {
+			contentForCategory := nextContent
+			if contentForCategory == "" {
+				contentForCategory = lockedBefore.Content
+			}
+			values["category"] = resolveCategory(*req.Category, contentForCategory)
+		}
+		memoryType, expiresAt, err := resolveUpdateTiming(lockedBefore, req.MemoryType, req.ExpiresAt)
+		if err != nil {
+			return err
+		}
+		values["memory_type"] = memoryType
+		values["expires_at"] = expiresAt
+		if req.Enabled != nil {
+			values["enabled"] = *req.Enabled
+		}
+		entry, err := tx.UpdateEntryScoped(ctx, accountID, entryID, values)
+		if err != nil {
+			return mapRepoError(err, "update memory entry")
+		}
+		if err := recordEntryEvent(ctx, tx, accountID, &entry.ID, updateAction(lockedBefore, entry), meta, lockedBefore, entry); err != nil {
+			return err
+		}
+		resp := memoryEntryResponse(entry)
+		response = &resp
+		return nil
+	}); err != nil {
 		return nil, err
 	}
-	values["memory_type"] = memoryType
-	values["expires_at"] = expiresAt
-	if req.Enabled != nil {
-		values["enabled"] = *req.Enabled
-	}
-	entry, err := s.repo.UpdateEntryScoped(ctx, accountID, entryID, values)
-	if err != nil {
-		return nil, mapRepoError(err, "update memory entry")
-	}
-	if err := s.recordEntryEvent(ctx, accountID, &entry.ID, updateAction(before, entry), meta, before, entry); err != nil {
-		return nil, err
-	}
-	resp := memoryEntryResponse(entry)
-	return &resp, nil
+	return response, nil
 }
 
 func (s *Service) DeleteEntry(ctx context.Context, accountID, entryID uuid.UUID) error {
@@ -226,17 +267,19 @@ func (s *Service) DeleteEntryWithMetadata(ctx context.Context, accountID, entryI
 	if entryID == uuid.Nil {
 		return fmt.Errorf("%w: entry id is required", ErrInvalidInput)
 	}
-	before, err := s.repo.GetEntryScoped(ctx, accountID, entryID)
-	if err != nil {
-		return mapRepoError(err, "get memory entry")
-	}
-	if err := s.repo.DeleteEntryScoped(ctx, accountID, entryID); err != nil {
-		return mapRepoError(err, "delete memory entry")
-	}
-	if err := s.recordEntryEvent(ctx, accountID, &entryID, EventActionDelete, meta, before, nil); err != nil {
-		return err
-	}
-	return nil
+	return s.repo.WithTransaction(ctx, func(tx store) error {
+		if err := tx.LockAccount(ctx, accountID); err != nil {
+			return fmt.Errorf("lock memory account: %w", err)
+		}
+		before, err := tx.GetEntryScoped(ctx, accountID, entryID)
+		if err != nil {
+			return mapRepoError(err, "get memory entry")
+		}
+		if err := tx.DeleteEntryScoped(ctx, accountID, entryID); err != nil {
+			return mapRepoError(err, "delete memory entry")
+		}
+		return recordEntryEvent(ctx, tx, accountID, &entryID, EventActionDelete, meta, before, nil)
+	})
 }
 
 func (s *Service) RenderContext(ctx context.Context, accountID uuid.UUID, budget int) (string, error) {
@@ -245,6 +288,13 @@ func (s *Service) RenderContext(ctx context.Context, accountID uuid.UUID, budget
 	}
 	if budget <= 0 {
 		budget = defaultRenderBudgetChars
+	}
+	enabled, err := s.IsEnabled(ctx, accountID)
+	if err != nil {
+		return "", err
+	}
+	if !enabled {
+		return "", nil
 	}
 	entries, err := s.repo.ListEntries(ctx, accountID, true)
 	if err != nil {
@@ -775,11 +825,11 @@ func updateAction(before *AccountMemoryEntry, after *AccountMemoryEntry) string 
 	return EventActionUpdate
 }
 
-func (s *Service) recordEntryEvent(ctx context.Context, accountID uuid.UUID, entryID *uuid.UUID, action string, meta MutationMetadata, before *AccountMemoryEntry, after *AccountMemoryEntry) error {
-	return s.recordEvent(ctx, accountID, entryID, action, meta, entrySnapshot(before), entrySnapshot(after))
+func recordEntryEvent(ctx context.Context, repo store, accountID uuid.UUID, entryID *uuid.UUID, action string, meta MutationMetadata, before *AccountMemoryEntry, after *AccountMemoryEntry) error {
+	return recordEvent(ctx, repo, accountID, entryID, action, meta, entrySnapshot(before), entrySnapshot(after))
 }
 
-func (s *Service) recordEvent(ctx context.Context, accountID uuid.UUID, entryID *uuid.UUID, action string, meta MutationMetadata, before datatypes.JSON, after datatypes.JSON) error {
+func recordEvent(ctx context.Context, repo store, accountID uuid.UUID, entryID *uuid.UUID, action string, meta MutationMetadata, before datatypes.JSON, after datatypes.JSON) error {
 	meta = normalizeMutationMetadata(meta)
 	event := &AccountMemoryEvent{
 		AccountID:            accountID,
@@ -792,7 +842,7 @@ func (s *Service) recordEvent(ctx context.Context, accountID uuid.UUID, entryID 
 		BeforeSnapshot:       before,
 		AfterSnapshot:        after,
 	}
-	if err := s.repo.CreateEvent(ctx, event); err != nil {
+	if err := repo.CreateEvent(ctx, event); err != nil {
 		return fmt.Errorf("record memory event: %w", err)
 	}
 	return nil

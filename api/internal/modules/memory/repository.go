@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -14,6 +15,12 @@ type Repository struct {
 
 func NewRepository(db *gorm.DB) *Repository {
 	return &Repository{db: db}
+}
+
+func (r *Repository) WithTransaction(ctx context.Context, fn func(store) error) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return fn(&Repository{db: tx})
+	})
 }
 
 func (r *Repository) GetSetting(ctx context.Context, accountID uuid.UUID) (*AccountMemorySetting, error) {
@@ -30,6 +37,28 @@ func (r *Repository) UpsertSetting(ctx context.Context, setting *AccountMemorySe
 		Columns:   []clause.Column{{Name: "account_id"}},
 		DoUpdates: clause.AssignmentColumns([]string{"enabled", "updated_at"}),
 	}).Create(setting).Error
+}
+
+func (r *Repository) LockAccount(ctx context.Context, accountID uuid.UUID) error {
+	now := time.Now()
+	setting := &AccountMemorySetting{
+		AccountID: accountID,
+		Enabled:   false,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := r.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "account_id"}},
+		DoNothing: true,
+	}).Create(setting).Error; err != nil {
+		return err
+	}
+
+	var locked AccountMemorySetting
+	return r.db.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("account_id = ?", accountID).
+		First(&locked).Error
 }
 
 func (r *Repository) ListEntries(ctx context.Context, accountID uuid.UUID, enabledOnly bool) ([]*AccountMemoryEntry, error) {

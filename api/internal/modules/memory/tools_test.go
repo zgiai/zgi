@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,9 @@ func TestMemoryToolUpdateAcceptsIDAlias(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newTestService()
 	accountID := uuid.New()
+	if _, err := svc.SetEnabled(ctx, accountID, true); err != nil {
+		t.Fatalf("SetEnabled() error = %v", err)
+	}
 	created, err := svc.CreateEntry(ctx, accountID, CreateEntryRequest{
 		Content:  "Remember the old value.",
 		Category: CategoryFact,
@@ -44,6 +48,9 @@ func TestMemoryToolListsExpiredTemporaryMemories(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newTestService()
 	accountID := uuid.New()
+	if _, err := svc.SetEnabled(ctx, accountID, true); err != nil {
+		t.Fatalf("SetEnabled() error = %v", err)
+	}
 	expiredAt := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
 
 	created, err := svc.CreateEntry(ctx, accountID, CreateEntryRequest{
@@ -83,6 +90,9 @@ func TestMemoryToolAddAcceptsMemoryAlias(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newTestService()
 	accountID := uuid.New()
+	if _, err := svc.SetEnabled(ctx, accountID, true); err != nil {
+		t.Fatalf("SetEnabled() error = %v", err)
+	}
 
 	tool := newAddMemoryTool(svc)
 	_, err := tool.Invoke(ctx, accountID.String(), map[string]interface{}{
@@ -109,6 +119,9 @@ func TestMemoryToolReadReturnsEntryIDAlias(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newTestService()
 	accountID := uuid.New()
+	if _, err := svc.SetEnabled(ctx, accountID, true); err != nil {
+		t.Fatalf("SetEnabled() error = %v", err)
+	}
 	created, err := svc.CreateEntry(ctx, accountID, CreateEntryRequest{
 		Content:  "Prefers short answers.",
 		Category: CategoryPreference,
@@ -142,5 +155,19 @@ func TestMemoryToolReadReturnsEntryIDAlias(t *testing.T) {
 	}
 	if payload.Entries[0].ID != created.ID || payload.Entries[0].EntryID != created.ID {
 		t.Fatalf("ids = (%q, %q), want %q", payload.Entries[0].ID, payload.Entries[0].EntryID, created.ID)
+	}
+}
+
+func TestMemoryToolRejectsWhenMemoryDisabled(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newTestService()
+	accountID := uuid.New()
+	if _, err := svc.SetEnabled(ctx, accountID, false); err != nil {
+		t.Fatalf("SetEnabled() error = %v", err)
+	}
+
+	_, err := newReadMemoryTool(svc).Invoke(ctx, accountID.String(), nil, nil, nil, nil)
+	if !errors.Is(err, ErrDisabled) {
+		t.Fatalf("Invoke(read disabled) error = %v, want ErrDisabled", err)
 	}
 }

@@ -130,6 +130,13 @@ func (t *memoryTool) Invoke(ctx context.Context, userID string, params map[strin
 	if err != nil {
 		return nil, err
 	}
+	enabled, err := t.service.IsEnabled(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	if !enabled {
+		return nil, ErrDisabled
+	}
 	switch t.kind {
 	case "read_user_memory":
 		state, err := t.service.GetMe(ctx, accountID)

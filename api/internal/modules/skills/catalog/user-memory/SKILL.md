@@ -51,5 +51,6 @@ Guidelines:
    - If the user asks for an actual reminder and no reminder tool is available, say you can remember it for future conversations but cannot proactively notify them at the time.
 9. Use `list_temporary_memories` with `status=expired` only for retrospective questions such as "what did I ask you to remember last week?" Expired temporary memories are historical, not current facts.
 10. Use `delete_user_memory` when the user asks you to forget something.
-11. Do not store secrets, credentials, or information about other people unless the user explicitly wants it remembered for future work.
-12. Never ask for or pass an account id. The platform supplies the current account identity.
+11. Account memory may be used across the user's organizations and workspaces. Do not store organization-specific, customer-specific, project-specific, or workspace-sensitive facts as long-term memory unless the user explicitly asks you to remember them across future work. Prefer temporary memory for short-lived project context.
+12. Do not store secrets, credentials, or information about other people unless the user explicitly wants it remembered for future work.
+13. Never ask for or pass an account id. The platform supplies the current account identity.

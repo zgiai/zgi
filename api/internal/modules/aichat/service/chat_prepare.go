@@ -380,7 +380,13 @@ func (s *service) applyOrganizationSkillConfig(ctx context.Context, scope Scope,
 	}
 	parts.SkillIDs, parts.ToolSkillIDs = filterSkillsForModel(enabled, catalog, parts)
 	if parts.UseMemory {
-		appendUserMemorySkill(ctx, parts, catalog)
+		memoryEnabled, err := s.isUserMemoryEnabled(ctx, scope.AccountID)
+		if err != nil {
+			return err
+		}
+		if memoryEnabled {
+			appendUserMemorySkill(ctx, parts, catalog)
+		}
 	}
 	if len(parts.SkillIDs) == 0 {
 		parts.SkillMode = skillModeDisabled
@@ -471,12 +477,18 @@ func normalizeRegenerateRequest(req aichatdto.RegenerateMessageRequest, message 
 		providerPtr = &provider
 	}
 
+	useMemory := boolMetadata(message.Metadata, "use_memory")
+	if req.UseMemory != nil {
+		useMemory = *req.UseMemory
+	}
+
 	return &chatRequestParts{
 		Query:       query,
 		ModelName:   modelName,
 		Provider:    provider,
 		ProviderPtr: providerPtr,
 		Parameters:  params,
+		UseMemory:   useMemory,
 	}, nil
 }
 
@@ -553,6 +565,13 @@ func (s *service) appendUserMemoryContext(ctx context.Context, scope Scope, part
 	if s.memoryService == nil {
 		return systemPrompt, map[string]interface{}{"user_memory": map[string]interface{}{"enabled": true, "available": false}}, nil
 	}
+	enabled, err := s.memoryService.IsEnabled(ctx, scope.AccountID)
+	if err != nil {
+		return "", nil, err
+	}
+	if !enabled {
+		return systemPrompt, map[string]interface{}{"user_memory": map[string]interface{}{"enabled": false, "available": false}}, nil
+	}
 	rendered, err := s.memoryService.RenderContext(ctx, scope.AccountID, userMemoryContextBudgetChars)
 	if err != nil {
 		return "", nil, err
@@ -567,6 +586,25 @@ func (s *service) appendUserMemoryContext(ctx context.Context, scope Scope, part
 		return systemPrompt, metadata, nil
 	}
 	return strings.TrimSpace(systemPrompt) + "\n\n" + rendered, metadata, nil
+}
+
+func (s *service) isUserMemoryEnabled(ctx context.Context, accountID uuid.UUID) (bool, error) {
+	if s.memoryService == nil {
+		return false, nil
+	}
+	return s.memoryService.IsEnabled(ctx, accountID)
+}
+
+func boolMetadata(metadata map[string]interface{}, key string) bool {
+	if metadata == nil {
+		return false
+	}
+	value, ok := metadata[key]
+	if !ok {
+		return false
+	}
+	typed, ok := value.(bool)
+	return ok && typed
 }
 
 func mergeUserMemoryMetadata(metadata map[string]interface{}, memoryMetadata map[string]interface{}) map[string]interface{} {

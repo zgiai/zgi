@@ -92,6 +92,7 @@ type Service interface {
 }
 
 type UserMemoryService interface {
+	IsEnabled(ctx context.Context, accountID uuid.UUID) (bool, error)
 	RenderContext(ctx context.Context, accountID uuid.UUID, budget int) (string, error)
 }
 
