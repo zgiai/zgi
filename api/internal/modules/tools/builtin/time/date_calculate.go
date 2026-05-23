@@ -13,6 +13,14 @@ import (
 
 const defaultDateFormat = "2006-01-02"
 
+var dateInputLayouts = []string{
+	defaultDateFormat,
+	"2006-01-02 15:04:05",
+	"2006-01-02 15:04",
+	"2006-01-02T15:04:05",
+	"2006-01-02T15:04",
+}
+
 // DateCalculateTool performs small date arithmetic and difference calculations.
 type DateCalculateTool struct {
 	*builtin.BuiltinTool
@@ -239,8 +247,10 @@ func parseDateParam(params map[string]interface{}, key string, loc *stdtime.Loca
 }
 
 func parseDate(raw string, loc *stdtime.Location) (stdtime.Time, error) {
-	if parsed, err := stdtime.ParseInLocation(defaultDateFormat, raw, loc); err == nil {
-		return parsed, nil
+	for _, layout := range dateInputLayouts {
+		if parsed, err := stdtime.ParseInLocation(layout, raw, loc); err == nil {
+			return stdtime.Date(parsed.Year(), parsed.Month(), parsed.Day(), 0, 0, 0, 0, loc), nil
+		}
 	}
 	parsed, err := stdtime.Parse(stdtime.RFC3339, raw)
 	if err != nil {
