@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	cryptorand "crypto/rand"
 	"flag"
 	"fmt"
+	"math/big"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -16,6 +18,14 @@ import (
 	"github.com/zgiai/zgi/api/pkg/database"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/gorm"
+)
+
+const (
+	migrationTimestampLayout    = "20060102150405"
+	migrationRandomSuffixDigits = 4
+	migrationRandomSuffixMax    = 10000
+	migrationIDPrefixRetryLimit = 16
+	migrationDirectory          = "internal/migrations"
 )
 
 func main() {
@@ -157,10 +167,14 @@ func createMigrationFile(slug string) (string, error) {
 		return "", fmt.Errorf("migration slug must be lower_snake_case")
 	}
 
-	timestamp := nextMigrationTimestamp(time.Now().UTC())
-	id := timestamp + "_" + slug
-	name := "migration" + timestamp
-	path := filepath.Join("internal", "migrations", id+".go")
+	prefix, err := nextMigrationIDPrefix(time.Now(), migrationDirectory, randomMigrationSuffix)
+	if err != nil {
+		return "", err
+	}
+
+	id := prefix + "_" + slug
+	name := "migration" + prefix
+	path := filepath.Join(migrationDirectory, id+".go")
 	if _, err := os.Stat(path); err == nil {
 		return "", fmt.Errorf("migration already exists: %s", path)
 	}
@@ -186,7 +200,7 @@ func up%s(schema *mschema.Builder) error {
 func down%s(schema *mschema.Builder) error {
 	return fmt.Errorf("rollback for migration %s is not implemented")
 }
-`, name, id, name, timestamp, timestamp, timestamp, id, timestamp, id)
+`, name, id, name, prefix, prefix, prefix, id, prefix, id)
 
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		return "", err
@@ -194,15 +208,35 @@ func down%s(schema *mschema.Builder) error {
 	return path, nil
 }
 
-func nextMigrationTimestamp(now time.Time) string {
-	for i := 0; i < 100; i++ {
-		candidate := now.Add(time.Duration(i) * time.Second).Format("20060102150405")
-		matches, err := filepath.Glob(filepath.Join("internal", "migrations", candidate+"*.go"))
-		if err == nil && len(matches) == 0 {
-			return candidate
+func nextMigrationIDPrefix(now time.Time, dir string, randomSuffix func() (int, error)) (string, error) {
+	timestamp := now.UTC().Format(migrationTimestampLayout)
+	for i := 0; i < migrationIDPrefixRetryLimit; i++ {
+		suffix, err := randomSuffix()
+		if err != nil {
+			return "", fmt.Errorf("generate migration ID random suffix: %w", err)
+		}
+		if suffix < 0 || suffix >= migrationRandomSuffixMax {
+			return "", fmt.Errorf("migration ID random suffix out of range: %d", suffix)
+		}
+
+		candidate := timestamp + fmt.Sprintf("%0*d", migrationRandomSuffixDigits, suffix)
+		matches, err := filepath.Glob(filepath.Join(dir, candidate+"*.go"))
+		if err != nil {
+			return "", fmt.Errorf("check migration ID prefix collision: %w", err)
+		}
+		if len(matches) == 0 {
+			return candidate, nil
 		}
 	}
-	return now.Format("20060102150405") + fmt.Sprintf("%02d", now.Nanosecond()/1e7)
+	return "", fmt.Errorf("migration ID prefix collision after %d attempts for %s", migrationIDPrefixRetryLimit, timestamp)
+}
+
+func randomMigrationSuffix() (int, error) {
+	n, err := cryptorand.Int(cryptorand.Reader, big.NewInt(migrationRandomSuffixMax))
+	if err != nil {
+		return 0, err
+	}
+	return int(n.Int64()), nil
 }
 
 func openConfiguredDB() (*gorm.DB, error) {
@@ -276,7 +310,7 @@ Commands:
   down            Alias of rollback; requires explicit confirmation
   status          Show migration status
   check           Validate migration IDs, filenames, safety rules, and optional fresh PostgreSQL execution
-  make <slug>     Create a timestamped migration file
+  make <slug>     Create a timestamped migration file with a random suffix
   seed            Execute seed data
 
 Migration Options:
@@ -297,7 +331,7 @@ Examples:
   go run cmd/migrate/main.go check
   go run cmd/migrate/main.go check -db "host=localhost user=postgres password=postgres dbname=zgi_check port=5432 sslmode=disable"
   go run cmd/migrate/main.go make create_audit_events
-  go run cmd/migrate/main.go rollback -confirm 20260601090000_create_audit_events
+  go run cmd/migrate/main.go rollback -confirm 202606010900000827_create_audit_events
 
   # Seed
   go run cmd/migrate/main.go seed                    # Execute development environment seeds

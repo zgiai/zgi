@@ -26,7 +26,7 @@ func TestRegisteredMigrationsAreValid(t *testing.T) {
 	seen := make(map[string]struct{}, len(migrations))
 	for _, migration := range migrations {
 		if !migrationIDPattern.MatchString(migration.ID) {
-			t.Fatalf("migration ID %q must match YYYYMMDDHHMMSS_slug", migration.ID)
+			t.Fatalf("migration ID %q must match public migration ID format", migration.ID)
 		}
 		if migration.Migrate == nil {
 			t.Fatalf("migration %s has nil Migrate function", migration.ID)
@@ -39,6 +39,31 @@ func TestRegisteredMigrationsAreValid(t *testing.T) {
 	for i := 1; i < len(migrations); i++ {
 		if migrations[i-1].ID > migrations[i].ID {
 			t.Fatalf("migrations must be sorted by ID: %s before %s", migrations[i-1].ID, migrations[i].ID)
+		}
+	}
+}
+
+func TestMigrationIDPatternAcceptsPublicFormats(t *testing.T) {
+	valid := []string{
+		"20260520000000_initial_schema",
+		"2026052000000012_legacy_short_suffix",
+		"202605240013420827_create_audit_events",
+	}
+	for _, id := range valid {
+		if !migrationIDPattern.MatchString(id) {
+			t.Fatalf("expected migration ID %q to be valid", id)
+		}
+	}
+
+	invalid := []string{
+		"2026052000000_missing_digit",
+		"20260524001342082_three_digit_suffix",
+		"20260524001342082708_too_long_suffix",
+		"202605240013420827_create-audit-events",
+	}
+	for _, id := range invalid {
+		if migrationIDPattern.MatchString(id) {
+			t.Fatalf("expected migration ID %q to be invalid", id)
 		}
 	}
 }
