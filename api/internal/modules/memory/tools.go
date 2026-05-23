@@ -40,6 +40,7 @@ func NewProvider(service *Service) *Provider {
 	provider.RegisterTool(newAddMemoryTool(service))
 	provider.RegisterTool(newUpdateMemoryTool(service))
 	provider.RegisterTool(newDeleteMemoryTool(service))
+	provider.RegisterTool(newListTemporaryMemoriesTool(service))
 	return provider
 }
 
@@ -54,9 +55,11 @@ func newReadMemoryTool(service *Service) tools.Tool {
 }
 
 func newAddMemoryTool(service *Service) tools.Tool {
-	return newMemoryTool(service, "add_user_memory", "Add User Memory", "Save a new durable memory entry for the current user.", []tools.ToolParameter{
-		stringParam("content", "Memory content", "The concise user memory to save.", true),
+	return newMemoryTool(service, "add_user_memory", "Add User Memory", "Save a new memory entry for the current user.", []tools.ToolParameter{
+		stringParam("content", "Memory content", "The concise user memory to save. Use this field for the memory text.", true),
 		categoryParam(),
+		memoryTypeParam(),
+		stringParam("expires_at", "Expires at", "RFC3339 expiration time for temporary memory. Required when memory_type is temporary. Do not use relative dates.", false),
 	})
 }
 
@@ -65,6 +68,8 @@ func newUpdateMemoryTool(service *Service) tools.Tool {
 		stringParam("entry_id", "Entry ID", "The memory entry id returned by read_user_memory.", true),
 		stringParam("content", "Memory content", "Updated memory content. Omit when only changing category or enabled.", false),
 		categoryParam(),
+		memoryTypeParam(),
+		stringParam("expires_at", "Expires at", "RFC3339 expiration time for temporary memory. Required when memory_type is temporary. Use an empty value only when converting to long_term.", false),
 		{
 			Name:           "enabled",
 			Label:          tools.I18nText{"en_US": "Enabled", "zh_Hans": "启用"},
@@ -79,6 +84,20 @@ func newUpdateMemoryTool(service *Service) tools.Tool {
 func newDeleteMemoryTool(service *Service) tools.Tool {
 	return newMemoryTool(service, "delete_user_memory", "Delete User Memory", "Delete one memory entry that belongs to the current user.", []tools.ToolParameter{
 		stringParam("entry_id", "Entry ID", "The memory entry id returned by read_user_memory.", true),
+	})
+}
+
+func newListTemporaryMemoriesTool(service *Service) tools.Tool {
+	return newMemoryTool(service, "list_temporary_memories", "List Temporary Memories", "List active or expired temporary memory entries for retrospective user questions. Expired memories are historical and not current facts.", []tools.ToolParameter{
+		statusParam(),
+		{
+			Name:           "limit",
+			Label:          tools.I18nText{"en_US": "Limit", "zh_Hans": "Limit"},
+			LLMDescription: "Maximum number of temporary memories to return. Defaults to 20 and is capped at 100.",
+			Type:           tools.ToolParameterTypeNumber,
+			Form:           tools.ToolParameterFormLLM,
+			Required:       false,
+		},
 	})
 }
 
@@ -117,46 +136,64 @@ func (t *memoryTool) Invoke(ctx context.Context, userID string, params map[strin
 		if err != nil {
 			return nil, err
 		}
-		return jsonMessages(state)
+		return jsonMessages(memoryToolStateResponse(state))
 	case "add_user_memory":
-		content := stringValue(params, "content")
-		entry, err := t.service.CreateEntry(ctx, accountID, CreateEntryRequest{
-			Content:  content,
-			Category: stringValue(params, "category"),
-		})
+		content := memoryContentValue(params)
+		entry, err := t.service.CreateEntryWithMetadata(ctx, accountID, CreateEntryRequest{
+			Content:    content,
+			Category:   stringValue(params, "category"),
+			MemoryType: stringValue(params, "memory_type"),
+			ExpiresAt:  stringValue(params, "expires_at"),
+		}, toolMutationMetadata(conversationID, messageID))
 		if err != nil {
 			return nil, err
 		}
-		return jsonMessages(entry)
+		return jsonMessages(memoryToolEntryResponse(entry))
 	case "update_user_memory":
 		entryID, err := parseEntryID(params)
 		if err != nil {
 			return nil, err
 		}
 		req := UpdateEntryRequest{}
-		if content := stringValue(params, "content"); content != "" {
+		if content := memoryContentValue(params); content != "" {
 			req.Content = &content
 		}
 		if category := stringValue(params, "category"); category != "" {
 			req.Category = &category
 		}
+		if memoryType := stringValue(params, "memory_type"); memoryType != "" {
+			req.MemoryType = &memoryType
+		}
+		if expiresAt := stringValue(params, "expires_at"); expiresAt != "" {
+			req.ExpiresAt = &expiresAt
+		}
 		if enabled, ok := boolValue(params, "enabled"); ok {
 			req.Enabled = &enabled
 		}
-		entry, err := t.service.UpdateEntry(ctx, accountID, entryID, req)
+		entry, err := t.service.UpdateEntryWithMetadata(ctx, accountID, entryID, req, toolMutationMetadata(conversationID, messageID))
 		if err != nil {
 			return nil, err
 		}
-		return jsonMessages(entry)
+		return jsonMessages(memoryToolEntryResponse(entry))
 	case "delete_user_memory":
 		entryID, err := parseEntryID(params)
 		if err != nil {
 			return nil, err
 		}
-		if err := t.service.DeleteEntry(ctx, accountID, entryID); err != nil {
+		if err := t.service.DeleteEntryWithMetadata(ctx, accountID, entryID, toolMutationMetadata(conversationID, messageID)); err != nil {
 			return nil, err
 		}
 		return jsonMessages(map[string]interface{}{"result": "success", "entry_id": entryID.String()})
+	case "list_temporary_memories":
+		entries, err := t.service.ListTemporaryEntries(ctx, accountID, stringValue(params, "status"), intValue(params, "limit"))
+		if err != nil {
+			return nil, err
+		}
+		out := make([]map[string]interface{}, 0, len(entries))
+		for _, entry := range entries {
+			out = append(out, memoryToolEntryMap(entry))
+		}
+		return jsonMessages(map[string]interface{}{"entries": out})
 	default:
 		return nil, fmt.Errorf("unknown memory tool %s", t.kind)
 	}
@@ -200,12 +237,90 @@ func categoryParam() tools.ToolParameter {
 	}
 }
 
+func memoryTypeParam() tools.ToolParameter {
+	return tools.ToolParameter{
+		Name:           "memory_type",
+		Label:          tools.I18nText{"en_US": "Memory type", "zh_Hans": "Memory type"},
+		LLMDescription: "Use long_term for durable preferences/facts. Use temporary for time-limited plans, one-off constraints, or short-lived context. Temporary memory requires expires_at.",
+		Type:           tools.ToolParameterTypeSelect,
+		Form:           tools.ToolParameterFormLLM,
+		Required:       false,
+		Default:        MemoryTypeLongTerm,
+		Options: []tools.ToolParameterOption{
+			{Value: MemoryTypeLongTerm, Label: tools.I18nText{"en_US": "Long-term", "zh_Hans": "Long-term"}},
+			{Value: MemoryTypeTemporary, Label: tools.I18nText{"en_US": "Temporary", "zh_Hans": "Temporary"}},
+		},
+	}
+}
+
+func statusParam() tools.ToolParameter {
+	return tools.ToolParameter{
+		Name:           "status",
+		Label:          tools.I18nText{"en_US": "Status", "zh_Hans": "Status"},
+		LLMDescription: "Which temporary memories to list. Use expired only for retrospective questions; expired memories are not current.",
+		Type:           tools.ToolParameterTypeSelect,
+		Form:           tools.ToolParameterFormLLM,
+		Required:       false,
+		Default:        memoryStatusActive,
+		Options: []tools.ToolParameterOption{
+			{Value: memoryStatusActive, Label: tools.I18nText{"en_US": "Active", "zh_Hans": "Active"}},
+			{Value: memoryStatusExpired, Label: tools.I18nText{"en_US": "Expired", "zh_Hans": "Expired"}},
+			{Value: "all", Label: tools.I18nText{"en_US": "All", "zh_Hans": "All"}},
+		},
+	}
+}
+
 func parseEntryID(params map[string]interface{}) (uuid.UUID, error) {
-	entryID, err := uuid.Parse(stringValue(params, "entry_id"))
+	raw := stringValue(params, "entry_id")
+	if raw == "" {
+		raw = stringValue(params, "id")
+	}
+	entryID, err := uuid.Parse(raw)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("%w: invalid entry_id", ErrInvalidInput)
 	}
 	return entryID, nil
+}
+
+func memoryToolStateResponse(state *MemoryMeResponse) map[string]interface{} {
+	if state == nil {
+		return map[string]interface{}{
+			"enabled":    false,
+			"entries":    []interface{}{},
+			"updated_at": int64(0),
+		}
+	}
+	entries := make([]map[string]interface{}, 0, len(state.Entries))
+	for _, entry := range state.Entries {
+		entries = append(entries, memoryToolEntryMap(entry))
+	}
+	return map[string]interface{}{
+		"enabled":    state.Enabled,
+		"entries":    entries,
+		"updated_at": state.UpdatedAt,
+	}
+}
+
+func memoryToolEntryResponse(entry *MemoryEntryResponse) map[string]interface{} {
+	if entry == nil {
+		return map[string]interface{}{}
+	}
+	return memoryToolEntryMap(*entry)
+}
+
+func memoryToolEntryMap(entry MemoryEntryResponse) map[string]interface{} {
+	return map[string]interface{}{
+		"id":          entry.ID,
+		"entry_id":    entry.ID,
+		"content":     entry.Content,
+		"category":    entry.Category,
+		"memory_type": entry.MemoryType,
+		"expires_at":  entry.ExpiresAt,
+		"status":      entry.Status,
+		"enabled":     entry.Enabled,
+		"created_at":  entry.CreatedAt,
+		"updated_at":  entry.UpdatedAt,
+	}
 }
 
 func stringValue(params map[string]interface{}, key string) string {
@@ -216,12 +331,58 @@ func stringValue(params map[string]interface{}, key string) string {
 	return value
 }
 
+func memoryContentValue(params map[string]interface{}) string {
+	for _, key := range []string{"content", "memory", "text"} {
+		if value := stringValue(params, key); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func boolValue(params map[string]interface{}, key string) (bool, bool) {
 	if params == nil {
 		return false, false
 	}
 	value, ok := params[key].(bool)
 	return value, ok
+}
+
+func intValue(params map[string]interface{}, key string) int {
+	if params == nil {
+		return 0
+	}
+	switch value := params[key].(type) {
+	case int:
+		return value
+	case int64:
+		return int(value)
+	case float64:
+		return int(value)
+	case json.Number:
+		intValue, _ := value.Int64()
+		return int(intValue)
+	default:
+		return 0
+	}
+}
+
+func toolMutationMetadata(conversationID *string, messageID *string) MutationMetadata {
+	meta := MutationMetadata{
+		ActorType: EventActorModel,
+		Source:    EventSourceAIChat,
+	}
+	if conversationID != nil {
+		if id, err := uuid.Parse(*conversationID); err == nil {
+			meta.SourceConversationID = &id
+		}
+	}
+	if messageID != nil {
+		if id, err := uuid.Parse(*messageID); err == nil {
+			meta.SourceMessageID = &id
+		}
+	}
+	return meta
 }
 
 func jsonMessages(value interface{}) ([]tools.ToolInvokeMessage, error) {

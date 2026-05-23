@@ -46,6 +46,10 @@ func (r *Repository) CreateEntry(ctx context.Context, entry *AccountMemoryEntry)
 	return r.db.WithContext(ctx).Create(entry).Error
 }
 
+func (r *Repository) CreateEvent(ctx context.Context, event *AccountMemoryEvent) error {
+	return r.db.WithContext(ctx).Create(event).Error
+}
+
 func (r *Repository) GetEntryScoped(ctx context.Context, accountID, entryID uuid.UUID) (*AccountMemoryEntry, error) {
 	var entry AccountMemoryEntry
 	err := r.db.WithContext(ctx).

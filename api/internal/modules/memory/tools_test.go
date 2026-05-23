@@ -1,0 +1,146 @@
+package memory
+
+import (
+	"context"
+	"encoding/json"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+func TestMemoryToolUpdateAcceptsIDAlias(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newTestService()
+	accountID := uuid.New()
+	created, err := svc.CreateEntry(ctx, accountID, CreateEntryRequest{
+		Content:  "Remember the old value.",
+		Category: CategoryFact,
+	})
+	if err != nil {
+		t.Fatalf("CreateEntry() error = %v", err)
+	}
+
+	tool := newUpdateMemoryTool(svc)
+	_, err = tool.Invoke(ctx, accountID.String(), map[string]interface{}{
+		"id":      created.ID,
+		"content": "Remember the updated value.",
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke(update with id alias) error = %v", err)
+	}
+
+	state, err := svc.GetMe(ctx, accountID)
+	if err != nil {
+		t.Fatalf("GetMe() error = %v", err)
+	}
+	if got := state.Entries[0].Content; got != "Remember the updated value." {
+		t.Fatalf("entry content = %q", got)
+	}
+}
+
+func TestMemoryToolListsExpiredTemporaryMemories(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newTestService()
+	accountID := uuid.New()
+	expiredAt := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+
+	created, err := svc.CreateEntry(ctx, accountID, CreateEntryRequest{
+		Content:    "The user needed to bring the briefcase yesterday.",
+		MemoryType: MemoryTypeTemporary,
+		ExpiresAt:  expiredAt,
+	})
+	if err != nil {
+		t.Fatalf("CreateEntry() error = %v", err)
+	}
+
+	messages, err := newListTemporaryMemoriesTool(svc).Invoke(ctx, accountID.String(), map[string]interface{}{
+		"status": memoryStatusExpired,
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke(list temporary) error = %v", err)
+	}
+	var payload struct {
+		Entries []struct {
+			ID         string `json:"id"`
+			MemoryType string `json:"memory_type"`
+			Status     string `json:"status"`
+		} `json:"entries"`
+	}
+	if err := json.Unmarshal([]byte(messages[0].Text), &payload); err != nil {
+		t.Fatalf("decode tool response: %v", err)
+	}
+	if len(payload.Entries) != 1 {
+		t.Fatalf("len(entries) = %d, want 1", len(payload.Entries))
+	}
+	if payload.Entries[0].ID != created.ID || payload.Entries[0].MemoryType != MemoryTypeTemporary || payload.Entries[0].Status != memoryStatusExpired {
+		t.Fatalf("entry = %#v, want expired temporary entry %s", payload.Entries[0], created.ID)
+	}
+}
+
+func TestMemoryToolAddAcceptsMemoryAlias(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newTestService()
+	accountID := uuid.New()
+
+	tool := newAddMemoryTool(svc)
+	_, err := tool.Invoke(ctx, accountID.String(), map[string]interface{}{
+		"memory":   "The user's birthday is May 24.",
+		"category": CategoryProfile,
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke(add with memory alias) error = %v", err)
+	}
+
+	state, err := svc.GetMe(ctx, accountID)
+	if err != nil {
+		t.Fatalf("GetMe() error = %v", err)
+	}
+	if len(state.Entries) != 1 {
+		t.Fatalf("len(entries) = %d, want 1", len(state.Entries))
+	}
+	if got := state.Entries[0].Content; got != "The user's birthday is May 24." {
+		t.Fatalf("entry content = %q", got)
+	}
+}
+
+func TestMemoryToolReadReturnsEntryIDAlias(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newTestService()
+	accountID := uuid.New()
+	created, err := svc.CreateEntry(ctx, accountID, CreateEntryRequest{
+		Content:  "Prefers short answers.",
+		Category: CategoryPreference,
+	})
+	if err != nil {
+		t.Fatalf("CreateEntry() error = %v", err)
+	}
+
+	messages, err := newReadMemoryTool(svc).Invoke(ctx, accountID.String(), nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke(read) error = %v", err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("len(messages) = %d, want 1", len(messages))
+	}
+	if !strings.Contains(messages[0].Text, `"entry_id"`) {
+		t.Fatalf("tool response %q does not expose entry_id", messages[0].Text)
+	}
+
+	var payload struct {
+		Entries []struct {
+			ID      string `json:"id"`
+			EntryID string `json:"entry_id"`
+		} `json:"entries"`
+	}
+	if err := json.Unmarshal([]byte(messages[0].Text), &payload); err != nil {
+		t.Fatalf("decode tool response: %v", err)
+	}
+	if len(payload.Entries) != 1 {
+		t.Fatalf("len(entries) = %d, want 1", len(payload.Entries))
+	}
+	if payload.Entries[0].ID != created.ID || payload.Entries[0].EntryID != created.ID {
+		t.Fatalf("ids = (%q, %q), want %q", payload.Entries[0].ID, payload.Entries[0].EntryID, created.ID)
+	}
+}
