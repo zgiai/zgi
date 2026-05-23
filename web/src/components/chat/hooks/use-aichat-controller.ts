@@ -128,6 +128,30 @@ function removeRunningStreamingStateByConversation(
   return nextStreamingByMessageId;
 }
 
+function clearStreamingReplayMetadata(message: AIChatMessage): AIChatMessage {
+  if (!message.metadata) {
+    return message;
+  }
+
+  const metadata = { ...message.metadata };
+  delete metadata.has_trace;
+  delete metadata.skill_invocations;
+  delete metadata.selected_skill_ids;
+  delete metadata.loaded_skill_ids;
+  delete metadata.skill_step_count;
+  delete metadata.skill_call_count;
+  delete metadata.skill_names;
+  delete metadata.tool_call_count;
+  delete metadata.tool_names;
+  delete metadata.generated_file_count;
+  delete metadata.generated_files;
+
+  return {
+    ...message,
+    metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+  };
+}
+
 /**
  * @hook useAIChatController
  * @description Dedicated controller for the standalone AIChat console page.
@@ -659,8 +683,12 @@ export function useAIChatController(): AIChatController {
             });
           const preservedAnswer = previousStreaming?.answer || placeholder.answer;
           const shouldDedupeReplay = !afterId && preservedAnswer.length > 0;
+          const replayingFromStart = !afterId;
+          const replayPlaceholder = replayingFromStart
+            ? clearStreamingReplayMetadata(placeholder)
+            : placeholder;
           const nextMessage: AIChatMessage = {
-            ...placeholder,
+            ...replayPlaceholder,
             answer: !afterId && !preservedAnswer ? '' : preservedAnswer,
             status: 'streaming',
             updated_at: now,
@@ -688,7 +716,7 @@ export function useAIChatController(): AIChatController {
                 message_id: messageId,
                 answer: nextMessage.answer,
                 status: 'streaming',
-                timeline: previousStreaming?.timeline ?? [],
+                timeline: replayingFromStart ? [] : previousStreaming?.timeline ?? [],
                 last_event_id: afterId,
                 replay_base_answer: shouldDedupeReplay
                   ? preservedAnswer

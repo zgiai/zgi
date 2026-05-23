@@ -160,6 +160,7 @@ const messages: WebappMessages = {
     streamError: '回复生成失败。',
     send: '发送',
     stop: '停止生成',
+    resumeAutoScroll: '继续跟随',
     toggleSidebar: '切换侧边栏',
     editMessage: '编辑消息',
     sendEdited: '发送修改后的消息',

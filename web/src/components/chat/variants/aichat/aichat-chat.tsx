@@ -4,6 +4,7 @@ import { createElement, useCallback, useEffect, useMemo, useRef, useState } from
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { useStore } from 'zustand';
+import { ArrowDown } from 'lucide-react';
 import type { ModelSelectorValue } from '@/components/common/model-selector';
 import type { AIChatController } from '@/components/chat/controllers/aichat-controller';
 import type { ConversationSummary } from '@/components/chat/controllers/types';
@@ -20,6 +21,7 @@ import {
 } from '@/components/chat/controllers/aichat/selectors';
 import { Sidebar } from '@/components/chat/variants/common/sidebar';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
+import { Button } from '@/components/ui/button';
 import { useAIChatSkills } from '@/hooks/aichat/use-aichat-skills';
 import { useLocale } from '@/hooks/use-locale';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -137,7 +139,13 @@ export function AIChatShell({
   );
   const isHome = !activeConversationId && messages.length === 0 && !isSending;
   const modelMissing = !modelSelectorValue.model;
-  const { bottomRef, scrollViewportRef, handleMessagesScroll } = useAIChatScroll({
+  const {
+    bottomRef,
+    scrollViewportRef,
+    handleMessagesScroll,
+    isAutoFollowPaused,
+    resumeAutoFollow,
+  } = useAIChatScroll({
     messages,
     activeMessagePagination,
     isLoadingMessages,
@@ -145,6 +153,16 @@ export function AIChatShell({
     isSending,
     loadOlderMessages: controller.loadOlderMessages,
   });
+  const hasActiveStreamingMessage = useMemo(
+    () =>
+      Object.values(streamingByMessageId).some(
+        streaming =>
+          streaming.status === 'streaming' &&
+          streaming.conversation_id === activeConversationId
+      ),
+    [activeConversationId, streamingByMessageId]
+  );
+  const showResumeScrollButton = isAutoFollowPaused && (isSending || hasActiveStreamingMessage);
 
   useEffect(() => {
     if (!error) {
@@ -456,6 +474,20 @@ export function AIChatShell({
           suggestions={suggestions}
           onSelectSuggestion={setInput}
         />
+
+        {showResumeScrollButton ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            className="absolute left-1/2 z-30 -translate-x-1/2 rounded-full border bg-background/95 px-3 shadow-lg backdrop-blur"
+            style={{ bottom: Math.max(inputAreaHeight + 18, 96) }}
+            onClick={resumeAutoFollow}
+          >
+            <ArrowDown className="mr-1.5 size-4" />
+            {t('consoleChat.resumeAutoScroll')}
+          </Button>
+        ) : null}
 
         <AIChatInputArea
           isHome={isHome}

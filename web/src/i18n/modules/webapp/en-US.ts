@@ -169,6 +169,7 @@ const messages = {
     streamError: 'The response failed.',
     send: 'Send',
     stop: 'Stop generating',
+    resumeAutoScroll: 'Continue following',
     toggleSidebar: 'Toggle sidebar',
     editMessage: 'Edit message',
     sendEdited: 'Send edited message',

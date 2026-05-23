@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, type UIEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type UIEvent } from 'react';
 import type { AIChatPagination } from '@/components/chat/controllers/aichat-controller';
 import type { AIChatMessage } from '@/services/types/aichat';
 
@@ -11,6 +11,13 @@ interface UseAIChatScrollParams {
   isLoadingOlderMessages: boolean;
   isSending: boolean;
   loadOlderMessages: () => Promise<void>;
+}
+
+const detachDistanceFromBottom = 120;
+const resumeDistanceFromBottom = 48;
+
+function getDistanceFromBottom(viewport: HTMLDivElement): number {
+  return Math.max(0, viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight);
 }
 
 /**
@@ -30,6 +37,36 @@ export function useAIChatScroll({
   const scrollViewportRef = useRef<HTMLDivElement | null>(null);
   const loadingOlderRequestRef = useRef(false);
   const skipNextAutoScrollRef = useRef(false);
+  const autoFollowRef = useRef(true);
+  const previousScrollTopRef = useRef(0);
+  const wasSendingRef = useRef(false);
+  const [isAutoFollowPaused, setIsAutoFollowPaused] = useState(false);
+
+  const setAutoFollow = useCallback((next: boolean) => {
+    autoFollowRef.current = next;
+    setIsAutoFollowPaused(!next);
+  }, []);
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
+    requestAnimationFrame(() => {
+      const viewport = scrollViewportRef.current;
+      if (!viewport) return;
+      viewport.scrollTo({ top: viewport.scrollHeight, behavior });
+      previousScrollTopRef.current = viewport.scrollTop;
+    });
+  }, []);
+
+  const resumeAutoFollow = useCallback(() => {
+    setAutoFollow(true);
+    scrollToBottom('smooth');
+  }, [scrollToBottom, setAutoFollow]);
+
+  useEffect(() => {
+    if (isSending && !wasSendingRef.current) {
+      setAutoFollow(true);
+    }
+    wasSendingRef.current = isSending;
+  }, [isSending, setAutoFollow]);
 
   useEffect(() => {
     if (skipNextAutoScrollRef.current) {
@@ -37,16 +74,32 @@ export function useAIChatScroll({
       return;
     }
 
-    requestAnimationFrame(() => {
-      const viewport = scrollViewportRef.current;
-      if (!viewport) return;
-      viewport.scrollTop = viewport.scrollHeight;
-    });
-  }, [messages, isSending]);
+    if (autoFollowRef.current) {
+      scrollToBottom();
+    }
+  }, [messages, isSending, scrollToBottom]);
 
   const handleMessagesScroll = useCallback(
     (event: UIEvent<HTMLDivElement>) => {
       const viewport = event.currentTarget;
+      const previousScrollTop = previousScrollTopRef.current;
+      const currentScrollTop = viewport.scrollTop;
+      const distanceFromBottom = getDistanceFromBottom(viewport);
+      const isScrollingUp = currentScrollTop < previousScrollTop - 2;
+      previousScrollTopRef.current = currentScrollTop;
+
+      if (distanceFromBottom <= resumeDistanceFromBottom) {
+        if (!autoFollowRef.current) {
+          setAutoFollow(true);
+        }
+      } else if (
+        autoFollowRef.current &&
+        isScrollingUp &&
+        distanceFromBottom > detachDistanceFromBottom
+      ) {
+        setAutoFollow(false);
+      }
+
       if (
         viewport.scrollTop > 80 ||
         !activeMessagePagination.hasMore ||
@@ -58,7 +111,7 @@ export function useAIChatScroll({
       }
 
       const previousScrollHeight = viewport.scrollHeight;
-      const previousScrollTop = viewport.scrollTop;
+      const anchorScrollTop = viewport.scrollTop;
       loadingOlderRequestRef.current = true;
       skipNextAutoScrollRef.current = true;
 
@@ -68,19 +121,27 @@ export function useAIChatScroll({
             const nextViewport = scrollViewportRef.current;
             if (!nextViewport) return;
             nextViewport.scrollTop =
-              nextViewport.scrollHeight - previousScrollHeight + previousScrollTop;
+              nextViewport.scrollHeight - previousScrollHeight + anchorScrollTop;
           });
         })
         .finally(() => {
           loadingOlderRequestRef.current = false;
         });
     },
-    [activeMessagePagination.hasMore, isLoadingMessages, isLoadingOlderMessages, loadOlderMessages]
+    [
+      activeMessagePagination.hasMore,
+      isLoadingMessages,
+      isLoadingOlderMessages,
+      loadOlderMessages,
+      setAutoFollow,
+    ]
   );
 
   return {
     bottomRef,
     scrollViewportRef,
     handleMessagesScroll,
+    isAutoFollowPaused,
+    resumeAutoFollow,
   };
 }
