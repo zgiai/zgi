@@ -19,14 +19,20 @@ export const ORIGINAL_PREVIEW_TEXT_EXTENSIONS: readonly string[] = [
   'md',
   'markdown',
   'mdx',
+  'json',
   'csv',
+  'html',
+  'htm',
   'xml',
 ];
+
+export const ORIGINAL_PREVIEW_OFFICE_EXTENSIONS: readonly string[] = ['doc', 'docx', 'xls', 'xlsx'];
 
 export const ORIGINAL_PREVIEW_EXTENSIONS: readonly string[] = [
   'pdf',
   ...ORIGINAL_PREVIEW_IMAGE_EXTENSIONS,
   ...ORIGINAL_PREVIEW_TEXT_EXTENSIONS,
+  ...ORIGINAL_PREVIEW_OFFICE_EXTENSIONS,
 ];
 
 export const AUDIO_EXTENSIONS: readonly string[] = ['mp3', 'm4a', 'wav', 'amr', 'mpga'];
@@ -105,6 +111,43 @@ export function isOriginalPreviewText(extension?: string | null): boolean {
   if (!extension) return false;
 
   return ORIGINAL_PREVIEW_TEXT_EXTENSIONS.includes(extension.toLowerCase().replace(/^\./, ''));
+}
+
+export type OriginalPreviewKind = 'image' | 'pdf' | 'browser' | 'html' | 'office' | 'unsupported';
+
+/**
+ * @util Resolve the browser preview renderer kind for an original file.
+ */
+export function getOriginalPreviewKind(
+  extension?: string | null,
+  mimeType?: string | null
+): OriginalPreviewKind {
+  const normalizedMimeType = mimeType?.toLowerCase().split(';')[0].trim() ?? '';
+  const normalizedExtension = extension?.toLowerCase().replace(/^\./, '') ?? '';
+
+  if (normalizedMimeType.startsWith('image/') || isOriginalPreviewImage(extension, mimeType)) {
+    return 'image';
+  }
+  if (normalizedMimeType === 'application/pdf' || normalizedExtension === 'pdf') return 'pdf';
+  if (normalizedMimeType === 'text/html' || ['html', 'htm'].includes(normalizedExtension)) {
+    return 'html';
+  }
+  if (
+    ORIGINAL_PREVIEW_TEXT_EXTENSIONS.includes(normalizedExtension) ||
+    normalizedMimeType.startsWith('text/') ||
+    [
+      'application/json',
+      'application/xml',
+      'application/csv',
+      'text/csv',
+      'text/markdown',
+    ].includes(normalizedMimeType)
+  ) {
+    return 'browser';
+  }
+  if (ORIGINAL_PREVIEW_OFFICE_EXTENSIONS.includes(normalizedExtension)) return 'office';
+
+  return 'unsupported';
 }
 
 /**

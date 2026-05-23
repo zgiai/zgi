@@ -68,8 +68,14 @@ const messages = {
     noFileSelected: 'No file selected',
     unsupportedTitle: 'Preview is not available for this file',
     unsupportedDescription:
-      'Original preview currently supports PDF, image, and lightweight text-like files.',
+      'Original preview supports images, PDF, HTML, text-like files, DOCX, and XLSX.',
     openInNewTab: 'Open in New Tab',
+    officeUnsupportedTitle: 'Preview is not available for this Office format',
+    officeTooLargeTitle: 'This Office file is too large to preview',
+    officeFallback: 'Open the file in a new tab or download it to view the original document.',
+    emptyWorkbook: 'The workbook has no sheets',
+    emptySheet: 'This sheet has no visible rows',
+    rowLimit: 'Showing the first {count} rows.',
   },
 
   // Delete dialog

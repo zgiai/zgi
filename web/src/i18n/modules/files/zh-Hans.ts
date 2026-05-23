@@ -68,8 +68,14 @@ const messages: FilesMessages = {
     loadError: '文件预览加载失败',
     noFileSelected: '未选择文件',
     unsupportedTitle: '暂不支持预览该文件',
-    unsupportedDescription: '当前仅支持 PDF、图片和轻量文本类文件原文件预览。',
+    unsupportedDescription: '当前支持图片、PDF、HTML、轻量文本类文件、DOCX 和 XLSX 原文件预览。',
     openInNewTab: '新窗口打开',
+    officeUnsupportedTitle: '暂不支持预览该 Office 格式',
+    officeTooLargeTitle: '该 Office 文件过大，无法预览',
+    officeFallback: '请在新窗口打开或下载文件查看原始文档。',
+    emptyWorkbook: '该工作簿没有工作表',
+    emptySheet: '该工作表没有可显示的行',
+    rowLimit: '当前仅显示前 {count} 行。',
   },
 
   // Delete dialog

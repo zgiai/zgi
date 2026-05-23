@@ -4,8 +4,9 @@ import { lightTheme } from '@uiw/react-json-view/light';
 import MarkdownViewer from '@/components/common/markdown-viewer';
 import type { HistoryResult } from '../types';
 import { Button } from '@/components/ui/button';
-import { Check, Copy, Download, FileText } from 'lucide-react';
+import { Check, Copy, Download, Eye, FileText } from 'lucide-react';
 import { FileIcon } from '@/components/ui/file-icon';
+import { UniversalFilePreviewDialog } from '@/components/files/universal-file-preview-dialog';
 import { useT } from '@/i18n';
 import { useLocale } from '@/hooks/use-locale';
 import { formatFileSize } from '@/utils/format';
@@ -35,7 +36,9 @@ interface GeneratedFileOutput {
   key: string;
   filename: string;
   url: string;
+  downloadUrl: string;
   extension?: string;
+  mimeType?: string;
   size?: number | null;
 }
 
@@ -139,8 +142,9 @@ function getGeneratedFileOutput(
   record: Record<string, unknown>,
   fallbackKey: string
 ): GeneratedFileOutput | null {
-  const url = getStringField(record, ['download_url', 'url', 'remote_url']);
+  const url = getStringField(record, ['url', 'remote_url', 'download_url']);
   if (!url) return null;
+  const downloadUrl = getStringField(record, ['download_url', 'url', 'remote_url']) ?? url;
 
   const rawFilename = getStringField(record, ['filename', 'file_name', 'name', 'title']);
   const extension = normalizeExtension(
@@ -160,7 +164,9 @@ function getGeneratedFileOutput(
     key: id || url || fallbackKey,
     filename,
     url,
+    downloadUrl,
     extension,
+    mimeType: getStringField(record, ['mime_type', 'mimeType']),
     size: getNumberField(record, ['size', 'file_size']),
   };
 }
@@ -207,6 +213,7 @@ const Results: React.FC<ResultsProps> = ({
   const { locale } = useLocale();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [copied, setCopied] = useState<boolean>(false);
+  const [previewFile, setPreviewFile] = useState<GeneratedFileOutput | null>(null);
 
   const displayText = useCallback(
     (value: string): string =>
@@ -319,6 +326,18 @@ const Results: React.FC<ResultsProps> = ({
               </div>
             </div>
             <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              aria-label={`${locale.startsWith('zh') ? '预览' : 'Preview'} ${file.filename}`}
+              title={`${locale.startsWith('zh') ? '预览' : 'Preview'} ${file.filename}`}
+              onClick={() => setPreviewFile(file)}
+            >
+              <Eye className="h-4 w-4" />
+              <span>{locale.startsWith('zh') ? '预览' : 'Preview'}</span>
+            </Button>
+            <Button
               asChild
               type="button"
               variant="outline"
@@ -327,7 +346,7 @@ const Results: React.FC<ResultsProps> = ({
               aria-label={`${downloadLabel} ${file.filename}`}
               title={`${downloadLabel} ${file.filename}`}
             >
-              <a href={file.url} download={file.filename}>
+              <a href={file.downloadUrl} download={file.filename}>
                 <Download className="h-4 w-4" />
                 <span>{downloadLabel}</span>
               </a>
@@ -433,6 +452,25 @@ const Results: React.FC<ResultsProps> = ({
           </div>
         )}
       </div>
+      <UniversalFilePreviewDialog
+        open={Boolean(previewFile)}
+        onOpenChange={open => {
+          if (!open) setPreviewFile(null);
+        }}
+        file={
+          previewFile
+            ? {
+                id: previewFile.key,
+                name: previewFile.filename,
+                extension: previewFile.extension,
+                mimeType: previewFile.mimeType,
+                size: previewFile.size,
+                previewUrl: previewFile.url,
+                downloadUrl: previewFile.downloadUrl,
+              }
+            : null
+        }
+      />
     </div>
   );
 };
