@@ -47,6 +47,7 @@ func (s *service) ListSkills(ctx context.Context, scope Scope) ([]skills.SkillDi
 	if err != nil {
 		return nil, err
 	}
+	metadata = visibleSkillMetadata(metadata)
 	enabled, err := s.effectiveOrganizationSkillIDs(ctx, scope.OrganizationID, metadata)
 	if err != nil {
 		return nil, err
@@ -70,6 +71,7 @@ func (s *service) GetSkill(ctx context.Context, scope Scope, skillID string) (*s
 	if err != nil {
 		return nil, err
 	}
+	catalog = visibleSkillMetadata(catalog)
 	normalized := strings.ToLower(strings.TrimSpace(skillID))
 	for idx := range catalog {
 		if catalog[idx].ID != normalized {
@@ -92,6 +94,7 @@ func (s *service) GetSkillConfig(ctx context.Context, scope Scope) (*SkillConfig
 	if err != nil {
 		return nil, err
 	}
+	metadata = visibleSkillMetadata(metadata)
 	enabled, err := s.effectiveOrganizationSkillIDs(ctx, scope.OrganizationID, metadata)
 	if err != nil {
 		return nil, err
@@ -107,6 +110,7 @@ func (s *service) UpdateSkillConfig(ctx context.Context, scope Scope, req aichat
 	if err != nil {
 		return nil, err
 	}
+	metadata = visibleSkillMetadata(metadata)
 	normalized, err := validateSkillConfigIDs(req.EnabledSkillIDs, metadata)
 	if err != nil {
 		return nil, err

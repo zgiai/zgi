@@ -62,6 +62,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/memory"
 	helper "github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/queue"
@@ -191,6 +192,9 @@ type ServiceContainer struct {
 
 	// Tool engine
 	toolEngine *tools.ToolEngine
+
+	// Account memory
+	memoryService *memory.Service
 
 	// Platform container
 	platformContainer *platform.Container
@@ -769,6 +773,7 @@ func (c *ServiceContainer) GetToolManager() *tools.ToolManager {
 
 		// Register builtin tool providers
 		c.toolManager.RegisterBuiltinProviders(getBuiltinToolProviders())
+		_ = c.toolManager.RegisterProvider(memory.NewProvider(c.GetMemoryService()))
 
 		logger.Info("ToolManager initialized with builtin providers")
 	}
@@ -781,6 +786,13 @@ func (c *ServiceContainer) GetToolEngine() *tools.ToolEngine {
 		c.toolEngine = tools.NewToolEngine(c.GetToolManager())
 	}
 	return c.toolEngine
+}
+
+func (c *ServiceContainer) GetMemoryService() *memory.Service {
+	if c.memoryService == nil {
+		c.memoryService = memory.NewService(c.db)
+	}
+	return c.memoryService
 }
 
 func (c *ServiceContainer) GetConsoleProvider() console.ConsoleProvider {

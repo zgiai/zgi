@@ -12,6 +12,7 @@ import (
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/llm/tokenestimate"
+	"github.com/zgiai/zgi/api/internal/modules/memory"
 	"github.com/zgiai/zgi/api/internal/modules/shared/titlegen"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	redisutil "github.com/zgiai/zgi/api/pkg/redis"
@@ -47,6 +48,8 @@ const (
 	skillModeDisabled = "disabled"
 	skillModeAuto     = "auto"
 	skillModeRequired = "required"
+
+	userMemoryContextBudgetChars = 4000
 )
 
 var defaultSystemSkillIDs = []string{
@@ -88,6 +91,11 @@ type Service interface {
 	MigrateWebAppConversation(ctx context.Context, scope Scope, sourceConversationID uuid.UUID) (*aichatmodel.Conversation, error)
 }
 
+type UserMemoryService interface {
+	IsEnabled(ctx context.Context, accountID uuid.UUID) (bool, error)
+	RenderContext(ctx context.Context, accountID uuid.UUID, budget int) (string, error)
+}
+
 type service struct {
 	repos              *repository.Repositories
 	llmClient          llmclient.LLMClient
@@ -100,6 +108,7 @@ type service struct {
 	contentExtractor   ContentExtractionService
 	workspacePerms     WorkspacePermissionService
 	skillRuntime       *skills.Runtime
+	memoryService      UserMemoryService
 	customSkillStorage customSkillStorage
 }
 
@@ -129,7 +138,7 @@ func NewServiceWithDependencies(
 	contentExtractor ContentExtractionService,
 	workspacePerms WorkspacePermissionService,
 ) Service {
-	return NewServiceWithSkillRuntime(repos, llmClient, titleGen, modelSpecResolver, fileService, contentExtractor, workspacePerms, nil)
+	return NewServiceWithSkillRuntime(repos, llmClient, titleGen, modelSpecResolver, fileService, contentExtractor, workspacePerms, nil, nil)
 }
 
 func NewServiceWithSkillRuntime(
@@ -141,6 +150,7 @@ func NewServiceWithSkillRuntime(
 	contentExtractor ContentExtractionService,
 	workspacePerms WorkspacePermissionService,
 	skillRuntime *skills.Runtime,
+	memoryService UserMemoryService,
 ) Service {
 	return &service{
 		repos:              repos,
@@ -154,6 +164,7 @@ func NewServiceWithSkillRuntime(
 		contentExtractor:   contentExtractor,
 		workspacePerms:     workspacePerms,
 		skillRuntime:       skillRuntime,
+		memoryService:      memoryService,
 		customSkillStorage: newFilesystemCustomSkillStorage(customSkillStorageRoot),
 	}
 }
@@ -222,7 +233,12 @@ type chatRequestParts struct {
 	ModelSupportsVision          bool
 	FunctionCallingKnown         bool
 	ModelSupportsFunctionCalling bool
+	UseMemory                    bool
 	SkillIDs                     []string
 	ToolSkillIDs                 []string
 	SkillMode                    string
+}
+
+func userMemorySkillID() string {
+	return memory.SkillID
 }
