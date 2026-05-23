@@ -2,9 +2,12 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf16"
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
@@ -17,6 +20,8 @@ const (
 	defaultMaxBusinessToolCallsPerSkill      = 20
 	defaultMaxRecoverableSkillFailures       = 20
 	defaultMaxConsecutiveRecoverableFailures = 5
+	intermediateAnswerChunkRunes             = 180
+	streamedIntermediateAnswerArg            = "_aichat_streamed_answer"
 )
 
 type skillStepResult struct {
@@ -26,6 +31,18 @@ type skillStepResult struct {
 	usedTool    bool
 	recoverable bool
 	fatalErr    error
+}
+
+type planningResult struct {
+	message          adapter.Message
+	usage            *adapter.Usage
+	answerStreamed   bool
+	progressStreamed bool
+}
+
+type streamingToolCallState struct {
+	call           adapter.ToolCall
+	emittedContent string
 }
 
 func (p *PreparedChat) skillsEnabled() bool {
@@ -96,15 +113,15 @@ func (s *service) runPreparedSkillStream(
 		planningReq.Tools = skills.MetaToolsForSkillState(resolved, loadedSkills)
 		planningReq.ToolChoice = "auto"
 
-		planningResp, err := s.llmClient.AppChat(ctx, newBillingAppContext(prepared), planningReq)
+		planningResult, err := s.runSkillPlanning(ctx, prepared, planningReq, round, onEvent)
 		if err != nil {
 			return answerBuilder.String(), usage, err
 		}
-		usage = mergeUsage(usage, planningRespUsage(planningResp))
-		planningMessage := firstPlanningMessage(planningResp)
+		usage = mergeUsage(usage, planningResult.usage)
+		planningMessage := planningResult.message
 		toolCalls := normalizeToolCalls(planningMessage.ToolCalls)
 		text := assistantMessageText(planningMessage)
-		if text != "" && len(toolCalls) > 0 {
+		if text != "" && len(toolCalls) > 0 && !planningResult.progressStreamed {
 			s.emitAgentProgress(ctx, prepared, text, onEvent)
 		}
 		if len(toolCalls) == 0 && prepared.parts.SkillMode == skillModeRequired && !skillUsed {
@@ -112,7 +129,9 @@ func (s *service) runPreparedSkillStream(
 		}
 		if text != "" && len(toolCalls) == 0 {
 			answerBuilder.WriteString(text)
-			s.emitAnswerChunk(ctx, prepared, text, onChunk)
+			if !planningResult.answerStreamed {
+				s.emitAnswerChunk(ctx, prepared, text, onEvent)
+			}
 		}
 		if len(toolCalls) == 0 {
 			logger.DebugContext(ctx, "aichat skill planning completed",
@@ -184,6 +203,260 @@ func (s *service) runPreparedSkillStream(
 	}
 
 	return answerBuilder.String(), usage, fmt.Errorf("%w: too many skill planning rounds", ErrInvalidInput)
+}
+
+func (s *service) runSkillPlanning(
+	ctx context.Context,
+	prepared *PreparedChat,
+	planningReq *adapter.ChatRequest,
+	round int,
+	onEvent func(StreamEvent) error,
+) (planningResult, error) {
+	if shouldStreamSkillPlanning(prepared) {
+		result, ok, err := s.runSkillPlanningStream(ctx, prepared, planningReq, round, onEvent)
+		if err != nil {
+			return planningResult{}, err
+		}
+		if ok {
+			return result, nil
+		}
+	}
+
+	planningReq.Stream = false
+	planningResp, err := s.llmClient.AppChat(ctx, newBillingAppContext(prepared), planningReq)
+	if err != nil {
+		return planningResult{}, err
+	}
+	return planningResult{
+		message: firstPlanningMessage(planningResp),
+		usage:   planningRespUsage(planningResp),
+	}, nil
+}
+
+func (s *service) runSkillPlanningStream(
+	ctx context.Context,
+	prepared *PreparedChat,
+	planningReq *adapter.ChatRequest,
+	round int,
+	onEvent func(StreamEvent) error,
+) (planningResult, bool, error) {
+	streamReq := cloneChatRequest(planningReq)
+	streamReq.Stream = true
+	stream, err := s.llmClient.AppChatStream(ctx, newBillingAppContext(prepared), streamReq)
+	if err != nil {
+		logger.WarnContext(ctx, "aichat skill planning stream unavailable, falling back to non-stream planning",
+			"message_id", prepared.Message.ID.String(),
+			"provider", prepared.parts.Provider,
+			err,
+		)
+		return planningResult{}, false, nil
+	}
+
+	var contentBuilder strings.Builder
+	var reasoningBuilder strings.Builder
+	var usage *adapter.Usage
+	toolCallsByIndex := map[int]*streamingToolCallState{}
+	toolCallOrder := make([]int, 0)
+	sawChunk := false
+	sawToolCall := false
+	answerStreamed := false
+	progressStreamed := false
+	var speculativeAnswer strings.Builder
+
+	for response := range stream {
+		if response.Error != nil {
+			return planningResult{}, true, response.Error
+		}
+		usage = mergeUsage(usage, response.Usage)
+		if response.Done {
+			break
+		}
+		if len(response.Choices) == 0 {
+			continue
+		}
+		sawChunk = true
+		for _, choice := range response.Choices {
+			if reasoning := streamChoiceReasoningContent(choice); reasoning != "" {
+				reasoningBuilder.WriteString(reasoning)
+			}
+			if text := streamChoiceText(choice); text != "" {
+				contentBuilder.WriteString(text)
+				if sawToolCall {
+					s.emitAgentProgress(ctx, prepared, text, onEvent)
+					progressStreamed = true
+				} else {
+					s.emitAnswerChunk(ctx, prepared, text, onEvent)
+					speculativeAnswer.WriteString(text)
+					answerStreamed = true
+				}
+			}
+			for _, delta := range choice.Delta.ToolCalls {
+				if !sawToolCall {
+					sawToolCall = true
+					if speculative := speculativeAnswer.String(); speculative != "" {
+						s.emitAnswerRetract(ctx, prepared, speculative, onEvent)
+					}
+					if progress := strings.TrimSpace(contentBuilder.String()); progress != "" {
+						s.emitAgentProgress(ctx, prepared, progress, onEvent)
+						progressStreamed = true
+					}
+				}
+				state := mergeStreamingToolCall(toolCallsByIndex, &toolCallOrder, delta)
+				if state == nil {
+					continue
+				}
+				s.emitStreamingIntermediateAnswerDelta(ctx, prepared, round, state, onEvent)
+			}
+		}
+	}
+
+	if !sawChunk {
+		return planningResult{}, false, nil
+	}
+
+	toolCalls := make([]adapter.ToolCall, 0, len(toolCallOrder))
+	for _, index := range toolCallOrder {
+		state := toolCallsByIndex[index]
+		if state == nil {
+			continue
+		}
+		call := state.call
+		if strings.EqualFold(strings.TrimSpace(call.Function.Name), skills.MetaToolIntermediateAnswer) && state.emittedContent != "" {
+			call.Function.Arguments = markIntermediateAnswerArgumentsStreamed(call.Function.Arguments, streamingIntermediateAnswerID(prepared, round, call))
+		}
+		toolCalls = append(toolCalls, call)
+	}
+
+	return planningResult{
+		message: adapter.Message{
+			Role:             "assistant",
+			Content:          contentBuilder.String(),
+			ToolCalls:        toolCalls,
+			ReasoningContent: reasoningBuilder.String(),
+		},
+		usage:            usage,
+		answerStreamed:   answerStreamed && len(toolCalls) == 0,
+		progressStreamed: progressStreamed,
+	}, true, nil
+}
+
+func shouldStreamSkillPlanning(prepared *PreparedChat) bool {
+	if prepared == nil || prepared.parts == nil {
+		return false
+	}
+	provider := strings.ToLower(strings.TrimSpace(prepared.parts.Provider))
+	switch provider {
+	case "openai", "openai-compatible", "deepseek", "openrouter", "zgi-cloud", "zgi_cloud", "dashscope",
+		"aliyun", "claude", "anthropic", "moonshotai", "moonshotai-cn", "siliconflow", "agicto", "glm":
+		return true
+	default:
+		return false
+	}
+}
+
+func streamChoiceText(choice adapter.StreamChoice) string {
+	switch typed := choice.Delta.Content.(type) {
+	case string:
+		return typed
+	default:
+		return ""
+	}
+}
+
+func streamChoiceReasoningContent(choice adapter.StreamChoice) string {
+	return choice.Delta.ReasoningContent
+}
+
+func mergeStreamingToolCall(states map[int]*streamingToolCallState, order *[]int, delta adapter.ToolCall) *streamingToolCallState {
+	index := 0
+	if delta.Index != nil {
+		index = *delta.Index
+	}
+	state := states[index]
+	if state == nil {
+		callIndex := index
+		state = &streamingToolCallState{
+			call: adapter.ToolCall{
+				Index: &callIndex,
+				Type:  "function",
+			},
+		}
+		states[index] = state
+		*order = append(*order, index)
+	}
+
+	if strings.TrimSpace(delta.ID) != "" {
+		state.call.ID = delta.ID
+	}
+	if strings.TrimSpace(delta.Type) != "" {
+		state.call.Type = delta.Type
+	}
+	if delta.Index != nil {
+		state.call.Index = delta.Index
+	}
+	if strings.TrimSpace(delta.Function.Name) != "" {
+		state.call.Function.Name = delta.Function.Name
+	}
+	if delta.Function.Arguments != "" {
+		state.call.Function.Arguments += delta.Function.Arguments
+	}
+	return state
+}
+
+func (s *service) emitStreamingIntermediateAnswerDelta(
+	ctx context.Context,
+	prepared *PreparedChat,
+	round int,
+	state *streamingToolCallState,
+	onEvent func(StreamEvent) error,
+) {
+	if state == nil || !strings.EqualFold(strings.TrimSpace(state.call.Function.Name), skills.MetaToolIntermediateAnswer) {
+		return
+	}
+	content, _ := partialJSONStringField(state.call.Function.Arguments, "content")
+	if content == "" || len(content) <= len(state.emittedContent) || !strings.HasPrefix(content, state.emittedContent) {
+		return
+	}
+	title, _ := partialJSONStringField(state.call.Function.Arguments, "title")
+	delta := content[len(state.emittedContent):]
+	state.emittedContent = content
+	trace := skills.SkillTrace{
+		Kind:    "intermediate_answer",
+		Title:   strings.TrimSpace(title),
+		Message: content,
+		Status:  "running",
+	}
+	answerID := streamingIntermediateAnswerID(prepared, round, state.call)
+	s.emitPreparedEvent(ctx, prepared, streamEventIntermediateAnswer, intermediateAnswerPayload(prepared, trace, answerID, delta, 0, false, "streaming"), onEvent)
+}
+
+func streamingIntermediateAnswerID(prepared *PreparedChat, round int, call adapter.ToolCall) string {
+	if strings.TrimSpace(call.ID) != "" {
+		return call.ID
+	}
+	index := 0
+	if call.Index != nil {
+		index = *call.Index
+	}
+	messageID := "message"
+	if prepared != nil && prepared.Message != nil {
+		messageID = prepared.Message.ID.String()
+	}
+	return fmt.Sprintf("intermediate-%s-%d-%d", messageID, round, index)
+}
+
+func markIntermediateAnswerArgumentsStreamed(arguments string, answerID string) string {
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(arguments), &parsed); err != nil {
+		return arguments
+	}
+	parsed[streamedIntermediateAnswerArg] = true
+	parsed[streamedIntermediateAnswerArg+"_id"] = answerID
+	encoded, err := json.Marshal(parsed)
+	if err != nil {
+		return arguments
+	}
+	return string(encoded)
 }
 
 func (s *service) handleProgressiveSkillCall(
@@ -258,6 +531,7 @@ func (s *service) handleIntermediateAnswerCall(
 		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "call submit_intermediate_answer again with non-empty content")), false, false)
 	}
 	title := strings.TrimSpace(stringArg(args, "title"))
+	answerID := strings.TrimSpace(stringArg(args, streamedIntermediateAnswerArg+"_id"))
 	trace := skills.SkillTrace{
 		Kind:    "intermediate_answer",
 		Title:   title,
@@ -267,7 +541,14 @@ func (s *service) handleIntermediateAnswerCall(
 			"title": title,
 		},
 	}
-	s.emitPreparedEvent(ctx, prepared, streamEventIntermediateAnswer, intermediateAnswerPayload(prepared, trace), onEvent)
+	if boolArg(args, streamedIntermediateAnswerArg) {
+		if answerID == "" {
+			answerID = callID
+		}
+		s.emitPreparedEvent(ctx, prepared, streamEventIntermediateAnswer, intermediateAnswerPayload(prepared, trace, answerID, "", 0, true, "success"), onEvent)
+	} else {
+		s.emitIntermediateAnswer(ctx, prepared, callID, trace, onEvent)
+	}
 	return successfulSkillStep(trace, skills.ToolResultMessage(callID, map[string]interface{}{
 		"status": "recorded",
 		"instruction": strings.Join([]string{
@@ -276,6 +557,64 @@ func (s *service) handleIntermediateAnswerCall(
 			"Your eventual user-facing reply must still be complete and self-contained; do not say see above.",
 		}, " "),
 	}), false, false)
+}
+
+func (s *service) emitIntermediateAnswer(
+	ctx context.Context,
+	prepared *PreparedChat,
+	answerID string,
+	trace skills.SkillTrace,
+	onEvent func(StreamEvent) error,
+) {
+	chunks := splitIntermediateAnswerContent(trace.Message, intermediateAnswerChunkRunes)
+	if len(chunks) == 0 {
+		return
+	}
+	for index, chunk := range chunks {
+		done := index == len(chunks)-1
+		status := "streaming"
+		if done {
+			status = "success"
+		}
+		s.emitPreparedEvent(ctx, prepared, streamEventIntermediateAnswer, intermediateAnswerPayload(prepared, trace, answerID, chunk, index, done, status), onEvent)
+	}
+}
+
+func splitIntermediateAnswerContent(content string, chunkRunes int) []string {
+	if chunkRunes <= 0 {
+		chunkRunes = intermediateAnswerChunkRunes
+	}
+	runes := []rune(content)
+	if len(runes) <= chunkRunes {
+		if content == "" {
+			return nil
+		}
+		return []string{content}
+	}
+
+	chunks := make([]string, 0, (len(runes)/chunkRunes)+1)
+	for start := 0; start < len(runes); {
+		end := start + chunkRunes
+		if end >= len(runes) {
+			chunks = append(chunks, string(runes[start:]))
+			break
+		}
+
+		split := end
+		for i := end; i > start+chunkRunes/2; i-- {
+			switch runes[i-1] {
+			case '\n', ' ', '\t', '。', '，', '；', '！', '？', '.', ',', ';', '!', '?':
+				split = i
+				i = start
+			}
+		}
+		if split <= start {
+			split = end
+		}
+		chunks = append(chunks, string(runes[start:split]))
+		start = split
+	}
+	return chunks
 }
 
 func (s *service) handleLoadSkillCall(
@@ -416,8 +755,8 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 	}
 }
 
-func (s *service) emitAnswerChunk(ctx context.Context, prepared *PreparedChat, text string, onChunk func(string) error) {
-	if strings.TrimSpace(text) == "" {
+func (s *service) emitAnswerChunk(ctx context.Context, prepared *PreparedChat, text string, onEvent func(StreamEvent) error) {
+	if text == "" {
 		return
 	}
 	payload := map[string]interface{}{
@@ -425,13 +764,24 @@ func (s *service) emitAnswerChunk(ctx context.Context, prepared *PreparedChat, t
 		"message_id":      prepared.Message.ID.String(),
 		"answer":          text,
 	}
-	s.appendStreamEventBestEffort(ctx, prepared.Message.ID, prepared.Conversation.ID, streamEventMessage, payload)
-	if onChunk == nil {
+	s.emitPreparedEvent(ctx, prepared, streamEventMessage, payload, onEvent)
+}
+
+func (s *service) emitAnswerRetract(ctx context.Context, prepared *PreparedChat, text string, onEvent func(StreamEvent) error) {
+	if text == "" {
 		return
 	}
-	if err := onChunk(text); err != nil {
-		logger.WarnContext(ctx, "failed to deliver aichat stream chunk to client", "message_id", prepared.Message.ID.String(), err)
-	}
+	s.emitPreparedEvent(ctx, prepared, streamEventMessageRetract, map[string]interface{}{
+		"conversation_id": prepared.Conversation.ID.String(),
+		"message_id":      prepared.Message.ID.String(),
+		"content":         text,
+		"length":          utf16CodeUnitLength(text),
+		"created_at":      time.Now().Unix(),
+	}, onEvent)
+}
+
+func utf16CodeUnitLength(text string) int {
+	return len(utf16.Encode([]rune(text)))
 }
 
 func (s *service) emitAgentProgress(ctx context.Context, prepared *PreparedChat, text string, onEvent func(StreamEvent) error) {
@@ -454,12 +804,13 @@ func agenticSkillLoopSystemMessage() adapter.Message {
 			"When using skills or tools, briefly explain your next action to the user before calling a skill/tool.",
 			"After each skill/tool result, summarize what happened. If a tool call fails, explain the likely cause, fix the arguments, and retry when possible.",
 			"Progress text sent together with tool calls is transient status text. Keep it short and do not place substantial user deliverables there.",
-			"If the user request has multiple ordered phases and a phase produces a user-facing deliverable before later tool/skill calls, you MUST call submit_intermediate_answer for that deliverable before continuing.",
-			"Examples of user-facing deliverables that MUST use submit_intermediate_answer when followed by more tool/skill calls: novel outlines, long-form drafts, plans, tables, code sketches, analysis sections, or generated content the user asked for.",
-			"Do not skip submit_intermediate_answer by postponing or summarizing that deliverable if the user explicitly asked for it as an intermediate phase.",
-			"When no more tool or skill calls are needed, send a natural user-facing reply that is complete and self-contained. If you did not call submit_intermediate_answer for a requested deliverable, that reply MUST include the deliverable in full, not a compressed summary.",
+			"If the current turn newly creates or substantially rewrites a user-facing deliverable before later tool/skill calls, call submit_intermediate_answer for that new deliverable before continuing.",
+			"Examples of new deliverables that should use submit_intermediate_answer when followed by more tool/skill calls: novel outlines, long-form drafts, plans, tables, code sketches, analysis sections, or generated content the user asked for.",
+			"Do not call submit_intermediate_answer merely to repeat content that was already visible in an earlier assistant answer. For requests like exporting, saving, converting, or generating a file from existing content, pass the existing content directly to the file/tool call.",
+			"Do not skip submit_intermediate_answer by postponing or summarizing a new deliverable if the user explicitly asked for it as an intermediate phase.",
+			"When no more tool or skill calls are needed, send a natural user-facing reply that is complete and self-contained. If you did not call submit_intermediate_answer for a new requested deliverable, that reply MUST include the deliverable in full, not a compressed summary.",
 			"Do not label the user-facing reply with protocol wording such as Final Answer, final result, or their Chinese equivalents unless the user explicitly asks for that wording.",
-			"Never refer to intermediate or progress content as above, earlier, or previously.",
+			"When reusing existing conversation content, refer to it explicitly, for example as the previous outline or the current branch's draft; do not duplicate the full text unless the user asks to see it again.",
 		}, "\n"),
 	}
 }
@@ -825,6 +1176,24 @@ func stringArg(args map[string]interface{}, key string) string {
 	return strings.TrimSpace(text)
 }
 
+func boolArg(args map[string]interface{}, key string) bool {
+	if args == nil {
+		return false
+	}
+	value, ok := args[key]
+	if !ok || value == nil {
+		return false
+	}
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		return strings.EqualFold(strings.TrimSpace(typed), "true")
+	default:
+		return false
+	}
+}
+
 func normalizedSkillArg(args map[string]interface{}, key string) string {
 	return strings.ToLower(stringArg(args, key))
 }
@@ -841,4 +1210,106 @@ func mapArg(args map[string]interface{}, key string) map[string]interface{} {
 		return typed
 	}
 	return map[string]interface{}{}
+}
+
+func partialJSONStringField(input string, field string) (string, bool) {
+	start, ok := findJSONStringFieldValueStart(input, field)
+	if !ok {
+		return "", false
+	}
+	value, _, complete := decodePartialJSONString(input[start:])
+	return value, complete
+}
+
+func findJSONStringFieldValueStart(input string, field string) (int, bool) {
+	for i := 0; i < len(input); i++ {
+		if input[i] != '"' {
+			continue
+		}
+		keyStart := i
+		key, keyEnd, complete := decodeJSONStringToken(input, keyStart)
+		if !complete || key != field {
+			continue
+		}
+		j := skipJSONWhitespace(input, keyEnd)
+		if j >= len(input) || input[j] != ':' {
+			continue
+		}
+		j = skipJSONWhitespace(input, j+1)
+		if j < len(input) && input[j] == '"' {
+			return j + 1, true
+		}
+	}
+	return 0, false
+}
+
+func decodeJSONStringToken(input string, quoteStart int) (string, int, bool) {
+	if quoteStart < 0 || quoteStart >= len(input) || input[quoteStart] != '"' {
+		return "", quoteStart, false
+	}
+	value, consumed, complete := decodePartialJSONString(input[quoteStart+1:])
+	return value, quoteStart + 1 + consumed, complete
+}
+
+func decodePartialJSONString(input string) (string, int, bool) {
+	var builder strings.Builder
+	for i := 0; i < len(input); i++ {
+		ch := input[i]
+		switch ch {
+		case '"':
+			return builder.String(), i + 1, true
+		case '\\':
+			if i+1 >= len(input) {
+				return builder.String(), i, false
+			}
+			next := input[i+1]
+			switch next {
+			case '"', '\\', '/':
+				builder.WriteByte(next)
+				i++
+			case 'b':
+				builder.WriteByte('\b')
+				i++
+			case 'f':
+				builder.WriteByte('\f')
+				i++
+			case 'n':
+				builder.WriteByte('\n')
+				i++
+			case 'r':
+				builder.WriteByte('\r')
+				i++
+			case 't':
+				builder.WriteByte('\t')
+				i++
+			case 'u':
+				if i+6 > len(input) {
+					return builder.String(), i, false
+				}
+				value, err := strconv.ParseInt(input[i+2:i+6], 16, 32)
+				if err != nil {
+					return builder.String(), i, false
+				}
+				builder.WriteRune(rune(value))
+				i += 5
+			default:
+				return builder.String(), i, false
+			}
+		default:
+			builder.WriteByte(ch)
+		}
+	}
+	return builder.String(), len(input), false
+}
+
+func skipJSONWhitespace(input string, index int) int {
+	for index < len(input) {
+		switch input[index] {
+		case ' ', '\n', '\r', '\t':
+			index++
+		default:
+			return index
+		}
+	}
+	return index
 }

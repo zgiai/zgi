@@ -5,6 +5,7 @@ import type JSZip from 'jszip';
 import {
   AlertCircle,
   Download,
+  ExternalLink,
   FileText,
   Image as ImageIcon,
   Loader2,
@@ -23,6 +24,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
   getOriginalPreviewKind,
   isOriginalPreviewImage,
@@ -37,6 +39,7 @@ const maxOfficeZipUncompressedBytes = 50 * 1024 * 1024;
 const maxOfficeZipEntryBytes = 10 * 1024 * 1024;
 const maxOfficeXmlEntryBytes = 8 * 1024 * 1024;
 const maxCsvPreviewBytes = 1024 * 1024;
+const maxHtmlPreviewBytes = 2 * 1024 * 1024;
 const maxSpreadsheetPreviewRows = 200;
 const maxSpreadsheetPreviewColumns = 100;
 const maxCsvPreviewRows = 500;
@@ -45,6 +48,24 @@ const defaultDocxPreviewZoom = 1.15;
 const minDocxPreviewZoom = 0.75;
 const maxDocxPreviewZoom = 1.8;
 const docxPreviewZoomStep = 0.1;
+const htmlPreviewCsp = [
+  'default-src \'none\'',
+  'script-src \'unsafe-inline\'',
+  'style-src \'unsafe-inline\' https://fonts.googleapis.com',
+  'font-src https://fonts.gstatic.com data:',
+  'img-src data: blob:',
+  'connect-src \'none\'',
+  'form-action \'none\'',
+  'frame-src \'none\'',
+  'base-uri \'none\'',
+  'navigate-to \'none\'',
+].join('; ');
+const htmlPreviewFallbackStyle = `
+  .reveal {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+`;
 
 export interface UniversalFilePreviewDescriptor {
   id?: string;
@@ -89,10 +110,12 @@ export function UniversalFilePreviewDialog({
     previewUrl: string;
     downloadUrl: string;
   } | null>(null);
+  const [htmlOpenConfirmOpen, setHtmlOpenConfirmOpen] = useState(false);
 
   useEffect(() => {
     if (!open) {
       setPreviewSession(null);
+      setHtmlOpenConfirmOpen(false);
       return;
     }
     if (!file) return;
@@ -118,6 +141,13 @@ export function UniversalFilePreviewDialog({
   const isImage = isOriginalPreviewImage(activeFile?.extension, activeFile?.mimeType);
   const isPdf = isOriginalPreviewPdf(activeFile?.extension, activeFile?.mimeType);
   const previewKind = getOriginalPreviewKind(activeFile?.extension, activeFile?.mimeType);
+  const htmlExternalOpenUrl = previewKind === 'html' ? resolvedPreviewUrl : '';
+  const canOpenHtmlExternally = Boolean(htmlExternalOpenUrl);
+
+  const openHtmlInNewTab = () => {
+    if (!htmlExternalOpenUrl) return;
+    window.open(htmlExternalOpenUrl, '_blank', 'noopener,noreferrer');
+  };
 
   const renderPreview = () => {
     if (!activeFile) {
@@ -179,24 +209,21 @@ export function UniversalFilePreviewDialog({
     }
 
     if (previewKind === 'html') {
+      return <HtmlPreview previewUrl={resolvedPreviewUrl} title={activeFile.name} />;
+    }
+
+    if (isPdf) {
       return (
-        <div className="flex h-full min-h-[60vh] flex-col bg-background">
-          <div className="border-b bg-muted/30 px-4 py-3 text-xs text-muted-foreground">
-            <div className="font-medium text-foreground">{t('preview.htmlLimitedTitle')}</div>
-            <div className="mt-1">{t('preview.htmlLimitedDescription')}</div>
-          </div>
-          <iframe
-            src={resolvedPreviewUrl}
-            title={activeFile.name}
-            sandbox=""
-            referrerPolicy="no-referrer"
-            className="min-h-0 flex-1 border-0 bg-background"
-          />
-        </div>
+        <iframe
+          src={resolvedPreviewUrl}
+          title={activeFile.name}
+          referrerPolicy="no-referrer"
+          className="h-full min-h-[60vh] w-full border-0 bg-background"
+        />
       );
     }
 
-    if (isPdf || previewKind === 'browser') {
+    if (previewKind === 'browser') {
       return (
         <iframe
           src={resolvedPreviewUrl}
@@ -218,41 +245,60 @@ export function UniversalFilePreviewDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent size="full" className="gap-0 overflow-hidden p-0">
-        <DialogHeader className="border-b px-5 py-4">
-          <div className="flex min-w-0 items-start gap-3 pr-8">
-            <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-              {isImage ? <ImageIcon className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent size="full" className="gap-0 overflow-hidden p-0">
+          <DialogHeader className="border-b px-5 py-4">
+            <div className="flex min-w-0 items-start gap-3 pr-8">
+              <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                {isImage ? <ImageIcon className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
+              </div>
+              <div className="min-w-0">
+                <DialogTitle className="truncate text-base leading-6">{title}</DialogTitle>
+                <DialogDescription className="mt-1">
+                  {extension ? t('preview.fileMeta', { extension }) : t('preview.description')}
+                </DialogDescription>
+              </div>
             </div>
-            <div className="min-w-0">
-              <DialogTitle className="truncate text-base leading-6">{title}</DialogTitle>
-              <DialogDescription className="mt-1">
-                {extension ? t('preview.fileMeta', { extension }) : t('preview.description')}
-              </DialogDescription>
-            </div>
-          </div>
-        </DialogHeader>
+          </DialogHeader>
 
-        <DialogBody className="min-h-0 overflow-hidden p-0">{renderPreview()}</DialogBody>
+          <DialogBody className="min-h-0 overflow-hidden p-0">{renderPreview()}</DialogBody>
 
-        <DialogFooter className="border-t px-5 py-3">
-          {downloadUrl ? (
-            <Button variant="outline" asChild>
-              <a href={downloadUrl} download={activeFile?.name}>
+          <DialogFooter className="border-t px-5 py-3">
+            {canOpenHtmlExternally ? (
+              <Button variant="outline" onClick={() => setHtmlOpenConfirmOpen(true)}>
+                <ExternalLink className="mr-2 h-4 w-4" />
+                {t('preview.openInNewTab')}
+              </Button>
+            ) : null}
+            {downloadUrl ? (
+              <Button variant="outline" asChild>
+                <a href={downloadUrl} download={activeFile?.name}>
+                  <Download className="mr-2 h-4 w-4" />
+                  {t('actions.downloadFile')}
+                </a>
+              </Button>
+            ) : file && onDownload ? (
+              <Button variant="outline" onClick={onDownload} disabled={isDownloading}>
                 <Download className="mr-2 h-4 w-4" />
                 {t('actions.downloadFile')}
-              </a>
-            </Button>
-          ) : file && onDownload ? (
-            <Button variant="outline" onClick={onDownload} disabled={isDownloading}>
-              <Download className="mr-2 h-4 w-4" />
-              {t('actions.downloadFile')}
-            </Button>
-          ) : null}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+              </Button>
+            ) : null}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <ConfirmDialog
+        open={htmlOpenConfirmOpen}
+        onOpenChange={setHtmlOpenConfirmOpen}
+        title={t('preview.htmlOpenRiskTitle')}
+        description={t('preview.htmlOpenRiskDescription')}
+        confirmText={t('preview.htmlOpenRiskConfirm')}
+        cancelText={t('preview.htmlOpenRiskCancel')}
+        variant="warning"
+        onConfirm={openHtmlInNewTab}
+      />
+    </>
   );
 }
 
@@ -287,6 +333,148 @@ function OfficePreview({ file, previewUrl }: OfficePreviewProps) {
       description={t('preview.officeFallback')}
     />
   );
+}
+
+function HtmlPreview({ previewUrl, title }: { previewUrl: string; title: string }) {
+  const t = useT('files');
+  const [srcDoc, setSrcDoc] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const loadErrorText = t('preview.loadError');
+  const htmlTooLargeText = t('preview.htmlTooLargeTitle');
+
+  useEffect(() => {
+    const abortController = new AbortController();
+    let cancelled = false;
+    setIsLoading(true);
+    setError(null);
+    setSrcDoc('');
+
+    const loadHtml = async () => {
+      try {
+        const response = await fetch(previewUrl, {
+          credentials: 'include',
+          signal: abortController.signal,
+        });
+        if (!response.ok) throw new Error(loadErrorText);
+
+        const contentLength = Number(response.headers.get('content-length') || 0);
+        if (contentLength > maxHtmlPreviewBytes) {
+          throw new Error(htmlTooLargeText);
+        }
+
+        const html = await response.text();
+        if (new Blob([html]).size > maxHtmlPreviewBytes) {
+          throw new Error(htmlTooLargeText);
+        }
+        if (cancelled) return;
+
+        setSrcDoc(buildIsolatedHtmlPreview(html));
+      } catch (err) {
+        if (abortController.signal.aborted || cancelled) return;
+        setError(err instanceof Error ? err.message : loadErrorText);
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    };
+
+    void loadHtml();
+    return () => {
+      cancelled = true;
+      abortController.abort();
+    };
+  }, [previewUrl, loadErrorText, htmlTooLargeText]);
+
+  return (
+    <div className="flex h-full min-h-[60vh] flex-col bg-background">
+      <div className="border-b bg-muted/30 px-4 py-3 text-xs text-muted-foreground">
+        <div className="font-medium text-foreground">{t('preview.htmlLimitedTitle')}</div>
+        <div className="mt-1">{t('preview.htmlLimitedDescription')}</div>
+      </div>
+      {isLoading ? (
+        <PreviewMessage
+          icon={<Loader2 className="h-5 w-5 animate-spin" />}
+          title={t('preview.loading')}
+        />
+      ) : error || !srcDoc ? (
+        <PreviewMessage
+          icon={<AlertCircle className="h-5 w-5" />}
+          title={error || loadErrorText}
+          description={t('preview.downloadOnlyDescription')}
+        />
+      ) : (
+        <iframe
+          srcDoc={srcDoc}
+          title={title}
+          sandbox="allow-scripts"
+          referrerPolicy="no-referrer"
+          className="min-h-0 flex-1 border-0 bg-background"
+        />
+      )}
+    </div>
+  );
+}
+
+function buildIsolatedHtmlPreview(html: string): string {
+  const parser = new DOMParser();
+  const document = parser.parseFromString(html, 'text/html');
+  const head = document.head || document.documentElement.insertBefore(document.createElement('head'), document.body);
+
+  document.querySelectorAll('base, iframe, object, embed, form, meta[http-equiv="refresh"]').forEach(node => {
+    node.remove();
+  });
+  document.querySelectorAll('script[src], script[type="module"], script[type="importmap"]').forEach(node => {
+    node.remove();
+  });
+  document.querySelectorAll('*').forEach(element => {
+    for (const attribute of Array.from(element.attributes)) {
+      const name = attribute.name.toLowerCase();
+      if (name.startsWith('on')) {
+        element.removeAttribute(attribute.name);
+        continue;
+      }
+
+      if (['action', 'formaction', 'href', 'src', 'xlink:href'].includes(name)) {
+        const value = attribute.value.trim();
+        if (!isSafeHtmlPreviewUrl(value, name)) {
+          element.removeAttribute(attribute.name);
+        }
+      }
+    }
+  });
+
+  const csp = document.createElement('meta');
+  csp.setAttribute('http-equiv', 'Content-Security-Policy');
+  csp.setAttribute('content', htmlPreviewCsp);
+  head.prepend(csp);
+
+  const fallbackStyle = document.createElement('style');
+  fallbackStyle.textContent = htmlPreviewFallbackStyle;
+  head.appendChild(fallbackStyle);
+
+  return `<!doctype html>\n${document.documentElement.outerHTML}`;
+}
+
+function isSafeHtmlPreviewUrl(value: string, attributeName: string): boolean {
+  if (!value) return true;
+  const normalized = value.replace(/\s+/g, '').replace(/\u007f/g, '').toLowerCase();
+  if (
+    normalized.startsWith('javascript:') ||
+    normalized.startsWith('vbscript:') ||
+    normalized.startsWith('file:')
+  ) {
+    return false;
+  }
+
+  if (attributeName === 'href' || attributeName === 'xlink:href') {
+    return value.startsWith('#');
+  }
+
+  if (attributeName === 'src') {
+    return normalized.startsWith('data:image/') || normalized.startsWith('blob:');
+  }
+
+  return false;
 }
 
 function DocxPreview({ previewUrl }: { previewUrl: string }) {
@@ -428,6 +616,9 @@ function DocxPreview({ previewUrl }: { previewUrl: string }) {
               'mx-auto w-fit max-w-full',
               '[&_.zgi-docx-preview-wrapper]:bg-transparent',
               '[&_.zgi-docx-preview]:!m-0',
+              '[&_.zgi-docx-preview]:box-border',
+              '[&_.zgi-docx-preview]:px-[72px]',
+              '[&_.zgi-docx-preview]:py-16',
               '[&_.zgi-docx-preview]:overflow-hidden',
               '[&_.zgi-docx-preview]:rounded-[3px]',
               '[&_.zgi-docx-preview]:border',

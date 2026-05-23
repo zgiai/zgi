@@ -396,6 +396,7 @@ func buildRecentExecutionContextMessage(branch []*aichatmodel.Message) (*adapter
 	builder.WriteString("Recent AIChat execution context for continuity.\n")
 	builder.WriteString("Older turns are represented only by their final assistant answers in the conversation history.\n")
 	builder.WriteString("Use these notes as context; do not mention these storage rules to the user.\n")
+	builder.WriteString("Do not resubmit these notes as intermediate answers; reuse them directly for export, save, convert, or file-generation requests.\n")
 
 	remaining := recentExecutionContextBudgetChars - builder.Len()
 	toolSection, toolStats := recentToolHistorySection(branch, remaining)

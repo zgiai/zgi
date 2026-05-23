@@ -287,9 +287,12 @@ export function AIChatAgenticTimeline({
               </div>
             ) : isIntermediateAnswerItem(item) ? (
               <div key={item.id} className="rounded-md border bg-background/80 p-3">
-                {item.title ? (
-                  <div className="mb-2 text-xs font-medium text-muted-foreground">
-                    {item.title}
+                {item.title || item.status === 'streaming' ? (
+                  <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                    {item.status === 'streaming' ? (
+                      <Loader2 className="size-3 animate-spin" />
+                    ) : null}
+                    {item.title ? <span>{item.title}</span> : null}
                   </div>
                 ) : null}
                 <div className="prose prose-sm max-w-none dark:prose-invert">

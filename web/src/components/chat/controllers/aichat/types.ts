@@ -10,6 +10,7 @@ import type {
   AIChatMessage,
   AIChatMessageChunkEventData,
   AIChatMessageEndEventData,
+  AIChatMessageRetractEventData,
   AIChatMessageStartEventData,
   AIChatSkillInvocation,
 } from '@/services/types/aichat';
@@ -60,8 +61,10 @@ export type AIChatAgenticTimelineItem =
   | {
       id: string;
       type: 'intermediate_answer';
+      answer_id?: string;
       title?: string;
       content: string;
+      status?: 'streaming' | 'success';
       created_at?: number;
       event_id?: string | null;
     };
@@ -104,6 +107,10 @@ export interface AIChatControllerStore extends AIChatControllerState {
   ) => void;
   applyMessageChunk: (
     payload: AIChatMessageChunkEventData,
+    eventId?: string | null
+  ) => void;
+  applyMessageRetract: (
+    payload: AIChatMessageRetractEventData,
     eventId?: string | null
   ) => void;
   applyAgentProgress: (

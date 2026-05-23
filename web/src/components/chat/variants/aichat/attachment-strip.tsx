@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { AlertCircle, FileImage, FileText, Loader2, Trash2 } from 'lucide-react';
+import { AlertCircle, FileImage, FileText, Loader2, RotateCcw, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useFileOriginalPreviewUrl } from '@/hooks/file/use-file-original-preview-url';
@@ -71,6 +71,7 @@ export function AIChatDragUploadOverlay({
 interface AIChatAttachmentStripProps {
   attachments: AIChatInputAttachment[];
   onRemove: (id: string) => void;
+  onRetry: (id: string) => void;
 }
 
 /**
@@ -82,7 +83,11 @@ interface AIChatAttachmentStripProps {
  * @example
  * <AIChatAttachmentStrip attachments={attachments} onRemove={removeAttachment} />
  */
-export function AIChatAttachmentStrip({ attachments, onRemove }: AIChatAttachmentStripProps) {
+export function AIChatAttachmentStrip({
+  attachments,
+  onRemove,
+  onRetry,
+}: AIChatAttachmentStripProps) {
   if (attachments.length === 0) {
     return null;
   }
@@ -99,6 +104,7 @@ export function AIChatAttachmentStrip({ attachments, onRemove }: AIChatAttachmen
               key={attachment.id}
               attachment={attachment}
               onRemove={onRemove}
+              onRetry={onRetry}
             />
           ))}
         </div>
@@ -110,6 +116,7 @@ export function AIChatAttachmentStrip({ attachments, onRemove }: AIChatAttachmen
               key={attachment.id}
               attachment={attachment}
               onRemove={onRemove}
+              onRetry={onRetry}
             />
           ))}
         </div>
@@ -121,11 +128,13 @@ export function AIChatAttachmentStrip({ attachments, onRemove }: AIChatAttachmen
 interface AIChatDocumentAttachmentChipProps {
   attachment: AIChatInputAttachment;
   onRemove: (id: string) => void;
+  onRetry: (id: string) => void;
 }
 
 function AIChatDocumentAttachmentChip({
   attachment,
   onRemove,
+  onRetry,
 }: AIChatDocumentAttachmentChipProps) {
   const t = useT('webapp');
 
@@ -152,6 +161,17 @@ function AIChatDocumentAttachmentChip({
           ? `${Math.round(attachment.progress)}%`
           : formatFileSize(attachment.size)}
       </span>
+      {attachment.status === 'error' && attachment.sourceFile ? (
+        <Button
+          isIcon
+          variant="ghost"
+          className="size-5 shrink-0 hover:bg-primary/10 hover:text-primary"
+          onClick={() => onRetry(attachment.id)}
+          title={t('consoleChat.attachments.retry')}
+        >
+          <RotateCcw className="size-3" />
+        </Button>
+      ) : null}
       <Button
         isIcon
         variant="ghost"
@@ -169,6 +189,7 @@ function AIChatDocumentAttachmentChip({
 interface AIChatImageAttachmentPreviewProps {
   attachment: AIChatInputAttachment;
   onRemove: (id: string) => void;
+  onRetry: (id: string) => void;
 }
 
 /**
@@ -183,6 +204,7 @@ interface AIChatImageAttachmentPreviewProps {
 function AIChatImageAttachmentPreview({
   attachment,
   onRemove,
+  onRetry,
 }: AIChatImageAttachmentPreviewProps) {
   const t = useT('webapp');
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
@@ -250,6 +272,20 @@ function AIChatImageAttachmentPreview({
         >
           <Trash2 className="size-3" />
         </Button>
+        {attachment.status === 'error' && attachment.sourceFile ? (
+          <Button
+            isIcon
+            variant="secondary"
+            className="absolute bottom-1 right-1 size-5 rounded-full bg-background/90 p-0 shadow-sm hover:bg-primary hover:text-primary-foreground"
+            onClick={event => {
+              event.stopPropagation();
+              onRetry(attachment.id);
+            }}
+            title={t('consoleChat.attachments.retry')}
+          >
+            <RotateCcw className="size-3" />
+          </Button>
+        ) : null}
       </div>
       <Dialog open={isPreviewOpen} onOpenChange={setIsPreviewOpen}>
         <DialogContent className="max-h-[90vh] max-w-[90vw] overflow-hidden p-0">

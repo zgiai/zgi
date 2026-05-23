@@ -469,11 +469,7 @@ func writeChatChunk(c *gin.Context, prepared *aichatservice.PreparedChat, chunk 
 
 func writeChatError(c *gin.Context, prepared *aichatservice.PreparedChat, err error) {
 	logger.WarnContext(c.Request.Context(), "aichat stream failed", "message_id", prepared.Message.ID.String(), err)
-	_ = writeSSE(c, "error", gin.H{
-		"conversation_id": prepared.Conversation.ID.String(),
-		"message_id":      prepared.Message.ID.String(),
-		"message":         err.Error(),
-	})
+	_ = writeSSE(c, "error", aichatservice.BuildStreamErrorPayload(prepared, err))
 }
 
 func writeChatEnd(c *gin.Context, prepared *aichatservice.PreparedChat, result *aichatservice.ChatResult) {

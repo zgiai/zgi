@@ -15,10 +15,12 @@ import (
 	aichatmodel "github.com/zgiai/zgi/api/internal/modules/aichat/model"
 	"github.com/zgiai/zgi/api/internal/modules/aichat/repository"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"github.com/zgiai/zgi/api/internal/modules/tools/builtin/calculator"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 func TestFinalizePreparedErrorSetsFailedMessageAsCurrentLeaf(t *testing.T) {
@@ -58,6 +60,48 @@ func TestFinalizePreparedErrorSetsFailedMessageAsCurrentLeaf(t *testing.T) {
 	}
 	if got, _ := events[0].Payload["message"].(string); got != "tool failed" {
 		t.Fatalf("stream error message = %q, want %q", got, "tool failed")
+	}
+}
+
+func TestFinalizePreparedErrorAddsBillingCodeToStreamError(t *testing.T) {
+	conversationID := uuid.New()
+	messageID := uuid.New()
+	svc := &service{
+		repos: &repository.Repositories{
+			Conversation: &recordingConversationRepository{},
+			Message:      &recordingMessageRepository{},
+		},
+		events: newStreamEventStore(nil),
+	}
+	err := errors.Join(
+		errors.New("all providers failed"),
+		&gateway.BillingUserError{
+			Kind:  gateway.BillingUserErrorKindWorkspaceQuotaInsufficient,
+			Cause: gateway.ErrInsufficientQuota,
+		},
+	)
+	events := make([]StreamEvent, 0)
+
+	svc.finalizePreparedError(context.Background(), &PreparedChat{
+		Conversation: &aichatmodel.Conversation{ID: conversationID},
+		Message:      &aichatmodel.Message{ID: messageID},
+	}, err, func(event StreamEvent) error {
+		events = append(events, event)
+		return nil
+	})
+
+	if len(events) != 1 || events[0].EventType != streamEventError {
+		t.Fatalf("events = %#v, want one stream error event", events)
+	}
+	payload := events[0].Payload
+	if got := payload["code"]; got != response.ErrWorkflowWorkspaceQuotaInsufficient.Code {
+		t.Fatalf("stream error code = %#v, want %d", got, response.ErrWorkflowWorkspaceQuotaInsufficient.Code)
+	}
+	if got := payload["message"]; got != response.ErrWorkflowWorkspaceQuotaInsufficient.Message {
+		t.Fatalf("stream error message = %#v, want %#v", got, response.ErrWorkflowWorkspaceQuotaInsufficient.Message)
+	}
+	if params, ok := payload["params"].(map[string]interface{}); !ok || len(params) != 0 {
+		t.Fatalf("stream error params = %#v, want empty map", payload["params"])
 	}
 }
 
@@ -180,10 +224,13 @@ Write concise briefs.
 	}
 	chunks := make([]string, 0)
 
-	answer, usage, err := svc.runPreparedSkillStream(context.Background(), context.Background(), prepared, func(chunk string) error {
-		chunks = append(chunks, chunk)
+	answer, usage, err := svc.runPreparedSkillStream(context.Background(), context.Background(), prepared, nil, func(event StreamEvent) error {
+		if event.EventType == streamEventMessage {
+			chunk, _ := event.Payload["answer"].(string)
+			chunks = append(chunks, chunk)
+		}
 		return nil
-	}, nil)
+	})
 	if err != nil {
 		t.Fatalf("runPreparedSkillStream() error = %v", err)
 	}
@@ -750,6 +797,285 @@ Write concise briefs.
 	}
 }
 
+func TestRunPreparedSkillStreamStreamsIntermediateAnswerToolArguments(t *testing.T) {
+	catalogDir := t.TempDir()
+	writeTestSkill(t, catalogDir, "brief-writer", `---
+name: brief-writer
+description: Help draft short writing briefs.
+when_to_use: Use when writing a concise brief.
+---
+
+# Brief Writer
+
+Write concise briefs.
+`)
+	toolIndex := 0
+	fakeLLM := &fakeAgenticLLMClient{
+		appChatStreamResponses: [][]adapter.StreamResponse{
+			{
+				{
+					Choices: []adapter.StreamChoice{{
+						Delta: adapter.Message{
+							ReasoningContent: "I should stream an outline.",
+							ToolCalls: []adapter.ToolCall{{
+								Index: &toolIndex,
+								ID:    "call_1",
+								Type:  "function",
+								Function: adapter.FunctionCall{
+									Name:      skills.MetaToolIntermediateAnswer,
+									Arguments: `{"title":"Outline","content":"Hello`,
+								},
+							}},
+						},
+					}},
+				},
+				{
+					Choices: []adapter.StreamChoice{{
+						Delta: adapter.Message{
+							ToolCalls: []adapter.ToolCall{{
+								Index: &toolIndex,
+								Function: adapter.FunctionCall{
+									Arguments: ` world"}`,
+								},
+							}},
+						},
+						FinishReason: "tool_calls",
+					}},
+				},
+				{Done: true},
+			},
+			{
+				{
+					Choices: []adapter.StreamChoice{{
+						Delta: adapter.Message{Content: "Final answer."},
+					}},
+				},
+				{Done: true},
+			},
+		},
+	}
+	svc := &service{
+		repos: &repository.Repositories{
+			Message:     &recordingMessageRepository{},
+			CustomSkill: &fakeCustomSkillRepository{items: map[string]*aichatmodel.CustomSkill{}},
+		},
+		llmClient:    fakeLLM,
+		events:       newStreamEventStore(nil),
+		skillRuntime: skills.NewRuntimeWithCatalog(tools.NewToolEngine(tools.NewToolManager(nil)), tools.NewToolManager(nil), catalogDir),
+	}
+	prepared := &PreparedChat{
+		Conversation: &aichatmodel.Conversation{
+			ID:             uuid.New(),
+			OrganizationID: uuid.New(),
+			AccountID:      uuid.New(),
+		},
+		Message: &aichatmodel.Message{
+			ID:       uuid.New(),
+			Metadata: map[string]interface{}{},
+		},
+		LLMRequest: &adapter.ChatRequest{
+			Messages: []adapter.Message{{Role: "user", Content: "write an outline then continue"}},
+		},
+		Scope: Scope{
+			OrganizationID: uuid.New(),
+			AccountID:      uuid.New(),
+		},
+		parts: &chatRequestParts{
+			Provider:  "openai",
+			SkillMode: skillModeAuto,
+			SkillIDs:  []string{"brief-writer"},
+		},
+	}
+	events := make([]StreamEvent, 0)
+
+	answer, _, err := svc.runPreparedSkillStream(context.Background(), context.Background(), prepared, nil, func(event StreamEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("runPreparedSkillStream() error = %v", err)
+	}
+	if answer != "Final answer." {
+		t.Fatalf("answer = %q, want final answer only", answer)
+	}
+	if fakeLLM.appChatCalls != 0 {
+		t.Fatalf("AppChat calls = %d, want streaming planning only", fakeLLM.appChatCalls)
+	}
+	if len(fakeLLM.appChatStreamRequests) != 2 {
+		t.Fatalf("recorded AppChatStream requests = %d, want 2", len(fakeLLM.appChatStreamRequests))
+	}
+	var reasoningFound bool
+	for _, message := range fakeLLM.appChatStreamRequests[1].Messages {
+		if message.Role == "assistant" && message.ReasoningContent == "I should stream an outline." {
+			reasoningFound = true
+			break
+		}
+	}
+	if !reasoningFound {
+		t.Fatalf("second streaming planning request did not preserve assistant reasoning_content: %#v", fakeLLM.appChatStreamRequests[1].Messages)
+	}
+
+	var streamed strings.Builder
+	var doneSeen bool
+	for _, event := range events {
+		if event.EventType != streamEventIntermediateAnswer {
+			continue
+		}
+		content, _ := event.Payload["content"].(string)
+		streamed.WriteString(content)
+		if done, _ := event.Payload["done"].(bool); done {
+			doneSeen = true
+		}
+	}
+	if streamed.String() != "Hello world" {
+		t.Fatalf("streamed intermediate content = %q, want Hello world", streamed.String())
+	}
+	if !doneSeen {
+		t.Fatal("expected final intermediate answer done marker")
+	}
+	invocations, _ := prepared.Message.Metadata["skill_invocations"].([]interface{})
+	if len(invocations) == 0 {
+		t.Fatalf("skill_invocations is empty, want intermediate answer trace")
+	}
+	last, _ := invocations[len(invocations)-1].(map[string]interface{})
+	if last["kind"] != "intermediate_answer" || last["message"] != "Hello world" {
+		t.Fatalf("last invocation = %#v, want streamed intermediate answer trace", last)
+	}
+}
+
+func TestRunPreparedSkillStreamDoesNotDuplicateStreamedPlanningProgress(t *testing.T) {
+	catalogDir := t.TempDir()
+	writeTestSkill(t, catalogDir, "brief-writer", `---
+name: brief-writer
+description: Help draft short writing briefs.
+when_to_use: Use when writing a concise brief.
+---
+
+# Brief Writer
+
+	Write concise briefs.
+`)
+	toolIndex := 0
+	finalAnswer := strings.Repeat("Final answer sentence. ", 12)
+	fakeLLM := &fakeAgenticLLMClient{
+		appChatStreamResponses: [][]adapter.StreamResponse{
+			{
+				{
+					Choices: []adapter.StreamChoice{{
+						Delta: adapter.Message{Content: "Loading the brief writer."},
+					}},
+				},
+				{
+					Choices: []adapter.StreamChoice{{
+						Delta: adapter.Message{
+							ToolCalls: []adapter.ToolCall{{
+								Index: &toolIndex,
+								ID:    "call_1",
+								Type:  "function",
+								Function: adapter.FunctionCall{
+									Name:      skills.MetaToolLoadSkill,
+									Arguments: `{"skill_id":"brief-writer"}`,
+								},
+							}},
+						},
+						FinishReason: "tool_calls",
+					}},
+				},
+				{Done: true},
+			},
+			{
+				{
+					Choices: []adapter.StreamChoice{{
+						Delta: adapter.Message{Content: finalAnswer[:len(finalAnswer)/2]},
+					}},
+				},
+				{
+					Choices: []adapter.StreamChoice{{
+						Delta: adapter.Message{Content: finalAnswer[len(finalAnswer)/2:]},
+					}},
+				},
+				{Done: true},
+			},
+		},
+	}
+	svc := &service{
+		repos: &repository.Repositories{
+			Message:     &recordingMessageRepository{},
+			CustomSkill: &fakeCustomSkillRepository{items: map[string]*aichatmodel.CustomSkill{}},
+		},
+		llmClient:    fakeLLM,
+		events:       newStreamEventStore(nil),
+		skillRuntime: skills.NewRuntimeWithCatalog(tools.NewToolEngine(tools.NewToolManager(nil)), tools.NewToolManager(nil), catalogDir),
+	}
+	prepared := &PreparedChat{
+		Conversation: &aichatmodel.Conversation{
+			ID:             uuid.New(),
+			OrganizationID: uuid.New(),
+			AccountID:      uuid.New(),
+		},
+		Message: &aichatmodel.Message{
+			ID:       uuid.New(),
+			Metadata: map[string]interface{}{},
+		},
+		LLMRequest: &adapter.ChatRequest{
+			Messages: []adapter.Message{{Role: "user", Content: "write a brief"}},
+		},
+		Scope: Scope{
+			OrganizationID: uuid.New(),
+			AccountID:      uuid.New(),
+		},
+		parts: &chatRequestParts{
+			Provider:  "openai",
+			SkillMode: skillModeAuto,
+			SkillIDs:  []string{"brief-writer"},
+		},
+	}
+	events := make([]StreamEvent, 0)
+	chunks := make([]string, 0)
+	visibleAnswer := ""
+
+	answer, _, err := svc.runPreparedSkillStream(context.Background(), context.Background(), prepared, nil, func(event StreamEvent) error {
+		events = append(events, event)
+		if event.EventType == streamEventMessage {
+			chunk, _ := event.Payload["answer"].(string)
+			chunks = append(chunks, chunk)
+			visibleAnswer += chunk
+		}
+		if event.EventType == streamEventMessageRetract {
+			content, _ := event.Payload["content"].(string)
+			visibleAnswer = strings.TrimSuffix(visibleAnswer, content)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("runPreparedSkillStream() error = %v", err)
+	}
+	if answer != finalAnswer {
+		t.Fatalf("answer = %q, want final answer only", answer)
+	}
+	if len(chunks) <= 2 || visibleAnswer != finalAnswer {
+		t.Fatalf("chunks = %#v visible answer = %q, want speculative progress retracted and final answer streamed", chunks, visibleAnswer)
+	}
+
+	var progressEvents []string
+	var retractContent string
+	for _, event := range events {
+		switch event.EventType {
+		case streamEventAgentProgress:
+			content, _ := event.Payload["content"].(string)
+			progressEvents = append(progressEvents, content)
+		case streamEventMessageRetract:
+			retractContent, _ = event.Payload["content"].(string)
+		}
+	}
+	if len(progressEvents) != 1 || progressEvents[0] != "Loading the brief writer." {
+		t.Fatalf("progress events = %#v, want one streamed planning progress event", progressEvents)
+	}
+	if retractContent != "Loading the brief writer." {
+		t.Fatalf("retract content = %q, want speculative planning answer retracted", retractContent)
+	}
+}
+
 func TestRunPreparedSkillStreamStagesSkillToolSchema(t *testing.T) {
 	catalogDir := t.TempDir()
 	writeTestSkill(t, catalogDir, "clock", `---
@@ -938,13 +1264,14 @@ Use the current_time tool after loading this skill.
 	}
 }
 
-func TestAgenticSkillLoopSystemMessageRequiresIntermediateAnswers(t *testing.T) {
+func TestAgenticSkillLoopSystemMessageScopesIntermediateAnswersToNewContent(t *testing.T) {
 	message := agenticSkillLoopSystemMessage()
 	content, _ := message.Content.(string)
 
 	requiredPhrases := []string{
-		"MUST call submit_intermediate_answer",
-		"multiple ordered phases",
+		"newly creates or substantially rewrites",
+		"Do not call submit_intermediate_answer merely to repeat content",
+		"exporting, saving, converting, or generating a file from existing content",
 		"that reply MUST include the deliverable in full",
 		"not a compressed summary",
 		"Do not label the user-facing reply",
@@ -1129,9 +1456,12 @@ func containsString(values []string, target string) bool {
 }
 
 type fakeAgenticLLMClient struct {
-	appChatResponses []*adapter.ChatResponse
-	appChatRequests  []*adapter.ChatRequest
-	appChatCalls     int
+	appChatResponses       []*adapter.ChatResponse
+	appChatRequests        []*adapter.ChatRequest
+	appChatCalls           int
+	appChatStreamResponses [][]adapter.StreamResponse
+	appChatStreamRequests  []*adapter.ChatRequest
+	appChatStreamCalls     int
 }
 
 func (f *fakeAgenticLLMClient) Chat(ctx context.Context, organizationID string, req *adapter.ChatRequest) (*adapter.ChatResponse, error) {
@@ -1170,7 +1500,19 @@ func (f *fakeAgenticLLMClient) AppChat(ctx context.Context, appCtx *llmclient.Ap
 }
 
 func (f *fakeAgenticLLMClient) AppChatStream(ctx context.Context, appCtx *llmclient.AppContext, req *adapter.ChatRequest) (<-chan adapter.StreamResponse, error) {
-	return nil, errors.New("not implemented")
+	if f.appChatStreamCalls >= len(f.appChatStreamResponses) {
+		return nil, errors.New("unexpected AppChatStream call")
+	}
+	cloned := cloneChatRequest(req)
+	f.appChatStreamRequests = append(f.appChatStreamRequests, cloned)
+	responses := f.appChatStreamResponses[f.appChatStreamCalls]
+	f.appChatStreamCalls++
+	ch := make(chan adapter.StreamResponse, len(responses))
+	for _, response := range responses {
+		ch <- response
+	}
+	close(ch)
+	return ch, nil
 }
 
 func (f *fakeAgenticLLMClient) AppCreateResponse(ctx context.Context, appCtx *llmclient.AppContext, req *adapter.CreateResponseRequest) (*adapter.CreateResponseResponse, error) {

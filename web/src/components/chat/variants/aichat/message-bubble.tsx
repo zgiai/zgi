@@ -16,6 +16,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useFileOriginalPreviewUrl } from '@/hooks/file/use-file-original-preview-url';
 import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
+import { useWorkspaceStore } from '@/store/workspace-store';
 import type {
   AIChatGeneratedFile,
   AIChatMessage,
@@ -30,6 +31,10 @@ import {
 } from '@/components/chat/variants/aichat/message-toolbars';
 import { UniversalFilePreviewDialog } from '@/components/files/universal-file-preview-dialog';
 import { AIChatAgenticTimeline } from '@/components/chat/variants/aichat/agentic-timeline';
+import {
+  getAIChatMessageErrorInput,
+  resolveAIChatErrorMessage,
+} from '@/components/chat/variants/aichat/error-utils';
 import type { AIChatSkillDisplayMap } from '@/components/chat/variants/aichat/skill-display';
 import type { AIChatAgenticTimelineItem } from '@/components/chat/controllers/aichat';
 import { timelineFromAIChatMessage } from '@/components/chat/controllers/aichat/selectors';
@@ -275,7 +280,11 @@ export function AIChatMessageBubble({
   onEditSubmit,
 }: AIChatMessageBubbleProps) {
   const t = useT('webapp');
+  const tGlobal = useT();
   const tCommon = useT('common');
+  const currentWorkspace = useWorkspaceStore.use.currentWorkspace();
+  const organizationRole = useWorkspaceStore.use.permissionState().organizationRole;
+  const isBillingAdmin = organizationRole === 'owner' || organizationRole === 'admin';
   const isStreaming = message.status === 'pending' || message.status === 'streaming';
   const isError = message.status === 'error';
   const isStopped = message.status === 'stopped';
@@ -312,6 +321,20 @@ export function AIChatMessageBubble({
         item.type === 'skill_event' &&
         (item.invocation.status === 'error' || item.invocation.status === 'blocked')
     );
+  const errorDisplay = useMemo(
+    () =>
+      isError
+        ? resolveAIChatErrorMessage(
+            (key, values) => tGlobal(key as never, values),
+            getAIChatMessageErrorInput(message),
+            {
+              isAdmin: isBillingAdmin,
+              workspaceId: currentWorkspace?.id,
+            }
+          )
+        : null,
+    [currentWorkspace?.id, isBillingAdmin, isError, message, tGlobal]
+  );
 
   return (
     <div className="group space-y-3">
@@ -492,9 +515,26 @@ export function AIChatMessageBubble({
           ) : null}
 
           {isError ? (
-            <div className="mt-2 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+            <div
+              className={cn(
+                'mt-2 flex items-start gap-2 rounded-md border p-3 text-sm',
+                errorDisplay?.isBilling
+                  ? 'border-amber-200 bg-amber-50 text-amber-950'
+                  : 'border-destructive/30 bg-destructive/10 text-destructive'
+              )}
+            >
               <AlertCircle className="mt-0.5 size-4 shrink-0" />
-              <span>{message.error || t('consoleChat.streamError')}</span>
+              <div className="min-w-0 flex-1 space-y-2">
+                <div>{errorDisplay?.description || t('consoleChat.streamError')}</div>
+                {isBillingAdmin && errorDisplay?.href && errorDisplay.actionLabel ? (
+                  <a
+                    href={errorDisplay.href}
+                    className="inline-flex h-7 items-center rounded-[4px] border border-amber-300 bg-white px-2.5 text-xs font-semibold text-amber-950 transition-colors hover:border-amber-400 hover:bg-amber-100"
+                  >
+                    {errorDisplay.actionLabel}
+                  </a>
+                ) : null}
+              </div>
             </div>
           ) : null}
 

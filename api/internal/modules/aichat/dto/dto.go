@@ -5,8 +5,9 @@ type CreateConversationRequest struct {
 }
 
 type UpdateConversationRequest struct {
-	Title  *string `json:"title,omitempty"`
-	Status *string `json:"status,omitempty"`
+	Title                *string `json:"title,omitempty"`
+	Status               *string `json:"status,omitempty"`
+	CurrentLeafMessageID *string `json:"current_leaf_message_id,omitempty"`
 }
 
 type ChatRequest struct {

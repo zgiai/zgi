@@ -1,6 +1,15 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type ClipboardEvent,
+  type KeyboardEvent,
+} from 'react';
 import dynamic from 'next/dynamic';
 import { toast } from 'sonner';
 import {
@@ -46,6 +55,72 @@ const FileSelectorDialog = dynamic(() => import('@/components/files/file-selecto
   ssr: false,
 });
 
+function padDatePart(value: number): string {
+  return String(value).padStart(2, '0');
+}
+
+function getTimestampForFilename(date = new Date()): string {
+  return [
+    date.getFullYear(),
+    padDatePart(date.getMonth() + 1),
+    padDatePart(date.getDate()),
+    '-',
+    padDatePart(date.getHours()),
+    padDatePart(date.getMinutes()),
+    padDatePart(date.getSeconds()),
+  ].join('');
+}
+
+function getImageExtensionFromMimeType(mimeType: string): string {
+  const subtype = mimeType.split('/')[1]?.toLowerCase() || 'png';
+  if (subtype === 'jpeg') return 'jpg';
+  if (subtype.includes('svg')) return 'svg';
+  if (subtype.includes('png')) return 'png';
+  return subtype.replace(/[^a-z0-9]/g, '') || 'png';
+}
+
+function renamePastedImageFile(file: File, index: number): File {
+  const extension = getImageExtensionFromMimeType(file.type);
+  const suffix = index > 0 ? `-${index + 1}` : '';
+  return new File([file], `pasted-image-${getTimestampForFilename()}${suffix}.${extension}`, {
+    type: file.type,
+    lastModified: file.lastModified || Date.now(),
+  });
+}
+
+function shouldRenamePastedImageFile(file: File): boolean {
+  const name = file.name.trim().toLowerCase();
+  return (
+    file.type.startsWith('image/') && (!name || name === 'image.png' || name === 'clipboard.png')
+  );
+}
+
+function getPastedFiles(event: ClipboardEvent<HTMLTextAreaElement>): File[] {
+  const clipboard = event.clipboardData;
+  const directFiles = Array.from(clipboard.files ?? []);
+  if (directFiles.length > 0) {
+    return directFiles.map((file, index) =>
+      shouldRenamePastedImageFile(file) ? renamePastedImageFile(file, index) : file
+    );
+  }
+
+  return Array.from(clipboard.items ?? [])
+    .filter(item => item.kind === 'file')
+    .map(item => item.getAsFile())
+    .filter((file): file is File => Boolean(file))
+    .map((file, index) =>
+      file.type.startsWith('image/') ? renamePastedImageFile(file, index) : file
+    );
+}
+
+function isComposingEnterEvent(event: KeyboardEvent<HTMLTextAreaElement>): boolean {
+  const nativeEvent = event.nativeEvent as globalThis.KeyboardEvent & {
+    isComposing?: boolean;
+  };
+
+  return nativeEvent.isComposing === true || event.keyCode === 229;
+}
+
 interface AIChatInputAreaProps {
   isHome: boolean;
   isLoadingMessages: boolean;
@@ -89,6 +164,7 @@ export function AIChatInputArea({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const dragDepthRef = useRef(0);
+  const isComposingRef = useRef(false);
   const [attachments, setAttachments] = useState<AIChatInputAttachment[]>([]);
   const [isFileSelectorOpen, setIsFileSelectorOpen] = useState(false);
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
@@ -185,6 +261,7 @@ export function AIChatInputArea({
                   progress: 100,
                   status: 'uploaded',
                   file: uploadedFile,
+                  sourceFile: undefined,
                   error: undefined,
                 }
               : attachment
@@ -250,6 +327,7 @@ export function AIChatInputArea({
             kind,
             progress: 0,
             status: 'uploading',
+            sourceFile: file,
           },
         ]);
         void uploadOneFile(file, localId, kind);
@@ -270,6 +348,41 @@ export function AIChatInputArea({
   const handleRemoveAttachment = useCallback((id: string) => {
     setAttachments(current => current.filter(attachment => attachment.id !== id));
   }, []);
+
+  const handleRetryAttachment = useCallback(
+    (id: string) => {
+      const attachment = attachments.find(item => item.id === id);
+      if (!attachment?.sourceFile) {
+        toast.error(t('consoleChat.attachments.retryUnavailable'));
+        return;
+      }
+      if (isSending || isUploading) {
+        toast.error(t('consoleChat.attachments.uploadUnavailable'));
+        return;
+      }
+
+      const validationError = validateFile(attachment.sourceFile, attachment.kind);
+      if (validationError) {
+        toast.error(validationError);
+        return;
+      }
+
+      setAttachments(current =>
+        current.map(item =>
+          item.id === id
+            ? {
+                ...item,
+                progress: 0,
+                status: 'uploading',
+                error: undefined,
+              }
+            : item
+        )
+      );
+      void uploadOneFile(attachment.sourceFile, id, attachment.kind);
+    },
+    [attachments, isSending, isUploading, t, uploadOneFile, validateFile]
+  );
 
   const handleImageUpload = useCallback(() => {
     if (!canUseImage) {
@@ -342,6 +455,19 @@ export function AIChatInputArea({
     onSend(uploadedFiles, useMemory);
     setAttachments([]);
   }, [hasUploadError, input, isUploading, onSend, uploadedFiles, useMemory]);
+
+  const handlePaste = useCallback(
+    (event: ClipboardEvent<HTMLTextAreaElement>) => {
+      const files = getPastedFiles(event);
+      if (files.length === 0) {
+        return;
+      }
+
+      event.preventDefault();
+      enqueueFiles(files);
+    },
+    [enqueueFiles]
+  );
 
   useEffect(() => {
     const container = containerRef.current;
@@ -450,12 +576,21 @@ export function AIChatInputArea({
             <AIChatAttachmentStrip
               attachments={attachments}
               onRemove={handleRemoveAttachment}
+              onRetry={handleRetryAttachment}
             />
             <Textarea
               value={input}
               onChange={event => onInputChange(event.target.value)}
+              onPaste={handlePaste}
+              onCompositionStart={() => {
+                isComposingRef.current = true;
+              }}
+              onCompositionEnd={() => {
+                isComposingRef.current = false;
+              }}
               onKeyDown={event => {
                 if (event.key === 'Enter' && !event.shiftKey) {
+                  if (isComposingRef.current || isComposingEnterEvent(event)) return;
                   if (isSending || isUploading || hasUploadError) return;
                   event.preventDefault();
                   handleSend();

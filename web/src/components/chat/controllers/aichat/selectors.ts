@@ -1,4 +1,8 @@
-import type { AIChatConversation, AIChatMessage } from '@/services/types/aichat';
+import type {
+  AIChatConversation,
+  AIChatMessage,
+  AIChatSkillInvocation,
+} from '@/services/types/aichat';
 import {
   DEFAULT_AICHAT_MESSAGE_PAGINATION,
   type AIChatAgenticTimelineItem,
@@ -16,6 +20,19 @@ import {
 import { upsertAIChatMessage } from '@/components/chat/utils/aichat-message';
 
 const EMPTY_AICHAT_MESSAGES: AIChatMessage[] = [];
+
+type PersistedSkillInvocation = AIChatSkillInvocation & {
+  arguments_summary?: Record<string, unknown> | null;
+};
+
+function normalizeSkillInvocation(invocation: AIChatSkillInvocation): AIChatSkillInvocation {
+  const persisted = invocation as PersistedSkillInvocation;
+  return {
+    ...invocation,
+    status: invocation.status === 'loaded' ? 'success' : invocation.status,
+    arguments: invocation.arguments ?? persisted.arguments_summary,
+  };
+}
 
 export function hasRunningMessageState(
   streamingByMessageId: Record<string, AIChatStreamingMessageState>,
@@ -86,9 +103,9 @@ export function mergeSelectedMessagesWithStreamingState(
 }
 
 export function timelineFromAIChatMessage(message: AIChatMessage): AIChatAgenticTimelineItem[] {
-  const invocations = (message.metadata?.skill_invocations ?? []).filter(
-    invocation => invocation.kind !== 'metadata_exposed'
-  );
+  const invocations = (message.metadata?.skill_invocations ?? [])
+    .filter(invocation => invocation.kind !== 'metadata_exposed')
+    .map(normalizeSkillInvocation);
 
   return invocations.map((invocation, index) => {
     if (invocation.kind === 'intermediate_answer' && invocation.message) {
