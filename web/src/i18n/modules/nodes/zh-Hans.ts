@@ -1090,7 +1090,7 @@ const messages: NodesMessages = {
       placeholders: {
         variableName: '请输入变量名',
         label: '请输入显示名称',
-        description: '例如：如需新增记账单可填写',
+        description: '例如：请输入项目地址',
         defaultValue: '请输入默认值',
         allowedFileExtensions: 'pdf,docx,txt',
       },
