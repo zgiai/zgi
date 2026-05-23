@@ -69,6 +69,10 @@ func textPreviewContentType(uploadFile *dto.UploadFile) string {
 	switch extension {
 	case "csv":
 		return "text/csv; charset=utf-8"
+	case "html", "htm":
+		return "text/html; charset=utf-8"
+	case "json":
+		return "application/json; charset=utf-8"
 	case "xml":
 		return "application/xml; charset=utf-8"
 	default:

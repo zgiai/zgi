@@ -276,18 +276,28 @@ const messages: CommonMessages = {
       recipients: '手机号',
       template: '短信模板',
     },
+    setup: {
+      title: '短信服务未配置',
+      description: '请先完成短信服务商、短信签名和短信模板配置，再使用短信通知。',
+      templatePlaceholder: '短信模板未配置',
+    },
     templates: {
       pendingActionNotification: '待办通知',
+      workflowAlert: '工作流告警',
     },
     params: {
       notificationTitle: '通知标题',
       linkCode: '链接参数',
+      remark: '备注',
+      summary: '摘要',
     },
     placeholders: {
       recipient: '手机号 {index}',
       recipientSingle: '手机号，多个用英文逗号分隔',
       notificationTitle: '您有一项新的任务待处理',
       linkCode: '任务或通知链接参数',
+      remark: '请输入备注',
+      summary: '请输入摘要',
       param: '请输入{label}',
     },
     actions: {

@@ -87,6 +87,7 @@ export function AIChatShell({
   const isRecoveringMessages = useStore(controller.store, selectIsRecoveringMessages);
   const isStopping = useStore(controller.store, selectIsStopping);
   const isSending = useStore(controller.store, state => state.isSending);
+  const streamingByMessageId = useStore(controller.store, state => state.streamingByMessageId);
   const error = useStore(controller.store, state => state.error);
   const { data: availableSkills = [] } = useAIChatSkills();
   const skillDisplayById = useMemo(
@@ -205,7 +206,7 @@ export function AIChatShell({
   }, [isMobile]);
 
   const handleSend = useCallback(
-    (files: AIChatMessageFile[] = []) => {
+    (files: AIChatMessageFile[] = [], useMemory = false) => {
       const query = input.trim();
       if (!query || isSending) return;
       if (!modelSelectorValue.model) {
@@ -222,6 +223,7 @@ export function AIChatShell({
           model: modelSelectorValue.model,
           parameters: modelSelectorValue.params,
         },
+        useMemory,
       });
     },
     [controller, input, isSending, modelSelectorValue, t]
@@ -390,6 +392,7 @@ export function AIChatShell({
           isLoadingMessages={isLoadingMessages}
           isLoadingOlderMessages={isLoadingOlderMessages}
           isSending={isSending}
+          streamingByMessageId={streamingByMessageId}
           skillDisplayById={skillDisplayById}
           editingMessageId={editingMessageId}
           editingQuery={editingQuery}

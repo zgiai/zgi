@@ -17,6 +17,7 @@ func RegisterAIChatRoutes(router *gin.RouterGroup, serviceContainer *container.S
 		serviceContainer.GetFileService(),
 		serviceContainer.GetContentExtractor(),
 		serviceContainer.GetOrganizationService(),
+		serviceContainer.GetMemoryService(),
 		skills.NewRuntime(serviceContainer.GetToolEngine(), serviceContainer.GetToolManager()),
 	)
 	group := router.Group("")

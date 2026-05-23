@@ -32,6 +32,8 @@ const messages = {
     'notification-sms': {
       title: 'Send SMS',
       description: 'Send a template-based SMS notification through the backend configured provider',
+      setupRequired:
+        'SMS notifications are not configured. Configure the SMS provider, SMS signature, and SMS templates first.',
       label: 'SMS',
     },
     code: {
@@ -821,18 +823,20 @@ const messages = {
       promptPreview: 'Preview',
       memory: 'Memory',
       context: 'Context',
+      conversationHistory: 'Conversation Context',
       vision: 'Vision',
     },
     roles: {
       system: 'System prompt',
-      user: 'User input template',
-      assistant: 'Assistant reply template',
+      user: 'User message',
+      assistant: 'Assistant message',
     },
     labels: {
       detail: 'Resolution',
       high: 'High',
       low: 'Low',
       visionVariable: 'Vision Variable',
+      conversationHistoryRounds: 'History rounds',
     },
     fields: {
       providerModel: 'Provider & Model',
@@ -843,6 +847,11 @@ const messages = {
     },
     actions: {
       addBlock: 'Add Block',
+      addUserQuestion: 'Add user question',
+      addHistoryContext: 'Add conversation history',
+      addCustomContext: 'Add example conversation',
+      insertExtraContext: 'Insert extra context',
+      changePromptOrder: 'Arrange context',
       applyPromptTemplate: 'Apply and keep editing',
       collapseBlock: 'Collapse block',
       changePromptReference: 'Choose another',
@@ -874,6 +883,8 @@ const messages = {
     tips: {
       cannotRemoveFirstSystem: 'The first system prompt cannot be removed',
       visionDescription: 'The selected vision variable will be used as the image input.',
+      conversationHistoryDescription:
+        'Carry recent conversation history for this LLM node. One round is one historical user and assistant message pair.',
     },
     playground: {
       currentPrompt: 'Current node prompt',
@@ -898,6 +909,112 @@ const messages = {
         'If no block is selected first, quick variables will be inserted into the first system prompt block by default.',
       noManualSyntax:
         'Variables are inserted as recognized tokens automatically, so you usually do not need to type the bracket syntax by hand.',
+    },
+    promptOrder: {
+      systemPrompt: 'System prompt',
+      history: 'Conversation history',
+      historyDescription: 'Recent conversation history inserted by this node.',
+      currentUser: 'Current user input',
+      customContext: 'Example conversation',
+      legacyContext: 'Existing message group',
+      singleUserMessage: 'User message',
+      positionLabel: 'Position {index}',
+      orderDialogTitle: 'Arrange context',
+      orderDialogDescription:
+        'Drag example conversations to control the extra context order between conversation history and the current user input. Example conversations can only be edited here.',
+      helpEntryDescription:
+        'For ordinary use, you do not need extra arrangement; the default setup is enough. Use this only when you need more information or examples.',
+      helpEntryButton: 'View example',
+      helpTitle: 'How does context arrangement work?',
+      helpDescription:
+        'For ordinary use, you do not need extra context arrangement; keeping the default setup works well. This is for cases where you need extra material or sample answers.',
+      helpBeginnerTab: 'Start from basics',
+      helpPracticalTab: 'Copy a real setup',
+      helpConceptContextTitle: 'What is context?',
+      helpConceptContextText:
+        'Context is the material the model can read before answering. If you do not send it, the model will not magically know it.',
+      helpConceptModelTitle: 'How the model gets info',
+      helpConceptModelText:
+        'The model does not browse your workflow by itself. It reads the message list you send in this run, in order.',
+      helpConceptWhyTitle: 'Why fill this in?',
+      helpConceptWhyText:
+        'Role, history, examples, and the current question become a clear task brief, so the answer is much more stable.',
+      helpBeginnerStoryTitle: 'A simple mental model',
+      helpBeginnerStoryText:
+        'Treat the model like a teammate walking into a meeting. Tell it who it is, what happened earlier, what answer style to copy, and what needs solving now.',
+      helpBeginnerTipTitle: 'Remember this: ',
+      helpBeginnerTipText:
+        'Context arrangement is not about adding more and more text. It is about placing the necessary information in the order you want the model to read it.',
+      helpExampleTitle: 'Example question',
+      helpExampleQuestion:
+        '"The customer said the plan we recommended last time is too expensive. Help me reply with a better option for a 30-person team and a steadier budget."',
+      helpFlowTitle: 'After arrangement, the model reads in this order',
+      helpFlowSystemLabel: 'System prompt',
+      helpFlowSystemText:
+        'First, set the role and boundaries: be a business assistant, answer clearly, stay actionable, and use the right tone.',
+      helpFlowHistoryLabel: 'Conversation history',
+      helpFlowHistoryText:
+        'Next, add old clues: the model knows what was recommended before and why the customer pushed back.',
+      helpFlowExampleLabel: 'Example conversation',
+      helpFlowExampleText:
+        'Then show a sample: how you want it to ask, answer, and phrase things. This is the pattern to imitate.',
+      helpFlowCurrentLabel: 'Current user input',
+      helpFlowCurrentText:
+        'Finally, give the real task. The model uses everything above as context and focuses on this message.',
+      helpBenefitOrderTitle: 'Control the order',
+      helpBenefitOrderText:
+        'You decide which example conversation comes first, so the model does not have to guess which pattern matters most.',
+      helpBenefitExampleTitle: 'Stabilize the style',
+      helpBenefitExampleText:
+        'Example conversations act like a sample answer, helping the model match your tone, structure, and detail level.',
+      helpBenefitDebugTitle: 'Debug faster',
+      helpBenefitDebugText:
+        'If the answer feels wrong, you can quickly see whether the example is too strong, material is missing, or the current input is unclear.',
+      helpCopyTitle: 'A setup you can copy',
+      helpCopyPurposePrefix: 'Purpose: ',
+      helpCopySystemLabel: 'System prompt',
+      helpCopySystemValue:
+        'You are an enterprise customer success assistant. First restate the customer need, then provide actionable advice. Keep the tone professional, concise, and avoid overpromising.',
+      helpCopySystemPurpose:
+        'Locks the model role, tone, and answer structure before any business content is read.',
+      helpCopyHistoryLabel: 'Conversation history',
+      helpCopyHistoryValue: 'Enabled; history rounds: 3; fixed after the system prompt.',
+      helpCopyHistoryPurpose:
+        'Lets the model understand what was discussed earlier and resolve phrases like "the plan from last time".',
+      helpCopyExampleLabel: 'Example conversation',
+      helpCopyExampleValue:
+        'User message: How should we reply when the customer thinks the price is high?\nAssistant message: Acknowledge the budget pressure, offer an alternative, then ask a next-step confirmation question.',
+      helpCopyExamplePurpose:
+        'Gives the model an answer pattern to imitate, especially useful for support, sales, review, or policy-driven replies.',
+      helpCopyCurrentLabel: 'Current user input',
+      helpCopyCurrentValue: 'System variable (query)',
+      helpCopyCurrentPurpose:
+        'Places the real current user request last, so the model answers it using the rules, history, and example above.',
+      helpTipTitle: 'Tip: ',
+      helpTipText:
+        'Most workflows work well with the default order. If you want the model to mimic a standard exchange, add an example conversation between history and the current input.',
+      systemFixedDescription: 'System prompt is fixed at the beginning and is edited in the main panel.',
+      contextPlaceholder: 'Extra context',
+      contextPlaceholderDescription: 'Provide the model with more information or answer examples.',
+      historyPanelHint:
+        'Conversation history is fixed after the system prompt; adjust only the switch and round count here.',
+      historyRoundsPreview: 'Insert up to {count} recent conversation round(s).',
+      userLine: 'User: ',
+      assistantLine: 'Assistant: ',
+      currentUserEditHint: 'Edit this content in the main panel.',
+      removeConfirmTitle: 'Remove this context item?',
+      removeHistoryConfirmDescription:
+        'This node will no longer insert conversation history. You can turn it back on in the main panel.',
+      removeGroupConfirmDescription:
+        'This example conversation will be removed as a group. You can still cancel the dialog to discard this change.',
+      unsavedChangesTitle: 'You have unsaved changes. Save them?',
+      unsavedChangesDescription:
+        'The context arrangement has been changed. Leaving now will discard those edits.',
+      saveAndClose: 'Save and close',
+      discardChanges: 'Discard',
+      missingUserQuestionTitle: 'Add a user question',
+      missingUserQuestionDescription:
+        'When context exists without a current user input, the model may treat the previous round question as the current one in multi-turn chats, causing mismatched answers.',
     },
     states: {
       emptyBlock: 'This block is empty',
@@ -1215,6 +1332,7 @@ const messages = {
       fields: {
         variableName: 'Variable Name',
         label: 'Label',
+        description: 'Input Hint',
         variableType: 'Variable Type',
         defaultValue: 'Default Value',
         maxLength: 'Max Length',
@@ -1241,6 +1359,7 @@ const messages = {
       placeholders: {
         variableName: 'Enter variable name',
         label: 'Enter label',
+        description: 'Shown as the input placeholder',
         defaultValue: 'Enter default value',
         allowedFileExtensions: 'pdf,docx,txt',
       },

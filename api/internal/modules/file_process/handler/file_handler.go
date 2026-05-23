@@ -681,23 +681,30 @@ func getUploadFileWorkspaceID(uploadFile *dto.UploadFile) string {
 }
 
 func isOriginalPreviewSupported(uploadFile *dto.UploadFile) bool {
+	mimeType := strings.TrimSpace(strings.ToLower(strings.Split(uploadFile.MimeType, ";")[0]))
+	if mimeType != "" && mimeType != "application/octet-stream" {
+		return mimeType == "application/pdf" ||
+			strings.HasPrefix(mimeType, "image/") ||
+			isOfficeOriginalPreviewMIMEType(mimeType) ||
+			isTextOriginalPreviewMIMEType(mimeType)
+	}
+
 	extension := strings.ToLower(strings.TrimPrefix(uploadFile.Extension, "."))
 	if extension == "pdf" || file_model.IsImageExtension(extension) {
+		return true
+	}
+	if isOfficeOriginalPreviewExtension(extension) {
 		return true
 	}
 	if isTextOriginalPreviewExtension(extension) {
 		return true
 	}
-
-	mimeType := strings.ToLower(uploadFile.MimeType)
-	return mimeType == "application/pdf" ||
-		strings.HasPrefix(mimeType, "image/") ||
-		isTextOriginalPreviewMIMEType(mimeType)
+	return false
 }
 
 func isTextOriginalPreviewExtension(extension string) bool {
 	switch extension {
-	case "txt", "md", "markdown", "mdx", "csv", "xml":
+	case "txt", "md", "markdown", "mdx", "json", "csv", "html", "htm", "xml":
 		return true
 	default:
 		return false
@@ -708,10 +715,31 @@ func isTextOriginalPreviewMIMEType(mimeType string) bool {
 	switch strings.TrimSpace(strings.Split(mimeType, ";")[0]) {
 	case "text/plain",
 		"text/markdown",
+		"text/html",
+		"application/json",
 		"text/csv",
 		"application/csv",
 		"text/xml",
 		"application/xml":
+		return true
+	default:
+		return false
+	}
+}
+
+func isOfficeOriginalPreviewExtension(extension string) bool {
+	switch extension {
+	case "docx", "xlsx":
+		return true
+	default:
+		return false
+	}
+}
+
+func isOfficeOriginalPreviewMIMEType(mimeType string) bool {
+	switch strings.TrimSpace(strings.Split(mimeType, ";")[0]) {
+	case "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
 		return true
 	default:
 		return false

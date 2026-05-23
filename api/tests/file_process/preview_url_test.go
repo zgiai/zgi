@@ -97,6 +97,54 @@ func TestGetFileOriginalPreviewURL_TemporaryFileRejectsOtherCreator(t *testing.T
 	}
 }
 
+func TestGetFileOriginalPreviewURL_SupportsGeneratedFileFormats(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name      string
+		extension string
+		mimeType  string
+	}{
+		{name: "html", extension: "html", mimeType: "text/html"},
+		{name: "json", extension: "json", mimeType: "application/json"},
+		{name: "docx", extension: "docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
+		{name: "xlsx", extension: "xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			const (
+				accountID      = "account-1"
+				organizationID = "organization-1"
+				fileID         = "file-1"
+				previewURL     = "https://files.example/preview"
+			)
+
+			fileService := &previewURLFileService{
+				file: &dto.UploadFile{
+					ID:             fileID,
+					OrganizationID: "00000000-0000-0000-0000-000000000000",
+					Name:           "generated." + tt.extension,
+					Extension:      tt.extension,
+					MimeType:       tt.mimeType,
+					CreatedBy:      accountID,
+					IsTemporary:    true,
+				},
+				url: previewURL,
+			}
+			router := newPreviewURLRouter(fileService, accountID, organizationID)
+
+			req := httptest.NewRequest(http.MethodGet, "/files/"+fileID+"/preview-url", nil)
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
 func newPreviewURLRouter(fileService interfaces.FileService, accountID, organizationID string) *gin.Engine {
 	router := gin.New()
 	handler := filehandler.NewFileHandler(fileService, nil, nil, nil, nil)

@@ -18,6 +18,7 @@ type ChatRequest struct {
 	Provider       string                 `json:"provider,omitempty"`
 	ResponseMode   string                 `json:"response_mode,omitempty"`
 	Parameters     map[string]interface{} `json:"parameters,omitempty"`
+	UseMemory      bool                   `json:"use_memory,omitempty"`
 }
 
 type RegenerateMessageRequest struct {
@@ -25,6 +26,7 @@ type RegenerateMessageRequest struct {
 	Model      *string                `json:"model,omitempty"`
 	Provider   *string                `json:"provider,omitempty"`
 	Parameters map[string]interface{} `json:"parameters,omitempty"`
+	UseMemory  *bool                  `json:"use_memory,omitempty"`
 }
 
 type StopConversationResponse struct {

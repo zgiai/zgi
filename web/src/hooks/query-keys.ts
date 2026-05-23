@@ -148,6 +148,11 @@ export const AICHAT_KEYS = {
   skillConfig: () => [...AICHAT_KEYS.skills(), 'config'] as const,
 } as const;
 
+export const MEMORY_KEYS = {
+  all: ['memory'] as const,
+  me: () => [...MEMORY_KEYS.all, 'me'] as const,
+} as const;
+
 // 6. DB Related
 export const DB_KEYS = {
   all: ['dbs'] as const,

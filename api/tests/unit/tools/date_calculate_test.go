@@ -167,6 +167,30 @@ func TestDateCalculateTool_DiffDays(t *testing.T) {
 	}
 }
 
+func TestDateCalculateTool_AcceptsCurrentTimeDefaultFormat(t *testing.T) {
+	tool := timepkg.NewDateCalculateTool("tenant-1")
+
+	messages, err := tool.Invoke(context.Background(), "user-1", map[string]interface{}{
+		"operation": "add",
+		"base_date": "2026-05-23 14:30:45",
+		"amount":    1,
+		"unit":      "day",
+		"timezone":  "Asia/Shanghai",
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if len(messages) != 1 || messages[0].Type != tools.ToolInvokeMessageTypeJSON {
+		t.Fatalf("messages = %#v, want one json message", messages)
+	}
+	if messages[0].Data["base_date"] != "2026-05-23" {
+		t.Fatalf("base_date = %v, want 2026-05-23", messages[0].Data["base_date"])
+	}
+	if messages[0].Data["result_date"] != "2026-05-24" {
+		t.Fatalf("result_date = %v, want 2026-05-24", messages[0].Data["result_date"])
+	}
+}
+
 func TestDateCalculateTool_InvalidInput(t *testing.T) {
 	tool := timepkg.NewDateCalculateTool("tenant-1")
 	tests := []struct {

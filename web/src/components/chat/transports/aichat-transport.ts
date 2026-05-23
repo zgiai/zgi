@@ -5,6 +5,7 @@ import {
 } from '@/utils/model-output-filter';
 import type {
   AIChatChatRequest,
+  AIChatAgentProgressEventData,
   AIChatConversation,
   AIChatErrorEventData,
   AIChatFileParseEndEventData,
@@ -14,6 +15,7 @@ import type {
   AIChatMessageChunkEventData,
   AIChatMessageEndEventData,
   AIChatMessageStartEventData,
+  AIChatIntermediateAnswerEventData,
   AIChatRegenerateMessageRequest,
   AIChatSkillCallEndEventData,
   AIChatSkillCallErrorEventData,
@@ -66,6 +68,11 @@ export interface AIChatMessageListResult {
 
 export interface AIChatStreamCallbacks {
   onMessageStart: (payload: AIChatMessageStartEventData, eventId?: string | null) => void;
+  onAgentProgress: (payload: AIChatAgentProgressEventData, eventId?: string | null) => void;
+  onIntermediateAnswer: (
+    payload: AIChatIntermediateAnswerEventData,
+    eventId?: string | null
+  ) => void;
   onFileParseStart: (payload: AIChatFileParseStartEventData, eventId?: string | null) => void;
   onFileParseEnd: (payload: AIChatFileParseEndEventData, eventId?: string | null) => void;
   onFileParseError: (payload: AIChatFileParseErrorEventData, eventId?: string | null) => void;
@@ -98,6 +105,12 @@ function dispatchAIChatStreamEvent(
   switch (event) {
     case 'message_start':
       callbacks.onMessageStart((data ?? {}) as AIChatMessageStartEventData, eventId);
+      break;
+    case 'agent_progress':
+      callbacks.onAgentProgress((data ?? {}) as AIChatAgentProgressEventData, eventId);
+      break;
+    case 'agent_intermediate_answer':
+      callbacks.onIntermediateAnswer((data ?? {}) as AIChatIntermediateAnswerEventData, eventId);
       break;
     case 'file_parse_start':
       callbacks.onFileParseStart((data ?? {}) as AIChatFileParseStartEventData, eventId);

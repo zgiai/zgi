@@ -1,10 +1,12 @@
 import type {
+  AIChatAgentProgressEventData,
   AIChatConversation,
   AIChatErrorEventData,
   AIChatFileParseEndEventData,
   AIChatFileParseErrorEventData,
   AIChatFileParseStartEventData,
   AIChatGeneratedFile,
+  AIChatIntermediateAnswerEventData,
   AIChatMessage,
   AIChatMessageChunkEventData,
   AIChatMessageEndEventData,
@@ -28,6 +30,7 @@ import {
 import {
   DEFAULT_AICHAT_MESSAGE_PAGINATION,
   type AIChatControllerState,
+  type AIChatAgenticTimelineItem,
   type AIChatMessageStartContext,
   type AIChatStreamingMessageState,
 } from '@/components/chat/controllers/aichat/types';
@@ -149,6 +152,78 @@ function upsertSkillInvocation(
   return next;
 }
 
+function getSkillInvocationIdentity(invocation: AIChatSkillInvocation): string {
+  return [
+    invocation.kind ?? 'tool_call',
+    invocation.skill_id ?? '',
+    invocation.tool_name ?? '',
+    invocation.path ?? '',
+  ].join(':');
+}
+
+function upsertSkillTimelineItem(
+  timeline: AIChatAgenticTimelineItem[] | undefined,
+  incoming: AIChatSkillInvocation,
+  eventId: string | null | undefined
+): AIChatAgenticTimelineItem[] {
+  if (incoming.kind === 'intermediate_answer') {
+    return [
+      ...(timeline ?? []),
+      {
+        id:
+          eventId ??
+          `intermediate-${incoming.created_at ?? Date.now()}-${timeline?.length ?? 0}`,
+        type: 'intermediate_answer',
+        title: incoming.title,
+        content: incoming.message ?? '',
+        created_at: incoming.created_at,
+        event_id: eventId ?? null,
+      },
+    ];
+  }
+
+  const next = timeline?.slice() ?? [];
+  const incomingIdentity = getSkillInvocationIdentity(incoming);
+  const reverseIndex = [...next].reverse().findIndex(item => {
+    if (item.type !== 'skill_event') return false;
+    const invocation = item.invocation;
+    return (
+      getSkillInvocationIdentity(invocation) === incomingIdentity &&
+      (invocation.status === 'loading' || invocation.status === 'running')
+    );
+  });
+
+  if (reverseIndex < 0) {
+    return [
+      ...next,
+      {
+        id:
+          eventId ??
+          `skill-${incomingIdentity}-${incoming.created_at ?? Date.now()}-${next.length}`,
+        type: 'skill_event',
+        invocation: incoming,
+        created_at: incoming.created_at,
+        event_id: eventId ?? null,
+      },
+    ];
+  }
+
+  const actualIndex = next.length - 1 - reverseIndex;
+  const existing = next[actualIndex];
+  if (existing.type !== 'skill_event') return next;
+
+  next[actualIndex] = {
+    ...existing,
+    invocation: {
+      ...existing.invocation,
+      ...incoming,
+    },
+    created_at: incoming.created_at ?? existing.created_at,
+    event_id: eventId ?? existing.event_id,
+  };
+  return next;
+}
+
 function updateSkillInvocationMetadata(
   current: AIChatControllerState,
   conversationId: string,
@@ -216,11 +291,78 @@ function updateSkillInvocationMetadata(
           ...current.streamingByMessageId,
           [messageId]: {
             ...previousStreaming,
+            timeline: upsertSkillTimelineItem(previousStreaming.timeline, invocation, eventId),
             last_event_id: eventId ?? previousStreaming.last_event_id,
           },
         }
       : current.streamingByMessageId,
   };
+}
+
+export function applyAgentProgressState(
+  current: AIChatControllerState,
+  payload: AIChatAgentProgressEventData,
+  eventId?: string | null
+): AIChatControllerState {
+  const content = (payload.content ?? '').trim();
+  if (!content || !payload.message_id) {
+    return current;
+  }
+
+  const previousStreaming = current.streamingByMessageId[payload.message_id];
+  if (!previousStreaming) {
+    return current;
+  }
+
+  const timeline = previousStreaming.timeline ?? [];
+  const nextTimeline: AIChatAgenticTimelineItem[] = [
+    ...timeline,
+    {
+      id: eventId ?? `progress-${payload.created_at ?? Date.now()}-${timeline.length}`,
+      type: 'progress_text',
+      content,
+      created_at: payload.created_at,
+      event_id: eventId ?? null,
+    },
+  ];
+
+  return {
+    ...current,
+    streamingByMessageId: {
+      ...current.streamingByMessageId,
+      [payload.message_id]: {
+        ...previousStreaming,
+        timeline: nextTimeline,
+        last_event_id: eventId ?? previousStreaming.last_event_id,
+      },
+    },
+  };
+}
+
+export function applyIntermediateAnswerState(
+  current: AIChatControllerState,
+  payload: AIChatIntermediateAnswerEventData,
+  eventId?: string | null
+): AIChatControllerState {
+  const content = (payload.content ?? '').trim();
+  if (!content || !payload.conversation_id || !payload.message_id) {
+    return current;
+  }
+
+  return updateSkillInvocationMetadata(
+    current,
+    payload.conversation_id,
+    payload.message_id,
+    eventId,
+    {
+      kind: 'intermediate_answer',
+      skill_id: '',
+      title: payload.title,
+      status: 'success',
+      message: content,
+      created_at: payload.created_at,
+    }
+  );
 }
 
 function inferExtension(filename: string): string {
@@ -524,6 +666,7 @@ export function applyMessageStartState(
     message_id: payload.message_id,
     answer: message.answer,
     status: 'streaming',
+    timeline: previousStreaming?.timeline ?? [],
     last_event_id: eventId ?? previousStreaming?.last_event_id,
     replay_base_answer: previousStreaming?.replay_base_answer,
     replay_offset: previousStreaming?.replay_offset,
@@ -891,6 +1034,7 @@ export function applyMessageChunkState(
         message_id: payload.message_id,
         answer: nextStreamingAnswer,
         status: 'streaming',
+        timeline: previousStreaming?.timeline ?? [],
         last_event_id: eventId ?? previousStreaming?.last_event_id,
         replay_base_answer: replayBaseAnswer,
         replay_offset: replayOffset,
@@ -923,8 +1067,20 @@ export function applyMessageEndState(
         }
       : message
   );
+  const previousStreaming = current.streamingByMessageId[payload.message_id];
   const nextStreamingByMessageId = { ...current.streamingByMessageId };
-  delete nextStreamingByMessageId[payload.message_id];
+  if (previousStreaming?.timeline?.length) {
+    const terminalStatus = normalizeAIChatStatus(payload.status);
+    nextStreamingByMessageId[payload.message_id] = {
+      ...previousStreaming,
+      status:
+        terminalStatus === 'stopped' || terminalStatus === 'error'
+          ? terminalStatus
+          : 'completed',
+    };
+  } else {
+    delete nextStreamingByMessageId[payload.message_id];
+  }
 
   return {
     ...current,

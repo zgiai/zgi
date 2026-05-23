@@ -8,7 +8,7 @@ runtime_type: tool
 tools:
   - current_time
   - date_calculate
-max_calls_per_turn: 3
+max_calls_per_turn: 20
 timeout_seconds: 5
 display:
   icon: clock

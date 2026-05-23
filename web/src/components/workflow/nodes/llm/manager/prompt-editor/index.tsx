@@ -41,8 +41,14 @@ interface PromptEditorProps {
   readOnly?: boolean;
   actions?: React.ReactNode; // right aligned actions (e.g. Insert variable dropdown)
   placeholder?: string;
+  headerLabel?: string;
   roleLocked?: boolean; // when true, role cannot be changed (first block fixed to system)
   nodeId?: string; // current node id to load upstream variables
+  compact?: boolean;
+  bordered?: boolean;
+  flat?: boolean;
+  subtleHeader?: boolean;
+  editorPadding?: 'normal' | 'compact' | 'none';
   // Allowed roles for selection dropdown; defaults to all roles
   allowedRoles?: Array<LLMNodeData['prompt_template'][number]['role']>;
   // Bubble focus changes to parent with the active editor handle
@@ -63,8 +69,14 @@ const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
       readOnly = false,
       actions,
       placeholder,
+      headerLabel,
       roleLocked = false,
       nodeId,
+      compact = false,
+      bordered = false,
+      flat = false,
+      subtleHeader = false,
+      editorPadding = compact ? 'compact' : 'normal',
       allowedRoles = ROLE_OPTIONS,
       onFocused,
     },
@@ -77,6 +89,7 @@ const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
       user: t('llm.roles.user'),
       assistant: t('llm.roles.assistant'),
     };
+    const displayLabel = headerLabel || roleLabels[role];
     // Bridge to inner WorkflowValueEditor imperative API
     const innerRef = useRef<WorkflowValueEditorHandle | null>(null);
     // Expanded modal state and editor ref
@@ -98,19 +111,35 @@ const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
     }), [readOnly]);
 
     return (
-      <div className={cn('space-y-0.5', className)}>
+      <div
+        className={cn(
+          'space-y-0.5 bg-background',
+          bordered && 'overflow-hidden rounded-lg border',
+          className
+        )}
+      >
         {/* Role selector and actions */}
-        <div className="flex items-center justify-between border-b bg-muted rounded-t-md px-1 py-0.5">
+        <div className={cn(
+          'flex items-center justify-between border-b px-1',
+          subtleHeader ? 'bg-background' : 'bg-muted',
+          !flat && !bordered && 'rounded-t-md',
+          compact ? 'py-0' : 'py-0.5',
+          subtleHeader && 'px-2'
+        )}>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
                 variant="ghost"
                 size="sm"
-                className="px-2 text-sm font-bold"
+                className={cn(
+                  'px-2',
+                  subtleHeader ? 'font-medium text-muted-foreground' : 'font-bold',
+                  compact ? 'h-7 text-xs' : 'text-sm'
+                )}
                 aria-label="Role"
                 disabled={roleLocked || readOnly}
               >
-                {roleLabels[role]}
+                {displayLabel}
                 {!roleLocked && !readOnly && <ChevronDown size={16} />}
               </Button>
             </DropdownMenuTrigger>
@@ -155,7 +184,15 @@ const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
         <WorkflowValueEditor
           ref={innerRef}
           value={value}
-          editorClassName="min-h-[72px] max-h-[174px] overflow-y-auto border-none p-1.5"
+          editorClassName={cn(
+            'overflow-y-auto border-none',
+            editorPadding === 'none'
+              ? 'p-0'
+              : editorPadding === 'compact'
+              ? 'p-1.5'
+              : 'p-2',
+            compact ? 'min-h-[44px] max-h-[104px]' : 'min-h-[72px] max-h-[174px]'
+          )}
           onChange={onChange}
           readOnly={readOnly}
           placeholder={placeholder}

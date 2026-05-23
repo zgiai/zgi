@@ -53,5 +53,6 @@ func renderWorkflowDefaultPrompt(id prompt.TemplateID, data interface{}) (string
 		return "", err
 	}
 
+	content = strings.ReplaceAll(content, "\r\n", "\n")
 	return strings.TrimSuffix(content, "\n"), nil
 }

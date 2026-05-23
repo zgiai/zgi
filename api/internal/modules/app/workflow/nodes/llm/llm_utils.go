@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
-	"github.com/zgiai/zgi/api/pkg/database"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
 )
@@ -68,14 +66,10 @@ func (m *TokenBufferMemory) GetHistoryPromptMessages(
 		zap.Int("messages_count", len(m.Messages)),
 	)
 
-	// For now, return mock history or stored messages
+	// History must be provided by the LLM node execution policy. Do not load
+	// from the database here; missing history means the prompt carries none.
 	if len(m.Messages) == 0 && !m.HistoryExplicitlyProvided {
-		logger.Debug("LLM token buffer memory loading conversation history")
-		// Load from conversation if available
-		m.loadConversationHistory()
-		logger.Debug("LLM token buffer memory loaded conversation history",
-			zap.Int("messages_count", len(m.Messages)),
-		)
+		logger.Debug("LLM token buffer memory has no explicit history; using empty history")
 	} else if len(m.Messages) == 0 && m.HistoryExplicitlyProvided {
 		logger.Debug("LLM token buffer memory skipping database load for explicit empty history")
 	}
@@ -259,92 +253,6 @@ func (m *TokenBufferMemory) AddMessage(message PromptMessage) {
 			removedMessage := m.Messages[0]
 			m.Messages = m.Messages[1:]
 			totalTokens -= m.estimateMessageTokens(removedMessage)
-		}
-	}
-}
-
-// loadConversationHistory loads conversation history from the conversation object
-func (m *TokenBufferMemory) loadConversationHistory() {
-	if len(m.Messages) > 0 {
-		logger.Debug("LLM token buffer memory already loaded",
-			zap.Int("messages_count", len(m.Messages)),
-		)
-		return
-	}
-
-	// In real implementation, this would load from database or conversation object
-	// For now, we'll load mock history if no real conversation is available
-	if m.Conversation != nil {
-		// Try to extract messages from conversation
-		if conversationMap, ok := m.Conversation.(map[string]any); ok {
-			if messages, ok := conversationMap["messages"].([]any); ok {
-				for _, msg := range messages {
-					if msgMap, ok := msg.(map[string]any); ok {
-						role := PromptMessageRoleUser
-						if r, exists := msgMap["role"]; exists {
-							if roleStr, ok := r.(string); ok {
-								role = PromptMessageRole(roleStr)
-							}
-						}
-
-						content := ""
-						if c, exists := msgMap["content"]; exists {
-							content = fmt.Sprintf("%v", c)
-						}
-
-						m.Messages = append(m.Messages, PromptMessage{
-							Role:    role,
-							Content: content,
-						})
-					}
-				}
-			}
-		}
-	}
-
-	if m.Conversation != nil && m.AppID != "" {
-		// Try to extract conversation ID
-		if conversationMap, ok := m.Conversation.(map[string]any); ok {
-			if conversationID, exists := conversationMap["id"].(string); conversationID != "" && exists {
-				// Check if we have a database connection
-				db := database.GetDB()
-				if db != nil {
-					// Load conversation from database
-					conversationRepo := conversation.NewConversationRepository(db)
-					conv, err := conversationRepo.GetConversationDetailWithMessages(m.AppID, conversationID)
-					if err != nil {
-						// Log error and continue with existing messages
-						logger.Warn("failed to load conversation history for LLM memory",
-							err,
-							zap.String("conversation_id", conversationID),
-							zap.String("app_id", m.AppID),
-						)
-						return
-					}
-
-					// Clear existing messages
-					m.Messages = make([]PromptMessage, 0)
-
-					// Convert conversation messages to prompt messages
-					for _, msg := range conv.Messages {
-						// Add user message
-						if msg.Query != "" {
-							m.Messages = append(m.Messages, PromptMessage{
-								Role:    PromptMessageRoleUser,
-								Content: msg.Query,
-							})
-						}
-
-						// Add assistant message
-						if msg.Answer != "" {
-							m.Messages = append(m.Messages, PromptMessage{
-								Role:    PromptMessageRoleAssistant,
-								Content: msg.Answer,
-							})
-						}
-					}
-				}
-			}
 		}
 	}
 }

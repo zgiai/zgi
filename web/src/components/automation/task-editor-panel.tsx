@@ -132,6 +132,7 @@ function toWorkflowInputVars(variables: WebAppVariable[] | undefined): InputVar[
     type: variable.type as InputVar['type'],
     variable: variable.variable,
     label: variable.label || variable.variable,
+    description: variable.description,
     required: Boolean(variable.required),
     max_length: variable.max_length,
     default: variable.default,

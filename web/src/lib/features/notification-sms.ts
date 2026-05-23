@@ -3,6 +3,7 @@ import type { SystemFeatures } from '@/services/types/auth';
 export const NOTIFICATION_SMS_NODE_TYPE = 'notification-sms' as const;
 export const NOTIFICATION_SMS_CHANNEL_TYPE = 'sms' as const;
 export const NOTIFICATION_SMS_TEMPLATE = 'pending_action_notification' as const;
+export const NOTIFICATION_SMS_WORKFLOW_ALERT_TEMPLATE = 'workflow_alert' as const;
 
 export interface NotificationSMSTemplateParam {
   key: string;
@@ -19,6 +20,12 @@ export interface NotificationSMSTemplate {
   params?: NotificationSMSTemplateParam[];
 }
 
+export type NotificationSMSParamDisplayKey =
+  | 'notificationTitle'
+  | 'linkCode'
+  | 'remark'
+  | 'summary';
+
 export type NotificationSMSTemplateParamValidationReason = 'required' | 'max_length' | 'pattern';
 
 export interface NotificationSMSTemplateParamValidationIssue {
@@ -33,6 +40,15 @@ const FALLBACK_PENDING_ACTION_TEMPLATE_PARAMS: NotificationSMSTemplateParam[] = 
 ];
 
 const WORKFLOW_VALUE_TOKEN_PATTERN = /^\{\{#[^#]+#\}\}$/;
+const TEMPLATE_PARAM_DISPLAY_KEY_BY_PARAM_KEY: Record<string, NotificationSMSParamDisplayKey> = {
+  notification_title: 'notificationTitle',
+  title: 'notificationTitle',
+  link_code: 'linkCode',
+  link: 'linkCode',
+  link_suffix: 'linkCode',
+  remark: 'remark',
+  summary: 'summary',
+};
 
 export function isNotificationSMSEnabled(features?: SystemFeatures | null): boolean {
   if (!features?.notification_sms?.enabled) {
@@ -40,6 +56,17 @@ export function isNotificationSMSEnabled(features?: SystemFeatures | null): bool
   }
 
   return true;
+}
+
+export function isNotificationSMSConfigured(features?: SystemFeatures | null): boolean {
+  return isNotificationSMSEnabled(features) && getNotificationSMSTemplates(features).length > 0;
+}
+
+export function getNotificationSMSParamDisplayKey(
+  param: NotificationSMSTemplateParam | string
+): NotificationSMSParamDisplayKey | null {
+  const key = (typeof param === 'string' ? param : param.key).trim().toLowerCase();
+  return TEMPLATE_PARAM_DISPLAY_KEY_BY_PARAM_KEY[key] ?? null;
 }
 
 export function isNotificationSMSWorkflowNodeEnabled(features?: SystemFeatures | null): boolean {

@@ -166,6 +166,11 @@ function areSameFileIds(files: UploadedFile[] | undefined, ids: string[]): boole
   return currentIds.every((id, index) => id === ids[index]);
 }
 
+function getInputPlaceholder(input: InputVar): string | undefined {
+  const placeholder = input.description?.trim();
+  return placeholder || undefined;
+}
+
 const WorkflowInputForm = React.forwardRef<WorkflowInputFormHandle, WorkflowInputFormProps>(
   (
     {
@@ -266,6 +271,7 @@ const WorkflowInputForm = React.forwardRef<WorkflowInputFormHandle, WorkflowInpu
         JSON.stringify(
           startVariables.map(v => ({
             variable: v.variable,
+            description: v.description ?? undefined,
             type: v.type,
             required: Boolean(v.required),
             options: v.options ?? [],
@@ -447,6 +453,7 @@ const WorkflowInputForm = React.forwardRef<WorkflowInputFormHandle, WorkflowInpu
         // i18n required message
         const requiredMsg = t('workflow.startForm.requiredField');
         const commonRules = input.required ? { required: requiredMsg } : {};
+        const placeholder = getInputPlaceholder(input);
 
         switch (input.type as InputVarType) {
           case 'text-input':
@@ -464,7 +471,7 @@ const WorkflowInputForm = React.forwardRef<WorkflowInputFormHandle, WorkflowInpu
                     </FormLabel>
                     <FormControl>
                       <Input
-                        placeholder={input.label}
+                        placeholder={placeholder}
                         maxLength={input.max_length}
                         {...field}
                         value={(field.value as string) ?? ''}
@@ -491,7 +498,7 @@ const WorkflowInputForm = React.forwardRef<WorkflowInputFormHandle, WorkflowInpu
                     </FormLabel>
                     <FormControl>
                       <Textarea
-                        placeholder={input.label}
+                        placeholder={placeholder}
                         maxLength={input.max_length}
                         {...field}
                         value={(field.value as string) ?? ''}
@@ -519,7 +526,7 @@ const WorkflowInputForm = React.forwardRef<WorkflowInputFormHandle, WorkflowInpu
                     <FormControl>
                       <Select onValueChange={field.onChange} value={(field.value as string) ?? ''}>
                         <SelectTrigger aria-invalid={!!form.formState.errors[input.variable]}>
-                          <SelectValue placeholder={input.label} />
+                          <SelectValue placeholder={placeholder} />
                         </SelectTrigger>
                         <SelectContent>
                           {(input.options ?? []).map(opt => (
@@ -556,6 +563,7 @@ const WorkflowInputForm = React.forwardRef<WorkflowInputFormHandle, WorkflowInpu
                             ? ''
                             : (field.value as number | string)
                         }
+                        placeholder={placeholder}
                         aria-invalid={!!form.formState.errors[input.variable]}
                         onChange={e => {
                           form.setValue(input.variable, e.target.value, {

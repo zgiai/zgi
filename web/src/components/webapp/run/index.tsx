@@ -83,6 +83,7 @@ function toInputVars(vars: WebAppVariable[], fileUploadLimit?: number): InputVar
     type: v.type as InputVar['type'],
     variable: v.variable,
     label: v.label,
+    description: v.description,
     required: v.required,
     max_length:
       v.type === 'file-list' && (typeof v.max_length !== 'number' || v.max_length <= 0)
@@ -146,7 +147,6 @@ export const WebappRun: React.FC<WebappRunProps> = ({
   const [streamedText, setStreamedText] = useState<string>('');
   const [isRunning, setIsRunning] = useState(false);
   const [finalResult, setFinalResult] = useState<HistoryResult | null>(null);
-  const [isFormValid, setIsFormValid] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState('input');
   const [precheckWarnings, setPrecheckWarnings] = useState<WorkflowPrecheckWarning[]>([]);
   const [approvalPaused, setApprovalPaused] = useState(false);
@@ -231,6 +231,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
       JSON.stringify(
         startVariables.map(v => ({
           variable: v.variable,
+          description: v.description ?? undefined,
           type: v.type,
           required: Boolean(v.required),
           options: v.options ?? [],
@@ -1671,7 +1672,6 @@ export const WebappRun: React.FC<WebappRunProps> = ({
         questionAnswerSubmitting
       }
       onSubmit={handleSubmit}
-      onValidChange={setIsFormValid}
       hideSubmitButton
       fileUploadAccessMode={isAuthenticated ? 'enabled' : 'login-required'}
       allowWorkspaceSwitch
@@ -1784,7 +1784,6 @@ export const WebappRun: React.FC<WebappRunProps> = ({
               isStarting ||
               questionAnswerSubmitting ||
               isApprovalPending ||
-              !isFormValid ||
               (!isQuestionAnswerPending && hasRequiredAnonymousFileInputs)
             }
             className="w-full shadow-lg transition-all duration-300 hover:shadow-xl hover:shadow-primary/30 font-medium h-11"
