@@ -273,10 +273,16 @@ function getUploadedFilesFromInitialValue(value: unknown): UploadedFile[] {
     .filter((file): file is UploadedFile => Boolean(file));
 }
 
-function areSameFileIds(files: UploadedFile[] | undefined, ids: string[]): boolean {
-  const currentIds = (files ?? []).map(file => file.id);
+function areSameFileIdLists(currentIds: string[], ids: string[]): boolean {
   if (currentIds.length !== ids.length) return false;
   return currentIds.every((id, index) => id === ids[index]);
+}
+
+function areSameFileIds(files: UploadedFile[] | undefined, ids: string[]): boolean {
+  return areSameFileIdLists(
+    (files ?? []).map(file => file.id),
+    ids
+  );
 }
 
 function getInputPlaceholder(input: InputVar): string | undefined {
@@ -488,15 +494,21 @@ const WorkflowInputForm = React.forwardRef<WorkflowInputFormHandle, WorkflowInpu
           );
           setFileStates(prev => {
             const next = { ...prev };
+            let changed = false;
             Object.entries(varMap).forEach(([key, ids]) => {
+              const currentFormIds = getFileIdsFromValue(form.getValues(key));
+              if (!areSameFileIdLists(currentFormIds, ids) || !areSameFileIds(prev[key], ids)) {
+                return;
+              }
               next[key] = ids.map(
                 id =>
                   metadataByID.get(id) ??
                   initialFileMap[key]?.find(file => file.id === id) ??
                   fallbackUploadedFile(id)
               );
+              changed = true;
             });
-            return next;
+            return changed ? next : prev;
           });
         } catch (e) {
           console.error('Failed to hydrate files', e);
@@ -507,7 +519,7 @@ const WorkflowInputForm = React.forwardRef<WorkflowInputFormHandle, WorkflowInpu
       return () => {
         cancelled = true;
       };
-    }, [initialValues, startVariables]); // Removed fileStates from deps to avoid loop, handled inside
+    }, [form, initialValues, startVariables]); // Removed fileStates from deps to avoid loop, handled inside
 
     // Submit wrapper to emit values upstream
     const handleSubmit = useCallback(
