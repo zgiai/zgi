@@ -16,11 +16,14 @@ import { Textarea } from '@/components/ui/textarea';
 import { TrashIcon, Plus, Sparkles, FileUp, Table2, Eye } from 'lucide-react';
 import type { DbTableColumn, DbTableRecord } from '@/services/types/db';
 import { Type } from '@/services/types/db';
-import { formatDate as formatDateDisplay } from '@/utils/format';
-import { formatDateTimeLocalInput } from '@/utils/date-input';
 import { EmptyElement } from '@/components/datasets/empty-element';
 import { toast } from 'sonner';
 import { useT } from '@/i18n';
+import {
+  datetimeLocalToWallTime,
+  formatTimestampLocalInput,
+  formatTimestampWallTime,
+} from './timestamp-utils';
 
 export interface TableDataBodyProps {
   loading: boolean;
@@ -50,30 +53,6 @@ export interface TableDataBodyProps {
   stickyColumnNames?: readonly string[];
 }
 
-// Normalize various timestamp representations to a valid Date
-const normalizeToDate = (v: unknown): Date | null => {
-  try {
-    if (v instanceof Date) {
-      return isNaN(v.getTime()) ? null : v;
-    }
-    if (typeof v === 'string') {
-      const n = Number(v);
-      const ms = isNaN(n) ? undefined : n;
-      const adjusted = typeof ms === 'number' && ms < 1e12 ? ms * 1000 : ms;
-      const d = new Date(typeof adjusted === 'number' ? adjusted : v);
-      return isNaN(d.getTime()) ? null : d;
-    }
-    if (typeof v === 'number') {
-      const adjusted = v < 1e12 ? v * 1000 : v;
-      const d = new Date(adjusted);
-      return isNaN(d.getTime()) ? null : d;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-};
-
 // Render read-only cell content with type-aware formatting
 const renderCell = (row: DbTableRecord, col: DbTableColumn): string => {
   const val = row[col.name];
@@ -84,7 +63,7 @@ const renderCell = (row: DbTableRecord, col: DbTableColumn): string => {
   if (val === null || val === undefined) return '';
   if (col.type === Type.Timestamp) {
     if (typeof val === 'string' && val.trim().length === 0) return '';
-    return formatDateDisplay(val as number | string | Date, 'YYYY-MM-DD HH:mm:ss');
+    return formatTimestampWallTime(val);
   }
   return String(val);
 };
@@ -343,15 +322,14 @@ const Body: FC<TableDataBodyProps> = ({
                         // Timestamp editor
                         if (col.type === Type.Timestamp) {
                           const cellKey = `${String(rowKey)}:${col.name}`;
-                          const d = normalizeToDate(val);
-                          const formatted = d ? formatDateTimeLocalInput(d) : '';
+                          const formatted = formatTimestampLocalInput(val);
                           const draftValue = drafts[cellKey];
                           const inputVal = draftValue !== undefined ? draftValue : formatted;
                           const invalidTimestamp =
                             col.is_required &&
                             (inputVal === '' ||
                               (draftValue !== undefined && !isCompleteLocal(draftValue)) ||
-                              d === null);
+                              formatted === '');
 
                           return (
                             <Input
@@ -370,16 +348,22 @@ const Body: FC<TableDataBodyProps> = ({
                                   return;
                                 }
                                 if (isCompleteLocal(local)) {
-                                  const iso = new Date(local).toISOString();
-                                  updateLocalCell(rowKey as string | number, col.name, iso);
+                                  updateLocalCell(
+                                    rowKey as string | number,
+                                    col.name,
+                                    datetimeLocalToWallTime(local)
+                                  );
                                 }
                               }}
                               onBlur={e => {
                                 const local = e.target.value;
                                 if (local && isCompleteLocal(local)) {
-                                  const iso = new Date(local).toISOString();
-                                  updateLocalCell(rowKey as string | number, col.name, iso);
-                                  // Clear draft to reflect committed ISO in state
+                                  updateLocalCell(
+                                    rowKey as string | number,
+                                    col.name,
+                                    datetimeLocalToWallTime(local)
+                                  );
+                                  // Clear draft to reflect committed wall time in state
                                   setDrafts(prev => {
                                     const next = { ...prev };
                                     delete next[cellKey];

@@ -180,10 +180,11 @@ func convertValue(raw, typ string, required bool) (interface{}, error) {
 			return nil, fmt.Errorf("cannot convert %q to boolean", raw)
 		}
 	case "timestamp":
-		for _, format := range []string{"2006-01-02 15:04:05", time.RFC3339, "2006-01-02T15:04:05", "2006-01-02"} {
-			if parsed, err := time.Parse(format, raw); err == nil {
-				return parsed, nil
-			}
+		if normalized, ok := normalizeLocalTimestamp(raw); ok {
+			return normalized, nil
+		}
+		if parsed, err := time.Parse(time.RFC3339, raw); err == nil {
+			return parsed, nil
 		}
 		return nil, fmt.Errorf("cannot convert %q to timestamp", raw)
 	case "text":
@@ -191,4 +192,16 @@ func convertValue(raw, typ string, required bool) (interface{}, error) {
 	default:
 		return raw, nil
 	}
+}
+
+func normalizeLocalTimestamp(raw string) (string, bool) {
+	for _, format := range []string{"2006-01-02 15:04:05", "2006-01-02T15:04:05", "2006-01-02"} {
+		if parsed, err := time.ParseInLocation(format, raw, time.Local); err == nil {
+			if format == "2006-01-02" {
+				return parsed.Format("2006-01-02 00:00:00"), true
+			}
+			return parsed.Format("2006-01-02 15:04:05"), true
+		}
+	}
+	return "", false
 }
