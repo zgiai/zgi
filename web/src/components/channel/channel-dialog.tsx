@@ -44,6 +44,15 @@ import {
 
 const DEFAULT_INITIAL_FUNDS_USD = '100.00';
 
+type DraftTestFailureKind =
+  | 'auth'
+  | 'baseUrl'
+  | 'model'
+  | 'rateLimit'
+  | 'quota'
+  | 'protocol'
+  | 'unknown';
+
 /**
  * Props for ChannelDialog component.
  * Only supports fields that exist in current channel API.
@@ -183,6 +192,69 @@ function discoveredModelToItem(model: DiscoveredChannelModel, provider: string):
   };
 }
 
+function classifyDraftTestFailure(message: string): DraftTestFailureKind {
+  const normalized = message.toLowerCase();
+
+  if (
+    normalized.includes('api key') ||
+    normalized.includes('apikey') ||
+    normalized.includes('unauthorized') ||
+    normalized.includes('forbidden') ||
+    normalized.includes('invalid key') ||
+    normalized.includes('authentication') ||
+    normalized.includes('auth')
+  ) {
+    return 'auth';
+  }
+
+  if (
+    normalized.includes('base_url') ||
+    normalized.includes('base url') ||
+    normalized.includes('connection refused') ||
+    normalized.includes('no such host') ||
+    normalized.includes('timeout') ||
+    normalized.includes('deadline exceeded') ||
+    normalized.includes('unsupported protocol scheme')
+  ) {
+    return 'baseUrl';
+  }
+
+  if (
+    normalized.includes('model') &&
+    (normalized.includes('not found') ||
+      normalized.includes('not exist') ||
+      normalized.includes('not available') ||
+      normalized.includes('not registered') ||
+      normalized.includes('unknown'))
+  ) {
+    return 'model';
+  }
+
+  if (normalized.includes('rate limit') || normalized.includes('too many requests')) {
+    return 'rateLimit';
+  }
+
+  if (
+    normalized.includes('quota') ||
+    normalized.includes('balance') ||
+    normalized.includes('insufficient') ||
+    normalized.includes('billing')
+  ) {
+    return 'quota';
+  }
+
+  if (
+    normalized.includes('protocol') ||
+    normalized.includes('not supported') ||
+    normalized.includes('unsupported') ||
+    normalized.includes('method not allowed')
+  ) {
+    return 'protocol';
+  }
+
+  return 'unknown';
+}
+
 interface ChannelFormProps {
   mode: 'create' | 'edit';
   initial?: ChannelDetail | null;
@@ -296,6 +368,20 @@ function ChannelForm({
           : !representativeModel
             ? t('dialog.testConnection.selectModelHint')
             : null;
+  const draftTestFailureKind =
+    draftTestResult && !draftTestResult.success
+      ? classifyDraftTestFailure(draftTestResult.message)
+      : null;
+  const createReadiness =
+    mode !== 'create'
+      ? null
+      : draftTestResult?.success
+        ? 'verified'
+        : draftTestResult && !draftTestResult.success
+          ? 'failed'
+          : representativeModel
+            ? 'untested'
+            : 'missingModel';
 
   React.useEffect(() => {
     draftTestRequestIdRef.current += 1;
@@ -643,6 +729,13 @@ function ChannelForm({
                           ? t('dialog.testConnection.messages.successFallback')
                           : t('dialog.testConnection.messages.failedFallback'))}
                     </div>
+                    <div className="mt-1 font-medium">
+                      {draftTestResult.success
+                        ? t('dialog.testConnection.nextSteps.success')
+                        : t(
+                            `dialog.testConnection.nextSteps.failures.${draftTestFailureKind ?? 'unknown'}` as never
+                          )}
+                    </div>
                     {draftTestResult.response_time_ms > 0 && (
                       <div className="mt-0.5">
                         {t('dialog.testConnection.latency', {
@@ -777,25 +870,48 @@ function ChannelForm({
         </div>
       </DialogBody>
 
-      <div className="pb-6 px-6 pt-4 border-t shrink-0 flex items-center justify-end gap-2">
-        <Button variant="outline" onClick={() => onOpenChange(false)} disabled={disabled}>
-          {t('dialog.buttons.cancel')}
-        </Button>
-        <Button
-          onClick={onSubmit}
-          disabled={
-            disabled ||
-            !name.trim() ||
-            !channelProvider.trim() ||
-            !apiBaseUrl.trim() ||
-            !hasValidInitialFunds ||
-            Boolean(compatibilityWarningKey) ||
-            (mode === 'create' && apiKeyRequired && !apiKey.trim()) ||
-            (mode === 'edit' && updateApiKey && !apiKey.trim())
-          }
-        >
-          {mode === 'create' ? t('dialog.buttons.create') : t('dialog.buttons.save')}
-        </Button>
+      <div className="pb-6 px-6 pt-4 border-t shrink-0 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        {mode === 'create' && createReadiness && (
+          <div
+            className={cn(
+              'flex min-w-0 items-start gap-2 text-xs',
+              createReadiness === 'verified'
+                ? 'text-emerald-700'
+                : createReadiness === 'failed'
+                  ? 'text-destructive'
+                  : 'text-muted-foreground'
+            )}
+          >
+            {createReadiness === 'verified' ? (
+              <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            ) : (
+              <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            )}
+            <span className="min-w-0">
+              {t(`dialog.testConnection.readiness.${createReadiness}` as never)}
+            </span>
+          </div>
+        )}
+        <div className="flex shrink-0 items-center justify-end gap-2">
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={disabled}>
+            {t('dialog.buttons.cancel')}
+          </Button>
+          <Button
+            onClick={onSubmit}
+            disabled={
+              disabled ||
+              !name.trim() ||
+              !channelProvider.trim() ||
+              !apiBaseUrl.trim() ||
+              !hasValidInitialFunds ||
+              Boolean(compatibilityWarningKey) ||
+              (mode === 'create' && apiKeyRequired && !apiKey.trim()) ||
+              (mode === 'edit' && updateApiKey && !apiKey.trim())
+            }
+          >
+            {mode === 'create' ? t('dialog.buttons.create') : t('dialog.buttons.save')}
+          </Button>
+        </div>
       </div>
     </div>
   );

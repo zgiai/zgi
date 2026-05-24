@@ -165,6 +165,24 @@ const messages = {
         failedFallback: 'Check that the provider, API base URL, API key, and model match.',
         requestFailed: 'Connection test request failed',
       },
+      nextSteps: {
+        success: 'This configuration is ready to create a channel.',
+        failures: {
+          auth: 'Confirm the API key belongs to this provider and can call the selected model.',
+          baseUrl: 'Confirm the API base URL is reachable and includes the correct version prefix, such as /v1.',
+          model: 'Confirm the selected model is available on this provider account, or fetch upstream models and choose again.',
+          rateLimit: 'The upstream provider returned a rate limit. Retry later or check account limits.',
+          quota: 'Confirm the upstream account balance, plan, or billing status is active.',
+          protocol: 'Confirm the selected adapter protocol is compatible with the provider API.',
+          unknown: 'Use the error above to check the key, base URL, protocol, and model configuration.',
+        },
+      },
+      readiness: {
+        verified: 'Connection verified. You can create the channel.',
+        failed: 'Connection failed. You can still create it, but fix the issue above first.',
+        untested: 'Connection has not been tested. Verify a representative model first.',
+        missingModel: 'Select at least one representative model before testing.',
+      },
     },
     discoverModels: {
       button: 'Fetch Models',

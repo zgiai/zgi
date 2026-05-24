@@ -161,6 +161,24 @@ const messages: ChannelsMessages = {
         failedFallback: '请检查服务商、API 基础地址、API 密钥和模型是否匹配。',
         requestFailed: '连接检测请求失败',
       },
+      nextSteps: {
+        success: '当前配置可用于创建渠道。',
+        failures: {
+          auth: '请确认 API 密钥属于当前服务商，且具备调用所选模型的权限。',
+          baseUrl: '请确认 API 基础地址可访问，路径包含正确的版本前缀，例如 /v1。',
+          model: '请确认所选模型在该服务商账号下可用，或先获取上游模型列表后重新选择。',
+          rateLimit: '上游返回限流，请稍后重试或检查账号限流策略。',
+          quota: '请确认上游账号余额、套餐或计费状态正常。',
+          protocol: '请确认当前适配器协议与服务商接口兼容。',
+          unknown: '请根据上方错误信息检查密钥、地址、协议和模型配置。',
+        },
+      },
+      readiness: {
+        verified: '已通过连接检测，可以创建渠道。',
+        failed: '检测未通过：仍可创建，但建议先修复上方问题。',
+        untested: '尚未检测连接，建议先验证代表模型。',
+        missingModel: '请选择至少一个代表模型后检测连接。',
+      },
     },
     discoverModels: {
       button: '获取模型列表',
