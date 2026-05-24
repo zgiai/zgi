@@ -65,7 +65,12 @@ export default function QuestionAnswerContent({ nodeId, data }: QuestionAnswerCo
 
   return (
     <div className="space-y-2">
-      <OutputVariablesView variant="compact" variables={outputVariables} maxItems={3} />
+      <OutputVariablesView
+        variant="compact"
+        variables={outputVariables}
+        maxItems={3}
+        showCount={false}
+      />
 
       <div className="space-y-1.5">
         <SummaryRow label={t('questionAnswer.canvas.question')}>
