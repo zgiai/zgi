@@ -50,7 +50,10 @@ import type { VariableInsertValue } from '@/components/workflow/common/workflow-
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useWorkspaceMembersInfinite } from '@/hooks/workspace/use-workspace-members';
 import { useT } from '@/i18n';
-import { isNotificationSMSEnabled } from '@/lib/features/notification-sms';
+import {
+  getNotificationSMSTemplates,
+  isNotificationSMSEnabled,
+} from '@/lib/features/notification-sms';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/store/auth-store';
 import { isValidEmail } from '@/utils/validation';
@@ -61,9 +64,11 @@ import { useWorkflowStore } from '../../../store';
 import {
   APPROVAL_ACTION_MAX_LENGTH,
   APPROVAL_IDENTIFIER_PATTERN,
+  APPROVAL_SMS_TEMPLATE,
   APPROVAL_TIMEOUT_HANDLE,
   createApprovalActionId,
   getApprovalTimeoutMaxDuration,
+  isApprovalSMSSystemTemplateParam,
   normalizeApprovalNodeData,
   type ApprovalAction,
   type ApprovalActionStyle,
@@ -182,16 +187,6 @@ function createMemberSMSRecipient(accountId = ''): ApprovalSMSRecipient {
     type: 'member',
     account_id: accountId,
   };
-}
-
-function createTemplateParamKey(params: Record<string, string>): string {
-  let index = Object.keys(params).length + 1;
-  let key = `param_${index}`;
-  while (Object.prototype.hasOwnProperty.call(params, key)) {
-    index += 1;
-    key = `param_${index}`;
-  }
-  return key;
 }
 
 function getActionButtonVariant(
@@ -769,27 +764,6 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
     [commitApprovalNow]
   );
 
-  const updateSMSTemplateParamKey = React.useCallback(
-    (previousKey: string, nextKey: string) => {
-      updateApprovalDraft(current => {
-        const entries = Object.entries(current.submit_methods.sms.template_params).map(
-          ([key, value]) => (key === previousKey ? [nextKey, value] : [key, value])
-        );
-        return {
-          ...current,
-          submit_methods: {
-            ...current.submit_methods,
-            sms: {
-              ...current.submit_methods.sms,
-              template_params: Object.fromEntries(entries),
-            },
-          },
-        };
-      });
-    },
-    [updateApprovalDraft]
-  );
-
   const updateSMSTemplateParamValue = React.useCallback(
     (key: string, value: string) => {
       updateApprovalDraft(current => ({
@@ -923,8 +897,51 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
     data.submit_methods.sms,
     memberOptionByAccountId
   );
-  const smsTemplateParams = Object.entries(data.submit_methods.sms.template_params);
+  const smsTemplateParamConfig = React.useMemo(() => {
+    const templateKey = data.submit_methods.sms.template.trim() || APPROVAL_SMS_TEMPLATE;
+    const template = getNotificationSMSTemplates(systemFeatures).find(
+      item => item.key === templateKey
+    );
+    return {
+      hasTemplate: Boolean(template),
+      params: (template?.params ?? []).filter(
+        param => !isApprovalSMSSystemTemplateParam(param.key)
+      ),
+    };
+  }, [data.submit_methods.sms.template, systemFeatures]);
+  const smsTemplateParamDefinitions = smsTemplateParamConfig.params;
   const smsControlsDisabled = readOnly || !approvalSMSEnabled;
+
+  React.useEffect(() => {
+    if (!smsTemplateParamConfig.hasTemplate) return;
+
+    const allowedKeys = new Set(smsTemplateParamDefinitions.map(param => param.key));
+    const currentParams = data.submit_methods.sms.template_params;
+    const nextParams = Object.fromEntries(
+      Object.entries(currentParams).filter(([key]) => allowedKeys.has(key))
+    );
+    if (Object.keys(currentParams).length === Object.keys(nextParams).length) return;
+
+    updateApprovalDraft(current => ({
+      ...current,
+      submit_methods: {
+        ...current.submit_methods,
+        sms: {
+          ...current.submit_methods.sms,
+          template_params: Object.fromEntries(
+            Object.entries(current.submit_methods.sms.template_params).filter(([key]) =>
+              allowedKeys.has(key)
+            )
+          ),
+        },
+      },
+    }));
+  }, [
+    data.submit_methods.sms.template_params,
+    smsTemplateParamDefinitions,
+    smsTemplateParamConfig.hasTemplate,
+    updateApprovalDraft,
+  ]);
 
   return (
     <div className={cn('space-y-6', className)}>
@@ -1282,97 +1299,32 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
                       />
                     </div>
 
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between gap-2">
+                    {smsTemplateParamDefinitions.length > 0 ? (
+                      <div className="space-y-2">
                         <FieldLabel>{t('approval.submit.templateParams')}</FieldLabel>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          isIcon
-                          disabled={smsControlsDisabled}
-                          onClick={() =>
-                            commitApprovalNow(current => {
-                              const key = createTemplateParamKey(
-                                current.submit_methods.sms.template_params
-                              );
-                              return {
-                                ...current,
-                                submit_methods: {
-                                  ...current.submit_methods,
-                                  sms: {
-                                    ...current.submit_methods.sms,
-                                    template_params: {
-                                      ...current.submit_methods.sms.template_params,
-                                      [key]: '',
-                                    },
-                                  },
-                                },
-                              };
-                            })
-                          }
-                          aria-label={t('approval.actions.addTemplateParam')}
-                          title={t('approval.actions.addTemplateParam')}
-                        >
-                          <Plus className="size-4" />
-                        </Button>
+                        <div className="grid gap-2">
+                          {smsTemplateParamDefinitions.map(param => {
+                            const key = param.key;
+                            const label = param.label || key;
+                            return (
+                              <div key={key} className="space-y-1.5">
+                                <FieldLabel>{label}</FieldLabel>
+                                <Input
+                                  value={data.submit_methods.sms.template_params[key] ?? ''}
+                                  disabled={smsControlsDisabled}
+                                  onChange={event =>
+                                    updateSMSTemplateParamValue(key, event.target.value)
+                                  }
+                                  onBlur={flushApprovalPendingEdits}
+                                  placeholder={t('approval.placeholders.templateParamValue')}
+                                  className="h-8 text-xs"
+                                />
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
-                      {smsTemplateParams.length === 0 ? (
-                        <div className="rounded-lg border border-dashed bg-muted/20 px-4 py-5 text-center text-xs text-muted-foreground">
-                          {t('approval.empty.templateParamsDescription')}
-                        </div>
-                      ) : null}
-                      {smsTemplateParams.map(([key, value]) => (
-                        <div
-                          key={key}
-                          className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_32px] gap-2"
-                        >
-                          <Input
-                            value={key}
-                            disabled={smsControlsDisabled}
-                            onChange={event => updateSMSTemplateParamKey(key, event.target.value)}
-                            onBlur={flushApprovalPendingEdits}
-                            placeholder={t('approval.placeholders.templateParamKey')}
-                            className="h-8 font-mono text-xs"
-                          />
-                          <Input
-                            value={value}
-                            disabled={smsControlsDisabled}
-                            onChange={event => updateSMSTemplateParamValue(key, event.target.value)}
-                            onBlur={flushApprovalPendingEdits}
-                            placeholder={t('approval.placeholders.templateParamValue')}
-                            className="h-8 text-xs"
-                          />
-                          <Button
-                            variant="ghost"
-                            isIcon
-                            disabled={smsControlsDisabled}
-                            onClick={() =>
-                              commitApprovalNow(current => {
-                                const nextParams = {
-                                  ...current.submit_methods.sms.template_params,
-                                };
-                                delete nextParams[key];
-                                return {
-                                  ...current,
-                                  submit_methods: {
-                                    ...current.submit_methods,
-                                    sms: {
-                                      ...current.submit_methods.sms,
-                                      template_params: nextParams,
-                                    },
-                                  },
-                                };
-                              })
-                            }
-                            aria-label={t('approval.actions.deleteTemplateParam')}
-                            title={t('approval.actions.deleteTemplateParam')}
-                          >
-                            <Trash2 className="size-4" />
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
+                    ) : null}
 
                     <div className="space-y-2">
                       <div className="flex items-center justify-between gap-2">

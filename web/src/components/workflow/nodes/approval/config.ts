@@ -101,6 +101,10 @@ const APPROVAL_SMS_RESERVED_TEMPLATE_PARAMS = new Set([
   'link_suffix',
 ]);
 
+export function isApprovalSMSSystemTemplateParam(key: string): boolean {
+  return APPROVAL_SMS_RESERVED_TEMPLATE_PARAMS.has(key.trim());
+}
+
 export const APPROVAL_SYSTEM_OUTPUT_KEYS = new Set([
   'approval_action_id',
   'approval_action_label',
@@ -535,7 +539,7 @@ export function checkValid(data: ApprovalNodeData): ValidationResult {
       const params = { key: normalizedKey };
       if (!normalizedKey) {
         errors.push({ code: 'approval.validation.smsTemplateParamKeyRequired' });
-      } else if (APPROVAL_SMS_RESERVED_TEMPLATE_PARAMS.has(normalizedKey)) {
+      } else if (isApprovalSMSSystemTemplateParam(normalizedKey)) {
         errors.push({ code: 'approval.validation.smsTemplateParamKeyReserved', params });
       } else if (!normalized.submit_methods.sms.template_params[key].trim()) {
         errors.push({ code: 'approval.validation.smsTemplateParamValueRequired', params });
