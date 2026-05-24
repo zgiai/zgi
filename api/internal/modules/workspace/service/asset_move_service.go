@@ -18,7 +18,6 @@ import (
 
 const (
 	AssetMoveTypeAgent    = "agent"
-	AssetMoveTypeWorkflow = "workflow"
 	AssetMoveTypeDataset  = "dataset"
 	AssetMoveTypeFile     = "file"
 	AssetMoveTypeDatabase = "database"
@@ -160,8 +159,6 @@ func (s *WorkspaceAssetMoveService) previewAsset(ctx context.Context, db *gorm.D
 	switch requestItem.Type {
 	case AssetMoveTypeAgent:
 		return s.previewAgent(ctx, db, organizationID, requestItem.ID, item)
-	case AssetMoveTypeWorkflow:
-		return s.previewWorkflow(ctx, db, organizationID, requestItem.ID, item)
 	case AssetMoveTypeDataset:
 		return s.previewDataset(ctx, db, organizationID, requestItem.ID, item)
 	case AssetMoveTypeFile:
@@ -205,58 +202,6 @@ func (s *WorkspaceAssetMoveService) previewAgent(ctx context.Context, db *gorm.D
 	return nil
 }
 
-func (s *WorkspaceAssetMoveService) previewWorkflow(ctx context.Context, db *gorm.DB, organizationID, workflowID string, item *dto.WorkspaceAssetMovePreviewItem) error {
-	var workflow struct {
-		ID       string
-		TenantID string
-		AppID    string
-		AgentID  string
-		Graph    string
-	}
-	err := db.WithContext(ctx).
-		Table("workflows").
-		Select("id, tenant_id, app_id, agent_id, graph").
-		Where("id = ?", workflowID).
-		First(&workflow).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		item.Blockers = append(item.Blockers, "workflow not found")
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-
-	agentID := firstNonEmpty(workflow.AgentID, workflow.AppID)
-	var agent struct {
-		ID       string
-		TenantID string
-	}
-	err = db.WithContext(ctx).
-		Table("agents").
-		Select("id, tenant_id").
-		Where("id = ? AND deleted_at IS NULL", agentID).
-		First(&agent).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		item.Blockers = append(item.Blockers, "workflow owner agent not found")
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	item.ResolvedAgentID = agent.ID
-	if err := s.attachAndCheckSourceWorkspace(ctx, db, organizationID, agent.TenantID, item); err != nil {
-		return err
-	}
-	if len(item.Blockers) == 0 {
-		warnings, err := s.workflowReferenceWarningsForAgent(ctx, db, organizationID, agent.ID, item.TargetWorkspaceID)
-		if err != nil {
-			return err
-		}
-		item.Warnings = append(item.Warnings, warnings...)
-	}
-	return nil
-}
-
 func (s *WorkspaceAssetMoveService) previewDataset(ctx context.Context, db *gorm.DB, organizationID, datasetID string, item *dto.WorkspaceAssetMovePreviewItem) error {
 	var dataset struct {
 		ID             string
@@ -266,7 +211,7 @@ func (s *WorkspaceAssetMoveService) previewDataset(ctx context.Context, db *gorm
 	err := db.WithContext(ctx).
 		Table("datasets").
 		Select("id, organization_id, workspace_id").
-		Where("id = ? AND deleted_at IS NULL", datasetID).
+		Where("id = ?", datasetID).
 		First(&dataset).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		item.Blockers = append(item.Blockers, "dataset not found")
@@ -431,16 +376,13 @@ func (s *WorkspaceAssetMoveService) workflowReferenceWarningsForAgent(ctx contex
 			Table(table).
 			Select("id, workspace_id").
 			Where("id IN ? AND organization_id = ?", ids, organizationID)
-		if table == "datasets" {
-			query = query.Where("deleted_at IS NULL")
-		}
 		err := query.Find(&deps).Error
 		if err != nil {
 			return err
 		}
 		for _, dep := range deps {
 			if dep.WorkspaceID == nil || *dep.WorkspaceID != targetWorkspaceID {
-				warnings = append(warnings, fmt.Sprintf("%s references %s %s outside target workspace", AssetMoveTypeWorkflow, assetType, dep.ID))
+				warnings = append(warnings, fmt.Sprintf("workflow references %s %s outside target workspace", assetType, dep.ID))
 			}
 		}
 		return nil
@@ -460,7 +402,7 @@ func (s *WorkspaceAssetMoveService) workflowReferenceWarningsForAgent(ctx contex
 func (s *WorkspaceAssetMoveService) movePreviewItem(ctx context.Context, tx *gorm.DB, organizationID, accountID string, item dto.WorkspaceAssetMovePreviewItem) error {
 	now := time.Now()
 	switch item.Type {
-	case AssetMoveTypeAgent, AssetMoveTypeWorkflow:
+	case AssetMoveTypeAgent:
 		agentID := firstNonEmpty(item.ResolvedAgentID, item.ID)
 		if err := tx.WithContext(ctx).Table("agents").
 			Where("id = ? AND deleted_at IS NULL", agentID).
@@ -479,7 +421,7 @@ func (s *WorkspaceAssetMoveService) movePreviewItem(ctx context.Context, tx *gor
 		}
 	case AssetMoveTypeDataset:
 		if err := tx.WithContext(ctx).Table("datasets").
-			Where("id = ? AND deleted_at IS NULL", item.ID).
+			Where("id = ?", item.ID).
 			Updates(map[string]interface{}{"workspace_id": item.TargetWorkspaceID, "updated_by": accountID, "updated_at": now}).Error; err != nil {
 			return err
 		}
@@ -505,7 +447,7 @@ func (s *WorkspaceAssetMoveService) movePreviewItem(ctx context.Context, tx *gor
 	case AssetMoveTypeFile:
 		if err := tx.WithContext(ctx).Table("upload_files").
 			Where("id = ?", item.ID).
-			Updates(map[string]interface{}{"workspace_id": item.TargetWorkspaceID, "updated_at": now}).Error; err != nil {
+			Update("workspace_id", item.TargetWorkspaceID).Error; err != nil {
 			return err
 		}
 		if err := tx.WithContext(ctx).Exec("DELETE FROM file_folder_joins WHERE file_id = ?", item.ID).Error; err != nil {

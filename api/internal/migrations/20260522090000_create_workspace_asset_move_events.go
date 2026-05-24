@@ -2,11 +2,11 @@ package migrations
 
 import mschema "github.com/zgiai/zgi/api/internal/migrations/schema"
 
-const migration20260522090000ID = "20260522090000_create_workspace_asset_move_events"
+const migration20260522090000WorkspaceAssetMoveEventsID = "20260522090000_create_workspace_asset_move_events"
 
 func init() {
 	registerSchemaMigration(
-		migration20260522090000ID,
+		migration20260522090000WorkspaceAssetMoveEventsID,
 		upCreateWorkspaceAssetMoveEvents,
 		downCreateWorkspaceAssetMoveEvents,
 	)

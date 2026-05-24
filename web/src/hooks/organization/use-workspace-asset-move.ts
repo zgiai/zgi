@@ -9,9 +9,10 @@ import {
   AGENT_KEYS,
   DATASET_KEYS,
   DB_KEYS,
-  FILE_KEYS,
   WORKSPACE_KEYS,
 } from '@/hooks/query-keys';
+import { DATASET_FOLDERS_QUERY_KEY } from '@/hooks/dataset/use-dataset-folders';
+import { FILES_QUERY_KEY } from '@/hooks/use-files';
 import { getErrorMessage } from '@/utils/error-notifications';
 
 export function useWorkspaceAssetMove() {
@@ -33,9 +34,12 @@ export function useWorkspaceAssetMove() {
       toast.success(t('assetMove.moveSuccess'));
       void queryClient.invalidateQueries({ queryKey: AGENT_KEYS.all });
       void queryClient.invalidateQueries({ queryKey: DATASET_KEYS.all });
-      void queryClient.invalidateQueries({ queryKey: FILE_KEYS.all });
+      void queryClient.invalidateQueries({ queryKey: [DATASET_FOLDERS_QUERY_KEY] });
+      void queryClient.invalidateQueries({ queryKey: [FILES_QUERY_KEY] });
       void queryClient.invalidateQueries({ queryKey: DB_KEYS.all });
       void queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.all });
+      void queryClient.refetchQueries({ queryKey: [DATASET_FOLDERS_QUERY_KEY], type: 'active' });
+      void queryClient.refetchQueries({ queryKey: [FILES_QUERY_KEY], type: 'active' });
     },
     onError: error => {
       toast.error(getErrorMessage(error) || t('assetMove.moveFailed'));

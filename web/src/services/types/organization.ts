@@ -331,7 +331,7 @@ export interface CheckMemberNameResponse {
   is_exist: boolean;
 }
 
-export type WorkspaceAssetMoveType = 'agent' | 'workflow' | 'dataset' | 'file' | 'database';
+export type WorkspaceAssetMoveType = 'agent' | 'dataset' | 'file' | 'database';
 
 export interface WorkspaceAssetMoveItem {
   type: WorkspaceAssetMoveType;
