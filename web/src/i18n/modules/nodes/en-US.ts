@@ -1725,9 +1725,9 @@ const messages = {
     validation: {
       providerRequired: 'Provider is required',
       toolRequired: 'Tool name is required',
-      paramBindingMissing: 'Binding required for parameter {name}',
-      paramValueRequired: 'Value required for parameter {name}',
-      paramVariableRequired: 'Variable binding required for parameter {name}',
+      paramBindingMissing: 'Configure {name}',
+      paramValueRequired: 'Fill in {name}',
+      paramVariableRequired: 'Bind a variable for {name}',
     },
   },
   documentExtractor: {

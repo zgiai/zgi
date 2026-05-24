@@ -59,6 +59,45 @@ import { checkValid as questionAnswerCheck } from '../../nodes/question-answer/c
 import type { RunnableSets } from '../store';
 import type { ValidationResult } from '../../nodes/common/validation';
 import { getNotificationSMSTemplates } from '@/lib/features/notification-sms';
+import type { BuiltinToolProvider, ToolParameter } from '@/services/types/tool';
+import type { Locale } from '@/lib/i18n';
+import { pickLocale } from '@/utils/tool-helpers';
+import type { ToolRequiredField } from '../../nodes/tool/config';
+
+function getToolRequiredFields(
+  toolProviders: BuiltinToolProvider[] | null | undefined,
+  providerId: string,
+  toolName: string,
+  locale: Locale
+): {
+  requiredParams: ToolRequiredField[];
+  requiredConfigurations: ToolRequiredField[];
+} {
+  if (!Array.isArray(toolProviders)) {
+    return { requiredParams: [], requiredConfigurations: [] };
+  }
+
+  const provider = toolProviders.find(
+    provider => provider.id === providerId || provider.name === providerId
+  );
+  const tool = provider?.tools?.find(tool => tool.name === toolName);
+  if (!tool) {
+    return { requiredParams: [], requiredConfigurations: [] };
+  }
+
+  const mapField = (param: ToolParameter): ToolRequiredField => ({
+    name: param.name,
+    label: param.label ? pickLocale(param.label, locale, param.name) : param.name,
+    type: param.type,
+  });
+
+  return {
+    requiredParams: (tool.parameters || []).filter(param => param.required).map(mapField),
+    requiredConfigurations: (tool.config_parameters?.parameters || [])
+      .filter(param => param.required)
+      .map(mapField),
+  };
+}
 
 /**
  * Pure validation engine for workflow graphs.
@@ -69,7 +108,9 @@ export function validateWorkflow(
   edges: WorkflowEdge[],
   agentType: AgentType,
   runnableSets: RunnableSets,
-  systemFeatures?: SystemFeatures | null
+  systemFeatures?: SystemFeatures | null,
+  toolProviders?: BuiltinToolProvider[] | null,
+  locale: Locale = 'zh-Hans'
 ): StoreValidationResults {
   const errors: StoreValidationError[] = [];
   const warnings: StoreValidationError[] = [];
@@ -276,9 +317,23 @@ export function validateWorkflow(
         case NODE_TYPES.CALL_DATABASE:
           pushNodeValidation(callDbCheck(node.data as CallDatabaseNodeData));
           break;
-        case NODE_TYPES.TOOL:
-          pushNodeValidation(toolCheck(node.data as ToolNodeData));
+        case NODE_TYPES.TOOL: {
+          const toolData = node.data as ToolNodeData;
+          const toolFields = getToolRequiredFields(
+            toolProviders,
+            toolData.provider_id,
+            toolData.tool_name,
+            locale
+          );
+          pushNodeValidation(
+            toolCheck(toolData, {
+              nodes,
+              requiredParams: toolFields.requiredParams,
+              requiredConfigurations: toolFields.requiredConfigurations,
+            })
+          );
           break;
+        }
         case NODE_TYPES.END:
           pushNodeValidation(endCheck(node.data as EndNodeData));
           break;

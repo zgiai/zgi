@@ -24,7 +24,7 @@ export interface ToolNodeData {
   // Tool parameters with bindings keyed by parameter name
   tool_parameters: Record<string, ToolParameterBinding>;
   // Tool configuration parameters (e.g. credentials)
-  tool_configurations?: Record<string, any>;
+  tool_configurations?: Record<string, unknown>;
   isInLoop: boolean;
   isInIteration: boolean;
 }
@@ -39,8 +39,15 @@ export type { ToolParameterBinding, ToolParameterBindingType, ProviderType };
  */
 interface ValidationCtx {
   nodes?: WorkflowNode[];
-  // Required parameters from API schema (optional, for full validation)
-  requiredParams?: string[];
+  // Required fields from API schema (optional, for full validation)
+  requiredParams?: ToolRequiredField[];
+  requiredConfigurations?: ToolRequiredField[];
+}
+
+export interface ToolRequiredField {
+  name: string;
+  label?: string;
+  type?: 'string' | 'number' | 'boolean' | 'select' | 'secret-input' | 'file';
 }
 
 /** Default tool node data */
@@ -56,6 +63,17 @@ export const DEFAULT_TOOL_NODE_DATA: ToolNodeData = {
   isInIteration: false,
 };
 
+const getFieldLabel = (field: ToolRequiredField) => field.label || field.name;
+
+const isEmptyConstant = (value: unknown) =>
+  value === undefined || value === null || (typeof value === 'string' && value.trim() === '');
+
+const isInvalidVariable = (value: unknown) => {
+  if (!value) return true;
+  if (Array.isArray(value)) return value.length < 2 || !value[0] || !value[1];
+  return true;
+};
+
 export const checkValid = (data: ToolNodeData, ctx?: ValidationCtx): ValidationResult => {
   const errors: ValidationError[] = [];
   const warnings: ValidationError[] = [];
@@ -67,41 +85,31 @@ export const checkValid = (data: ToolNodeData, ctx?: ValidationCtx): ValidationR
     errors.push({ code: 'tool.validation.toolRequired' });
   }
 
-  // Validate required parameters if schema is provided
-  const requiredParams = ctx?.requiredParams || [];
-  for (const paramName of requiredParams) {
-    const binding = data.tool_parameters?.[paramName];
+  for (const field of ctx?.requiredParams || []) {
+    const binding = data.tool_parameters?.[field.name];
+    const label = getFieldLabel(field);
     if (!binding) {
       errors.push({
         code: 'tool.validation.paramBindingMissing',
-        params: { name: paramName },
+        params: { name: label },
       });
       continue;
     }
 
-    if (binding.type === 'constant') {
-      const v = binding.value;
-      if (v === undefined || v === null || (typeof v === 'string' && v.trim() === '')) {
-        errors.push({
-          code: 'tool.validation.paramValueRequired',
-          params: { name: paramName },
-        });
+    if (binding.type === 'constant' || binding.type === 'mixed') {
+      if (isEmptyConstant(binding.value)) {
+        errors.push({ code: 'tool.validation.paramValueRequired', params: { name: label } });
       }
     }
 
     if (binding.type === 'variable') {
       const variable = binding.value;
-      const invalid = (() => {
-        if (!variable) return true;
-        if (Array.isArray(variable)) {
-          return variable.length < 2 || !variable[0] || !variable[1];
-        }
-        return true;
-      })();
-      if (invalid) {
+      if (field.type === 'string' && isInvalidVariable(variable)) {
+        errors.push({ code: 'tool.validation.paramValueRequired', params: { name: label } });
+      } else if (isInvalidVariable(variable)) {
         errors.push({
           code: 'tool.validation.paramVariableRequired',
-          params: { name: paramName },
+          params: { name: label },
         });
       }
       // Upstream missing warning when tuple provided
@@ -113,6 +121,16 @@ export const checkValid = (data: ToolNodeData, ctx?: ValidationCtx): ValidationR
           warnings.push({ code: 'validation.invalidUpstream' });
         }
       }
+    }
+  }
+
+  for (const field of ctx?.requiredConfigurations || []) {
+    const value = data.tool_configurations?.[field.name];
+    if (isEmptyConstant(value)) {
+      errors.push({
+        code: 'tool.validation.paramValueRequired',
+        params: { name: getFieldLabel(field) },
+      });
     }
   }
 

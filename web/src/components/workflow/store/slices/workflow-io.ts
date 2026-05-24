@@ -184,7 +184,9 @@ export function createWorkflowIOSlice(
         validatedEdges,
         get().agentType,
         runnableSets,
-        useAuthStore.getState().systemFeatures
+        useAuthStore.getState().systemFeatures,
+        get().toolValidationProviders,
+        get().toolValidationLocale
       );
 
       set(

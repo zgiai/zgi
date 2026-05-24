@@ -25,6 +25,8 @@ import { useWorkflowLeaveGuard } from './hooks/use-workflow-leave-guard';
 import { isWorkflowDebugPanelActive } from './hooks/use-debug-focus-mode';
 import { getNodeAbsolutePosition } from './store/helpers/graph';
 import { useAuthStore } from '@/store/auth-store';
+import { useBuiltinTools } from '@/hooks/workflow/use-builtin-tools';
+import { useLocale } from '@/hooks/use-locale';
 
 // Throttled global mouse tracker to isolate re-renders from WorkflowEditor
 // Uses both requestAnimationFrame and time-based throttling (50ms) to minimize store updates
@@ -92,6 +94,13 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
   const { isValid } = useWorkflowValidation();
   const systemFeatures = useAuthStore.use.systemFeatures();
   const syncRunnableSets = useWorkflowStore.use.syncRunnableSets();
+  const setToolValidationContext = useWorkflowStore.use.setToolValidationContext();
+  const { tools } = useBuiltinTools();
+  const { locale } = useLocale();
+
+  useEffect(() => {
+    setToolValidationContext(Array.isArray(tools) ? tools : null, locale);
+  }, [locale, setToolValidationContext, tools]);
 
   useEffect(() => {
     syncRunnableSets();

@@ -116,7 +116,13 @@ export function mapParametersToFormFields(
 /** Build a default binding for a given field */
 export function createDefaultBinding(field: ToolFormField): ToolParameterBinding {
   if (field.default !== undefined) {
+    if (field.type === 'text') {
+      return { type: 'mixed', value: field.default };
+    }
     return { type: 'constant', value: field.default };
+  }
+  if (field.type === 'text') {
+    return { type: 'mixed', value: '' };
   }
   // No default provided; prefer variable mode to encourage workflow linking
   return { type: 'variable', value: undefined };
