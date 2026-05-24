@@ -1,6 +1,11 @@
 package inspectsvc
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 func TestResolveRenderPagesSequential(t *testing.T) {
 	got, err := resolveRenderPages(4, nil)
@@ -52,5 +57,29 @@ func TestPageListIsSequential(t *testing.T) {
 func TestImagePathToDataURLMissing(t *testing.T) {
 	if _, err := imagePathToDataURL("does-not-exist.png"); err == nil {
 		t.Fatal("expected missing image error")
+	}
+}
+
+func TestRenderPDFPreviewPrefersPDFToCairo(t *testing.T) {
+	if _, err := resolveRendererBinary("pdftocairo", "CONTENT_PARSE_PDFTOCAIRO_PATH"); err != nil {
+		t.Skipf("pdftocairo unavailable: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "..", "..", "..", "tests", "file_process", "hyperparse", "fixtures", "sample.pdf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pages, engine, err := RenderPDFPreviewPagesToDataURLs(data, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if engine != "pdftocairo" {
+		t.Fatalf("engine=%q want pdftocairo", engine)
+	}
+	if len(pages) != 1 {
+		t.Fatalf("pages=%d want 1", len(pages))
+	}
+	if !strings.HasPrefix(pages[0], "data:image/") {
+		t.Fatalf("page data url has unexpected prefix: %.32q", pages[0])
 	}
 }

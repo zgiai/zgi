@@ -37,7 +37,7 @@ RUN if [ -n "$APK_MIRROR" ]; then \
     fi
 
 # Install runtime tools.
-# poppler-utils supplies pdftoppm for PDF rasterization; tesseract handles
+# poppler-utils supplies pdftocairo/pdftoppm for PDF rasterization; tesseract handles
 # self-hosted OCR fallback for scan/image-like documents.
 RUN apk --no-cache add \
     ca-certificates \

@@ -84,7 +84,7 @@ func (h *PlaygroundHandler) renderPlaygroundRunSource(c *gin.Context, item *mode
 		mimeType = http.DetectContentType(data)
 	}
 	if isPlaygroundPDF(item.FileName, mimeType) {
-		pages, engine, err := hyperparseengine.RenderPDFPagesToDataURLs(data, maxPages)
+		pages, engine, err := hyperparseengine.RenderPDFPreviewPagesToDataURLs(data, maxPages)
 		if err != nil {
 			response.FailWithMessage(c, response.ErrSystemError, err.Error())
 			return
@@ -135,7 +135,7 @@ func (h *PlaygroundHandler) RenderPDF(c *gin.Context) {
 		maxPages = 50
 	}
 
-	pages, engine, err := hyperparseengine.RenderPDFPagesToDataURLs(data, maxPages)
+	pages, engine, err := hyperparseengine.RenderPDFPreviewPagesToDataURLs(data, maxPages)
 	if err != nil {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
