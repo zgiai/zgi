@@ -1595,7 +1595,7 @@ export function useAIChatController(): AIChatController {
             ...(files.length > 0 ? { file_ids: files.map(file => file.id) } : {}),
             response_mode: 'streaming',
             parameters: toAIChatParameters(model.parameters),
-            use_memory: useMemory,
+            ...(useMemory ? { use_memory: true } : {}),
           },
           {
             onMessageStart: (payload, eventId) => {
@@ -2079,6 +2079,7 @@ export function useAIChatController(): AIChatController {
         query: source.query,
         model,
         parentId: source.parent_id,
+        useMemory: Boolean(source.metadata?.use_memory),
       });
     },
     [replaceRootMessage, send]

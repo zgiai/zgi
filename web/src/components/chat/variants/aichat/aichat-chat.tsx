@@ -365,6 +365,7 @@ export function AIChatShell({
           model: modelSelectorValue.model,
           parameters: modelSelectorValue.params,
         },
+        useMemory: Boolean(message.metadata?.use_memory),
       });
     },
     [
