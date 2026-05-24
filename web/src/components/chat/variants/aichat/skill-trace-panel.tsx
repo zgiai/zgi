@@ -12,6 +12,7 @@ import { useLocale } from '@/hooks/use-locale';
 import { cn } from '@/lib/utils';
 import type { AIChatSkillInvocation } from '@/services/types/aichat';
 import {
+  getAIChatSkillResultDisplay,
   getAIChatSkillToolDisplayName,
   getFallbackAIChatSkillDisplayInfo,
   type AIChatSkillDisplayInfo,
@@ -117,6 +118,7 @@ export function AIChatSkillTracePanel({
           invocation.path ||
           t('consoleChat.skills.trace.unknownTool');
         const tone = getInvocationTone(invocation);
+        const resultDetail = getAIChatSkillResultDisplay(invocation, locale);
 
         if (invocation.kind === 'skill_load') {
           return {
@@ -129,7 +131,7 @@ export function AIChatSkillTracePanel({
                 : tone === 'error'
                   ? t('consoleChat.skills.trace.error', { skill: skill.label })
                   : t('consoleChat.skills.trace.loaded', { skill: skill.label }),
-            detail: invocation.message || invocation.error,
+            detail: resultDetail || invocation.message || invocation.error,
           };
         }
 
@@ -142,7 +144,7 @@ export function AIChatSkillTracePanel({
               skill: skill.label,
               path: invocation.path || t('consoleChat.skills.trace.unknownReference'),
             }),
-            detail: invocation.message || invocation.error,
+            detail: resultDetail || invocation.message || invocation.error,
           };
         }
 
@@ -162,7 +164,7 @@ export function AIChatSkillTracePanel({
                     skill: skill.label,
                     tool: toolName,
                   }),
-          detail: invocation.message || invocation.error,
+          detail: resultDetail || invocation.message || invocation.error,
         };
       }),
     [invocations, locale, skillDisplayById, t]

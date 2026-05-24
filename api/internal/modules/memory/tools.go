@@ -51,11 +51,11 @@ type memoryTool struct {
 }
 
 func newReadMemoryTool(service *Service) tools.Tool {
-	return newMemoryTool(service, "read_user_memory", "Read User Memory", "Read enabled saved memories for the current user before answering with memory, checking duplicates, or resolving possible conflicts.", nil)
+	return newMemoryTool(service, "read_user_memory", "Read User Memory", "Read enabled saved memories for the current user. Use before relying on memory, writing related memory, checking duplicates, or resolving possible conflicts.", nil)
 }
 
 func newAddMemoryTool(service *Service) tools.Tool {
-	return newMemoryTool(service, "add_user_memory", "Add User Memory", "Save concise durable or time-limited user information that should help future conversations, including stable preferences, profile facts, habits, names, standing instructions, or upcoming short-term context.", []tools.ToolParameter{
+	return newMemoryTool(service, "add_user_memory", "Add User Memory", "Save concise durable or time-limited user information that should help future conversations, including stable preferences, profile facts, habits, names, standing instructions, or upcoming short-term context. For ordinary non-sensitive information, do not ask whether to save it. Use update_user_memory instead when related memory already exists. Only tell the user it was saved after this tool succeeds, and keep any acknowledgement brief.", []tools.ToolParameter{
 		stringParam("content", "Memory content", "A concise neutral third-person memory. Do not copy casual phrasing; do not save secrets or one-off chat details.", true),
 		categoryParam(),
 		memoryTypeParam(),
@@ -64,7 +64,7 @@ func newAddMemoryTool(service *Service) tools.Tool {
 }
 
 func newUpdateMemoryTool(service *Service) tools.Tool {
-	return newMemoryTool(service, "update_user_memory", "Update User Memory", "Correct, merge, disable, or refresh an existing memory for the current user. Use this instead of creating a duplicate when the user corrects prior memory or when new information supersedes old memory.", []tools.ToolParameter{
+	return newMemoryTool(service, "update_user_memory", "Update User Memory", "Correct, merge, disable, or refresh an existing memory for the current user. Use this instead of creating a duplicate when related memory already exists. For ordinary refinements, update quietly. If new user information conflicts with saved memory, ask the user to confirm before calling this tool. Only tell the user it was updated after this tool succeeds, and keep any acknowledgement brief.", []tools.ToolParameter{
 		stringParam("entry_id", "Entry ID", "The memory entry id returned by read_user_memory.", true),
 		stringParam("content", "Memory content", "Updated memory content. Omit when only changing category or enabled.", false),
 		categoryParam(),
@@ -82,7 +82,7 @@ func newUpdateMemoryTool(service *Service) tools.Tool {
 }
 
 func newDeleteMemoryTool(service *Service) tools.Tool {
-	return newMemoryTool(service, "delete_user_memory", "Delete User Memory", "Delete one memory entry that belongs to the current user.", []tools.ToolParameter{
+	return newMemoryTool(service, "delete_user_memory", "Delete User Memory", "Delete one memory entry that belongs to the current user. Only tell the user it was deleted or forgotten after this tool succeeds.", []tools.ToolParameter{
 		stringParam("entry_id", "Entry ID", "The memory entry id returned by read_user_memory.", true),
 	})
 }
@@ -233,7 +233,7 @@ func categoryParam() tools.ToolParameter {
 	return tools.ToolParameter{
 		Name:           "category",
 		Label:          tools.I18nText{"en_US": "Category", "zh_Hans": "分类"},
-		LLMDescription: "One of preference, profile, instruction, fact, or other.",
+		LLMDescription: "Choose the most specific category: preference for user preferences, profile for stable personal facts, instruction for standing assistant behavior, fact for durable background/project facts, or other only when none fit.",
 		Type:           tools.ToolParameterTypeSelect,
 		Form:           tools.ToolParameterFormLLM,
 		Required:       false,

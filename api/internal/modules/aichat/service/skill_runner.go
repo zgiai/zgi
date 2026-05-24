@@ -24,6 +24,8 @@ const (
 	streamedIntermediateAnswerArg            = "_aichat_streamed_answer"
 )
 
+var skillPlanningFallbackProgressDelay = 800 * time.Millisecond
+
 type skillStepResult struct {
 	trace       skills.SkillTrace
 	toolMessage adapter.Message
@@ -41,8 +43,11 @@ type planningResult struct {
 }
 
 type streamingToolCallState struct {
-	call           adapter.ToolCall
-	emittedContent string
+	call                    adapter.ToolCall
+	emittedContent          string
+	emittedPlanningProgress bool
+	emittedPlanningSkillID  string
+	emittedPlanningToolName string
 }
 
 func (p *PreparedChat) skillsEnabled() bool {
@@ -242,7 +247,7 @@ func (s *service) runSkillPlanningStream(
 ) (planningResult, bool, error) {
 	streamReq := cloneChatRequest(planningReq)
 	streamReq.Stream = true
-	stream, err := s.llmClient.AppChatStream(ctx, newBillingAppContext(prepared), streamReq)
+	stream, fallbackProgressStreamed, err := s.openSkillPlanningStream(ctx, prepared, streamReq, onEvent)
 	if err != nil {
 		logger.WarnContext(ctx, "aichat skill planning stream unavailable, falling back to non-stream planning",
 			"message_id", prepared.Message.ID.String(),
@@ -260,56 +265,75 @@ func (s *service) runSkillPlanningStream(
 	sawChunk := false
 	sawToolCall := false
 	answerStreamed := false
-	progressStreamed := false
+	naturalProgressStreamed := false
+	toolPlanningProgressStreamed := false
 	var speculativeAnswer strings.Builder
+	fallbackTimer := time.NewTimer(skillPlanningFallbackProgressDelay)
+	defer fallbackTimer.Stop()
 
-	for response := range stream {
-		if response.Error != nil {
-			return planningResult{}, true, response.Error
-		}
-		usage = mergeUsage(usage, response.Usage)
-		if response.Done {
-			break
-		}
-		if len(response.Choices) == 0 {
+	for {
+		select {
+		case <-fallbackTimer.C:
+			if !answerStreamed && !naturalProgressStreamed && !toolPlanningProgressStreamed && !fallbackProgressStreamed {
+				fallbackProgressStreamed = s.emitPlanningFallbackProgress(ctx, prepared, onEvent)
+			}
 			continue
-		}
-		sawChunk = true
-		for _, choice := range response.Choices {
-			if reasoning := streamChoiceReasoningContent(choice); reasoning != "" {
-				reasoningBuilder.WriteString(reasoning)
+		case response, ok := <-stream:
+			if !ok {
+				goto streamDone
 			}
-			if text := streamChoiceText(choice); text != "" {
-				contentBuilder.WriteString(text)
-				if sawToolCall {
-					s.emitAgentProgress(ctx, prepared, text, onEvent)
-					progressStreamed = true
-				} else {
-					s.emitAnswerChunk(ctx, prepared, text, onEvent)
-					speculativeAnswer.WriteString(text)
-					answerStreamed = true
-				}
+
+			if response.Error != nil {
+				return planningResult{}, true, response.Error
 			}
-			for _, delta := range choice.Delta.ToolCalls {
-				if !sawToolCall {
-					sawToolCall = true
-					if speculative := speculativeAnswer.String(); speculative != "" {
-						s.emitAnswerRetract(ctx, prepared, speculative, onEvent)
-					}
-					if progress := strings.TrimSpace(contentBuilder.String()); progress != "" {
-						s.emitAgentProgress(ctx, prepared, progress, onEvent)
-						progressStreamed = true
+			usage = mergeUsage(usage, response.Usage)
+			if response.Done {
+				goto streamDone
+			}
+			if len(response.Choices) == 0 {
+				continue
+			}
+			sawChunk = true
+			for _, choice := range response.Choices {
+				if reasoning := streamChoiceReasoningContent(choice); reasoning != "" {
+					reasoningBuilder.WriteString(reasoning)
+				}
+				if text := streamChoiceText(choice); text != "" {
+					contentBuilder.WriteString(text)
+					if sawToolCall {
+						s.emitAgentProgress(ctx, prepared, text, onEvent)
+						naturalProgressStreamed = true
+					} else {
+						s.emitAnswerChunk(ctx, prepared, text, onEvent)
+						speculativeAnswer.WriteString(text)
+						answerStreamed = true
 					}
 				}
-				state := mergeStreamingToolCall(toolCallsByIndex, &toolCallOrder, delta)
-				if state == nil {
-					continue
+				for _, delta := range choice.Delta.ToolCalls {
+					if !sawToolCall {
+						sawToolCall = true
+						if speculative := speculativeAnswer.String(); speculative != "" {
+							s.emitAnswerRetract(ctx, prepared, speculative, onEvent)
+						}
+						if progress := strings.TrimSpace(contentBuilder.String()); progress != "" {
+							s.emitAgentProgress(ctx, prepared, progress, onEvent)
+							naturalProgressStreamed = true
+						}
+					}
+					state := mergeStreamingToolCall(toolCallsByIndex, &toolCallOrder, delta)
+					if state == nil {
+						continue
+					}
+					if (!toolPlanningProgressStreamed || isStreamingBusinessToolCall(state)) && (!naturalProgressStreamed || isStreamingBusinessToolCall(state)) && s.emitStreamingToolPlanningProgress(ctx, prepared, state, onEvent) {
+						toolPlanningProgressStreamed = true
+					}
+					s.emitStreamingIntermediateAnswerDelta(ctx, prepared, round, state, onEvent)
 				}
-				s.emitStreamingIntermediateAnswerDelta(ctx, prepared, round, state, onEvent)
 			}
 		}
 	}
 
+streamDone:
 	if !sawChunk {
 		return planningResult{}, false, nil
 	}
@@ -336,8 +360,44 @@ func (s *service) runSkillPlanningStream(
 		},
 		usage:            usage,
 		answerStreamed:   answerStreamed && len(toolCalls) == 0,
-		progressStreamed: progressStreamed,
+		progressStreamed: naturalProgressStreamed || toolPlanningProgressStreamed || fallbackProgressStreamed,
 	}, true, nil
+}
+
+type skillPlanningStreamOpenResult struct {
+	stream <-chan adapter.StreamResponse
+	err    error
+}
+
+func (s *service) openSkillPlanningStream(
+	ctx context.Context,
+	prepared *PreparedChat,
+	streamReq *adapter.ChatRequest,
+	onEvent func(StreamEvent) error,
+) (<-chan adapter.StreamResponse, bool, error) {
+	resultCh := make(chan skillPlanningStreamOpenResult, 1)
+	go func() {
+		stream, err := s.llmClient.AppChatStream(ctx, newBillingAppContext(prepared), streamReq)
+		resultCh <- skillPlanningStreamOpenResult{stream: stream, err: err}
+	}()
+
+	timer := time.NewTimer(skillPlanningFallbackProgressDelay)
+	defer timer.Stop()
+
+	select {
+	case result := <-resultCh:
+		return result.stream, false, result.err
+	case <-timer.C:
+		fallbackProgressStreamed := s.emitPlanningFallbackProgress(ctx, prepared, onEvent)
+		select {
+		case result := <-resultCh:
+			return result.stream, fallbackProgressStreamed, result.err
+		case <-ctx.Done():
+			return nil, fallbackProgressStreamed, ctx.Err()
+		}
+	case <-ctx.Done():
+		return nil, false, ctx.Err()
+	}
 }
 
 func shouldStreamSkillPlanning(prepared *PreparedChat) bool {
@@ -403,6 +463,10 @@ func mergeStreamingToolCall(states map[int]*streamingToolCallState, order *[]int
 	return state
 }
 
+func isStreamingBusinessToolCall(state *streamingToolCallState) bool {
+	return state != nil && strings.EqualFold(strings.TrimSpace(state.call.Function.Name), skills.MetaToolCallSkillTool)
+}
+
 func (s *service) emitStreamingIntermediateAnswerDelta(
 	ctx context.Context,
 	prepared *PreparedChat,
@@ -428,6 +492,99 @@ func (s *service) emitStreamingIntermediateAnswerDelta(
 	}
 	answerID := streamingIntermediateAnswerID(prepared, round, state.call)
 	s.emitPreparedEvent(ctx, prepared, streamEventIntermediateAnswer, intermediateAnswerPayload(prepared, trace, answerID, delta, 0, false, "streaming"), onEvent)
+}
+
+func (s *service) emitStreamingToolPlanningProgress(
+	ctx context.Context,
+	prepared *PreparedChat,
+	state *streamingToolCallState,
+	onEvent func(StreamEvent) error,
+) bool {
+	if state == nil {
+		return false
+	}
+	metaToolName := strings.TrimSpace(state.call.Function.Name)
+	if metaToolName == "" || strings.EqualFold(metaToolName, skills.MetaToolIntermediateAnswer) {
+		return false
+	}
+
+	arguments := state.call.Function.Arguments
+	argumentsChars := len([]rune(arguments))
+	payload := map[string]interface{}{
+		"conversation_id": prepared.Conversation.ID.String(),
+		"message_id":      prepared.Message.ID.String(),
+		"phase":           "tool_planning",
+		"meta_tool_name":  metaToolName,
+		"arguments_chars": argumentsChars,
+		"created_at":      time.Now().Unix(),
+	}
+
+	skillID := ""
+	toolName := ""
+	switch metaToolName {
+	case skills.MetaToolCallSkillTool:
+		skillID, _ = partialJSONStringField(arguments, "skill_id")
+		toolName, _ = partialJSONStringField(arguments, "tool_name")
+		skillID = strings.TrimSpace(skillID)
+		toolName = strings.TrimSpace(toolName)
+		if strings.TrimSpace(skillID) == "" || strings.TrimSpace(toolName) == "" {
+			if argumentsChars < 256 {
+				return false
+			}
+		}
+		if skillID != "" {
+			payload["skill_id"] = skillID
+		}
+		if toolName != "" {
+			payload["tool_name"] = toolName
+		}
+	case skills.MetaToolLoadSkill, skills.MetaToolReadSkillReference:
+		skillID, _ = partialJSONStringField(arguments, "skill_id")
+		skillID = strings.TrimSpace(skillID)
+		if strings.TrimSpace(skillID) == "" && argumentsChars < 128 {
+			return false
+		}
+		if skillID != "" {
+			payload["skill_id"] = skillID
+		}
+	default:
+		if argumentsChars < 128 {
+			return false
+		}
+	}
+
+	if state.emittedPlanningProgress {
+		if metaToolName != skills.MetaToolCallSkillTool {
+			return false
+		}
+		if skillID == "" || toolName == "" {
+			return false
+		}
+		if state.emittedPlanningSkillID == skillID && state.emittedPlanningToolName == toolName {
+			return false
+		}
+	}
+
+	state.emittedPlanningProgress = true
+	state.emittedPlanningSkillID = skillID
+	state.emittedPlanningToolName = toolName
+	s.emitPreparedEvent(ctx, prepared, streamEventAgentProgress, payload, onEvent)
+	return true
+}
+
+func (s *service) emitPlanningFallbackProgress(
+	ctx context.Context,
+	prepared *PreparedChat,
+	onEvent func(StreamEvent) error,
+) bool {
+	payload := map[string]interface{}{
+		"conversation_id": prepared.Conversation.ID.String(),
+		"message_id":      prepared.Message.ID.String(),
+		"phase":           "planning",
+		"created_at":      time.Now().Unix(),
+	}
+	s.emitPreparedEvent(ctx, prepared, streamEventAgentProgress, payload, onEvent)
+	return true
 }
 
 func streamingIntermediateAnswerID(prepared *PreparedChat, round int, call adapter.ToolCall) string {
@@ -699,6 +856,7 @@ func (s *service) handleCallSkillTool(
 	if err != nil {
 		return recoverableSkillStep(invocation.Trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "fix the tool arguments based on the error and retry")), true, false)
 	}
+	invocation.Trace.Result = summarizeSkillToolResult(invocation.Trace.SkillID, invocation.Trace.ToolName, invocation.Messages)
 	logger.DebugContext(ctx, "aichat skill tool completed",
 		"conversation_id", prepared.Conversation.ID.String(),
 		"message_id", prepared.Message.ID.String(),
@@ -803,6 +961,7 @@ func agenticSkillLoopSystemMessage() adapter.Message {
 		Content: strings.Join([]string{
 			"When using skills or tools, briefly explain your next action to the user before calling a skill/tool.",
 			"After each skill/tool result, summarize what happened. If a tool call fails, explain the likely cause, fix the arguments, and retry when possible.",
+			"Do not claim that you saved, remembered, updated, deleted, sent, created, changed, or completed any external action unless the corresponding skill/tool call succeeded in this turn.",
 			"Progress text sent together with tool calls is transient status text. Keep it short and do not place substantial user deliverables there.",
 			"If the current turn newly creates or substantially rewrites a user-facing deliverable before later tool/skill calls, call submit_intermediate_answer for that new deliverable before continuing.",
 			"Examples of new deliverables that should use submit_intermediate_answer when followed by more tool/skill calls: novel outlines, long-form drafts, plans, tables, code sketches, analysis sections, or generated content the user asked for.",
@@ -996,6 +1155,7 @@ func mergeSkillTraceMetadata(source map[string]interface{}, traces []skills.Skil
 			"status":      trace.Status,
 			"duration_ms": trace.DurationMS,
 			"arguments":   trace.Arguments,
+			"result":      trace.Result,
 			"message":     trace.Message,
 			"error":       trace.Error,
 		})

@@ -16,6 +16,7 @@ import { cn } from '@/lib/utils';
 import type { AIChatSkillInvocation } from '@/services/types/aichat';
 import type { AIChatAgenticTimelineItem } from '@/components/chat/controllers/aichat';
 import {
+  getAIChatSkillResultDisplay,
   getAIChatSkillToolDisplayName,
   getFallbackAIChatSkillDisplayInfo,
   type AIChatSkillDisplayInfo,
@@ -40,6 +41,13 @@ const TIMELINE_DEBUG_LABEL_KEYS = {
 
 const assistantMarkdownClassName =
   'prose prose-sm max-w-none dark:prose-invert sm:pr-4 md:pr-6 lg:pr-8 xl:pr-9';
+
+const TRANSIENT_PROGRESS_TEXT_KEYS = [
+  'consoleChat.skills.agentic.thinking',
+  'consoleChat.skills.agentic.organizing',
+  'consoleChat.skills.agentic.preparing',
+  'consoleChat.skills.agentic.checkingTools',
+] as const;
 
 interface AIChatAgenticTimelineProps {
   timeline: AIChatAgenticTimelineItem[];
@@ -111,7 +119,9 @@ function buildSkillTitle(
     t('consoleChat.skills.trace.unknownTool');
 
   if (invocation.kind === 'skill_load') {
-    if (tone === 'running') return t('consoleChat.skills.agentic.loadingSkill', { skill: skill.label });
+    if (tone === 'running') {
+      return t('consoleChat.skills.agentic.loadingSkill', { skill: skill.label });
+    }
     if (tone === 'error') return t('consoleChat.skills.agentic.loadFailed', { skill: skill.label });
     return t('consoleChat.skills.agentic.loadedSkill', { skill: skill.label });
   }
@@ -228,6 +238,67 @@ function isIntermediateAnswerItem(
   return 'type' in item && item.type === 'intermediate_answer';
 }
 
+function isTransientProgressItem(
+  item: Extract<AIChatAgenticTimelineItem, { type: 'progress_text' }>
+) {
+  return item.transient === true || Boolean(item.phase && !item.content.trim());
+}
+
+function stableIndex(value: string, length: number): number {
+  if (length <= 0) return 0;
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
+  }
+  return hash % length;
+}
+
+function buildProgressText(
+  item: Extract<AIChatAgenticTimelineItem, { type: 'progress_text' }>,
+  skillDisplayById: AIChatSkillDisplayMap,
+  locale: string,
+  t: WebappTranslator
+) {
+  if (item.phase !== 'tool_planning') {
+    if (item.phase === 'planning') {
+      return t('consoleChat.skills.agentic.preparingAction');
+    }
+    return item.content;
+  }
+
+  const skill = item.skill_id
+    ? skillDisplayById[item.skill_id] ?? getFallbackAIChatSkillDisplayInfo(item.skill_id, locale)
+    : null;
+  const tool =
+    item.skill_id && item.tool_name
+      ? getAIChatSkillToolDisplayName(item.skill_id, item.tool_name, locale) || item.tool_name
+      : item.tool_name;
+
+  if (skill && tool) {
+    return t('consoleChat.skills.agentic.preparingTool', { skill: skill.label, tool });
+  }
+  if (skill) {
+    return t('consoleChat.skills.agentic.preparingSkill', { skill: skill.label });
+  }
+  return t('consoleChat.skills.agentic.preparingAction');
+}
+
+function buildTransientProgressText(
+  item: Extract<AIChatAgenticTimelineItem, { type: 'progress_text' }>,
+  skillDisplayById: AIChatSkillDisplayMap,
+  locale: string,
+  t: WebappTranslator
+) {
+  if (item.phase === 'tool_planning' && (item.skill_id || item.tool_name)) {
+    return buildProgressText(item, skillDisplayById, locale, t);
+  }
+  const key =
+    TRANSIENT_PROGRESS_TEXT_KEYS[
+      stableIndex(item.event_id ?? item.id, TRANSIENT_PROGRESS_TEXT_KEYS.length)
+    ];
+  return t(key);
+}
+
 export function AIChatAgenticTimeline({
   timeline,
   skillDisplayById,
@@ -253,7 +324,10 @@ export function AIChatAgenticTimeline({
           skill,
           tone,
           title: buildSkillTitle(item.invocation, skill, tone, locale, t),
-          detail: item.invocation.message || item.invocation.error,
+          detail:
+            getAIChatSkillResultDisplay(item.invocation, locale) ||
+            item.invocation.message ||
+            item.invocation.error,
         };
       }),
     [locale, skillDisplayById, t, timeline]
@@ -288,15 +362,27 @@ export function AIChatAgenticTimeline({
         <div className="space-y-2">
           {events.map(item =>
             isProgressTextItem(item) ? (
-              <div
-                key={item.id}
-                className={cn(
-                  assistantMarkdownClassName,
-                  'border-l-2 border-muted-foreground/20 pl-3 text-foreground'
-                )}
-              >
-                <MarkdownViewer className="md-viewer break-words" content={item.content} />
-              </div>
+              isTransientProgressItem(item) ? (
+                <div
+                  key={item.id}
+                  className="border-l-2 border-muted-foreground/15 py-0.5 pl-3 text-xs text-muted-foreground/70 animate-pulse"
+                >
+                  <span>{buildTransientProgressText(item, skillDisplayById, locale, t)}</span>
+                </div>
+              ) : (
+                <div
+                  key={item.id}
+                  className={cn(
+                    assistantMarkdownClassName,
+                    'border-l-2 border-muted-foreground/20 pl-3 text-foreground'
+                  )}
+                >
+                  <MarkdownViewer
+                    className="md-viewer break-words"
+                    content={buildProgressText(item, skillDisplayById, locale, t)}
+                  />
+                </div>
+              )
             ) : isIntermediateAnswerItem(item) ? (
               <div key={item.id} className="space-y-1.5 border-l-2 border-muted-foreground/20 pl-3">
                 {item.title || item.status === 'streaming' ? (

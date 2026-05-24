@@ -252,7 +252,7 @@ func TestRenderContextUsesEnabledEntriesAndBudget(t *testing.T) {
 		t.Fatalf("disable second entry: %v", err)
 	}
 
-	rendered, err := svc.RenderContext(ctx, accountID, 1000)
+	rendered, err := svc.RenderContext(ctx, accountID, 1500)
 	if err != nil {
 		t.Fatalf("RenderContext() error = %v", err)
 	}
@@ -286,10 +286,12 @@ func TestRenderContextIncludesMemoryPolicyWithoutEntries(t *testing.T) {
 	}
 	for _, want := range []string{
 		"User memory is enabled",
-		"Consider saving",
-		"read_user_memory",
-		"conflicts with existing memory",
-		"ask the user to confirm",
+		"When to use user-memory",
+		"MUST call user-memory",
+		"memory-worthy",
+		"do not ask whether to save it",
+		"ask for confirmation only when",
+		"do not say memory was remembered",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("rendered context = %q, want %q", rendered, want)
@@ -334,7 +336,7 @@ func TestCreateEntryMergesDuplicateMemory(t *testing.T) {
 	}
 }
 
-func TestResolveCategoryUsesSpecificPolicyWhenModelIsBroad(t *testing.T) {
+func TestCreateEntryPreservesModelProvidedCategory(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newTestService()
 	accountID := uuid.New()
@@ -346,8 +348,8 @@ func TestResolveCategoryUsesSpecificPolicyWhenModelIsBroad(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateEntry() error = %v", err)
 	}
-	if entry.Category != CategoryProfile {
-		t.Fatalf("entry.Category = %s, want profile", entry.Category)
+	if entry.Category != CategoryFact {
+		t.Fatalf("entry.Category = %s, want fact", entry.Category)
 	}
 }
 
@@ -363,7 +365,7 @@ func TestRenderContextGroupsByCategoryPolicy(t *testing.T) {
 	_, _ = svc.CreateEntry(ctx, accountID, CreateEntryRequest{Content: "Always answer in Chinese.", Category: CategoryInstruction})
 	_, _ = svc.CreateEntry(ctx, accountID, CreateEntryRequest{Content: "Prefers concise answers.", Category: CategoryPreference})
 
-	rendered, err := svc.RenderContext(ctx, accountID, 1000)
+	rendered, err := svc.RenderContext(ctx, accountID, 1500)
 	if err != nil {
 		t.Fatalf("RenderContext() error = %v", err)
 	}
@@ -422,7 +424,7 @@ func TestRenderContextIncludesOnlyActiveTemporaryMemory(t *testing.T) {
 		t.Fatalf("CreateEntry(expired temporary) error = %v", err)
 	}
 
-	rendered, err := svc.RenderContext(ctx, accountID, 1000)
+	rendered, err := svc.RenderContext(ctx, accountID, 1500)
 	if err != nil {
 		t.Fatalf("RenderContext() error = %v", err)
 	}

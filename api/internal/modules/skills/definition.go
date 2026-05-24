@@ -129,6 +129,7 @@ type SkillTrace struct {
 	Status     string                 `json:"status"`
 	DurationMS int64                  `json:"duration_ms,omitempty"`
 	Arguments  map[string]interface{} `json:"arguments,omitempty"`
+	Result     map[string]interface{} `json:"result,omitempty"`
 	Error      string                 `json:"error,omitempty"`
 }
 

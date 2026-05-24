@@ -199,20 +199,32 @@ function getSkillInvocationIdentity(invocation: AIChatSkillInvocation): string {
   ].join(':');
 }
 
+function isTransientProgressItem(item: AIChatAgenticTimelineItem): boolean {
+  return item.type === 'progress_text' && (item.transient === true || Boolean(item.phase && !item.content.trim()));
+}
+
+function removeTransientProgressItems(
+  timeline: AIChatAgenticTimelineItem[] | undefined
+): AIChatAgenticTimelineItem[] {
+  return (timeline ?? []).filter(item => !isTransientProgressItem(item));
+}
+
 function upsertSkillTimelineItem(
   timeline: AIChatAgenticTimelineItem[] | undefined,
   incoming: AIChatSkillInvocation,
   eventId: string | null | undefined
 ): AIChatAgenticTimelineItem[] {
+  const baseTimeline = removeTransientProgressItems(timeline);
+
   if (incoming.kind === 'intermediate_answer') {
     const existingIndex = incoming.answer_id
-      ? (timeline ?? []).findIndex(
+      ? baseTimeline.findIndex(
           item => item.type === 'intermediate_answer' && item.answer_id === incoming.answer_id
         )
       : -1;
 
     if (existingIndex >= 0) {
-      const next = (timeline ?? []).slice();
+      const next = baseTimeline.slice();
       const existing = next[existingIndex];
       if (existing.type !== 'intermediate_answer') return next;
 
@@ -228,12 +240,12 @@ function upsertSkillTimelineItem(
     }
 
     return [
-      ...(timeline ?? []),
+      ...baseTimeline,
       {
         id:
           incoming.answer_id ||
           eventId ||
-          `intermediate-${incoming.created_at ?? Date.now()}-${timeline?.length ?? 0}`,
+          `intermediate-${incoming.created_at ?? Date.now()}-${baseTimeline.length}`,
         type: 'intermediate_answer',
         answer_id: incoming.answer_id,
         title: incoming.title,
@@ -245,7 +257,7 @@ function upsertSkillTimelineItem(
     ];
   }
 
-  const next = timeline?.slice() ?? [];
+  const next = baseTimeline.slice();
   const incomingIdentity = getSkillInvocationIdentity(incoming);
   const reverseIndex = [...next].reverse().findIndex(item => {
     if (item.type !== 'skill_event') return false;
@@ -368,7 +380,7 @@ export function applyAgentProgressState(
   eventId?: string | null
 ): AIChatControllerState {
   const content = (payload.content ?? '').trim();
-  if (!content || !payload.message_id) {
+  if ((!content && !payload.phase) || !payload.message_id) {
     return current;
   }
 
@@ -385,9 +397,16 @@ export function applyAgentProgressState(
     return current;
   }
   const lastItem = timeline[timeline.length - 1];
+  const isRepeatedStructuredProgress =
+    lastItem?.type === 'progress_text' &&
+    payload.phase &&
+    lastItem.phase === payload.phase &&
+    (lastItem.meta_tool_name ?? '') === (payload.meta_tool_name ?? '') &&
+    (lastItem.skill_id ?? '') === (payload.skill_id ?? '') &&
+    (lastItem.tool_name ?? '') === (payload.tool_name ?? '');
   const isRepeatedProgress =
     lastItem?.type === 'progress_text' && lastItem.content.trim() === content;
-  if (isRepeatedProgress) {
+  if (isRepeatedStructuredProgress || isRepeatedProgress) {
     return {
       ...current,
       streamingByMessageId: {
@@ -400,12 +419,20 @@ export function applyAgentProgressState(
     };
   }
 
+  const transient = Boolean(payload.phase && !content);
+  const nextBaseTimeline = removeTransientProgressItems(timeline);
   const nextTimeline: AIChatAgenticTimelineItem[] = [
-    ...timeline,
+    ...nextBaseTimeline,
     {
-      id: eventId ?? `progress-${payload.created_at ?? Date.now()}-${timeline.length}`,
+      id: eventId ?? `progress-${payload.created_at ?? Date.now()}-${nextBaseTimeline.length}`,
       type: 'progress_text',
       content,
+      phase: payload.phase,
+      transient,
+      meta_tool_name: payload.meta_tool_name,
+      skill_id: payload.skill_id,
+      tool_name: payload.tool_name,
+      arguments_chars: payload.arguments_chars,
       created_at: payload.created_at,
       event_id: eventId ?? null,
     },
@@ -924,6 +951,8 @@ export function applySkillCallEndState(
       tool_name: payload.tool_name,
       status: 'success',
       duration_ms: payload.duration_ms,
+      message: payload.message,
+      result: payload.result,
       created_at: payload.created_at,
     }
   );
@@ -1138,7 +1167,7 @@ export function applyMessageChunkState(
         message_id: payload.message_id,
         answer: nextStreamingAnswer,
         status: 'streaming',
-        timeline: previousStreaming?.timeline ?? [],
+        timeline: removeTransientProgressItems(previousStreaming?.timeline),
         last_event_id: eventId ?? previousStreaming?.last_event_id,
         replay_base_answer: replayBaseAnswer,
         replay_offset: replayOffset,
@@ -1229,11 +1258,13 @@ export function applyMessageEndState(
       : message
   );
   const previousStreaming = current.streamingByMessageId[payload.message_id];
+  const nextTimeline = removeTransientProgressItems(previousStreaming?.timeline);
   const nextStreamingByMessageId = { ...current.streamingByMessageId };
-  if (previousStreaming?.timeline?.length) {
+  if (nextTimeline.length) {
     const terminalStatus = normalizeAIChatStatus(payload.status);
     nextStreamingByMessageId[payload.message_id] = {
       ...previousStreaming,
+      timeline: nextTimeline,
       status:
         terminalStatus === 'stopped' || terminalStatus === 'error'
           ? terminalStatus
