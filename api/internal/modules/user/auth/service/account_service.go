@@ -1451,32 +1451,20 @@ func (s *AccountService) ResetPasswordWithAutoRegister(token, newPassword string
 
 	ctx := context.Background()
 	account, err := s.accountRepo.GetAccountByEmail(ctx, *tokenData.Email)
-	allowRegister := s.IsAllowRegister()
-
-	if account != nil {
-		account.Password = &hashedPassword
-		account.PasswordSalt = &salt
-		if err := s.accountRepo.UpdateAccount(ctx, account); err != nil {
-			return fmt.Errorf("failed to update password: %w", err)
-		}
-		return nil
+	if err != nil {
+		return fmt.Errorf("account not found: %w", err)
+	}
+	if err := accountAccessStatusError(account.Status); err != nil {
+		return err
 	}
 
-	if allowRegister {
-		account = &auth_model.Account{
-			Email:        *tokenData.Email,
-			Name:         *tokenData.Email,
-			Password:     &hashedPassword,
-			PasswordSalt: &salt,
-			Status:       auth_model.AccountStatusActive,
-		}
-		if err := s.accountRepo.CreateAccount(ctx, account); err != nil {
-			return fmt.Errorf("failed to create account: %w", err)
-		}
-		return nil
+	account.Password = &hashedPassword
+	account.PasswordSalt = &salt
+	if err := s.accountRepo.UpdateAccount(ctx, account); err != nil {
+		return fmt.Errorf("failed to update password: %w", err)
 	}
 
-	return errors.New("account not found and not allowed to register")
+	return nil
 }
 
 // UpdateAccountPassword implements the UpdateAccountPassword method

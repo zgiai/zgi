@@ -123,7 +123,7 @@ const messages: AuthMessages = {
   businessErrors: {
     invalidParameter: '请求参数不合法，请检查输入后重试。',
     invalidCredentials: '邮箱或密码不正确。',
-    accountNotFound: '账号不存在。',
+    accountNotFound: '这个邮箱没有被注册，请重试。',
     invalidLoginStatus: '验证链接已失效，请重新获取验证码。',
     registrationNotAllowed: '当前部署不允许注册。',
     accountSuspended: '该账户已被停用，请联系管理员。',
@@ -142,6 +142,7 @@ const messages: AuthMessages = {
     sendCodeTooManyAttempts: '验证码请求过于频繁，请稍后再试。',
     verifyCodeTooManyAttempts: '验证码错误次数过多，请稍后再试。',
     emailServiceUnavailable: '邮件服务暂不可用，请稍后再试。',
+    emailCheckFailed: '无法校验邮箱是否已注册，请稍后再试。',
     resetVerificationExpired: '验证码错误或链接已失效，请检查后重试。',
     registerTokenExpired: '注册链接已失效，请重新获取验证码。',
     resetPasswordFailed: '重置密码失败，请重新获取验证码后再试。',

@@ -428,6 +428,11 @@ func (h *AccountHandler) ForgotPasswordSendEmail(c *gin.Context) {
 		return
 	}
 
+	if !h.accountService.ExistsByEmail(c.Request.Context(), req.Email) {
+		response.Fail(c, response.ErrAccountNotFound)
+		return
+	}
+
 	token, err := h.accountService.SendResetPasswordEmail(context.Background(), nil, req.Email, req.Language)
 	if err != nil {
 		if err == ErrAccountNotFoundAndAllowRegister {
@@ -954,6 +959,11 @@ func (h *ForgotPasswordHandler) SendEmail(c *gin.Context) {
 		language = "en-US" // default language
 	}
 
+	if !h.accountService.ExistsByEmail(c.Request.Context(), req.Email) {
+		response.Fail(c, response.ErrAccountNotFound)
+		return
+	}
+
 	// Send password reset email
 	token, err := h.accountService.SendResetPasswordEmail(context.Background(), nil, req.Email, language)
 	if err != nil {
@@ -1027,7 +1037,7 @@ func (h *ForgotPasswordHandler) Reset(c *gin.Context) {
 	}
 
 	// Reset password
-	err := h.accountService.ResetPasswordWithAutoRegister(req.Token, req.NewPassword)
+	err := h.accountService.ResetPassword(context.Background(), req.Token, req.NewPassword)
 	if err != nil {
 		if err.Error() == "Account is frozen" {
 			response.Fail(c, response.ErrAccountFrozen)
