@@ -527,7 +527,7 @@ const MarkdownViewer: React.FC<MarkdownViewerProps> = ({
               return <MarkdownMermaid chart={raw} />;
             }
             return (
-              <div className="group my-2 md-code-wrapper">
+              <div className="group my-2 max-w-full overflow-hidden md-code-wrapper">
                 <div className="md-code-header">
                   <div className="md-code-lang">{langMatch?.[1] || 'code'}</div>
                   <Button
@@ -545,8 +545,10 @@ const MarkdownViewer: React.FC<MarkdownViewerProps> = ({
                     )}
                   </Button>
                 </div>
-                <pre className="overflow-auto text-xs">
-                  <code className={codeClassName}>{children}</code>
+                <pre className="max-w-full overflow-x-auto overflow-y-hidden text-xs">
+                  <code className={cn('block min-w-max whitespace-pre', codeClassName)}>
+                    {children}
+                  </code>
                 </pre>
               </div>
             );

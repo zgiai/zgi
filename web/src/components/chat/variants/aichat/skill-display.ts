@@ -1,5 +1,5 @@
 import type { Locale } from '@/i18n/config';
-import type { AIChatSkillMetadata } from '@/services/types/aichat';
+import type { AIChatSkillInvocation, AIChatSkillMetadata } from '@/services/types/aichat';
 
 export interface AIChatSkillDisplayInfo {
   skillId: string;
@@ -67,6 +67,33 @@ const SYSTEM_SKILL_TOOL_LABELS: Record<string, Record<string, Record<string, str
       en_US: 'List temporary memories',
       zh_Hans: '查看临时记忆',
     },
+  },
+};
+
+const USER_MEMORY_TOOL_RESULT_TEXT: Record<string, Record<string, string>> = {
+  add_user_memory: {
+    en_US: 'Saved memory: {content}',
+    zh_Hans: '已保存记忆：{content}',
+  },
+  update_user_memory: {
+    en_US: 'Updated memory: {content}',
+    zh_Hans: '已更新记忆：{content}',
+  },
+  update_user_memory_without_content: {
+    en_US: 'Updated memory {entryId}',
+    zh_Hans: '已更新记忆 {entryId}',
+  },
+  delete_user_memory: {
+    en_US: 'Deleted memory {entryId}',
+    zh_Hans: '已删除记忆 {entryId}',
+  },
+  read_user_memory: {
+    en_US: 'Read {count} memories',
+    zh_Hans: '已读取 {count} 条记忆',
+  },
+  list_temporary_memories: {
+    en_US: 'Listed {count} temporary memories',
+    zh_Hans: '已查看 {count} 条临时记忆',
   },
 };
 
@@ -172,4 +199,93 @@ export function getAIChatSkillToolDisplayName(
   const labels = SYSTEM_SKILL_TOOL_LABELS[skillId]?.[name];
   if (!labels) return name;
   return pickLocalizedText(labels, locale, name);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function stringFromRecord(source: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  }
+  return '';
+}
+
+function numberFromRecord(source: Record<string, unknown>, keys: string[]): number | null {
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value))) {
+      return Number(value);
+    }
+  }
+  return null;
+}
+
+function compactMemoryContent(content: string): string {
+  const normalized = content.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= 120) return normalized;
+  return `${normalized.slice(0, 117)}...`;
+}
+
+function formatMemoryToolResult(
+  key: keyof typeof USER_MEMORY_TOOL_RESULT_TEXT,
+  locale: Locale | string,
+  replacements: Record<string, string | number>
+): string {
+  let text = pickLocalizedText(USER_MEMORY_TOOL_RESULT_TEXT[key], locale, key);
+  for (const [name, value] of Object.entries(replacements)) {
+    text = text.replace(`{${name}}`, String(value));
+  }
+  return text;
+}
+
+export function getAIChatSkillResultDisplay(
+  invocation: AIChatSkillInvocation,
+  locale: Locale | string
+): string | null {
+  if (invocation.skill_id !== USER_MEMORY_SKILL_ID || invocation.status !== 'success') {
+    return null;
+  }
+
+  const toolName = invocation.tool_name?.trim();
+  const result = isRecord(invocation.result) ? invocation.result : {};
+  const args = isRecord(invocation.arguments) ? invocation.arguments : {};
+  const content = compactMemoryContent(
+    stringFromRecord(result, ['content', 'memory', 'text']) ||
+      stringFromRecord(args, ['content', 'memory', 'text'])
+  );
+  const entryId =
+    stringFromRecord(result, ['entry_id', 'id']) || stringFromRecord(args, ['entry_id', 'id']);
+
+  switch (toolName) {
+    case 'add_user_memory':
+      return content
+        ? formatMemoryToolResult('add_user_memory', locale, { content })
+        : getAIChatSkillToolDisplayName(invocation.skill_id, toolName, locale);
+    case 'update_user_memory':
+      if (content) {
+        return formatMemoryToolResult('update_user_memory', locale, { content });
+      }
+      return formatMemoryToolResult('update_user_memory_without_content', locale, {
+        entryId: entryId || '',
+      }).trim();
+    case 'delete_user_memory':
+      return formatMemoryToolResult('delete_user_memory', locale, {
+        entryId: entryId || '',
+      }).trim();
+    case 'read_user_memory': {
+      const count = numberFromRecord(result, ['entries_count', 'count']) ?? 0;
+      return formatMemoryToolResult('read_user_memory', locale, { count });
+    }
+    case 'list_temporary_memories': {
+      const count = numberFromRecord(result, ['entries_count', 'count']) ?? 0;
+      return formatMemoryToolResult('list_temporary_memories', locale, { count });
+    }
+    default:
+      return null;
+  }
 }

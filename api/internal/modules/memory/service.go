@@ -27,14 +27,17 @@ const (
 )
 
 const memoryRenderPolicy = `User memory is enabled for this account.
-Memory operating rules:
-- Notice durable user facts, names, preferred forms of address, preferences, habits, standing instructions, and stable background.
-- Consider saving useful durable information with add_user_memory even when the user did not explicitly say "remember this".
-- Save time-limited plans or date-bounded context as temporary memory with an absolute expires_at.
-- Before adding memory, use read_user_memory when duplicate or conflicting memory is possible.
-- If the user clearly corrects an existing memory, update the existing entry.
-- If new information conflicts with existing memory but the correction is ambiguous, ask the user to confirm before updating memory.
-- Do not save secrets, credentials, highly sensitive private data, one-off chat details, or tenant-sensitive facts unless explicitly requested.
+When to use user-memory:
+- Use it when the user asks to remember, forget, update, or rely on memory.
+- MUST call user-memory for stable preferences, personal info, habits, address forms, or standing instructions.
+- Names, preferences, habits, and address forms are memory-worthy without "remember".
+- Resolve relative dates before saving temporary memory.
+- Read memory if duplicates/conflicts may exist; update/merge instead of duplicating.
+- For ordinary non-sensitive memory-worthy information, do not ask whether to save it; save quietly.
+- ask for confirmation only when new info conflicts with saved memory, is ambiguous, or sensitive.
+- do not say memory was remembered, saved, updated, or deleted unless the tool succeeds this turn.
+- After writing, keep answering naturally; mention memory only if the user explicitly asked.
+- Skip secrets, sensitive data, one-off chat, and tenant/workspace facts unless explicit.
 `
 
 var (
@@ -163,7 +166,7 @@ func (s *Service) CreateEntryWithMetadata(ctx context.Context, accountID uuid.UU
 	if err != nil {
 		return nil, err
 	}
-	category := resolveCategory(req.Category, content)
+	category := normalizeCategory(req.Category)
 	memoryType, expiresAt, err := resolveCreateTiming(req.MemoryType, req.ExpiresAt)
 	if err != nil {
 		return nil, err
@@ -245,21 +248,15 @@ func (s *Service) UpdateEntryWithMetadata(ctx context.Context, accountID, entryI
 			return mapRepoError(err, "get memory entry")
 		}
 		values := map[string]interface{}{"updated_at": time.Now()}
-		var nextContent string
 		if req.Content != nil {
 			content, err := normalizeContent(*req.Content)
 			if err != nil {
 				return err
 			}
 			values["content"] = content
-			nextContent = content
 		}
 		if req.Category != nil {
-			contentForCategory := nextContent
-			if contentForCategory == "" {
-				contentForCategory = lockedBefore.Content
-			}
-			values["category"] = resolveCategory(*req.Category, contentForCategory)
+			values["category"] = normalizeCategory(*req.Category)
 		}
 		memoryType, expiresAt, err := resolveUpdateTiming(lockedBefore, req.MemoryType, req.ExpiresAt)
 		if err != nil {
@@ -533,47 +530,6 @@ func parseUnixTimestamp(value string) (int64, error) {
 		unix = unix / 1000
 	}
 	return unix, nil
-}
-
-func resolveCategory(raw string, content string) string {
-	supplied := normalizeCategory(raw)
-	inferred := inferCategory(content)
-	if supplied == CategoryOther {
-		return inferred
-	}
-	if supplied == CategoryFact && inferred != CategoryOther && inferred != CategoryFact {
-		return inferred
-	}
-	return supplied
-}
-
-func inferCategory(content string) string {
-	text := strings.ToLower(strings.TrimSpace(content))
-	if text == "" {
-		return CategoryOther
-	}
-	if containsAny(text, "称呼", "叫我", "call me", "address the user", "preferred name", "偏好", "喜欢", "prefer", "language preference", "tone", "style", "格式") {
-		return CategoryPreference
-	}
-	if containsAny(text, "生日", "birthday", "姓名", "名字", "name is", "职业", "job", "role is", "所在地", "location", "用户是", "user is") {
-		return CategoryProfile
-	}
-	if containsAny(text, "以后", "始终", "总是", "必须", "不要", "禁止", "应该", "always", "never", "must", "should") {
-		return CategoryInstruction
-	}
-	if containsAny(text, "项目", "project", "工作", "work", "公司", "company", "团队", "team") {
-		return CategoryFact
-	}
-	return CategoryOther
-}
-
-func containsAny(text string, needles ...string) bool {
-	for _, needle := range needles {
-		if strings.Contains(text, needle) {
-			return true
-		}
-	}
-	return false
 }
 
 type categoryPolicy struct {

@@ -16,6 +16,7 @@ import { cn } from '@/lib/utils';
 import type { AIChatSkillInvocation } from '@/services/types/aichat';
 import type { AIChatAgenticTimelineItem } from '@/components/chat/controllers/aichat';
 import {
+  getAIChatSkillResultDisplay,
   getAIChatSkillToolDisplayName,
   getFallbackAIChatSkillDisplayInfo,
   type AIChatSkillDisplayInfo,
@@ -111,7 +112,9 @@ function buildSkillTitle(
     t('consoleChat.skills.trace.unknownTool');
 
   if (invocation.kind === 'skill_load') {
-    if (tone === 'running') return t('consoleChat.skills.agentic.loadingSkill', { skill: skill.label });
+    if (tone === 'running') {
+      return t('consoleChat.skills.agentic.loadingSkill', { skill: skill.label });
+    }
     if (tone === 'error') return t('consoleChat.skills.agentic.loadFailed', { skill: skill.label });
     return t('consoleChat.skills.agentic.loadedSkill', { skill: skill.label });
   }
@@ -253,7 +256,10 @@ export function AIChatAgenticTimeline({
           skill,
           tone,
           title: buildSkillTitle(item.invocation, skill, tone, locale, t),
-          detail: item.invocation.message || item.invocation.error,
+          detail:
+            getAIChatSkillResultDisplay(item.invocation, locale) ||
+            item.invocation.message ||
+            item.invocation.error,
         };
       }),
     [locale, skillDisplayById, t, timeline]

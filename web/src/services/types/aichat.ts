@@ -126,6 +126,7 @@ export interface AIChatSkillInvocation {
   status: AIChatSkillActivityStatus;
   duration_ms?: number;
   arguments?: Record<string, unknown> | null;
+  result?: Record<string, unknown> | null;
   path?: string;
   message?: string;
   error?: string;
@@ -372,6 +373,8 @@ export interface AIChatSkillCallEndEventData {
   tool_name: string;
   duration_ms?: number;
   status: 'success';
+  message?: string;
+  result?: Record<string, unknown> | null;
   created_at?: number;
 }
 

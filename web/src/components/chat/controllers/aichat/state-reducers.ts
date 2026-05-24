@@ -924,6 +924,8 @@ export function applySkillCallEndState(
       tool_name: payload.tool_name,
       status: 'success',
       duration_ms: payload.duration_ms,
+      message: payload.message,
+      result: payload.result,
       created_at: payload.created_at,
     }
   );

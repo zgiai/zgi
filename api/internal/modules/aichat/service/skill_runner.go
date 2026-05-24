@@ -699,6 +699,7 @@ func (s *service) handleCallSkillTool(
 	if err != nil {
 		return recoverableSkillStep(invocation.Trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "fix the tool arguments based on the error and retry")), true, false)
 	}
+	invocation.Trace.Result = summarizeSkillToolResult(invocation.Trace.SkillID, invocation.Trace.ToolName, invocation.Messages)
 	logger.DebugContext(ctx, "aichat skill tool completed",
 		"conversation_id", prepared.Conversation.ID.String(),
 		"message_id", prepared.Message.ID.String(),
@@ -803,6 +804,7 @@ func agenticSkillLoopSystemMessage() adapter.Message {
 		Content: strings.Join([]string{
 			"When using skills or tools, briefly explain your next action to the user before calling a skill/tool.",
 			"After each skill/tool result, summarize what happened. If a tool call fails, explain the likely cause, fix the arguments, and retry when possible.",
+			"Do not claim that you saved, remembered, updated, deleted, sent, created, changed, or completed any external action unless the corresponding skill/tool call succeeded in this turn.",
 			"Progress text sent together with tool calls is transient status text. Keep it short and do not place substantial user deliverables there.",
 			"If the current turn newly creates or substantially rewrites a user-facing deliverable before later tool/skill calls, call submit_intermediate_answer for that new deliverable before continuing.",
 			"Examples of new deliverables that should use submit_intermediate_answer when followed by more tool/skill calls: novel outlines, long-form drafts, plans, tables, code sketches, analysis sections, or generated content the user asked for.",
@@ -996,6 +998,7 @@ func mergeSkillTraceMetadata(source map[string]interface{}, traces []skills.Skil
 			"status":      trace.Status,
 			"duration_ms": trace.DurationMS,
 			"arguments":   trace.Arguments,
+			"result":      trace.Result,
 			"message":     trace.Message,
 			"error":       trace.Error,
 		})

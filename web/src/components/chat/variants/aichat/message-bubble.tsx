@@ -2,7 +2,16 @@
 
 import { ModelIcon } from 'modelicons';
 import { useMemo, useState } from 'react';
-import { AlertCircle, CheckCircle2, Download, Eye, FileImage, FileText, Loader2 } from 'lucide-react';
+import {
+  AlertCircle,
+  CheckCircle2,
+  CircleStop,
+  Download,
+  Eye,
+  FileImage,
+  FileText,
+  Loader2,
+} from 'lucide-react';
 import MarkdownViewer from '@/components/common/markdown-viewer';
 import {
   Dialog,
@@ -468,7 +477,15 @@ export function AIChatMessageBubble({
                 {t('consoleChat.streaming')}
               </span>
             ) : null}
-            {isStopped ? <span>{t('consoleChat.stopped')}</span> : null}
+            {isStopped && answer ? (
+              <span
+                className="inline-flex items-center"
+                title={t('consoleChat.stopped')}
+                aria-label={t('consoleChat.stopped')}
+              >
+                <CircleStop className="size-3" />
+              </span>
+            ) : null}
           </div>
 
           {hasTimeline ? (
@@ -489,8 +506,11 @@ export function AIChatMessageBubble({
           ) : null}
 
           {answer ? (
-            <div className="prose prose-sm max-w-none dark:prose-invert sm:pr-4 md:pr-6 lg:pr-8 xl:pr-9">
-              <MarkdownViewer className="md-viewer break-words" content={displayAnswer} />
+            <div className="prose prose-sm min-w-0 max-w-full overflow-x-hidden dark:prose-invert sm:pr-4 md:pr-6 lg:pr-8 xl:pr-9">
+              <MarkdownViewer
+                className="md-viewer min-w-0 max-w-full overflow-x-hidden break-words"
+                content={displayAnswer}
+              />
               {shouldHideAssistantToolbar ? null : (
                 <AssistantMessageToolbar
                   answer={answer}
