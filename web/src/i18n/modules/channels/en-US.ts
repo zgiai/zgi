@@ -11,7 +11,7 @@ const messages = {
   },
   credit: {
     points: 'pts',
-    rate: '10,000 pts is approximately $1.00 of call quota',
+    rate: 'Conversion: $1.00 = 10,000 pts',
     approxUsd: 'about {amount}',
     usdToPoints: '{usd} = {points} pts',
     quickAmount: '${amount}',
@@ -142,6 +142,8 @@ const messages = {
       initialFundsMax: 'Maximum quota: {max} pts',
       initialFundsRate: 'Enter USD for clarity; the system converts it into points.',
       initialFundsDefault: 'Internal company channels default to $100. Adjust it for the use case.',
+      providerLocked:
+        'The adapter is locked to the current provider. Create a channel from Channels to choose another protocol.',
       priority: 'Lower numbers are routed first.',
       weight: 'Used for traffic split within the same priority.',
     },
@@ -162,6 +164,12 @@ const messages = {
     protocolNotes: {
       google:
         'Gemini text mode and Vertex image mode require different API key and API base URL settings.',
+    },
+    errors: {
+      qwenOpenAICompatibleMismatch:
+        'OpenAI Compatible is selected, but the selected models include native Qwen capabilities such as rerank, image, vision, or multimodal models. Use Alibaba Cloud (Qwen), or select only OpenAI-compatible models.',
+      dashScopeProviderMismatch:
+        'Use Alibaba Cloud (Qwen) for DashScope rerank, image, and vision models. OpenAI Compatible is only for compatible-mode models.',
     },
     buttons: {
       cancel: 'Cancel',

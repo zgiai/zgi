@@ -56,11 +56,47 @@ func (h *ChannelHandler) CreateRoute(c *gin.Context) {
 
 	route, err := h.service.CreateRoute(c.Request.Context(), organizationID, req)
 	if err != nil {
-		h.Error(c, err)
+		handleCreateRouteError(c, err)
 		return
 	}
 
 	h.Success(c, route)
+}
+
+func handleCreateRouteError(c *gin.Context, err error) {
+	if isCreateRouteInputError(err) {
+		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+		return
+	}
+
+	response.FailWithMessage(c, response.ErrSystemError, err.Error())
+}
+
+func isCreateRouteInputError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	msg := err.Error()
+	inputErrorMarkers := []string{
+		"initial funds must be greater than or equal to 0",
+		"channel validation failed:",
+		"validation failed:",
+		"must use the full model name",
+		"unsupported channel_provider:",
+		"unsupported test method ",
+		"use case is unsupported for channel validation",
+		"is not supported by this adapter",
+		"api_base_url is required",
+		"api_key is required",
+	}
+	for _, marker := range inputErrorMarkers {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func parseCreateRouteRequest(c *gin.Context) (*dto.CreateRouteRequest, bool) {

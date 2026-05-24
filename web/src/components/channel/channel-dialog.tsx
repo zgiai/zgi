@@ -18,10 +18,12 @@ import type {
   ChannelDetail,
   UpdateChannelRequest,
 } from '@/services/types/channel';
+import type { ModelItem } from '@/services/types/model';
 import { useT } from '@/i18n';
 import ModelMultiSelector from '@/components/common/model-multi-selector/model-multi-selector';
 import { ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
 import ChannelProviderSelector, {
   getMappedProvider,
   getChannelProviderOption,
@@ -44,6 +46,8 @@ export interface ChannelDialogProps {
   onOpenChange: (open: boolean) => void;
   mode: 'create' | 'edit';
   initial?: ChannelDetail | null;
+  defaultChannelProvider?: string;
+  lockChannelProvider?: boolean;
   providerOptions?: string[];
 }
 
@@ -80,16 +84,55 @@ function sanitizeUsdInput(value: string, maxUsd: number): string {
   return next;
 }
 
+function hasNativeQwenModel(models: ModelItem[]): boolean {
+  return models.some(model => {
+    if (model.provider !== 'qwen') return false;
+    const useCases = model.use_cases ?? [];
+    return (
+      useCases.includes('image-gen') ||
+      useCases.includes('rerank') ||
+      useCases.includes('vision') ||
+      useCases.includes('realtime-audio') ||
+      /(?:rerank|image|vl|vision|omni|tongyi)/i.test(model.model)
+    );
+  });
+}
+
+function getCompatibilityWarningKey(
+  channelProvider: string,
+  selectedModels: ModelItem[]
+): 'dialog.errors.qwenOpenAICompatibleMismatch' | 'dialog.errors.dashScopeProviderMismatch' | '' {
+  if (channelProvider.trim().toLowerCase() !== 'openai-compatible') {
+    return '';
+  }
+
+  if (hasNativeQwenModel(selectedModels)) {
+    return 'dialog.errors.qwenOpenAICompatibleMismatch';
+  }
+
+  return '';
+}
+
 interface ChannelFormProps {
   mode: 'create' | 'edit';
   initial?: ChannelDetail | null;
+  defaultChannelProvider?: string;
+  lockChannelProvider?: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
-function ChannelForm({ mode, initial, onOpenChange }: ChannelFormProps) {
+function ChannelForm({
+  mode,
+  initial,
+  defaultChannelProvider,
+  lockChannelProvider = false,
+  onOpenChange,
+}: ChannelFormProps) {
   const t = useT('channels');
+  const rawInitialChannelProvider =
+    initial?.channel_provider ?? initial?.provider ?? defaultChannelProvider ?? 'openai-compatible';
   const initialChannelProvider =
-    initial?.channel_provider ?? initial?.provider ?? 'openai-compatible';
+    getChannelProviderOption(rawInitialChannelProvider)?.value ?? rawInitialChannelProvider;
   const initialProviderOption = getChannelProviderOption(initialChannelProvider);
   const initialFundsMaxLabel = CHANNEL_INITIAL_CREDIT_MAX.toLocaleString();
   const maxInitialFundsUsd = CHANNEL_INITIAL_CREDIT_MAX / CHANNEL_POINTS_PER_USD;
@@ -109,6 +152,7 @@ function ChannelForm({ mode, initial, onOpenChange }: ChannelFormProps) {
   const [modelsSelected, setModelsSelected] = React.useState<string[]>(
     Array.isArray(initial?.models) ? (initial?.models as string[]) : []
   );
+  const [selectedModelItems, setSelectedModelItems] = React.useState<ModelItem[]>([]);
   const [priority, setPriority] = React.useState<string>(
     initial?.priority != null ? String(initial.priority) : ''
   );
@@ -127,6 +171,7 @@ function ChannelForm({ mode, initial, onOpenChange }: ChannelFormProps) {
       initialFundsPoints > 0 &&
       initialFundsPoints <= CHANNEL_INITIAL_CREDIT_MAX);
   const apiKeyRequired = mode === 'create' && channelProvider !== 'ollama';
+  const compatibilityWarningKey = getCompatibilityWarningKey(channelProvider, selectedModelItems);
 
   // Stable callbacks to prevent child component re-renders when parent re-renders
 
@@ -146,6 +191,11 @@ function ChannelForm({ mode, initial, onOpenChange }: ChannelFormProps) {
   };
 
   const onSubmit = async (): Promise<void> => {
+    if (compatibilityWarningKey) {
+      toast.error(t(compatibilityWarningKey as never));
+      return;
+    }
+
     // Build payloads strictly from allowed fields
     const common = {
       channel_provider: channelProvider.trim(),
@@ -235,8 +285,8 @@ function ChannelForm({ mode, initial, onOpenChange }: ChannelFormProps) {
         <DialogDescription>{t('description')}</DialogDescription>
       </DialogHeader>
 
-      <DialogBody className="grid grid-cols-3 gap-4 h-0 grow">
-        <div className="col-span-1 space-y-3 overflow-y-auto pr-3">
+      <DialogBody className="grid h-0 grow grid-cols-1 gap-4 overflow-y-auto xl:grid-cols-3 xl:overflow-hidden">
+        <div className="min-w-0 space-y-3 xl:overflow-y-auto xl:pr-3">
           <div className="text-sm font-semibold text-foreground">{t('dialog.basic')}</div>
           <div className="space-y-1">
             <div className="text-sm font-medium">
@@ -257,6 +307,7 @@ function ChannelForm({ mode, initial, onOpenChange }: ChannelFormProps) {
             <ChannelProviderSelector
               value={channelProvider}
               onChange={option => {
+                if (lockChannelProvider) return;
                 setChannelProvider(option.value);
                 if (option.defaultApiBaseUrl) {
                   setApiBaseUrl(option.defaultApiBaseUrl);
@@ -264,8 +315,13 @@ function ChannelForm({ mode, initial, onOpenChange }: ChannelFormProps) {
                 }
                 setApiBaseUrl('');
               }}
-              disabled={disabled}
+              disabled={disabled || lockChannelProvider}
             />
+            {lockChannelProvider && (
+              <div className="text-xs text-muted-foreground">
+                {t('dialog.hints.providerLocked')}
+              </div>
+            )}
             {selectedProviderOption?.notesKey && (
               <div className="text-xs text-muted-foreground">
                 {t(selectedProviderOption.notesKey as never)}
@@ -331,7 +387,7 @@ function ChannelForm({ mode, initial, onOpenChange }: ChannelFormProps) {
           </div>
           {mode === 'create' && (
             <div className="space-y-2 rounded-md border border-primary/30 bg-primary/5 p-3">
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                 <div className="text-sm font-medium">
                   {t('dialog.labels.initialFunds')}
                   <span className="text-destructive ml-0.5">*</span>
@@ -341,11 +397,12 @@ function ChannelForm({ mode, initial, onOpenChange }: ChannelFormProps) {
               <p className="text-xs text-muted-foreground">
                 {t('dialog.hints.initialFundsDefault')}
               </p>
-              <div className="flex items-center gap-2">
-                <div className="flex h-10 shrink-0 items-center rounded-md border bg-background px-3 text-sm text-muted-foreground">
+              <div className="relative">
+                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
                   $
-                </div>
+                </span>
                 <Input
+                  className="pl-8 pr-16"
                   inputMode="decimal"
                   value={initialFundsUsd}
                   onChange={e =>
@@ -353,9 +410,9 @@ function ChannelForm({ mode, initial, onOpenChange }: ChannelFormProps) {
                   }
                   placeholder={t('dialog.placeholders.initialFunds')}
                 />
-                <div className="flex h-10 shrink-0 items-center rounded-md border bg-background px-3 text-sm text-muted-foreground">
+                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
                   USD
-                </div>
+                </span>
               </div>
               <div className="flex flex-wrap gap-2">
                 {[50, 100, 500].map(amount => (
@@ -397,7 +454,7 @@ function ChannelForm({ mode, initial, onOpenChange }: ChannelFormProps) {
               advancedOpen ? 'h-auto opacity-100 pb-3' : 'h-0 opacity-0'
             )}
           >
-            <div id="advanced-section" className="grid grid-cols-2 gap-3">
+            <div id="advanced-section" className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <div className="text-sm font-medium">{t('dialog.labels.priority')}</div>
                 <Input
@@ -422,21 +479,29 @@ function ChannelForm({ mode, initial, onOpenChange }: ChannelFormProps) {
                 />
                 <p className="text-xs text-muted-foreground">{t('dialog.hints.weight')}</p>
               </div>
-              <div className="flex items-center gap-3 col-span-2">
+              <div className="flex items-center gap-3 sm:col-span-2">
                 <div className="text-sm font-medium">{t('dialog.labels.enabled')}</div>
                 <Switch checked={isEnabled} onCheckedChange={v => setIsEnabled(Boolean(v))} />
               </div>
             </div>
           </div>
         </div>
-        <div className="col-span-2 overflow-y-auto pl-3">
+        <div className="min-w-0 xl:col-span-2 xl:overflow-y-auto xl:pl-3">
+          {compatibilityWarningKey && (
+            <div className="mb-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+              {t(compatibilityWarningKey as never)}
+            </div>
+          )}
           <ModelMultiSelector
             value={modelsSelected}
             onChange={handleModelsChange}
+            onSelectionMetaChange={setSelectedModelItems}
             placeholder={t('dialog.placeholders.modelsCsv')}
             className="max-h-[calc(92vh-12rem)] overflow-hidden"
+            columns={2}
             preferredProvider={mappedProvider}
             autoCollapseOthers={mappedProvider !== 'all'}
+            providerFilter={lockChannelProvider ? mappedProvider : undefined}
           />
         </div>
       </DialogBody>
@@ -453,6 +518,7 @@ function ChannelForm({ mode, initial, onOpenChange }: ChannelFormProps) {
             !channelProvider.trim() ||
             !apiBaseUrl.trim() ||
             !hasValidInitialFunds ||
+            Boolean(compatibilityWarningKey) ||
             (mode === 'create' && apiKeyRequired && !apiKey.trim()) ||
             (mode === 'edit' && updateApiKey && !apiKey.trim())
           }
@@ -469,6 +535,8 @@ export default function ChannelDialog({
   onOpenChange,
   mode,
   initial,
+  defaultChannelProvider,
+  lockChannelProvider,
   providerOptions: _providerOptions,
 }: ChannelDialogProps): JSX.Element {
   const normalizedInitial = React.useMemo(() => {
@@ -488,7 +556,13 @@ export default function ChannelDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="w-[96vw] max-w-[96vw] h-[92vh] p-0">
         {open && (
-          <ChannelForm mode={mode} initial={normalizedInitial} onOpenChange={onOpenChange} />
+          <ChannelForm
+            mode={mode}
+            initial={normalizedInitial}
+            defaultChannelProvider={defaultChannelProvider}
+            lockChannelProvider={lockChannelProvider}
+            onOpenChange={onOpenChange}
+          />
         )}
       </DialogContent>
     </Dialog>

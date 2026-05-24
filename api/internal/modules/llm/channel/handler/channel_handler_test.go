@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -72,6 +73,39 @@ func TestParseCreateRouteRequestRejectsInitialQuota(t *testing.T) {
 	msg, _ := resp["message"].(string)
 	if !strings.Contains(msg, "initial_funds") {
 		t.Fatalf("expected error message to mention initial_funds, got %q", msg)
+	}
+}
+
+func TestHandleCreateRouteErrorReturnsInvalidParamForValidationFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	c, w := newJSONContext(`{}`)
+
+	handleCreateRouteError(c, errors.New("channel validation failed: all representative models failed: qwen-plus: unauthorized"))
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", w.Code)
+	}
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	msg, _ := resp["message"].(string)
+	if !strings.Contains(msg, "channel validation failed") {
+		t.Fatalf("expected validation failure message, got %q", msg)
+	}
+}
+
+func TestHandleCreateRouteErrorKeepsSystemErrorsInternal(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	c, w := newJSONContext(`{}`)
+
+	handleCreateRouteError(c, errors.New("failed to create route: database unavailable"))
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status 500, got %d", w.Code)
 	}
 }
 

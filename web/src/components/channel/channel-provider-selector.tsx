@@ -130,7 +130,12 @@ interface ChannelProviderSelectorProps {
 export function getChannelProviderOption(value?: string): ChannelProviderOption | undefined {
   if (!value) return undefined;
   const normalized = value.trim().toLowerCase();
-  return CHANNEL_PROVIDER_OPTIONS.find(item => item.value.toLowerCase() === normalized);
+  return CHANNEL_PROVIDER_OPTIONS.find(
+    item =>
+      item.value.toLowerCase() === normalized ||
+      item.provider?.toLowerCase() === normalized ||
+      item.icon?.toLowerCase() === normalized
+  );
 }
 
 export function getMappedProvider(value?: string): string {

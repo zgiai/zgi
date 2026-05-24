@@ -13,7 +13,7 @@ const messages: ChannelsMessages = {
   },
   credit: {
     points: '点',
-    rate: '10,000 点约等于 $1.00 调用额度',
+    rate: '换算比例：$1.00 = 10,000 点',
     approxUsd: '约 {amount}',
     usdToPoints: '{usd} = {points} 点',
     quickAmount: '${amount}',
@@ -141,6 +141,7 @@ const messages: ChannelsMessages = {
       initialFundsMax: '最大额度：{max} 点',
       initialFundsRate: '按美元输入更直观，系统会换算为点数额度。',
       initialFundsDefault: '公司内部渠道建议默认 $100，可根据使用场景调整。',
+      providerLocked: '已按当前提供商锁定适配器；如需选择其他协议，请从渠道页新建渠道。',
       priority: '数字越小越优先。',
       weight: '同优先级内按权重分流。',
     },
@@ -160,6 +161,12 @@ const messages: ChannelsMessages = {
     },
     protocolNotes: {
       google: 'Gemini 文本与 Vertex 图片模式的 API Key 和 API 基础地址规则不同。',
+    },
+    errors: {
+      qwenOpenAICompatibleMismatch:
+        '当前选择的是“OpenAI 兼容协议”，但已选模型包含通义千问的原生能力模型（如重排、图片、视觉或多模态）。请改用“阿里云（通义千问）”协议，或只选择 OpenAI 兼容模式模型。',
+      dashScopeProviderMismatch:
+        'DashScope 的重排、图片和视觉模型请使用“阿里云（通义千问）”协议；OpenAI 兼容协议只适合兼容模式模型。',
     },
     buttons: {
       cancel: '取消',

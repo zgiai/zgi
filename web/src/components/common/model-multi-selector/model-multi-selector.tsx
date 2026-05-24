@@ -12,7 +12,6 @@ import type { ModelItem, ModelList } from '@/services/types/model';
 import { Search, X, ChevronDown, Info } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n';
-import { ModelIcon } from 'modelicons';
 import { ProviderIcon } from '@/components/common/provider-icon';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ModelTooltipContent } from '@/components/model/model-tooltip-content';
@@ -33,6 +32,8 @@ export interface ModelMultiSelectorProps {
   columns?: 2 | 3 | 4;
   preferredProvider?: string;
   autoCollapseOthers?: boolean;
+  providerFilter?: string;
+  onSelectionMetaChange?: (models: ModelItem[]) => void;
 }
 
 // Group models by provider
@@ -52,6 +53,15 @@ const COLUMNS_CLASS: Record<2 | 3 | 4, string> = {
   4: 'grid-cols-4',
 };
 
+function getModelSelectionKey(model: Pick<ModelItem, 'provider' | 'model'>): string {
+  return `${model.provider || 'unknown'}\t${model.model}`;
+}
+
+function getModelNameFromSelectionKey(key: string): string {
+  const separatorIndex = key.indexOf('\t');
+  return separatorIndex >= 0 ? key.slice(separatorIndex + 1) : key;
+}
+
 function ModelMultiSelectorBase({
   value,
   onChange,
@@ -62,6 +72,8 @@ function ModelMultiSelectorBase({
   columns = 3,
   preferredProvider,
   autoCollapseOthers = false,
+  providerFilter,
+  onSelectionMetaChange,
 }: ModelMultiSelectorProps): JSX.Element {
   const t = useT();
 
@@ -72,6 +84,7 @@ function ModelMultiSelectorBase({
 
   // Uncontrolled selection state
   const [internalSelected, setInternalSelected] = useState<string[]>([]);
+  const [selectedItemKeys, setSelectedItemKeys] = useState<Set<string>>(new Set());
 
   const controlled = value !== undefined;
   const selected = controlled ? (value as string[]) : internalSelected;
@@ -88,18 +101,47 @@ function ModelMultiSelectorBase({
   });
 
   const allItems = useMemo(() => data?.data?.items ?? [], [data]);
+  const selectedItems = useMemo(
+    () =>
+      allItems.filter(
+        item => selectedSet.has(item.model) && selectedItemKeys.has(getModelSelectionKey(item))
+      ),
+    [allItems, selectedItemKeys, selectedSet]
+  );
+
+  useEffect(() => {
+    onSelectionMetaChange?.(selectedItems);
+  }, [onSelectionMetaChange, selectedItems]);
+
+  useEffect(() => {
+    setSelectedItemKeys(prev => {
+      if (selectedSet.size === 0 && prev.size === 0) return prev;
+
+      const next = new Set(
+        Array.from(prev).filter(key => selectedSet.has(getModelNameFromSelectionKey(key)))
+      );
+
+      return next.size === prev.size ? prev : next;
+    });
+  }, [selectedSet]);
 
   // Frontend filtering by model, model_name, provider
   const items = useMemo(() => {
-    if (!search.trim()) return allItems;
+    const normalizedProviderFilter = providerFilter?.trim().toLowerCase();
+    const providerItems =
+      normalizedProviderFilter && normalizedProviderFilter !== 'all'
+        ? allItems.filter(m => (m.provider || 'unknown').toLowerCase() === normalizedProviderFilter)
+        : allItems;
+
+    if (!search.trim()) return providerItems;
     const keyword = search.trim().toLowerCase();
-    return allItems.filter(
+    return providerItems.filter(
       m =>
         m.model.toLowerCase().includes(keyword) ||
         (m.model_name && m.model_name.toLowerCase().includes(keyword)) ||
         (m.provider && m.provider.toLowerCase().includes(keyword))
     );
-  }, [allItems, search]);
+  }, [allItems, providerFilter, search]);
 
   // Group models by provider
   const groupedModels = useMemo<ProviderGroup[]>(() => {
@@ -156,11 +198,44 @@ function ModelMultiSelectorBase({
     [controlled, onChange]
   );
 
-  const toggle = useCallback(
+  const toggleSelectedName = useCallback(
     (name: string) => {
       const next = new Set(selectedSet);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
+      if (next.has(name)) {
+        next.delete(name);
+        setSelectedItemKeys(prev => {
+          const nextKeys = new Set(
+            Array.from(prev).filter(key => getModelNameFromSelectionKey(key) !== name)
+          );
+          return nextKeys.size === prev.size ? prev : nextKeys;
+        });
+      } else {
+        next.add(name);
+      }
+      setSelected(Array.from(next));
+    },
+    [selectedSet, setSelected]
+  );
+
+  const toggleModel = useCallback(
+    (model: ModelItem) => {
+      const modelKey = getModelSelectionKey(model);
+      const next = new Set(selectedSet);
+      if (next.has(model.model)) {
+        next.delete(model.model);
+        setSelectedItemKeys(prev => {
+          const nextKeys = new Set(prev);
+          nextKeys.delete(modelKey);
+          return nextKeys;
+        });
+      } else {
+        next.add(model.model);
+        setSelectedItemKeys(prev => {
+          const nextKeys = new Set(prev);
+          nextKeys.add(modelKey);
+          return nextKeys;
+        });
+      }
       setSelected(Array.from(next));
     },
     [selectedSet, setSelected]
@@ -168,6 +243,7 @@ function ModelMultiSelectorBase({
 
   const clearAll = useCallback(() => {
     if (selected.length === 0) return;
+    setSelectedItemKeys(new Set());
     setSelected([]);
   }, [selected.length, setSelected]);
 
@@ -181,9 +257,19 @@ function ModelMultiSelectorBase({
       if (allSelected) {
         // Deselect all in this group
         groupModelNames.forEach(name => next.delete(name));
+        setSelectedItemKeys(prev => {
+          const nextKeys = new Set(prev);
+          group.models.forEach(model => nextKeys.delete(getModelSelectionKey(model)));
+          return nextKeys;
+        });
       } else {
         // Select all in this group
         groupModelNames.forEach(name => next.add(name));
+        setSelectedItemKeys(prev => {
+          const nextKeys = new Set(prev);
+          group.models.forEach(model => nextKeys.add(getModelSelectionKey(model)));
+          return nextKeys;
+        });
       }
       setSelected(Array.from(next));
     },
@@ -254,7 +340,7 @@ function ModelMultiSelectorBase({
                 <button
                   type="button"
                   className="ml-1 opacity-70 hover:opacity-100"
-                  onClick={() => toggle(m)}
+                  onClick={() => toggleSelectedName(m)}
                   disabled={disabled}
                 >
                   <X size={12} />
@@ -360,11 +446,11 @@ function ModelMultiSelectorBase({
                               >
                                 <Checkbox
                                   checked={checked}
-                                  onCheckedChange={() => toggle(id)}
+                                  onCheckedChange={() => toggleModel(m)}
                                   id={`model-${m.provider}-${id}`}
                                   disabled={disabled}
                                 />
-                                <ModelIcon model={id} size={18} />
+                                <ProviderIcon provider={m.provider} size={18} />
                                 <span className="text-xs truncate flex-1" title={m.model_name}>
                                   {m.model_name || id}
                                 </span>
