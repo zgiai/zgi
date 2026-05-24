@@ -289,12 +289,29 @@ func TestBaselineTableNamesIncludesBridgeCriticalTables(t *testing.T) {
 	}
 }
 
+func TestLegacyBridgePreflightExcludesBackfilledTablesOnly(t *testing.T) {
+	tables := baselineTableNamesExcluding(legacyBridgeBackfilledTables)
+	seen := make(map[string]struct{}, len(tables))
+	for _, table := range tables {
+		seen[table] = struct{}{}
+	}
+
+	for _, table := range legacyBridgeBackfilledTables {
+		if _, ok := seen[table]; ok {
+			t.Fatalf("expected legacy bridge preflight to allow %s to be backfilled by public migrations", table)
+		}
+	}
+	if _, ok := seen["workflow_test_settings"]; !ok {
+		t.Fatal("expected legacy bridge preflight to keep validating baseline tables not backfilled by public migrations")
+	}
+}
+
 func TestLegacyBridgeDoesNotHardcodeClosedSourceMigrationIDs(t *testing.T) {
 	_, filename, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("resolve caller path")
 	}
-	data, err := os.ReadFile(filepath.Join(filepath.Dir(filename), "lineage.go"))
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(filename), "legacy_bridge.go"))
 	if err != nil {
 		t.Fatal(err)
 	}

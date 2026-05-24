@@ -62,6 +62,17 @@ var (
 		{table: "datasets", column: "id", dataType: "uuid", udtName: "uuid"},
 		{table: "agents", column: "id", dataType: "uuid", udtName: "uuid"},
 	}
+	legacyBridgeBackfilledTables = []string{
+		"content_parse_chunk_artifact_sets",
+		"data_library_database_asset_refs",
+		"data_library_document_assets",
+		"data_library_document_versions",
+		"data_library_extraction_artifacts",
+		"data_library_knowledge_base_asset_refs",
+		"data_library_processing_requests",
+		"data_library_reuse_events",
+		"data_library_vector_artifacts",
+	}
 )
 
 type requiredColumnType struct {
@@ -133,6 +144,9 @@ func legacyBridgeMigrationPlan() migrationPlan {
 		validateUnknownMigrations: false,
 		beforeRun: func(db *gorm.DB) error {
 			if err := validateSupportedLegacyShape(db); err != nil {
+				return err
+			}
+			if err := validatePublicBaselineTablesBeforeBridge(db); err != nil {
 				return err
 			}
 			return markInitialSchemaApplied(db)
@@ -243,6 +257,17 @@ func validatePublicBaselineTables(db *gorm.DB) error {
 	return nil
 }
 
+func validatePublicBaselineTablesBeforeBridge(db *gorm.DB) error {
+	missing, err := missingTables(db, baselineTableNamesExcluding(legacyBridgeBackfilledTables))
+	if err != nil {
+		return err
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("legacy database is missing public baseline tables before bridge migration: %s", strings.Join(missing, ", "))
+	}
+	return nil
+}
+
 func missingTables(db *gorm.DB, expected []string) ([]string, error) {
 	if len(expected) == 0 {
 		return nil, nil
@@ -275,11 +300,23 @@ func missingTables(db *gorm.DB, expected []string) ([]string, error) {
 }
 
 func baselineTableNames() []string {
+	return baselineTableNamesExcluding(nil)
+}
+
+func baselineTableNamesExcluding(excluded []string) []string {
+	excludedSet := make(map[string]struct{}, len(excluded))
+	for _, table := range excluded {
+		excludedSet[table] = struct{}{}
+	}
+
 	seen := make(map[string]struct{})
 	for _, file := range baseline.Files {
 		for _, statement := range file.Statements {
 			match := baselineCreateTablePattern.FindStringSubmatch(strings.TrimSpace(statement))
 			if len(match) != 2 {
+				continue
+			}
+			if _, ok := excludedSet[match[1]]; ok {
 				continue
 			}
 			seen[match[1]] = struct{}{}
