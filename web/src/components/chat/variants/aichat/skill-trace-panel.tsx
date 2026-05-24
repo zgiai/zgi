@@ -7,11 +7,13 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { useT } from '@/i18n/translations';
+import { useLocale } from '@/hooks/use-locale';
 import { cn } from '@/lib/utils';
 import type { AIChatSkillInvocation } from '@/services/types/aichat';
 import {
+  getAIChatSkillResultDisplay,
+  getAIChatSkillToolDisplayName,
   getFallbackAIChatSkillDisplayInfo,
   type AIChatSkillDisplayInfo,
   type AIChatSkillDisplayMap,
@@ -19,6 +21,18 @@ import {
 import { AIChatSkillIcon } from '@/components/chat/variants/aichat/skill-icon';
 
 type SkillTraceTone = 'running' | 'success' | 'error';
+type SkillTraceDebugLabel = keyof typeof SKILL_TRACE_DEBUG_LABEL_KEYS;
+
+const SKILL_TRACE_DEBUG_LABEL_KEYS = {
+  kind: 'consoleChat.skills.trace.debug.kind',
+  skillId: 'consoleChat.skills.trace.debug.skillId',
+  toolName: 'consoleChat.skills.trace.debug.toolName',
+  path: 'consoleChat.skills.trace.debug.path',
+  duration: 'consoleChat.skills.trace.debug.duration',
+  arguments: 'consoleChat.skills.trace.debug.arguments',
+  message: 'consoleChat.skills.trace.debug.message',
+  error: 'consoleChat.skills.trace.debug.error',
+} as const;
 
 interface SkillTraceEvent {
   invocation: AIChatSkillInvocation;
@@ -46,7 +60,34 @@ function getStatusIcon(tone: SkillTraceTone) {
 }
 
 function getDurationText(durationMs: number | undefined): string | null {
-  return typeof durationMs === 'number' && Number.isFinite(durationMs) ? `${durationMs}ms` : null;
+  if (typeof durationMs !== 'number' || !Number.isFinite(durationMs)) return null;
+  if (durationMs < 0) return null;
+  if (durationMs === 0) return '<1ms';
+  return `${durationMs}ms`;
+}
+
+function formatDebugValue(value: unknown): string | null {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function skillTraceDebugRows(invocation: AIChatSkillInvocation, locale: string) {
+  return [
+    ['kind', invocation.kind],
+    ['skillId', invocation.skill_id],
+    ['toolName', getAIChatSkillToolDisplayName(invocation.skill_id, invocation.tool_name, locale)],
+    ['path', invocation.path],
+    ['duration', getDurationText(invocation.duration_ms)],
+    ['arguments', invocation.arguments],
+    ['message', invocation.message],
+    ['error', invocation.error],
+  ] as const satisfies ReadonlyArray<readonly [SkillTraceDebugLabel, unknown]>;
 }
 
 /**
@@ -63,18 +104,21 @@ export function AIChatSkillTracePanel({
   skillDisplayById,
 }: AIChatSkillTracePanelProps) {
   const t = useT('webapp');
+  const { locale } = useLocale();
   const [isOpen, setIsOpen] = useState(false);
 
   const events = useMemo<SkillTraceEvent[]>(
     () =>
       invocations.map(invocation => {
         const skillId = invocation.skill_id || t('consoleChat.skills.trace.unknownSkill');
-        const skill = skillDisplayById[skillId] ?? getFallbackAIChatSkillDisplayInfo(skillId);
+        const skill =
+          skillDisplayById[skillId] ?? getFallbackAIChatSkillDisplayInfo(skillId, locale);
         const toolName =
-          invocation.tool_name ||
+          getAIChatSkillToolDisplayName(invocation.skill_id, invocation.tool_name, locale) ||
           invocation.path ||
           t('consoleChat.skills.trace.unknownTool');
         const tone = getInvocationTone(invocation);
+        const resultDetail = getAIChatSkillResultDisplay(invocation, locale);
 
         if (invocation.kind === 'skill_load') {
           return {
@@ -87,7 +131,7 @@ export function AIChatSkillTracePanel({
                 : tone === 'error'
                   ? t('consoleChat.skills.trace.error', { skill: skill.label })
                   : t('consoleChat.skills.trace.loaded', { skill: skill.label }),
-            detail: invocation.message || invocation.error,
+            detail: resultDetail || invocation.message || invocation.error,
           };
         }
 
@@ -100,7 +144,7 @@ export function AIChatSkillTracePanel({
               skill: skill.label,
               path: invocation.path || t('consoleChat.skills.trace.unknownReference'),
             }),
-            detail: invocation.message || invocation.error,
+            detail: resultDetail || invocation.message || invocation.error,
           };
         }
 
@@ -120,10 +164,10 @@ export function AIChatSkillTracePanel({
                     skill: skill.label,
                     tool: toolName,
                   }),
-          detail: invocation.message || invocation.error,
+          detail: resultDetail || invocation.message || invocation.error,
         };
       }),
-    [invocations, skillDisplayById, t]
+    [invocations, locale, skillDisplayById, t]
   );
 
   const summary = useMemo(() => {
@@ -175,8 +219,8 @@ export function AIChatSkillTracePanel({
         </button>
       </CollapsibleTrigger>
       <CollapsibleContent>
-        <div className="mt-2 max-w-xl rounded-md border bg-background/80 p-2">
-          <ScrollArea className="max-h-56 pr-3">
+        <div className="mt-2 max-w-xl overflow-hidden rounded-md border bg-background/80 p-2">
+          <div className="max-h-56 overflow-y-auto pr-2">
             <div className="space-y-2">
               {events.map((event, index) => {
                 const duration = getDurationText(event.invocation.duration_ms);
@@ -214,12 +258,32 @@ export function AIChatSkillTracePanel({
                           {event.detail}
                         </div>
                       ) : null}
+                      <dl className="mt-2 grid gap-1 rounded-md bg-muted/30 p-2 text-[11px]">
+                        {skillTraceDebugRows(event.invocation, locale).map(([labelKey, value]) => {
+                          const formatted = formatDebugValue(value);
+                          if (!formatted) return null;
+
+                          return (
+                            <div
+                              key={labelKey}
+                              className="grid grid-cols-[88px_minmax(0,1fr)] gap-2"
+                            >
+                              <dt className="text-muted-foreground">
+                                {t(SKILL_TRACE_DEBUG_LABEL_KEYS[labelKey])}
+                              </dt>
+                              <dd className="min-w-0 whitespace-pre-wrap break-all font-mono text-foreground/80">
+                                {formatted}
+                              </dd>
+                            </div>
+                          );
+                        })}
+                      </dl>
                     </div>
                   </div>
                 );
               })}
             </div>
-          </ScrollArea>
+          </div>
         </div>
       </CollapsibleContent>
     </Collapsible>

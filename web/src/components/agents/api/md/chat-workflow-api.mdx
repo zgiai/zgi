@@ -53,13 +53,6 @@ Service API 使用 `API-Key` 进行鉴权。
         （选填）会话 ID，需要基于之前的聊天记录继续对话时，必须传之前消息的 conversation_id。
         如果不传或传空值，系统将创建新会话。
       </Property>
-      <Property name='history_window_size' type='int' propKey='history_window_size'>
-        （选填）历史消息窗口大小，默认为 0。
-        表示在当前对话中保留多少轮历史消息作为上下文。
-        - 0: 不使用历史消息
-        - 1: 保留最近 1 轮对话
-        - N: 保留最近 N 轮对话
-      </Property>
     </Properties>
 
     ### Response
@@ -176,7 +169,7 @@ Service API 使用 `API-Key` 进行鉴权。
   </Col>
   <Col sticky>
 
-    <CodeGroup title="Request - New Conversation" tag="POST" label="/chat-workflows/run" targetCode={`curl --location --max-time 20 '{apibase}/chat-workflows/run' \\\n--header 'Content-Type: application/json' \\\n--header 'Authorization: Bearer {api_key}' \\\n--data '{\n    "query": "你好，我是程序员",\n    "response_mode": "streaming",\n    "history_window_size": 1\n}'`}>
+    <CodeGroup title="Request - New Conversation" tag="POST" label="/chat-workflows/run" targetCode={`curl --location --max-time 20 '{apibase}/chat-workflows/run' \\\n--header 'Content-Type: application/json' \\\n--header 'Authorization: Bearer {api_key}' \\\n--data '{\n    "query": "你好，我是程序员",\n    "response_mode": "streaming"\n}'`}>
 
     ```bash {{ title: 'cURL - 新会话' }}
     curl --location --max-time 20 '{apibase}/chat-workflows/run' \
@@ -184,14 +177,13 @@ Service API 使用 `API-Key` 进行鉴权。
     --header 'Authorization: Bearer {api_key}' \
     --data '{
         "query": "你好，我是程序员",
-        "response_mode": "streaming",
-        "history_window_size": 1
+        "response_mode": "streaming"
     }'
     ```
 
     </CodeGroup>
 
-    <CodeGroup title="Request - Continue Conversation" tag="POST" label="/chat-workflows/run" targetCode={`curl --location --max-time 20 '{apibase}/chat-workflows/run' \\\n--header 'Content-Type: application/json' \\\n--header 'Authorization: Bearer {api_key}' \\\n--data '{\n    "query": "我是程序员",\n    "response_mode": "streaming",\n    "conversation_id": "1749ede3-ee92-471c-be92-9d17d58e193b",\n    "history_window_size": 1\n}'`}>
+    <CodeGroup title="Request - Continue Conversation" tag="POST" label="/chat-workflows/run" targetCode={`curl --location --max-time 20 '{apibase}/chat-workflows/run' \\\n--header 'Content-Type: application/json' \\\n--header 'Authorization: Bearer {api_key}' \\\n--data '{\n    "query": "我是程序员",\n    "response_mode": "streaming",\n    "conversation_id": "1749ede3-ee92-471c-be92-9d17d58e193b"\n}'`}>
 
     ```bash {{ title: 'cURL - 继续会话' }}
     curl --location --max-time 20 '{apibase}/chat-workflows/run' \
@@ -200,8 +192,7 @@ Service API 使用 `API-Key` 进行鉴权。
     --data '{
         "query": "我是程序员",
         "response_mode": "streaming",
-        "conversation_id": "1749ede3-ee92-471c-be92-9d17d58e193b",
-        "history_window_size": 1
+        "conversation_id": "1749ede3-ee92-471c-be92-9d17d58e193b"
     }'
     ```
 
@@ -224,23 +215,6 @@ Service API 使用 `API-Key` 进行鉴权。
     ```
     </CodeGroup>
 
-    ### History Window Size 说明
-    <CodeGroup title="Example">
-    ```bash {{ title: '历史窗口示例' }}
-    # history_window_size = 0 (不使用历史)
-    只使用当前问题，不包含任何历史对话
-
-    # history_window_size = 1 (保留1轮)
-    User: 你好
-    AI: 你好！有什么可以帮助你的？
-    User: 我是程序员 ← 当前问题
-    上下文包含：最近1轮对话 + 当前问题
-
-    # history_window_size = 3 (保留3轮)
-    保留最近3轮完整对话作为上下文
-    ```
-    </CodeGroup>
-
   </Col>
 </Row>
 
@@ -252,14 +226,6 @@ A:
 
 - **第一次对话**：不传或传空值，系统会自动创建新会话并在响应中返回 `conversation_id`
 - **后续对话**：传入之前返回的 `conversation_id`，系统会基于该会话的历史继续对话
-
-### Q: history_window_size 如何设置？
-
-A:
-
-- `0`：不使用历史消息，每次都是新对话
-- `1-N`：保留最近 N 轮对话作为上下文
-- 建议根据实际场景设置：客服场景建议 3-5 轮，简单问答建议 1-2 轮
 
 ### Q: 如何处理长时间运行的对话？
 

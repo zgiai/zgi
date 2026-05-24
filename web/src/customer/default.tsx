@@ -63,7 +63,9 @@ function DefaultDashboardShell({ children }: CustomerDashboardShellProps) {
         <DashboardSidebar />
         <div className="flex-1 min-w-0 overflow-auto">{children}</div>
       </div>
-      <DashboardMobileSidebar open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen} />
+      {mobileSidebarOpen ? (
+        <DashboardMobileSidebar open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen} />
+      ) : null}
     </div>
   );
 }

@@ -34,6 +34,7 @@ export type AuthBusinessErrorDescriptionKey =
   | 'businessErrors.sendCodeTooManyAttempts'
   | 'businessErrors.verifyCodeTooManyAttempts'
   | 'businessErrors.emailServiceUnavailable'
+  | 'businessErrors.emailCheckFailed'
   | 'businessErrors.resetVerificationExpired'
   | 'businessErrors.registerTokenExpired'
   | 'businessErrors.resetPasswordFailed';

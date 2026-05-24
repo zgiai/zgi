@@ -23,6 +23,9 @@ import { createModeSelectionSlice, type ModeSelectionSlice } from './slices/mode
 import { createWorkflowIOSlice, type WorkflowIOSlice } from './slices/workflow-io';
 import { createRunStatusSlice, type RunStatusSlice } from './slices/run-status';
 import { debounce } from '@/lib/utils';
+import { useAuthStore } from '@/store/auth-store';
+import type { BuiltinToolProvider } from '@/services/types/tool';
+import type { Locale } from '@/lib/i18n';
 
 export type { UpstreamExportItem } from './helpers/graph';
 
@@ -175,6 +178,9 @@ export interface WorkflowStore
   // Cached results for performance (avoids re-computing on every render)
   runnableSets: RunnableSets;
   validationResults: StoreValidationResults;
+  toolValidationProviders: BuiltinToolProvider[] | null;
+  toolValidationLocale: Locale;
+  setToolValidationContext: (providers: BuiltinToolProvider[] | null, locale: Locale) => void;
   syncRunnableSets: () => void;
   syncRunnableSetsDebounced: () => void;
 
@@ -281,6 +287,16 @@ export const useWorkflowStoreBase = create<WorkflowStore>()(
         errorMap: new Map(),
         warningMap: new Map(),
       },
+      toolValidationProviders: null,
+      toolValidationLocale: 'zh-Hans',
+      setToolValidationContext: (providers, locale) => {
+        set(
+          { toolValidationProviders: providers, toolValidationLocale: locale },
+          false,
+          'workflow:setToolValidationContext'
+        );
+        get().syncRunnableSets();
+      },
       // Cache for graph reachability/sets
       runnableSets: {
         mainRunnable: new Set(),
@@ -294,7 +310,15 @@ export const useWorkflowStoreBase = create<WorkflowStore>()(
         // const start = performance.now();
         const runnable = computeRunnableSets(nodes, edges);
         // const mid = performance.now();
-        const validation = validateWorkflow(nodes, edges, agentType, runnable);
+        const validation = validateWorkflow(
+          nodes,
+          edges,
+          agentType,
+          runnable,
+          useAuthStore.getState().systemFeatures,
+          get().toolValidationProviders,
+          get().toolValidationLocale
+        );
         // const end = performance.now();
 
         // console.log(

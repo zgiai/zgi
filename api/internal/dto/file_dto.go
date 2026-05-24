@@ -25,6 +25,10 @@ type FileListResponse struct {
 	Page    int          `json:"page"`
 }
 
+type FileMetadataListResponse struct {
+	Data []UploadFile `json:"data"`
+}
+
 // FileFolderCreateRequest represents request for creating file folder
 type FileFolderCreateRequest struct {
 	Name                 string   `json:"name" binding:"required"`

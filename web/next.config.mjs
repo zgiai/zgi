@@ -1,4 +1,5 @@
 import createNextIntlPlugin from 'next-intl/plugin';
+import { withSentryConfig } from '@sentry/nextjs';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -33,9 +34,31 @@ function normalizeBasePath(basePath) {
   return prefixed.replace(/\/+$/, '');
 }
 
+function readPositiveIntegerEnv(name) {
+  const raw = process.env[name];
+  if (!raw) return undefined;
+  const value = Number.parseInt(raw, 10);
+  return Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function readBooleanEnv(name) {
+  const raw = process.env[name];
+  if (raw === undefined) return undefined;
+  const value = raw.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(value)) return true;
+  if (['0', 'false', 'no', 'off'].includes(value)) return false;
+  return undefined;
+}
+
 const basePath = normalizeBasePath(rawBasePath);
 const staticAppName = (process.env.NEXT_PUBLIC_APP_NAME ?? 'ZGI').trim() || 'ZGI';
 const staticBrandName = (process.env.NEXT_PUBLIC_BRAND_NAME ?? staticAppName).trim() || staticAppName;
+const buildCpus = readPositiveIntegerEnv('NEXT_BUILD_CPUS');
+const staticGenerationMaxConcurrency = readPositiveIntegerEnv(
+  'NEXT_STATIC_GENERATION_MAX_CONCURRENCY'
+);
+const turbopackMemoryLimitMb = readPositiveIntegerEnv('NEXT_TURBOPACK_MEMORY_LIMIT_MB');
+const webpackMemoryOptimizations = readBooleanEnv('NEXT_WEBPACK_MEMORY_OPTIMIZATIONS');
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -51,6 +74,19 @@ const nextConfig = {
   experimental: {
     optimizePackageImports: ['@radix-ui/react-icons', 'lucide-react', 'antd'],
     serverSourceMaps: false,
+    ...(buildCpus
+      ? {
+          cpus: buildCpus,
+          memoryBasedWorkersCount: false,
+        }
+      : {}),
+    ...(staticGenerationMaxConcurrency
+      ? { staticGenerationMaxConcurrency }
+      : {}),
+    ...(turbopackMemoryLimitMb
+      ? { turbopackMemoryLimit: turbopackMemoryLimitMb * 1024 * 1024 }
+      : {}),
+    ...(webpackMemoryOptimizations === undefined ? {} : { webpackMemoryOptimizations }),
   },
   productionBrowserSourceMaps: false,
   pageExtensions: ['js', 'jsx', 'md', 'mdx', 'ts', 'tsx'],
@@ -79,4 +115,17 @@ const nextConfig = {
     : {}),
 };
 
-export default withNextIntl(nextConfig)
+const withPlugins = withNextIntl(nextConfig);
+
+export default withSentryConfig(withPlugins, {
+  org: process.env.SENTRY_ORG,
+  project: process.env.SENTRY_PROJECT,
+  authToken: process.env.SENTRY_AUTH_TOKEN,
+  silent: !process.env.CI,
+  widenClientFileUpload: Boolean(process.env.SENTRY_AUTH_TOKEN),
+  webpack: {
+    treeshake: {
+      removeDebugLogging: true,
+    },
+  },
+});

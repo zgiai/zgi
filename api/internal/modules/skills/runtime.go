@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	defaultMaxCallsPerTurn = 3
+	defaultMaxCallsPerTurn = 20
 	defaultTimeoutSeconds  = 5
 	defaultCatalogDir      = "internal/modules/skills/catalog"
 	defaultDisplayIcon     = "sparkles"
@@ -27,6 +27,7 @@ const (
 	MetaToolLoadSkill          = "load_skill"
 	MetaToolReadSkillReference = "read_skill_reference"
 	MetaToolCallSkillTool      = "call_skill_tool"
+	MetaToolIntermediateAnswer = "submit_intermediate_answer"
 )
 
 var ErrSkillNotFound = errors.New("skill not found")
@@ -399,82 +400,240 @@ func MetaToolsForSkills(resolved *ResolvedSkills) []llmadapter.Tool {
 	return metaTools(resolvedHasToolSkills(resolved))
 }
 
-func metaTools(includeToolCaller bool) []llmadapter.Tool {
+func MetaToolsForSkillState(resolved *ResolvedSkills, loadedSkillIDs map[string]struct{}) []llmadapter.Tool {
+	loaded := normalizedLoadedSkillIDs(loadedSkillIDs)
 	tools := []llmadapter.Tool{
-		{
-			Type: "function",
-			Function: llmadapter.Function{
-				Name:        MetaToolLoadSkill,
-				Description: "Load the full instructions for an enabled skill before using that skill.",
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"skill_id": map[string]interface{}{
-							"type":        "string",
-							"description": "The enabled skill ID to load.",
-						},
-					},
-					"required": []string{"skill_id"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: llmadapter.Function{
-				Name:        MetaToolReadSkillReference,
-				Description: "Read a reference document from a loaded skill when SKILL.md says it is relevant.",
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"skill_id": map[string]interface{}{
-							"type":        "string",
-							"description": "The enabled skill ID that owns the reference.",
-						},
-						"path": map[string]interface{}{
-							"type":        "string",
-							"description": "Reference path relative to the skill references directory.",
-						},
-					},
-					"required": []string{"skill_id", "path"},
-				},
-			},
-		},
+		loadSkillMetaTool(resolvedSkillIDs(resolved)),
+		intermediateAnswerMetaTool(),
 	}
-	if includeToolCaller {
-		tools = append(tools, llmadapter.Tool{
-			Type: "function",
-			Function: llmadapter.Function{
-				Name:        MetaToolCallSkillTool,
-				Description: "Call a tool allowed by a loaded skill after reading its instructions.",
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"skill_id": map[string]interface{}{
-							"type":        "string",
-							"description": "The enabled skill ID that allows the tool.",
-						},
-						"tool_name": map[string]interface{}{
-							"type":        "string",
-							"description": "The allowed tool name to call.",
-						},
-						"arguments": map[string]interface{}{
-							"type":        "object",
-							"description": "Arguments for the skill tool.",
-						},
-					},
-					"required": []string{"skill_id", "tool_name", "arguments"},
-				},
-			},
-		})
+	if referenceSkillIDs, referencePaths := loadedReferenceOptions(resolved, loaded); len(referenceSkillIDs) > 0 && len(referencePaths) > 0 {
+		tools = append(tools, readReferenceMetaTool(referenceSkillIDs, referencePaths))
+	}
+	if toolSkillIDs, toolNames, pairs := loadedToolOptions(resolved, loaded); len(toolSkillIDs) > 0 && len(toolNames) > 0 {
+		tools = append(tools, callSkillToolMetaTool(toolSkillIDs, toolNames, pairs))
 	}
 	return tools
 }
 
+func metaTools(includeToolCaller bool) []llmadapter.Tool {
+	tools := []llmadapter.Tool{
+		loadSkillMetaTool(nil),
+		readReferenceMetaTool(nil, nil),
+		intermediateAnswerMetaTool(),
+	}
+	if includeToolCaller {
+		tools = append(tools, callSkillToolMetaTool(nil, nil, nil))
+	}
+	return tools
+}
+
+func loadSkillMetaTool(skillIDs []string) llmadapter.Tool {
+	return llmadapter.Tool{
+		Type: "function",
+		Function: llmadapter.Function{
+			Name:        MetaToolLoadSkill,
+			Description: "Load the full instructions for an enabled skill before using that skill.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"skill_id": stringSchema("The enabled skill ID to load.", skillIDs),
+				},
+				"required": []string{"skill_id"},
+			},
+		},
+	}
+}
+
+func readReferenceMetaTool(skillIDs []string, paths []string) llmadapter.Tool {
+	return llmadapter.Tool{
+		Type: "function",
+		Function: llmadapter.Function{
+			Name:        MetaToolReadSkillReference,
+			Description: "Read a reference document from a loaded skill when SKILL.md says it is relevant.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"skill_id": stringSchema("The loaded skill ID that owns the reference.", skillIDs),
+					"path":     stringSchema("Reference path relative to the skill references directory.", paths),
+				},
+				"required": []string{"skill_id", "path"},
+			},
+		},
+	}
+}
+
+func intermediateAnswerMetaTool() llmadapter.Tool {
+	return llmadapter.Tool{
+		Type: "function",
+		Function: llmadapter.Function{
+			Name:        MetaToolIntermediateAnswer,
+			Description: "Submit a substantial new intermediate answer or draft that should be visible to the user before continuing with more skill/tool calls. Do not use this to repeat content that was already visible in an earlier assistant answer; for export/save/convert/file-generation requests, pass the existing content directly to the relevant tool instead.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"title": map[string]interface{}{
+						"type":        "string",
+						"description": "A short title for the intermediate answer, such as Novel outline or Draft plan.",
+					},
+					"content": map[string]interface{}{
+						"type":        "string",
+						"description": "The markdown content of the intermediate answer or draft.",
+					},
+				},
+				"required": []string{"content"},
+			},
+		},
+	}
+}
+
+func callSkillToolMetaTool(skillIDs []string, toolNames []string, pairs []string) llmadapter.Tool {
+	description := "Call a tool allowed by a loaded skill after reading its instructions."
+	if len(pairs) > 0 {
+		description += " Allowed skill/tool pairs: " + strings.Join(pairs, "; ") + "."
+	}
+	return llmadapter.Tool{
+		Type: "function",
+		Function: llmadapter.Function{
+			Name:        MetaToolCallSkillTool,
+			Description: description,
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"skill_id":  stringSchema("The loaded skill ID that allows the tool.", skillIDs),
+					"tool_name": stringSchema("The allowed tool name to call.", toolNames),
+					"arguments": map[string]interface{}{
+						"type":        "object",
+						"description": "Arguments for the skill tool.",
+					},
+				},
+				"required": []string{"skill_id", "tool_name", "arguments"},
+			},
+		},
+	}
+}
+
+func stringSchema(description string, values []string) map[string]interface{} {
+	schema := map[string]interface{}{
+		"type":        "string",
+		"description": description,
+	}
+	if len(values) > 0 {
+		schema["enum"] = values
+	}
+	return schema
+}
+
+func resolvedSkillIDs(resolved *ResolvedSkills) []string {
+	if resolved == nil {
+		return nil
+	}
+	ids := make([]string, 0, len(resolved.Skills))
+	for _, doc := range resolved.Skills {
+		if id := normalizeSkillID(doc.Metadata.ID); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+func normalizedLoadedSkillIDs(loadedSkillIDs map[string]struct{}) map[string]struct{} {
+	out := make(map[string]struct{}, len(loadedSkillIDs))
+	for raw := range loadedSkillIDs {
+		id := normalizeSkillID(raw)
+		if id != "" {
+			out[id] = struct{}{}
+		}
+	}
+	return out
+}
+
+func loadedReferenceOptions(resolved *ResolvedSkills, loaded map[string]struct{}) ([]string, []string) {
+	if resolved == nil || len(loaded) == 0 {
+		return nil, nil
+	}
+	skillSeen := map[string]struct{}{}
+	pathSeen := map[string]struct{}{}
+	skillIDs := []string{}
+	paths := []string{}
+	for _, doc := range resolved.Skills {
+		skillID := normalizeSkillID(doc.Metadata.ID)
+		if _, ok := loaded[skillID]; !ok || len(doc.Metadata.References) == 0 {
+			continue
+		}
+		if _, exists := skillSeen[skillID]; !exists {
+			skillSeen[skillID] = struct{}{}
+			skillIDs = append(skillIDs, skillID)
+		}
+		for _, ref := range doc.Metadata.References {
+			path := strings.TrimSpace(ref.Path)
+			if path == "" {
+				continue
+			}
+			if _, exists := pathSeen[path]; exists {
+				continue
+			}
+			pathSeen[path] = struct{}{}
+			paths = append(paths, path)
+		}
+	}
+	sort.Strings(skillIDs)
+	sort.Strings(paths)
+	return skillIDs, paths
+}
+
+func loadedToolOptions(resolved *ResolvedSkills, loaded map[string]struct{}) ([]string, []string, []string) {
+	if resolved == nil || len(loaded) == 0 {
+		return nil, nil, nil
+	}
+	skillSeen := map[string]struct{}{}
+	toolSeen := map[string]struct{}{}
+	skillIDs := []string{}
+	toolNames := []string{}
+	pairs := []string{}
+	for _, doc := range resolved.Skills {
+		skillID := normalizeSkillID(doc.Metadata.ID)
+		if _, ok := loaded[skillID]; !ok || len(doc.Tools) == 0 {
+			continue
+		}
+		if _, exists := skillSeen[skillID]; !exists {
+			skillSeen[skillID] = struct{}{}
+			skillIDs = append(skillIDs, skillID)
+		}
+		docToolNames := make([]string, 0, len(doc.Tools))
+		for _, tool := range doc.Tools {
+			name := strings.TrimSpace(tool.Name)
+			if name == "" {
+				continue
+			}
+			docToolNames = append(docToolNames, name)
+			if _, exists := toolSeen[name]; !exists {
+				toolSeen[name] = struct{}{}
+				toolNames = append(toolNames, name)
+			}
+		}
+		sort.Strings(docToolNames)
+		if len(docToolNames) > 0 {
+			pairs = append(pairs, skillID+": "+strings.Join(docToolNames, ", "))
+		}
+	}
+	sort.Strings(skillIDs)
+	sort.Strings(toolNames)
+	sort.Strings(pairs)
+	return skillIDs, toolNames, pairs
+}
+
 func SkillMetadataSystemMessage(metadata []SkillPromptMetadata) llmadapter.Message {
+	message, _ := SkillMetadataSystemMessageWithBudget(metadata, DefaultSkillMetadataPromptBudgetChars)
+	return message
+}
+
+func SkillMetadataSystemMessageWithBudget(metadata []SkillPromptMetadata, budgetChars int) (llmadapter.Message, SkillMetadataPromptStats) {
+	content, stats := skillMetadataPromptWithBudget(metadata, budgetChars)
 	return llmadapter.Message{
 		Role:    "system",
-		Content: skillMetadataPrompt(metadata),
-	}
+		Content: content,
+	}, stats
 }
 
 func ToolResultMessage(callID string, payload interface{}) llmadapter.Message {

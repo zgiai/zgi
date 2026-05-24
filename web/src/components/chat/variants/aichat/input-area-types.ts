@@ -44,6 +44,7 @@ export interface AIChatInputAttachment {
   kind: AIChatInputAttachmentKind;
   progress: number;
   status: AIChatInputAttachmentStatus;
+  sourceFile?: File;
   file?: AIChatMessageFile;
   previewUrl?: string;
   error?: string;

@@ -15,12 +15,19 @@ export type AIChatSkillMode = 'disabled' | 'auto' | 'required';
 export type AIChatSkillSource = 'system' | 'custom';
 export type AIChatSkillRuntimeType = 'tool' | 'prompt' | 'hybrid';
 export type AIChatSkillStatus = 'active' | 'invalid';
-export type AIChatSkillActivityStatus = 'loading' | 'loaded' | 'running' | 'success' | 'error';
+export type AIChatSkillActivityStatus =
+  | 'loading'
+  | 'loaded'
+  | 'running'
+  | 'success'
+  | 'blocked'
+  | 'error';
 export type AIChatSkillInvocationKind =
   | 'metadata_exposed'
   | 'skill_load'
   | 'reference_read'
-  | 'tool_call';
+  | 'tool_call'
+  | 'intermediate_answer';
 
 export interface AIChatConversationMetadata {
   [key: string]: unknown;
@@ -71,7 +78,6 @@ export interface AIChatCancelImportSkillPreviewResponseData {
   canceled: boolean;
 }
 
-export type AIChatImportSkillResponse = ApiResponseData<AIChatSkillMetadata>;
 export type AIChatDeleteSkillResponse = ApiResponseData<AIChatDeleteSkillResponseData>;
 export type AIChatCancelImportSkillPreviewResponse =
   ApiResponseData<AIChatCancelImportSkillPreviewResponseData>;
@@ -85,6 +91,8 @@ export interface AIChatImportSkillPreview {
   import_id?: string;
   expires_at?: number;
   skill?: AIChatSkillMetadata;
+  will_overwrite: boolean;
+  existing_skill?: AIChatExistingSkill;
   file_count: number;
   total_size: number;
   files: AIChatImportSkillPreviewFile[];
@@ -98,17 +106,27 @@ export interface AIChatImportSkillPreview {
 
 export interface AIChatConfirmImportSkillRequest {
   import_id: string;
+  overwrite_confirmed?: boolean;
 }
 
 export type AIChatImportSkillPreviewResponse = ApiResponseData<AIChatImportSkillPreview>;
 
+export interface AIChatExistingSkill {
+  skill_id: string;
+  name: string;
+  updated_at?: number;
+}
+
 export interface AIChatSkillInvocation {
   kind?: AIChatSkillInvocationKind;
+  answer_id?: string;
   skill_id: string;
   tool_name?: string;
+  title?: string;
   status: AIChatSkillActivityStatus;
   duration_ms?: number;
   arguments?: Record<string, unknown> | null;
+  result?: Record<string, unknown> | null;
   path?: string;
   message?: string;
   error?: string;
@@ -239,6 +257,7 @@ export interface AIChatCreateConversationRequest {
 export interface AIChatUpdateConversationRequest {
   title?: string;
   status?: AIChatConversationStatus;
+  current_leaf_message_id?: string;
 }
 
 export interface AIChatModelParameters {
@@ -261,6 +280,7 @@ export interface AIChatChatRequest {
   file_ids?: string[];
   response_mode: 'streaming';
   parameters?: AIChatModelParameters;
+  use_memory?: boolean;
 }
 
 export interface AIChatRegenerateMessageRequest {
@@ -287,6 +307,14 @@ export interface AIChatMessageChunkEventData {
   __sensitiveOutputBlocked?: boolean;
 }
 
+export interface AIChatMessageRetractEventData {
+  conversation_id: string;
+  message_id: string;
+  content?: string;
+  length?: number;
+  created_at?: number;
+}
+
 export interface AIChatMessageEndEventData {
   conversation_id: string;
   message_id: string;
@@ -298,6 +326,8 @@ export interface AIChatErrorEventData {
   conversation_id?: string;
   message_id?: string;
   message?: string;
+  code?: string | number;
+  params?: Record<string, unknown>;
 }
 
 export interface AIChatSkillLoadStartEventData {
@@ -332,6 +362,7 @@ export interface AIChatSkillCallStartEventData {
   skill_id: string;
   tool_name: string;
   arguments?: Record<string, unknown>;
+  arguments_summary?: Record<string, unknown>;
   created_at?: number;
 }
 
@@ -342,6 +373,8 @@ export interface AIChatSkillCallEndEventData {
   tool_name: string;
   duration_ms?: number;
   status: 'success';
+  message?: string;
+  result?: Record<string, unknown> | null;
   created_at?: number;
 }
 
@@ -376,6 +409,31 @@ export interface AIChatSkillArtifactCreatedEventData extends Partial<AIChatGener
   skill_id: string;
   tool_name: string;
   file?: AIChatSkillArtifactFile;
+}
+
+export interface AIChatAgentProgressEventData {
+  conversation_id: string;
+  message_id: string;
+  content?: string;
+  phase?: 'planning' | 'tool_planning';
+  meta_tool_name?: string;
+  skill_id?: string;
+  tool_name?: string;
+  arguments_chars?: number;
+  created_at?: number;
+}
+
+export interface AIChatIntermediateAnswerEventData {
+  conversation_id: string;
+  message_id: string;
+  answer_id?: string;
+  title?: string;
+  content?: string;
+  delta?: boolean;
+  index?: number;
+  done?: boolean;
+  status?: 'streaming' | 'success';
+  created_at?: number;
 }
 
 export interface AIChatFileParseStartEventData {
@@ -426,6 +484,8 @@ export interface AIChatStopConversationResponseData {
 
 export type AIChatSseEventName =
   | 'message_start'
+  | 'agent_progress'
+  | 'agent_intermediate_answer'
   | 'skill_load_start'
   | 'skill_load_end'
   | 'skill_reference_read'
@@ -437,6 +497,7 @@ export type AIChatSseEventName =
   | 'file_parse_end'
   | 'file_parse_error'
   | 'message'
+  | 'message_retract'
   | 'message_end'
   | 'error';
 

@@ -4,9 +4,13 @@ import { lightTheme } from '@uiw/react-json-view/light';
 import MarkdownViewer from '@/components/common/markdown-viewer';
 import type { HistoryResult } from '../types';
 import { Button } from '@/components/ui/button';
-import { Check, Copy, FileText } from 'lucide-react';
+import { Check, Copy, Download, Eye, FileText } from 'lucide-react';
+import { FileIcon } from '@/components/ui/file-icon';
+import { UniversalFilePreviewDialog } from '@/components/files/universal-file-preview-dialog';
+import { API_URL } from '@/lib/config';
 import { useT } from '@/i18n';
 import { useLocale } from '@/hooks/use-locale';
+import { formatFileSize } from '@/utils/format';
 import { isSensitiveOutputBlockedValue } from '@/utils/model-output-filter';
 import {
   QuestionAnswerTranscript,
@@ -27,6 +31,17 @@ interface FlatOutputField {
   key: string;
   label: string;
   value: string;
+}
+
+interface GeneratedFileOutput {
+  key: string;
+  filename: string;
+  url: string;
+  downloadUrl: string;
+  previewUrl?: string;
+  extension?: string;
+  mimeType?: string;
+  size?: number | null;
 }
 
 const outputFieldLabels: Record<string, { en: string; zh: string }> = {
@@ -95,6 +110,140 @@ function getFlatOutputFields(value: unknown, locale: string): FlatOutputField[] 
   return fields.every(Boolean) ? (fields as FlatOutputField[]) : null;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function getStringField(record: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) return value;
+  }
+  return undefined;
+}
+
+function getNumberField(record: Record<string, unknown>, keys: string[]): number | null {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string' && value.trim()) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return null;
+}
+
+function normalizeExtension(extension?: string, filename?: string): string | undefined {
+  const rawExtension = extension || filename?.split('.').pop();
+  if (!rawExtension) return undefined;
+  return rawExtension.replace(/^\./, '').toLowerCase();
+}
+
+function getTrustedPreviewURL(url?: string): string | undefined {
+  if (typeof window === 'undefined' || !url) return undefined;
+
+  try {
+    const parsed = new URL(url, window.location.origin);
+    if (!isAllowedPreviewOrigin(parsed.origin)) return undefined;
+    if (isToolFilePreviewPath(parsed.pathname)) return url;
+    if (isSignedFilePreviewPath(parsed)) return url;
+  } catch {
+    return undefined;
+  }
+
+  return undefined;
+}
+
+function isAllowedPreviewOrigin(origin: string): boolean {
+  const allowedOrigins = new Set<string>([window.location.origin]);
+  try {
+    allowedOrigins.add(new URL(API_URL, window.location.origin).origin);
+  } catch {
+    // Ignore invalid runtime API configuration and fall back to same-origin only.
+  }
+  return allowedOrigins.has(origin);
+}
+
+function isToolFilePreviewPath(pathname: string): boolean {
+  return pathname.startsWith('/console/api/files/tools/');
+}
+
+function isSignedFilePreviewPath(url: URL): boolean {
+  return (
+    pathnameMatchesSignedFilePreview(url.pathname) &&
+    url.searchParams.has('timestamp') &&
+    url.searchParams.has('nonce') &&
+    url.searchParams.has('sign')
+  );
+}
+
+function pathnameMatchesSignedFilePreview(pathname: string): boolean {
+  return pathname.startsWith('/console/api/files/') && pathname.endsWith('/file-preview');
+}
+
+function getGeneratedFileOutput(
+  record: Record<string, unknown>,
+  fallbackKey: string
+): GeneratedFileOutput | null {
+  const url = getStringField(record, ['url']);
+  const remoteUrl = getStringField(record, ['remote_url']);
+  const downloadUrl = getStringField(record, ['download_url', 'url', 'remote_url']);
+  const displayUrl = url || remoteUrl || downloadUrl;
+  if (!displayUrl || !downloadUrl) return null;
+
+  const rawFilename = getStringField(record, ['filename', 'file_name', 'name', 'title']);
+  const extension = normalizeExtension(
+    getStringField(record, ['extension', 'format']),
+    rawFilename
+  );
+  const id = getStringField(record, ['id', 'file_id']);
+  const transferMethod = getStringField(record, ['transfer_method']);
+  const isLikelyFile = !!rawFilename || !!extension || !!id || transferMethod === 'tool_file';
+  if (!isLikelyFile) return null;
+
+  const filename =
+    rawFilename ||
+    (extension ? `generated-file.${extension}` : id ? `generated-file-${id}` : 'generated-file');
+
+  return {
+    key: id || displayUrl || fallbackKey,
+    filename,
+    url: displayUrl,
+    downloadUrl,
+    previewUrl: getTrustedPreviewURL(url),
+    extension,
+    mimeType: getStringField(record, ['mime_type', 'mimeType']),
+    size: getNumberField(record, ['size', 'file_size']),
+  };
+}
+
+function collectGeneratedFiles(
+  value: unknown,
+  files: GeneratedFileOutput[] = [],
+  seen = new Set<string>(),
+  path = 'root'
+): GeneratedFileOutput[] {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => collectGeneratedFiles(item, files, seen, `${path}.${index}`));
+    return files;
+  }
+
+  if (!isRecord(value)) return files;
+
+  const file = getGeneratedFileOutput(value, path);
+  if (file && !seen.has(file.key)) {
+    seen.add(file.key);
+    files.push(file);
+  }
+
+  Object.entries(value).forEach(([key, childValue]) => {
+    collectGeneratedFiles(childValue, files, seen, `${path}.${key}`);
+  });
+
+  return files;
+}
+
 /**
  * Results - Render streaming or historical outputs with auto-scroll.
  */
@@ -111,6 +260,7 @@ const Results: React.FC<ResultsProps> = ({
   const { locale } = useLocale();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [copied, setCopied] = useState<boolean>(false);
+  const [previewFile, setPreviewFile] = useState<GeneratedFileOutput | null>(null);
 
   const displayText = useCallback(
     (value: string): string =>
@@ -132,6 +282,11 @@ const Results: React.FC<ResultsProps> = ({
     if (historyResult?.kind !== 'json') return null;
     return getFlatOutputFields(historyResult.value, locale);
   }, [historyResult, locale]);
+
+  const generatedFiles = useMemo<GeneratedFileOutput[]>(() => {
+    if (historyResult?.kind !== 'json') return [];
+    return collectGeneratedFiles(historyResult.value);
+  }, [historyResult]);
 
   // Determine content text to copy from current mode
   const copyText = useMemo<string>(() => {
@@ -192,33 +347,102 @@ const Results: React.FC<ResultsProps> = ({
     el.scrollTop = el.scrollHeight;
   }, [mode, streamedText]);
 
+  const renderGeneratedFiles = (files: GeneratedFileOutput[]) => {
+    if (files.length === 0) return null;
+
+    const generatedFileLabel = locale.startsWith('zh') ? '生成文件' : 'Generated files';
+    const downloadLabel = locale.startsWith('zh') ? '下载' : 'Download';
+    const downloadOnlyLabel = locale.startsWith('zh')
+      ? '外部链接仅支持下载'
+      : 'External links can be downloaded only';
+
+    return (
+      <div className="mb-3 space-y-2">
+        <div className="text-xs font-medium text-muted-foreground">{generatedFileLabel}</div>
+        {files.map(file => (
+          <div
+            key={file.key}
+            className="flex min-w-0 items-center gap-3 rounded-md border border-border/50 bg-background px-3 py-2"
+            title={file.filename}
+          >
+            <div className="flex size-9 shrink-0 items-center justify-center rounded-md bg-muted">
+              <FileIcon filename={file.filename} extension={file.extension} size="sm" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-medium text-foreground">{file.filename}</div>
+              <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                {file.extension ? <span>.{file.extension}</span> : null}
+                {file.size ? <span>{formatFileSize(file.size)}</span> : null}
+                {!file.previewUrl ? <span>{downloadOnlyLabel}</span> : null}
+              </div>
+            </div>
+            {file.previewUrl ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                aria-label={`${locale.startsWith('zh') ? '预览' : 'Preview'} ${file.filename}`}
+                title={`${locale.startsWith('zh') ? '预览' : 'Preview'} ${file.filename}`}
+                onClick={() => setPreviewFile(file)}
+              >
+                <Eye className="h-4 w-4" />
+                <span>{locale.startsWith('zh') ? '预览' : 'Preview'}</span>
+              </Button>
+            ) : null}
+            <Button
+              asChild
+              type="button"
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              aria-label={`${downloadLabel} ${file.filename}`}
+              title={`${downloadLabel} ${file.filename}`}
+            >
+              <a href={file.downloadUrl} download={file.filename}>
+                <Download className="h-4 w-4" />
+                <span>{downloadLabel}</span>
+              </a>
+            </Button>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   const renderJsonResult = (value: unknown) => {
     const fields = getFlatOutputFields(value, locale);
 
     if (fields) {
       return (
-        <div className="space-y-2">
-          {fields.map(field => (
-            <div
-              key={field.key}
-              className="rounded-md border border-border/50 bg-background px-3 py-2"
-            >
-              <div className="text-xs font-medium text-muted-foreground">{field.label}</div>
-              <div className="mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground">
-                {displayText(field.value)}
+        <>
+          {renderGeneratedFiles(generatedFiles)}
+          <div className="space-y-2">
+            {fields.map(field => (
+              <div
+                key={field.key}
+                className="rounded-md border border-border/50 bg-background px-3 py-2"
+              >
+                <div className="text-xs font-medium text-muted-foreground">{field.label}</div>
+                <div className="mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground">
+                  {displayText(field.value)}
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        </>
       );
     }
 
     return (
-      <JsonView
-        value={(value as unknown) ?? {}}
-        style={lightTheme}
-        className="rounded-lg overflow-auto bg-muted/20 p-3 border border-border/40 font-mono text-sm leading-relaxed"
-      />
+      <>
+        {renderGeneratedFiles(generatedFiles)}
+        <JsonView
+          value={(value as unknown) ?? {}}
+          style={lightTheme}
+          className="rounded-lg overflow-auto bg-muted/20 p-3 border border-border/40 font-mono text-sm leading-relaxed"
+        />
+      </>
     );
   };
 
@@ -281,6 +505,25 @@ const Results: React.FC<ResultsProps> = ({
           </div>
         )}
       </div>
+      <UniversalFilePreviewDialog
+        open={Boolean(previewFile)}
+        onOpenChange={open => {
+          if (!open) setPreviewFile(null);
+        }}
+        file={
+          previewFile
+            ? {
+                id: previewFile.key,
+                name: previewFile.filename,
+                extension: previewFile.extension,
+                mimeType: previewFile.mimeType,
+                size: previewFile.size,
+                previewUrl: previewFile.previewUrl,
+                downloadUrl: previewFile.downloadUrl,
+              }
+            : null
+        }
+      />
     </div>
   );
 };

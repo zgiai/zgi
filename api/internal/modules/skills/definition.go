@@ -82,6 +82,13 @@ type SkillPromptMetadata struct {
 	TimeoutSeconds   int    `json:"timeout_seconds"`
 }
 
+type SkillMetadataPromptStats struct {
+	EnabledCount int
+	ExposedCount int
+	OmittedCount int
+	Truncated    bool
+}
+
 type SkillDiscoveryMetadata struct {
 	ID               string               `json:"skill_id"`
 	Source           string               `json:"source"`
@@ -117,9 +124,12 @@ type SkillTrace struct {
 	Kind       string                 `json:"kind"`
 	SkillID    string                 `json:"skill_id,omitempty"`
 	ToolName   string                 `json:"tool_name,omitempty"`
+	Title      string                 `json:"title,omitempty"`
+	Message    string                 `json:"message,omitempty"`
 	Status     string                 `json:"status"`
 	DurationMS int64                  `json:"duration_ms,omitempty"`
 	Arguments  map[string]interface{} `json:"arguments,omitempty"`
+	Result     map[string]interface{} `json:"result,omitempty"`
 	Error      string                 `json:"error,omitempty"`
 }
 

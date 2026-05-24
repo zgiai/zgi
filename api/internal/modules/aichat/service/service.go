@@ -12,6 +12,7 @@ import (
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/llm/tokenestimate"
+	"github.com/zgiai/zgi/api/internal/modules/memory"
 	"github.com/zgiai/zgi/api/internal/modules/shared/titlegen"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	redisutil "github.com/zgiai/zgi/api/pkg/redis"
@@ -29,8 +30,11 @@ const (
 
 	streamEventMessageStart         = "message_start"
 	streamEventMessage              = "message"
+	streamEventMessageRetract       = "message_retract"
 	streamEventMessageEnd           = "message_end"
 	streamEventError                = "error"
+	streamEventAgentProgress        = "agent_progress"
+	streamEventIntermediateAnswer   = "agent_intermediate_answer"
 	streamEventFileParseStart       = "file_parse_start"
 	streamEventFileParseEnd         = "file_parse_end"
 	streamEventFileParseError       = "file_parse_error"
@@ -45,6 +49,8 @@ const (
 	skillModeDisabled = "disabled"
 	skillModeAuto     = "auto"
 	skillModeRequired = "required"
+
+	userMemoryContextBudgetChars = 4000
 )
 
 var defaultSystemSkillIDs = []string{
@@ -78,13 +84,17 @@ type Service interface {
 	GetSkillConfig(ctx context.Context, scope Scope) (*SkillConfig, error)
 	UpdateSkillConfig(ctx context.Context, scope Scope, req aichatdto.UpdateSkillConfigRequest) (*SkillConfig, error)
 	PreviewImportCustomSkill(ctx context.Context, scope Scope, fileHeader *multipart.FileHeader) (*SkillImportPreview, error)
-	ConfirmCustomSkillImport(ctx context.Context, scope Scope, importID string) (*skills.SkillDiscoveryMetadata, error)
-	ImportCustomSkill(ctx context.Context, scope Scope, fileHeader *multipart.FileHeader) (*skills.SkillDiscoveryMetadata, error)
+	ConfirmCustomSkillImport(ctx context.Context, scope Scope, importID string, overwriteConfirmed bool) (*skills.SkillDiscoveryMetadata, error)
 	CancelCustomSkillImportPreview(ctx context.Context, scope Scope, importID string) error
 	DeleteSkill(ctx context.Context, scope Scope, skillID string) error
 	CleanupStaleActiveMessages(ctx context.Context) (int64, error)
 	CleanupExpiredCustomSkillImportPreviews(ctx context.Context) error
 	MigrateWebAppConversation(ctx context.Context, scope Scope, sourceConversationID uuid.UUID) (*aichatmodel.Conversation, error)
+}
+
+type UserMemoryService interface {
+	IsEnabled(ctx context.Context, accountID uuid.UUID) (bool, error)
+	RenderContext(ctx context.Context, accountID uuid.UUID, budget int) (string, error)
 }
 
 type service struct {
@@ -99,6 +109,7 @@ type service struct {
 	contentExtractor   ContentExtractionService
 	workspacePerms     WorkspacePermissionService
 	skillRuntime       *skills.Runtime
+	memoryService      UserMemoryService
 	customSkillStorage customSkillStorage
 }
 
@@ -128,7 +139,7 @@ func NewServiceWithDependencies(
 	contentExtractor ContentExtractionService,
 	workspacePerms WorkspacePermissionService,
 ) Service {
-	return NewServiceWithSkillRuntime(repos, llmClient, titleGen, modelSpecResolver, fileService, contentExtractor, workspacePerms, nil)
+	return NewServiceWithSkillRuntime(repos, llmClient, titleGen, modelSpecResolver, fileService, contentExtractor, workspacePerms, nil, nil)
 }
 
 func NewServiceWithSkillRuntime(
@@ -140,6 +151,7 @@ func NewServiceWithSkillRuntime(
 	contentExtractor ContentExtractionService,
 	workspacePerms WorkspacePermissionService,
 	skillRuntime *skills.Runtime,
+	memoryService UserMemoryService,
 ) Service {
 	return &service{
 		repos:              repos,
@@ -153,6 +165,7 @@ func NewServiceWithSkillRuntime(
 		contentExtractor:   contentExtractor,
 		workspacePerms:     workspacePerms,
 		skillRuntime:       skillRuntime,
+		memoryService:      memoryService,
 		customSkillStorage: newFilesystemCustomSkillStorage(customSkillStorageRoot),
 	}
 }
@@ -191,6 +204,8 @@ type SkillImportPreview struct {
 	ImportID         string
 	ExpiresAt        time.Time
 	Skill            *skills.SkillDiscoveryMetadata
+	WillOverwrite    bool
+	ExistingSkill    *ExistingSkill
 	FileCount        int
 	TotalSize        int64
 	Files            []SkillImportPreviewFile
@@ -200,6 +215,12 @@ type SkillImportPreview struct {
 	Warnings         []string
 	ValidationErrors []string
 	CanImport        bool
+}
+
+type ExistingSkill struct {
+	SkillID   string
+	Name      string
+	UpdatedAt time.Time
 }
 
 type chatRequestParts struct {
@@ -213,7 +234,12 @@ type chatRequestParts struct {
 	ModelSupportsVision          bool
 	FunctionCallingKnown         bool
 	ModelSupportsFunctionCalling bool
+	UseMemory                    bool
 	SkillIDs                     []string
 	ToolSkillIDs                 []string
 	SkillMode                    string
+}
+
+func userMemorySkillID() string {
+	return memory.SkillID
 }

@@ -1,6 +1,8 @@
 'use client';
 
 import { Check, ChevronLeft, ChevronRight, Copy, Pencil, RotateCcw, X } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
@@ -32,6 +34,59 @@ interface AssistantMessageToolbarProps {
   onSwitchBranch?: (messageId: string) => void;
 }
 
+interface CopyActionButtonProps {
+  text: string;
+  title: string;
+}
+
+function CopyActionButton({ text, title }: CopyActionButtonProps) {
+  const commonT = useT('common');
+  const [copied, setCopied] = useState(false);
+  const resetTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (resetTimerRef.current !== null) {
+        window.clearTimeout(resetTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      toast.success(commonT('toasts.copySuccess'));
+      if (resetTimerRef.current !== null) {
+        window.clearTimeout(resetTimerRef.current);
+      }
+      resetTimerRef.current = window.setTimeout(() => {
+        setCopied(false);
+        resetTimerRef.current = null;
+      }, 1200);
+    } catch {
+      toast.error(commonT('toasts.copyFailed'));
+    }
+  }, [commonT, text]);
+
+  return (
+    <Button
+      variant="ghost"
+      isIcon
+      size="xs"
+      className="size-6 text-muted-foreground"
+      onClick={handleCopy}
+      title={title}
+    >
+      {copied ? (
+        <Check className="size-3.5 text-success" />
+      ) : (
+        <Copy className="size-3.5" />
+      )}
+    </Button>
+  );
+}
+
 /**
  * @component UserMessageToolbar
  * @category Feature
@@ -59,16 +114,7 @@ export function UserMessageToolbar({
         toolbarVisibility
       )}
     >
-      <Button
-        variant="ghost"
-        isIcon
-        size="xs"
-        className="size-6 text-muted-foreground"
-        onClick={() => navigator.clipboard?.writeText(query)}
-        title={t('chat.copy')}
-      >
-        <Copy className="size-3.5" />
-      </Button>
+      <CopyActionButton text={query} title={t('chat.copy')} />
       {canEdit ? (
         <Button
           variant="ghost"
@@ -183,16 +229,7 @@ export function AssistantMessageToolbar({
       ) : null}
       <div className={cn('flex items-center gap-1 transition-opacity', toolbarVisibility)}>
         {answer ? (
-          <Button
-            variant="ghost"
-            isIcon
-            size="xs"
-            className="size-6 text-muted-foreground"
-            onClick={() => navigator.clipboard?.writeText(answer)}
-            title={t('chat.copy')}
-          >
-            <Copy className="size-3.5" />
-          </Button>
+          <CopyActionButton text={answer} title={t('chat.copy')} />
         ) : null}
         {canRegenerate ? (
           <Button

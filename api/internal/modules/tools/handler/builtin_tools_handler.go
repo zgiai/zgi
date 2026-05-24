@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/zgiai/zgi/api/internal/modules/memory"
 	pluginmodel "github.com/zgiai/zgi/api/internal/modules/pluginrunner/model"
 	"github.com/zgiai/zgi/api/internal/modules/pluginrunner/service"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
@@ -113,6 +114,9 @@ func (h *BuiltinToolsHandler) ListBuiltinProviders(c *gin.Context) {
 	providers := h.toolManager.ListProviders(tools.ToolProviderTypeBuiltin)
 	for _, provider := range providers {
 		entity := provider.GetEntity()
+		if isHiddenBuiltinProvider(entity) {
+			continue
+		}
 		providerResp := h.convertProviderEntityToResponse(entity)
 		responses = append(responses, providerResp)
 	}
@@ -181,6 +185,10 @@ func (h *BuiltinToolsHandler) GetBuiltinProvider(c *gin.Context) {
 	provider, err := h.toolManager.GetProvider(c.Request.Context(), tools.ToolProviderTypeBuiltin, providerName, "")
 	if err == nil {
 		entity := provider.GetEntity()
+		if isHiddenBuiltinProvider(entity) {
+			response.Fail(c, response.ErrNotFound)
+			return
+		}
 		providerResp := h.convertProviderEntityToResponse(entity)
 		logger.Info("Successfully retrieved builtin provider", "provider", providerName, "type", "builtin")
 		response.Success(c, providerResp)
@@ -227,6 +235,15 @@ func (h *BuiltinToolsHandler) GetBuiltinProvider(c *gin.Context) {
 	// 3. Not found in either source
 	logger.Warn("Provider not found", "provider", providerName)
 	response.Fail(c, response.ErrNotFound)
+}
+
+func isHiddenBuiltinProvider(entity tools.ToolProviderEntity) bool {
+	for _, tag := range entity.Identity.Tags {
+		if tag == memory.HiddenProviderTag {
+			return true
+		}
+	}
+	return false
 }
 
 // convertProviderEntityToResponse converts ToolProviderEntity to API response format

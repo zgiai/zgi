@@ -16,6 +16,7 @@ import {
   CalendarDays,
   HardDrive,
   Link2,
+  MoveRight,
 } from 'lucide-react';
 import { useT } from '@/i18n';
 import { toast } from 'sonner';
@@ -47,6 +48,8 @@ import { Badge } from '@/components/ui/badge';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { FilePreviewDialog } from './file-preview-dialog';
 import { isOriginalPreviewSupported } from '@/utils/file-helpers';
+import { useOrganizations } from '@/hooks/organization/use-organizations';
+import { WorkspaceAssetMoveDialog } from '@/components/common/workspace-asset-move-dialog';
 export interface FileListProps {
   files: FileItem[];
   maxCount?: number;
@@ -138,13 +141,16 @@ function FileListBase({
   const { downloadFile, isDownloading } = useDownloadFile();
   const { deleteFiles, isDeleting } = useDeleteFiles();
   const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
+  const [workspaceMoveFile, setWorkspaceMoveFile] = useState<FileItem | null>(null);
+  const { currentOrganization } = useOrganizations();
 
   // Permission checks
   const { hasPermission } = useAccountPermissions();
   const canDownload = hasPermission('file.download');
   const canManage = hasPermission('file.manage');
   const canUpload = hasPermission('file.upload_create');
-  const hasAnyAction = canDownload || canManage;
+  const canMoveAssets = ['owner', 'admin'].includes(currentOrganization?.organization_role ?? '');
+  const hasAnyAction = canDownload || canManage || canMoveAssets;
   const emptyDescription = mobileEmptyDescription
     ? mobileEmptyDescription
     : canUpload
@@ -753,6 +759,17 @@ function FileListBase({
                             {t('actions.delete')}
                           </DropdownMenuItem>
                         )}
+                        {canMoveAssets && !selectionMode && (
+                          <DropdownMenuItem
+                            onClick={e => {
+                              e.stopPropagation();
+                              setWorkspaceMoveFile(file);
+                            }}
+                          >
+                            <MoveRight className="h-4 w-4 mr-2" />
+                            {common('assetMove.title')}
+                          </DropdownMenuItem>
+                        )}
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </TableCell>
@@ -793,6 +810,15 @@ function FileListBase({
           void handleDownload(file);
         }}
         isDownloading={isDownloading}
+      />
+      <WorkspaceAssetMoveDialog
+        open={Boolean(workspaceMoveFile)}
+        onOpenChange={open => {
+          if (!open) setWorkspaceMoveFile(null);
+        }}
+        assetType="file"
+        assetId={workspaceMoveFile?.id ?? ''}
+        assetName={workspaceMoveFile?.name}
       />
     </div>
   );

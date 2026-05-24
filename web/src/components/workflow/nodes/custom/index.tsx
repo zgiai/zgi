@@ -7,7 +7,8 @@ import NodeCard from './node-card';
 import { NODE_THEMES, type NodeTheme } from './config';
 import { NODE_CONFIG } from './config';
 import { useWorkflowStore } from '../../store/store';
-import WorkflowRunNodesList from '../../ui/workflow-run-nodes-list';
+import NodeRuntimeLogDetails from './node-runtime-log-details';
+import { AlertCircle, TriangleAlert } from 'lucide-react';
 
 // Import content-only components per node type
 import StartContent from '../start';
@@ -101,9 +102,19 @@ const CustomNode: React.FC<CustomNodeProps> = ({ id, data, selected }) => {
   const runtimeLogItems =
     useWorkflowStore(state => state.runtimeLogItemsByNodeId[id as string]) ??
     EMPTY_RUNTIME_LOG_ITEMS;
+  const runtimeLogPopoverOpen = useWorkflowStore(
+    state => state.runtimeLogPopoverOpenByNodeId[id as string] ?? false
+  );
+  const setRuntimeLogPopoverOpen = useWorkflowStore.use.setRuntimeLogPopoverOpen();
   const updateNodeInternals = useUpdateNodeInternals();
   // Use cached runnableSets from store with granular selector
   const isComment = useWorkflowStore(state => state.runnableSets.commentSet.has(id as string));
+  const hasValidationErrors = useWorkflowStore(
+    state => (state.validationResults.errorMap.get(id as string)?.length ?? 0) > 0
+  );
+  const hasValidationWarnings = useWorkflowStore(
+    state => (state.validationResults.warningMap.get(id as string)?.length ?? 0) > 0
+  );
 
   // Recompute handle anchors for dynamic branches of if-else
   const isIfElse = data?.type === 'if-else';
@@ -368,6 +379,15 @@ const CustomNode: React.FC<CustomNodeProps> = ({ id, data, selected }) => {
   const setHoveredNodeId = useWorkflowStore.use.setHoveredNodeId();
 
   // No longer need to compute isComment here as it is selected above
+  const validationBadge = hasValidationErrors ? (
+    <div className="absolute -top-2 -right-2 z-20 flex h-5 w-5 items-center justify-center rounded-full border border-red-200 bg-red-50 text-red-600 shadow-sm dark:border-red-900/60 dark:bg-red-950 dark:text-red-300">
+      <AlertCircle className="h-3.5 w-3.5" strokeWidth={2.5} />
+    </div>
+  ) : hasValidationWarnings ? (
+    <div className="absolute -top-2 -right-2 z-20 flex h-5 w-5 items-center justify-center rounded-full border border-amber-200 bg-amber-50 text-amber-600 shadow-sm dark:border-amber-900/60 dark:bg-amber-950 dark:text-amber-300">
+      <TriangleAlert className="h-3.5 w-3.5" strokeWidth={2.5} />
+    </div>
+  ) : null;
 
   return (
     <>
@@ -394,7 +414,14 @@ const CustomNode: React.FC<CustomNodeProps> = ({ id, data, selected }) => {
                   return { text, className: theme.classNames.badge };
                 })()
           }
-          cardClassName={cn(theme.classNames.card, theme.resizable && 'h-full flex flex-col')}
+          cardClassName={cn(
+            theme.classNames.card,
+            hasValidationErrors && 'border-red-300/80 dark:border-red-800/80',
+            !hasValidationErrors &&
+              hasValidationWarnings &&
+              'border-amber-300/80 dark:border-amber-800/80',
+            theme.resizable && 'h-full flex flex-col'
+          )}
           className={cn(
             theme.classNames.wrapper,
             theme.resizable && 'h-full',
@@ -413,23 +440,26 @@ const CustomNode: React.FC<CustomNodeProps> = ({ id, data, selected }) => {
           iconClassName={cn(status === 'paused' && 'text-white')}
           descClassName={cn(theme.classNames.desc)}
           contentClassName={cn(theme.classNames.content, theme.resizable && 'grow')}
-          after={handles}
+          after={
+            <>
+              {handles}
+              {validationBadge}
+            </>
+          }
+          runtimeFooter={
+            runtimeLogItems.length > 0 ? (
+              <NodeRuntimeLogDetails
+                nodeId={id as string}
+                items={runtimeLogItems}
+                open={runtimeLogPopoverOpen}
+                onOpenChange={open => setRuntimeLogPopoverOpen(id as string, open)}
+              />
+            ) : null
+          }
           showResizeHandle={theme.resizable}
         >
           {renderContent()}
         </NodeCard>
-        {runtimeLogItems.length > 0 ? (
-          <div
-            data-workflow-runtime-log="true"
-            className="nodrag nowheel mt-2 w-[280px]"
-            onClick={event => event.stopPropagation()}
-            onDoubleClick={event => event.stopPropagation()}
-            onMouseDown={event => event.stopPropagation()}
-            onPointerDown={event => event.stopPropagation()}
-          >
-            <WorkflowRunNodesList items={runtimeLogItems} showDetail={false} variant="canvas" />
-          </div>
-        ) : null}
       </div>
     </>
   );

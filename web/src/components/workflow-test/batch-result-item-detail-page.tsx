@@ -141,7 +141,15 @@ function formatJudgeScore(value: number) {
   return `${Number.isInteger(score) ? score.toFixed(0) : score.toFixed(1)} / 5`;
 }
 
-function extractExecutionNodes(outputs: Record<string, unknown>) {
+type ExecutionNodeSnapshot = {
+  id: string;
+  status: string;
+  error: string;
+  startTime: string;
+  endTime: string;
+};
+
+function extractExecutionNodes(outputs: Record<string, unknown>): ExecutionNodeSnapshot[] {
   const nodeResults = outputs?.node_results;
   if (!nodeResults || typeof nodeResults !== 'object') {
     return [];
@@ -156,8 +164,7 @@ function extractExecutionNodes(outputs: Record<string, unknown>) {
         startTime: typeof value.startTime === 'string' ? value.startTime : '',
         endTime: typeof value.endTime === 'string' ? value.endTime : '',
       };
-    })
-    .sort((a, b) => a.startTime.localeCompare(b.startTime));
+    });
 }
 
 type WorkflowDraftNodeMeta = {
@@ -192,6 +199,95 @@ function buildWorkflowDraftNodeMetaMap(draft: { graph?: { nodes?: unknown[] } } 
     });
   });
   return result;
+}
+
+function buildWorkflowDraftNodeOrderMap(draft: { graph?: { nodes?: unknown[] } } | undefined) {
+  const nodes = draft?.graph?.nodes;
+  const result = new Map<string, number>();
+  if (!Array.isArray(nodes)) {
+    return result;
+  }
+  nodes.forEach((node, index) => {
+    if (!node || typeof node !== 'object') return;
+    const idValue = (node as { id?: unknown }).id;
+    if (typeof idValue !== 'string' || !idValue) return;
+    result.set(idValue, index);
+  });
+  return result;
+}
+
+function getNodeId(node: unknown) {
+  if (!node || typeof node !== 'object') return '';
+  const idValue = (node as { id?: unknown }).id;
+  return typeof idValue === 'string' ? idValue : '';
+}
+
+function getEdgeEndpoint(edge: unknown, key: 'source' | 'target') {
+  if (!edge || typeof edge !== 'object') return '';
+  const value = (edge as Record<string, unknown>)[key];
+  return typeof value === 'string' ? value : '';
+}
+
+function buildWorkflowDraftTraversalOrderMap(draft: { graph?: { nodes?: unknown[]; edges?: unknown[] } } | undefined) {
+  const nodes = draft?.graph?.nodes;
+  const edges = draft?.graph?.edges;
+  const result = new Map<string, number>();
+  if (!Array.isArray(nodes) || !Array.isArray(edges) || nodes.length === 0) {
+    return result;
+  }
+
+  const nodeIds = new Set(nodes.map(getNodeId).filter(Boolean));
+  const adjacency = new Map<string, string[]>();
+  edges.forEach(edge => {
+    const source = getEdgeEndpoint(edge, 'source');
+    const target = getEdgeEndpoint(edge, 'target');
+    if (!source || !target || !nodeIds.has(source) || !nodeIds.has(target)) return;
+    const next = adjacency.get(source) || [];
+    next.push(target);
+    adjacency.set(source, next);
+  });
+
+  const startNode = nodes.find(node => getNodeDataString(node, 'type') === 'start') || nodes[0];
+  const startNodeId = getNodeId(startNode);
+  const queue = startNodeId ? [startNodeId] : [];
+  const visited = new Set<string>();
+
+  while (queue.length > 0) {
+    const id = queue.shift();
+    if (!id || visited.has(id)) continue;
+    visited.add(id);
+    result.set(id, result.size);
+    const targets = adjacency.get(id) || [];
+    targets.forEach(target => {
+      if (!visited.has(target)) {
+        queue.push(target);
+      }
+    });
+  }
+
+  nodes.forEach(node => {
+    const id = getNodeId(node);
+    if (id && !result.has(id)) {
+      result.set(id, result.size);
+    }
+  });
+  return result;
+}
+
+function sortExecutionNodesByWorkflowOrder(
+  executionNodes: ExecutionNodeSnapshot[],
+  nodeOrderById: Map<string, number>
+) {
+  return [...executionNodes].sort((a, b) => {
+    const aOrder = nodeOrderById.get(a.id);
+    const bOrder = nodeOrderById.get(b.id);
+    if (aOrder !== undefined && bOrder !== undefined) {
+      return aOrder - bOrder;
+    }
+    if (aOrder !== undefined) return -1;
+    if (bOrder !== undefined) return 1;
+    return a.startTime.localeCompare(b.startTime);
+  });
 }
 
 function fallbackExecutionStepMeta(nodeId: string): WorkflowDraftNodeMeta {
@@ -340,6 +436,13 @@ export function BatchResultItemDetailPage({
     () => buildWorkflowDraftNodeMetaMap(workflowDraft),
     [workflowDraft]
   );
+  const draftNodeOrderById = React.useMemo(
+    () => {
+      const traversalOrder = buildWorkflowDraftTraversalOrderMap(workflowDraft);
+      return traversalOrder.size > 0 ? traversalOrder : buildWorkflowDraftNodeOrderMap(workflowDraft);
+    },
+    [workflowDraft]
+  );
   const getScenarioName = React.useCallback(
     (item: WorkflowTestBatchItem) => {
       const scenarioId = item.case_snapshot.scenario_id;
@@ -398,7 +501,10 @@ export function BatchResultItemDetailPage({
   }
 
   const outputs = selectedItem.outputs || {};
-  const executionNodes = extractExecutionNodes(outputs);
+  const executionNodes = sortExecutionNodesByWorkflowOrder(
+    extractExecutionNodes(outputs),
+    draftNodeOrderById
+  );
   const conversationTurns = buildConversationTurnSnapshots(outputs, selectedItem);
   const judgeScore = deriveJudgeScore(selectedItem, outputs);
   const judgeScoreText = formatJudgeScore(judgeScore);

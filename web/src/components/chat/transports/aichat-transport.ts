@@ -5,6 +5,7 @@ import {
 } from '@/utils/model-output-filter';
 import type {
   AIChatChatRequest,
+  AIChatAgentProgressEventData,
   AIChatConversation,
   AIChatErrorEventData,
   AIChatFileParseEndEventData,
@@ -13,7 +14,9 @@ import type {
   AIChatMessage,
   AIChatMessageChunkEventData,
   AIChatMessageEndEventData,
+  AIChatMessageRetractEventData,
   AIChatMessageStartEventData,
+  AIChatIntermediateAnswerEventData,
   AIChatRegenerateMessageRequest,
   AIChatSkillCallEndEventData,
   AIChatSkillCallErrorEventData,
@@ -66,6 +69,11 @@ export interface AIChatMessageListResult {
 
 export interface AIChatStreamCallbacks {
   onMessageStart: (payload: AIChatMessageStartEventData, eventId?: string | null) => void;
+  onAgentProgress: (payload: AIChatAgentProgressEventData, eventId?: string | null) => void;
+  onIntermediateAnswer: (
+    payload: AIChatIntermediateAnswerEventData,
+    eventId?: string | null
+  ) => void;
   onFileParseStart: (payload: AIChatFileParseStartEventData, eventId?: string | null) => void;
   onFileParseEnd: (payload: AIChatFileParseEndEventData, eventId?: string | null) => void;
   onFileParseError: (payload: AIChatFileParseErrorEventData, eventId?: string | null) => void;
@@ -83,6 +91,10 @@ export interface AIChatStreamCallbacks {
     eventId?: string | null
   ) => void;
   onMessageChunk: (payload: AIChatMessageChunkEventData, eventId?: string | null) => void;
+  onMessageRetract: (
+    payload: AIChatMessageRetractEventData,
+    eventId?: string | null
+  ) => void;
   onMessageEnd: (payload: AIChatMessageEndEventData, eventId?: string | null) => void;
   onErrorEvent: (payload: AIChatErrorEventData, eventId?: string | null) => void;
   onRequestError: (error: Error) => void;
@@ -98,6 +110,12 @@ function dispatchAIChatStreamEvent(
   switch (event) {
     case 'message_start':
       callbacks.onMessageStart((data ?? {}) as AIChatMessageStartEventData, eventId);
+      break;
+    case 'agent_progress':
+      callbacks.onAgentProgress((data ?? {}) as AIChatAgentProgressEventData, eventId);
+      break;
+    case 'agent_intermediate_answer':
+      callbacks.onIntermediateAnswer((data ?? {}) as AIChatIntermediateAnswerEventData, eventId);
       break;
     case 'file_parse_start':
       callbacks.onFileParseStart((data ?? {}) as AIChatFileParseStartEventData, eventId);
@@ -134,6 +152,9 @@ function dispatchAIChatStreamEvent(
       break;
     case 'message':
       callbacks.onMessageChunk((data ?? {}) as AIChatMessageChunkEventData, eventId);
+      break;
+    case 'message_retract':
+      callbacks.onMessageRetract((data ?? {}) as AIChatMessageRetractEventData, eventId);
       break;
     case 'message_end':
       callbacks.onMessageEnd((data ?? {}) as AIChatMessageEndEventData, eventId);
@@ -207,7 +228,11 @@ export class AIChatTransport {
 
   async updateConversation(
     conversationId: string,
-    payload: { title?: string; status?: AIChatConversation['status'] }
+    payload: {
+      title?: string;
+      status?: AIChatConversation['status'];
+      current_leaf_message_id?: string;
+    }
   ): Promise<AIChatConversation> {
     const response = await aichatService.updateConversation(conversationId, payload);
     return response.data;

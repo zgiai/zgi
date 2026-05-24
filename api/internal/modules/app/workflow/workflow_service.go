@@ -27,6 +27,7 @@ import (
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
 	quota_model "github.com/zgiai/zgi/api/internal/modules/quota/model"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/internal/modules/shared/titlegen"
 	"github.com/zgiai/zgi/api/pkg/database"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
@@ -41,6 +42,7 @@ type WorkflowService struct {
 	accountService             interfaces.AccountService
 	advancedChatHandler        *AdvancedChatWorkflowHandler
 	workflowRunMessageLookup   workflowRunMessageLookup
+	conversationTitleGen       titlegen.Service
 	quotaService               interfaces.QuotaService
 	enterpriseService          interfaces.OrganizationService
 	// runningWorkflows stores cancel functions for running workflows, keyed by workflow run ID
@@ -195,6 +197,9 @@ func mergeRootVariablesIntoGraph(workflowMap map[string]any) (map[string]any, er
 	if convVars, exists := workflowMap["conversation_variables"]; exists {
 		graphData["conversation_variables"] = convVars
 	}
+	if features, exists := workflowMap["features"]; exists {
+		graphData["features"] = features
+	}
 
 	return graphData, nil
 }
@@ -264,6 +269,7 @@ func NewWorkflowServiceWithContentExtractor(repo WorkflowRepository, agentsRepo 
 		accountService:             accountService,
 		advancedChatHandler:        advancedChatHandler,
 		workflowRunMessageLookup:   advancedChatHandler,
+		conversationTitleGen:       newWorkflowConversationTitleGenerator(llmClient, graphFlowService),
 		quotaService:               quotaService,
 		enterpriseService:          enterpriseService,
 		runningWorkflows:           make(map[string]context.CancelFunc),
@@ -3207,6 +3213,15 @@ func (s *WorkflowService) RunWorkflowByVersionUUID(ctx context.Context, versionU
 		if err != nil {
 			logger.Error("Failed to create workflow message", err)
 			// Don't fail the entire workflow execution if message creation fails
+		} else {
+			s.enqueueWebAppConversationTitleGeneration(ctx, workflowConversationTitleParams{
+				WorkspaceID:    tenantID,
+				OrganizationID: organizationID,
+				AgentID:        agentID,
+				AccountID:      accountUUID,
+				ConversationID: conversationUUID,
+				WebAppID:       versionUUID,
+			})
 		}
 	}
 
@@ -3484,6 +3499,15 @@ func (s *WorkflowService) RunWorkflowByWebAppID(ctx context.Context, webAppID st
 		if err != nil {
 			logger.Error("Failed to create workflow message", err)
 			// Don't fail the entire workflow execution if message creation fails
+		} else {
+			s.enqueueWebAppConversationTitleGeneration(ctx, workflowConversationTitleParams{
+				WorkspaceID:    tenantID,
+				OrganizationID: organizationID,
+				AgentID:        agentID,
+				AccountID:      accountUUID,
+				ConversationID: conversationUUID,
+				WebAppID:       webAppID,
+			})
 		}
 	}
 

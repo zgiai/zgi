@@ -22,6 +22,66 @@ interface QuestionAnswerContentProps {
   data: QuestionAnswerNodeData;
 }
 
+type QuestionPreviewPart =
+  | { type: 'text'; key: string; value: string }
+  | { type: 'variable'; key: string; selector: string[] };
+
+function parseQuestionPreviewParts(value: string): QuestionPreviewPart[] {
+  const tokenRegex = /\{\{#([^.#}]+)\.([^#}]+)#\}\}/g;
+  const parts: QuestionPreviewPart[] = [];
+  let lastIndex = 0;
+  let index = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = tokenRegex.exec(value)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push({
+        type: 'text',
+        key: `text-${index++}`,
+        value: value.slice(lastIndex, match.index),
+      });
+    }
+
+    parts.push({
+      type: 'variable',
+      key: `variable-${index++}`,
+      selector: [match[1], ...match[2].split('.')],
+    });
+    lastIndex = tokenRegex.lastIndex;
+  }
+
+  if (lastIndex < value.length) {
+    parts.push({
+      type: 'text',
+      key: `text-${index}`,
+      value: value.slice(lastIndex),
+    });
+  }
+
+  return parts.length ? parts : [{ type: 'text', key: 'text-0', value }];
+}
+
+function QuestionPreview({ nodeId, value }: { nodeId: string; value: string }) {
+  const parts = React.useMemo(() => parseQuestionPreviewParts(value), [value]);
+
+  return (
+    <span className="line-clamp-2 whitespace-pre-wrap break-words leading-6">
+      {parts.map(part =>
+        part.type === 'variable' ? (
+          <ValueBadge
+            key={part.key}
+            selector={part.selector}
+            currentNodeId={nodeId}
+            className="mx-0.5 inline-flex max-w-36 align-middle rounded-md px-1.5 py-0 text-[11px] leading-5"
+          />
+        ) : (
+          <React.Fragment key={part.key}>{part.value}</React.Fragment>
+        )
+      )}
+    </span>
+  );
+}
+
 function SummaryRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="grid grid-cols-[64px_minmax(0,1fr)] items-start gap-2 text-xs">
@@ -65,12 +125,18 @@ export default function QuestionAnswerContent({ nodeId, data }: QuestionAnswerCo
 
   return (
     <div className="space-y-2">
-      <OutputVariablesView variant="compact" variables={outputVariables} maxItems={3} />
+      <OutputVariablesView
+        variant="compact"
+        variables={outputVariables}
+        maxItems={3}
+        showCount={false}
+        expandHiddenItems
+      />
 
       <div className="space-y-1.5">
         <SummaryRow label={t('questionAnswer.canvas.question')}>
           {normalized.question.trim() ? (
-            <span className="line-clamp-2 break-words">{normalized.question}</span>
+            <QuestionPreview nodeId={nodeId} value={normalized.question} />
           ) : (
             <span className="text-muted-foreground">
               {t('questionAnswer.canvas.emptyQuestion')}

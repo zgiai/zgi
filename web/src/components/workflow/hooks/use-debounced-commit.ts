@@ -61,12 +61,11 @@ export function useDebouncedCommit<T>(initialValue: T, options: UseDebouncedComm
   }, [isEqual]);
 
   const setNextValue = useCallback((nextValue: T | ((prev: T) => T)) => {
-    setValue(prev => {
-      const next =
-        typeof nextValue === 'function' ? (nextValue as (current: T) => T)(prev) : nextValue;
-      latestValueRef.current = next;
-      return next;
-    });
+    const current = latestValueRef.current;
+    const next =
+      typeof nextValue === 'function' ? (nextValue as (value: T) => T)(current) : nextValue;
+    latestValueRef.current = next;
+    setValue(next);
   }, []);
 
   const valuesEqual = useCallback(

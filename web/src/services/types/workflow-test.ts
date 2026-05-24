@@ -136,6 +136,10 @@ export interface UpdateWorkflowTestCaseRequest {
   turns?: WorkflowTestTurn[];
 }
 
+export interface DeleteWorkflowTestCasesRequest {
+  case_ids: string[];
+}
+
 export interface CreateWorkflowTestBatchRequest {
   name: string;
   case_ids?: string[];

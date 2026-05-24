@@ -16,8 +16,8 @@ import { Input, PasswordInput } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Icons } from '@/components/ui/icons';
-import { useFinishRegister } from '@/hooks';
+import { CheckCircle, Loader2 } from 'lucide-react';
+import { useFinishRegister } from '@/hooks/auth/use-finish-register';
 
 interface CompleteRegistrationFormProps {
   className?: string;
@@ -151,7 +151,7 @@ export function CompleteRegistrationForm({ className }: CompleteRegistrationForm
           {/* Success Message */}
           {isSuccess ? (
             <Alert>
-              <Icons.CheckCircle className="h-4 w-4" />
+              <CheckCircle className="h-4 w-4" />
               <AlertDescription>{tAuth('accountCreatedSuccess')}</AlertDescription>
             </Alert>
           ) : (
@@ -270,7 +270,7 @@ export function CompleteRegistrationForm({ className }: CompleteRegistrationForm
 
                 {/* Submit Button */}
                 <Button type="submit" className="w-full" disabled={isFormLoading}>
-                  {isFormLoading && <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />}
+                  {isFormLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                   {tAuth('completeRegistrationBtn')}
                 </Button>
               </form>

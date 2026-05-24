@@ -6,6 +6,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/translations';
 import type { ConversationSummary } from '@/components/chat/controllers/types';
@@ -65,6 +71,7 @@ export function Sidebar({
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [editingTitle, setEditingTitle] = React.useState('');
   const [renamingId, setRenamingId] = React.useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = React.useState<ConversationSummary | null>(null);
 
   const startEditing = React.useCallback((conversation: ConversationSummary) => {
     setEditingId(conversation.id);
@@ -95,6 +102,16 @@ export function Sidebar({
     },
     [cancelEditing, editingTitle, onRename]
   );
+  const requestDelete = React.useCallback((conversation: ConversationSummary) => {
+    setDeleteTarget(conversation);
+  }, []);
+
+  const confirmDelete = React.useCallback(() => {
+    if (!deleteTarget) return;
+    onDelete(deleteTarget.id);
+    setDeleteTarget(null);
+  }, [deleteTarget, onDelete]);
+
   const backgroundStyle = getSidebarBackgroundStyle(backgroundImage);
 
   return (
@@ -153,115 +170,160 @@ export function Sidebar({
               const isRenaming = renamingId === conv.id;
 
               return (
-                <div
-                  key={conv.id}
-                  onClick={() => {
-                    if (!isEditing) {
-                      onSelect(conv.id);
-                    }
-                  }}
-                  className={cn(
-                    'group flex items-center justify-between p-2 rounded-md text-sm cursor-pointer hover:bg-muted transition-colors',
-                    activeId === conv.id && 'bg-muted font-medium'
-                  )}
-                >
-                  <div className="flex items-center w-full gap-2 overflow-hidden">
-                    {isRunning ? (
-                      <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
-                    ) : (
-                      <History className="h-4 w-4 shrink-0 text-muted-foreground" />
-                    )}
-                    {isEditing ? (
-                      <form
-                        className="flex min-w-0 grow items-center gap-1"
-                        onClick={event => event.stopPropagation()}
-                        onSubmit={event => {
-                          event.preventDefault();
-                          void submitEditing(conv);
-                        }}
-                      >
-                        <Input
-                          value={editingTitle}
-                          onChange={event => setEditingTitle(event.target.value)}
-                          onKeyDown={event => {
-                            if (event.key === 'Escape') {
+                <ContextMenu key={conv.id}>
+                  <ContextMenuTrigger asChild>
+                    <div
+                      onClick={() => {
+                        if (!isEditing) {
+                          onSelect(conv.id);
+                        }
+                      }}
+                      onDoubleClick={event => {
+                        if (!onRename || isEditing) return;
+                        event.preventDefault();
+                        event.stopPropagation();
+                        startEditing(conv);
+                      }}
+                      className={cn(
+                        'group flex items-center justify-between p-2 rounded-md text-sm cursor-pointer hover:bg-muted transition-colors',
+                        activeId === conv.id && 'bg-muted font-medium'
+                      )}
+                    >
+                      <div className="flex items-center w-full gap-2 overflow-hidden">
+                        {isRunning ? (
+                          <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
+                        ) : (
+                          <History className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        )}
+                        {isEditing ? (
+                          <form
+                            className="flex min-w-0 grow items-center gap-1"
+                            onClick={event => event.stopPropagation()}
+                            onSubmit={event => {
                               event.preventDefault();
-                              cancelEditing();
-                            }
-                          }}
-                          className="h-7 min-w-0 grow rounded-md px-2 text-xs"
-                          autoFocus
-                          disabled={isRenaming}
-                          aria-label={t('webapp.chat.renameConversation')}
-                        />
-                        <Button
-                          type="submit"
-                          variant="ghost"
-                          isIcon
-                          className="h-6 w-6 shrink-0"
-                          disabled={!editingTitle.trim() || isRenaming}
-                          aria-label={t('common.save')}
-                        >
-                          {isRenaming ? (
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                          ) : (
-                            <Check className="h-3 w-3" />
-                          )}
-                        </Button>
-                      </form>
-                    ) : (
-                      <div className="flex w-0 grow flex-col gap-0.5 overflow-hidden">
-                        <span className="truncate">
-                          {conv.title || t('webapp.chat.newConversation')}
-                        </span>
+                              void submitEditing(conv);
+                            }}
+                          >
+                            <Input
+                              value={editingTitle}
+                              onChange={event => setEditingTitle(event.target.value)}
+                              onKeyDown={event => {
+                                if (event.key === 'Escape') {
+                                  event.preventDefault();
+                                  cancelEditing();
+                                }
+                              }}
+                              className="h-7 min-w-0 grow rounded-md px-2 text-xs"
+                              autoFocus
+                              disabled={isRenaming}
+                              aria-label={t('webapp.chat.renameConversation')}
+                            />
+                            <Button
+                              type="submit"
+                              variant="ghost"
+                              isIcon
+                              className="h-6 w-6 shrink-0"
+                              disabled={!editingTitle.trim() || isRenaming}
+                              aria-label={t('common.save')}
+                            >
+                              {isRenaming ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <Check className="h-3 w-3" />
+                              )}
+                            </Button>
+                          </form>
+                        ) : (
+                          <div className="flex w-0 grow flex-col gap-0.5 overflow-hidden">
+                            <span className="truncate">
+                              {conv.title || t('webapp.chat.newConversation')}
+                            </span>
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
-                  <div className="flex shrink-0 items-center" onClick={e => e.stopPropagation()}>
-                    {onRename && !isEditing ? (
-                      <Button
-                        variant="ghost"
-                        isIcon
-                        className="h-6 w-6 sm:opacity-0 group-hover:opacity-100"
-                        onClick={event => {
-                          event.stopPropagation();
-                          startEditing(conv);
-                        }}
-                        aria-label={t('webapp.chat.renameConversation')}
+                      <div
+                        className="flex shrink-0 items-center"
+                        onClick={e => e.stopPropagation()}
                       >
-                        <Pencil className="h-3 w-3 text-muted-foreground hover:text-foreground" />
-                      </Button>
-                    ) : null}
-                    {!isEditing ? (
-                      <ConfirmDialog
-                        variant="warning"
-                        title={t('webapp.chat.deleteTitle')}
-                        description={t('webapp.chat.deleteDescription', {
-                          conversationTitle: conv.title || t('webapp.chat.newConversation'),
-                        })}
-                        confirmText={t('common.delete')}
-                        cancelText={t('common.cancel')}
-                        onConfirm={() => onDelete(conv.id)}
-                        trigger={
+                        {onRename && !isEditing ? (
                           <Button
                             variant="ghost"
                             isIcon
                             className="h-6 w-6 sm:opacity-0 group-hover:opacity-100"
-                            onClick={e => e.stopPropagation()}
-                            aria-label={t('webapp.chat.deleteTitle')}
+                            onClick={event => {
+                              event.stopPropagation();
+                              startEditing(conv);
+                            }}
+                            aria-label={t('webapp.chat.renameConversation')}
                           >
-                            <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
+                            <Pencil className="h-3 w-3 text-muted-foreground hover:text-foreground" />
                           </Button>
-                        }
-                      />
-                    ) : null}
-                  </div>
-                </div>
+                        ) : null}
+                        {!isEditing ? (
+                          <ConfirmDialog
+                            variant="warning"
+                            title={t('webapp.chat.deleteTitle')}
+                            description={t('webapp.chat.deleteDescription', {
+                              conversationTitle: conv.title || t('webapp.chat.newConversation'),
+                            })}
+                            confirmText={t('common.delete')}
+                            cancelText={t('common.cancel')}
+                            onConfirm={() => onDelete(conv.id)}
+                            trigger={
+                              <Button
+                                variant="ghost"
+                                isIcon
+                                className="h-6 w-6 sm:opacity-0 group-hover:opacity-100"
+                                onClick={e => e.stopPropagation()}
+                                aria-label={t('webapp.chat.deleteTitle')}
+                              >
+                                <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
+                              </Button>
+                            }
+                          />
+                        ) : null}
+                      </div>
+                    </div>
+                  </ContextMenuTrigger>
+                  {!isEditing ? (
+                    <ContextMenuContent alignOffset={4} className="w-40">
+                      {onRename ? (
+                        <ContextMenuItem onSelect={() => startEditing(conv)}>
+                          <Pencil className="mr-2 h-4 w-4" />
+                          {t('webapp.chat.renameConversation')}
+                        </ContextMenuItem>
+                      ) : null}
+                      <ContextMenuItem
+                        className="text-destructive focus:text-destructive"
+                        onSelect={() => requestDelete(conv)}
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        {t('webapp.chat.deleteConversation')}
+                      </ContextMenuItem>
+                    </ContextMenuContent>
+                  ) : null}
+                </ContextMenu>
               );
             })
           )}
         </div>
       </ScrollArea>
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onOpenChange={open => {
+          if (!open) {
+            setDeleteTarget(null);
+          }
+        }}
+        variant="warning"
+        title={t('webapp.chat.deleteTitle')}
+        description={t('webapp.chat.deleteDescription', {
+          conversationTitle: deleteTarget?.title || t('webapp.chat.newConversation'),
+        })}
+        confirmText={t('common.delete')}
+        cancelText={t('common.cancel')}
+        onConfirm={confirmDelete}
+      />
     </div>
   );
 }

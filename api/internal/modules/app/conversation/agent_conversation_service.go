@@ -25,6 +25,7 @@ type AgentConversationService interface {
 	GetConversationWithMessages(ctx context.Context, id uuid.UUID, messageLimit int) (*AgentConversation, error)
 	GenerateConversationName(ctx context.Context, query string) string
 	UpdateConversationWebAppID(ctx context.Context, conversationID uuid.UUID, webAppID string) error
+	UpdateConversationNameIfCurrent(ctx context.Context, conversationID uuid.UUID, currentName, nextName string) (bool, error)
 }
 
 // CreateConversationRequest represents the request to create a conversation
@@ -223,6 +224,11 @@ func (s *agentConversationService) GenerateConversationName(ctx context.Context,
 // UpdateConversationWebAppID updates the web_app_id for an existing conversation
 func (s *agentConversationService) UpdateConversationWebAppID(ctx context.Context, conversationID uuid.UUID, webAppID string) error {
 	return s.conversationRepo.UpdateWebAppID(ctx, conversationID, webAppID)
+}
+
+// UpdateConversationNameIfCurrent updates a conversation name only if nobody changed it first.
+func (s *agentConversationService) UpdateConversationNameIfCurrent(ctx context.Context, conversationID uuid.UUID, currentName, nextName string) (bool, error) {
+	return s.conversationRepo.UpdateNameIfCurrent(ctx, conversationID, currentName, nextName)
 }
 
 // Helper function to create string pointer

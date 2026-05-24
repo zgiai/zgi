@@ -20,6 +20,7 @@ import { useHistoryView } from './hooks/use-history-view';
 import { useSseCallbacks } from './hooks/use-sse-callbacks';
 import type { WorkflowFinishedData, HistoryResult } from './types';
 import useWorkflowValidation from '../../hooks/use-workflow-validation';
+import { flushWorkflowPendingEdits } from '../../hooks/pending-edits';
 import {
   Dialog,
   DialogContent,
@@ -123,6 +124,10 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
   const setNodeRunStatus = useWorkflowStore.use.setNodeRunStatus();
   const setActiveOutputHandle = useWorkflowStore.use.setActiveOutputHandle();
   const resetActiveOutputHandles = useWorkflowStore.use.resetActiveOutputHandles();
+  const beginRuntimeLogPopoverAutoOpen =
+    useWorkflowStore.use.beginRuntimeLogPopoverAutoOpen();
+  const finalizeRuntimeLogPopoversAfterRun =
+    useWorkflowStore.use.finalizeRuntimeLogPopoversAfterRun();
   const setAutoFollow = useWorkflowStore.use.setAutoFollow();
   const setRuntimeLogItems = useWorkflowStore.use.setRuntimeLogItems();
   // const isAutoFollow = useWorkflowStore.use.isAutoFollow();
@@ -220,7 +225,7 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
   const runtimeLogSignatureRef = useRef('');
 
   useEffect(() => {
-    const items = open ? (isHistory ? historyExecutionItems : runItems) : [];
+    const items = isHistory ? (open ? historyExecutionItems : []) : runItems;
     const signature = items
       .map(item => {
         let payloadSignature = '';
@@ -251,10 +256,6 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
       .join('|');
     if (runtimeLogSignatureRef.current === signature) return;
     runtimeLogSignatureRef.current = signature;
-    if (!open) {
-      setRuntimeLogItems([]);
-      return;
-    }
     setRuntimeLogItems(items);
   }, [historyExecutionItems, isHistory, open, runItems, setRuntimeLogItems]);
 
@@ -335,6 +336,8 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
     setNodeRunStatus,
     setActiveOutputHandle,
     resetActiveOutputHandles,
+    beginRuntimeLogPopoverAutoOpen,
+    finalizeRuntimeLogPopoversAfterRun,
     setAutoFollow,
     setCurrentRunningNodeId,
     lastInputs: lastInputs as unknown as Record<string, unknown> | undefined,
@@ -817,6 +820,7 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
   const { errors } = useWorkflowValidation();
 
   const persistDraftBeforeRun = useCallback(async () => {
+    flushWorkflowPendingEdits();
     const { nodes, edges, viewport, workflowData } = useWorkflowStore.getState();
     const updatedWorkflowData = {
       ...workflowData,

@@ -14,9 +14,11 @@ import { Card, CardContent, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Icons } from '@/components/ui/icons';
-import { useForgotPassword } from '@/hooks';
+import { CheckCircle } from 'lucide-react';
+import { useForgotPassword } from '@/hooks/auth/use-forgot-password';
+import { authenticationService } from '@/services/auth.service';
 import { useT } from '@/i18n';
+import { toast } from 'sonner';
 
 interface ForgotPasswordFormProps {
   className?: string;
@@ -25,6 +27,7 @@ interface ForgotPasswordFormProps {
 export function ForgotPasswordForm({ className }: ForgotPasswordFormProps) {
   const router = useRouter();
   const [isCodeSent, setIsCodeSent] = useState(false);
+  const [isCheckingEmail, setIsCheckingEmail] = useState(false);
   const t = useT().auth;
   const { locale } = useLocale();
 
@@ -37,7 +40,7 @@ export function ForgotPasswordForm({ className }: ForgotPasswordFormProps) {
 
   // Auth state
   const forgotPasswordMutation = useForgotPassword();
-  const isLoading = forgotPasswordMutation.isPending;
+  const isLoading = isCheckingEmail || forgotPasswordMutation.isPending;
 
   // Form setup
   const {
@@ -61,6 +64,24 @@ export function ForgotPasswordForm({ className }: ForgotPasswordFormProps) {
 
   // Form submission
   const onSubmit = async (data: ForgotPasswordFormData) => {
+    setIsCheckingEmail(true);
+    try {
+      const emailCheck = await authenticationService.checkEmail(data.email);
+      if (!emailCheck.is_registered) {
+        toast.error(t('errorSendingRecovery'), {
+          description: t('businessErrors.accountNotFound'),
+        });
+        return;
+      }
+    } catch (_err) {
+      toast.error(t('errorSendingRecovery'), {
+        description: t('businessErrors.emailCheckFailed'),
+      });
+      return;
+    } finally {
+      setIsCheckingEmail(false);
+    }
+
     try {
       const response = await forgotPasswordMutation.mutateAsync({
         email: data.email,
@@ -73,7 +94,7 @@ export function ForgotPasswordForm({ className }: ForgotPasswordFormProps) {
         );
       }
     } catch (_err) {
-      // Error is handled by the store
+      // Error is handled by the mutation hook.
     }
   };
 
@@ -91,7 +112,7 @@ export function ForgotPasswordForm({ className }: ForgotPasswordFormProps) {
           {/* Success Alert */}
           {isCodeSent && (
             <Alert className="bg-success/5 border-success/20 text-success animate-in fade-in zoom-in-95 duration-500">
-              <Icons.CheckCircle className="h-4 w-4" />
+              <CheckCircle className="h-4 w-4" />
               <AlertDescription>{t('codeSentToEmail')}</AlertDescription>
             </Alert>
           )}

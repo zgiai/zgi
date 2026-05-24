@@ -9,7 +9,9 @@ import type {
   GetAllFilesRequest,
   RelatedResourcesResponse,
   StorageUsage,
+  FileFolder,
   FileFoldersResponse,
+  FileMetadataResponse,
   UploadFileRequest,
   UploadFileResponse,
   CreateFolderRequest,
@@ -91,6 +93,11 @@ class FileManageService extends BaseService {
     return this.request('get', `/console/api/files/${fileId}/preview-url`);
   }
 
+  async getFilesMetadata(fileIds: string[]): Promise<ApiResponseData<FileMetadataResponse>> {
+    const params = fileIds.map(id => `file_ids=${encodeURIComponent(id)}`).join('&');
+    return this.request('get', `/console/api/files/metadata?${params}`);
+  }
+
   /**
    * Delete files by IDs
    */
@@ -105,6 +112,13 @@ class FileManageService extends BaseService {
   async getFileFolders(workspaceId?: string): Promise<ApiResponseData<FileFoldersResponse>> {
     const params = workspaceId ? { workspace_id: workspaceId } : {};
     return this.request('get', '/console/api/file-folders', undefined, { params });
+  }
+
+  /**
+   * Get a file folder by ID
+   */
+  async getFileFolder(folderId: string): Promise<ApiResponseData<FileFolder>> {
+    return this.request('get', `/console/api/file-folders/${folderId}`);
   }
 
   /**

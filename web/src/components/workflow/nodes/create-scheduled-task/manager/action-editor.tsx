@@ -13,7 +13,10 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { useT } from '@/i18n';
 import { useAuthStore } from '@/store/auth-store';
-import { isNotificationSMSAutomationChannelEnabled } from '@/lib/features/notification-sms';
+import {
+  isNotificationSMSAutomationChannelEnabled,
+  NOTIFICATION_SMS_TEMPLATE,
+} from '@/lib/features/notification-sms';
 import { NotificationSMSEditor } from '@/components/notification-sms/notification-sms-editor';
 import type {
   CreateScheduledTaskActionData,
@@ -75,7 +78,9 @@ export function ActionEditor({
   }
 
   const actionMeta = scheduledTaskActionRegistry[action.action_type];
-  const actionOptions = scheduledTaskActionOptions.some(option => option.value === action.action_type)
+  const actionOptions = scheduledTaskActionOptions.some(
+    option => option.value === action.action_type
+  )
     ? scheduledTaskActionOptions
     : [...scheduledTaskActionOptions, actionMeta];
   const baseChannelOptions = smsEnabled
@@ -112,9 +117,10 @@ export function ActionEditor({
                 onChange({
                   ...action,
                   action_type: value as CreateScheduledTaskActionData['action_type'],
-                  channel_type: scheduledTaskActionRegistry[
-                    value as CreateScheduledTaskActionData['action_type']
-                  ].channelTypes[0],
+                  channel_type:
+                    scheduledTaskActionRegistry[
+                      value as CreateScheduledTaskActionData['action_type']
+                    ].channelTypes[0],
                 })
               }
               disabled={editorReadOnly}
@@ -196,22 +202,17 @@ export function ActionEditor({
               recipientMode="list"
               value={{
                 recipients: action.notification?.recipients ?? [''],
-                notificationTitle: action.notification?.notification_title ?? '',
-                linkCode: action.notification?.link_code ?? '',
+                template: action.notification?.template ?? NOTIFICATION_SMS_TEMPLATE,
+                templateParams: action.notification?.template_params ?? {},
               }}
               errors={{
                 recipients: errors?.recipients
                   ? t(errors.recipients.code as never, errors.recipients.params as never)
                   : undefined,
-                notificationTitle: errors?.notificationTitle
-                  ? t(
-                      errors.notificationTitle.code as never,
-                      errors.notificationTitle.params as never
-                    )
+                template: errors?.template
+                  ? t(errors.template.code as never, errors.template.params as never)
                   : undefined,
-                linkCode: errors?.linkCode
-                  ? t(errors.linkCode.code as never, errors.linkCode.params as never)
-                  : undefined,
+                templateParams: formatTemplateParamErrors(errors?.templateParams, t),
               }}
               readOnly={readOnly || !isSupportedActionType}
               onChange={next =>
@@ -220,8 +221,8 @@ export function ActionEditor({
                   notification: {
                     ...(action.notification ?? getFallbackNotificationDraft()),
                     recipients: next.recipients,
-                    notification_title: next.notificationTitle,
-                    link_code: next.linkCode,
+                    template: next.template,
+                    template_params: next.templateParams,
                   },
                 })
               }
@@ -244,10 +245,28 @@ function getFallbackNotificationDraft(): ScheduledTaskNotificationDraft {
     subject: '',
     body: '',
     body_type: 'text/html',
-    template: 'pending_action_notification',
-    notification_title: '',
-    link_code: '',
+    template: NOTIFICATION_SMS_TEMPLATE,
+    template_params: {
+      notification_title: '',
+      link_code: '',
+    },
   };
+}
+
+function formatTemplateParamErrors(
+  errors: CreateScheduledTaskActionValidationErrors['templateParams'] | undefined,
+  t: ReturnType<typeof useT<'nodes'>>
+): Record<string, string | undefined> | undefined {
+  if (!errors) {
+    return undefined;
+  }
+
+  return Object.fromEntries(
+    Object.entries(errors).map(([key, error]) => [
+      key,
+      error ? t(error.code as never, error.params as never) : undefined,
+    ])
+  );
 }
 
 export default ActionEditor;

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, type PropsWithChildren } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
-import { useSetupStatus } from '@/hooks';
+import { useSetupStatus } from '@/hooks/use-setup';
 import { LanguageSwitcher } from '@/components/common/language-switcher';
 import {
   APP_NAME,
@@ -23,8 +23,9 @@ import { useLocale } from 'next-intl';
 import { cn } from '@/lib/utils';
 import { Logo } from '@/components/logo';
 import { useT } from '@/i18n';
-import { Icons } from '@/components/ui/icons';
+import { Loader2 } from 'lucide-react';
 import { useAuthStore } from '@/store/auth-store';
+import { AuthRouteProviders } from '@/providers/auth-route-providers';
 import {
   buildSsoStartUrl,
   resolveSingleSsoRedirectTarget,
@@ -37,6 +38,14 @@ import { consumePendingLogoutRedirect } from '@/utils/logout-redirect';
  * This creates a consistent experience for login, register, password reset, etc.
  */
 export default function AuthLayout({ children }: PropsWithChildren) {
+  return (
+    <AuthRouteProviders>
+      <AuthLayoutContent>{children}</AuthLayoutContent>
+    </AuthRouteProviders>
+  );
+}
+
+function AuthLayoutContent({ children }: PropsWithChildren) {
   const router = useRouter();
   const pathname = usePathname();
   const locale = useLocale();
@@ -221,7 +230,7 @@ export default function AuthLayout({ children }: PropsWithChildren) {
             {singleSsoRedirectUrl ? (
               <div className="glass-panel rounded-3xl border bg-card/85 px-8 py-10 text-center shadow-premium">
                 <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-primary/10 text-primary">
-                  <Icons.Spinner className="size-7 animate-spin" />
+                  <Loader2 className="size-7 animate-spin" />
                 </div>
                 <p className="text-xl font-semibold">{t('signInWithSSO')}</p>
                 <p className="mt-3 text-sm text-muted-foreground">{t('ssoProcessing')}</p>

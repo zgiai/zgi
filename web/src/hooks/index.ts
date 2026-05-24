@@ -162,7 +162,6 @@ export {
 } from './automation/use-automation';
 export {
   useDeleteAIChatSkill,
-  useImportAIChatSkill,
   useAIChatSkill,
   useAIChatSkillConfig,
   useAIChatSkills,

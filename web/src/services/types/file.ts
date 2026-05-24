@@ -33,6 +33,10 @@ export interface AllFilesResponse {
   has_more: boolean;
 }
 
+export interface FileMetadataResponse {
+  data: FileItem[];
+}
+
 export interface GetAllFilesRequest {
   page: string;
   limit: string;

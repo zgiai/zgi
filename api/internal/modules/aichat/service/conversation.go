@@ -47,6 +47,7 @@ func (s *service) ListSkills(ctx context.Context, scope Scope) ([]skills.SkillDi
 	if err != nil {
 		return nil, err
 	}
+	metadata = visibleSkillMetadata(metadata)
 	enabled, err := s.effectiveOrganizationSkillIDs(ctx, scope.OrganizationID, metadata)
 	if err != nil {
 		return nil, err
@@ -70,6 +71,7 @@ func (s *service) GetSkill(ctx context.Context, scope Scope, skillID string) (*s
 	if err != nil {
 		return nil, err
 	}
+	catalog = visibleSkillMetadata(catalog)
 	normalized := strings.ToLower(strings.TrimSpace(skillID))
 	for idx := range catalog {
 		if catalog[idx].ID != normalized {
@@ -92,6 +94,7 @@ func (s *service) GetSkillConfig(ctx context.Context, scope Scope) (*SkillConfig
 	if err != nil {
 		return nil, err
 	}
+	metadata = visibleSkillMetadata(metadata)
 	enabled, err := s.effectiveOrganizationSkillIDs(ctx, scope.OrganizationID, metadata)
 	if err != nil {
 		return nil, err
@@ -107,6 +110,7 @@ func (s *service) UpdateSkillConfig(ctx context.Context, scope Scope, req aichat
 	if err != nil {
 		return nil, err
 	}
+	metadata = visibleSkillMetadata(metadata)
 	normalized, err := validateSkillConfigIDs(req.EnabledSkillIDs, metadata)
 	if err != nil {
 		return nil, err
@@ -138,6 +142,7 @@ func (s *service) UpdateConversation(ctx context.Context, scope Scope, id uuid.U
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, err
 	}
+	var conversation *aichatmodel.Conversation
 	updates := make(map[string]interface{})
 	if req.Title != nil {
 		updates["title"] = normalizeTitle(*req.Title, defaultConversationTitle)
@@ -149,10 +154,47 @@ func (s *service) UpdateConversation(ctx context.Context, scope Scope, id uuid.U
 		}
 		updates["status"] = status
 	}
+	if req.CurrentLeafMessageID != nil {
+		leafID, err := uuid.Parse(strings.TrimSpace(*req.CurrentLeafMessageID))
+		if err != nil || leafID == uuid.Nil {
+			return nil, fmt.Errorf("%w: invalid current leaf message id", ErrInvalidInput)
+		}
+		conversation, err = s.getConversation(ctx, scope, id)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.validateCurrentLeafMessage(ctx, scope, conversation, leafID); err != nil {
+			return nil, err
+		}
+		updates["current_leaf_message_id"] = leafID
+	}
 	if err := s.repos.Conversation.UpdateScoped(ctx, id, scope.OrganizationID, scope.AccountID, updates); err != nil {
 		return nil, mapRepoError(err)
 	}
 	return s.getConversation(ctx, scope, id)
+}
+
+func (s *service) validateCurrentLeafMessage(ctx context.Context, scope Scope, conversation *aichatmodel.Conversation, leafID uuid.UUID) error {
+	message, err := s.repos.Message.GetScoped(ctx, leafID, scope.OrganizationID, scope.AccountID)
+	if err != nil {
+		return mapRepoError(err)
+	}
+	if message.ConversationID != conversation.ID {
+		return fmt.Errorf("%w: current leaf message belongs to another conversation", ErrInvalidInput)
+	}
+	switch message.Status {
+	case aichatmodel.MessageStatusCompleted, aichatmodel.MessageStatusStopped, aichatmodel.MessageStatusError:
+		return nil
+	case aichatmodel.MessageStatusStreaming:
+		if conversation.RuntimeStatus == aichatmodel.ConversationRuntimeStatusStreaming &&
+			conversation.ActiveMessageID != nil &&
+			*conversation.ActiveMessageID == message.ID {
+			return nil
+		}
+		return fmt.Errorf("%w: current leaf message is not the active streaming message", ErrInvalidInput)
+	default:
+		return fmt.Errorf("%w: invalid current leaf message status", ErrInvalidInput)
+	}
 }
 
 func (s *service) DeleteConversation(ctx context.Context, scope Scope, id uuid.UUID) error {

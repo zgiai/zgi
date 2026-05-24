@@ -46,7 +46,7 @@ func NewNodeRunner(deps Dependencies) *NodeRunner {
 }
 
 func (r *NodeRunner) RunNode(ctx context.Context, req graph_engine.NodeRunRequest, eventChan chan<- *shared.NodeEventCh) (*shared.NodeRunResult, error) {
-	logger.Info("Creating node instance for nodeID: %s, nodeType: %s, config: %+v", req.NodeID, req.NodeType, req.Config)
+	logger.Info("Creating node instance for nodeID: %s, nodeType: %s", req.NodeID, req.NodeType)
 
 	nodeFactory, err := nodes.GetNodeFactory(req.NodeType, nodes.LatestVersion)
 	if err != nil {
@@ -143,9 +143,15 @@ func (r *NodeRunner) optionalDependencies(nodeID string, nodeType shared.NodeTyp
 		} else {
 			logger.Warn("No AutomationDefinitionService available for %s node: %s", nodeType, nodeID)
 		}
+		if r.deps.NotificationSMSService != nil {
+			optionalDeps = append(optionalDeps, r.deps.NotificationSMSService)
+			logger.Info("Passing NotificationSMSService to %s node: %s", nodeType, nodeID)
+		} else {
+			logger.Warn("No NotificationSMSService available for %s node: %s", nodeType, nodeID)
+		}
 	}
 
-	if nodeType == shared.NotificationSMS {
+	if nodeType == shared.NotificationSMS || nodeType == shared.Approval {
 		if r.deps.NotificationSMSService != nil {
 			optionalDeps = append(optionalDeps, r.deps.NotificationSMSService)
 			logger.Info("Passing NotificationSMSService to %s node: %s", nodeType, nodeID)

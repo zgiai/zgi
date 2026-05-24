@@ -37,6 +37,8 @@ export const WORKSPACE_KEYS = {
     [...WORKSPACE_KEYS.all, 'detail', orgId, wsId] as const,
   members: (orgId: string | null, wsId: string | null, params?: unknown) =>
     [...WORKSPACE_KEYS.all, 'members', orgId, wsId, params].filter(Boolean),
+  memberDetail: (orgId: string | null, wsId: string | null, memberId: string | null) =>
+    [...WORKSPACE_KEYS.all, 'member-detail', orgId, wsId, memberId].filter(Boolean),
   availableMembers: (orgId: string | null, wsId: string | null, params?: unknown) =>
     [...WORKSPACE_KEYS.all, 'available-members', orgId, wsId, params].filter(Boolean),
   membersInfinite: (orgId: string | null, wsId: string | null, params: unknown) =>
@@ -146,6 +148,11 @@ export const AICHAT_KEYS = {
   skills: () => [...AICHAT_KEYS.all, 'skills'] as const,
   skill: (id: string) => [...AICHAT_KEYS.skills(), id] as const,
   skillConfig: () => [...AICHAT_KEYS.skills(), 'config'] as const,
+} as const;
+
+export const MEMORY_KEYS = {
+  all: ['memory'] as const,
+  me: () => [...MEMORY_KEYS.all, 'me'] as const,
 } as const;
 
 // 6. DB Related

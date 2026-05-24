@@ -37,6 +37,9 @@ func RegisterWorkspaceRoutes(router *gin.RouterGroup, db *gorm.DB, accountServic
 	// Register department routes
 	registerDepartmentRoutes(router, db, accountService, consoleWebURL, serviceContainer)
 
+	// Register organization workspace asset move routes
+	registerWorkspaceAssetMoveRoutes(router, accountService, serviceContainer)
+
 	// registerTenantAndMemberRoutesLegacy(router, db, accountService, consoleWebURL)
 }
 
@@ -55,6 +58,16 @@ func registerDepartmentRoutes(router *gin.RouterGroup, db *gorm.DB, accountServi
 	deptHandler := workspaceHandler.NewDepartmentHandler(deptService, accountService, enterpriseService, consoleWebURL)
 
 	deptHandler.RegisterRoutes(router)
+}
+
+func registerWorkspaceAssetMoveRoutes(router *gin.RouterGroup, accountService interfaces.AccountService, serviceContainer *container.ServiceContainer) {
+	assetMoveService := workspaceService.NewWorkspaceAssetMoveService(
+		serviceContainer.GetDB(),
+		serviceContainer.GetOrganizationService(),
+	)
+	assetMoveHandler := workspaceHandler.NewWorkspaceAssetMoveHandler(accountService, assetMoveService)
+
+	assetMoveHandler.RegisterRoutes(router)
 }
 
 // func registerTenantAndMemberRoutesLegacy(...) { ... }

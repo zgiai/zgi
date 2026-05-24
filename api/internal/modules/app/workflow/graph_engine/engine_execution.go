@@ -72,7 +72,7 @@ func (e *WorkflowEngine) executeNode(ctx context.Context, nodeID string, state *
 				state.Status = shared.FAILED
 			}
 			state.Error = err
-			logger.Error(fmt.Sprintf("Node execution failed for nodeID: %s, nodeType: %s, duration: %v, config: %+v", nodeID, state.NodeType, executionDuration, state.Config), err)
+			logger.Error(fmt.Sprintf("Node execution failed for nodeID: %s, nodeType: %s, duration: %v", nodeID, state.NodeType, executionDuration), err)
 		} else {
 			if result != nil {
 				state.Status = result.Status
@@ -81,7 +81,7 @@ func (e *WorkflowEngine) executeNode(ctx context.Context, nodeID string, state *
 					for outputKey, outputValue := range result.Outputs {
 						selector := []string{nodeID, outputKey}
 						e.runtimeState.VariablePool.Add(selector, outputValue)
-						logger.Info("Added node output to variable pool: nodeID=%s, key=%s, value=%v", nodeID, outputKey, outputValue)
+						logger.Info("Added node output to variable pool: nodeID=%s, key=%s", nodeID, outputKey)
 					}
 				}
 				e.updateRuntimeOutputsForNode(state.NodeType, result.Outputs)

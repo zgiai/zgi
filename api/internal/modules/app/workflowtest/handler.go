@@ -246,6 +246,41 @@ func (h *Handler) UpdateCase(c *gin.Context) {
 	response.Success(c, item)
 }
 
+func (h *Handler) DeleteCase(c *gin.Context) {
+	agentID, caseID, ok := bindAgentAndCaseID(c)
+	if !ok {
+		return
+	}
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentManage) {
+		return
+	}
+	if err := h.service.DeleteCases(c.Request.Context(), agentID, []string{caseID}); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	response.Success(c, gin.H{"deleted": 1})
+}
+
+func (h *Handler) DeleteCases(c *gin.Context) {
+	agentID, ok := bindAgentID(c)
+	if !ok {
+		return
+	}
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentManage) {
+		return
+	}
+	var req DeleteCasesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if err := h.service.DeleteCases(c.Request.Context(), agentID, req.CaseIDs); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	response.Success(c, gin.H{"deleted": len(req.CaseIDs)})
+}
+
 func (h *Handler) GenerateCases(c *gin.Context) {
 	agentID, ok := bindAgentID(c)
 	if !ok {

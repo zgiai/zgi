@@ -19,14 +19,20 @@ export const ORIGINAL_PREVIEW_TEXT_EXTENSIONS: readonly string[] = [
   'md',
   'markdown',
   'mdx',
+  'json',
   'csv',
+  'html',
+  'htm',
   'xml',
 ];
+
+export const ORIGINAL_PREVIEW_OFFICE_EXTENSIONS: readonly string[] = ['docx', 'xlsx'];
 
 export const ORIGINAL_PREVIEW_EXTENSIONS: readonly string[] = [
   'pdf',
   ...ORIGINAL_PREVIEW_IMAGE_EXTENSIONS,
   ...ORIGINAL_PREVIEW_TEXT_EXTENSIONS,
+  ...ORIGINAL_PREVIEW_OFFICE_EXTENSIONS,
 ];
 
 export const AUDIO_EXTENSIONS: readonly string[] = ['mp3', 'm4a', 'wav', 'amr', 'mpga'];
@@ -68,11 +74,12 @@ export function isOriginalPreviewSupported(
   extension?: string | null,
   mimeType?: string | null
 ): boolean {
-  if (mimeType?.toLowerCase().startsWith('image/')) return true;
-  if (mimeType?.toLowerCase() === 'application/pdf') return true;
-  if (!extension) return false;
+  const normalizedMimeType = normalizePreviewMimeType(mimeType);
+  if (normalizedMimeType && !isGenericPreviewMimeType(normalizedMimeType)) {
+    return getOriginalPreviewKind(extension, mimeType) !== 'unsupported';
+  }
 
-  return ORIGINAL_PREVIEW_EXTENSIONS.includes(extension.toLowerCase().replace(/^\./, ''));
+  return ORIGINAL_PREVIEW_EXTENSIONS.includes(normalizePreviewExtension(extension));
 }
 
 /**
@@ -82,20 +89,24 @@ export function isOriginalPreviewImage(
   extension?: string | null,
   mimeType?: string | null
 ): boolean {
-  if (mimeType?.toLowerCase().startsWith('image/')) return true;
-  if (!extension) return false;
+  const normalizedMimeType = normalizePreviewMimeType(mimeType);
+  if (normalizedMimeType && !isGenericPreviewMimeType(normalizedMimeType)) {
+    return normalizedMimeType.startsWith('image/');
+  }
 
-  return ORIGINAL_PREVIEW_IMAGE_EXTENSIONS.includes(extension.toLowerCase().replace(/^\./, ''));
+  return ORIGINAL_PREVIEW_IMAGE_EXTENSIONS.includes(normalizePreviewExtension(extension));
 }
 
 /**
  * @util Check whether an original preview should render as a PDF.
  */
 export function isOriginalPreviewPdf(extension?: string | null, mimeType?: string | null): boolean {
-  if (mimeType?.toLowerCase() === 'application/pdf') return true;
-  if (!extension) return false;
+  const normalizedMimeType = normalizePreviewMimeType(mimeType);
+  if (normalizedMimeType && !isGenericPreviewMimeType(normalizedMimeType)) {
+    return normalizedMimeType === 'application/pdf';
+  }
 
-  return extension.toLowerCase().replace(/^\./, '') === 'pdf';
+  return normalizePreviewExtension(extension) === 'pdf';
 }
 
 /**
@@ -105,6 +116,75 @@ export function isOriginalPreviewText(extension?: string | null): boolean {
   if (!extension) return false;
 
   return ORIGINAL_PREVIEW_TEXT_EXTENSIONS.includes(extension.toLowerCase().replace(/^\./, ''));
+}
+
+export type OriginalPreviewKind =
+  | 'image'
+  | 'pdf'
+  | 'browser'
+  | 'html'
+  | 'csv'
+  | 'office'
+  | 'unsupported';
+
+/**
+ * @util Resolve the browser preview renderer kind for an original file.
+ */
+export function getOriginalPreviewKind(
+  extension?: string | null,
+  mimeType?: string | null
+): OriginalPreviewKind {
+  const normalizedMimeType = normalizePreviewMimeType(mimeType);
+  const normalizedExtension = normalizePreviewExtension(extension);
+
+  if (normalizedMimeType && !isGenericPreviewMimeType(normalizedMimeType)) {
+    if (normalizedMimeType === 'text/html') return 'html';
+    if (normalizedMimeType === 'application/pdf') return 'pdf';
+    if (normalizedMimeType.startsWith('image/')) return 'image';
+    if (['application/csv', 'text/csv'].includes(normalizedMimeType)) return 'csv';
+    if (isOfficePreviewMimeType(normalizedMimeType)) return 'office';
+    if (
+      normalizedMimeType.startsWith('text/') ||
+      ['application/json', 'application/xml', 'text/markdown'].includes(normalizedMimeType)
+    ) {
+      return 'browser';
+    }
+    return 'unsupported';
+  }
+
+  if (ORIGINAL_PREVIEW_IMAGE_EXTENSIONS.includes(normalizedExtension)) return 'image';
+  if (normalizedExtension === 'pdf') return 'pdf';
+  if (['html', 'htm'].includes(normalizedExtension)) {
+    return 'html';
+  }
+  if (normalizedExtension === 'csv') {
+    return 'csv';
+  }
+  if (ORIGINAL_PREVIEW_TEXT_EXTENSIONS.includes(normalizedExtension)) {
+    return 'browser';
+  }
+  if (ORIGINAL_PREVIEW_OFFICE_EXTENSIONS.includes(normalizedExtension)) return 'office';
+
+  return 'unsupported';
+}
+
+function normalizePreviewMimeType(mimeType?: string | null): string {
+  return mimeType?.toLowerCase().split(';')[0].trim() ?? '';
+}
+
+function normalizePreviewExtension(extension?: string | null): string {
+  return extension?.toLowerCase().replace(/^\./, '') ?? '';
+}
+
+function isGenericPreviewMimeType(mimeType: string): boolean {
+  return mimeType === '' || mimeType === 'application/octet-stream';
+}
+
+function isOfficePreviewMimeType(mimeType: string): boolean {
+  return [
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  ].includes(mimeType);
 }
 
 /**

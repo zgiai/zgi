@@ -40,6 +40,9 @@ ZGI's public migration history starts from one initial schema migration:
 - Future schema changes must be append-only migrations with timestamp IDs.
 
 Closed-source pre-public migration history is intentionally not included in the open repository.
+The migration runner still supports recognized legacy databases through a bridge plan:
+it validates the required schema shape, records the public baseline marker without replaying the initial schema SQL, and then runs public append-only migrations.
+Unknown or partially migrated legacy databases fail before any public migration runs.
 The initial schema migration refuses to run on a non-empty public schema, so existing deployments are never silently overwritten or deleted.
 
 The migration schema builder lives under `internal/migrations/schema` on purpose. It is a contributor-facing migration DSL, not a public Go package for runtime application code.
@@ -47,7 +50,7 @@ The migration schema builder lives under `internal/migrations/schema` on purpose
 ## Rules
 
 1. Add new migrations only under `internal/migrations`.
-2. Use timestamped `YYYYMMDDHHMMSS_slug` IDs and filenames for future migrations. The generator avoids local same-second collisions.
+2. Use `go run ./cmd/migrate make <slug>` for new migrations. New generated IDs use `YYYYMMDDHHMMSSRRRR_slug`, where `RRRR` is a four-digit random suffix. Existing `YYYYMMDDHHMMSS_slug` IDs remain valid.
 3. Register each future migration with `registerSchemaMigration` unless raw `gormigrate` behavior is required.
 4. Do not edit, delete, or reorder migrations after release.
 5. Use PostgreSQL-compatible SQL. SQLite-backed migration tests are not allowed.
@@ -70,21 +73,22 @@ ZGI follows Laravel's production-safety ideas but adapts them to PostgreSQL:
 - Rollbacks created through `registerSchemaMigration` run with `AllowDestructive`, because rollback is the only normal path where dropping a newly created table or column is expected.
 - Rollback commands require the exact latest migration ID via `--confirm`, so AI agents and operators cannot accidentally roll back with a short command.
 - The initial public baseline refuses to run on a non-empty public schema, so existing deployments are not silently overwritten.
+- Recognized legacy databases are bridged into the public migration chain only after schema-shape checks pass.
 - `make` generates a migration whose `up` and `down` both fail with `not implemented` until the author fills in the migration body.
 
 ## Writing Migrations
 
-Future migrations should follow the Laravel-style structure: one timestamped file, one `up` function, one `down` function, and a schema blueprint for common table work.
+Future migrations should follow the Laravel-style structure: one timestamped file, one `up` function, one `down` function, and a schema blueprint for common table work. The migration generator creates the ID and failing `up` / `down` stubs; do not hand-write migration IDs.
 
 ```go
 package migrations
 
 import mschema "github.com/zgiai/zgi/api/internal/migrations/schema"
 
-const migration20260601090000ID = "20260601090000_create_audit_events"
+const migration202606010900000827ID = "202606010900000827_create_audit_events"
 
 func init() {
-	registerSchemaMigration(migration20260601090000ID, upCreateAuditEvents, downCreateAuditEvents)
+	registerSchemaMigration(migration202606010900000827ID, upCreateAuditEvents, downCreateAuditEvents)
 }
 
 func upCreateAuditEvents(schema *mschema.Builder) error {

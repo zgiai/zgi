@@ -128,7 +128,7 @@ const messages = {
   businessErrors: {
     invalidParameter: 'Invalid request. Please check your input and try again.',
     invalidCredentials: 'The email or password is incorrect.',
-    accountNotFound: 'This account does not exist.',
+    accountNotFound: 'This email is not registered. Please try again.',
     invalidLoginStatus: 'The verification link has expired. Please request a new code.',
     registrationNotAllowed: 'Registration is not allowed for this deployment.',
     accountSuspended: 'This account has been suspended. Please contact an administrator.',
@@ -149,6 +149,7 @@ const messages = {
     verifyCodeTooManyAttempts:
       'Too many incorrect verification code attempts. Please try again later.',
     emailServiceUnavailable: 'The email service is unavailable. Please try again later.',
+    emailCheckFailed: 'Unable to check whether this email is registered. Please try again later.',
     resetVerificationExpired:
       'The verification code is incorrect or the link has expired. Please check and try again.',
     registerTokenExpired: 'The registration link has expired. Please request a new code.',

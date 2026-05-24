@@ -534,6 +534,8 @@ const (
 	// Frontend callback routing.
 	// envSSOFrontendCallbackURL sets the frontend callback URL used after SSO login. Default: empty.
 	envSSOFrontendCallbackURL = "SSO_FRONTEND_CALLBACK_URL"
+	// envSSOFrontendCallbackURLPrefix sets named frontend callback URLs for SSO login.
+	envSSOFrontendCallbackURLPrefix = "SSO_FRONTEND_CALLBACK_URL_"
 )
 
 // Domain behavior and toolchain keys.

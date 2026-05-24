@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 
-import { BookOpenIcon, MoreHorizontal, Trash2, FolderOpen, Pencil } from 'lucide-react';
+import { BookOpenIcon, MoreHorizontal, Trash2, FolderOpen, Pencil, MoveRight } from 'lucide-react';
 import { useT } from '@/i18n';
 import { useDeleteDataset } from '@/hooks/dataset/use-datasets';
 import type { Dataset } from '@/services/types/dataset';
@@ -23,6 +23,8 @@ import type { OpenDatasetDialogPayload } from '@/components/datasets/dialog/type
 import { Badge } from '../ui/badge';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { ICON_BG } from '@/lib/config';
+import { useOrganizations } from '@/hooks/organization/use-organizations';
+import { WorkspaceAssetMoveDialog } from '@/components/common/workspace-asset-move-dialog';
 
 interface DatasetCardProps {
   dataset: Dataset;
@@ -36,13 +38,17 @@ interface DatasetCardProps {
 
 function DatasetCard({ dataset, onDeleted, pageIndex, currentFolderId }: DatasetCardProps) {
   const t = useT('datasets');
+  const tCommon = useT('common');
   const deleteMutation = useDeleteDataset();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
+  const [workspaceMoveOpen, setWorkspaceMoveOpen] = useState(false);
+  const { currentOrganization } = useOrganizations();
 
   // Permission checking - use new permission system
   const { hasPermission } = useAccountPermissions();
   const canManage = hasPermission('knowledge_base.manage');
+  const canMoveAssets = ['owner', 'admin'].includes(currentOrganization?.organization_role ?? '');
 
   return (
     <div className="relative h-36 sm:h-40">
@@ -93,8 +99,7 @@ function DatasetCard({ dataset, onDeleted, pageIndex, currentFolderId }: Dataset
           </Card>
         </Link>
       </div>
-      {/* Only show dropdown menu when user has manage permission */}
-      {canManage && (
+      {(canManage || canMoveAssets) && (
         <div className="absolute bottom-1.5 sm:bottom-2 right-1.5 sm:right-2">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -104,28 +109,40 @@ function DatasetCard({ dataset, onDeleted, pageIndex, currentFolderId }: Dataset
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               {/* Edit dataset basic info via page-level dialog */}
-              <DropdownMenuItem
-                inset
-                onSelect={() => {
-                  eventBus.publish<OpenDatasetDialogPayload>('dataset:open-dialog', {
-                    mode: 'edit',
-                    dataset,
-                    currentFolderId: currentFolderId,
-                  });
-                }}
-              >
-                <Pencil className="h-4 w-4" />
-                {t('actions.edit')}
-              </DropdownMenuItem>
-              {/* Move dataset to another folder */}
-              <DropdownMenuItem inset onSelect={() => setMoveOpen(true)}>
-                <FolderOpen className="h-4 w-4" />
-                {t('actions.move')}
-              </DropdownMenuItem>
-              <DropdownMenuItem variant="destructive" inset onSelect={() => setConfirmOpen(true)}>
-                <Trash2 className="h-4 w-4" />
-                {t('actions.delete')}
-              </DropdownMenuItem>
+              {canManage && (
+                <>
+                  <DropdownMenuItem
+                    inset
+                    onSelect={() => {
+                      eventBus.publish<OpenDatasetDialogPayload>('dataset:open-dialog', {
+                        mode: 'edit',
+                        dataset,
+                        currentFolderId: currentFolderId,
+                      });
+                    }}
+                  >
+                    <Pencil className="h-4 w-4" />
+                    {t('actions.edit')}
+                  </DropdownMenuItem>
+                  {/* Move dataset to another folder */}
+                  <DropdownMenuItem inset onSelect={() => setMoveOpen(true)}>
+                    <FolderOpen className="h-4 w-4" />
+                    {t('actions.move')}
+                  </DropdownMenuItem>
+                </>
+              )}
+              {canMoveAssets && (
+                <DropdownMenuItem inset onSelect={() => setWorkspaceMoveOpen(true)}>
+                  <MoveRight className="h-4 w-4" />
+                  {tCommon('assetMove.title')}
+                </DropdownMenuItem>
+              )}
+              {canManage && (
+                <DropdownMenuItem variant="destructive" inset onSelect={() => setConfirmOpen(true)}>
+                  <Trash2 className="h-4 w-4" />
+                  {t('actions.delete')}
+                </DropdownMenuItem>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -154,6 +171,13 @@ function DatasetCard({ dataset, onDeleted, pageIndex, currentFolderId }: Dataset
         onOpenChange={setMoveOpen}
         datasetId={dataset.id}
         currentFolderId={currentFolderId}
+      />
+      <WorkspaceAssetMoveDialog
+        open={workspaceMoveOpen}
+        onOpenChange={setWorkspaceMoveOpen}
+        assetType="dataset"
+        assetId={dataset.id}
+        assetName={dataset.name}
       />
     </div>
   );

@@ -13,8 +13,8 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { PasswordInput } from '@/components/ui/input';
-import { Icons } from '@/components/ui/icons';
-import { useResetPassword } from '@/hooks';
+import { Loader2 } from 'lucide-react';
+import { useResetPassword } from '@/hooks/auth/use-reset-password';
 import { toast } from 'sonner';
 
 interface ResetPasswordFormProps {
@@ -147,7 +147,7 @@ export function ResetPasswordForm({ className }: ResetPasswordFormProps) {
 
             {/* Submit Button */}
             <Button type="submit" className="w-full" disabled={isLoading}>
-              {isLoading && <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />}
+              {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {t('resetPasswordBtn')}
             </Button>
           </form>

@@ -8,6 +8,48 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 )
 
+func TestExecuteSingleGroupMode_AggregatesOnlyValidVariables(t *testing.T) {
+	vp := entities.NewVariablePool()
+	vp.Add([]string{"fallback", "result"}, 3)
+
+	node := &Node{
+		NodeStruct: base.NodeStruct{
+			NodeID:            "aggregator",
+			NodeType:          shared.VariableAggregator,
+			GraphRuntimeState: entities.NewGraphRuntimeState(vp),
+		},
+		NodeData: NodeData{
+			OutputType: shared.SegmentTypeNumber,
+			Variables: [][]string{
+				{"missing", "foo"},
+				{"fallback", "result"},
+			},
+		},
+	}
+
+	outputs, inputs, processData := node.executeSingleGroupMode(vp)
+
+	output, ok := outputs["output"].(map[string]any)
+	if !ok {
+		t.Fatalf("outputs[output] type = %T, want map[string]any", outputs["output"])
+	}
+	if got := output["result"]; got != float64(3) {
+		t.Fatalf("output[result] = %#v, want %#v", got, float64(3))
+	}
+	if _, ok := output["foo"]; ok {
+		t.Fatalf("output[foo] exists, want missing; output=%#v", output)
+	}
+	if _, ok := inputs["fallback.result"]; !ok {
+		t.Fatalf("inputs missing fallback.result: %#v", inputs)
+	}
+	if _, ok := inputs["missing.foo"]; ok {
+		t.Fatalf("inputs contains missing.foo, want skipped: %#v", inputs)
+	}
+	if got := processData["mode"]; got != "aggregate_all" {
+		t.Fatalf("mode = %#v, want aggregate_all", got)
+	}
+}
+
 func TestExecuteMultiGroupMode_MultiVariableGroupAddsNestedOutputWrapper(t *testing.T) {
 	vp := entities.NewVariablePool()
 	vp.Add([]string{"upstream", "text"}, "question text")
@@ -60,8 +102,7 @@ func TestExecuteMultiGroupMode_MultiVariableGroupAddsNestedOutputWrapper(t *test
 
 func TestExecuteMultiGroupMode_NestedOutputWrapperResolvesViaVariablePool(t *testing.T) {
 	vp := entities.NewVariablePool()
-	vp.Add([]string{"upstream", "text"}, "question text")
-	vp.Add([]string{"upstream", "result"}, "answer result")
+	vp.Add([]string{"upstream", "result"}, 5)
 
 	node := &Node{
 		NodeStruct: base.NodeStruct{
@@ -75,9 +116,9 @@ func TestExecuteMultiGroupMode_NestedOutputWrapperResolvesViaVariablePool(t *tes
 				Groups: []Group{
 					{
 						GroupName:  "group1",
-						OutputType: shared.SegmentTypeString,
+						OutputType: shared.SegmentTypeNumber,
 						Variables: [][]string{
-							{"upstream", "text"},
+							{"missing", "foo"},
 							{"upstream", "result"},
 						},
 					},
@@ -98,15 +139,14 @@ func TestExecuteMultiGroupMode_NestedOutputWrapperResolvesViaVariablePool(t *tes
 	if outputVar == nil {
 		t.Fatal("GetWithPath(aggregator, group1, output) = nil, want nested object")
 	}
-
 	nestedOutput, ok := outputVar.ToObject().(map[string]any)
 	if !ok {
 		t.Fatalf("outputVar.ToObject() type = %T, want map[string]any", outputVar.ToObject())
 	}
-	if got := nestedOutput["text"]; got != "question text" {
-		t.Fatalf("nestedOutput[text] = %#v, want %#v", got, "question text")
+	if got := nestedOutput["result"]; got != float64(5) {
+		t.Fatalf("nestedOutput[result] = %#v, want %#v", got, float64(5))
 	}
-	if got := nestedOutput["result"]; got != "answer result" {
-		t.Fatalf("nestedOutput[result] = %#v, want %#v", got, "answer result")
+	if _, ok := nestedOutput["foo"]; ok {
+		t.Fatalf("nestedOutput[foo] exists, want skipped; nestedOutput=%#v", nestedOutput)
 	}
 }

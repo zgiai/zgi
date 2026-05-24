@@ -622,27 +622,26 @@ export class AuthenticationService extends BaseService {
 
   // Check if email is already registered
   async checkEmail(email: string): Promise<{ is_registered: boolean; data?: unknown }> {
-    try {
-      const response = await this.request<ApiResponseData<{ is_registered: boolean }>>(
-        'post',
-        '/email/check',
-        { email },
-        { skipAuth: true }
-      );
+    const response = await this.request<ApiResponseData<{ is_registered: boolean }>>(
+      'post',
+      '/email/check',
+      { email },
+      { skipAuth: true }
+    );
 
-      // Check is_registered field from response data
-      if (response.code === '0' && response.data) {
-        return {
-          is_registered: response.data.is_registered || false,
-          data: response.data,
-        };
-      }
-
-      return { is_registered: false };
-    } catch (_error) {
-      // If the endpoint returns an error, assume email doesn't exist
-      return { is_registered: false };
+    if ('code' in response && response.code !== '0') {
+      const error = new Error(response.message || 'Email check failed');
+      (error as unknown as BusinessError).businessError = {
+        code: response.code || '',
+        message: response.message || '',
+      };
+      throw error;
     }
+
+    return {
+      is_registered: response.data?.is_registered || false,
+      data: response.data,
+    };
   }
 }
 

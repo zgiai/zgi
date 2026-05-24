@@ -5,8 +5,9 @@ type CreateConversationRequest struct {
 }
 
 type UpdateConversationRequest struct {
-	Title  *string `json:"title,omitempty"`
-	Status *string `json:"status,omitempty"`
+	Title                *string `json:"title,omitempty"`
+	Status               *string `json:"status,omitempty"`
+	CurrentLeafMessageID *string `json:"current_leaf_message_id,omitempty"`
 }
 
 type ChatRequest struct {
@@ -18,6 +19,7 @@ type ChatRequest struct {
 	Provider       string                 `json:"provider,omitempty"`
 	ResponseMode   string                 `json:"response_mode,omitempty"`
 	Parameters     map[string]interface{} `json:"parameters,omitempty"`
+	UseMemory      bool                   `json:"use_memory,omitempty"`
 }
 
 type RegenerateMessageRequest struct {
@@ -25,6 +27,7 @@ type RegenerateMessageRequest struct {
 	Model      *string                `json:"model,omitempty"`
 	Provider   *string                `json:"provider,omitempty"`
 	Parameters map[string]interface{} `json:"parameters,omitempty"`
+	UseMemory  *bool                  `json:"use_memory,omitempty"`
 }
 
 type StopConversationResponse struct {
@@ -70,6 +73,8 @@ type ImportSkillPreviewResponse struct {
 	ImportID         string                   `json:"import_id,omitempty"`
 	ExpiresAt        int64                    `json:"expires_at,omitempty"`
 	Skill            *SkillResponse           `json:"skill,omitempty"`
+	WillOverwrite    bool                     `json:"will_overwrite"`
+	ExistingSkill    *ExistingSkillResponse   `json:"existing_skill,omitempty"`
 	FileCount        int                      `json:"file_count"`
 	TotalSize        int64                    `json:"total_size"`
 	Files            []ImportSkillPreviewFile `json:"files"`
@@ -82,7 +87,14 @@ type ImportSkillPreviewResponse struct {
 }
 
 type ConfirmImportSkillRequest struct {
-	ImportID string `json:"import_id" binding:"required"`
+	ImportID           string `json:"import_id" binding:"required"`
+	OverwriteConfirmed bool   `json:"overwrite_confirmed,omitempty"`
+}
+
+type ExistingSkillResponse struct {
+	SkillID   string `json:"skill_id"`
+	Name      string `json:"name"`
+	UpdatedAt int64  `json:"updated_at,omitempty"`
 }
 
 type SkillDisplayResponse struct {

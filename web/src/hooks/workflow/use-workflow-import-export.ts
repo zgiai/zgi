@@ -6,7 +6,7 @@ import type { WorkflowExportVersion, WorkflowImportResult } from '@/services/typ
 import type { ApiResponseData } from '@/services/types/common';
 import { useT } from '@/i18n';
 import { toast } from 'sonner';
-import { AGENT_KEYS } from '@/hooks/query-keys';
+import { AGENT_KEYS, WORKFLOW_KEYS } from '@/hooks/query-keys';
 
 interface ExportWorkflowParams {
   agentId: string;
@@ -71,6 +71,9 @@ export function useImportWorkflow() {
     mutationFn: ({ file, workspaceId }) => workflowService.importWorkflow(file, workspaceId),
     onSuccess: response => {
       queryClient.invalidateQueries({ queryKey: AGENT_KEYS.lists() });
+      if (response.data.agent_id) {
+        queryClient.removeQueries({ queryKey: WORKFLOW_KEYS.draft(response.data.agent_id) });
+      }
       const warningCount = Array.isArray(response.data.warnings) ? response.data.warnings.length : 0;
       if (warningCount > 0) {
         toast.success(t('workflow.importWithWarnings', { count: warningCount }));

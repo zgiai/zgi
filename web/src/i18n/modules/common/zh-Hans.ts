@@ -123,6 +123,22 @@ const messages: CommonMessages = {
     noWorkspaces: '没有可用的工作空间',
   },
 
+  assetMove: {
+    title: '移动到工作空间',
+    description: '选择目标工作空间，并在确认前查看移动检查结果。',
+    descriptionWithName: '将“{name}”移动到其他工作空间，确认前请查看移动检查结果。',
+    targetWorkspace: '目标工作空间',
+    targetWorkspacePlaceholder: '选择目标工作空间',
+    previewing: '正在检查移动...',
+    unknownWorkspace: '未知工作空间',
+    blockersTitle: '无法移动',
+    warningsTitle: '请确认提示',
+    confirm: '移动',
+    previewFailed: '移动检查失败',
+    moveSuccess: '移动成功',
+    moveFailed: '移动失败',
+  },
+
   // Error Boundary
   errorBoundary: {
     somethingWentWrong: '出错了',
@@ -258,14 +274,31 @@ const messages: CommonMessages = {
   notificationSms: {
     fields: {
       recipients: '手机号',
+      template: '短信模板',
+    },
+    setup: {
+      title: '短信服务未配置',
+      description: '请先完成短信服务商、短信签名和短信模板配置，再使用短信通知。',
+      templatePlaceholder: '短信模板未配置',
+    },
+    templates: {
+      pendingActionNotification: '待办通知',
+      workflowAlert: '工作流告警',
+    },
+    params: {
       notificationTitle: '通知标题',
       linkCode: '链接参数',
+      remark: '备注',
+      summary: '摘要',
     },
     placeholders: {
       recipient: '手机号 {index}',
       recipientSingle: '手机号，多个用英文逗号分隔',
       notificationTitle: '您有一项新的任务待处理',
       linkCode: '任务或通知链接参数',
+      remark: '请输入备注',
+      summary: '请输入摘要',
+      param: '请输入{label}',
     },
     actions: {
       addRecipient: '添加手机号',
@@ -276,14 +309,13 @@ const messages: CommonMessages = {
       linkCode: '建议填写短码，例如 abc123；不要包含 -、_、中文或完整链接。',
     },
     validation: {
-      linkCodeInvalid: '链接参数只能填写字母或数字，例如 abc123。不要输入 -、_、中文或完整链接。',
+      paramRequired: '请填写{label}。',
+      paramInvalid: '{label}格式不正确。',
+      paramTooLong: '{label}不能超过 {max} 个字符。',
     },
     preview: '模板预览',
-    previewBody:
-      '您好，您有一项新的任务待处理：{title}。请打开后端已配置的审核链接，链接参数为 {code}。',
     previewHint: '实际短信内容以后端配置的服务商审核模板为准。',
-    previewTitlePlaceholder: '通知标题',
-    previewCodePlaceholder: '链接参数',
+    previewUnavailable: '当前模板没有配置预览文案。',
   },
 
   // Form elements

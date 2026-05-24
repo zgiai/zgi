@@ -1,8 +1,11 @@
 'use client';
 
+/* eslint-disable no-redeclare, @typescript-eslint/no-explicit-any */
+
 import { useTranslations } from 'next-intl';
 import { getTranslations } from 'next-intl/server';
-import { AVAILABLE_MODULES } from './loader';
+import type { ReactNode } from 'react';
+import { AVAILABLE_MODULES, type ModuleName } from './loader';
 import type { Messages } from './modules';
 
 // ============================================================================
@@ -66,7 +69,7 @@ type ShiftingKeys<T, P extends string> = P extends `${infer Head}.${infer Tail}`
  */
 export type ScopedTranslations<P extends string> = (
   key: ShiftingKeys<Messages, P>,
-  values?: any
+  values?: Record<string, unknown>
 ) => string;
 
 /**
@@ -108,6 +111,90 @@ type DotNotationTranslator = (
   values?: Record<string, string | number | Date>
 ) => string;
 
+interface RuntimeTranslator {
+  (key: string, values?: Record<string, unknown>): string;
+  rich?: (key: string, values?: Record<string, unknown>) => ReactNode;
+  markup?: (key: string, values?: Record<string, unknown>) => string;
+  raw?: (key: string) => unknown;
+  has?: (key: string) => boolean;
+}
+
+type UnifiedRuntimeTranslator = RuntimeTranslator & Partial<Record<ModuleName, RuntimeTranslator>>;
+
+const warnedMissingKeys = new Set<string>();
+
+function shouldReportMissingTranslations(): boolean {
+  return process.env.NODE_ENV !== 'production';
+}
+
+function reportMissingTranslation(key: string): void {
+  if (!shouldReportMissingTranslations() || warnedMissingKeys.has(key)) {
+    return;
+  }
+
+  warnedMissingKeys.add(key);
+  console.error(`[i18n] Missing message for "${key}". Check route module coverage.`);
+}
+
+function hasTranslation(translator: RuntimeTranslator, key: string): boolean {
+  return typeof translator.has !== 'function' || translator.has(key);
+}
+
+function callWithMissingKeyReport(
+  translator: RuntimeTranslator,
+  key: string,
+  values?: Record<string, unknown>
+): string {
+  if (!hasTranslation(translator, key)) {
+    reportMissingTranslation(key);
+  }
+
+  return translator(key, values);
+}
+
+function createScopedTranslatorWithMissingKeyReport(
+  translator: RuntimeTranslator,
+  scope: string
+): RuntimeTranslator {
+  const scoped = ((key: string, values?: Record<string, unknown>) => {
+    if (!hasTranslation(translator, key)) {
+      reportMissingTranslation(`${scope}.${key}`);
+    }
+
+    return translator(key, values);
+  }) as RuntimeTranslator;
+
+  if (typeof translator.rich === 'function') {
+    scoped.rich = (key, values) => {
+      if (!hasTranslation(translator, key)) {
+        reportMissingTranslation(`${scope}.${key}`);
+      }
+      return translator.rich?.(key, values) ?? '';
+    };
+  }
+  if (typeof translator.markup === 'function') {
+    scoped.markup = (key, values) => {
+      if (!hasTranslation(translator, key)) {
+        reportMissingTranslation(`${scope}.${key}`);
+      }
+      return translator.markup?.(key, values) ?? '';
+    };
+  }
+  if (typeof translator.raw === 'function') {
+    scoped.raw = key => {
+      if (!hasTranslation(translator, key)) {
+        reportMissingTranslation(`${scope}.${key}`);
+      }
+      return translator.raw?.(key);
+    };
+  }
+  if (typeof translator.has === 'function') {
+    scoped.has = translator.has.bind(translator);
+  }
+
+  return scoped;
+}
+
 /**
  * Unified translation type.
  *
@@ -118,6 +205,56 @@ type DotNotationTranslator = (
  * Both usages are fully type-safe with IDE auto-completion.
  */
 export type UnifiedTranslations = DotNotationTranslator & Translators;
+
+function bindRootMethods(rootT: RuntimeTranslator, translator: RuntimeTranslator): void {
+  if (typeof rootT.rich === 'function') {
+    translator.rich = rootT.rich.bind(rootT);
+  }
+  if (typeof rootT.markup === 'function') {
+    translator.markup = rootT.markup.bind(rootT);
+  }
+  if (typeof rootT.raw === 'function') {
+    translator.raw = rootT.raw.bind(rootT);
+  }
+  if (typeof rootT.has === 'function') {
+    translator.has = rootT.has.bind(rootT);
+  }
+}
+
+function createNamespaceTranslator(
+  rootT: RuntimeTranslator,
+  module: ModuleName
+): RuntimeTranslator {
+  const scoped = ((key: string, values?: Record<string, unknown>) =>
+    callWithMissingKeyReport(rootT, `${module}.${key}`, values)) as RuntimeTranslator;
+
+  if (typeof rootT.rich === 'function') {
+    scoped.rich = (key, values) => {
+      const fullKey = `${module}.${key}`;
+      if (!hasTranslation(rootT, fullKey)) {
+        reportMissingTranslation(fullKey);
+      }
+      return rootT.rich?.(fullKey, values) ?? '';
+    };
+  }
+  if (typeof rootT.markup === 'function') {
+    scoped.markup = (key, values) => {
+      const fullKey = `${module}.${key}`;
+      if (!hasTranslation(rootT, fullKey)) {
+        reportMissingTranslation(fullKey);
+      }
+      return rootT.markup?.(fullKey, values) ?? '';
+    };
+  }
+  if (typeof rootT.raw === 'function') {
+    scoped.raw = key => rootT.raw?.(`${module}.${key}`);
+  }
+  if (typeof rootT.has === 'function') {
+    scoped.has = key => rootT.has?.(`${module}.${key}`) ?? false;
+  }
+
+  return scoped;
+}
 
 /**
  * Universal client-side translation hook.
@@ -145,19 +282,20 @@ export function useT(scope?: string): any {
 
   // When scoped, return the translator directly to preserve .rich() and other methods
   if (scope) {
-    return rootT;
+    return createScopedTranslatorWithMissingKeyReport(rootT as RuntimeTranslator, scope);
   }
 
   // For unified mode, create wrapper with namespace accessors
-  const h = (key: string, values?: any) => (rootT as any)(key, values);
-  const t = h as any;
+  const h = ((key: string, values?: Record<string, unknown>) =>
+    callWithMissingKeyReport(rootT as RuntimeTranslator, key, values)) as RuntimeTranslator;
+  bindRootMethods(rootT as RuntimeTranslator, h);
+  const t = h as UnifiedRuntimeTranslator;
 
   AVAILABLE_MODULES.forEach(module => {
-    // @ts-ignore - dynamic assignment
-    t[module] = useTranslations(module);
+    t[module] = createNamespaceTranslator(rootT as RuntimeTranslator, module);
   });
 
-  return t;
+  return t as UnifiedTranslations;
 }
 
 /**
@@ -186,19 +324,18 @@ export async function getT(scope?: string): Promise<any> {
 
   // When scoped, return the translator directly to preserve .rich() and other methods
   if (scope) {
-    return rootT;
+    return createScopedTranslatorWithMissingKeyReport(rootT as RuntimeTranslator, scope);
   }
 
   // For unified mode, create wrapper with namespace accessors
-  const h = (key: string, values?: any) => (rootT as any)(key, values);
-  const t = h as any;
+  const h = ((key: string, values?: Record<string, unknown>) =>
+    callWithMissingKeyReport(rootT as RuntimeTranslator, key, values)) as RuntimeTranslator;
+  bindRootMethods(rootT as RuntimeTranslator, h);
+  const t = h as UnifiedRuntimeTranslator;
 
-  await Promise.all(
-    AVAILABLE_MODULES.map(async module => {
-      // @ts-ignore - dynamic assignment
-      t[module] = await getTranslations(module);
-    })
-  );
+  AVAILABLE_MODULES.forEach(module => {
+    t[module] = createNamespaceTranslator(rootT as RuntimeTranslator, module);
+  });
 
-  return t;
+  return t as UnifiedTranslations;
 }

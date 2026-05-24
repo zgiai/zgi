@@ -20,6 +20,7 @@ export interface OutputVariablesViewProps {
   variant?: 'panel' | 'compact';
   maxItems?: number;
   showCount?: boolean;
+  expandHiddenItems?: boolean;
 }
 
 const OutputVariablesView: React.FC<OutputVariablesViewProps> = ({
@@ -30,6 +31,7 @@ const OutputVariablesView: React.FC<OutputVariablesViewProps> = ({
   variant = 'panel',
   maxItems = 3,
   showCount = true,
+  expandHiddenItems = false,
 }) => {
   const t = useT('nodes');
   const items = Array.isArray(variables) ? variables : [];
@@ -47,16 +49,27 @@ const OutputVariablesView: React.FC<OutputVariablesViewProps> = ({
   }, [emptyText, t]);
 
   const [open, setOpen] = React.useState<boolean>(variant === 'compact');
+  const [compactExpanded, setCompactExpanded] = React.useState(false);
 
   React.useEffect(() => {
     setOpen(variant === 'compact');
+    setCompactExpanded(false);
   }, [variant]);
 
   if (variant === 'compact') {
     if (items.length === 0) return null;
 
     const visibleItems = items.slice(0, Math.max(1, maxItems));
+    const hiddenItems = items.slice(visibleItems.length);
     const hiddenCount = Math.max(0, items.length - visibleItems.length);
+    const displayItems = expandHiddenItems && compactExpanded ? items : visibleItems;
+    const toggleLabel = compactExpanded
+      ? t('common.collapseOutputVariables')
+      : t('common.expandOutputVariables', { count: hiddenCount });
+    const hiddenNames = hiddenItems.map(variable => variable.name).join(', ');
+    const hiddenTooltipLabel = hiddenNames
+      ? t('common.hiddenOutputVariablesTooltip', { variables: hiddenNames })
+      : toggleLabel;
 
     return (
       <div className={cn('border-t pt-2 space-y-1.5', className)}>
@@ -67,7 +80,7 @@ const OutputVariablesView: React.FC<OutputVariablesViewProps> = ({
           ) : null}
         </div>
         <div className="space-y-1">
-          {visibleItems.map(variable => (
+          {displayItems.map(variable => (
             <div
               key={variable.name}
               className="flex items-center justify-between gap-2 rounded-md border bg-background/70 px-2 py-1 text-xs"
@@ -76,7 +89,24 @@ const OutputVariablesView: React.FC<OutputVariablesViewProps> = ({
               <span className="truncate text-muted-foreground">{variable.type}</span>
             </div>
           ))}
-          {hiddenCount > 0 ? (
+          {hiddenCount > 0 && expandHiddenItems ? (
+            <button
+              type="button"
+              className="nodrag nowheel flex w-full items-center gap-1 rounded-md bg-muted/40 px-2 py-1 text-left text-[11px] text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              title={compactExpanded ? toggleLabel : hiddenTooltipLabel}
+              aria-expanded={compactExpanded}
+              onPointerDown={event => event.stopPropagation()}
+              onClick={event => {
+                event.stopPropagation();
+                setCompactExpanded(expanded => !expanded);
+              }}
+            >
+              <ChevronDown
+                className={cn('h-3 w-3 shrink-0 transition-transform', !compactExpanded && '-rotate-90')}
+              />
+              <span className="truncate">{toggleLabel}</span>
+            </button>
+          ) : hiddenCount > 0 ? (
             <div className="px-1 text-[11px] text-muted-foreground">
               +{hiddenCount}
             </div>

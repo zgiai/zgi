@@ -24,6 +24,7 @@ type AgentConversationRepository interface {
 	IncrementDialogueCount(ctx context.Context, id uuid.UUID) error
 	GetWithMessages(ctx context.Context, id uuid.UUID, messageLimit int) (*AgentConversation, error)
 	UpdateWebAppID(ctx context.Context, conversationID uuid.UUID, webAppID string) error
+	UpdateNameIfCurrent(ctx context.Context, conversationID uuid.UUID, currentName, nextName string) (bool, error)
 	MigrateConversationsByAccountID(ctx context.Context, tx *gorm.DB, virtualAccountID, authenticatedAccountID uuid.UUID) (int64, error)
 }
 
@@ -334,6 +335,21 @@ func (r *agentConversationRepository) UpdateWebAppID(ctx context.Context, conver
 	}
 
 	return nil
+}
+
+// UpdateNameIfCurrent updates the conversation name only when the caller still sees the same current name.
+func (r *agentConversationRepository) UpdateNameIfCurrent(ctx context.Context, conversationID uuid.UUID, currentName, nextName string) (bool, error) {
+	result := r.db.WithContext(ctx).
+		Model(&AgentConversation{}).
+		Where("id = ? AND name = ? AND deleted_at IS NULL", conversationID, currentName).
+		Updates(map[string]interface{}{
+			"name":       nextName,
+			"updated_at": time.Now(),
+		})
+	if result.Error != nil {
+		return false, fmt.Errorf("failed to update conversation name: %w", result.Error)
+	}
+	return result.RowsAffected > 0, nil
 }
 
 // MigrateConversationsByAccountID migrates conversations from virtual user to authenticated user

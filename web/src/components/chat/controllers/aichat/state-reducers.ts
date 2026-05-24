@@ -1,15 +1,18 @@
 import type {
+  AIChatAgentProgressEventData,
   AIChatConversation,
   AIChatErrorEventData,
   AIChatFileParseEndEventData,
   AIChatFileParseErrorEventData,
   AIChatFileParseStartEventData,
   AIChatGeneratedFile,
+  AIChatIntermediateAnswerEventData,
   AIChatMessage,
   AIChatMessageChunkEventData,
   AIChatMessageEndEventData,
   AIChatMessageFile,
   AIChatMessageMetadata,
+  AIChatMessageRetractEventData,
   AIChatMessageStartEventData,
   AIChatSkillCallEndEventData,
   AIChatSkillCallErrorEventData,
@@ -28,6 +31,7 @@ import {
 import {
   DEFAULT_AICHAT_MESSAGE_PAGINATION,
   type AIChatControllerState,
+  type AIChatAgenticTimelineItem,
   type AIChatMessageStartContext,
   type AIChatStreamingMessageState,
 } from '@/components/chat/controllers/aichat/types';
@@ -111,10 +115,47 @@ function mergeMessageMetadata(
   };
 }
 
+function clearRuntimeMessageMetadata(
+  metadata?: AIChatMessageMetadata
+): AIChatMessageMetadata | undefined {
+  if (!metadata) return undefined;
+  const next = { ...metadata };
+  delete next.sensitiveOutputBlocked;
+  delete next.has_trace;
+  delete next.skill_invocations;
+  delete next.selected_skill_ids;
+  delete next.loaded_skill_ids;
+  delete next.skill_step_count;
+  delete next.skill_call_count;
+  delete next.skill_names;
+  delete next.tool_call_count;
+  delete next.tool_names;
+  delete next.generated_file_count;
+  delete next.generated_files;
+  return next;
+}
+
 function upsertSkillInvocation(
   invocations: AIChatSkillInvocation[],
   incoming: AIChatSkillInvocation
 ): AIChatSkillInvocation[] {
+  if (incoming.kind === 'intermediate_answer' && incoming.answer_id) {
+    const index = invocations.findIndex(
+      invocation =>
+        invocation.kind === 'intermediate_answer' && invocation.answer_id === incoming.answer_id
+    );
+    if (index < 0) {
+      return [...invocations, incoming];
+    }
+
+    const next = invocations.slice();
+    next[index] = {
+      ...next[index],
+      ...incoming,
+    };
+    return next;
+  }
+
   const next = invocations.slice();
   const incomingKind = incoming.kind ?? 'tool_call';
   const incomingToolName = incoming.tool_name ?? '';
@@ -145,6 +186,115 @@ function upsertSkillInvocation(
   next[actualIndex] = {
     ...next[actualIndex],
     ...incoming,
+  };
+  return next;
+}
+
+function getSkillInvocationIdentity(invocation: AIChatSkillInvocation): string {
+  return [
+    invocation.kind ?? 'tool_call',
+    invocation.skill_id ?? '',
+    invocation.tool_name ?? '',
+    invocation.path ?? '',
+  ].join(':');
+}
+
+function isTransientProgressItem(item: AIChatAgenticTimelineItem): boolean {
+  return item.type === 'progress_text' && (item.transient === true || Boolean(item.phase && !item.content.trim()));
+}
+
+function removeTransientProgressItems(
+  timeline: AIChatAgenticTimelineItem[] | undefined
+): AIChatAgenticTimelineItem[] {
+  return (timeline ?? []).filter(item => !isTransientProgressItem(item));
+}
+
+function upsertSkillTimelineItem(
+  timeline: AIChatAgenticTimelineItem[] | undefined,
+  incoming: AIChatSkillInvocation,
+  eventId: string | null | undefined
+): AIChatAgenticTimelineItem[] {
+  const baseTimeline = removeTransientProgressItems(timeline);
+
+  if (incoming.kind === 'intermediate_answer') {
+    const existingIndex = incoming.answer_id
+      ? baseTimeline.findIndex(
+          item => item.type === 'intermediate_answer' && item.answer_id === incoming.answer_id
+        )
+      : -1;
+
+    if (existingIndex >= 0) {
+      const next = baseTimeline.slice();
+      const existing = next[existingIndex];
+      if (existing.type !== 'intermediate_answer') return next;
+
+      next[existingIndex] = {
+        ...existing,
+        title: incoming.title ?? existing.title,
+        content: incoming.message ?? existing.content,
+        status: incoming.status === 'success' ? 'success' : 'streaming',
+        created_at: existing.created_at ?? incoming.created_at,
+        event_id: eventId ?? existing.event_id,
+      };
+      return next;
+    }
+
+    return [
+      ...baseTimeline,
+      {
+        id:
+          incoming.answer_id ||
+          eventId ||
+          `intermediate-${incoming.created_at ?? Date.now()}-${baseTimeline.length}`,
+        type: 'intermediate_answer',
+        answer_id: incoming.answer_id,
+        title: incoming.title,
+        content: incoming.message ?? '',
+        status: incoming.status === 'success' ? 'success' : 'streaming',
+        created_at: incoming.created_at,
+        event_id: eventId ?? null,
+      },
+    ];
+  }
+
+  const next = baseTimeline.slice();
+  const incomingIdentity = getSkillInvocationIdentity(incoming);
+  const reverseIndex = [...next].reverse().findIndex(item => {
+    if (item.type !== 'skill_event') return false;
+    const invocation = item.invocation;
+    return (
+      getSkillInvocationIdentity(invocation) === incomingIdentity &&
+      (invocation.status === 'loading' || invocation.status === 'running')
+    );
+  });
+
+  if (reverseIndex < 0) {
+    return [
+      ...next,
+      {
+        id:
+          eventId ??
+          `skill-${incomingIdentity}-${incoming.created_at ?? Date.now()}-${next.length}`,
+        type: 'skill_event',
+        invocation: incoming,
+        created_at: incoming.created_at,
+        event_id: eventId ?? null,
+      },
+    ];
+  }
+
+  const actualIndex = next.length - 1 - reverseIndex;
+  const existing = next[actualIndex];
+  if (existing.type !== 'skill_event') return next;
+
+  next[actualIndex] = {
+    ...existing,
+    invocation: {
+      ...existing.invocation,
+      ...incoming,
+    },
+    created_at: incoming.created_at ?? existing.created_at,
+    event_id: eventId ?? existing.event_id,
   };
   return next;
 }
@@ -216,11 +366,128 @@ function updateSkillInvocationMetadata(
           ...current.streamingByMessageId,
           [messageId]: {
             ...previousStreaming,
+            timeline: upsertSkillTimelineItem(previousStreaming.timeline, invocation, eventId),
             last_event_id: eventId ?? previousStreaming.last_event_id,
           },
         }
       : current.streamingByMessageId,
   };
+}
+
+export function applyAgentProgressState(
+  current: AIChatControllerState,
+  payload: AIChatAgentProgressEventData,
+  eventId?: string | null
+): AIChatControllerState {
+  const content = (payload.content ?? '').trim();
+  if ((!content && !payload.phase) || !payload.message_id) {
+    return current;
+  }
+
+  const previousStreaming = current.streamingByMessageId[payload.message_id];
+  if (!previousStreaming) {
+    return current;
+  }
+
+  const timeline = previousStreaming.timeline ?? [];
+  const hasSameEvent = Boolean(
+    eventId && timeline.some(item => 'event_id' in item && item.event_id === eventId)
+  );
+  if (hasSameEvent) {
+    return current;
+  }
+  const lastItem = timeline[timeline.length - 1];
+  const isRepeatedStructuredProgress =
+    lastItem?.type === 'progress_text' &&
+    payload.phase &&
+    lastItem.phase === payload.phase &&
+    (lastItem.meta_tool_name ?? '') === (payload.meta_tool_name ?? '') &&
+    (lastItem.skill_id ?? '') === (payload.skill_id ?? '') &&
+    (lastItem.tool_name ?? '') === (payload.tool_name ?? '');
+  const isRepeatedProgress =
+    lastItem?.type === 'progress_text' && lastItem.content.trim() === content;
+  if (isRepeatedStructuredProgress || isRepeatedProgress) {
+    return {
+      ...current,
+      streamingByMessageId: {
+        ...current.streamingByMessageId,
+        [payload.message_id]: {
+          ...previousStreaming,
+          last_event_id: eventId ?? previousStreaming.last_event_id,
+        },
+      },
+    };
+  }
+
+  const transient = Boolean(payload.phase && !content);
+  const nextBaseTimeline = removeTransientProgressItems(timeline);
+  const nextTimeline: AIChatAgenticTimelineItem[] = [
+    ...nextBaseTimeline,
+    {
+      id: eventId ?? `progress-${payload.created_at ?? Date.now()}-${nextBaseTimeline.length}`,
+      type: 'progress_text',
+      content,
+      phase: payload.phase,
+      transient,
+      meta_tool_name: payload.meta_tool_name,
+      skill_id: payload.skill_id,
+      tool_name: payload.tool_name,
+      arguments_chars: payload.arguments_chars,
+      created_at: payload.created_at,
+      event_id: eventId ?? null,
+    },
+  ];
+
+  return {
+    ...current,
+    streamingByMessageId: {
+      ...current.streamingByMessageId,
+      [payload.message_id]: {
+        ...previousStreaming,
+        timeline: nextTimeline,
+        last_event_id: eventId ?? previousStreaming.last_event_id,
+      },
+    },
+  };
+}
+
+export function applyIntermediateAnswerState(
+  current: AIChatControllerState,
+  payload: AIChatIntermediateAnswerEventData,
+  eventId?: string | null
+): AIChatControllerState {
+  const content = payload.content ?? '';
+  if ((!content && payload.done !== true) || !payload.conversation_id || !payload.message_id) {
+    return current;
+  }
+  const previousStreaming = current.streamingByMessageId[payload.message_id];
+  const answerId =
+    payload.answer_id ||
+    eventId ||
+    `intermediate-${payload.created_at ?? Date.now()}-${payload.index ?? 0}`;
+  const previousItem = previousStreaming?.timeline?.find(
+    (
+      item
+    ): item is Extract<AIChatAgenticTimelineItem, { type: 'intermediate_answer' }> =>
+      item.type === 'intermediate_answer' && item.answer_id === answerId
+  );
+  const nextContent = payload.delta ? `${previousItem?.content ?? ''}${content}` : content;
+
+  return updateSkillInvocationMetadata(
+    current,
+    payload.conversation_id,
+    payload.message_id,
+    eventId,
+    {
+      kind: 'intermediate_answer',
+      answer_id: answerId,
+      skill_id: '',
+      title: payload.title,
+      status: payload.done === false ? 'running' : 'success',
+      message: nextContent,
+      created_at: payload.created_at,
+    }
+  );
 }
 
 function inferExtension(filename: string): string {
@@ -479,7 +746,12 @@ export function applyMessageStartState(
         ...createdMessage,
         answer: isReplace ? '' : existingMessage.answer,
         created_at: existingMessage.created_at,
-        metadata: mergeMessageMetadata(existingMessage.metadata, createdMessage.metadata),
+        error: undefined,
+        metadata: isReplace
+          ? clearRuntimeMessageMetadata(
+              mergeMessageMetadata(existingMessage.metadata, createdMessage.metadata)
+            )
+          : mergeMessageMetadata(existingMessage.metadata, createdMessage.metadata),
         updated_at: createdAt,
       }
     : createdMessage;
@@ -524,10 +796,12 @@ export function applyMessageStartState(
     message_id: payload.message_id,
     answer: message.answer,
     status: 'streaming',
-    last_event_id: eventId ?? previousStreaming?.last_event_id,
-    replay_base_answer: previousStreaming?.replay_base_answer,
-    replay_offset: previousStreaming?.replay_offset,
+    timeline: isReplace ? [] : previousStreaming?.timeline ?? [],
+    last_event_id: eventId ?? (isReplace ? undefined : previousStreaming?.last_event_id),
+    replay_base_answer: isReplace ? undefined : previousStreaming?.replay_base_answer,
+    replay_offset: isReplace ? undefined : previousStreaming?.replay_offset,
     replace: isReplace || previousStreaming?.replace,
+    sensitiveOutputBlocked: isReplace ? undefined : previousStreaming?.sensitiveOutputBlocked,
   };
 
   return {
@@ -655,7 +929,7 @@ export function applySkillCallStartState(
       skill_id: payload.skill_id,
       tool_name: payload.tool_name,
       status: 'running',
-      arguments: payload.arguments,
+      arguments: payload.arguments_summary ?? payload.arguments,
       created_at: payload.created_at,
     }
   );
@@ -677,6 +951,8 @@ export function applySkillCallEndState(
       tool_name: payload.tool_name,
       status: 'success',
       duration_ms: payload.duration_ms,
+      message: payload.message,
+      result: payload.result,
       created_at: payload.created_at,
     }
   );
@@ -739,7 +1015,7 @@ export function applySkillLoadEndState(
       kind: 'skill_load',
       skill_id: payload.skill_id,
       tool_name: '',
-      status: 'loaded',
+      status: 'success',
       duration_ms: payload.duration_ms,
       created_at: payload.created_at,
     }
@@ -891,6 +1167,7 @@ export function applyMessageChunkState(
         message_id: payload.message_id,
         answer: nextStreamingAnswer,
         status: 'streaming',
+        timeline: removeTransientProgressItems(previousStreaming?.timeline),
         last_event_id: eventId ?? previousStreaming?.last_event_id,
         replay_base_answer: replayBaseAnswer,
         replay_offset: replayOffset,
@@ -898,6 +1175,63 @@ export function applyMessageChunkState(
         sensitiveOutputBlocked: isSensitiveBlocked || previousStreaming?.sensitiveOutputBlocked,
       },
     },
+  };
+}
+
+function removeRetractedSuffix(answer: string, content: string, length?: number): string {
+  if (!answer) {
+    return answer;
+  }
+  if (content && answer.endsWith(content)) {
+    return answer.slice(0, -content.length);
+  }
+  const safeLength =
+    typeof length === 'number' && Number.isFinite(length) && length > 0
+      ? Math.min(Math.floor(length), answer.length)
+      : 0;
+  if (!content && safeLength > 0) {
+    return answer.slice(0, -safeLength);
+  }
+  return answer;
+}
+
+export function applyMessageRetractState(
+  current: AIChatControllerState,
+  payload: AIChatMessageRetractEventData,
+  eventId?: string | null
+): AIChatControllerState {
+  const content = payload.content ?? '';
+  if (!payload.conversation_id || !payload.message_id) {
+    return current;
+  }
+
+  const messages = current.messagesByConversation[payload.conversation_id] ?? [];
+  const previousStreaming = current.streamingByMessageId[payload.message_id];
+  const nextMessages = messages.map(message =>
+    message.id === payload.message_id
+      ? {
+          ...message,
+          answer: removeRetractedSuffix(message.answer, content, payload.length),
+        }
+      : message
+  );
+
+  return {
+    ...current,
+    messagesByConversation: {
+      ...current.messagesByConversation,
+      [payload.conversation_id]: nextMessages,
+    },
+    streamingByMessageId: previousStreaming
+      ? {
+          ...current.streamingByMessageId,
+          [payload.message_id]: {
+            ...previousStreaming,
+            answer: removeRetractedSuffix(previousStreaming.answer, content, payload.length),
+            last_event_id: eventId ?? previousStreaming.last_event_id,
+          },
+        }
+      : current.streamingByMessageId,
   };
 }
 
@@ -923,8 +1257,22 @@ export function applyMessageEndState(
         }
       : message
   );
+  const previousStreaming = current.streamingByMessageId[payload.message_id];
+  const nextTimeline = removeTransientProgressItems(previousStreaming?.timeline);
   const nextStreamingByMessageId = { ...current.streamingByMessageId };
-  delete nextStreamingByMessageId[payload.message_id];
+  if (nextTimeline.length) {
+    const terminalStatus = normalizeAIChatStatus(payload.status);
+    nextStreamingByMessageId[payload.message_id] = {
+      ...previousStreaming,
+      timeline: nextTimeline,
+      status:
+        terminalStatus === 'stopped' || terminalStatus === 'error'
+          ? terminalStatus
+          : 'completed',
+    };
+  } else {
+    delete nextStreamingByMessageId[payload.message_id];
+  }
 
   return {
     ...current,
@@ -959,7 +1307,15 @@ export function applyStreamErrorState(
   const conversationId = payload.conversation_id || fallbackConversationId;
   const messageId = payload.message_id;
   const message = payload.message || 'AIChat stream error';
-  const messages = conversationId ? current.messagesByConversation[conversationId] ?? [] : [];
+  const errorMetadata =
+    payload.code || payload.params
+      ? {
+          error_code: payload.code,
+          error_params: payload.params,
+        }
+      : undefined;
+  const messages = conversationId ? (current.messagesByConversation[conversationId] ?? []) : [];
+  const erroredMessage = messageId ? messages.find(item => item.id === messageId) : undefined;
   const nextStreamingByMessageId = { ...current.streamingByMessageId };
   if (messageId) {
     delete nextStreamingByMessageId[messageId];
@@ -976,6 +1332,11 @@ export function applyStreamErrorState(
                 ...conversation,
                 runtime_status: 'idle' as const,
                 active_message_id: undefined,
+                current_leaf_message_id: messageId || conversation.current_leaf_message_id,
+                dialogue_count:
+                  messageId && erroredMessage && !erroredMessage.parent_id
+                    ? 1
+                    : conversation.dialogue_count,
               }
             : conversation
         )
@@ -991,6 +1352,12 @@ export function applyStreamErrorState(
                         ...item,
                         status: 'error' as const,
                         error: message,
+                        metadata: errorMetadata
+                          ? {
+                              ...(item.metadata ?? {}),
+                              ...errorMetadata,
+                            }
+                          : item.metadata,
                         updated_at: Math.floor(Date.now() / 1000),
                       }
                     : item

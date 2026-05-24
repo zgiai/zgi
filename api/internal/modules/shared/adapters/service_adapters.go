@@ -250,11 +250,11 @@ func (a *AccountServiceAdapter) GetUserThroughEmail(ctx context.Context, email s
 	return a.accountService.GetUserThroughEmail(ctx, email)
 }
 
-func (a *AccountServiceAdapter) IssueSSOState(ctx context.Context) (string, error) {
-	return a.accountService.IssueSSOState(ctx)
+func (a *AccountServiceAdapter) IssueSSOState(ctx context.Context, callbackURL string) (string, error) {
+	return a.accountService.IssueSSOState(ctx, callbackURL)
 }
 
-func (a *AccountServiceAdapter) ConsumeSSOState(ctx context.Context, state string) error {
+func (a *AccountServiceAdapter) ConsumeSSOState(ctx context.Context, state string) (string, error) {
 	return a.accountService.ConsumeSSOState(ctx, state)
 }
 
@@ -477,6 +477,7 @@ func (t *TenantServiceAdapter) GetWorkspaceMembers(ctx context.Context, tenantID
 			Role:         member.Role,
 			RoleID:       member.RoleID,
 			Status:       member.Status,
+			HasMobile:    member.HasMobile,
 		})
 	}
 	return interfaceMembers, nil
@@ -547,6 +548,7 @@ func (t *TenantServiceAdapter) GetDatasetOperatorMembers(ctx context.Context, te
 			Role:         member.Role,
 			RoleID:       member.RoleID,
 			Status:       member.Status,
+			HasMobile:    member.HasMobile,
 		})
 	}
 	return interfaceMembers, nil

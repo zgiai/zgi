@@ -68,8 +68,27 @@ const messages = {
     noFileSelected: 'No file selected',
     unsupportedTitle: 'Preview is not available for this file',
     unsupportedDescription:
-      'Original preview currently supports PDF, image, and lightweight text-like files.',
+      'Original preview supports images, PDF, HTML, text-like files, DOCX, and XLSX.',
     openInNewTab: 'Open in New Tab',
+    unavailableTitle: 'Preview is unavailable',
+    downloadOnlyDescription: 'Download the file to view it outside the browser preview.',
+    htmlLimitedTitle: 'HTML is shown in isolated preview mode',
+    htmlLimitedDescription:
+      'Page scripts can run for animations, while forms, popups, network requests, embedded frames, and navigation stay blocked.',
+    htmlOpenRiskTitle: 'Open original HTML in a new tab?',
+    htmlOpenRiskDescription:
+      'The new tab will load the original HTML outside the isolated preview. It may run scripts, navigate, or contact external resources from that page. Only continue if you trust this file.',
+    htmlOpenRiskConfirm: 'Open Anyway',
+    htmlOpenRiskCancel: 'Cancel',
+    htmlTooLargeTitle: 'This HTML file is too large to preview safely',
+    officeUnsupportedTitle: 'Preview is not available for this Office format',
+    officeTooLargeTitle: 'This Office file is too large to preview',
+    officeFallback: 'Download the file to view the original document.',
+    textTooLargeTitle: 'This text file is too large to preview',
+    textFallback: 'Download the file to view the full content.',
+    emptyWorkbook: 'The workbook has no sheets',
+    emptySheet: 'This sheet has no visible rows',
+    rowLimit: 'Showing the first {count} rows.',
   },
 
   // Delete dialog

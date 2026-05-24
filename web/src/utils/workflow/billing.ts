@@ -137,6 +137,8 @@ export function inferWorkflowBillingCodeFromValue(value?: unknown): string | und
   if (
     normalized.includes('private_channel_balance_insufficient') ||
     normalized.includes('channel_balance_insufficient') ||
+    normalized.includes('private channel balance') ||
+    normalized.includes('channel balance') ||
     normalized.includes('渠道余额不足') ||
     normalized.includes('为渠道充值') ||
     normalized.includes('切换渠道')
@@ -147,6 +149,8 @@ export function inferWorkflowBillingCodeFromValue(value?: unknown): string | und
   if (
     normalized.includes('workspace_quota') ||
     normalized.includes('workspace_balance') ||
+    normalized.includes('workspace quota') ||
+    normalized.includes('workspace balance') ||
     normalized.includes('工作空间额度')
   ) {
     return '207012';
@@ -155,6 +159,8 @@ export function inferWorkflowBillingCodeFromValue(value?: unknown): string | und
   if (
     normalized.includes('organization_balance') ||
     normalized.includes('account_balance') ||
+    normalized.includes('organization balance') ||
+    normalized.includes('account balance') ||
     normalized.includes('组织余额不足')
   ) {
     return '207011';

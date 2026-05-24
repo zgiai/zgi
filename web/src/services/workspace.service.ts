@@ -148,6 +148,19 @@ class WorkspaceService extends BaseService {
     return response.data;
   }
 
+  // Get workspace member detail
+  async getWorkspaceMember(
+    organizationId: string,
+    workspaceId: string,
+    memberId: string
+  ): Promise<WorkspaceMemberAccount> {
+    const response = await this.request<ApiResponseData<WorkspaceMemberAccount>>(
+      'get',
+      `/organizations/${organizationId}/workspaces/${workspaceId}/members/${memberId}`
+    );
+    return response.data;
+  }
+
   // Get members that can be added to a workspace
   async getAvailableMembers(
     organizationId: string,

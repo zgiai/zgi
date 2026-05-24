@@ -402,9 +402,9 @@ const messages: AgentsMessages = {
       sensitiveLabel: '内容审查',
       sensitiveDesc: '对用户输入和AI输出进行内容审查，过滤不当内容。',
       conversationHistory: {
-        label: '会话上下文',
-        desc: '在对话过程中携带上下文进行对话。',
-        windowLabel: '会话轮数',
+        label: '旧版对话上下文（兼容）',
+        desc: '仅对未配置节点级对话上下文的旧 LLM 节点生效。新节点请在 LLM 节点面板中设置。',
+        windowLabel: '兼容轮数',
       },
       openingStatement: {
         label: '首页引导语',
@@ -707,6 +707,9 @@ const messages: AgentsMessages = {
       dialogueCount: '对话轮次',
       technicalFieldsHidden: '仅包含技术字段，可展开原始数据查看。',
       debugDetails: '调试详情',
+      openNodeRuntimeLog: '查看运行详情',
+      closeNodeRuntimeLog: '收起运行详情',
+      runningNow: '运行中',
     },
     runErrorsDialog: {
       title: '存在未解决的错误',
@@ -915,9 +918,15 @@ const messages: AgentsMessages = {
         selectedCount: '已选择 {count} 个问题',
         batchEnable: '批量启用',
         batchDisable: '批量停用',
+        batchDelete: '批量删除',
         batchEnabled: '已启用 {count} 个测试问题',
         batchDisabled: '已停用 {count} 个测试问题',
         clearSelection: '取消选择',
+        deleteConfirmTitle: '删除测试问题？',
+        deleteConfirmDescription: '删除后该问题将不再出现在问题库，已生成的历史测试批次不受影响。',
+        batchDeleteConfirmTitle: '批量删除测试问题？',
+        batchDeleteConfirmDescription:
+          '将删除已选择的 {count} 个测试问题，已生成的历史测试批次不受影响。',
       },
       batches: {
         title: '测试批次列表',
@@ -1212,6 +1221,9 @@ const messages: AgentsMessages = {
       caseCreateFailed: '录入测试问题失败',
       caseUpdated: '测试问题已更新',
       caseUpdateFailed: '更新测试问题失败',
+      caseDeleted: '测试问题已删除',
+      casesDeleted: '已删除 {count} 个测试问题',
+      caseDeleteFailed: '删除测试问题失败',
       casesGenerated: '已生成 {count} 个测试问题',
       casesGenerateFailed: '生成测试问题失败',
       batchCreated: '测试批次已创建',

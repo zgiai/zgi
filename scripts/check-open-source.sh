@@ -165,7 +165,7 @@ if [ "${#scan_targets[@]}" -gt 0 ]; then
     for path in "${migration_targets[@]}"; do
       [ "$path" = "api/internal/migrations/20260520000000_initial_schema.go" ] && continue
       file_id="$(basename "$path" .go)"
-      if ! [[ "$file_id" =~ ^[0-9]{14}([0-9]{2})?_[a-z0-9_]+$ ]]; then
+      if ! [[ "$file_id" =~ ^[0-9]{14}([0-9]{2}|[0-9]{4})?_[a-z0-9_]+$ ]]; then
         echo "open-source-check: migration file must use timestamp_slug naming: $path" >&2
         failures=$((failures + 1))
       fi

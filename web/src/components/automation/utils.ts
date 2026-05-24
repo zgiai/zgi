@@ -1,8 +1,13 @@
 import { formatDate, formatDurationSeconds } from '@/utils/format';
 import { isValidEmail } from '@/utils/validation';
 import { generateClientId } from '@/utils/client-id';
-import { isNotificationSMSLinkCodeValid } from '@/components/notification-sms/validation';
-import { NOTIFICATION_SMS_TEMPLATE } from '@/lib/features/notification-sms';
+import {
+  getNotificationSMSTemplates,
+  normalizeNotificationSMSTemplateKey,
+  NOTIFICATION_SMS_TEMPLATE,
+  type NotificationSMSTemplate,
+} from '@/lib/features/notification-sms';
+import type { SystemFeatures } from '@/services/types/auth';
 import type { FormInputs } from '@/components/workflow/common/workflow-input-form';
 import { InputVarType, type InputVar } from '@/components/workflow/types/input-var';
 import type {
@@ -248,6 +253,24 @@ function extractRawObject(value: unknown): Record<string, unknown> | null {
   }
 
   return value as Record<string, unknown>;
+}
+
+function normalizeTemplateParams(value: unknown): Record<string, string> {
+  const raw = extractRawObject(value);
+  if (!raw) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(raw).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+  );
+}
+
+function trimTemplateParams(value: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(([key, item]) => [key, item.trim()] as const)
+      .filter(([, item]) => item)
+  );
 }
 
 function isKnownScheduleType(value: string): value is 'once' | 'cron' {
@@ -582,8 +605,11 @@ export function createDefaultTaskActionDraft(
     subject: '',
     bodyType: 'text/html',
     body: '',
-    smsNotificationTitle: '',
-    smsLinkCode: '',
+    smsTemplate: NOTIFICATION_SMS_TEMPLATE,
+    smsTemplateParams: {
+      notification_title: '',
+      link_code: '',
+    },
     workflowAgentId: '',
     workflowVersionStrategy: 'latest_published',
     workflowVersionUuid: '',
@@ -683,8 +709,8 @@ export function taskDetailToDraft(taskDetail: AutomationTaskDetailData): TaskDra
         );
         const templateParams =
           channelType === 'sms' && 'template_params' in notificationConfig
-            ? notificationConfig.template_params
-            : null;
+            ? normalizeTemplateParams(notificationConfig.template_params)
+            : {};
 
         return {
           ...createDefaultTaskActionDraft('send_notification'),
@@ -702,8 +728,11 @@ export function taskDetailToDraft(taskDetail: AutomationTaskDetailData): TaskDra
             ('body' in notificationConfig ? notificationConfig.body : undefined) ??
             (notificationConfig as { content?: string } | undefined)?.content ??
             '',
-          smsNotificationTitle: templateParams?.notification_title ?? '',
-          smsLinkCode: templateParams?.link_code ?? '',
+          smsTemplate:
+            channelType === 'sms' && 'template' in notificationConfig
+              ? normalizeNotificationSMSTemplateKey(notificationConfig.template)
+              : NOTIFICATION_SMS_TEMPLATE,
+          smsTemplateParams: templateParams,
           rawConfig: extractRawObject(item.config),
         };
       })
@@ -752,11 +781,8 @@ export function draftToCreateRequest(
         config: {
           channel_type: 'sms',
           to: normalizeRecipients(action.recipients),
-          template: NOTIFICATION_SMS_TEMPLATE,
-          template_params: {
-            notification_title: action.smsNotificationTitle.trim(),
-            link_code: action.smsLinkCode.trim(),
-          },
+          template: normalizeNotificationSMSTemplateKey(action.smsTemplate),
+          template_params: trimTemplateParams(action.smsTemplateParams),
         },
       };
     }
@@ -844,9 +870,50 @@ export function generatedTaskDraftToDraft(generated: GeneratedAutomationTaskDraf
   });
 }
 
+function validateSMSTemplateParams(
+  action: TaskDraftAction,
+  templates: NotificationSMSTemplate[],
+  t: (key: string, values?: Record<string, string | number>) => string
+): Record<string, string | undefined> {
+  const templateKey = normalizeNotificationSMSTemplateKey(action.smsTemplate);
+  const template = templates.find(item => item.key === templateKey);
+  if (!template) {
+    return {};
+  }
+
+  return (template.params ?? []).reduce<Record<string, string | undefined>>((errors, param) => {
+    const label = param.label || param.key;
+    const value = action.smsTemplateParams[param.key]?.trim() ?? '';
+    if (!value) {
+      if (param.required) {
+        errors[param.key] = t('editor.validation.smsTemplateParamRequired', { label });
+      }
+      return errors;
+    }
+    if (param.max_length && [...value].length > param.max_length) {
+      errors[param.key] = t('editor.validation.smsTemplateParamTooLong', {
+        label,
+        max: param.max_length,
+      });
+      return errors;
+    }
+    if (param.pattern) {
+      try {
+        if (!new RegExp(param.pattern).test(value)) {
+          errors[param.key] = t('editor.validation.smsTemplateParamInvalid', { label });
+        }
+      } catch {
+        return errors;
+      }
+    }
+    return errors;
+  }, {});
+}
+
 export function validateTaskDraft(
   draft: TaskDraft,
-  t: (key: string) => string
+  t: (key: string, values?: Record<string, string | number>) => string,
+  systemFeatures?: SystemFeatures | null
 ): TaskValidationErrors {
   const errors: TaskValidationErrors = {};
 
@@ -934,14 +1001,18 @@ export function validateTaskDraft(
       }
 
       if (action.channelType === 'sms') {
-        if (!action.smsNotificationTitle.trim()) {
-          currentErrors.smsNotificationTitle = t('editor.validation.smsNotificationTitleRequired');
+        const rawSMSTemplate = action.smsTemplate.trim();
+        if (!rawSMSTemplate) {
+          currentErrors.smsTemplate = t('editor.validation.smsTemplateRequired');
         }
 
-        if (!action.smsLinkCode.trim()) {
-          currentErrors.smsLinkCode = t('editor.validation.smsLinkCodeRequired');
-        } else if (!isNotificationSMSLinkCodeValid(action.smsLinkCode)) {
-          currentErrors.smsLinkCode = t('editor.validation.smsLinkCodeInvalid');
+        const paramErrors = validateSMSTemplateParams(
+          action,
+          getNotificationSMSTemplates(systemFeatures),
+          t
+        );
+        if (Object.keys(paramErrors).length > 0) {
+          currentErrors.smsTemplateParams = paramErrors;
         }
       } else {
         if (!action.subject.trim()) {

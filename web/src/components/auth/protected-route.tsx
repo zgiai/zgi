@@ -3,7 +3,7 @@
 import { useEffect, useMemo } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useAuthStore } from '@/store/auth-store';
-import { Icons } from '@/components/ui/icons';
+import { AlertCircle } from 'lucide-react';
 import { ZgiLoadingScreen } from '@/components/brand/zgi-loading-screen';
 import { useT } from '@/i18n';
 import { consumePendingLogoutRedirect } from '@/utils/logout-redirect';
@@ -87,7 +87,7 @@ export function ProtectedRoute({ children, requireAdmin = false, fallback }: Pro
       fallback || (
         <div className="flex min-h-screen items-center justify-center">
           <div className="flex flex-col items-center space-y-4 text-center">
-            <Icons.AlertCircle className="h-12 w-12 text-destructive" />
+            <AlertCircle className="h-12 w-12 text-destructive" />
             <div>
               <h2 className="text-lg font-semibold">{t('common.accessDenied')}</h2>
               <p className="text-sm text-muted-foreground">{t('common.unauthorizedDescription')}</p>

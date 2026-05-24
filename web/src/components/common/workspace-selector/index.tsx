@@ -20,6 +20,8 @@ export interface WorkspaceSelectorValue {
   name: string;
 }
 
+const emptyExcludedWorkspaceIds: string[] = [];
+
 export interface WorkspaceSelectorProps {
   /** Current selected workspace ID */
   value?: WorkspaceSelectorValue;
@@ -35,6 +37,8 @@ export interface WorkspaceSelectorProps {
   searchable?: boolean;
   /** Automatically select the first workspace when no value is provided */
   autoSelectFirst?: boolean;
+  /** Workspace IDs to hide from the dropdown */
+  excludedWorkspaceIds?: string[];
 }
 
 /**
@@ -49,6 +53,7 @@ export function WorkspaceSelector({
   disabled = false,
   searchable = true,
   autoSelectFirst = false,
+  excludedWorkspaceIds = emptyExcludedWorkspaceIds,
 }: WorkspaceSelectorProps) {
   const t = useT('common');
   const [searchQuery, setSearchQuery] = useState('');
@@ -59,20 +64,31 @@ export function WorkspaceSelector({
   const workspaceQuery = useWorkspaces('', 1, 1000);
   const workspaces = workspaceQuery.workspaces;
   const isLoading = workspaceQuery.isLoading;
+  const excludedWorkspaceIdSet = useMemo(
+    () => new Set(excludedWorkspaceIds.filter(Boolean)),
+    [excludedWorkspaceIds]
+  );
+  const selectableWorkspaces = useMemo(
+    () =>
+      workspaces.filter(
+        (workspace: WorkspaceSelectorValue) => !excludedWorkspaceIdSet.has(workspace.id)
+      ),
+    [excludedWorkspaceIdSet, workspaces]
+  );
 
   // Use translated placeholder if none provided
   const effectivePlaceholder = placeholder || t('workspaceSelector.placeholder');
 
   useEffect(() => {
-    if (!autoSelectFirst || value?.id || isLoading || !workspaces.length) {
+    if (!autoSelectFirst || value?.id || isLoading || !selectableWorkspaces.length) {
       return;
     }
 
-    const [firstWorkspace] = workspaces;
+    const [firstWorkspace] = selectableWorkspaces;
     if (firstWorkspace) {
       onChange?.({ id: firstWorkspace.id, name: firstWorkspace.name });
     }
-  }, [autoSelectFirst, isLoading, onChange, value?.id, workspaces]);
+  }, [autoSelectFirst, isLoading, onChange, selectableWorkspaces, value?.id]);
 
   // Clear search when dropdown closes or component unmounts
   useEffect(() => {
@@ -83,12 +99,12 @@ export function WorkspaceSelector({
 
   // Filter workspaces based on search query, but keep the selected value pinned at the top
   const filteredWorkspaces = useMemo(() => {
-    if (!workspaces) return workspaces;
-    if (!searchQuery) return workspaces;
-    return workspaces.filter((t: WorkspaceSelectorValue) =>
+    if (!selectableWorkspaces) return selectableWorkspaces;
+    if (!searchQuery) return selectableWorkspaces;
+    return selectableWorkspaces.filter((t: WorkspaceSelectorValue) =>
       t.name.toLowerCase().includes(searchQuery.toLowerCase())
     );
-  }, [workspaces, searchQuery]);
+  }, [searchQuery, selectableWorkspaces]);
 
   // Ensure the current selection remains visible even if it doesn't match the search
   const computedWorkspaces = useMemo(() => {
@@ -98,15 +114,15 @@ export function WorkspaceSelector({
     const exists = base.some((w: WorkspaceSelectorValue) => w.id === selId);
     if (exists) return base;
     const selectedFromSource =
-      (workspaces || []).find((w: WorkspaceSelectorValue) => w.id === selId) || value;
+      (selectableWorkspaces || []).find((w: WorkspaceSelectorValue) => w.id === selId) || value;
     return [selectedFromSource, ...base];
-  }, [filteredWorkspaces, workspaces, value]);
+  }, [filteredWorkspaces, selectableWorkspaces, value]);
 
   // Whether current value exists in options; used for fallback display
   const valueInOptions = useMemo(() => {
     if (!value?.id) return false;
-    return (workspaces || []).some((w: WorkspaceSelectorValue) => w.id === value.id);
-  }, [workspaces, value]);
+    return (selectableWorkspaces || []).some((w: WorkspaceSelectorValue) => w.id === value.id);
+  }, [selectableWorkspaces, value]);
 
   // Handle workspace selection
   const handleWorkspaceSelect = useCallback(

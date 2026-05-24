@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	appconfig "github.com/zgiai/zgi/api/config"
 	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
+	notificationsms "github.com/zgiai/zgi/api/internal/modules/notification/sms"
 	"github.com/zgiai/zgi/api/pkg/email"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/gorm"
@@ -32,6 +33,12 @@ type EmailSender interface {
 	SendEmail(to []string, subject, body string) error
 }
 
+type SMSSender interface {
+	IsEnabled() bool
+	ValidateTemplateParams(template string, params map[string]string) error
+	Send(ctx context.Context, req notificationsms.Request) (*notificationsms.Result, error)
+}
+
 type emailSenderFunc func(to []string, subject, body string) error
 
 func (f emailSenderFunc) SendEmail(to []string, subject, body string) error {
@@ -41,6 +48,7 @@ func (f emailSenderFunc) SendEmail(to []string, subject, body string) error {
 type Service struct {
 	db          *gorm.DB
 	emailSender EmailSender
+	smsSender   SMSSender
 }
 
 func NewService(db *gorm.DB) *Service {
@@ -49,10 +57,15 @@ func NewService(db *gorm.DB) *Service {
 
 // NewServiceWithEmailSender creates an approval service with an explicit email sender.
 func NewServiceWithEmailSender(db *gorm.DB, sender EmailSender) *Service {
+	return NewServiceWithSenders(db, sender, nil)
+}
+
+func NewServiceWithSenders(db *gorm.DB, emailSender EmailSender, smsSender SMSSender) *Service {
+	sender := emailSender
 	if sender == nil {
 		sender = emailSenderFunc(email.SendEmail)
 	}
-	return &Service{db: db, emailSender: sender}
+	return &Service{db: db, emailSender: sender, smsSender: smsSender}
 }
 
 func (s *Service) CreateOrGetRuntimeForm(ctx context.Context, params CreateRuntimeFormParams) (*RuntimeForm, error) {
@@ -83,7 +96,7 @@ func (s *Service) CreateOrGetRuntimeForm(ctx context.Context, params CreateRunti
 		return nil, err
 	}
 
-	s.deliverEmailApprovals(ctx, form, deliveries, recipients)
+	s.deliverApprovals(ctx, form, deliveries, recipients)
 
 	return s.runtimeFormPayload(ctx, form)
 }
@@ -544,6 +557,14 @@ func (s *Service) buildRuntimeForm(ctx context.Context, params CreateRuntimeForm
 		deliveries = append(deliveries, delivery)
 		recipients = append(recipients, deliveryRecipients...)
 	}
+	if params.Config.SubmitMethods.SMS.Enabled {
+		delivery, deliveryRecipients, err := s.smsDelivery(ctx, formID, params.Config.SubmitMethods.SMS)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		deliveries = append(deliveries, delivery)
+		recipients = append(recipients, deliveryRecipients...)
+	}
 
 	if len(recipients) == 0 {
 		delivery, deliveryRecipients, err := s.webAppDelivery(formID)
@@ -618,6 +639,7 @@ func (s *Service) emailDelivery(ctx context.Context, formID string, cfg EmailSub
 type resolvedRecipient struct {
 	Type    string
 	Email   string
+	Phone   string
 	Payload map[string]interface{}
 }
 
@@ -668,7 +690,108 @@ func (s *Service) resolveEmailRecipient(ctx context.Context, recipient EmailReci
 	}
 }
 
-func (s *Service) deliverEmailApprovals(ctx context.Context, form *Form, deliveries []Delivery, recipients []Recipient) {
+func (s *Service) smsDelivery(ctx context.Context, formID string, cfg SMSSubmitMethod) (Delivery, []Recipient, error) {
+	if err := s.ensureSMSEnabled(); err != nil {
+		return Delivery{}, nil, err
+	}
+	if err := s.validateApprovalSMSTemplateParams(cfg); err != nil {
+		return Delivery{}, nil, err
+	}
+	deliveryID := uuid.NewString()
+	payload, err := json.Marshal(cfg)
+	if err != nil {
+		return Delivery{}, nil, fmt.Errorf("marshal sms delivery config: %w", err)
+	}
+	recipients := make([]Recipient, 0, len(cfg.Recipients))
+	for _, configured := range cfg.Recipients {
+		resolved, err := s.resolveSMSRecipient(ctx, configured)
+		if err != nil {
+			return Delivery{}, nil, fmt.Errorf("resolve sms recipient: %w", err)
+		}
+		token, err := newApprovalToken()
+		if err != nil {
+			return Delivery{}, nil, err
+		}
+		recipientPayload, _ := json.Marshal(resolved.Payload)
+		recipients = append(recipients, Recipient{
+			ID:               uuid.NewString(),
+			FormID:           formID,
+			DeliveryID:       deliveryID,
+			RecipientType:    resolved.Type,
+			RecipientPayload: string(recipientPayload),
+			AccessToken:      token,
+		})
+	}
+	if len(recipients) == 0 {
+		return Delivery{}, nil, fmt.Errorf("sms recipients are required")
+	}
+	return Delivery{
+		ID:                 deliveryID,
+		FormID:             formID,
+		DeliveryMethodType: DeliveryTypeSMS,
+		ChannelPayload:     string(payload),
+	}, recipients, nil
+}
+
+func (s *Service) ensureSMSEnabled() error {
+	if s == nil || s.smsSender == nil {
+		return fmt.Errorf("approval sms service is not configured")
+	}
+	if !s.smsSender.IsEnabled() {
+		return fmt.Errorf("notification sms is not enabled")
+	}
+	return nil
+}
+
+func (s *Service) resolveSMSRecipient(ctx context.Context, recipient SMSRecipient) (*resolvedRecipient, error) {
+	switch strings.TrimSpace(recipient.Type) {
+	case "external":
+		phone := notificationsms.NormalizePhoneNumbers(recipient.Phone)
+		if phone == "" {
+			return nil, fmt.Errorf("external phone is required")
+		}
+		return &resolvedRecipient{
+			Type:  RecipientTypeSMSExternal,
+			Phone: phone,
+			Payload: map[string]interface{}{
+				"type":  RecipientTypeSMSExternal,
+				"phone": phone,
+			},
+		}, nil
+	case "member":
+		accountID := strings.TrimSpace(recipient.AccountID)
+		if accountID == "" {
+			return nil, fmt.Errorf("member account_id is required")
+		}
+		var row struct {
+			MobileE164 string `gorm:"column:mobile_e164"`
+		}
+		if err := s.db.WithContext(ctx).
+			Table("accounts").
+			Select("accounts.mobile_e164").
+			Where("accounts.id = ?", accountID).
+			Scan(&row).Error; err != nil {
+			return nil, fmt.Errorf("load member phone: %w", err)
+		}
+		phone := notificationsms.NormalizePhoneNumbers(row.MobileE164)
+		if phone == "" {
+			return nil, fmt.Errorf("member phone not found")
+		}
+		return &resolvedRecipient{
+			Type:  RecipientTypeSMSMember,
+			Phone: phone,
+			Payload: map[string]interface{}{
+				"type":       RecipientTypeSMSMember,
+				"account_id": accountID,
+				"phone":      phone,
+			},
+		}, nil
+	default:
+		return nil, fmt.Errorf("unsupported recipient type: %s", recipient.Type)
+	}
+}
+
+func (s *Service) deliverApprovals(ctx context.Context, form *Form, deliveries []Delivery, recipients []Recipient) {
 	if form == nil {
 		return
 	}
@@ -677,39 +800,72 @@ func (s *Service) deliverEmailApprovals(ctx context.Context, form *Form, deliver
 		recipientsByDelivery[recipient.DeliveryID] = append(recipientsByDelivery[recipient.DeliveryID], recipient)
 	}
 	for _, delivery := range deliveries {
-		if delivery.DeliveryMethodType != DeliveryTypeEmail {
+		switch delivery.DeliveryMethodType {
+		case DeliveryTypeEmail:
+			s.deliverEmailApproval(ctx, form, delivery, recipientsByDelivery[delivery.ID])
+		case DeliveryTypeSMS:
+			s.deliverSMSApproval(ctx, form, delivery, recipientsByDelivery[delivery.ID])
+		}
+	}
+}
+
+func (s *Service) deliverEmailApproval(ctx context.Context, form *Form, delivery Delivery, recipients []Recipient) {
+	var cfg EmailSubmitMethod
+	if err := json.Unmarshal([]byte(delivery.ChannelPayload), &cfg); err != nil {
+		logger.WarnContext(ctx, "failed to decode approval email config", "delivery_id", delivery.ID, err)
+		return
+	}
+	for _, recipient := range recipients {
+		emailAddress := recipientEmail(recipient)
+		if emailAddress == "" {
 			continue
 		}
-		var cfg EmailSubmitMethod
-		if err := json.Unmarshal([]byte(delivery.ChannelPayload), &cfg); err != nil {
-			logger.WarnContext(ctx, "failed to decode approval email config", "delivery_id", delivery.ID, err)
+		link := approvalURL(recipient.AccessToken)
+		body := strings.ReplaceAll(cfg.Body, "{{#url#}}", link)
+		if body == "" {
+			body = link
+		}
+		subject := sanitizeSubject(cfg.Subject)
+		if subject == "" {
+			subject = "Approval request"
+		}
+		warnIfUnresolvedEmailTemplate(ctx, form, "subject", subject)
+		warnIfUnresolvedEmailTemplate(ctx, form, "body", body)
+		if err := s.sendApprovalEmail([]string{emailAddress}, subject, body); err != nil {
+			s.recordDeliveryError(ctx, delivery.ID, err)
+			logger.WarnContext(ctx, "failed to send approval email", "delivery_id", delivery.ID, "recipient_id", recipient.ID, err)
 			continue
 		}
-		for _, recipient := range recipientsByDelivery[delivery.ID] {
-			emailAddress := recipientEmail(recipient)
-			if emailAddress == "" {
-				continue
-			}
-			link := approvalURL(recipient.AccessToken)
-			body := strings.ReplaceAll(cfg.Body, "{{#url#}}", link)
-			if body == "" {
-				body = link
-			}
-			subject := sanitizeSubject(cfg.Subject)
-			if subject == "" {
-				subject = "Approval request"
-			}
-			warnIfUnresolvedEmailTemplate(ctx, form, "subject", subject)
-			warnIfUnresolvedEmailTemplate(ctx, form, "body", body)
-			if err := s.sendApprovalEmail([]string{emailAddress}, subject, body); err != nil {
-				errMsg := err.Error()
-				logger.WarnContext(ctx, "failed to send approval email", "delivery_id", delivery.ID, "recipient_id", recipient.ID, err)
-				_ = s.db.WithContext(ctx).Model(&Delivery{}).Where("id = ?", delivery.ID).Update("last_error", errMsg).Error
-				continue
-			}
-			now := time.Now()
-			_ = s.db.WithContext(ctx).Model(&Delivery{}).Where("id = ?", delivery.ID).Update("sent_at", now).Error
+		s.recordDeliverySent(ctx, delivery.ID)
+	}
+}
+
+func (s *Service) deliverSMSApproval(ctx context.Context, form *Form, delivery Delivery, recipients []Recipient) {
+	var cfg SMSSubmitMethod
+	if err := json.Unmarshal([]byte(delivery.ChannelPayload), &cfg); err != nil {
+		logger.WarnContext(ctx, "failed to decode approval sms config", "delivery_id", delivery.ID, err)
+		return
+	}
+	for _, recipient := range recipients {
+		phone := recipientPhone(recipient)
+		if phone == "" {
+			continue
 		}
+		req := notificationsms.Request{
+			Provider:       strings.TrimSpace(cfg.Provider),
+			Phone:          phone,
+			Template:       strings.TrimSpace(cfg.Template),
+			TemplateParams: approvalSMSTemplateParams(cfg, recipient.AccessToken),
+			Source:         "workflow_approval",
+			SourceID:       form.WorkflowRunID,
+		}
+		if err := s.sendApprovalSMS(ctx, req); err != nil {
+			s.recordDeliveryError(ctx, delivery.ID, err)
+			logger.WarnContext(ctx, "failed to send approval sms", "delivery_id", delivery.ID, "recipient_id", recipient.ID, "phone", notificationsms.MaskPhone(phone), err)
+			continue
+		}
+		s.recordDeliverySent(ctx, delivery.ID)
+		logger.InfoContext(ctx, "approval sms sent", "workflow_run_id", form.WorkflowRunID, "form_id", form.ID, "delivery_id", delivery.ID, "recipient_id", recipient.ID, "phone", notificationsms.MaskPhone(phone))
 	}
 }
 
@@ -718,6 +874,26 @@ func (s *Service) sendApprovalEmail(to []string, subject, body string) error {
 		return email.SendEmail(to, subject, body)
 	}
 	return s.emailSender.SendEmail(to, subject, body)
+}
+
+func (s *Service) sendApprovalSMS(ctx context.Context, req notificationsms.Request) error {
+	if err := s.ensureSMSEnabled(); err != nil {
+		return err
+	}
+	_, err := s.smsSender.Send(ctx, req)
+	return err
+}
+
+func (s *Service) recordDeliveryError(ctx context.Context, deliveryID string, err error) {
+	if err == nil {
+		return
+	}
+	_ = s.db.WithContext(ctx).Model(&Delivery{}).Where("id = ?", deliveryID).Update("last_error", err.Error()).Error
+}
+
+func (s *Service) recordDeliverySent(ctx context.Context, deliveryID string) {
+	now := time.Now()
+	_ = s.db.WithContext(ctx).Model(&Delivery{}).Where("id = ?", deliveryID).Update("sent_at", now).Error
 }
 
 func warnIfUnresolvedEmailTemplate(ctx context.Context, form *Form, field, value string) {
@@ -842,6 +1018,38 @@ func ValidateConfig(config NodeConfig) error {
 		}
 		seenActions[id] = struct{}{}
 	}
+	if config.SubmitMethods.SMS.Enabled {
+		if err := validateSMSSubmitMethod(config.SubmitMethods.SMS); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateSMSSubmitMethod(cfg SMSSubmitMethod) error {
+	if strings.TrimSpace(cfg.NotificationTitle) == "" {
+		return fmt.Errorf("approval sms notification_title is required")
+	}
+	if len(cfg.Recipients) == 0 {
+		return fmt.Errorf("approval sms recipients are required")
+	}
+	for key := range cfg.TemplateParams {
+		switch strings.TrimSpace(key) {
+		case notificationsms.TemplateParamNotificationTitle, notificationsms.TemplateParamLinkCode:
+			return fmt.Errorf("approval sms template param %s is generated by the system", key)
+		}
+	}
+	return nil
+}
+
+func (s *Service) validateApprovalSMSTemplateParams(cfg SMSSubmitMethod) error {
+	template := strings.TrimSpace(cfg.Template)
+	if template == "" {
+		template = notificationsms.TemplatePendingActionNotification
+	}
+	if err := s.smsSender.ValidateTemplateParams(template, approvalSMSTemplateParams(cfg, "token")); err != nil {
+		return fmt.Errorf("approval sms: %w", err)
+	}
 	return nil
 }
 
@@ -935,6 +1143,33 @@ func recipientEmail(recipient Recipient) string {
 	}
 	emailAddress, _ := payload["email"].(string)
 	return strings.TrimSpace(emailAddress)
+}
+
+func recipientPhone(recipient Recipient) string {
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(recipient.RecipientPayload), &payload); err != nil {
+		return ""
+	}
+	phone, _ := payload["phone"].(string)
+	return notificationsms.NormalizePhoneNumbers(phone)
+}
+
+func approvalSMSTemplateParams(cfg SMSSubmitMethod, token string) map[string]string {
+	params := make(map[string]string, len(cfg.TemplateParams)+2)
+	for key, value := range cfg.TemplateParams {
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key != "" && value != "" {
+			params[key] = value
+		}
+	}
+	params[notificationsms.TemplateParamNotificationTitle] = strings.TrimSpace(cfg.NotificationTitle)
+	params[notificationsms.TemplateParamLinkCode] = approvalLinkCode(token)
+	return params
+}
+
+func approvalLinkCode(token string) string {
+	return url.PathEscape(token)
 }
 
 func sanitizeSubject(subject string) string {

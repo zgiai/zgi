@@ -48,8 +48,8 @@ export interface TaskDraftAction {
   subject: string;
   bodyType: AutomationBodyType;
   body: string;
-  smsNotificationTitle: string;
-  smsLinkCode: string;
+  smsTemplate: string;
+  smsTemplateParams: Record<string, string>;
   workflowAgentId: string;
   workflowVersionStrategy: AutomationWorkflowVersionStrategy;
   workflowVersionUuid: string;
@@ -65,8 +65,8 @@ export interface TaskDraftActionErrors {
   subject?: string;
   bodyType?: string;
   body?: string;
-  smsNotificationTitle?: string;
-  smsLinkCode?: string;
+  smsTemplate?: string;
+  smsTemplateParams?: Record<string, string | undefined>;
   workflowAgentId?: string;
   workflowVersionUuid?: string;
   workflowInputsJson?: string;

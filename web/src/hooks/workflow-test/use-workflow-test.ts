@@ -9,6 +9,7 @@ import { getErrorMessage } from '@/utils/error-notifications';
 import type {
   CreateWorkflowTestBatchRequest,
   CreateWorkflowTestCaseRequest,
+  DeleteWorkflowTestCasesRequest,
   CreateWorkflowTestScenarioRequest,
   GenerateWorkflowTestCasesRequest,
   RecognizeWorkflowTestScenariosRequest,
@@ -16,7 +17,10 @@ import type {
   SaveWorkflowTestScenariosRequest,
   UpdateWorkflowTestCaseRequest,
   UpdateWorkflowTestSettingsRequest,
+  WorkflowTestCase,
+  WorkflowTestListResponse,
 } from '@/services/types/workflow-test';
+import type { ApiResponseData } from '@/services/types/common';
 
 export function useWorkflowTestSettings(agentId: string) {
   return useQuery({
@@ -154,6 +158,57 @@ export function useUpdateWorkflowTestCase(agentId: string, options?: { silent?: 
     },
     onError: error => {
       toast.error(getErrorMessage(error) || t('caseUpdateFailed'));
+    },
+  });
+}
+
+export function useDeleteWorkflowTestCases(agentId: string) {
+  const t = useT('agents.workflowTest.toasts');
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: DeleteWorkflowTestCasesRequest) =>
+      workflowTestService.deleteCases(agentId, data),
+    onMutate: async data => {
+      const ids = new Set(data.case_ids);
+      const casesQueryFilter = {
+        queryKey: [...WORKFLOW_TEST_KEYS.all, agentId, 'cases'],
+      };
+      await queryClient.cancelQueries(casesQueryFilter);
+      const previousCases = queryClient.getQueriesData<
+        ApiResponseData<WorkflowTestListResponse<WorkflowTestCase>>
+      >(casesQueryFilter);
+
+      queryClient.setQueriesData<ApiResponseData<WorkflowTestListResponse<WorkflowTestCase>>>(
+        casesQueryFilter,
+        previous => {
+          if (!previous?.data?.items) return previous;
+          return {
+            ...previous,
+            data: {
+              ...previous.data,
+              items: previous.data.items.filter(item => !ids.has(item.id)),
+            },
+          };
+        }
+      );
+
+      return { previousCases };
+    },
+    onSuccess: (_response, data) => {
+      toast.success(
+        data.case_ids.length > 1
+          ? t('casesDeleted', { count: data.case_ids.length })
+          : t('caseDeleted')
+      );
+    },
+    onError: (error, _data, context) => {
+      context?.previousCases.forEach(([queryKey, previous]) => {
+        queryClient.setQueryData(queryKey, previous);
+      });
+      toast.error(getErrorMessage(error) || t('caseDeleteFailed'));
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: WORKFLOW_TEST_KEYS.all });
     },
   });
 }

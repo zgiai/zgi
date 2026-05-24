@@ -49,6 +49,7 @@ interface WorkflowRunNodesListProps {
   items: WorkflowRunNodeListItem[];
   showDetail?: boolean;
   variant?: 'panel' | 'canvas';
+  hideCanvasNodeChrome?: boolean;
 }
 
 interface WorkflowRunNodeGroup {
@@ -627,11 +628,13 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
   items,
   showDetail = true,
   variant = 'panel',
+  hideCanvasNodeChrome = false,
 }) => {
   const t = useT();
   const runtimeLabel: RuntimeLabel = (key, params) =>
     t(`agents.workflow.runtimeLog.${key}` as Parameters<typeof t>[0], params);
   const isCanvasVariant = variant === 'canvas';
+  const isCanvasDetailOnly = isCanvasVariant && hideCanvasNodeChrome;
   const styles = {
     running: {
       wrap: 'border-l-4 border-l-info border border-border/50 bg-card',
@@ -723,7 +726,7 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
   };
 
   return (
-    <div className="space-y-2 relative">
+    <div className={cn('relative', isCanvasDetailOnly ? 'space-y-1.5' : 'space-y-2')}>
       {groupedItems.map(group => {
         const errorOnly = Boolean(errorOnlyByNode[group.key]);
         const visibleExecutions = errorOnly
@@ -783,86 +786,92 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
             className={cn(
               'rounded-lg px-2 py-2 transition-all duration-500 relative z-10 border',
               isCanvasVariant && 'rounded-md border-border/70 bg-background shadow-sm',
+              isCanvasDetailOnly && 'border-border/70 bg-background/95 p-2 shadow-none',
               statusCfg.wrap,
-              isCanvasVariant
+              isCanvasDetailOnly && 'border-l border-l-border/70',
+              isCanvasDetailOnly
+                ? 'border-border/70 hover:border-border/70'
+                : isCanvasVariant
                 ? 'border-border/70 hover:border-border/80 hover:bg-background hover:shadow-md'
                 : isOpen(itemKey)
                   ? 'shadow-[0_4px_12px_rgba(0,0,0,0.06),0_0_1px_rgba(0,0,0,0.1)] bg-card border-border/80 scale-[1.01]'
                   : 'border-transparent hover:border-border/40 hover:bg-muted/10 hover:shadow-sm'
             )}
           >
-            <div
-              className={cn(
-                'flex items-center gap-2',
-                canToggle ? 'cursor-pointer select-none' : 'cursor-default'
-              )}
-              onClick={() => canToggle && toggleOpen(itemKey)}
-            >
-              {/* Toggle button on the left */}
-              <div className="w-3 flex items-center justify-center shrink-0">
-                {canToggle ? (
-                  <ChevronDown
-                    className={cn(
-                      'h-3.5 w-3.5 transition-transform text-muted-foreground/40 hover:text-foreground',
-                      isOpen(itemKey) ? '' : '-rotate-90'
-                    )}
-                  />
-                ) : null}
-              </div>
-
-              {/* Icon wrap - smaller and more refined */}
+            {!isCanvasDetailOnly ? (
               <div
                 className={cn(
-                  'w-5 h-5 flex items-center justify-center rounded text-white shrink-0 shadow-[0_1px_2px_rgba(0,0,0,0.1)] transition-all duration-300',
-                  theme?.classNames.iconBg,
-                  raw.status === 'paused' && 'bg-warning text-white shadow-none',
-                  isOpen(itemKey) ? 'ring-2 ring-background ring-offset-1 scale-105' : ''
+                  'flex items-center gap-2',
+                  canToggle ? 'cursor-pointer select-none' : 'cursor-default'
                 )}
-                aria-label={raw.nodeType}
+                onClick={() => canToggle && toggleOpen(itemKey)}
               >
-                {Icon ? <Icon className="w-3 h-3" /> : null}
-              </div>
+                {/* Toggle button on the left */}
+                <div className="w-3 flex items-center justify-center shrink-0">
+                  {canToggle ? (
+                    <ChevronDown
+                      className={cn(
+                        'h-3.5 w-3.5 transition-transform text-muted-foreground/40 hover:text-foreground',
+                        isOpen(itemKey) ? '' : '-rotate-90'
+                      )}
+                    />
+                  ) : null}
+                </div>
 
-              {/* Title and status */}
-              <div className="flex-1 min-w-0 ml-0.5">
+                {/* Icon wrap - smaller and more refined */}
                 <div
                   className={cn(
-                    'text-[13px] font-semibold truncate tracking-tight text-foreground/80',
-                    theme?.classNames.title
+                    'w-5 h-5 flex items-center justify-center rounded text-white shrink-0 shadow-[0_1px_2px_rgba(0,0,0,0.1)] transition-all duration-300',
+                    theme?.classNames.iconBg,
+                    raw.status === 'paused' && 'bg-warning text-white shadow-none',
+                    isOpen(itemKey) ? 'ring-2 ring-background ring-offset-1 scale-105' : ''
                   )}
+                  aria-label={raw.nodeType}
                 >
-                  {raw.title}
+                  {Icon ? <Icon className="w-3 h-3" /> : null}
                 </div>
-                {summary ? (
-                  <div className="mt-0.5 w-fit max-w-full truncate rounded bg-primary/5 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-                    {summary}
+
+                {/* Title and status */}
+                <div className="flex-1 min-w-0 ml-0.5">
+                  <div
+                    className={cn(
+                      'text-[13px] font-semibold truncate tracking-tight text-foreground/80',
+                      theme?.classNames.title
+                    )}
+                  >
+                    {raw.title}
+                  </div>
+                  {summary ? (
+                    <div className="mt-0.5 w-fit max-w-full truncate rounded bg-primary/5 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                      {summary}
+                    </div>
+                  ) : null}
+                </div>
+                {isCanvasVariant && group.executions.length > 1 ? (
+                  <div className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                    {runtimeLabel('executionCount', { count: group.executions.length })}
                   </div>
                 ) : null}
-              </div>
-              {isCanvasVariant && group.executions.length > 1 ? (
-                <div className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                  {runtimeLabel('executionCount', { count: group.executions.length })}
-                </div>
-              ) : null}
-              <div className="flex items-center gap-1.5">
-                <span
-                  className={cn(
-                    'w-1.5 h-1.5 rounded-full shrink-0 shadow-[0_0_4px_rgba(0,0,0,0.1)]',
-                    statusCfg.dot,
-                    raw.status === 'running' && 'animate-pulse-subtle'
+                <div className="flex items-center gap-1.5">
+                  <span
+                    className={cn(
+                      'w-1.5 h-1.5 rounded-full shrink-0 shadow-[0_0_4px_rgba(0,0,0,0.1)]',
+                      statusCfg.dot,
+                      raw.status === 'running' && 'animate-pulse-subtle'
+                    )}
+                  />
+                  {raw.status === 'running' ? (
+                    <Loader className="h-3 w-3 animate-spin text-info" />
+                  ) : raw.status === 'paused' ? null : (
+                    <div className={elapsedTimeClass}>
+                      {formatMs(raw?.elapsedTime ? raw.elapsedTime : 0)}
+                    </div>
                   )}
-                />
-                {raw.status === 'running' ? (
-                  <Loader className="h-3 w-3 animate-spin text-info" />
-                ) : raw.status === 'paused' ? null : (
-                  <div className={elapsedTimeClass}>
-                    {formatMs(raw?.elapsedTime ? raw.elapsedTime : 0)}
-                  </div>
-                )}
+                </div>
               </div>
-            </div>
+            ) : null}
             {isCanvasVariant && previewRows.length > 0 ? (
-              <div className="mt-2 grid gap-1.5">
+              <div className={cn('grid gap-1.5', isCanvasDetailOnly ? 'mt-0' : 'mt-2')}>
                 {previewRows.map(row => (
                   <div
                     key={`${executionKey}-${row.label}`}

@@ -7,7 +7,6 @@ import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type { ModelUseCase, ModelItem } from '@/services/types/model';
 import { ModelIcon } from 'modelicons';
-import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useAvailableModels } from '@/hooks/model/use-model';
 import { ModelFeatureIcon } from '@/components/model/model-feature-icon';
 import { useProviderI18n } from '@/hooks/provider/use-provider-i18n';
@@ -121,7 +120,6 @@ export function ModelSelector({
 
   // Track open state
   const [open, setOpen] = useState(false);
-  const debouncedQuery = useDebouncedValue(searchQuery, 500);
   const [internalSelected, setInternalSelected] = useState<ModelSelectorValue | null>(null);
 
   // Get user role for conditional rendering in empty state
@@ -239,7 +237,7 @@ export function ModelSelector({
 
   // Filter providers and models based on search query
   const filteredProviders = useMemo(() => {
-    const q = debouncedQuery?.trim().toLowerCase();
+    const q = searchQuery.trim().toLowerCase();
 
     return providerGroups
       .map(provider => {
@@ -267,7 +265,7 @@ export function ModelSelector({
         return dedupedModels.length > 0 ? { ...provider, models: dedupedModels } : null;
       })
       .filter(Boolean) as ProviderGroup[];
-  }, [providerGroups, debouncedQuery, searchIndex]);
+  }, [providerGroups, searchQuery, searchIndex]);
 
   // Flattened rows for virtualization
   const flatRows = useMemo<FlatRow[]>(() => {
@@ -459,6 +457,11 @@ export function ModelSelector({
 
   const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setSearchQuery(e.target.value);
+    lastScrollTopRef.current = 0;
+    setScrollTop(0);
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = 0;
+    }
   }, []);
 
   const handleSearchKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -518,7 +521,7 @@ export function ModelSelector({
         searchInputRef.current?.focus();
       });
     }
-  }, [debouncedQuery, open, searchable]);
+  }, [open, searchable]);
 
   // Resolve selected info for trigger rendering
   const selectedResolved = useMemo(() => {
@@ -666,7 +669,7 @@ export function ModelSelector({
               ) : (
                 !isLoading && (
                   <EmptyState
-                    searchQuery={debouncedQuery}
+                    searchQuery={searchQuery}
                     noResultsText={t('models.selector.empty.noResults')}
                     noModelsText={t('models.selector.empty.noModels', {
                       type: t(`models.selector.usecases.${modelType}`),
