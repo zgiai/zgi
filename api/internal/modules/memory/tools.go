@@ -51,12 +51,12 @@ type memoryTool struct {
 }
 
 func newReadMemoryTool(service *Service) tools.Tool {
-	return newMemoryTool(service, "read_user_memory", "Read User Memory", "Read the current user's saved account memory entries.", nil)
+	return newMemoryTool(service, "read_user_memory", "Read User Memory", "Read enabled saved memories for the current user before answering with memory, checking duplicates, or resolving possible conflicts.", nil)
 }
 
 func newAddMemoryTool(service *Service) tools.Tool {
-	return newMemoryTool(service, "add_user_memory", "Add User Memory", "Save a new memory entry for the current user.", []tools.ToolParameter{
-		stringParam("content", "Memory content", "The concise user memory to save. Use this field for the memory text.", true),
+	return newMemoryTool(service, "add_user_memory", "Add User Memory", "Save concise durable or time-limited user information that should help future conversations, including stable preferences, profile facts, habits, names, standing instructions, or upcoming short-term context.", []tools.ToolParameter{
+		stringParam("content", "Memory content", "A concise neutral third-person memory. Do not copy casual phrasing; do not save secrets or one-off chat details.", true),
 		categoryParam(),
 		memoryTypeParam(),
 		stringParam("expires_at", "Expires at", "RFC3339 expiration time for temporary memory. Required when memory_type is temporary. Do not use relative dates.", false),
@@ -64,7 +64,7 @@ func newAddMemoryTool(service *Service) tools.Tool {
 }
 
 func newUpdateMemoryTool(service *Service) tools.Tool {
-	return newMemoryTool(service, "update_user_memory", "Update User Memory", "Update one memory entry that belongs to the current user.", []tools.ToolParameter{
+	return newMemoryTool(service, "update_user_memory", "Update User Memory", "Correct, merge, disable, or refresh an existing memory for the current user. Use this instead of creating a duplicate when the user corrects prior memory or when new information supersedes old memory.", []tools.ToolParameter{
 		stringParam("entry_id", "Entry ID", "The memory entry id returned by read_user_memory.", true),
 		stringParam("content", "Memory content", "Updated memory content. Omit when only changing category or enabled.", false),
 		categoryParam(),

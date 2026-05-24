@@ -272,6 +272,31 @@ func TestRenderContextUsesEnabledEntriesAndBudget(t *testing.T) {
 	}
 }
 
+func TestRenderContextIncludesMemoryPolicyWithoutEntries(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newTestService()
+	accountID := uuid.New()
+	if _, err := svc.SetEnabled(ctx, accountID, true); err != nil {
+		t.Fatalf("SetEnabled() error = %v", err)
+	}
+
+	rendered, err := svc.RenderContext(ctx, accountID, 2000)
+	if err != nil {
+		t.Fatalf("RenderContext() error = %v", err)
+	}
+	for _, want := range []string{
+		"User memory is enabled",
+		"Consider saving",
+		"read_user_memory",
+		"conflicts with existing memory",
+		"ask the user to confirm",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered context = %q, want %q", rendered, want)
+		}
+	}
+}
+
 func TestCreateEntryMergesDuplicateMemory(t *testing.T) {
 	ctx := context.Background()
 	svc, store := newTestService()
