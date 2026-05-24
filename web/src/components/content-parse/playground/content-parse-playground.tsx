@@ -576,10 +576,10 @@ export function ContentParsePlayground() {
   const isBusy = isParsing || isPending || isSaving;
 
   return (
-    <div className="min-h-full bg-bg-canvas px-4 py-3 text-foreground sm:px-6 lg:px-8">
-      <div className="mx-auto flex max-w-[1600px] flex-col gap-3">
+    <div className="min-h-full overflow-x-hidden bg-bg-canvas px-4 py-3 text-foreground sm:px-6 lg:px-8">
+      <div className="mx-auto flex w-full max-w-[1600px] min-w-0 flex-col gap-3">
         <header className="rounded-2xl border border-border/80 bg-card/80 p-3 shadow-sm">
-          <div className="grid gap-3 xl:grid-cols-[minmax(220px,0.65fr)_minmax(260px,0.72fr)_minmax(360px,1fr)_minmax(380px,0.95fr)] xl:items-center">
+          <div className="grid min-w-0 gap-3 xl:grid-cols-[minmax(180px,0.8fr)_minmax(240px,1fr)_minmax(320px,1fr)] xl:items-center">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-muted-foreground">
                 <span className="uppercase tracking-[0.12em]">{t('page.eyebrow')}</span>
@@ -611,12 +611,12 @@ export function ContentParsePlayground() {
               isRenderingPreview={isRenderingPreview}
             />
 
-            <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+            <div className="flex min-w-0 flex-wrap items-center gap-2 border-t border-border/60 pt-3 xl:col-span-3 xl:justify-end">
               <Select
                 value={provider}
                 onValueChange={value => setProvider(value as ParseProviderKey)}
               >
-                <SelectTrigger className="h-9 min-w-[190px] bg-background">
+                <SelectTrigger className="h-9 w-full min-w-0 bg-background sm:w-auto sm:min-w-[180px]">
                   <div className="flex min-w-0 items-center justify-between gap-2">
                     <span className="truncate">{selectedProvider?.label || provider}</span>
                     <ProviderStatusBadge
@@ -653,7 +653,7 @@ export function ContentParsePlayground() {
                     type="button"
                     variant="ghost"
                     size="sm"
-                    className="h-9 px-2 text-xs text-muted-foreground"
+                    className="h-9 min-w-0 px-2 text-xs text-muted-foreground"
                   >
                     <SlidersHorizontal className="size-3.5" />
                     {t('advanced.open')}
@@ -746,7 +746,12 @@ export function ContentParsePlayground() {
 
               <Popover>
                 <PopoverTrigger asChild>
-                  <Button type="button" variant="outline" size="sm" className="h-9 px-2 text-xs">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-9 min-w-0 px-2 text-xs"
+                  >
                     <Info className="size-3.5" />
                     {t('help.detailsToggle')}
                     <ChevronDown className="size-3.5" />
@@ -766,7 +771,12 @@ export function ContentParsePlayground() {
 
               <Popover onOpenChange={open => open && void handleLoadProviderSummary()}>
                 <PopoverTrigger asChild>
-                  <Button type="button" variant="ghost" size="sm" className="h-9 px-2 text-xs">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-9 min-w-0 px-2 text-xs"
+                  >
                     <Activity className="size-3.5" />
                     {t('actions.health')}
                   </Button>
@@ -784,7 +794,12 @@ export function ContentParsePlayground() {
 
               <Popover onOpenChange={open => open && void handleLoadHistory()}>
                 <PopoverTrigger asChild>
-                  <Button type="button" variant="ghost" size="sm" className="h-9 px-2 text-xs">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-9 min-w-0 px-2 text-xs"
+                  >
                     <History className="size-3.5" />
                     {t('actions.history')}
                   </Button>
@@ -807,7 +822,7 @@ export function ContentParsePlayground() {
                     type="button"
                     variant="ghost"
                     size="sm"
-                    className="h-9 px-2 text-xs"
+                    className="h-9 min-w-0 px-2 text-xs"
                     disabled={!result?.file.sha256 && !savedRun?.source_content_hash}
                   >
                     <Hash className="size-3.5" />
@@ -830,7 +845,7 @@ export function ContentParsePlayground() {
                 type="button"
                 variant="outline"
                 size="sm"
-                className="h-9"
+                className="h-9 min-w-0"
                 onClick={handleSaveRun}
                 loading={isSaving}
                 disabled={!file || !result}
@@ -843,7 +858,7 @@ export function ContentParsePlayground() {
                 type="button"
                 variant="outline"
                 size="sm"
-                className="h-9"
+                className="h-9 min-w-0"
                 onClick={handleCopyShareLink}
                 disabled={!savedRun?.share_token}
               >
@@ -854,7 +869,7 @@ export function ContentParsePlayground() {
               <Button
                 type="button"
                 onClick={handleParse}
-                className="h-9"
+                className="h-9 min-w-0"
                 loading={isBusy}
                 disabled={
                   !file || isRenderingPreview || !isProviderSelectable(selectedProviderStatus)
@@ -867,8 +882,8 @@ export function ContentParsePlayground() {
           </div>
         </header>
 
-        <section className="grid min-h-[640px] gap-5 xl:h-[calc(100vh-190px)] xl:max-h-[920px] xl:grid-cols-[minmax(0,1fr)_440px] xl:items-stretch">
-          <Card className="flex min-h-[640px] flex-col overflow-hidden border-border/80 shadow-sm xl:h-full">
+        <section className="grid min-h-[640px] min-w-0 gap-5 xl:h-[calc(100vh-190px)] xl:max-h-[920px] xl:grid-cols-[minmax(0,1fr)_minmax(360px,440px)] xl:items-stretch">
+          <Card className="flex min-h-[640px] min-w-0 flex-col overflow-hidden border-border/80 shadow-sm xl:h-full">
             <CardHeader className="shrink-0 border-b border-border/70 p-4">
               <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                 <div className="min-w-0">
@@ -936,7 +951,7 @@ export function ContentParsePlayground() {
             </CardContent>
           </Card>
 
-          <Card className="flex min-h-[640px] flex-col overflow-hidden border-border/80 shadow-sm xl:h-full">
+          <Card className="flex min-h-[640px] min-w-0 flex-col overflow-hidden border-border/80 shadow-sm xl:h-full">
             <CardHeader className="shrink-0 border-b border-border/70 p-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
@@ -1100,13 +1115,13 @@ function CompactRunSummary({
             key={metric.label}
             className="min-w-0 rounded-lg border border-border/70 bg-background/70 px-2 py-1.5"
           >
-            <div className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+            <div className="flex min-w-0 items-center gap-1 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
               {isBusy && metric.id === 'time' ? (
                 <Loader2 className="size-2.5 animate-spin" />
               ) : (
                 <Icon className="size-2.5" />
               )}
-              {metric.label}
+              <span className="truncate">{metric.label}</span>
             </div>
             <div className="mt-0.5 truncate text-xs font-semibold text-foreground">
               {metric.value}
@@ -1415,7 +1430,7 @@ function FileDropZone({
   return (
     <label
       className={cn(
-        'group flex cursor-pointer items-center gap-3 rounded-xl border border-dashed border-border bg-background transition-colors hover:border-primary/60 hover:bg-muted/30',
+        'group flex min-w-0 cursor-pointer items-center gap-3 rounded-xl border border-dashed border-border bg-background transition-colors hover:border-primary/60 hover:bg-muted/30',
         compact ? 'min-h-14 px-3 py-2' : 'min-h-20 px-4 py-3'
       )}
       onDragOver={event => event.preventDefault()}
@@ -1442,7 +1457,7 @@ function FileDropZone({
         <div className="truncate text-sm font-semibold text-foreground">
           {file ? file.name : t('upload.title')}
         </div>
-        <div className="mt-1 text-xs text-muted-foreground">
+        <div className="mt-1 truncate text-xs text-muted-foreground">
           {file ? formatBytes(file.size) : t('upload.subtitle')}
         </div>
       </div>
