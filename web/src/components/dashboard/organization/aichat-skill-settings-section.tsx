@@ -51,6 +51,8 @@ import type {
 } from '@/services/types/aichat';
 
 const AUTO_SAVE_DELAY_MS = 450;
+const SYSTEM_SKILL_NAME_CONFLICT_ERROR =
+  'This skill name is reserved by a built-in system skill. Please rename your custom skill and try again.';
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 type RuntimeFilter = 'all' | AIChatSkillRuntimeType;
@@ -173,8 +175,15 @@ function previewWarnings(preview: AIChatImportSkillPreview | null) {
   return preview?.warnings ?? [];
 }
 
-function previewValidationErrors(preview: AIChatImportSkillPreview | null) {
-  return preview?.validation_errors ?? [];
+function previewValidationErrors(
+  preview: AIChatImportSkillPreview | null,
+  localize: (key: DashboardSuffix) => string
+) {
+  return (preview?.validation_errors ?? []).map(error =>
+    error === SYSTEM_SKILL_NAME_CONFLICT_ERROR
+      ? localize('organization.aichatSkills.importPreview.systemSkillNameConflict')
+      : error
+  );
 }
 
 interface AIChatSkillCardProps {
@@ -433,7 +442,7 @@ function SkillImportPreviewDialog({
   const files = previewFiles(preview);
   const references = previewReferences(preview);
   const warnings = previewWarnings(preview);
-  const validationErrors = previewValidationErrors(preview);
+  const validationErrors = previewValidationErrors(preview, t);
   const existingSkillName =
     preview?.existing_skill?.name || preview?.existing_skill?.skill_id || skill?.skill_id || '';
 

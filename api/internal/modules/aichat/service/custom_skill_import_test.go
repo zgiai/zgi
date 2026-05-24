@@ -150,28 +150,44 @@ func TestValidateSkillConfigIDsRejectsInvalidSkill(t *testing.T) {
 
 func TestCustomSkillIDConflictsWithBrokenSystemSkill(t *testing.T) {
 	catalogDir := t.TempDir()
-	skillDir := filepath.Join(catalogDir, "brief-writer")
-	if err := os.MkdirAll(skillDir, 0o755); err != nil {
-		t.Fatalf("mkdir system skill: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(`---
-name: brief-writer
-description: Broken system skill.
-provider_type: builtin
-provider_id: missing
-tools:
-  - missing_tool
----
-
-# Broken
-`), 0o644); err != nil {
-		t.Fatalf("write system skill: %v", err)
-	}
+	writeSystemSkill(t, catalogDir, "brief-writer")
 	runtime := skills.NewRuntimeWithCatalog(tools.NewToolEngine(tools.NewToolManager(nil)), tools.NewToolManager(nil), catalogDir)
 	svc := &service{skillRuntime: runtime}
 
 	if !svc.customSkillIDConflictsWithSystem(context.Background(), "brief-writer") {
 		t.Fatal("customSkillIDConflictsWithSystem() = false, want true for existing system id")
+	}
+}
+
+func TestPreviewImportCustomSkillRejectsSystemSkillNameWithFriendlyMessage(t *testing.T) {
+	svc, scope, _ := testCustomSkillServiceWithSystemSkill(t, "brief-writer")
+
+	preview, err := svc.PreviewImportCustomSkill(context.Background(), scope, testSkillFileHeader(t, testSkillZip(t, map[string]string{
+		"SKILL.md": testCustomSkillMarkdown(),
+	})))
+	if err != nil {
+		t.Fatalf("PreviewImportCustomSkill() error = %v", err)
+	}
+	if preview.CanImport {
+		t.Fatal("PreviewImportCustomSkill().CanImport = true, want false")
+	}
+	if len(preview.ValidationErrors) != 1 || preview.ValidationErrors[0] != customSkillSystemNameConflictMessage {
+		t.Fatalf("ValidationErrors = %#v, want friendly system conflict message", preview.ValidationErrors)
+	}
+}
+
+func TestConfirmCustomSkillImportRejectsSystemSkillNameWithFriendlyMessage(t *testing.T) {
+	svc, scope, _ := testCustomSkillServiceWithSystemSkill(t, "brief-writer")
+	importID := uuid.NewString()
+	if _, err := svc.customSkillStorage.SavePreviewPackage(context.Background(), scope.OrganizationID, importID, testSkillZip(t, map[string]string{
+		"SKILL.md": testCustomSkillMarkdown(),
+	})); err != nil {
+		t.Fatalf("SavePreviewPackage() error = %v", err)
+	}
+
+	_, err := svc.ConfirmCustomSkillImport(context.Background(), scope, importID, false)
+	if err == nil || !errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), customSkillSystemNameConflictMessage) {
+		t.Fatalf("ConfirmCustomSkillImport() error = %v, want friendly system conflict invalid input", err)
 	}
 }
 
@@ -299,6 +315,18 @@ func testSkillFileHeader(t *testing.T, data []byte) *multipart.FileHeader {
 func testCustomSkillService(t *testing.T) (*service, Scope, *fakeCustomSkillRepository) {
 	t.Helper()
 	catalogDir := t.TempDir()
+	return testCustomSkillServiceWithCatalog(t, catalogDir)
+}
+
+func testCustomSkillServiceWithSystemSkill(t *testing.T, skillID string) (*service, Scope, *fakeCustomSkillRepository) {
+	t.Helper()
+	catalogDir := t.TempDir()
+	writeSystemSkill(t, catalogDir, skillID)
+	return testCustomSkillServiceWithCatalog(t, catalogDir)
+}
+
+func testCustomSkillServiceWithCatalog(t *testing.T, catalogDir string) (*service, Scope, *fakeCustomSkillRepository) {
+	t.Helper()
 	customRepo := &fakeCustomSkillRepository{items: map[string]*aichatmodel.CustomSkill{}}
 	svc := &service{
 		repos: &repository.Repositories{
@@ -310,6 +338,28 @@ func testCustomSkillService(t *testing.T) (*service, Scope, *fakeCustomSkillRepo
 		customSkillStorage: newFilesystemCustomSkillStorage(t.TempDir()),
 	}
 	return svc, Scope{OrganizationID: uuid.New(), AccountID: uuid.New()}, customRepo
+}
+
+func writeSystemSkill(t *testing.T, catalogDir string, skillID string) {
+	t.Helper()
+	skillDir := filepath.Join(catalogDir, skillID)
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatalf("mkdir system skill: %v", err)
+	}
+	content := `---
+name: ` + skillID + `
+description: Built-in system skill.
+provider_type: builtin
+provider_id: missing
+tools:
+  - missing_tool
+---
+
+# System Skill
+`
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write system skill: %v", err)
+	}
 }
 
 type fakeAccessRepository struct{}

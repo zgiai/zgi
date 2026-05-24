@@ -568,6 +568,7 @@ const messages: DashboardMessages = {
         cancel: '取消',
         overwriteTitle: '将覆盖现有 Skill',
         overwriteDescription: '组织中已存在 “{skill}”。确认导入后，现有 Skill 包会被新的包替换。',
+        systemSkillNameConflict: '这个 Skill 名称已被平台内置 Skill 占用，请修改自定义 Skill 名称后再导入。',
       },
       messages: {
         saved: 'AIChat Skill 设置已保存',
