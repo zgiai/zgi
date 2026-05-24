@@ -1,7 +1,7 @@
 package handler
 
 import (
-	"fmt"
+	"errors"
 	"io"
 	"net/url"
 	"path/filepath"
@@ -339,7 +339,7 @@ func (h *FileHandler) GetFileOriginalPreviewURL(c *gin.Context) {
 		return
 	}
 
-	uploadFile, ok := h.getAuthorizedOriginalPreviewFile(c, fileID)
+	uploadFile, ok := h.getAuthorizedFileForDownload(c, fileID)
 	if !ok {
 		return
 	}
@@ -384,7 +384,7 @@ func (h *FileHandler) GetFilesMetadata(c *gin.Context) {
 		}
 		seen[fileID] = struct{}{}
 
-		uploadFile, ok := h.getAuthorizedOriginalPreviewFile(c, fileID)
+		uploadFile, ok := h.getAuthorizedFileForDownload(c, fileID)
 		if !ok {
 			return
 		}
@@ -567,52 +567,17 @@ func (h *FileHandler) DownloadFile(c *gin.Context) {
 		return
 	}
 
-	// Get current user information
-	accountID := c.GetString("account_id")
-	if accountID == "" {
-		h.businessError(c, response.ErrUnauthorized)
+	uploadFile, ok := h.getAuthorizedFileForDownload(c, fileID)
+	if !ok {
 		return
-	}
-
-	// Get canonical organization scope
-	organizationID := util.GetOrganizationID(c)
-	if organizationID == "" {
-		h.businessError(c, response.ErrInvalidTenantId)
-		return
-	}
-
-	// Get file info for permission checks
-	uploadFile, err := h.fileService.GetFileByID(c.Request.Context(), fileID)
-	if err != nil {
-		h.businessError(c, response.ErrFileNotFound)
-		return
-	}
-
-	if uploadFile.TeamTenantID != nil && *uploadFile.TeamTenantID != "" && h.enterpriseService != nil {
-		hasPermission, err := h.enterpriseService.CheckWorkspacePermission(
-			c.Request.Context(),
-			organizationID,
-			*uploadFile.TeamTenantID,
-			accountID,
-			workspace_model.WorkspacePermissionFileDownload,
-		)
-		if err != nil {
-			h.businessError(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			h.businessError(c, response.ErrPermissionDenied)
-			return
-		}
 	}
 
 	// Call service layer to download file
 	content, err := h.fileService.DownloadFile(c.Request.Context(), fileID)
 	if err != nil {
-		switch err {
-		case model.ErrFileNotFound:
+		if errors.Is(err, model.ErrFileNotFound) {
 			response.Fail(c, response.ErrFileNotFound)
-		default:
+		} else {
 			h.businessError(c, response.ErrFileDownloadFailed)
 		}
 		return
@@ -622,8 +587,7 @@ func (h *FileHandler) DownloadFile(c *gin.Context) {
 	c.Header("Content-Description", "File Transfer")
 	c.Header("Content-Type", uploadFile.MimeType)
 
-	encodedFilename := url.QueryEscape(uploadFile.Name)
-	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", encodedFilename))
+	c.Header("Content-Disposition", fileAttachmentDisposition(uploadFile.Name))
 
 	c.Header("Content-Length", strconv.FormatInt(uploadFile.Size, 10))
 	c.Header("Expires", "0")
@@ -634,7 +598,7 @@ func (h *FileHandler) DownloadFile(c *gin.Context) {
 	c.Data(200, uploadFile.MimeType, content)
 }
 
-func (h *FileHandler) getAuthorizedOriginalPreviewFile(c *gin.Context, fileID string) (*dto.UploadFile, bool) {
+func (h *FileHandler) getAuthorizedFileForDownload(c *gin.Context, fileID string) (*dto.UploadFile, bool) {
 	accountID := c.GetString("account_id")
 	if accountID == "" {
 		h.businessError(c, response.ErrUnauthorized)
@@ -709,6 +673,46 @@ func getUploadFileWorkspaceID(uploadFile *dto.UploadFile) string {
 		return *uploadFile.TeamTenantID
 	}
 	return ""
+}
+
+func fileAttachmentDisposition(filename string) string {
+	filename = sanitizeAttachmentFilename(filename)
+	if filename == "" {
+		filename = "download"
+	}
+	fallback := asciiAttachmentFilenameFallback(filename)
+	encoded := url.PathEscape(filename)
+	return `attachment; filename="` + fallback + `"; filename*=UTF-8''` + encoded
+}
+
+func sanitizeAttachmentFilename(filename string) string {
+	filename = strings.TrimSpace(filename)
+	filename = strings.ReplaceAll(filename, "\r", "_")
+	filename = strings.ReplaceAll(filename, "\n", "_")
+	filename = strings.ReplaceAll(filename, "\\", "/")
+	if index := strings.LastIndex(filename, "/"); index >= 0 {
+		filename = filename[index+1:]
+	}
+	return strings.Trim(filename, ". ")
+}
+
+func asciiAttachmentFilenameFallback(filename string) string {
+	var builder strings.Builder
+	for _, r := range filename {
+		switch {
+		case r == '"' || r == '\\':
+			builder.WriteByte('_')
+		case r >= 0x20 && r <= 0x7e:
+			builder.WriteRune(r)
+		default:
+			builder.WriteByte('_')
+		}
+	}
+	fallback := strings.TrimSpace(builder.String())
+	if fallback == "" {
+		return "download"
+	}
+	return fallback
 }
 
 func isOriginalPreviewSupported(uploadFile *dto.UploadFile) bool {

@@ -2,7 +2,6 @@ package handler
 
 import (
 	"net/http"
-	"net/url"
 	"os"
 	"strconv"
 
@@ -52,15 +51,18 @@ func (h *ImagePreviewHandler) GetFilePreview(c *gin.Context) {
 	sign := c.Query("sign")
 	asAttachmentStr := c.Query("as_attachment")
 
-	// Check required parameters
-	if timestamp == "" || nonce == "" || sign == "" {
+	hasSignatureParams := timestamp != "" || nonce != "" || sign != ""
+	if hasSignatureParams {
+		if timestamp == "" || nonce == "" || sign == "" {
+			response.Fail(c, response.ErrInvalidParam)
+			return
+		}
+		if !util.VerifyFileSignature(fileID, timestamp, nonce, sign) {
+			response.Fail(c, response.ErrFileNotFound) // Return a generic not-found error for security.
+			return
+		}
+	} else if c.GetString("auth_method") != "jwt" {
 		response.Fail(c, response.ErrInvalidParam)
-		return
-	}
-
-	// Verify file signature
-	if !util.VerifyFileSignature(fileID, timestamp, nonce, sign) {
-		response.Fail(c, response.ErrFileNotFound) // Return a generic not-found error for security.
 		return
 	}
 
@@ -108,8 +110,7 @@ func (h *ImagePreviewHandler) writeFilePreview(c *gin.Context, uploadFile *dto.U
 	}
 
 	if asAttachment {
-		encodedFilename := url.QueryEscape(uploadFile.Name)
-		c.Header("Content-Disposition", `attachment; filename*=UTF-8''`+encodedFilename)
+		c.Header("Content-Disposition", fileAttachmentDisposition(uploadFile.Name))
 	}
 	c.Header("Content-Length", strconv.Itoa(len(content)))
 	c.Data(http.StatusOK, uploadFile.MimeType, content)

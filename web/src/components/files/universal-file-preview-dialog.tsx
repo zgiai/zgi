@@ -108,7 +108,7 @@ export function UniversalFilePreviewDialog({
   const [previewSession, setPreviewSession] = useState<{
     file: UniversalFilePreviewDescriptor;
     previewUrl: string;
-    downloadUrl: string;
+    downloadUrl?: string;
   } | null>(null);
   const [htmlOpenConfirmOpen, setHtmlOpenConfirmOpen] = useState(false);
 
@@ -120,21 +120,43 @@ export function UniversalFilePreviewDialog({
     }
     if (!file) return;
 
-    setPreviewSession(current => {
-      if (current) return current;
+    const nextPreviewUrl = firstNonEmptyString(previewUrl, file.previewUrl);
+    const nextDownloadUrl = firstNonEmptyString(file.downloadUrl);
+    const nextFileKey = getPreviewFileKey(file);
+    if (!nextPreviewUrl && !nextDownloadUrl) return;
 
-      const sessionPreviewUrl = previewUrl || file.previewUrl || '';
+    setPreviewSession(current => {
+      if (current && getPreviewFileKey(current.file) === nextFileKey) {
+        const updatedPreviewUrl = current.previewUrl || nextPreviewUrl;
+        const updatedDownloadUrl = current.downloadUrl || nextDownloadUrl;
+        if (
+          updatedPreviewUrl === current.previewUrl &&
+          updatedDownloadUrl === current.downloadUrl
+        ) {
+          return current;
+        }
+        return {
+          file: current.file,
+          previewUrl: updatedPreviewUrl,
+          downloadUrl: updatedDownloadUrl,
+        };
+      }
+
       return {
         file,
-        previewUrl: sessionPreviewUrl,
-        downloadUrl: file.downloadUrl || sessionPreviewUrl,
+        previewUrl: nextPreviewUrl,
+        downloadUrl: nextDownloadUrl,
       };
     });
   }, [file, open, previewUrl]);
 
   const activeFile = previewSession?.file ?? file;
-  const resolvedPreviewUrl = previewSession?.previewUrl ?? previewUrl ?? file?.previewUrl ?? '';
-  const downloadUrl = previewSession?.downloadUrl ?? file?.downloadUrl ?? resolvedPreviewUrl;
+  const resolvedPreviewUrl = firstNonEmptyString(
+    previewSession?.previewUrl,
+    previewUrl,
+    file?.previewUrl
+  );
+  const downloadUrl = firstNonEmptyString(previewSession?.downloadUrl, file?.downloadUrl);
   const isSupported = isOriginalPreviewSupported(activeFile?.extension, activeFile?.mimeType);
   const extension = activeFile?.extension?.replace(/^\./, '').toUpperCase() || '';
   const title = activeFile?.name || t('preview.title');
@@ -271,17 +293,17 @@ export function UniversalFilePreviewDialog({
                 {t('preview.openInNewTab')}
               </Button>
             ) : null}
-            {downloadUrl ? (
+            {file && onDownload ? (
+              <Button variant="outline" onClick={onDownload} disabled={isDownloading}>
+                <Download className="mr-2 h-4 w-4" />
+                {t('actions.downloadFile')}
+              </Button>
+            ) : downloadUrl ? (
               <Button variant="outline" asChild>
                 <a href={downloadUrl} download={activeFile?.name}>
                   <Download className="mr-2 h-4 w-4" />
                   {t('actions.downloadFile')}
                 </a>
-              </Button>
-            ) : file && onDownload ? (
-              <Button variant="outline" onClick={onDownload} disabled={isDownloading}>
-                <Download className="mr-2 h-4 w-4" />
-                {t('actions.downloadFile')}
               </Button>
             ) : null}
           </DialogFooter>
@@ -300,6 +322,14 @@ export function UniversalFilePreviewDialog({
       />
     </>
   );
+}
+
+function firstNonEmptyString(...values: Array<string | null | undefined>): string {
+  return values.find(value => typeof value === 'string' && value.trim() !== '') ?? '';
+}
+
+function getPreviewFileKey(file: UniversalFilePreviewDescriptor): string {
+  return file.id || file.name;
 }
 
 interface OfficePreviewProps {
