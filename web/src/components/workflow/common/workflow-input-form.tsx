@@ -22,6 +22,8 @@ import {
 } from '@/components/ui/select';
 import { FileUpload } from '@/components/common/file-upload';
 import type { UploadedFile } from '@/services/types/dataset';
+import type { FileItem } from '@/services/types/file';
+import { fileManageService } from '@/services/file-manage.service';
 import { useForm } from 'react-hook-form';
 import type { InputVar, InputVarType } from '@/components/workflow/types/input-var';
 import { useT } from '@/i18n';
@@ -35,6 +37,11 @@ export interface FileInputPayload {
   transfer_method: 'local_file'; // future: 'remote_url'
   url: string;
   upload_file_id: string;
+  name?: string;
+  filename?: string;
+  size?: number;
+  extension?: string;
+  mime_type?: string;
 }
 
 export type WorkflowFileUploadAccessMode = 'enabled' | 'login-required';
@@ -64,7 +71,7 @@ export function transformFilesToPayload(
   const transformed: FormInputs = { ...values } as FormInputs;
   variables.forEach(v => {
     if (v.type === 'file') {
-      const id = values[v.variable] as string | undefined;
+      const id = getFileIdFromValue(values[v.variable]);
       if (id) {
         const fileType = (v.allowed_file_types && v.allowed_file_types[0]) || 'document';
         transformed[v.variable] = {
@@ -78,7 +85,7 @@ export function transformFilesToPayload(
       }
     }
     if (v.type === 'file-list') {
-      const ids = (values[v.variable] as string[] | undefined) ?? [];
+      const ids = getFileIdsFromValue(values[v.variable]);
       const fileType = (v.allowed_file_types && v.allowed_file_types[0]) || 'document';
       transformed[v.variable] = ids.map(fid => ({
         type: fileType,
@@ -142,22 +149,128 @@ function toPositiveNumber(value: unknown): number | undefined {
 }
 
 function getInitialFileIds(value: unknown): string[] {
+  return getFileIdsFromValue(value);
+}
+
+function getStringField(record: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function getNumberField(record: Record<string, unknown>, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string') {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return undefined;
+}
+
+function getFileIdFromValue(value: unknown): string | undefined {
+  if (typeof value === 'string') {
+    const id = value.trim();
+    return id || undefined;
+  }
+  if (value && typeof value === 'object') {
+    return getStringField(value as Record<string, unknown>, ['upload_file_id', 'id', 'related_id']);
+  }
+  return undefined;
+}
+
+function getFileIdsFromValue(value: unknown): string[] {
+  const values = Array.isArray(value) ? value : [value];
+  return values.map(getFileIdFromValue).filter((id): id is string => Boolean(id));
+}
+
+function normalizeInitialFileValues(
+  values: FormInputs | undefined,
+  variables: InputVar[]
+): FormInputs | undefined {
+  if (!values) return undefined;
+  const normalized: FormInputs = { ...values };
+  variables.forEach(v => {
+    if (v.type === 'file') {
+      normalized[v.variable] = getFileIdFromValue(values[v.variable]);
+    }
+    if (v.type === 'file-list') {
+      normalized[v.variable] = getFileIdsFromValue(values[v.variable]);
+    }
+  });
+  return normalized;
+}
+
+function toUploadedFileFromRecord(
+  record: Record<string, unknown>,
+  fallbackID?: string
+): UploadedFile | null {
+  const id = getFileIdFromValue(record) ?? fallbackID;
+  if (!id) return null;
+  const name = getStringField(record, ['name', 'filename']) ?? `file-${id}`;
+  const extension =
+    getStringField(record, ['extension', 'ext'])?.replace(/^\./, '') ||
+    name.split('.').pop() ||
+    'bin';
+  const mimeType =
+    getStringField(record, ['mime_type', 'content_type']) ?? 'application/octet-stream';
+  return {
+    id,
+    name,
+    size: getNumberField(record, ['size']) ?? 0,
+    extension,
+    mime_type: mimeType,
+    hash: getStringField(record, ['hash']),
+    created_by: getStringField(record, ['created_by']),
+    created_at: record.created_at as string | number | undefined,
+    url: getStringField(record, ['source_url', 'url', 'remote_url']),
+  };
+}
+
+function toUploadedFileFromMetadata(file: FileItem): UploadedFile {
+  return {
+    id: file.id,
+    name: file.name,
+    size: file.size,
+    extension: file.extension,
+    mime_type: file.mime_type,
+    hash: file.hash,
+    created_by: file.created_by,
+    created_at: file.created_at,
+    url: file.source_url,
+  };
+}
+
+function fallbackUploadedFile(id: string): UploadedFile {
+  return {
+    id,
+    name: `file-${id}`,
+    size: 0,
+    type: 'application/octet-stream',
+    created_at: Date.now(),
+    extension: 'bin',
+    mime_type: 'application/octet-stream',
+    created_by: '',
+  };
+}
+
+function getUploadedFilesFromInitialValue(value: unknown): UploadedFile[] {
   const values = Array.isArray(value) ? value : [value];
   return values
     .map(item => {
-      if (typeof item === 'string') return item;
-      if (
-        item &&
-        typeof item === 'object' &&
-        'upload_file_id' in item &&
-        typeof (item as { upload_file_id?: unknown }).upload_file_id === 'string'
-      ) {
-        return (item as { upload_file_id: string }).upload_file_id;
+      if (typeof item === 'string') return fallbackUploadedFile(item);
+      if (item && typeof item === 'object') {
+        return toUploadedFileFromRecord(item as Record<string, unknown>);
       }
-      return '';
+      return null;
     })
-    .map(id => id.trim())
-    .filter(Boolean);
+    .filter((file): file is UploadedFile => Boolean(file));
 }
 
 function areSameFileIds(files: UploadedFile[] | undefined, ids: string[]): boolean {
@@ -259,10 +372,15 @@ const WorkflowInputForm = React.forwardRef<WorkflowInputFormHandle, WorkflowInpu
       return result;
     }, [startVariables]);
 
+    const normalizedInitialValues = useMemo(
+      () => normalizeInitialFileValues(initialValues, startVariables),
+      [initialValues, startVariables]
+    );
+
     // Merge provided initial values (if any) to allow repopulating a previous run.
     const defaultValues = useMemo<FormInputs>(
-      () => ({ ...schemaDefaultValues, ...(initialValues ?? {}) }) as FormInputs,
-      [schemaDefaultValues, initialValues]
+      () => ({ ...schemaDefaultValues, ...(normalizedInitialValues ?? {}) }) as FormInputs,
+      [schemaDefaultValues, normalizedInitialValues]
     );
 
     // Schema signature for stability: only reset when actual schema changes
@@ -288,7 +406,10 @@ const WorkflowInputForm = React.forwardRef<WorkflowInputFormHandle, WorkflowInpu
     );
 
     // Initial values signature: reset when true external initial values change
-    const initialSig = useMemo(() => JSON.stringify(initialValues ?? {}), [initialValues]);
+    const initialSig = useMemo(
+      () => JSON.stringify(normalizedInitialValues ?? {}),
+      [normalizedInitialValues]
+    );
 
     // RHF form state
     const form = useForm<FormInputs>({
@@ -324,36 +445,56 @@ const WorkflowInputForm = React.forwardRef<WorkflowInputFormHandle, WorkflowInpu
     useEffect(() => {
       if (!initialValues) return;
 
+      let cancelled = false;
       const hydrateFiles = async () => {
         const fileVars = startVariables.filter(v => v.type === 'file' || v.type === 'file-list');
         if (fileVars.length === 0) return;
 
         const varMap: Record<string, string[]> = {};
+        const initialFileMap: Record<string, UploadedFile[]> = {};
 
         fileVars.forEach(v => {
           const cleanIds = getInitialFileIds(initialValues[v.variable]);
           if (cleanIds.length === 0) return;
           if (!areSameFileIds(fileStatesRef.current[v.variable], cleanIds)) {
             varMap[v.variable] = cleanIds;
+            const filesFromValue = getUploadedFilesFromInitialValue(initialValues[v.variable]);
+            initialFileMap[v.variable] =
+              filesFromValue.length > 0 ? filesFromValue : cleanIds.map(fallbackUploadedFile);
           }
         });
 
         if (Object.keys(varMap).length === 0) return;
 
+        setFileStates(prev => {
+          const next = { ...prev };
+          Object.entries(varMap).forEach(([key, ids]) => {
+            const candidates = initialFileMap[key] ?? [];
+            next[key] = ids.map(
+              id => candidates.find(file => file.id === id) ?? fallbackUploadedFile(id)
+            );
+          });
+          return next;
+        });
+
+        const idsToFetch = Array.from(new Set(Object.values(varMap).flat()));
+        if (idsToFetch.length === 0) return;
+
         try {
+          const response = await fileManageService.getFilesMetadata(idsToFetch);
+          if (cancelled) return;
+          const metadataByID = new Map(
+            (response.data?.data ?? []).map(file => [file.id, toUploadedFileFromMetadata(file)])
+          );
           setFileStates(prev => {
             const next = { ...prev };
             Object.entries(varMap).forEach(([key, ids]) => {
-              next[key] = ids.map(id => ({
-                id,
-                name: `file-${id}`, // Fallback name
-                size: 0,
-                type: 'application/octet-stream',
-                created_at: Date.now(),
-                extension: 'bin',
-                mime_type: 'application/octet-stream',
-                created_by: '',
-              }));
+              next[key] = ids.map(
+                id =>
+                  metadataByID.get(id) ??
+                  initialFileMap[key]?.find(file => file.id === id) ??
+                  fallbackUploadedFile(id)
+              );
             });
             return next;
           });
@@ -363,6 +504,9 @@ const WorkflowInputForm = React.forwardRef<WorkflowInputFormHandle, WorkflowInpu
       };
 
       hydrateFiles();
+      return () => {
+        cancelled = true;
+      };
     }, [initialValues, startVariables]); // Removed fileStates from deps to avoid loop, handled inside
 
     // Submit wrapper to emit values upstream
@@ -385,11 +529,14 @@ const WorkflowInputForm = React.forwardRef<WorkflowInputFormHandle, WorkflowInpu
 
     const handleSetValues = useCallback(
       (values: FormInputs) => {
-        const nextValues = { ...schemaDefaultValues, ...values };
+        const nextValues = {
+          ...schemaDefaultValues,
+          ...(normalizeInitialFileValues(values, startVariables) ?? {}),
+        };
         form.reset(nextValues);
         onChange?.(nextValues);
       },
-      [form, onChange, schemaDefaultValues]
+      [form, onChange, schemaDefaultValues, startVariables]
     );
 
     const handleLoginConfirm = useCallback(() => {

@@ -11,6 +11,7 @@ import type {
   StorageUsage,
   FileFolder,
   FileFoldersResponse,
+  FileMetadataResponse,
   UploadFileRequest,
   UploadFileResponse,
   CreateFolderRequest,
@@ -90,6 +91,11 @@ class FileManageService extends BaseService {
     fileId: string
   ): Promise<ApiResponseData<FileOriginalPreviewUrlResponse>> {
     return this.request('get', `/console/api/files/${fileId}/preview-url`);
+  }
+
+  async getFilesMetadata(fileIds: string[]): Promise<ApiResponseData<FileMetadataResponse>> {
+    const params = fileIds.map(id => `file_ids=${encodeURIComponent(id)}`).join('&');
+    return this.request('get', `/console/api/files/metadata?${params}`);
   }
 
   /**

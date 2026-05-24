@@ -20,6 +20,7 @@ import { useHistoryView } from './hooks/use-history-view';
 import { useSseCallbacks } from './hooks/use-sse-callbacks';
 import type { WorkflowFinishedData, HistoryResult } from './types';
 import useWorkflowValidation from '../../hooks/use-workflow-validation';
+import { flushWorkflowPendingEdits } from '../../hooks/pending-edits';
 import {
   Dialog,
   DialogContent,
@@ -819,6 +820,7 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
   const { errors } = useWorkflowValidation();
 
   const persistDraftBeforeRun = useCallback(async () => {
+    flushWorkflowPendingEdits();
     const { nodes, edges, viewport, workflowData } = useWorkflowStore.getState();
     const updatedWorkflowData = {
       ...workflowData,

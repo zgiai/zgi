@@ -363,6 +363,37 @@ func (h *FileHandler) GetFileOriginalPreviewURL(c *gin.Context) {
 	})
 }
 
+// GetFilesMetadata returns authorized metadata for files by ID.
+// GET /files/metadata?file_ids=...
+func (h *FileHandler) GetFilesMetadata(c *gin.Context) {
+	fileIDs := c.QueryArray("file_ids")
+	if len(fileIDs) == 0 {
+		h.businessError(c, response.ErrFileIdRequired)
+		return
+	}
+
+	seen := make(map[string]struct{}, len(fileIDs))
+	files := make([]dto.UploadFile, 0, len(fileIDs))
+	for _, fileID := range fileIDs {
+		fileID = strings.TrimSpace(fileID)
+		if fileID == "" {
+			continue
+		}
+		if _, ok := seen[fileID]; ok {
+			continue
+		}
+		seen[fileID] = struct{}{}
+
+		uploadFile, ok := h.getAuthorizedOriginalPreviewFile(c, fileID)
+		if !ok {
+			return
+		}
+		files = append(files, *uploadFile)
+	}
+
+	response.Success(c, &dto.FileMetadataListResponse{Data: files})
+}
+
 // CreateTextFile creates a text file from provided content and uploads it
 // POST /files/text
 func (h *FileHandler) CreateTextFile(c *gin.Context) {
