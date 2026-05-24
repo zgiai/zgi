@@ -20,6 +20,7 @@ export interface OutputVariablesViewProps {
   variant?: 'panel' | 'compact';
   maxItems?: number;
   showCount?: boolean;
+  expandHiddenItems?: boolean;
 }
 
 const OutputVariablesView: React.FC<OutputVariablesViewProps> = ({
@@ -30,6 +31,7 @@ const OutputVariablesView: React.FC<OutputVariablesViewProps> = ({
   variant = 'panel',
   maxItems = 3,
   showCount = true,
+  expandHiddenItems = false,
 }) => {
   const t = useT('nodes');
   const items = Array.isArray(variables) ? variables : [];
@@ -60,7 +62,7 @@ const OutputVariablesView: React.FC<OutputVariablesViewProps> = ({
     const visibleItems = items.slice(0, Math.max(1, maxItems));
     const hiddenItems = items.slice(visibleItems.length);
     const hiddenCount = Math.max(0, items.length - visibleItems.length);
-    const displayItems = compactExpanded ? items : visibleItems;
+    const displayItems = expandHiddenItems && compactExpanded ? items : visibleItems;
     const toggleLabel = compactExpanded
       ? t('common.collapseOutputVariables')
       : t('common.expandOutputVariables', { count: hiddenCount });
@@ -87,7 +89,7 @@ const OutputVariablesView: React.FC<OutputVariablesViewProps> = ({
               <span className="truncate text-muted-foreground">{variable.type}</span>
             </div>
           ))}
-          {hiddenCount > 0 ? (
+          {hiddenCount > 0 && expandHiddenItems ? (
             <button
               type="button"
               className="nodrag nowheel flex w-full items-center gap-1 rounded-md bg-muted/40 px-2 py-1 text-left text-[11px] text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -104,6 +106,10 @@ const OutputVariablesView: React.FC<OutputVariablesViewProps> = ({
               />
               <span className="truncate">{toggleLabel}</span>
             </button>
+          ) : hiddenCount > 0 ? (
+            <div className="px-1 text-[11px] text-muted-foreground">
+              +{hiddenCount}
+            </div>
           ) : null}
         </div>
       </div>

@@ -70,6 +70,7 @@ export default function QuestionAnswerContent({ nodeId, data }: QuestionAnswerCo
         variables={outputVariables}
         maxItems={3}
         showCount={false}
+        expandHiddenItems
       />
 
       <div className="space-y-1.5">
