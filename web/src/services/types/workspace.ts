@@ -46,6 +46,7 @@ export interface WorkspaceMemberAccount {
   role_id: string;
   role_name: string;
   status: string;
+  has_mobile?: boolean;
   department_id: string;
   department_name: string;
   member_name?: string;

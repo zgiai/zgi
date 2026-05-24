@@ -613,6 +613,7 @@ func (s *WorkspaceManagementServiceImpl) GetWorkspaceMembers(ctx context.Context
 			Role:         string(join.Role),
 			RoleID:       join.RoleID,
 			Status:       string(account.Status),
+			HasMobile:    account.MobileE164 != nil && strings.TrimSpace(*account.MobileE164) != "",
 		})
 	}
 
@@ -640,6 +641,7 @@ func (s *WorkspaceManagementServiceImpl) GetWorkspaceMembersPaginated(ctx contex
 		LastLoginAt      *time.Time `gorm:"column:last_login_at"`
 		LastActiveAt     *time.Time `gorm:"column:last_active_at"`
 		AccountCreatedAt time.Time  `gorm:"column:account_created_at"`
+		MobileE164       *string    `gorm:"column:mobile_e164"`
 		Role             string     `gorm:"column:role"`
 		RoleID           *string    `gorm:"column:role_id"`
 		MemberName       *string    `gorm:"column:member_name"`
@@ -655,7 +657,7 @@ func (s *WorkspaceManagementServiceImpl) GetWorkspaceMembersPaginated(ctx contex
 	fields := []string{
 		"a.id", "a.name as account_name", "a.email", "a.avatar", "a.status",
 		"a.last_login_at", "a.last_active_at", "a.created_at as account_created_at",
-		"wm.role", "wm.role_id",
+		"a.mobile_e164", "wm.role", "wm.role_id",
 	}
 
 	if orgID != "" {
@@ -722,6 +724,7 @@ func (s *WorkspaceManagementServiceImpl) GetWorkspaceMembersPaginated(ctx contex
 			Role:         r.Role,
 			RoleID:       r.RoleID,
 			Status:       r.Status,
+			HasMobile:    r.MobileE164 != nil && strings.TrimSpace(*r.MobileE164) != "",
 		})
 	}
 
@@ -832,6 +835,7 @@ func (s *WorkspaceManagementServiceImpl) GetDatasetOperatorMembers(ctx context.C
 			Role:         string(join.Role), // Ensure role is dataset_operator
 			RoleID:       join.RoleID,
 			Status:       string(account.Status),
+			HasMobile:    account.MobileE164 != nil && strings.TrimSpace(*account.MobileE164) != "",
 		})
 	}
 

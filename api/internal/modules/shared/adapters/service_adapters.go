@@ -477,6 +477,7 @@ func (t *TenantServiceAdapter) GetWorkspaceMembers(ctx context.Context, tenantID
 			Role:         member.Role,
 			RoleID:       member.RoleID,
 			Status:       member.Status,
+			HasMobile:    member.HasMobile,
 		})
 	}
 	return interfaceMembers, nil
@@ -547,6 +548,7 @@ func (t *TenantServiceAdapter) GetDatasetOperatorMembers(ctx context.Context, te
 			Role:         member.Role,
 			RoleID:       member.RoleID,
 			Status:       member.Status,
+			HasMobile:    member.HasMobile,
 		})
 	}
 	return interfaceMembers, nil

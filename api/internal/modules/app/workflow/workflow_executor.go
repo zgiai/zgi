@@ -919,19 +919,17 @@ func (e *WorkflowExecutor) ExecuteWorkflowNodeWithVariablePool(ctx context.Conte
 	logger.Info("Starting node execution in engine", map[string]interface{}{
 		"nodeID":   nodeID,
 		"nodeType": nodeType,
-		"config":   config,
-		"inputs":   inputs,
 	})
 	if err := engine.Execute(ctx); err != nil {
-		logger.Error(fmt.Sprintf("Engine execution failed for nodeID: %s, nodeType: %s, config: %+v, inputs: %+v", nodeID, nodeType, config, inputs), err)
+		logger.Error(fmt.Sprintf("Engine execution failed for nodeID: %s, nodeType: %s", nodeID, nodeType), err)
 		// Get detailed node state for debugging
 		if nodeState, exists := engine.GetNodeStatus(nodeID); exists {
 			var nodeErrorStr string
 			if nodeState.Error != nil {
 				nodeErrorStr = nodeState.Error.Error()
 			}
-			logger.Error(fmt.Sprintf("Failed node state details - nodeID: %s, status: %s, error: %s, startTime: %v, endTime: %v, inputs: %+v, outputs: %+v",
-				nodeID, nodeState.Status, nodeErrorStr, nodeState.StartTime, nodeState.EndTime, nodeState.Inputs, nodeState.Outputs),
+			logger.Error(fmt.Sprintf("Failed node state details - nodeID: %s, status: %s, error: %s, startTime: %v, endTime: %v",
+				nodeID, nodeState.Status, nodeErrorStr, nodeState.StartTime, nodeState.EndTime),
 				fmt.Errorf("node execution failed"))
 
 			// Prefer returning the concrete node error to the client for better diagnosis
@@ -960,7 +958,7 @@ func (e *WorkflowExecutor) ExecuteWorkflowNodeWithVariablePool(ctx context.Conte
 			if nodeType == shared.Start || (k != "sys.agent_id" && k != "sys.files" && k != "sys.user_id" && k != "sys.workflow_id" && k != "sys.workflow_run_id") {
 				selector := []string{nodeID, k}
 				sharedVariablePool.Add(selector, v)
-				logger.Info("Added node output to variable pool", "nodeID", nodeID, "variable", k, "value", v, "selector", selector)
+				logger.Info("Added node output to variable pool", "nodeID", nodeID, "variable", k, "selector", selector)
 			}
 		}
 	}
@@ -1095,11 +1093,9 @@ func (e *WorkflowExecutor) ExecuteWorkflowNodeWithAllCallbacks(
 	logger.Info("Starting node execution in engine with stream callback", map[string]interface{}{
 		"nodeID":   nodeID,
 		"nodeType": nodeType,
-		"config":   config,
-		"inputs":   inputs,
 	})
 	if err := engine.Execute(ctx); err != nil {
-		logger.Error(fmt.Sprintf("Engine execution failed for nodeID: %s, nodeType: %s, config: %+v, inputs: %+v", nodeID, nodeType, config, inputs), err)
+		logger.Error(fmt.Sprintf("Engine execution failed for nodeID: %s, nodeType: %s", nodeID, nodeType), err)
 		// Get detailed node state for debugging
 		if nodeState, exists := engine.GetNodeStatus(nodeID); exists {
 			partialResult := buildNodeRunResultFromState(nodeState)
@@ -1107,8 +1103,8 @@ func (e *WorkflowExecutor) ExecuteWorkflowNodeWithAllCallbacks(
 			if nodeState.Error != nil {
 				nodeErrorStr = nodeState.Error.Error()
 			}
-			logger.Error(fmt.Sprintf("Failed node state details - nodeID: %s, status: %s, error: %s, startTime: %v, endTime: %v, inputs: %+v, outputs: %+v",
-				nodeID, nodeState.Status, nodeErrorStr, nodeState.StartTime, nodeState.EndTime, nodeState.Inputs, nodeState.Outputs),
+			logger.Error(fmt.Sprintf("Failed node state details - nodeID: %s, status: %s, error: %s, startTime: %v, endTime: %v",
+				nodeID, nodeState.Status, nodeErrorStr, nodeState.StartTime, nodeState.EndTime),
 				fmt.Errorf("node execution failed"))
 
 			// Prefer returning the concrete node error to the client for better diagnosis
@@ -1138,7 +1134,7 @@ func (e *WorkflowExecutor) ExecuteWorkflowNodeWithAllCallbacks(
 			if nodeType == shared.Start || (k != "sys.agent_id" && k != "sys.files" && k != "sys.user_id" && k != "sys.workflow_id" && k != "sys.workflow_run_id") {
 				selector := []string{nodeID, k}
 				sharedVariablePool.Add(selector, v)
-				logger.Info("Added node output to variable pool", "nodeID", nodeID, "variable", k, "value", v, "selector", selector)
+				logger.Info("Added node output to variable pool", "nodeID", nodeID, "variable", k, "selector", selector)
 			}
 		}
 	}

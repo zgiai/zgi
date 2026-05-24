@@ -37,6 +37,8 @@ export const WORKSPACE_KEYS = {
     [...WORKSPACE_KEYS.all, 'detail', orgId, wsId] as const,
   members: (orgId: string | null, wsId: string | null, params?: unknown) =>
     [...WORKSPACE_KEYS.all, 'members', orgId, wsId, params].filter(Boolean),
+  memberDetail: (orgId: string | null, wsId: string | null, memberId: string | null) =>
+    [...WORKSPACE_KEYS.all, 'member-detail', orgId, wsId, memberId].filter(Boolean),
   availableMembers: (orgId: string | null, wsId: string | null, params?: unknown) =>
     [...WORKSPACE_KEYS.all, 'available-members', orgId, wsId, params].filter(Boolean),
   membersInfinite: (orgId: string | null, wsId: string | null, params: unknown) =>
