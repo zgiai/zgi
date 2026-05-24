@@ -1,9 +1,11 @@
 package migrations
 
 import (
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -65,6 +67,115 @@ func TestMigrationIDPatternAcceptsPublicFormats(t *testing.T) {
 		if migrationIDPattern.MatchString(id) {
 			t.Fatalf("expected migration ID %q to be invalid", id)
 		}
+	}
+}
+
+func TestChooseMigrationPlanForFreshDatabase(t *testing.T) {
+	plan, err := chooseMigrationPlan(migrationState{})
+	if err != nil {
+		t.Fatalf("choose migration plan: %v", err)
+	}
+	if plan.name != "fresh" {
+		t.Fatalf("expected fresh plan, got %s", plan.name)
+	}
+	if !plan.validateUnknownMigrations {
+		t.Fatal("fresh plan must validate unknown migrations")
+	}
+	if len(plan.migrations) == 0 || plan.migrations[0].ID != initialSchemaMigrationID {
+		t.Fatalf("fresh plan must start with %s", initialSchemaMigrationID)
+	}
+}
+
+func TestChooseMigrationPlanRejectsNonEmptyDatabaseWithoutHistory(t *testing.T) {
+	_, err := chooseMigrationPlan(migrationState{hasApplicationData: true})
+	if err == nil {
+		t.Fatal("expected non-empty database without migration history to fail")
+	}
+	if !strings.Contains(err.Error(), "missing supported migration history") {
+		t.Fatalf("expected supported history error, got %v", err)
+	}
+}
+
+func TestChooseMigrationPlanSupportsLegacyShapeWithPrivateHistory(t *testing.T) {
+	plan, err := chooseMigrationPlan(migrationState{
+		hasMigrationsTable: true,
+		hasApplicationData: true,
+		supportsLegacy:     true,
+		appliedIDs: map[string]struct{}{
+			"pre_public_history": {},
+		},
+	})
+	if err != nil {
+		t.Fatalf("choose migration plan: %v", err)
+	}
+	if plan.name != "legacy-bridge" {
+		t.Fatalf("expected legacy bridge plan, got %s", plan.name)
+	}
+	if plan.validateUnknownMigrations {
+		t.Fatal("legacy bridge must allow historical migration IDs outside the public chain")
+	}
+	if plan.beforeRun == nil || plan.afterRun == nil {
+		t.Fatal("legacy bridge must have preflight and post-run verification")
+	}
+}
+
+func TestChooseMigrationPlanKeepsLegacyBridgeAfterBaselineMarker(t *testing.T) {
+	plan, err := chooseMigrationPlan(migrationState{
+		hasMigrationsTable: true,
+		hasApplicationData: true,
+		supportsLegacy:     true,
+		appliedIDs: map[string]struct{}{
+			"pre_public_history":     {},
+			initialSchemaMigrationID: {},
+		},
+	})
+	if err != nil {
+		t.Fatalf("choose migration plan: %v", err)
+	}
+	if plan.name != "legacy-bridge" {
+		t.Fatalf("expected legacy bridge plan, got %s", plan.name)
+	}
+	if plan.validateUnknownMigrations {
+		t.Fatal("legacy bridge must keep allowing private migration IDs after baseline marker is written")
+	}
+}
+
+func TestChooseMigrationPlanUsesCurrentPublicHistory(t *testing.T) {
+	plan, err := chooseMigrationPlan(migrationState{
+		hasMigrationsTable: true,
+		hasApplicationData: true,
+		appliedIDs: map[string]struct{}{
+			initialSchemaMigrationID: {},
+		},
+	})
+	if err != nil {
+		t.Fatalf("choose migration plan: %v", err)
+	}
+	if plan.name != "current" {
+		t.Fatalf("expected current plan, got %s", plan.name)
+	}
+	if !plan.validateUnknownMigrations {
+		t.Fatal("current public history must validate unknown migrations")
+	}
+}
+
+func TestChooseMigrationPlanRejectsUnsupportedLegacyShape(t *testing.T) {
+	_, err := chooseMigrationPlan(migrationState{
+		hasMigrationsTable: true,
+		hasApplicationData: true,
+		legacyShapeErr:     errors.New("legacy database is missing required tables: accounts"),
+		appliedIDs: map[string]struct{}{
+			"pre_public_history": {},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected unsupported legacy shape to fail")
+	}
+	if !strings.Contains(err.Error(), "schema shape is not a supported ZGI legacy database") {
+		t.Fatalf("expected unsupported shape error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "missing required tables") {
+		t.Fatalf("expected missing tables context, got %v", err)
 	}
 }
 
@@ -156,6 +267,58 @@ func TestInitialSchemaFilesAreOrderedAndPresent(t *testing.T) {
 		if i > 0 && baseline.Files[i-1].Name >= file.Name {
 			t.Fatalf("initial schema chunks must be listed in execution order: %s before %s", baseline.Files[i-1].Name, file.Name)
 		}
+	}
+}
+
+func TestBaselineTableNamesIncludesBridgeCriticalTables(t *testing.T) {
+	tables := baselineTableNames()
+	seen := make(map[string]struct{}, len(tables))
+	for _, table := range tables {
+		seen[table] = struct{}{}
+	}
+
+	for _, table := range []string{
+		"content_parse_chunk_artifact_sets",
+		"data_library_document_assets",
+		"data_library_database_asset_refs",
+		"workflow_test_settings",
+	} {
+		if _, ok := seen[table]; !ok {
+			t.Fatalf("expected baseline table list to include %s", table)
+		}
+	}
+}
+
+func TestLegacyBridgePreflightExcludesBackfilledTablesOnly(t *testing.T) {
+	tables := baselineTableNamesExcluding(legacyBridgeBackfilledTables)
+	seen := make(map[string]struct{}, len(tables))
+	for _, table := range tables {
+		seen[table] = struct{}{}
+	}
+
+	for _, table := range legacyBridgeBackfilledTables {
+		if _, ok := seen[table]; ok {
+			t.Fatalf("expected legacy bridge preflight to allow %s to be backfilled by public migrations", table)
+		}
+	}
+	if _, ok := seen["workflow_test_settings"]; !ok {
+		t.Fatal("expected legacy bridge preflight to keep validating baseline tables not backfilled by public migrations")
+	}
+}
+
+func TestLegacyBridgeDoesNotHardcodeClosedSourceMigrationIDs(t *testing.T) {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve caller path")
+	}
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(filename), "legacy_bridge.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := strings.ToLower(string(data))
+	privateMigrationIDPattern := regexp.MustCompile(`\b20\d{12,}(?:_[0-9]+)?\b`)
+	if match := privateMigrationIDPattern.FindString(text); match != "" {
+		t.Fatalf("legacy bridge must not expose closed-source migration ID %q", match)
 	}
 }
 

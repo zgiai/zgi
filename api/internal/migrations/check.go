@@ -96,6 +96,7 @@ func checkMigrationFilenames() ([]string, error) {
 
 	allowed := map[string]struct{}{
 		"check.go":               {},
+		"legacy_bridge.go":       {},
 		"postgres_smoke_test.go": {},
 		"registry.go":            {},
 		"runner.go":              {},
