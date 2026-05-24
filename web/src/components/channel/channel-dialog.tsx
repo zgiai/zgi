@@ -12,16 +12,17 @@ import {
 import { Input, PasswordInput } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
-import { useCreateChannel, useUpdateChannel } from '@/hooks';
+import { useCreateChannel, useTestDraftChannelModel, useUpdateChannel } from '@/hooks';
 import type {
   CreateChannelRequest,
   ChannelDetail,
+  ChannelModelTestResult,
   UpdateChannelRequest,
 } from '@/services/types/channel';
 import type { ModelItem } from '@/services/types/model';
 import { useT } from '@/i18n';
 import ModelMultiSelector from '@/components/common/model-multi-selector/model-multi-selector';
-import { ChevronDown } from 'lucide-react';
+import { AlertCircle, CheckCircle2, ChevronDown, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import ChannelProviderSelector, {
@@ -161,6 +162,10 @@ function ChannelForm({
   );
   const [isEnabled, setIsEnabled] = React.useState<boolean>(initial?.is_enabled ?? true);
   const [advancedOpen, setAdvancedOpen] = React.useState<boolean>(false);
+  const [draftTestResult, setDraftTestResult] = React.useState<ChannelModelTestResult | null>(
+    null
+  );
+  const draftTestRequestIdRef = React.useRef(0);
   const parsedInitialFundsUsd = initialFundsUsd.trim() ? Number(initialFundsUsd) : undefined;
   const initialFundsPoints = usdToChannelPoints(parsedInitialFundsUsd);
   const initialFundsPreview =
@@ -181,6 +186,7 @@ function ChannelForm({
 
   const { createChannel, isCreating } = useCreateChannel();
   const { updateChannel, isUpdating } = useUpdateChannel();
+  const { testDraftChannelModel, isTestingDraft } = useTestDraftChannelModel();
 
   const handleNumericInput = (
     value: string,
@@ -190,16 +196,76 @@ function ChannelForm({
     setter(sanitizeNonNegativeInt(value, max));
   };
 
+  const representativeModel = modelsSelected[0];
+  const canTestConnection =
+    mode === 'create' &&
+    Boolean(channelProvider.trim()) &&
+    Boolean(apiBaseUrl.trim()) &&
+    Boolean(representativeModel) &&
+    (!apiKeyRequired || Boolean(apiKey.trim()));
+  const connectionTestHint =
+    mode !== 'create'
+      ? null
+      : !apiBaseUrl.trim()
+        ? t('dialog.testConnection.apiBaseUrlHint')
+        : apiKeyRequired && !apiKey.trim()
+          ? t('dialog.testConnection.apiKeyHint')
+          : !representativeModel
+            ? t('dialog.testConnection.selectModelHint')
+            : null;
+
+  React.useEffect(() => {
+    draftTestRequestIdRef.current += 1;
+    setDraftTestResult(null);
+  }, [apiKey, apiBaseUrl, channelProvider, representativeModel]);
+
+  const onTestConnection = async (): Promise<void> => {
+    if (!canTestConnection || !representativeModel) return;
+    const requestId = draftTestRequestIdRef.current + 1;
+    draftTestRequestIdRef.current = requestId;
+    setDraftTestResult(null);
+
+    const testedProvider = channelProvider.trim();
+    const testedApiKey = apiKey.trim();
+    const testedApiBaseUrl = apiBaseUrl.trim();
+    const testedModel = representativeModel;
+
+    try {
+      const result = await testDraftChannelModel({
+        channel_provider: testedProvider,
+        api_key: testedApiKey,
+        api_base_url: testedApiBaseUrl,
+        model: testedModel,
+      });
+
+      const inputsStillMatch =
+        channelProvider.trim() === testedProvider &&
+        apiKey.trim() === testedApiKey &&
+        apiBaseUrl.trim() === testedApiBaseUrl &&
+        modelsSelected[0] === testedModel;
+
+      if (draftTestRequestIdRef.current === requestId && inputsStillMatch) {
+        setDraftTestResult(result);
+      }
+    } catch {
+      if (draftTestRequestIdRef.current === requestId) {
+        setDraftTestResult(null);
+      }
+    }
+  };
+
   const onSubmit = async (): Promise<void> => {
     if (compatibilityWarningKey) {
       toast.error(t(compatibilityWarningKey as never));
       return;
     }
 
+    const normalizedApiBaseUrl = apiBaseUrl.trim();
+
     // Build payloads strictly from allowed fields
     const common = {
       channel_provider: channelProvider.trim(),
-      api_base_url: apiBaseUrl || undefined,
+      api_base_url: normalizedApiBaseUrl || undefined,
       priority: toNumberOrUndefined(priority),
       weight: toNumberOrUndefined(weight),
       // Advanced fields for creation or legacy
@@ -231,8 +297,8 @@ function ChannelForm({
     if (channelProvider !== initialChannelProvider) {
       update.channel_provider = channelProvider || undefined;
     }
-    if (apiBaseUrl !== (initial.api_base_url ?? '')) {
-      update.api_base_url = apiBaseUrl || undefined;
+    if (normalizedApiBaseUrl !== (initial.api_base_url ?? '')) {
+      update.api_base_url = normalizedApiBaseUrl || undefined;
     }
     if (updateApiKey && apiKey.trim()) {
       update.api_key = apiKey.trim();
@@ -259,7 +325,7 @@ function ChannelForm({
     onOpenChange(false);
   };
 
-  const disabled = isCreating || isUpdating;
+  const disabled = isCreating || isUpdating || isTestingDraft;
 
   const selectedProviderOption = React.useMemo(
     () => getChannelProviderOption(channelProvider),
@@ -385,6 +451,75 @@ function ChannelForm({
               placeholder={apiBaseUrlPlaceholder}
             />
           </div>
+          {mode === 'create' && (
+            <div className="space-y-2 rounded-md border bg-muted/30 p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-sm font-medium">{t('dialog.testConnection.title')}</div>
+                  <div className="mt-1 text-xs leading-5 text-muted-foreground">
+                    {representativeModel
+                      ? t('dialog.testConnection.descriptionWithModel', {
+                          model: representativeModel,
+                        })
+                      : t('dialog.testConnection.description')}
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={onTestConnection}
+                  disabled={!canTestConnection || disabled}
+                  className="shrink-0"
+                >
+                  {isTestingDraft && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+                  {t('dialog.testConnection.button')}
+                </Button>
+              </div>
+              {connectionTestHint && (
+                <div className="flex items-start gap-2 text-xs text-muted-foreground">
+                  <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>{connectionTestHint}</span>
+                </div>
+              )}
+              {draftTestResult && (
+                <div
+                  className={cn(
+                    'flex items-start gap-2 rounded-md border px-3 py-2 text-xs',
+                    draftTestResult.success
+                      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                      : 'border-destructive/20 bg-destructive/5 text-destructive'
+                  )}
+                >
+                  {draftTestResult.success ? (
+                    <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  ) : (
+                    <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  )}
+                  <div className="min-w-0">
+                    <div className="font-medium">
+                      {draftTestResult.success
+                        ? t('dialog.testConnection.messages.success')
+                        : t('dialog.testConnection.messages.failed')}
+                    </div>
+                    <div className="mt-0.5 break-words">
+                      {draftTestResult.message ||
+                        (draftTestResult.success
+                          ? t('dialog.testConnection.messages.successFallback')
+                          : t('dialog.testConnection.messages.failedFallback'))}
+                    </div>
+                    {draftTestResult.response_time_ms > 0 && (
+                      <div className="mt-0.5">
+                        {t('dialog.testConnection.latency', {
+                          ms: draftTestResult.response_time_ms,
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
           {mode === 'create' && (
             <div className="space-y-2 rounded-md border border-primary/30 bg-primary/5 p-3">
               <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">

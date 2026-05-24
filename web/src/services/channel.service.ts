@@ -7,6 +7,8 @@ import type {
   ChannelDetail,
   UpdateChannelRequest,
   CreateChannelRequest,
+  DraftTestChannelModelRequest,
+  ChannelModelTestResult,
   BatchTestChannelModelsRequest,
   BatchTestChannelModelsEvent,
   PlatformChannelsResponse,
@@ -70,6 +72,13 @@ export class ChannelService extends BaseService {
   // POST /console/api/llm/channels
   createChannel(data: CreateChannelRequest): Promise<ApiResponseData<ChannelDetail>> {
     return this.request('post', '/llm/channels', data);
+  }
+
+  // POST /console/api/llm/channels/draft/test/model - test a single model before creating a channel
+  testDraftChannelModel(
+    data: DraftTestChannelModelRequest
+  ): Promise<ApiResponseData<ChannelModelTestResult>> {
+    return this.request('post', '/llm/channels/draft/test/model', data);
   }
 
   // POST /console/api/llm/channels/{id}/test/batch - batch test multiple models (SSE POST)

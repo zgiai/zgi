@@ -145,6 +145,23 @@ const messages: ChannelsMessages = {
       priority: '数字越小越优先。',
       weight: '同优先级内按权重分流。',
     },
+    testConnection: {
+      title: '检测连接',
+      description: '选择一个代表模型后，可先验证密钥、地址、协议和模型是否匹配。',
+      descriptionWithModel: '将使用 {model} 验证密钥、地址、协议和模型是否匹配。',
+      button: '检测连接',
+      apiBaseUrlHint: '请先填写 API 基础地址，再检测连接。',
+      apiKeyHint: '请先填写 API 密钥，再检测连接。',
+      selectModelHint: '请先在右侧选择至少一个代表模型，再检测连接。',
+      latency: '耗时：{ms} ms',
+      messages: {
+        success: '连接检测通过',
+        failed: '连接检测未通过',
+        successFallback: '该模型已成功响应。',
+        failedFallback: '请检查服务商、API 基础地址、API 密钥和模型是否匹配。',
+        requestFailed: '连接检测请求失败',
+      },
+    },
     protocolOptions: {
       openaiCompatible: 'OpenAI 兼容协议',
       ollama: 'Ollama',

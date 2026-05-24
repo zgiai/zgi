@@ -53,6 +53,7 @@ export {
   useUpdateOfficialChannelSettings,
   useDeleteChannel,
   useCreateChannel,
+  useTestDraftChannelModel,
   useBatchTestChannelModels,
   useAdjustChannelWallet,
 } from './channel/use-channel';

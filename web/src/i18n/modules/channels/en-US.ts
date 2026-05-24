@@ -147,6 +147,25 @@ const messages = {
       priority: 'Lower numbers are routed first.',
       weight: 'Used for traffic split within the same priority.',
     },
+    testConnection: {
+      title: 'Test Connection',
+      description:
+        'Select one representative model first, then verify the key, base URL, protocol, and model match.',
+      descriptionWithModel:
+        'Using {model} to verify the key, base URL, protocol, and model match.',
+      button: 'Test',
+      apiBaseUrlHint: 'Enter the API base URL before testing.',
+      apiKeyHint: 'Enter the API key before testing.',
+      selectModelHint: 'Select at least one representative model on the right before testing.',
+      latency: 'Latency: {ms} ms',
+      messages: {
+        success: 'Connection test passed',
+        failed: 'Connection test failed',
+        successFallback: 'The model responded successfully.',
+        failedFallback: 'Check that the provider, API base URL, API key, and model match.',
+        requestFailed: 'Connection test request failed',
+      },
+    },
     protocolOptions: {
       openaiCompatible: 'OpenAI Compatible',
       ollama: 'Ollama',

@@ -132,6 +132,24 @@ export interface CreateChannelRequest {
 // Test method types for channel model testing
 export type ChannelTestMethod = 'chat' | 'embedding' | 'image-gen' | 'rerank';
 
+// Request to test a model before creating the channel
+export interface DraftTestChannelModelRequest {
+  channel_provider: string;
+  api_key: string;
+  api_base_url?: string;
+  model: string;
+  test_method?: ChannelTestMethod;
+}
+
+export interface ChannelModelTestResult {
+  success: boolean;
+  message: string;
+  model: string;
+  use_case?: string;
+  test_method?: string;
+  response_time_ms: number;
+}
+
 // Request to batch test multiple models in a channel (SSE)
 export interface BatchTestChannelModelsRequest {
   models: string[];
