@@ -57,6 +57,8 @@ func registerFileRoutesLegacy(v1 *gin.RouterGroup, accountService interfaces.Acc
 
 		files.POST("/text", fileHandler.CreateTextFile)
 
+		files.GET("/metadata", fileHandler.GetFilesMetadata)
+
 		files.GET("/:file_id/preview", fileHandler.GetFilePreview)
 
 		files.GET("/:file_id/preview-url", fileHandler.GetFileOriginalPreviewURL)
