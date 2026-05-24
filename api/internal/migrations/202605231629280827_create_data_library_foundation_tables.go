@@ -4,20 +4,16 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/go-gormigrate/gormigrate/v2"
-	"gorm.io/gorm"
+	mschema "github.com/zgiai/zgi/api/internal/migrations/schema"
 )
 
 const migration202605231629280827ID = "202605231629280827_create_data_library_foundation_tables"
 
 func init() {
-	registerMigration(&gormigrate.Migration{
-		ID:      migration202605231629280827ID,
-		Migrate: upCreateDataLibraryFoundationTables,
-	})
+	registerSchemaMigration(migration202605231629280827ID, upCreateDataLibraryFoundationTables, downCreateDataLibraryFoundationTables)
 }
 
-func upCreateDataLibraryFoundationTables(tx *gorm.DB) error {
+func upCreateDataLibraryFoundationTables(schema *mschema.Builder) error {
 	statements := []string{
 		`
 		CREATE TABLE IF NOT EXISTS content_parse_chunk_artifact_sets (
@@ -513,7 +509,7 @@ func upCreateDataLibraryFoundationTables(tx *gorm.DB) error {
 		`,
 	}
 	for _, statement := range statements {
-		if err := tx.Exec(statement).Error; err != nil {
+		if err := schema.Raw(statement); err != nil {
 			if isDataLibraryDuplicateConstraintError(err) {
 				continue
 			}
@@ -521,6 +517,10 @@ func upCreateDataLibraryFoundationTables(tx *gorm.DB) error {
 		}
 	}
 	return nil
+}
+
+func downCreateDataLibraryFoundationTables(schema *mschema.Builder) error {
+	return fmt.Errorf("rollback for migration %s is not supported", migration202605231629280827ID)
 }
 
 func isDataLibraryDuplicateConstraintError(err error) bool {
