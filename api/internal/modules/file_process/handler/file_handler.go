@@ -599,70 +599,7 @@ func (h *FileHandler) DownloadFile(c *gin.Context) {
 }
 
 func (h *FileHandler) getAuthorizedFileForDownload(c *gin.Context, fileID string) (*dto.UploadFile, bool) {
-	accountID := c.GetString("account_id")
-	if accountID == "" {
-		h.businessError(c, response.ErrUnauthorized)
-		return nil, false
-	}
-
-	organizationID := util.GetOrganizationID(c)
-	if organizationID == "" {
-		h.businessError(c, response.ErrInvalidTenantId)
-		return nil, false
-	}
-
-	uploadFile, err := h.fileService.GetFileByID(c.Request.Context(), fileID)
-	if err != nil {
-		h.businessError(c, response.ErrFileNotFound)
-		return nil, false
-	}
-	if uploadFile.IsTemporary {
-		if uploadFile.CreatedBy != accountID {
-			h.businessError(c, response.ErrPermissionDenied)
-			return nil, false
-		}
-		return uploadFile, true
-	}
-
-	if uploadFile.OrganizationID != organizationID {
-		h.businessError(c, response.ErrFileNotFound)
-		return nil, false
-	}
-
-	workspaceID := getUploadFileWorkspaceID(uploadFile)
-	if workspaceID == "" {
-		return uploadFile, true
-	}
-	if !h.checkWorkspaceFileDownloadPermission(c, organizationID, accountID, workspaceID) {
-		return nil, false
-	}
-
-	return uploadFile, true
-}
-
-func (h *FileHandler) checkWorkspaceFileDownloadPermission(c *gin.Context, organizationID, accountID, workspaceID string) bool {
-	if h.enterpriseService == nil {
-		h.businessError(c, response.ErrSystemError)
-		return false
-	}
-
-	hasPermission, err := h.enterpriseService.CheckWorkspacePermission(
-		c.Request.Context(),
-		organizationID,
-		workspaceID,
-		accountID,
-		workspace_model.WorkspacePermissionFileDownload,
-	)
-	if err != nil {
-		h.businessError(c, response.ErrSystemError)
-		return false
-	}
-	if !hasPermission {
-		h.businessError(c, response.ErrPermissionDenied)
-		return false
-	}
-
-	return true
+	return authorizeFileDownloadAccess(c, h.fileService, h.enterpriseService, fileID)
 }
 
 func getUploadFileWorkspaceID(uploadFile *dto.UploadFile) string {

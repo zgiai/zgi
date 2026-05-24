@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	appconfig "github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/dto"
 	filehandler "github.com/zgiai/zgi/api/internal/modules/file_process/handler"
 	filemodel "github.com/zgiai/zgi/api/internal/modules/file_process/model"
@@ -291,27 +292,25 @@ func TestDownloadFile_ReturnsAttachmentWithUTF8Filename(t *testing.T) {
 func TestFilePreview_AllowsJWTWithoutSignature(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	const fileID = "file-1"
+	const (
+		accountID      = "account-1"
+		organizationID = "organization-1"
+		fileID         = "file-1"
+	)
 	content := []byte("a,b\n1,2\n")
 	fileService := &previewURLFileService{
 		file: &dto.UploadFile{
 			ID:             fileID,
-			OrganizationID: "organization-1",
+			OrganizationID: organizationID,
 			Name:           "table.csv",
 			Extension:      "csv",
 			MimeType:       "text/csv",
-			CreatedBy:      "account-1",
+			CreatedBy:      accountID,
 			Size:           int64(len(content)),
 		},
 		content: content,
 	}
-	router := gin.New()
-	handler := filehandler.NewImagePreviewHandler(fileService, nil)
-	router.GET("/files/:file_id/file-preview", func(c *gin.Context) {
-		c.Set("auth_method", "jwt")
-		c.Set("account_id", "account-1")
-		handler.GetFilePreview(c)
-	})
+	router := newImagePreviewRouter(fileService, accountID, organizationID, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/files/"+fileID+"/file-preview", nil)
 	rec := httptest.NewRecorder()
@@ -325,8 +324,169 @@ func TestFilePreview_AllowsJWTWithoutSignature(t *testing.T) {
 	}
 }
 
+func TestFilePreview_JWTRejectsTemporaryFileFromOtherCreator(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	const (
+		accountID      = "account-1"
+		organizationID = "organization-1"
+		fileID         = "file-1"
+	)
+	fileService := &previewURLFileService{
+		file: &dto.UploadFile{
+			ID:             fileID,
+			OrganizationID: "00000000-0000-0000-0000-000000000000",
+			Name:           "secret.csv",
+			Extension:      "csv",
+			MimeType:       "text/csv",
+			CreatedBy:      "account-2",
+			IsTemporary:    true,
+		},
+		content: []byte("a,b\n1,2\n"),
+	}
+	router := newImagePreviewRouter(fileService, accountID, organizationID, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/files/"+fileID+"/file-preview", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+}
+
+func TestFilePreview_JWTRejectsCrossOrganizationFile(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	const (
+		accountID      = "account-1"
+		organizationID = "organization-1"
+		fileID         = "file-1"
+	)
+	fileService := &previewURLFileService{
+		file: &dto.UploadFile{
+			ID:             fileID,
+			OrganizationID: "organization-2",
+			Name:           "secret.csv",
+			Extension:      "csv",
+			MimeType:       "text/csv",
+			CreatedBy:      accountID,
+		},
+		content: []byte("a,b\n1,2\n"),
+	}
+	router := newImagePreviewRouter(fileService, accountID, organizationID, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/files/"+fileID+"/file-preview", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+}
+
+func TestFilePreview_JWTRejectsWorkspaceWithoutDownloadPermission(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	const (
+		accountID      = "account-1"
+		organizationID = "organization-1"
+		workspaceID    = "workspace-1"
+		fileID         = "file-1"
+	)
+	fileService := &previewURLFileService{
+		file: &dto.UploadFile{
+			ID:             fileID,
+			OrganizationID: organizationID,
+			WorkspaceID:    stringPtr(workspaceID),
+			Name:           "secret.csv",
+			Extension:      "csv",
+			MimeType:       "text/csv",
+			CreatedBy:      accountID,
+		},
+		content: []byte("a,b\n1,2\n"),
+	}
+	router := newImagePreviewRouter(fileService, accountID, organizationID, &previewURLOrganizationService{
+		allowed: false,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/files/"+fileID+"/file-preview", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+}
+
+func TestFilePreview_SignedURLBypassesJWTFileAuthorization(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	previous := appconfig.GlobalConfig
+	appconfig.GlobalConfig = &appconfig.Config{
+		App: appconfig.AppConfig{
+			FilesURL:           "https://files.example",
+			SecretKey:          "test-secret",
+			FilesAccessTimeout: 3600,
+		},
+	}
+	defer func() {
+		appconfig.GlobalConfig = previous
+	}()
+
+	const (
+		accountID      = "account-1"
+		organizationID = "organization-1"
+		fileID         = "file-1"
+	)
+	content := []byte("a,b\n1,2\n")
+	fileService := &previewURLFileService{
+		file: &dto.UploadFile{
+			ID:             fileID,
+			OrganizationID: "organization-2",
+			Name:           "signed.csv",
+			Extension:      "csv",
+			MimeType:       "text/csv",
+			CreatedBy:      "account-2",
+			Size:           int64(len(content)),
+		},
+		content: content,
+	}
+	router := newImagePreviewRouter(fileService, accountID, organizationID, &previewURLOrganizationService{
+		allowed: false,
+	})
+	signedURL, err := util.GetSignedFileURLWithConfig(fileID, "https://files.example", "test-secret")
+	if err != nil {
+		t.Fatalf("create signed url: %v", err)
+	}
+	query := signedURL[strings.Index(signedURL, "?"):]
+
+	req := httptest.NewRequest(http.MethodGet, "/files/"+fileID+"/file-preview"+query, nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if rec.Body.String() != string(content) {
+		t.Fatalf("body = %q, want %q", rec.Body.String(), string(content))
+	}
+}
+
 func newPreviewURLRouter(fileService interfaces.FileService, accountID, organizationID string) *gin.Engine {
 	return newFileRouter(fileService, accountID, organizationID, nil)
+}
+
+func newImagePreviewRouter(fileService interfaces.FileService, accountID, organizationID string, organizationService interfaces.OrganizationService) *gin.Engine {
+	router := gin.New()
+	handler := filehandler.NewImagePreviewHandler(fileService, nil, organizationService)
+	router.GET("/files/:file_id/file-preview", func(c *gin.Context) {
+		c.Set("auth_method", "jwt")
+		c.Set("account_id", accountID)
+		util.SetOrganizationID(c, organizationID)
+		handler.GetFilePreview(c)
+	})
+	return router
 }
 
 func newFileRouter(fileService interfaces.FileService, accountID, organizationID string, organizationService interfaces.OrganizationService) *gin.Engine {

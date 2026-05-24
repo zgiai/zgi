@@ -19,20 +19,23 @@ import (
 
 // ImagePreviewHandler handles image preview HTTP requests
 type ImagePreviewHandler struct {
-	fileService    interfaces.FileService
-	accountService interfaces.AccountService
-	validator      *validator.Validate
+	fileService       interfaces.FileService
+	accountService    interfaces.AccountService
+	enterpriseService interfaces.OrganizationService
+	validator         *validator.Validate
 }
 
 // NewImagePreviewHandler creates a new image preview handler instance
 func NewImagePreviewHandler(
 	fileService interfaces.FileService,
 	accountService interfaces.AccountService,
+	enterpriseService interfaces.OrganizationService,
 ) *ImagePreviewHandler {
 	return &ImagePreviewHandler{
-		fileService:    fileService,
-		accountService: accountService,
-		validator:      validator.New(),
+		fileService:       fileService,
+		accountService:    accountService,
+		enterpriseService: enterpriseService,
+		validator:         validator.New(),
 	}
 }
 
@@ -52,6 +55,7 @@ func (h *ImagePreviewHandler) GetFilePreview(c *gin.Context) {
 	asAttachmentStr := c.Query("as_attachment")
 
 	hasSignatureParams := timestamp != "" || nonce != "" || sign != ""
+	signedAccess := false
 	if hasSignatureParams {
 		if timestamp == "" || nonce == "" || sign == "" {
 			response.Fail(c, response.ErrInvalidParam)
@@ -61,6 +65,7 @@ func (h *ImagePreviewHandler) GetFilePreview(c *gin.Context) {
 			response.Fail(c, response.ErrFileNotFound) // Return a generic not-found error for security.
 			return
 		}
+		signedAccess = true
 	} else if c.GetString("auth_method") != "jwt" {
 		response.Fail(c, response.ErrInvalidParam)
 		return
@@ -75,15 +80,25 @@ func (h *ImagePreviewHandler) GetFilePreview(c *gin.Context) {
 	}
 
 	// Get file information
-	uploadFile, err := h.fileService.GetFileByID(c.Request.Context(), fileID)
-	if err != nil {
-		switch err {
-		case file_model.ErrFileNotFound:
-			response.Fail(c, response.ErrFileNotFound)
-		default:
-			response.Fail(c, response.ErrSystemError)
+	var uploadFile *dto.UploadFile
+	if signedAccess {
+		var err error
+		uploadFile, err = h.fileService.GetFileByID(c.Request.Context(), fileID)
+		if err != nil {
+			switch err {
+			case file_model.ErrFileNotFound:
+				response.Fail(c, response.ErrFileNotFound)
+			default:
+				response.Fail(c, response.ErrSystemError)
+			}
+			return
 		}
-		return
+	} else {
+		var ok bool
+		uploadFile, ok = authorizeFileDownloadAccess(c, h.fileService, h.enterpriseService, fileID)
+		if !ok {
+			return
+		}
 	}
 
 	// Get file content
