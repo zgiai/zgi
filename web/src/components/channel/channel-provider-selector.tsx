@@ -79,6 +79,14 @@ export const CHANNEL_PROVIDER_OPTIONS: ChannelProviderOption[] = [
     apiKeyPlaceholder: 'xxx',
   },
   {
+    value: 'openrouter',
+    labelKey: 'dialog.protocolOptions.openrouter',
+    icon: 'openrouter',
+    provider: 'openrouter',
+    defaultApiBaseUrl: 'https://openrouter.ai/api/v1',
+    apiKeyPlaceholder: 'sk-or-xxx',
+  },
+  {
     value: 'anthropic',
     labelKey: 'dialog.protocolOptions.anthropic',
     icon: 'anthropic',

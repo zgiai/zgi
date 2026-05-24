@@ -12,17 +12,23 @@ import {
 import { Input, PasswordInput } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
-import { useCreateChannel, useTestDraftChannelModel, useUpdateChannel } from '@/hooks';
+import {
+  useCreateChannel,
+  useDiscoverDraftChannelModels,
+  useTestDraftChannelModel,
+  useUpdateChannel,
+} from '@/hooks';
 import type {
   CreateChannelRequest,
   ChannelDetail,
   ChannelModelTestResult,
+  DiscoveredChannelModel,
   UpdateChannelRequest,
 } from '@/services/types/channel';
-import type { ModelItem } from '@/services/types/model';
+import type { ModelItem, ModelUseCase } from '@/services/types/model';
 import { useT } from '@/i18n';
 import ModelMultiSelector from '@/components/common/model-multi-selector/model-multi-selector';
-import { AlertCircle, CheckCircle2, ChevronDown, Loader2 } from 'lucide-react';
+import { AlertCircle, CheckCircle2, ChevronDown, Loader2, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import ChannelProviderSelector, {
@@ -114,6 +120,69 @@ function getCompatibilityWarningKey(
   return '';
 }
 
+function capabilitiesToUseCases(capabilities: string[] | undefined): ModelUseCase[] {
+  const values = new Set((capabilities ?? []).map(item => item.toLowerCase()));
+  const useCases = new Set<ModelUseCase>();
+
+  if (values.has('embedding') || values.has('embeddings') || values.has('embed')) {
+    useCases.add('embedding');
+  }
+  if (values.has('rerank')) {
+    useCases.add('rerank');
+  }
+  if (values.has('image') || values.has('image-gen') || values.has('image_generation')) {
+    useCases.add('image-gen');
+  }
+  if (values.has('vision')) {
+    useCases.add('vision');
+  }
+  if (values.has('reasoning')) {
+    useCases.add('reasoning');
+  }
+  if (useCases.size === 0 || values.has('chat') || values.has('text')) {
+    useCases.add('text-chat');
+  }
+
+  return Array.from(useCases);
+}
+
+function discoveredModelToItem(model: DiscoveredChannelModel, provider: string): ModelItem {
+  const useCases = capabilitiesToUseCases(model.capabilities);
+  return {
+    id: `discovered-${provider}-${model.id}`,
+    provider,
+    model: model.id || model.name,
+    model_name: model.display_name || model.name || model.id,
+    family: provider,
+    family_name: provider,
+    status: 'active',
+    tagline: '',
+    is_flagship: false,
+    is_recommended: false,
+    is_featured: false,
+    is_new: false,
+    access_type: 'open',
+    currency: 'USD',
+    input_price: 0,
+    output_price: 0,
+    context_window: model.context_length ?? 0,
+    max_output_tokens: 0,
+    endpoints: {},
+    features: {},
+    tools: {},
+    use_cases: useCases,
+    input_modalities: [],
+    output_modalities: [],
+    is_enabled: true,
+    is_available: false,
+    is_configured: false,
+    callable: false,
+    tier: 'custom',
+    created_at: model.created ?? Math.floor(Date.now() / 1000),
+    updated_at: Math.floor(Date.now() / 1000),
+  };
+}
+
 interface ChannelFormProps {
   mode: 'create' | 'edit';
   initial?: ChannelDetail | null;
@@ -166,6 +235,11 @@ function ChannelForm({
     null
   );
   const draftTestRequestIdRef = React.useRef(0);
+  const [discoveredModels, setDiscoveredModels] = React.useState<ModelItem[]>([]);
+  const [discoverResult, setDiscoverResult] = React.useState<{
+    total: number;
+    provider: string;
+  } | null>(null);
   const parsedInitialFundsUsd = initialFundsUsd.trim() ? Number(initialFundsUsd) : undefined;
   const initialFundsPoints = usdToChannelPoints(parsedInitialFundsUsd);
   const initialFundsPreview =
@@ -187,6 +261,8 @@ function ChannelForm({
   const { createChannel, isCreating } = useCreateChannel();
   const { updateChannel, isUpdating } = useUpdateChannel();
   const { testDraftChannelModel, isTestingDraft } = useTestDraftChannelModel();
+  const { discoverDraftChannelModels, isDiscoveringDraftModels } =
+    useDiscoverDraftChannelModels();
 
   const handleNumericInput = (
     value: string,
@@ -196,12 +272,19 @@ function ChannelForm({
     setter(sanitizeNonNegativeInt(value, max));
   };
 
+  const disabled = isCreating || isUpdating || isTestingDraft || isDiscoveringDraftModels;
+
   const representativeModel = modelsSelected[0];
   const canTestConnection =
     mode === 'create' &&
     Boolean(channelProvider.trim()) &&
     Boolean(apiBaseUrl.trim()) &&
     Boolean(representativeModel) &&
+    (!apiKeyRequired || Boolean(apiKey.trim()));
+  const canDiscoverModels =
+    mode === 'create' &&
+    Boolean(channelProvider.trim()) &&
+    Boolean(apiBaseUrl.trim()) &&
     (!apiKeyRequired || Boolean(apiKey.trim()));
   const connectionTestHint =
     mode !== 'create'
@@ -218,6 +301,11 @@ function ChannelForm({
     draftTestRequestIdRef.current += 1;
     setDraftTestResult(null);
   }, [apiKey, apiBaseUrl, channelProvider, representativeModel]);
+
+  React.useEffect(() => {
+    setDiscoveredModels([]);
+    setDiscoverResult(null);
+  }, [apiKey, apiBaseUrl, channelProvider]);
 
   const onTestConnection = async (): Promise<void> => {
     if (!canTestConnection || !representativeModel) return;
@@ -254,6 +342,32 @@ function ChannelForm({
     }
   };
 
+  const onDiscoverModels = async (): Promise<void> => {
+    if (!canDiscoverModels) return;
+    setDiscoveredModels([]);
+    setDiscoverResult(null);
+
+    const fallbackProvider =
+      (lockChannelProvider && mappedProvider !== 'all' ? mappedProvider : undefined) ||
+      getMappedProvider(channelProvider) ||
+      channelProvider.trim();
+
+    try {
+      const result = await discoverDraftChannelModels({
+        channel_provider: channelProvider.trim(),
+        api_key: apiKey.trim(),
+        api_base_url: apiBaseUrl.trim(),
+      });
+      const nextModels = result.models.map(model =>
+        discoveredModelToItem(model, model.provider || fallbackProvider)
+      );
+      setDiscoveredModels(nextModels);
+      setDiscoverResult({ total: nextModels.length, provider: fallbackProvider });
+    } catch {
+      setDiscoveredModels([]);
+      setDiscoverResult(null);
+    }
+  };
   const onSubmit = async (): Promise<void> => {
     if (compatibilityWarningKey) {
       toast.error(t(compatibilityWarningKey as never));
@@ -324,8 +438,6 @@ function ChannelForm({
     await updateChannel(initial.id, update);
     onOpenChange(false);
   };
-
-  const disabled = isCreating || isUpdating || isTestingDraft;
 
   const selectedProviderOption = React.useMemo(
     () => getChannelProviderOption(channelProvider),
@@ -475,6 +587,29 @@ function ChannelForm({
                   {isTestingDraft && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
                   {t('dialog.testConnection.button')}
                 </Button>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={onDiscoverModels}
+                  disabled={!canDiscoverModels || disabled}
+                >
+                  {isDiscoveringDraftModels ? (
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                  )}
+                  {t('dialog.discoverModels.button')}
+                </Button>
+                {discoverResult && (
+                  <span className="text-xs text-muted-foreground">
+                    {t('dialog.discoverModels.messages.success', {
+                      count: discoverResult.total,
+                    })}
+                  </span>
+                )}
               </div>
               {connectionTestHint && (
                 <div className="flex items-start gap-2 text-xs text-muted-foreground">
@@ -632,11 +767,12 @@ function ChannelForm({
             onChange={handleModelsChange}
             onSelectionMetaChange={setSelectedModelItems}
             placeholder={t('dialog.placeholders.modelsCsv')}
-            className="max-h-[calc(92vh-12rem)] overflow-hidden"
+            className="min-h-[360px] max-h-[calc(92vh-12rem)] overflow-hidden xl:h-full"
             columns={2}
             preferredProvider={mappedProvider}
             autoCollapseOthers={mappedProvider !== 'all'}
             providerFilter={lockChannelProvider ? mappedProvider : undefined}
+            supplementalModels={discoveredModels}
           />
         </div>
       </DialogBody>

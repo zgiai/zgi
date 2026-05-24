@@ -150,7 +150,7 @@ const messages = {
     testConnection: {
       title: 'Test Connection',
       description:
-        'Select one representative model first, then verify the key, base URL, protocol, and model match.',
+        'Fetch upstream models first, then select one representative model to verify the key, base URL, protocol, and model match.',
       descriptionWithModel:
         'Using {model} to verify the key, base URL, protocol, and model match.',
       button: 'Test',
@@ -166,6 +166,13 @@ const messages = {
         requestFailed: 'Connection test request failed',
       },
     },
+    discoverModels: {
+      button: 'Fetch Models',
+      messages: {
+        success: 'Fetched {count} upstream models',
+        requestFailed: 'Failed to fetch model list',
+      },
+    },
     protocolOptions: {
       openaiCompatible: 'OpenAI Compatible',
       ollama: 'Ollama',
@@ -174,6 +181,7 @@ const messages = {
       minimax: 'MiniMax',
       deepseek: 'DeepSeek',
       cohere: 'Cohere',
+      openrouter: 'OpenRouter',
       anthropic: 'Anthropic',
       qwen: 'Alibaba Cloud (Qwen)',
       moonshotaiCn: 'Moonshot AI (Kimi)',

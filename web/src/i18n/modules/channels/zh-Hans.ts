@@ -147,7 +147,7 @@ const messages: ChannelsMessages = {
     },
     testConnection: {
       title: '检测连接',
-      description: '选择一个代表模型后，可先验证密钥、地址、协议和模型是否匹配。',
+      description: '可先获取上游模型列表；选择一个代表模型后，再验证密钥、地址、协议和模型是否匹配。',
       descriptionWithModel: '将使用 {model} 验证密钥、地址、协议和模型是否匹配。',
       button: '检测连接',
       apiBaseUrlHint: '请先填写 API 基础地址，再检测连接。',
@@ -162,6 +162,13 @@ const messages: ChannelsMessages = {
         requestFailed: '连接检测请求失败',
       },
     },
+    discoverModels: {
+      button: '获取模型列表',
+      messages: {
+        success: '已获取 {count} 个上游模型',
+        requestFailed: '获取模型列表失败',
+      },
+    },
     protocolOptions: {
       openaiCompatible: 'OpenAI 兼容协议',
       ollama: 'Ollama',
@@ -170,6 +177,7 @@ const messages: ChannelsMessages = {
       minimax: 'MiniMax',
       deepseek: 'DeepSeek',
       cohere: 'Cohere',
+      openrouter: 'OpenRouter',
       anthropic: 'Anthropic',
       qwen: '阿里云（通义千问）',
       moonshotaiCn: '月之暗面（Kimi）',

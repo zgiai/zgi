@@ -34,6 +34,7 @@ func RegisterTenantChannelRoutes(r *gin.RouterGroup, handler *ChannelHandler) {
 	g.POST("/select", handler.SelectRoute)
 	g.GET("/by-model", handler.GetRoutesForModel)
 	g.POST("/init", handler.InitTenantRoutes)
+	g.POST("/draft/discover-models", handler.DiscoverDraftChannelModels)
 	g.POST("/draft/test/model", handler.TestDraftChannelModel)
 	g.POST("/ollama/discover-models", handler.DiscoverOllamaModels)
 	g.POST("/official/init", handler.InitOfficialChannel)

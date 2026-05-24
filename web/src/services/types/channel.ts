@@ -150,6 +150,28 @@ export interface ChannelModelTestResult {
   response_time_ms: number;
 }
 
+export interface DiscoverDraftChannelModelsRequest {
+  channel_provider: string;
+  api_key: string;
+  api_base_url?: string;
+}
+
+export interface DiscoveredChannelModel {
+  id: string;
+  name: string;
+  display_name: string;
+  provider?: string;
+  owned_by?: string;
+  context_length?: number;
+  capabilities?: string[];
+  created?: number;
+}
+
+export interface DiscoverDraftChannelModelsResponse {
+  models: DiscoveredChannelModel[];
+  total: number;
+}
+
 // Request to batch test multiple models in a channel (SSE)
 export interface BatchTestChannelModelsRequest {
   models: string[];

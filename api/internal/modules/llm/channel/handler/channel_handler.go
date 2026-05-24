@@ -600,6 +600,41 @@ func (h *ChannelHandler) TestDraftChannelModel(c *gin.Context) {
 	h.Success(c, result)
 }
 
+// DiscoverDraftChannelModels lists upstream models before the channel is created.
+// POST /channels/draft/discover-models
+func (h *ChannelHandler) DiscoverDraftChannelModels(c *gin.Context) {
+	if _, ok := h.GetOrganizationID(c); !ok {
+		return
+	}
+
+	var req dto.DiscoverDraftChannelModelsRequest
+	if !h.BindJSON(c, &req) {
+		return
+	}
+
+	if strings.TrimSpace(req.ChannelProvider) == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "channel_provider is required")
+		return
+	}
+
+	spec, err := channelprovider.ValidateConnectionFields(req.ChannelProvider, req.APIBaseURL)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+		return
+	}
+	if err := channelprovider.ValidateAPIKey(spec, req.APIKey); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+		return
+	}
+
+	result, err := h.service.DiscoverDraftChannelModels(c.Request.Context(), &req)
+	if err != nil {
+		h.Error(c, err)
+		return
+	}
+	h.Success(c, result)
+}
+
 // DiscoverOllamaModels lists locally available Ollama models from /api/tags.
 // POST /channels/ollama/discover-models
 func (h *ChannelHandler) DiscoverOllamaModels(c *gin.Context) {

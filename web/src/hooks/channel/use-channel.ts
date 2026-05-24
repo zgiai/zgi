@@ -15,6 +15,8 @@ import type {
   CreateChannelRequest,
   DraftTestChannelModelRequest,
   ChannelModelTestResult,
+  DiscoverDraftChannelModelsRequest,
+  DiscoverDraftChannelModelsResponse,
   BatchTestChannelModelsRequest,
   BatchTestChannelModelsEvent,
   BatchTestModelResult,
@@ -577,6 +579,34 @@ export function useTestDraftChannelModel(): {
   );
 
   return { testDraftChannelModel, isTestingDraft: isPending };
+}
+
+export function useDiscoverDraftChannelModels(): {
+  discoverDraftChannelModels: (
+    data: DiscoverDraftChannelModelsRequest
+  ) => Promise<DiscoverDraftChannelModelsResponse>;
+  isDiscoveringDraftModels: boolean;
+} {
+  const t = useT('channels');
+  const { mutateAsync, isPending } = useMutation({
+    mutationFn: async (data: DiscoverDraftChannelModelsRequest) => {
+      const response = await channelService.discoverDraftChannelModels(data);
+      return response.data;
+    },
+    onError: error => {
+      const title = t('dialog.discoverModels.messages.requestFailed');
+      toast.error(title, {
+        description: normalizeToastDescription(title, (error as { message?: string }).message),
+      });
+    },
+  });
+
+  const discoverDraftChannelModels = useCallback(
+    async (data: DiscoverDraftChannelModelsRequest) => mutateAsync(data),
+    [mutateAsync]
+  );
+
+  return { discoverDraftChannelModels, isDiscoveringDraftModels: isPending };
 }
 
 /**

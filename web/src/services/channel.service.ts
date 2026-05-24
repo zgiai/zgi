@@ -9,6 +9,8 @@ import type {
   CreateChannelRequest,
   DraftTestChannelModelRequest,
   ChannelModelTestResult,
+  DiscoverDraftChannelModelsRequest,
+  DiscoverDraftChannelModelsResponse,
   BatchTestChannelModelsRequest,
   BatchTestChannelModelsEvent,
   PlatformChannelsResponse,
@@ -79,6 +81,13 @@ export class ChannelService extends BaseService {
     data: DraftTestChannelModelRequest
   ): Promise<ApiResponseData<ChannelModelTestResult>> {
     return this.request('post', '/llm/channels/draft/test/model', data);
+  }
+
+  // POST /console/api/llm/channels/draft/discover-models - list upstream models before creating a channel
+  discoverDraftChannelModels(
+    data: DiscoverDraftChannelModelsRequest
+  ): Promise<ApiResponseData<DiscoverDraftChannelModelsResponse>> {
+    return this.request('post', '/llm/channels/draft/discover-models', data);
   }
 
   // POST /console/api/llm/channels/{id}/test/batch - batch test multiple models (SSE POST)

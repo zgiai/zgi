@@ -34,6 +34,7 @@ export interface ModelMultiSelectorProps {
   autoCollapseOthers?: boolean;
   providerFilter?: string;
   onSelectionMetaChange?: (models: ModelItem[]) => void;
+  supplementalModels?: ModelItem[];
 }
 
 // Group models by provider
@@ -62,6 +63,10 @@ function getModelNameFromSelectionKey(key: string): string {
   return separatorIndex >= 0 ? key.slice(separatorIndex + 1) : key;
 }
 
+function isModelSelectable(model: ModelItem): boolean {
+  return model.callable !== false && model.is_available !== false;
+}
+
 function ModelMultiSelectorBase({
   value,
   onChange,
@@ -74,6 +79,7 @@ function ModelMultiSelectorBase({
   autoCollapseOthers = false,
   providerFilter,
   onSelectionMetaChange,
+  supplementalModels = [],
 }: ModelMultiSelectorProps): JSX.Element {
   const t = useT();
 
@@ -100,7 +106,20 @@ function ModelMultiSelectorBase({
     retry: false,
   });
 
-  const allItems = useMemo(() => data?.data?.items ?? [], [data]);
+  const allItems = useMemo(() => {
+    const merged = new Map<string, ModelItem>();
+    (data?.data?.items ?? []).forEach(item => {
+      merged.set(getModelSelectionKey(item), item);
+    });
+    supplementalModels.forEach(item => {
+      const key = getModelSelectionKey(item);
+      if (!merged.has(key)) {
+        merged.set(key, item);
+      }
+    });
+    return Array.from(merged.values());
+  }, [data, supplementalModels]);
+
   const selectedItems = useMemo(
     () =>
       allItems.filter(
@@ -219,6 +238,8 @@ function ModelMultiSelectorBase({
 
   const toggleModel = useCallback(
     (model: ModelItem) => {
+      if (!isModelSelectable(model)) return;
+
       const modelKey = getModelSelectionKey(model);
       const next = new Set(selectedSet);
       if (next.has(model.model)) {
@@ -250,7 +271,10 @@ function ModelMultiSelectorBase({
   // Toggle all models in a provider group
   const toggleProviderGroup = useCallback(
     (group: ProviderGroup) => {
-      const groupModelNames = group.models.map(m => m.model);
+      const selectableModels = group.models.filter(isModelSelectable);
+      if (selectableModels.length === 0) return;
+
+      const groupModelNames = selectableModels.map(m => m.model);
       const allSelected = groupModelNames.every(name => selectedSet.has(name));
 
       const next = new Set(selectedSet);
@@ -259,7 +283,7 @@ function ModelMultiSelectorBase({
         groupModelNames.forEach(name => next.delete(name));
         setSelectedItemKeys(prev => {
           const nextKeys = new Set(prev);
-          group.models.forEach(model => nextKeys.delete(getModelSelectionKey(model)));
+          selectableModels.forEach(model => nextKeys.delete(getModelSelectionKey(model)));
           return nextKeys;
         });
       } else {
@@ -267,7 +291,7 @@ function ModelMultiSelectorBase({
         groupModelNames.forEach(name => next.add(name));
         setSelectedItemKeys(prev => {
           const nextKeys = new Set(prev);
-          group.models.forEach(model => nextKeys.add(getModelSelectionKey(model)));
+          selectableModels.forEach(model => nextKeys.add(getModelSelectionKey(model)));
           return nextKeys;
         });
       }
@@ -292,7 +316,10 @@ function ModelMultiSelectorBase({
   // Check if all models in a group are selected
   const isGroupAllSelected = useCallback(
     (group: ProviderGroup): boolean => {
-      return group.models.every(m => selectedSet.has(m.model));
+      const selectableModels = group.models.filter(isModelSelectable);
+      return (
+        selectableModels.length > 0 && selectableModels.every(m => selectedSet.has(m.model))
+      );
     },
     [selectedSet]
   );
@@ -300,8 +327,10 @@ function ModelMultiSelectorBase({
   // Check if some (but not all) models in a group are selected
   const isGroupPartiallySelected = useCallback(
     (group: ProviderGroup): boolean => {
-      const someSelected = group.models.some(m => selectedSet.has(m.model));
-      const allSelected = group.models.every(m => selectedSet.has(m.model));
+      const selectableModels = group.models.filter(isModelSelectable);
+      const someSelected = selectableModels.some(m => selectedSet.has(m.model));
+      const allSelected =
+        selectableModels.length > 0 && selectableModels.every(m => selectedSet.has(m.model));
       return someSelected && !allSelected;
     },
     [selectedSet]
@@ -389,6 +418,7 @@ function ModelMultiSelectorBase({
                   const isCollapsed = collapsedGroups.has(group.provider);
                   const allSelected = isGroupAllSelected(group);
                   const partialSelected = isGroupPartiallySelected(group);
+                  const hasSelectableModels = group.models.some(isModelSelectable);
 
                   return (
                     <div key={group.provider} className="border-b last:border-b-0">
@@ -421,7 +451,7 @@ function ModelMultiSelectorBase({
                             }
                             onCheckedChange={() => toggleProviderGroup(group)}
                             onClick={e => e.stopPropagation?.()}
-                            disabled={disabled}
+                            disabled={disabled || !hasSelectableModels}
                           />
                           <ProviderIcon size={24} provider={group.provider} />
                           <span className="text-sm font-medium">{group.provider}</span>
@@ -438,17 +468,23 @@ function ModelMultiSelectorBase({
                           {group.models.map(m => {
                             const id = m.model;
                             const checked = selectedSet.has(id);
+                            const selectable = isModelSelectable(m);
                             return (
                               <label
                                 htmlFor={`model-${m.provider}-${id}`}
                                 key={`${m.provider}|${id}`}
-                                className="flex items-center gap-2 px-3 py-2 hover:bg-accent/80 rounded-md cursor-pointer group"
+                                className={cn(
+                                  'flex items-center gap-2 px-3 py-2 rounded-md group',
+                                  selectable && !disabled
+                                    ? 'cursor-pointer hover:bg-accent/80'
+                                    : 'cursor-not-allowed opacity-55'
+                                )}
                               >
                                 <Checkbox
                                   checked={checked}
                                   onCheckedChange={() => toggleModel(m)}
                                   id={`model-${m.provider}-${id}`}
-                                  disabled={disabled}
+                                  disabled={disabled || !selectable}
                                 />
                                 <ProviderIcon provider={m.provider} size={18} />
                                 <span className="text-xs truncate flex-1" title={m.model_name}>
