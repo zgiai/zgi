@@ -1817,6 +1817,9 @@ const messages: NodesMessages = {
     selectNodeToEdit: '请选择一个节点来编辑其属性',
     noVariables: '暂无可插入变量',
     outputVariables: '输出变量',
+    expandOutputVariables: '展开 {count} 个输出变量',
+    collapseOutputVariables: '收起输出变量',
+    hiddenOutputVariablesTooltip: '隐藏的输出变量：{variables}',
   },
   ui: {
     quickAdd: '快速添加',

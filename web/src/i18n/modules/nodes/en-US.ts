@@ -1881,6 +1881,9 @@ const messages = {
     selectNodeToEdit: 'Select a node to edit its properties',
     noVariables: 'No variables available',
     outputVariables: 'Output Variables',
+    expandOutputVariables: 'Show {count} more output variables',
+    collapseOutputVariables: 'Collapse output variables',
+    hiddenOutputVariablesTooltip: 'Hidden output variables: {variables}',
   },
   ui: {
     quickAdd: 'Quick Add',
