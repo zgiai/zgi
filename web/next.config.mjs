@@ -1,4 +1,5 @@
 import createNextIntlPlugin from 'next-intl/plugin';
+import { withSentryConfig } from '@sentry/nextjs';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -114,4 +115,17 @@ const nextConfig = {
     : {}),
 };
 
-export default withNextIntl(nextConfig)
+const withPlugins = withNextIntl(nextConfig);
+
+export default withSentryConfig(withPlugins, {
+  org: process.env.SENTRY_ORG,
+  project: process.env.SENTRY_PROJECT,
+  authToken: process.env.SENTRY_AUTH_TOKEN,
+  silent: !process.env.CI,
+  widenClientFileUpload: Boolean(process.env.SENTRY_AUTH_TOKEN),
+  webpack: {
+    treeshake: {
+      removeDebugLogging: true,
+    },
+  },
+});
