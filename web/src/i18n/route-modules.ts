@@ -2,8 +2,26 @@ import type { ModuleName } from './loader';
 
 const PUBLIC_MODULES: ModuleName[] = ['common', 'navigation'];
 const AUTH_MODULES: ModuleName[] = ['common', 'auth', 'ui', 'navigation'];
-const WEBAPP_MODULES: ModuleName[] = ['common', 'ui', 'webapp', 'files', 'agents', 'nodes'];
-const APP_TOKEN_MODULES: ModuleName[] = ['common', 'ui', 'webapp', 'files', 'agents', 'nodes'];
+const WEBAPP_MODULES: ModuleName[] = [
+  'common',
+  'ui',
+  'navigation',
+  'datasets',
+  'webapp',
+  'files',
+  'agents',
+  'nodes',
+];
+const APP_TOKEN_MODULES: ModuleName[] = [
+  'common',
+  'ui',
+  'navigation',
+  'datasets',
+  'webapp',
+  'files',
+  'agents',
+  'nodes',
+];
 const ANNOUNCEMENT_TOKEN_MODULES: ModuleName[] = ['common', 'ui', 'nodes', 'webapp'];
 const PROFILE_MODULES: ModuleName[] = ['common', 'ui', 'navigation', 'profile'];
 
