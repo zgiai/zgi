@@ -378,6 +378,8 @@ const messages: NodesMessages = {
     },
     memberStatus: {
       noMobile: '未绑定手机号',
+      checkingMobile: '正在确认手机号',
+      unknownMobile: '无法确认手机号',
     },
     timeout: {
       minute: '分钟',
@@ -441,11 +443,16 @@ const messages: NodesMessages = {
       smsRecipientRequired: '短信通知至少需要一个收件人',
       smsMemberRecipientRequired: '短信收件人 {index} 必须选择成员',
       smsMemberPhoneMissing:
-        '短信收件人 {index} 选择的成员未绑定手机号，或当前无法确认手机号。请改用外部手机号或先补充成员手机号。',
+        '短信收件人 {index} 选择的成员未绑定手机号，请改用外部手机号或先补充成员手机号。',
+      smsMemberPhoneChecking: '短信收件人 {index} 的成员手机号正在确认，请稍后再试。',
+      smsMemberPhoneUnconfirmed:
+        '短信收件人 {index} 无法确认成员手机号，请重新选择成员或改用外部手机号。',
       smsExternalRecipientRequired: '短信收件人 {index} 必须填写手机号',
       smsTemplateParamKeyRequired: '短信模板参数名不能为空',
       smsTemplateParamKeyReserved: '短信模板参数 {key} 由系统生成，不能手动配置',
       smsTemplateParamValueRequired: '短信模板参数 {key} 的值不能为空',
+      smsTemplateParamTooLong: '短信模板参数 {label} 不能超过 {max} 个字符',
+      smsTemplateParamInvalid: '短信模板参数 {label} 格式不正确',
     },
     runtime: {
       paused: '流程已暂停，等待人工审查',

@@ -1,5 +1,11 @@
 import { isValidEmail } from '@/utils/validation';
 import type { ValidationError, ValidationResult } from '../common/validation';
+import {
+  getNotificationSMSTemplateParamValidationIssues,
+  type NotificationSMSTemplate,
+  type NotificationSMSTemplateParam,
+  type NotificationSMSTemplateParamValidationIssue,
+} from '@/lib/features/notification-sms';
 
 export type ApprovalFieldType = 'text' | 'textarea';
 export type ApprovalActionStyle = 'primary' | 'secondary' | 'danger';
@@ -95,11 +101,7 @@ export const APPROVAL_MAX_TIMEOUT_HOURS = 72;
 export const APPROVAL_ACTION_MAX_LENGTH = 20;
 export const APPROVAL_SMS_TEMPLATE = 'pending_action_notification';
 
-const APPROVAL_SMS_RESERVED_TEMPLATE_PARAMS = new Set([
-  'notification_title',
-  'link_code',
-  'link_suffix',
-]);
+const APPROVAL_SMS_RESERVED_TEMPLATE_PARAMS = new Set(['notification_title', 'link_code']);
 
 export function isApprovalSMSSystemTemplateParam(key: string): boolean {
   return APPROVAL_SMS_RESERVED_TEMPLATE_PARAMS.has(key.trim());
@@ -434,7 +436,10 @@ export function normalizeApprovalNodeData(
   };
 }
 
-export function checkValid(data: ApprovalNodeData): ValidationResult {
+export function checkValid(
+  data: ApprovalNodeData,
+  smsTemplates: NotificationSMSTemplate[] = []
+): ValidationResult {
   const normalized = normalizeApprovalNodeData(data);
   const errors: ValidationError[] = [];
   const warnings: ValidationError[] = [];
@@ -534,6 +539,10 @@ export function checkValid(data: ApprovalNodeData): ValidationResult {
     if (normalized.submit_methods.sms.recipients.length === 0) {
       errors.push({ code: 'approval.validation.smsRecipientRequired' });
     }
+    const definedTemplateParamKeys = getApprovalSMSTemplateParamKeys(
+      normalized.submit_methods.sms.template,
+      smsTemplates
+    );
     Object.keys(normalized.submit_methods.sms.template_params).forEach(key => {
       const normalizedKey = key.trim();
       const params = { key: normalizedKey };
@@ -541,10 +550,24 @@ export function checkValid(data: ApprovalNodeData): ValidationResult {
         errors.push({ code: 'approval.validation.smsTemplateParamKeyRequired' });
       } else if (isApprovalSMSSystemTemplateParam(normalizedKey)) {
         errors.push({ code: 'approval.validation.smsTemplateParamKeyReserved', params });
-      } else if (!normalized.submit_methods.sms.template_params[key].trim()) {
+      } else if (
+        !definedTemplateParamKeys.has(normalizedKey) &&
+        !normalized.submit_methods.sms.template_params[key].trim()
+      ) {
         errors.push({ code: 'approval.validation.smsTemplateParamValueRequired', params });
       }
     });
+    errors.push(
+      ...getApprovalSMSTemplateParamValidationErrors(
+        normalized.submit_methods.sms.template,
+        {
+          ...normalized.submit_methods.sms.template_params,
+          notification_title: normalized.submit_methods.sms.notification_title,
+          link_code: 'token123',
+        },
+        smsTemplates
+      )
+    );
     normalized.submit_methods.sms.recipients.forEach((recipient, index) => {
       const params = { index: index + 1 };
       if (recipient.type === 'member') {
@@ -561,4 +584,56 @@ export function checkValid(data: ApprovalNodeData): ValidationResult {
   }
 
   return { isValid: errors.length === 0, errors, warnings };
+}
+
+function getApprovalSMSTemplateParamKeys(
+  templateKey: string,
+  templates: NotificationSMSTemplate[]
+): Set<string> {
+  const template = templates.find(item => item.key === templateKey.trim());
+  return new Set(template?.params?.map(param => param.key.trim()).filter(Boolean) ?? []);
+}
+
+function getApprovalSMSTemplateParamValidationErrors(
+  templateKey: string,
+  templateParams: Record<string, string>,
+  templates: NotificationSMSTemplate[]
+): ValidationError[] {
+  return getNotificationSMSTemplateParamValidationIssues(templateKey, templateParams, templates)
+    .map(issue => getApprovalSMSTemplateParamValidationError(issue))
+    .filter((error): error is ValidationError => Boolean(error));
+}
+
+function getApprovalSMSTemplateParamValidationError(
+  issue: NotificationSMSTemplateParamValidationIssue
+): ValidationError | null {
+  const { param, reason } = issue;
+  if (param.key === 'notification_title' && reason === 'required') {
+    return null;
+  }
+
+  if (reason === 'max_length') {
+    return {
+      code: 'approval.validation.smsTemplateParamTooLong',
+      params: {
+        label: getApprovalSMSTemplateParamLabel(param),
+        max: issue.max ?? param.max_length ?? 0,
+      },
+    };
+  }
+  if (reason === 'pattern') {
+    return {
+      code: 'approval.validation.smsTemplateParamInvalid',
+      params: { label: getApprovalSMSTemplateParamLabel(param) },
+    };
+  }
+
+  return {
+    code: 'approval.validation.smsTemplateParamValueRequired',
+    params: { key: getApprovalSMSTemplateParamLabel(param) },
+  };
+}
+
+function getApprovalSMSTemplateParamLabel(param: NotificationSMSTemplateParam): string {
+  return param.label?.trim() || param.key;
 }

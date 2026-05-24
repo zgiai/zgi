@@ -1,6 +1,6 @@
 'use client';
 
-import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useInfiniteQuery, useQueries, useQuery } from '@tanstack/react-query';
 import { workspaceService } from '@/services/workspace.service';
 import type { WorkspaceMemberAccount } from '@/services/types/workspace';
 import { useOrganizations } from '@/hooks/organization/use-organizations';
@@ -22,6 +22,10 @@ interface UseWorkspaceMembersOptions {
   page?: number;
   limit?: number;
   keepPreviousData?: boolean;
+}
+
+interface UseWorkspaceMemberDetailsOptions {
+  enabled?: boolean;
 }
 
 /**
@@ -137,4 +141,55 @@ export function useWorkspaceMembersInfinite(
     fetchNextPage: query.fetchNextPage,
     refetch: query.refetch,
   };
+}
+
+/**
+ * Hook for fetching specific workspace members by ID.
+ */
+export function useWorkspaceMemberDetails(
+  orgId?: string | null,
+  wsId?: string | null,
+  memberIds: string[] = [],
+  options: UseWorkspaceMemberDetailsOptions = {}
+) {
+  const { enabled = true } = options;
+
+  const { currentOrganization } = useOrganizations();
+  const currentWorkspace = useCurrentWorkspace();
+
+  const organizationId = orgId ?? currentOrganization?.id ?? null;
+  const workspaceId = wsId ?? currentWorkspace?.id ?? null;
+  const normalizedMemberIds = Array.from(
+    new Set(memberIds.map(memberId => memberId.trim()).filter(Boolean))
+  );
+
+  const queries = useQueries({
+    queries: normalizedMemberIds.map(memberId => ({
+      queryKey: WORKSPACE_KEYS.memberDetail(organizationId, workspaceId, memberId),
+      queryFn: async () => {
+        if (!organizationId || !workspaceId) {
+          throw new Error('workspace member detail requires organization and workspace');
+        }
+        return await workspaceService.getWorkspaceMember(organizationId, workspaceId, memberId);
+      },
+      enabled: enabled && !!organizationId && !!workspaceId,
+      staleTime: 2 * 60 * 1000,
+      gcTime: 5 * 60 * 1000,
+      refetchOnWindowFocus: false,
+      retry: false,
+    })),
+  });
+
+  return normalizedMemberIds.map((memberId, index) => {
+    const query = queries[index];
+    return {
+      memberId,
+      data: query.data as WorkspaceMemberAccount | undefined,
+      isLoading: query.isLoading,
+      isFetching: query.isFetching,
+      isError: query.isError,
+      error: query.error,
+      refetch: query.refetch,
+    };
+  });
 }

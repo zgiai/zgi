@@ -3,7 +3,10 @@ import type { ApprovalSMSRecipient, ApprovalSubmitMethods } from '../config';
 export interface ApprovalSMSMemberOption {
   account_id: string;
   has_mobile?: boolean;
+  phone_status?: ApprovalSMSMemberPhoneStatus;
 }
+
+export type ApprovalSMSMemberPhoneStatus = 'has_mobile' | 'no_mobile' | 'checking' | 'unconfirmed';
 
 export function createSMSMemberOptionMap(
   memberOptions: ApprovalSMSMemberOption[]
@@ -19,17 +22,31 @@ export function getDefaultSMSMemberAccountId(
   if (!accountId) return '';
 
   const member = memberOptionsByAccountId.get(accountId);
-  return member?.has_mobile ? member.account_id : '';
+  return getSMSMemberPhoneStatus(memberOptionsByAccountId, accountId) === 'has_mobile'
+    ? (member?.account_id ?? '')
+    : '';
+}
+
+export function getSMSMemberPhoneStatus(
+  memberOptionsByAccountId: ReadonlyMap<string, ApprovalSMSMemberOption>,
+  accountId: string
+): ApprovalSMSMemberPhoneStatus {
+  const trimmedAccountId = accountId.trim();
+  if (!trimmedAccountId) return 'unconfirmed';
+
+  const member = memberOptionsByAccountId.get(trimmedAccountId);
+  if (!member) return 'unconfirmed';
+  if (member.phone_status) return member.phone_status;
+  if (member.has_mobile === true) return 'has_mobile';
+  if (member.has_mobile === false) return 'no_mobile';
+  return 'unconfirmed';
 }
 
 export function isSMSMemberUnavailable(
   memberOptionsByAccountId: ReadonlyMap<string, ApprovalSMSMemberOption>,
   accountId: string
 ): boolean {
-  const trimmedAccountId = accountId.trim();
-  if (!trimmedAccountId) return true;
-
-  return memberOptionsByAccountId.get(trimmedAccountId)?.has_mobile !== true;
+  return getSMSMemberPhoneStatus(memberOptionsByAccountId, accountId) !== 'has_mobile';
 }
 
 export function isSMSRecipientIncomplete(
@@ -64,7 +81,7 @@ export function resolveSMSMemberAccountIdForTypeSwitch(
 ): string {
   if (
     recipient.type === 'member' &&
-    memberOptionsByAccountId.get(recipient.account_id)?.has_mobile
+    getSMSMemberPhoneStatus(memberOptionsByAccountId, recipient.account_id) === 'has_mobile'
   ) {
     return recipient.account_id;
   }

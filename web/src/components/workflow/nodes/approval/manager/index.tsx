@@ -48,7 +48,10 @@ import { WorkflowValueEditor, type WorkflowValueEditorHandle } from '@/component
 import WorkflowValueInserter from '@/components/workflow/common/workflow-value-inserter';
 import type { VariableInsertValue } from '@/components/workflow/common/workflow-value-inserter/variable-item';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
-import { useWorkspaceMembersInfinite } from '@/hooks/workspace/use-workspace-members';
+import {
+  useWorkspaceMemberDetails,
+  useWorkspaceMembersInfinite,
+} from '@/hooks/workspace/use-workspace-members';
 import { useT } from '@/i18n';
 import {
   getNotificationSMSTemplates,
@@ -83,10 +86,11 @@ import {
 import {
   createSMSMemberOptionMap,
   getDefaultSMSMemberAccountId,
+  getSMSMemberPhoneStatus,
   isApprovalSMSConfigIncomplete,
-  isSMSMemberUnavailable,
   resolveSMSMemberAccountIdForTypeSwitch,
   type ApprovalSMSMemberOption,
+  type ApprovalSMSMemberPhoneStatus,
 } from './sms-recipient-logic';
 
 interface ApprovalManagerProps {
@@ -208,6 +212,10 @@ interface ApprovalMemberOption extends ApprovalSMSMemberOption {
 
 function getMemberLabel(member: ApprovalMemberOption): string {
   return member.member_name || member.name || member.email;
+}
+
+function getKnownMemberPhoneStatus(hasMobile?: boolean): ApprovalSMSMemberPhoneStatus {
+  return hasMobile ? 'has_mobile' : 'no_mobile';
 }
 
 function MemberRecipientSelector({
@@ -412,6 +420,7 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
         name: member.name,
         member_name: member.member_name,
         has_mobile: Boolean(member.has_mobile),
+        phone_status: getKnownMemberPhoneStatus(member.has_mobile),
       });
     });
 
@@ -431,6 +440,7 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
         name: defaultRecipientName,
         member_name: defaultRecipientName,
         has_mobile: Boolean(defaultRecipientPhone),
+        phone_status: getKnownMemberPhoneStatus(Boolean(defaultRecipientPhone)),
       });
     }
 
@@ -449,6 +459,67 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
     [memberOptions]
   );
 
+  const selectedSMSMemberAccountIds = React.useMemo(
+    () =>
+      Array.from(
+        new Set(
+          data.submit_methods.sms.recipients
+            .filter((recipient): recipient is Extract<ApprovalSMSRecipient, { type: 'member' }> =>
+              Boolean(recipient.type === 'member' && recipient.account_id.trim())
+            )
+            .map(recipient => recipient.account_id.trim())
+        )
+      ),
+    [data.submit_methods.sms.recipients]
+  );
+  const selectedSMSMemberDetailAccountIds = React.useMemo(
+    () => selectedSMSMemberAccountIds.filter(accountId => !memberOptionByAccountId.has(accountId)),
+    [memberOptionByAccountId, selectedSMSMemberAccountIds]
+  );
+  const selectedSMSMemberDetailQueries = useWorkspaceMemberDetails(
+    undefined,
+    undefined,
+    selectedSMSMemberDetailAccountIds,
+    { enabled: data.submit_methods.sms.enabled }
+  );
+  const smsMemberOptions = React.useMemo(() => {
+    if (selectedSMSMemberDetailQueries.length === 0) {
+      return memberOptions;
+    }
+
+    const memberMap = new Map<string, ApprovalMemberOption>(
+      memberOptions.map(member => [member.account_id, member])
+    );
+    selectedSMSMemberDetailQueries.forEach(query => {
+      const member = query.data;
+      if (member) {
+        memberMap.set(query.memberId, {
+          account_id: member.id,
+          email: member.email?.trim() || '',
+          name: member.name || member.email || query.memberId,
+          member_name: member.member_name,
+          has_mobile: Boolean(member.has_mobile),
+          phone_status: getKnownMemberPhoneStatus(member.has_mobile),
+        });
+        return;
+      }
+
+      memberMap.set(query.memberId, {
+        account_id: query.memberId,
+        email: '',
+        name: query.memberId,
+        member_name: query.memberId,
+        phone_status: query.isLoading || query.isFetching ? 'checking' : 'unconfirmed',
+      });
+    });
+
+    return Array.from(memberMap.values());
+  }, [memberOptions, selectedSMSMemberDetailQueries]);
+  const smsMemberOptionByAccountId = React.useMemo(
+    () => createSMSMemberOptionMap(smsMemberOptions),
+    [smsMemberOptions]
+  );
+
   const defaultMemberAccountId = React.useMemo(
     () =>
       memberOptions.find(member => member.account_id === defaultRecipientAccountId)?.account_id ||
@@ -457,8 +528,8 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
     [defaultRecipientAccountId, memberOptions]
   );
   const defaultSMSMemberAccountId = React.useMemo(
-    () => getDefaultSMSMemberAccountId(memberOptionByAccountId, defaultRecipientAccountId),
-    [defaultRecipientAccountId, memberOptionByAccountId]
+    () => getDefaultSMSMemberAccountId(smsMemberOptionByAccountId, defaultRecipientAccountId),
+    [defaultRecipientAccountId, smsMemberOptionByAccountId]
   );
   const createDefaultSMSRecipient = React.useCallback(() => {
     if (defaultSMSMemberAccountId) {
@@ -895,7 +966,7 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
 
   const smsConfigIncomplete = isApprovalSMSConfigIncomplete(
     data.submit_methods.sms,
-    memberOptionByAccountId
+    smsMemberOptionByAccountId
   );
   const smsTemplateParamConfig = React.useMemo(() => {
     const templateKey = data.submit_methods.sms.template.trim() || APPROVAL_SMS_TEMPLATE;
@@ -1376,20 +1447,32 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
                           recipient.type === 'member' &&
                           data.submit_methods.sms.enabled &&
                           !selectedMemberAccountId.trim();
-                        const memberUnavailable =
+                        const memberPhoneStatus =
                           recipient.type === 'member' &&
                           data.submit_methods.sms.enabled &&
-                          Boolean(selectedMemberAccountId.trim()) &&
-                          isSMSMemberUnavailable(memberOptionByAccountId, selectedMemberAccountId);
+                          Boolean(selectedMemberAccountId.trim())
+                            ? getSMSMemberPhoneStatus(
+                                smsMemberOptionByAccountId,
+                                selectedMemberAccountId
+                              )
+                            : 'has_mobile';
                         const memberErrorText = missingMember
                           ? t('approval.validation.smsMemberRecipientRequired', {
                               index: index + 1,
                             })
-                          : memberUnavailable
-                            ? t('approval.validation.smsMemberPhoneMissing', {
+                          : memberPhoneStatus === 'checking'
+                            ? t('approval.validation.smsMemberPhoneChecking', {
                                 index: index + 1,
                               })
-                            : undefined;
+                            : memberPhoneStatus === 'unconfirmed'
+                              ? t('approval.validation.smsMemberPhoneUnconfirmed', {
+                                  index: index + 1,
+                                })
+                              : memberPhoneStatus === 'no_mobile'
+                                ? t('approval.validation.smsMemberPhoneMissing', {
+                                    index: index + 1,
+                                  })
+                                : undefined;
                         return (
                           <div key={index} className="space-y-1">
                             <div className="grid grid-cols-[110px_1fr_32px] gap-2">
@@ -1402,7 +1485,7 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
                                       return createMemberSMSRecipient(
                                         resolveSMSMemberAccountIdForTypeSwitch(
                                           item,
-                                          memberOptionByAccountId,
+                                          smsMemberOptionByAccountId,
                                           defaultSMSMemberAccountId
                                         )
                                       );
@@ -1430,7 +1513,7 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
                                 <MemberRecipientSelector
                                   value={selectedMemberAccountId}
                                   disabled={smsControlsDisabled}
-                                  options={memberOptions}
+                                  options={smsMemberOptions}
                                   keyword={memberKeyword}
                                   isLoading={membersLoading}
                                   isFetching={membersFetching}
@@ -1445,12 +1528,28 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
                                       createMemberSMSRecipient(value)
                                     )
                                   }
-                                  isOptionDisabled={member => !member.has_mobile}
-                                  getOptionHint={member =>
-                                    member.has_mobile
-                                      ? undefined
-                                      : t('approval.memberStatus.noMobile')
+                                  isOptionDisabled={member =>
+                                    getSMSMemberPhoneStatus(
+                                      smsMemberOptionByAccountId,
+                                      member.account_id
+                                    ) !== 'has_mobile'
                                   }
+                                  getOptionHint={member => {
+                                    const status = getSMSMemberPhoneStatus(
+                                      smsMemberOptionByAccountId,
+                                      member.account_id
+                                    );
+                                    if (status === 'checking') {
+                                      return t('approval.memberStatus.checkingMobile');
+                                    }
+                                    if (status === 'unconfirmed') {
+                                      return t('approval.memberStatus.unknownMobile');
+                                    }
+                                    if (status === 'no_mobile') {
+                                      return t('approval.memberStatus.noMobile');
+                                    }
+                                    return undefined;
+                                  }}
                                 />
                               ) : (
                                 <Input

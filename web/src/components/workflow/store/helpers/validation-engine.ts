@@ -317,7 +317,7 @@ export function validateWorkflow(
           pushNodeValidation(jsonParserCheck(node.data as JsonParserNodeData));
           break;
         case NODE_TYPES.APPROVAL:
-          pushNodeValidation(approvalCheck(node.data as ApprovalNodeData));
+          pushNodeValidation(approvalCheck(node.data as ApprovalNodeData, smsTemplates));
           break;
         case NODE_TYPES.ANNOUNCEMENT:
           pushNodeValidation(announcementCheck(node.data as AnnouncementNodeData));
