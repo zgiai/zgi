@@ -121,6 +121,17 @@ function clearRuntimeMessageMetadata(
   if (!metadata) return undefined;
   const next = { ...metadata };
   delete next.sensitiveOutputBlocked;
+  delete next.has_trace;
+  delete next.skill_invocations;
+  delete next.selected_skill_ids;
+  delete next.loaded_skill_ids;
+  delete next.skill_step_count;
+  delete next.skill_call_count;
+  delete next.skill_names;
+  delete next.tool_call_count;
+  delete next.tool_names;
+  delete next.generated_file_count;
+  delete next.generated_files;
   return next;
 }
 
