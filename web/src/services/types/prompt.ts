@@ -117,6 +117,7 @@ export interface PromptOptimizeRequest {
   provider?: string;
   model?: string;
   prompt_id?: string;
+  language?: string;
 }
 
 export interface PromptOptimizeResult {

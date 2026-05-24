@@ -179,9 +179,11 @@ export function usePromptContentHelpers() {
 export function useOptimizePrompt() {
   const queryClient = useQueryClient();
   const t = useT('prompts');
+  const { locale } = useLocale();
 
   return useMutation({
-    mutationFn: (data: PromptOptimizeRequest) => promptService.optimizePrompt(data),
+    mutationFn: (data: PromptOptimizeRequest) =>
+      promptService.optimizePrompt({ ...data, language: data.language || locale }),
     onSuccess: (_data, variables) => {
       if (variables.prompt_id) {
         queryClient.invalidateQueries({
