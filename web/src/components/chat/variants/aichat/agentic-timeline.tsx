@@ -36,6 +36,9 @@ const TIMELINE_DEBUG_LABEL_KEYS = {
   error: 'consoleChat.skills.trace.debug.error',
 } as const;
 
+const assistantMarkdownClassName =
+  'prose prose-sm max-w-none dark:prose-invert sm:pr-4 md:pr-6 lg:pr-8 xl:pr-9';
+
 interface AIChatAgenticTimelineProps {
   timeline: AIChatAgenticTimelineItem[];
   skillDisplayById: AIChatSkillDisplayMap;
@@ -281,21 +284,24 @@ export function AIChatAgenticTimeline({
             isProgressTextItem(item) ? (
               <div
                 key={item.id}
-                className="whitespace-pre-wrap break-words border-l-2 border-muted-foreground/20 pl-3 text-sm text-muted-foreground"
+                className={cn(
+                  assistantMarkdownClassName,
+                  'border-l-2 border-muted-foreground/20 pl-3 text-foreground'
+                )}
               >
-                {item.content}
+                <MarkdownViewer className="md-viewer break-words" content={item.content} />
               </div>
             ) : isIntermediateAnswerItem(item) ? (
-              <div key={item.id} className="rounded-md border bg-background/80 p-3">
+              <div key={item.id} className="space-y-1.5 border-l-2 border-muted-foreground/20 pl-3">
                 {item.title || item.status === 'streaming' ? (
-                  <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                  <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
                     {item.status === 'streaming' ? (
                       <Loader2 className="size-3 animate-spin" />
                     ) : null}
                     {item.title ? <span>{item.title}</span> : null}
                   </div>
                 ) : null}
-                <div className="prose prose-sm max-w-none dark:prose-invert">
+                <div className={assistantMarkdownClassName}>
                   <MarkdownViewer className="md-viewer break-words" content={item.content} />
                 </div>
               </div>
