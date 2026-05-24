@@ -74,6 +74,10 @@ type UpdateCaseRequest struct {
 	Turns          []CaseTurn `json:"turns"`
 }
 
+type DeleteCasesRequest struct {
+	CaseIDs []string `json:"case_ids"`
+}
+
 type CreateBatchRequest struct {
 	Name                string   `json:"name"`
 	CaseIDs             []string `json:"case_ids,omitempty"`
@@ -362,6 +366,29 @@ func (s *Service) UpdateCase(ctx context.Context, agentID string, caseID string,
 		return nil, err
 	}
 	return s.repo.GetCase(ctx, agentID, caseID)
+}
+
+func (s *Service) DeleteCases(ctx context.Context, agentID string, caseIDs []string) error {
+	uniqueIDs := make([]string, 0, len(caseIDs))
+	seen := make(map[string]struct{}, len(caseIDs))
+	for _, id := range caseIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		uniqueIDs = append(uniqueIDs, id)
+	}
+	if len(uniqueIDs) == 0 {
+		return fmt.Errorf("case_ids is required")
+	}
+	if err := s.repo.DeleteCases(ctx, agentID, uniqueIDs); err != nil {
+		return err
+	}
+	return s.refreshScenarioCaseCounts(ctx, agentID)
 }
 
 func normalizeExpectedResult(expectedResult string) string {

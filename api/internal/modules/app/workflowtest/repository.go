@@ -120,6 +120,15 @@ func (r *Repository) UpdateCase(ctx context.Context, testCase *Case) error {
 		}).Error
 }
 
+func (r *Repository) DeleteCases(ctx context.Context, agentID string, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).
+		Where("agent_id = ? AND id IN ?", agentID, ids).
+		Delete(&Case{}).Error
+}
+
 func (r *Repository) ListCasesByIDs(ctx context.Context, agentID string, ids []string) ([]Case, error) {
 	var cases []Case
 	err := r.db.WithContext(ctx).

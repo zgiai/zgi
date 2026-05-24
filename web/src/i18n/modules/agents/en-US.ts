@@ -950,9 +950,16 @@ const messages = {
         selectedCount: 'Selected {count} questions',
         batchEnable: 'Batch Enable',
         batchDisable: 'Batch Disable',
+        batchDelete: 'Batch Delete',
         batchEnabled: 'Enabled {count} test questions',
         batchDisabled: 'Disabled {count} test questions',
         clearSelection: 'Clear Selection',
+        deleteConfirmTitle: 'Delete test question?',
+        deleteConfirmDescription:
+          'The question will be removed from the library. Existing historical test batches are not affected.',
+        batchDeleteConfirmTitle: 'Delete selected test questions?',
+        batchDeleteConfirmDescription:
+          'This will delete {count} selected test questions. Existing historical test batches are not affected.',
       },
       batches: {
         title: 'Test Batch List',
@@ -1257,6 +1264,9 @@ const messages = {
       caseCreateFailed: 'Failed to add test question',
       caseUpdated: 'Test question updated',
       caseUpdateFailed: 'Failed to update test question',
+      caseDeleted: 'Test question deleted',
+      casesDeleted: 'Deleted {count} test questions',
+      caseDeleteFailed: 'Failed to delete test question',
       casesGenerated: 'Generated {count} test questions',
       casesGenerateFailed: 'Failed to generate test questions',
       batchCreated: 'Test batch created',

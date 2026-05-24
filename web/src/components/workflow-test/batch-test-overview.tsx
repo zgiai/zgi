@@ -4,11 +4,20 @@ import * as React from 'react';
 import Link from 'next/link';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Ban, Loader2, WandSparkles, Plus, Settings2, MoreHorizontal } from 'lucide-react';
+import {
+  Ban,
+  Loader2,
+  WandSparkles,
+  Plus,
+  Settings2,
+  MoreHorizontal,
+  Trash2,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
 import {
@@ -39,6 +48,7 @@ import { ScenarioDialog } from './scenario-dialog';
 import { RecognizeScenariosDialog } from './recognize-scenarios-dialog';
 import {
   useCancelWorkflowTestBatch,
+  useDeleteWorkflowTestCases,
   useExecuteWorkflowTestBatch,
   useRetestWorkflowTestBatch,
   useUpdateWorkflowTestCase,
@@ -161,6 +171,7 @@ export function BatchTestOverview({
   const [scenarioDialogOpen, setScenarioDialogOpen] = React.useState(false);
   const [recognizeScenariosOpen, setRecognizeScenariosOpen] = React.useState(false);
   const [editingCaseId, setEditingCaseId] = React.useState<string | null>(null);
+  const [deletingCaseIds, setDeletingCaseIds] = React.useState<string[]>([]);
   const [selectedCaseIds, setSelectedCaseIds] = React.useState<string[]>([]);
   const [caseSearch, setCaseSearch] = React.useState('');
   const [caseScenarioFilter, setCaseScenarioFilter] = React.useState('all');
@@ -175,6 +186,7 @@ export function BatchTestOverview({
   const cancelBatch = useCancelWorkflowTestBatch(agentId);
   const retestBatch = useRetestWorkflowTestBatch(agentId);
   const updateCase = useUpdateWorkflowTestCase(agentId);
+  const deleteCases = useDeleteWorkflowTestCases(agentId);
   const cases = React.useMemo(() => casesData?.data?.items ?? [], [casesData]);
   const scenarios = React.useMemo(() => scenariosData?.data?.items ?? [], [scenariosData]);
   const batches = React.useMemo(() => batchesData?.data?.items ?? [], [batchesData]);
@@ -215,6 +227,7 @@ export function BatchTestOverview({
       selectedCases.map(item =>
         workflowTestService.updateCase(agentId, item.id, {
           content: item.content,
+          expected_result: item.expected_result,
           scenario_id: item.scenario_id,
           question_type: item.question_type,
           status,
@@ -229,6 +242,24 @@ export function BatchTestOverview({
       })
     );
     queryClient.invalidateQueries({ queryKey: WORKFLOW_TEST_KEYS.all });
+  };
+
+  const requestDeleteCases = (caseIds: string[]) => {
+    setDeletingCaseIds(Array.from(new Set(caseIds)));
+  };
+
+  const confirmDeleteCases = () => {
+    if (deletingCaseIds.length === 0) return;
+    const ids = deletingCaseIds;
+    deleteCases.mutate(
+      { case_ids: ids },
+      {
+        onSuccess: () => {
+          setSelectedCaseIds(prev => prev.filter(id => !ids.includes(id)));
+          setDeletingCaseIds([]);
+        },
+      }
+    );
   };
 
   const buildRetestName = (batchName: string) => t('batches.retestName', { name: batchName });
@@ -540,6 +571,7 @@ export function BatchTestOverview({
                                   caseId: item.id,
                                   data: {
                                     content: item.content,
+                                    expected_result: item.expected_result,
                                     scenario_id: item.scenario_id,
                                     question_type: item.question_type,
                                     status: item.status === 'enabled' ? 'disabled' : 'enabled',
@@ -550,6 +582,22 @@ export function BatchTestOverview({
                             >
                               {item.status === 'enabled' ? commonT('disable') : commonT('enable')}
                             </Button>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                                  <MoreHorizontal className="size-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem
+                                  className="text-red-600 focus:text-red-600"
+                                  onSelect={() => requestDeleteCases([item.id])}
+                                >
+                                  <Trash2 className="mr-2 size-4" />
+                                  {commonT('delete')}
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </TableCell>
                         </TableRow>
                       ))
@@ -577,6 +625,16 @@ export function BatchTestOverview({
                         onClick={() => updateSelectedCaseStatus('disabled')}
                       >
                         {t('cases.batchDisable')}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
+                        disabled={deleteCases.isPending}
+                        onClick={() => requestDeleteCases(selectedCaseIds)}
+                      >
+                        <Trash2 className="mr-1 size-4" />
+                        {t('cases.batchDelete')}
                       </Button>
                       <Button variant="ghost" size="sm" onClick={() => setSelectedCaseIds([])}>
                         {t('cases.clearSelection')}
@@ -827,6 +885,27 @@ export function BatchTestOverview({
         scenarios={scenarios.map(scene => ({ id: scene.id, name: scene.name }))}
         open={generateDialogOpen}
         onOpenChange={setGenerateDialogOpen}
+      />
+      <ConfirmDialog
+        open={deletingCaseIds.length > 0}
+        onOpenChange={open => {
+          if (!open && !deleteCases.isPending) setDeletingCaseIds([]);
+        }}
+        title={
+          deletingCaseIds.length > 1
+            ? t('cases.batchDeleteConfirmTitle')
+            : t('cases.deleteConfirmTitle')
+        }
+        description={
+          deletingCaseIds.length > 1
+            ? t('cases.batchDeleteConfirmDescription', { count: deletingCaseIds.length })
+            : t('cases.deleteConfirmDescription')
+        }
+        confirmText={commonT('delete')}
+        cancelText={commonT('cancel')}
+        loading={deleteCases.isPending}
+        variant="warning"
+        onConfirm={confirmDeleteCases}
       />
     </div>
   );
