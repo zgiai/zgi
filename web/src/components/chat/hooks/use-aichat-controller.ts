@@ -128,7 +128,7 @@ function removeRunningStreamingStateByConversation(
   return nextStreamingByMessageId;
 }
 
-function clearStreamingReplayMetadata(message: AIChatMessage): AIChatMessage {
+function clearStreamingRuntimeMessageMetadata(message: AIChatMessage): AIChatMessage {
   if (!message.metadata) {
     return message;
   }
@@ -685,7 +685,7 @@ export function useAIChatController(): AIChatController {
           const shouldDedupeReplay = !afterId && preservedAnswer.length > 0;
           const replayingFromStart = !afterId;
           const replayPlaceholder = replayingFromStart
-            ? clearStreamingReplayMetadata(placeholder)
+            ? clearStreamingRuntimeMessageMetadata(placeholder)
             : placeholder;
           const nextMessage: AIChatMessage = {
             ...replayPlaceholder,
@@ -1847,16 +1847,12 @@ export function useAIChatController(): AIChatController {
 
       setControllerState(current => {
         const now = Math.floor(Date.now() / 1000);
-        const nextMetadata = sourceMessage.metadata ? { ...sourceMessage.metadata } : undefined;
-        if (nextMetadata) {
-          delete nextMetadata.sensitiveOutputBlocked;
-        }
+        const cleanedSourceMessage = clearStreamingRuntimeMessageMetadata(sourceMessage);
         const nextMessage: AIChatMessage = {
-          ...sourceMessage,
+          ...cleanedSourceMessage,
           answer: '',
           status: 'streaming',
           error: undefined,
-          metadata: nextMetadata,
           updated_at: now,
         };
 
