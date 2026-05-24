@@ -50,6 +50,49 @@ func TestParseWorkbookTrimsTrailingEmptyRowsAndRecommendsVisibleSheet(t *testing
 	}
 }
 
+func TestRecommendedSheetPrefersParserRecommendation(t *testing.T) {
+	workbook := &ParsedWorkbook{
+		SourceType: "excel",
+		Sheets: []ParsedSheet{
+			{
+				Name: "Cover",
+				Rows: [][]string{{"Title"}, {"Import notes"}},
+			},
+			{
+				Name:        "Data",
+				Rows:        [][]string{{"Name", "Amount"}, {"Alice", "10"}},
+				Recommended: true,
+			},
+		},
+	}
+
+	sheet, err := RecommendedSheet(workbook)
+	if err != nil {
+		t.Fatalf("RecommendedSheet returned error: %v", err)
+	}
+	if sheet.Name != "Data" {
+		t.Fatalf("recommended sheet = %q, want Data", sheet.Name)
+	}
+}
+
+func TestRecommendedSheetFallsBackToFirstSheet(t *testing.T) {
+	workbook := &ParsedWorkbook{
+		SourceType: "excel",
+		Sheets: []ParsedSheet{
+			{Name: "Sheet1", Rows: [][]string{{"Name"}, {"Alice"}}},
+			{Name: "Sheet2", Rows: [][]string{{"Name"}, {"Bob"}}},
+		},
+	}
+
+	sheet, err := RecommendedSheet(workbook)
+	if err != nil {
+		t.Fatalf("RecommendedSheet returned error: %v", err)
+	}
+	if sheet.Name != "Sheet1" {
+		t.Fatalf("fallback sheet = %q, want Sheet1", sheet.Name)
+	}
+}
+
 func TestParseCSVAllowsRaggedRowsAndEmptyTrailingRows(t *testing.T) {
 	wb, err := ParseWorkbook("ragged.csv", []byte("Name,Amount,Status\nA,1\nB,2,done\n,,\n"))
 	if err != nil {

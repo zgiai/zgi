@@ -3197,10 +3197,11 @@ func (s *dataSourceService) parseExcelFile(file io.Reader, fileName string, colu
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse workbook: %w", err)
 	}
-	if len(workbook.Sheets) == 0 {
-		return nil, fmt.Errorf("Excel file has no sheets")
+	sheet, err := excelimportsvc.RecommendedSheet(workbook)
+	if err != nil {
+		return nil, err
 	}
-	rows := workbook.Sheets[0].Rows
+	rows := sheet.Rows
 
 	if len(rows) < 2 {
 		return nil, fmt.Errorf("Excel file must contain at least header row and one data row")
