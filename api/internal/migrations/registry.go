@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	migrationIDPattern = regexp.MustCompile(`^\d{14}(\d{2})?_[a-z0-9_]+$`)
+	migrationIDPattern = regexp.MustCompile(`^\d{14}(\d{2}|\d{4})?_[a-z0-9_]+$`)
 	registered         []*gormigrate.Migration
 )
 
@@ -55,7 +55,7 @@ func registeredMigrations() []*gormigrate.Migration {
 			panic("migration ID is empty")
 		}
 		if !migrationIDPattern.MatchString(migration.ID) {
-			panic(fmt.Sprintf("migration ID %q must match YYYYMMDDHHMMSS_slug", migration.ID))
+			panic(fmt.Sprintf("migration ID %q must match public migration ID format", migration.ID))
 		}
 		if migration.Migrate == nil {
 			panic(fmt.Sprintf("migration %s has nil Migrate function", migration.ID))

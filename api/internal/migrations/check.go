@@ -66,7 +66,7 @@ func checkRegisteredMigrations() error {
 			return fmt.Errorf("migration at index %d is nil", i)
 		}
 		if !migrationIDPattern.MatchString(migration.ID) {
-			return fmt.Errorf("migration ID %q must match YYYYMMDDHHMMSS_slug", migration.ID)
+			return fmt.Errorf("migration ID %q must match public migration ID format", migration.ID)
 		}
 		if migration.Migrate == nil {
 			return fmt.Errorf("migration %s has nil Migrate function", migration.ID)
