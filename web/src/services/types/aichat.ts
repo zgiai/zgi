@@ -415,6 +415,11 @@ export interface AIChatAgentProgressEventData {
   conversation_id: string;
   message_id: string;
   content?: string;
+  phase?: 'planning' | 'tool_planning';
+  meta_tool_name?: string;
+  skill_id?: string;
+  tool_name?: string;
+  arguments_chars?: number;
   created_at?: number;
 }
 

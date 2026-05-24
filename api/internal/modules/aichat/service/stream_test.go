@@ -943,6 +943,336 @@ Write concise briefs.
 	}
 }
 
+func TestRunSkillPlanningStreamEmitsToolPlanningProgress(t *testing.T) {
+	toolIndex := 0
+	fakeLLM := &fakeAgenticLLMClient{
+		appChatStreamResponses: [][]adapter.StreamResponse{
+			{
+				{
+					Choices: []adapter.StreamChoice{{
+						Delta: adapter.Message{
+							ToolCalls: []adapter.ToolCall{{
+								Index: &toolIndex,
+								ID:    "call_1",
+								Type:  "function",
+								Function: adapter.FunctionCall{
+									Name:      skills.MetaToolCallSkillTool,
+									Arguments: `{"skill_id":"file-generator","tool_name":"write_file","arguments":{"filename":"index.html","content":"<html>`,
+								},
+							}},
+						},
+					}},
+				},
+				{
+					Choices: []adapter.StreamChoice{{
+						Delta: adapter.Message{
+							ToolCalls: []adapter.ToolCall{{
+								Index: &toolIndex,
+								Function: adapter.FunctionCall{
+									Arguments: `<body>Hello</body></html>"}}`,
+								},
+							}},
+						},
+						FinishReason: "tool_calls",
+					}},
+				},
+				{Done: true},
+			},
+		},
+	}
+	svc := &service{llmClient: fakeLLM}
+	prepared := &PreparedChat{
+		Conversation: &aichatmodel.Conversation{
+			ID:             uuid.New(),
+			OrganizationID: uuid.New(),
+			AccountID:      uuid.New(),
+		},
+		Message: &aichatmodel.Message{ID: uuid.New()},
+		parts:   &chatRequestParts{Provider: "openai"},
+	}
+	events := make([]StreamEvent, 0)
+
+	result, ok, err := svc.runSkillPlanningStream(
+		context.Background(),
+		prepared,
+		&adapter.ChatRequest{Messages: []adapter.Message{{Role: "user", Content: "make a page"}}},
+		0,
+		func(event StreamEvent) error {
+			events = append(events, event)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("runSkillPlanningStream() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("runSkillPlanningStream() ok = false, want true")
+	}
+	if len(result.message.ToolCalls) != 1 {
+		t.Fatalf("tool calls = %d, want 1", len(result.message.ToolCalls))
+	}
+
+	var progress map[string]interface{}
+	for _, event := range events {
+		if event.EventType == streamEventAgentProgress {
+			progress = event.Payload
+			break
+		}
+	}
+	if progress == nil {
+		t.Fatal("missing agent_progress event")
+	}
+	if progress["phase"] != "tool_planning" {
+		t.Fatalf("progress phase = %#v, want tool_planning", progress["phase"])
+	}
+	if progress["skill_id"] != "file-generator" || progress["tool_name"] != "write_file" {
+		t.Fatalf("progress payload = %#v, want file-generator/write_file", progress)
+	}
+	if chars, _ := progress["arguments_chars"].(int); chars <= 0 {
+		t.Fatalf("arguments_chars = %#v, want positive int", progress["arguments_chars"])
+	}
+}
+
+func TestRunSkillPlanningStreamEmitsFallbackProgressBeforeBufferedToolCall(t *testing.T) {
+	originalDelay := skillPlanningFallbackProgressDelay
+	skillPlanningFallbackProgressDelay = 10 * time.Millisecond
+	defer func() {
+		skillPlanningFallbackProgressDelay = originalDelay
+	}()
+
+	toolIndex := 0
+	fakeLLM := &fakeAgenticLLMClient{
+		appChatStreamOpenDelay: 50 * time.Millisecond,
+		appChatStreamResponses: [][]adapter.StreamResponse{
+			{
+				{
+					Choices: []adapter.StreamChoice{{
+						Delta: adapter.Message{
+							ToolCalls: []adapter.ToolCall{{
+								Index: &toolIndex,
+								ID:    "call_1",
+								Type:  "function",
+								Function: adapter.FunctionCall{
+									Name:      skills.MetaToolCallSkillTool,
+									Arguments: `{"skill_id":"file-generator","tool_name":"write_file","arguments":{"content":"<html></html>"}}`,
+								},
+							}},
+						},
+						FinishReason: "tool_calls",
+					}},
+				},
+				{Done: true},
+			},
+		},
+	}
+	svc := &service{llmClient: fakeLLM}
+	prepared := &PreparedChat{
+		Conversation: &aichatmodel.Conversation{
+			ID:             uuid.New(),
+			OrganizationID: uuid.New(),
+			AccountID:      uuid.New(),
+		},
+		Message: &aichatmodel.Message{ID: uuid.New()},
+		parts:   &chatRequestParts{Provider: "openai"},
+	}
+	events := make([]StreamEvent, 0)
+
+	_, ok, err := svc.runSkillPlanningStream(
+		context.Background(),
+		prepared,
+		&adapter.ChatRequest{Messages: []adapter.Message{{Role: "user", Content: "make a page"}}},
+		0,
+		func(event StreamEvent) error {
+			events = append(events, event)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("runSkillPlanningStream() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("runSkillPlanningStream() ok = false, want true")
+	}
+	if len(events) == 0 || events[0].EventType != streamEventAgentProgress {
+		t.Fatalf("events = %#v, want first event agent_progress", events)
+	}
+	if events[0].Payload["phase"] != "planning" {
+		t.Fatalf("first progress phase = %#v, want planning", events[0].Payload["phase"])
+	}
+}
+
+func TestRunSkillPlanningStreamEmitsToolPlanningAfterNaturalProgress(t *testing.T) {
+	toolIndex := 0
+	fakeLLM := &fakeAgenticLLMClient{
+		appChatStreamResponses: [][]adapter.StreamResponse{
+			{
+				{
+					Choices: []adapter.StreamChoice{{
+						Delta: adapter.Message{Content: "I will create the file."},
+					}},
+				},
+				{
+					Choices: []adapter.StreamChoice{{
+						Delta: adapter.Message{
+							ToolCalls: []adapter.ToolCall{{
+								Index: &toolIndex,
+								ID:    "call_1",
+								Type:  "function",
+								Function: adapter.FunctionCall{
+									Name:      skills.MetaToolCallSkillTool,
+									Arguments: `{"skill_id":"file-generator","tool_name":"generate_file","arguments":{"content":"<html>`,
+								},
+							}},
+						},
+					}},
+				},
+				{
+					Choices: []adapter.StreamChoice{{
+						Delta: adapter.Message{
+							ToolCalls: []adapter.ToolCall{{
+								Index: &toolIndex,
+								Function: adapter.FunctionCall{
+									Arguments: `<body>Hello</body></html>"}}`,
+								},
+							}},
+						},
+						FinishReason: "tool_calls",
+					}},
+				},
+				{Done: true},
+			},
+		},
+	}
+	svc := &service{llmClient: fakeLLM}
+	prepared := &PreparedChat{
+		Conversation: &aichatmodel.Conversation{
+			ID:             uuid.New(),
+			OrganizationID: uuid.New(),
+			AccountID:      uuid.New(),
+		},
+		Message: &aichatmodel.Message{ID: uuid.New()},
+		parts:   &chatRequestParts{Provider: "openai"},
+	}
+	events := make([]StreamEvent, 0)
+
+	_, ok, err := svc.runSkillPlanningStream(
+		context.Background(),
+		prepared,
+		&adapter.ChatRequest{Messages: []adapter.Message{{Role: "user", Content: "make a page"}}},
+		0,
+		func(event StreamEvent) error {
+			events = append(events, event)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("runSkillPlanningStream() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("runSkillPlanningStream() ok = false, want true")
+	}
+
+	var naturalProgressSeen bool
+	var toolPlanningSeen bool
+	for _, event := range events {
+		if event.EventType != streamEventAgentProgress {
+			continue
+		}
+		if event.Payload["content"] == "I will create the file." {
+			naturalProgressSeen = true
+		}
+		if event.Payload["phase"] == "tool_planning" && event.Payload["tool_name"] == "generate_file" {
+			toolPlanningSeen = true
+		}
+	}
+	if !naturalProgressSeen || !toolPlanningSeen {
+		t.Fatalf("events = %#v, want natural progress and tool planning progress", events)
+	}
+}
+
+func TestRunSkillPlanningStreamUpgradesToolPlanningWithBusinessTool(t *testing.T) {
+	toolIndex := 0
+	fakeLLM := &fakeAgenticLLMClient{
+		appChatStreamResponses: [][]adapter.StreamResponse{
+			{
+				{
+					Choices: []adapter.StreamChoice{{
+						Delta: adapter.Message{
+							ToolCalls: []adapter.ToolCall{{
+								Index: &toolIndex,
+								ID:    "call_1",
+								Type:  "function",
+								Function: adapter.FunctionCall{
+									Name:      skills.MetaToolCallSkillTool,
+									Arguments: `{"arguments":{"content":"` + strings.Repeat("x", 260),
+								},
+							}},
+						},
+					}},
+				},
+				{
+					Choices: []adapter.StreamChoice{{
+						Delta: adapter.Message{
+							ToolCalls: []adapter.ToolCall{{
+								Index: &toolIndex,
+								Function: adapter.FunctionCall{
+									Arguments: `"},"skill_id":"file-generator","tool_name":"generate_file"}`,
+								},
+							}},
+						},
+						FinishReason: "tool_calls",
+					}},
+				},
+				{Done: true},
+			},
+		},
+	}
+	svc := &service{llmClient: fakeLLM}
+	prepared := &PreparedChat{
+		Conversation: &aichatmodel.Conversation{
+			ID:             uuid.New(),
+			OrganizationID: uuid.New(),
+			AccountID:      uuid.New(),
+		},
+		Message: &aichatmodel.Message{ID: uuid.New()},
+		parts:   &chatRequestParts{Provider: "openai"},
+	}
+	events := make([]StreamEvent, 0)
+
+	_, ok, err := svc.runSkillPlanningStream(
+		context.Background(),
+		prepared,
+		&adapter.ChatRequest{Messages: []adapter.Message{{Role: "user", Content: "make a page"}}},
+		0,
+		func(event StreamEvent) error {
+			events = append(events, event)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("runSkillPlanningStream() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("runSkillPlanningStream() ok = false, want true")
+	}
+
+	var progressEvents []StreamEvent
+	for _, event := range events {
+		if event.EventType == streamEventAgentProgress && event.Payload["phase"] == "tool_planning" {
+			progressEvents = append(progressEvents, event)
+		}
+	}
+	if len(progressEvents) != 2 {
+		t.Fatalf("tool planning events = %#v, want unknown progress followed by business tool progress", progressEvents)
+	}
+	if progressEvents[0].Payload["skill_id"] != nil || progressEvents[0].Payload["tool_name"] != nil {
+		t.Fatalf("first tool planning payload = %#v, want no business tool identity", progressEvents[0].Payload)
+	}
+	if progressEvents[1].Payload["skill_id"] != "file-generator" || progressEvents[1].Payload["tool_name"] != "generate_file" {
+		t.Fatalf("second tool planning payload = %#v, want file-generator/generate_file", progressEvents[1].Payload)
+	}
+}
+
 func TestRunPreparedSkillStreamDoesNotDuplicateStreamedPlanningProgress(t *testing.T) {
 	catalogDir := t.TempDir()
 	writeTestSkill(t, catalogDir, "brief-writer", `---
@@ -1462,6 +1792,8 @@ type fakeAgenticLLMClient struct {
 	appChatStreamResponses [][]adapter.StreamResponse
 	appChatStreamRequests  []*adapter.ChatRequest
 	appChatStreamCalls     int
+	appChatStreamOpenDelay time.Duration
+	appChatStreamDelay     time.Duration
 }
 
 func (f *fakeAgenticLLMClient) Chat(ctx context.Context, organizationID string, req *adapter.ChatRequest) (*adapter.ChatResponse, error) {
@@ -1500,6 +1832,13 @@ func (f *fakeAgenticLLMClient) AppChat(ctx context.Context, appCtx *llmclient.Ap
 }
 
 func (f *fakeAgenticLLMClient) AppChatStream(ctx context.Context, appCtx *llmclient.AppContext, req *adapter.ChatRequest) (<-chan adapter.StreamResponse, error) {
+	if f.appChatStreamOpenDelay > 0 {
+		select {
+		case <-time.After(f.appChatStreamOpenDelay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	if f.appChatStreamCalls >= len(f.appChatStreamResponses) {
 		return nil, errors.New("unexpected AppChatStream call")
 	}
@@ -1508,6 +1847,16 @@ func (f *fakeAgenticLLMClient) AppChatStream(ctx context.Context, appCtx *llmcli
 	responses := f.appChatStreamResponses[f.appChatStreamCalls]
 	f.appChatStreamCalls++
 	ch := make(chan adapter.StreamResponse, len(responses))
+	if f.appChatStreamDelay > 0 {
+		go func() {
+			time.Sleep(f.appChatStreamDelay)
+			for _, response := range responses {
+				ch <- response
+			}
+			close(ch)
+		}()
+		return ch, nil
+	}
 	for _, response := range responses {
 		ch <- response
 	}

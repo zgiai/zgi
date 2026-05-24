@@ -493,7 +493,8 @@ export function useAIChatController(): AIChatController {
 
   const applyAgentProgress = useCallback(
     (payload: AIChatAgentProgressEventData, eventId?: string | null) => {
-      if (!payload.conversation_id || !payload.message_id || !payload.content) return;
+      if (!payload.conversation_id || !payload.message_id) return;
+      if (!payload.content && !payload.phase) return;
       setControllerState(current => applyAgentProgressState(current, payload, eventId));
     },
     [setControllerState]
