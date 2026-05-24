@@ -121,6 +121,22 @@ const messages = {
     noResults: 'No matching workspaces found',
     noWorkspaces: 'No workspaces available',
   },
+
+  assetMove: {
+    title: 'Move to Workspace',
+    description: 'Select a target workspace and review the move check before confirming.',
+    descriptionWithName: 'Move "{name}" to another workspace after reviewing the move check.',
+    targetWorkspace: 'Target workspace',
+    targetWorkspacePlaceholder: 'Select target workspace',
+    previewing: 'Checking move...',
+    unknownWorkspace: 'Unknown workspace',
+    blockersTitle: 'Move blocked',
+    warningsTitle: 'Review warnings',
+    confirm: 'Move',
+    previewFailed: 'Failed to check move',
+    moveSuccess: 'Moved successfully',
+    moveFailed: 'Failed to move',
+  },
   // Error Boundary
   errorBoundary: {
     somethingWentWrong: 'Something went wrong',

@@ -123,6 +123,22 @@ const messages: CommonMessages = {
     noWorkspaces: '没有可用的工作空间',
   },
 
+  assetMove: {
+    title: '移动到工作空间',
+    description: '选择目标工作空间，并在确认前查看移动检查结果。',
+    descriptionWithName: '将“{name}”移动到其他工作空间，确认前请查看移动检查结果。',
+    targetWorkspace: '目标工作空间',
+    targetWorkspacePlaceholder: '选择目标工作空间',
+    previewing: '正在检查移动...',
+    unknownWorkspace: '未知工作空间',
+    blockersTitle: '无法移动',
+    warningsTitle: '请确认提示',
+    confirm: '移动',
+    previewFailed: '移动检查失败',
+    moveSuccess: '移动成功',
+    moveFailed: '移动失败',
+  },
+
   // Error Boundary
   errorBoundary: {
     somethingWentWrong: '出错了',

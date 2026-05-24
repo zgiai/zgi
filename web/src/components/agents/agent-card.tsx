@@ -11,7 +11,15 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 
-import { Workflow, MoreHorizontal, Trash2, Edit, Download, MessageSquareText } from 'lucide-react';
+import {
+  Workflow,
+  MoreHorizontal,
+  Trash2,
+  Edit,
+  Download,
+  MessageSquareText,
+  MoveRight,
+} from 'lucide-react';
 import { useT } from '@/i18n';
 import { useDeleteAgent } from '@/hooks/agent/use-agents';
 import { AgentType, type Agent } from '@/services/types/agent';
@@ -23,6 +31,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import { agentService } from '@/services';
 import { useExportWorkflow } from '@/hooks/workflow/use-workflow-import-export';
 import { ICON_BG, ICON_TEXT } from '@/lib/config';
+import { useOrganizations } from '@/hooks/organization/use-organizations';
+import { WorkspaceAssetMoveDialog } from '@/components/common/workspace-asset-move-dialog';
 
 interface AgentCardProps {
   agent: Agent;
@@ -41,12 +51,15 @@ function AgentCard({ agent, onDeleted, pageIndex }: AgentCardProps) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [exportConfirmOpen, setExportConfirmOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
   const queryClient = useQueryClient();
   const { exportWorkflow, isExporting } = useExportWorkflow();
+  const { currentOrganization } = useOrganizations();
 
   // Permissions
   const { hasPermission } = useAccountPermissions();
   const canManage = hasPermission('agent.manage');
+  const canMoveAssets = ['owner', 'admin'].includes(currentOrganization?.organization_role ?? '');
   const agentHref = `/console/agents/${agent.id}/workflow`;
   const modeText =
     agent.agent_type === AgentType.WORKFLOW ? t('modes.workflow') : t('modes.conversational');
@@ -124,12 +137,12 @@ function AgentCard({ agent, onDeleted, pageIndex }: AgentCardProps) {
           </CardContent>
         </Card>
       </Link>
-      {/* Only show dropdown menu when user has manage permission */}
-      {canManage && (
+      {/* Show actions available to workspace managers or organization admins. */}
+      {(canManage || canMoveAssets) && (
         <div className="absolute bottom-2 right-2">
           <DropdownMenu
             onOpenChange={open => {
-              if (open) {
+              if (open && canManage) {
                 // Prefetch agent detail when actions menu opens
                 queryClient.prefetchQuery({
                   queryKey: ['agents', 'detail', agent.id],
@@ -146,28 +159,47 @@ function AgentCard({ agent, onDeleted, pageIndex }: AgentCardProps) {
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem inset onSelect={() => setEditOpen(true)}>
-                <Edit className="h-4 w-4" />
-                {t('actions.edit')}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                inset
-                disabled={isExporting}
-                onSelect={() => setExportConfirmOpen(true)}
-              >
-                <Download className="h-4 w-4" />
-                {t('actions.exportYaml')}
-              </DropdownMenuItem>
-              <DropdownMenuItem variant="destructive" inset onSelect={() => setConfirmOpen(true)}>
-                <Trash2 className="h-4 w-4" />
-                {t('actions.delete')}
-              </DropdownMenuItem>
+              {canManage && (
+                <>
+                  <DropdownMenuItem inset onSelect={() => setEditOpen(true)}>
+                    <Edit className="h-4 w-4" />
+                    {t('actions.edit')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    inset
+                    disabled={isExporting}
+                    onSelect={() => setExportConfirmOpen(true)}
+                  >
+                    <Download className="h-4 w-4" />
+                    {t('actions.exportYaml')}
+                  </DropdownMenuItem>
+                </>
+              )}
+              {canMoveAssets && (
+                <DropdownMenuItem inset onSelect={() => setMoveOpen(true)}>
+                  <MoveRight className="h-4 w-4" />
+                  {tCommon('assetMove.title')}
+                </DropdownMenuItem>
+              )}
+              {canManage && (
+                <DropdownMenuItem variant="destructive" inset onSelect={() => setConfirmOpen(true)}>
+                  <Trash2 className="h-4 w-4" />
+                  {t('actions.delete')}
+                </DropdownMenuItem>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
       )}
       {/* Unified create/edit dialog in edit mode */}
       <AgentDialog open={editOpen} mode="edit" agentId={agent.id} onOpenChange={setEditOpen} />
+      <WorkspaceAssetMoveDialog
+        open={moveOpen}
+        onOpenChange={setMoveOpen}
+        assetType="agent"
+        assetId={agent.id}
+        assetName={agent.name}
+      />
       <ConfirmDialog
         open={exportConfirmOpen}
         onOpenChange={setExportConfirmOpen}
