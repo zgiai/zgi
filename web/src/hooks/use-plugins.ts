@@ -1,6 +1,7 @@
 import { pluginService } from '@/services/plugin.service';
 import type {
   MarketplaceBrandingSettings,
+  MarketplaceCategory,
   MarketplacePlugin,
   MarketplacePluginCategory,
 } from '@/services/types/plugin';
@@ -40,6 +41,36 @@ export interface UseMarketplacePluginsReturn {
   isFetching: boolean;
   error: string | null;
   refetch: () => Promise<void>;
+}
+
+export interface UseMarketplaceCategoriesReturn {
+  categories: MarketplaceCategory[];
+  isLoading: boolean;
+  error: string | null;
+  refetch: () => Promise<void>;
+}
+
+export function useMarketplaceCategories(locale?: string): UseMarketplaceCategoriesReturn {
+  const query = useQuery({
+    queryKey: PLUGIN_KEYS.marketplaceCategories({ locale }),
+    queryFn: async () => {
+      const response = await pluginService.getMarketplaceCategories({ locale });
+      return response.data;
+    },
+    staleTime: 5 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+  });
+
+  return {
+    categories: query.data?.items ?? [],
+    isLoading: query.isLoading,
+    error: (query.error as { message?: string } | null)?.message ?? null,
+    refetch: async () => {
+      await query.refetch();
+    },
+  };
 }
 
 export function useMarketplacePlugins(
@@ -95,16 +126,17 @@ export function useMarketplacePlugins(
 }
 
 export function useMarketplaceBranding(): MarketplaceBrandingSettings {
+  const { locale } = useLocale();
   const query = useQuery({
-    queryKey: PLUGIN_KEYS.marketplaceBranding(),
-    queryFn: () => pluginService.getMarketplaceBrandingConfig(),
+    queryKey: [...PLUGIN_KEYS.marketplaceBranding(), locale],
+    queryFn: () => pluginService.getMarketplaceBrandingConfig(locale),
     staleTime: 5 * 60 * 1000,
     gcTime: 10 * 60 * 1000,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
 
-  return query.data ?? {};
+  return { ...(query.data ?? {}), is_loaded: query.isSuccess };
 }
 
 /**
@@ -165,6 +197,60 @@ export function useMarketplacePluginVersions(
     isLoading: query.isLoading,
     isFetching: query.isFetching,
     error: (query.error as { message?: string } | null)?.message ?? null,
+    refetch: query.refetch,
+  };
+}
+
+export function useMarketplacePluginFavorite(
+  pluginId: string | null,
+  submitterId?: string | null,
+  enabled = true
+) {
+  const queryClient = useQueryClient();
+  const queryEnabled = Boolean(pluginId && enabled);
+
+  const query = useQuery({
+    queryKey: PLUGIN_KEYS.marketplaceFavorite(pluginId || '', submitterId || ''),
+    queryFn: async () => {
+      if (!pluginId) return null;
+      const response = await pluginService.getMarketplacePluginFavoriteStatus(pluginId, submitterId);
+      return response.data;
+    },
+    enabled: queryEnabled,
+    staleTime: 30 * 1000,
+  });
+
+  const favoriteMutation = useMutation({
+    mutationFn: async () => {
+      if (!pluginId || !submitterId) throw new Error('plugin_id and submitter_id are required');
+      return pluginService.favoriteMarketplacePlugin(pluginId, submitterId);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: PLUGIN_KEYS.marketplaceFavorite(pluginId || '', submitterId || ''),
+      });
+    },
+  });
+
+  const unfavoriteMutation = useMutation({
+    mutationFn: async () => {
+      if (!pluginId || !submitterId) throw new Error('plugin_id and submitter_id are required');
+      return pluginService.unfavoriteMarketplacePlugin(pluginId, submitterId);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: PLUGIN_KEYS.marketplaceFavorite(pluginId || '', submitterId || ''),
+      });
+    },
+  });
+
+  return {
+    favorited: query.data?.favorited ?? false,
+    favoriteCount: query.data?.favorite_count ?? 0,
+    isLoading: query.isLoading,
+    isMutating: favoriteMutation.isPending || unfavoriteMutation.isPending,
+    favorite: favoriteMutation.mutateAsync,
+    unfavorite: unfavoriteMutation.mutateAsync,
     refetch: query.refetch,
   };
 }

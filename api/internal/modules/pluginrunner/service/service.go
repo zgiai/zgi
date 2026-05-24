@@ -259,20 +259,7 @@ func (s *pluginRunnerServiceImpl) InstallFromMarketplace(ctx context.Context, te
 		return nil, fmt.Errorf("failed to parse plugin package (must follow plugin YAML format): %w", err)
 	}
 
-	// Build manifest for Plugin Runner registration
-	manifest := &model.PluginManifest{
-		Name:                 parseResult.Manifest.Name,
-		Version:              parseResult.Manifest.Version,
-		Author:               parseResult.Manifest.Author,
-		Description:          parseResult.Manifest.Description,
-		Tags:                 parseResult.Manifest.Tags,
-		MarketplacePluginID:  marketplacePluginID,
-		MarketplaceVersionID: versionID,
-		Runner: model.PluginRunner{
-			Language:   parseResult.Manifest.Language,
-			Entrypoint: parseResult.Manifest.Entrypoint,
-		},
-	}
+	manifest := buildRunnerManifest(parseResult, marketplacePluginID, versionID)
 
 	// Generate plugin ID for Runner (author:name:version format)
 	pluginID := manifest.Author + ":" + manifest.Name + ":" + manifest.Version
@@ -422,10 +409,19 @@ func (s *pluginRunnerServiceImpl) ReinstallFromMarketplace(ctx context.Context, 
 }
 
 func buildRunnerManifest(parseResult *parser.ParseResult, marketplacePluginID, versionID string) *model.PluginManifest {
+	name := parseResult.Manifest.Name
+	if parseResult.Declaration != nil && parseResult.Declaration.Provider.Name != "" {
+		name = parseResult.Declaration.Provider.Name
+	}
+	author := parseResult.Manifest.Author
+	if parseResult.Declaration != nil && parseResult.Declaration.Provider.Author != "" {
+		author = parseResult.Declaration.Provider.Author
+	}
+
 	return &model.PluginManifest{
-		Name:                 parseResult.Manifest.Name,
+		Name:                 name,
 		Version:              parseResult.Manifest.Version,
-		Author:               parseResult.Manifest.Author,
+		Author:               author,
 		Description:          parseResult.Manifest.Description,
 		Tags:                 parseResult.Manifest.Tags,
 		MarketplacePluginID:  marketplacePluginID,

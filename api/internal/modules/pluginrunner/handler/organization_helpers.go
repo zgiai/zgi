@@ -285,8 +285,6 @@ func (h *Handler) cleanupRunnerVersion(ctx context.Context, info *model.Installe
 		return nil
 	}
 
-	//  Determine the plugin author:name:version based on the info information
-	//	This ID is in the format author:name:version
 	pluginID, err := h.resolveRunnerPluginID(ctx, info)
 	if err != nil {
 		return err
@@ -304,7 +302,19 @@ func (h *Handler) cleanupRunnerVersion(ctx context.Context, info *model.Installe
 	)
 
 	if err := h.service.DeletePlugin(ctx, pluginID); err != nil {
-		return fmt.Errorf("failed to delete plugin from runner: %w", err)
+		if isRunnerNotFoundError(err) {
+			logger.Warn(
+				"plugin already absent from runner",
+				"resolved_marketplace_version_id",
+				info.MarketplaceVersionID,
+				"resolved_external_id",
+				pluginID,
+				"error",
+				err,
+			)
+		} else {
+			return fmt.Errorf("failed to delete plugin from runner: %w", err)
+		}
 	}
 
 	if h.infoRepo != nil {
@@ -317,6 +327,10 @@ func (h *Handler) cleanupRunnerVersion(ctx context.Context, info *model.Installe
 }
 
 func (h *Handler) resolveRunnerPluginID(ctx context.Context, info *model.InstalledPluginInfo) (string, error) {
+	if info.MarketplaceVersionID != "" {
+		return info.MarketplaceVersionID, nil
+	}
+
 	if info.PluginAuthor != "" {
 		return fmt.Sprintf("%s:%s:%s", info.PluginAuthor, info.PluginName, info.PluginVersion), nil
 	}
@@ -336,4 +350,12 @@ func (h *Handler) resolveRunnerPluginID(ctx context.Context, info *model.Install
 	}
 
 	return "", nil
+}
+
+func isRunnerNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := err.Error()
+	return strings.Contains(message, "status 404") || strings.Contains(message, "not found")
 }

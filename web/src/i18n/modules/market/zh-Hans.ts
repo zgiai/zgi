@@ -18,6 +18,18 @@ const messages: MarketMessages = {
     applyUpload: '申请上传插件',
     publishPlugin: '发布插件',
     resultCount: '共 {count} 个插件',
+    empty: {
+      title: '暂无插件',
+      action: '发布插件',
+    },
+    searchPage: {
+      title: '搜索插件',
+      exit: '返回插件市场',
+      noResults: '没有找到结果',
+      allCategories: '全部类型',
+      selectedCategories: '已选 {count} 个类型',
+      clearCategories: '清空类型',
+    },
     sourceType: {
       all: '全部',
       official: '官方',
@@ -65,6 +77,9 @@ const messages: MarketMessages = {
       title: '插件反馈',
       requestType: '反馈类型',
       officialPlugin: '选择官方插件',
+      officialPluginPlaceholder: '请选择官方插件',
+      officialPluginSearch: '搜索官方插件',
+      officialPluginLimitHint: '默认展示前 100 条，可通过搜索查看更多匹配插件。',
       content: '反馈内容',
       contentPlaceholder: '请输入反馈内容',
       cancel: '取消',
@@ -78,6 +93,12 @@ const messages: MarketMessages = {
         missingPlugin: '找不到想要的插件',
         other: '其他反馈',
       },
+    },
+    uploadDialog: {
+      title: '发布插件',
+      description: '发布插件申请将在前台独立流程中处理，不依赖后台配置的跳转地址。',
+      hint: '当前入口仅由后台开关控制是否显示，后续可在这里接入插件包上传、开发者信息和审核提交流程。',
+      close: '知道了',
     },
   },
 };

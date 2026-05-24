@@ -244,10 +244,14 @@ export const PLUGIN_KEYS = {
   all: ['plugins'] as const,
   marketplace: () => [...PLUGIN_KEYS.all, 'marketplace'] as const,
   marketplaceList: (params: unknown) => [...PLUGIN_KEYS.marketplace(), 'list', params] as const,
+  marketplaceCategories: (params: unknown) =>
+    [...PLUGIN_KEYS.marketplace(), 'categories', params] as const,
   marketplaceBranding: () => [...PLUGIN_KEYS.marketplace(), 'branding'] as const,
   marketplaceDetail: (id: string) => [...PLUGIN_KEYS.marketplace(), 'detail', id] as const,
   marketplaceVersions: (pluginId: string, params: unknown) =>
     [...PLUGIN_KEYS.marketplace(), 'versions', pluginId, params] as const,
+  marketplaceFavorite: (pluginId: string, submitterId: string) =>
+    [...PLUGIN_KEYS.marketplace(), 'favorite', pluginId, submitterId] as const,
   installationStatus: (versionId: string) =>
     [...PLUGIN_KEYS.all, 'installation-status', versionId] as const,
 } as const;

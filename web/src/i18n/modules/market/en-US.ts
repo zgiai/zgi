@@ -16,6 +16,18 @@ const messages = {
     applyUpload: 'Submit plugin',
     publishPlugin: 'Publish plugin',
     resultCount: '{count} plugins',
+    empty: {
+      title: 'No plugins yet',
+      action: 'Publish plugin',
+    },
+    searchPage: {
+      title: 'Search plugins',
+      exit: 'Back to plugin store',
+      noResults: 'No results found',
+      allCategories: 'All categories',
+      selectedCategories: '{count} categories selected',
+      clearCategories: 'Clear categories',
+    },
     sourceType: {
       all: 'All',
       official: 'Official',
@@ -63,6 +75,9 @@ const messages = {
       title: 'Plugin feedback',
       requestType: 'Request type',
       officialPlugin: 'Select official plugin',
+      officialPluginPlaceholder: 'Select an official plugin',
+      officialPluginSearch: 'Search official plugins',
+      officialPluginLimitHint: 'Showing the first 100 by default. Search to load more matches.',
       content: 'Feedback content',
       contentPlaceholder: 'Please enter the feedback content',
       cancel: 'Cancel',
@@ -76,6 +91,14 @@ const messages = {
         missingPlugin: 'Unable to find the plugin',
         other: 'Other feedback',
       },
+    },
+    uploadDialog: {
+      title: 'Publish plugin',
+      description:
+        'Plugin publishing requests are handled by the storefront flow and do not depend on a console-configured target URL.',
+      hint:
+        'This entry is only controlled by the console visibility switch. Package upload, developer information, and review submission can be connected here later.',
+      close: 'Got it',
     },
   },
 };

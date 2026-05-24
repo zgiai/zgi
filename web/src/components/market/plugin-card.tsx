@@ -48,7 +48,53 @@ function PluginCard({ plugin, branding, className, onClick }: PluginCardProps) {
     )
   );
   const visibleLabels = pluginLabels.slice(0, 3);
-  const metrics = getPluginMetrics(plugin);
+  const metrics = getPluginMetrics(plugin, branding);
+  const metricEnabled = branding?.metric_enabled ?? {};
+  const metricTips = branding?.metric_tips ?? {};
+  const metricIcons = branding?.metric_icon_urls ?? {};
+  const metricItems = [
+    {
+      key: 'downloads',
+      icon: Download,
+      iconUrl: metricIcons.downloads,
+      label: formatMetricTip(metricTips.downloads, metrics.installs) || t('plugins.metrics.installs'),
+      value: metrics.installs,
+      enabled: metricEnabled.downloads !== false,
+    },
+    {
+      key: 'runs',
+      icon: Bot,
+      iconUrl: metricIcons.runs,
+      label: formatMetricTip(metricTips.runs, metrics.runs) || t('plugins.metrics.runs'),
+      value: metrics.runs,
+      enabled: metricEnabled.runs !== false,
+    },
+    {
+      key: 'runtime',
+      icon: Clock3,
+      iconUrl: metricIcons.runtime,
+      label: formatMetricTip(metricTips.runtime, metrics.avgRuntime) || t('plugins.metrics.avgRuntime'),
+      value: metrics.avgRuntime,
+      enabled: metricEnabled.runtime !== false,
+    },
+    {
+      key: 'success',
+      icon: MessageSquareText,
+      iconUrl: metricIcons.success,
+      label: formatMetricTip(metricTips.success, metrics.successRate) || t('plugins.metrics.successRate'),
+      value: metrics.successRate,
+      enabled: metricEnabled.success !== false,
+    },
+    {
+      key: 'favorites',
+      icon: Star,
+      iconUrl: metricIcons.favorites,
+      label: formatMetricTip(metricTips.favorites, metrics.favorites) || t('plugins.metrics.favorites'),
+      value: metrics.favorites,
+      enabled: metricEnabled.favorites !== false,
+    },
+  ];
+  const visibleMetricItems = metricItems.filter(item => item.enabled);
 
   return (
     <Card
@@ -58,7 +104,12 @@ function PluginCard({ plugin, branding, className, onClick }: PluginCardProps) {
       )}
       onClick={onClick}
     >
-      <CardContent className="flex h-full min-h-[194px] flex-col gap-3 p-4">
+      <CardContent
+        className={cn(
+          'flex h-full flex-col gap-3 p-4',
+          visibleMetricItems.length > 0 && 'min-h-[194px]'
+        )}
+      >
         <div className="flex min-w-0 items-start gap-4">
           {plugin.icon ? (
             <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg border bg-muted">
@@ -131,21 +182,19 @@ function PluginCard({ plugin, branding, className, onClick }: PluginCardProps) {
           )}
         </div>
 
-        <div className="mt-auto flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 pt-1 text-xs text-muted-foreground">
-          <Metric icon={Download} label={t('plugins.metrics.installs')} value={metrics.installs} />
-          <Metric icon={Bot} label={t('plugins.metrics.runs')} value={metrics.runs} />
-          <Metric
-            icon={Clock3}
-            label={t('plugins.metrics.avgRuntime')}
-            value={metrics.avgRuntime}
-          />
-          <Metric
-            icon={MessageSquareText}
-            label={t('plugins.metrics.successRate')}
-            value={metrics.successRate}
-          />
-          <Metric icon={Star} label={t('plugins.metrics.favorites')} value={metrics.favorites} />
-        </div>
+        {visibleMetricItems.length > 0 && (
+          <div className="mt-auto flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 pt-1 text-xs text-muted-foreground">
+            {visibleMetricItems.map(item => (
+              <Metric
+                key={item.key}
+                icon={item.icon}
+                iconUrl={item.iconUrl}
+                label={item.label}
+                value={item.value}
+              />
+            ))}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -184,10 +233,12 @@ function VerificationIcon({ src, label }: { src: string; label: string }) {
 
 function Metric({
   icon: Icon,
+  iconUrl,
   label,
   value,
 }: {
   icon: React.ComponentType<{ className?: string }>;
+  iconUrl?: string;
   label: string;
   value: string;
 }) {
@@ -195,7 +246,11 @@ function Metric({
     <Tooltip>
       <TooltipTrigger asChild>
         <span className="flex min-w-0 items-center gap-1">
-          <Icon className="h-3.5 w-3.5 shrink-0" />
+          {iconUrl ? (
+            <img src={iconUrl} alt="" className="h-3.5 w-3.5 shrink-0 object-contain" />
+          ) : (
+            <Icon className="h-3.5 w-3.5 shrink-0" />
+          )}
           <span className="whitespace-nowrap">{value}</span>
         </span>
       </TooltipTrigger>
@@ -204,11 +259,17 @@ function Metric({
   );
 }
 
-function getPluginMetrics(plugin: MarketplacePlugin) {
+function formatMetricTip(template: string | undefined, value: string) {
+  if (!template) return '';
+  return template.replaceAll('{{value}}', value);
+}
+
+function getPluginMetrics(plugin: MarketplacePlugin, branding?: MarketplaceBrandingSettings) {
   const hash = stableHash(plugin.id);
-  const installs = plugin.download_count || 1200 + (hash % 180000);
-  const runs = installs * (4 + (hash % 18));
-  const favorites = plugin.rating_count || 80 + (hash % 18000);
+  const base = branding?.metric_base_values ?? {};
+  const installs = (plugin.download_count || 1200 + (hash % 180000)) + (base.downloads || 0);
+  const runs = installs * (4 + (hash % 18)) + (base.runs || 0);
+  const favorites = (plugin.rating_count || 80 + (hash % 18000)) + (base.favorites || 0);
   const successRate = `${Math.min(99.9, 86 + (hash % 139) / 10).toFixed(1)}%`;
   const avgRuntime = `${120 + (hash % 1800)}ms`;
 

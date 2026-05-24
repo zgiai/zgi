@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef, type FormEvent } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
-import { MessageSquareText, Search, Upload } from 'lucide-react';
+import { Check, ChevronsUpDown, MessageSquareText, Search, Upload } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -13,9 +14,13 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useT } from '@/i18n';
-import { useMarketplaceBranding, useMarketplacePlugins } from '@/hooks/use-plugins';
+import {
+  useMarketplaceBranding,
+  useMarketplaceCategories,
+  useMarketplacePlugins,
+} from '@/hooks/use-plugins';
 import PluginCard from '@/components/market/plugin-card';
-import PluginDetailModal from '@/components/market/plugin-detail-modal';
+import MarketEmptyState from '@/components/market/market-empty-state';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import type { MarketplacePlugin, MarketplacePluginCategory } from '@/services/types/plugin';
 import { useInfiniteObserver } from '@/hooks/use-infinite-observer';
@@ -23,6 +28,7 @@ import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useLocale } from '@/hooks/use-locale';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   Dialog,
   DialogBody,
@@ -39,32 +45,37 @@ import { useAuthStore, useOrganizationStore } from '@/store';
 
 type PluginCategory = '' | MarketplacePluginCategory;
 type PluginSort = 'downloads' | 'newest';
-type PluginSource = 'all' | 'official' | 'third_party';
-
-const PLUGIN_CATEGORIES: Array<{ value: PluginCategory; label: string }> = [
-  { value: '', label: 'all' },
-  { value: 'tool', label: 'tool' },
-  { value: 'extension', label: 'extension' },
-  { value: 'integration', label: 'integration' },
-];
+type PluginSource = 'official' | 'third_party';
+const DEFAULT_PLUGIN_CATEGORY = 'recommend';
 
 export default function PluginsPage() {
   const t = useT();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const { locale } = useLocale();
+  const categoryFromUrl = searchParams.get('category') || '';
   const [searchKeyword, setSearchKeyword] = useState('');
-  const [selectedPlugin, setSelectedPlugin] = useState<MarketplacePlugin | null>(null);
-  const [isModalOpen, setIsModalOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [allPlugins, setAllPlugins] = useState<MarketplacePlugin[]>([]);
   const [totalCount, setTotalCount] = useState(0);
-  const [selectedType, setSelectedType] = useState<PluginCategory>('');
+  const [selectedType, setSelectedType] = useState<PluginCategory>(
+    categoryFromUrl || DEFAULT_PLUGIN_CATEGORY
+  );
   const [selectedSort, setSelectedSort] = useState<PluginSort>('downloads');
-  const [selectedSource, setSelectedSource] = useState<PluginSource>('all');
+  const [selectedSource, setSelectedSource] = useState<PluginSource>('official');
   const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
-  const debouncedSearchKeyword = useDebouncedValue(searchKeyword, 500);
   const branding = useMarketplaceBranding();
-  const sourceOfficial =
-    selectedSource === 'official' ? true : selectedSource === 'third_party' ? false : undefined;
+  const { categories: marketplaceCategories } = useMarketplaceCategories(locale);
+  const pluginCategories = useMemo<Array<{ value: PluginCategory; label: string }>>(
+    () =>
+      marketplaceCategories.map(category => ({
+        value: category.code,
+        label: category.name || category.name_zh_hans || category.name_en_us || category.code,
+      })),
+    [marketplaceCategories]
+  );
+  const sourceOfficial = selectedSource === 'official';
 
   const {
     plugins: pagePlugins,
@@ -76,28 +87,18 @@ export default function PluginsPage() {
     page: currentPage,
     page_size: 20,
     category: selectedType || undefined,
-    search: debouncedSearchKeyword || undefined,
     locale,
     sort: selectedSort,
     is_official: sourceOfficial,
   });
 
-  const { plugins: officialPlugins } = useMarketplacePlugins({
-    page: 1,
-    page_size: 100,
-    locale,
-    sort: 'downloads',
-    is_official: true,
-  });
-
   const lastProcessedPage = useRef(0);
 
-  // Reset data when search or type changes
   useEffect(() => {
     setAllPlugins([]);
     setCurrentPage(1);
     lastProcessedPage.current = 0;
-  }, [debouncedSearchKeyword, selectedType, selectedSort, selectedSource, locale]);
+  }, [selectedType, selectedSort, selectedSource, locale]);
 
   useEffect(() => {
     if (currentPage === lastProcessedPage.current || isLoading) {
@@ -141,9 +142,42 @@ export default function PluginsPage() {
   });
 
   const handlePluginCardClick = useCallback((plugin: MarketplacePlugin) => {
-    setSelectedPlugin(plugin);
-    setIsModalOpen(true);
-  }, []);
+    router.push(`/dashboard/market/plugins/${plugin.id}`);
+  }, [router]);
+
+  const handleSearchSubmit = useCallback(
+    (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      const query = searchKeyword.trim();
+      router.push(
+        query
+          ? `/dashboard/market/plugins/search?q=${encodeURIComponent(query)}`
+          : '/dashboard/market/plugins/search'
+      );
+    },
+    [router, searchKeyword]
+  );
+
+  const handleCategoryChange = useCallback(
+    (value: string) => {
+      const nextCategory = value as PluginCategory;
+      const nextSearchParams = new URLSearchParams(searchParams.toString());
+
+      nextSearchParams.set('category', nextCategory);
+
+      const nextQuery = nextSearchParams.toString();
+      router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
+      setSelectedType(nextCategory);
+    },
+    [pathname, router, searchParams]
+  );
+
+  useEffect(() => {
+    const nextCategory = categoryFromUrl || DEFAULT_PLUGIN_CATEGORY;
+    if (nextCategory !== selectedType) {
+      setSelectedType(nextCategory);
+    }
+  }, [categoryFromUrl, selectedType]);
 
   return (
     <div className="h-full overflow-y-auto bg-background">
@@ -154,7 +188,10 @@ export default function PluginsPage() {
               {t('market.plugins.title')}
             </h1>
 
-            <div className="relative min-w-0 sm:col-span-2 sm:row-start-2 min-[920px]:absolute min-[920px]:left-1/2 min-[920px]:top-0 min-[920px]:col-span-1 min-[920px]:row-start-1 min-[920px]:w-[min(48vw,560px)] min-[920px]:-translate-x-1/2">
+            <form
+              onSubmit={handleSearchSubmit}
+              className="relative min-w-0 sm:col-span-2 sm:row-start-2 min-[920px]:absolute min-[920px]:left-1/2 min-[920px]:top-0 min-[920px]:col-span-1 min-[920px]:row-start-1 min-[920px]:w-[min(48vw,560px)] min-[920px]:-translate-x-1/2"
+            >
               <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 placeholder={t('market.plugins.searchPlaceholder')}
@@ -162,7 +199,7 @@ export default function PluginsPage() {
                 onChange={e => setSearchKeyword(e.target.value)}
                 className="h-10 w-full rounded-lg bg-background pl-10 text-sm shadow-sm"
               />
-            </div>
+            </form>
 
             <div className="flex min-w-0 items-center justify-start gap-2 sm:col-start-2 sm:row-start-1 sm:justify-end">
               {branding.feedback_enabled !== false && (
@@ -184,12 +221,10 @@ export default function PluginsPage() {
                 <Button
                   variant="default"
                   className="h-10 shrink-0 rounded-lg px-4 shadow-sm"
-                  asChild
+                  onClick={() => toast.info(t('common.comingSoon'))}
                 >
-                  <a href={branding.upload_application_url || '#'} target="_blank" rel="noreferrer">
-                    <Upload className="mr-2 h-4 w-4 shrink-0" />
-                    {t('market.plugins.publishPlugin')}
-                  </a>
+                  <Upload className="mr-2 h-4 w-4 shrink-0" />
+                  {t('market.plugins.publishPlugin')}
                 </Button>
               )}
             </div>
@@ -197,18 +232,16 @@ export default function PluginsPage() {
 
           <Tabs
             value={selectedType}
-            onValueChange={value => setSelectedType(value as PluginCategory)}
+            onValueChange={handleCategoryChange}
           >
             <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto border-0 bg-transparent p-0">
-              {PLUGIN_CATEGORIES.map(category => (
+              {pluginCategories.map(category => (
                 <TabsTrigger
                   key={category.value || 'all'}
                   value={category.value}
                   className="h-10 rounded-lg border border-transparent px-4 text-sm font-medium text-muted-foreground data-[state=active]:border-transparent data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none"
                 >
-                  {t(
-                    `market.plugins.categories.${category.label as 'all' | 'tool' | 'extension' | 'integration'}`
-                  )}
+                  {category.label}
                 </TabsTrigger>
               ))}
             </TabsList>
@@ -221,10 +254,9 @@ export default function PluginsPage() {
                 onValueChange={value => setSelectedSource(value as PluginSource)}
               >
                 <SelectTrigger className="h-9 w-full rounded-lg bg-background text-muted-foreground shadow-sm sm:w-[156px]">
-                  <SelectValue placeholder={t('market.plugins.sourceType.all')} />
+                  <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">{t('market.plugins.sourceType.all')}</SelectItem>
                   <SelectItem value="official">
                     {t('market.plugins.sourceType.official')}
                   </SelectItem>
@@ -268,20 +300,19 @@ export default function PluginsPage() {
 
         {/* Empty State */}
         {!isLoading && allPlugins.length === 0 && (
-          <div className="flex flex-col items-center justify-center rounded-xl border py-16 text-center">
-            <Search className="mb-4 h-12 w-12 text-muted-foreground" />
-            <h3 className="mb-2 text-lg font-medium">{t('market.plugins.noResults')}</h3>
-            <p className="mb-4 max-w-sm text-muted-foreground">
-              {debouncedSearchKeyword
-                ? t('market.plugins.noResultsDescription', { keyword: debouncedSearchKeyword })
-                : t('market.plugins.noPluginsDescription')}
-            </p>
-            {debouncedSearchKeyword && (
-              <Button variant="outline" onClick={() => setSearchKeyword('')}>
-                {t('market.plugins.clearSearch')}
-              </Button>
-            )}
-          </div>
+          <MarketEmptyState
+            title={t('market.plugins.empty.title')}
+            actionLabel={
+              branding.upload_application_enabled !== false
+                ? t('market.plugins.empty.action')
+                : undefined
+            }
+            onAction={
+              branding.upload_application_enabled !== false
+                ? () => toast.info(t('common.comingSoon'))
+                : undefined
+            }
+          />
         )}
 
         {allPlugins.length > 0 && (
@@ -300,12 +331,9 @@ export default function PluginsPage() {
         {/* Infinite Scroll Sentinel */}
         {allPlugins.length > 0 && hasNextPage && (
           <div ref={sentinelRef} className="flex min-h-16 justify-center py-8">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <div className="flex items-center justify-center">
               {isFetching ? (
-                <>
-                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                  {t('market.plugins.loading')}
-                </>
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
               ) : (
                 t('market.plugins.scrollHint')
               )}
@@ -316,25 +344,18 @@ export default function PluginsPage() {
         {/* No More Data Indicator */}
         {allPlugins.length > 0 && !hasNextPage && (
           <div className="flex justify-center py-8">
-            <div className="text-sm text-muted-foreground">
-              {t('market.plugins.noMoreData') || 'No more plugins'}
+            <div className="flex w-24 items-center justify-center gap-1.5">
+              <span className="h-px flex-1 bg-border" />
+              <span className="h-1 w-1 rounded-full bg-muted-foreground/40" />
+              <span className="h-px flex-1 bg-border" />
             </div>
           </div>
         )}
       </div>
 
-      {isModalOpen && (
-        <PluginDetailModal
-          open={isModalOpen}
-          onOpenChange={setIsModalOpen}
-          pluginId={selectedPlugin?.id || null}
-        />
-      )}
-
       <PluginFeedbackDialog
         open={isFeedbackOpen}
         onOpenChange={setIsFeedbackOpen}
-        officialPlugins={officialPlugins}
       />
     </div>
   );
@@ -343,26 +364,43 @@ export default function PluginsPage() {
 function PluginFeedbackDialog({
   open,
   onOpenChange,
-  officialPlugins,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  officialPlugins: MarketplacePlugin[];
 }) {
   const t = useT();
+  const { locale } = useLocale();
   const user = useAuthStore.use.user();
   const currentOrganization = useOrganizationStore.use.currentOrganization();
   const [requestType, setRequestType] =
     useState<MarketplacePluginFeedbackRequestType>('existing_official');
   const [pluginId, setPluginId] = useState('');
+  const [pluginSearch, setPluginSearch] = useState('');
+  const [isPluginPickerOpen, setIsPluginPickerOpen] = useState(false);
   const [content, setContent] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const needsPlugin = requestType === 'existing_official';
+  const debouncedPluginSearch = useDebouncedValue(pluginSearch, 300);
+  const { plugins: officialPlugins, isFetching: isFetchingOfficialPlugins } = useMarketplacePlugins(
+    {
+      page: 1,
+      page_size: 100,
+      locale,
+      sort: 'downloads',
+      is_official: true,
+      search: debouncedPluginSearch || undefined,
+    },
+    {
+      enabled: open && needsPlugin,
+      staleTime: 30 * 1000,
+    }
+  );
 
   const selectedPluginId = useMemo(() => {
     if (!needsPlugin) return '';
     return pluginId || officialPlugins[0]?.id || '';
   }, [needsPlugin, officialPlugins, pluginId]);
+  const selectedPlugin = officialPlugins.find(plugin => plugin.id === selectedPluginId);
 
   useEffect(() => {
     if (open && needsPlugin && !pluginId && officialPlugins[0]?.id) {
@@ -392,6 +430,7 @@ function PluginFeedbackDialog({
       setContent('');
       setRequestType('existing_official');
       setPluginId('');
+      setPluginSearch('');
       onOpenChange(false);
     } catch (error) {
       toast.error(
@@ -441,18 +480,70 @@ function PluginFeedbackDialog({
                 {t('market.plugins.feedbackDialog.officialPlugin')}
                 <span className="text-destructive">*</span>
               </Label>
-              <Select value={selectedPluginId} onValueChange={setPluginId}>
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {officialPlugins.map(plugin => (
-                    <SelectItem key={plugin.id} value={plugin.id}>
-                      {plugin.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Popover open={isPluginPickerOpen} onOpenChange={setIsPluginPickerOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-10 w-full justify-between rounded-lg bg-background px-3 font-normal"
+                  >
+                    <span className="truncate">
+                      {selectedPlugin?.name ||
+                        t('market.plugins.feedbackDialog.officialPluginPlaceholder')}
+                    </span>
+                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 text-muted-foreground" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent
+                  align="start"
+                  className="z-[60] w-[var(--radix-popover-trigger-width)] p-2"
+                >
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      value={pluginSearch}
+                      onChange={event => setPluginSearch(event.target.value)}
+                      className="h-9 pl-9"
+                      placeholder={t('market.plugins.feedbackDialog.officialPluginSearch')}
+                    />
+                  </div>
+                  <div className="mt-2 max-h-64 overflow-y-auto">
+                    {isFetchingOfficialPlugins && officialPlugins.length === 0 ? (
+                      <div className="px-3 py-6 text-center text-sm text-muted-foreground">
+                        {t('market.plugins.loading')}
+                      </div>
+                    ) : officialPlugins.length === 0 ? (
+                      <div className="px-3 py-6 text-center text-sm text-muted-foreground">
+                        {t('market.plugins.noResults')}
+                      </div>
+                    ) : (
+                      <div className="grid gap-1">
+                        {officialPlugins.map(plugin => (
+                          <button
+                            key={plugin.id}
+                            type="button"
+                            className="flex h-9 min-w-0 items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-muted"
+                            onClick={() => {
+                              setPluginId(plugin.id);
+                              setIsPluginPickerOpen(false);
+                            }}
+                          >
+                            <Check
+                              className={`h-4 w-4 shrink-0 ${
+                                selectedPluginId === plugin.id ? 'opacity-100' : 'opacity-0'
+                              }`}
+                            />
+                            <span className="min-w-0 truncate">{plugin.name}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="mt-2 border-t pt-2 text-xs text-muted-foreground">
+                    {t('market.plugins.feedbackDialog.officialPluginLimitHint')}
+                  </div>
+                </PopoverContent>
+              </Popover>
             </div>
           )}
 
