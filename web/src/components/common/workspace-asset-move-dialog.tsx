@@ -19,6 +19,7 @@ import {
 } from '@/components/common/workspace-selector';
 import { useT } from '@/i18n';
 import { useWorkspaceAssetMove } from '@/hooks/organization/use-workspace-asset-move';
+import { useCurrentWorkspace } from '@/store/workspace-store';
 import type {
   WorkspaceAssetMovePreviewItem,
   WorkspaceAssetMoveType,
@@ -42,8 +43,13 @@ export function WorkspaceAssetMoveDialog({
   onMoved,
 }: WorkspaceAssetMoveDialogProps) {
   const t = useT('common');
+  const currentWorkspace = useCurrentWorkspace();
   const [targetWorkspace, setTargetWorkspace] = useState<WorkspaceSelectorValue | undefined>();
   const { previewMutation, moveMutation } = useWorkspaceAssetMove();
+  const excludedWorkspaceIds = useMemo(
+    () => (currentWorkspace?.id ? [currentWorkspace.id] : []),
+    [currentWorkspace?.id]
+  );
 
   const request = useMemo(() => {
     if (!targetWorkspace?.id) return null;
@@ -104,6 +110,7 @@ export function WorkspaceAssetMoveDialog({
               value={targetWorkspace}
               onChange={handleTargetWorkspaceChange}
               placeholder={t('assetMove.targetWorkspacePlaceholder')}
+              excludedWorkspaceIds={excludedWorkspaceIds}
             />
           </div>
 

@@ -192,6 +192,9 @@ func (s *WorkspaceAssetMoveService) previewAgent(ctx context.Context, db *gorm.D
 	if err := s.attachAndCheckSourceWorkspace(ctx, db, organizationID, agent.TenantID, item); err != nil {
 		return err
 	}
+	if blockIfAlreadyInTargetWorkspace(item) {
+		return nil
+	}
 	if len(item.Blockers) == 0 {
 		warnings, err := s.workflowReferenceWarningsForAgent(ctx, db, organizationID, agent.ID, item.TargetWorkspaceID)
 		if err != nil {
@@ -226,6 +229,9 @@ func (s *WorkspaceAssetMoveService) previewDataset(ctx context.Context, db *gorm
 	if err := s.attachSourceWorkspace(ctx, db, dataset.WorkspaceID, item); err != nil {
 		return err
 	}
+	if blockIfAlreadyInTargetWorkspace(item) {
+		return nil
+	}
 	return s.validateTargetFolder(ctx, db, "dataset_folders", "workspace_id", organizationID, item)
 }
 
@@ -254,6 +260,9 @@ func (s *WorkspaceAssetMoveService) previewFile(ctx context.Context, db *gorm.DB
 		if err := s.attachSourceWorkspace(ctx, db, *file.WorkspaceID, item); err != nil {
 			return err
 		}
+		if blockIfAlreadyInTargetWorkspace(item) {
+			return nil
+		}
 	}
 	return s.validateTargetFolder(ctx, db, "file_folders", "workspace_id", organizationID, item)
 }
@@ -280,9 +289,20 @@ func (s *WorkspaceAssetMoveService) previewDatabase(ctx context.Context, db *gor
 		item.Blockers = append(item.Blockers, "database is outside current organization")
 	}
 	if dataSource.WorkspaceID != nil {
-		return s.attachSourceWorkspace(ctx, db, *dataSource.WorkspaceID, item)
+		if err := s.attachSourceWorkspace(ctx, db, *dataSource.WorkspaceID, item); err != nil {
+			return err
+		}
+		blockIfAlreadyInTargetWorkspace(item)
 	}
 	return nil
+}
+
+func blockIfAlreadyInTargetWorkspace(item *dto.WorkspaceAssetMovePreviewItem) bool {
+	if item.FromWorkspaceID == "" || item.FromWorkspaceID != item.TargetWorkspaceID {
+		return false
+	}
+	item.Blockers = append(item.Blockers, "asset is already in target workspace")
+	return true
 }
 
 func (s *WorkspaceAssetMoveService) attachAndCheckSourceWorkspace(ctx context.Context, db *gorm.DB, organizationID, workspaceID string, item *dto.WorkspaceAssetMovePreviewItem) error {

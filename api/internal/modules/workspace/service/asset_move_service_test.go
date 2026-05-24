@@ -147,6 +147,87 @@ func TestWorkspaceAssetMovePreviewBlocksDatasetTargetFolderOutsideTargetWorkspac
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestWorkspaceAssetMovePreviewBlocksSameWorkspaceForAgent(t *testing.T) {
+	db, mock := newAssetMoveMockDB(t)
+	expectWorkspaceLookup(mock, "ws-1", "org-1", "normal")
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, tenant_id FROM "agents" WHERE id = $1 AND deleted_at IS NULL ORDER BY "agents"."id" LIMIT $2`)).
+		WithArgs("agent-1", 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id"}).AddRow("agent-1", "ws-1"))
+	expectWorkspaceLookup(mock, "ws-1", "org-1", "normal")
+	expectWorkspaceLookup(mock, "ws-1", "org-1", "normal")
+
+	svc := NewWorkspaceAssetMoveService(db, stubAssetMoveOrgService{allowed: true})
+	preview, err := svc.Preview(context.Background(), "org-1", "acct-1", dto.WorkspaceAssetMoveRequest{
+		TargetWorkspaceID: "ws-1",
+		Items:             []dto.WorkspaceAssetMoveItem{{Type: AssetMoveTypeAgent, ID: "agent-1"}},
+	})
+
+	require.NoError(t, err)
+	require.False(t, preview.Movable)
+	require.Contains(t, preview.Items[0].Blockers, "asset is already in target workspace")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestWorkspaceAssetMoveDatasetMoveBlocksSameWorkspaceWithoutClearingFolderJoin(t *testing.T) {
+	db, mock := newAssetMoveMockDB(t)
+	mock.ExpectBegin()
+	expectWorkspaceLookup(mock, "ws-1", "org-1", "normal")
+	expectDatasetPreview(mock, "dataset-1", "org-1", "ws-1")
+	expectWorkspaceLookup(mock, "ws-1", "org-1", "normal")
+	mock.ExpectRollback()
+
+	svc := NewWorkspaceAssetMoveService(db, stubAssetMoveOrgService{allowed: true})
+	result, err := svc.Move(context.Background(), "org-1", "acct-1", dto.WorkspaceAssetMoveRequest{
+		TargetWorkspaceID: "ws-1",
+		Items:             []dto.WorkspaceAssetMoveItem{{Type: AssetMoveTypeDataset, ID: "dataset-1"}},
+	})
+
+	require.ErrorIs(t, err, ErrAssetMoveBlocked)
+	require.NotNil(t, result)
+	require.False(t, result.Preview.Movable)
+	require.Contains(t, result.Preview.Items[0].Blockers, "asset is already in target workspace")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestWorkspaceAssetMoveFileMoveBlocksSameWorkspaceWithoutClearingFolderJoin(t *testing.T) {
+	db, mock := newAssetMoveMockDB(t)
+	mock.ExpectBegin()
+	expectWorkspaceLookup(mock, "ws-1", "org-1", "normal")
+	expectFilePreview(mock, "file-1", "org-1", "ws-1")
+	expectWorkspaceLookup(mock, "ws-1", "org-1", "normal")
+	mock.ExpectRollback()
+
+	svc := NewWorkspaceAssetMoveService(db, stubAssetMoveOrgService{allowed: true})
+	result, err := svc.Move(context.Background(), "org-1", "acct-1", dto.WorkspaceAssetMoveRequest{
+		TargetWorkspaceID: "ws-1",
+		Items:             []dto.WorkspaceAssetMoveItem{{Type: AssetMoveTypeFile, ID: "file-1"}},
+	})
+
+	require.ErrorIs(t, err, ErrAssetMoveBlocked)
+	require.NotNil(t, result)
+	require.False(t, result.Preview.Movable)
+	require.Contains(t, result.Preview.Items[0].Blockers, "asset is already in target workspace")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestWorkspaceAssetMovePreviewBlocksSameWorkspaceForDatabase(t *testing.T) {
+	db, mock := newAssetMoveMockDB(t)
+	expectWorkspaceLookup(mock, "ws-1", "org-1", "normal")
+	expectDatabasePreview(mock, "database-1", "org-1", "ws-1")
+	expectWorkspaceLookup(mock, "ws-1", "org-1", "normal")
+
+	svc := NewWorkspaceAssetMoveService(db, stubAssetMoveOrgService{allowed: true})
+	preview, err := svc.Preview(context.Background(), "org-1", "acct-1", dto.WorkspaceAssetMoveRequest{
+		TargetWorkspaceID: "ws-1",
+		Items:             []dto.WorkspaceAssetMoveItem{{Type: AssetMoveTypeDatabase, ID: "database-1"}},
+	})
+
+	require.NoError(t, err)
+	require.False(t, preview.Movable)
+	require.Contains(t, preview.Items[0].Blockers, "asset is already in target workspace")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestWorkspaceAssetMoveAgentMoveUpdatesRelatedTablesAndAudit(t *testing.T) {
 	db, mock := newAssetMoveMockDB(t)
 	mock.ExpectBegin()
@@ -243,4 +324,16 @@ func expectDatasetPreview(mock sqlmock.Sqlmock, datasetID, orgID, workspaceID st
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, organization_id, workspace_id FROM "datasets" WHERE id = $1 ORDER BY "datasets"."id" LIMIT $2`)).
 		WithArgs(datasetID, 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "organization_id", "workspace_id"}).AddRow(datasetID, orgID, workspaceID))
+}
+
+func expectFilePreview(mock sqlmock.Sqlmock, fileID, orgID, workspaceID string) {
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, organization_id, workspace_id FROM "upload_files" WHERE id = $1 ORDER BY "upload_files"."id" LIMIT $2`)).
+		WithArgs(fileID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "organization_id", "workspace_id"}).AddRow(fileID, orgID, workspaceID))
+}
+
+func expectDatabasePreview(mock sqlmock.Sqlmock, databaseID, orgID, workspaceID string) {
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, organization_id, workspace_id FROM "data_sources" WHERE id = $1 ORDER BY "data_sources"."id" LIMIT $2`)).
+		WithArgs(databaseID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "organization_id", "workspace_id"}).AddRow(databaseID, orgID, workspaceID))
 }
