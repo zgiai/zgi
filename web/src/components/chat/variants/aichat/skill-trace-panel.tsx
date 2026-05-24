@@ -8,9 +8,11 @@ import {
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
 import { useT } from '@/i18n/translations';
+import { useLocale } from '@/hooks/use-locale';
 import { cn } from '@/lib/utils';
 import type { AIChatSkillInvocation } from '@/services/types/aichat';
 import {
+  getAIChatSkillToolDisplayName,
   getFallbackAIChatSkillDisplayInfo,
   type AIChatSkillDisplayInfo,
   type AIChatSkillDisplayMap,
@@ -74,11 +76,11 @@ function formatDebugValue(value: unknown): string | null {
   }
 }
 
-function skillTraceDebugRows(invocation: AIChatSkillInvocation) {
+function skillTraceDebugRows(invocation: AIChatSkillInvocation, locale: string) {
   return [
     ['kind', invocation.kind],
     ['skillId', invocation.skill_id],
-    ['toolName', invocation.tool_name],
+    ['toolName', getAIChatSkillToolDisplayName(invocation.skill_id, invocation.tool_name, locale)],
     ['path', invocation.path],
     ['duration', getDurationText(invocation.duration_ms)],
     ['arguments', invocation.arguments],
@@ -101,15 +103,17 @@ export function AIChatSkillTracePanel({
   skillDisplayById,
 }: AIChatSkillTracePanelProps) {
   const t = useT('webapp');
+  const { locale } = useLocale();
   const [isOpen, setIsOpen] = useState(false);
 
   const events = useMemo<SkillTraceEvent[]>(
     () =>
       invocations.map(invocation => {
         const skillId = invocation.skill_id || t('consoleChat.skills.trace.unknownSkill');
-        const skill = skillDisplayById[skillId] ?? getFallbackAIChatSkillDisplayInfo(skillId);
+        const skill =
+          skillDisplayById[skillId] ?? getFallbackAIChatSkillDisplayInfo(skillId, locale);
         const toolName =
-          invocation.tool_name ||
+          getAIChatSkillToolDisplayName(invocation.skill_id, invocation.tool_name, locale) ||
           invocation.path ||
           t('consoleChat.skills.trace.unknownTool');
         const tone = getInvocationTone(invocation);
@@ -161,7 +165,7 @@ export function AIChatSkillTracePanel({
           detail: invocation.message || invocation.error,
         };
       }),
-    [invocations, skillDisplayById, t]
+    [invocations, locale, skillDisplayById, t]
   );
 
   const summary = useMemo(() => {
@@ -253,7 +257,7 @@ export function AIChatSkillTracePanel({
                         </div>
                       ) : null}
                       <dl className="mt-2 grid gap-1 rounded-md bg-muted/30 p-2 text-[11px]">
-                        {skillTraceDebugRows(event.invocation).map(([labelKey, value]) => {
+                        {skillTraceDebugRows(event.invocation, locale).map(([labelKey, value]) => {
                           const formatted = formatDebugValue(value);
                           if (!formatted) return null;
 

@@ -581,6 +581,8 @@ const messages = {
         overwriteTitle: 'This will overwrite an existing Skill',
         overwriteDescription:
           '"{skill}" already exists in this organization. Importing this package will replace the existing Skill package.',
+        systemSkillNameConflict:
+          'This Skill name is reserved by a built-in system Skill. Rename the custom Skill and try again.',
       },
       messages: {
         saved: 'AIChat Skill settings saved',

@@ -31,6 +31,8 @@ const (
 	customSkillMaxFileCount   = 200
 )
 
+const customSkillSystemNameConflictMessage = "This skill name is reserved by a built-in system skill. Please rename your custom skill and try again."
+
 type extractedSkillFile struct {
 	Path string `json:"path"`
 	Size int64  `json:"size"`
@@ -84,7 +86,7 @@ func (s *service) PreviewImportCustomSkill(ctx context.Context, scope Scope, fil
 		result.ImportID = ""
 		result.ExpiresAt = time.Time{}
 		result.Skill = skillDiscoveryMetadataPtr(doc)
-		result.ValidationErrors = []string{"custom skill id conflicts with a system skill"}
+		result.ValidationErrors = []string{customSkillSystemNameConflictMessage}
 		result.CanImport = false
 		return result, nil
 	}
@@ -132,7 +134,7 @@ func (s *service) confirmCustomSkillImport(ctx context.Context, scope Scope, imp
 		return nil, fmt.Errorf("%w: %v", ErrInvalidInput, err)
 	}
 	if s.customSkillIDConflictsWithSystem(ctx, doc.Metadata.ID) {
-		return nil, fmt.Errorf("%w: custom skill id conflicts with a system skill", ErrInvalidInput)
+		return nil, fmt.Errorf("%w: %s", ErrInvalidInput, customSkillSystemNameConflictMessage)
 	}
 	existing, err := s.existingCustomSkill(ctx, scope.OrganizationID, doc.Metadata.ID)
 	if err != nil {

@@ -11,10 +11,12 @@ import { Button } from '@/components/ui/button';
 import MarkdownViewer from '@/components/common/markdown-viewer';
 import { useT } from '@/i18n/translations';
 import type { ScopedTranslations } from '@/i18n/translations';
+import { useLocale } from '@/hooks/use-locale';
 import { cn } from '@/lib/utils';
 import type { AIChatSkillInvocation } from '@/services/types/aichat';
 import type { AIChatAgenticTimelineItem } from '@/components/chat/controllers/aichat';
 import {
+  getAIChatSkillToolDisplayName,
   getFallbackAIChatSkillDisplayInfo,
   type AIChatSkillDisplayInfo,
   type AIChatSkillDisplayMap,
@@ -83,11 +85,11 @@ function formatDebugValue(value: unknown): string | null {
   }
 }
 
-function timelineDebugRows(invocation: AIChatSkillInvocation) {
+function timelineDebugRows(invocation: AIChatSkillInvocation, locale: string) {
   return [
     ['kind', invocation.kind],
     ['skillId', invocation.skill_id],
-    ['toolName', invocation.tool_name],
+    ['toolName', getAIChatSkillToolDisplayName(invocation.skill_id, invocation.tool_name, locale)],
     ['path', invocation.path],
     ['duration', getDurationText(invocation.duration_ms)],
     ['arguments', invocation.arguments],
@@ -100,10 +102,11 @@ function buildSkillTitle(
   invocation: AIChatSkillInvocation,
   skill: AIChatSkillDisplayInfo,
   tone: TimelineTone,
+  locale: string,
   t: WebappTranslator
 ): string {
   const toolName =
-    invocation.tool_name ||
+    getAIChatSkillToolDisplayName(invocation.skill_id, invocation.tool_name, locale) ||
     invocation.path ||
     t('consoleChat.skills.trace.unknownTool');
 
@@ -144,6 +147,7 @@ function SkillTimelineRow({
   event: SkillTimelineViewModel;
 }) {
   const t = useT('webapp');
+  const { locale } = useLocale();
   const [isOpen, setIsOpen] = useState(false);
   const duration = getDurationText(event.item.invocation.duration_ms);
 
@@ -190,7 +194,7 @@ function SkillTimelineRow({
             </div>
           ) : null}
           <dl className="grid gap-1 rounded-md bg-background/80 p-2 text-[11px]">
-            {timelineDebugRows(event.item.invocation).map(([labelKey, value]) => {
+            {timelineDebugRows(event.item.invocation, locale).map(([labelKey, value]) => {
               const formatted = formatDebugValue(value);
               if (!formatted) return null;
 
@@ -230,6 +234,7 @@ export function AIChatAgenticTimeline({
   defaultOpen = true,
 }: AIChatAgenticTimelineProps) {
   const t = useT('webapp');
+  const { locale } = useLocale();
   const [isOpen, setIsOpen] = useState(defaultOpen);
 
   const events = useMemo(
@@ -239,18 +244,19 @@ export function AIChatAgenticTimeline({
         if (item.type === 'intermediate_answer') return item;
 
         const skillId = item.invocation.skill_id || t('consoleChat.skills.trace.unknownSkill');
-        const skill = skillDisplayById[skillId] ?? getFallbackAIChatSkillDisplayInfo(skillId);
+        const skill =
+          skillDisplayById[skillId] ?? getFallbackAIChatSkillDisplayInfo(skillId, locale);
         const tone = getInvocationTone(item.invocation);
 
         return {
           item,
           skill,
           tone,
-          title: buildSkillTitle(item.invocation, skill, tone, t),
+          title: buildSkillTitle(item.invocation, skill, tone, locale, t),
           detail: item.invocation.message || item.invocation.error,
         };
       }),
-    [skillDisplayById, t, timeline]
+    [locale, skillDisplayById, t, timeline]
   );
 
   if (events.length === 0) return null;

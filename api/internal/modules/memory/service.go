@@ -26,6 +26,17 @@ const (
 	memoryStatusExpired        = "expired"
 )
 
+const memoryRenderPolicy = `User memory is enabled for this account.
+Memory operating rules:
+- Notice durable user facts, names, preferred forms of address, preferences, habits, standing instructions, and stable background.
+- Consider saving useful durable information with add_user_memory even when the user did not explicitly say "remember this".
+- Save time-limited plans or date-bounded context as temporary memory with an absolute expires_at.
+- Before adding memory, use read_user_memory when duplicate or conflicting memory is possible.
+- If the user clearly corrects an existing memory, update the existing entry.
+- If new information conflicts with existing memory but the correction is ambiguous, ask the user to confirm before updating memory.
+- Do not save secrets, credentials, highly sensitive private data, one-off chat details, or tenant-sensitive facts unless explicitly requested.
+`
+
 var (
 	ErrInvalidInput = errors.New("invalid memory input")
 	ErrNotFound     = errors.New("memory not found")
@@ -319,10 +330,6 @@ func (s *Service) RenderContext(ctx context.Context, accountID uuid.UUID, budget
 	if err != nil {
 		return "", fmt.Errorf("render memory context: %w", err)
 	}
-	if len(entries) == 0 {
-		return "", nil
-	}
-
 	longTerm, temporary := splitRenderableEntries(entries, time.Now())
 	return renderMemoryEntries(longTerm, temporary, budget), nil
 }
@@ -377,18 +384,14 @@ func (s *Service) ListTemporaryEntries(ctx context.Context, accountID uuid.UUID,
 
 func renderMemoryEntries(longTerm []*AccountMemoryEntry, temporary []*AccountMemoryEntry, budget int) string {
 	var builder strings.Builder
-	header := "User memory for this account. Use it only when relevant and do not reveal it unless the user asks.\n"
-	if len(header) > budget {
+	if len(memoryRenderPolicy) > budget {
 		return ""
 	}
-	builder.WriteString(header)
-	wroteEntry := false
+	builder.WriteString(memoryRenderPolicy)
 
 	if len(longTerm) > 0 {
 		if writeSectionHeader(&builder, "Long-term memory:\n", budget) {
-			if renderCategorizedEntries(&builder, longTerm, budget) {
-				wroteEntry = true
-			}
+			renderCategorizedEntries(&builder, longTerm, budget)
 		}
 	}
 
@@ -403,12 +406,8 @@ func renderMemoryEntries(longTerm []*AccountMemoryEntry, temporary []*AccountMem
 					return strings.TrimSpace(builder.String())
 				}
 				builder.WriteString(line)
-				wroteEntry = true
 			}
 		}
-	}
-	if !wroteEntry {
-		return ""
 	}
 	return strings.TrimSpace(builder.String())
 }
