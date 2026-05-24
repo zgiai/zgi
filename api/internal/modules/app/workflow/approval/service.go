@@ -865,6 +865,7 @@ func (s *Service) deliverSMSApproval(ctx context.Context, form *Form, delivery D
 			continue
 		}
 		s.recordDeliverySent(ctx, delivery.ID)
+		logger.InfoContext(ctx, "approval sms sent", "workflow_run_id", form.WorkflowRunID, "form_id", form.ID, "delivery_id", delivery.ID, "recipient_id", recipient.ID, "phone", notificationsms.MaskPhone(phone))
 	}
 }
 

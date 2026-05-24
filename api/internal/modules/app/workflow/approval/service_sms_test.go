@@ -79,6 +79,14 @@ func TestCreateRuntimeFormSendsApprovalSMSWithLinkCode(t *testing.T) {
 	if req.TemplateParams[notificationsms.TemplateParamLinkCode] != "smsTok01" {
 		t.Fatalf("link code param = %q", req.TemplateParams[notificationsms.TemplateParamLinkCode])
 	}
+
+	var delivery Delivery
+	if err := db.Where("delivery_method_type = ?", DeliveryTypeSMS).First(&delivery).Error; err != nil {
+		t.Fatalf("load sms delivery: %v", err)
+	}
+	if delivery.SentAt == nil {
+		t.Fatal("sms delivery sent_at is nil")
+	}
 }
 
 func TestCreateRuntimeFormFailsWhenApprovalSMSTemplateParamsAreInvalid(t *testing.T) {

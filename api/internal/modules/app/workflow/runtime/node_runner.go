@@ -46,7 +46,7 @@ func NewNodeRunner(deps Dependencies) *NodeRunner {
 }
 
 func (r *NodeRunner) RunNode(ctx context.Context, req graph_engine.NodeRunRequest, eventChan chan<- *shared.NodeEventCh) (*shared.NodeRunResult, error) {
-	logger.Info("Creating node instance for nodeID: %s, nodeType: %s, config: %+v", req.NodeID, req.NodeType, req.Config)
+	logger.Info("Creating node instance for nodeID: %s, nodeType: %s", req.NodeID, req.NodeType)
 
 	nodeFactory, err := nodes.GetNodeFactory(req.NodeType, nodes.LatestVersion)
 	if err != nil {

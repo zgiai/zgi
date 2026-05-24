@@ -381,6 +381,9 @@ const messages = {
       external: 'External',
       externalPhone: 'External phone',
     },
+    memberStatus: {
+      noMobile: 'No phone number',
+    },
     timeout: {
       minute: 'Minutes',
       hour: 'Hours',
@@ -443,6 +446,8 @@ const messages = {
       smsTitleRequired: 'SMS title is required',
       smsRecipientRequired: 'At least one SMS recipient is required',
       smsMemberRecipientRequired: 'SMS recipient {index} must select a member',
+      smsMemberPhoneMissing:
+        'SMS recipient {index} selected a member without a confirmed phone number. Use an external phone or add a phone number to the member first.',
       smsExternalRecipientRequired: 'SMS recipient {index} must enter a phone number',
       smsTemplateParamKeyRequired: 'SMS template parameter name is required',
       smsTemplateParamKeyReserved:

@@ -75,6 +75,14 @@ import {
   type ApprovalSMSRecipient,
   type ApprovalTimeoutUnit,
 } from '../config';
+import {
+  createSMSMemberOptionMap,
+  getDefaultSMSMemberAccountId,
+  isApprovalSMSConfigIncomplete,
+  isSMSMemberUnavailable,
+  resolveSMSMemberAccountIdForTypeSwitch,
+  type ApprovalSMSMemberOption,
+} from './sms-recipient-logic';
 
 interface ApprovalManagerProps {
   id: string;
@@ -197,8 +205,7 @@ function getActionButtonVariant(
 const ACTION_STYLE_OPTIONS: ApprovalActionStyle[] = ['primary', 'secondary', 'danger'];
 const MEMBER_PAGE_SIZE = 20;
 
-interface ApprovalMemberOption {
-  account_id: string;
+interface ApprovalMemberOption extends ApprovalSMSMemberOption {
   email: string;
   name?: string;
   member_name?: string;
@@ -220,6 +227,8 @@ function MemberRecipientSelector({
   onKeywordChange,
   onChange,
   onLoadMore,
+  isOptionDisabled,
+  getOptionHint,
 }: {
   value: string;
   options: ApprovalMemberOption[];
@@ -232,6 +241,8 @@ function MemberRecipientSelector({
   onKeywordChange: (value: string) => void;
   onChange: (value: string) => void;
   onLoadMore: () => void;
+  isOptionDisabled?: (member: ApprovalMemberOption) => boolean;
+  getOptionHint?: (member: ApprovalMemberOption) => string | undefined;
 }) {
   const t = useT('nodes');
   const [open, setOpen] = React.useState(false);
@@ -239,7 +250,15 @@ function MemberRecipientSelector({
   const isEmpty = !isLoading && options.length === 0;
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={nextOpen => {
+        setOpen(nextOpen);
+        if (!nextOpen) {
+          onKeywordChange('');
+        }
+      }}
+    >
       <PopoverTrigger asChild>
         <Button
           type="button"
@@ -263,16 +282,22 @@ function MemberRecipientSelector({
         <div className="max-h-56 overflow-y-auto">
           {options.map(member => {
             const checked = member.account_id === value;
+            const optionDisabled = isOptionDisabled?.(member) ?? false;
+            const optionHint = getOptionHint?.(member);
             return (
               <button
                 key={member.account_id}
                 type="button"
+                disabled={optionDisabled}
                 className={cn(
-                  'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-none hover:bg-accent',
-                  checked ? 'text-foreground' : 'text-muted-foreground'
+                  'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-none hover:bg-accent disabled:cursor-not-allowed disabled:hover:bg-transparent',
+                  checked ? 'text-foreground' : 'text-muted-foreground',
+                  optionDisabled ? 'opacity-60' : ''
                 )}
                 onClick={() => {
+                  if (optionDisabled) return;
                   onChange(member.account_id);
+                  onKeywordChange('');
                   setOpen(false);
                 }}
               >
@@ -280,7 +305,7 @@ function MemberRecipientSelector({
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-foreground">{getMemberLabel(member)}</span>
                   <span className="block truncate text-xs text-muted-foreground">
-                    {member.email}
+                    {optionHint ? `${member.email} - ${optionHint}` : member.email}
                   </span>
                 </span>
               </button>
@@ -391,6 +416,7 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
         email,
         name: member.name,
         member_name: member.member_name,
+        has_mobile: Boolean(member.has_mobile),
       });
     });
 
@@ -409,6 +435,7 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
         email: defaultRecipientEmail,
         name: defaultRecipientName,
         member_name: defaultRecipientName,
+        has_mobile: Boolean(defaultRecipientPhone),
       });
     }
 
@@ -418,8 +445,14 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
     defaultRecipientAccountId,
     defaultRecipientEmail,
     currentUser?.name,
+    defaultRecipientPhone,
     members,
   ]);
+
+  const memberOptionByAccountId = React.useMemo(
+    () => createSMSMemberOptionMap(memberOptions),
+    [memberOptions]
+  );
 
   const defaultMemberAccountId = React.useMemo(
     () =>
@@ -428,6 +461,16 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
       '',
     [defaultRecipientAccountId, memberOptions]
   );
+  const defaultSMSMemberAccountId = React.useMemo(
+    () => getDefaultSMSMemberAccountId(memberOptionByAccountId, defaultRecipientAccountId),
+    [defaultRecipientAccountId, memberOptionByAccountId]
+  );
+  const createDefaultSMSRecipient = React.useCallback(() => {
+    if (defaultSMSMemberAccountId) {
+      return createMemberSMSRecipient(defaultSMSMemberAccountId);
+    }
+    return createExternalSMSRecipient(defaultRecipientPhone);
+  }, [defaultRecipientPhone, defaultSMSMemberAccountId]);
 
   React.useEffect(() => {
     dataRef.current = data;
@@ -876,10 +919,10 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
     flushApprovalPendingEdits();
   }, [data.timeout.duration, flushApprovalPendingEdits, timeoutDurationInput]);
 
-  const smsConfigIncomplete =
-    data.submit_methods.sms.enabled &&
-    (!data.submit_methods.sms.notification_title.trim() ||
-      data.submit_methods.sms.recipients.length === 0);
+  const smsConfigIncomplete = isApprovalSMSConfigIncomplete(
+    data.submit_methods.sms,
+    memberOptionByAccountId
+  );
   const smsTemplateParams = Object.entries(data.submit_methods.sms.template_params);
   const smsControlsDisabled = readOnly || !approvalSMSEnabled;
 
@@ -1349,7 +1392,7 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
                                   ...current.submit_methods.sms,
                                   recipients: [
                                     ...current.submit_methods.sms.recipients,
-                                    createExternalSMSRecipient(defaultRecipientPhone),
+                                    createDefaultSMSRecipient(),
                                   ],
                                 },
                               },
@@ -1377,102 +1420,135 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
                           recipient.type === 'external' &&
                           data.submit_methods.sms.enabled &&
                           !externalPhone.trim();
+                        const missingMember =
+                          recipient.type === 'member' &&
+                          data.submit_methods.sms.enabled &&
+                          !selectedMemberAccountId.trim();
+                        const memberUnavailable =
+                          recipient.type === 'member' &&
+                          data.submit_methods.sms.enabled &&
+                          Boolean(selectedMemberAccountId.trim()) &&
+                          isSMSMemberUnavailable(memberOptionByAccountId, selectedMemberAccountId);
+                        const memberErrorText = missingMember
+                          ? t('approval.validation.smsMemberRecipientRequired', {
+                              index: index + 1,
+                            })
+                          : memberUnavailable
+                            ? t('approval.validation.smsMemberPhoneMissing', {
+                                index: index + 1,
+                              })
+                            : undefined;
                         return (
-                          <div key={index} className="grid grid-cols-[110px_1fr_32px] gap-2">
-                            <Select
-                              value={recipientType}
-                              disabled={smsControlsDisabled}
-                              onValueChange={value =>
-                                commitSMSRecipientNow(index, item => {
-                                  if (value === 'member') {
-                                    return createMemberSMSRecipient(
-                                      item.type === 'member'
-                                        ? item.account_id || defaultMemberAccountId
-                                        : defaultMemberAccountId
-                                    );
-                                  }
-                                  if (item.type === 'external') {
-                                    return item;
-                                  }
-                                  return createExternalSMSRecipient(defaultRecipientPhone);
-                                })
-                              }
-                            >
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="member">
-                                  {t('approval.recipientTypes.member')}
-                                </SelectItem>
-                                <SelectItem value="external">
-                                  {t('approval.recipientTypes.externalPhone')}
-                                </SelectItem>
-                              </SelectContent>
-                            </Select>
-                            {recipientType === 'member' ? (
-                              <MemberRecipientSelector
-                                value={selectedMemberAccountId}
+                          <div key={index} className="space-y-1">
+                            <div className="grid grid-cols-[110px_1fr_32px] gap-2">
+                              <Select
+                                value={recipientType}
                                 disabled={smsControlsDisabled}
-                                options={memberOptions}
-                                keyword={memberKeyword}
-                                isLoading={membersLoading}
-                                isFetching={membersFetching}
-                                isFetchingNextPage={membersFetchingNextPage}
-                                hasMore={hasMoreMembers}
-                                onKeywordChange={setMemberKeyword}
-                                onLoadMore={() => {
-                                  void fetchNextMembersPage();
-                                }}
-                                onChange={value =>
-                                  commitSMSRecipientNow(index, () =>
-                                    createMemberSMSRecipient(value)
-                                  )
+                                onValueChange={value =>
+                                  commitSMSRecipientNow(index, item => {
+                                    if (value === 'member') {
+                                      return createMemberSMSRecipient(
+                                        resolveSMSMemberAccountIdForTypeSwitch(
+                                          item,
+                                          memberOptionByAccountId,
+                                          defaultSMSMemberAccountId
+                                        )
+                                      );
+                                    }
+                                    if (item.type === 'external') {
+                                      return item;
+                                    }
+                                    return createExternalSMSRecipient(defaultRecipientPhone);
+                                  })
                                 }
-                              />
-                            ) : (
-                              <Input
-                                value={externalPhone}
+                              >
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="member">
+                                    {t('approval.recipientTypes.member')}
+                                  </SelectItem>
+                                  <SelectItem value="external">
+                                    {t('approval.recipientTypes.externalPhone')}
+                                  </SelectItem>
+                                </SelectContent>
+                              </Select>
+                              {recipientType === 'member' ? (
+                                <MemberRecipientSelector
+                                  value={selectedMemberAccountId}
+                                  disabled={smsControlsDisabled}
+                                  options={memberOptions}
+                                  keyword={memberKeyword}
+                                  isLoading={membersLoading}
+                                  isFetching={membersFetching}
+                                  isFetchingNextPage={membersFetchingNextPage}
+                                  hasMore={hasMoreMembers}
+                                  onKeywordChange={setMemberKeyword}
+                                  onLoadMore={() => {
+                                    void fetchNextMembersPage();
+                                  }}
+                                  onChange={value =>
+                                    commitSMSRecipientNow(index, () =>
+                                      createMemberSMSRecipient(value)
+                                    )
+                                  }
+                                  isOptionDisabled={member => !member.has_mobile}
+                                  getOptionHint={member =>
+                                    member.has_mobile
+                                      ? undefined
+                                      : t('approval.memberStatus.noMobile')
+                                  }
+                                />
+                              ) : (
+                                <Input
+                                  value={externalPhone}
+                                  disabled={smsControlsDisabled}
+                                  onChange={event =>
+                                    updateSMSRecipientDraft(index, () =>
+                                      createExternalSMSRecipient(event.target.value)
+                                    )
+                                  }
+                                  placeholder={t('approval.placeholders.externalPhone')}
+                                  error={missingPhone}
+                                  errorText={
+                                    missingPhone
+                                      ? t('approval.validation.smsExternalRecipientRequired', {
+                                          index: index + 1,
+                                        })
+                                      : undefined
+                                  }
+                                />
+                              )}
+                              <Button
+                                variant="ghost"
+                                isIcon
                                 disabled={smsControlsDisabled}
-                                onChange={event =>
-                                  updateSMSRecipientDraft(index, () =>
-                                    createExternalSMSRecipient(event.target.value)
-                                  )
-                                }
-                                placeholder={t('approval.placeholders.externalPhone')}
-                                error={missingPhone}
-                                errorText={
-                                  missingPhone
-                                    ? t('approval.validation.smsExternalRecipientRequired', {
-                                        index: index + 1,
-                                      })
-                                    : undefined
-                                }
-                              />
-                            )}
-                            <Button
-                              variant="ghost"
-                              isIcon
-                              disabled={smsControlsDisabled}
-                              onClick={() =>
-                                commitApprovalNow(current => ({
-                                  ...current,
-                                  submit_methods: {
-                                    ...current.submit_methods,
-                                    sms: {
-                                      ...current.submit_methods.sms,
-                                      recipients: current.submit_methods.sms.recipients.filter(
-                                        (_, recipientIndex) => recipientIndex !== index
-                                      ),
+                                onClick={() =>
+                                  commitApprovalNow(current => ({
+                                    ...current,
+                                    submit_methods: {
+                                      ...current.submit_methods,
+                                      sms: {
+                                        ...current.submit_methods.sms,
+                                        recipients: current.submit_methods.sms.recipients.filter(
+                                          (_, recipientIndex) => recipientIndex !== index
+                                        ),
+                                      },
                                     },
-                                  },
-                                }))
-                              }
-                              aria-label={t('approval.actions.deleteRecipient')}
-                              title={t('approval.actions.deleteRecipient')}
-                            >
-                              <Trash2 className="size-4" />
-                            </Button>
+                                  }))
+                                }
+                                aria-label={t('approval.actions.deleteRecipient')}
+                                title={t('approval.actions.deleteRecipient')}
+                              >
+                                <Trash2 className="size-4" />
+                              </Button>
+                            </div>
+                            {memberErrorText ? (
+                              <div className="pl-[118px] text-xs text-destructive">
+                                {memberErrorText}
+                              </div>
+                            ) : null}
                           </div>
                         );
                       })}
@@ -1496,9 +1572,7 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
                   }
                   commitApprovalNow(current => {
                     const shouldAddCurrentUser =
-                      enabled &&
-                      defaultMemberAccountId &&
-                      current.submit_methods.sms.recipients.length === 0;
+                      enabled && current.submit_methods.sms.recipients.length === 0;
                     return {
                       ...current,
                       submit_methods: {
@@ -1511,7 +1585,7 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
                             current.title ||
                             t('approval.defaults.smsTitle'),
                           recipients: shouldAddCurrentUser
-                            ? [createMemberSMSRecipient(defaultMemberAccountId)]
+                            ? [createDefaultSMSRecipient()]
                             : current.submit_methods.sms.recipients,
                         },
                       },

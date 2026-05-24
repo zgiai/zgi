@@ -93,6 +93,7 @@ type AccountWithRole struct {
 	Role         string  `json:"role"`
 	RoleID       *string `json:"role_id,omitempty"`
 	Status       string  `json:"status"`
+	HasMobile    bool    `json:"has_mobile"`
 }
 
 type WorkspaceMemberWithExtensionResponse struct {

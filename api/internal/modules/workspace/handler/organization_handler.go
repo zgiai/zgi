@@ -69,6 +69,7 @@ type TenantMemberWithDepartmentResponse struct {
 	RoleID         *string `json:"role_id,omitempty"`
 	RoleName       string  `json:"role_name"`
 	Status         string  `json:"status"`
+	HasMobile      bool    `json:"has_mobile"`
 	DepartmentID   *string `json:"department_id,omitempty"`
 	DepartmentName *string `json:"department_name,omitempty"`
 }
@@ -3178,6 +3179,7 @@ func (h *OrganizationHandler) GetOrganizationWorkspaceMembers(c *gin.Context) {
 			RoleID:         roleID,
 			RoleName:       roleName,
 			Status:         m.Status,
+			HasMobile:      m.HasMobile,
 			DepartmentID:   deptID,
 			DepartmentName: deptName,
 		}
@@ -3260,6 +3262,7 @@ func (h *OrganizationHandler) GetOrganizationWorkspaceMemberDetailByID(c *gin.Co
 		CreatedAt:      target.CreatedAt,
 		Role:           target.Role,
 		Status:         target.Status,
+		HasMobile:      target.HasMobile,
 		DepartmentID:   deptID,
 		DepartmentName: deptName,
 	}
