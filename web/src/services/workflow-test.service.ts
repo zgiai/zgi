@@ -4,6 +4,7 @@ import type {
   CreateWorkflowTestBatchRequest,
   CreateWorkflowTestCaseRequest,
   CreateWorkflowTestScenarioRequest,
+  DeleteWorkflowTestCasesRequest,
   GenerateWorkflowTestCasesRequest,
   GenerateWorkflowTestCasesResponse,
   RecognizeWorkflowTestScenariosRequest,
@@ -94,6 +95,17 @@ class WorkflowTestService extends BaseService {
     data: UpdateWorkflowTestCaseRequest
   ): Promise<ApiResponseData<WorkflowTestCase>> {
     return this.request('put', `/agents/${agentId}/workflow-tests/cases/${caseId}`, data);
+  }
+
+  deleteCase(agentId: string, caseId: string): Promise<ApiResponseData<{ deleted: number }>> {
+    return this.request('delete', `/agents/${agentId}/workflow-tests/cases/${caseId}`);
+  }
+
+  deleteCases(
+    agentId: string,
+    data: DeleteWorkflowTestCasesRequest
+  ): Promise<ApiResponseData<{ deleted: number }>> {
+    return this.request('delete', `/agents/${agentId}/workflow-tests/cases`, undefined, { data });
   }
 
   generateCases(
