@@ -27,6 +27,7 @@ function WebappVersionLayoutContent({ children }: { children: React.ReactNode })
 
   const meta = data?.data?.config;
   const iconType = meta?.icon_type;
+  const isAgentWebApp = meta?.type?.toUpperCase?.() === AgentType.AGENT;
 
   // Derive icon props consistent with AgentSidebar
   let textIcon = (meta?.title || ICON_TEXT).slice(0, 2).toUpperCase();
@@ -62,9 +63,13 @@ function WebappVersionLayoutContent({ children }: { children: React.ReactNode })
         )}
       >
         <div className="px-4 py-1 flex items-center justify-between">
-          <div className="hidden md:block max-w-52">
-            <Logo routerToHome={false} showName={false} />
-          </div>
+          {isAgentWebApp ? (
+            <div className="hidden md:block w-10" />
+          ) : (
+            <div className="hidden md:block max-w-52">
+              <Logo routerToHome={false} showName={false} />
+            </div>
+          )}
           <div className="flex items-center gap-2">
             {isLoading ? (
               <>

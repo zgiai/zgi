@@ -87,10 +87,8 @@ export default function ConsoleWorkAppDetailPage({ params }: ConsoleWorkAppDetai
 
   if (config.config?.type?.toUpperCase?.() === 'AGENT') {
     return (
-      <div className="box-border h-full min-h-0 w-full overflow-hidden md:p-2">
-        <div className="h-full w-full min-h-0 bg-background overflow-hidden md:rounded-lg md:border md:shadow-sm">
-          <AgentWebappChat webAppId={webAppId} config={config} />
-        </div>
+      <div className="h-full min-h-0 w-full overflow-hidden bg-background">
+        <AgentWebappChat webAppId={webAppId} config={config} />
       </div>
     );
   }
