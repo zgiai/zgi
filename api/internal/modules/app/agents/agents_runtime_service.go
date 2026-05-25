@@ -45,8 +45,9 @@ func (s *agentsService) UpdateAgentConfig(ctx context.Context, agentID, accountI
 	params := string(paramsJSON)
 	cfg.Configs = &params
 	modeJSON, err := json.Marshal(dto.AgentRuntimeModeConfig{
-		EnabledSkillIDs: runtimeCfg.EnabledSkillIDs,
-		UseMemory:       runtimeCfg.UseMemory,
+		EnabledSkillIDs:   runtimeCfg.EnabledSkillIDs,
+		UseMemory:         runtimeCfg.UseMemory,
+		FileUploadEnabled: runtimeCfg.FileUpload,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal agent mode: %w", err)
@@ -160,6 +161,12 @@ func (s *agentsService) GetPublishedAgentWebAppConfig(ctx context.Context, webAp
 		}
 	}
 	cfg := agentConfigResponseFromSnapshot(ag.ID.String(), version.ConfigSnapshot)
+	iconURL := ""
+	if ag.IconType != nil && *ag.IconType == "image" && ag.Icon != nil && *ag.Icon != "" && s.fileService != nil {
+		if fileURL, err := s.fileService.GetFileURL(ctx, *ag.Icon); err == nil {
+			iconURL = fileURL
+		}
+	}
 	return &dto.AgentWebAppRuntimeConfigResponse{
 		AgentID:        ag.ID.String(),
 		WebAppID:       ag.WebAppID.String(),
@@ -170,6 +177,7 @@ func (s *agentsService) GetPublishedAgentWebAppConfig(ctx context.Context, webAp
 		Description:    ag.Description,
 		Icon:           stringPtrValue(ag.Icon),
 		IconType:       stringPtrValue(ag.IconType),
+		IconURL:        iconURL,
 		Version:        version.Version,
 		VersionUUID:    version.VersionUUID.String(),
 		Config:         *cfg,
@@ -247,6 +255,7 @@ func agentConfigResponse(agentID string, cfg *AgentsConfig) *dto.AgentConfigResp
 		ModelParameters: params,
 		EnabledSkillIDs: normalizeStringIDs(mode.EnabledSkillIDs),
 		UseMemory:       mode.UseMemory,
+		FileUpload:      mode.FileUploadEnabled,
 	}
 	if cfg != nil {
 		resp.SystemPrompt = stringPtrValue(cfg.PrePrompt)
@@ -260,13 +269,14 @@ func agentConfigResponse(agentID string, cfg *AgentsConfig) *dto.AgentConfigResp
 func agentConfigSnapshot(agentID string, cfg *AgentsConfig) map[string]interface{} {
 	resp := agentConfigResponse(agentID, cfg)
 	return map[string]interface{}{
-		"agent_id":          resp.AgentID,
-		"system_prompt":     resp.SystemPrompt,
-		"model_provider":    resp.ModelProvider,
-		"model":             resp.Model,
-		"model_parameters":  resp.ModelParameters,
-		"enabled_skill_ids": resp.EnabledSkillIDs,
-		"use_memory":        resp.UseMemory,
+		"agent_id":            resp.AgentID,
+		"system_prompt":       resp.SystemPrompt,
+		"model_provider":      resp.ModelProvider,
+		"model":               resp.Model,
+		"model_parameters":    resp.ModelParameters,
+		"enabled_skill_ids":   resp.EnabledSkillIDs,
+		"use_memory":          resp.UseMemory,
+		"file_upload_enabled": resp.FileUpload,
 	}
 }
 
@@ -288,6 +298,9 @@ func agentConfigResponseFromSnapshot(agentID string, snapshot map[string]interfa
 	resp.EnabledSkillIDs = normalizeStringIDs(stringSliceFromSnapshot(snapshot["enabled_skill_ids"]))
 	if useMemory, ok := snapshot["use_memory"].(bool); ok {
 		resp.UseMemory = useMemory
+	}
+	if fileUpload, ok := snapshot["file_upload_enabled"].(bool); ok {
+		resp.FileUpload = fileUpload
 	}
 	return resp
 }

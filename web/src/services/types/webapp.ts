@@ -98,6 +98,7 @@ export interface WebAppWorkflowConfig {
     model_parameters?: Record<string, unknown>;
     enabled_skill_ids?: string[];
     use_memory?: boolean;
+    file_upload_enabled?: boolean;
   };
 }
 

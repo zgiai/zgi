@@ -151,8 +151,9 @@ type WebAppStatusResponse struct {
 }
 
 type AgentRuntimeModeConfig struct {
-	EnabledSkillIDs []string `json:"enabled_skill_ids"`
-	UseMemory       bool     `json:"use_memory"`
+	EnabledSkillIDs   []string `json:"enabled_skill_ids"`
+	UseMemory         bool     `json:"use_memory"`
+	FileUploadEnabled bool     `json:"file_upload_enabled"`
 }
 
 type AgentConfigRequest struct {
@@ -162,6 +163,7 @@ type AgentConfigRequest struct {
 	ModelParameters map[string]interface{} `json:"model_parameters"`
 	EnabledSkillIDs []string               `json:"enabled_skill_ids"`
 	UseMemory       bool                   `json:"use_memory"`
+	FileUpload      bool                   `json:"file_upload_enabled"`
 }
 
 type AgentConfigResponse struct {
@@ -172,6 +174,7 @@ type AgentConfigResponse struct {
 	ModelParameters map[string]interface{} `json:"model_parameters"`
 	EnabledSkillIDs []string               `json:"enabled_skill_ids"`
 	UseMemory       bool                   `json:"use_memory"`
+	FileUpload      bool                   `json:"file_upload_enabled"`
 	UpdatedAt       int64                  `json:"updated_at"`
 }
 
@@ -214,6 +217,7 @@ type AgentWebAppRuntimeConfigResponse struct {
 	Description    string              `json:"description"`
 	Icon           string              `json:"icon"`
 	IconType       string              `json:"icon_type"`
+	IconURL        string              `json:"icon_url"`
 	Version        string              `json:"version"`
 	VersionUUID    string              `json:"version_uuid"`
 	Config         AgentConfigResponse `json:"config"`

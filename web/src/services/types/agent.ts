@@ -178,6 +178,7 @@ export interface AgentRuntimeConfig {
   model_parameters: Record<string, unknown>;
   enabled_skill_ids: string[];
   use_memory: boolean;
+  file_upload_enabled: boolean;
   updated_at: number;
 }
 
@@ -188,6 +189,7 @@ export interface UpdateAgentRuntimeConfigRequest {
   model_parameters: Record<string, unknown>;
   enabled_skill_ids: string[];
   use_memory: boolean;
+  file_upload_enabled: boolean;
 }
 
 export interface AgentChatRequest {

@@ -500,6 +500,7 @@ func (h *AgentsHandler) GetWebAppRuntimeConfig(c *gin.Context) {
 			"type":       result.AgentType,
 			"icon":       result.Icon,
 			"icon_type":  result.IconType,
+			"icon_url":   result.IconURL,
 			"title":      result.Name,
 			"web_app_id": result.WebAppID,
 		},
