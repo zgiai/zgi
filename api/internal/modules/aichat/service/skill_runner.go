@@ -11,6 +11,7 @@ import (
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
+	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
@@ -901,15 +902,21 @@ func fatalSkillStep(trace skills.SkillTrace, toolMessage adapter.Message, err er
 
 func (s *service) skillExecutionContext(prepared *PreparedChat) skills.ExecutionContext {
 	tenantID := prepared.Scope.OrganizationID.String()
+	runtimeParameters := map[string]interface{}{
+		"organization_id": prepared.Scope.OrganizationID.String(),
+	}
 	if prepared.Scope.WorkspaceID != nil {
 		tenantID = prepared.Scope.WorkspaceID.String()
+		runtimeParameters["workspace_id"] = prepared.Scope.WorkspaceID.String()
 	}
 	return skills.ExecutionContext{
-		TenantID:       tenantID,
-		UserID:         prepared.Scope.AccountID.String(),
-		ConversationID: prepared.Conversation.ID.String(),
-		AppID:          prepared.Conversation.ID.String(),
-		MessageID:      prepared.Message.ID.String(),
+		TenantID:          tenantID,
+		UserID:            prepared.Scope.AccountID.String(),
+		ConversationID:    prepared.Conversation.ID.String(),
+		AppID:             prepared.Conversation.ID.String(),
+		MessageID:         prepared.Message.ID.String(),
+		InvokeFrom:        tools.ToolInvokeFromAIChat,
+		RuntimeParameters: runtimeParameters,
 	}
 }
 

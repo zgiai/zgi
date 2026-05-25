@@ -126,6 +126,7 @@ func (t *knowledgeTool) Invoke(ctx context.Context, userID string, params map[st
 		if err != nil {
 			return nil, err
 		}
+		applyAgentKnowledgeRuntimeConfig(t.Runtime(), &req)
 		response, err := t.service.RetrieveAgentKnowledge(ctx, req)
 		if err != nil {
 			return nil, err
@@ -133,6 +134,18 @@ func (t *knowledgeTool) Invoke(ctx context.Context, userID string, params map[st
 		return retrievalMessages(response)
 	default:
 		return nil, fmt.Errorf("unknown knowledge tool %s", t.kind)
+	}
+}
+
+func applyAgentKnowledgeRuntimeConfig(runtime *tools.ToolRuntime, req *dataset_service.KnowledgeRetrieveRequest) {
+	if runtime == nil || req == nil || len(runtime.RuntimeParameters) == 0 {
+		return
+	}
+	if datasetIDs := stringListValue(runtime.RuntimeParameters, "knowledge_dataset_ids"); len(datasetIDs) > 0 {
+		req.DatasetIDs = datasetIDs
+	}
+	if config := mapValue(runtime.RuntimeParameters, "knowledge_retrieval_config"); len(config) > 0 {
+		req.RetrievalConfig = config
 	}
 }
 
@@ -146,19 +159,33 @@ func (t *knowledgeTool) ForkToolRuntime(runtime *tools.ToolRuntime) tools.Tool {
 
 func (t *knowledgeTool) scope(userID string, appID *string) (dataset_service.KnowledgeScope, error) {
 	runtime := t.Runtime()
-	workspaceID := t.GetTenantID()
+	tenantID := strings.TrimSpace(t.GetTenantID())
 	if runtime != nil && strings.TrimSpace(runtime.TenantID) != "" {
-		workspaceID = runtime.TenantID
-	}
-	if strings.TrimSpace(workspaceID) == "" {
-		return dataset_service.KnowledgeScope{}, fmt.Errorf("workspace_id is required")
+		tenantID = strings.TrimSpace(runtime.TenantID)
 	}
 	if strings.TrimSpace(userID) == "" {
 		return dataset_service.KnowledgeScope{}, fmt.Errorf("account_id is required")
 	}
+	organizationID := ""
+	workspaceID := ""
+	if runtime != nil {
+		organizationID = strings.TrimSpace(stringValue(runtime.RuntimeParameters, "organization_id"))
+		workspaceID = strings.TrimSpace(stringValue(runtime.RuntimeParameters, "workspace_id"))
+	}
+	if organizationID == "" && workspaceID == "" {
+		if runtime != nil && runtime.InvokeFrom == tools.ToolInvokeFromAIChat {
+			organizationID = tenantID
+		} else {
+			workspaceID = tenantID
+		}
+	}
+	if organizationID == "" && workspaceID == "" {
+		return dataset_service.KnowledgeScope{}, fmt.Errorf("organization_id or workspace_id is required")
+	}
 	scope := dataset_service.KnowledgeScope{
-		WorkspaceID: strings.TrimSpace(workspaceID),
-		AccountID:   strings.TrimSpace(userID),
+		WorkspaceID:    workspaceID,
+		OrganizationID: organizationID,
+		AccountID:      strings.TrimSpace(userID),
 	}
 	if appID != nil {
 		scope.AppID = strings.TrimSpace(*appID)
@@ -422,6 +449,22 @@ func stringListValue(params map[string]interface{}, key string) []string {
 		}
 		seen[trimmed] = struct{}{}
 		out = append(out, trimmed)
+	}
+	return out
+}
+
+func mapValue(params map[string]interface{}, key string) map[string]interface{} {
+	value, ok := params[key]
+	if !ok || value == nil {
+		return nil
+	}
+	typed, ok := value.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	out := make(map[string]interface{}, len(typed))
+	for itemKey, itemValue := range typed {
+		out[itemKey] = itemValue
 	}
 	return out
 }

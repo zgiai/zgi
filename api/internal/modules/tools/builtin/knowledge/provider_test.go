@@ -14,10 +14,12 @@ type fakeRetrievalService struct {
 	retrieveCalled      bool
 	agentRetrieveCalled bool
 	lastRequest         dataset_service.KnowledgeRetrieveRequest
+	lastScope           dataset_service.KnowledgeScope
 }
 
 func (f *fakeRetrievalService) ListAccessibleDatasets(ctx context.Context, scope dataset_service.KnowledgeScope, query string, limit int) ([]dataset_service.KnowledgeDatasetSummary, error) {
 	f.listCalled = true
+	f.lastScope = scope
 	return []dataset_service.KnowledgeDatasetSummary{
 		{DatasetID: "ds-1", Name: "Policies", Provider: "vendor"},
 	}, nil
@@ -69,6 +71,37 @@ func TestRetrieveKnowledgeRequiresDatasetIDs(t *testing.T) {
 	}
 	if service.retrieveCalled {
 		t.Fatalf("Retrieve should not be called when dataset_ids are missing")
+	}
+}
+
+func TestListAccessibleKnowledgeUsesOrganizationScope(t *testing.T) {
+	service := &fakeRetrievalService{}
+	tool, err := NewProvider(service).GetTool(ToolListAccessibleKnowledge)
+	if err != nil {
+		t.Fatalf("GetTool() error = %v", err)
+	}
+	tool = tool.ForkToolRuntime(&tools.ToolRuntime{
+		TenantID:   "workspace-1",
+		InvokeFrom: tools.ToolInvokeFromAIChat,
+		RuntimeParameters: map[string]interface{}{
+			"organization_id": "org-1",
+			"workspace_id":    "workspace-1",
+		},
+	})
+	_, err = tool.Invoke(context.Background(), "account-1", map[string]interface{}{
+		"query": "policy",
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if !service.listCalled {
+		t.Fatalf("ListAccessibleDatasets was not called")
+	}
+	if service.lastScope.OrganizationID != "org-1" {
+		t.Fatalf("OrganizationID = %q, want %q", service.lastScope.OrganizationID, "org-1")
+	}
+	if service.lastScope.WorkspaceID != "workspace-1" {
+		t.Fatalf("WorkspaceID = %q, want %q", service.lastScope.WorkspaceID, "workspace-1")
 	}
 }
 

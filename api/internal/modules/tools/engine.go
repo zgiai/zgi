@@ -22,17 +22,18 @@ func NewToolEngine(toolManager *ToolManager) *ToolEngine {
 
 // InvokeRequest represents a tool invocation request
 type InvokeRequest struct {
-	ProviderType   ToolProviderType       `json:"provider_type"`
-	ProviderID     string                 `json:"provider_id"`
-	ToolName       string                 `json:"tool_name"`
-	TenantID       string                 `json:"tenant_id"`
-	UserID         string                 `json:"user_id"`
-	Parameters     map[string]interface{} `json:"parameters"`
-	CredentialID   string                 `json:"credential_id,omitempty"`
-	ConversationID string                 `json:"conversation_id,omitempty"`
-	AppID          string                 `json:"app_id,omitempty"`
-	MessageID      string                 `json:"message_id,omitempty"`
-	InvokeFrom     ToolInvokeFrom         `json:"invoke_from"`
+	ProviderType      ToolProviderType       `json:"provider_type"`
+	ProviderID        string                 `json:"provider_id"`
+	ToolName          string                 `json:"tool_name"`
+	TenantID          string                 `json:"tenant_id"`
+	UserID            string                 `json:"user_id"`
+	Parameters        map[string]interface{} `json:"parameters"`
+	CredentialID      string                 `json:"credential_id,omitempty"`
+	ConversationID    string                 `json:"conversation_id,omitempty"`
+	AppID             string                 `json:"app_id,omitempty"`
+	MessageID         string                 `json:"message_id,omitempty"`
+	InvokeFrom        ToolInvokeFrom         `json:"invoke_from"`
+	RuntimeParameters map[string]interface{} `json:"runtime_parameters,omitempty"`
 }
 
 // InvokeResult represents the result of a tool invocation
@@ -63,6 +64,7 @@ func (e *ToolEngine) Invoke(ctx context.Context, req InvokeRequest) (*InvokeResu
 		req.TenantID,
 		req.InvokeFrom,
 		req.CredentialID,
+		req.RuntimeParameters,
 	)
 	if err != nil {
 		return &InvokeResult{
@@ -249,6 +251,7 @@ func (e *ToolEngine) GetToolParameters(
 		tenantID,
 		ToolInvokeFromAPI,
 		"",
+		nil,
 	)
 	if err != nil {
 		return nil, err

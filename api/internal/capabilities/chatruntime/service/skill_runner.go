@@ -9,8 +9,10 @@ import (
 	"time"
 	"unicode/utf16"
 
+	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
+	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
@@ -904,13 +906,39 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 	if prepared.Scope.WorkspaceID != nil {
 		tenantID = prepared.Scope.WorkspaceID.String()
 	}
-	return skills.ExecutionContext{
-		TenantID:       tenantID,
-		UserID:         prepared.Scope.AccountID.String(),
-		ConversationID: prepared.Conversation.ID.String(),
-		AppID:          prepared.Conversation.ID.String(),
-		MessageID:      prepared.Message.ID.String(),
+	appID := prepared.Conversation.ID.String()
+	if strings.TrimSpace(prepared.RunConfig.BillingAppID) != "" {
+		appID = strings.TrimSpace(prepared.RunConfig.BillingAppID)
 	}
+	invokeFrom := tools.ToolInvokeFromAIChat
+	if normalizeCallerType(prepared.Caller.Type) == runtimemodel.ConversationCallerAgent {
+		invokeFrom = tools.ToolInvokeFromAgent
+	}
+	return skills.ExecutionContext{
+		TenantID:          tenantID,
+		UserID:            prepared.Scope.AccountID.String(),
+		ConversationID:    prepared.Conversation.ID.String(),
+		AppID:             appID,
+		MessageID:         prepared.Message.ID.String(),
+		InvokeFrom:        invokeFrom,
+		RuntimeParameters: skillRuntimeParameters(prepared.Scope, prepared.RunConfig),
+	}
+}
+
+func skillRuntimeParameters(scope Scope, config RunConfig) map[string]interface{} {
+	params := map[string]interface{}{
+		"organization_id": scope.OrganizationID.String(),
+	}
+	if scope.WorkspaceID != nil {
+		params["workspace_id"] = scope.WorkspaceID.String()
+	}
+	if len(config.KnowledgeDatasetIDs) > 0 {
+		params["knowledge_dataset_ids"] = append([]string(nil), config.KnowledgeDatasetIDs...)
+	}
+	if len(config.KnowledgeRetrievalConfig) > 0 {
+		params["knowledge_retrieval_config"] = copyStringAnyMap(config.KnowledgeRetrievalConfig)
+	}
+	return params
 }
 
 func (s *service) emitAnswerChunk(ctx context.Context, prepared *PreparedChat, text string, onEvent func(StreamEvent) error) {
