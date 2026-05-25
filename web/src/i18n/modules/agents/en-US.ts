@@ -1369,6 +1369,7 @@ const messages = {
       experience: 'Experience customization',
       model: 'Model',
       skills: 'Skill',
+      knowledge: 'Knowledge',
       files: 'Files',
       memory: 'Memory',
     },
@@ -1395,7 +1396,7 @@ const messages = {
     skills: {
       selectedCount: '{count} selected',
       add: 'Add Skill',
-      enablePrompt: 'No enabled Skill is available in the current organization.',
+      enablePrompt: 'No Skill is available for agents.',
       enableAction: 'Enable Skill',
       emptySelected: 'No Skill has been added to this Agent.',
       remove: 'Remove {name}',
@@ -1408,6 +1409,11 @@ const messages = {
       noMatch: 'No matching Skill.',
       done: 'Done',
       idLabel: 'ID: {id}',
+      requiresKnowledge: 'Configure knowledge bases first',
+    },
+    knowledge: {
+      empty: 'No knowledge base is available in the current workspace.',
+      noDescription: 'No description',
     },
     suggestions: {
       generate: 'Generate',

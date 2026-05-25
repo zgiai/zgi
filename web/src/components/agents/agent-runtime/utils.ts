@@ -16,6 +16,7 @@ export function buildAgentRuntimeSignature(payload: UpdateAgentRuntimeConfigRequ
   return JSON.stringify({
     ...payload,
     enabled_skill_ids: [...payload.enabled_skill_ids].sort(),
+    knowledge_dataset_ids: [...(payload.knowledge_dataset_ids ?? [])].sort(),
   });
 }
 

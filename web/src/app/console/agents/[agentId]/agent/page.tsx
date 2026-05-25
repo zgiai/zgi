@@ -8,7 +8,10 @@ import {
   createAgentDraftTransport,
   useAIChatController,
 } from '@/components/chat';
-import { getAIChatSkillDisplayInfo } from '@/components/chat/variants/aichat/skill-display';
+import {
+  getAIChatSkillDisplayInfo,
+  isHiddenSystemSkill,
+} from '@/components/chat/variants/aichat/skill-display';
 import type { ModelSelectorParameterValue, ModelSelectorValue } from '@/components/common/model-selector';
 import {
   AgentRuntimeHeader,
@@ -27,7 +30,8 @@ import {
 } from '@/components/agents/agent-runtime';
 import { PromptOptimizerDialog } from '@/components/prompts/prompt-optimizer-dialog';
 import { useAgent, useAgentConfig, usePublishAgent } from '@/hooks/agent/use-agents';
-import { useAIChatSkillConfig, useAIChatSkills } from '@/hooks/aichat/use-aichat-skills';
+import { useAIChatSkills } from '@/hooks/aichat/use-aichat-skills';
+import { useDatasets } from '@/hooks/dataset/use-datasets';
 import { AGENT_KEYS } from '@/hooks/query-keys';
 import { useLocale } from '@/hooks/use-locale';
 import { useT } from '@/i18n';
@@ -73,7 +77,7 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
   const { agent, isLoading: isAgentLoading } = useAgent(agentId);
   const { data: configResponse, isLoading: isConfigLoading } = useAgentConfig(agentId);
   const { data: allSkills = [], isLoading: isSkillsLoading } = useAIChatSkills();
-  const { data: organizationSkillConfig, isLoading: isSkillConfigLoading } = useAIChatSkillConfig();
+  const { pages: datasetPages, isLoading: isDatasetsLoading } = useDatasets({ limit: 100 });
   const publishAgent = usePublishAgent();
   const config = configResponse?.data;
   const agentDetail = agent?.data;
@@ -96,6 +100,7 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
   const [homeTitle, setHomeTitle] = useState(defaultHomeTitle);
   const [inputPlaceholder, setInputPlaceholder] = useState(defaultInputPlaceholder);
   const [suggestedQuestions, setSuggestedQuestions] = useState<string[]>([]);
+  const [knowledgeDatasetIds, setKnowledgeDatasetIds] = useState<string[]>([]);
   const [skillDialogOpen, setSkillDialogOpen] = useState(false);
   const [promptOptimizerOpen, setPromptOptimizerOpen] = useState(false);
   const [skillSearch, setSkillSearch] = useState('');
@@ -111,6 +116,7 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
     experience: true,
     model: true,
     skills: true,
+    knowledge: true,
     files: true,
     memory: true,
   });
@@ -120,14 +126,16 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const versionPreviewBackupRef = useRef<VersionPreviewBackup | null>(null);
 
-  const enabledOrganizationSkillIds = useMemo(
-    () => new Set(organizationSkillConfig?.enabled_skill_ids ?? []),
-    [organizationSkillConfig?.enabled_skill_ids]
-  );
   const selectableSkills = useMemo(
-    () => allSkills.filter(skill => enabledOrganizationSkillIds.has(skill.skill_id)),
-    [allSkills, enabledOrganizationSkillIds]
+    () =>
+      allSkills.filter(skill => {
+        if (isHiddenSystemSkill(skill.skill_id)) return false;
+        const callers = skill.supported_callers ?? [];
+        return callers.length === 0 || callers.includes('agent');
+      }),
+    [allSkills]
   );
+  const availableDatasets = useMemo(() => datasetPages.flat(), [datasetPages]);
   const selectableSkillIds = useMemo(
     () => new Set(selectableSkills.map(skill => skill.skill_id)),
     [selectableSkills]
@@ -189,6 +197,8 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
         .map(item => item.trim())
         .filter(Boolean)
         .slice(0, 6),
+      knowledge_dataset_ids: knowledgeDatasetIds,
+      knowledge_retrieval_config: {},
     }),
     [
       defaultHomeTitle,
@@ -199,6 +209,7 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
       modelValue,
       normalizedSelectedSkillIds,
       suggestedQuestions,
+      knowledgeDatasetIds,
       systemPrompt,
       useMemory,
     ]
@@ -246,6 +257,8 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
       input_placeholder: config.input_placeholder ?? defaultInputPlaceholder,
       theme_color: 'default',
       suggested_questions: config.suggested_questions ?? [],
+      knowledge_dataset_ids: config.knowledge_dataset_ids ?? [],
+      knowledge_retrieval_config: config.knowledge_retrieval_config ?? {},
     };
     setSystemPrompt(nextPayload.system_prompt);
     setModelValue({
@@ -259,6 +272,7 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
     setHomeTitle(nextPayload.home_title);
     setInputPlaceholder(nextPayload.input_placeholder);
     setSuggestedQuestions(nextPayload.suggested_questions);
+    setKnowledgeDatasetIds(nextPayload.knowledge_dataset_ids ?? []);
     setLastSavedAt(config.updated_at ?? null);
     lastSavedSignatureRef.current = buildAgentRuntimeSignature(nextPayload);
     setSaveState('saved');
@@ -277,6 +291,7 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
     setHomeTitle(payload.home_title);
     setInputPlaceholder(payload.input_placeholder);
     setSuggestedQuestions(payload.suggested_questions);
+    setKnowledgeDatasetIds(payload.knowledge_dataset_ids ?? []);
   }, []);
 
   const payloadFromRuntimeConfig = useCallback(
@@ -295,6 +310,8 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
       input_placeholder: runtimeConfig.input_placeholder ?? defaultInputPlaceholder,
       theme_color: 'default',
       suggested_questions: runtimeConfig.suggested_questions ?? [],
+      knowledge_dataset_ids: runtimeConfig.knowledge_dataset_ids ?? [],
+      knowledge_retrieval_config: runtimeConfig.knowledge_retrieval_config ?? {},
     }),
     [defaultHomeTitle, defaultInputPlaceholder]
   );
@@ -328,6 +345,10 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
           theme_color: 'default',
           suggested_questions:
             response.data.suggested_questions ?? currentPayload.suggested_questions,
+          knowledge_dataset_ids:
+            response.data.knowledge_dataset_ids ?? currentPayload.knowledge_dataset_ids,
+          knowledge_retrieval_config:
+            response.data.knowledge_retrieval_config ?? currentPayload.knowledge_retrieval_config,
         };
         setLastSavedAt(updatedAt);
         lastSavedSignatureRef.current = buildAgentRuntimeSignature(savedPayload);
@@ -376,6 +397,12 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
   const handleToggleSkill = useCallback((skillId: string, checked: boolean) => {
     setSelectedSkillIds(current =>
       checked ? Array.from(new Set([...current, skillId])) : current.filter(id => id !== skillId)
+    );
+  }, []);
+
+  const handleToggleKnowledgeDataset = useCallback((datasetId: string, checked: boolean) => {
+    setKnowledgeDatasetIds(current =>
+      checked ? Array.from(new Set([...current, datasetId])) : current.filter(id => id !== datasetId)
     );
   }, []);
 
@@ -614,7 +641,10 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
           normalizedSelectedSkillIds={normalizedSelectedSkillIds}
           selectableSkillsCount={selectableSkills.length}
           isSkillsLoading={isSkillsLoading}
-          isSkillConfigLoading={isSkillConfigLoading}
+          isSkillConfigLoading={false}
+          isDatasetsLoading={isDatasetsLoading}
+          availableDatasets={availableDatasets}
+          selectedKnowledgeDatasetIds={knowledgeDatasetIds}
           suggestedQuestions={suggestedQuestions}
           isGeneratingSuggestions={isGeneratingSuggestions}
           systemPrompt={systemPrompt}
@@ -630,6 +660,7 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
           onChangeInputPlaceholder={setInputPlaceholder}
           onOpenSkillDialog={() => setSkillDialogOpen(true)}
           onToggleSkill={handleToggleSkill}
+          onToggleKnowledgeDataset={handleToggleKnowledgeDataset}
           onGenerateSuggestedQuestions={() => void handleGenerateSuggestedQuestions()}
           onChangeSuggestedQuestions={setSuggestedQuestions}
           onChangeFileUploadEnabled={setFileUploadEnabled}

@@ -1294,6 +1294,7 @@ const messages: AgentsMessages = {
       experience: '体验定制',
       model: '模型',
       skills: 'Skill',
+      knowledge: '知识库',
       files: '文件',
       memory: '记忆',
     },
@@ -1320,7 +1321,7 @@ const messages: AgentsMessages = {
     skills: {
       selectedCount: '已选 {count}',
       add: '添加 Skill',
-      enablePrompt: '当前组织还没有启用可用 Skill。',
+      enablePrompt: '暂无可用于智能体的 Skill。',
       enableAction: '启用 Skill',
       emptySelected: '还没有为这个 Agent 添加 Skill。',
       remove: '移除 {name}',
@@ -1333,6 +1334,11 @@ const messages: AgentsMessages = {
       noMatch: '没有匹配的 Skill。',
       done: '完成',
       idLabel: 'ID：{id}',
+      requiresKnowledge: '请先配置知识库',
+    },
+    knowledge: {
+      empty: '当前工作区暂无可用知识库。',
+      noDescription: '暂无描述',
     },
     suggestions: {
       generate: '生成',

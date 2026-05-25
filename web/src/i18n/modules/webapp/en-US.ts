@@ -179,6 +179,16 @@ const messages = {
     sendEdited: 'Send edited message',
     previousBranch: 'Previous branch',
     nextBranch: 'Next branch',
+    skillPreferences: {
+      action: 'My Skills',
+      title: 'My AIChat Skills',
+      description: 'Choose which organization-enabled Skills are active for your AIChat.',
+      empty: 'No organization-enabled AIChat Skill is available.',
+      save: 'Save',
+      cancel: 'Cancel',
+      saved: 'AIChat Skill preference saved',
+      saveFailed: 'Failed to save AIChat Skill preference',
+    },
     skills: {
       trace: {
         unknownSkill: 'skill',

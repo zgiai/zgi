@@ -13,7 +13,7 @@ import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { useStore } from 'zustand';
-import { ArrowDown, MessageSquarePlus, PanelLeft } from 'lucide-react';
+import { ArrowDown, MessageSquarePlus, PanelLeft, Settings2 } from 'lucide-react';
 import type { ModelSelectorValue } from '@/components/common/model-selector';
 import type { AIChatController } from '@/components/chat/controllers/aichat-controller';
 import type { ConversationSummary } from '@/components/chat/controllers/types';
@@ -31,7 +31,11 @@ import {
 import { Sidebar } from '@/components/chat/variants/common/sidebar';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
-import { useAIChatSkills } from '@/hooks/aichat/use-aichat-skills';
+import {
+  useAIChatSkillPreference,
+  useAIChatSkills,
+  useUpdateAIChatSkillPreference,
+} from '@/hooks/aichat/use-aichat-skills';
 import { useLocale } from '@/hooks/use-locale';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useT } from '@/i18n/translations';
@@ -47,7 +51,11 @@ import { AIChatHeader } from '@/components/chat/variants/aichat/chat-header';
 import { AIChatHomeView } from '@/components/chat/variants/aichat/home-view';
 import { AIChatInputArea } from '@/components/chat/variants/aichat/input-area';
 import { AIChatMessageList } from '@/components/chat/variants/aichat/message-list';
-import { buildAIChatSkillDisplayMap } from '@/components/chat/variants/aichat/skill-display';
+import {
+  buildAIChatSkillDisplayMap,
+  isHiddenSystemSkill,
+} from '@/components/chat/variants/aichat/skill-display';
+import { AIChatSkillPreferenceDialog } from '@/components/chat/variants/aichat/skill-preference-dialog';
 import { useAIChatScroll } from '@/components/chat/variants/aichat/use-aichat-scroll';
 import {
   getAIChatMessageErrorInput,
@@ -135,6 +143,7 @@ export function AIChatShell({
   embeddedConversationControlsPortalId,
   renderEmbeddedConversationControls,
   showAssistantModelMeta = true,
+  surface = 'aichat',
   themeColor,
 }: AIChatShellProps) {
   const router = useRouter();
@@ -154,6 +163,8 @@ export function AIChatShell({
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [externalControlsPortal, setExternalControlsPortal] = useState<HTMLElement | null>(null);
+  const [skillPreferenceOpen, setSkillPreferenceOpen] = useState(false);
+  const [draftSkillPreferenceIds, setDraftSkillPreferenceIds] = useState<string[]>([]);
   const [inputAreaHeight, setInputAreaHeight] = useState(160);
   const topologyRef = useRef<{ key: string; topology: ChatMessageTopology } | null>(null);
   const lastErrorToastRef = useRef<string | null>(null);
@@ -173,11 +184,30 @@ export function AIChatShell({
   const currentWorkspace = useWorkspaceStore.use.currentWorkspace();
   const organizationRole = useWorkspaceStore.use.permissionState().organizationRole;
   const isBillingAdmin = organizationRole === 'owner' || organizationRole === 'admin';
+  const enableAIChatSkillPreference = !isEmbedded && surface !== 'agent-draft' && surface !== 'agent-webapp';
   const { data: availableSkills = [] } = useAIChatSkills();
+  const { data: skillPreference, isLoading: isLoadingSkillPreference } =
+    useAIChatSkillPreference({ enabled: enableAIChatSkillPreference });
+  const updateSkillPreference = useUpdateAIChatSkillPreference();
   const skillDisplayById = useMemo(
     () => buildAIChatSkillDisplayMap(availableSkills, locale),
     [availableSkills, locale]
   );
+  const aichatConfigurableSkills = useMemo(
+    () =>
+      availableSkills.filter(skill => {
+        if (!skill.enabled || skill.status === 'invalid') return false;
+        if (isHiddenSystemSkill(skill.skill_id)) return false;
+        const callers = skill.supported_callers ?? [];
+        return callers.length === 0 || callers.includes('aichat');
+      }),
+    [availableSkills]
+  );
+
+  useEffect(() => {
+    if (!enableAIChatSkillPreference || !skillPreference) return;
+    setDraftSkillPreferenceIds(skillPreference.enabled_skill_ids ?? []);
+  }, [enableAIChatSkillPreference, skillPreference]);
 
   const messageTopologyKey = useMemo(
     () => buildChatMessageTopologyKey(activeMessages),
@@ -494,6 +524,31 @@ export function AIChatShell({
     [controller]
   );
 
+  const handleToggleSkillPreference = useCallback((skillId: string, checked: boolean) => {
+    setDraftSkillPreferenceIds(current =>
+      checked ? Array.from(new Set([...current, skillId])) : current.filter(id => id !== skillId)
+    );
+  }, []);
+
+  const handleSaveSkillPreference = useCallback(() => {
+    updateSkillPreference.mutate(
+      { payload: { enabled_skill_ids: draftSkillPreferenceIds } },
+      {
+        onSuccess: () => {
+          setSkillPreferenceOpen(false);
+          toast.success(t('consoleChat.skillPreferences.saved'));
+        },
+        onError: error => {
+          toast.error(
+            error instanceof Error
+              ? error.message
+              : t('consoleChat.skillPreferences.saveFailed')
+          );
+        },
+      }
+    );
+  }, [draftSkillPreferenceIds, t, updateSkillPreference]);
+
   const embeddedConversationControls = useMemo(() => {
     if (!showEmbeddedConversationDrawer) return null;
     const controls = {
@@ -566,6 +621,17 @@ export function AIChatShell({
             title={activeConversation?.title || t('consoleChat.title')}
             onToggleSidebar={handleToggleSidebar}
             onStartNew={handleNewChat}
+            rightAction={enableAIChatSkillPreference ? (
+              <Button
+                variant="ghost"
+                isIcon
+                className="size-8 text-muted-foreground"
+                onClick={() => setSkillPreferenceOpen(true)}
+                title={t('consoleChat.skillPreferences.action')}
+              >
+                <Settings2 className="size-4" />
+              </Button>
+            ) : undefined}
           />
         ) : null}
 
@@ -672,6 +738,20 @@ export function AIChatShell({
             />
           </SheetContent>
         </Sheet>
+      ) : null}
+
+      {enableAIChatSkillPreference ? (
+        <AIChatSkillPreferenceDialog
+          open={skillPreferenceOpen}
+          locale={locale}
+          skills={aichatConfigurableSkills}
+          selectedSkillIds={draftSkillPreferenceIds}
+          isLoading={isLoadingSkillPreference}
+          isSaving={updateSkillPreference.isPending}
+          onOpenChange={setSkillPreferenceOpen}
+          onToggleSkill={handleToggleSkillPreference}
+          onSave={handleSaveSkillPreference}
+        />
       ) : null}
     </div>
   );

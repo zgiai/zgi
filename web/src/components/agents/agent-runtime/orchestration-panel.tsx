@@ -1,11 +1,11 @@
 'use client';
 
-import Link from 'next/link';
-import { ExternalLink, Loader2, Plus, Sparkles, Trash2 } from 'lucide-react';
+import { Loader2, Plus, Sparkles, Trash2 } from 'lucide-react';
 import { getAIChatSkillDisplayInfo } from '@/components/chat/variants/aichat/skill-display';
 import { ModelSelectorParameter, type ModelSelectorParameterValue } from '@/components/common/model-selector';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
@@ -13,6 +13,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { useT } from '@/i18n';
 import type { AIChatSkillMetadata } from '@/services/types/aichat';
+import type { Dataset } from '@/services/types/dataset';
 import {
   AGENT_HOME_TITLE_MAX_LENGTH,
   AGENT_INPUT_PLACEHOLDER_MAX_LENGTH,
@@ -31,6 +32,9 @@ interface AgentRuntimeOrchestrationPanelProps {
   selectableSkillsCount: number;
   isSkillsLoading: boolean;
   isSkillConfigLoading: boolean;
+  isDatasetsLoading: boolean;
+  availableDatasets: Dataset[];
+  selectedKnowledgeDatasetIds: string[];
   suggestedQuestions: string[];
   isGeneratingSuggestions: boolean;
   systemPrompt: string;
@@ -44,6 +48,7 @@ interface AgentRuntimeOrchestrationPanelProps {
   onChangeInputPlaceholder: (value: string) => void;
   onOpenSkillDialog: () => void;
   onToggleSkill: (skillId: string, checked: boolean) => void;
+  onToggleKnowledgeDataset: (datasetId: string, checked: boolean) => void;
   onGenerateSuggestedQuestions: () => void;
   onChangeSuggestedQuestions: (value: string[]) => void;
   onChangeFileUploadEnabled: (value: boolean) => void;
@@ -61,6 +66,9 @@ export function AgentRuntimeOrchestrationPanel({
   selectableSkillsCount,
   isSkillsLoading,
   isSkillConfigLoading,
+  isDatasetsLoading,
+  availableDatasets,
+  selectedKnowledgeDatasetIds,
   suggestedQuestions,
   isGeneratingSuggestions,
   systemPrompt,
@@ -74,6 +82,7 @@ export function AgentRuntimeOrchestrationPanel({
   onChangeInputPlaceholder,
   onOpenSkillDialog,
   onToggleSkill,
+  onToggleKnowledgeDataset,
   onGenerateSuggestedQuestions,
   onChangeSuggestedQuestions,
   onChangeFileUploadEnabled,
@@ -138,12 +147,6 @@ export function AgentRuntimeOrchestrationPanel({
             ) : selectableSkillsCount === 0 ? (
               <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
                 {t('skills.enablePrompt')}
-                <Button asChild variant="link" className="h-auto px-1 text-sm">
-                  <Link href="/dashboard/organization/aichat-skills">
-                    {t('skills.enableAction')}
-                    <ExternalLink className="ml-1 size-3.5" />
-                  </Link>
-                </Button>
               </div>
             ) : selectedSkills.length === 0 ? (
               <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
@@ -179,6 +182,52 @@ export function AgentRuntimeOrchestrationPanel({
                         <Trash2 className="size-4" />
                       </Button>
                     </div>
+                  );
+                })}
+              </div>
+            )}
+          </RuntimeSection>
+
+          <Separator className="h-px" />
+
+          <RuntimeSection
+            title={t('sections.knowledge')}
+            section="knowledge"
+            open={openSections.knowledge}
+            onToggle={onToggleSection}
+            action={<Badge variant="subtle">{selectedKnowledgeDatasetIds.length}</Badge>}
+          >
+            {isDatasetsLoading ? (
+              <div className="space-y-2">
+                <Skeleton className="h-12 w-full" />
+                <Skeleton className="h-12 w-full" />
+              </div>
+            ) : availableDatasets.length === 0 ? (
+              <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                {t('knowledge.empty')}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {availableDatasets.map(dataset => {
+                  const checked = selectedKnowledgeDatasetIds.includes(dataset.id);
+                  return (
+                    <label
+                      key={dataset.id}
+                      className="flex cursor-pointer items-start gap-3 rounded-md border bg-background p-3"
+                    >
+                      <Checkbox
+                        checked={checked}
+                        onCheckedChange={value =>
+                          onToggleKnowledgeDataset(dataset.id, value === true)
+                        }
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium">{dataset.name}</span>
+                        <span className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
+                          {dataset.description || t('knowledge.noDescription')}
+                        </span>
+                      </span>
+                    </label>
                   );
                 })}
               </div>

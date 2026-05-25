@@ -185,6 +185,8 @@ export interface AgentRuntimeConfig {
   input_placeholder: string;
   theme_color: string;
   suggested_questions: string[];
+  knowledge_dataset_ids?: string[];
+  knowledge_retrieval_config?: Record<string, unknown>;
   updated_at: number;
 }
 
@@ -200,6 +202,8 @@ export interface UpdateAgentRuntimeConfigRequest {
   input_placeholder: string;
   theme_color: string;
   suggested_questions: string[];
+  knowledge_dataset_ids?: string[];
+  knowledge_retrieval_config?: Record<string, unknown>;
 }
 
 export interface AgentSuggestedQuestionSkillContext {

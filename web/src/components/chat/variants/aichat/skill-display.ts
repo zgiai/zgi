@@ -14,6 +14,12 @@ export interface AIChatSkillDisplayInfo {
 export type AIChatSkillDisplayMap = Record<string, AIChatSkillDisplayInfo>;
 
 const USER_MEMORY_SKILL_ID = 'user-memory';
+const AGENT_KNOWLEDGE_SKILL_ID = 'agent-knowledge';
+
+export function isHiddenSystemSkill(skillId: string): boolean {
+  const normalized = skillId.trim().toLowerCase();
+  return normalized === USER_MEMORY_SKILL_ID || normalized === AGENT_KNOWLEDGE_SKILL_ID;
+}
 
 const SYSTEM_SKILL_DISPLAY: Record<string, {
   label: Record<string, string>;

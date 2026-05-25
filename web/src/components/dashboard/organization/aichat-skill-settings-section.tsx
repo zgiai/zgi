@@ -1,11 +1,13 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { AlertCircle, CheckCircle2, Loader2, Trash2, Upload, Wrench } from 'lucide-react';
 import { toast } from 'sonner';
 import { AIChatSkillIcon } from '@/components/chat/variants/aichat/skill-icon';
 import {
   getAIChatSkillDisplayInfo,
+  isHiddenSystemSkill,
   type AIChatSkillDisplayInfo,
 } from '@/components/chat/variants/aichat/skill-display';
 import { Badge } from '@/components/ui/badge';
@@ -40,6 +42,7 @@ import {
   usePreviewImportAIChatSkill,
   useUpdateAIChatSkillConfig,
 } from '@/hooks/aichat/use-aichat-skills';
+import { AICHAT_KEYS } from '@/hooks/query-keys';
 import { useLocale } from '@/hooks/use-locale';
 import { useT, type DashboardSuffix } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
@@ -51,6 +54,8 @@ import type {
 } from '@/services/types/aichat';
 
 const AUTO_SAVE_DELAY_MS = 450;
+const SKILL_CARD_GRID_CLASS =
+  'grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4';
 const SYSTEM_SKILL_NAME_CONFLICT_ERROR =
   'This skill name is reserved by a built-in system skill. Please rename your custom skill and try again.';
 
@@ -84,14 +89,19 @@ function sameSkillIds(left: string[], right: string[]): boolean {
 }
 
 function normalizeSkillIds(ids: string[]): string[] {
-  return Array.from(new Set(ids)).sort((a, b) => a.localeCompare(b));
+  return Array.from(new Set(ids.map(id => id.trim().toLowerCase()).filter(Boolean))).sort((a, b) =>
+    a.localeCompare(b)
+  );
 }
 
 function getInitialEnabledSkillIds(
   skills: AIChatSkillMetadata[],
   configIds: string[] | undefined
 ): string[] {
-  const ids = configIds ?? skills.filter(skill => skill.enabled).map(skill => skill.skill_id);
+  const manageableIds = new Set(skills.map(skill => skill.skill_id.trim().toLowerCase()));
+  const ids = configIds
+    ? configIds.filter(skillId => manageableIds.has(skillId.trim().toLowerCase()))
+    : skills.filter(skill => skill.enabled).map(skill => skill.skill_id);
   return normalizeSkillIds(ids);
 }
 
@@ -574,6 +584,7 @@ function SkillImportPreviewDialog({
 export function AIChatSkillSettingsSection() {
   const t = useT('dashboard');
   const { locale } = useLocale();
+  const queryClient = useQueryClient();
   const { data: skills = [], isLoading: isLoadingSkills, isError } = useAIChatSkills();
   const { data: config, isLoading: isLoadingConfig } = useAIChatSkillConfig();
   const updateConfig = useUpdateAIChatSkillConfig();
@@ -595,19 +606,23 @@ export function AIChatSkillSettingsSection() {
   const saveSequenceRef = useRef(0);
   const updateConfigRef = useRef(updateConfig.mutateAsync);
   const importConfirmedRef = useRef(false);
+  const manageableSkills = useMemo(
+    () => skills.filter(skill => !isHiddenSystemSkill(skill.skill_id)),
+    [skills]
+  );
 
   const initialEnabledSkillIds = useMemo(
-    () => getInitialEnabledSkillIds(skills, config?.enabled_skill_ids),
-    [config?.enabled_skill_ids, skills]
+    () => getInitialEnabledSkillIds(manageableSkills, config?.enabled_skill_ids),
+    [config?.enabled_skill_ids, manageableSkills]
   );
 
   const skillDisplays = useMemo(
     () =>
-      skills.reduce<Record<string, AIChatSkillDisplayInfo>>((map, skill) => {
+      manageableSkills.reduce<Record<string, AIChatSkillDisplayInfo>>((map, skill) => {
         map[skill.skill_id] = getAIChatSkillDisplayInfo(skill, locale);
         return map;
       }, {}),
-    [locale, skills]
+    [locale, manageableSkills]
   );
 
   const isLoading = isLoadingSkills || isLoadingConfig;
@@ -615,12 +630,12 @@ export function AIChatSkillSettingsSection() {
   const isMutating = updateConfig.isPending || isImporting || deleteSkill.isPending;
   const enabledCount = enabledSkillIds.length;
   const systemSkills = useMemo(
-    () => skills.filter(skill => getSkillSource(skill) === 'system'),
-    [skills]
+    () => manageableSkills.filter(skill => getSkillSource(skill) === 'system'),
+    [manageableSkills]
   );
   const customSkills = useMemo(
-    () => skills.filter(skill => getSkillSource(skill) === 'custom'),
-    [skills]
+    () => manageableSkills.filter(skill => getSkillSource(skill) === 'custom'),
+    [manageableSkills]
   );
   const hasActiveFilters =
     searchQuery.trim().length > 0 || runtimeFilter !== 'all' || statusFilter !== 'all';
@@ -684,6 +699,7 @@ export function AIChatSkillSettingsSection() {
         const savedSkillIds = normalizeSkillIds(
           response.data?.enabled_skill_ids ?? requestedSkillIds
         );
+        queryClient.setQueryData(AICHAT_KEYS.skillConfig(), { enabled_skill_ids: savedSkillIds });
         setPersistedSkillIds(savedSkillIds);
         setEnabledSkillIds(current =>
           sameSkillIds(current, requestedSkillIds) ? savedSkillIds : current
@@ -705,7 +721,7 @@ export function AIChatSkillSettingsSection() {
     return () => {
       window.clearTimeout(timeout);
     };
-  }, [enabledSkillIds, isLoading, persistedSkillIds, t]);
+  }, [enabledSkillIds, isLoading, persistedSkillIds, queryClient, t]);
 
   const handleToggle = (skillId: string, enabled: boolean) => {
     setEnabledSkillIds(current => {
@@ -824,7 +840,7 @@ export function AIChatSkillSettingsSection() {
           {Array.from({ length: 2 }).map((_, sectionIndex) => (
             <div key={sectionIndex} className="space-y-3">
               <Skeleton className="h-14 rounded-md" />
-              <div className="grid gap-3 sm:[grid-template-columns:repeat(auto-fill,minmax(300px,360px))]">
+              <div className={SKILL_CARD_GRID_CLASS}>
                 {Array.from({ length: 3 }).map((_, index) => (
                   <Skeleton key={index} className="h-42 rounded-md" />
                 ))}
@@ -837,6 +853,10 @@ export function AIChatSkillSettingsSection() {
           {t('organization.aichatSkills.loadFailed')}
         </div>
       ) : skills.length === 0 ? (
+        <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
+          {t('organization.aichatSkills.empty')}
+        </div>
+      ) : manageableSkills.length === 0 ? (
         <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
           {t('organization.aichatSkills.empty')}
         </div>
@@ -896,7 +916,7 @@ export function AIChatSkillSettingsSection() {
           <TabsContent value="system" className="mt-0">
             <div className="space-y-3">
               {filteredSystemSkills.length > 0 ? (
-                <div className="grid gap-3 sm:[grid-template-columns:repeat(auto-fill,minmax(300px,360px))]">
+                <div className={SKILL_CARD_GRID_CLASS}>
                   {filteredSystemSkills.map(skill => (
                     <AIChatSkillCard
                       key={skill.skill_id}
@@ -929,7 +949,7 @@ export function AIChatSkillSettingsSection() {
           <TabsContent value="custom" className="mt-0">
             <div className="space-y-3">
               {filteredCustomSkills.length > 0 ? (
-                <div className="grid gap-3 sm:[grid-template-columns:repeat(auto-fill,minmax(300px,360px))]">
+                <div className={SKILL_CARD_GRID_CLASS}>
                   {filteredCustomSkills.map(skill => (
                     <AIChatSkillCard
                       key={skill.skill_id}

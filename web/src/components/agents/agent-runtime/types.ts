@@ -2,7 +2,13 @@ import type { Agent, AgentDetail } from '@/services/types/agent';
 import type { AgentRuntimeConfig } from '@/services/types/agent';
 
 export type AgentRuntimeSaveState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error' | 'previewing';
-export type AgentConfigSection = 'experience' | 'model' | 'skills' | 'files' | 'memory';
+export type AgentConfigSection =
+  | 'experience'
+  | 'model'
+  | 'skills'
+  | 'knowledge'
+  | 'files'
+  | 'memory';
 
 export type AgentRuntimeAgent = Agent | AgentDetail | undefined;
 
