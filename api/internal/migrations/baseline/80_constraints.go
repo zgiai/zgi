@@ -130,8 +130,6 @@ var ConstraintsSchema = File{
     ADD CONSTRAINT dataset_metadata_bindings_pkey PRIMARY KEY (id);`,
 		`ALTER TABLE ONLY public.dataset_metadatas
     ADD CONSTRAINT dataset_metadatas_pkey PRIMARY KEY (id);`,
-		`ALTER TABLE ONLY public.dataset_permissions
-    ADD CONSTRAINT dataset_permissions_pkey PRIMARY KEY (id);`,
 		`ALTER TABLE ONLY public.dataset_process_rules
     ADD CONSTRAINT dataset_process_rules_pkey PRIMARY KEY (id);`,
 		`ALTER TABLE ONLY public.dataset_queries

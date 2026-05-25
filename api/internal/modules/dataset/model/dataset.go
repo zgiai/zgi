@@ -119,30 +119,6 @@ func (d *Dataset) GenCollectionName() string {
 	return GenCollectionNameByID(d.ID)
 }
 
-type DatasetPermissionEnum string
-
-const (
-	DatasetPermissionOnlyMe   DatasetPermissionEnum = "only_me"
-	DatasetPermissionAllTeam  DatasetPermissionEnum = "all_team"
-	DatasetPermissionPartial  DatasetPermissionEnum = "partial_members"
-	DatasetPermissionAllGroup DatasetPermissionEnum = "all_group"
-)
-
-// DatasetPermission represents dataset access permissions
-type DatasetPermission struct {
-	ID            string    `json:"id" gorm:"primaryKey;type:uuid;default:uuid_generate_v4()"`
-	DatasetID     string    `json:"dataset_id" gorm:"type:uuid;not null;index:idx_dataset_permissions_dataset_id"`
-	AccountID     string    `json:"account_id" gorm:"type:uuid;not null;index:idx_dataset_permissions_account_id"`
-	TenantID      string    `json:"tenant_id" gorm:"type:uuid;not null;index:idx_dataset_permissions_tenant_id"`
-	HasPermission bool      `json:"has_permission" gorm:"not null;default:true"`
-	CreatedAt     time.Time `json:"created_at" gorm:"not null;default:CURRENT_TIMESTAMP(0)"`
-}
-
-// TableName specifies table name
-func (DatasetPermission) TableName() string {
-	return "dataset_permissions"
-}
-
 // DatasetQuery represents dataset query logs
 type DatasetQuery struct {
 	ID            string    `json:"id" gorm:"primaryKey;type:uuid;default:uuid_generate_v4()"`

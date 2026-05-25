@@ -272,8 +272,6 @@ func TestWorkspaceAssetMoveDatasetMoveWithTargetFolderUpdatesJoinAndAudit(t *tes
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	mock.ExpectExec(`UPDATE "datasets" SET .* WHERE id = .*`).
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`UPDATE "dataset_permissions" SET .* WHERE dataset_id = .*`).
-		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`DELETE FROM dataset_folder_joins WHERE dataset_id = .*`).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`INSERT INTO "dataset_folder_joins"`).

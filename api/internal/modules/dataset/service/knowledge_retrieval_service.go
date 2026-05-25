@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -162,30 +163,45 @@ func NewKnowledgeRetrievalService(
 
 // ListAccessibleDatasets returns datasets visible to the current account in the current workspace.
 func (s *KnowledgeRetrievalService) ListAccessibleDatasets(ctx context.Context, scope KnowledgeScope, query string, limit int) ([]KnowledgeDatasetSummary, error) {
-	if s == nil || s.datasetRepo == nil {
+	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("knowledge retrieval service is not configured")
 	}
-	if strings.TrimSpace(scope.WorkspaceID) == "" {
+	workspaceID := strings.TrimSpace(scope.WorkspaceID)
+	accountID := strings.TrimSpace(scope.AccountID)
+	if workspaceID == "" {
 		return nil, fmt.Errorf("workspace_id is required")
 	}
-	if strings.TrimSpace(scope.AccountID) == "" {
+	if accountID == "" {
 		return nil, fmt.Errorf("account_id is required")
 	}
-	limit = normalizeKnowledgeLimit(limit, defaultKnowledgeListLimit, maxKnowledgeListLimit)
-	datasets, _, err := s.datasetRepo.GetByTenantIDs(ctx, []string{scope.WorkspaceID}, 1, limit, strings.TrimSpace(query), false, scope.AccountID)
+	allowed, err := s.canAccessKnowledgeWorkspace(ctx, workspaceID, accountID)
 	if err != nil {
 		return nil, err
 	}
+	if !allowed {
+		return []KnowledgeDatasetSummary{}, nil
+	}
+
+	limit = normalizeKnowledgeLimit(limit, defaultKnowledgeListLimit, maxKnowledgeListLimit)
+	search := strings.TrimSpace(query)
+	dbQuery := s.db.WithContext(ctx).
+		Model(&dataset_model.Dataset{}).
+		Where("workspace_id = ?", workspaceID)
+	if search != "" {
+		pattern := "%" + search + "%"
+		dbQuery = dbQuery.Where("name ILIKE ? OR description ILIKE ?", pattern, pattern)
+	}
+	var datasets []*dataset_model.Dataset
+	if err := dbQuery.
+		Order("created_at DESC, id DESC").
+		Limit(limit).
+		Find(&datasets).Error; err != nil {
+		return nil, fmt.Errorf("failed to list accessible datasets: %w", err)
+	}
+
 	out := make([]KnowledgeDatasetSummary, 0, len(datasets))
 	for _, dataset := range datasets {
 		if dataset == nil {
-			continue
-		}
-		ok, err := s.datasetRepo.CheckDatasetPermission(ctx, dataset.ID, scope.AccountID, scope.WorkspaceID)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
 			continue
 		}
 		out = append(out, KnowledgeDatasetSummary{
@@ -214,6 +230,13 @@ func (s *KnowledgeRetrievalService) Retrieve(ctx context.Context, req KnowledgeR
 	if strings.TrimSpace(req.Scope.AccountID) == "" {
 		return nil, fmt.Errorf("account_id is required")
 	}
+	allowed, err := s.canAccessKnowledgeWorkspace(ctx, strings.TrimSpace(req.Scope.WorkspaceID), strings.TrimSpace(req.Scope.AccountID))
+	if err != nil {
+		return nil, err
+	}
+	if !allowed {
+		return nil, fmt.Errorf("workspace is not accessible")
+	}
 	datasetIDs := normalizeStringList(req.DatasetIDs)
 	if len(datasetIDs) == 0 {
 		return nil, fmt.Errorf("dataset_ids are required")
@@ -227,7 +250,7 @@ func (s *KnowledgeRetrievalService) Retrieve(ctx context.Context, req KnowledgeR
 	scoredRecords := make([]scoredKnowledgeRecord, 0)
 	graphExecutions := make([]*dto.GraphExecution, 0)
 	for _, datasetID := range datasetIDs {
-		dataset, err := s.datasetRepo.GetDatasetWithPermissionCheck(ctx, datasetID, req.Scope.AccountID, req.Scope.WorkspaceID)
+		dataset, err := s.accessibleKnowledgeDataset(ctx, datasetID, req.Scope.WorkspaceID)
 		if err != nil {
 			return nil, fmt.Errorf("dataset %s is not accessible: %w", datasetID, err)
 		}
@@ -284,6 +307,70 @@ func (s *KnowledgeRetrievalService) RetrieveAgentKnowledge(ctx context.Context, 
 		req.RetrievalConfig = retrievalConfig
 	}
 	return s.Retrieve(ctx, req)
+}
+
+func (s *KnowledgeRetrievalService) canAccessKnowledgeWorkspace(ctx context.Context, workspaceID, accountID string) (bool, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	accountID = strings.TrimSpace(accountID)
+	if workspaceID == "" || accountID == "" {
+		return false, nil
+	}
+
+	var workspace struct {
+		OrganizationID string `gorm:"column:organization_id"`
+	}
+	if err := s.db.WithContext(ctx).
+		Table("workspaces").
+		Select("organization_id").
+		Where("id = ?", workspaceID).
+		Take(&workspace).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to load workspace: %w", err)
+	}
+
+	var memberCount int64
+	if err := s.db.WithContext(ctx).
+		Table("workspace_members").
+		Where("workspace_id = ? AND account_id = ?", workspaceID, accountID).
+		Count(&memberCount).Error; err != nil {
+		return false, fmt.Errorf("failed to check workspace membership: %w", err)
+	}
+	if memberCount > 0 {
+		return true, nil
+	}
+
+	if strings.TrimSpace(workspace.OrganizationID) == "" {
+		return false, nil
+	}
+	var adminCount int64
+	if err := s.db.WithContext(ctx).
+		Table("members").
+		Where("organization_id = ? AND account_id = ? AND role IN ?", workspace.OrganizationID, accountID, []string{"owner", "admin"}).
+		Count(&adminCount).Error; err != nil {
+		return false, fmt.Errorf("failed to check organization membership: %w", err)
+	}
+	return adminCount > 0, nil
+}
+
+func (s *KnowledgeRetrievalService) accessibleKnowledgeDataset(ctx context.Context, datasetID, workspaceID string) (*dataset_model.Dataset, error) {
+	datasetID = strings.TrimSpace(datasetID)
+	workspaceID = strings.TrimSpace(workspaceID)
+	if datasetID == "" {
+		return nil, fmt.Errorf("dataset_id is required")
+	}
+	if workspaceID == "" {
+		return nil, fmt.Errorf("workspace_id is required")
+	}
+
+	var dataset dataset_model.Dataset
+	if err := s.db.WithContext(ctx).
+		Where("id = ? AND workspace_id = ?", datasetID, workspaceID).
+		First(&dataset).Error; err != nil {
+		return nil, err
+	}
+	return &dataset, nil
 }
 
 func (s *KnowledgeRetrievalService) retrieveDataset(ctx context.Context, dataset *dataset_model.Dataset, query string, retrievalConfig map[string]interface{}, topK int, retrievalMode string) ([]dto.HitTestingRecordResponse, *dto.GraphExecution, error) {
