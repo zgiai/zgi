@@ -39,6 +39,8 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	group := router.Group("/aichat")
 	group.GET("/skills", h.ListSkills)
 	group.GET("/skills/config", h.GetSkillConfig)
+	group.GET("/skill-preferences/me", h.GetMySkillPreference)
+	group.PUT("/skill-preferences/me", h.UpdateMySkillPreference)
 	group.GET("/skills/:id", h.GetSkill)
 	skillManagement := group.Group("/skills", middleware.EnterpriseAdminOrOwnerRequired())
 	skillManagement.POST("/import/preview", h.PreviewImportSkill)
@@ -124,6 +126,37 @@ func (h *Handler) UpdateSkillConfig(c *gin.Context) {
 		return
 	}
 	response.Success(c, skillConfigResponse(config))
+}
+
+func (h *Handler) GetMySkillPreference(c *gin.Context) {
+	scope, ok := h.scope(c)
+	if !ok {
+		return
+	}
+	preference, err := h.service.GetAccountSkillPreference(c.Request.Context(), scope, runtimemodel.ConversationCallerAIChat)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	response.Success(c, accountSkillPreferenceResponse(preference))
+}
+
+func (h *Handler) UpdateMySkillPreference(c *gin.Context) {
+	scope, ok := h.scope(c)
+	if !ok {
+		return
+	}
+	var req runtimedto.UpdateAccountSkillPreferenceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	preference, err := h.service.UpdateAccountSkillPreference(c.Request.Context(), scope, runtimemodel.ConversationCallerAIChat, req)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	response.Success(c, accountSkillPreferenceResponse(preference))
 }
 
 func (h *Handler) PreviewImportSkill(c *gin.Context) {
@@ -682,6 +715,8 @@ func skillResponse(metadata skills.SkillDiscoveryMetadata) runtimedto.SkillRespo
 		TimeoutSeconds:   metadata.TimeoutSeconds,
 		Status:           metadata.Status,
 		ValidationError:  metadata.ValidationError,
+		SupportedCallers: metadata.SupportedCallers,
+		RequiredConfig:   metadata.RequiredConfig,
 	}
 }
 
@@ -747,6 +782,16 @@ func skillConfigResponse(config *runtimeservice.SkillConfig) runtimedto.SkillCon
 		return runtimedto.SkillConfigResponse{EnabledSkillIDs: []string{}}
 	}
 	return runtimedto.SkillConfigResponse{EnabledSkillIDs: append([]string(nil), config.EnabledSkillIDs...)}
+}
+
+func accountSkillPreferenceResponse(pref *runtimeservice.AccountSkillPreference) runtimedto.AccountSkillPreferenceResponse {
+	if pref == nil {
+		return runtimedto.AccountSkillPreferenceResponse{EnabledSkillIDs: []string{}, Defaulted: true}
+	}
+	return runtimedto.AccountSkillPreferenceResponse{
+		EnabledSkillIDs: append([]string(nil), pref.EnabledSkillIDs...),
+		Defaulted:       pref.Defaulted,
+	}
 }
 
 func messageResponse(message *runtimemodel.Message) runtimedto.MessageResponse {

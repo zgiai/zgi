@@ -533,6 +533,8 @@ func skillDiscoveryMetadataPtr(doc skills.SkillDocument) *skills.SkillDiscoveryM
 		MaxCallsPerTurn:  doc.Metadata.MaxCallsPerTurn,
 		TimeoutSeconds:   doc.Metadata.TimeoutSeconds,
 		Status:           skills.SkillStatusActive,
+		SupportedCallers: append([]string(nil), doc.Metadata.SupportedCallers...),
+		RequiredConfig:   append([]string(nil), doc.Metadata.RequiredConfig...),
 	}
 	return &metadata
 }

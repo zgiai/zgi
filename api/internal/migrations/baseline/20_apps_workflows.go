@@ -246,6 +246,14 @@ var AppsWorkflowsSchema = File{
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
 );`,
+		`CREATE TABLE public.chat_runtime_account_skill_preferences (
+    organization_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    caller_type character varying(32) NOT NULL,
+    enabled_skill_ids jsonb DEFAULT '[]'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);`,
 		`CREATE TABLE public.app_prompt_optimization_runs (
     id uuid NOT NULL,
     organization_id uuid NOT NULL,

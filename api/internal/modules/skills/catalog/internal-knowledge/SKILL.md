@@ -15,20 +15,20 @@ display:
   category: knowledge
   label:
     en_US: Internal Knowledge
-    zh_Hans: Internal Knowledge
+    zh_Hans: 内部知识库
   description:
-    en_US: Finds accessible workspace knowledge bases and retrieves selected context.
-    zh_Hans: Finds accessible workspace knowledge bases and retrieves selected context.
+    en_US: Finds knowledge bases accessible to the current AIChat user and retrieves relevant context.
+    zh_Hans: 查询当前 AIChat 用户可访问的知识库，并检索相关上下文。
   when_to_use:
-    en_US: Use for internal AIChat questions that need knowledge base retrieval.
-    zh_Hans: Use for internal AIChat questions that need knowledge base retrieval.
+    en_US: Use when an AIChat answer needs facts or source context from accessible knowledge bases.
+    zh_Hans: 当 AIChat 回复需要引用可访问知识库中的事实或来源上下文时使用。
   tags:
     en_US:
       - Knowledge
       - Retrieval
     zh_Hans:
-      - Knowledge
-      - Retrieval
+      - 知识库
+      - 检索
 ---
 
 # Internal Knowledge Skill

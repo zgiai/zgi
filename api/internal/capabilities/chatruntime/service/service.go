@@ -74,15 +74,17 @@ type Caller struct {
 }
 
 type RunConfig struct {
-	SystemPrompt        string
-	SystemPromptVersion string
-	ModelProvider       string
-	Model               string
-	ModelParameters     map[string]interface{}
-	EnabledSkillIDs     []string
-	UseMemory           bool
-	BillingAppID        string
-	BillingAppType      string
+	SystemPrompt             string
+	SystemPromptVersion      string
+	ModelProvider            string
+	Model                    string
+	ModelParameters          map[string]interface{}
+	EnabledSkillIDs          []string
+	KnowledgeDatasetIDs      []string
+	KnowledgeRetrievalConfig map[string]interface{}
+	UseMemory                bool
+	BillingAppID             string
+	BillingAppType           string
 }
 
 type Service interface {
@@ -109,6 +111,8 @@ type Service interface {
 	GetSkill(ctx context.Context, scope Scope, skillID string) (*skills.SkillDiscoveryMetadata, error)
 	GetSkillConfig(ctx context.Context, scope Scope) (*SkillConfig, error)
 	UpdateSkillConfig(ctx context.Context, scope Scope, req runtimedto.UpdateSkillConfigRequest) (*SkillConfig, error)
+	GetAccountSkillPreference(ctx context.Context, scope Scope, callerType string) (*AccountSkillPreference, error)
+	UpdateAccountSkillPreference(ctx context.Context, scope Scope, callerType string, req runtimedto.UpdateAccountSkillPreferenceRequest) (*AccountSkillPreference, error)
 	PreviewImportCustomSkill(ctx context.Context, scope Scope, fileHeader *multipart.FileHeader) (*SkillImportPreview, error)
 	ConfirmCustomSkillImport(ctx context.Context, scope Scope, importID string, overwriteConfirmed bool) (*skills.SkillDiscoveryMetadata, error)
 	CancelCustomSkillImportPreview(ctx context.Context, scope Scope, importID string) error
@@ -223,6 +227,11 @@ type SkillConfig struct {
 	EnabledSkillIDs []string
 }
 
+type AccountSkillPreference struct {
+	EnabledSkillIDs []string
+	Defaulted       bool
+}
+
 type SkillImportPreviewFile struct {
 	Path string
 	Size int64
@@ -269,6 +278,8 @@ type chatRequestParts struct {
 	SystemPrompt                 string
 	SystemPromptVersion          string
 	ConfiguredSkillIDs           []string
+	KnowledgeDatasetIDs          []string
+	KnowledgeRetrievalConfig     map[string]interface{}
 	BillingSource                string
 }
 

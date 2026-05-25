@@ -44,7 +44,7 @@ func (s *service) PrepareConfiguredChat(ctx context.Context, scope Scope, caller
 	if err := s.applyModelCapabilities(ctx, scope, parts); err != nil {
 		return nil, err
 	}
-	if err := s.applyOrganizationSkillConfig(ctx, scope, parts); err != nil {
+	if err := s.applySkillConfig(ctx, scope, caller, &config, parts); err != nil {
 		return nil, err
 	}
 	conversation, err := s.resolveChatConversation(ctx, scope, caller, req, parts.Query)
@@ -135,7 +135,7 @@ func (s *service) prepareRootRegeneration(ctx context.Context, scope Scope, call
 	if err := s.applyModelCapabilities(ctx, scope, parts); err != nil {
 		return nil, err
 	}
-	if err := s.applyOrganizationSkillConfig(ctx, scope, parts); err != nil {
+	if err := s.applySkillConfig(ctx, scope, caller, &config, parts); err != nil {
 		return nil, err
 	}
 	contextResult, err := s.buildUpstreamMessages(ctx, scope, nil, parts)
@@ -386,6 +386,10 @@ func (s *service) applyModelCapabilities(ctx context.Context, scope Scope, parts
 }
 
 func (s *service) applyOrganizationSkillConfig(ctx context.Context, scope Scope, parts *chatRequestParts) error {
+	return s.applySkillConfig(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, nil, parts)
+}
+
+func (s *service) applySkillConfig(ctx context.Context, scope Scope, caller Caller, config *RunConfig, parts *chatRequestParts) error {
 	if parts == nil {
 		return nil
 	}
@@ -415,12 +419,23 @@ func (s *service) applyOrganizationSkillConfig(ctx context.Context, scope Scope,
 	if err != nil {
 		return err
 	}
-	enabled := parts.ConfiguredSkillIDs
-	if enabled == nil {
-		var err error
-		enabled, err = s.effectiveOrganizationSkillIDs(ctx, scope.OrganizationID, catalog)
+	callerType := normalizeCallerType(caller.Type)
+	var enabled []string
+	if callerType == runtimemodel.ConversationCallerAgent {
+		enabled = effectiveAgentSkillIDs(parts.ConfiguredSkillIDs, catalog, config)
+	} else {
+		orgEnabled, err := s.effectiveOrganizationSkillIDs(ctx, scope.OrganizationID, catalog)
 		if err != nil {
 			return err
+		}
+		if parts.ConfiguredSkillIDs == nil {
+			defaultEnabled, _, err := s.effectiveAccountSkillPreferenceIDs(ctx, scope, callerType, catalog, orgEnabled)
+			if err != nil {
+				return err
+			}
+			enabled = defaultEnabled
+		} else {
+			enabled = effectiveSkillIDsForCaller(parts.ConfiguredSkillIDs, catalog, orgEnabled, callerType, config)
 		}
 	}
 	parts.SkillIDs, parts.ToolSkillIDs = filterSkillsForModel(enabled, catalog, parts)
@@ -500,6 +515,8 @@ func applyRunConfigToParts(config RunConfig, parts *chatRequestParts) {
 	parts.SystemPrompt = strings.TrimSpace(config.SystemPrompt)
 	parts.SystemPromptVersion = strings.TrimSpace(config.SystemPromptVersion)
 	parts.ConfiguredSkillIDs = normalizedSkillIDs(config.EnabledSkillIDs)
+	parts.KnowledgeDatasetIDs = normalizedSkillIDs(config.KnowledgeDatasetIDs)
+	parts.KnowledgeRetrievalConfig = copyStringAnyMap(config.KnowledgeRetrievalConfig)
 	parts.BillingSource = strings.TrimSpace(config.BillingAppType)
 }
 

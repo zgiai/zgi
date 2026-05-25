@@ -14,20 +14,20 @@ display:
   category: knowledge
   label:
     en_US: Agent Knowledge
-    zh_Hans: Agent Knowledge
+    zh_Hans: 智能体知识库
   description:
     en_US: Retrieves only from knowledge bases bound to the current Agent configuration.
-    zh_Hans: Retrieves only from knowledge bases bound to the current Agent configuration.
+    zh_Hans: 仅从当前智能体配置绑定的知识库中检索上下文。
   when_to_use:
     en_US: Use for Agent answers that need configured knowledge base retrieval.
-    zh_Hans: Use for Agent answers that need configured knowledge base retrieval.
+    zh_Hans: 当智能体回复需要检索已绑定知识库时使用。
   tags:
     en_US:
       - Knowledge
       - Agent
     zh_Hans:
-      - Knowledge
-      - Agent
+      - 知识库
+      - 智能体
 ---
 
 # Agent Knowledge Skill

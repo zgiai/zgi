@@ -13,6 +13,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/suggestedquestions"
 	sharedmodel "github.com/zgiai/zgi/api/internal/modules/shared/model"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
 func (s *agentsService) GetAgentConfig(ctx context.Context, agentID, accountID string) (*dto.AgentConfigResponse, error) {
@@ -152,17 +153,19 @@ func (s *agentsService) RollbackAgentPublishedVersion(ctx context.Context, agent
 	}
 	snapshot := agentConfigResponseFromSnapshot(agentID, version.ConfigSnapshot)
 	applied, err := applyAgentConfigRequestToDraft(cfg, dto.AgentConfigRequest{
-		SystemPrompt:       snapshot.SystemPrompt,
-		ModelProvider:      snapshot.ModelProvider,
-		Model:              snapshot.Model,
-		ModelParameters:    snapshot.ModelParameters,
-		EnabledSkillIDs:    snapshot.EnabledSkillIDs,
-		UseMemory:          snapshot.UseMemory,
-		FileUpload:         snapshot.FileUpload,
-		HomeTitle:          snapshot.HomeTitle,
-		InputPlaceholder:   snapshot.InputPlaceholder,
-		ThemeColor:         snapshot.ThemeColor,
-		SuggestedQuestions: snapshot.SuggestedQuestions,
+		SystemPrompt:             snapshot.SystemPrompt,
+		ModelProvider:            snapshot.ModelProvider,
+		Model:                    snapshot.Model,
+		ModelParameters:          snapshot.ModelParameters,
+		EnabledSkillIDs:          snapshot.EnabledSkillIDs,
+		UseMemory:                snapshot.UseMemory,
+		FileUpload:               snapshot.FileUpload,
+		HomeTitle:                snapshot.HomeTitle,
+		InputPlaceholder:         snapshot.InputPlaceholder,
+		ThemeColor:               snapshot.ThemeColor,
+		SuggestedQuestions:       snapshot.SuggestedQuestions,
+		KnowledgeDatasetIDs:      snapshot.KnowledgeDatasetIDs,
+		KnowledgeRetrievalConfig: snapshot.KnowledgeRetrievalConfig,
 	})
 	if err != nil {
 		return nil, err
@@ -283,8 +286,12 @@ func normalizeAgentConfigRequest(req dto.AgentConfigRequest) dto.AgentConfigRequ
 	if req.ModelParameters == nil {
 		req.ModelParameters = map[string]interface{}{}
 	}
-	req.EnabledSkillIDs = normalizeStringIDs(req.EnabledSkillIDs)
+	req.EnabledSkillIDs = normalizeAgentEnabledSkillIDs(req.EnabledSkillIDs)
 	req.SuggestedQuestions = normalizeSuggestedQuestions(req.SuggestedQuestions)
+	req.KnowledgeDatasetIDs = normalizeStringIDs(req.KnowledgeDatasetIDs)
+	if req.KnowledgeRetrievalConfig == nil {
+		req.KnowledgeRetrievalConfig = map[string]interface{}{}
+	}
 	return req
 }
 
@@ -303,13 +310,15 @@ func applyAgentConfigRequestToDraft(cfg *AgentsConfig, req dto.AgentConfigReques
 	params := string(paramsJSON)
 	cfg.Configs = &params
 	modeJSON, err := json.Marshal(dto.AgentRuntimeModeConfig{
-		EnabledSkillIDs:    runtimeCfg.EnabledSkillIDs,
-		UseMemory:          runtimeCfg.UseMemory,
-		FileUploadEnabled:  runtimeCfg.FileUpload,
-		HomeTitle:          runtimeCfg.HomeTitle,
-		InputPlaceholder:   runtimeCfg.InputPlaceholder,
-		ThemeColor:         runtimeCfg.ThemeColor,
-		SuggestedQuestions: runtimeCfg.SuggestedQuestions,
+		EnabledSkillIDs:          runtimeCfg.EnabledSkillIDs,
+		UseMemory:                runtimeCfg.UseMemory,
+		FileUploadEnabled:        runtimeCfg.FileUpload,
+		HomeTitle:                runtimeCfg.HomeTitle,
+		InputPlaceholder:         runtimeCfg.InputPlaceholder,
+		ThemeColor:               runtimeCfg.ThemeColor,
+		SuggestedQuestions:       runtimeCfg.SuggestedQuestions,
+		KnowledgeDatasetIDs:      runtimeCfg.KnowledgeDatasetIDs,
+		KnowledgeRetrievalConfig: runtimeCfg.KnowledgeRetrievalConfig,
 	})
 	if err != nil {
 		return dto.AgentConfigRequest{}, fmt.Errorf("failed to marshal agent mode: %w", err)
@@ -329,15 +338,17 @@ func agentConfigResponse(agentID string, cfg *AgentsConfig) *dto.AgentConfigResp
 		_ = json.Unmarshal([]byte(*cfg.AgentMode), &mode)
 	}
 	resp := &dto.AgentConfigResponse{
-		AgentID:            agentID,
-		ModelParameters:    params,
-		EnabledSkillIDs:    normalizeStringIDs(mode.EnabledSkillIDs),
-		UseMemory:          mode.UseMemory,
-		FileUpload:         mode.FileUploadEnabled,
-		HomeTitle:          normalizeAgentHomeTitle(mode.HomeTitle),
-		InputPlaceholder:   normalizeAgentInputPlaceholder(mode.InputPlaceholder),
-		ThemeColor:         normalizeAgentThemeColor(mode.ThemeColor),
-		SuggestedQuestions: normalizeSuggestedQuestions(mode.SuggestedQuestions),
+		AgentID:                  agentID,
+		ModelParameters:          params,
+		EnabledSkillIDs:          normalizeAgentEnabledSkillIDs(mode.EnabledSkillIDs),
+		UseMemory:                mode.UseMemory,
+		FileUpload:               mode.FileUploadEnabled,
+		HomeTitle:                normalizeAgentHomeTitle(mode.HomeTitle),
+		InputPlaceholder:         normalizeAgentInputPlaceholder(mode.InputPlaceholder),
+		ThemeColor:               normalizeAgentThemeColor(mode.ThemeColor),
+		SuggestedQuestions:       normalizeSuggestedQuestions(mode.SuggestedQuestions),
+		KnowledgeDatasetIDs:      normalizeStringIDs(mode.KnowledgeDatasetIDs),
+		KnowledgeRetrievalConfig: copyStringAnyMap(mode.KnowledgeRetrievalConfig),
 	}
 	if cfg != nil {
 		resp.SystemPrompt = stringPtrValue(cfg.PrePrompt)
@@ -351,18 +362,20 @@ func agentConfigResponse(agentID string, cfg *AgentsConfig) *dto.AgentConfigResp
 func agentConfigSnapshot(agentID string, cfg *AgentsConfig) map[string]interface{} {
 	resp := agentConfigResponse(agentID, cfg)
 	return map[string]interface{}{
-		"agent_id":            resp.AgentID,
-		"system_prompt":       resp.SystemPrompt,
-		"model_provider":      resp.ModelProvider,
-		"model":               resp.Model,
-		"model_parameters":    resp.ModelParameters,
-		"enabled_skill_ids":   resp.EnabledSkillIDs,
-		"use_memory":          resp.UseMemory,
-		"file_upload_enabled": resp.FileUpload,
-		"home_title":          resp.HomeTitle,
-		"input_placeholder":   resp.InputPlaceholder,
-		"theme_color":         resp.ThemeColor,
-		"suggested_questions": resp.SuggestedQuestions,
+		"agent_id":                   resp.AgentID,
+		"system_prompt":              resp.SystemPrompt,
+		"model_provider":             resp.ModelProvider,
+		"model":                      resp.Model,
+		"model_parameters":           resp.ModelParameters,
+		"enabled_skill_ids":          resp.EnabledSkillIDs,
+		"use_memory":                 resp.UseMemory,
+		"file_upload_enabled":        resp.FileUpload,
+		"home_title":                 resp.HomeTitle,
+		"input_placeholder":          resp.InputPlaceholder,
+		"theme_color":                resp.ThemeColor,
+		"suggested_questions":        resp.SuggestedQuestions,
+		"knowledge_dataset_ids":      resp.KnowledgeDatasetIDs,
+		"knowledge_retrieval_config": resp.KnowledgeRetrievalConfig,
 	}
 }
 
@@ -381,7 +394,7 @@ func agentConfigResponseFromSnapshot(agentID string, snapshot map[string]interfa
 	if params, ok := snapshot["model_parameters"].(map[string]interface{}); ok {
 		resp.ModelParameters = params
 	}
-	resp.EnabledSkillIDs = normalizeStringIDs(stringSliceFromSnapshot(snapshot["enabled_skill_ids"]))
+	resp.EnabledSkillIDs = normalizeAgentEnabledSkillIDs(stringSliceFromSnapshot(snapshot["enabled_skill_ids"]))
 	if useMemory, ok := snapshot["use_memory"].(bool); ok {
 		resp.UseMemory = useMemory
 	}
@@ -392,6 +405,10 @@ func agentConfigResponseFromSnapshot(agentID string, snapshot map[string]interfa
 	resp.InputPlaceholder = normalizeAgentInputPlaceholder(stringFromSnapshot(snapshot, "input_placeholder"))
 	resp.ThemeColor = normalizeAgentThemeColor(stringFromSnapshot(snapshot, "theme_color"))
 	resp.SuggestedQuestions = normalizeSuggestedQuestions(stringSliceFromSnapshot(snapshot["suggested_questions"]))
+	resp.KnowledgeDatasetIDs = normalizeStringIDs(stringSliceFromSnapshot(snapshot["knowledge_dataset_ids"]))
+	if cfg, ok := snapshot["knowledge_retrieval_config"].(map[string]interface{}); ok {
+		resp.KnowledgeRetrievalConfig = copyStringAnyMap(cfg)
+	}
 	return resp
 }
 
@@ -570,6 +587,24 @@ func normalizeStringIDs(input []string) []string {
 	return out
 }
 
+func normalizeAgentEnabledSkillIDs(input []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(input))
+	for _, raw := range input {
+		id := strings.ToLower(strings.TrimSpace(raw))
+		if id == "" || skills.IsHiddenSystemSkill(id) {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func normalizeSuggestedQuestions(input []string) []string {
 	out := make([]string, 0, len(input))
 	for _, raw := range input {
@@ -644,6 +679,17 @@ func cleanAgentContextText(input string, maxRunes int) string {
 		return string(runes[:maxRunes])
 	}
 	return text
+}
+
+func copyStringAnyMap(input map[string]interface{}) map[string]interface{} {
+	if input == nil {
+		return map[string]interface{}{}
+	}
+	out := make(map[string]interface{}, len(input))
+	for key, value := range input {
+		out[key] = value
+	}
+	return out
 }
 
 func stringPtr(value string) *string {

@@ -12,6 +12,7 @@ const (
 	SkillFileGenerator     = "file-generator"
 	SkillInternalKnowledge = "internal-knowledge"
 	SkillAgentKnowledge    = "agent-knowledge"
+	SkillUserMemory        = "user-memory"
 
 	SkillSourceSystem = "system"
 	SkillSourceCustom = "custom"
@@ -22,7 +23,21 @@ const (
 	SkillRuntimeTypeTool   = "tool"
 	SkillRuntimeTypePrompt = "prompt"
 	SkillRuntimeTypeHybrid = "hybrid"
+
+	SkillCallerAIChat = "aichat"
+	SkillCallerAgent  = "agent"
+
+	SkillRequiredConfigAgentKnowledge = "agent_knowledge"
 )
+
+func IsHiddenSystemSkill(skillID string) bool {
+	switch normalizeSkillID(skillID) {
+	case SkillAgentKnowledge, SkillUserMemory:
+		return true
+	default:
+		return false
+	}
+}
 
 type SkillToolDefinition struct {
 	Name         string                 `json:"name" yaml:"name"`
@@ -31,16 +46,18 @@ type SkillToolDefinition struct {
 }
 
 type SkillFrontmatter struct {
-	Name            string                 `yaml:"name"`
-	Description     string                 `yaml:"description"`
-	WhenToUse       string                 `yaml:"when_to_use"`
-	ProviderType    tools.ToolProviderType `yaml:"provider_type"`
-	ProviderID      string                 `yaml:"provider_id"`
-	Tools           []string               `yaml:"tools"`
-	RuntimeType     string                 `yaml:"runtime_type"`
-	MaxCallsPerTurn int                    `yaml:"max_calls_per_turn"`
-	TimeoutSeconds  int                    `yaml:"timeout_seconds"`
-	Display         SkillDisplayMetadata   `yaml:"display"`
+	Name             string                 `yaml:"name"`
+	Description      string                 `yaml:"description"`
+	WhenToUse        string                 `yaml:"when_to_use"`
+	ProviderType     tools.ToolProviderType `yaml:"provider_type"`
+	ProviderID       string                 `yaml:"provider_id"`
+	Tools            []string               `yaml:"tools"`
+	RuntimeType      string                 `yaml:"runtime_type"`
+	MaxCallsPerTurn  int                    `yaml:"max_calls_per_turn"`
+	TimeoutSeconds   int                    `yaml:"timeout_seconds"`
+	Display          SkillDisplayMetadata   `yaml:"display"`
+	SupportedCallers []string               `yaml:"supported_callers"`
+	RequiredConfig   []string               `yaml:"required_config"`
 }
 
 type SkillDisplayMetadata struct {
@@ -67,6 +84,8 @@ type SkillMetadata struct {
 	MaxCallsPerTurn  int                  `json:"max_calls_per_turn"`
 	TimeoutSeconds   int                  `json:"timeout_seconds"`
 	RootPath         string               `json:"-"`
+	SupportedCallers []string             `json:"supported_callers,omitempty"`
+	RequiredConfig   []string             `json:"required_config,omitempty"`
 }
 
 type SkillPromptMetadata struct {
@@ -108,6 +127,8 @@ type SkillDiscoveryMetadata struct {
 	TimeoutSeconds   int                  `json:"timeout_seconds"`
 	Status           string               `json:"status"`
 	ValidationError  string               `json:"validation_error,omitempty"`
+	SupportedCallers []string             `json:"supported_callers,omitempty"`
+	RequiredConfig   []string             `json:"required_config,omitempty"`
 }
 
 type SkillDocument struct {
@@ -212,6 +233,24 @@ func skillPromptMetadata(skill SkillDocument) SkillPromptMetadata {
 	}
 }
 
+func copyStringSlice(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	return append([]string(nil), values...)
+}
+
+func copyStringAnyMap(values map[string]interface{}) map[string]interface{} {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]interface{}, len(values))
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
+}
+
 func skillDiscoveryMetadata(skill SkillDocument) SkillDiscoveryMetadata {
 	metadata := skill.Metadata
 	return SkillDiscoveryMetadata{
@@ -229,5 +268,7 @@ func skillDiscoveryMetadata(skill SkillDocument) SkillDiscoveryMetadata {
 		MaxCallsPerTurn:  metadata.MaxCallsPerTurn,
 		TimeoutSeconds:   metadata.TimeoutSeconds,
 		Status:           SkillStatusActive,
+		SupportedCallers: copyStringSlice(metadata.SupportedCallers),
+		RequiredConfig:   copyStringSlice(metadata.RequiredConfig),
 	}
 }

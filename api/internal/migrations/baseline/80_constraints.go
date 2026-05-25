@@ -38,6 +38,8 @@ var ConstraintsSchema = File{
     ADD CONSTRAINT chat_runtime_messages_pkey PRIMARY KEY (id);`,
 		`ALTER TABLE ONLY public.chat_runtime_organization_skill_configs
     ADD CONSTRAINT chat_runtime_organization_skill_configs_pkey PRIMARY KEY (organization_id, skill_id);`,
+		`ALTER TABLE ONLY public.chat_runtime_account_skill_preferences
+    ADD CONSTRAINT chat_runtime_account_skill_preferences_pkey PRIMARY KEY (organization_id, account_id, caller_type);`,
 		`ALTER TABLE ONLY public.app_prompt_optimization_runs
     ADD CONSTRAINT app_prompt_optimization_runs_pkey PRIMARY KEY (id);`,
 		`ALTER TABLE ONLY public.app_prompt_versions

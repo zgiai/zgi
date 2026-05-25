@@ -337,7 +337,7 @@ func (h *AgentsHandler) UpdateAgentConfig(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	if err := h.validateAgentRuntimeSkills(c, req.EnabledSkillIDs); err != nil {
+	if err := h.validateAgentRuntimeSkills(c, req); err != nil {
 		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
 		return
 	}
@@ -358,6 +358,18 @@ func (h *AgentsHandler) PublishAgent(c *gin.Context) {
 	var req dto.PublishAgentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		req = dto.PublishAgentRequest{}
+	}
+	cfg, err := h.appService.GetAgentConfig(c.Request.Context(), c.Param("agent_id"), accountID)
+	if err != nil {
+		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
+		return
+	}
+	if err := h.validateAgentRuntimeSkills(c, dto.AgentConfigRequest{
+		EnabledSkillIDs:     cfg.EnabledSkillIDs,
+		KnowledgeDatasetIDs: cfg.KnowledgeDatasetIDs,
+	}); err != nil {
+		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
+		return
 	}
 	result, err := h.appService.PublishAgent(c.Request.Context(), c.Param("agent_id"), accountID, req)
 	if err != nil {
@@ -427,15 +439,17 @@ func (h *AgentsHandler) ChatAgent(c *gin.Context) {
 		return
 	}
 	runConfig := runtimeservice.RunConfig{
-		SystemPrompt:        cfg.SystemPrompt,
-		SystemPromptVersion: "agent.draft",
-		ModelProvider:       cfg.ModelProvider,
-		Model:               cfg.Model,
-		ModelParameters:     cfg.ModelParameters,
-		EnabledSkillIDs:     cfg.EnabledSkillIDs,
-		UseMemory:           cfg.UseMemory,
-		BillingAppID:        agentID.String(),
-		BillingAppType:      runtimemodel.ConversationCallerAgent,
+		SystemPrompt:             cfg.SystemPrompt,
+		SystemPromptVersion:      "agent.draft",
+		ModelProvider:            cfg.ModelProvider,
+		Model:                    cfg.Model,
+		ModelParameters:          cfg.ModelParameters,
+		EnabledSkillIDs:          cfg.EnabledSkillIDs,
+		KnowledgeDatasetIDs:      cfg.KnowledgeDatasetIDs,
+		KnowledgeRetrievalConfig: cfg.KnowledgeRetrievalConfig,
+		UseMemory:                cfg.UseMemory,
+		BillingAppID:             agentID.String(),
+		BillingAppType:           runtimemodel.ConversationCallerAgent,
 	}
 	prepared, err := h.chatRuntimeService.PrepareConfiguredChat(
 		c.Request.Context(),
@@ -597,15 +611,17 @@ func (h *AgentsHandler) ChatWebAppAgent(c *gin.Context) {
 		return
 	}
 	runConfig := runtimeservice.RunConfig{
-		SystemPrompt:        published.Config.SystemPrompt,
-		SystemPromptVersion: "agent.published." + published.Version,
-		ModelProvider:       published.Config.ModelProvider,
-		Model:               published.Config.Model,
-		ModelParameters:     published.Config.ModelParameters,
-		EnabledSkillIDs:     published.Config.EnabledSkillIDs,
-		UseMemory:           published.Config.UseMemory,
-		BillingAppID:        published.AgentID,
-		BillingAppType:      runtimemodel.ConversationCallerAgent,
+		SystemPrompt:             published.Config.SystemPrompt,
+		SystemPromptVersion:      "agent.published." + published.Version,
+		ModelProvider:            published.Config.ModelProvider,
+		Model:                    published.Config.Model,
+		ModelParameters:          published.Config.ModelParameters,
+		EnabledSkillIDs:          published.Config.EnabledSkillIDs,
+		KnowledgeDatasetIDs:      published.Config.KnowledgeDatasetIDs,
+		KnowledgeRetrievalConfig: published.Config.KnowledgeRetrievalConfig,
+		UseMemory:                published.Config.UseMemory,
+		BillingAppID:             published.AgentID,
+		BillingAppType:           runtimemodel.ConversationCallerAgent,
 	}
 	prepared, err := h.chatRuntimeService.PrepareConfiguredChat(
 		c.Request.Context(),

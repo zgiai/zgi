@@ -94,6 +94,7 @@ var IndexesSchema = File{
 		`CREATE UNIQUE INDEX idx_chat_runtime_conversations_source_conversation ON public.chat_runtime_conversations USING btree (source_conversation_id) WHERE ((source_conversation_id IS NOT NULL) AND (deleted_at IS NULL));`,
 		`CREATE INDEX idx_chat_runtime_conversations_source_web_app ON public.chat_runtime_conversations USING btree (source_web_app_id) WHERE ((source_web_app_id IS NOT NULL) AND (deleted_at IS NULL));`,
 		`CREATE INDEX idx_chat_runtime_conversations_workspace ON public.chat_runtime_conversations USING btree (workspace_id) WHERE (deleted_at IS NULL);`,
+		`CREATE INDEX idx_chat_runtime_account_skill_preferences_account ON public.chat_runtime_account_skill_preferences USING btree (account_id, organization_id, caller_type);`,
 		`CREATE UNIQUE INDEX idx_chat_runtime_custom_skills_org_skill_active ON public.chat_runtime_custom_skills USING btree (organization_id, skill_id) WHERE (deleted_at IS NULL);`,
 		`CREATE INDEX idx_chat_runtime_custom_skills_org_status ON public.chat_runtime_custom_skills USING btree (organization_id, status) WHERE (deleted_at IS NULL);`,
 		`CREATE INDEX idx_chat_runtime_messages_billing_reason_source ON public.chat_runtime_messages USING btree (billing_reason_source) WHERE (deleted_at IS NULL);`,

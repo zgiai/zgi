@@ -62,6 +62,11 @@ type OrganizationSkillConfigRepository interface {
 	DeleteByOrganizationAndSkill(ctx context.Context, organizationID uuid.UUID, skillID string) error
 }
 
+type AccountSkillPreferenceRepository interface {
+	Get(ctx context.Context, organizationID, accountID uuid.UUID, callerType string) (*runtimemodel.AccountSkillPreference, error)
+	Upsert(ctx context.Context, pref *runtimemodel.AccountSkillPreference) error
+}
+
 type CustomSkillRepository interface {
 	ListByOrganization(ctx context.Context, organizationID uuid.UUID) ([]*runtimemodel.CustomSkill, error)
 	ListManageableByOrganization(ctx context.Context, organizationID uuid.UUID) ([]*runtimemodel.CustomSkill, error)
@@ -75,6 +80,7 @@ type Repositories struct {
 	Message      MessageRepository
 	Access       AccessRepository
 	SkillConfig  OrganizationSkillConfigRepository
+	SkillPref    AccountSkillPreferenceRepository
 	CustomSkill  CustomSkillRepository
 	DB           *gorm.DB
 }
@@ -90,6 +96,7 @@ func NewRepositories(db *gorm.DB) *Repositories {
 		Message:      NewMessageRepository(db),
 		Access:       NewAccessRepository(db),
 		SkillConfig:  NewOrganizationSkillConfigRepository(db),
+		SkillPref:    NewAccountSkillPreferenceRepository(db),
 		CustomSkill:  NewCustomSkillRepository(db),
 		DB:           db,
 	}

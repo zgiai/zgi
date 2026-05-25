@@ -151,43 +151,49 @@ type WebAppStatusResponse struct {
 }
 
 type AgentRuntimeModeConfig struct {
-	EnabledSkillIDs    []string `json:"enabled_skill_ids"`
-	UseMemory          bool     `json:"use_memory"`
-	FileUploadEnabled  bool     `json:"file_upload_enabled"`
-	HomeTitle          string   `json:"home_title"`
-	InputPlaceholder   string   `json:"input_placeholder"`
-	ThemeColor         string   `json:"theme_color"`
-	SuggestedQuestions []string `json:"suggested_questions"`
+	EnabledSkillIDs          []string               `json:"enabled_skill_ids"`
+	UseMemory                bool                   `json:"use_memory"`
+	FileUploadEnabled        bool                   `json:"file_upload_enabled"`
+	HomeTitle                string                 `json:"home_title"`
+	InputPlaceholder         string                 `json:"input_placeholder"`
+	ThemeColor               string                 `json:"theme_color"`
+	SuggestedQuestions       []string               `json:"suggested_questions"`
+	KnowledgeDatasetIDs      []string               `json:"knowledge_dataset_ids"`
+	KnowledgeRetrievalConfig map[string]interface{} `json:"knowledge_retrieval_config"`
 }
 
 type AgentConfigRequest struct {
-	SystemPrompt       string                 `json:"system_prompt"`
-	ModelProvider      string                 `json:"model_provider"`
-	Model              string                 `json:"model"`
-	ModelParameters    map[string]interface{} `json:"model_parameters"`
-	EnabledSkillIDs    []string               `json:"enabled_skill_ids"`
-	UseMemory          bool                   `json:"use_memory"`
-	FileUpload         bool                   `json:"file_upload_enabled"`
-	HomeTitle          string                 `json:"home_title"`
-	InputPlaceholder   string                 `json:"input_placeholder"`
-	ThemeColor         string                 `json:"theme_color"`
-	SuggestedQuestions []string               `json:"suggested_questions"`
+	SystemPrompt             string                 `json:"system_prompt"`
+	ModelProvider            string                 `json:"model_provider"`
+	Model                    string                 `json:"model"`
+	ModelParameters          map[string]interface{} `json:"model_parameters"`
+	EnabledSkillIDs          []string               `json:"enabled_skill_ids"`
+	UseMemory                bool                   `json:"use_memory"`
+	FileUpload               bool                   `json:"file_upload_enabled"`
+	HomeTitle                string                 `json:"home_title"`
+	InputPlaceholder         string                 `json:"input_placeholder"`
+	ThemeColor               string                 `json:"theme_color"`
+	SuggestedQuestions       []string               `json:"suggested_questions"`
+	KnowledgeDatasetIDs      []string               `json:"knowledge_dataset_ids"`
+	KnowledgeRetrievalConfig map[string]interface{} `json:"knowledge_retrieval_config"`
 }
 
 type AgentConfigResponse struct {
-	AgentID            string                 `json:"agent_id"`
-	SystemPrompt       string                 `json:"system_prompt"`
-	ModelProvider      string                 `json:"model_provider"`
-	Model              string                 `json:"model"`
-	ModelParameters    map[string]interface{} `json:"model_parameters"`
-	EnabledSkillIDs    []string               `json:"enabled_skill_ids"`
-	UseMemory          bool                   `json:"use_memory"`
-	FileUpload         bool                   `json:"file_upload_enabled"`
-	HomeTitle          string                 `json:"home_title"`
-	InputPlaceholder   string                 `json:"input_placeholder"`
-	ThemeColor         string                 `json:"theme_color"`
-	SuggestedQuestions []string               `json:"suggested_questions"`
-	UpdatedAt          int64                  `json:"updated_at"`
+	AgentID                  string                 `json:"agent_id"`
+	SystemPrompt             string                 `json:"system_prompt"`
+	ModelProvider            string                 `json:"model_provider"`
+	Model                    string                 `json:"model"`
+	ModelParameters          map[string]interface{} `json:"model_parameters"`
+	EnabledSkillIDs          []string               `json:"enabled_skill_ids"`
+	UseMemory                bool                   `json:"use_memory"`
+	FileUpload               bool                   `json:"file_upload_enabled"`
+	HomeTitle                string                 `json:"home_title"`
+	InputPlaceholder         string                 `json:"input_placeholder"`
+	ThemeColor               string                 `json:"theme_color"`
+	SuggestedQuestions       []string               `json:"suggested_questions"`
+	UpdatedAt                int64                  `json:"updated_at"`
+	KnowledgeDatasetIDs      []string               `json:"knowledge_dataset_ids"`
+	KnowledgeRetrievalConfig map[string]interface{} `json:"knowledge_retrieval_config"`
 }
 
 type AgentSuggestedQuestionSkillContext struct {

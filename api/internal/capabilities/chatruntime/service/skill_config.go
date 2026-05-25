@@ -106,6 +106,188 @@ func (s *service) effectiveOrganizationSkillIDs(ctx context.Context, organizatio
 	return enabled, nil
 }
 
+func (s *service) effectiveAccountSkillPreferenceIDs(ctx context.Context, scope Scope, callerType string, catalog []skills.SkillDiscoveryMetadata, organizationEnabled []string) ([]string, bool, error) {
+	callerType = normalizeCallerType(callerType)
+	if callerType != runtimemodel.ConversationCallerAIChat {
+		return []string{}, true, nil
+	}
+	if s.repos == nil || s.repos.SkillPref == nil {
+		return filterSkillIDsForCaller(organizationEnabled, catalog, callerType), true, nil
+	}
+	pref, err := s.repos.SkillPref.Get(ctx, scope.OrganizationID, scope.AccountID, callerType)
+	if err != nil {
+		return nil, false, err
+	}
+	if pref == nil {
+		return filterSkillIDsForCaller(organizationEnabled, catalog, callerType), true, nil
+	}
+	return effectiveSkillIDsForCaller(pref.EnabledSkillIDs, catalog, organizationEnabled, callerType, nil), false, nil
+}
+
+func validateSkillIDsForCaller(input []string, catalog []skills.SkillDiscoveryMetadata, organizationEnabled []string, callerType string, runConfig *RunConfig) ([]string, error) {
+	callerType = normalizeCallerType(callerType)
+	catalogByID := catalogSkillByID(catalog)
+	orgEnabled := stringSet(organizationEnabled)
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(input))
+	for _, raw := range input {
+		id := strings.ToLower(strings.TrimSpace(raw))
+		if id == "" {
+			continue
+		}
+		if skills.IsHiddenSystemSkill(id) {
+			return nil, fmt.Errorf("%w: skill %s is managed by runtime configuration", ErrInvalidInput, id)
+		}
+		item, ok := catalogByID[id]
+		if !ok {
+			return nil, fmt.Errorf("%w: unknown skill id %s", ErrInvalidInput, id)
+		}
+		if _, ok := orgEnabled[id]; !ok {
+			return nil, fmt.Errorf("%w: skill %s is not enabled by organization", ErrInvalidInput, id)
+		}
+		if !skillSupportsCaller(item, callerType) {
+			return nil, fmt.Errorf("%w: skill %s is not available for %s", ErrInvalidInput, id, callerType)
+		}
+		if err := validateSkillRequiredConfig(item, runConfig); err != nil {
+			return nil, err
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func effectiveAgentSkillIDs(input []string, catalog []skills.SkillDiscoveryMetadata, runConfig *RunConfig) []string {
+	catalogByID := catalogSkillByID(catalog)
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(input)+1)
+	for _, raw := range input {
+		id := strings.ToLower(strings.TrimSpace(raw))
+		if id == "" || skills.IsHiddenSystemSkill(id) {
+			continue
+		}
+		item, ok := catalogByID[id]
+		if !ok || !skillSupportsCaller(item, runtimemodel.ConversationCallerAgent) {
+			continue
+		}
+		if validateSkillRequiredConfig(item, runConfig) != nil {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	if runConfigHasKnowledgeDatasets(runConfig) && agentKnowledgeAvailable(catalog) {
+		id := skills.SkillAgentKnowledge
+		if _, ok := seen[id]; !ok {
+			out = append(out, id)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func filterSkillIDsForCaller(input []string, catalog []skills.SkillDiscoveryMetadata, callerType string) []string {
+	callerType = normalizeCallerType(callerType)
+	catalogByID := catalogSkillByID(catalog)
+	out := make([]string, 0, len(input))
+	for _, raw := range input {
+		id := strings.ToLower(strings.TrimSpace(raw))
+		if id == "" || skills.IsHiddenSystemSkill(id) {
+			continue
+		}
+		item, ok := catalogByID[id]
+		if !ok || !skillSupportsCaller(item, callerType) {
+			continue
+		}
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func effectiveSkillIDsForCaller(input []string, catalog []skills.SkillDiscoveryMetadata, organizationEnabled []string, callerType string, runConfig *RunConfig) []string {
+	callerType = normalizeCallerType(callerType)
+	catalogByID := catalogSkillByID(catalog)
+	orgEnabled := stringSet(organizationEnabled)
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(input))
+	for _, raw := range input {
+		id := strings.ToLower(strings.TrimSpace(raw))
+		if id == "" {
+			continue
+		}
+		if skills.IsHiddenSystemSkill(id) {
+			continue
+		}
+		item, ok := catalogByID[id]
+		if !ok {
+			continue
+		}
+		if _, ok := orgEnabled[id]; !ok {
+			continue
+		}
+		if !skillSupportsCaller(item, callerType) {
+			continue
+		}
+		if validateSkillRequiredConfig(item, runConfig) != nil {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func skillSupportsCaller(item skills.SkillDiscoveryMetadata, callerType string) bool {
+	callerType = normalizeCallerType(callerType)
+	if len(item.SupportedCallers) == 0 {
+		return true
+	}
+	for _, raw := range item.SupportedCallers {
+		if strings.EqualFold(strings.TrimSpace(raw), callerType) {
+			return true
+		}
+	}
+	return false
+}
+
+func validateSkillRequiredConfig(item skills.SkillDiscoveryMetadata, runConfig *RunConfig) error {
+	for _, raw := range item.RequiredConfig {
+		switch strings.ToLower(strings.TrimSpace(raw)) {
+		case skills.SkillRequiredConfigAgentKnowledge:
+			if runConfig == nil || len(normalizedSkillIDs(runConfig.KnowledgeDatasetIDs)) == 0 {
+				return fmt.Errorf("%w: skill %s requires configured knowledge datasets", ErrInvalidInput, item.ID)
+			}
+		}
+	}
+	return nil
+}
+
+func catalogSkillByID(catalog []skills.SkillDiscoveryMetadata) map[string]skills.SkillDiscoveryMetadata {
+	out := make(map[string]skills.SkillDiscoveryMetadata, len(catalog))
+	for _, item := range catalog {
+		if item.Status == skills.SkillStatusInvalid {
+			continue
+		}
+		id := strings.ToLower(strings.TrimSpace(item.ID))
+		if id != "" {
+			out[id] = item
+		}
+	}
+	return out
+}
+
 func (s *service) isOrganizationSkillEnabled(ctx context.Context, organizationID uuid.UUID, skillID string) bool {
 	catalog, err := s.catalogSkillMetadata(ctx, organizationID)
 	if err != nil {
@@ -227,12 +409,25 @@ func defaultEnabledSkillIDs(catalog []skills.SkillDiscoveryMetadata) []string {
 func visibleSkillMetadata(metadata []skills.SkillDiscoveryMetadata) []skills.SkillDiscoveryMetadata {
 	out := make([]skills.SkillDiscoveryMetadata, 0, len(metadata))
 	for _, item := range metadata {
-		if strings.EqualFold(strings.TrimSpace(item.ID), userMemorySkillID()) {
+		if skills.IsHiddenSystemSkill(item.ID) {
 			continue
 		}
 		out = append(out, item)
 	}
 	return out
+}
+
+func runConfigHasKnowledgeDatasets(runConfig *RunConfig) bool {
+	return runConfig != nil && len(normalizedSkillIDs(runConfig.KnowledgeDatasetIDs)) > 0
+}
+
+func agentKnowledgeAvailable(catalog []skills.SkillDiscoveryMetadata) bool {
+	for _, item := range catalog {
+		if strings.EqualFold(strings.TrimSpace(item.ID), skills.SkillAgentKnowledge) && item.Status != skills.SkillStatusInvalid && skillSupportsCaller(item, runtimemodel.ConversationCallerAgent) {
+			return true
+		}
+	}
+	return false
 }
 
 func catalogSkillIDSet(catalog []skills.SkillDiscoveryMetadata) map[string]struct{} {

@@ -6,7 +6,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// OrganizationSkillConfig stores the AIChat skill enablement for one organization.
+// OrganizationSkillConfig stores the organization-level chat runtime skill policy.
 type OrganizationSkillConfig struct {
 	OrganizationID uuid.UUID `gorm:"type:uuid;primaryKey" json:"organization_id"`
 	SkillID        string    `gorm:"type:varchar(128);primaryKey" json:"skill_id"`

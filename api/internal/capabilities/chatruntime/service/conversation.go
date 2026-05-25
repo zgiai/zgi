@@ -157,6 +157,65 @@ func (s *service) UpdateSkillConfig(ctx context.Context, scope Scope, req runtim
 	return &SkillConfig{EnabledSkillIDs: normalized}, nil
 }
 
+func (s *service) GetAccountSkillPreference(ctx context.Context, scope Scope, callerType string) (*AccountSkillPreference, error) {
+	if err := s.ensureMember(ctx, scope); err != nil {
+		return nil, err
+	}
+	callerType = normalizeCallerType(callerType)
+	if callerType != runtimemodel.ConversationCallerAIChat {
+		return nil, fmt.Errorf("%w: unsupported caller type", ErrInvalidInput)
+	}
+	metadata, err := s.catalogSkillMetadata(ctx, scope.OrganizationID)
+	if err != nil {
+		return nil, err
+	}
+	metadata = visibleSkillMetadata(metadata)
+	orgEnabled, err := s.effectiveOrganizationSkillIDs(ctx, scope.OrganizationID, metadata)
+	if err != nil {
+		return nil, err
+	}
+	enabled, defaulted, err := s.effectiveAccountSkillPreferenceIDs(ctx, scope, callerType, metadata, orgEnabled)
+	if err != nil {
+		return nil, err
+	}
+	return &AccountSkillPreference{EnabledSkillIDs: enabled, Defaulted: defaulted}, nil
+}
+
+func (s *service) UpdateAccountSkillPreference(ctx context.Context, scope Scope, callerType string, req runtimedto.UpdateAccountSkillPreferenceRequest) (*AccountSkillPreference, error) {
+	if err := s.ensureMember(ctx, scope); err != nil {
+		return nil, err
+	}
+	callerType = normalizeCallerType(callerType)
+	if callerType != runtimemodel.ConversationCallerAIChat {
+		return nil, fmt.Errorf("%w: unsupported caller type", ErrInvalidInput)
+	}
+	metadata, err := s.catalogSkillMetadata(ctx, scope.OrganizationID)
+	if err != nil {
+		return nil, err
+	}
+	metadata = visibleSkillMetadata(metadata)
+	orgEnabled, err := s.effectiveOrganizationSkillIDs(ctx, scope.OrganizationID, metadata)
+	if err != nil {
+		return nil, err
+	}
+	normalized, err := validateSkillIDsForCaller(req.EnabledSkillIDs, metadata, orgEnabled, callerType, nil)
+	if err != nil {
+		return nil, err
+	}
+	if s.repos == nil || s.repos.SkillPref == nil {
+		return nil, fmt.Errorf("%w: account skill preference repository is not configured", ErrInvalidInput)
+	}
+	if err := s.repos.SkillPref.Upsert(ctx, &runtimemodel.AccountSkillPreference{
+		OrganizationID:  scope.OrganizationID,
+		AccountID:       scope.AccountID,
+		CallerType:      callerType,
+		EnabledSkillIDs: normalized,
+	}); err != nil {
+		return nil, err
+	}
+	return &AccountSkillPreference{EnabledSkillIDs: normalized, Defaulted: false}, nil
+}
+
 func (s *service) ListConversations(ctx context.Context, scope Scope, page, limit int) ([]*runtimemodel.Conversation, int64, error) {
 	return s.ListConversationsByCaller(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, page, limit)
 }

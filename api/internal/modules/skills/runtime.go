@@ -45,11 +45,13 @@ type skillLocation struct {
 }
 
 type ExecutionContext struct {
-	TenantID       string
-	UserID         string
-	ConversationID string
-	AppID          string
-	MessageID      string
+	TenantID          string
+	UserID            string
+	ConversationID    string
+	AppID             string
+	MessageID         string
+	InvokeFrom        tools.ToolInvokeFrom
+	RuntimeParameters map[string]interface{}
 }
 
 type ToolInvocationResult struct {
@@ -343,16 +345,17 @@ func (r *Runtime) CallSkillTool(
 
 	start := time.Now()
 	result, err := r.engine.Invoke(runCtx, tools.InvokeRequest{
-		ProviderType:   toolDef.ProviderType,
-		ProviderID:     toolDef.ProviderID,
-		ToolName:       toolDef.Name,
-		TenantID:       execCtx.TenantID,
-		UserID:         execCtx.UserID,
-		Parameters:     arguments,
-		ConversationID: execCtx.ConversationID,
-		AppID:          execCtx.AppID,
-		MessageID:      execCtx.MessageID,
-		InvokeFrom:     tools.ToolInvokeFromAIChat,
+		ProviderType:      toolDef.ProviderType,
+		ProviderID:        toolDef.ProviderID,
+		ToolName:          toolDef.Name,
+		TenantID:          execCtx.TenantID,
+		UserID:            execCtx.UserID,
+		Parameters:        arguments,
+		ConversationID:    execCtx.ConversationID,
+		AppID:             execCtx.AppID,
+		MessageID:         execCtx.MessageID,
+		InvokeFrom:        normalizeToolInvokeFrom(execCtx.InvokeFrom),
+		RuntimeParameters: copyStringAnyMap(execCtx.RuntimeParameters),
 	})
 	trace := SkillTrace{
 		Kind:       "tool_call",
@@ -751,10 +754,72 @@ func buildSkillDocument(id string, root string, source string, frontmatter Skill
 			HasScripts:       hasScripts(root),
 			ScriptsSupported: false,
 			RootPath:         root,
+			SupportedCallers: normalizeSkillCallers(id, source, frontmatter.SupportedCallers),
+			RequiredConfig:   normalizeSkillRequiredConfig(id, frontmatter.RequiredConfig),
 		},
 		Instructions: strings.TrimSpace(body),
 		Tools:        buildSkillToolDefinitions(frontmatter),
 	}
+}
+
+func normalizeToolInvokeFrom(value tools.ToolInvokeFrom) tools.ToolInvokeFrom {
+	switch value {
+	case tools.ToolInvokeFromAgent:
+		return tools.ToolInvokeFromAgent
+	default:
+		return tools.ToolInvokeFromAIChat
+	}
+}
+
+func normalizeSkillCallers(id string, source string, callers []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(callers))
+	for _, raw := range callers {
+		switch strings.ToLower(strings.TrimSpace(raw)) {
+		case SkillCallerAIChat:
+			if _, ok := seen[SkillCallerAIChat]; !ok {
+				seen[SkillCallerAIChat] = struct{}{}
+				out = append(out, SkillCallerAIChat)
+			}
+		case SkillCallerAgent:
+			if _, ok := seen[SkillCallerAgent]; !ok {
+				seen[SkillCallerAgent] = struct{}{}
+				out = append(out, SkillCallerAgent)
+			}
+		}
+	}
+	if len(out) > 0 {
+		return out
+	}
+	switch normalizeSkillID(id) {
+	case SkillInternalKnowledge:
+		return []string{SkillCallerAIChat}
+	case SkillAgentKnowledge:
+		return []string{SkillCallerAgent}
+	default:
+		return []string{SkillCallerAIChat, SkillCallerAgent}
+	}
+}
+
+func normalizeSkillRequiredConfig(id string, required []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(required))
+	for _, raw := range required {
+		value := strings.ToLower(strings.TrimSpace(raw))
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	if len(out) == 0 && normalizeSkillID(id) == SkillAgentKnowledge {
+		out = append(out, SkillRequiredConfigAgentKnowledge)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func parseSkillMarkdown(raw []byte) (SkillFrontmatter, string, error) {

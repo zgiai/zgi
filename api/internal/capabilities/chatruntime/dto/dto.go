@@ -54,6 +54,8 @@ type SkillResponse struct {
 	TimeoutSeconds   int                  `json:"timeout_seconds"`
 	Status           string               `json:"status"`
 	ValidationError  string               `json:"validation_error,omitempty"`
+	SupportedCallers []string             `json:"supported_callers,omitempty"`
+	RequiredConfig   []string             `json:"required_config,omitempty"`
 }
 
 type SkillConfigResponse struct {
@@ -61,6 +63,15 @@ type SkillConfigResponse struct {
 }
 
 type UpdateSkillConfigRequest struct {
+	EnabledSkillIDs []string `json:"enabled_skill_ids"`
+}
+
+type AccountSkillPreferenceResponse struct {
+	EnabledSkillIDs []string `json:"enabled_skill_ids"`
+	Defaulted       bool     `json:"defaulted"`
+}
+
+type UpdateAccountSkillPreferenceRequest struct {
 	EnabledSkillIDs []string `json:"enabled_skill_ids"`
 }
 
