@@ -2,9 +2,12 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/llm/provider/model"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -98,11 +101,33 @@ func (r *providerConfigRepository) Upsert(ctx context.Context, config *model.Pro
 		}
 		return r.db.WithContext(ctx).Save(&existing).Error
 	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
 
-	// Record doesn't exist, create it
-	// Use Select to force include is_enabled field even when it's false (zero value)
-	// Without this, GORM will skip false values and use database default (true)
-	return r.db.WithContext(ctx).Select("*").Create(config).Error
+	// Record doesn't exist, create it. Use a map so false is written as false
+	// instead of being replaced by the model's default:true tag.
+	if config.ID == uuid.Nil {
+		config.ID = uuid.New()
+	}
+	values := map[string]interface{}{
+		"id":                  config.ID,
+		"organization_id":     config.OrganizationID,
+		"provider_id":         config.ProviderID,
+		"is_enabled":          config.IsEnabled,
+		"custom_display_name": config.CustomDisplayName,
+		"custom_api_base_url": config.CustomAPIBaseURL,
+		"custom_logo_url":     config.CustomLogoURL,
+		"sort_order":          config.SortOrder,
+	}
+	if config.Metadata != nil {
+		metadata, err := json.Marshal(config.Metadata)
+		if err != nil {
+			return err
+		}
+		values["metadata"] = datatypes.JSON(metadata)
+	}
+	return r.db.WithContext(ctx).Model(&model.ProviderConfig{}).Create(values).Error
 }
 
 // ============================================================================
