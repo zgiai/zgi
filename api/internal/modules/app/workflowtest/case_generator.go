@@ -22,6 +22,12 @@ type GenerateCasesRequest struct {
 	Model         *Model   `json:"model,omitempty"`
 }
 
+type CreateGenerationTaskRequest = GenerateCasesRequest
+
+type GenerationTaskResponse struct {
+	Task *GenerationTask `json:"task"`
+}
+
 type GeneratedCase struct {
 	Content        string `json:"content"`
 	ExpectedResult string `json:"expected_result"`
