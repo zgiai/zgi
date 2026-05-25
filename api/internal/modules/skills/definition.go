@@ -7,9 +7,11 @@ import (
 )
 
 const (
-	SkillTime          = "time"
-	SkillCalculator    = "calculator"
-	SkillFileGenerator = "file-generator"
+	SkillTime              = "time"
+	SkillCalculator        = "calculator"
+	SkillFileGenerator     = "file-generator"
+	SkillInternalKnowledge = "internal-knowledge"
+	SkillAgentKnowledge    = "agent-knowledge"
 
 	SkillSourceSystem = "system"
 	SkillSourceCustom = "custom"
