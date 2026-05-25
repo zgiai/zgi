@@ -445,6 +445,8 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
                       variant="outline"
                       className="size-8"
                       onClick={() => setSkillDialogOpen(true)}
+                      aria-label="添加 Skill"
+                      title="添加 Skill"
                     >
                       <Plus className="size-4" />
                     </Button>
@@ -489,6 +491,8 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
                             variant="ghost"
                             className="size-7 shrink-0 text-muted-foreground hover:text-destructive"
                             onClick={() => handleToggleSkill(skill.skill_id, false)}
+                            aria-label={`移除 ${display.label}`}
+                            title={`移除 ${display.label}`}
                           >
                             <Trash2 className="size-4" />
                           </Button>
