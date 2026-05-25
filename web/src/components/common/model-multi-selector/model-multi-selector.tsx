@@ -16,6 +16,8 @@ import { ProviderIcon } from '@/components/common/provider-icon';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ModelTooltipContent } from '@/components/model/model-tooltip-content';
 
+type ModelSelectionPolicy = 'available' | 'catalog';
+
 export interface ModelMultiSelectorProps {
   // Controlled selected model names
   value?: string[];
@@ -35,6 +37,7 @@ export interface ModelMultiSelectorProps {
   providerFilter?: string;
   onSelectionMetaChange?: (models: ModelItem[]) => void;
   supplementalModels?: ModelItem[];
+  selectionPolicy?: ModelSelectionPolicy;
 }
 
 // Group models by provider
@@ -63,7 +66,15 @@ function getModelNameFromSelectionKey(key: string): string {
   return separatorIndex >= 0 ? key.slice(separatorIndex + 1) : key;
 }
 
-function isModelSelectable(model: ModelItem): boolean {
+function isModelSelectable(
+  model: ModelItem,
+  selectionPolicy: ModelSelectionPolicy,
+  catalogModelKeys: ReadonlySet<string>
+): boolean {
+  if (selectionPolicy === 'catalog') {
+    return catalogModelKeys.has(getModelSelectionKey(model));
+  }
+
   return model.callable !== false && model.is_available !== false;
 }
 
@@ -80,6 +91,7 @@ function ModelMultiSelectorBase({
   providerFilter,
   onSelectionMetaChange,
   supplementalModels = [],
+  selectionPolicy = 'available',
 }: ModelMultiSelectorProps): JSX.Element {
   const t = useT();
 
@@ -106,9 +118,21 @@ function ModelMultiSelectorBase({
     retry: false,
   });
 
+  const catalogItems = useMemo(() => data?.data?.items ?? [], [data]);
+
+  const catalogModelKeys = useMemo(
+    () => new Set(catalogItems.map(item => getModelSelectionKey(item))),
+    [catalogItems]
+  );
+
+  const isSelectable = useCallback(
+    (model: ModelItem) => isModelSelectable(model, selectionPolicy, catalogModelKeys),
+    [catalogModelKeys, selectionPolicy]
+  );
+
   const allItems = useMemo(() => {
     const merged = new Map<string, ModelItem>();
-    (data?.data?.items ?? []).forEach(item => {
+    catalogItems.forEach(item => {
       merged.set(getModelSelectionKey(item), item);
     });
     supplementalModels.forEach(item => {
@@ -118,7 +142,7 @@ function ModelMultiSelectorBase({
       }
     });
     return Array.from(merged.values());
-  }, [data, supplementalModels]);
+  }, [catalogItems, supplementalModels]);
 
   const selectedItems = useMemo(
     () =>
@@ -238,7 +262,7 @@ function ModelMultiSelectorBase({
 
   const toggleModel = useCallback(
     (model: ModelItem) => {
-      if (!isModelSelectable(model)) return;
+      if (!isSelectable(model)) return;
 
       const modelKey = getModelSelectionKey(model);
       const next = new Set(selectedSet);
@@ -259,7 +283,7 @@ function ModelMultiSelectorBase({
       }
       setSelected(Array.from(next));
     },
-    [selectedSet, setSelected]
+    [isSelectable, selectedSet, setSelected]
   );
 
   const clearAll = useCallback(() => {
@@ -271,7 +295,7 @@ function ModelMultiSelectorBase({
   // Toggle all models in a provider group
   const toggleProviderGroup = useCallback(
     (group: ProviderGroup) => {
-      const selectableModels = group.models.filter(isModelSelectable);
+      const selectableModels = group.models.filter(isSelectable);
       if (selectableModels.length === 0) return;
 
       const groupModelNames = selectableModels.map(m => m.model);
@@ -297,7 +321,7 @@ function ModelMultiSelectorBase({
       }
       setSelected(Array.from(next));
     },
-    [selectedSet, setSelected]
+    [isSelectable, selectedSet, setSelected]
   );
 
   // Toggle collapse state for a provider group
@@ -316,24 +340,24 @@ function ModelMultiSelectorBase({
   // Check if all models in a group are selected
   const isGroupAllSelected = useCallback(
     (group: ProviderGroup): boolean => {
-      const selectableModels = group.models.filter(isModelSelectable);
+      const selectableModels = group.models.filter(isSelectable);
       return (
         selectableModels.length > 0 && selectableModels.every(m => selectedSet.has(m.model))
       );
     },
-    [selectedSet]
+    [isSelectable, selectedSet]
   );
 
   // Check if some (but not all) models in a group are selected
   const isGroupPartiallySelected = useCallback(
     (group: ProviderGroup): boolean => {
-      const selectableModels = group.models.filter(isModelSelectable);
+      const selectableModels = group.models.filter(isSelectable);
       const someSelected = selectableModels.some(m => selectedSet.has(m.model));
       const allSelected =
         selectableModels.length > 0 && selectableModels.every(m => selectedSet.has(m.model));
       return someSelected && !allSelected;
     },
-    [selectedSet]
+    [isSelectable, selectedSet]
   );
 
   return (
@@ -418,7 +442,7 @@ function ModelMultiSelectorBase({
                   const isCollapsed = collapsedGroups.has(group.provider);
                   const allSelected = isGroupAllSelected(group);
                   const partialSelected = isGroupPartiallySelected(group);
-                  const hasSelectableModels = group.models.some(isModelSelectable);
+                  const hasSelectableModels = group.models.some(isSelectable);
 
                   return (
                     <div key={group.provider} className="border-b last:border-b-0">
@@ -468,7 +492,7 @@ function ModelMultiSelectorBase({
                           {group.models.map(m => {
                             const id = m.model;
                             const checked = selectedSet.has(id);
-                            const selectable = isModelSelectable(m);
+                            const selectable = isSelectable(m);
                             return (
                               <label
                                 htmlFor={`model-${m.provider}-${id}`}
