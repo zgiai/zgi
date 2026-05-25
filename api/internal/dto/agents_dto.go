@@ -149,3 +149,72 @@ type WebAppStatusResponse struct {
 	WebAppStatus string `json:"web_app_status"`
 	UpdatedAt    int64  `json:"updated_at"`
 }
+
+type AgentRuntimeModeConfig struct {
+	EnabledSkillIDs []string `json:"enabled_skill_ids"`
+	UseMemory       bool     `json:"use_memory"`
+}
+
+type AgentConfigRequest struct {
+	SystemPrompt    string                 `json:"system_prompt"`
+	ModelProvider   string                 `json:"model_provider"`
+	Model           string                 `json:"model"`
+	ModelParameters map[string]interface{} `json:"model_parameters"`
+	EnabledSkillIDs []string               `json:"enabled_skill_ids"`
+	UseMemory       bool                   `json:"use_memory"`
+}
+
+type AgentConfigResponse struct {
+	AgentID         string                 `json:"agent_id"`
+	SystemPrompt    string                 `json:"system_prompt"`
+	ModelProvider   string                 `json:"model_provider"`
+	Model           string                 `json:"model"`
+	ModelParameters map[string]interface{} `json:"model_parameters"`
+	EnabledSkillIDs []string               `json:"enabled_skill_ids"`
+	UseMemory       bool                   `json:"use_memory"`
+	UpdatedAt       int64                  `json:"updated_at"`
+}
+
+type PublishAgentRequest struct {
+	Description string `json:"description"`
+}
+
+type PublishAgentResponse struct {
+	AgentID     string `json:"agent_id"`
+	VersionUUID string `json:"version_uuid"`
+	Version     string `json:"version"`
+	WebAppID    string `json:"web_app_id"`
+	PublishedAt int64  `json:"published_at"`
+}
+
+type AgentPublishedVersionResponse struct {
+	ID          string `json:"id"`
+	AgentID     string `json:"agent_id"`
+	VersionUUID string `json:"version_uuid"`
+	Version     string `json:"version"`
+	Description string `json:"description"`
+	CreatedAt   int64  `json:"created_at"`
+}
+
+type AgentPublishedVersionsResponse struct {
+	Data    []AgentPublishedVersionResponse `json:"data"`
+	Page    int                             `json:"page"`
+	Limit   int                             `json:"limit"`
+	Total   int64                           `json:"total"`
+	HasMore bool                            `json:"has_more"`
+}
+
+type AgentWebAppRuntimeConfigResponse struct {
+	AgentID        string              `json:"agent_id"`
+	WebAppID       string              `json:"web_app_id"`
+	WorkspaceID    string              `json:"workspace_id"`
+	OrganizationID string              `json:"organization_id"`
+	AgentType      string              `json:"agent_type"`
+	Name           string              `json:"name"`
+	Description    string              `json:"description"`
+	Icon           string              `json:"icon"`
+	IconType       string              `json:"icon_type"`
+	Version        string              `json:"version"`
+	VersionUUID    string              `json:"version_uuid"`
+	Config         AgentConfigResponse `json:"config"`
+}

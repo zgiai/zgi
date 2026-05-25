@@ -10,9 +10,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	aichatdto "github.com/zgiai/zgi/api/internal/modules/aichat/dto"
-	aichatmodel "github.com/zgiai/zgi/api/internal/modules/aichat/model"
-	aichatservice "github.com/zgiai/zgi/api/internal/modules/aichat/service"
+	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
+	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/middleware"
@@ -28,10 +28,10 @@ const (
 )
 
 type Handler struct {
-	service aichatservice.Service
+	service runtimeservice.Service
 }
 
-func NewHandler(service aichatservice.Service) *Handler {
+func NewHandler(service runtimeservice.Service) *Handler {
 	return &Handler{service: service}
 }
 
@@ -70,7 +70,7 @@ func (h *Handler) ListSkills(c *gin.Context) {
 		h.fail(c, err)
 		return
 	}
-	items := make([]aichatdto.SkillResponse, 0, len(metadata))
+	items := make([]runtimedto.SkillResponse, 0, len(metadata))
 	for _, item := range metadata {
 		items = append(items, skillResponse(item))
 	}
@@ -113,7 +113,7 @@ func (h *Handler) UpdateSkillConfig(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var req aichatdto.UpdateSkillConfigRequest
+	var req runtimedto.UpdateSkillConfigRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, response.ErrInvalidParam)
 		return
@@ -149,7 +149,7 @@ func (h *Handler) ConfirmImportSkill(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var req aichatdto.ConfirmImportSkillRequest
+	var req runtimedto.ConfirmImportSkillRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, response.ErrInvalidParam)
 		return
@@ -201,7 +201,7 @@ func (h *Handler) CreateConversation(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var req aichatdto.CreateConversationRequest
+	var req runtimedto.CreateConversationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, response.ErrInvalidParam)
 		return
@@ -225,11 +225,11 @@ func (h *Handler) ListConversations(c *gin.Context) {
 		h.fail(c, err)
 		return
 	}
-	items := make([]aichatdto.ConversationResponse, 0, len(conversations))
+	items := make([]runtimedto.ConversationResponse, 0, len(conversations))
 	for _, conversation := range conversations {
 		items = append(items, conversationResponse(conversation))
 	}
-	response.Success(c, aichatdto.ListResponse[aichatdto.ConversationResponse]{
+	response.Success(c, runtimedto.ListResponse[runtimedto.ConversationResponse]{
 		Data:    items,
 		Page:    page,
 		Limit:   limit,
@@ -256,7 +256,7 @@ func (h *Handler) UpdateConversation(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var req aichatdto.UpdateConversationRequest
+	var req runtimedto.UpdateConversationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, response.ErrInvalidParam)
 		return
@@ -292,11 +292,11 @@ func (h *Handler) ListMessages(c *gin.Context) {
 		h.fail(c, err)
 		return
 	}
-	items := make([]aichatdto.MessageResponse, 0, len(messages))
+	items := make([]runtimedto.MessageResponse, 0, len(messages))
 	for _, message := range messages {
 		items = append(items, messageResponse(message))
 	}
-	response.Success(c, aichatdto.ListResponse[aichatdto.MessageResponse]{
+	response.Success(c, runtimedto.ListResponse[runtimedto.MessageResponse]{
 		Data:    items,
 		Page:    page,
 		Limit:   limit,
@@ -317,7 +317,7 @@ func (h *Handler) StreamConversationEvents(c *gin.Context) {
 	}
 
 	setupSSE(c)
-	err = h.service.StreamConversationEvents(c.Request.Context(), scope, conversationID, messageID, c.Query("after_id"), func(event aichatservice.StreamEvent) error {
+	err = h.service.StreamConversationEvents(c.Request.Context(), scope, conversationID, messageID, c.Query("after_id"), func(event runtimeservice.StreamEvent) error {
 		return writeSSEEvent(c, event.ID, event.EventType, event.Payload)
 	})
 	if err != nil {
@@ -373,7 +373,7 @@ func (h *Handler) RegenerateMessage(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var req aichatdto.RegenerateMessageRequest
+	var req runtimedto.RegenerateMessageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, response.ErrInvalidParam)
 		return
@@ -390,15 +390,15 @@ func (h *Handler) RegenerateMessage(c *gin.Context) {
 
 	result, err := h.service.RunPreparedStream(c.Request.Context(), prepared, func(chunk string) error {
 		return client.writeChunk(prepared, chunk)
-	}, func(event aichatservice.StreamEvent) error {
+	}, func(event runtimeservice.StreamEvent) error {
 		return writeSSEEvent(c, event.ID, event.EventType, event.Payload)
 	})
 	if err != nil {
-		if errors.Is(err, aichatservice.ErrMessageStopped) {
+		if errors.Is(err, runtimeservice.ErrMessageStopped) {
 			writeChatStopped(c, prepared)
 			return
 		}
-		if aichatservice.IsFinalizedStreamError(err) {
+		if runtimeservice.IsFinalizedStreamError(err) {
 			return
 		}
 		writeChatError(c, prepared, err)
@@ -412,7 +412,7 @@ func (h *Handler) Chat(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var req aichatdto.ChatRequest
+	var req runtimedto.ChatRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, response.ErrInvalidParam)
 		return
@@ -430,15 +430,15 @@ func (h *Handler) Chat(c *gin.Context) {
 
 	result, err := h.service.RunPreparedStream(c.Request.Context(), prepared, func(chunk string) error {
 		return client.writeChunk(prepared, chunk)
-	}, func(event aichatservice.StreamEvent) error {
+	}, func(event runtimeservice.StreamEvent) error {
 		return writeSSEEvent(c, event.ID, event.EventType, event.Payload)
 	})
 	if err != nil {
-		if errors.Is(err, aichatservice.ErrMessageStopped) {
+		if errors.Is(err, runtimeservice.ErrMessageStopped) {
 			writeChatStopped(c, prepared)
 			return
 		}
-		if aichatservice.IsFinalizedStreamError(err) {
+		if runtimeservice.IsFinalizedStreamError(err) {
 			return
 		}
 		writeChatError(c, prepared, err)
@@ -447,7 +447,7 @@ func (h *Handler) Chat(c *gin.Context) {
 	writeChatEnd(c, prepared, result)
 }
 
-func writeChatStart(c *gin.Context, prepared *aichatservice.PreparedChat) {
+func writeChatStart(c *gin.Context, prepared *runtimeservice.PreparedChat) {
 	_ = writeSSE(c, "message_start", gin.H{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
@@ -459,7 +459,7 @@ func writeChatStart(c *gin.Context, prepared *aichatservice.PreparedChat) {
 	})
 }
 
-func writeChatChunk(c *gin.Context, prepared *aichatservice.PreparedChat, chunk string) error {
+func writeChatChunk(c *gin.Context, prepared *runtimeservice.PreparedChat, chunk string) error {
 	return writeSSE(c, "message", gin.H{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
@@ -467,27 +467,27 @@ func writeChatChunk(c *gin.Context, prepared *aichatservice.PreparedChat, chunk 
 	})
 }
 
-func writeChatError(c *gin.Context, prepared *aichatservice.PreparedChat, err error) {
+func writeChatError(c *gin.Context, prepared *runtimeservice.PreparedChat, err error) {
 	logger.WarnContext(c.Request.Context(), "aichat stream failed", "message_id", prepared.Message.ID.String(), err)
-	_ = writeSSE(c, "error", aichatservice.BuildStreamErrorPayload(prepared, err))
+	_ = writeSSE(c, "error", runtimeservice.BuildStreamErrorPayload(prepared, err))
 }
 
-func writeChatEnd(c *gin.Context, prepared *aichatservice.PreparedChat, result *aichatservice.ChatResult) {
+func writeChatEnd(c *gin.Context, prepared *runtimeservice.PreparedChat, result *runtimeservice.ChatResult) {
 	_ = writeSSE(c, "message_end", gin.H{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
-		"status":          aichatmodel.MessageStatusCompleted,
+		"status":          runtimemodel.MessageStatusCompleted,
 		"metadata": gin.H{
 			"usage": result.Metadata["usage"],
 		},
 	})
 }
 
-func writeChatStopped(c *gin.Context, prepared *aichatservice.PreparedChat) {
+func writeChatStopped(c *gin.Context, prepared *runtimeservice.PreparedChat) {
 	_ = writeSSE(c, "message_end", gin.H{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
-		"status":          aichatmodel.MessageStatusStopped,
+		"status":          runtimemodel.MessageStatusStopped,
 		"metadata": gin.H{
 			"usage": gin.H{},
 		},
@@ -503,7 +503,7 @@ func newSSEClientWriter(c *gin.Context) *sseClientWriter {
 	return &sseClientWriter{c: c}
 }
 
-func (w *sseClientWriter) writeChunk(prepared *aichatservice.PreparedChat, chunk string) error {
+func (w *sseClientWriter) writeChunk(prepared *runtimeservice.PreparedChat, chunk string) error {
 	if w.closed || w.c.Request.Context().Err() != nil {
 		w.closed = true
 		return nil
@@ -515,16 +515,16 @@ func (w *sseClientWriter) writeChunk(prepared *aichatservice.PreparedChat, chunk
 	return nil
 }
 
-func (h *Handler) scope(c *gin.Context) (aichatservice.Scope, bool) {
+func (h *Handler) scope(c *gin.Context) (runtimeservice.Scope, bool) {
 	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))
 	if err != nil {
 		response.Fail(c, response.ErrUnauthorized)
-		return aichatservice.Scope{}, false
+		return runtimeservice.Scope{}, false
 	}
 	organizationID, err := uuid.Parse(strings.TrimSpace(util.GetOrganizationID(c)))
 	if err != nil {
 		response.Fail(c, response.ErrUnauthorized)
-		return aichatservice.Scope{}, false
+		return runtimeservice.Scope{}, false
 	}
 	var workspaceID *uuid.UUID
 	if raw := strings.TrimSpace(util.GetWorkspaceID(c)); raw != "" {
@@ -533,37 +533,37 @@ func (h *Handler) scope(c *gin.Context) (aichatservice.Scope, bool) {
 			workspaceID = &parsed
 		}
 	}
-	return aichatservice.Scope{
+	return runtimeservice.Scope{
 		OrganizationID: organizationID,
 		AccountID:      accountID,
 		WorkspaceID:    workspaceID,
 	}, true
 }
 
-func (h *Handler) scopedID(c *gin.Context, param string) (aichatservice.Scope, uuid.UUID, bool) {
+func (h *Handler) scopedID(c *gin.Context, param string) (runtimeservice.Scope, uuid.UUID, bool) {
 	scope, ok := h.scope(c)
 	if !ok {
-		return aichatservice.Scope{}, uuid.Nil, false
+		return runtimeservice.Scope{}, uuid.Nil, false
 	}
 	id, err := uuid.Parse(strings.TrimSpace(c.Param(param)))
 	if err != nil {
 		response.Fail(c, response.ErrInvalidParam)
-		return aichatservice.Scope{}, uuid.Nil, false
+		return runtimeservice.Scope{}, uuid.Nil, false
 	}
 	return scope, id, true
 }
 
 func (h *Handler) fail(c *gin.Context, err error) {
 	switch {
-	case errors.Is(err, aichatservice.ErrUnauthorized):
+	case errors.Is(err, runtimeservice.ErrUnauthorized):
 		response.Fail(c, response.ErrUnauthorized)
-	case errors.Is(err, aichatservice.ErrPermissionDenied):
+	case errors.Is(err, runtimeservice.ErrPermissionDenied):
 		response.Fail(c, response.ErrPermissionDenied)
-	case errors.Is(err, aichatservice.ErrNotFound):
+	case errors.Is(err, runtimeservice.ErrNotFound):
 		response.Fail(c, response.ErrNotFound)
-	case errors.Is(err, aichatservice.ErrInvalidInput), errors.Is(err, aichatservice.ErrInvalidModelParam):
+	case errors.Is(err, runtimeservice.ErrInvalidInput), errors.Is(err, runtimeservice.ErrInvalidModelParam):
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
-	case errors.Is(err, aichatservice.ErrConversationRunning), errors.Is(err, aichatservice.ErrMessageReplaceNotAllowed):
+	case errors.Is(err, runtimeservice.ErrConversationRunning), errors.Is(err, runtimeservice.ErrMessageReplaceNotAllowed):
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 	default:
 		logger.ErrorContext(c.Request.Context(), "aichat request failed", err)
@@ -622,8 +622,8 @@ func parsePositiveInt(raw string, fallback int) int {
 	return value
 }
 
-func conversationResponse(conversation *aichatmodel.Conversation) aichatdto.ConversationResponse {
-	resp := aichatdto.ConversationResponse{
+func conversationResponse(conversation *runtimemodel.Conversation) runtimedto.ConversationResponse {
+	resp := runtimedto.ConversationResponse{
 		ID:             conversation.ID.String(),
 		OrganizationID: conversation.OrganizationID.String(),
 		AccountID:      conversation.AccountID.String(),
@@ -657,14 +657,14 @@ func conversationResponse(conversation *aichatmodel.Conversation) aichatdto.Conv
 	return resp
 }
 
-func skillResponse(metadata skills.SkillDiscoveryMetadata) aichatdto.SkillResponse {
-	return aichatdto.SkillResponse{
+func skillResponse(metadata skills.SkillDiscoveryMetadata) runtimedto.SkillResponse {
+	return runtimedto.SkillResponse{
 		SkillID:     metadata.ID,
 		Source:      metadata.Source,
 		Name:        metadata.Name,
 		Description: metadata.Description,
 		WhenToUse:   metadata.WhenToUse,
-		Display: aichatdto.SkillDisplayResponse{
+		Display: runtimedto.SkillDisplayResponse{
 			Icon:        metadata.Display.Icon,
 			Category:    metadata.Display.Category,
 			Label:       metadata.Display.Label,
@@ -685,27 +685,27 @@ func skillResponse(metadata skills.SkillDiscoveryMetadata) aichatdto.SkillRespon
 	}
 }
 
-func skillImportPreviewResponse(preview *aichatservice.SkillImportPreview) aichatdto.ImportSkillPreviewResponse {
+func skillImportPreviewResponse(preview *runtimeservice.SkillImportPreview) runtimedto.ImportSkillPreviewResponse {
 	if preview == nil {
-		return aichatdto.ImportSkillPreviewResponse{
-			Files:            []aichatdto.ImportSkillPreviewFile{},
+		return runtimedto.ImportSkillPreviewResponse{
+			Files:            []runtimedto.ImportSkillPreviewFile{},
 			References:       []string{},
 			Warnings:         []string{},
 			ValidationErrors: []string{},
 		}
 	}
-	files := make([]aichatdto.ImportSkillPreviewFile, 0, len(preview.Files))
+	files := make([]runtimedto.ImportSkillPreviewFile, 0, len(preview.Files))
 	for _, file := range preview.Files {
-		files = append(files, aichatdto.ImportSkillPreviewFile{Path: file.Path, Size: file.Size})
+		files = append(files, runtimedto.ImportSkillPreviewFile{Path: file.Path, Size: file.Size})
 	}
-	var skill *aichatdto.SkillResponse
+	var skill *runtimedto.SkillResponse
 	if preview.Skill != nil {
 		value := skillResponse(*preview.Skill)
 		skill = &value
 	}
-	var existingSkill *aichatdto.ExistingSkillResponse
+	var existingSkill *runtimedto.ExistingSkillResponse
 	if preview.ExistingSkill != nil {
-		existingSkill = &aichatdto.ExistingSkillResponse{
+		existingSkill = &runtimedto.ExistingSkillResponse{
 			SkillID: preview.ExistingSkill.SkillID,
 			Name:    preview.ExistingSkill.Name,
 		}
@@ -717,7 +717,7 @@ func skillImportPreviewResponse(preview *aichatservice.SkillImportPreview) aicha
 	if !preview.ExpiresAt.IsZero() {
 		expiresAt = preview.ExpiresAt.Unix()
 	}
-	return aichatdto.ImportSkillPreviewResponse{
+	return runtimedto.ImportSkillPreviewResponse{
 		ImportID:         preview.ImportID,
 		ExpiresAt:        expiresAt,
 		Skill:            skill,
@@ -742,15 +742,15 @@ func copyStringSlice(values []string) []string {
 	return append([]string(nil), values...)
 }
 
-func skillConfigResponse(config *aichatservice.SkillConfig) aichatdto.SkillConfigResponse {
+func skillConfigResponse(config *runtimeservice.SkillConfig) runtimedto.SkillConfigResponse {
 	if config == nil {
-		return aichatdto.SkillConfigResponse{EnabledSkillIDs: []string{}}
+		return runtimedto.SkillConfigResponse{EnabledSkillIDs: []string{}}
 	}
-	return aichatdto.SkillConfigResponse{EnabledSkillIDs: append([]string(nil), config.EnabledSkillIDs...)}
+	return runtimedto.SkillConfigResponse{EnabledSkillIDs: append([]string(nil), config.EnabledSkillIDs...)}
 }
 
-func messageResponse(message *aichatmodel.Message) aichatdto.MessageResponse {
-	resp := aichatdto.MessageResponse{
+func messageResponse(message *runtimemodel.Message) runtimedto.MessageResponse {
+	resp := runtimedto.MessageResponse{
 		ID:                  message.ID.String(),
 		ConversationID:      message.ConversationID.String(),
 		Query:               message.Query,
@@ -774,9 +774,9 @@ func messageResponse(message *aichatmodel.Message) aichatdto.MessageResponse {
 	return resp
 }
 
-func stopConversationResponse(result *aichatservice.StopConversationResult) aichatdto.StopConversationResponse {
-	resp := aichatdto.StopConversationResponse{
-		Status: aichatmodel.ConversationRuntimeStatusIdle,
+func stopConversationResponse(result *runtimeservice.StopConversationResult) runtimedto.StopConversationResponse {
+	resp := runtimedto.StopConversationResponse{
+		Status: runtimemodel.ConversationRuntimeStatusIdle,
 	}
 	if result == nil || result.Conversation == nil {
 		return resp

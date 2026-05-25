@@ -1,0 +1,353 @@
+package agents
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/dto"
+)
+
+func (s *agentsService) GetAgentConfig(ctx context.Context, agentID, accountID string) (*dto.AgentConfigResponse, error) {
+	ag, cfg, err := s.loadAgentRuntimeConfig(ctx, agentID)
+	if err != nil {
+		return nil, err
+	}
+	if ag.AgentsType != "AGENT" {
+		return nil, fmt.Errorf("agent config is only available for AGENT type")
+	}
+	return agentConfigResponse(ag.ID.String(), cfg), nil
+}
+
+func (s *agentsService) UpdateAgentConfig(ctx context.Context, agentID, accountID string, req dto.AgentConfigRequest) (*dto.AgentConfigResponse, error) {
+	if err := s.ensureAgentEditor(ctx, accountID); err != nil {
+		return nil, err
+	}
+	ag, cfg, err := s.loadAgentRuntimeConfig(ctx, agentID)
+	if err != nil {
+		return nil, err
+	}
+	if ag.AgentsType != "AGENT" {
+		return nil, fmt.Errorf("agent config is only available for AGENT type")
+	}
+	runtimeCfg := normalizeAgentConfigRequest(req)
+	cfg.PrePrompt = stringPtr(runtimeCfg.SystemPrompt)
+	cfg.ModelProvider = nullableStringPtr(runtimeCfg.ModelProvider)
+	cfg.ModelVersionID = nullableStringPtr(runtimeCfg.Model)
+	paramsJSON, err := json.Marshal(runtimeCfg.ModelParameters)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal model parameters: %w", err)
+	}
+	params := string(paramsJSON)
+	cfg.Configs = &params
+	modeJSON, err := json.Marshal(dto.AgentRuntimeModeConfig{
+		EnabledSkillIDs: runtimeCfg.EnabledSkillIDs,
+		UseMemory:       runtimeCfg.UseMemory,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal agent mode: %w", err)
+	}
+	mode := string(modeJSON)
+	cfg.AgentMode = &mode
+	if uid, err := uuid.Parse(accountID); err == nil {
+		cfg.UpdatedBy = &uid
+	}
+	if err := s.agentsRepo.UpdateAgentsConfig(ctx, cfg); err != nil {
+		return nil, err
+	}
+	return agentConfigResponse(ag.ID.String(), cfg), nil
+}
+
+func (s *agentsService) PublishAgent(ctx context.Context, agentID, accountID string, req dto.PublishAgentRequest) (*dto.PublishAgentResponse, error) {
+	if err := s.ensureAgentEditor(ctx, accountID); err != nil {
+		return nil, err
+	}
+	ag, cfg, err := s.loadAgentRuntimeConfig(ctx, agentID)
+	if err != nil {
+		return nil, err
+	}
+	if ag.AgentsType != "AGENT" {
+		return nil, fmt.Errorf("publish agent is only available for AGENT type")
+	}
+	snapshot := agentConfigSnapshot(ag.ID.String(), cfg)
+	now := time.Now()
+	versionUUID := uuid.New()
+	version := &AgentPublishedVersion{
+		AgentID:        ag.ID,
+		WorkspaceID:    ag.TenantID,
+		Version:        now.Format("20060102150405"),
+		VersionUUID:    versionUUID,
+		ConfigSnapshot: snapshot,
+		Description:    strings.TrimSpace(req.Description),
+		CreatedAt:      now,
+	}
+	if uid, err := uuid.Parse(accountID); err == nil {
+		version.CreatedBy = &uid
+	}
+	if err := s.agentsRepo.CreateAgentPublishedVersion(ctx, version); err != nil {
+		return nil, err
+	}
+	return &dto.PublishAgentResponse{
+		AgentID:     ag.ID.String(),
+		VersionUUID: versionUUID.String(),
+		Version:     version.Version,
+		WebAppID:    ag.WebAppID.String(),
+		PublishedAt: now.Unix(),
+	}, nil
+}
+
+func (s *agentsService) ListAgentPublishedVersions(ctx context.Context, agentID string, page, limit int) (*dto.AgentPublishedVersionsResponse, error) {
+	if page <= 0 {
+		page = 1
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	versions, total, err := s.agentsRepo.ListAgentPublishedVersions(ctx, agentID, limit, (page-1)*limit)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]dto.AgentPublishedVersionResponse, 0, len(versions))
+	for _, version := range versions {
+		if version == nil {
+			continue
+		}
+		items = append(items, dto.AgentPublishedVersionResponse{
+			ID:          version.ID.String(),
+			AgentID:     version.AgentID.String(),
+			VersionUUID: version.VersionUUID.String(),
+			Version:     version.Version,
+			Description: version.Description,
+			CreatedAt:   version.CreatedAt.Unix(),
+		})
+	}
+	return &dto.AgentPublishedVersionsResponse{
+		Data:    items,
+		Page:    page,
+		Limit:   limit,
+		Total:   total,
+		HasMore: int64(page*limit) < total,
+	}, nil
+}
+
+func (s *agentsService) GetPublishedAgentWebAppConfig(ctx context.Context, webAppID string) (*dto.AgentWebAppRuntimeConfigResponse, error) {
+	ag, err := s.agentsRepo.GetByWebAppID(ctx, webAppID)
+	if err != nil {
+		return nil, err
+	}
+	if NormalizeAgentWebAppStatus(ag.WebAppStatus) != AgentWebAppStatusActive {
+		return nil, fmt.Errorf("web app is offline")
+	}
+	if ag.AgentsType != "AGENT" {
+		return nil, fmt.Errorf("web app is not an AGENT runtime")
+	}
+	version, err := s.agentsRepo.GetLatestAgentPublishedVersion(ctx, ag.ID.String())
+	if err != nil {
+		return nil, err
+	}
+	organizationID := ag.TenantID.String()
+	if s.enterpriseService != nil {
+		org, err := s.enterpriseService.GetOrganizationByWorkspaceID(ctx, ag.TenantID.String())
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve web app organization: %w", err)
+		}
+		if org != nil {
+			organizationID = org.ID
+		}
+	}
+	cfg := agentConfigResponseFromSnapshot(ag.ID.String(), version.ConfigSnapshot)
+	return &dto.AgentWebAppRuntimeConfigResponse{
+		AgentID:        ag.ID.String(),
+		WebAppID:       ag.WebAppID.String(),
+		WorkspaceID:    ag.TenantID.String(),
+		OrganizationID: organizationID,
+		AgentType:      ag.AgentsType,
+		Name:           ag.Name,
+		Description:    ag.Description,
+		Icon:           stringPtrValue(ag.Icon),
+		IconType:       stringPtrValue(ag.IconType),
+		Version:        version.Version,
+		VersionUUID:    version.VersionUUID.String(),
+		Config:         *cfg,
+	}, nil
+}
+
+func (s *agentsService) loadAgentRuntimeConfig(ctx context.Context, agentID string) (*Agent, *AgentsConfig, error) {
+	ag, err := s.agentsRepo.GetByID(ctx, agentID)
+	if err != nil {
+		return nil, nil, err
+	}
+	var cfg *AgentsConfig
+	if ag.AgentsModelConfigID != nil {
+		cfg, err = s.agentsRepo.GetAgentsConfigByID(ctx, ag.AgentsModelConfigID.String())
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	if cfg == nil {
+		cfg, err = s.agentsRepo.GetAgentsConfigByAgentID(ctx, agentID)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	if cfg == nil {
+		cfg = &AgentsConfig{AgentsID: ag.ID, PromptType: "simple"}
+		if err := s.agentsRepo.CreateAgentsConfig(ctx, cfg); err != nil {
+			return nil, nil, err
+		}
+		ag.AgentsModelConfigID = &cfg.ID
+		_ = s.agentsRepo.Update(ctx, ag)
+	}
+	return ag, cfg, nil
+}
+
+func (s *agentsService) ensureAgentEditor(ctx context.Context, accountID string) error {
+	if strings.TrimSpace(accountID) == "" {
+		return fmt.Errorf("account id is required")
+	}
+	if s.accountService == nil {
+		return nil
+	}
+	ok, err := s.accountService.IsEditor(ctx, accountID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("permission denied")
+	}
+	return nil
+}
+
+func normalizeAgentConfigRequest(req dto.AgentConfigRequest) dto.AgentConfigRequest {
+	req.SystemPrompt = strings.TrimSpace(req.SystemPrompt)
+	req.ModelProvider = strings.TrimSpace(req.ModelProvider)
+	req.Model = strings.TrimSpace(req.Model)
+	if req.ModelParameters == nil {
+		req.ModelParameters = map[string]interface{}{}
+	}
+	req.EnabledSkillIDs = normalizeStringIDs(req.EnabledSkillIDs)
+	return req
+}
+
+func agentConfigResponse(agentID string, cfg *AgentsConfig) *dto.AgentConfigResponse {
+	params := map[string]interface{}{}
+	if cfg != nil && cfg.Configs != nil && strings.TrimSpace(*cfg.Configs) != "" {
+		_ = json.Unmarshal([]byte(*cfg.Configs), &params)
+	}
+	mode := dto.AgentRuntimeModeConfig{}
+	if cfg != nil && cfg.AgentMode != nil && strings.TrimSpace(*cfg.AgentMode) != "" {
+		_ = json.Unmarshal([]byte(*cfg.AgentMode), &mode)
+	}
+	resp := &dto.AgentConfigResponse{
+		AgentID:         agentID,
+		ModelParameters: params,
+		EnabledSkillIDs: normalizeStringIDs(mode.EnabledSkillIDs),
+		UseMemory:       mode.UseMemory,
+	}
+	if cfg != nil {
+		resp.SystemPrompt = stringPtrValue(cfg.PrePrompt)
+		resp.ModelProvider = stringPtrValue(cfg.ModelProvider)
+		resp.Model = stringPtrValue(cfg.ModelVersionID)
+		resp.UpdatedAt = cfg.UpdatedAt.Unix()
+	}
+	return resp
+}
+
+func agentConfigSnapshot(agentID string, cfg *AgentsConfig) map[string]interface{} {
+	resp := agentConfigResponse(agentID, cfg)
+	return map[string]interface{}{
+		"agent_id":          resp.AgentID,
+		"system_prompt":     resp.SystemPrompt,
+		"model_provider":    resp.ModelProvider,
+		"model":             resp.Model,
+		"model_parameters":  resp.ModelParameters,
+		"enabled_skill_ids": resp.EnabledSkillIDs,
+		"use_memory":        resp.UseMemory,
+	}
+}
+
+func agentConfigResponseFromSnapshot(agentID string, snapshot map[string]interface{}) *dto.AgentConfigResponse {
+	resp := &dto.AgentConfigResponse{
+		AgentID:         agentID,
+		ModelParameters: map[string]interface{}{},
+		EnabledSkillIDs: []string{},
+	}
+	if snapshot == nil {
+		return resp
+	}
+	resp.SystemPrompt = stringFromSnapshot(snapshot, "system_prompt")
+	resp.ModelProvider = stringFromSnapshot(snapshot, "model_provider")
+	resp.Model = stringFromSnapshot(snapshot, "model")
+	if params, ok := snapshot["model_parameters"].(map[string]interface{}); ok {
+		resp.ModelParameters = params
+	}
+	resp.EnabledSkillIDs = normalizeStringIDs(stringSliceFromSnapshot(snapshot["enabled_skill_ids"]))
+	if useMemory, ok := snapshot["use_memory"].(bool); ok {
+		resp.UseMemory = useMemory
+	}
+	return resp
+}
+
+func stringFromSnapshot(snapshot map[string]interface{}, key string) string {
+	if value, ok := snapshot[key].(string); ok {
+		return value
+	}
+	return ""
+}
+
+func stringSliceFromSnapshot(value interface{}) []string {
+	switch items := value.(type) {
+	case []string:
+		return append([]string(nil), items...)
+	case []interface{}:
+		out := make([]string, 0, len(items))
+		for _, item := range items {
+			if value, ok := item.(string); ok {
+				out = append(out, value)
+			}
+		}
+		return out
+	default:
+		return []string{}
+	}
+}
+
+func normalizeStringIDs(input []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(input))
+	for _, raw := range input {
+		id := strings.ToLower(strings.TrimSpace(raw))
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func stringPtr(value string) *string {
+	return &value
+}
+
+func nullableStringPtr(value string) *string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return &value
+}
+
+func stringPtrValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}

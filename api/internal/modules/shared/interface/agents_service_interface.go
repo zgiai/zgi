@@ -16,6 +16,11 @@ type AgentsService interface {
 	CreateAgent(ctx context.Context, tenantID string, req interface{}, accountID string) (interface{}, error)
 	GetAgent(ctx context.Context, agentID string) (interface{}, error)
 	UpdateAgent(ctx context.Context, agentID string, req interface{}) (interface{}, error)
+	GetAgentConfig(ctx context.Context, agentID, accountID string) (*dto.AgentConfigResponse, error)
+	UpdateAgentConfig(ctx context.Context, agentID, accountID string, req dto.AgentConfigRequest) (*dto.AgentConfigResponse, error)
+	PublishAgent(ctx context.Context, agentID, accountID string, req dto.PublishAgentRequest) (*dto.PublishAgentResponse, error)
+	ListAgentPublishedVersions(ctx context.Context, agentID string, page, limit int) (*dto.AgentPublishedVersionsResponse, error)
+	GetPublishedAgentWebAppConfig(ctx context.Context, webAppID string) (*dto.AgentWebAppRuntimeConfigResponse, error)
 	UpdateWebAppStatus(ctx context.Context, agentID string, req dto.UpdateWebAppStatusRequest) (*dto.WebAppStatusResponse, error)
 	DeleteAgent(ctx context.Context, agentID string) error
 }

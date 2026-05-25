@@ -2,11 +2,18 @@ package agents
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
+	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/dto"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
@@ -22,15 +29,21 @@ type AgentsHandler struct {
 	accountService      interfaces.AccountService
 	organizationService interfaces.OrganizationService
 	db                  *gorm.DB
+	chatRuntimeService  runtimeservice.Service
 }
 
-func NewAgentsHandler(appService AgentsService, tenantService interfaces.WorkspaceManagementService, accountService interfaces.AccountService, organizationService interfaces.OrganizationService, db *gorm.DB) *AgentsHandler {
+func NewAgentsHandler(appService AgentsService, tenantService interfaces.WorkspaceManagementService, accountService interfaces.AccountService, organizationService interfaces.OrganizationService, db *gorm.DB, chatRuntimeServices ...runtimeservice.Service) *AgentsHandler {
+	var chatRuntimeService runtimeservice.Service
+	if len(chatRuntimeServices) > 0 {
+		chatRuntimeService = chatRuntimeServices[0]
+	}
 	return &AgentsHandler{
 		appService:          appService,
 		tenantService:       tenantService,
 		accountService:      accountService,
 		organizationService: organizationService,
 		db:                  db,
+		chatRuntimeService:  chatRuntimeService,
 	}
 }
 
@@ -298,6 +311,343 @@ func (h *AgentsHandler) GetAgent(c *gin.Context) {
 
 	response.Success(c, result)
 }
+
+func (h *AgentsHandler) GetAgentConfig(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	result, err := h.appService.GetAgentConfig(c.Request.Context(), c.Param("agent_id"), accountID)
+	if err != nil {
+		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *AgentsHandler) UpdateAgentConfig(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	var req dto.AgentConfigRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if err := h.validateAgentRuntimeSkills(c, req.EnabledSkillIDs); err != nil {
+		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
+		return
+	}
+	result, err := h.appService.UpdateAgentConfig(c.Request.Context(), c.Param("agent_id"), accountID, req)
+	if err != nil {
+		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *AgentsHandler) PublishAgent(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	var req dto.PublishAgentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		req = dto.PublishAgentRequest{}
+	}
+	result, err := h.appService.PublishAgent(c.Request.Context(), c.Param("agent_id"), accountID, req)
+	if err != nil {
+		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *AgentsHandler) ChatAgent(c *gin.Context) {
+	if h.chatRuntimeService == nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))
+	if err != nil {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	organizationID, err := uuid.Parse(strings.TrimSpace(util.GetOrganizationID(c)))
+	if err != nil {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	agentID, err := uuid.Parse(strings.TrimSpace(c.Param("agent_id")))
+	if err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	var workspaceID *uuid.UUID
+	if raw := strings.TrimSpace(util.GetWorkspaceID(c)); raw != "" {
+		if parsed, err := uuid.Parse(raw); err == nil {
+			workspaceID = &parsed
+		}
+	}
+	var req runtimedto.ChatRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	cfg, err := h.appService.GetAgentConfig(c.Request.Context(), agentID.String(), accountID.String())
+	if err != nil {
+		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
+		return
+	}
+	runConfig := runtimeservice.RunConfig{
+		SystemPrompt:        cfg.SystemPrompt,
+		SystemPromptVersion: "agent.draft",
+		ModelProvider:       cfg.ModelProvider,
+		Model:               cfg.Model,
+		ModelParameters:     cfg.ModelParameters,
+		EnabledSkillIDs:     cfg.EnabledSkillIDs,
+		UseMemory:           cfg.UseMemory,
+		BillingAppID:        agentID.String(),
+		BillingAppType:      runtimemodel.ConversationCallerAgent,
+	}
+	prepared, err := h.chatRuntimeService.PrepareConfiguredChat(
+		c.Request.Context(),
+		runtimeservice.Scope{OrganizationID: organizationID, AccountID: accountID, WorkspaceID: workspaceID},
+		runtimeservice.Caller{Type: runtimemodel.ConversationCallerAgent, ID: &agentID, Source: runtimemodel.ConversationSourceConsole},
+		runConfig,
+		req,
+	)
+	if err != nil {
+		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
+		return
+	}
+	setupAgentSSE(c)
+	_ = writeAgentSSE(c, "message_start", gin.H{
+		"conversation_id": prepared.Conversation.ID.String(),
+		"message_id":      prepared.Message.ID.String(),
+		"parent_id":       uuidPtrToString(prepared.Message.ParentID),
+		"title":           prepared.Conversation.Title,
+		"model":           prepared.Message.ModelName,
+		"created_at":      prepared.Message.CreatedAt.Unix(),
+	})
+	result, err := h.chatRuntimeService.RunPreparedStream(c.Request.Context(), prepared, func(chunk string) error {
+		return writeAgentSSE(c, "message", gin.H{
+			"conversation_id": prepared.Conversation.ID.String(),
+			"message_id":      prepared.Message.ID.String(),
+			"answer":          chunk,
+		})
+	}, func(event runtimeservice.StreamEvent) error {
+		return writeAgentSSEEvent(c, event.ID, event.EventType, event.Payload)
+	})
+	if err != nil {
+		status := runtimemodel.MessageStatusError
+		if errors.Is(err, runtimeservice.ErrMessageStopped) {
+			status = runtimemodel.MessageStatusStopped
+		}
+		_ = writeAgentSSE(c, "message_end", gin.H{
+			"conversation_id": prepared.Conversation.ID.String(),
+			"message_id":      prepared.Message.ID.String(),
+			"status":          status,
+			"metadata":        gin.H{},
+		})
+		return
+	}
+	_ = writeAgentSSE(c, "message_end", gin.H{
+		"conversation_id": prepared.Conversation.ID.String(),
+		"message_id":      prepared.Message.ID.String(),
+		"status":          runtimemodel.MessageStatusCompleted,
+		"metadata": gin.H{
+			"usage": result.Metadata["usage"],
+		},
+	})
+}
+
+func (h *AgentsHandler) ListAgentPublishedVersions(c *gin.Context) {
+	page := 1
+	limit := 20
+	if parsed, err := strconv.Atoi(c.DefaultQuery("page", "1")); err == nil {
+		page = parsed
+	}
+	if parsed, err := strconv.Atoi(c.DefaultQuery("limit", "20")); err == nil {
+		limit = parsed
+	}
+	result, err := h.appService.ListAgentPublishedVersions(c.Request.Context(), c.Param("agent_id"), page, limit)
+	if err != nil {
+		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *AgentsHandler) GetWebAppRuntimeConfig(c *gin.Context) {
+	result, err := h.appService.GetPublishedAgentWebAppConfig(c.Request.Context(), c.Param("web_app_id"))
+	if err != nil {
+		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
+		return
+	}
+	response.Success(c, gin.H{
+		"variables": []interface{}{},
+		"features": gin.H{
+			"agent_type": result.AgentType,
+			"runtime":    "chat",
+		},
+		"config": gin.H{
+			"agent_id":   result.AgentID,
+			"type":       result.AgentType,
+			"icon":       result.Icon,
+			"icon_type":  result.IconType,
+			"title":      result.Name,
+			"web_app_id": result.WebAppID,
+		},
+		"agent_config": result.Config,
+		"version": gin.H{
+			"version":      result.Version,
+			"version_uuid": result.VersionUUID,
+		},
+	})
+}
+
+func (h *AgentsHandler) ChatWebAppAgent(c *gin.Context) {
+	if h.chatRuntimeService == nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	webAppID := strings.TrimSpace(c.Param("web_app_id"))
+	published, err := h.appService.GetPublishedAgentWebAppConfig(c.Request.Context(), webAppID)
+	if err != nil {
+		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
+		return
+	}
+	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))
+	if err != nil {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	agentID, err := uuid.Parse(published.AgentID)
+	if err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	workspaceID, err := uuid.Parse(published.WorkspaceID)
+	if err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	organizationID, err := uuid.Parse(published.OrganizationID)
+	if err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	sourceWebAppID, err := uuid.Parse(published.WebAppID)
+	if err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	var req runtimedto.ChatRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	runConfig := runtimeservice.RunConfig{
+		SystemPrompt:        published.Config.SystemPrompt,
+		SystemPromptVersion: "agent.published." + published.Version,
+		ModelProvider:       published.Config.ModelProvider,
+		Model:               published.Config.Model,
+		ModelParameters:     published.Config.ModelParameters,
+		EnabledSkillIDs:     published.Config.EnabledSkillIDs,
+		UseMemory:           published.Config.UseMemory,
+		BillingAppID:        published.AgentID,
+		BillingAppType:      runtimemodel.ConversationCallerAgent,
+	}
+	prepared, err := h.chatRuntimeService.PrepareConfiguredChat(
+		c.Request.Context(),
+		runtimeservice.Scope{OrganizationID: organizationID, AccountID: accountID, WorkspaceID: &workspaceID, SkipAccessCheck: true},
+		runtimeservice.Caller{
+			Type:           runtimemodel.ConversationCallerAgent,
+			ID:             &agentID,
+			Source:         runtimemodel.ConversationSourceWebApp,
+			SourceWebAppID: &sourceWebAppID,
+		},
+		runConfig,
+		req,
+	)
+	if err != nil {
+		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
+		return
+	}
+	setupAgentSSE(c)
+	_ = writeAgentSSE(c, "message_start", gin.H{
+		"conversation_id": prepared.Conversation.ID.String(),
+		"message_id":      prepared.Message.ID.String(),
+		"parent_id":       uuidPtrToString(prepared.Message.ParentID),
+		"title":           prepared.Conversation.Title,
+		"model":           prepared.Message.ModelName,
+		"created_at":      prepared.Message.CreatedAt.Unix(),
+	})
+	result, err := h.chatRuntimeService.RunPreparedStream(c.Request.Context(), prepared, func(chunk string) error {
+		return writeAgentSSE(c, "message", gin.H{
+			"conversation_id": prepared.Conversation.ID.String(),
+			"message_id":      prepared.Message.ID.String(),
+			"answer":          chunk,
+		})
+	}, func(event runtimeservice.StreamEvent) error {
+		return writeAgentSSEEvent(c, event.ID, event.EventType, event.Payload)
+	})
+	if err != nil {
+		status := runtimemodel.MessageStatusError
+		if errors.Is(err, runtimeservice.ErrMessageStopped) {
+			status = runtimemodel.MessageStatusStopped
+		}
+		_ = writeAgentSSE(c, "message_end", gin.H{
+			"conversation_id": prepared.Conversation.ID.String(),
+			"message_id":      prepared.Message.ID.String(),
+			"status":          status,
+			"metadata":        gin.H{},
+		})
+		return
+	}
+	_ = writeAgentSSE(c, "message_end", gin.H{
+		"conversation_id": prepared.Conversation.ID.String(),
+		"message_id":      prepared.Message.ID.String(),
+		"status":          runtimemodel.MessageStatusCompleted,
+		"metadata": gin.H{
+			"usage": result.Metadata["usage"],
+		},
+	})
+}
+
+func setupAgentSSE(c *gin.Context) {
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("Transfer-Encoding", "chunked")
+	c.Status(http.StatusOK)
+	c.Writer.Flush()
+}
+
+func writeAgentSSE(c *gin.Context, event string, data interface{}) error {
+	return writeAgentSSEEvent(c, "", event, data)
+}
+
+func writeAgentSSEEvent(c *gin.Context, id string, event string, data interface{}) error {
+	payload := gin.H{"event": event, "data": data}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	if id != "" {
+		_, _ = fmt.Fprintf(c.Writer, "id: %s\n", id)
+	}
+	_, _ = fmt.Fprintf(c.Writer, "event: %s\n", event)
+	_, _ = fmt.Fprintf(c.Writer, "data: %s\n\n", string(encoded))
+	c.Writer.Flush()
+	return nil
+}
+
 func (h *AgentsHandler) UpdateAgent(c *gin.Context) {
 	// Authenticate
 	accountID := c.GetString("account_id")

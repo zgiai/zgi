@@ -120,6 +120,26 @@ func (s *stubWebAppStatusHandlerService) UpdateAgent(context.Context, string, in
 	return nil, nil
 }
 
+func (s *stubWebAppStatusHandlerService) GetAgentConfig(context.Context, string, string) (*dto.AgentConfigResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) UpdateAgentConfig(context.Context, string, string, dto.AgentConfigRequest) (*dto.AgentConfigResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) PublishAgent(context.Context, string, string, dto.PublishAgentRequest) (*dto.PublishAgentResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) ListAgentPublishedVersions(context.Context, string, int, int) (*dto.AgentPublishedVersionsResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) GetPublishedAgentWebAppConfig(context.Context, string) (*dto.AgentWebAppRuntimeConfigResponse, error) {
+	return nil, nil
+}
+
 func (s *stubWebAppStatusHandlerService) UpdateWebAppStatus(ctx context.Context, agentID string, req dto.UpdateWebAppStatusRequest) (*dto.WebAppStatusResponse, error) {
 	s.called = true
 	s.agentID = agentID
