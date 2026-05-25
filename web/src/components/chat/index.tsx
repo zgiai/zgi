@@ -114,6 +114,11 @@ interface AIChatVariantProps {
   showModelSelector?: boolean;
   showMemoryToggle?: boolean;
   forcedUseMemory?: boolean;
+  enableUpload?: boolean;
+  showFileLibraryPicker?: boolean;
+  homeBrand?: React.ReactNode;
+  homeTitle?: string;
+  homeDescription?: string;
 }
 
 type ChatProps =

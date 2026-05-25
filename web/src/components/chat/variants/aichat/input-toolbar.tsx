@@ -38,6 +38,8 @@ interface AIChatInputToolbarProps {
   imageExtensions: string[];
   showModelSelector?: boolean;
   showMemoryToggle?: boolean;
+  enableUpload?: boolean;
+  showFileLibraryPicker?: boolean;
   onModelChange: (value: ModelSelectorValue) => void;
   onModelPropsChange: (model: ModelSelectorModelProps | null) => void;
   onUploadDocument: () => void;
@@ -75,6 +77,8 @@ export function AIChatInputToolbar({
   imageExtensions,
   showModelSelector = true,
   showMemoryToggle = true,
+  enableUpload = true,
+  showFileLibraryPicker = true,
   onModelChange,
   onModelPropsChange,
   onUploadDocument,
@@ -120,61 +124,65 @@ export function AIChatInputToolbar({
         {showMemoryToggle ? (
           <AIChatMemoryModule disabled={isSending} onEnabledChange={onMemoryEnabledChange} />
         ) : null}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              isIcon
-              variant="ghost"
-              className="size-8 rounded-full"
-              disabled={isSending || isUploading || remainingSlots <= 0}
-              title={t('consoleChat.attachments.upload')}
-            >
-              <Paperclip className="size-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-48">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <div>
-                  <DropdownMenuItem onClick={onUploadDocument}>
-                    <FileText className="mr-2 size-4" />
-                    {t('consoleChat.attachments.uploadDocument')}
-                  </DropdownMenuItem>
-                </div>
-              </TooltipTrigger>
-              <TooltipContent side="left" className="max-w-xs">
-                {t('consoleChat.attachments.uploadDocumentTooltip', {
-                  count: attachmentLimit,
-                  size: maxSizeMB,
-                  types: formatExtensionsForDisplay(allowedExtensions).join(' / '),
-                })}
-              </TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <div>
-                  <DropdownMenuItem disabled={!canUseImage} onClick={onUploadImage}>
-                    <ImageIcon className="mr-2 size-4" />
-                    {t('consoleChat.attachments.uploadImage')}
-                  </DropdownMenuItem>
-                </div>
-              </TooltipTrigger>
-              <TooltipContent side="left" className="max-w-xs">
-                {canUseImage
-                  ? t('consoleChat.attachments.uploadImageTooltip', {
-                      count: attachmentLimit,
-                      size: imageMaxSizeMB,
-                      types: formatExtensionsForDisplay(imageExtensions).join(' / '),
-                    })
-                  : t('consoleChat.attachments.imageVisionRequired')}
-              </TooltipContent>
-            </Tooltip>
-            <DropdownMenuItem onClick={onSelectFromFiles}>
-              <FolderOpen className="mr-2 size-4" />
-              {t('consoleChat.attachments.selectFromFiles')}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        {enableUpload ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                isIcon
+                variant="ghost"
+                className="size-8 rounded-full"
+                disabled={isSending || isUploading || remainingSlots <= 0}
+                title={t('consoleChat.attachments.upload')}
+              >
+                <Paperclip className="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div>
+                    <DropdownMenuItem onClick={onUploadDocument}>
+                      <FileText className="mr-2 size-4" />
+                      {t('consoleChat.attachments.uploadDocument')}
+                    </DropdownMenuItem>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="left" className="max-w-xs">
+                  {t('consoleChat.attachments.uploadDocumentTooltip', {
+                    count: attachmentLimit,
+                    size: maxSizeMB,
+                    types: formatExtensionsForDisplay(allowedExtensions).join(' / '),
+                  })}
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div>
+                    <DropdownMenuItem disabled={!canUseImage} onClick={onUploadImage}>
+                      <ImageIcon className="mr-2 size-4" />
+                      {t('consoleChat.attachments.uploadImage')}
+                    </DropdownMenuItem>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="left" className="max-w-xs">
+                  {canUseImage
+                    ? t('consoleChat.attachments.uploadImageTooltip', {
+                        count: attachmentLimit,
+                        size: imageMaxSizeMB,
+                        types: formatExtensionsForDisplay(imageExtensions).join(' / '),
+                      })
+                    : t('consoleChat.attachments.imageVisionRequired')}
+                </TooltipContent>
+              </Tooltip>
+              {showFileLibraryPicker ? (
+                <DropdownMenuItem onClick={onSelectFromFiles}>
+                  <FolderOpen className="mr-2 size-4" />
+                  {t('consoleChat.attachments.selectFromFiles')}
+                </DropdownMenuItem>
+              ) : null}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
         {isSending ? (
           <Button
             isIcon

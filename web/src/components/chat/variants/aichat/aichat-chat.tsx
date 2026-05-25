@@ -65,6 +65,11 @@ interface AIChatShellProps {
   showModelSelector?: boolean;
   showMemoryToggle?: boolean;
   forcedUseMemory?: boolean;
+  enableUpload?: boolean;
+  showFileLibraryPicker?: boolean;
+  homeBrand?: React.ReactNode;
+  homeTitle?: string;
+  homeDescription?: string;
 }
 
 /**
@@ -84,6 +89,11 @@ export function AIChatShell({
   showModelSelector = true,
   showMemoryToggle = true,
   forcedUseMemory,
+  enableUpload = true,
+  showFileLibraryPicker = true,
+  homeBrand,
+  homeTitle,
+  homeDescription,
 }: AIChatShellProps) {
   const router = useRouter();
   const t = useT('webapp');
@@ -486,6 +496,9 @@ export function AIChatShell({
           isVisible={isHome && !isLoadingMessages}
           suggestions={suggestions}
           onSelectSuggestion={setInput}
+          brand={homeBrand}
+          title={homeTitle}
+          description={homeDescription}
         />
 
         {showResumeScrollButton ? (
@@ -517,6 +530,8 @@ export function AIChatShell({
           onHeightChange={setInputAreaHeight}
           showModelSelector={showModelSelector}
           showMemoryToggle={showMemoryToggle}
+          enableUpload={enableUpload}
+          showFileLibraryPicker={showFileLibraryPicker}
         />
       </main>
 
