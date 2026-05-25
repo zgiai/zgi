@@ -69,6 +69,25 @@ func TestResolve_AgictoUsesDedicatedAdapter(t *testing.T) {
 	}
 }
 
+func TestResolve_MistralUsesDedicatedAdapter(t *testing.T) {
+	spec, err := Resolve("mistral")
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if spec.Name != "mistral" {
+		t.Fatalf("spec.Name = %q, want %q", spec.Name, "mistral")
+	}
+	if spec.AdapterKey != "mistral" {
+		t.Fatalf("spec.AdapterKey = %q, want %q", spec.AdapterKey, "mistral")
+	}
+	if spec.LookupProvider != "mistral" {
+		t.Fatalf("spec.LookupProvider = %q, want %q", spec.LookupProvider, "mistral")
+	}
+	if spec.NativeCapabilities.OpenAIResponses.Supported {
+		t.Fatalf("mistral OpenAIResponses supported = true, want false until responses API is validated")
+	}
+}
+
 func TestResolve_OllamaUsesDedicatedPrivateAdapter(t *testing.T) {
 	spec, err := Resolve("ollama")
 	if err != nil {

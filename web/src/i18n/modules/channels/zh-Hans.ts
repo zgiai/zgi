@@ -105,6 +105,124 @@ const messages: ChannelsMessages = {
     titleCreate: '创建渠道',
     titleEdit: '编辑渠道',
     officialChannelHint: '这是官方渠道，仅可修改优先级和权重设置。',
+    setup: {
+      description: '先选择要接入的服务商，系统会自动收窄协议、默认地址和可选模型范围。',
+      steps: {
+        provider: '选择服务商',
+        config: '连接配置',
+      },
+      categories: {
+        common: '常用服务商',
+        aggregator: '聚合平台',
+        advanced: '高级接入',
+      },
+      categoryDescriptions: {
+        common: '适合直接接入官方模型服务，协议和模型范围由系统预设。',
+        aggregator: '适合 OpenRouter 等多供应商模型平台，短期先按平台模型范围收窄。',
+        advanced: '适合自建、代理或本地模型服务，需要了解具体 API 协议。',
+      },
+      fields: {
+        capabilities: '能力',
+        protocol: '协议',
+        modelStrategy: '模型来源',
+      },
+      actions: {
+        changeProvider: '返回重新选择服务商',
+      },
+      kinds: {
+        direct: {
+          label: '官方直连',
+          strategy: '使用服务商模型范围，可检查服务商可用模型',
+          headline: '按官方服务商接入',
+          guidance:
+            '系统会锁定对应协议和默认地址，只展示该服务商模型，适合 OpenAI、Qwen、DeepSeek 等官方账号。',
+        },
+        aggregator: {
+          label: '聚合平台',
+          strategy: '先检查平台实际可用模型，再选择启用',
+          headline: '按聚合平台接入',
+          guidance:
+            '聚合平台模型数量多、变化快，建议先检查服务商返回的可用模型，再选择需要开放给组织的模型。',
+        },
+        compatible: {
+          label: '兼容协议',
+          strategy: '按 OpenAI 兼容接口检查或手动选择模型',
+          headline: '按兼容接口接入',
+          guidance:
+            '适合代理、自建网关或第三方兼容接口。请确认服务商确实支持 OpenAI 兼容的 /models 和调用接口。',
+        },
+        local: {
+          label: '本地服务',
+          strategy: '从本地服务发现模型',
+          headline: '按本地运行时接入',
+          guidance:
+            '适合 Ollama 等本地模型服务，通常不需要 API Key，但需要确认本机或内网地址可被服务端访问。',
+        },
+        custom: {
+          label: '高级自定义',
+          strategy: '管理员手动确认协议和模型',
+          headline: '按高级模式接入',
+          guidance: '保留协议选择能力，适合已经知道服务商协议、地址和模型命名规则的管理员。',
+        },
+      },
+      providers: {
+        openai: {
+          label: 'OpenAI',
+          description: '接入 OpenAI 官方模型服务，适合标准文本、视觉、图片和向量能力。',
+          capabilities: '文本、视觉、图片、向量',
+        },
+        qwen: {
+          label: '阿里云通义千问',
+          description: '接入 DashScope 原生能力，适合通义文本、视觉、图片、重排和多模态模型。',
+          capabilities: '文本、视觉、图片、重排',
+        },
+        deepseek: {
+          label: 'DeepSeek',
+          description: '接入 DeepSeek 官方模型服务，适合通用对话、代码和推理模型。',
+          capabilities: '文本、代码、推理',
+        },
+        anthropic: {
+          label: 'Anthropic Claude',
+          description: '接入 Claude 官方模型服务，适合长文本、推理和企业知识问答。',
+          capabilities: '文本、视觉、长上下文',
+        },
+        google: {
+          label: 'Google Gemini',
+          description: '接入 Gemini 模型服务，注意文本和 Vertex 图片模式的密钥规则不同。',
+          capabilities: '文本、视觉、多模态',
+        },
+        moonshot: {
+          label: '月之暗面 Kimi',
+          description: '接入 Moonshot/Kimi 模型服务，适合中文对话和长上下文任务。',
+          capabilities: '文本、长上下文',
+        },
+        mistral: {
+          label: 'Mistral AI',
+          description: '接入 Mistral 官方模型服务，适合多语种文本、代码和推理模型。',
+          capabilities: '文本、代码、推理',
+        },
+        openrouter: {
+          label: 'OpenRouter',
+          description: '接入多供应商聚合平台。模型很多，短期先按 OpenRouter 模型范围过滤。',
+          capabilities: '聚合模型、文本、视觉',
+        },
+        openaiCompatible: {
+          label: 'OpenAI 兼容服务',
+          description: '接入自建或第三方 OpenAI 兼容接口，仅适合兼容标准接口的模型。',
+          capabilities: '兼容接口、手动配置',
+        },
+        custom: {
+          label: '自定义高级接入',
+          description: '保留完整协议选择能力，适合明确知道服务商协议和模型名称的管理员。',
+          capabilities: '高级配置、完整选择',
+        },
+        ollama: {
+          label: 'Ollama',
+          description: '接入本地 Ollama 服务，适合本地开发和私有模型试用。',
+          capabilities: '本地模型、文本',
+        },
+      },
+    },
     basic: '连接配置',
     availableModels: '可用模型',
     advanced: '高级设置',
@@ -147,7 +265,8 @@ const messages: ChannelsMessages = {
     },
     testConnection: {
       title: '检测连接',
-      description: '可先获取上游模型列表；选择一个代表模型后，再验证密钥、地址、协议和模型是否匹配。',
+      description:
+        '可先用当前 API Key 检查服务商可用模型；选择一个代表模型后，再验证密钥、地址、协议和模型是否匹配。',
       descriptionWithModel: '将使用 {model} 验证密钥、地址、协议和模型是否匹配。',
       button: '检测连接',
       apiBaseUrlHint: '请先填写 API 基础地址，再检测连接。',
@@ -166,9 +285,9 @@ const messages: ChannelsMessages = {
         failures: {
           auth: '请确认 API 密钥属于当前服务商，且具备调用所选模型的权限。',
           baseUrl: '请确认 API 基础地址可访问，路径包含正确的版本前缀，例如 /v1。',
-          model: '请确认所选模型在该服务商账号下可用，或先获取上游模型列表后重新选择。',
-          rateLimit: '上游返回限流，请稍后重试或检查账号限流策略。',
-          quota: '请确认上游账号余额、套餐或计费状态正常。',
+          model: '请确认所选模型在该服务商账号下可用，或先检查服务商可用模型后重新选择。',
+          rateLimit: '服务商返回限流，请稍后重试或检查账号限流策略。',
+          quota: '请确认服务商账号余额、套餐或计费状态正常。',
           protocol: '请确认当前适配器协议与服务商接口兼容。',
           unknown: '请根据上方错误信息检查密钥、地址、协议和模型配置。',
         },
@@ -181,10 +300,10 @@ const messages: ChannelsMessages = {
       },
     },
     discoverModels: {
-      button: '获取模型列表',
+      button: '检查可用模型',
       messages: {
-        success: '已获取 {count} 个上游模型',
-        requestFailed: '获取模型列表失败',
+        success: '服务商返回 {count} 个可用模型',
+        requestFailed: '检查可用模型失败',
       },
     },
     protocolOptions: {
@@ -194,6 +313,7 @@ const messages: ChannelsMessages = {
       glm: '智普清言（GLM）',
       minimax: 'MiniMax',
       deepseek: 'DeepSeek',
+      mistral: 'Mistral AI',
       cohere: 'Cohere',
       openrouter: 'OpenRouter',
       anthropic: 'Anthropic',
@@ -201,6 +321,11 @@ const messages: ChannelsMessages = {
       moonshotaiCn: '月之暗面（Kimi）',
       doubao: '火山引擎（豆包）',
       google: 'Google（Gemini）',
+    },
+    protocolGroups: {
+      aggregator: '聚合服务',
+      compatible: '兼容协议',
+      vertical: '垂直厂商',
     },
     protocolNotes: {
       google: 'Gemini 文本与 Vertex 图片模式的 API Key 和 API 基础地址规则不同。',

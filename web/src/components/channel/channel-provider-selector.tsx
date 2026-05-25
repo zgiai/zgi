@@ -4,7 +4,10 @@ import React from 'react';
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
@@ -16,6 +19,7 @@ export interface ChannelProviderOption {
   labelKey: string;
   icon?: string;
   provider: string;
+  category: 'aggregator' | 'compatible' | 'vertical';
   defaultApiBaseUrl?: string;
   apiBaseUrlPlaceholder?: string;
   apiKeyPlaceholder?: string;
@@ -27,6 +31,7 @@ export const CHANNEL_PROVIDER_OPTIONS: ChannelProviderOption[] = [
     value: 'openai-compatible',
     labelKey: 'dialog.protocolOptions.openaiCompatible',
     provider: 'all',
+    category: 'compatible',
     defaultApiBaseUrl: 'https://api.openai.com/v1',
     apiKeyPlaceholder: 'sk-xxx',
   },
@@ -35,6 +40,7 @@ export const CHANNEL_PROVIDER_OPTIONS: ChannelProviderOption[] = [
     labelKey: 'dialog.protocolOptions.ollama',
     icon: 'ollama',
     provider: 'all',
+    category: 'vertical',
     defaultApiBaseUrl: 'http://localhost:11434',
     apiKeyPlaceholder: 'ollama',
   },
@@ -43,6 +49,7 @@ export const CHANNEL_PROVIDER_OPTIONS: ChannelProviderOption[] = [
     labelKey: 'dialog.protocolOptions.openai',
     icon: 'openai',
     provider: 'openai',
+    category: 'vertical',
     defaultApiBaseUrl: 'https://api.openai.com/v1',
     apiKeyPlaceholder: 'sk-xxx',
   },
@@ -51,6 +58,7 @@ export const CHANNEL_PROVIDER_OPTIONS: ChannelProviderOption[] = [
     labelKey: 'dialog.protocolOptions.glm',
     icon: 'zhipu',
     provider: 'zhipu',
+    category: 'vertical',
     defaultApiBaseUrl: 'https://open.bigmodel.cn/api/paas/v4',
     apiKeyPlaceholder: 'xxx',
   },
@@ -59,6 +67,7 @@ export const CHANNEL_PROVIDER_OPTIONS: ChannelProviderOption[] = [
     labelKey: 'dialog.protocolOptions.minimax',
     icon: 'minimax',
     provider: 'minimax',
+    category: 'vertical',
     defaultApiBaseUrl: 'https://api.minimaxi.com/v1',
     apiKeyPlaceholder: 'xxx',
   },
@@ -67,14 +76,25 @@ export const CHANNEL_PROVIDER_OPTIONS: ChannelProviderOption[] = [
     labelKey: 'dialog.protocolOptions.deepseek',
     icon: 'deepseek',
     provider: 'deepseek',
+    category: 'vertical',
     defaultApiBaseUrl: 'https://api.deepseek.com/v1',
     apiKeyPlaceholder: 'sk-xxx',
+  },
+  {
+    value: 'mistral',
+    labelKey: 'dialog.protocolOptions.mistral',
+    icon: 'mistral',
+    provider: 'mistral',
+    category: 'vertical',
+    defaultApiBaseUrl: 'https://api.mistral.ai/v1',
+    apiKeyPlaceholder: 'xxx',
   },
   {
     value: 'cohere',
     labelKey: 'dialog.protocolOptions.cohere',
     icon: 'cohere',
     provider: 'cohere',
+    category: 'vertical',
     defaultApiBaseUrl: 'https://api.cohere.com',
     apiKeyPlaceholder: 'xxx',
   },
@@ -83,6 +103,7 @@ export const CHANNEL_PROVIDER_OPTIONS: ChannelProviderOption[] = [
     labelKey: 'dialog.protocolOptions.openrouter',
     icon: 'openrouter',
     provider: 'openrouter',
+    category: 'aggregator',
     defaultApiBaseUrl: 'https://openrouter.ai/api/v1',
     apiKeyPlaceholder: 'sk-or-xxx',
   },
@@ -91,6 +112,7 @@ export const CHANNEL_PROVIDER_OPTIONS: ChannelProviderOption[] = [
     labelKey: 'dialog.protocolOptions.anthropic',
     icon: 'anthropic',
     provider: 'anthropic',
+    category: 'vertical',
     defaultApiBaseUrl: 'https://api.anthropic.com/v1',
     apiKeyPlaceholder: 'sk-ant-xxx',
   },
@@ -99,6 +121,7 @@ export const CHANNEL_PROVIDER_OPTIONS: ChannelProviderOption[] = [
     labelKey: 'dialog.protocolOptions.qwen',
     icon: 'qwen',
     provider: 'qwen',
+    category: 'vertical',
     defaultApiBaseUrl: 'https://dashscope.aliyuncs.com/api/v1',
     apiKeyPlaceholder: 'sk-xxx',
   },
@@ -107,6 +130,7 @@ export const CHANNEL_PROVIDER_OPTIONS: ChannelProviderOption[] = [
     labelKey: 'dialog.protocolOptions.moonshotaiCn',
     icon: 'moonshot',
     provider: 'moonshot',
+    category: 'vertical',
     defaultApiBaseUrl: 'https://api.moonshot.cn/v1',
     apiKeyPlaceholder: 'sk-xxx',
   },
@@ -115,6 +139,7 @@ export const CHANNEL_PROVIDER_OPTIONS: ChannelProviderOption[] = [
     labelKey: 'dialog.protocolOptions.doubao',
     icon: 'doubao',
     provider: 'doubao',
+    category: 'vertical',
     defaultApiBaseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
     apiKeyPlaceholder: 'sk-xxx',
   },
@@ -123,6 +148,7 @@ export const CHANNEL_PROVIDER_OPTIONS: ChannelProviderOption[] = [
     labelKey: 'dialog.protocolOptions.google',
     icon: 'google',
     provider: 'google',
+    category: 'vertical',
     defaultApiBaseUrl: 'https://generativelanguage.googleapis.com/v1beta',
     apiKeyPlaceholder: 'Gemini API Key 或 Vertex Bearer Token',
     notesKey: 'dialog.protocolNotes.google',
@@ -150,6 +176,15 @@ export function getMappedProvider(value?: string): string {
   if (!value) return '';
   return getChannelProviderOption(value)?.provider ?? value.trim().toLowerCase();
 }
+
+const PROVIDER_GROUPS: Array<{
+  category: ChannelProviderOption['category'];
+  labelKey: string;
+}> = [
+  { category: 'aggregator', labelKey: 'dialog.protocolGroups.aggregator' },
+  { category: 'compatible', labelKey: 'dialog.protocolGroups.compatible' },
+  { category: 'vertical', labelKey: 'dialog.protocolGroups.vertical' },
+];
 
 export default function ChannelProviderSelector({
   value,
@@ -181,14 +216,30 @@ export default function ChannelProviderSelector({
         </SelectValue>
       </SelectTrigger>
       <SelectContent>
-        {CHANNEL_PROVIDER_OPTIONS.map(option => (
-          <SelectItem key={option.value} value={option.value}>
-            <div className="flex items-center gap-2">
-              {option.icon ? <ProviderIcon size={20} provider={option.icon} /> : null}
-              {t(option.labelKey as never)}
-            </div>
-          </SelectItem>
-        ))}
+        {PROVIDER_GROUPS.map((group, index) => {
+          const options = CHANNEL_PROVIDER_OPTIONS.filter(
+            option => option.category === group.category
+          );
+          if (options.length === 0) return null;
+          return (
+            <React.Fragment key={group.category}>
+              {index > 0 && <SelectSeparator />}
+              <SelectGroup>
+                <SelectLabel className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
+                  {t(group.labelKey as never)}
+                </SelectLabel>
+                {options.map(option => (
+                  <SelectItem key={option.value} value={option.value}>
+                    <div className="flex items-center gap-2">
+                      {option.icon ? <ProviderIcon size={20} provider={option.icon} /> : null}
+                      {t(option.labelKey as never)}
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </React.Fragment>
+          );
+        })}
       </SelectContent>
     </Select>
   );

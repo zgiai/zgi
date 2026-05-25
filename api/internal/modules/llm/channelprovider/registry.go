@@ -41,6 +41,7 @@ var specs = map[string]Spec{
 	"minmax":            {Name: "minimax", AdapterKey: "minimax", LookupProvider: "minimax", NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
 	"deepseek":          {Name: "deepseek", AdapterKey: "deepseek", LookupProvider: "deepseek", NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
 	"siliconflow":       {Name: "siliconflow", AdapterKey: "siliconflow", LookupProvider: "deepseek", NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
+	"mistral":           {Name: "mistral", AdapterKey: "mistral", LookupProvider: "mistral"},
 	"cohere":            {Name: "cohere", AdapterKey: "cohere", LookupProvider: "cohere"},
 	"anthropic":         {Name: "anthropic", AdapterKey: "claude", LookupProvider: "anthropic", NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
 	"claude":            {Name: "anthropic", AdapterKey: "claude", LookupProvider: "anthropic", NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
