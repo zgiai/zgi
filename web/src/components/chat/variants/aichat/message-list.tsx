@@ -32,6 +32,7 @@ interface AIChatMessageListProps {
   onEditChange: (value: string) => void;
   onEditCancel: () => void;
   onEditSubmit: (message: AIChatMessage) => void;
+  showAssistantModelMeta?: boolean;
 }
 
 function isReplaceableRootStatus(status: AIChatMessage['status']): boolean {
@@ -86,6 +87,7 @@ export function AIChatMessageList({
   onEditChange,
   onEditCancel,
   onEditSubmit,
+  showAssistantModelMeta = true,
 }: AIChatMessageListProps) {
   return (
     <ScrollArea
@@ -132,6 +134,7 @@ export function AIChatMessageList({
                 onEditChange={onEditChange}
                 onEditCancel={onEditCancel}
                 onEditSubmit={onEditSubmit}
+                showAssistantModelMeta={showAssistantModelMeta}
               />
             ))}
             <div ref={bottomRef} className="shrink-0" style={{ height: bottomSpacerHeight }} />

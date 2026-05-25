@@ -1,10 +1,19 @@
 'use client';
 
-import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  createElement,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { useStore } from 'zustand';
-import { ArrowDown } from 'lucide-react';
+import { ArrowDown, MessageSquarePlus, PanelLeft } from 'lucide-react';
 import type { ModelSelectorValue } from '@/components/common/model-selector';
 import type { AIChatController } from '@/components/chat/controllers/aichat-controller';
 import type { ConversationSummary } from '@/components/chat/controllers/types';
@@ -26,6 +35,7 @@ import { useAIChatSkills } from '@/hooks/aichat/use-aichat-skills';
 import { useLocale } from '@/hooks/use-locale';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useT } from '@/i18n/translations';
+import { cn } from '@/lib/utils';
 import { useWorkspaceStore } from '@/store/workspace-store';
 import type { AIChatMessage, AIChatMessageFile } from '@/services/types/aichat';
 import {
@@ -71,7 +81,29 @@ interface AIChatShellProps {
   homeTitle?: string;
   homeDescription?: string;
   suggestions?: string[];
+  inputPlaceholder?: string;
+  embeddedConversationMode?: 'none' | 'drawer';
+  embeddedConversationControlsMode?: 'internal' | 'external';
+  embeddedConversationControlsClassName?: string;
+  embeddedConversationControlsPortalId?: string;
+  renderEmbeddedConversationControls?: (controls: {
+    openConversations: () => void;
+    startNewConversation: () => void;
+    isHome: boolean;
+  }) => React.ReactNode;
+  showAssistantModelMeta?: boolean;
+  surface?: 'aichat' | 'agent-draft' | 'agent-webapp';
+  themeColor?: string;
 }
+
+const CHAT_THEME_PRIMARY: Record<string, string> = {
+  blue: '217 91% 60%',
+  emerald: '160 84% 39%',
+  violet: '262 83% 58%',
+  rose: '346 77% 50%',
+  amber: '38 92% 50%',
+  slate: '215 20% 45%',
+};
 
 /**
  * @component AIChatShell
@@ -96,6 +128,14 @@ export function AIChatShell({
   homeTitle,
   homeDescription,
   suggestions: configuredSuggestions,
+  inputPlaceholder,
+  embeddedConversationMode = 'none',
+  embeddedConversationControlsMode = 'internal',
+  embeddedConversationControlsClassName,
+  embeddedConversationControlsPortalId,
+  renderEmbeddedConversationControls,
+  showAssistantModelMeta = true,
+  themeColor,
 }: AIChatShellProps) {
   const router = useRouter();
   const t = useT('webapp');
@@ -103,11 +143,17 @@ export function AIChatShell({
   const { locale } = useLocale();
   const isMobile = useIsMobile();
   const isEmbedded = variant === 'embedded';
+  const showEmbeddedConversationDrawer = isEmbedded && embeddedConversationMode === 'drawer';
+  const themeStyle = useMemo<CSSProperties | undefined>(() => {
+    const primary = themeColor ? CHAT_THEME_PRIMARY[themeColor] : undefined;
+    return primary ? ({ '--primary': primary } as CSSProperties) : undefined;
+  }, [themeColor]);
   const [input, setInput] = useState('');
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingQuery, setEditingQuery] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [externalControlsPortal, setExternalControlsPortal] = useState<HTMLElement | null>(null);
   const [inputAreaHeight, setInputAreaHeight] = useState(160);
   const topologyRef = useRef<{ key: string; topology: ChatMessageTopology } | null>(null);
   const lastErrorToastRef = useRef<string | null>(null);
@@ -448,8 +494,54 @@ export function AIChatShell({
     [controller]
   );
 
+  const embeddedConversationControls = useMemo(() => {
+    if (!showEmbeddedConversationDrawer) return null;
+    const controls = {
+      openConversations: () => setMobileSidebarOpen(true),
+      startNewConversation: handleNewChat,
+      isHome,
+    };
+    if (renderEmbeddedConversationControls) {
+      return renderEmbeddedConversationControls(controls);
+    }
+    return (
+      <div className="flex items-center gap-1 rounded-full border bg-background/90 p-1 shadow-sm backdrop-blur">
+        <Button
+          variant="ghost"
+          isIcon
+          className="size-8 text-muted-foreground"
+          onClick={controls.openConversations}
+          title={t('consoleChat.toggleSidebar')}
+        >
+          <PanelLeft className="size-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          isIcon
+          className="size-8 text-muted-foreground"
+          onClick={controls.startNewConversation}
+          title={t('chat.newConversation')}
+        >
+          <MessageSquarePlus className="size-4" />
+        </Button>
+      </div>
+    );
+  }, [handleNewChat, isHome, renderEmbeddedConversationControls, showEmbeddedConversationDrawer, t]);
+
+  useEffect(() => {
+    if (
+      embeddedConversationControlsMode !== 'external' ||
+      !embeddedConversationControlsPortalId ||
+      typeof document === 'undefined'
+    ) {
+      setExternalControlsPortal(null);
+      return;
+    }
+    setExternalControlsPortal(document.getElementById(embeddedConversationControlsPortalId));
+  }, [embeddedConversationControlsMode, embeddedConversationControlsPortalId]);
+
   return (
-    <div className="flex h-full w-full overflow-hidden bg-background">
+    <div className="flex h-full w-full overflow-hidden bg-background" style={themeStyle}>
       {!isEmbedded ? (
         <div className="hidden md:block">
           <Sidebar
@@ -477,6 +569,21 @@ export function AIChatShell({
           />
         ) : null}
 
+        {showEmbeddedConversationDrawer && embeddedConversationControlsMode === 'internal' ? (
+          <div
+            className={cn(
+              'absolute z-30',
+              embeddedConversationControlsClassName ?? 'left-3 top-3'
+            )}
+          >
+            {embeddedConversationControls}
+          </div>
+        ) : null}
+
+        {externalControlsPortal && embeddedConversationControls
+          ? createPortal(embeddedConversationControls, externalControlsPortal)
+          : null}
+
         <AIChatMessageList
           messages={messages}
           activeConversation={activeConversation}
@@ -499,6 +606,7 @@ export function AIChatShell({
           onEditChange={setEditingQuery}
           onEditCancel={handleEditCancel}
           onEditSubmit={handleEditSubmit}
+          showAssistantModelMeta={showAssistantModelMeta}
         />
 
         <AIChatHomeView
@@ -541,10 +649,11 @@ export function AIChatShell({
           showMemoryToggle={showMemoryToggle}
           enableUpload={enableUpload}
           showFileLibraryPicker={showFileLibraryPicker}
+          inputPlaceholder={inputPlaceholder}
         />
       </main>
 
-      {!isEmbedded ? (
+      {!isEmbedded || showEmbeddedConversationDrawer ? (
         <Sheet open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
           <SheetContent side="left" className="max-w-none p-0 sm:max-w-sm" showClose={false}>
             <SheetTitle className="sr-only">{t('chat.conversations')}</SheetTitle>

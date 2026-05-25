@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Chat, { createAgentWebAppTransport, useAIChatController } from '@/components/chat';
 import { IconPreview } from '@/components/common/icon-input/icon-preview';
 import type { ModelSelectorValue } from '@/components/common/model-selector';
+import { useT } from '@/i18n';
 import { ICON_BG } from '@/lib/config';
 import type { WebAppWorkflowConfig } from '@/services/types/webapp';
 
@@ -24,9 +25,9 @@ function toModelParams(
   return next;
 }
 
-function resolveWebAppIcon(config: WebAppWorkflowConfig) {
+function resolveWebAppIcon(config: WebAppWorkflowConfig, fallbackTitle: string) {
   const meta = config.config;
-  const title = meta?.title || 'Agent';
+  const title = meta?.title || fallbackTitle;
   let iconType: 'image' | 'text' = meta?.icon_type === 'image' ? 'image' : 'text';
   let src = '';
   let icon = title.slice(0, 2).toUpperCase();
@@ -48,9 +49,14 @@ function resolveWebAppIcon(config: WebAppWorkflowConfig) {
 }
 
 export default function AgentWebappChat({ webAppId, config }: AgentWebappChatProps) {
-  const title = config.config?.title || 'Agent';
+  const t = useT('webapp');
   const agentConfig = config.agent_config;
-  const iconPreview = useMemo(() => resolveWebAppIcon(config), [config]);
+  const homeTitle = agentConfig?.home_title || t('agentChat.defaultHomeTitle');
+  const inputPlaceholder = agentConfig?.input_placeholder || t('chat.enterCommand');
+  const iconPreview = useMemo(
+    () => resolveWebAppIcon(config, t('agentChat.fallbackTitle')),
+    [config, t]
+  );
   const transport = useMemo(() => createAgentWebAppTransport(webAppId), [webAppId]);
   const controller = useAIChatController({ transport });
   const initController = controller.init;
@@ -93,6 +99,10 @@ export default function AgentWebappChat({ webAppId, config }: AgentWebappChatPro
       enableUpload={Boolean(agentConfig?.file_upload_enabled)}
       showFileLibraryPicker={false}
       suggestions={agentConfig?.suggested_questions ?? []}
+      inputPlaceholder={inputPlaceholder}
+      embeddedConversationMode="drawer"
+      showAssistantModelMeta={false}
+      surface="agent-webapp"
       homeBrand={
         <div className="flex size-16 items-center justify-center rounded-2xl border bg-background shadow-sm">
           <IconPreview
@@ -105,8 +115,8 @@ export default function AgentWebappChat({ webAppId, config }: AgentWebappChatPro
           />
         </div>
       }
-      homeTitle={title}
-      homeDescription="开始新的 Agent 对话"
+      homeTitle={homeTitle}
+      homeDescription=""
     />
   );
 }

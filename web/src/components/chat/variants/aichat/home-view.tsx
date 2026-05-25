@@ -37,6 +37,8 @@ export function AIChatHomeView({
   const t = useT('webapp');
   const [isHydrated, setIsHydrated] = React.useState(false);
   const fallbackText = (ICON_TEXT || APP_NAME.charAt(0) || 'A').slice(0, 2).toUpperCase();
+  const resolvedDescription =
+    description === '' ? '' : description || t('chat.chooseAssistant');
 
   React.useEffect(() => {
     setIsHydrated(true);
@@ -67,9 +69,9 @@ export function AIChatHomeView({
           <h2 className="text-2xl font-bold text-foreground">
             {title || t('chat.startConversation')}
           </h2>
-          <p className="text-sm text-muted-foreground">
-            {description || t('chat.chooseAssistant')}
-          </p>
+          {resolvedDescription ? (
+            <p className="text-sm text-muted-foreground">{resolvedDescription}</p>
+          ) : null}
         </div>
         <div className="h-[140px] w-full shrink-0" />
         <div className="flex flex-wrap items-center justify-center gap-2">

@@ -112,6 +112,10 @@ const messages = {
     description:
       'The app is currently unavailable. Please contact the app owner or try again after it is brought online.',
   },
+  agentChat: {
+    fallbackTitle: 'Agent',
+    defaultHomeTitle: 'title',
+  },
   billing: {
     precheckWarnings: {
       '207008': {

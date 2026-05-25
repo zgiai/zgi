@@ -138,6 +138,7 @@ interface AIChatInputAreaProps {
   showMemoryToggle?: boolean;
   enableUpload?: boolean;
   showFileLibraryPicker?: boolean;
+  inputPlaceholder?: string;
 }
 
 /**
@@ -166,6 +167,7 @@ export function AIChatInputArea({
   showMemoryToggle = true,
   enableUpload = true,
   showFileLibraryPicker = true,
+  inputPlaceholder,
 }: AIChatInputAreaProps) {
   const t = useT('webapp');
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -615,7 +617,7 @@ export function AIChatInputArea({
                   handleSend();
                 }
               }}
-              placeholder={t('chat.enterCommand')}
+              placeholder={inputPlaceholder || t('chat.enterCommand')}
               className="max-h-36 min-h-12 resize-none border-0 bg-transparent px-3 py-2 shadow-none focus-visible:ring-0"
             />
             <input

@@ -18,16 +18,11 @@ export default function WebappChatPage(): JSX.Element {
   const isAgentWebApp = data?.data?.config?.type?.toUpperCase?.() === 'AGENT';
 
   return (
-    <div
-      className={cn(
-        'box-border h-full min-h-0 w-full overflow-hidden',
-        !isAgentWebApp && 'md:px-4 md:pb-2'
-      )}
-    >
+    <div className="box-border h-full min-h-0 w-full overflow-hidden md:px-4 md:pb-2">
       <div
         className={cn(
           'h-full w-full min-h-0 bg-background overflow-hidden',
-          !isAgentWebApp && 'md:rounded-lg md:border md:shadow-sm'
+          'md:rounded-lg md:border md:shadow-sm'
         )}
       >
         {isLoading ? (

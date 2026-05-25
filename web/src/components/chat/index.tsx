@@ -120,6 +120,19 @@ interface AIChatVariantProps {
   homeTitle?: string;
   homeDescription?: string;
   suggestions?: string[];
+  inputPlaceholder?: string;
+  embeddedConversationMode?: 'none' | 'drawer';
+  embeddedConversationControlsMode?: 'internal' | 'external';
+  embeddedConversationControlsClassName?: string;
+  embeddedConversationControlsPortalId?: string;
+  renderEmbeddedConversationControls?: (controls: {
+    openConversations: () => void;
+    startNewConversation: () => void;
+    isHome: boolean;
+  }) => React.ReactNode;
+  showAssistantModelMeta?: boolean;
+  surface?: 'aichat' | 'agent-draft' | 'agent-webapp';
+  themeColor?: string;
 }
 
 type ChatProps =
