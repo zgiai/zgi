@@ -384,6 +384,10 @@ func (h *ProviderHandler) ToggleProvider(c *gin.Context) {
 		return
 	}
 	if err := h.service.ToggleProvider(c.Request.Context(), organizationID, req.Provider, req.IsEnabled); err != nil {
+		if errors.Is(err, service.ErrProviderNotFound) {
+			response.FailWithMessage(c, response.ErrNotFound, err.Error())
+			return
+		}
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
 	}
