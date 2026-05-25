@@ -12,8 +12,10 @@ import {
   ExternalLink,
   Loader2,
   MoreHorizontal,
+  Plus,
   Save,
   Sparkles,
+  Trash2,
   Upload,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -24,9 +26,18 @@ import {
   type ModelSelectorParameterValue,
   type ModelSelectorValue,
 } from '@/components/common/model-selector';
-import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -39,6 +50,7 @@ import { useLocale } from '@/hooks/use-locale';
 import { cn } from '@/lib/utils';
 import agentService from '@/services/agent.service';
 import type { UpdateAgentRuntimeConfigRequest } from '@/services/types/agent';
+import type { AIChatSkillMetadata } from '@/services/types/aichat';
 import { getErrorMessage } from '@/utils/error-notifications';
 
 interface AgentRuntimePageProps {
@@ -95,6 +107,7 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
   const { data: organizationSkillConfig, isLoading: isSkillConfigLoading } = useAIChatSkillConfig();
   const publishAgent = usePublishAgent();
   const config = configResponse?.data;
+  const agentDetail = agent?.data;
 
   const draftTransport = useMemo(() => createAgentDraftTransport(agentId), [agentId]);
   const chatController = useAIChatController({ transport: draftTransport });
@@ -108,6 +121,8 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
   });
   const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
   const [useMemory, setUseMemory] = useState(false);
+  const [fileUploadEnabled, setFileUploadEnabled] = useState(false);
+  const [skillDialogOpen, setSkillDialogOpen] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const lastSavedSignatureRef = useRef('');
@@ -129,6 +144,13 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
     () => selectedSkillIds.filter(id => selectableSkillIds.has(id)),
     [selectableSkillIds, selectedSkillIds]
   );
+  const selectedSkills = useMemo(
+    () =>
+      normalizedSelectedSkillIds
+        .map(id => selectableSkills.find(skill => skill.skill_id === id))
+        .filter((skill): skill is AIChatSkillMetadata => Boolean(skill)),
+    [normalizedSelectedSkillIds, selectableSkills]
+  );
   const modelSelectorValue = useMemo(
     () => ({
       provider: modelValue.provider,
@@ -145,12 +167,25 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
       model_parameters: modelValue.params,
       enabled_skill_ids: normalizedSelectedSkillIds,
       use_memory: useMemory,
+      file_upload_enabled: fileUploadEnabled,
     }),
-    [modelValue, normalizedSelectedSkillIds, systemPrompt, useMemory]
+    [fileUploadEnabled, modelValue, normalizedSelectedSkillIds, systemPrompt, useMemory]
   );
   const currentSignature = useMemo(() => buildSignature(currentPayload), [currentPayload]);
   const isDirty = Boolean(
     lastSavedSignatureRef.current && currentSignature !== lastSavedSignatureRef.current
+  );
+  const agentHomeBrand = useMemo(
+    () => (
+      <div className="flex size-16 items-center justify-center rounded-2xl border border-primary/30 bg-primary/10 text-xl font-semibold text-primary shadow-sm">
+        {agentDetail?.icon_type === 'image' && agentDetail.icon_url ? (
+          <img src={agentDetail.icon_url} alt="" className="size-full rounded-2xl object-cover" />
+        ) : (
+          pickAgentInitials(agentDetail?.name)
+        )}
+      </div>
+    ),
+    [agentDetail?.icon_type, agentDetail?.icon_url, agentDetail?.name]
   );
 
   useEffect(() => {
@@ -166,6 +201,7 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
       model_parameters: toModelParams(config.model_parameters),
       enabled_skill_ids: config.enabled_skill_ids ?? [],
       use_memory: config.use_memory ?? false,
+      file_upload_enabled: config.file_upload_enabled ?? false,
     };
     setSystemPrompt(nextPayload.system_prompt);
     setModelValue({
@@ -175,6 +211,7 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
     });
     setSelectedSkillIds(nextPayload.enabled_skill_ids);
     setUseMemory(nextPayload.use_memory);
+    setFileUploadEnabled(nextPayload.file_upload_enabled);
     setLastSavedAt(config.updated_at ?? null);
     lastSavedSignatureRef.current = buildSignature(nextPayload);
     setSaveState('saved');
@@ -192,11 +229,14 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
       try {
         const response = await agentService.updateAgentConfig(agentId, currentPayload);
         const updatedAt = response.data.updated_at ?? Math.floor(Date.now() / 1000);
-        setLastSavedAt(updatedAt);
-        lastSavedSignatureRef.current = buildSignature({
+        const savedPayload = {
           ...currentPayload,
           model_parameters: toModelParams(response.data.model_parameters),
-        });
+          file_upload_enabled:
+            response.data.file_upload_enabled ?? currentPayload.file_upload_enabled,
+        };
+        setLastSavedAt(updatedAt);
+        lastSavedSignatureRef.current = buildSignature(savedPayload);
         queryClient.setQueryData(AGENT_KEYS.config(agentId), response);
         queryClient.invalidateQueries({ queryKey: AGENT_KEYS.detail(agentId) });
         setSaveState('saved');
@@ -276,7 +316,6 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
     );
   }
 
-  const agentDetail = agent?.data;
   const saveText = formatSaveText(saveState, lastSavedAt);
 
   return (
@@ -372,7 +411,7 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
             <div>
               <h2 className="text-sm font-semibold">编排</h2>
               <p className="text-xs text-muted-foreground">
-                模型、技能和记忆配置会保存到 AGENT 草稿。
+                模型、Skill、文件和记忆配置会保存到 AGENT 草稿。
               </p>
             </div>
           </div>
@@ -397,9 +436,19 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2 text-sm font-medium">
                     <ChevronRight className="size-4 text-muted-foreground" />
-                    技能
+                    Skill
                   </div>
-                  <Badge variant="subtle">{normalizedSelectedSkillIds.length} 已选</Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="subtle">{normalizedSelectedSkillIds.length} 已选</Badge>
+                    <Button
+                      isIcon
+                      variant="outline"
+                      className="size-8"
+                      onClick={() => setSkillDialogOpen(true)}
+                    >
+                      <Plus className="size-4" />
+                    </Button>
+                  </div>
                 </div>
                 {isSkillsLoading || isSkillConfigLoading ? (
                   <div className="space-y-2">
@@ -408,44 +457,64 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
                   </div>
                 ) : selectableSkills.length === 0 ? (
                   <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-                    当前组织还没有启用可选技能。
+                    当前组织还没有启用可选 Skill。
                     <Button asChild variant="link" className="h-auto px-1 text-sm">
                       <Link href="/dashboard/organization/aichat-skills">
-                        去启用技能
+                        去启用 Skill
                         <ExternalLink className="ml-1 size-3.5" />
                       </Link>
                     </Button>
                   </div>
+                ) : selectedSkills.length === 0 ? (
+                  <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                    还没有为这个 Agent 添加 Skill。
+                  </div>
                 ) : (
                   <div className="space-y-2">
-                    {selectableSkills.map(skill => {
+                    {selectedSkills.map(skill => {
                       const display = getAIChatSkillDisplayInfo(skill, locale);
-                      const checked = normalizedSelectedSkillIds.includes(skill.skill_id);
                       return (
-                        <label
+                        <div
                           key={skill.skill_id}
-                          className="flex cursor-pointer items-start gap-3 rounded-md border bg-background p-3 transition-colors hover:bg-muted/40"
+                          className="flex items-start gap-3 rounded-md border bg-background p-3"
                         >
-                          <Checkbox
-                            checked={checked}
-                            onCheckedChange={value =>
-                              handleToggleSkill(skill.skill_id, value === true)
-                            }
-                            className="mt-0.5"
-                          />
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate text-sm font-medium">
-                              {display.label}
-                            </span>
-                            <span className="mt-1 line-clamp-2 block text-xs leading-5 text-muted-foreground">
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-sm font-medium">{display.label}</div>
+                            <div className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
                               {display.description || skill.description || skill.skill_id}
-                            </span>
-                          </span>
-                        </label>
+                            </div>
+                          </div>
+                          <Button
+                            isIcon
+                            variant="ghost"
+                            className="size-7 shrink-0 text-muted-foreground hover:text-destructive"
+                            onClick={() => handleToggleSkill(skill.skill_id, false)}
+                          >
+                            <Trash2 className="size-4" />
+                          </Button>
+                        </div>
                       );
                     })}
                   </div>
                 )}
+              </section>
+
+              <Separator className="h-px" />
+
+              <section className="space-y-3">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <ChevronRight className="size-4 text-muted-foreground" />
+                  文件
+                </div>
+                <div className="flex items-center justify-between rounded-md border p-3">
+                  <div>
+                    <div className="text-sm font-medium">允许文件上传</div>
+                    <div className="text-xs text-muted-foreground">
+                      开启后，调试和 WebApp 可以上传文档或图片。
+                    </div>
+                  </div>
+                  <Switch checked={fileUploadEnabled} onCheckedChange={setFileUploadEnabled} />
+                </div>
               </section>
 
               <Separator className="h-px" />
@@ -487,10 +556,60 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
               showModelSelector={false}
               showMemoryToggle={false}
               forcedUseMemory={useMemory}
+              enableUpload={fileUploadEnabled}
+              homeBrand={agentHomeBrand}
+              homeTitle={agentDetail?.name || '开启新对话'}
+              homeDescription="使用当前草稿配置测试 Agent 效果"
             />
           </div>
         </section>
       </div>
+
+      <Dialog open={skillDialogOpen} onOpenChange={setSkillDialogOpen}>
+        <DialogContent size="lg">
+          <DialogHeader>
+            <DialogTitle>添加 Skill</DialogTitle>
+            <DialogDescription>
+              从当前组织已启用的 Skill 中选择这个 Agent 可使用的能力。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogBody className="max-h-[520px]">
+            {selectableSkills.length === 0 ? (
+              <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                当前组织还没有启用可选 Skill。
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {selectableSkills.map(skill => {
+                  const display = getAIChatSkillDisplayInfo(skill, locale);
+                  const checked = normalizedSelectedSkillIds.includes(skill.skill_id);
+                  return (
+                    <label
+                      key={skill.skill_id}
+                      className="flex cursor-pointer items-start gap-3 rounded-md border bg-background p-3 transition-colors hover:bg-muted/40"
+                    >
+                      <Checkbox
+                        checked={checked}
+                        onCheckedChange={value => handleToggleSkill(skill.skill_id, value === true)}
+                        className="mt-0.5"
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium">{display.label}</span>
+                        <span className="mt-1 line-clamp-2 block text-xs leading-5 text-muted-foreground">
+                          {display.description || skill.description || skill.skill_id}
+                        </span>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+          </DialogBody>
+          <DialogFooter>
+            <Button onClick={() => setSkillDialogOpen(false)}>完成</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
