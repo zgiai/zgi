@@ -1358,6 +1358,8 @@ const messages: NodesMessages = {
       emptyCode: '代码内容不能为空',
       emptyVariableName: '存在未命名的输入变量',
       emptyValueSelector: '存在未绑定来源的输入变量',
+      unsupportedOutputType:
+        '代码节点暂不支持输出变量「{name}」使用「{type}」类型，请改用可 JSON 表达的输出类型',
     },
   },
   ifElse: {

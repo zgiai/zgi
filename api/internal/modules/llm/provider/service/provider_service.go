@@ -307,8 +307,8 @@ func (s *providerService) DeleteCustom(ctx context.Context, organizationID, id u
 // Aggregated operations
 // ============================================================================
 
-// ListTenantProviders returns all providers available to an organization (global + custom)
-// Only returns providers where is_active=true
+// ListTenantProviders returns all providers available to an organization (global + custom).
+// Disabled custom providers are still returned so tenants can re-enable them.
 func (s *providerService) ListTenantProviders(ctx context.Context, organizationID uuid.UUID) ([]*model.ProviderView, error) {
 	var result []*model.ProviderView
 
@@ -391,8 +391,8 @@ func (s *providerService) ListTenantProviders(ctx context.Context, organizationI
 		result = append(result, view)
 	}
 
-	// Get organization's custom providers
-	customProviders, _, err := s.customRepo.List(ctx, organizationID, boolPtr(true), 0, 1000)
+	// Get organization's custom providers, including disabled ones.
+	customProviders, _, err := s.customRepo.List(ctx, organizationID, nil, 0, 1000)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list custom providers: %w", err)
 	}
@@ -437,7 +437,7 @@ func (s *providerService) GetTenantProvider(ctx context.Context, organizationID 
 
 		// Search by ID in custom providers
 		customProvider, err := s.customRepo.GetByID(ctx, organizationID, id)
-		if err == nil && customProvider.IsActive {
+		if err == nil {
 			return s.buildCustomProviderDetailView(ctx, organizationID, customProvider)
 		}
 	}
@@ -454,16 +454,13 @@ func (s *providerService) GetTenantProvider(ctx context.Context, organizationID 
 		}
 	}
 
-	// Search by name in custom providers
-	customProviders, _, err := s.customRepo.List(ctx, organizationID, boolPtr(true), 0, 1000)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list custom providers: %w", err)
+	// Search by name in custom providers, including disabled ones.
+	customProvider, err := s.customRepo.GetByProvider(ctx, organizationID, providerIdentifier)
+	if err == nil {
+		return s.buildCustomProviderDetailView(ctx, organizationID, customProvider)
 	}
-
-	for _, p := range customProviders {
-		if p.Provider == providerIdentifier && p.IsActive {
-			return s.buildCustomProviderDetailView(ctx, organizationID, p)
-		}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("failed to get custom provider: %w", err)
 	}
 
 	return nil, ErrProviderNotFound
@@ -623,37 +620,39 @@ func boolPtr(b bool) *bool {
 
 // ToggleProvider enables or disables a provider for an organization
 func (s *providerService) ToggleProvider(ctx context.Context, organizationID uuid.UUID, provider string, isEnabled bool) error {
-	// Find the global provider by name
-	providers, _, err := s.globalRepo.List(ctx, nil, 0, 1000)
-	if err != nil {
-		return fmt.Errorf("failed to list providers: %w", err)
-	}
-
-	var targetProvider *model.LLMProvider
-	for _, p := range providers {
-		if p.Provider == provider {
-			targetProvider = p
-			break
+	targetProvider, err := s.globalRepo.GetByName(ctx, provider)
+	if err == nil {
+		config := &model.ProviderConfig{
+			OrganizationID: organizationID,
+			ProviderID:     targetProvider.ID,
+			IsEnabled:      isEnabled,
 		}
+
+		if err := s.configRepo.Upsert(ctx, config); err != nil {
+			return err
+		}
+
+		s.invalidateAvailableModelsCache(organizationID)
+		return nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("failed to get global provider: %w", err)
 	}
 
-	if targetProvider == nil {
-		return fmt.Errorf("provider not found: %s", provider)
+	customProvider, err := s.customRepo.GetByProvider(ctx, organizationID, provider)
+	if err == nil {
+		customProvider.IsActive = isEnabled
+		if err := s.customRepo.Update(ctx, customProvider); err != nil {
+			return fmt.Errorf("failed to update custom provider: %w", err)
+		}
+		s.invalidateAvailableModelsCache(organizationID)
+		return nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("failed to get custom provider: %w", err)
 	}
 
-	// Upsert the provider config
-	config := &model.ProviderConfig{
-		OrganizationID: organizationID,
-		ProviderID:     targetProvider.ID,
-		IsEnabled:      isEnabled,
-	}
-
-	if err := s.configRepo.Upsert(ctx, config); err != nil {
-		return err
-	}
-
-	s.invalidateAvailableModelsCache(organizationID)
-	return nil
+	return ErrProviderNotFound
 }
 
 // GetProviderDetail gets detailed provider information with models

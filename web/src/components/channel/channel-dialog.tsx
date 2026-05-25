@@ -866,6 +866,7 @@ function ChannelForm({
             autoCollapseOthers={mappedProvider !== 'all'}
             providerFilter={lockChannelProvider ? mappedProvider : undefined}
             supplementalModels={discoveredModels}
+            selectionPolicy="catalog"
           />
         </div>
       </DialogBody>
