@@ -52,7 +52,8 @@ RUN apk --no-cache add \
     poppler-utils \
     tesseract-ocr \
     tesseract-ocr-data-eng \
-    tesseract-ocr-data-chi_sim
+    tesseract-ocr-data-chi_sim \
+    && fc-cache -f
 
 # Set timezone
 ENV TZ=Asia/Shanghai
