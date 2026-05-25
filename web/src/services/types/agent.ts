@@ -31,6 +31,7 @@ export type WebAppStatus = 'active' | 'inactive';
 // Basic agent interface (for list response)
 export interface Agent {
   id: string;
+  web_app_id?: string;
   name: string;
   description: string;
   agent_type: AgentType;
@@ -49,6 +50,7 @@ export interface Agent {
 // Agent detail interface (for detail response)
 export interface AgentDetail {
   id: string;
+  web_app_id?: string;
   name: string;
   description: string;
   agent_type: AgentType;
@@ -179,6 +181,9 @@ export interface AgentRuntimeConfig {
   enabled_skill_ids: string[];
   use_memory: boolean;
   file_upload_enabled: boolean;
+  home_title: string;
+  input_placeholder: string;
+  theme_color: string;
   suggested_questions: string[];
   updated_at: number;
 }
@@ -191,7 +196,40 @@ export interface UpdateAgentRuntimeConfigRequest {
   enabled_skill_ids: string[];
   use_memory: boolean;
   file_upload_enabled: boolean;
+  home_title: string;
+  input_placeholder: string;
+  theme_color: string;
   suggested_questions: string[];
+}
+
+export interface AgentSuggestedQuestionSkillContext {
+  id?: string;
+  name?: string;
+  description?: string;
+}
+
+export interface GenerateAgentSuggestedQuestionsRequest {
+  locale?: string;
+  count?: number;
+  provider?: string;
+  model?: string;
+  system_prompt?: string;
+  home_title?: string;
+  existing_questions?: string[];
+  skills?: AgentSuggestedQuestionSkillContext[];
+  knowledge_refs?: string[];
+}
+
+export interface AgentSuggestedQuestionCandidate {
+  text: string;
+  reason?: string;
+}
+
+export interface GenerateAgentSuggestedQuestionsResponse {
+  questions: AgentSuggestedQuestionCandidate[];
+  warnings?: string[];
+  provider?: string;
+  model?: string;
 }
 
 export interface AgentChatRequest {
@@ -233,6 +271,29 @@ export interface PublishAgentResponse {
   version: string;
   web_app_id: string;
   published_at: number;
+}
+
+export interface AgentPublishedVersion {
+  id: string;
+  agent_id: string;
+  version_uuid: string;
+  version: string;
+  description: string;
+  config_snapshot: AgentRuntimeConfig;
+  is_current: boolean;
+  created_at: number;
+}
+
+export interface AgentPublishedVersionsResponse {
+  data: AgentPublishedVersion[];
+  page: number;
+  limit: number;
+  total: number;
+  has_more: boolean;
+}
+
+export interface RollbackAgentPublishedVersionRequest {
+  version_id: string;
 }
 export interface AgentApiKeyCreateResponse {
   id: string;

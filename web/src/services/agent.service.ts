@@ -13,6 +13,8 @@ import type {
   AgentRuntimeConfig,
   UpdateAgentRuntimeConfigRequest,
   PublishAgentResponse,
+  AgentPublishedVersionsResponse,
+  RollbackAgentPublishedVersionRequest,
   AgentChatRequest,
   AgentChatSseEnvelope,
   AgentChatStreamCallbacks,
@@ -24,6 +26,8 @@ import type {
   AgentApiKeyCreateResponse,
   RunnableWebAppsData,
   RunnableWebAppsParams,
+  GenerateAgentSuggestedQuestionsRequest,
+  GenerateAgentSuggestedQuestionsResponse,
 } from './types/agent';
 import type { WebAppRunRequest, WebAppRunSseCallbacks } from './types/webapp';
 import type { ApiResponseData } from './types/common';
@@ -139,6 +143,32 @@ class AgentService extends BaseService {
 
   publishAgent(agentId: string): Promise<ApiResponseData<PublishAgentResponse>> {
     return this.request('post', `/agents/${agentId}/publish`, undefined, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  getPublishedVersions(
+    agentId: string
+  ): Promise<ApiResponseData<AgentPublishedVersionsResponse>> {
+    return this.request('get', `/agents/${agentId}/published-versions`, undefined, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  rollbackPublishedVersion(
+    agentId: string,
+    data: RollbackAgentPublishedVersionRequest
+  ): Promise<ApiResponseData<AgentRuntimeConfig>> {
+    return this.request('post', `/agents/${agentId}/published-versions/rollback`, data, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  generateSuggestedQuestions(
+    agentId: string,
+    data: GenerateAgentSuggestedQuestionsRequest
+  ): Promise<ApiResponseData<GenerateAgentSuggestedQuestionsResponse>> {
+    return this.request('post', `/agents/${agentId}/suggested-questions/generate`, data, {
       headers: { 'Content-Type': 'application/json' },
     });
   }
