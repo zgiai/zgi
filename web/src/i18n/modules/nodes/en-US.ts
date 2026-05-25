@@ -1433,6 +1433,8 @@ const messages = {
       emptyCode: 'Code cannot be empty',
       emptyVariableName: 'An input variable is missing a name',
       emptyValueSelector: 'An input variable is missing a value source',
+      unsupportedOutputType:
+        'Code node does not support output "{name}" with type "{type}". Please use a JSON-compatible output type.',
     },
   },
   ifElse: {

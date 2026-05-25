@@ -1,3 +1,46 @@
+import type { ValidationResult, ValidationError } from '../common/validation';
+import type { WorkflowNode } from '../../store/type';
+
+export type CodeInputValueType =
+  | 'string'
+  | 'number'
+  | 'boolean'
+  | 'object'
+  | 'file'
+  | 'array'
+  | 'array[string]'
+  | 'array[number]'
+  | 'array[boolean]'
+  | 'array[object]'
+  | 'array[file]';
+
+export type CodeOutputType =
+  | 'string'
+  | 'number'
+  | 'boolean'
+  | 'object'
+  | 'array[string]'
+  | 'array[number]'
+  | 'array[boolean]'
+  | 'array[object]';
+
+export const CODE_OUTPUT_TYPES: readonly CodeOutputType[] = [
+  'string',
+  'number',
+  'boolean',
+  'object',
+  'array[string]',
+  'array[number]',
+  'array[boolean]',
+  'array[object]',
+];
+
+const CODE_OUTPUT_TYPE_SET = new Set<string>(CODE_OUTPUT_TYPES);
+
+export function isCodeOutputType(value: unknown): value is CodeOutputType {
+  return typeof value === 'string' && CODE_OUTPUT_TYPE_SET.has(value);
+}
+
 export interface CodeNodeData {
   type: 'code';
   title: string;
@@ -7,35 +50,12 @@ export interface CodeNodeData {
   variables: Array<{
     variable: string;
     value_selector: string[];
-    value_type:
-      | 'string'
-      | 'number'
-      | 'boolean'
-      | 'object'
-      | 'file'
-      | 'array'
-      | 'array[string]'
-      | 'array[number]'
-      | 'array[boolean]'
-      | 'array[object]'
-      | 'array[file]';
+    value_type: CodeInputValueType;
   }>;
   outputs: Record<
     string,
     {
-      type:
-        | 'string'
-        | 'number'
-        | 'boolean'
-        | 'object'
-        | 'file'
-        | 'array'
-        | 'array[string]'
-        | 'array[number]'
-        | 'array[boolean]'
-        | 'array[object]'
-        | 'array[file]'
-        | 'array[array]';
+      type: CodeOutputType;
       children: null;
     }
   >;
@@ -57,8 +77,6 @@ export const DEFAULT_CODE_NODE_DATA: CodeNodeData = {
   isInIteration: false,
 };
 
-import type { ValidationResult, ValidationError } from '../common/validation';
-import type { WorkflowNode } from '../../store/type';
 // Validate Code node data based on business rules
 interface ValidationCtx {
   nodes?: WorkflowNode[];
@@ -90,10 +108,25 @@ export const checkValid = (nodeData: CodeNodeData, ctx?: ValidationCtx): Validat
     if (Array.isArray(v.value_selector) && v.value_selector.length >= 2) {
       const [sourceId] = v.value_selector;
       const allowed = new Set<string>(['sys', 'conversation', 'environment']);
-      const hasNode = Array.isArray(ctx?.nodes) ? ctx!.nodes!.some(n => n.id === sourceId) : true;
+      const nodes = ctx?.nodes;
+      const hasNode = Array.isArray(nodes) ? nodes.some(n => n.id === sourceId) : true;
       if (!allowed.has(sourceId) && !hasNode) {
         warnings.push({ code: 'validation.invalidUpstream' });
       }
+    }
+  }
+
+  for (const [name, output] of Object.entries(nodeData.outputs || {})) {
+    const outputType = (output as { type?: unknown }).type;
+    if (!isCodeOutputType(outputType)) {
+      errors.push({
+        code: 'code.errors.unsupportedOutputType',
+        params: {
+          name,
+          type: typeof outputType === 'string' ? outputType : String(outputType ?? ''),
+        },
+      });
+      break;
     }
   }
 
