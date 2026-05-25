@@ -12,22 +12,9 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { WorkflowIdentifierInput } from '@/components/workflow/common/variable-binding-editor/identifier-input';
-import type { OutputVariable } from '../../../store/type';
+import { CODE_OUTPUT_TYPES, type CodeOutputType } from '../config';
 import { useT } from '@/i18n';
 import { isValidIdentifier } from '@/utils/validation';
-
-const OUTPUT_TYPES: Array<OutputVariable['type']> = [
-  'string',
-  'number',
-  'boolean',
-  'object',
-  'file',
-  'array[string]',
-  'array[number]',
-  'array[boolean]',
-  'array[object]',
-  'array[file]',
-];
 
 function isDeleteShortcut(event: React.KeyboardEvent<HTMLElement>): boolean {
   return event.key === 'Delete' || event.key === 'Backspace';
@@ -43,8 +30,8 @@ export interface OutputRowProps {
   idx: number;
   committedKey: string;
   onKeyChange: (index: number, newKey: string) => void;
-  typeValue: OutputVariable['type'];
-  onTypeChange: (committedKey: string, type: OutputVariable['type']) => void;
+  typeValue: CodeOutputType;
+  onTypeChange: (committedKey: string, type: CodeOutputType) => void;
   onRemove: (committedKey: string) => void;
   isReadOnly: boolean;
 }
@@ -92,14 +79,14 @@ const OutputRow: React.FC<OutputRowProps> = ({
       <div className="shrink-0 w-28">
         <Select
           value={typeValue}
-          onValueChange={value => onTypeChange(committedKey, value as OutputVariable['type'])}
+          onValueChange={value => onTypeChange(committedKey, value as CodeOutputType)}
           disabled={isReadOnly}
         >
           <SelectTrigger className="w-full shrink-0">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {OUTPUT_TYPES.map(type => (
+            {CODE_OUTPUT_TYPES.map(type => (
               <SelectItem key={type} value={type}>
                 {type}
               </SelectItem>

@@ -17,6 +17,7 @@
     "lint": "node scripts/prepare-customer-overlay.mjs && eslint .",
     "lint:fix": "node scripts/prepare-customer-overlay.mjs && eslint . --fix",
     "test:workflow-tool-validation": "node scripts/test-workflow-tool-validation.mjs",
+    "test:code-node-validation": "node scripts/test-code-node-validation.mjs",
     "type-check": "node scripts/prepare-customer-overlay.mjs && node scripts/generate-sensitive-word-filter.mjs && node scripts/check-i18n-route-modules.mjs && tsc --noEmit",
     "check:i18n-routes": "node scripts/check-i18n-route-modules.mjs",
     "validate:agent-templates": "node scripts/validate-agent-templates.mjs",
