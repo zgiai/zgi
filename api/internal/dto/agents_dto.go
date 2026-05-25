@@ -151,31 +151,34 @@ type WebAppStatusResponse struct {
 }
 
 type AgentRuntimeModeConfig struct {
-	EnabledSkillIDs   []string `json:"enabled_skill_ids"`
-	UseMemory         bool     `json:"use_memory"`
-	FileUploadEnabled bool     `json:"file_upload_enabled"`
+	EnabledSkillIDs    []string `json:"enabled_skill_ids"`
+	UseMemory          bool     `json:"use_memory"`
+	FileUploadEnabled  bool     `json:"file_upload_enabled"`
+	SuggestedQuestions []string `json:"suggested_questions"`
 }
 
 type AgentConfigRequest struct {
-	SystemPrompt    string                 `json:"system_prompt"`
-	ModelProvider   string                 `json:"model_provider"`
-	Model           string                 `json:"model"`
-	ModelParameters map[string]interface{} `json:"model_parameters"`
-	EnabledSkillIDs []string               `json:"enabled_skill_ids"`
-	UseMemory       bool                   `json:"use_memory"`
-	FileUpload      bool                   `json:"file_upload_enabled"`
+	SystemPrompt       string                 `json:"system_prompt"`
+	ModelProvider      string                 `json:"model_provider"`
+	Model              string                 `json:"model"`
+	ModelParameters    map[string]interface{} `json:"model_parameters"`
+	EnabledSkillIDs    []string               `json:"enabled_skill_ids"`
+	UseMemory          bool                   `json:"use_memory"`
+	FileUpload         bool                   `json:"file_upload_enabled"`
+	SuggestedQuestions []string               `json:"suggested_questions"`
 }
 
 type AgentConfigResponse struct {
-	AgentID         string                 `json:"agent_id"`
-	SystemPrompt    string                 `json:"system_prompt"`
-	ModelProvider   string                 `json:"model_provider"`
-	Model           string                 `json:"model"`
-	ModelParameters map[string]interface{} `json:"model_parameters"`
-	EnabledSkillIDs []string               `json:"enabled_skill_ids"`
-	UseMemory       bool                   `json:"use_memory"`
-	FileUpload      bool                   `json:"file_upload_enabled"`
-	UpdatedAt       int64                  `json:"updated_at"`
+	AgentID            string                 `json:"agent_id"`
+	SystemPrompt       string                 `json:"system_prompt"`
+	ModelProvider      string                 `json:"model_provider"`
+	Model              string                 `json:"model"`
+	ModelParameters    map[string]interface{} `json:"model_parameters"`
+	EnabledSkillIDs    []string               `json:"enabled_skill_ids"`
+	UseMemory          bool                   `json:"use_memory"`
+	FileUpload         bool                   `json:"file_upload_enabled"`
+	SuggestedQuestions []string               `json:"suggested_questions"`
+	UpdatedAt          int64                  `json:"updated_at"`
 }
 
 type PublishAgentRequest struct {

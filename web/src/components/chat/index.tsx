@@ -119,6 +119,7 @@ interface AIChatVariantProps {
   homeBrand?: React.ReactNode;
   homeTitle?: string;
   homeDescription?: string;
+  suggestions?: string[];
 }
 
 type ChatProps =
@@ -353,7 +354,10 @@ export {
   createAgentDraftTransport,
   createAgentWebAppTransport,
 } from '@/components/chat/transports/agent-runtime-transport';
-export { useAIChatController } from '@/components/chat/hooks/use-aichat-controller';
+export {
+  useAIChatController,
+  useChatRuntimeController,
+} from '@/components/chat/runtime/controller/use-chat-runtime-controller';
 export { AIChatShell, AIChatMessageBubble } from '@/components/chat/variants/aichat/aichat-chat';
 export {
   buildCurrentChatPath,

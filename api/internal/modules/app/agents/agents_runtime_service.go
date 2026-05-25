@@ -45,9 +45,10 @@ func (s *agentsService) UpdateAgentConfig(ctx context.Context, agentID, accountI
 	params := string(paramsJSON)
 	cfg.Configs = &params
 	modeJSON, err := json.Marshal(dto.AgentRuntimeModeConfig{
-		EnabledSkillIDs:   runtimeCfg.EnabledSkillIDs,
-		UseMemory:         runtimeCfg.UseMemory,
-		FileUploadEnabled: runtimeCfg.FileUpload,
+		EnabledSkillIDs:    runtimeCfg.EnabledSkillIDs,
+		UseMemory:          runtimeCfg.UseMemory,
+		FileUploadEnabled:  runtimeCfg.FileUpload,
+		SuggestedQuestions: runtimeCfg.SuggestedQuestions,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal agent mode: %w", err)
@@ -238,6 +239,7 @@ func normalizeAgentConfigRequest(req dto.AgentConfigRequest) dto.AgentConfigRequ
 		req.ModelParameters = map[string]interface{}{}
 	}
 	req.EnabledSkillIDs = normalizeStringIDs(req.EnabledSkillIDs)
+	req.SuggestedQuestions = normalizeSuggestedQuestions(req.SuggestedQuestions)
 	return req
 }
 
@@ -251,11 +253,12 @@ func agentConfigResponse(agentID string, cfg *AgentsConfig) *dto.AgentConfigResp
 		_ = json.Unmarshal([]byte(*cfg.AgentMode), &mode)
 	}
 	resp := &dto.AgentConfigResponse{
-		AgentID:         agentID,
-		ModelParameters: params,
-		EnabledSkillIDs: normalizeStringIDs(mode.EnabledSkillIDs),
-		UseMemory:       mode.UseMemory,
-		FileUpload:      mode.FileUploadEnabled,
+		AgentID:            agentID,
+		ModelParameters:    params,
+		EnabledSkillIDs:    normalizeStringIDs(mode.EnabledSkillIDs),
+		UseMemory:          mode.UseMemory,
+		FileUpload:         mode.FileUploadEnabled,
+		SuggestedQuestions: normalizeSuggestedQuestions(mode.SuggestedQuestions),
 	}
 	if cfg != nil {
 		resp.SystemPrompt = stringPtrValue(cfg.PrePrompt)
@@ -277,6 +280,7 @@ func agentConfigSnapshot(agentID string, cfg *AgentsConfig) map[string]interface
 		"enabled_skill_ids":   resp.EnabledSkillIDs,
 		"use_memory":          resp.UseMemory,
 		"file_upload_enabled": resp.FileUpload,
+		"suggested_questions": resp.SuggestedQuestions,
 	}
 }
 
@@ -302,6 +306,7 @@ func agentConfigResponseFromSnapshot(agentID string, snapshot map[string]interfa
 	if fileUpload, ok := snapshot["file_upload_enabled"].(bool); ok {
 		resp.FileUpload = fileUpload
 	}
+	resp.SuggestedQuestions = normalizeSuggestedQuestions(stringSliceFromSnapshot(snapshot["suggested_questions"]))
 	return resp
 }
 
@@ -344,6 +349,25 @@ func normalizeStringIDs(input []string) []string {
 		out = append(out, id)
 	}
 	sort.Strings(out)
+	return out
+}
+
+func normalizeSuggestedQuestions(input []string) []string {
+	out := make([]string, 0, len(input))
+	for _, raw := range input {
+		item := strings.TrimSpace(raw)
+		if item == "" {
+			continue
+		}
+		if len([]rune(item)) > 200 {
+			runes := []rune(item)
+			item = string(runes[:200])
+		}
+		out = append(out, item)
+		if len(out) >= 6 {
+			break
+		}
+	}
 	return out
 }
 

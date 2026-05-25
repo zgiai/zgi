@@ -179,6 +179,7 @@ export interface AgentRuntimeConfig {
   enabled_skill_ids: string[];
   use_memory: boolean;
   file_upload_enabled: boolean;
+  suggested_questions: string[];
   updated_at: number;
 }
 
@@ -190,6 +191,7 @@ export interface UpdateAgentRuntimeConfigRequest {
   enabled_skill_ids: string[];
   use_memory: boolean;
   file_upload_enabled: boolean;
+  suggested_questions: string[];
 }
 
 export interface AgentChatRequest {

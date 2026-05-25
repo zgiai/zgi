@@ -26,6 +26,7 @@ import {
   type ModelSelectorParameterValue,
   type ModelSelectorValue,
 } from '@/components/common/model-selector';
+import { PromptOptimizerDialog } from '@/components/prompts/prompt-optimizer-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -38,6 +39,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -122,7 +124,9 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
   const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
   const [useMemory, setUseMemory] = useState(false);
   const [fileUploadEnabled, setFileUploadEnabled] = useState(false);
+  const [suggestedQuestions, setSuggestedQuestions] = useState<string[]>([]);
   const [skillDialogOpen, setSkillDialogOpen] = useState(false);
+  const [promptOptimizerOpen, setPromptOptimizerOpen] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const lastSavedSignatureRef = useRef('');
@@ -168,8 +172,19 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
       enabled_skill_ids: normalizedSelectedSkillIds,
       use_memory: useMemory,
       file_upload_enabled: fileUploadEnabled,
+      suggested_questions: suggestedQuestions
+        .map(item => item.trim())
+        .filter(Boolean)
+        .slice(0, 6),
     }),
-    [fileUploadEnabled, modelValue, normalizedSelectedSkillIds, systemPrompt, useMemory]
+    [
+      fileUploadEnabled,
+      modelValue,
+      normalizedSelectedSkillIds,
+      suggestedQuestions,
+      systemPrompt,
+      useMemory,
+    ]
   );
   const currentSignature = useMemo(() => buildSignature(currentPayload), [currentPayload]);
   const isDirty = Boolean(
@@ -202,6 +217,7 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
       enabled_skill_ids: config.enabled_skill_ids ?? [],
       use_memory: config.use_memory ?? false,
       file_upload_enabled: config.file_upload_enabled ?? false,
+      suggested_questions: config.suggested_questions ?? [],
     };
     setSystemPrompt(nextPayload.system_prompt);
     setModelValue({
@@ -212,6 +228,7 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
     setSelectedSkillIds(nextPayload.enabled_skill_ids);
     setUseMemory(nextPayload.use_memory);
     setFileUploadEnabled(nextPayload.file_upload_enabled);
+    setSuggestedQuestions(nextPayload.suggested_questions);
     setLastSavedAt(config.updated_at ?? null);
     lastSavedSignatureRef.current = buildSignature(nextPayload);
     setSaveState('saved');
@@ -234,6 +251,8 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
           model_parameters: toModelParams(response.data.model_parameters),
           file_upload_enabled:
             response.data.file_upload_enabled ?? currentPayload.file_upload_enabled,
+          suggested_questions:
+            response.data.suggested_questions ?? currentPayload.suggested_questions,
         };
         setLastSavedAt(updatedAt);
         lastSavedSignatureRef.current = buildSignature(savedPayload);
@@ -282,6 +301,25 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
     setSelectedSkillIds(current =>
       checked ? Array.from(new Set([...current, skillId])) : current.filter(id => id !== skillId)
     );
+  }, []);
+
+  const handleAddSuggestedQuestion = useCallback(() => {
+    setSuggestedQuestions(current => (current.length >= 6 ? current : [...current, '']));
+  }, []);
+
+  const handleChangeSuggestedQuestion = useCallback((index: number, value: string) => {
+    setSuggestedQuestions(current =>
+      current.map((item, itemIndex) => (itemIndex === index ? value : item))
+    );
+  }, []);
+
+  const handleRemoveSuggestedQuestion = useCallback((index: number) => {
+    setSuggestedQuestions(current => current.filter((_, itemIndex) => itemIndex !== index));
+  }, []);
+
+  const handleApplyOptimizedPrompt = useCallback((payload: { text: string }) => {
+    setSystemPrompt(payload.text);
+    setPromptOptimizerOpen(false);
   }, []);
 
   const handleManualSave = useCallback(() => {
@@ -394,7 +432,16 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
                 系统提示词会在每轮对话前注入 runtime。
               </p>
             </div>
-            <Sparkles className="size-4 text-primary" />
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 gap-1.5 px-2 text-xs"
+              onClick={() => setPromptOptimizerOpen(true)}
+              disabled={!systemPrompt.trim()}
+            >
+              <Sparkles className="size-3.5" />
+              优化
+            </Button>
           </div>
           <div className="min-h-0 flex-1 px-5 pb-5">
             <Textarea
@@ -506,6 +553,58 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
               <Separator className="h-px" />
 
               <section className="space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <ChevronRight className="size-4 text-muted-foreground" />
+                    请求示例
+                  </div>
+                  <Button
+                    isIcon
+                    variant="outline"
+                    className="size-8"
+                    onClick={handleAddSuggestedQuestion}
+                    disabled={suggestedQuestions.length >= 6}
+                    aria-label="添加请求示例"
+                    title="添加请求示例"
+                  >
+                    <Plus className="size-4" />
+                  </Button>
+                </div>
+                <div className="space-y-2">
+                  {suggestedQuestions.length === 0 ? (
+                    <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                      还没有配置请求示例，WebApp 首页将不展示示例问题。
+                    </div>
+                  ) : (
+                    suggestedQuestions.map((question, index) => (
+                      <div key={index} className="flex items-center gap-2">
+                        <Input
+                          value={question}
+                          maxLength={200}
+                          placeholder="例如：帮我总结这份文档的重点"
+                          onChange={event =>
+                            handleChangeSuggestedQuestion(index, event.target.value)
+                          }
+                        />
+                        <Button
+                          isIcon
+                          variant="ghost"
+                          className="size-8 shrink-0 text-muted-foreground hover:text-destructive"
+                          onClick={() => handleRemoveSuggestedQuestion(index)}
+                          aria-label="删除请求示例"
+                          title="删除请求示例"
+                        >
+                          <Trash2 className="size-4" />
+                        </Button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </section>
+
+              <Separator className="h-px" />
+
+              <section className="space-y-3">
                 <div className="flex items-center gap-2 text-sm font-medium">
                   <ChevronRight className="size-4 text-muted-foreground" />
                   文件
@@ -561,6 +660,7 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
               showMemoryToggle={false}
               forcedUseMemory={useMemory}
               enableUpload={fileUploadEnabled}
+              suggestions={currentPayload.suggested_questions}
               homeBrand={agentHomeBrand}
               homeTitle={agentDetail?.name || '开启新对话'}
               homeDescription="使用当前草稿配置测试 Agent 效果"
@@ -568,6 +668,25 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
           </div>
         </section>
       </div>
+
+      <PromptOptimizerDialog
+        open={promptOptimizerOpen}
+        onOpenChange={setPromptOptimizerOpen}
+        initialPrompt={systemPrompt}
+        sourceLabel="系统提示词"
+        sourceHelpText="优化器会基于当前系统提示词重写角色、任务、约束与输出要求；当前 AGENT 不注入节点变量。"
+        sourceResetLabel="恢复当前系统提示词"
+        initialModel={
+          modelValue.model
+            ? {
+                provider: modelValue.provider,
+                model: modelValue.model,
+              }
+            : null
+        }
+        applyLabel="应用到系统提示词"
+        onApplyResult={handleApplyOptimizedPrompt}
+      />
 
       <Dialog open={skillDialogOpen} onOpenChange={setSkillDialogOpen}>
         <DialogContent size="lg">

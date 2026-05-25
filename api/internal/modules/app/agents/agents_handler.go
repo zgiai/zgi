@@ -492,8 +492,9 @@ func (h *AgentsHandler) GetWebAppRuntimeConfig(c *gin.Context) {
 	response.Success(c, gin.H{
 		"variables": []interface{}{},
 		"features": gin.H{
-			"agent_type": result.AgentType,
-			"runtime":    "chat",
+			"agent_type":          result.AgentType,
+			"runtime":             "chat",
+			"suggested_questions": result.Config.SuggestedQuestions,
 		},
 		"config": gin.H{
 			"agent_id":   result.AgentID,

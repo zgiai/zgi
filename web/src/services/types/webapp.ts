@@ -99,6 +99,7 @@ export interface WebAppWorkflowConfig {
     enabled_skill_ids?: string[];
     use_memory?: boolean;
     file_upload_enabled?: boolean;
+    suggested_questions?: string[];
   };
 }
 

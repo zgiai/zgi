@@ -70,6 +70,7 @@ interface AIChatShellProps {
   homeBrand?: React.ReactNode;
   homeTitle?: string;
   homeDescription?: string;
+  suggestions?: string[];
 }
 
 /**
@@ -94,6 +95,7 @@ export function AIChatShell({
   homeBrand,
   homeTitle,
   homeDescription,
+  suggestions: configuredSuggestions,
 }: AIChatShellProps) {
   const router = useRouter();
   const t = useT('webapp');
@@ -248,15 +250,22 @@ export function AIChatShell({
     [activeConversationId, conversations, isRecoveringMessages, isStopping]
   );
 
-  const suggestions = useMemo<AIChatSuggestion[]>(
-    () => [
+  const suggestions = useMemo<AIChatSuggestion[]>(() => {
+    if (configuredSuggestions) {
+      return configuredSuggestions
+        .map(text => text.trim())
+        .filter(Boolean)
+        .slice(0, 6)
+        .map((text, index) => ({ text, key: `configured-${index}` }));
+    }
+
+    return [
       { text: t('chat.suggestions.email'), key: 'email' },
       { text: t('chat.suggestions.meeting'), key: 'meeting' },
       { text: t('chat.suggestions.report'), key: 'report' },
       { text: t('chat.suggestions.polish'), key: 'polish' },
-    ],
-    [t]
-  );
+    ];
+  }, [configuredSuggestions, t]);
 
   const canReplaceRootMessage = useCallback(
     (message: AIChatMessage) => {
