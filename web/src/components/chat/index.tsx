@@ -110,6 +110,10 @@ interface AIChatVariantProps {
   controller: AIChatController;
   modelSelectorValue: AIChatModelValue;
   onModelChange: (value: ModelSelectorValue) => void;
+  variant?: 'full' | 'embedded';
+  showModelSelector?: boolean;
+  showMemoryToggle?: boolean;
+  forcedUseMemory?: boolean;
 }
 
 type ChatProps =
@@ -153,9 +157,7 @@ const SingleTestChat: React.FC<SingleTestVariantProps> = ({
   const initSingle = useChatStore.use.initSingle();
   // Select live conversation by id to refresh UI on store updates
   const conv = useChatStore(state => state.conversations[conversation.id]);
-  const [draftSuggestion, setDraftSuggestion] = useState<{ id: number; text: string } | null>(
-    null
-  );
+  const [draftSuggestion, setDraftSuggestion] = useState<{ id: number; text: string } | null>(null);
 
   useEffect(() => {
     if (mode !== 'singleTest' || !enableInit) return;
@@ -341,11 +343,13 @@ export { SingleChatController } from '@/components/chat/controllers/single-chat-
 export { WebappConversationTransport } from '@/components/chat/transports/webapp-transport';
 export { AgentAdvancedChatTransport } from '@/components/chat/transports/agent-advanced-chat-transport';
 export { AIChatTransport } from '@/components/chat/transports/aichat-transport';
-export { useAIChatController } from '@/components/chat/hooks/use-aichat-controller';
 export {
-  AIChatShell,
-  AIChatMessageBubble,
-} from '@/components/chat/variants/aichat/aichat-chat';
+  AgentRuntimeTransport,
+  createAgentDraftTransport,
+  createAgentWebAppTransport,
+} from '@/components/chat/transports/agent-runtime-transport';
+export { useAIChatController } from '@/components/chat/hooks/use-aichat-controller';
+export { AIChatShell, AIChatMessageBubble } from '@/components/chat/variants/aichat/aichat-chat';
 export {
   buildCurrentChatPath,
   buildChatMessageTopology,

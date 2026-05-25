@@ -61,6 +61,10 @@ interface AIChatShellProps {
   controller: AIChatController;
   modelSelectorValue: AIChatModelValue;
   onModelChange: (value: ModelSelectorValue) => void;
+  variant?: 'full' | 'embedded';
+  showModelSelector?: boolean;
+  showMemoryToggle?: boolean;
+  forcedUseMemory?: boolean;
 }
 
 /**
@@ -76,12 +80,17 @@ export function AIChatShell({
   controller,
   modelSelectorValue,
   onModelChange,
+  variant = 'full',
+  showModelSelector = true,
+  showMemoryToggle = true,
+  forcedUseMemory,
 }: AIChatShellProps) {
   const router = useRouter();
   const t = useT('webapp');
   const tGlobal = useT();
   const { locale } = useLocale();
   const isMobile = useIsMobile();
+  const isEmbedded = variant === 'embedded';
   const [input, setInput] = useState('');
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingQuery, setEditingQuery] = useState('');
@@ -157,8 +166,7 @@ export function AIChatShell({
     () =>
       Object.values(streamingByMessageId).some(
         streaming =>
-          streaming.status === 'streaming' &&
-          streaming.conversation_id === activeConversationId
+          streaming.status === 'streaming' && streaming.conversation_id === activeConversationId
       ),
     [activeConversationId, streamingByMessageId]
   );
@@ -284,10 +292,10 @@ export function AIChatShell({
           model: modelSelectorValue.model,
           parameters: modelSelectorValue.params,
         },
-        useMemory,
+        useMemory: forcedUseMemory ?? useMemory,
       });
     },
-    [controller, input, isSending, modelSelectorValue, t]
+    [controller, forcedUseMemory, input, isSending, modelSelectorValue, t]
   );
 
   const handleRegenerate = useCallback(
@@ -423,28 +431,32 @@ export function AIChatShell({
 
   return (
     <div className="flex h-full w-full overflow-hidden bg-background">
-      <div className="hidden md:block">
-        <Sidebar
-          activeId={activeConversationId}
-          conversations={conversationSummaries}
-          isOpen={sidebarOpen}
-          isHome={isHome}
-          onNewChat={handleNewChat}
-          onSelect={handleSelectConversation}
-          onDelete={handleDeleteConversation}
-          onRename={handleRenameConversation}
-          backgroundImage={AICHAT_SIDEBAR_BG_IMAGE}
-        />
-      </div>
+      {!isEmbedded ? (
+        <div className="hidden md:block">
+          <Sidebar
+            activeId={activeConversationId}
+            conversations={conversationSummaries}
+            isOpen={sidebarOpen}
+            isHome={isHome}
+            onNewChat={handleNewChat}
+            onSelect={handleSelectConversation}
+            onDelete={handleDeleteConversation}
+            onRename={handleRenameConversation}
+            backgroundImage={AICHAT_SIDEBAR_BG_IMAGE}
+          />
+        </div>
+      ) : null}
 
       <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
-        <AIChatHeader
-          isMobile={isMobile}
-          isHome={isHome}
-          title={activeConversation?.title || t('consoleChat.title')}
-          onToggleSidebar={handleToggleSidebar}
-          onStartNew={handleNewChat}
-        />
+        {!isEmbedded ? (
+          <AIChatHeader
+            isMobile={isMobile}
+            isHome={isHome}
+            title={activeConversation?.title || t('consoleChat.title')}
+            onToggleSidebar={handleToggleSidebar}
+            onStartNew={handleNewChat}
+          />
+        ) : null}
 
         <AIChatMessageList
           messages={messages}
@@ -503,27 +515,31 @@ export function AIChatShell({
           onStop={controller.stop}
           onModelChange={onModelChange}
           onHeightChange={setInputAreaHeight}
+          showModelSelector={showModelSelector}
+          showMemoryToggle={showMemoryToggle}
         />
       </main>
 
-      <Sheet open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
-        <SheetContent side="left" className="max-w-none p-0 sm:max-w-sm" showClose={false}>
-          <SheetTitle className="sr-only">{t('chat.conversations')}</SheetTitle>
-          <Sidebar
-            activeId={activeConversationId}
-            conversations={conversationSummaries}
-            isOpen
-            isHome={isHome}
-            className="w-full border-r-0"
-            onNewChat={handleNewChat}
-            onSelect={handleSelectConversation}
-            onDelete={handleDeleteConversation}
-            onRename={handleRenameConversation}
-            backgroundImage={AICHAT_SIDEBAR_BG_IMAGE}
-            onClose={() => setMobileSidebarOpen(false)}
-          />
-        </SheetContent>
-      </Sheet>
+      {!isEmbedded ? (
+        <Sheet open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
+          <SheetContent side="left" className="max-w-none p-0 sm:max-w-sm" showClose={false}>
+            <SheetTitle className="sr-only">{t('chat.conversations')}</SheetTitle>
+            <Sidebar
+              activeId={activeConversationId}
+              conversations={conversationSummaries}
+              isOpen
+              isHome={isHome}
+              className="w-full border-r-0"
+              onNewChat={handleNewChat}
+              onSelect={handleSelectConversation}
+              onDelete={handleDeleteConversation}
+              onRename={handleRenameConversation}
+              backgroundImage={AICHAT_SIDEBAR_BG_IMAGE}
+              onClose={() => setMobileSidebarOpen(false)}
+            />
+          </SheetContent>
+        </Sheet>
+      ) : null}
     </div>
   );
 }

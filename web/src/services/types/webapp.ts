@@ -80,16 +80,25 @@ export interface WebAppWorkflowMeta {
   icon?: string;
   icon_type?: 'image' | 'text' | string;
   icon_url?: string;
-  type?: 'WORKFLOW' | 'CONVERSATIONAL_WORKFLOW' | string;
+  type?: 'WORKFLOW' | 'CONVERSATIONAL_WORKFLOW' | 'AGENT' | string;
   title: string;
   /** Agent ID for stop functionality */
   agent_id?: string;
+  web_app_id?: string;
 }
 
 export interface WebAppWorkflowConfig {
   variables: WebAppVariable[];
   features: WebAppFeatures;
   config: WebAppWorkflowMeta;
+  agent_config?: {
+    system_prompt?: string;
+    model_provider?: string;
+    model?: string;
+    model_parameters?: Record<string, unknown>;
+    enabled_skill_ids?: string[];
+    use_memory?: boolean;
+  };
 }
 
 export interface WebAppRunRequest {

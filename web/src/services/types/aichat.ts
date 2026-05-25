@@ -231,7 +231,7 @@ export interface AIChatMessage {
   error?: string;
   model_provider?: string;
   model_name: string;
-  billing_reason_source?: 'aichat';
+  billing_reason_source?: 'aichat' | 'agent';
   model_parameters?: Record<string, unknown>;
   metadata?: AIChatMessageMetadata;
   source_message_id?: string;

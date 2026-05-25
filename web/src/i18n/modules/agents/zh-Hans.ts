@@ -18,6 +18,8 @@ const messages: AgentsMessages = {
   modes: {
     chatWorkflow: '对话工作流',
     chatWorkflowDesc: '自带上下文，用于构建需要多轮自然语言对话的智能体。',
+    agent: '智能体',
+    agentDesc: '通过提示词和技能配置运行，不使用工作流编排。',
     taskWorkflow: '任务工作流',
     taskWorkflowDesc: '可自定义输入与输出，适用于单次执行任务的智能体。',
     conversational: '对话工作流',
@@ -1259,6 +1261,10 @@ const messages: AgentsMessages = {
     webAppOnlineSuccess: 'WebApp 已上架',
     webAppOfflineSuccess: 'WebApp 已下架',
     webAppStatusUpdateFailed: '更新 WebApp 状态失败',
+    saveSuccess: '配置已保存',
+    saveFailed: '保存配置失败',
+    publishSuccess: '智能体已发布',
+    publishFailed: '发布智能体失败',
   },
 };
 

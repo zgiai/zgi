@@ -1,6 +1,7 @@
 'use client';
 
 import { Skeleton } from '@/components/ui/skeleton';
+import AgentWebappChat from '@/components/webapp/agent-chat';
 import WebappChat from '@/components/webapp/chat';
 import { useWebAppConfig } from '@/hooks/webapp/use-webapp';
 import { useParams } from 'next/navigation';
@@ -27,6 +28,8 @@ export default function WebappChatPage(): JSX.Element {
           </div>
         ) : isWebAppOfflineError(error) ? (
           <WebAppOfflineState />
+        ) : data?.data?.config?.type?.toUpperCase?.() === 'AGENT' ? (
+          <AgentWebappChat webAppId={version_uuid} config={data.data} />
         ) : data?.data ? (
           <WebappChat
             versionUuid={version_uuid}

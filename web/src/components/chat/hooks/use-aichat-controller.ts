@@ -35,7 +35,10 @@ import {
   type AIChatModelSelection,
   type AIChatRecoveryMode,
 } from '@/components/chat/controllers/aichat';
-import { aichatTransport } from '@/components/chat/transports/aichat-transport';
+import {
+  aichatTransport,
+  type AIChatRuntimeTransport,
+} from '@/components/chat/transports/aichat-transport';
 import {
   createDraftAIChatConversation,
   createStreamingAIChatMessage,
@@ -156,8 +159,16 @@ function clearStreamingRuntimeMessageMetadata(message: AIChatMessage): AIChatMes
  * @hook useAIChatController
  * @description Dedicated controller for the standalone AIChat console page.
  */
-export function useAIChatController(): AIChatController {
+export function useAIChatController(options?: {
+  transport?: AIChatRuntimeTransport;
+}): AIChatController {
   const queryClient = useQueryClient();
+  const transportRef = useRef<AIChatRuntimeTransport>(options?.transport ?? aichatTransport);
+  useEffect(() => {
+    if (options?.transport) {
+      transportRef.current = options.transport;
+    }
+  }, [options?.transport]);
   const storeRef = useRef<ReturnType<typeof createAIChatControllerStore> | null>(null);
   if (!storeRef.current) {
     storeRef.current = createAIChatControllerStore();
@@ -270,7 +281,7 @@ export function useAIChatController(): AIChatController {
 
   const refreshConversationSilently = useCallback(
     (conversationId: string) => {
-      void aichatTransport
+      void transportRef.current
         .refreshConversation(conversationId)
         .then(conversation => {
           setControllerState(current => {
@@ -308,7 +319,7 @@ export function useAIChatController(): AIChatController {
 
   const refreshMessagesSilently = useCallback(
     (conversationId: string) => {
-      void aichatTransport
+      void transportRef.current
         .listMessages(conversationId, {
           page: 1,
           limit: DEFAULT_AICHAT_MESSAGE_PAGINATION.limit,
@@ -580,7 +591,7 @@ export function useAIChatController(): AIChatController {
       setControllerState(current => ({ ...current, isLoadingList: true, error: null }));
 
       try {
-        const response = await aichatTransport.listConversations({ page, limit });
+        const response = await transportRef.current.listConversations({ page, limit });
         const incoming = response.items;
         setControllerState(current => {
           const conversations = params.append
@@ -621,8 +632,7 @@ export function useAIChatController(): AIChatController {
           (currentState.activeConversationId === conversationId ? 'active' : 'background');
         const getCurrentMode = (): AIChatRecoveryMode => {
           const storedMode = recoveryModeByConversationRef.current[conversationId] ?? requestedMode;
-          return storedMode === 'active' &&
-            stateRef.current.activeConversationId === conversationId
+          return storedMode === 'active' && stateRef.current.activeConversationId === conversationId
             ? 'active'
             : 'background';
         };
@@ -717,7 +727,7 @@ export function useAIChatController(): AIChatController {
                 message_id: messageId,
                 answer: nextMessage.answer,
                 status: 'streaming',
-                timeline: replayingFromStart ? [] : previousStreaming?.timeline ?? [],
+                timeline: replayingFromStart ? [] : (previousStreaming?.timeline ?? []),
                 last_event_id: afterId,
                 replay_base_answer: shouldDedupeReplay
                   ? preservedAnswer
@@ -758,7 +768,7 @@ export function useAIChatController(): AIChatController {
           recoveryRetryTimeoutsRef.current[conversationId] = timeout;
         };
 
-        void aichatTransport
+        void transportRef.current
           .recoverConversationStream(
             conversationId,
             { messageId, afterId },
@@ -954,7 +964,7 @@ export function useAIChatController(): AIChatController {
 
       try {
         const { conversation, messages, messagePagination } =
-          await aichatTransport.getConversation(conversationId);
+          await transportRef.current.getConversation(conversationId);
 
         const isStreamingConversation =
           conversation.runtime_status === 'streaming' && Boolean(conversation.active_message_id);
@@ -1142,7 +1152,10 @@ export function useAIChatController(): AIChatController {
     if (isDraftAIChatConversationId(activeConversationId)) {
       pendingStreamAbortRef.current?.abort();
       pendingStreamAbortRef.current = null;
-    } else if (activeConversationId && shouldTreatConversationAsRunning(currentState, activeConversationId)) {
+    } else if (
+      activeConversationId &&
+      shouldTreatConversationAsRunning(currentState, activeConversationId)
+    ) {
       setBackgroundConversation(activeConversationId);
       const activeRecovery = recoveryAbortByConversationRef.current[activeConversationId];
       const activeStream = streamAbortByConversationRef.current[activeConversationId];
@@ -1281,7 +1294,7 @@ export function useAIChatController(): AIChatController {
     }));
 
     try {
-      const response = await aichatTransport.stopConversation(activeConversationId);
+      const response = await transportRef.current.stopConversation(activeConversationId);
       abortController?.abort();
       closeConversationConnection(activeConversationId);
       if (pendingStreamAbortRef.current === abortController) {
@@ -1314,7 +1327,7 @@ export function useAIChatController(): AIChatController {
     async (conversationId: string) => {
       if (!conversationId) return;
       try {
-        await aichatTransport.removeConversation(conversationId);
+        await transportRef.current.removeConversation(conversationId);
         closeConversationConnection(conversationId);
         setControllerState(current => {
           const nextMessages = { ...current.messagesByConversation };
@@ -1377,7 +1390,7 @@ export function useAIChatController(): AIChatController {
       }));
 
       try {
-        const conversation = await aichatTransport.updateConversation(conversationId, {
+        const conversation = await transportRef.current.updateConversation(conversationId, {
           title: nextTitle,
         });
         setControllerState(current => ({
@@ -1430,7 +1443,7 @@ export function useAIChatController(): AIChatController {
 
       try {
         const nextPage = currentPagination.page + 1;
-        const response = await aichatTransport.listMessages(targetConversationId, {
+        const response = await transportRef.current.listMessages(targetConversationId, {
           page: nextPage,
           limit: currentPagination.limit || DEFAULT_AICHAT_MESSAGE_PAGINATION.limit,
         });
@@ -1487,7 +1500,7 @@ export function useAIChatController(): AIChatController {
       const currentState = stateRef.current;
       const activeConversationId = currentState.activeConversationId;
       const activeConversation = activeConversationId
-        ? currentState.conversations.find(item => item.id === activeConversationId) ?? null
+        ? (currentState.conversations.find(item => item.id === activeConversationId) ?? null)
         : null;
       const isActiveRecovering = activeConversationId
         ? currentState.recoveringByConversation[activeConversationId]
@@ -1524,9 +1537,7 @@ export function useAIChatController(): AIChatController {
         parentIdOverride === undefined
           ? currentPath[currentPath.length - 1]?.id
           : parentIdOverride || undefined;
-      const draftConversationId = activeConversationId
-        ? null
-        : createClientDraftId('draft-aichat');
+      const draftConversationId = activeConversationId ? null : createClientDraftId('draft-aichat');
       const draftMessageId = draftConversationId
         ? createClientDraftId('draft-aichat-message')
         : null;
@@ -1586,7 +1597,7 @@ export function useAIChatController(): AIChatController {
       });
 
       try {
-        await aichatTransport.streamChat(
+        await transportRef.current.streamChat(
           {
             conversation_id: activeConversationId ?? undefined,
             parent_id: parentId,
@@ -1706,7 +1717,9 @@ export function useAIChatController(): AIChatController {
             },
             onClose: () => {
               if (streamConversationId) {
-                if (streamAbortByConversationRef.current[streamConversationId] === abortController) {
+                if (
+                  streamAbortByConversationRef.current[streamConversationId] === abortController
+                ) {
                   delete streamAbortByConversationRef.current[streamConversationId];
                 }
               }
@@ -1894,7 +1907,7 @@ export function useAIChatController(): AIChatController {
       });
 
       try {
-        await aichatTransport.regenerateMessage(
+        await transportRef.current.regenerateMessage(
           messageId,
           {
             query: trimmedQuery || undefined,
@@ -2117,7 +2130,7 @@ export function useAIChatController(): AIChatController {
       });
 
       if (!nextLeafId) return;
-      void aichatTransport
+      void transportRef.current
         .updateConversation(activeConversationId, {
           current_leaf_message_id: nextLeafId,
         })

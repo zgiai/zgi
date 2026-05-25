@@ -2,6 +2,7 @@
 
 import { use, useEffect, useMemo } from 'react';
 import { AlertCircle } from 'lucide-react';
+import AgentWebappChat from '@/components/webapp/agent-chat';
 import WebappChat from '@/components/webapp/chat';
 import { WebappRun } from '@/components/webapp/run';
 import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -83,6 +84,16 @@ export default function ConsoleWorkAppDetailPage({ params }: ConsoleWorkAppDetai
   }
 
   const mode = detectWebappMode(config);
+
+  if (config.config?.type?.toUpperCase?.() === 'AGENT') {
+    return (
+      <div className="box-border h-full min-h-0 w-full overflow-hidden md:p-2">
+        <div className="h-full w-full min-h-0 bg-background overflow-hidden md:rounded-lg md:border md:shadow-sm">
+          <AgentWebappChat webAppId={webAppId} config={config} />
+        </div>
+      </div>
+    );
+  }
 
   if (mode === 'run') {
     return (

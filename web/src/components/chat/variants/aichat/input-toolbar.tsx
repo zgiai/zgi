@@ -36,6 +36,8 @@ interface AIChatInputToolbarProps {
   imageMaxSizeMB: number;
   allowedExtensions: string[];
   imageExtensions: string[];
+  showModelSelector?: boolean;
+  showMemoryToggle?: boolean;
   onModelChange: (value: ModelSelectorValue) => void;
   onModelPropsChange: (model: ModelSelectorModelProps | null) => void;
   onUploadDocument: () => void;
@@ -71,6 +73,8 @@ export function AIChatInputToolbar({
   imageMaxSizeMB,
   allowedExtensions,
   imageExtensions,
+  showModelSelector = true,
+  showMemoryToggle = true,
   onModelChange,
   onModelPropsChange,
   onUploadDocument,
@@ -85,20 +89,22 @@ export function AIChatInputToolbar({
   return (
     <div className="flex items-center justify-between gap-2 px-1">
       <div className="flex min-w-0 items-center gap-1.5">
-        <div className="w-44 min-w-0 sm:w-56">
-          <ModelSelector
-            modelType="text-chat"
-            value={modelSelectorValue}
-            onChange={onModelChange}
-            onModelPropsChange={onModelPropsChange}
-            capabilityFilter={modelCapabilityFilter}
-            className={cn(
-              'h-8 rounded-full border-border/70 px-3 text-xs',
-              modelMissing ? 'border-destructive/50' : ''
-            )}
-            showCapabilities={false}
-          />
-        </div>
+        {showModelSelector ? (
+          <div className="w-44 min-w-0 sm:w-56">
+            <ModelSelector
+              modelType="text-chat"
+              value={modelSelectorValue}
+              onChange={onModelChange}
+              onModelPropsChange={onModelPropsChange}
+              capabilityFilter={modelCapabilityFilter}
+              className={cn(
+                'h-8 rounded-full border-border/70 px-3 text-xs',
+                modelMissing ? 'border-destructive/50' : ''
+              )}
+              showCapabilities={false}
+            />
+          </div>
+        ) : null}
         {hasImageAttachment ? (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -111,10 +117,9 @@ export function AIChatInputToolbar({
         ) : null}
       </div>
       <div className="flex shrink-0 items-center gap-1">
-        <AIChatMemoryModule
-          disabled={isSending}
-          onEnabledChange={onMemoryEnabledChange}
-        />
+        {showMemoryToggle ? (
+          <AIChatMemoryModule disabled={isSending} onEnabledChange={onMemoryEnabledChange} />
+        ) : null}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button

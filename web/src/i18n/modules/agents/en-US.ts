@@ -16,6 +16,8 @@ const messages = {
   modes: {
     chatWorkflow: 'Chatflow',
     chatWorkflowDesc: 'Context-aware agent for multi-turn natural language conversations.',
+    agent: 'Agent',
+    agentDesc: 'Prompt and skill based agent without workflow orchestration.',
     taskWorkflow: 'Workflow',
     taskWorkflowDesc: 'Agent with configurable inputs and outputs for single-run tasks.',
     conversational: 'Chatflow',
@@ -1040,7 +1042,8 @@ const messages = {
       caseCount: '{count} questions',
       turnCount: '{count} conversation turns',
       previewTitle: 'Execution Preview',
-      preview: 'This run will execute {count} enabled questions and cover {scenarioCount} business scenarios.',
+      preview:
+        'This run will execute {count} enabled questions and cover {scenarioCount} business scenarios.',
       unassignedPreview: '{count} selected questions are not assigned to a scenario.',
       checksTitle: 'Pre-run Checks',
       checks: {
@@ -1108,7 +1111,8 @@ const messages = {
         scenarioPlaceholder: 'Select business scenario',
         noScenario: 'Do not specify',
         questionTypeLabel: 'Question Type',
-        questionTypeDescription: 'The system will generate matching questions from the selected scenarios.',
+        questionTypeDescription:
+          'The system will generate matching questions from the selected scenarios.',
         turnStrategyLabel: 'Conversation Turn Strategy',
         selectedScenarioCount: 'Selected {count} business scenarios',
         selectedQuestionTypeCount: 'Selected {count} question types',
@@ -1131,7 +1135,8 @@ const messages = {
         contentPlaceholder:
           'For example: Based on this customer profile, summarize the lead and recommend next follow-up steps.',
         expectedResultLabel: 'Expected Result',
-        expectedResultPlaceholder: 'Optional. Describe how the agent is expected to handle this question.',
+        expectedResultPlaceholder:
+          'Optional. Describe how the agent is expected to handle this question.',
         scenarioLabel: 'Business Scenario',
         scenarioPlaceholder: 'Select business scenario',
         typeLabel: 'Question Type',
@@ -1209,7 +1214,8 @@ const messages = {
       rawCopied: 'Raw data copied',
       rawCopyFailed: 'Failed to copy raw data',
       loadingConversation: 'Loading conversation records...',
-      conversationSnapshotFallback: 'No conversation record is available. Showing the test snapshot instead.',
+      conversationSnapshotFallback:
+        'No conversation record is available. Showing the test snapshot instead.',
       viewTurnInputRaw: 'View raw input for this turn',
       viewTurnOutputRaw: 'View raw output for this turn',
       previousItem: 'Previous',
@@ -1302,6 +1308,10 @@ const messages = {
     webAppOnlineSuccess: 'Web app is online',
     webAppOfflineSuccess: 'Web app is offline',
     webAppStatusUpdateFailed: 'Failed to update web app status',
+    saveSuccess: 'Configuration saved',
+    saveFailed: 'Failed to save configuration',
+    publishSuccess: 'Agent published',
+    publishFailed: 'Failed to publish agent',
   },
 };
 

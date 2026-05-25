@@ -134,6 +134,8 @@ interface AIChatInputAreaProps {
   onStop: () => void;
   onModelChange: (value: ModelSelectorValue) => void;
   onHeightChange?: (height: number) => void;
+  showModelSelector?: boolean;
+  showMemoryToggle?: boolean;
 }
 
 /**
@@ -158,6 +160,8 @@ export function AIChatInputArea({
   onStop,
   onModelChange,
   onHeightChange,
+  showModelSelector = true,
+  showMemoryToggle = true,
 }: AIChatInputAreaProps) {
   const t = useT('webapp');
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -208,10 +212,7 @@ export function AIChatInputArea({
     () => formatExtensionsForDisplay(allSelectableExtensions).join(' / '),
     [allSelectableExtensions]
   );
-  const uploadedFiles = useMemo(
-    () => getUploadedAIChatFiles(attachments),
-    [attachments]
-  );
+  const uploadedFiles = useMemo(() => getUploadedAIChatFiles(attachments), [attachments]);
   const canClickSend = Boolean(input.trim()) && !modelMissing && !isUploading && !hasUploadError;
 
   const validateFile = useCallback(
@@ -631,6 +632,8 @@ export function AIChatInputArea({
               imageMaxSizeMB={imageMaxSizeMB}
               allowedExtensions={allowedExtensions}
               imageExtensions={imageExtensions}
+              showModelSelector={showModelSelector}
+              showMemoryToggle={showMemoryToggle}
               onModelChange={onModelChange}
               onModelPropsChange={setSelectedModelProps}
               onUploadDocument={() => fileInputRef.current?.click()}

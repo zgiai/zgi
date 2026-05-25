@@ -55,6 +55,7 @@ export const AGENT_KEYS = {
   list: (params: unknown) => [...AGENT_KEYS.lists(), params] as const,
   details: () => [...AGENT_KEYS.all, 'detail'] as const,
   detail: (id: string) => [...AGENT_KEYS.details(), id] as const,
+  config: (id: string) => [...AGENT_KEYS.detail(id), 'config'] as const,
   runnable: (workspaceId?: string | null) =>
     [...AGENT_KEYS.all, 'runnable-webapps', workspaceId || 'all'] as const,
 } as const;
@@ -199,7 +200,8 @@ export const PROVIDER_KEYS = {
   all: ['providers'] as const,
   list: (params: unknown) => [...PROVIDER_KEYS.all, params] as const,
   detail: (provider: string) => ['provider', provider] as const,
-  availableCounts: (providers: string[]) => [...PROVIDER_KEYS.all, 'available-counts', providers] as const,
+  availableCounts: (providers: string[]) =>
+    [...PROVIDER_KEYS.all, 'available-counts', providers] as const,
 } as const;
 
 export const MODEL_KEYS = {
