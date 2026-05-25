@@ -128,11 +128,19 @@ func (s *stubWebAppStatusHandlerService) UpdateAgentConfig(context.Context, stri
 	return nil, nil
 }
 
+func (s *stubWebAppStatusHandlerService) GenerateAgentSuggestedQuestions(context.Context, string, string, *dto.GenerateAgentSuggestedQuestionsRequest) (*dto.GenerateSuggestedQuestionsResponse, error) {
+	return nil, nil
+}
+
 func (s *stubWebAppStatusHandlerService) PublishAgent(context.Context, string, string, dto.PublishAgentRequest) (*dto.PublishAgentResponse, error) {
 	return nil, nil
 }
 
 func (s *stubWebAppStatusHandlerService) ListAgentPublishedVersions(context.Context, string, int, int) (*dto.AgentPublishedVersionsResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) RollbackAgentPublishedVersion(context.Context, string, string, dto.RollbackAgentPublishedVersionRequest) (*dto.AgentConfigResponse, error) {
 	return nil, nil
 }
 

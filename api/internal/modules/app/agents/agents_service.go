@@ -12,6 +12,8 @@ import (
 	"github.com/google/uuid"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/dto"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	quota_model "github.com/zgiai/zgi/api/internal/modules/quota/model"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	shared_visibility "github.com/zgiai/zgi/api/internal/modules/shared/visibility"
@@ -71,6 +73,8 @@ type agentsService struct {
 	enterpriseService         interfaces.OrganizationService
 	quotaService              interfaces.QuotaService
 	fileService               interfaces.FileService
+	llmClient                 llmclient.LLMClient
+	defaultModelResolver      llmdefaultservice.DefaultModelResolver
 	db                        *gorm.DB
 }
 
@@ -84,6 +88,8 @@ func NewAgentsService(
 	enterpriseService interfaces.OrganizationService,
 	quotaService interfaces.QuotaService,
 	fileService interfaces.FileService,
+	llmClient llmclient.LLMClient,
+	defaultModelResolver llmdefaultservice.DefaultModelResolver,
 	db *gorm.DB,
 ) AgentsService {
 	return &agentsService{
@@ -96,6 +102,8 @@ func NewAgentsService(
 		enterpriseService:         enterpriseService,
 		quotaService:              quotaService,
 		fileService:               fileService,
+		llmClient:                 llmClient,
+		defaultModelResolver:      defaultModelResolver,
 		db:                        db,
 	}
 }
@@ -1588,6 +1596,7 @@ func (s *agentsService) GetAgent(ctx context.Context, agentID string) (interface
 		"icon":           ag.Icon,
 		"icon_url":       iconUrl,
 		"enable_api":     ag.EnableAPI,
+		"web_app_id":     ag.WebAppID.String(),
 		"web_app_status": string(NormalizeAgentWebAppStatus(ag.WebAppStatus)),
 		"is_published":   isPublished,
 		"created_at":     ag.CreatedAt.Unix(),

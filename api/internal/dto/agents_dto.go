@@ -154,6 +154,9 @@ type AgentRuntimeModeConfig struct {
 	EnabledSkillIDs    []string `json:"enabled_skill_ids"`
 	UseMemory          bool     `json:"use_memory"`
 	FileUploadEnabled  bool     `json:"file_upload_enabled"`
+	HomeTitle          string   `json:"home_title"`
+	InputPlaceholder   string   `json:"input_placeholder"`
+	ThemeColor         string   `json:"theme_color"`
 	SuggestedQuestions []string `json:"suggested_questions"`
 }
 
@@ -165,6 +168,9 @@ type AgentConfigRequest struct {
 	EnabledSkillIDs    []string               `json:"enabled_skill_ids"`
 	UseMemory          bool                   `json:"use_memory"`
 	FileUpload         bool                   `json:"file_upload_enabled"`
+	HomeTitle          string                 `json:"home_title"`
+	InputPlaceholder   string                 `json:"input_placeholder"`
+	ThemeColor         string                 `json:"theme_color"`
 	SuggestedQuestions []string               `json:"suggested_questions"`
 }
 
@@ -177,8 +183,29 @@ type AgentConfigResponse struct {
 	EnabledSkillIDs    []string               `json:"enabled_skill_ids"`
 	UseMemory          bool                   `json:"use_memory"`
 	FileUpload         bool                   `json:"file_upload_enabled"`
+	HomeTitle          string                 `json:"home_title"`
+	InputPlaceholder   string                 `json:"input_placeholder"`
+	ThemeColor         string                 `json:"theme_color"`
 	SuggestedQuestions []string               `json:"suggested_questions"`
 	UpdatedAt          int64                  `json:"updated_at"`
+}
+
+type AgentSuggestedQuestionSkillContext struct {
+	ID          string `json:"id,omitempty"`
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+type GenerateAgentSuggestedQuestionsRequest struct {
+	Locale            string                               `json:"locale,omitempty"`
+	Count             int                                  `json:"count,omitempty" validate:"omitempty,min=1,max=6"`
+	Provider          string                               `json:"provider,omitempty"`
+	Model             string                               `json:"model,omitempty"`
+	SystemPrompt      string                               `json:"system_prompt,omitempty"`
+	HomeTitle         string                               `json:"home_title,omitempty"`
+	ExistingQuestions []string                             `json:"existing_questions,omitempty"`
+	Skills            []AgentSuggestedQuestionSkillContext `json:"skills,omitempty"`
+	KnowledgeRefs     []string                             `json:"knowledge_refs,omitempty"`
 }
 
 type PublishAgentRequest struct {
@@ -194,12 +221,14 @@ type PublishAgentResponse struct {
 }
 
 type AgentPublishedVersionResponse struct {
-	ID          string `json:"id"`
-	AgentID     string `json:"agent_id"`
-	VersionUUID string `json:"version_uuid"`
-	Version     string `json:"version"`
-	Description string `json:"description"`
-	CreatedAt   int64  `json:"created_at"`
+	ID             string              `json:"id"`
+	AgentID        string              `json:"agent_id"`
+	VersionUUID    string              `json:"version_uuid"`
+	Version        string              `json:"version"`
+	Description    string              `json:"description"`
+	ConfigSnapshot AgentConfigResponse `json:"config_snapshot"`
+	IsCurrent      bool                `json:"is_current"`
+	CreatedAt      int64               `json:"created_at"`
 }
 
 type AgentPublishedVersionsResponse struct {
@@ -208,6 +237,10 @@ type AgentPublishedVersionsResponse struct {
 	Limit   int                             `json:"limit"`
 	Total   int64                           `json:"total"`
 	HasMore bool                            `json:"has_more"`
+}
+
+type RollbackAgentPublishedVersionRequest struct {
+	VersionID string `json:"version_id" binding:"required"`
 }
 
 type AgentWebAppRuntimeConfigResponse struct {

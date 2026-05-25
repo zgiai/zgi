@@ -367,6 +367,29 @@ func (h *AgentsHandler) PublishAgent(c *gin.Context) {
 	response.Success(c, result)
 }
 
+func (h *AgentsHandler) GenerateAgentSuggestedQuestions(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	var req dto.GenerateAgentSuggestedQuestionsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	result, err := h.appService.GenerateAgentSuggestedQuestions(c.Request.Context(), c.Param("agent_id"), accountID, &req)
+	if err != nil {
+		if isAgentSuggestedQuestionsConfigurationError(err) {
+			response.FailWithMessage(c, response.ErrConfigError, "Please configure a default LLM model before generating suggested questions.")
+			return
+		}
+		if isAgentSuggestedQuestionsModelOutputError(err) {
+			response.FailWithMessage(c, response.ErrServiceUnavailable, "The model did not return usable suggested questions. Please try again.")
+			return
+		}
+		response.FailWithMessage(c, response.ErrServiceUnavailable, "Failed to generate suggested questions. Please try again.")
+		return
+	}
+	response.Success(c, result)
+}
+
 func (h *AgentsHandler) ChatAgent(c *gin.Context) {
 	if h.chatRuntimeService == nil {
 		response.Fail(c, response.ErrSystemError)
@@ -476,6 +499,25 @@ func (h *AgentsHandler) ListAgentPublishedVersions(c *gin.Context) {
 		limit = parsed
 	}
 	result, err := h.appService.ListAgentPublishedVersions(c.Request.Context(), c.Param("agent_id"), page, limit)
+	if err != nil {
+		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *AgentsHandler) RollbackAgentPublishedVersion(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	var req dto.RollbackAgentPublishedVersionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	result, err := h.appService.RollbackAgentPublishedVersion(c.Request.Context(), c.Param("agent_id"), accountID, req)
 	if err != nil {
 		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
 		return

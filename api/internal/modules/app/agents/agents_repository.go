@@ -63,6 +63,7 @@ type AgentsRepository interface {
 	GetAgentsConfigByAgentID(ctx context.Context, agentID string) (*AgentsConfig, error)
 	UpdateAgentsConfig(ctx context.Context, cfg *AgentsConfig) error
 	CreateAgentPublishedVersion(ctx context.Context, version *AgentPublishedVersion) error
+	GetAgentPublishedVersionByID(ctx context.Context, agentID, versionID string) (*AgentPublishedVersion, error)
 	GetLatestAgentPublishedVersion(ctx context.Context, agentID string) (*AgentPublishedVersion, error)
 	ListAgentPublishedVersions(ctx context.Context, agentID string, limit, offset int) ([]*AgentPublishedVersion, int64, error)
 	HasPublishedAgentVersion(ctx context.Context, agentID string) (bool, error)
@@ -388,6 +389,19 @@ func (r *agentsRepository) CreateAgentPublishedVersion(ctx context.Context, vers
 		return fmt.Errorf("failed to create agent published version: %w", err)
 	}
 	return nil
+}
+
+func (r *agentsRepository) GetAgentPublishedVersionByID(ctx context.Context, agentID, versionID string) (*AgentPublishedVersion, error) {
+	var version AgentPublishedVersion
+	if err := r.db.WithContext(ctx).
+		Where("id = ? AND agent_id = ? AND deleted_at IS NULL", versionID, agentID).
+		First(&version).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get agent published version: %w", err)
+	}
+	return &version, nil
 }
 
 func (r *agentsRepository) GetLatestAgentPublishedVersion(ctx context.Context, agentID string) (*AgentPublishedVersion, error) {

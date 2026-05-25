@@ -10,6 +10,7 @@ import (
 	workflowtest "github.com/zgiai/zgi/api/internal/modules/app/workflowtest"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	memorymodule "github.com/zgiai/zgi/api/internal/modules/memory"
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
@@ -56,7 +57,11 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 		skills.NewRuntime(toolEngine, toolManager),
 		memoryService,
 	)
-	service := app.NewAgentsService(repo, accountService, tenantService, workflowService, chatRuntimeService, resourcePermissionService, enterpriseService, quotaService, fileService, db)
+	var defaultModelResolver llmdefaultservice.DefaultModelResolver
+	if graphFlowService != nil {
+		defaultModelResolver = graphFlowService.DefaultModelSvc
+	}
+	service := app.NewAgentsService(repo, accountService, tenantService, workflowService, chatRuntimeService, resourcePermissionService, enterpriseService, quotaService, fileService, llmClient, defaultModelResolver, db)
 	appHandler := app.NewAgentsHandler(service, tenantService, accountService, enterpriseService, db, chatRuntimeService)
 	workflowTestService := workflowtest.NewService(workflowtest.NewRepository(db))
 	workflowTestHandler := workflowtest.NewHandler(workflowTestService, workflowService, enterpriseService, llmClient)
@@ -73,8 +78,10 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	appsGroup.GET("/:agent_id", appHandler.GetAgent)
 	appsGroup.GET("/:agent_id/config", appHandler.GetAgentConfig)
 	appsGroup.PUT("/:agent_id/config", appHandler.UpdateAgentConfig)
+	appsGroup.POST("/:agent_id/suggested-questions/generate", appHandler.GenerateAgentSuggestedQuestions)
 	appsGroup.POST("/:agent_id/publish", appHandler.PublishAgent)
 	appsGroup.GET("/:agent_id/published-versions", appHandler.ListAgentPublishedVersions)
+	appsGroup.POST("/:agent_id/published-versions/rollback", appHandler.RollbackAgentPublishedVersion)
 	appsGroup.POST("/:agent_id/chat", appHandler.ChatAgent)
 	appsGroup.GET("/:agent_id/runtime/conversations", appHandler.ListAgentRuntimeConversations)
 	appsGroup.GET("/:agent_id/runtime/conversations/:conversation_id", appHandler.GetAgentRuntimeConversation)
