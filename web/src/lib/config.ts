@@ -186,6 +186,14 @@ export const UPLOAD_API_URL: string = readPublicEnvRaw('NEXT_PUBLIC_UPLOAD_API_U
 export const MARKET_API_URL: string = readPublicEnvRaw('NEXT_PUBLIC_MARKET_API_URL') || '';
 
 /**
+ * Marketplace distribution channel. When set, plugin list requests explicitly
+ * ask the market API for this channel instead of relying on host-based routing.
+ */
+export const MARKETPLACE_CHANNEL: string = (
+  readPublicEnvRaw('NEXT_PUBLIC_MARKETPLACE_CHANNEL') || ''
+).trim();
+
+/**
  * Enable language switcher in UI
  */
 export const ENABLE_LANG_SWITCH: boolean =
