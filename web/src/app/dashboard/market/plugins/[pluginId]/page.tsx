@@ -70,19 +70,21 @@ export default function MarketplacePluginDetailPage() {
     branding.is_loaded === true && branding.metric_enabled?.favorites !== false;
   const {
     isInstalled,
+    isPluginInstalled,
+    installedVersionId,
     isInstalling,
     isUninstalling,
     installPlugin,
     uninstallPlugin,
     refetchStatus,
-  } = useInstallPluginFromMarketplace(selectedVersionId, Boolean(selectedVersionId));
+  } = useInstallPluginFromMarketplace(pluginId, selectedVersionId, Boolean(pluginId && selectedVersionId));
   const favorite = useMarketplacePluginFavorite(pluginId, user?.id, isFavoriteEnabled);
 
   useEffect(() => {
-    if (!selectedVersionId && versions.length > 0) {
-      setSelectedVersionId(versions[0].id);
+    if (!selectedVersionId) {
+      setSelectedVersionId(plugin?.latest_version?.id || versions[0]?.id || null);
     }
-  }, [selectedVersionId, versions]);
+  }, [plugin?.latest_version?.id, selectedVersionId, versions]);
 
   useEffect(() => {
     setIsIconLoadFailed(false);
@@ -102,13 +104,29 @@ export default function MarketplacePluginDetailPage() {
   };
 
   const handleUninstall = async () => {
-    if (!selectedVersionId) return;
+    const versionIdToUninstall = isInstalled ? selectedVersionId : installedVersionId;
+    if (!versionIdToUninstall) return;
     try {
-      await uninstallPlugin(selectedVersionId);
+      await uninstallPlugin(versionIdToUninstall);
       await refetchStatus();
       toast.success(isZh ? '插件已卸载' : 'Plugin uninstalled');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : isZh ? '卸载失败' : 'Uninstall failed');
+    }
+  };
+
+  const handleUpdate = async () => {
+    if (!plugin || !selectedVersionId) return;
+    const previousVersionId = installedVersionId;
+    try {
+      await installPlugin(plugin.id, selectedVersionId);
+      if (previousVersionId && previousVersionId !== selectedVersionId) {
+        await uninstallPlugin(previousVersionId);
+      }
+      await refetchStatus();
+      toast.success(isZh ? '插件已更新' : 'Plugin updated');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : isZh ? '更新失败' : 'Update failed');
     }
   };
 
@@ -197,10 +215,12 @@ export default function MarketplacePluginDetailPage() {
   const labels = Array.from(new Set([...(plugin.official_labels || []), ...(plugin.tags || [])]));
   const toolDefinitions = normalizeToolDefinitions(selectedVersion?.manifest?.tools, isZh);
   const hasNewerVersion = Boolean(
-    isInstalled &&
+    isPluginInstalled &&
       selectedVersion?.id &&
       plugin.latest_version?.id &&
-      selectedVersion.id !== plugin.latest_version.id
+      selectedVersion.id === plugin.latest_version.id &&
+      installedVersionId &&
+      installedVersionId !== plugin.latest_version.id
   );
 
   return (
@@ -278,7 +298,7 @@ export default function MarketplacePluginDetailPage() {
               >
                 {isUninstalling ? (isZh ? '卸载中...' : 'Uninstalling...') : isZh ? '卸载' : 'Uninstall'}
               </Button>
-            ) : (
+            ) : !hasNewerVersion ? (
               <Button
                 onClick={handleInstall}
                 disabled={isInstalling || !selectedVersionId}
@@ -287,10 +307,15 @@ export default function MarketplacePluginDetailPage() {
                 <Download className="mr-2 h-4 w-4" />
                 {isInstalling ? (isZh ? '安装中...' : 'Installing...') : isZh ? '安装' : 'Install'}
               </Button>
-            )}
+            ) : null}
             {hasNewerVersion && (
-              <Button variant="outline" className="h-10">
-                {isZh ? '更新' : 'Update'}
+              <Button
+                variant="outline"
+                className="h-10"
+                onClick={handleUpdate}
+                disabled={isInstalling || isUninstalling}
+              >
+                {isInstalling || isUninstalling ? (isZh ? '更新中...' : 'Updating...') : isZh ? '更新' : 'Update'}
               </Button>
             )}
             <DropdownMenu>
@@ -453,7 +478,8 @@ function buildStats(
   branding: MarketplaceBrandingSettings
 ) {
   const hash = stableHash(plugin.id);
-  const installs = plugin.download_count || 1200 + (hash % 180000);
+  const installs = plugin.download_count || 0;
+  const favorites = favoriteCount || plugin.rating_count || 0;
   const metricEnabled = branding.metric_enabled ?? {};
   const metricStats = [
     {
@@ -477,7 +503,7 @@ function buildStats(
     {
       key: 'favorites',
       label: isZh ? '收藏' : 'Favorites',
-      value: compactNumber(favoriteCount || plugin.rating_count || 0),
+      value: compactNumber(favorites),
       enabled: metricEnabled.favorites !== false,
     },
   ];

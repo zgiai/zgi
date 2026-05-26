@@ -168,11 +168,6 @@ class PluginService extends BaseService {
         success: settings['marketplace.metrics.success_enabled'] !== 'false',
         favorites: settings['marketplace.metrics.favorites_enabled'] !== 'false',
       },
-      metric_base_values: {
-        downloads: parseNumberSetting(settings['marketplace.metrics.download_base']),
-        runs: parseNumberSetting(settings['marketplace.metrics.run_base']),
-        favorites: parseNumberSetting(settings['marketplace.metrics.favorite_base']),
-      },
       metric_tips: {
         downloads: localizedTip('download'),
         runs: localizedTip('run'),
@@ -268,8 +263,3 @@ class PluginService extends BaseService {
 
 export const pluginService = new PluginService();
 export default pluginService;
-
-function parseNumberSetting(value?: string) {
-  const parsed = Number(value || 0);
-  return Number.isFinite(parsed) ? parsed : 0;
-}

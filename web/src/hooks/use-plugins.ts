@@ -258,23 +258,40 @@ export function useMarketplacePluginFavorite(
 /**
  * Hook to install plugin from marketplace and check installation status
  */
-export function useInstallPluginFromMarketplace(versionId: string | null, enabled = true) {
+export function useInstallPluginFromMarketplace(
+  pluginId: string | null,
+  versionId: string | null,
+  enabled = true
+) {
   const queryClient = useQueryClient();
 
   // Query to check installation status
   const installationStatusQuery = useQuery({
-    queryKey: PLUGIN_KEYS.installationStatus(versionId || ''),
+    queryKey: PLUGIN_KEYS.installationStatus(`${pluginId || ''}:${versionId || ''}`),
     queryFn: async () => {
-      if (!versionId) return false;
+      if (!pluginId && !versionId) {
+        return {
+          isPluginInstalled: false,
+          isCurrentVersionInstalled: false,
+          installedVersionId: null as string | null,
+        };
+      }
       const response = await pluginService.getInstalledPlugins();
       const installedPluginsList = response.data || [];
 
-      // Installation state is keyed by marketplace version id in the current UI
-      const isInstalled = installedPluginsList.some(p => p.version_id === versionId);
+      const installedPlugin = installedPluginsList.find(
+        p => (pluginId && p.id === pluginId) || (versionId && p.version_id === versionId)
+      );
+      const installedVersionId =
+        typeof installedPlugin?.version_id === 'string' ? installedPlugin.version_id : null;
 
-      return isInstalled;
+      return {
+        isPluginInstalled: Boolean(installedPlugin),
+        isCurrentVersionInstalled: Boolean(versionId && installedVersionId === versionId),
+        installedVersionId,
+      };
     },
-    enabled: enabled && !!versionId,
+    enabled: enabled && Boolean(pluginId || versionId),
     staleTime: 1 * 60 * 1000, // 1 minute
     gcTime: 5 * 60 * 1000, // 5 minutes
   });
@@ -287,7 +304,7 @@ export function useInstallPluginFromMarketplace(versionId: string | null, enable
     onSuccess: async () => {
       // Invalidate installation status query to refetch
       await queryClient.invalidateQueries({
-        queryKey: PLUGIN_KEYS.installationStatus(versionId || ''),
+        queryKey: PLUGIN_KEYS.installationStatus(`${pluginId || ''}:${versionId || ''}`),
       });
     },
   });
@@ -300,7 +317,7 @@ export function useInstallPluginFromMarketplace(versionId: string | null, enable
     onSuccess: async () => {
       // Invalidate installation status query to refetch
       await queryClient.invalidateQueries({
-        queryKey: PLUGIN_KEYS.installationStatus(versionId || ''),
+        queryKey: PLUGIN_KEYS.installationStatus(`${pluginId || ''}:${versionId || ''}`),
       });
     },
   });
@@ -322,7 +339,9 @@ export function useInstallPluginFromMarketplace(versionId: string | null, enable
   );
 
   return {
-    isInstalled: installationStatusQuery.data ?? false,
+    isInstalled: installationStatusQuery.data?.isCurrentVersionInstalled ?? false,
+    isPluginInstalled: installationStatusQuery.data?.isPluginInstalled ?? false,
+    installedVersionId: installationStatusQuery.data?.installedVersionId ?? null,
     isLoading: installationStatusQuery.isLoading,
     isInstalling: installMutation.isPending,
     isUninstalling: uninstallMutation.isPending,

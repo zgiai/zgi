@@ -72,7 +72,7 @@ export default function PluginDetailModal({
     installPlugin,
     uninstallPlugin,
     refetchStatus,
-  } = useInstallPluginFromMarketplace(selectedVersionId, open && !!plugin);
+  } = useInstallPluginFromMarketplace(plugin?.id ?? null, selectedVersionId, open && !!plugin);
 
   // Handle install plugin
   const handleInstall = async () => {

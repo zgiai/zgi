@@ -1,6 +1,6 @@
 'use client';
 
-import { memo } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import type { MarketplaceBrandingSettings, MarketplacePlugin } from '@/services/types/plugin';
 import { cn } from '@/lib/utils';
@@ -24,6 +24,7 @@ const DEFAULT_YELLOW_V_ICON =
 
 function PluginCard({ plugin, branding, className, onClick }: PluginCardProps) {
   const t = useT('market');
+  const [isIconLoadFailed, setIsIconLoadFailed] = useState(false);
 
   const pluginName = plugin.name;
   const pluginDescription = plugin.short_description || plugin.description;
@@ -96,6 +97,10 @@ function PluginCard({ plugin, branding, className, onClick }: PluginCardProps) {
   ];
   const visibleMetricItems = metricItems.filter(item => item.enabled);
 
+  useEffect(() => {
+    setIsIconLoadFailed(false);
+  }, [plugin.id, plugin.icon]);
+
   return (
     <Card
       className={cn(
@@ -111,20 +116,13 @@ function PluginCard({ plugin, branding, className, onClick }: PluginCardProps) {
         )}
       >
         <div className="flex min-w-0 items-start gap-4">
-          {plugin.icon ? (
+          {plugin.icon && !isIconLoadFailed ? (
             <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg border bg-muted">
               <img
                 src={plugin.icon}
                 alt={pluginName}
                 className="h-full w-full object-contain"
-                onError={e => {
-                  const target = e.target as HTMLImageElement;
-                  target.style.display = 'none';
-                  const parent = target.parentElement;
-                  if (parent) {
-                    parent.innerHTML = `<div class="flex h-full w-full items-center justify-center text-base font-semibold text-muted-foreground">${pluginName.slice(0, 2)}</div>`;
-                  }
-                }}
+                onError={() => setIsIconLoadFailed(true)}
               />
             </div>
           ) : (
@@ -266,10 +264,9 @@ function formatMetricTip(template: string | undefined, value: string) {
 
 function getPluginMetrics(plugin: MarketplacePlugin, branding?: MarketplaceBrandingSettings) {
   const hash = stableHash(plugin.id);
-  const base = branding?.metric_base_values ?? {};
-  const installs = (plugin.download_count || 1200 + (hash % 180000)) + (base.downloads || 0);
-  const runs = installs * (4 + (hash % 18)) + (base.runs || 0);
-  const favorites = (plugin.rating_count || 80 + (hash % 18000)) + (base.favorites || 0);
+  const installs = plugin.download_count || 0;
+  const runs = installs * (4 + (hash % 18));
+  const favorites = plugin.rating_count || 0;
   const successRate = `${Math.min(99.9, 86 + (hash % 139) / 10).toFixed(1)}%`;
   const avgRuntime = `${120 + (hash % 1800)}ms`;
 

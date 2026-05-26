@@ -15,6 +15,7 @@ export interface MarketplaceCategory {
 }
 
 export interface InstalledPlugin {
+  id: string;
   version_id: string;
   [key: string]: unknown;
 }
@@ -40,7 +41,6 @@ export interface MarketplaceBrandingSettings {
   upload_application_enabled?: boolean;
   metric_icon_urls?: Partial<Record<'downloads' | 'runs' | 'runtime' | 'success' | 'favorites', string>>;
   metric_enabled?: Partial<Record<'downloads' | 'runs' | 'runtime' | 'success' | 'favorites', boolean>>;
-  metric_base_values?: Partial<Record<'downloads' | 'runs' | 'favorites', number>>;
   metric_tips?: Partial<Record<'downloads' | 'runs' | 'runtime' | 'success' | 'favorites', string>>;
 }
 

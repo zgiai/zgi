@@ -327,29 +327,35 @@ func (h *Handler) cleanupRunnerVersion(ctx context.Context, info *model.Installe
 }
 
 func (h *Handler) resolveRunnerPluginID(ctx context.Context, info *model.InstalledPluginInfo) (string, error) {
-	if info.MarketplaceVersionID != "" {
-		return info.MarketplaceVersionID, nil
-	}
-
-	if info.PluginAuthor != "" {
-		return fmt.Sprintf("%s:%s:%s", info.PluginAuthor, info.PluginName, info.PluginVersion), nil
-	}
-
 	installations, err := h.service.ListInstalledPlugins(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to list runner plugins: %w", err)
 	}
+
+	for _, inst := range installations {
+		if inst.Manifest.MarketplaceVersionID != "" && inst.Manifest.MarketplaceVersionID == info.MarketplaceVersionID {
+			return formatRunnerPluginID(inst.Manifest.Author, inst.Manifest.Name, inst.Manifest.Version), nil
+		}
+	}
+
+	if info.PluginAuthor != "" {
+		return formatRunnerPluginID(info.PluginAuthor, info.PluginName, info.PluginVersion), nil
+	}
+
 	for _, inst := range installations {
 		if inst.Manifest.Name == info.PluginName && inst.Manifest.Version == info.PluginVersion {
-			author := inst.Manifest.Author
-			if author == "" {
-				return "", nil
-			}
-			return fmt.Sprintf("%s:%s:%s", author, inst.Manifest.Name, inst.Manifest.Version), nil
+			return formatRunnerPluginID(inst.Manifest.Author, inst.Manifest.Name, inst.Manifest.Version), nil
 		}
 	}
 
 	return "", nil
+}
+
+func formatRunnerPluginID(author, name, version string) string {
+	if name == "" || version == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s:%s:%s", author, name, version)
 }
 
 func isRunnerNotFoundError(err error) bool {
