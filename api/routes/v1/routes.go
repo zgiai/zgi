@@ -84,7 +84,11 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	RegisterAutomationRoutes(v1, serviceContainer)
 
 	// ---------- Payment ----------
-	RegisterPaymentRoutes(v1, serviceContainer)
+	RegisterPaymentRoutes(v1, PaymentRouteDeps{
+		DB:              db,
+		AccountService:  accountService,
+		ConsoleProvider: serviceContainer.GetConsoleProvider(),
+	})
 
 	// ---------- Quota ----------
 	RegisterQuotaRoutes(v1, QuotaRouteDeps{
