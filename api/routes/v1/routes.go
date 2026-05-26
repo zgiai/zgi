@@ -54,7 +54,10 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	RegisterFileRoutes(v1, accountService, serviceContainer)
 
 	// ---------- Memory (common) ----------
-	RegisterMemoryRoutes(v1, serviceContainer)
+	RegisterMemoryRoutes(v1, MemoryRouteDeps{
+		MemoryService:  serviceContainer.GetMemoryService(),
+		AccountService: accountService,
+	})
 
 	// ---------- Dataset ----------
 	RegisterDatasetRoutes(v1, serviceContainer)
