@@ -3,7 +3,6 @@ package services
 import (
 	"context"
 
-	"github.com/zgiai/zgi/api/internal/container"
 	"github.com/zgiai/zgi/api/internal/modules/llm/provider/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/provider/repository"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -15,15 +14,12 @@ import (
 
 type ProviderService struct {
 	pb.UnimplementedProviderServiceServer
-	container *container.ServiceContainer
-	repo      repository.ProviderRepository
+	repo repository.ProviderRepository
 }
 
-func NewProviderService(c *container.ServiceContainer) *ProviderService {
-	db := c.GetDB()
+func NewProviderService(repo repository.ProviderRepository) *ProviderService {
 	return &ProviderService{
-		container: c,
-		repo:      repository.NewProviderRepository(db),
+		repo: repo,
 	}
 }
 
