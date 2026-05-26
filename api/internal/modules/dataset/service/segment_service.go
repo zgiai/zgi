@@ -87,6 +87,7 @@ type segmentServiceImpl struct {
 	llmClient         llmclient.LLMClient
 	graphFlowTaskRepo *graphflow_repo.GraphFlowTaskRepository
 	taskManager       *queue.TaskManager
+	embeddingFactory  func(ctx context.Context, dataset *model.Dataset) (embedding.EmbeddingService, error)
 }
 
 // NewSegmentService creates a new SegmentService.
@@ -378,12 +379,19 @@ func (s *segmentServiceImpl) storeSegmentVector(ctx context.Context, target segm
 		return fmt.Errorf("content is required")
 	}
 
-	embeddingService, err := s.buildEmbeddingService(ctx, target.Dataset)
+	embeddingService, err := s.resolveSegmentEmbeddingService(ctx, target.Dataset)
 	if err != nil {
 		return err
 	}
 
 	return s.storeSegmentVectorWithEmbedding(ctx, target, embeddingService)
+}
+
+func (s *segmentServiceImpl) resolveSegmentEmbeddingService(ctx context.Context, dataset *model.Dataset) (embedding.EmbeddingService, error) {
+	if s.embeddingFactory != nil {
+		return s.embeddingFactory(ctx, dataset)
+	}
+	return s.buildEmbeddingService(ctx, dataset)
 }
 
 func (s *segmentServiceImpl) storeSegmentVectorWithEmbedding(ctx context.Context, target segmentVectorTarget, embeddingService embedding.EmbeddingService) error {
@@ -526,52 +534,133 @@ func (s *segmentServiceImpl) CreateChildChunk(ctx context.Context, childChunk *m
 		return nil, err
 	}
 
-	response := &dto.ChildChunkResponse{
-		ID:            childChunk.ID,
-		SegmentID:     childChunk.SegmentID,
-		Content:       childChunk.Content,
-		Position:      childChunk.Position,
-		WordCount:     childChunk.WordCount,
-		Type:          childChunk.Type,
-		IndexNodeID:   childChunk.IndexNodeID,
-		IndexNodeHash: childChunk.IndexNodeHash,
-		CreatedAt:     childChunk.CreatedAt.Unix(),
-		UpdatedAt:     childChunk.UpdatedAt.Unix(),
+	dataset, err := s.datasetRepo.GetByID(ctx, childChunk.DatasetID)
+	if err != nil {
+		_ = s.chunkService.DeleteChildChunkByID(ctx, childChunk.ID)
+		return nil, fmt.Errorf("failed to get dataset for child chunk vector: %w", err)
+	}
+	if err := s.storeChildChunkVector(ctx, dataset, childChunk); err != nil {
+		_ = s.chunkService.DeleteChildChunkByID(ctx, childChunk.ID)
+		return nil, err
 	}
 
-	return response, nil
+	return childChunkResponse(childChunk), nil
 }
 
 // UpdateChildChunk
 func (s *segmentServiceImpl) UpdateChildChunk(ctx context.Context, childChunk *model.ChildChunk) (*dto.ChildChunkResponse, error) {
+	existingChildChunk, err := s.chunkService.GetChildChunkByID(ctx, childChunk.ID)
+	if err != nil {
+		return nil, err
+	}
+	dataset, err := s.datasetRepo.GetByID(ctx, childChunk.DatasetID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get dataset for child chunk vector: %w", err)
+	}
+
+	contentChanged := existingChildChunk.Content != childChunk.Content
+	if contentChanged {
+		if childChunk.IndexNodeID == nil || strings.TrimSpace(*childChunk.IndexNodeID) == "" {
+			indexNodeID := uuid.New().String()
+			childChunk.IndexNodeID = &indexNodeID
+		}
+		hash := simpleHash(childChunk.Content)
+		childChunk.IndexNodeHash = &hash
+		if existingChildChunk.IndexNodeID != nil && strings.TrimSpace(*existingChildChunk.IndexNodeID) != "" {
+			if err := s.deleteSegmentVector(ctx, existingChildChunk.DatasetID, *existingChildChunk.IndexNodeID); err != nil {
+				return nil, err
+			}
+		}
+		if err := s.storeChildChunkVector(ctx, dataset, childChunk); err != nil {
+			if restoreErr := s.storeChildChunkVector(ctx, dataset, existingChildChunk); restoreErr != nil {
+				return nil, fmt.Errorf("failed to store updated child chunk vector: %w; restore error: %v", err, restoreErr)
+			}
+			return nil, err
+		}
+	}
+
 	if err := s.chunkService.UpdateChildChunk(ctx, childChunk); err != nil {
+		if contentChanged {
+			if childChunk.IndexNodeID != nil && strings.TrimSpace(*childChunk.IndexNodeID) != "" {
+				_ = s.deleteSegmentVector(ctx, childChunk.DatasetID, *childChunk.IndexNodeID)
+			}
+			if restoreErr := s.storeChildChunkVector(ctx, dataset, existingChildChunk); restoreErr != nil {
+				return nil, fmt.Errorf("failed to update child chunk and restore vector: %w; restore error: %v", err, restoreErr)
+			}
+		}
 		return nil, err
 	}
 
-	response := &dto.ChildChunkResponse{
-		ID:            childChunk.ID,
-		SegmentID:     childChunk.SegmentID,
-		Content:       childChunk.Content,
-		Position:      childChunk.Position,
-		WordCount:     childChunk.WordCount,
-		Type:          childChunk.Type,
-		IndexNodeID:   childChunk.IndexNodeID,
-		IndexNodeHash: childChunk.IndexNodeHash,
-		CreatedAt:     childChunk.CreatedAt.Unix(),
-		UpdatedAt:     childChunk.UpdatedAt.Unix(),
-	}
-
-	return response, nil
+	return childChunkResponse(childChunk), nil
 }
 
 // DeleteChildChunk
 func (s *segmentServiceImpl) DeleteChildChunk(ctx context.Context, childChunkID string) error {
-	return s.chunkService.DeleteChildChunkByID(ctx, childChunkID)
+	childChunk, err := s.chunkService.GetChildChunkByID(ctx, childChunkID)
+	if err != nil {
+		return err
+	}
+
+	if childChunk.IndexNodeID != nil {
+		if err := s.deleteSegmentVector(ctx, childChunk.DatasetID, *childChunk.IndexNodeID); err != nil {
+			return err
+		}
+	}
+
+	if err := s.chunkService.DeleteChildChunkByID(ctx, childChunkID); err != nil {
+		dataset, datasetErr := s.datasetRepo.GetByID(ctx, childChunk.DatasetID)
+		if datasetErr != nil {
+			return fmt.Errorf("failed to delete child chunk after vector deletion: %w; failed to load dataset for vector restore: %v", err, datasetErr)
+		}
+		if restoreErr := s.storeChildChunkVector(ctx, dataset, childChunk); restoreErr != nil {
+			return fmt.Errorf("failed to delete child chunk and restore vector: %w; restore error: %v", err, restoreErr)
+		}
+		return err
+	}
+
+	return nil
 }
 
 // GetChildChunkByID
 func (s *segmentServiceImpl) GetChildChunkByID(ctx context.Context, childChunkID string) (*model.ChildChunk, error) {
 	return s.chunkService.GetChildChunkByID(ctx, childChunkID)
+}
+
+func (s *segmentServiceImpl) storeChildChunkVector(ctx context.Context, dataset *model.Dataset, childChunk *model.ChildChunk) error {
+	if childChunk == nil {
+		return fmt.Errorf("child chunk is required")
+	}
+	if childChunk.IndexNodeID == nil || strings.TrimSpace(*childChunk.IndexNodeID) == "" {
+		return fmt.Errorf("child chunk index node id is required")
+	}
+
+	docHash := ""
+	if childChunk.IndexNodeHash != nil {
+		docHash = *childChunk.IndexNodeHash
+	}
+
+	return s.storeSegmentVector(ctx, segmentVectorTarget{
+		Dataset:     dataset,
+		DocumentID:  childChunk.DocumentID,
+		IndexNodeID: *childChunk.IndexNodeID,
+		Content:     childChunk.Content,
+		DocHash:     docHash,
+	})
+}
+
+func childChunkResponse(childChunk *model.ChildChunk) *dto.ChildChunkResponse {
+	return &dto.ChildChunkResponse{
+		ID:            childChunk.ID,
+		SegmentID:     childChunk.SegmentID,
+		Content:       childChunk.Content,
+		Position:      childChunk.Position,
+		WordCount:     childChunk.WordCount,
+		Type:          childChunk.Type,
+		IndexNodeID:   childChunk.IndexNodeID,
+		IndexNodeHash: childChunk.IndexNodeHash,
+		CreatedAt:     childChunk.CreatedAt.Unix(),
+		UpdatedAt:     childChunk.UpdatedAt.Unix(),
+	}
 }
 
 // simpleHash
