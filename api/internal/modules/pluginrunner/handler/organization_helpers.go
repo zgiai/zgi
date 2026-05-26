@@ -327,6 +327,10 @@ func (h *Handler) cleanupRunnerVersion(ctx context.Context, info *model.Installe
 }
 
 func (h *Handler) resolveRunnerPluginID(ctx context.Context, info *model.InstalledPluginInfo) (string, error) {
+	if info.PluginAuthor != "" {
+		return formatRunnerPluginID(info.PluginAuthor, info.PluginName, info.PluginVersion), nil
+	}
+
 	installations, err := h.service.ListInstalledPlugins(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to list runner plugins: %w", err)
@@ -336,10 +340,6 @@ func (h *Handler) resolveRunnerPluginID(ctx context.Context, info *model.Install
 		if inst.Manifest.MarketplaceVersionID != "" && inst.Manifest.MarketplaceVersionID == info.MarketplaceVersionID {
 			return formatRunnerPluginID(inst.Manifest.Author, inst.Manifest.Name, inst.Manifest.Version), nil
 		}
-	}
-
-	if info.PluginAuthor != "" {
-		return formatRunnerPluginID(info.PluginAuthor, info.PluginName, info.PluginVersion), nil
 	}
 
 	for _, inst := range installations {
