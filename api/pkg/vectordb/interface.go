@@ -11,6 +11,9 @@ type VectorDB interface {
 	// StoreVector stores a vector with metadata
 	StoreVector(ctx context.Context, id, className string, properties map[string]interface{}, vector []float64) error
 
+	// DeleteVector deletes a vector by ID from a class/collection.
+	DeleteVector(ctx context.Context, id, className string) error
+
 	// SearchVectors performs similarity search
 	SearchVectors(ctx context.Context, className string, vector []float64, limit int) ([]map[string]interface{}, error)
 
@@ -75,6 +78,11 @@ func NewVectorDB(cfg *config.VectorStoreConfig) (VectorDB, error) {
 type MockVectorDB struct{}
 
 func (m *MockVectorDB) StoreVector(ctx context.Context, id, className string, properties map[string]interface{}, vector []float64) error {
+	// Mock implementation - just log the operation
+	return nil
+}
+
+func (m *MockVectorDB) DeleteVector(ctx context.Context, id, className string) error {
 	// Mock implementation - just log the operation
 	return nil
 }

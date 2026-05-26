@@ -356,6 +356,110 @@ func (s *segmentServiceImpl) DeleteSegments(ctx context.Context, segmentIDs []st
 	return nil
 }
 
+type segmentVectorTarget struct {
+	Dataset     *model.Dataset
+	DocumentID  string
+	IndexNodeID string
+	Content     string
+	DocHash     string
+}
+
+func (s *segmentServiceImpl) storeSegmentVector(ctx context.Context, target segmentVectorTarget) error {
+	if s.vectorDB == nil {
+		return fmt.Errorf("vector database is not configured")
+	}
+	if target.Dataset == nil {
+		return fmt.Errorf("dataset is required")
+	}
+	if strings.TrimSpace(target.IndexNodeID) == "" {
+		return fmt.Errorf("index node id is required")
+	}
+	if strings.TrimSpace(target.Content) == "" {
+		return fmt.Errorf("content is required")
+	}
+
+	embeddingService, err := s.buildEmbeddingService(ctx, target.Dataset)
+	if err != nil {
+		return err
+	}
+
+	return s.storeSegmentVectorWithEmbedding(ctx, target, embeddingService)
+}
+
+func (s *segmentServiceImpl) storeSegmentVectorWithEmbedding(ctx context.Context, target segmentVectorTarget, embeddingService embedding.EmbeddingService) error {
+	if s.vectorDB == nil {
+		return fmt.Errorf("vector database is not configured")
+	}
+	if target.Dataset == nil {
+		return fmt.Errorf("dataset is required")
+	}
+	if strings.TrimSpace(target.IndexNodeID) == "" {
+		return fmt.Errorf("index node id is required")
+	}
+	if strings.TrimSpace(target.Content) == "" {
+		return fmt.Errorf("content is required")
+	}
+	if embeddingService == nil {
+		return fmt.Errorf("embedding service is not configured")
+	}
+
+	embeddings, err := embeddingService.EmbedTexts(ctx, []string{target.Content})
+	if err != nil {
+		return fmt.Errorf("failed to generate embedding: %w", err)
+	}
+	if len(embeddings) == 0 || len(embeddings[0]) == 0 {
+		return fmt.Errorf("empty embedding vector for index node %s", target.IndexNodeID)
+	}
+
+	className := model.GenCollectionNameByID(target.Dataset.ID)
+	if err := s.vectorDB.CreateClass(ctx, className, defaultSegmentVectorClassProperties()); err != nil {
+		return fmt.Errorf("failed to ensure vector class %s: %w", className, err)
+	}
+
+	docHash := target.DocHash
+	if docHash == "" {
+		docHash = simpleHash(target.Content)
+	}
+	properties := map[string]interface{}{
+		"text":        target.Content,
+		"doc_id":      target.IndexNodeID,
+		"doc_hash":    docHash,
+		"document_id": target.DocumentID,
+		"dataset_id":  target.Dataset.ID,
+	}
+
+	if err := s.vectorDB.StoreVector(ctx, target.IndexNodeID, className, properties, embeddings[0]); err != nil {
+		return fmt.Errorf("failed to store vector %s: %w", target.IndexNodeID, err)
+	}
+
+	return nil
+}
+
+func (s *segmentServiceImpl) deleteSegmentVector(ctx context.Context, datasetID, indexNodeID string) error {
+	if s.vectorDB == nil {
+		return fmt.Errorf("vector database is not configured")
+	}
+	if strings.TrimSpace(datasetID) == "" {
+		return fmt.Errorf("dataset id is required")
+	}
+	if strings.TrimSpace(indexNodeID) == "" {
+		return nil
+	}
+
+	className := model.GenCollectionNameByID(datasetID)
+	if err := s.vectorDB.DeleteVector(ctx, indexNodeID, className); err != nil {
+		return fmt.Errorf("failed to delete vector %s: %w", indexNodeID, err)
+	}
+
+	return nil
+}
+
+func defaultSegmentVectorClassProperties() []map[string]interface{} {
+	return []map[string]interface{}{
+		{"name": "text", "dataType": []string{"text"}},
+	}
+}
+
 // GetChunkByID
 func (s *segmentServiceImpl) GetChunkByID(ctx context.Context, id string) (*model.DocumentSegment, error) {
 	return s.chunkService.GetChunkByID(ctx, id)
