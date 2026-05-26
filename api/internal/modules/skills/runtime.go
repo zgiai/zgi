@@ -537,12 +537,22 @@ func callSkillToolArgumentsSchema(contracts []SkillToolArgumentContract, hasUnty
 	if len(options) == 0 {
 		return schema
 	}
-	if hasUntypedTools {
+	if hasUntypedTools || hasOptionalOnlyContract(contracts) {
 		schema["anyOf"] = options
 	} else {
 		schema["oneOf"] = options
 	}
 	return schema
+}
+
+func hasOptionalOnlyContract(contracts []SkillToolArgumentContract) bool {
+	for _, contract := range contracts {
+		required, _ := contract.Schema["required"].([]string)
+		if len(required) == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func stringSchema(description string, values []string) map[string]interface{} {
@@ -671,14 +681,16 @@ func loadedToolOptions(resolved *ResolvedSkills, loaded map[string]struct{}) ([]
 func SkillToolArgumentContractFor(skillID string, toolName string) (SkillToolArgumentContract, bool) {
 	skillID = normalizeSkillID(skillID)
 	toolName = strings.TrimSpace(toolName)
-	if skillID != SkillCalculator {
-		return SkillToolArgumentContract{}, false
-	}
-	switch toolName {
-	case "evaluate_expression":
-		return SkillToolArgumentContract{
-			SkillID:     skillID,
-			ToolName:    toolName,
+	key := skillID + "/" + toolName
+	contract, ok := skillToolArgumentContracts()[key]
+	return contract, ok
+}
+
+func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
+	return map[string]SkillToolArgumentContract{
+		SkillCalculator + "/evaluate_expression": {
+			SkillID:     SkillCalculator,
+			ToolName:    "evaluate_expression",
 			Description: "Evaluate one deterministic arithmetic expression.",
 			Schema: objectSchema(
 				map[string]interface{}{
@@ -691,19 +703,14 @@ func SkillToolArgumentContractFor(skillID string, toolName string) (SkillToolArg
 				[]string{"expression"},
 			),
 			Example: map[string]interface{}{"expression": "23*17+9"},
-		}, true
-	case "calculate":
-		return SkillToolArgumentContract{
-			SkillID:     skillID,
-			ToolName:    toolName,
+		},
+		SkillCalculator + "/calculate": {
+			SkillID:     SkillCalculator,
+			ToolName:    "calculate",
 			Description: "Perform deterministic binary arithmetic between two numbers.",
 			Schema: objectSchema(
 				map[string]interface{}{
-					"operation": map[string]interface{}{
-						"type":        "string",
-						"description": "Arithmetic operation.",
-						"enum":        []string{"add", "subtract", "multiply", "divide", "power", "mod"},
-					},
+					"operation": enumStringSchema("Arithmetic operation.", []string{"add", "subtract", "multiply", "divide", "power", "mod"}),
 					"left":      numberSchema("Left operand."),
 					"right":     numberSchema("Right operand."),
 					"precision": precisionSchema(),
@@ -711,19 +718,14 @@ func SkillToolArgumentContractFor(skillID string, toolName string) (SkillToolArg
 				[]string{"operation", "left", "right"},
 			),
 			Example: map[string]interface{}{"operation": "multiply", "left": 23, "right": 17},
-		}, true
-	case "percentage":
-		return SkillToolArgumentContract{
-			SkillID:     skillID,
-			ToolName:    toolName,
+		},
+		SkillCalculator + "/percentage": {
+			SkillID:     SkillCalculator,
+			ToolName:    "percentage",
 			Description: "Calculate percent-of, percentage change, or apply a percentage increase/decrease.",
 			Schema: objectSchema(
 				map[string]interface{}{
-					"operation": map[string]interface{}{
-						"type":        "string",
-						"description": "Percentage operation. percent_of/apply_* require value and percent; change requires from and to.",
-						"enum":        []string{"percent_of", "change", "apply_increase", "apply_decrease"},
-					},
+					"operation": enumStringSchema("Percentage operation. percent_of/apply_* require value and percent; change requires from and to.", []string{"percent_of", "change", "apply_increase", "apply_decrease"}),
 					"value":     numberSchema("Base value for percent_of, apply_increase, and apply_decrease."),
 					"percent":   numberSchema("Percentage value, such as 15 for 15 percent."),
 					"from":      numberSchema("Original value for change."),
@@ -733,9 +735,159 @@ func SkillToolArgumentContractFor(skillID string, toolName string) (SkillToolArg
 				[]string{"operation"},
 			),
 			Example: map[string]interface{}{"operation": "percent_of", "value": 200, "percent": 15},
-		}, true
-	default:
-		return SkillToolArgumentContract{}, false
+		},
+		SkillFileGenerator + "/generate_file": {
+			SkillID:     SkillFileGenerator,
+			ToolName:    "generate_file",
+			Description: "Generate a downloadable file artifact from provided content.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"content":   stringValueSchema("Text content to write into the generated file. Use valid CSV content for xlsx and runnable HTML content for html."),
+					"format":    enumStringSchema("Output format.", []string{"txt", "md", "html", "json", "csv", "docx", "xlsx", "pdf"}),
+					"filename":  stringValueSchema("Optional display filename. Do not include path separators or an extension."),
+					"title":     stringValueSchema("Optional document title used by generated HTML and PDF files."),
+					"lifecycle": enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+				},
+				[]string{"content", "format"},
+			),
+			Example: map[string]interface{}{"content": "# Report\n\nSummary...", "format": "md", "filename": "report"},
+		},
+		SkillInternalKnowledge + "/list_accessible_knowledge_bases": {
+			SkillID:     SkillInternalKnowledge,
+			ToolName:    "list_accessible_knowledge_bases",
+			Description: "List knowledge bases accessible to the current AIChat user.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"query": stringValueSchema("Optional search text for narrowing candidate knowledge bases."),
+					"limit": numberSchema("Maximum number of knowledge bases to list. Defaults to 20."),
+				},
+				nil,
+			),
+			Example: map[string]interface{}{"query": "expense policy", "limit": 10},
+		},
+		SkillInternalKnowledge + "/retrieve_knowledge": {
+			SkillID:     SkillInternalKnowledge,
+			ToolName:    "retrieve_knowledge",
+			Description: "Retrieve relevant context from selected accessible knowledge base IDs.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"query":          stringValueSchema("The user question or search query."),
+					"dataset_ids":    stringArrayOrCSVSchema("Knowledge base IDs selected from list_accessible_knowledge_bases. Pass a JSON array of IDs when possible."),
+					"top_k":          numberSchema("Maximum number of retrieved chunks. Defaults to 5."),
+					"retrieval_mode": enumStringSchema("Optional retrieval mode.", []string{"hybrid", "vector", "graph"}),
+				},
+				[]string{"query", "dataset_ids"},
+			),
+			Example: map[string]interface{}{"query": "What is the reimbursement policy?", "dataset_ids": []string{"dataset-id"}},
+		},
+		SkillAgentKnowledge + "/retrieve_agent_knowledge": {
+			SkillID:     SkillAgentKnowledge,
+			ToolName:    "retrieve_agent_knowledge",
+			Description: "Retrieve relevant context from knowledge bases bound to the current Agent.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"query":          stringValueSchema("The user question or search query."),
+					"top_k":          numberSchema("Maximum number of retrieved chunks. Defaults to 5."),
+					"retrieval_mode": enumStringSchema("Optional retrieval mode.", []string{"hybrid", "vector", "graph"}),
+				},
+				[]string{"query"},
+			),
+			Example: map[string]interface{}{"query": "Summarize the configured product FAQ."},
+		},
+		SkillTime + "/current_time": {
+			SkillID:     SkillTime,
+			ToolName:    "current_time",
+			Description: "Get the current system time with optional timezone and format.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"format":   stringValueSchema("Optional strftime-style output format. Defaults to %Y-%m-%d %H:%M:%S."),
+					"timezone": stringValueSchema("Optional IANA timezone such as Asia/Shanghai. Defaults to UTC."),
+				},
+				nil,
+			),
+			Example: map[string]interface{}{"timezone": "Asia/Shanghai", "format": "%Y-%m-%d %H:%M:%S"},
+		},
+		SkillTime + "/date_calculate": {
+			SkillID:     SkillTime,
+			ToolName:    "date_calculate",
+			Description: "Add or subtract date intervals, or calculate the day interval between two dates.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"operation":   enumStringSchema("Operation to perform. diff requires target_date.", []string{"add", "subtract", "diff"}),
+					"base_date":   stringValueSchema("Base date in YYYY-MM-DD format. Use today or omit to use the current date."),
+					"amount":      numberSchema("Interval amount for add or subtract. Defaults to 1."),
+					"unit":        enumStringSchema("Interval unit for add or subtract.", []string{"day", "week", "month", "year"}),
+					"target_date": stringValueSchema("Target date in YYYY-MM-DD format. Required when operation is diff."),
+					"timezone":    stringValueSchema("IANA timezone used when base_date is omitted. Defaults to UTC."),
+				},
+				[]string{"operation"},
+			),
+			Example: map[string]interface{}{"operation": "add", "base_date": "today", "amount": 3, "unit": "day", "timezone": "Asia/Shanghai"},
+		},
+		SkillUserMemory + "/read_user_memory": {
+			SkillID:     SkillUserMemory,
+			ToolName:    "read_user_memory",
+			Description: "Read enabled saved memories for the current user.",
+			Schema:      objectSchema(map[string]interface{}{}, nil),
+			Example:     map[string]interface{}{},
+		},
+		SkillUserMemory + "/add_user_memory": {
+			SkillID:     SkillUserMemory,
+			ToolName:    "add_user_memory",
+			Description: "Save concise durable or time-limited user information for future conversations.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"content":     stringValueSchema("A concise neutral third-person memory. Do not save secrets or one-off chat details."),
+					"category":    enumStringSchema("Most specific memory category.", []string{"preference", "profile", "instruction", "fact", "other"}),
+					"memory_type": enumStringSchema("Use long_term for durable facts; temporary requires expires_at.", []string{"long_term", "temporary"}),
+					"expires_at":  stringValueSchema("RFC3339 expiration time for temporary memory. Required when memory_type is temporary."),
+				},
+				[]string{"content"},
+			),
+			Example: map[string]interface{}{"content": "The user prefers concise technical explanations.", "category": "preference", "memory_type": "long_term"},
+		},
+		SkillUserMemory + "/update_user_memory": {
+			SkillID:     SkillUserMemory,
+			ToolName:    "update_user_memory",
+			Description: "Correct, merge, disable, or refresh an existing memory entry.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"entry_id":    stringValueSchema("The memory entry id returned by read_user_memory."),
+					"content":     stringValueSchema("Updated memory content. Omit when only changing category, memory_type, expires_at, or enabled."),
+					"category":    enumStringSchema("Most specific memory category.", []string{"preference", "profile", "instruction", "fact", "other"}),
+					"memory_type": enumStringSchema("Use long_term for durable facts; temporary requires expires_at.", []string{"long_term", "temporary"}),
+					"expires_at":  stringValueSchema("RFC3339 expiration time for temporary memory. Use an empty value only when converting to long_term."),
+					"enabled":     booleanSchema("Whether this memory entry should be included in future memory context."),
+				},
+				[]string{"entry_id"},
+			),
+			Example: map[string]interface{}{"entry_id": "memory-entry-id", "content": "The user prefers detailed API examples."},
+		},
+		SkillUserMemory + "/delete_user_memory": {
+			SkillID:     SkillUserMemory,
+			ToolName:    "delete_user_memory",
+			Description: "Delete one memory entry that belongs to the current user.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"entry_id": stringValueSchema("The memory entry id returned by read_user_memory."),
+				},
+				[]string{"entry_id"},
+			),
+			Example: map[string]interface{}{"entry_id": "memory-entry-id"},
+		},
+		SkillUserMemory + "/list_temporary_memories": {
+			SkillID:     SkillUserMemory,
+			ToolName:    "list_temporary_memories",
+			Description: "List active or expired temporary memory entries.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"status": enumStringSchema("Which temporary memories to list. Use expired only for retrospective questions.", []string{"active", "expired", "all"}),
+					"limit":  numberSchema("Maximum number of temporary memories to return. Defaults to 20 and is capped at 100."),
+				},
+				nil,
+			),
+			Example: map[string]interface{}{"status": "active", "limit": 20},
+		},
 	}
 }
 
@@ -754,6 +906,9 @@ func ExpectedSkillToolArguments(skillID string, toolName string) map[string]inte
 }
 
 func objectSchema(properties map[string]interface{}, required []string) map[string]interface{} {
+	if required == nil {
+		required = []string{}
+	}
 	return map[string]interface{}{
 		"type":                 "object",
 		"properties":           properties,
@@ -766,6 +921,43 @@ func numberSchema(description string) map[string]interface{} {
 	return map[string]interface{}{
 		"type":        "number",
 		"description": description,
+	}
+}
+
+func stringValueSchema(description string) map[string]interface{} {
+	return map[string]interface{}{
+		"type":        "string",
+		"description": description,
+	}
+}
+
+func enumStringSchema(description string, values []string) map[string]interface{} {
+	schema := stringValueSchema(description)
+	if len(values) > 0 {
+		schema["enum"] = values
+	}
+	return schema
+}
+
+func booleanSchema(description string) map[string]interface{} {
+	return map[string]interface{}{
+		"type":        "boolean",
+		"description": description,
+	}
+}
+
+func stringArrayOrCSVSchema(description string) map[string]interface{} {
+	return map[string]interface{}{
+		"description": description,
+		"oneOf": []interface{}{
+			map[string]interface{}{
+				"type":  "array",
+				"items": map[string]interface{}{"type": "string"},
+			},
+			map[string]interface{}{
+				"type": "string",
+			},
+		},
 	}
 }
 

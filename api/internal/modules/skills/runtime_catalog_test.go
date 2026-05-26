@@ -111,6 +111,115 @@ func TestExpectedSkillToolArgumentsForCalculator(t *testing.T) {
 	}
 }
 
+func TestSystemToolSkillsExposeArgumentContracts(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	skillIDs := []string{
+		SkillAgentKnowledge,
+		SkillCalculator,
+		SkillFileGenerator,
+		SkillInternalKnowledge,
+		SkillTime,
+		SkillUserMemory,
+	}
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), skillIDs)
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	for _, doc := range resolved.Skills {
+		for _, tool := range doc.Tools {
+			if _, ok := SkillToolArgumentContractFor(doc.Metadata.ID, tool.Name); !ok {
+				t.Fatalf("missing argument contract for %s/%s", doc.Metadata.ID, tool.Name)
+			}
+		}
+	}
+}
+
+func TestExpectedSkillToolArgumentsForBuiltInRequiredTools(t *testing.T) {
+	tests := []struct {
+		skillID  string
+		toolName string
+		required []string
+	}{
+		{SkillFileGenerator, "generate_file", []string{"content", "format"}},
+		{SkillInternalKnowledge, "retrieve_knowledge", []string{"query", "dataset_ids"}},
+		{SkillAgentKnowledge, "retrieve_agent_knowledge", []string{"query"}},
+		{SkillTime, "date_calculate", []string{"operation"}},
+		{SkillUserMemory, "add_user_memory", []string{"content"}},
+		{SkillUserMemory, "update_user_memory", []string{"entry_id"}},
+		{SkillUserMemory, "delete_user_memory", []string{"entry_id"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.skillID+"/"+tt.toolName, func(t *testing.T) {
+			expected := ExpectedSkillToolArguments(tt.skillID, tt.toolName)
+			if expected == nil {
+				t.Fatalf("ExpectedSkillToolArguments() = nil")
+			}
+			schema, ok := expected["schema"].(map[string]interface{})
+			if !ok {
+				t.Fatalf("schema type = %T, want map[string]interface{}", expected["schema"])
+			}
+			for _, required := range tt.required {
+				if !hasRequired(schema, required) {
+					t.Fatalf("schema does not require %s: %#v", required, schema)
+				}
+			}
+			example, ok := expected["example"].(map[string]interface{})
+			if !ok || len(example) == 0 {
+				t.Fatalf("example missing: %#v", expected["example"])
+			}
+		})
+	}
+}
+
+func TestMetaToolArgumentsExposeAllLoadedSystemToolContracts(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	skillIDs := []string{
+		SkillAgentKnowledge,
+		SkillCalculator,
+		SkillFileGenerator,
+		SkillInternalKnowledge,
+		SkillTime,
+		SkillUserMemory,
+	}
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), skillIDs)
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	loaded := map[string]struct{}{}
+	for _, id := range skillIDs {
+		loaded[id] = struct{}{}
+	}
+	metaTools := MetaToolsForSkillState(resolved, loaded)
+	callTool := findMetaTool(metaTools, MetaToolCallSkillTool)
+	if callTool == nil {
+		t.Fatalf("call_skill_tool meta tool not found")
+	}
+	params, ok := callTool.Function.Parameters.(map[string]interface{})
+	if !ok {
+		t.Fatalf("parameters type = %T, want map[string]interface{}", callTool.Function.Parameters)
+	}
+	properties, ok := params["properties"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("parameters.properties missing")
+	}
+	arguments, ok := properties["arguments"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("arguments schema missing")
+	}
+	if _, hasOneOf := arguments["oneOf"]; hasOneOf {
+		t.Fatalf("arguments.oneOf should not be used when optional-only contracts are loaded: %#v", arguments)
+	}
+	anyOf, ok := arguments["anyOf"].([]interface{})
+	if !ok || len(anyOf) < 10 {
+		t.Fatalf("arguments.anyOf = %#v, want built-in tool schemas", arguments["anyOf"])
+	}
+	for _, required := range []string{"content", "query", "operation", "entry_id"} {
+		if findSchemaWithRequired(anyOf, required) == nil {
+			t.Fatalf("schema requiring %s not found in %#v", required, anyOf)
+		}
+	}
+}
+
 func toolNames(tools []SkillToolDefinition) []string {
 	out := make([]string, 0, len(tools))
 	for _, tool := range tools {
