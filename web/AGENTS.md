@@ -26,7 +26,7 @@ The project uses `pnpm@10.12.1`.
 - `src/services/` contains API clients and service-layer types.
 - `src/store/` contains client-side global state.
 - `src/i18n/` contains localization modules.
-- `src/customer/` contains customer overlay support prepared by scripts.
+- `src/customer/` contains the customer adapter contract and default implementation. Forks can override `active.ts` to select their own adapter.
 
 ## TypeScript and React
 

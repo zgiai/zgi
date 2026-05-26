@@ -74,6 +74,7 @@ type ChannelService interface {
 	AdjustChannelWallet(ctx context.Context, organizationID, channelID uuid.UUID, req *dto.AdjustChannelWalletRequest) (*dto.AdjustChannelWalletResponse, error)
 
 	// Advanced testing
+	DiscoverDraftChannelModels(ctx context.Context, req *dto.DiscoverDraftChannelModelsRequest) (*dto.DiscoverDraftChannelModelsResponse, error)
 	DiscoverOllamaModels(ctx context.Context, req *dto.DiscoverOllamaModelsRequest) (*dto.DiscoverOllamaModelsResponse, error)
 	TestDraftChannelModel(ctx context.Context, organizationID uuid.UUID, req *dto.DraftTestChannelModelRequest) (*dto.ChannelModelTestResult, error)
 	TestChannelModel(ctx context.Context, channelID uuid.UUID, organizationID uuid.UUID, model string, testMethod string) (*dto.ChannelModelTestResult, error)
@@ -1182,6 +1183,67 @@ func (s *channelService) TestDraftChannelModel(ctx context.Context, organization
 	}
 
 	return buildChannelModelTestResult(result), nil
+}
+
+func (s *channelService) DiscoverDraftChannelModels(ctx context.Context, req *dto.DiscoverDraftChannelModelsRequest) (*dto.DiscoverDraftChannelModelsResponse, error) {
+	spec, err := channelprovider.ValidateConnectionFields(req.ChannelProvider, req.APIBaseURL)
+	if err != nil {
+		return nil, err
+	}
+	if err := channelprovider.ValidateAPIKey(spec, req.APIKey); err != nil {
+		return nil, err
+	}
+
+	adapterInstance, err := adapter.NewAdapter(&adapter.AdapterConfig{
+		ProviderName: spec.AdapterKey,
+		APIKey:       req.APIKey,
+		BaseURL:      req.APIBaseURL,
+		Timeout:      30 * time.Second,
+		MaxRetries:   1,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create %s adapter: %w", spec.Name, err)
+	}
+
+	upstreamModels, err := adapterInstance.ListModels(ctx, req.APIKey)
+	if err != nil {
+		return nil, fmt.Errorf("discover %s models: %w", spec.Name, err)
+	}
+
+	views := make([]dto.DiscoveredChannelModelView, 0, len(upstreamModels))
+	seen := make(map[string]struct{}, len(upstreamModels))
+	for _, item := range upstreamModels {
+		id := strings.TrimSpace(item.ID)
+		if id == "" {
+			id = strings.TrimSpace(item.Name)
+		}
+		if id == "" {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		displayName := strings.TrimSpace(item.Name)
+		if displayName == "" {
+			displayName = id
+		}
+		views = append(views, dto.DiscoveredChannelModelView{
+			ID:            id,
+			Name:          id,
+			DisplayName:   displayName,
+			Provider:      spec.LookupProvider,
+			OwnedBy:       item.OwnedBy,
+			ContextLength: item.ContextLength,
+			Capabilities:  append([]string(nil), item.Capabilities...),
+			Created:       item.Created,
+		})
+	}
+
+	return &dto.DiscoverDraftChannelModelsResponse{
+		Models: views,
+		Total:  len(views),
+	}, nil
 }
 
 func (s *channelService) TestChannelModel(ctx context.Context, channelID uuid.UUID, organizationID uuid.UUID, modelName string, testMethod string) (*dto.ChannelModelTestResult, error) {

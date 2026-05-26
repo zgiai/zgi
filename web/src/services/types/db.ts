@@ -106,6 +106,7 @@ export interface DbTableColumn {
 // GET /console/api/data-dbs/{db_id}/tables/{table_id}/columns response payload
 export interface DbTableColumnsPayload {
   columns: DbTableColumn[];
+  content?: string;
 }
 
 // PUT /console/api/data-dbs/{db_id}/tables/{table_id}/columns response payload
@@ -194,6 +195,7 @@ export interface BatchIngestResultItem {
   file_name: string;
   message: string;
   records: DbTableRecord[];
+  content?: string;
 }
 
 // Response data payload for batch ingest API

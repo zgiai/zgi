@@ -19,6 +19,9 @@ func init() {
 	adapter.GlobalFactory.Register("siliconflow", func(config *adapter.AdapterConfig) (adapter.LLMProviderAdapter, error) {
 		return NewSiliconFlowAdapter(config)
 	})
+	adapter.GlobalFactory.Register("mistral", func(config *adapter.AdapterConfig) (adapter.LLMProviderAdapter, error) {
+		return NewMistralAdapter(config)
+	})
 	adapter.GlobalFactory.Register("ollama", func(config *adapter.AdapterConfig) (adapter.LLMProviderAdapter, error) {
 		return NewOllamaAdapter(config)
 	})

@@ -93,11 +93,25 @@ func (a *PluginRunnerToolAdapter) FetchToolProvider(ctx context.Context, tenantI
 		return nil, fmt.Errorf("failed to list installed plugins: %w", err)
 	}
 
+	if installation := findRunnerInstallationByName(installations, providerName); installation != nil {
+		provider := a.manifestToProviderEntity(installation.Manifest)
+		return &provider, nil
+	}
+
 	for _, installation := range installations {
-		if installation.Manifest.Name == providerName {
-			provider := a.manifestToProviderEntity(installation.Manifest)
-			return &provider, nil
+		if !a.matchesInstalledProvider(ctx, tenantID, providerName, installation.Manifest) {
+			continue
 		}
+		if installation.Manifest.Name == providerName {
+			continue
+		}
+		logger.Warn("resolved plugin provider through legacy runner manifest name",
+			"tenant_id", tenantID,
+			"provider", providerName,
+			"runner_provider", installation.Manifest.Name,
+			"marketplace_version_id", installation.Manifest.MarketplaceVersionID)
+		provider := a.manifestToProviderEntity(installation.Manifest)
+		return &provider, nil
 	}
 
 	return nil, fmt.Errorf("plugin provider %s not found", providerName)
@@ -116,18 +130,22 @@ func (a *PluginRunnerToolAdapter) InvokeTool(
 		"provider", provider,
 		"tool", tool)
 
+	runnerProvider, err := a.resolveRunnerProviderName(ctx, tenantID, provider)
+	if err != nil {
+		return nil, err
+	}
 	policy := a.resolveExecutionPolicy(ctx, tenantID, provider)
-	entrypoint, version, err := a.resolvePluginRuntime(ctx, provider)
+	entrypoint, version, err := a.resolvePluginRuntime(ctx, runnerProvider)
 	if err != nil {
 		return nil, err
 	}
 
 	workflowRunID := getWorkflowRunIDFromContext(ctx)
 	if policy.SessionPolicy == sessionPolicyReuseWithinRun && workflowRunID != "" {
-		return a.invokeWithReusableSession(ctx, tenantID, provider, tool, params, policy, workflowRunID, entrypoint, version)
+		return a.invokeWithReusableSession(ctx, tenantID, runnerProvider, tool, params, policy, workflowRunID, entrypoint, version)
 	}
 
-	return a.invokeWithEphemeralSession(ctx, tenantID, provider, tool, params, policy, entrypoint, version)
+	return a.invokeWithEphemeralSession(ctx, tenantID, runnerProvider, tool, params, policy, entrypoint, version)
 }
 
 // ValidateCredentials validates credentials for a provider
@@ -581,6 +599,51 @@ func (a *PluginRunnerToolAdapter) resolvePluginRuntime(ctx context.Context, prov
 	}
 
 	return entrypoint, version, nil
+}
+
+func (a *PluginRunnerToolAdapter) resolveRunnerProviderName(ctx context.Context, tenantID, providerName string) (string, error) {
+	installations, err := a.service.ListInstalledPlugins(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to list installed plugins: %w", err)
+	}
+
+	if installation := findRunnerInstallationByName(installations, providerName); installation != nil {
+		return installation.Manifest.Name, nil
+	}
+	for _, installation := range installations {
+		if a.matchesInstalledProvider(ctx, tenantID, providerName, installation.Manifest) {
+			return installation.Manifest.Name, nil
+		}
+	}
+
+	return "", fmt.Errorf("plugin %s not found or not installed", providerName)
+}
+
+func (a *PluginRunnerToolAdapter) matchesInstalledProvider(ctx context.Context, tenantID, providerName string, manifest pluginrunner_model.PluginManifest) bool {
+	if a.accountInstallationService == nil || tenantID == "" || providerName == "" {
+		return false
+	}
+	if manifest.MarketplaceVersionID == "" {
+		return false
+	}
+
+	info, err := a.accountInstallationService.GetInstalledPluginInfoByProviderName(ctx, tenantID, providerName)
+	if err != nil || info == nil {
+		if err != nil {
+			logger.Warn("failed to resolve installed plugin info by provider name", "tenant_id", tenantID, "provider", providerName, "error", err)
+		}
+		return false
+	}
+	return info.MarketplaceVersionID == manifest.MarketplaceVersionID
+}
+
+func findRunnerInstallationByName(installations []pluginrunner_model.Installation, providerName string) *pluginrunner_model.Installation {
+	for i := range installations {
+		if installations[i].Manifest.Name == providerName {
+			return &installations[i]
+		}
+	}
+	return nil
 }
 
 func (a *PluginRunnerToolAdapter) resolveExecutionPolicy(

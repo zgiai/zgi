@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useSaveWorkflowTestScenarios } from '@/hooks/workflow-test/use-workflow-test';
 import { useT } from '@/i18n';
+import { cn } from '@/lib/utils';
 import type { WorkflowTestScenario } from '@/services/types/workflow-test';
 
 interface ScenarioDialogProps {
@@ -92,7 +93,10 @@ export function ScenarioDialog({ agentId, scenarios, open, onOpenChange }: Scena
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="text-red-600 hover:text-red-700"
+                  disabled={item.caseCount > 0}
+                  className={cn(
+                    item.caseCount > 0 ? 'text-slate-400' : 'text-red-600 hover:text-red-700'
+                  )}
                   onClick={() => removeItem(item.clientId)}
                 >
                   <Trash2 className="mr-1 size-4" />

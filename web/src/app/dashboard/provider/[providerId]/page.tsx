@@ -236,6 +236,16 @@ export default function ModelPage() {
     [clearSelection, provider, toggleableVisibleModels, toggleBatchModels]
   );
 
+  const handleAdd = useCallback(() => {
+    if (isCustom) {
+      setEditingModel(null);
+      setIsModelDialogOpen(true);
+      return;
+    }
+
+    router.push(`/dashboard/channel?create=1&provider=${encodeURIComponent(provider)}`);
+  }, [isCustom, provider, router]);
+
   const handleUpdate = async (data: UpdateCustomProviderRequest) => {
     if (detail) {
       await updateCustomProvider(detail.id, data);
@@ -330,7 +340,12 @@ export default function ModelPage() {
           extraActions={
             !IS_CLOUD && !isCustom ? <ModelUpdatesButton providerId={provider} /> : undefined
           }
-          onAdd={isCustom ? () => setIsModelDialogOpen(true) : undefined}
+          onAdd={handleAdd}
+          addLabel={
+            isCustom
+              ? (t('aiProviders.models.actions.add') as string)
+              : (t('aiProviders.models.actions.addChannel') as string)
+          }
           disabled={isBatchToggling}
           hasActiveFilters={hasActiveFilters}
         />

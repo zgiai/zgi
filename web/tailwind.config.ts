@@ -7,7 +7,6 @@ const config: Config = {
     './components/**/*.{js,ts,jsx,tsx,mdx}',
     './app/**/*.{js,ts,jsx,tsx,mdx}',
     './src/**/*.{js,ts,jsx,tsx,mdx}',
-    './.customer/**/*.{js,ts,jsx,tsx,mdx}',
     './.local-overrides/**/*.{js,ts,jsx,tsx,mdx}',
   ],
   theme: {

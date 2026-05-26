@@ -2,7 +2,6 @@ package handler
 
 import (
 	"net/http"
-	"net/url"
 	"os"
 	"strconv"
 
@@ -20,20 +19,23 @@ import (
 
 // ImagePreviewHandler handles image preview HTTP requests
 type ImagePreviewHandler struct {
-	fileService    interfaces.FileService
-	accountService interfaces.AccountService
-	validator      *validator.Validate
+	fileService       interfaces.FileService
+	accountService    interfaces.AccountService
+	enterpriseService interfaces.OrganizationService
+	validator         *validator.Validate
 }
 
 // NewImagePreviewHandler creates a new image preview handler instance
 func NewImagePreviewHandler(
 	fileService interfaces.FileService,
 	accountService interfaces.AccountService,
+	enterpriseService interfaces.OrganizationService,
 ) *ImagePreviewHandler {
 	return &ImagePreviewHandler{
-		fileService:    fileService,
-		accountService: accountService,
-		validator:      validator.New(),
+		fileService:       fileService,
+		accountService:    accountService,
+		enterpriseService: enterpriseService,
+		validator:         validator.New(),
 	}
 }
 
@@ -52,15 +54,20 @@ func (h *ImagePreviewHandler) GetFilePreview(c *gin.Context) {
 	sign := c.Query("sign")
 	asAttachmentStr := c.Query("as_attachment")
 
-	// Check required parameters
-	if timestamp == "" || nonce == "" || sign == "" {
+	hasSignatureParams := timestamp != "" || nonce != "" || sign != ""
+	signedAccess := false
+	if hasSignatureParams {
+		if timestamp == "" || nonce == "" || sign == "" {
+			response.Fail(c, response.ErrInvalidParam)
+			return
+		}
+		if !util.VerifyFileSignature(fileID, timestamp, nonce, sign) {
+			response.Fail(c, response.ErrFileNotFound) // Return a generic not-found error for security.
+			return
+		}
+		signedAccess = true
+	} else if c.GetString("auth_method") != "jwt" {
 		response.Fail(c, response.ErrInvalidParam)
-		return
-	}
-
-	// Verify file signature
-	if !util.VerifyFileSignature(fileID, timestamp, nonce, sign) {
-		response.Fail(c, response.ErrFileNotFound) // Return a generic not-found error for security.
 		return
 	}
 
@@ -73,15 +80,25 @@ func (h *ImagePreviewHandler) GetFilePreview(c *gin.Context) {
 	}
 
 	// Get file information
-	uploadFile, err := h.fileService.GetFileByID(c.Request.Context(), fileID)
-	if err != nil {
-		switch err {
-		case file_model.ErrFileNotFound:
-			response.Fail(c, response.ErrFileNotFound)
-		default:
-			response.Fail(c, response.ErrSystemError)
+	var uploadFile *dto.UploadFile
+	if signedAccess {
+		var err error
+		uploadFile, err = h.fileService.GetFileByID(c.Request.Context(), fileID)
+		if err != nil {
+			switch err {
+			case file_model.ErrFileNotFound:
+				response.Fail(c, response.ErrFileNotFound)
+			default:
+				response.Fail(c, response.ErrSystemError)
+			}
+			return
 		}
-		return
+	} else {
+		var ok bool
+		uploadFile, ok = authorizeFileDownloadAccess(c, h.fileService, h.enterpriseService, fileID)
+		if !ok {
+			return
+		}
 	}
 
 	// Get file content
@@ -108,8 +125,7 @@ func (h *ImagePreviewHandler) writeFilePreview(c *gin.Context, uploadFile *dto.U
 	}
 
 	if asAttachment {
-		encodedFilename := url.QueryEscape(uploadFile.Name)
-		c.Header("Content-Disposition", `attachment; filename*=UTF-8''`+encodedFilename)
+		c.Header("Content-Disposition", fileAttachmentDisposition(uploadFile.Name))
 	}
 	c.Header("Content-Length", strconv.Itoa(len(content)))
 	c.Data(http.StatusOK, uploadFile.MimeType, content)

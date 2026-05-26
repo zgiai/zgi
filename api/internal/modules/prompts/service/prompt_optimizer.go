@@ -49,6 +49,7 @@ func (s *promptService) Optimize(
 	goal := normalizePromptOptimizerGoal(req.Goal)
 	preserveVariables := req.PreserveVariables == nil || *req.PreserveVariables
 	detectedVariables := detectPromptOptimizerVariables(rawPrompt)
+	outputLanguage := promptOptimizerOutputLanguage(req.Language)
 
 	promptID, err := s.resolveOptimizerPromptID(ctx, organizationID, accountID, req.PromptID)
 	if err != nil {
@@ -89,6 +90,7 @@ func (s *promptService) Optimize(
 			rawPrompt,
 			preserveVariables,
 			detectedVariables,
+			outputLanguage,
 			false,
 		),
 	)
@@ -153,6 +155,7 @@ func (s *promptService) OptimizeStream(
 	goal := normalizePromptOptimizerGoal(req.Goal)
 	preserveVariables := req.PreserveVariables == nil || *req.PreserveVariables
 	detectedVariables := detectPromptOptimizerVariables(rawPrompt)
+	outputLanguage := promptOptimizerOutputLanguage(req.Language)
 
 	promptID, err := s.resolveOptimizerPromptID(ctx, organizationID, accountID, req.PromptID)
 	if err != nil {
@@ -238,6 +241,7 @@ func (s *promptService) OptimizeStream(
 			rawPrompt,
 			preserveVariables,
 			detectedVariables,
+			outputLanguage,
 			true,
 		),
 	)
@@ -383,6 +387,20 @@ func detectPromptOptimizerVariables(rawPrompt string) []string {
 	return variables
 }
 
+func promptOptimizerOutputLanguage(language string) string {
+	normalized := strings.ToLower(strings.TrimSpace(language))
+	switch {
+	case normalized == "":
+		return ""
+	case strings.HasPrefix(normalized, "zh"):
+		return "Simplified Chinese"
+	case strings.HasPrefix(normalized, "en"):
+		return "English"
+	default:
+		return strings.TrimSpace(language)
+	}
+}
+
 func (s *promptService) resolveOptimizerPromptID(
 	ctx context.Context,
 	organizationID,
@@ -412,6 +430,7 @@ func buildPromptOptimizerChatRequest(
 	rawPrompt string,
 	preserveVariables bool,
 	detectedVariables []string,
+	outputLanguage string,
 	stream bool,
 ) *adapter.ChatRequest {
 	temperature := 0.2
@@ -437,6 +456,7 @@ func buildPromptOptimizerChatRequest(
 					rawPrompt,
 					preserveVariables,
 					detectedVariables,
+					outputLanguage,
 				),
 			},
 		},
@@ -457,7 +477,7 @@ Use this internal CRISPE-style method before writing the final prompt, but never
 Output requirements:
 1. Output only the final optimized prompt itself. Do not output JSON wrappers, Markdown fences, explanations, analysis steps, framework labels, headings about optimization, or extra commentary.
 2. Preserve the user's original intent and domain. Strengthen clarity, reliability, structure, actionability, constraints, and evaluation criteria.
-3. Match the primary language of the user's original prompt.
+3. Use the requested system/interface language for the final optimized prompt when it is provided. If no requested system/interface language is provided, match the primary language of the user's original prompt.
 4. If the original prompt is for a system prompt, agent instruction, workflow node, RAG answer, classifier, extraction task, JSON generation, code task, email, support reply, or other specific scenario, preserve that scenario and optimize for it.
 5. If variables or placeholders are detected and variable preservation is enabled, preserve them exactly. Do not translate, remove, rename, reorder, or change their bracket syntax.
 6. The final prompt should usually contain a strong expert role, useful background/context, a concrete task list, output requirements, constraints/guardrails, and example requirements. For very short original prompts, enrich them with reasonable missing context instead of merely rephrasing them.
@@ -469,6 +489,7 @@ func buildPromptOptimizerUserPrompt(
 	rawPrompt string,
 	preserveVariables bool,
 	detectedVariables []string,
+	outputLanguage string,
 ) string {
 	goalDescription := map[string]string{
 		promptOptimizerGoalGeneral:      "Create a balanced, high-quality prompt with clear role, context, task, constraints, and output format.",
@@ -490,6 +511,11 @@ func buildPromptOptimizerUserPrompt(
 		variableList = string(bytes)
 	}
 
+	languageInstruction := "Use the primary language of the original user prompt."
+	if strings.TrimSpace(outputLanguage) != "" {
+		languageInstruction = fmt.Sprintf("Use the system/interface language for the final optimized prompt: %s.", outputLanguage)
+	}
+
 	if goal == promptOptimizerGoalDeep {
 		return fmt.Sprintf(`Optimize the following user prompt into one high-quality, directly usable result.
 
@@ -507,6 +533,7 @@ Quality bar for deep optimization:
 - The result must read like a complete prompt the user can paste into ChatGPT or another LLM.
 - The result should be substantially better than the original, not just a polished rewrite.
 - Include an expert role, inferred context, explicit task list, output format, constraints, and example requirements when the original prompt does not already provide them.
+- %s
 - Do not use the words "CRISPE", "role and capability", "context explanation", "task statement", "output format", "case requirement", or "optimized prompt" as labels in the final answer.
 
 Optimization goal:
@@ -519,12 +546,15 @@ Detected variables:
 %s
 
 Original user prompt:
-%s`, goalDescription, variableMode, variableList, rawPrompt)
+%s`, languageInstruction, goalDescription, variableMode, variableList, rawPrompt)
 	}
 
 	return fmt.Sprintf(`Optimize the following user prompt into one high-quality, directly usable result.
 
 Internally infer the role, context, task list, output format, and useful examples before writing the final prompt. Do not show that analysis.
+
+Output language:
+%s
 
 Optimization goal:
 %s
@@ -536,7 +566,7 @@ Detected variables:
 %s
 
 Original user prompt:
-%s`, goalDescription, variableMode, variableList, rawPrompt)
+%s`, languageInstruction, goalDescription, variableMode, variableList, rawPrompt)
 }
 
 func parsePromptOptimizerTextResponse(resp *adapter.ChatResponse) (string, error) {

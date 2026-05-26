@@ -11,7 +11,7 @@ const messages = {
   },
   credit: {
     points: 'pts',
-    rate: '10,000 pts is approximately $1.00 of call quota',
+    rate: 'Conversion: $1.00 = 10,000 pts',
     approxUsd: 'about {amount}',
     usdToPoints: '{usd} = {points} pts',
     quickAmount: '${amount}',
@@ -106,6 +106,138 @@ const messages = {
     titleEdit: 'Edit Channel',
     officialChannelHint:
       'This is an official channel. You can only modify priority and weight settings.',
+    setup: {
+      description:
+        'Choose the service first. The system will narrow the protocol, default API URL, and model scope.',
+      steps: {
+        provider: 'Choose Provider',
+        config: 'Connection',
+      },
+      categories: {
+        common: 'Common Providers',
+        aggregator: 'Aggregators',
+        advanced: 'Advanced Setup',
+      },
+      categoryDescriptions: {
+        common: 'Use official model services with preset protocol and model scope.',
+        aggregator:
+          'Use platforms like OpenRouter that aggregate many providers. This first version filters by platform scope.',
+        advanced:
+          'Use self-hosted, proxy, or local model services when you know the exact API protocol.',
+      },
+      fields: {
+        capabilities: 'Capabilities',
+        protocol: 'Protocol',
+        modelStrategy: 'Model source',
+      },
+      actions: {
+        changeProvider: 'Back to provider selection',
+      },
+      kinds: {
+        direct: {
+          label: 'Direct',
+          strategy: 'Use the provider scope and check provider-available models when available',
+          headline: 'Connect by official provider',
+          guidance:
+            'The protocol and default URL are locked to the selected provider, and the model picker stays scoped to that provider.',
+        },
+        aggregator: {
+          label: 'Aggregator',
+          strategy: 'Check the platform catalog first, then enable selected models',
+          headline: 'Connect by aggregator platform',
+          guidance:
+            'Aggregator catalogs are large and change often. Check the provider-returned model list before choosing which models to expose.',
+        },
+        compatible: {
+          label: 'Compatible',
+          strategy: 'Check or manually select OpenAI-compatible models',
+          headline: 'Connect by compatible API',
+          guidance:
+            'Use this for proxies, custom gateways, or third-party APIs that truly support OpenAI-compatible model listing and calls.',
+        },
+        local: {
+          label: 'Local',
+          strategy: 'Discover models from the local runtime',
+          headline: 'Connect by local runtime',
+          guidance:
+            'Use this for local model services such as Ollama. API keys are usually optional, but the server must be able to reach the URL.',
+        },
+        custom: {
+          label: 'Advanced',
+          strategy: 'Admin confirms protocol and model names manually',
+          headline: 'Connect by advanced setup',
+          guidance:
+            'Keeps protocol control available for admins who already know the provider protocol, URL, and model naming rules.',
+        },
+      },
+      providers: {
+        openai: {
+          label: 'OpenAI',
+          description:
+            'Connect OpenAI official models for standard text, vision, image, and embedding use cases.',
+          capabilities: 'Text, vision, image, embeddings',
+        },
+        qwen: {
+          label: 'Alibaba Cloud Qwen',
+          description:
+            'Connect native DashScope capabilities for Qwen text, vision, image, rerank, and multimodal models.',
+          capabilities: 'Text, vision, image, rerank',
+        },
+        deepseek: {
+          label: 'DeepSeek',
+          description:
+            'Connect DeepSeek official models for chat, coding, and reasoning use cases.',
+          capabilities: 'Text, coding, reasoning',
+        },
+        anthropic: {
+          label: 'Anthropic Claude',
+          description:
+            'Connect Claude official models for long-context, reasoning, and enterprise Q&A.',
+          capabilities: 'Text, vision, long context',
+        },
+        google: {
+          label: 'Google Gemini',
+          description:
+            'Connect Gemini models. Text and Vertex image modes can require different key rules.',
+          capabilities: 'Text, vision, multimodal',
+        },
+        moonshot: {
+          label: 'Moonshot Kimi',
+          description: 'Connect Moonshot/Kimi models for Chinese chat and long-context tasks.',
+          capabilities: 'Text, long context',
+        },
+        mistral: {
+          label: 'Mistral AI',
+          description:
+            'Connect Mistral official models for multilingual text, coding, and reasoning use cases.',
+          capabilities: 'Text, coding, reasoning',
+        },
+        openrouter: {
+          label: 'OpenRouter',
+          description:
+            'Connect a multi-provider aggregator. Because the model list is large, this version filters by OpenRouter scope.',
+          capabilities: 'Aggregated models, text, vision',
+        },
+        openaiCompatible: {
+          label: 'OpenAI-Compatible Service',
+          description:
+            'Connect self-hosted or third-party OpenAI-compatible APIs for standard-compatible models.',
+          capabilities: 'Compatible API, manual setup',
+        },
+        custom: {
+          label: 'Custom Advanced Setup',
+          description:
+            'Keep full protocol control for admins who already know the provider API and model names.',
+          capabilities: 'Advanced config, full selection',
+        },
+        ollama: {
+          label: 'Ollama',
+          description:
+            'Connect a local Ollama service for local development and private model trials.',
+          capabilities: 'Local models, text',
+        },
+      },
+    },
     basic: 'Connection',
     availableModels: 'Available Models',
     advanced: 'Advanced Settings',
@@ -142,8 +274,55 @@ const messages = {
       initialFundsMax: 'Maximum quota: {max} pts',
       initialFundsRate: 'Enter USD for clarity; the system converts it into points.',
       initialFundsDefault: 'Internal company channels default to $100. Adjust it for the use case.',
+      providerLocked:
+        'The adapter is locked to the current provider. Create a channel from Channels to choose another protocol.',
       priority: 'Lower numbers are routed first.',
       weight: 'Used for traffic split within the same priority.',
+    },
+    testConnection: {
+      title: 'Test Connection',
+      description:
+        'Check provider-available models with the current API key first, then select one representative model to verify the key, base URL, protocol, and model match.',
+      descriptionWithModel:
+        'Using {model} to verify the key, base URL, protocol, and model match.',
+      button: 'Test',
+      apiBaseUrlHint: 'Enter the API base URL before testing.',
+      apiKeyHint: 'Enter the API key before testing.',
+      selectModelHint: 'Select at least one representative model on the right before testing.',
+      latency: 'Latency: {ms} ms',
+      messages: {
+        success: 'Connection test passed',
+        failed: 'Connection test failed',
+        successFallback: 'The model responded successfully.',
+        failedFallback: 'Check that the provider, API base URL, API key, and model match.',
+        requestFailed: 'Connection test request failed',
+      },
+      nextSteps: {
+        success: 'This configuration is ready to create a channel.',
+        failures: {
+          auth: 'Confirm the API key belongs to this provider and can call the selected model.',
+          baseUrl: 'Confirm the API base URL is reachable and includes the correct version prefix, such as /v1.',
+          model:
+            'Confirm the selected model is available on this provider account, or check provider-available models and choose again.',
+          rateLimit: 'The provider returned a rate limit. Retry later or check account limits.',
+          quota: 'Confirm the provider account balance, plan, or billing status is active.',
+          protocol: 'Confirm the selected adapter protocol is compatible with the provider API.',
+          unknown: 'Use the error above to check the key, base URL, protocol, and model configuration.',
+        },
+      },
+      readiness: {
+        verified: 'Connection verified. You can create the channel.',
+        failed: 'Connection failed. You can still create it, but fix the issue above first.',
+        untested: 'Connection has not been tested. Verify a representative model first.',
+        missingModel: 'Select at least one representative model before testing.',
+      },
+    },
+    discoverModels: {
+      button: 'Check Models',
+      messages: {
+        success: 'Provider returned {count} available models',
+        requestFailed: 'Failed to check available models',
+      },
     },
     protocolOptions: {
       openaiCompatible: 'OpenAI Compatible',
@@ -152,16 +331,29 @@ const messages = {
       glm: 'GLM (Zhipu)',
       minimax: 'MiniMax',
       deepseek: 'DeepSeek',
+      mistral: 'Mistral AI',
       cohere: 'Cohere',
+      openrouter: 'OpenRouter',
       anthropic: 'Anthropic',
       qwen: 'Alibaba Cloud (Qwen)',
       moonshotaiCn: 'Moonshot AI (Kimi)',
       doubao: 'Volcengine (Doubao)',
       google: 'Google (Gemini)',
     },
+    protocolGroups: {
+      aggregator: 'Aggregators',
+      compatible: 'Compatible protocols',
+      vertical: 'Vertical providers',
+    },
     protocolNotes: {
       google:
         'Gemini text mode and Vertex image mode require different API key and API base URL settings.',
+    },
+    errors: {
+      qwenOpenAICompatibleMismatch:
+        'OpenAI Compatible is selected, but the selected models include native Qwen capabilities such as rerank, image, vision, or multimodal models. Use Alibaba Cloud (Qwen), or select only OpenAI-compatible models.',
+      dashScopeProviderMismatch:
+        'Use Alibaba Cloud (Qwen) for DashScope rerank, image, and vision models. OpenAI Compatible is only for compatible-mode models.',
     },
     buttons: {
       cancel: 'Cancel',

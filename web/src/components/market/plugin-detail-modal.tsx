@@ -56,6 +56,7 @@ export default function PluginDetailModal({
 
   // Selected version state
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
+  const [isIconLoadFailed, setIsIconLoadFailed] = useState(false);
 
   // Set default selected version to first one when versions are loaded
   useEffect(() => {
@@ -63,6 +64,10 @@ export default function PluginDetailModal({
       setSelectedVersionId(pluginVersions[0].id);
     }
   }, [pluginVersions, selectedVersionId]);
+
+  useEffect(() => {
+    setIsIconLoadFailed(false);
+  }, [plugin?.id, plugin?.icon]);
 
   // Use hook for installation and status checking
   const {
@@ -72,7 +77,7 @@ export default function PluginDetailModal({
     installPlugin,
     uninstallPlugin,
     refetchStatus,
-  } = useInstallPluginFromMarketplace(selectedVersionId, open && !!plugin);
+  } = useInstallPluginFromMarketplace(plugin?.id ?? null, selectedVersionId, open && !!plugin);
 
   // Handle install plugin
   const handleInstall = async () => {
@@ -180,20 +185,13 @@ export default function PluginDetailModal({
             <div className="relative px-6 pt-6 pb-4 border-b">
               <div className="flex items-start gap-3">
                 {/* Icon */}
-                {plugin.icon ? (
+                {plugin.icon && !isIconLoadFailed ? (
                   <div className="w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center shrink-0 rounded-lg bg-muted overflow-hidden">
                     <img
                       src={plugin.icon}
                       alt={plugin.name}
                       className="w-full h-full object-contain"
-                      onError={e => {
-                        const target = e.target as HTMLImageElement;
-                        target.style.display = 'none';
-                        const parent = target.parentElement;
-                        if (parent && plugin) {
-                          parent.innerHTML = `<div class="w-full h-full flex items-center justify-center text-lg font-semibold text-muted-foreground">${plugin.name.slice(0, 2)}</div>`;
-                        }
-                      }}
+                      onError={() => setIsIconLoadFailed(true)}
                     />
                   </div>
                 ) : (

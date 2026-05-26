@@ -65,16 +65,6 @@ function stringifyOutput(outputs: Record<string, unknown>, none: string) {
   return JSON.stringify(outputs, null, 2);
 }
 
-function stringifyValue(value: unknown, none: string) {
-  if (value === undefined || value === null || value === '') {
-    return none;
-  }
-  if (typeof value === 'string') {
-    return value;
-  }
-  return JSON.stringify(value, null, 2);
-}
-
 function stringifyJson(value: unknown, none: string) {
   if (value === undefined || value === null || value === '') {
     return none;
@@ -94,10 +84,6 @@ function hasExecutionFailure(outputs: Record<string, unknown>) {
     return true;
   }
   return false;
-}
-
-function hasAttachments(item: WorkflowTestBatchItem) {
-  return item.case_snapshot.turns?.some(turn => turn.attachments?.length) ?? false;
 }
 
 function formatResponseTime(item: WorkflowTestBatchItem, none: string) {
@@ -141,13 +127,65 @@ function formatJudgeScore(value: number) {
   return `${Number.isInteger(score) ? score.toFixed(0) : score.toFixed(1)} / 5`;
 }
 
-type ExecutionNodeSnapshot = {
+function localizeWorkflowTestError(
+  message: string,
+  t: (key:
+    | 'errors.judgeModelRequired'
+    | 'errors.judgeNotConfigured'
+    | 'errors.judgeEmptyResult'
+    | 'errors.judgeFailed'
+    | 'errors.judgeFailedSuggestion'
+    | 'errors.judgeManualReviewSuggestion'
+    | 'errors.judgeConfigureSuggestion') => string
+) {
+  const normalized = message.trim().toLowerCase();
+  if (!normalized) return message;
+  if (
+    normalized.includes('judge failed: model field is required') ||
+    normalized.includes('model field is required')
+  ) {
+    return t('errors.judgeModelRequired');
+  }
+  if (normalized.includes('judge is not configured')) {
+    return t('errors.judgeNotConfigured');
+  }
+  if (normalized.includes('judge returned empty result')) {
+    return t('errors.judgeEmptyResult');
+  }
+  if (
+    normalized === 'ai scoring failed; review manually or rerun the test' ||
+    normalized === 'ai 评分失败，请人工复核或重新测试。'
+  ) {
+    return t('errors.judgeFailedSuggestion');
+  }
+  if (
+    normalized === 'review this result manually' ||
+    normalized === '请人工复核本次结果。'
+  ) {
+    return t('errors.judgeManualReviewSuggestion');
+  }
+  if (
+    normalized === 'configure ai scoring and rerun, or review manually' ||
+    normalized === '请配置 ai 评分能力后重新执行，或人工复核本次结果。'
+  ) {
+    return t('errors.judgeConfigureSuggestion');
+  }
+  if (normalized === 'judge failed') {
+    return t('errors.judgeFailed');
+  }
+  if (normalized.startsWith('judge failed: ')) {
+    return `${t('errors.judgeFailed')}：${message.trim().slice('judge failed: '.length)}`;
+  }
+  return message;
+}
+
+interface ExecutionNodeSnapshot {
   id: string;
   status: string;
   error: string;
   startTime: string;
   endTime: string;
-};
+}
 
 function extractExecutionNodes(outputs: Record<string, unknown>): ExecutionNodeSnapshot[] {
   const nodeResults = outputs?.node_results;
@@ -167,11 +205,11 @@ function extractExecutionNodes(outputs: Record<string, unknown>): ExecutionNodeS
     });
 }
 
-type WorkflowDraftNodeMeta = {
+interface WorkflowDraftNodeMeta {
   id: string;
   title: string;
   type: string;
-};
+}
 
 function getNodeDataString(node: unknown, key: string) {
   if (!node || typeof node !== 'object') return '';
@@ -304,16 +342,16 @@ function buildTurnTitle(role: string, index: number) {
   return `第 ${index + 1} 轮 · ${roleLabel}`;
 }
 
-type TurnResultSnapshot = {
+interface TurnResultSnapshot {
   turnIndex: number;
   content: string;
   workflowRunId: string;
   outputs: Record<string, unknown>;
-};
+}
 
-type ConversationTurnSnapshot = TurnResultSnapshot & {
+interface ConversationTurnSnapshot extends TurnResultSnapshot {
   answer: string;
-};
+}
 
 function extractTurnResultSnapshots(outputs: Record<string, unknown>): TurnResultSnapshot[] {
   const rawTurnResults = outputs.turn_results;
@@ -388,10 +426,10 @@ function buildConversationTurnSnapshots(
   ];
 }
 
-type RawViewPayload = {
+interface RawViewPayload {
   title: string;
   content: Record<string, unknown> | unknown[] | string | number | boolean | null;
-};
+}
 
 export function BatchResultItemDetailPage({
   agentId,
@@ -420,7 +458,6 @@ export function BatchResultItemDetailPage({
   const batches = batchesData?.data?.items ?? [];
   const batch = batches.find(item => item.id === batchId);
   const items = itemsData?.data?.items ?? [];
-  const scenarios = scenariosData?.data?.items ?? [];
   const itemIndex = items.findIndex(item => item.id === itemId);
   const selectedItem = itemIndex >= 0 ? items[itemIndex] : null;
   const previousItem = itemIndex > 0 ? items[itemIndex - 1] : null;
@@ -429,8 +466,8 @@ export function BatchResultItemDetailPage({
   const isLoading = batchesLoading || itemsLoading;
   const error = batchesError || itemsError;
   const scenarioNameById = React.useMemo(
-    () => new Map(scenarios.map(scenario => [scenario.id, scenario.name])),
-    [scenarios]
+    () => new Map((scenariosData?.data?.items ?? []).map(scenario => [scenario.id, scenario.name])),
+    [scenariosData]
   );
   const draftNodeMetaById = React.useMemo(
     () => buildWorkflowDraftNodeMetaMap(workflowDraft),
@@ -511,9 +548,15 @@ export function BatchResultItemDetailPage({
   const questionSnapshot = selectedItem.case_snapshot.content || commonT('none');
   const expectedResult = selectedItem.case_snapshot.expected_result || commonT('none');
   const reasonText =
-    selectedItem.error ||
-    selectedItem.judge_reason ||
+    (selectedItem.error ? localizeWorkflowTestError(selectedItem.error, t) : '') ||
+    (selectedItem.judge_reason ? localizeWorkflowTestError(selectedItem.judge_reason, t) : '') ||
     (selectedItem.status === 'passed' ? t('passedReasonFallback') : commonT('none'));
+  const judgeReasonText = selectedItem.judge_reason
+    ? localizeWorkflowTestError(selectedItem.judge_reason, t)
+    : commonT('none');
+  const judgeSuggestionText = selectedItem.judge_suggestion
+    ? localizeWorkflowTestError(selectedItem.judge_suggestion, t)
+    : '';
   const reasonTitle = selectedItem.status === 'passed' && !selectedItem.error ? t('passConclusion') : t('issueReason');
   const reasonToneClass =
     selectedItem.status === 'passed' && !selectedItem.error
@@ -695,11 +738,11 @@ export function BatchResultItemDetailPage({
                 </div>
                 <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-800">
                   <div className="text-slate-500">{t('judgeOpinion')}</div>
-                  <div className="mt-2 whitespace-pre-wrap">{selectedItem.judge_reason || commonT('none')}</div>
-                  {selectedItem.judge_suggestion ? (
+                  <div className="mt-2 whitespace-pre-wrap">{judgeReasonText}</div>
+                  {judgeSuggestionText ? (
                     <div className="mt-4 rounded-xl bg-amber-50 p-4 text-amber-800">
                       <div className="font-medium">{t('suggestionLabel')}</div>
-                      <div className="mt-1 whitespace-pre-wrap">{selectedItem.judge_suggestion}</div>
+                      <div className="mt-1 whitespace-pre-wrap">{judgeSuggestionText}</div>
                     </div>
                   ) : null}
                 </div>

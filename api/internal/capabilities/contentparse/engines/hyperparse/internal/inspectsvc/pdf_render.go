@@ -102,6 +102,7 @@ func StreamRenderPDFSelectedPagesToDataURLsWithScales(pdfBytes []byte, pageNumbe
 		render func(pdfPath, outDir string, page int, scaleTo int) (string, error)
 	}
 	renderers := []singlePageRenderer{
+		{engine: "pdftocairo", render: renderWithPDFToCairoSinglePage},
 		{engine: "pdftoppm", render: renderWithPDFToPPMSinglePage},
 		{engine: "mutool", render: renderWithMuToolSinglePage},
 		{engine: "magick", render: renderWithImageMagickSinglePage},
@@ -136,7 +137,7 @@ func StreamRenderPDFSelectedPagesToDataURLsWithScales(pdfBytes []byte, pageNumbe
 			log.Printf("[ui.pdf.render] all streaming engines failed: %s", strings.Join(errs, " | "))
 			return nil, nil, "", fmt.Errorf("PDF rendering failed: %s", strings.Join(errs, " | "))
 		}
-		return nil, nil, "", fmt.Errorf("no available PDF rendering tool found; install pdftoppm, mutool, or ImageMagick")
+		return nil, nil, "", fmt.Errorf("no available PDF rendering tool found; install pdftocairo, pdftoppm, mutool, or ImageMagick")
 	}
 
 	if concurrency <= 0 {
@@ -240,6 +241,12 @@ func renderPDFPagesToDataURLsWithSelectionAndProfile(pdfBytes []byte, maxPages i
 
 	useSparse := (len(pageNumbers) > 0 && !pageListIsSequential(requestedPages, maxPages)) || len(scaleOverrides) > 0
 	var errs []string
+	if paths, e := renderWithPDFToCairoForPages(pdfPath, tmpDir, requestedPages, useSparse, profile, scaleOverrides); e == nil && len(paths) > 0 {
+		urls, err := imagePathsToDataURLsWithMaxSide(paths, profile.previewMaxSide)
+		return urls, requestedPages, "pdftocairo", err
+	} else if e != nil {
+		errs = append(errs, "pdftocairo="+e.Error())
+	}
 	if paths, e := renderWithPDFToPPMForPages(pdfPath, tmpDir, requestedPages, useSparse, profile, scaleOverrides); e == nil && len(paths) > 0 {
 		urls, err := imagePathsToDataURLsWithMaxSide(paths, profile.previewMaxSide)
 		return urls, requestedPages, "pdftoppm", err
@@ -262,7 +269,7 @@ func renderPDFPagesToDataURLsWithSelectionAndProfile(pdfBytes []byte, maxPages i
 		log.Printf("[ui.pdf.render] all engines failed: %s", strings.Join(errs, " | "))
 		return nil, nil, "", fmt.Errorf("PDF rendering failed: %s", strings.Join(errs, " | "))
 	}
-	return nil, nil, "", fmt.Errorf("no available PDF rendering tool found; install pdftoppm, mutool, or ImageMagick")
+	return nil, nil, "", fmt.Errorf("no available PDF rendering tool found; install pdftocairo, pdftoppm, mutool, or ImageMagick")
 }
 
 func detectRenderPageLimit(pdfBytes []byte, maxPages int) int {
@@ -305,6 +312,87 @@ func pageListIsSequential(pages []int, maxPages int) bool {
 		}
 	}
 	return true
+}
+
+func renderWithPDFToCairo(pdfPath, outDir string, maxPages int, scaleTo int) ([]string, error) {
+	bin, err := resolveRendererBinary("pdftocairo", "CONTENT_PARSE_PDFTOCAIRO_PATH")
+	if err != nil {
+		return nil, err
+	}
+	prefix := filepath.Join(outDir, "cairo_page")
+	args := []string{"-png"}
+	if scaleTo > 0 {
+		args = append(args, "-scale-to", strconv.Itoa(scaleTo))
+	}
+	args = append(args, "-f", "1", "-l", strconv.Itoa(maxPages), pdfPath, prefix)
+	cmd := exec.Command(bin, args...)
+	if b, err := cmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("pdftocairo failed: %v (%s)", err, strings.TrimSpace(string(b)))
+	}
+	paths, _ := filepath.Glob(filepath.Join(outDir, "cairo_page-*.png"))
+	if len(paths) == 0 {
+		paths, _ = filepath.Glob(filepath.Join(outDir, "cairo_page_*.png"))
+	}
+	sort.Strings(paths)
+	if len(paths) == 0 {
+		return nil, fmt.Errorf("pdftocairo rendered 0 pages")
+	}
+	return paths, nil
+}
+
+func renderWithPDFToCairoSinglePage(pdfPath, outDir string, page int, scaleTo int) (string, error) {
+	bin, err := resolveRendererBinary("pdftocairo", "CONTENT_PARSE_PDFTOCAIRO_PATH")
+	if err != nil {
+		return "", err
+	}
+	prefix := filepath.Join(outDir, fmt.Sprintf("cairo_page_%03d", page))
+	args := []string{"-png"}
+	if scaleTo > 0 {
+		args = append(args, "-scale-to", strconv.Itoa(scaleTo))
+	}
+	args = append(args, "-singlefile", "-f", strconv.Itoa(page), "-l", strconv.Itoa(page), pdfPath, prefix)
+	cmd := exec.Command(bin, args...)
+	if b, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("pdftocairo page %d failed: %v (%s)", page, err, strings.TrimSpace(string(b)))
+	}
+	return resolveSingleRenderedPath(prefix+".png", prefix+"*.png")
+}
+
+func renderWithPDFToCairoForPages(pdfPath, outDir string, pageNumbers []int, sparse bool, profile pdfRenderProfile, scaleOverrides pageRenderScaleOverrides) ([]string, error) {
+	if sparse {
+		return renderWithPDFToCairoSelectedWithScales(pdfPath, outDir, pageNumbers, profile.pdftoppmScale, scaleOverrides)
+	}
+	return renderWithPDFToCairo(pdfPath, outDir, len(pageNumbers), profile.pdftoppmScale)
+}
+
+func renderWithPDFToCairoSelectedWithScales(pdfPath, outDir string, pageNumbers []int, defaultScale int, scaleOverrides pageRenderScaleOverrides) ([]string, error) {
+	bin, err := resolveRendererBinary("pdftocairo", "CONTENT_PARSE_PDFTOCAIRO_PATH")
+	if err != nil {
+		return nil, err
+	}
+	paths := make([]string, 0, len(pageNumbers))
+	for _, page := range pageNumbers {
+		prefix := filepath.Join(outDir, fmt.Sprintf("cairo_page_%03d", page))
+		args := []string{"-png"}
+		scaleTo := scaleOverrideForPage(scaleOverrides, page)
+		if scaleTo <= 0 {
+			scaleTo = defaultScale
+		}
+		if scaleTo > 0 {
+			args = append(args, "-scale-to", strconv.Itoa(scaleTo))
+		}
+		args = append(args, "-singlefile", "-f", strconv.Itoa(page), "-l", strconv.Itoa(page), pdfPath, prefix)
+		cmd := exec.Command(bin, args...)
+		if b, err := cmd.CombinedOutput(); err != nil {
+			return nil, fmt.Errorf("pdftocairo page %d failed: %v (%s)", page, err, strings.TrimSpace(string(b)))
+		}
+		path, err := resolveSingleRenderedPath(prefix+".png", prefix+"*.png")
+		if err != nil {
+			return nil, fmt.Errorf("pdftocairo page %d: %w", page, err)
+		}
+		paths = append(paths, path)
+	}
+	return paths, nil
 }
 
 func renderWithPDFToPPM(pdfPath, outDir string, maxPages int, scaleTo int) ([]string, error) {

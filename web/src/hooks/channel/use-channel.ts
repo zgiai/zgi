@@ -13,6 +13,10 @@ import type {
   ChannelDetail,
   UpdateChannelRequest,
   CreateChannelRequest,
+  DraftTestChannelModelRequest,
+  ChannelModelTestResult,
+  DiscoverDraftChannelModelsRequest,
+  DiscoverDraftChannelModelsResponse,
   BatchTestChannelModelsRequest,
   BatchTestChannelModelsEvent,
   BatchTestModelResult,
@@ -549,6 +553,60 @@ export function useCreateChannel(): {
   );
 
   return { createChannel, isCreating: isPending };
+}
+
+export function useTestDraftChannelModel(): {
+  testDraftChannelModel: (data: DraftTestChannelModelRequest) => Promise<ChannelModelTestResult>;
+  isTestingDraft: boolean;
+} {
+  const t = useT('channels');
+  const { mutateAsync, isPending } = useMutation({
+    mutationFn: async (data: DraftTestChannelModelRequest) => {
+      const response = await channelService.testDraftChannelModel(data);
+      return response.data;
+    },
+    onError: error => {
+      const title = t('dialog.testConnection.messages.requestFailed');
+      toast.error(title, {
+        description: normalizeToastDescription(title, (error as { message?: string }).message),
+      });
+    },
+  });
+
+  const testDraftChannelModel = useCallback(
+    async (data: DraftTestChannelModelRequest) => mutateAsync(data),
+    [mutateAsync]
+  );
+
+  return { testDraftChannelModel, isTestingDraft: isPending };
+}
+
+export function useDiscoverDraftChannelModels(): {
+  discoverDraftChannelModels: (
+    data: DiscoverDraftChannelModelsRequest
+  ) => Promise<DiscoverDraftChannelModelsResponse>;
+  isDiscoveringDraftModels: boolean;
+} {
+  const t = useT('channels');
+  const { mutateAsync, isPending } = useMutation({
+    mutationFn: async (data: DiscoverDraftChannelModelsRequest) => {
+      const response = await channelService.discoverDraftChannelModels(data);
+      return response.data;
+    },
+    onError: error => {
+      const title = t('dialog.discoverModels.messages.requestFailed');
+      toast.error(title, {
+        description: normalizeToastDescription(title, (error as { message?: string }).message),
+      });
+    },
+  });
+
+  const discoverDraftChannelModels = useCallback(
+    async (data: DiscoverDraftChannelModelsRequest) => mutateAsync(data),
+    [mutateAsync]
+  );
+
+  return { discoverDraftChannelModels, isDiscoveringDraftModels: isPending };
 }
 
 /**

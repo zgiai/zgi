@@ -30,7 +30,7 @@ func runJudge(ctx context.Context, judge Judge, req JudgeRequest) *JudgeResult {
 		return &JudgeResult{
 			Status:     BatchItemStatusReview,
 			Reason:     "judge is not configured",
-			Suggestion: "请配置 AI 评分能力后重新执行，或人工复核本次结果。",
+			Suggestion: "configure AI scoring and rerun, or review manually",
 			Confidence: 0,
 		}
 	}
@@ -38,12 +38,19 @@ func runJudge(ctx context.Context, judge Judge, req JudgeRequest) *JudgeResult {
 	if err != nil {
 		return &JudgeResult{
 			Status:     BatchItemStatusReview,
-			Reason:     fmt.Sprintf("judge failed: %v", err),
-			Suggestion: "AI 评分失败，请人工复核或重新测试。",
+			Reason:     judgeFailureReason(err),
+			Suggestion: "AI scoring failed; review manually or rerun the test",
 			Confidence: 0,
 		}
 	}
 	return normalizeJudgeResult(result)
+}
+
+func judgeFailureReason(err error) string {
+	if err == nil {
+		return "judge failed"
+	}
+	return fmt.Sprintf("judge failed: %v", err)
 }
 
 func normalizeJudgeResult(result *JudgeResult) *JudgeResult {
@@ -51,7 +58,7 @@ func normalizeJudgeResult(result *JudgeResult) *JudgeResult {
 		return &JudgeResult{
 			Status:     BatchItemStatusReview,
 			Reason:     "judge returned empty result",
-			Suggestion: "请人工复核本次结果。",
+			Suggestion: "review this result manually",
 			Confidence: 0,
 		}
 	}

@@ -36,6 +36,9 @@ type AccountInstallationService interface {
 	// GetDeclarationByProviderName returns a specific declaration by provider name for a tenant
 	GetDeclarationByProviderName(ctx context.Context, tenantID, providerName string) (*model.PluginDeclaration, error)
 
+	// GetInstalledPluginInfoByProviderName returns installed plugin info by provider name for a tenant.
+	GetInstalledPluginInfoByProviderName(ctx context.Context, tenantID, providerName string) (*model.InstalledPluginInfo, error)
+
 	// InstallFromDirectory installs a plugin by parsing YAML files from directory
 	InstallFromDirectory(ctx context.Context, tenantID, marketplacePluginID, marketplaceVersionID, installedBy, pluginDir string) (*model.AccountPluginInstallation, error)
 }
@@ -143,6 +146,30 @@ func (s *accountInstallationService) GetDeclarationByProviderName(ctx context.Co
 	}
 
 	return nil, nil // Not found
+}
+
+func (s *accountInstallationService) GetInstalledPluginInfoByProviderName(ctx context.Context, tenantID, providerName string) (*model.InstalledPluginInfo, error) {
+	installations, err := s.installRepo.ListByTenantID(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, inst := range installations {
+		if inst.Status != model.InstallationStatusActive {
+			continue
+		}
+
+		info, err := s.infoRepo.GetByMarketplaceVersionID(ctx, inst.MarketplaceVersionID)
+		if err != nil {
+			logger.Warn("plugin info not found while resolving provider name", "tenant_id", tenantID, "version_id", inst.MarketplaceVersionID, "error", err)
+			continue
+		}
+		if info.PluginName == providerName {
+			return info, nil
+		}
+	}
+
+	return nil, nil
 }
 
 // InstallFromDirectory installs a plugin by parsing YAML files from a directory

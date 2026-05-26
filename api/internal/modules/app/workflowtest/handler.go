@@ -3,6 +3,7 @@ package workflowtest
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -11,6 +12,7 @@ import (
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/queue"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
 
@@ -19,6 +21,7 @@ type Handler struct {
 	workflowService     interfaces.WorkflowService
 	organizationService interfaces.OrganizationService
 	llmClient           llmclient.LLMClient
+	taskManager         *queue.TaskManager
 }
 
 func NewHandler(service *Service, workflowService interfaces.WorkflowService, args ...interface{}) *Handler {
@@ -26,15 +29,21 @@ func NewHandler(service *Service, workflowService interfaces.WorkflowService, ar
 	wf = workflowService
 	var client llmclient.LLMClient
 	var organizationService interfaces.OrganizationService
+	var taskManager *queue.TaskManager
 	for _, arg := range args {
 		switch value := arg.(type) {
 		case llmclient.LLMClient:
 			client = value
 		case interfaces.OrganizationService:
 			organizationService = value
+		case *queue.TaskManager:
+			taskManager = value
 		}
 	}
-	return &Handler{service: service, workflowService: wf, organizationService: organizationService, llmClient: client}
+	if service != nil {
+		service.SetWorkflowContextProvider(WorkflowServiceContextProvider{WorkflowService: wf})
+	}
+	return &Handler{service: service, workflowService: wf, organizationService: organizationService, llmClient: client, taskManager: taskManager}
 }
 
 func (h *Handler) GetSettings(c *gin.Context) {
@@ -145,7 +154,7 @@ func (h *Handler) SaveScenarios(c *gin.Context) {
 	}
 	items, err := h.service.SaveScenarios(c.Request.Context(), agentID, req)
 	if err != nil {
-		response.Fail(c, response.ErrInvalidParam)
+		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 		return
 	}
 	response.Success(c, gin.H{"items": items})
@@ -170,7 +179,7 @@ func (h *Handler) RecognizeScenarios(c *gin.Context) {
 	}
 	var req RecognizeScenariosRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Fail(c, response.ErrInvalidParam)
+		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 		return
 	}
 	recognizer := &LLMScenarioRecognizer{
@@ -181,10 +190,110 @@ func (h *Handler) RecognizeScenarios(c *gin.Context) {
 	}
 	result, err := h.service.RecognizeScenarios(c.Request.Context(), agentID, req, recognizer)
 	if err != nil {
-		response.Fail(c, response.ErrInvalidParam)
+		logger.Error(fmt.Sprintf("workflow test recognize scenarios failed: agent_id=%s", agentID), err)
+		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 		return
 	}
 	response.Success(c, result)
+}
+
+func (h *Handler) CreateScenarioRecognitionTask(c *gin.Context) {
+	agentID, ok := bindAgentID(c)
+	if !ok {
+		return
+	}
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentManage) {
+		return
+	}
+	if h.taskManager == nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	workspaceID, ok := h.resolveAgentWorkspaceID(c, agentID)
+	if !ok {
+		return
+	}
+	var req RecognizeScenariosRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+		return
+	}
+	if _, err := h.service.RecoverStaleRunningScenarioRecognitionTasks(c.Request.Context(), time.Now().Add(-30*time.Minute)); err != nil {
+		logger.Warn("workflow test recover stale scenario recognition tasks failed", map[string]interface{}{
+			"agent_id": agentID,
+			"error":    err.Error(),
+		})
+	}
+	task, err := h.service.CreateScenarioRecognitionTask(c.Request.Context(), agentID, workspaceID, accountID, req)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+		return
+	}
+	asynqTask, err := NewScenarioRecognitionTaskAsynqTask(task.ID, h.taskManager)
+	if err != nil {
+		_ = h.service.finishScenarioRecognitionTask(c.Request.Context(), task.ID, GenerationTaskStatusFailed, scenarioRecognitionTaskFailureReason(err), 0, 0)
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	if _, err := h.taskManager.EnqueueTask(asynqTask); err != nil {
+		_ = h.service.finishScenarioRecognitionTask(c.Request.Context(), task.ID, GenerationTaskStatusFailed, scenarioRecognitionTaskFailureReason(err), 0, 0)
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	response.Success(c, ScenarioRecognitionTaskResponse{Task: task})
+}
+
+func (h *Handler) GetActiveScenarioRecognitionTask(c *gin.Context) {
+	agentID, ok := bindAgentID(c)
+	if !ok {
+		return
+	}
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentView) {
+		return
+	}
+	task, err := h.service.GetActiveScenarioRecognitionTask(c.Request.Context(), agentID)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	response.Success(c, ScenarioRecognitionTaskResponse{Task: task})
+}
+
+func (h *Handler) GetLatestScenarioRecognitionTask(c *gin.Context) {
+	agentID, ok := bindAgentID(c)
+	if !ok {
+		return
+	}
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentView) {
+		return
+	}
+	task, err := h.service.GetLatestScenarioRecognitionTask(c.Request.Context(), agentID)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	response.Success(c, ScenarioRecognitionTaskResponse{Task: task})
+}
+
+func (h *Handler) GetScenarioRecognitionTask(c *gin.Context) {
+	agentID, ok := bindAgentID(c)
+	if !ok {
+		return
+	}
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentView) {
+		return
+	}
+	task, err := h.service.GetScenarioRecognitionTask(c.Request.Context(), agentID, c.Param("task_id"))
+	if err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	response.Success(c, ScenarioRecognitionTaskResponse{Task: task})
 }
 
 func (h *Handler) ListCases(c *gin.Context) {
@@ -315,6 +424,121 @@ func (h *Handler) GenerateCases(c *gin.Context) {
 		return
 	}
 	response.Success(c, result)
+}
+
+func (h *Handler) CreateGenerationTask(c *gin.Context) {
+	agentID, ok := bindAgentID(c)
+	if !ok {
+		return
+	}
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentManage) {
+		return
+	}
+	if h.taskManager == nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	workspaceID, ok := h.resolveAgentWorkspaceID(c, agentID)
+	if !ok {
+		return
+	}
+	var req CreateGenerationTaskRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if _, err := h.service.RecoverStaleRunningGenerationTasks(c.Request.Context(), time.Now().Add(-30*time.Minute)); err != nil {
+		logger.Warn("workflow test recover stale generation tasks failed", map[string]interface{}{
+			"agent_id": agentID,
+			"error":    err.Error(),
+		})
+	}
+	task, err := h.service.CreateGenerationTask(c.Request.Context(), agentID, workspaceID, accountID, req)
+	if err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	asynqTask, err := NewGenerationTaskAsynqTask(task.ID, h.taskManager)
+	if err != nil {
+		_ = h.service.finishGenerationTask(c.Request.Context(), task.ID, GenerationTaskStatusFailed, generationTaskFailureReason(err))
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	if _, err := h.taskManager.EnqueueTask(asynqTask); err != nil {
+		_ = h.service.finishGenerationTask(c.Request.Context(), task.ID, GenerationTaskStatusFailed, generationTaskFailureReason(err))
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	response.Success(c, GenerationTaskResponse{Task: task})
+}
+
+func (h *Handler) GetActiveGenerationTask(c *gin.Context) {
+	agentID, ok := bindAgentID(c)
+	if !ok {
+		return
+	}
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentView) {
+		return
+	}
+	task, err := h.service.GetActiveGenerationTask(c.Request.Context(), agentID)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	response.Success(c, GenerationTaskResponse{Task: task})
+}
+
+func (h *Handler) GetLatestGenerationTask(c *gin.Context) {
+	agentID, ok := bindAgentID(c)
+	if !ok {
+		return
+	}
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentView) {
+		return
+	}
+	task, err := h.service.GetLatestGenerationTask(c.Request.Context(), agentID)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	response.Success(c, GenerationTaskResponse{Task: task})
+}
+
+func (h *Handler) GetGenerationTask(c *gin.Context) {
+	agentID, ok := bindAgentID(c)
+	if !ok {
+		return
+	}
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentView) {
+		return
+	}
+	task, err := h.service.GetGenerationTask(c.Request.Context(), agentID, c.Param("task_id"))
+	if err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	response.Success(c, GenerationTaskResponse{Task: task})
+}
+
+func (h *Handler) CancelGenerationTask(c *gin.Context) {
+	agentID, ok := bindAgentID(c)
+	if !ok {
+		return
+	}
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentManage) {
+		return
+	}
+	task, err := h.service.CancelGenerationTask(c.Request.Context(), agentID, c.Param("task_id"))
+	if err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	response.Success(c, GenerationTaskResponse{Task: task})
 }
 
 func (h *Handler) ListBatches(c *gin.Context) {

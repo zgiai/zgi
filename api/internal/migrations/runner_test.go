@@ -289,6 +289,32 @@ func TestBaselineTableNamesIncludesBridgeCriticalTables(t *testing.T) {
 	}
 }
 
+func TestWorkflowTestGenerationTasksMigrationDefinesActiveUniqueIndex(t *testing.T) {
+	sql := strings.Join(strings.Fields(workflowTestGenerationTasksActiveIndexSQL), " ")
+	for _, want := range []string{
+		"CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_test_generation_tasks_active_agent",
+		"ON public.workflow_test_generation_tasks (agent_id)",
+		"WHERE status IN ('queued', 'running', 'canceling')",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("active generation task unique index SQL missing %q: %s", want, sql)
+		}
+	}
+}
+
+func TestWorkflowTestScenarioRecognitionTasksMigrationDefinesActiveUniqueIndex(t *testing.T) {
+	sql := strings.Join(strings.Fields(workflowTestScenarioRecognitionTasksActiveIndexSQL), " ")
+	for _, want := range []string{
+		"CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_test_scenario_recognition_tasks_active_agent",
+		"ON public.workflow_test_scenario_recognition_tasks (agent_id)",
+		"WHERE status IN ('queued', 'running', 'canceling')",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("active scenario recognition task unique index SQL missing %q: %s", want, sql)
+		}
+	}
+}
+
 func TestLegacyBridgePreflightExcludesBackfilledTablesOnly(t *testing.T) {
 	tables := baselineTableNamesExcluding(legacyBridgeBackfilledTables)
 	seen := make(map[string]struct{}, len(tables))

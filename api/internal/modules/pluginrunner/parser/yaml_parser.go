@@ -15,13 +15,13 @@ import (
 
 // PluginManifest represents the manifest.yaml structure
 type PluginManifest struct {
-	Name        string            `yaml:"name" json:"name"`
-	Author      string            `yaml:"author" json:"author"`
-	Version     string            `yaml:"version" json:"version"`
-	Label       map[string]string `yaml:"label" json:"label"`
-	Description map[string]string `yaml:"description" json:"description"`
-	Icon        string            `yaml:"icon" json:"icon,omitempty"`
-	Tags        []string          `yaml:"tags" json:"tags,omitempty"`
+	Name        string        `yaml:"name" json:"name"`
+	Author      string        `yaml:"author" json:"author"`
+	Version     string        `yaml:"version" json:"version"`
+	Label       LocalizedText `yaml:"label" json:"label"`
+	Description LocalizedText `yaml:"description" json:"description"`
+	Icon        string        `yaml:"icon" json:"icon,omitempty"`
+	Tags        []string      `yaml:"tags" json:"tags,omitempty"`
 	Plugins     struct {
 		Tools []string `yaml:"tools" json:"tools"`
 	} `yaml:"plugins" json:"plugins"`
@@ -38,14 +38,14 @@ type PluginManifest struct {
 // ProviderDefinition represents provider/*.yaml structure
 type ProviderDefinition struct {
 	Identity struct {
-		Name        string            `yaml:"name" json:"name"`
-		Author      string            `yaml:"author" json:"author,omitempty"`
-		Label       map[string]string `yaml:"label" json:"label"`
-		Description map[string]string `yaml:"description" json:"description"`
-		Icon        string            `yaml:"icon" json:"icon,omitempty"`
-		Tags        []string          `yaml:"tags" json:"tags,omitempty"`
+		Name        string        `yaml:"name" json:"name"`
+		Author      string        `yaml:"author" json:"author,omitempty"`
+		Label       LocalizedText `yaml:"label" json:"label"`
+		Description LocalizedText `yaml:"description" json:"description"`
+		Icon        string        `yaml:"icon" json:"icon,omitempty"`
+		Tags        []string      `yaml:"tags" json:"tags,omitempty"`
 	} `yaml:"identity" json:"identity"`
-	Tools           []string         `yaml:"tools" json:"tools"`
+	Tools           []ProviderTool   `yaml:"tools" json:"tools"`
 	ExecutionPolicy *ExecutionPolicy `yaml:"execution_policy" json:"execution_policy,omitempty"`
 }
 
@@ -61,46 +61,104 @@ type ExecutionPolicy struct {
 // ToolDefinition represents tools/*.yaml structure
 type ToolDefinition struct {
 	Identity struct {
-		Name   string            `yaml:"name" json:"name"`
-		Author string            `yaml:"author" json:"author,omitempty"`
-		Label  map[string]string `yaml:"label" json:"label"`
+		Name   string        `yaml:"name" json:"name"`
+		Author string        `yaml:"author" json:"author,omitempty"`
+		Label  LocalizedText `yaml:"label" json:"label"`
 	} `yaml:"identity" json:"identity"`
 	Description struct {
-		Human map[string]string `yaml:"human" json:"human"`
-		LLM   string            `yaml:"llm" json:"llm"`
+		Human LocalizedText `yaml:"human" json:"human"`
+		LLM   string        `yaml:"llm" json:"llm"`
 	} `yaml:"description" json:"description"`
 	Parameters []ParameterDefinition `yaml:"parameters" json:"parameters"`
 }
 
 // ParameterDefinition represents a tool parameter
 type ParameterDefinition struct {
-	Name             string            `yaml:"name" json:"name"`
-	Type             string            `yaml:"type" json:"type"`
-	Required         bool              `yaml:"required" json:"required"`
-	Form             string            `yaml:"form" json:"form"`
-	Label            map[string]string `yaml:"label" json:"label"`
-	HumanDescription map[string]string `yaml:"human_description" json:"human_description,omitempty"`
-	Default          interface{}       `yaml:"default" json:"default,omitempty"`
-	Options          []Option          `yaml:"options" json:"options,omitempty"`
+	Name             string        `yaml:"name" json:"name"`
+	Type             string        `yaml:"type" json:"type"`
+	Required         bool          `yaml:"required" json:"required"`
+	Form             string        `yaml:"form" json:"form"`
+	Label            LocalizedText `yaml:"label" json:"label"`
+	HumanDescription LocalizedText `yaml:"human_description" json:"human_description,omitempty"`
+	Default          interface{}   `yaml:"default" json:"default,omitempty"`
+	Options          []Option      `yaml:"options" json:"options,omitempty"`
 }
 
 // ConfigurationDefinition represents a provider configuration parameter
 type ConfigurationDefinition struct {
-	Name             string            `yaml:"-" json:"name"`
-	Type             string            `yaml:"type" json:"type"`
-	Required         bool              `yaml:"required" json:"required"`
-	Label            map[string]string `yaml:"label" json:"label"`
-	Help             map[string]string `yaml:"help" json:"help,omitempty"`
-	Placeholder      map[string]string `yaml:"placeholder" json:"placeholder,omitempty"`
-	Default          interface{}       `yaml:"default" json:"default,omitempty"`
-	Options          []Option          `yaml:"options" json:"options,omitempty"`
-	HumanDescription map[string]string `yaml:"human_description" json:"human_description,omitempty"`
+	Name             string        `yaml:"-" json:"name"`
+	Type             string        `yaml:"type" json:"type"`
+	Required         bool          `yaml:"required" json:"required"`
+	Label            LocalizedText `yaml:"label" json:"label"`
+	Help             LocalizedText `yaml:"help" json:"help,omitempty"`
+	Placeholder      LocalizedText `yaml:"placeholder" json:"placeholder,omitempty"`
+	Default          interface{}   `yaml:"default" json:"default,omitempty"`
+	Options          []Option      `yaml:"options" json:"options,omitempty"`
+	HumanDescription LocalizedText `yaml:"human_description" json:"human_description,omitempty"`
 }
 
 // Option represents a parameter option
 type Option struct {
-	Value interface{}       `yaml:"value" json:"value"`
-	Label map[string]string `yaml:"label" json:"label"`
+	Value interface{}   `yaml:"value" json:"value"`
+	Label LocalizedText `yaml:"label" json:"label"`
+}
+
+// LocalizedText accepts both old scalar strings and Dify-style localized maps.
+type LocalizedText map[string]string
+
+func (t *LocalizedText) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.ScalarNode:
+		if strings.TrimSpace(value.Value) == "" {
+			*t = nil
+			return nil
+		}
+		*t = LocalizedText{"en_US": value.Value}
+		return nil
+	case yaml.MappingNode:
+		next := make(LocalizedText, len(value.Content)/2)
+		for i := 0; i < len(value.Content); i += 2 {
+			key := strings.TrimSpace(value.Content[i].Value)
+			if key == "" {
+				continue
+			}
+			var val string
+			if err := value.Content[i+1].Decode(&val); err != nil {
+				return err
+			}
+			next[key] = val
+		}
+		*t = next
+		return nil
+	case yaml.SequenceNode:
+		return fmt.Errorf("localized text must be a string or map")
+	default:
+		*t = nil
+		return nil
+	}
+}
+
+// ProviderTool accepts either a referenced tool YAML path or an inline tool definition.
+type ProviderTool struct {
+	Path       string
+	InlineTool *ToolDefinition
+}
+
+func (t *ProviderTool) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.ScalarNode:
+		t.Path = strings.TrimSpace(value.Value)
+		return nil
+	case yaml.MappingNode:
+		tool, err := decodeInlineTool(value)
+		if err != nil {
+			return err
+		}
+		t.InlineTool = tool
+		return nil
+	default:
+		return fmt.Errorf("tool entry must be a path or object")
+	}
 }
 
 // PluginDeclaration is the combined declaration structure to store in database
@@ -111,19 +169,19 @@ type PluginDeclaration struct {
 
 // ProviderInfo represents provider info in declaration
 type ProviderInfo struct {
-	Name            string            `json:"name"`
-	Author          string            `json:"author,omitempty"`
-	Label           map[string]string `json:"label"`
-	Description     map[string]string `json:"description"`
-	Icon            string            `json:"icon,omitempty"`
-	Tags            []string          `json:"tags,omitempty"`
-	ExecutionPolicy *ExecutionPolicy  `json:"execution_policy,omitempty"`
+	Name            string           `json:"name"`
+	Author          string           `json:"author,omitempty"`
+	Label           LocalizedText    `json:"label"`
+	Description     LocalizedText    `json:"description"`
+	Icon            string           `json:"icon,omitempty"`
+	Tags            []string         `json:"tags,omitempty"`
+	ExecutionPolicy *ExecutionPolicy `json:"execution_policy,omitempty"`
 }
 
 // ToolInfo represents tool info in declaration
 type ToolInfo struct {
 	Name           string                    `json:"name"`
-	Label          map[string]string         `json:"label"`
+	Label          LocalizedText             `json:"label"`
 	Description    ToolDescription           `json:"description"`
 	Parameters     []ParameterDefinition     `json:"parameters"`
 	Configurations []ConfigurationDefinition `json:"configurations,omitempty"`
@@ -131,8 +189,8 @@ type ToolInfo struct {
 
 // ToolDescription represents tool description
 type ToolDescription struct {
-	Human map[string]string `json:"human"`
-	LLM   string            `json:"llm"`
+	Human LocalizedText `json:"human"`
+	LLM   string        `json:"llm"`
 }
 
 // RunnerManifest contains info needed by Plugin Runner
@@ -188,12 +246,16 @@ func ParsePluginDirectory(pluginDir string) (*PluginDeclaration, error) {
 			}
 		}
 
-		// Parse tools referenced by this provider
-		for _, toolPath := range providerDecl.Tools {
-			toolFullPath := filepath.Join(pluginDir, toolPath)
-			toolDef, err := parseTool(toolFullPath)
-			if err != nil {
-				return nil, fmt.Errorf("failed to parse tool %s: %w", toolPath, err)
+		// Parse referenced tools or inline tools from this provider.
+		for _, toolRef := range providerDecl.Tools {
+			toolDef := toolRef.InlineTool
+			if toolDef == nil {
+				toolFullPath := filepath.Join(pluginDir, toolRef.Path)
+				var err error
+				toolDef, err = parseTool(toolFullPath)
+				if err != nil {
+					return nil, fmt.Errorf("failed to parse tool %s: %w", toolRef.Path, err)
+				}
 			}
 
 			declaration.Tools = append(declaration.Tools, ToolInfo{
@@ -243,12 +305,83 @@ func parseTool(toolPath string) (*ToolDefinition, error) {
 		return nil, err
 	}
 
-	var tool ToolDefinition
-	if err := yaml.Unmarshal(data, &tool); err != nil {
+	return parseToolData(data)
+}
+
+func parseToolData(data []byte) (*ToolDefinition, error) {
+	var node yaml.Node
+	if err := yaml.Unmarshal(data, &node); err != nil {
+		return nil, err
+	}
+	if len(node.Content) == 0 {
+		return nil, fmt.Errorf("tool YAML is empty")
+	}
+
+	if mappingHasKey(node.Content[0], "identity") {
+		var tool ToolDefinition
+		if err := node.Content[0].Decode(&tool); err != nil {
+			return nil, err
+		}
+		return &tool, nil
+	}
+
+	return decodeInlineTool(node.Content[0])
+}
+
+func decodeInlineTool(node *yaml.Node) (*ToolDefinition, error) {
+	type inlineTool struct {
+		Name           string                    `yaml:"name"`
+		Author         string                    `yaml:"author"`
+		Label          LocalizedText             `yaml:"label"`
+		Description    LocalizedText             `yaml:"description"`
+		LLMDescription string                    `yaml:"llm_description"`
+		Parameters     []ParameterDefinition     `yaml:"parameters"`
+		Configurations []ConfigurationDefinition `yaml:"configurations"`
+	}
+
+	var raw inlineTool
+	if err := node.Decode(&raw); err != nil {
 		return nil, err
 	}
 
+	var tool ToolDefinition
+	tool.Identity.Name = raw.Name
+	tool.Identity.Author = raw.Author
+	tool.Identity.Label = raw.Label
+	tool.Description.Human = raw.Description
+	tool.Description.LLM = raw.LLMDescription
+	if tool.Description.LLM == "" {
+		tool.Description.LLM = preferredLocalizedText(raw.Description)
+	}
+	tool.Parameters = raw.Parameters
+
 	return &tool, nil
+}
+
+func mappingHasKey(node *yaml.Node, key string) bool {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return false
+	}
+	for i := 0; i < len(node.Content); i += 2 {
+		if node.Content[i].Value == key {
+			return true
+		}
+	}
+	return false
+}
+
+func preferredLocalizedText(text LocalizedText) string {
+	for _, key := range []string{"en_US", "en-US", "zh_Hans", "zh-Hans"} {
+		if value := strings.TrimSpace(text[key]); value != "" {
+			return value
+		}
+	}
+	for _, value := range text {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // ToJSON converts declaration to JSON bytes for database storage
@@ -356,16 +489,20 @@ func ParsePluginFromZipFull(zipData []byte) (*ParseResult, error) {
 			}
 		}
 
-		// Parse tools referenced by this provider
-		for _, toolPath := range provider.Tools {
-			toolData := findFileInZip(files, toolPath)
-			if toolData == nil {
-				return nil, fmt.Errorf("tool file not found: %s", toolPath)
-			}
+		// Parse referenced tools or inline tools from this provider.
+		for _, toolRef := range provider.Tools {
+			tool := toolRef.InlineTool
+			if tool == nil {
+				toolData := findFileInZip(files, toolRef.Path)
+				if toolData == nil {
+					return nil, fmt.Errorf("tool file not found: %s", toolRef.Path)
+				}
 
-			var tool ToolDefinition
-			if err := yaml.Unmarshal(toolData, &tool); err != nil {
-				return nil, fmt.Errorf("failed to parse tool %s: %w", toolPath, err)
+				var err error
+				tool, err = parseToolData(toolData)
+				if err != nil {
+					return nil, fmt.Errorf("failed to parse tool %s: %w", toolRef.Path, err)
+				}
 			}
 
 			declaration.Tools = append(declaration.Tools, ToolInfo{

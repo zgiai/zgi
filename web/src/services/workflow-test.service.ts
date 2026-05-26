@@ -3,6 +3,8 @@ import type { ApiResponseData } from './types/common';
 import type {
   CreateWorkflowTestBatchRequest,
   CreateWorkflowTestCaseRequest,
+  CreateWorkflowTestGenerationTaskRequest,
+  CreateWorkflowTestScenarioRecognitionTaskRequest,
   CreateWorkflowTestScenarioRequest,
   DeleteWorkflowTestCasesRequest,
   GenerateWorkflowTestCasesRequest,
@@ -16,7 +18,9 @@ import type {
   WorkflowTestBatch,
   WorkflowTestBatchItem,
   WorkflowTestCase,
+  WorkflowTestGenerationTaskResponse,
   WorkflowTestListResponse,
+  WorkflowTestScenarioRecognitionTaskResponse,
   WorkflowTestScenario,
   WorkflowTestSettings,
 } from './types/workflow-test';
@@ -115,6 +119,71 @@ class WorkflowTestService extends BaseService {
     return this.request('post', `/agents/${agentId}/workflow-tests/cases/generate`, data, {
       timeout: WORKFLOW_TEST_LLM_TIMEOUT_MS,
     });
+  }
+
+  createGenerationTask(
+    agentId: string,
+    data: CreateWorkflowTestGenerationTaskRequest
+  ): Promise<ApiResponseData<WorkflowTestGenerationTaskResponse>> {
+    return this.request('post', `/agents/${agentId}/workflow-tests/cases/generation-tasks`, data);
+  }
+
+  getActiveGenerationTask(
+    agentId: string
+  ): Promise<ApiResponseData<WorkflowTestGenerationTaskResponse>> {
+    return this.request('get', `/agents/${agentId}/workflow-tests/cases/generation-tasks/active`);
+  }
+
+  getLatestGenerationTask(
+    agentId: string
+  ): Promise<ApiResponseData<WorkflowTestGenerationTaskResponse>> {
+    return this.request('get', `/agents/${agentId}/workflow-tests/cases/generation-tasks`);
+  }
+
+  createScenarioRecognitionTask(
+    agentId: string,
+    data: CreateWorkflowTestScenarioRecognitionTaskRequest
+  ): Promise<ApiResponseData<WorkflowTestScenarioRecognitionTaskResponse>> {
+    return this.request(
+      'post',
+      `/agents/${agentId}/workflow-tests/scenarios/recognition-tasks`,
+      data
+    );
+  }
+
+  getActiveScenarioRecognitionTask(
+    agentId: string
+  ): Promise<ApiResponseData<WorkflowTestScenarioRecognitionTaskResponse>> {
+    return this.request(
+      'get',
+      `/agents/${agentId}/workflow-tests/scenarios/recognition-tasks/active`
+    );
+  }
+
+  getLatestScenarioRecognitionTask(
+    agentId: string
+  ): Promise<ApiResponseData<WorkflowTestScenarioRecognitionTaskResponse>> {
+    return this.request('get', `/agents/${agentId}/workflow-tests/scenarios/recognition-tasks`);
+  }
+
+  getGenerationTask(
+    agentId: string,
+    taskId: string
+  ): Promise<ApiResponseData<WorkflowTestGenerationTaskResponse>> {
+    return this.request(
+      'get',
+      `/agents/${agentId}/workflow-tests/cases/generation-tasks/${taskId}`
+    );
+  }
+
+  cancelGenerationTask(
+    agentId: string,
+    taskId: string
+  ): Promise<ApiResponseData<WorkflowTestGenerationTaskResponse>> {
+    return this.request(
+      'post',
+      `/agents/${agentId}/workflow-tests/cases/generation-tasks/${taskId}/cancel`
+    );
   }
 
   listBatches(

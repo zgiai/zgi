@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
@@ -26,10 +26,12 @@ interface ForgotPasswordFormProps {
 
 export function ForgotPasswordForm({ className }: ForgotPasswordFormProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [isCodeSent, setIsCodeSent] = useState(false);
   const [isCheckingEmail, setIsCheckingEmail] = useState(false);
   const t = useT().auth;
   const { locale } = useLocale();
+  const emailFromParams = searchParams.get('email') ?? '';
 
   // Form validation schema with translated messages
   const forgotPasswordSchema = z.object({
@@ -51,7 +53,7 @@ export function ForgotPasswordForm({ className }: ForgotPasswordFormProps) {
   } = useForm<ForgotPasswordFormData>({
     resolver: zodResolver(forgotPasswordSchema),
     defaultValues: {
-      email: '',
+      email: emailFromParams,
     },
   });
 

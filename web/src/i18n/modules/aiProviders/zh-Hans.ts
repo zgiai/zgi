@@ -363,6 +363,7 @@ const messages: AiProvidersMessages = {
       configureChannels: '去配置渠道',
       configure: '去配置',
       add: '添加模型',
+      addChannel: '添加渠道',
     },
     pricing: {
       input: '输入',

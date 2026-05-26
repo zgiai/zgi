@@ -6,12 +6,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/container"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
 	workspace_service "github.com/zgiai/zgi/api/internal/modules/workspace/service"
 	"github.com/zgiai/zgi/api/pkg/database"
 )
 
 // RegisterRoutes registers all v1 version routes
-func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *container.ServiceContainer) {
+func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *container.ServiceContainer, workflowEngineFactory *graph_engine.EngineFactory) {
 	// Health & setup routes first
 	RegisterHealthRoutes(v1)
 	RegisterSetupRoutes(v1, serviceContainer)
@@ -53,7 +54,10 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	RegisterFileRoutes(v1, accountService, serviceContainer)
 
 	// ---------- Memory (common) ----------
-	RegisterMemoryRoutes(v1, serviceContainer)
+	RegisterMemoryRoutes(v1, MemoryRouteDeps{
+		MemoryService:  serviceContainer.GetMemoryService(),
+		AccountService: accountService,
+	})
 
 	// ---------- Dataset ----------
 	RegisterDatasetRoutes(v1, serviceContainer)
@@ -74,17 +78,25 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	RegisterPaymentRoutes(v1, serviceContainer)
 
 	// ---------- Quota ----------
-	RegisterQuotaRoutes(v1, serviceContainer)
+	RegisterQuotaRoutes(v1, QuotaRouteDeps{
+		QuotaService: serviceContainer.GetQuotaService(),
+	})
 
 	// ---------- Workflow ----------
-	RegisterWorkflowRoutes(v1, accountService, tenantService, serviceContainer.GetFileService(), db, serviceContainer.GetContentExtractor(), serviceContainer.GetQuotaService(), serviceContainer.GetOrganizationService(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), serviceContainer.GetAutomationDefinitionService(), serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetScheduler(), serviceContainer.GetWorkflowEngineFactory(), serviceContainer)
+	RegisterWorkflowRoutes(v1, accountService, tenantService, serviceContainer.GetFileService(), db, serviceContainer.GetContentExtractor(), serviceContainer.GetQuotaService(), serviceContainer.GetOrganizationService(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), serviceContainer.GetAutomationDefinitionService(), serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetScheduler(), workflowEngineFactory, serviceContainer)
 
 	// ---------- Agent ----------
 	resourcePermissionService := serviceContainer.GetResourcePermissionService()
-	RegisterAgentsRoutes(v1, db, accountService, tenantService, resourcePermissionService, serviceContainer.GetOrganizationService(), serviceContainer.GetQuotaService(), serviceContainer.GetFileService(), serviceContainer.GetContentExtractor(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), serviceContainer.GetWorkflowEngineFactory())
+	RegisterAgentsRoutes(v1, db, accountService, tenantService, resourcePermissionService, serviceContainer.GetOrganizationService(), serviceContainer.GetQuotaService(), serviceContainer.GetFileService(), serviceContainer.GetContentExtractor(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), workflowEngineFactory, serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry())
 
 	// ---------- Prompt Library ----------
-	RegisterPromptRoutes(v1, serviceContainer)
+	RegisterPromptRoutes(v1, PromptRouteDeps{
+		DB:                  serviceContainer.GetDB(),
+		AccountService:      serviceContainer.GetAccountService(),
+		OrganizationService: serviceContainer.GetOrganizationService(),
+		LLMClient:           serviceContainer.GetLLMClient(),
+		DefaultModelService: serviceContainer.GetDefaultModelService(),
+	})
 
 	// ---------- LLM Management ----------
 	llmModule := RegisterLLMRoutes(v1, serviceContainer)
@@ -96,5 +108,8 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	RegisterDashboardRoutes(v1, serviceContainer, llmModule)
 
 	// ---------- GDPR Compliance ----------
-	RegisterGDPRRoutes(v1, serviceContainer)
+	RegisterGDPRRoutes(v1, GDPRRouteDeps{
+		DB:             db,
+		AccountService: accountService,
+	})
 }

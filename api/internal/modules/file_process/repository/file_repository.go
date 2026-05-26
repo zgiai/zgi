@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	file_model "github.com/zgiai/zgi/api/internal/modules/file_process/model"
 )
@@ -15,6 +16,8 @@ type FileRepository interface {
 	GetByTenantAndID(ctx context.Context, tenantID, id string) (*file_model.UploadFile, error)
 	ListByTenantAndIDs(ctx context.Context, tenantID string, ids []string) (map[string]*file_model.UploadFile, error)
 	UpdateContentText(ctx context.Context, id string, contentText string) error
+	GetExtractionCache(ctx context.Context, fileID, cacheKey string) (*file_model.FileExtractionCache, error)
+	UpsertExtractionCache(ctx context.Context, cache *file_model.FileExtractionCache) error
 	Update(ctx context.Context, id string, updates map[string]interface{}) error
 	MarkAsUsed(ctx context.Context, id, usedBy string) error
 	ListByTenantID(ctx context.Context, tenantID, accountID string, allowAllFolders bool, workspaceID string, page, pageSize int, keyword, sort, extension string, startTime, endTime *time.Time) ([]*file_model.UploadFile, int64, error)
@@ -91,6 +94,27 @@ func (r *fileRepository) UpdateContentText(ctx context.Context, id string, conte
 	return r.db.WithContext(ctx).Model(&file_model.UploadFile{}).
 		Where("id = ?", id).
 		Update("content_text", contentText).Error
+}
+
+func (r *fileRepository) GetExtractionCache(ctx context.Context, fileID, cacheKey string) (*file_model.FileExtractionCache, error) {
+	var cache file_model.FileExtractionCache
+	err := r.db.WithContext(ctx).
+		Where("file_id = ? AND cache_key = ?", fileID, cacheKey).
+		First(&cache).Error
+	if err != nil {
+		return nil, err
+	}
+	return &cache, nil
+}
+
+func (r *fileRepository) UpsertExtractionCache(ctx context.Context, cache *file_model.FileExtractionCache) error {
+	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns: []clause.Column{
+			{Name: "file_id"},
+			{Name: "cache_key"},
+		},
+		DoUpdates: clause.AssignmentColumns([]string{"content", "source", "updated_at"}),
+	}).Create(cache).Error
 }
 
 func (r *fileRepository) Update(ctx context.Context, id string, updates map[string]interface{}) error {

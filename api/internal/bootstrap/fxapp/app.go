@@ -12,7 +12,11 @@ var Module = fx.Options(
 	}),
 	baseModule,
 	infraModule,
-	legacyBridgeModule,
+	legacyGlobalsModule,
+	legacyContainerModule,
+	taskRuntimeModule,
+	schedulerModule,
+	graphFlowModule,
 	workflowModule,
 	runtimeModule,
 )

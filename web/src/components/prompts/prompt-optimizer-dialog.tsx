@@ -29,6 +29,7 @@ import type {
 import { extractPromptVariables } from './prompt-optimizer-template';
 import { getPromptRuntimeErrorMessage } from './prompt-runtime-errors';
 import { useWorkspaceStore } from '@/store/workspace-store';
+import { useLocale } from '@/hooks/use-locale';
 
 interface PromptOptimizerDialogProps {
   open: boolean;
@@ -68,6 +69,7 @@ export function PromptOptimizerDialog({
   applyLabel,
 }: PromptOptimizerDialogProps) {
   const t = useT('prompts');
+  const { locale } = useLocale();
   const organizationRole = useWorkspaceStore.use.permissionState().organizationRole;
   const isAdminOrOwner = organizationRole === 'owner' || organizationRole === 'admin';
   const [sourcePrompt, setSourcePrompt] = useState('');
@@ -158,6 +160,7 @@ export function PromptOptimizerDialog({
           provider: activeModel?.provider,
           model: activeModel?.model,
           prompt_id: promptId,
+          language: locale,
         },
         {
           onProgress: payload => {

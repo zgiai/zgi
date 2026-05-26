@@ -376,6 +376,7 @@ const messages = {
       configureChannels: 'Configure Channels',
       configure: 'Configure',
       add: 'Add Model',
+      addChannel: 'Add Channel',
     },
     pricing: {
       input: 'Input',

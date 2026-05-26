@@ -15,7 +15,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { ModelSelector } from '@/components/common/model-selector';
 import type { ModelSelectorValue } from '@/components/common/model-selector';
-import { useRecognizeWorkflowTestScenarios } from '@/hooks/workflow-test/use-workflow-test';
+import { useCreateWorkflowTestScenarioRecognitionTask } from '@/hooks/workflow-test/use-workflow-test';
 import { useDefaultModelByUseCase } from '@/hooks/model/use-default-model-by-use-case';
 import { useCurrentUser } from '@/store/auth-store';
 import { getLastSelectedAiModel, saveLastSelectedAiModel } from '@/utils/ui-local';
@@ -36,7 +36,7 @@ export function RecognizeScenariosDialog({
 }: RecognizeScenariosDialogProps) {
   const t = useT('agents.workflowTest.dialogs.recognizeScenarios');
   const commonT = useT('agents.workflowTest.common');
-  const recognizeScenarios = useRecognizeWorkflowTestScenarios(agentId);
+  const createRecognitionTask = useCreateWorkflowTestScenarioRecognitionTask(agentId);
   const user = useCurrentUser();
   const { value: defaultModel } = useDefaultModelByUseCase('text-chat');
   const [selectedModel, setSelectedModel] = React.useState<ModelSelectorValue | null>(() => {
@@ -104,10 +104,10 @@ export function RecognizeScenariosDialog({
             {commonT('cancel')}
           </Button>
           <Button
-            disabled={recognizeScenarios.isPending || !canSubmit}
+            disabled={createRecognitionTask.isPending || !canSubmit}
             onClick={() => {
               if (!selectedModel) return;
-              recognizeScenarios.mutate(
+              createRecognitionTask.mutate(
                 {
                   context: defaultContext,
                   prompt,
@@ -120,7 +120,7 @@ export function RecognizeScenariosDialog({
               );
             }}
           >
-            {recognizeScenarios.isPending ? t('submitting') : t('submit')}
+            {createRecognitionTask.isPending ? t('submitting') : t('submit')}
           </Button>
         </DialogFooter>
       </DialogContent>

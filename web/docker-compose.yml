@@ -14,7 +14,6 @@ services:
         NEXT_PUBLIC_FAVICON_URL: ${NEXT_PUBLIC_FAVICON_URL:-}
         NEXT_PUBLIC_ICON_TEXT: ${NEXT_PUBLIC_ICON_TEXT:-}
         NEXT_PUBLIC_IS_CLOUD: ${NEXT_PUBLIC_IS_CLOUD:-}
-        CUSTOMER_OVERLAY_DIR: ${CUSTOMER_OVERLAY_DIR:-}
     container_name: ${WEB_CONTAINER_NAME:-zgi-web}
     restart: unless-stopped
     ports:

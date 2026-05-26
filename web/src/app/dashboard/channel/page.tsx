@@ -67,6 +67,8 @@ function ChannelPageContent(): JSX.Element {
 
   const searchParam = searchParams.get('search') || '';
   const pageParam = Number(searchParams.get('page')) || 1;
+  const createParam = searchParams.get('create') === '1';
+  const createProviderParam = searchParams.get('provider') || '';
 
   const [search, setSearch] = useState(searchParam);
   const debounced = useDebouncedValue(search, 300);
@@ -75,6 +77,8 @@ function ChannelPageContent(): JSX.Element {
   const [dialogOpen, setDialogOpen] = useState<boolean>(false);
   const [dialogMode, setDialogMode] = useState<'create' | 'edit'>('create');
   const [dialogInitial, setDialogInitial] = useState<ChannelDetail | null>(null);
+  const [dialogDefaultProvider, setDialogDefaultProvider] = useState<string | undefined>();
+  const [dialogProviderLocked, setDialogProviderLocked] = useState(false);
 
   const [connectOpen, setConnectOpen] = useState<boolean>(false);
   const [connectChannel, setConnectChannel] = useState<ChannelDetail | null>(null);
@@ -161,17 +165,33 @@ function ChannelPageContent(): JSX.Element {
     };
   }, [orgItems]);
 
-  const openCreate = useCallback(() => {
+  const openCreate = useCallback((defaultProvider?: string, lockProvider = false) => {
     setDialogMode('create');
     setDialogInitial(null);
+    setDialogDefaultProvider(defaultProvider);
+    setDialogProviderLocked(Boolean(defaultProvider && lockProvider));
     setDialogOpen(true);
   }, []);
 
   const openEdit = useCallback((ch: ChannelDetail) => {
     setDialogMode('edit');
     setDialogInitial(ch);
+    setDialogDefaultProvider(undefined);
+    setDialogProviderLocked(false);
     setDialogOpen(true);
   }, []);
+
+  useEffect(() => {
+    if (!createParam || dialogOpen) return;
+
+    openCreate(createProviderParam || undefined, Boolean(createProviderParam));
+
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete('create');
+    params.delete('provider');
+    const next = params.toString();
+    router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false });
+  }, [createParam, createProviderParam, dialogOpen, openCreate, pathname, router, searchParams]);
 
   const onToggle = useCallback(
     async (id: string, next: boolean) => {
@@ -234,7 +254,7 @@ function ChannelPageContent(): JSX.Element {
 
         <div className="flex items-center gap-2">
           {/* <Button variant="outline">{t('actions.batch')}</Button> */}
-          <Button onClick={openCreate}>
+          <Button onClick={() => openCreate()}>
             <Plus className="h-4 w-4 mr-1" />
             {t('actions.add')}
           </Button>
@@ -436,7 +456,7 @@ function ChannelPageContent(): JSX.Element {
                       <div className="text-sm text-muted-foreground max-w-[400px]">
                         {t('empty.description')}
                       </div>
-                      <Button onClick={openCreate} size="sm" className="mt-2">
+                      <Button onClick={() => openCreate()} size="sm" className="mt-2">
                         <Plus className="h-4 w-4 mr-1" />
                         {t('actions.add')}
                       </Button>
@@ -484,6 +504,8 @@ function ChannelPageContent(): JSX.Element {
         onOpenChange={setDialogOpen}
         mode={dialogMode}
         initial={dialogInitial}
+        defaultChannelProvider={dialogDefaultProvider}
+        lockChannelProvider={dialogProviderLocked}
       />
 
       <ChannelConnectivityDialog
