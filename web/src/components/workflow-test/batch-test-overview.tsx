@@ -12,6 +12,7 @@ import {
   Settings2,
   MoreHorizontal,
   Trash2,
+  PlayCircle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -50,6 +51,8 @@ import {
   useCancelWorkflowTestBatch,
   useDeleteWorkflowTestCases,
   useExecuteWorkflowTestBatch,
+  useLatestWorkflowTestScenarioRecognitionTask,
+  useLatestWorkflowTestGenerationTask,
   useRetestWorkflowTestBatch,
   useUpdateWorkflowTestCase,
   useWorkflowTestBatches,
@@ -59,6 +62,7 @@ import {
 import { useWorkflowDraft } from '@/hooks/workflow/use-workflow';
 import { WORKFLOW_TEST_KEYS } from '@/hooks/query-keys';
 import { useT } from '@/i18n';
+import { cn } from '@/lib/utils';
 import { workflowTestService } from '@/services/workflow-test.service';
 import type { WorkflowNode } from '@/components/workflow/store';
 import { formatQuestionTypeLabel } from './question-type';
@@ -164,12 +168,17 @@ export function BatchTestOverview({
   const typeT = useT('agents.workflowTest.questionTypes');
   const batchStatusT = useT('agents.workflowTest.batchStatus');
   const batchResultT = useT('agents.workflowTest.batchResult');
+  const toastT = useT('agents.workflowTest.toasts');
   const queryClient = useQueryClient();
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [caseDialogOpen, setCaseDialogOpen] = React.useState(false);
   const [generateDialogOpen, setGenerateDialogOpen] = React.useState(false);
   const [scenarioDialogOpen, setScenarioDialogOpen] = React.useState(false);
   const [recognizeScenariosOpen, setRecognizeScenariosOpen] = React.useState(false);
+  const [pendingGenerationCount, setPendingGenerationCount] = React.useState<number | null>(null);
+  const [completedGenerationTaskId, setCompletedGenerationTaskId] = React.useState<string | null>(
+    null
+  );
   const [editingCaseId, setEditingCaseId] = React.useState<string | null>(null);
   const [deletingCaseIds, setDeletingCaseIds] = React.useState<string[]>([]);
   const [selectedCaseIds, setSelectedCaseIds] = React.useState<string[]>([]);
@@ -181,6 +190,9 @@ export function BatchTestOverview({
   const { data: casesData, isLoading: casesLoading } = useWorkflowTestCases(agentId);
   const { data: scenariosData } = useWorkflowTestScenarios(agentId);
   const { data: batchesData } = useWorkflowTestBatches(agentId);
+  const { data: latestGenerationTaskData } = useLatestWorkflowTestGenerationTask(agentId);
+  const { data: latestScenarioRecognitionTaskData } =
+    useLatestWorkflowTestScenarioRecognitionTask(agentId);
   const { data: workflowDraft } = useWorkflowDraft(agentId);
   const executeBatch = useExecuteWorkflowTestBatch(agentId);
   const cancelBatch = useCancelWorkflowTestBatch(agentId);
@@ -190,6 +202,55 @@ export function BatchTestOverview({
   const cases = React.useMemo(() => casesData?.data?.items ?? [], [casesData]);
   const scenarios = React.useMemo(() => scenariosData?.data?.items ?? [], [scenariosData]);
   const batches = React.useMemo(() => batchesData?.data?.items ?? [], [batchesData]);
+  const generationTask = latestGenerationTaskData?.data?.task ?? null;
+  const scenarioRecognitionTask = latestScenarioRecognitionTaskData?.data?.task ?? null;
+  const isScenarioRecognitionActive =
+    scenarioRecognitionTask?.status === 'queued' ||
+    scenarioRecognitionTask?.status === 'running' ||
+    scenarioRecognitionTask?.status === 'canceling';
+  const isGenerationActive =
+    generationTask?.status === 'queued' ||
+    generationTask?.status === 'running' ||
+    generationTask?.status === 'canceling';
+  const isGenerationPendingLocally = pendingGenerationCount !== null && !isGenerationActive;
+  const displayedGenerationStatus = isGenerationPendingLocally ? 'running' : generationTask?.status;
+  const isGenerationCompleted =
+    displayedGenerationStatus === 'completed' && generationTask?.id === completedGenerationTaskId;
+  const shouldShowGenerationBanner =
+    view === 'case-library' &&
+    (isGenerationActive ||
+      isGenerationCompleted ||
+      displayedGenerationStatus === 'failed' ||
+      pendingGenerationCount !== null);
+  const generationBannerRequested = isGenerationPendingLocally
+    ? pendingGenerationCount
+    : (generationTask?.requested_count ?? pendingGenerationCount ?? 0);
+  const generationBannerCreated = isGenerationPendingLocally
+    ? 0
+    : (generationTask?.created_count ?? 0);
+  const generationBannerTone =
+    displayedGenerationStatus === 'failed'
+      ? {
+          wrapper: 'border-red-200 bg-red-50',
+          icon: 'bg-white text-red-600',
+          title: 'text-red-700',
+          description: 'text-red-700',
+        }
+      : isGenerationCompleted
+        ? {
+            wrapper: 'border-emerald-200 bg-emerald-50',
+            icon: 'bg-white text-emerald-600',
+            title: 'text-emerald-700',
+            description: 'text-slate-700',
+          }
+        : {
+            wrapper: 'border-blue-200 bg-blue-50',
+            icon: 'bg-white text-blue-600',
+            title: 'text-blue-700',
+            description: 'text-slate-700',
+          };
+  const previousGenerationTaskStatusRef = React.useRef<string | null>(null);
+  const previousScenarioRecognitionTaskStatusRef = React.useRef<string | null>(null);
   const enabledCases = cases.filter(item => item.status === 'enabled');
   const disabledCases = cases.filter(item => item.status !== 'enabled');
   const coveredScenarioIds = new Set(cases.map(item => item.scenario_id).filter(Boolean));
@@ -221,6 +282,71 @@ export function BatchTestOverview({
   React.useEffect(() => {
     setSelectedCaseIds(prev => prev.filter(id => cases.some(item => item.id === id)));
   }, [cases]);
+
+  React.useEffect(() => {
+    if (isGenerationActive) {
+      setPendingGenerationCount(null);
+    }
+  }, [isGenerationActive]);
+
+  React.useEffect(() => {
+    const previousStatus = previousGenerationTaskStatusRef.current;
+    const currentStatus = generationTask?.status ?? null;
+    if (currentStatus === previousStatus) return;
+
+    if (generationTask?.status === 'failed' && generationTask.error) {
+      toast.error(generationTask.error);
+    } else if (
+      generationTask?.status === 'completed' &&
+      (previousStatus === 'queued' ||
+        previousStatus === 'running' ||
+        previousStatus === 'canceling')
+    ) {
+      setCompletedGenerationTaskId(generationTask.id);
+    }
+
+    if (
+      previousStatus &&
+      (currentStatus === null ||
+        currentStatus === 'completed' ||
+        currentStatus === 'failed' ||
+        currentStatus === 'canceled')
+    ) {
+      setPendingGenerationCount(null);
+      queryClient.invalidateQueries({ queryKey: WORKFLOW_TEST_KEYS.cases(agentId) });
+    }
+
+    previousGenerationTaskStatusRef.current = currentStatus;
+  }, [agentId, generationTask, queryClient, toastT]);
+
+  React.useEffect(() => {
+    if (!completedGenerationTaskId) return;
+    const timer = window.setTimeout(() => setCompletedGenerationTaskId(null), 6000);
+    return () => window.clearTimeout(timer);
+  }, [completedGenerationTaskId]);
+
+  React.useEffect(() => {
+    const previousStatus = previousScenarioRecognitionTaskStatusRef.current;
+    const currentStatus = scenarioRecognitionTask?.status ?? null;
+    if (currentStatus === previousStatus) return;
+
+    if (scenarioRecognitionTask?.status === 'failed' && scenarioRecognitionTask.error) {
+      toast.error(scenarioRecognitionTask.error);
+    }
+
+    if (
+      previousStatus &&
+      (currentStatus === null ||
+        currentStatus === 'completed' ||
+        currentStatus === 'failed' ||
+        currentStatus === 'canceled')
+    ) {
+      queryClient.invalidateQueries({ queryKey: WORKFLOW_TEST_KEYS.scenarios(agentId) });
+      queryClient.invalidateQueries({ queryKey: WORKFLOW_TEST_KEYS.cases(agentId) });
+    }
+
+    previousScenarioRecognitionTaskStatusRef.current = currentStatus;
+  }, [agentId, queryClient, scenarioRecognitionTask]);
 
   const updateSelectedCaseStatus = async (status: 'enabled' | 'disabled') => {
     await Promise.all(
@@ -297,7 +423,7 @@ export function BatchTestOverview({
                 <span>{commonT('currentDraftSnapshot')}</span>
               </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center justify-end gap-2">
               {view === 'batches' ? (
                 <>
                   <Button variant="outline" onClick={() => setSettingsOpen(true)}>
@@ -313,16 +439,15 @@ export function BatchTestOverview({
                 </>
               ) : scenarios.length > 0 ? (
                 <>
-                  <Button
-                    className="bg-slate-950 text-white hover:bg-slate-800"
-                    onClick={() => setGenerateDialogOpen(true)}
-                  >
+                  <Button className="bg-slate-950 text-white hover:bg-slate-800" asChild>
+                    <Link href={`/console/agents/${agentId}/batch-test/batches/new`}>
+                      <PlayCircle className="mr-2 size-4" />
+                      {t('actions.goTest')}
+                    </Link>
+                  </Button>
+                  <Button variant="outline" onClick={() => setGenerateDialogOpen(true)}>
                     <WandSparkles className="mr-2 size-4" />
                     {t('actions.generateCases')}
-                  </Button>
-                  <Button variant="outline" onClick={() => setCaseDialogOpen(true)}>
-                    <Plus className="mr-2 size-4" />
-                    {t('actions.createCase')}
                   </Button>
                 </>
               ) : null}
@@ -361,8 +486,14 @@ export function BatchTestOverview({
                 </div>
                 {sceneCards.length > 0 ? (
                   <div className="flex gap-2">
-                    <Button variant="outline" onClick={() => setRecognizeScenariosOpen(true)}>
-                      {t('actions.rerecognizeScenarios')}
+                    <Button
+                      variant="outline"
+                      disabled={isScenarioRecognitionActive}
+                      onClick={() => setRecognizeScenariosOpen(true)}
+                    >
+                      {isScenarioRecognitionActive
+                        ? t('actions.recognizingScenarios')
+                        : t('actions.rerecognizeScenarios')}
                     </Button>
                     <Button variant="outline" onClick={() => setScenarioDialogOpen(true)}>
                       {t('actions.editScenarios')}
@@ -379,52 +510,116 @@ export function BatchTestOverview({
                     <div className="mt-4 font-semibold text-slate-950">
                       {t('scenarios.emptyTitle')}
                     </div>
-                    <p className="mt-2 max-w-md text-sm text-slate-600">
-                      {t('scenarios.emptyDescription')}
+                    <p
+                      className={cn(
+                        'mt-2 max-w-md text-sm',
+                        isScenarioRecognitionActive ? 'font-medium text-blue-600' : 'text-slate-600'
+                      )}
+                    >
+                      {isScenarioRecognitionActive
+                        ? t('scenarios.recognizingDescription')
+                        : t('scenarios.emptyDescription')}
                     </p>
-                    <Button className="mt-5" onClick={() => setRecognizeScenariosOpen(true)}>
-                      {t('actions.recognizeScenarios')}
+                    <Button
+                      className="mt-5"
+                      disabled={isScenarioRecognitionActive}
+                      onClick={() => setRecognizeScenariosOpen(true)}
+                    >
+                      {isScenarioRecognitionActive
+                        ? t('actions.recognizingScenarios')
+                        : t('actions.recognizeScenarios')}
                     </Button>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-3 xl:grid-cols-5">
-                    {sceneCards.map(scene => (
-                      <div
-                        key={scene.name}
-                        className="rounded-xl border border-slate-200 bg-slate-50 p-4"
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="font-semibold text-slate-950">{scene.name}</div>
-                          <Badge
-                            className={
-                              scene.covered
-                                ? 'bg-emerald-50 text-emerald-700'
-                                : 'bg-slate-100 text-slate-500'
-                            }
-                          >
-                            {scene.covered ? t('scenarios.covered') : t('scenarios.uncovered')}
-                          </Badge>
+                  <>
+                    {isScenarioRecognitionActive ? (
+                      <p className="mb-4 text-sm font-medium text-blue-600">
+                        {t('scenarios.recognizingDescription')}
+                      </p>
+                    ) : null}
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-3 xl:grid-cols-5">
+                      {sceneCards.map(scene => (
+                        <div
+                          key={scene.name}
+                          className="rounded-xl border border-slate-200 bg-slate-50 p-4"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="font-semibold text-slate-950">{scene.name}</div>
+                            <Badge
+                              className={
+                                scene.covered
+                                  ? 'bg-emerald-50 text-emerald-700'
+                                  : 'bg-slate-100 text-slate-500'
+                              }
+                            >
+                              {scene.covered ? t('scenarios.covered') : t('scenarios.uncovered')}
+                            </Badge>
+                          </div>
+                          <div className="mt-1 text-sm text-slate-500">
+                            {t('scenarios.caseCount', { count: scene.count })}
+                          </div>
+                          <p className="mt-3 line-clamp-3 text-sm text-slate-600">
+                            {scene.description}
+                          </p>
                         </div>
-                        <div className="mt-1 text-sm text-slate-500">
-                          {t('scenarios.caseCount', { count: scene.count })}
-                        </div>
-                        <p className="mt-3 line-clamp-3 text-sm text-slate-600">
-                          {scene.description}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
+                  </>
                 )}
               </CardContent>
             </Card>
 
             <Card id="case-library" className="scroll-mt-6 rounded-2xl">
-              <CardHeader>
-                <CardTitle>{t('cases.title')}</CardTitle>
-                <p className="text-sm text-slate-600">{t('cases.description')}</p>
+              <CardHeader className="flex-row items-start justify-between gap-4">
+                <div>
+                  <CardTitle>{t('cases.title')}</CardTitle>
+                  <p className="text-sm text-slate-600">{t('cases.description')}</p>
+                </div>
+                <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                  <Button variant="outline" onClick={() => setCaseDialogOpen(true)}>
+                    <Plus className="mr-2 size-4" />
+                    {t('actions.createCase')}
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent className="p-0">
-                <div className="grid grid-cols-4 gap-3 border-y border-slate-200 p-4">
+                {shouldShowGenerationBanner ? (
+                  <div
+                    className={`flex items-start gap-3 border-y px-6 py-4 ${generationBannerTone.wrapper}`}
+                  >
+                    <div
+                      className={`flex size-8 shrink-0 items-center justify-center rounded-lg ${generationBannerTone.icon}`}
+                    >
+                      <WandSparkles className="size-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className={`text-sm font-semibold ${generationBannerTone.title}`}>
+                        {displayedGenerationStatus === 'failed'
+                          ? t('cases.generationFailedTitle', {
+                              count: generationBannerRequested,
+                            })
+                          : isGenerationCompleted
+                            ? t('cases.generationCompletedTitle', {
+                                count: generationBannerCreated,
+                              })
+                            : t('cases.generatingTaskTitle', {
+                                count: generationBannerRequested,
+                              })}
+                      </div>
+                      <div className={`mt-1 text-sm ${generationBannerTone.description}`}>
+                        {displayedGenerationStatus === 'failed'
+                          ? t('cases.generationFailedDescription', {
+                              created: generationBannerCreated,
+                              error: generationTask?.error || commonT('none'),
+                            })
+                          : isGenerationCompleted
+                            ? t('cases.generationCompletedDescription')
+                            : t('cases.generatingTaskDescription')}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+                <div className="sticky top-0 z-10 grid grid-cols-1 gap-3 border-y border-slate-200 bg-white p-4 md:grid-cols-4">
                   <Input
                     value={caseSearch}
                     onChange={event => setCaseSearch(event.target.value)}
@@ -465,145 +660,157 @@ export function BatchTestOverview({
                     </SelectContent>
                   </Select>
                 </div>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-12">
-                        <Checkbox
-                          checked={allCasesSelected}
-                          onCheckedChange={checked => {
-                            const filteredIds = filteredCases.map(item => item.id);
-                            setSelectedCaseIds(prev =>
-                              checked
-                                ? Array.from(new Set([...prev, ...filteredIds]))
-                                : prev.filter(id => !filteredIds.includes(id))
-                            );
-                          }}
-                        />
-                      </TableHead>
-                      <TableHead>{t('table.questionContent')}</TableHead>
-                      <TableHead>{t('table.businessScenario')}</TableHead>
-                      <TableHead>{t('table.questionType')}</TableHead>
-                      <TableHead>{t('table.status')}</TableHead>
-                      <TableHead>{t('table.updatedAt')}</TableHead>
-                      <TableHead className="text-right">{t('table.operations')}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {casesLoading ? (
+                <div className="max-h-[560px] overflow-auto">
+                  <Table className="table-fixed">
+                    <TableHeader>
                       <TableRow>
-                        <TableCell colSpan={7} className="h-32 text-center text-slate-500">
-                          {t('cases.loading')}
-                        </TableCell>
+                        <TableHead className="w-12">
+                          <Checkbox
+                            checked={allCasesSelected}
+                            onCheckedChange={checked => {
+                              const filteredIds = filteredCases.map(item => item.id);
+                              setSelectedCaseIds(prev =>
+                                checked
+                                  ? Array.from(new Set([...prev, ...filteredIds]))
+                                  : prev.filter(id => !filteredIds.includes(id))
+                              );
+                            }}
+                          />
+                        </TableHead>
+                        <TableHead className="w-[44%]">{t('table.questionContent')}</TableHead>
+                        <TableHead className="w-[15%]">{t('table.businessScenario')}</TableHead>
+                        <TableHead className="w-[11%]">{t('table.questionType')}</TableHead>
+                        <TableHead className="w-[10%]">{t('table.status')}</TableHead>
+                        <TableHead className="w-[13%]">{t('table.updatedAt')}</TableHead>
+                        <TableHead className="w-[150px] text-right">
+                          {t('table.operations')}
+                        </TableHead>
                       </TableRow>
-                    ) : cases.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={7} className="h-32 text-center text-slate-500">
-                          {t('cases.empty')}
-                        </TableCell>
-                      </TableRow>
-                    ) : filteredCases.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={7} className="h-32 text-center text-slate-500">
-                          {t('cases.filteredEmpty')}
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      filteredCases.map(item => (
-                        <TableRow key={item.id}>
-                          <TableCell>
-                            <Checkbox
-                              checked={selectedCaseIds.includes(item.id)}
-                              onCheckedChange={checked => {
-                                setSelectedCaseIds(prev =>
-                                  checked
-                                    ? Array.from(new Set([...prev, item.id]))
-                                    : prev.filter(id => id !== item.id)
-                                );
-                              }}
-                            />
-                          </TableCell>
-                          <TableCell className="max-w-xl">
-                            <div className="font-medium text-slate-950">{item.content}</div>
-                            {item.turns?.length > 1 ? (
-                              <div className="mt-1 text-xs text-slate-500">
-                                共 {item.turns.length} 轮对话
-                              </div>
-                            ) : null}
-                            {item.turns?.some(turn => turn.attachments?.length) ? (
-                              <div className="mt-1 text-xs text-slate-500">
-                                {commonT('attachmentsIncluded')}
-                              </div>
-                            ) : null}
-                          </TableCell>
-                          <TableCell>
-                            {item.scenario_id
-                              ? scenariosById.get(item.scenario_id) || commonT('none')
-                              : commonT('none')}
-                          </TableCell>
-                          <TableCell>{formatQuestionTypeLabel(item.question_type, typeT)}</TableCell>
-                          <TableCell>
-                            <Badge
-                              className={
-                                item.status === 'enabled'
-                                  ? 'bg-emerald-50 text-emerald-700'
-                                  : 'bg-slate-100 text-slate-500'
-                              }
-                            >
-                              {statusLabel(item.status, commonT)}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>{new Date(item.updated_at).toLocaleString()}</TableCell>
-                          <TableCell className="text-right">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => setEditingCaseId(item.id)}
-                            >
-                              {commonT('edit')}
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              disabled={updateCase.isPending}
-                              onClick={() =>
-                                updateCase.mutate({
-                                  caseId: item.id,
-                                  data: {
-                                    content: item.content,
-                                    expected_result: item.expected_result,
-                                    scenario_id: item.scenario_id,
-                                    question_type: item.question_type,
-                                    status: item.status === 'enabled' ? 'disabled' : 'enabled',
-                                    turns: item.turns,
-                                  },
-                                })
-                              }
-                            >
-                              {item.status === 'enabled' ? commonT('disable') : commonT('enable')}
-                            </Button>
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                                  <MoreHorizontal className="size-4" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                <DropdownMenuItem
-                                  className="text-red-600 focus:text-red-600"
-                                  onSelect={() => requestDeleteCases([item.id])}
-                                >
-                                  <Trash2 className="mr-2 size-4" />
-                                  {commonT('delete')}
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
+                    </TableHeader>
+                    <TableBody>
+                      {casesLoading ? (
+                        <TableRow>
+                          <TableCell colSpan={7} className="h-32 text-center text-slate-500">
+                            {t('cases.loading')}
                           </TableCell>
                         </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
+                      ) : cases.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={7} className="h-32 text-center text-slate-500">
+                            {t('cases.empty')}
+                          </TableCell>
+                        </TableRow>
+                      ) : filteredCases.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={7} className="h-32 text-center text-slate-500">
+                            {t('cases.filteredEmpty')}
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        filteredCases.map(item => (
+                          <TableRow key={item.id}>
+                            <TableCell>
+                              <Checkbox
+                                checked={selectedCaseIds.includes(item.id)}
+                                onCheckedChange={checked => {
+                                  setSelectedCaseIds(prev =>
+                                    checked
+                                      ? Array.from(new Set([...prev, item.id]))
+                                      : prev.filter(id => id !== item.id)
+                                  );
+                                }}
+                              />
+                            </TableCell>
+                            <TableCell className="min-w-0 align-top">
+                              <div className="line-clamp-2 break-words font-medium text-slate-950">
+                                {item.content}
+                              </div>
+                              {item.turns?.length > 1 ? (
+                                <div className="mt-1 text-xs text-slate-500">
+                                  共 {item.turns.length} 轮对话
+                                </div>
+                              ) : null}
+                              {item.turns?.some(turn => turn.attachments?.length) ? (
+                                <div className="mt-1 text-xs text-slate-500">
+                                  {commonT('attachmentsIncluded')}
+                                </div>
+                              ) : null}
+                            </TableCell>
+                            <TableCell className="align-top">
+                              <div className="line-clamp-2 break-words">
+                                {item.scenario_id
+                                  ? scenariosById.get(item.scenario_id) || commonT('none')
+                                  : commonT('none')}
+                              </div>
+                            </TableCell>
+                            <TableCell className="align-top">
+                              {formatQuestionTypeLabel(item.question_type, typeT)}
+                            </TableCell>
+                            <TableCell className="align-top">
+                              <Badge
+                                className={
+                                  item.status === 'enabled'
+                                    ? 'bg-emerald-50 text-emerald-700'
+                                    : 'bg-slate-100 text-slate-500'
+                                }
+                              >
+                                {statusLabel(item.status, commonT)}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="align-top text-xs text-slate-600">
+                              {new Date(item.updated_at).toLocaleString()}
+                            </TableCell>
+                            <TableCell className="text-right align-top">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setEditingCaseId(item.id)}
+                              >
+                                {commonT('edit')}
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                disabled={updateCase.isPending}
+                                onClick={() =>
+                                  updateCase.mutate({
+                                    caseId: item.id,
+                                    data: {
+                                      content: item.content,
+                                      expected_result: item.expected_result,
+                                      scenario_id: item.scenario_id,
+                                      question_type: item.question_type,
+                                      status: item.status === 'enabled' ? 'disabled' : 'enabled',
+                                      turns: item.turns,
+                                    },
+                                  })
+                                }
+                              >
+                                {item.status === 'enabled' ? commonT('disable') : commonT('enable')}
+                              </Button>
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                                    <MoreHorizontal className="size-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuItem
+                                    className="text-red-600 focus:text-red-600"
+                                    onSelect={() => requestDeleteCases([item.id])}
+                                  >
+                                    <Trash2 className="mr-2 size-4" />
+                                    {commonT('delete')}
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
                 {selectedCaseIds.length > 0 ? (
                   <div className="sticky bottom-0 z-10 flex items-center justify-between border-t border-slate-200 bg-white px-4 py-3 shadow-[0_-8px_24px_rgba(15,23,42,0.08)]">
                     <div className="text-sm text-slate-600">
@@ -885,6 +1092,8 @@ export function BatchTestOverview({
         scenarios={scenarios.map(scene => ({ id: scene.id, name: scene.name }))}
         open={generateDialogOpen}
         onOpenChange={setGenerateDialogOpen}
+        onGenerationStart={setPendingGenerationCount}
+        onGenerationCreateFailed={() => setPendingGenerationCount(null)}
       />
       <ConfirmDialog
         open={deletingCaseIds.length > 0}

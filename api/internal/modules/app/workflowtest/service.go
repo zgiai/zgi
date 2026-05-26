@@ -7,15 +7,17 @@ import (
 	"strings"
 	"time"
 
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/gorm"
 )
 
 type Service struct {
-	repo       *Repository
-	runner     Runner
-	judge      Judge
-	summarizer Summarizer
+	repo                    *Repository
+	runner                  Runner
+	judge                   Judge
+	summarizer              Summarizer
+	workflowContextProvider WorkflowContextProvider
 }
 
 func NewService(repo *Repository) *Service {
@@ -32,6 +34,10 @@ func (s *Service) SetJudge(judge Judge) {
 
 func (s *Service) SetSummarizer(summarizer Summarizer) {
 	s.summarizer = summarizer
+}
+
+func (s *Service) SetWorkflowContextProvider(provider WorkflowContextProvider) {
+	s.workflowContextProvider = provider
 }
 
 type UpdateSettingsRequest struct {
@@ -321,8 +327,15 @@ func (s *Service) CreateCase(ctx context.Context, agentID string, req CreateCase
 	if err := s.repo.CreateCase(ctx, testCase); err != nil {
 		return nil, err
 	}
-	if err := s.refreshScenarioCaseCounts(ctx, agentID); err != nil {
-		return nil, err
+	if scenarioID != nil {
+		if err := s.repo.IncrementScenarioCaseCount(ctx, agentID, *scenarioID, 1); err != nil {
+			return nil, err
+		}
+	}
+	if scenarioID == nil {
+		if err := s.refreshScenarioCaseCounts(ctx, agentID); err != nil {
+			return nil, err
+		}
 	}
 	return testCase, nil
 }
@@ -352,6 +365,10 @@ func (s *Service) UpdateCase(ctx context.Context, agentID string, caseID string,
 	if err != nil {
 		return nil, err
 	}
+	previousScenarioID := ""
+	if existing.ScenarioID != nil {
+		previousScenarioID = *existing.ScenarioID
+	}
 	existing.ScenarioID = scenarioID
 	existing.Content = content
 	existing.ExpectedResult = expectedResult
@@ -362,8 +379,21 @@ func (s *Service) UpdateCase(ctx context.Context, agentID string, caseID string,
 	if err := s.repo.UpdateCase(ctx, existing); err != nil {
 		return nil, err
 	}
-	if err := s.refreshScenarioCaseCounts(ctx, agentID); err != nil {
-		return nil, err
+	nextScenarioID := ""
+	if scenarioID != nil {
+		nextScenarioID = *scenarioID
+	}
+	if previousScenarioID != nextScenarioID {
+		if previousScenarioID != "" {
+			if err := s.repo.IncrementScenarioCaseCount(ctx, agentID, previousScenarioID, -1); err != nil {
+				return nil, err
+			}
+		}
+		if nextScenarioID != "" {
+			if err := s.repo.IncrementScenarioCaseCount(ctx, agentID, nextScenarioID, 1); err != nil {
+				return nil, err
+			}
+		}
 	}
 	return s.repo.GetCase(ctx, agentID, caseID)
 }
@@ -453,6 +483,270 @@ func (s *Service) ListCases(ctx context.Context, agentID string, status string) 
 	return s.repo.ListCases(ctx, agentID, strings.TrimSpace(status))
 }
 
+func (s *Service) CreateGenerationTask(ctx context.Context, agentID, workspaceID, accountID string, req CreateGenerationTaskRequest) (*GenerationTask, error) {
+	if req.Count < minGeneratedCaseCount || req.Count > maxGeneratedCaseCount {
+		return nil, fmt.Errorf("count must be between %d and %d", minGeneratedCaseCount, maxGeneratedCaseCount)
+	}
+	scenarioIDs := normalizeGenerateScenarioIDs(req)
+	if len(scenarioIDs) == 0 {
+		return nil, fmt.Errorf("at least one scenario is required")
+	}
+	for _, scenarioID := range scenarioIDs {
+		if err := s.ensureScenarioBelongsToAgent(ctx, agentID, scenarioID); err != nil {
+			return nil, err
+		}
+	}
+	activeTask, err := s.repo.GetActiveGenerationTask(ctx, agentID)
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	if activeTask != nil {
+		return nil, fmt.Errorf("generation task is already running")
+	}
+
+	model := normalizeModel(req.Model)
+	modelProvider := ""
+	modelName := ""
+	if model != nil {
+		modelProvider = model.Provider
+		modelName = model.Name
+	}
+	turnStrategy := strings.TrimSpace(req.TurnStrategy)
+	if turnStrategy == "" {
+		turnStrategy = "mixed"
+	}
+	questionTypes := normalizeQuestionTypes(req.QuestionTypes)
+	if len(questionTypes) == 0 {
+		questionTypes = []string{CaseTypeCore, CaseTypeExtension, CaseTypeFuzzy}
+	}
+	now := time.Now()
+	task := &GenerationTask{
+		ID:             newID(),
+		AgentID:        agentID,
+		WorkspaceID:    workspaceID,
+		AccountID:      accountID,
+		Status:         GenerationTaskStatusQueued,
+		RequestedCount: req.Count,
+		ScenarioIDs:    JSONList(scenarioIDs),
+		QuestionTypes:  JSONList(questionTypes),
+		TurnStrategy:   turnStrategy,
+		Prompt:         strings.TrimSpace(req.Prompt),
+		Context:        strings.TrimSpace(req.Context),
+		ModelProvider:  modelProvider,
+		ModelName:      modelName,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	if err := s.repo.CreateGenerationTask(ctx, task); err != nil {
+		if isActiveGenerationTaskConflict(err) {
+			return nil, fmt.Errorf("generation task is already running")
+		}
+		return nil, err
+	}
+	return task, nil
+}
+
+func (s *Service) GetActiveGenerationTask(ctx context.Context, agentID string) (*GenerationTask, error) {
+	task, err := s.repo.GetActiveGenerationTask(ctx, agentID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return task, err
+}
+
+func (s *Service) GetLatestGenerationTask(ctx context.Context, agentID string) (*GenerationTask, error) {
+	task, err := s.repo.GetLatestGenerationTask(ctx, agentID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return task, err
+}
+
+func (s *Service) GetGenerationTask(ctx context.Context, agentID, taskID string) (*GenerationTask, error) {
+	return s.repo.GetGenerationTask(ctx, agentID, taskID)
+}
+
+func (s *Service) CancelGenerationTask(ctx context.Context, agentID, taskID string) (*GenerationTask, error) {
+	if _, err := s.repo.CancelGenerationTask(ctx, agentID, taskID, time.Now()); err != nil {
+		return nil, err
+	}
+	return s.GetGenerationTask(ctx, agentID, taskID)
+}
+
+func (s *Service) RunGenerationTask(ctx context.Context, taskID string, client llmclient.LLMClient) error {
+	task, err := s.repo.GetGenerationTaskByID(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	if isTerminalGenerationTaskStatus(task.Status) {
+		return nil
+	}
+	if task.Status == GenerationTaskStatusCanceling {
+		return s.finishGenerationTask(ctx, task.ID, GenerationTaskStatusCanceled, "")
+	}
+	if task.Status != GenerationTaskStatusQueued {
+		return nil
+	}
+	changed, err := s.repo.MarkGenerationTaskRunning(ctx, task.ID, time.Now())
+	if err != nil {
+		return err
+	}
+	if !changed {
+		task, err = s.repo.GetGenerationTaskByID(ctx, task.ID)
+		if err != nil {
+			return err
+		}
+		if isTerminalGenerationTaskStatus(task.Status) {
+			return nil
+		}
+		if task.Status == GenerationTaskStatusCanceling {
+			return s.finishGenerationTask(ctx, task.ID, GenerationTaskStatusCanceled, "")
+		}
+		return nil
+	}
+	task, err = s.repo.GetGenerationTaskByID(ctx, task.ID)
+	if err != nil {
+		return err
+	}
+	if isTerminalGenerationTaskStatus(task.Status) {
+		return nil
+	}
+	if task.Status == GenerationTaskStatusCanceling {
+		return s.finishGenerationTask(ctx, task.ID, GenerationTaskStatusCanceled, "")
+	}
+	if task.Status != GenerationTaskStatusRunning {
+		return nil
+	}
+
+	checkCanceled := func(ctx context.Context) error {
+		current, err := s.repo.GetGenerationTaskByID(ctx, task.ID)
+		if err != nil {
+			return err
+		}
+		if current.Status == GenerationTaskStatusCanceling {
+			if err := s.finishGenerationTask(ctx, task.ID, GenerationTaskStatusCanceled, ""); err != nil {
+				return err
+			}
+			return errGenerationTaskCanceled
+		}
+		return nil
+	}
+	generator := &LLMCaseGenerator{
+		Client:      client,
+		WorkspaceID: task.WorkspaceID,
+		AccountID:   task.AccountID,
+		AgentID:     task.AgentID,
+	}
+	req := generationTaskGenerateCasesRequest(task)
+	_, err = s.generateCasesForScenarios(ctx, task.AgentID, req, []string(task.ScenarioIDs), generator, generateCaseProgressHooks{
+		BeforeScenario: checkCanceled,
+		AfterCreate: func(ctx context.Context, item Case) error {
+			if err := s.repo.IncrementGenerationTaskCreatedCount(ctx, task.ID, 1); err != nil {
+				return err
+			}
+			return checkCanceled(ctx)
+		},
+	})
+	if err != nil {
+		if errors.Is(err, errGenerationTaskCanceled) {
+			return nil
+		}
+		reason := generationTaskFailureReason(err)
+		if finishErr := s.finishGenerationTask(ctx, task.ID, GenerationTaskStatusFailed, reason); finishErr != nil {
+			// Do not retry the whole asynq task here: generation may have already
+			// created cases. Stale running rows are repaired by the repository
+			// recovery hook without re-running generation.
+			return errors.Join(err, finishErr)
+		}
+		return err
+	}
+	return s.finishGenerationTask(ctx, task.ID, GenerationTaskStatusCompleted, "")
+}
+
+func (s *Service) RecoverStaleRunningGenerationTasks(ctx context.Context, staleBefore time.Time) (int64, error) {
+	return s.repo.RecoverStaleRunningGenerationTasks(ctx, staleBefore, generationTaskFailureReason(fmt.Errorf("worker stopped before marking task terminal")), time.Now())
+}
+
+type generateCaseProgressHooks struct {
+	BeforeScenario func(context.Context) error
+	AfterCreate    func(context.Context, Case) error
+}
+
+var errGenerationTaskCanceled = errors.New("generation task canceled")
+
+func (s *Service) finishGenerationTask(ctx context.Context, taskID, status, reason string) error {
+	now := time.Now()
+	return s.repo.UpdateGenerationTaskStatus(ctx, taskID, status, map[string]interface{}{
+		"completed_at": now,
+		"error":        reason,
+	})
+}
+
+func isTerminalGenerationTaskStatus(status string) bool {
+	return status == GenerationTaskStatusCompleted ||
+		status == GenerationTaskStatusCanceled ||
+		status == GenerationTaskStatusFailed
+}
+
+func generationTaskGenerateCasesRequest(task *GenerationTask) GenerateCasesRequest {
+	req := GenerateCasesRequest{
+		Count:         task.RequestedCount,
+		ScenarioIDs:   []string(task.ScenarioIDs),
+		QuestionTypes: []string(task.QuestionTypes),
+		TurnStrategy:  task.TurnStrategy,
+		Prompt:        task.Prompt,
+		Context:       task.Context,
+	}
+	if strings.TrimSpace(task.ModelProvider) != "" && strings.TrimSpace(task.ModelName) != "" {
+		req.Model = &Model{
+			Provider: strings.TrimSpace(task.ModelProvider),
+			Name:     strings.TrimSpace(task.ModelName),
+		}
+	}
+	return req
+}
+
+func generationTaskFailureReason(err error) string {
+	if err == nil || strings.TrimSpace(err.Error()) == "" {
+		return "生成测试问题失败"
+	}
+	return "生成测试问题失败：" + err.Error()
+}
+
+func isActiveGenerationTaskConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	if !strings.Contains(message, "idx_workflow_test_generation_tasks_active_agent") &&
+		!strings.Contains(message, "workflow_test_generation_tasks") {
+		return false
+	}
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return true
+	}
+	return strings.Contains(message, "unique") ||
+		strings.Contains(message, "duplicate") ||
+		strings.Contains(message, "duplicated")
+}
+
+func isActiveScenarioRecognitionTaskConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	if !strings.Contains(message, "idx_workflow_test_scenario_recognition_tasks_active_agent") &&
+		!strings.Contains(message, "workflow_test_scenario_recognition_tasks") {
+		return false
+	}
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return true
+	}
+	return strings.Contains(message, "unique") ||
+		strings.Contains(message, "duplicate") ||
+		strings.Contains(message, "duplicated")
+}
+
 func (s *Service) GenerateCases(ctx context.Context, agentID string, req GenerateCasesRequest, generator CaseGenerator) (*GenerateCasesResult, error) {
 	if req.Count < minGeneratedCaseCount || req.Count > maxGeneratedCaseCount {
 		return nil, fmt.Errorf("count must be between %d and %d", minGeneratedCaseCount, maxGeneratedCaseCount)
@@ -469,45 +763,51 @@ func (s *Service) GenerateCases(ctx context.Context, agentID string, req Generat
 			return nil, err
 		}
 	}
+	return s.generateCasesForScenarios(ctx, agentID, req, scenarioIDs, generator, generateCaseProgressHooks{})
+}
 
+func (s *Service) generateCasesForScenarios(ctx context.Context, agentID string, req GenerateCasesRequest, scenarioIDs []string, generator CaseGenerator, hooks generateCaseProgressHooks) (*GenerateCasesResult, error) {
 	items := make([]Case, 0, req.Count)
 	generatedCases := make([]GeneratedCase, 0, req.Count)
-	remaining := req.Count
-	for index, scenarioID := range scenarioIDs {
-		count := remaining / (len(scenarioIDs) - index)
-		if count == 0 {
-			continue
+	if hooks.BeforeScenario != nil {
+		if err := hooks.BeforeScenario(ctx); err != nil {
+			return nil, err
 		}
-		remaining -= count
-		generateReq := req
-		generateReq.Count = count
-		generateReq.ScenarioID = scenarioID
-		generateReq.ScenarioIDs = nil
-		generated, err := generator.GenerateCases(ctx, generateReq)
+	}
+	generateReq := req
+	generateReq.Count = req.Count
+	generateReq.ScenarioID = ""
+	generateReq.ScenarioIDs = scenarioIDs
+	generated, err := generator.GenerateCases(ctx, generateReq)
+	if err != nil {
+		return nil, err
+	}
+	normalized, err := normalizeGeneratedCases(generated)
+	if err != nil {
+		return nil, err
+	}
+	if len(normalized) > req.Count {
+		normalized = normalized[:req.Count]
+	}
+	for index, item := range normalized {
+		scenarioID := scenarioIDs[index%len(scenarioIDs)]
+		created, err := s.CreateCase(ctx, agentID, CreateCaseRequest{
+			Content:        item.Content,
+			ExpectedResult: item.ExpectedResult,
+			ScenarioID:     scenarioID,
+			QuestionType:   item.QuestionType,
+			Status:         CaseStatusEnabled,
+			Turns:          []CaseTurn{{Role: "user", Content: item.Content}},
+		})
 		if err != nil {
 			return nil, err
 		}
-		normalized, err := normalizeGeneratedCases(generated)
-		if err != nil {
-			return nil, err
-		}
-		if len(normalized) > count {
-			normalized = normalized[:count]
-		}
-		for _, item := range normalized {
-			created, err := s.CreateCase(ctx, agentID, CreateCaseRequest{
-				Content:        item.Content,
-				ExpectedResult: item.ExpectedResult,
-				ScenarioID:     scenarioID,
-				QuestionType:   item.QuestionType,
-				Status:         CaseStatusEnabled,
-				Turns:          []CaseTurn{{Role: "user", Content: item.Content}},
-			})
-			if err != nil {
+		items = append(items, *created)
+		generatedCases = append(generatedCases, item)
+		if hooks.AfterCreate != nil {
+			if err := hooks.AfterCreate(ctx, *created); err != nil {
 				return nil, err
 			}
-			items = append(items, *created)
-			generatedCases = append(generatedCases, item)
 		}
 	}
 	return &GenerateCasesResult{Cases: generatedCases, Items: items}, nil
@@ -536,6 +836,10 @@ func normalizeGenerateScenarioIDs(req GenerateCasesRequest) []string {
 }
 
 func (s *Service) RecognizeScenarios(ctx context.Context, agentID string, req RecognizeScenariosRequest, recognizer ScenarioRecognizer) (*ScenarioRecognitionResult, error) {
+	return s.recognizeScenarios(ctx, agentID, req, s.resolveWorkflowRecognitionContext(ctx, agentID), recognizer)
+}
+
+func (s *Service) recognizeScenarios(ctx context.Context, agentID string, req RecognizeScenariosRequest, workflowContext string, recognizer ScenarioRecognizer) (*ScenarioRecognitionResult, error) {
 	if recognizer == nil {
 		return nil, fmt.Errorf("scenario recognizer is not configured")
 	}
@@ -550,6 +854,7 @@ func (s *Service) RecognizeScenarios(ctx context.Context, agentID string, req Re
 	recognized, err := recognizer.RecognizeScenarios(ctx, ScenarioRecognitionInput{
 		AgentID:           agentID,
 		Context:           strings.TrimSpace(req.Context),
+		WorkflowContext:   strings.TrimSpace(workflowContext),
 		Prompt:            strings.TrimSpace(req.Prompt),
 		Model:             normalizeModel(req.Model),
 		Cases:             cases,
@@ -608,6 +913,168 @@ func (s *Service) RecognizeScenarios(ctx context.Context, agentID string, req Re
 		Assignments: normalized.Assignments,
 		Cases:       updatedCases,
 	}, nil
+}
+
+type ScenarioRecognitionTaskResponse struct {
+	Task *ScenarioRecognitionTask `json:"task"`
+}
+
+func (s *Service) CreateScenarioRecognitionTask(ctx context.Context, agentID, workspaceID, accountID string, req RecognizeScenariosRequest) (*ScenarioRecognitionTask, error) {
+	activeTask, err := s.repo.GetActiveScenarioRecognitionTask(ctx, agentID)
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	if activeTask != nil {
+		return nil, fmt.Errorf("scenario recognition task is already running")
+	}
+
+	model := normalizeModel(req.Model)
+	modelProvider := ""
+	modelName := ""
+	if model != nil {
+		modelProvider = model.Provider
+		modelName = model.Name
+	}
+	now := time.Now()
+	task := &ScenarioRecognitionTask{
+		ID:                      newID(),
+		AgentID:                 agentID,
+		WorkspaceID:             workspaceID,
+		AccountID:               accountID,
+		Status:                  GenerationTaskStatusQueued,
+		Prompt:                  strings.TrimSpace(req.Prompt),
+		Context:                 strings.TrimSpace(req.Context),
+		WorkflowContextSnapshot: s.resolveWorkflowRecognitionContext(ctx, agentID),
+		ModelProvider:           modelProvider,
+		ModelName:               modelName,
+		CreatedAt:               now,
+		UpdatedAt:               now,
+	}
+	if err := s.repo.CreateScenarioRecognitionTask(ctx, task); err != nil {
+		if isActiveScenarioRecognitionTaskConflict(err) {
+			return nil, fmt.Errorf("scenario recognition task is already running")
+		}
+		return nil, err
+	}
+	return task, nil
+}
+
+func (s *Service) GetActiveScenarioRecognitionTask(ctx context.Context, agentID string) (*ScenarioRecognitionTask, error) {
+	task, err := s.repo.GetActiveScenarioRecognitionTask(ctx, agentID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return task, err
+}
+
+func (s *Service) GetLatestScenarioRecognitionTask(ctx context.Context, agentID string) (*ScenarioRecognitionTask, error) {
+	task, err := s.repo.GetLatestScenarioRecognitionTask(ctx, agentID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return task, err
+}
+
+func (s *Service) GetScenarioRecognitionTask(ctx context.Context, agentID, taskID string) (*ScenarioRecognitionTask, error) {
+	return s.repo.GetScenarioRecognitionTask(ctx, agentID, taskID)
+}
+
+func (s *Service) RunScenarioRecognitionTask(ctx context.Context, taskID string, recognizer ScenarioRecognizer) error {
+	task, err := s.repo.GetScenarioRecognitionTaskByID(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	if isTerminalGenerationTaskStatus(task.Status) {
+		return nil
+	}
+	if task.Status == GenerationTaskStatusCanceling {
+		return s.finishScenarioRecognitionTask(ctx, task.ID, GenerationTaskStatusCanceled, "", 0, 0)
+	}
+	if task.Status != GenerationTaskStatusQueued {
+		return nil
+	}
+	changed, err := s.repo.MarkScenarioRecognitionTaskRunning(ctx, task.ID, time.Now())
+	if err != nil {
+		return err
+	}
+	if !changed {
+		task, err = s.repo.GetScenarioRecognitionTaskByID(ctx, task.ID)
+		if err != nil {
+			return err
+		}
+		if isTerminalGenerationTaskStatus(task.Status) {
+			return nil
+		}
+		if task.Status == GenerationTaskStatusCanceling {
+			return s.finishScenarioRecognitionTask(ctx, task.ID, GenerationTaskStatusCanceled, "", 0, 0)
+		}
+		return nil
+	}
+	task, err = s.repo.GetScenarioRecognitionTaskByID(ctx, task.ID)
+	if err != nil {
+		return err
+	}
+	if isTerminalGenerationTaskStatus(task.Status) {
+		return nil
+	}
+	if task.Status == GenerationTaskStatusCanceling {
+		return s.finishScenarioRecognitionTask(ctx, task.ID, GenerationTaskStatusCanceled, "", 0, 0)
+	}
+	if task.Status != GenerationTaskStatusRunning {
+		return nil
+	}
+
+	result, err := s.recognizeScenarios(ctx, task.AgentID, scenarioRecognitionTaskRequest(task), task.WorkflowContextSnapshot, recognizer)
+	if err != nil {
+		reason := scenarioRecognitionTaskFailureReason(err)
+		if finishErr := s.finishScenarioRecognitionTask(ctx, task.ID, GenerationTaskStatusFailed, reason, 0, 0); finishErr != nil {
+			return errors.Join(err, finishErr)
+		}
+		return err
+	}
+	return s.finishScenarioRecognitionTask(ctx, task.ID, GenerationTaskStatusCompleted, "", result.RecognizedCount(), result.AssignedCaseCount())
+}
+
+func (s *Service) RecoverStaleRunningScenarioRecognitionTasks(ctx context.Context, staleBefore time.Time) (int64, error) {
+	return s.repo.RecoverStaleRunningScenarioRecognitionTasks(ctx, staleBefore, scenarioRecognitionTaskFailureReason(fmt.Errorf("worker stopped before marking task terminal")), time.Now())
+}
+
+func (s *Service) finishScenarioRecognitionTask(ctx context.Context, taskID, status, reason string, recognizedCount, assignedCaseCount int) error {
+	now := time.Now()
+	return s.repo.UpdateScenarioRecognitionTaskStatus(ctx, taskID, status, map[string]interface{}{
+		"completed_at":        now,
+		"error":               reason,
+		"recognized_count":    recognizedCount,
+		"assigned_case_count": assignedCaseCount,
+	})
+}
+
+func scenarioRecognitionTaskRequest(task *ScenarioRecognitionTask) RecognizeScenariosRequest {
+	req := RecognizeScenariosRequest{
+		Prompt:  task.Prompt,
+		Context: task.Context,
+	}
+	if strings.TrimSpace(task.ModelProvider) != "" && strings.TrimSpace(task.ModelName) != "" {
+		req.Model = &Model{
+			Provider: strings.TrimSpace(task.ModelProvider),
+			Name:     strings.TrimSpace(task.ModelName),
+		}
+	}
+	return req
+}
+
+func scenarioRecognitionTaskFailureReason(err error) string {
+	if err == nil || strings.TrimSpace(err.Error()) == "" {
+		return "识别业务场景失败"
+	}
+	return "识别业务场景失败：" + err.Error()
+}
+
+func (s *Service) resolveWorkflowRecognitionContext(ctx context.Context, agentID string) string {
+	if s == nil || s.workflowContextProvider == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.workflowContextProvider.WorkflowRecognitionContext(ctx, agentID))
 }
 
 func normalizeModel(model *Model) *Model {

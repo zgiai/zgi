@@ -121,8 +121,11 @@ function ModelMultiSelectorBase({
   const catalogItems = useMemo(() => data?.data?.items ?? [], [data]);
 
   const catalogModelKeys = useMemo(
-    () => new Set(catalogItems.map(item => getModelSelectionKey(item))),
-    [catalogItems]
+    () =>
+      new Set(
+        [...catalogItems, ...supplementalModels].map(item => getModelSelectionKey(item))
+      ),
+    [catalogItems, supplementalModels]
   );
 
   const isSelectable = useCallback(
@@ -136,10 +139,7 @@ function ModelMultiSelectorBase({
       merged.set(getModelSelectionKey(item), item);
     });
     supplementalModels.forEach(item => {
-      const key = getModelSelectionKey(item);
-      if (!merged.has(key)) {
-        merged.set(key, item);
-      }
+      merged.set(getModelSelectionKey(item), item);
     });
     return Array.from(merged.values());
   }, [catalogItems, supplementalModels]);

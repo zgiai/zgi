@@ -18,7 +18,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { ModelSelector } from '@/components/common/model-selector';
 import type { ModelSelectorValue } from '@/components/common/model-selector';
-import { useGenerateWorkflowTestCases } from '@/hooks/workflow-test/use-workflow-test';
+import { useCreateWorkflowTestGenerationTask } from '@/hooks/workflow-test/use-workflow-test';
 import { useDefaultModelByUseCase } from '@/hooks/model/use-default-model-by-use-case';
 import { useCurrentUser } from '@/store/auth-store';
 import { getLastSelectedAiModel, saveLastSelectedAiModel } from '@/utils/ui-local';
@@ -29,42 +29,36 @@ interface GenerateCasesDialogProps {
   scenarios: Array<{ id: string; name: string }>;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onGenerationStart?: (count: number) => void;
+  onGenerationCreateFailed?: () => void;
 }
 
-const COUNT_PRESETS = [10, 20, 50];
+const MIN_GENERATED_CASE_COUNT = 1;
+const MAX_GENERATED_CASE_COUNT = 50;
+const COUNT_PRESETS = [10, 20, MAX_GENERATED_CASE_COUNT];
 const QUESTION_TYPES = [
   { value: 'core', labelKey: 'core' as const },
   { value: 'extension', labelKey: 'extension' as const },
   { value: 'fuzzy', labelKey: 'fuzzy' as const },
 ];
 const TURN_STRATEGIES = [
-  { value: 'mixed' as const, label: '单轮 + 多轮' },
-  { value: 'single' as const, label: '单轮对话' },
-  { value: 'multi' as const, label: '多轮对话' },
+  { value: 'mixed' as const, labelKey: 'turnStrategyMixed' as const },
+  { value: 'single' as const, labelKey: 'turnStrategySingle' as const },
+  { value: 'multi' as const, labelKey: 'turnStrategyMulti' as const },
 ];
-
-function defaultPrompt(): string {
-  return `请基于当前智能体工作流、已识别业务场景和已有测试问题，生成一批可进入问题库的候选测试问题。
-
-生成要求：
-1. 每个问题都要模拟真实用户表达，避免像测试脚本。
-2. 结合所选业务场景生成问题，优先覆盖高频、关键、异常和兜底场景。
-3. 结合所选问题类型生成不同复杂度的问题。
-4. 如果选择了多轮对话，请生成有上下文衔接的对话输入。
-5. 为每个问题补充预期结果，描述智能体应如何正确回答。
-6. 输出 JSON 对象，格式为：{"cases":[{"content":"问题内容","expected_result":"预期结果","question_type":"core"}]}`;
-}
 
 export function GenerateCasesDialog({
   agentId,
   scenarios,
   open,
   onOpenChange,
+  onGenerationStart,
+  onGenerationCreateFailed,
 }: GenerateCasesDialogProps) {
   const t = useT('agents.workflowTest.dialogs.generateCases');
   const commonT = useT('agents.workflowTest.common');
   const typeT = useT('agents.workflowTest.questionTypes');
-  const generateCases = useGenerateWorkflowTestCases(agentId);
+  const createGenerationTask = useCreateWorkflowTestGenerationTask(agentId);
   const user = useCurrentUser();
   const { value: defaultModel } = useDefaultModelByUseCase('text-chat');
   const [count, setCount] = React.useState(20);
@@ -72,7 +66,7 @@ export function GenerateCasesDialog({
   const [questionTypes, setQuestionTypes] = React.useState<string[]>(['core', 'extension', 'fuzzy']);
   const [turnStrategy, setTurnStrategy] = React.useState<'mixed' | 'single' | 'multi'>('mixed');
   const [model, setModel] = React.useState<ModelSelectorValue | null>(null);
-  const [prompt, setPrompt] = React.useState(defaultPrompt());
+  const [prompt, setPrompt] = React.useState('');
   const [context, setContext] = React.useState('');
 
   React.useEffect(() => {
@@ -88,26 +82,32 @@ export function GenerateCasesDialog({
   }, [defaultModel, user?.id]);
 
   React.useEffect(() => {
-    if (!open) {
-      setCount(20);
-      setScenarioIds([]);
-      setQuestionTypes(['core', 'extension', 'fuzzy']);
-      setTurnStrategy('mixed');
-      setPrompt(defaultPrompt());
-      setContext('');
-    } else if (scenarios.length > 0 && scenarioIds.length === 0) {
-      setScenarioIds(scenarios.map(scene => scene.id));
-    }
-  }, [open, scenarios, scenarioIds.length]);
+    if (open) return;
+    setCount(20);
+    setScenarioIds([]);
+    setQuestionTypes(['core', 'extension', 'fuzzy']);
+    setTurnStrategy('mixed');
+    setPrompt('');
+    setContext('');
+  }, [open]);
+
+  React.useEffect(() => {
+    if (!open) return;
+    setScenarioIds(prev => {
+      if (prev.length > 0 || scenarios.length === 0) return prev;
+      return scenarios.map(scene => scene.id);
+    });
+    setPrompt(prev => prev || t('promptDefault'));
+  }, [open, scenarios, t]);
 
   const safeCount = Number.isFinite(count) ? count : 0;
   const canSubmit =
-    safeCount >= 1 &&
-    safeCount <= 50 &&
+    safeCount >= MIN_GENERATED_CASE_COUNT &&
+    safeCount <= MAX_GENERATED_CASE_COUNT &&
     scenarioIds.length > 0 &&
     questionTypes.length > 0 &&
     Boolean(model?.provider && model?.model) &&
-    !generateCases.isPending;
+    !createGenerationTask.isPending;
 
   const toggleScenario = (id: string, checked: boolean) => {
     setScenarioIds(prev =>
@@ -123,12 +123,12 @@ export function GenerateCasesDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent size="lg" className="max-w-[1180px] rounded-2xl">
+      <DialogContent size="lg" className="w-[calc(100vw-32px)] max-w-[800px] rounded-2xl">
         <DialogHeader>
           <DialogTitle>{t('title')}</DialogTitle>
           <DialogDescription>{t('description')}</DialogDescription>
         </DialogHeader>
-        <DialogBody className="space-y-6">
+        <DialogBody className="max-h-[calc(100vh-220px)] space-y-6 overflow-y-auto pr-1">
           <section className="space-y-3">
             <Label>{t('countLabel')}</Label>
             <div className="flex flex-wrap gap-2">
@@ -146,10 +146,17 @@ export function GenerateCasesDialog({
               <div className="w-24">
                 <Input
                   type="number"
-                  min={1}
-                  max={50}
+                  min={MIN_GENERATED_CASE_COUNT}
+                  max={MAX_GENERATED_CASE_COUNT}
                   value={count}
-                  onChange={event => setCount(Number(event.target.value))}
+                  onChange={event => {
+                    const next = Number(event.target.value);
+                    if (!Number.isFinite(next)) {
+                      setCount(MIN_GENERATED_CASE_COUNT);
+                      return;
+                    }
+                    setCount(Math.min(MAX_GENERATED_CASE_COUNT, Math.max(MIN_GENERATED_CASE_COUNT, next)));
+                  }}
                 />
               </div>
             </div>
@@ -220,7 +227,7 @@ export function GenerateCasesDialog({
                   className="h-12"
                   onClick={() => setTurnStrategy(item.value)}
                 >
-                  {item.label}
+                  {t(item.labelKey)}
                 </Button>
               ))}
             </div>
@@ -285,24 +292,27 @@ export function GenerateCasesDialog({
             disabled={!canSubmit}
             onClick={() => {
               if (!model) return;
-              generateCases.mutate(
-                {
-                  count: safeCount,
-                  scenario_ids: scenarioIds,
-                  question_types: questionTypes,
-                  turn_strategy: turnStrategy,
-                  prompt,
-                  context,
-                  model: {
-                    provider: model.provider,
-                    name: model.model,
-                  },
+              const payload = {
+                count: safeCount,
+                scenario_ids: scenarioIds,
+                question_types: questionTypes,
+                turn_strategy: turnStrategy,
+                prompt,
+                context,
+                model: {
+                  provider: model.provider,
+                  name: model.model,
                 },
-                { onSuccess: () => onOpenChange(false) }
+              };
+              onGenerationStart?.(safeCount);
+              onOpenChange(false);
+              createGenerationTask.mutate(
+                payload,
+                { onError: () => onGenerationCreateFailed?.() }
               );
             }}
           >
-            {generateCases.isPending ? t('submitting') : t('submit')}
+            {createGenerationTask.isPending ? t('submitting') : t('submit')}
           </Button>
         </DialogFooter>
       </DialogContent>

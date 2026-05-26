@@ -9,6 +9,8 @@ import { getErrorMessage } from '@/utils/error-notifications';
 import type {
   CreateWorkflowTestBatchRequest,
   CreateWorkflowTestCaseRequest,
+  CreateWorkflowTestGenerationTaskRequest,
+  CreateWorkflowTestScenarioRecognitionTaskRequest,
   DeleteWorkflowTestCasesRequest,
   CreateWorkflowTestScenarioRequest,
   GenerateWorkflowTestCasesRequest,
@@ -119,6 +121,57 @@ export function useRecognizeWorkflowTestScenarios(agentId: string) {
   });
 }
 
+const ACTIVE_SCENARIO_RECOGNITION_STATUSES = new Set(['queued', 'running', 'canceling']);
+
+export function useActiveWorkflowTestScenarioRecognitionTask(agentId: string) {
+  return useQuery({
+    queryKey: WORKFLOW_TEST_KEYS.scenarioRecognitionTaskActive(agentId),
+    queryFn: () => workflowTestService.getActiveScenarioRecognitionTask(agentId),
+    enabled: !!agentId,
+    refetchOnWindowFocus: true,
+    refetchInterval: query => {
+      const task = query.state.data?.data?.task;
+      return task && ACTIVE_SCENARIO_RECOGNITION_STATUSES.has(task.status) ? 3000 : false;
+    },
+  });
+}
+
+export function useLatestWorkflowTestScenarioRecognitionTask(agentId: string) {
+  return useQuery({
+    queryKey: WORKFLOW_TEST_KEYS.scenarioRecognitionTaskLatest(agentId),
+    queryFn: () => workflowTestService.getLatestScenarioRecognitionTask(agentId),
+    enabled: !!agentId,
+    refetchOnWindowFocus: true,
+    refetchInterval: query => {
+      const task = query.state.data?.data?.task;
+      return task && ACTIVE_SCENARIO_RECOGNITION_STATUSES.has(task.status) ? 3000 : false;
+    },
+  });
+}
+
+export function useCreateWorkflowTestScenarioRecognitionTask(agentId: string) {
+  const t = useT('agents.workflowTest.toasts');
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: CreateWorkflowTestScenarioRecognitionTaskRequest) =>
+      workflowTestService.createScenarioRecognitionTask(agentId, data),
+    onSuccess: response => {
+      toast.info(t('scenariosRecognitionStarted'));
+      queryClient.setQueryData(WORKFLOW_TEST_KEYS.scenarioRecognitionTaskLatest(agentId), response);
+      queryClient.setQueryData(WORKFLOW_TEST_KEYS.scenarioRecognitionTaskActive(agentId), response);
+      queryClient.invalidateQueries({
+        queryKey: WORKFLOW_TEST_KEYS.scenarioRecognitionTaskActive(agentId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: WORKFLOW_TEST_KEYS.scenarioRecognitionTaskLatest(agentId),
+      });
+    },
+    onError: error => {
+      toast.error(getErrorMessage(error) || t('scenariosRecognizeFailed'));
+    },
+  });
+}
+
 export function useWorkflowTestCases(agentId: string, params?: { status?: string }) {
   return useQuery({
     queryKey: WORKFLOW_TEST_KEYS.cases(agentId, params),
@@ -174,9 +227,10 @@ export function useDeleteWorkflowTestCases(agentId: string) {
         queryKey: [...WORKFLOW_TEST_KEYS.all, agentId, 'cases'],
       };
       await queryClient.cancelQueries(casesQueryFilter);
-      const previousCases = queryClient.getQueriesData<
-        ApiResponseData<WorkflowTestListResponse<WorkflowTestCase>>
-      >(casesQueryFilter);
+      const previousCases =
+        queryClient.getQueriesData<ApiResponseData<WorkflowTestListResponse<WorkflowTestCase>>>(
+          casesQueryFilter
+        );
 
       queryClient.setQueriesData<ApiResponseData<WorkflowTestListResponse<WorkflowTestCase>>>(
         casesQueryFilter,
@@ -222,6 +276,58 @@ export function useGenerateWorkflowTestCases(agentId: string) {
     onSuccess: response => {
       toast.success(t('casesGenerated', { count: response.data.items.length }));
       queryClient.invalidateQueries({ queryKey: WORKFLOW_TEST_KEYS.all });
+    },
+    onError: error => {
+      toast.error(getErrorMessage(error) || t('casesGenerateFailed'));
+    },
+  });
+}
+
+const ACTIVE_GENERATION_STATUSES = new Set(['queued', 'running', 'canceling']);
+
+export function useActiveWorkflowTestGenerationTask(agentId: string) {
+  return useQuery({
+    queryKey: WORKFLOW_TEST_KEYS.generationTaskActive(agentId),
+    queryFn: () => workflowTestService.getActiveGenerationTask(agentId),
+    enabled: !!agentId,
+    refetchOnWindowFocus: true,
+    refetchInterval: query => {
+      const task = query.state.data?.data?.task;
+      return task && ACTIVE_GENERATION_STATUSES.has(task.status) ? 3000 : false;
+    },
+  });
+}
+
+export function useLatestWorkflowTestGenerationTask(agentId: string) {
+  return useQuery({
+    queryKey: WORKFLOW_TEST_KEYS.generationTaskLatest(agentId),
+    queryFn: () => workflowTestService.getLatestGenerationTask(agentId),
+    enabled: !!agentId,
+    refetchOnWindowFocus: true,
+    refetchInterval: query => {
+      const task = query.state.data?.data?.task;
+      return task && ACTIVE_GENERATION_STATUSES.has(task.status) ? 3000 : false;
+    },
+  });
+}
+
+export function useCreateWorkflowTestGenerationTask(agentId: string) {
+  const t = useT('agents.workflowTest.toasts');
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: CreateWorkflowTestGenerationTaskRequest) =>
+      workflowTestService.createGenerationTask(agentId, data),
+    onSuccess: response => {
+      const count = response.data.task?.requested_count ?? 0;
+      toast.info(t('casesGenerationStarted', { count }));
+      queryClient.setQueryData(WORKFLOW_TEST_KEYS.generationTaskLatest(agentId), response);
+      queryClient.setQueryData(WORKFLOW_TEST_KEYS.generationTaskActive(agentId), response);
+      queryClient.invalidateQueries({
+        queryKey: WORKFLOW_TEST_KEYS.generationTaskActive(agentId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: WORKFLOW_TEST_KEYS.generationTaskLatest(agentId),
+      });
     },
     onError: error => {
       toast.error(getErrorMessage(error) || t('casesGenerateFailed'));

@@ -139,6 +139,18 @@ export const WORKFLOW_TEST_KEYS = {
   scenarios: (agentId: string) => [...WORKFLOW_TEST_KEYS.all, agentId, 'scenarios'] as const,
   cases: (agentId: string, params?: unknown) =>
     [...WORKFLOW_TEST_KEYS.all, agentId, 'cases', params] as const,
+  generationTaskActive: (agentId: string) =>
+    [...WORKFLOW_TEST_KEYS.all, agentId, 'generation-task-active'] as const,
+  generationTaskLatest: (agentId: string) =>
+    [...WORKFLOW_TEST_KEYS.all, agentId, 'generation-task-latest'] as const,
+  generationTask: (agentId: string, taskId: string) =>
+    [...WORKFLOW_TEST_KEYS.all, agentId, 'generation-task', taskId] as const,
+  scenarioRecognitionTaskActive: (agentId: string) =>
+    [...WORKFLOW_TEST_KEYS.all, agentId, 'scenario-recognition-task-active'] as const,
+  scenarioRecognitionTaskLatest: (agentId: string) =>
+    [...WORKFLOW_TEST_KEYS.all, agentId, 'scenario-recognition-task-latest'] as const,
+  scenarioRecognitionTask: (agentId: string, taskId: string) =>
+    [...WORKFLOW_TEST_KEYS.all, agentId, 'scenario-recognition-task', taskId] as const,
   batches: (agentId: string) => [...WORKFLOW_TEST_KEYS.all, agentId, 'batches'] as const,
   batchItems: (agentId: string, batchId: string) =>
     [...WORKFLOW_TEST_KEYS.all, agentId, 'batches', batchId, 'items'] as const,

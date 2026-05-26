@@ -3,23 +3,25 @@ package v1
 import (
 	"github.com/gin-gonic/gin"
 
-	"github.com/zgiai/zgi/api/internal/container"
 	"github.com/zgiai/zgi/api/internal/modules/quota/handler"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/middleware"
 )
 
+// QuotaRouteDeps contains dependencies required by quota routes.
+type QuotaRouteDeps struct {
+	QuotaService interfaces.QuotaService
+}
+
 // RegisterQuotaRoutes registers all quota-related routes
-func RegisterQuotaRoutes(router *gin.RouterGroup, container *container.ServiceContainer) {
-	// Get quota service from container
-	quotaService := container.GetQuotaService()
+func RegisterQuotaRoutes(router *gin.RouterGroup, deps QuotaRouteDeps) {
+	if deps.QuotaService == nil {
+		panic("quota routes require quota service")
+	}
 
-	// Initialize handler
-	quotaHandler := handler.NewQuotaHandler(quotaService)
-
-	// Create quota group with JWT middleware
+	quotaHandler := handler.NewQuotaHandler(deps.QuotaService)
 	quotaGroup := router.Group("/quota")
 	quotaGroup.Use(middleware.JWT())
 
-	// Register routes
 	quotaHandler.RegisterRoutes(quotaGroup)
 }

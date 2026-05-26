@@ -15,6 +15,7 @@ type RecognizeScenariosRequest struct {
 type ScenarioRecognitionInput struct {
 	AgentID           string
 	Context           string
+	WorkflowContext   string
 	Prompt            string
 	Model             *Model
 	Cases             []Case
@@ -40,6 +41,20 @@ type ScenarioRecognitionResult struct {
 	Scenarios   []RecognizedScenario       `json:"scenarios,omitempty"`
 	Assignments []RecognizedCaseAssignment `json:"assignments,omitempty"`
 	Cases       []Case                     `json:"cases,omitempty"`
+}
+
+func (r *ScenarioRecognitionResult) RecognizedCount() int {
+	if r == nil {
+		return 0
+	}
+	return len(r.Scenarios)
+}
+
+func (r *ScenarioRecognitionResult) AssignedCaseCount() int {
+	if r == nil {
+		return 0
+	}
+	return len(r.Assignments)
 }
 
 type ScenarioRecognizer interface {

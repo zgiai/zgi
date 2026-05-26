@@ -22,6 +22,13 @@ const (
 	BatchStatusCompleted = "completed"
 	BatchStatusStopped   = "stopped"
 	BatchStatusCanceled  = "canceled"
+
+	GenerationTaskStatusQueued    = "queued"
+	GenerationTaskStatusRunning   = "running"
+	GenerationTaskStatusCanceling = "canceling"
+	GenerationTaskStatusCanceled  = "canceled"
+	GenerationTaskStatusCompleted = "completed"
+	GenerationTaskStatusFailed    = "failed"
 )
 
 const DefaultJudgePromptTemplate = `你是工作流自动化测试的 AI 评分助手。请根据测试问题、智能体回复、期望要点和业务场景，判断本次回答是否有效解决用户问题。
@@ -106,6 +113,37 @@ func (t *CaseTurns) Scan(value interface{}) error {
 		return nil
 	}
 	return json.Unmarshal(bytes, t)
+}
+
+type JSONList []string
+
+func (l JSONList) Value() (driver.Value, error) {
+	if l == nil {
+		return "[]", nil
+	}
+	data, err := json.Marshal(l)
+	return string(data), err
+}
+
+func (l *JSONList) Scan(value interface{}) error {
+	if value == nil {
+		*l = JSONList{}
+		return nil
+	}
+	var bytes []byte
+	switch v := value.(type) {
+	case []byte:
+		bytes = v
+	case string:
+		bytes = []byte(v)
+	default:
+		return fmt.Errorf("unsupported JSONList scan type %T", value)
+	}
+	if len(bytes) == 0 {
+		*l = JSONList{}
+		return nil
+	}
+	return json.Unmarshal(bytes, l)
 }
 
 type Case struct {
@@ -247,6 +285,58 @@ type Batch struct {
 
 func (Batch) TableName() string {
 	return "workflow_test_batches"
+}
+
+type GenerationTask struct {
+	ID                string     `gorm:"type:uuid;primaryKey" json:"id"`
+	AgentID           string     `gorm:"type:uuid;not null;index:idx_workflow_test_generation_tasks_agent;index:idx_workflow_test_generation_tasks_agent_status_created,priority:1" json:"agent_id"`
+	WorkspaceID       string     `gorm:"type:uuid;not null;index:idx_workflow_test_generation_tasks_workspace" json:"workspace_id"`
+	AccountID         string     `gorm:"type:uuid;not null;index:idx_workflow_test_generation_tasks_account" json:"account_id"`
+	Status            string     `gorm:"type:varchar(32);not null;default:'queued';index:idx_workflow_test_generation_tasks_status;index:idx_workflow_test_generation_tasks_agent_status_created,priority:2" json:"status"`
+	RequestedCount    int        `gorm:"type:int;not null;default:0" json:"requested_count"`
+	CreatedCount      int        `gorm:"type:int;not null;default:0" json:"created_count"`
+	ScenarioIDs       JSONList   `gorm:"type:jsonb;not null" json:"scenario_ids"`
+	QuestionTypes     JSONList   `gorm:"type:jsonb;not null" json:"question_types"`
+	TurnStrategy      string     `gorm:"type:varchar(32);not null;default:'mixed'" json:"turn_strategy"`
+	Prompt            string     `gorm:"type:text;not null;default:''" json:"prompt"`
+	Context           string     `gorm:"type:text;not null;default:''" json:"context"`
+	ModelProvider     string     `gorm:"type:varchar(100);not null;default:''" json:"model_provider"`
+	ModelName         string     `gorm:"type:varchar(160);not null;default:''" json:"model_name"`
+	Error             string     `gorm:"type:text;not null;default:''" json:"error"`
+	StartedAt         *time.Time `gorm:"type:timestamptz" json:"started_at,omitempty"`
+	CancelRequestedAt *time.Time `gorm:"type:timestamptz" json:"cancel_requested_at,omitempty"`
+	CompletedAt       *time.Time `gorm:"type:timestamptz" json:"completed_at,omitempty"`
+	CreatedAt         time.Time  `gorm:"not null;default:CURRENT_TIMESTAMP;index:idx_workflow_test_generation_tasks_agent_status_created,priority:3" json:"created_at"`
+	UpdatedAt         time.Time  `gorm:"not null;default:CURRENT_TIMESTAMP" json:"updated_at"`
+}
+
+func (GenerationTask) TableName() string {
+	return "workflow_test_generation_tasks"
+}
+
+type ScenarioRecognitionTask struct {
+	ID                      string     `gorm:"type:uuid;primaryKey" json:"id"`
+	AgentID                 string     `gorm:"type:uuid;not null;index:idx_workflow_test_scenario_recognition_tasks_agent;index:idx_workflow_test_scenario_recognition_tasks_agent_status_created,priority:1" json:"agent_id"`
+	WorkspaceID             string     `gorm:"type:uuid;not null;index:idx_workflow_test_scenario_recognition_tasks_workspace" json:"workspace_id"`
+	AccountID               string     `gorm:"type:uuid;not null;index:idx_workflow_test_scenario_recognition_tasks_account" json:"account_id"`
+	Status                  string     `gorm:"type:varchar(32);not null;default:'queued';index:idx_workflow_test_scenario_recognition_tasks_status;index:idx_workflow_test_scenario_recognition_tasks_agent_status_created,priority:2" json:"status"`
+	Prompt                  string     `gorm:"type:text;not null;default:''" json:"prompt"`
+	Context                 string     `gorm:"type:text;not null;default:''" json:"context"`
+	WorkflowContextSnapshot string     `gorm:"type:text;not null;default:''" json:"workflow_context_snapshot"`
+	ModelProvider           string     `gorm:"type:varchar(100);not null;default:''" json:"model_provider"`
+	ModelName               string     `gorm:"type:varchar(160);not null;default:''" json:"model_name"`
+	RecognizedCount         int        `gorm:"type:int;not null;default:0" json:"recognized_count"`
+	AssignedCaseCount       int        `gorm:"type:int;not null;default:0" json:"assigned_case_count"`
+	Error                   string     `gorm:"type:text;not null;default:''" json:"error"`
+	StartedAt               *time.Time `gorm:"type:timestamptz" json:"started_at,omitempty"`
+	CancelRequestedAt       *time.Time `gorm:"type:timestamptz" json:"cancel_requested_at,omitempty"`
+	CompletedAt             *time.Time `gorm:"type:timestamptz" json:"completed_at,omitempty"`
+	CreatedAt               time.Time  `gorm:"not null;default:CURRENT_TIMESTAMP;index:idx_workflow_test_scenario_recognition_tasks_agent_status_created,priority:3" json:"created_at"`
+	UpdatedAt               time.Time  `gorm:"not null;default:CURRENT_TIMESTAMP" json:"updated_at"`
+}
+
+func (ScenarioRecognitionTask) TableName() string {
+	return "workflow_test_scenario_recognition_tasks"
 }
 
 func newID() string {

@@ -40,6 +40,18 @@ func getOrganizationID(c *gin.Context) (uuid.UUID, error) {
 	return uuid.Parse(orgIDStr)
 }
 
+func handleChannelMutationError(c *gin.Context, err error) {
+	if msg, ok := channelprovider.UserVisibleValidationMessage(err); ok {
+		response.FailWithMessage(c, response.ErrInvalidParam, msg)
+		return
+	}
+	if isCreateRouteInputError(err) {
+		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+		return
+	}
+	response.FailWithMessage(c, response.ErrSystemError, err.Error())
+}
+
 // Tenant Route Operations
 
 func (h *ChannelHandler) CreateRoute(c *gin.Context) {
@@ -56,7 +68,7 @@ func (h *ChannelHandler) CreateRoute(c *gin.Context) {
 
 	route, err := h.service.CreateRoute(c.Request.Context(), organizationID, req)
 	if err != nil {
-		handleCreateRouteError(c, err)
+		handleChannelMutationError(c, err)
 		return
 	}
 
@@ -64,12 +76,7 @@ func (h *ChannelHandler) CreateRoute(c *gin.Context) {
 }
 
 func handleCreateRouteError(c *gin.Context, err error) {
-	if isCreateRouteInputError(err) {
-		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
-		return
-	}
-
-	response.FailWithMessage(c, response.ErrSystemError, err.Error())
+	handleChannelMutationError(c, err)
 }
 
 func isCreateRouteInputError(err error) bool {
@@ -241,7 +248,7 @@ func (h *ChannelHandler) UpdateRoute(c *gin.Context) {
 	}
 	route, err := h.service.UpdateRoute(c.Request.Context(), organizationID, id, &req)
 	if err != nil {
-		h.Error(c, err)
+		handleChannelMutationError(c, err)
 		return
 	}
 	h.Success(c, route)

@@ -922,6 +922,7 @@ const messages = {
         judgeSettings: 'AI scoring settings',
         generateCases: 'Generate Questions',
         createCase: 'Add Question',
+        goTest: 'Run Test',
         recognizeScenarios: 'Recognize Business Scenarios',
         rerecognizeScenarios: 'Recognize Again',
         recognizingScenarios: 'Recognizing...',
@@ -938,6 +939,8 @@ const messages = {
         emptyTitle: 'No business scenarios recognized yet',
         emptyDescription:
           'Recognize business scenarios from the current workflow first, then review test question coverage.',
+        recognizingDescription:
+          'Recognizing business scenarios from the current workflow. Please wait.',
       },
       cases: {
         title: 'Test Question List',
@@ -953,8 +956,22 @@ const messages = {
         batchEnable: 'Batch Enable',
         batchDisable: 'Batch Disable',
         batchDelete: 'Batch Delete',
+        batchDeleteDisabledHint: 'Select test questions before deleting them',
         batchEnabled: 'Enabled {count} test questions',
         batchDisabled: 'Disabled {count} test questions',
+        generatingBanner:
+          'Generating {count} test questions. They will be added to the library when ready.',
+        generatingTaskBanner:
+          'Generating {requested} test questions, {created} created. Refreshing the page will not interrupt the task.',
+        generatingTaskTitle: 'Generating {count} test questions...',
+        generatingTaskDescription: 'Generated questions will be added to the list automatically.',
+        generationCompletedTitle: 'Generated {count} test questions',
+        generationCompletedDescription:
+          'Generated questions have been added to the list. Review or edit them as needed.',
+        generationFailedBanner:
+          'Failed to generate {requested} test questions. {created} were created. Error: {error}',
+        generationFailedTitle: 'Failed to generate {count} test questions',
+        generationFailedDescription: '{created} were created. Error: {error}',
         clearSelection: 'Clear Selection',
         deleteConfirmTitle: 'Delete test question?',
         deleteConfirmDescription:
@@ -1114,17 +1131,23 @@ const messages = {
         questionTypeDescription:
           'The system will generate matching questions from the selected scenarios.',
         turnStrategyLabel: 'Conversation Turn Strategy',
+        turnStrategyMixed: 'Single + Multi-turn',
+        turnStrategySingle: 'Single-turn',
+        turnStrategyMulti: 'Multi-turn',
         selectedScenarioCount: 'Selected {count} business scenarios',
         selectedQuestionTypeCount: 'Selected {count} question types',
         modelLabel: 'Generation Model',
         modelPlaceholder: 'Select generation model',
         promptLabel: 'Generation Prompt Template',
         promptPlaceholder: 'Enter the generation prompt template',
+        promptDefault:
+          'Generate candidate test questions for the question library based on the current agent workflow, recognized business scenarios, and existing test questions.\n\nRequirements:\n1. Use the current UI language for all questions and expected results.\n2. Make each question sound like a real user request, not a test script or feature checklist.\n3. Cover the selected business scenarios evenly across high-frequency, critical, abnormal, boundary, and fallback cases. Avoid duplicate wording.\n4. Match the selected question types: core questions cover the main path, extension questions cover nearby expressions, and fuzzy questions cover incomplete or conversational input.\n5. For multi-turn conversations, generate natural turns with clear context progression.\n6. Add an expected result for each question that is specific enough to verify. Do not write only "answer correctly".\n7. Keep each question concise when possible.\n8. Return a JSON object in this format: \'{\'"cases":[\'{\'"content":"Question content","expected_result":"Expected result","question_type":"core"\'}\']\'}\'',
         contextLabel: 'Business Context',
         contextPlaceholder:
           'Describe the agent purpose, key business scenarios, and expected user inputs.',
         submit: 'Generate Questions',
         submitting: 'Generating...',
+        startedBanner: 'Generating {count} test questions. Please wait.',
       },
       case: {
         createTitle: 'Add Test Question',
@@ -1254,6 +1277,17 @@ const messages = {
           'This test has {failed} failed questions and {review} questions needing review. Prioritize failed questions and review scoring reasons and suggestions.',
       },
       suggestion: 'Suggestion: {suggestion}',
+      errors: {
+        judgeModelRequired:
+          'AI scoring failed: no scoring model is configured. Choose a model in AI scoring settings and retest.',
+        judgeNotConfigured:
+          'AI scoring is not configured. Configure it and retest, or review manually.',
+        judgeEmptyResult: 'AI scoring returned no valid result. Review this result manually.',
+        judgeFailed: 'AI scoring failed',
+        judgeFailedSuggestion: 'AI scoring failed. Review manually or rerun the test.',
+        judgeManualReviewSuggestion: 'Review this result manually.',
+        judgeConfigureSuggestion: 'Configure AI scoring and rerun, or review manually.',
+      },
     },
     toasts: {
       settingsSaved: 'AI scoring prompt saved',
@@ -1265,6 +1299,7 @@ const messages = {
       scenariosSaved: 'Business scenarios saved',
       scenariosSaveFailed: 'Failed to save business scenarios',
       scenariosRecognized: 'Recognized {count} business scenarios',
+      scenariosRecognitionStarted: 'Recognizing business scenarios',
       scenariosRecognizeFailed: 'Failed to recognize business scenarios',
       caseCreated: 'Test question added',
       caseCreateFailed: 'Failed to add test question',
@@ -1275,6 +1310,8 @@ const messages = {
       caseDeleteFailed: 'Failed to delete test question',
       casesGenerated: 'Generated {count} test questions',
       casesGenerateFailed: 'Failed to generate test questions',
+      casesGenerationStarted: 'Generating {count} test questions',
+      casesGenerationCompleted: 'Generated {count} test questions',
       batchCreated: 'Test batch created',
       batchCreateFailed: 'Failed to create test batch',
       batchStarted: 'Test batch started',
