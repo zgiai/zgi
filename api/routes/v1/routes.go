@@ -99,5 +99,8 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	RegisterDashboardRoutes(v1, serviceContainer, llmModule)
 
 	// ---------- GDPR Compliance ----------
-	RegisterGDPRRoutes(v1, serviceContainer)
+	RegisterGDPRRoutes(v1, GDPRRouteDeps{
+		DB:             db,
+		AccountService: accountService,
+	})
 }
