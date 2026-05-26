@@ -6,6 +6,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/container"
 	"github.com/zgiai/zgi/api/internal/infra/platform"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
+	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
 	workspacerepo "github.com/zgiai/zgi/api/internal/modules/workspace/repository"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/email"
@@ -27,6 +28,7 @@ var legacyGlobalsModule = fx.Module("legacyglobals",
 var legacyContainerModule = fx.Module("legacycontainer",
 	fx.Provide(
 		provideServiceContainer,
+		provideBootstrapService,
 	),
 )
 
@@ -101,4 +103,8 @@ func provideScheduler(serviceContainer *container.ServiceContainer) *pkgschedule
 
 func provideGraphFlowService(serviceContainer *container.ServiceContainer) *graphflow.Service {
 	return serviceContainer.GetGraphFlowService()
+}
+
+func provideBootstrapService(serviceContainer *container.ServiceContainer) *system_service.BootstrapService {
+	return serviceContainer.GetBootstrapService()
 }
