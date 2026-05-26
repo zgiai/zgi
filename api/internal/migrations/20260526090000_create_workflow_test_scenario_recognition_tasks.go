@@ -2,7 +2,7 @@ package migrations
 
 import mschema "github.com/zgiai/zgi/api/internal/migrations/schema"
 
-const migration20260526090000ID = "20260526090000_create_workflow_test_scenario_recognition_tasks"
+const migrationCreateWorkflowTestScenarioRecognitionTasksID = "20260526090000_create_workflow_test_scenario_recognition_tasks"
 
 const workflowTestScenarioRecognitionTasksActiveIndexSQL = `
 CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_test_scenario_recognition_tasks_active_agent
@@ -12,7 +12,7 @@ WHERE status IN ('queued', 'running', 'canceling')
 
 func init() {
 	registerSchemaMigration(
-		migration20260526090000ID,
+		migrationCreateWorkflowTestScenarioRecognitionTasksID,
 		upCreateWorkflowTestScenarioRecognitionTasks,
 		downCreateWorkflowTestScenarioRecognitionTasks,
 	)

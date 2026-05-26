@@ -4,11 +4,11 @@ import (
 	mschema "github.com/zgiai/zgi/api/internal/migrations/schema"
 )
 
-const migration20260526090000ID = "20260526090000_create_chat_runtime_account_skill_preferences"
+const migrationCreateChatRuntimeAccountSkillPreferencesID = "20260526090000_create_chat_runtime_account_skill_preferences"
 
 func init() {
 	registerSchemaMigration(
-		migration20260526090000ID,
+		migrationCreateChatRuntimeAccountSkillPreferencesID,
 		upCreateChatRuntimeAccountSkillPreferences,
 		downCreateChatRuntimeAccountSkillPreferences,
 	)

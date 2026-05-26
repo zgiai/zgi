@@ -4,10 +4,10 @@ import (
 	mschema "github.com/zgiai/zgi/api/internal/migrations/schema"
 )
 
-const migration20260525090000ID = "20260525090000_create_chat_runtime_and_agent_versions"
+const migrationCreateChatRuntimeAndAgentVersionsID = "20260525090000_create_chat_runtime_and_agent_versions"
 
 func init() {
-	registerSchemaMigration(migration20260525090000ID, upCreateChatRuntimeAndAgentVersions, nil)
+	registerSchemaMigration(migrationCreateChatRuntimeAndAgentVersionsID, upCreateChatRuntimeAndAgentVersions, nil)
 }
 
 func upCreateChatRuntimeAndAgentVersions(schema *mschema.Builder) error {
