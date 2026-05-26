@@ -15,6 +15,7 @@ import { SysChat, type SysChatProps } from './variants/sys/sys-chat';
 import { ImgChat } from './variants/img/img-chat';
 import { type ModelSelectorValue } from '../common/model-selector/model-selector';
 import { AIChatShell, type AIChatModelValue } from '@/components/chat/variants/aichat/aichat-chat';
+import type { AIChatUploadScope } from '@/components/chat/variants/aichat/input-area';
 import type { AIChatController } from '@/components/chat/controllers/aichat-controller';
 
 interface SingleTestVariantProps {
@@ -116,6 +117,7 @@ interface AIChatVariantProps {
   showMemoryToggle?: boolean;
   forcedUseMemory?: boolean;
   enableUpload?: boolean;
+  uploadScope?: AIChatUploadScope;
   showFileLibraryPicker?: boolean;
   homeBrand?: React.ReactNode;
   homeTitle?: string;

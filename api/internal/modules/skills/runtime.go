@@ -412,8 +412,8 @@ func MetaToolsForSkillState(resolved *ResolvedSkills, loadedSkillIDs map[string]
 	if referenceSkillIDs, referencePaths := loadedReferenceOptions(resolved, loaded); len(referenceSkillIDs) > 0 && len(referencePaths) > 0 {
 		tools = append(tools, readReferenceMetaTool(referenceSkillIDs, referencePaths))
 	}
-	if toolSkillIDs, toolNames, pairs := loadedToolOptions(resolved, loaded); len(toolSkillIDs) > 0 && len(toolNames) > 0 {
-		tools = append(tools, callSkillToolMetaTool(toolSkillIDs, toolNames, pairs))
+	if toolSkillIDs, toolNames, pairs, argumentHints := loadedToolOptions(resolved, loaded); len(toolSkillIDs) > 0 && len(toolNames) > 0 {
+		tools = append(tools, callSkillToolMetaTool(toolSkillIDs, toolNames, pairs, argumentHints))
 	}
 	return tools
 }
@@ -425,7 +425,7 @@ func metaTools(includeToolCaller bool) []llmadapter.Tool {
 		intermediateAnswerMetaTool(),
 	}
 	if includeToolCaller {
-		tools = append(tools, callSkillToolMetaTool(nil, nil, nil))
+		tools = append(tools, callSkillToolMetaTool(nil, nil, nil, nil))
 	}
 	return tools
 }
@@ -489,10 +489,14 @@ func intermediateAnswerMetaTool() llmadapter.Tool {
 	}
 }
 
-func callSkillToolMetaTool(skillIDs []string, toolNames []string, pairs []string) llmadapter.Tool {
+func callSkillToolMetaTool(skillIDs []string, toolNames []string, pairs []string, argumentHints []string) llmadapter.Tool {
 	description := "Call a tool allowed by a loaded skill after reading its instructions."
 	if len(pairs) > 0 {
 		description += " Allowed skill/tool pairs: " + strings.Join(pairs, "; ") + "."
+	}
+	argumentsDescription := "Arguments for the skill tool. Pass a non-empty object that satisfies the selected tool's required parameters."
+	if len(argumentHints) > 0 {
+		argumentsDescription += " Tool argument requirements: " + strings.Join(argumentHints, " ")
 	}
 	return llmadapter.Tool{
 		Type: "function",
@@ -506,7 +510,7 @@ func callSkillToolMetaTool(skillIDs []string, toolNames []string, pairs []string
 					"tool_name": stringSchema("The allowed tool name to call.", toolNames),
 					"arguments": map[string]interface{}{
 						"type":        "object",
-						"description": "Arguments for the skill tool.",
+						"description": argumentsDescription,
 					},
 				},
 				"required": []string{"skill_id", "tool_name", "arguments"},
@@ -585,15 +589,16 @@ func loadedReferenceOptions(resolved *ResolvedSkills, loaded map[string]struct{}
 	return skillIDs, paths
 }
 
-func loadedToolOptions(resolved *ResolvedSkills, loaded map[string]struct{}) ([]string, []string, []string) {
+func loadedToolOptions(resolved *ResolvedSkills, loaded map[string]struct{}) ([]string, []string, []string, []string) {
 	if resolved == nil || len(loaded) == 0 {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	skillSeen := map[string]struct{}{}
 	toolSeen := map[string]struct{}{}
 	skillIDs := []string{}
 	toolNames := []string{}
 	pairs := []string{}
+	argumentHints := []string{}
 	for _, doc := range resolved.Skills {
 		skillID := normalizeSkillID(doc.Metadata.ID)
 		if _, ok := loaded[skillID]; !ok || len(doc.Tools) == 0 {
@@ -618,12 +623,37 @@ func loadedToolOptions(resolved *ResolvedSkills, loaded map[string]struct{}) ([]
 		sort.Strings(docToolNames)
 		if len(docToolNames) > 0 {
 			pairs = append(pairs, skillID+": "+strings.Join(docToolNames, ", "))
+			if hint := skillToolArgumentHint(skillID, docToolNames); hint != "" {
+				argumentHints = append(argumentHints, hint)
+			}
 		}
 	}
 	sort.Strings(skillIDs)
 	sort.Strings(toolNames)
 	sort.Strings(pairs)
-	return skillIDs, toolNames, pairs
+	sort.Strings(argumentHints)
+	return skillIDs, toolNames, pairs, argumentHints
+}
+
+func skillToolArgumentHint(skillID string, toolNames []string) string {
+	if normalizeSkillID(skillID) != SkillCalculator {
+		return ""
+	}
+	available := map[string]struct{}{}
+	for _, name := range toolNames {
+		available[strings.TrimSpace(name)] = struct{}{}
+	}
+	parts := []string{}
+	if _, ok := available["evaluate_expression"]; ok {
+		parts = append(parts, "calculator/evaluate_expression requires arguments.expression string and optional arguments.precision integer.")
+	}
+	if _, ok := available["calculate"]; ok {
+		parts = append(parts, "calculator/calculate requires arguments.operation plus numeric arguments.left and arguments.right; optional arguments.precision.")
+	}
+	if _, ok := available["percentage"]; ok {
+		parts = append(parts, "calculator/percentage requires arguments.operation; percent_of/apply_* require value and percent; change requires from and to; optional precision.")
+	}
+	return strings.Join(parts, " ")
 }
 
 func SkillMetadataSystemMessage(metadata []SkillPromptMetadata) llmadapter.Message {

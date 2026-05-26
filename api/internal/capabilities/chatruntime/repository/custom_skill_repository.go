@@ -2,12 +2,14 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -96,14 +98,22 @@ func (r *customSkillRepository) Upsert(ctx context.Context, skill *runtimemodel.
 			}
 			return nil
 		}
+		displayJSON, err := json.Marshal(skill.Display)
+		if err != nil {
+			return fmt.Errorf("failed to marshal custom skill display: %w", err)
+		}
+		manifestJSON, err := json.Marshal(skill.Manifest)
+		if err != nil {
+			return fmt.Errorf("failed to marshal custom skill manifest: %w", err)
+		}
 		updates := map[string]interface{}{
 			"name":             skill.Name,
 			"description":      skill.Description,
 			"when_to_use":      skill.WhenToUse,
 			"runtime_type":     skill.RuntimeType,
-			"display":          skill.Display,
+			"display":          datatypes.JSON(displayJSON),
 			"storage_path":     skill.StoragePath,
-			"manifest":         skill.Manifest,
+			"manifest":         datatypes.JSON(manifestJSON),
 			"status":           skill.Status,
 			"validation_error": skill.ValidationError,
 			"updated_at":       now,

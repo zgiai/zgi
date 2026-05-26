@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/dto"
+	filemodel "github.com/zgiai/zgi/api/internal/modules/file_process/model"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/util"
@@ -28,6 +30,7 @@ type AgentsHandler struct {
 	tenantService       interfaces.WorkspaceManagementService
 	accountService      interfaces.AccountService
 	organizationService interfaces.OrganizationService
+	fileService         interfaces.FileService
 	db                  *gorm.DB
 	chatRuntimeService  runtimeservice.Service
 }
@@ -45,6 +48,10 @@ func NewAgentsHandler(appService AgentsService, tenantService interfaces.Workspa
 		db:                  db,
 		chatRuntimeService:  chatRuntimeService,
 	}
+}
+
+func (h *AgentsHandler) SetFileService(fileService interfaces.FileService) {
+	h.fileService = fileService
 }
 
 func (h *AgentsHandler) GetAgentsList(c *gin.Context) {
@@ -583,6 +590,94 @@ func (h *AgentsHandler) GetWebAppRuntimeConfig(c *gin.Context) {
 			"version_uuid": result.VersionUUID,
 		},
 	})
+}
+
+func (h *AgentsHandler) GetWebAppUploadConfig(c *gin.Context) {
+	if h.fileService == nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	published, err := h.appService.GetPublishedAgentWebAppConfig(c.Request.Context(), c.Param("web_app_id"))
+	if err != nil {
+		h.failWebAppRuntime(c, err)
+		return
+	}
+	if !published.Config.FileUpload {
+		response.Fail(c, response.ErrPermissionDenied)
+		return
+	}
+	response.Success(c, h.fileService.GetUploadConfig())
+}
+
+func (h *AgentsHandler) UploadWebAppFile(c *gin.Context) {
+	if h.fileService == nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	published, err := h.appService.GetPublishedAgentWebAppConfig(c.Request.Context(), c.Param("web_app_id"))
+	if err != nil {
+		h.failWebAppRuntime(c, err)
+		return
+	}
+	if !published.Config.FileUpload {
+		response.Fail(c, response.ErrPermissionDenied)
+		return
+	}
+	accountID := strings.TrimSpace(c.GetString("account_id"))
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	file, header, err := c.Request.FormFile("file")
+	if err != nil {
+		response.Fail(c, response.ErrNoFileUploaded)
+		return
+	}
+	defer file.Close()
+	if err := c.Request.ParseMultipartForm(32 << 20); err == nil && len(c.Request.MultipartForm.File) > 1 {
+		response.Fail(c, response.ErrTooManyFiles)
+		return
+	}
+	if strings.TrimSpace(header.Filename) == "" {
+		response.Fail(c, response.ErrFilenameRequired)
+		return
+	}
+	content, err := io.ReadAll(file)
+	if err != nil {
+		response.Fail(c, response.ErrFileReadFailed)
+		return
+	}
+	mimeType := header.Header.Get("Content-Type")
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+	workspaceID := published.WorkspaceID
+	uploadFile, err := h.fileService.UploadFile(
+		c.Request.Context(),
+		header.Filename,
+		content,
+		mimeType,
+		accountID,
+		published.OrganizationID,
+		filemodel.CreatedByRoleEndUser,
+		nil,
+		&workspaceID,
+		true,
+		false,
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, filemodel.ErrFileTooLarge):
+			response.Fail(c, response.ErrFileTooLarge)
+		case errors.Is(err, filemodel.ErrUnsupportedFileType):
+			response.Fail(c, response.ErrUnsupportedFileType)
+		default:
+			logger.ErrorContext(c.Request.Context(), "failed to upload webapp file", err)
+			response.FailWithMessage(c, response.ErrorCode{Code: 210002, Message: "Failed to upload file", UserVisible: true}, err.Error())
+		}
+		return
+	}
+	response.Success(c, dto.NewFileUploadResponse(uploadFile))
 }
 
 func agentRuntimeRequestContext(c *gin.Context, accountID string) context.Context {

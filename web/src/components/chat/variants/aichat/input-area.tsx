@@ -51,6 +51,8 @@ import {
 } from '@/components/chat/variants/aichat/input-area-utils';
 import type { AIChatModelValue } from '@/components/chat/variants/aichat/types';
 
+export type AIChatUploadScope = { type: 'console' } | { type: 'webapp'; webAppId: string };
+
 const FileSelectorDialog = dynamic(() => import('@/components/files/file-selector-dialog'), {
   ssr: false,
 });
@@ -137,6 +139,7 @@ interface AIChatInputAreaProps {
   showModelSelector?: boolean;
   showMemoryToggle?: boolean;
   enableUpload?: boolean;
+  uploadScope?: AIChatUploadScope;
   showFileLibraryPicker?: boolean;
   inputPlaceholder?: string;
 }
@@ -166,6 +169,7 @@ export function AIChatInputArea({
   showModelSelector = true,
   showMemoryToggle = true,
   enableUpload = true,
+  uploadScope = { type: 'console' },
   showFileLibraryPicker = true,
   inputPlaceholder,
 }: AIChatInputAreaProps) {
@@ -182,7 +186,10 @@ export function AIChatInputArea({
     null
   );
   const [useMemory, setUseMemory] = useState(false);
-  const { data: uploadConfig } = useUploadConfig({ enabled: true });
+  const { data: uploadConfig } = useUploadConfig({
+    enabled: enableUpload,
+    scope: uploadScope.type === 'webapp' ? uploadScope : undefined,
+  });
   const allowedExtensions = useMemo(
     () => filterLowercaseExtensions([...AICHAT_DOCUMENT_EXTENSIONS]),
     []
@@ -245,15 +252,19 @@ export function AIChatInputArea({
   const uploadOneFile = useCallback(
     async (file: File, localId: string, kind: AIChatAttachmentUploadKind) => {
       try {
-        const response = await uploadService.uploadSingle(file, {
-          is_temporary: true,
-          onProgress: progress =>
-            setAttachments(current =>
-              current.map(attachment =>
-                attachment.id === localId ? { ...attachment, progress } : attachment
-              )
-            ),
-        });
+        const onProgress = (progress: number) =>
+          setAttachments(current =>
+            current.map(attachment =>
+              attachment.id === localId ? { ...attachment, progress } : attachment
+            )
+          );
+        const response =
+          uploadScope.type === 'webapp'
+            ? await uploadService.uploadWebAppSingle(uploadScope.webAppId, file, { onProgress })
+            : await uploadService.uploadSingle(file, {
+                is_temporary: true,
+                onProgress,
+              });
         const uploadedFile = toAIChatMessageFile(response, kind);
         setAttachments(current =>
           current.map(attachment =>
@@ -291,7 +302,7 @@ export function AIChatInputArea({
         );
       }
     },
-    [t]
+    [t, uploadScope]
   );
 
   const enqueueFiles = useCallback(

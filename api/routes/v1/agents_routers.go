@@ -63,6 +63,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	}
 	service := app.NewAgentsService(repo, accountService, tenantService, workflowService, chatRuntimeService, resourcePermissionService, enterpriseService, quotaService, fileService, llmClient, defaultModelResolver, db)
 	appHandler := app.NewAgentsHandler(service, tenantService, accountService, enterpriseService, db, chatRuntimeService)
+	appHandler.SetFileService(fileService)
 	workflowTestService := workflowtest.NewService(workflowtest.NewRepository(db))
 	workflowTestHandler := workflowtest.NewHandler(workflowTestService, workflowService, enterpriseService, llmClient)
 
@@ -104,6 +105,8 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	protectedWebApps.Use(middleware.SetAccountService(accountService))
 	protectedWebApps.Use(middleware.WebAppAuthMiddleware())
 	protectedWebApps.POST("/:web_app_id/chat", appHandler.ChatWebAppAgent)
+	protectedWebApps.GET("/:web_app_id/files/upload", appHandler.GetWebAppUploadConfig)
+	protectedWebApps.POST("/:web_app_id/files/upload", appHandler.UploadWebAppFile)
 	protectedWebApps.GET("/:web_app_id/runtime/conversations", appHandler.ListWebAppAgentRuntimeConversations)
 	protectedWebApps.GET("/:web_app_id/runtime/conversations/:conversation_id", appHandler.GetWebAppAgentRuntimeConversation)
 	protectedWebApps.PATCH("/:web_app_id/runtime/conversations/:conversation_id", appHandler.UpdateWebAppAgentRuntimeConversation)

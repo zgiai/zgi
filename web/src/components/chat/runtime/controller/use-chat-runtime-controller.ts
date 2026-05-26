@@ -39,8 +39,10 @@ import { MEMORY_KEYS } from '@/hooks/query-keys';
  */
 export function useChatRuntimeController(options?: {
   transport?: AIChatRuntimeTransport;
+  requireModel?: boolean;
 }): AIChatController {
   const queryClient = useQueryClient();
+  const requireModel = options?.requireModel ?? true;
   const transportRef = useRef<AIChatRuntimeTransport>(options?.transport ?? aichatTransport);
   useEffect(() => {
     if (options?.transport) {
@@ -212,6 +214,7 @@ export function useChatRuntimeController(options?: {
   const { send, regenerate, replaceRootMessage } = useChatRuntimeMessageActions({
     stateRef,
     transportRef,
+    requireModel,
     pendingStreamAbortRef,
     streamAbortByConversationRef,
     streamingMessageRef,

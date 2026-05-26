@@ -2,12 +2,14 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -38,11 +40,15 @@ func (r *accountSkillPreferenceRepository) Upsert(ctx context.Context, pref *run
 	}
 	now := time.Now()
 	pref.UpdatedAt = now
+	enabledSkillIDs, err := json.Marshal(pref.EnabledSkillIDs)
+	if err != nil {
+		return fmt.Errorf("failed to marshal account skill preference enabled skill ids: %w", err)
+	}
 	result := r.db.WithContext(ctx).
 		Model(&runtimemodel.AccountSkillPreference{}).
 		Where("organization_id = ? AND account_id = ? AND caller_type = ?", pref.OrganizationID, pref.AccountID, pref.CallerType).
 		Updates(map[string]interface{}{
-			"enabled_skill_ids": pref.EnabledSkillIDs,
+			"enabled_skill_ids": datatypes.JSON(enabledSkillIDs),
 			"updated_at":        now,
 		})
 	if result.Error != nil {

@@ -45,7 +45,8 @@ export default function AgentWebappChat({ webAppId, config }: AgentWebappChatPro
     [config, t]
   );
   const transport = useMemo(() => createAgentWebAppTransport(webAppId), [webAppId]);
-  const controller = useAIChatController({ transport });
+  const uploadScope = useMemo(() => ({ type: 'webapp' as const, webAppId }), [webAppId]);
+  const controller = useAIChatController({ transport, requireModel: false });
   const initController = controller.init;
   const modelValue = useMemo(() => ({ provider: '', model: '', params: {} }), []);
 
@@ -64,6 +65,7 @@ export default function AgentWebappChat({ webAppId, config }: AgentWebappChatPro
       requireModel={false}
       showMemoryToggle={false}
       enableUpload={Boolean(agentConfig?.file_upload_enabled)}
+      uploadScope={uploadScope}
       showFileLibraryPicker={false}
       suggestions={agentConfig?.suggested_questions ?? []}
       inputPlaceholder={inputPlaceholder}

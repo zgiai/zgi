@@ -30,6 +30,7 @@ import type { ChatRuntimeEventAppliers } from '@/components/chat/runtime/control
 interface UseChatRuntimeMessageActionsArgs {
   stateRef: MutableRefObject<AIChatControllerStore>;
   transportRef: MutableRefObject<AIChatRuntimeTransport>;
+  requireModel: boolean;
   pendingStreamAbortRef: MutableRefObject<AbortController | null>;
   streamAbortByConversationRef: MutableRefObject<Record<string, AbortController>>;
   streamingMessageRef: MutableRefObject<{ conversationId: string; messageId: string } | null>;
@@ -44,6 +45,7 @@ interface UseChatRuntimeMessageActionsArgs {
 export function useChatRuntimeMessageActions({
   stateRef,
   transportRef,
+  requireModel,
   pendingStreamAbortRef,
   streamAbortByConversationRef,
   streamingMessageRef,
@@ -99,7 +101,7 @@ export function useChatRuntimeMessageActions({
         : false;
       if (
         !trimmedQuery ||
-        !model.model ||
+        (requireModel && !model.model) ||
         currentState.isSending ||
         isActiveRecovering ||
         isActiveStopping ||
@@ -374,6 +376,7 @@ export function useChatRuntimeMessageActions({
       applyStreamError,
       markSelectionTarget,
       pendingStreamAbortRef,
+      requireModel,
       refreshAccountMemoryAfterToolCall,
       setControllerState,
       stateRef,
