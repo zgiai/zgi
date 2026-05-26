@@ -16,34 +16,57 @@ import (
 	"gorm.io/gorm"
 )
 
-// legacyBridgeModule isolates the pre-Fx wiring model behind a narrow bridge.
-// It keeps global initializers and ServiceContainer-based assembly in one place,
-// then exposes only the concrete runtime dependencies that the Fx app still needs.
-var legacyBridgeModule = fx.Module("legacybridge",
+type legacyGlobalsReady struct{}
+
+var legacyGlobalsModule = fx.Module("legacyglobals",
+	fx.Provide(
+		provideLegacyGlobals,
+	),
+)
+
+var legacyContainerModule = fx.Module("legacycontainer",
 	fx.Provide(
 		provideServiceContainer,
+	),
+)
+
+var taskRuntimeModule = fx.Module("taskruntime",
+	fx.Provide(
 		provideTaskManager,
 		provideTaskHandlerRegistry,
+	),
+)
+
+var schedulerModule = fx.Module("scheduler",
+	fx.Provide(
 		provideScheduler,
+	),
+)
+
+var graphFlowModule = fx.Module("graphflow",
+	fx.Provide(
 		provideGraphFlowService,
 	),
 )
 
-// provideServiceContainer bridges the legacy container into the Fx graph.
+func provideLegacyGlobals(cfg *config.Config) legacyGlobalsReady {
+	// These package-level initializers still back legacy code paths that are
+	// not constructor-injected yet.
+	jwt.Init(cfg)
+	email.Init(cfg)
+	return legacyGlobalsReady{}
+}
+
+// provideServiceContainer bridges the legacy service container into the Fx graph.
 // The Redis dependency is intentionally requested to force infra initialization
 // to complete before the legacy boot side effects run.
 func provideServiceContainer(
 	db *gorm.DB,
 	cfg *config.Config,
 	_ *redis.Client,
+	_ legacyGlobalsReady,
 	platformContainer *platform.Container,
 ) (*container.ServiceContainer, error) {
-	// Global config and DB are initialized by base/infra providers before this bridge runs.
-	// These package-level initializers still back legacy code paths that are
-	// not constructor-injected yet.
-	jwt.Init(cfg)
-	email.Init(cfg)
-
 	tokenManager := util.NewTokenManager()
 
 	workspaceRepo := workspacerepo.NewWorkspaceRepository(db)
