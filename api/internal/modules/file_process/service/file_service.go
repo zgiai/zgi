@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -422,6 +423,103 @@ func (s *fileService) GetFilePreviewWithOCR(ctx context.Context, fileID string, 
 
 func (s *fileService) GetFile(ctx context.Context, fileID string) (string, error) {
 	return s.getFileInner(ctx, fileID, false, nil)
+}
+
+// ExtractFileWithSetting explicitly extracts file content with caller-provided
+// parsing settings and bypasses cached ContentText from upload-time parsing.
+func (s *fileService) ExtractFileWithSetting(ctx context.Context, fileID string, setting interfaces.FileExtractionSetting) (string, error) {
+	uploadFile, err := s.fileRepo.GetByID(ctx, fileID)
+	if err != nil {
+		return "", model.ErrFileNotFound
+	}
+
+	if !model.IsDocumentExtension(uploadFile.Extension) {
+		return "", model.ErrUnsupportedFileType
+	}
+
+	cacheKey := extractionSettingCacheKey(setting)
+	if cacheKey != "" {
+		cache, err := s.fileRepo.GetExtractionCache(ctx, fileID, cacheKey)
+		if err == nil && strings.TrimSpace(cache.Content) != "" {
+			logger.InfoContext(ctx, "file extraction cache hit", "file_id", fileID, "cache_key", cacheKey, "source", cache.Source)
+			return cache.Content, nil
+		}
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			logger.WarnContext(ctx, "failed to read file extraction cache", "file_id", fileID, "cache_key", cacheKey, err)
+		}
+	}
+
+	var processRule *dataset_model.DatasetProcessRule
+	if setting.EnableOCR != nil {
+		processRule = &dataset_model.DatasetProcessRule{
+			Mode: "automatic",
+			Rules: map[string]interface{}{
+				"pre_processing_rules": []interface{}{
+					map[string]interface{}{
+						"id":      "image_content_recognition",
+						"enabled": *setting.EnableOCR,
+					},
+				},
+			},
+		}
+	}
+
+	extractSetting := &extractor.ExtractSetting{
+		DatasourceType:            extractor.DatasourceTypeFile,
+		UploadFile:                uploadFile,
+		DocumentModel:             "text_model",
+		ProcessRule:               processRule,
+		ExtractionStrategy:        setting.ExtractionStrategy,
+		ExtractionFallbackEnabled: setting.ExtractionFallbackEnabled,
+	}
+
+	extractOutput, text, err := s.extractor.LoadFromUploadFileWithSetting(ctx, uploadFile, true, false, extractSetting)
+	if err != nil {
+		return "", fmt.Errorf("failed to extract file content: %w", err)
+	}
+	content := text
+	if text != "" {
+		content = text
+	} else {
+		content = dto.ExtractOutputText(extractOutput)
+	}
+	if cacheKey != "" && strings.TrimSpace(content) != "" {
+		if err := s.fileRepo.UpsertExtractionCache(ctx, &model.FileExtractionCache{
+			FileID:   fileID,
+			CacheKey: cacheKey,
+			Content:  content,
+			Source:   setting.CacheNamespace,
+		}); err != nil {
+			logger.WarnContext(ctx, "failed to write file extraction cache", "file_id", fileID, "cache_key", cacheKey, err)
+		} else {
+			logger.InfoContext(ctx, "file extraction cache stored", "file_id", fileID, "cache_key", cacheKey, "source", setting.CacheNamespace)
+		}
+	}
+	return content, nil
+}
+
+func extractionSettingCacheKey(setting interfaces.FileExtractionSetting) string {
+	namespace := strings.TrimSpace(setting.CacheNamespace)
+	if namespace == "" {
+		return ""
+	}
+	fallback := "nil"
+	if setting.ExtractionFallbackEnabled != nil {
+		fallback = fmt.Sprintf("%t", *setting.ExtractionFallbackEnabled)
+	}
+	ocr := "nil"
+	if setting.EnableOCR != nil {
+		ocr = fmt.Sprintf("%t", *setting.EnableOCR)
+	}
+	raw := fmt.Sprintf(
+		"%s|strategy=%s|fallback=%s|ocr=%s",
+		namespace,
+		strings.TrimSpace(setting.ExtractionStrategy),
+		fallback,
+		ocr,
+	)
+	sum := sha256.Sum256([]byte(raw))
+	return fmt.Sprintf("%s:%x", namespace, sum[:16])
 }
 
 // GetSupportedFileTypes gets supported file types

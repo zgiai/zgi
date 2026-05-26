@@ -17,7 +17,7 @@ import {
 import { DB_KEYS } from '@/hooks/query-keys';
 
 export interface UseAnalyzeFileForTableReturn {
-  analyze: (payload: AnalyzeFileForTableRequest) => Promise<DbTableColumn[]>;
+  analyze: (payload: AnalyzeFileForTableRequest) => Promise<DbTableColumnsPayload>;
   isPending: boolean;
 }
 
@@ -74,11 +74,11 @@ export function useAnalyzeFileForTable(): UseAnalyzeFileForTableReturn {
     },
   });
 
-  const analyze = async (payload: AnalyzeFileForTableRequest): Promise<DbTableColumn[]> => {
+  const analyze = async (payload: AnalyzeFileForTableRequest): Promise<DbTableColumnsPayload> => {
     const res = await mutateAsync(payload);
     const raw = Array.isArray(res?.data?.columns) ? res.data.columns : [];
     // Ensure strict types and defaults
-    return raw.map(col => ({
+    const columns = raw.map(col => ({
       id: String(col.id ?? ''),
       name: String(col.name ?? ''),
       description: String(col.description ?? ''),
@@ -86,6 +86,10 @@ export function useAnalyzeFileForTable(): UseAnalyzeFileForTableReturn {
       is_required: Boolean(col.is_required),
       is_system_field: Boolean((col as { is_system_field?: boolean }).is_system_field),
     }));
+    return {
+      columns,
+      content: typeof res?.data?.content === 'string' ? res.data.content : '',
+    };
   };
 
   return { analyze, isPending };

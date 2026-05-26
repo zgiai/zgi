@@ -166,6 +166,7 @@ export default function StepOne({ dataSourceId, onAnalyzeDone, initialAiColumns 
 
   // AI result
   const [aiColumns, setAiColumns] = useState<DbTableColumn[]>(initialAiColumns ?? []);
+  const [analyzedPreviewContent, setAnalyzedPreviewContent] = useState('');
   useEffect(() => {
     if (Array.isArray(initialAiColumns)) {
       setAiColumns(initialAiColumns);
@@ -173,6 +174,11 @@ export default function StepOne({ dataSourceId, onAnalyzeDone, initialAiColumns 
   }, [initialAiColumns]);
 
   const { analyze, isPending: isAnalyzing } = useAnalyzeFileForTable();
+  useEffect(() => {
+    if (!referenceEnabled || !selectedFile?.id) {
+      setAnalyzedPreviewContent('');
+    }
+  }, [referenceEnabled, selectedFile?.id]);
 
   const canAnalyze = useMemo(() => {
     // Require prompt, model, and file (if reference enabled)
@@ -186,6 +192,7 @@ export default function StepOne({ dataSourceId, onAnalyzeDone, initialAiColumns 
     const first = files[0];
     if (first) {
       setSelectedFile(first);
+      setAnalyzedPreviewContent('');
     }
     setFileDialogOpen(false);
   }, []);
@@ -198,8 +205,10 @@ export default function StepOne({ dataSourceId, onAnalyzeDone, initialAiColumns 
       data_source_id: dataSourceId,
       ...(referenceEnabled && selectedFile?.id ? { file_id: selectedFile.id } : {}),
     };
-    const cols = await analyze(payload);
+    const result = await analyze(payload);
+    const cols = result.columns;
     setAiColumns(cols);
+    setAnalyzedPreviewContent(result.content ?? '');
     onAnalyzeDone(cols);
   }, [
     analyze,
@@ -222,6 +231,7 @@ export default function StepOne({ dataSourceId, onAnalyzeDone, initialAiColumns 
       refetchOnWindowFocus: false,
     }
   );
+  const displayedPreviewContent = analyzedPreviewContent || previewContent;
 
   // Terms to highlight inside preview based on AI columns
   const highlightTerms = useMemo(() => {
@@ -372,7 +382,10 @@ export default function StepOne({ dataSourceId, onAnalyzeDone, initialAiColumns 
                   <Button
                     isIcon
                     variant="ghost"
-                    onClick={() => setSelectedFile(null)}
+                    onClick={() => {
+                      setSelectedFile(null);
+                      setAnalyzedPreviewContent('');
+                    }}
                     className="h-8 w-8"
                     aria-label={t('dbs.createPage.removeFileAria')}
                   >
@@ -429,8 +442,8 @@ export default function StepOne({ dataSourceId, onAnalyzeDone, initialAiColumns 
                   <Skeleton key={i} className="h-4 w-full" />
                 ))}
               </div>
-            ) : previewContent ? (
-              <MarkdownViewer content={previewContent} highlights={highlightTerms} />
+            ) : displayedPreviewContent ? (
+              <MarkdownViewer content={displayedPreviewContent} highlights={highlightTerms} />
             ) : (
               <div className="text-sm text-muted-foreground">{t('dbs.createPage.noPreview')}</div>
             )}
