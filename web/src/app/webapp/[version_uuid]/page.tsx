@@ -7,7 +7,8 @@ import { useParams, useRouter } from 'next/navigation';
 import { detectWebappMode } from '@/utils/webapp/helpers';
 import { useT } from '@/i18n';
 import { WebAppOfflineState } from '@/components/webapp/offline-state';
-import { isWebAppOfflineError } from '@/utils/webapp/errors';
+import { WebAppNotPublishedState } from '@/components/webapp/not-published-state';
+import { isWebAppNotPublishedError, isWebAppOfflineError } from '@/utils/webapp/errors';
 
 /**
  * Redirect shim: detects webapp mode and redirects to /chat or /run
@@ -38,6 +39,8 @@ export default function WebappPage(): JSX.Element {
           </div>
         ) : isWebAppOfflineError(error) ? (
           <WebAppOfflineState />
+        ) : isWebAppNotPublishedError(error) ? (
+          <WebAppNotPublishedState />
         ) : isError ? (
           <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
             {t('run.configError')}

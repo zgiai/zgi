@@ -196,6 +196,12 @@ type AgentConfigResponse struct {
 	KnowledgeRetrievalConfig map[string]interface{} `json:"knowledge_retrieval_config"`
 }
 
+type AgentDraftRuntimeConfigResponse struct {
+	AgentID     string              `json:"agent_id"`
+	WorkspaceID string              `json:"workspace_id"`
+	Config      AgentConfigResponse `json:"config"`
+}
+
 type AgentSuggestedQuestionSkillContext struct {
 	ID          string `json:"id,omitempty"`
 	Name        string `json:"name,omitempty"`

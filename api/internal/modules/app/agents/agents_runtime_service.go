@@ -16,29 +16,34 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
+var (
+	errAgentWebAppOffline      = errors.New("web app is offline")
+	errAgentWebAppNotPublished = errors.New("agent web app has no published version")
+)
+
 func (s *agentsService) GetAgentConfig(ctx context.Context, agentID, accountID string) (*dto.AgentConfigResponse, error) {
-	ag, cfg, err := s.loadAgentRuntimeConfig(ctx, agentID)
+	ag, cfg, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, true)
 	if err != nil {
-		return nil, err
-	}
-	if ag.AgentsType != "AGENT" {
-		return nil, fmt.Errorf("agent config is only available for AGENT type")
-	}
-	if err := s.ensureCanManageAgent(ctx, ag, accountID); err != nil {
 		return nil, err
 	}
 	return agentConfigResponse(ag.ID.String(), cfg), nil
 }
 
-func (s *agentsService) UpdateAgentConfig(ctx context.Context, agentID, accountID string, req dto.AgentConfigRequest) (*dto.AgentConfigResponse, error) {
-	ag, cfg, err := s.loadAgentRuntimeConfig(ctx, agentID)
+func (s *agentsService) GetAgentDraftRuntimeConfig(ctx context.Context, agentID, accountID string) (*dto.AgentDraftRuntimeConfigResponse, error) {
+	ag, cfg, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, true)
 	if err != nil {
 		return nil, err
 	}
-	if ag.AgentsType != "AGENT" {
-		return nil, fmt.Errorf("agent config is only available for AGENT type")
-	}
-	if err := s.ensureCanManageAgent(ctx, ag, accountID); err != nil {
+	return &dto.AgentDraftRuntimeConfigResponse{
+		AgentID:     ag.ID.String(),
+		WorkspaceID: ag.TenantID.String(),
+		Config:      *agentConfigResponse(ag.ID.String(), cfg),
+	}, nil
+}
+
+func (s *agentsService) UpdateAgentConfig(ctx context.Context, agentID, accountID string, req dto.AgentConfigRequest) (*dto.AgentConfigResponse, error) {
+	ag, cfg, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, true)
+	if err != nil {
 		return nil, err
 	}
 	if _, err := applyAgentConfigRequestToDraft(cfg, req); err != nil {
@@ -54,14 +59,8 @@ func (s *agentsService) UpdateAgentConfig(ctx context.Context, agentID, accountI
 }
 
 func (s *agentsService) PublishAgent(ctx context.Context, agentID, accountID string, req dto.PublishAgentRequest) (*dto.PublishAgentResponse, error) {
-	ag, cfg, err := s.loadAgentRuntimeConfig(ctx, agentID)
+	ag, cfg, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, true)
 	if err != nil {
-		return nil, err
-	}
-	if ag.AgentsType != "AGENT" {
-		return nil, fmt.Errorf("publish agent is only available for AGENT type")
-	}
-	if err := s.ensureCanManageAgent(ctx, ag, accountID); err != nil {
 		return nil, err
 	}
 	snapshot := agentConfigSnapshot(ag.ID.String(), cfg)
@@ -92,14 +91,8 @@ func (s *agentsService) PublishAgent(ctx context.Context, agentID, accountID str
 }
 
 func (s *agentsService) ListAgentPublishedVersions(ctx context.Context, agentID, accountID string, page, limit int) (*dto.AgentPublishedVersionsResponse, error) {
-	ag, _, err := s.loadAgentRuntimeConfig(ctx, agentID)
+	_, _, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, false)
 	if err != nil {
-		return nil, err
-	}
-	if ag.AgentsType != "AGENT" {
-		return nil, fmt.Errorf("published versions are only available for AGENT type")
-	}
-	if err := s.ensureCanManageAgent(ctx, ag, accountID); err != nil {
 		return nil, err
 	}
 	if page <= 0 {
@@ -143,14 +136,8 @@ func (s *agentsService) ListAgentPublishedVersions(ctx context.Context, agentID,
 }
 
 func (s *agentsService) RollbackAgentPublishedVersion(ctx context.Context, agentID, accountID string, req dto.RollbackAgentPublishedVersionRequest) (*dto.AgentConfigResponse, error) {
-	ag, cfg, err := s.loadAgentRuntimeConfig(ctx, agentID)
+	ag, cfg, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, true)
 	if err != nil {
-		return nil, err
-	}
-	if ag.AgentsType != "AGENT" {
-		return nil, fmt.Errorf("rollback agent version is only available for AGENT type")
-	}
-	if err := s.ensureCanManageAgent(ctx, ag, accountID); err != nil {
 		return nil, err
 	}
 	versionID := strings.TrimSpace(req.VersionID)
@@ -200,7 +187,7 @@ func (s *agentsService) GetPublishedAgentWebAppConfig(ctx context.Context, webAp
 		return nil, err
 	}
 	if NormalizeAgentWebAppStatus(ag.WebAppStatus) != AgentWebAppStatusActive {
-		return nil, fmt.Errorf("web app is offline")
+		return nil, errAgentWebAppOffline
 	}
 	if ag.AgentsType != "AGENT" {
 		return nil, fmt.Errorf("web app is not an AGENT runtime")
@@ -209,9 +196,13 @@ func (s *agentsService) GetPublishedAgentWebAppConfig(ctx context.Context, webAp
 	if err != nil {
 		return nil, err
 	}
-	organizationID := ag.TenantID.String()
+	if version == nil {
+		return nil, errAgentWebAppNotPublished
+	}
+	workspaceID := ag.TenantID.String()
+	organizationID := workspaceID
 	if s.enterpriseService != nil {
-		org, err := s.enterpriseService.GetOrganizationByWorkspaceID(ctx, ag.TenantID.String())
+		org, err := s.enterpriseService.GetOrganizationByWorkspaceID(ctx, workspaceID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve web app organization: %w", err)
 		}
@@ -229,7 +220,7 @@ func (s *agentsService) GetPublishedAgentWebAppConfig(ctx context.Context, webAp
 	return &dto.AgentWebAppRuntimeConfigResponse{
 		AgentID:        ag.ID.String(),
 		WebAppID:       ag.WebAppID.String(),
-		WorkspaceID:    ag.TenantID.String(),
+		WorkspaceID:    workspaceID,
 		OrganizationID: organizationID,
 		AgentType:      ag.AgentsType,
 		Name:           ag.Name,
@@ -243,7 +234,27 @@ func (s *agentsService) GetPublishedAgentWebAppConfig(ctx context.Context, webAp
 	}, nil
 }
 
-func (s *agentsService) loadAgentRuntimeConfig(ctx context.Context, agentID string) (*Agent, *AgentsConfig, error) {
+func (s *agentsService) loadAuthorizedAgentRuntimeDraft(ctx context.Context, agentID, accountID string, ensureConfig bool) (*Agent, *AgentsConfig, error) {
+	ag, cfg, err := s.loadAgentRuntimeDraft(ctx, agentID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if ag.AgentsType != "AGENT" {
+		return nil, nil, fmt.Errorf("agent runtime config is only available for AGENT type")
+	}
+	if err := s.ensureCanManageAgent(ctx, ag, accountID); err != nil {
+		return nil, nil, err
+	}
+	if ensureConfig {
+		cfg, err = s.ensureAgentRuntimeDraftConfig(ctx, ag, cfg)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	return ag, cfg, nil
+}
+
+func (s *agentsService) loadAgentRuntimeDraft(ctx context.Context, agentID string) (*Agent, *AgentsConfig, error) {
 	ag, err := s.agentsRepo.GetByID(ctx, agentID)
 	if err != nil {
 		return nil, nil, err
@@ -261,15 +272,22 @@ func (s *agentsService) loadAgentRuntimeConfig(ctx context.Context, agentID stri
 			return nil, nil, err
 		}
 	}
+	return ag, cfg, nil
+}
+
+func (s *agentsService) ensureAgentRuntimeDraftConfig(ctx context.Context, ag *Agent, cfg *AgentsConfig) (*AgentsConfig, error) {
+	if ag == nil {
+		return nil, fmt.Errorf("agent is required")
+	}
 	if cfg == nil {
 		cfg = &AgentsConfig{AgentsID: ag.ID, PromptType: "simple"}
 		if err := s.agentsRepo.CreateAgentsConfig(ctx, cfg); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		ag.AgentsModelConfigID = &cfg.ID
 		_ = s.agentsRepo.Update(ctx, ag)
 	}
-	return ag, cfg, nil
+	return cfg, nil
 }
 
 func (s *agentsService) ensureAgentEditor(ctx context.Context, accountID string) error {
@@ -429,23 +447,18 @@ func (s *agentsService) GenerateAgentSuggestedQuestions(ctx context.Context, age
 	if req == nil {
 		req = &dto.GenerateAgentSuggestedQuestionsRequest{}
 	}
-	ag, cfg, err := s.loadAgentRuntimeConfig(ctx, agentID)
+	ag, cfg, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, true)
 	if err != nil {
-		return nil, err
-	}
-	if ag.AgentsType != "AGENT" {
-		return nil, fmt.Errorf("suggested questions are only available for AGENT type")
-	}
-	if err := s.ensureCanManageAgent(ctx, ag, accountID); err != nil {
 		return nil, err
 	}
 	if s.llmClient == nil {
 		return nil, fmt.Errorf("llm client is not configured")
 	}
 
-	organizationID := ag.TenantID.String()
+	workspaceID := ag.TenantID.String()
+	organizationID := workspaceID
 	if s.enterpriseService != nil {
-		if org, err := s.enterpriseService.GetOrganizationByWorkspaceID(ctx, ag.TenantID.String()); err == nil && org != nil && org.ID != "" {
+		if org, err := s.enterpriseService.GetOrganizationByWorkspaceID(ctx, workspaceID); err == nil && org != nil && org.ID != "" {
 			organizationID = org.ID
 		}
 	}
@@ -509,7 +522,7 @@ func (s *agentsService) GenerateAgentSuggestedQuestions(ctx context.Context, age
 		Provider:       provider,
 		Model:          model,
 		AgentID:        agentID,
-		WorkspaceID:    ag.TenantID.String(),
+		WorkspaceID:    workspaceID,
 		OrganizationID: organizationID,
 		AccountID:      accountID,
 		AppType:        "agent",

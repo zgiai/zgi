@@ -8,7 +8,8 @@ import { useParams } from 'next/navigation';
 import { useT } from '@/i18n';
 import { AlertCircle } from 'lucide-react';
 import { WebAppOfflineState } from '@/components/webapp/offline-state';
-import { isWebAppOfflineError } from '@/utils/webapp/errors';
+import { WebAppNotPublishedState } from '@/components/webapp/not-published-state';
+import { isWebAppNotPublishedError, isWebAppOfflineError } from '@/utils/webapp/errors';
 import { cn } from '@/lib/utils';
 
 export default function WebappChatPage(): JSX.Element {
@@ -35,6 +36,8 @@ export default function WebappChatPage(): JSX.Element {
           </div>
         ) : isWebAppOfflineError(error) ? (
           <WebAppOfflineState />
+        ) : isWebAppNotPublishedError(error) ? (
+          <WebAppNotPublishedState />
         ) : isAgentWebApp ? (
           <AgentWebappChat webAppId={version_uuid} config={data.data} />
         ) : data?.data ? (

@@ -112,6 +112,10 @@ const messages = {
     description:
       'The app is currently unavailable. Please contact the app owner or try again after it is brought online.',
   },
+  notPublished: {
+    title: 'This web app has not been published',
+    description: 'Publish this agent before opening its web app.',
+  },
   agentChat: {
     fallbackTitle: 'Agent',
     defaultHomeTitle: 'title',

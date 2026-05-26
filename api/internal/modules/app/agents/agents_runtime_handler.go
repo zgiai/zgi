@@ -173,34 +173,24 @@ func (h *AgentsHandler) agentRuntimeContext(c *gin.Context) (agentRuntimeContext
 		return agentRuntimeContext{}, false
 	}
 	ctx := agentRuntimeRequestContext(c, accountID.String())
-	cfg, err := h.appService.GetAgentConfig(ctx, agentID.String(), accountID.String())
+	draft, err := h.appService.GetAgentDraftRuntimeConfig(ctx, agentID.String(), accountID.String())
 	if err != nil {
 		h.failRuntime(c, err)
 		return agentRuntimeContext{}, false
 	}
-	var workspaceID *uuid.UUID
-	if h.db != nil {
-		var ag Agent
-		if err := h.db.WithContext(c.Request.Context()).Where("id = ? AND deleted_at IS NULL", agentID).Take(&ag).Error; err == nil {
-			value := ag.TenantID
-			workspaceID = &value
-		}
-	}
-	if workspaceID == nil {
-		if raw := strings.TrimSpace(util.GetWorkspaceID(c)); raw != "" {
-			if parsed, err := uuid.Parse(raw); err == nil {
-				workspaceID = &parsed
-			}
-		}
+	agentWorkspaceID, err := uuid.Parse(strings.TrimSpace(draft.WorkspaceID))
+	if err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return agentRuntimeContext{}, false
 	}
 	return agentRuntimeContext{
-		Scope: runtimeservice.Scope{OrganizationID: organizationID, AccountID: accountID, WorkspaceID: workspaceID},
+		Scope: runtimeservice.Scope{OrganizationID: organizationID, AccountID: accountID, WorkspaceID: &agentWorkspaceID},
 		Caller: runtimeservice.Caller{
 			Type:   runtimemodel.ConversationCallerAgent,
 			ID:     &agentID,
 			Source: runtimemodel.ConversationSourceConsole,
 		},
-		RunConfig: agentRunConfig(agentID.String(), "agent.draft", *cfg),
+		RunConfig: agentRunConfig(agentID.String(), "agent.draft", draft.Config),
 	}, true
 }
 
@@ -211,7 +201,7 @@ func (h *AgentsHandler) webAppAgentRuntimeContext(c *gin.Context) (agentRuntimeC
 	}
 	published, err := h.appService.GetPublishedAgentWebAppConfig(c.Request.Context(), c.Param("web_app_id"))
 	if err != nil {
-		h.failRuntime(c, err)
+		h.failWebAppRuntime(c, err)
 		return agentRuntimeContext{}, false
 	}
 	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))
@@ -569,8 +559,24 @@ func (h *AgentsHandler) failRuntime(c *gin.Context, err error) {
 		response.Fail(c, response.ErrUnauthorized)
 	case errors.Is(err, runtimeservice.ErrPermissionDenied):
 		response.SpecialFail(c, gin.H{"code": "403001", "message": "Permission denied"})
+	case errors.Is(err, errAgentWebAppOffline):
+		response.Fail(c, response.ErrWebAppOffline)
+	case errors.Is(err, errAgentWebAppNotPublished):
+		response.Fail(c, response.ErrWebAppNotPublished)
 	default:
 		logger.ErrorContext(c.Request.Context(), "agent runtime request failed", err)
+		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
+	}
+}
+
+func (h *AgentsHandler) failWebAppRuntime(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, errAgentWebAppOffline):
+		response.Fail(c, response.ErrWebAppOffline)
+	case errors.Is(err, errAgentWebAppNotPublished):
+		response.Fail(c, response.ErrWebAppNotPublished)
+	default:
+		logger.ErrorContext(c.Request.Context(), "agent webapp runtime request failed", err)
 		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
 	}
 }

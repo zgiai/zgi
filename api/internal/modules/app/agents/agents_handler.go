@@ -430,23 +430,23 @@ func (h *AgentsHandler) ChatAgent(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	var workspaceID *uuid.UUID
-	if raw := strings.TrimSpace(util.GetWorkspaceID(c)); raw != "" {
-		if parsed, err := uuid.Parse(raw); err == nil {
-			workspaceID = &parsed
-		}
-	}
 	var req runtimedto.ChatRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
 	ctx := agentRuntimeRequestContext(c, accountID.String())
-	cfg, err := h.appService.GetAgentConfig(ctx, agentID.String(), accountID.String())
+	draft, err := h.appService.GetAgentDraftRuntimeConfig(ctx, agentID.String(), accountID.String())
 	if err != nil {
 		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
 		return
 	}
+	agentWorkspaceID, err := uuid.Parse(strings.TrimSpace(draft.WorkspaceID))
+	if err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	cfg := draft.Config
 	runConfig := runtimeservice.RunConfig{
 		SystemPrompt:             cfg.SystemPrompt,
 		SystemPromptVersion:      "agent.draft",
@@ -462,7 +462,7 @@ func (h *AgentsHandler) ChatAgent(c *gin.Context) {
 	}
 	prepared, err := h.chatRuntimeService.PrepareConfiguredChat(
 		ctx,
-		runtimeservice.Scope{OrganizationID: organizationID, AccountID: accountID, WorkspaceID: workspaceID},
+		runtimeservice.Scope{OrganizationID: organizationID, AccountID: accountID, WorkspaceID: &agentWorkspaceID},
 		runtimeservice.Caller{Type: runtimemodel.ConversationCallerAgent, ID: &agentID, Source: runtimemodel.ConversationSourceConsole},
 		runConfig,
 		req,
@@ -558,7 +558,7 @@ func (h *AgentsHandler) RollbackAgentPublishedVersion(c *gin.Context) {
 func (h *AgentsHandler) GetWebAppRuntimeConfig(c *gin.Context) {
 	result, err := h.appService.GetPublishedAgentWebAppConfig(c.Request.Context(), c.Param("web_app_id"))
 	if err != nil {
-		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
+		h.failWebAppRuntime(c, err)
 		return
 	}
 	response.Success(c, gin.H{
@@ -623,7 +623,7 @@ func (h *AgentsHandler) ChatWebAppAgent(c *gin.Context) {
 	webAppID := strings.TrimSpace(c.Param("web_app_id"))
 	published, err := h.appService.GetPublishedAgentWebAppConfig(c.Request.Context(), webAppID)
 	if err != nil {
-		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
+		h.failWebAppRuntime(c, err)
 		return
 	}
 	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))

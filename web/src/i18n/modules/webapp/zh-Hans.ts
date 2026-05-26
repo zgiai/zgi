@@ -107,6 +107,10 @@ const messages: WebappMessages = {
     title: '该 WebApp 已下架',
     description: '当前应用暂不可访问。请联系应用管理员，或等待应用重新上架后再试。',
   },
+  notPublished: {
+    title: 'WebApp 尚未发布',
+    description: '请先发布这个智能体，再打开它的 WebApp。',
+  },
   agentChat: {
     fallbackTitle: '智能体',
     defaultHomeTitle: 'title',

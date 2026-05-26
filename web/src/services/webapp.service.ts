@@ -9,6 +9,11 @@ import type {
   WebAppPrecheckResult,
 } from './types/webapp';
 import { sanitizeModelOutputValue, wrapModelOutputSseCallbacks } from '@/utils/model-output-filter';
+import {
+  getWebAppErrorCode,
+  WEBAPP_NOT_PUBLISHED_ERROR_CODE,
+  WEBAPP_OFFLINE_ERROR_CODE,
+} from '@/utils/webapp/errors';
 
 interface WebAppRunBody extends WebAppRunRequest {
   response_mode: 'streaming';
@@ -41,7 +46,11 @@ export class WebAppService {
       return await webappHttp.get<WebAppApiResponseData<WebAppWorkflowConfig>>(
         `/console/api/webapps/${versionUuid}/config`
       );
-    } catch {
+    } catch (error) {
+      const code = getWebAppErrorCode(error);
+      if (code === WEBAPP_OFFLINE_ERROR_CODE || code === WEBAPP_NOT_PUBLISHED_ERROR_CODE) {
+        throw error;
+      }
       return webappHttp.get<WebAppApiResponseData<WebAppWorkflowConfig>>(
         `/console/api/workflows/${versionUuid}/config`
       );

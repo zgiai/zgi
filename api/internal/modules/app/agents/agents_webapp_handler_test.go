@@ -100,6 +100,25 @@ func TestPublicAgentWebAppConfig_DoesNotExposeRuntimeSecrets(t *testing.T) {
 	require.Contains(t, string(encoded), "file_upload_enabled")
 }
 
+func TestAgentsHandler_GetWebAppRuntimeConfig_MapsNotPublishedError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	service := &stubWebAppStatusHandlerService{err: errAgentWebAppNotPublished}
+	handler := NewAgentsHandler(service, nil, nil, nil, nil)
+	router := gin.New()
+	router.GET("/webapps/:web_app_id/config", handler.GetWebAppRuntimeConfig)
+
+	req := httptest.NewRequest(http.MethodGet, "/webapps/33333333-3333-3333-3333-333333333333/config", nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+	var body map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Equal(t, "204009", body["code"])
+}
+
 func newWebAppStatusHandlerTestRouter(service AgentsService) *gin.Engine {
 	handler := NewAgentsHandler(service, nil, nil, nil, nil)
 	router := gin.New()
@@ -159,6 +178,10 @@ func (s *stubWebAppStatusHandlerService) GetAgentConfig(context.Context, string,
 	return nil, nil
 }
 
+func (s *stubWebAppStatusHandlerService) GetAgentDraftRuntimeConfig(context.Context, string, string) (*dto.AgentDraftRuntimeConfigResponse, error) {
+	return nil, nil
+}
+
 func (s *stubWebAppStatusHandlerService) UpdateAgentConfig(context.Context, string, string, dto.AgentConfigRequest) (*dto.AgentConfigResponse, error) {
 	return nil, nil
 }
@@ -180,7 +203,7 @@ func (s *stubWebAppStatusHandlerService) RollbackAgentPublishedVersion(context.C
 }
 
 func (s *stubWebAppStatusHandlerService) GetPublishedAgentWebAppConfig(context.Context, string) (*dto.AgentWebAppRuntimeConfigResponse, error) {
-	return nil, nil
+	return nil, s.err
 }
 
 func (s *stubWebAppStatusHandlerService) UpdateWebAppStatus(ctx context.Context, agentID string, req dto.UpdateWebAppStatusRequest) (*dto.WebAppStatusResponse, error) {
