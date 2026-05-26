@@ -102,7 +102,7 @@ const messages = {
     quickSwitch: 'Quick Switch',
     quickSwitchDesc: 'Quickly switch between popular themes',
     // Theme names and descriptions
-    light: 'ZGI Blue',
+    light: 'Light',
     lightDesc: 'High-recognition bright blue with a white canvas and restrained actions',
     dark: 'Dark',
     darkDesc: 'Easy on the eyes',
@@ -112,10 +112,10 @@ const messages = {
     'graphite-cyanDesc': 'Low-saturation cyan for long-running console work',
     emerald: 'Emerald',
     emeraldDesc: 'Fresh green used only for key actions and states',
-    'ai-young': 'AI Young',
-    'ai-youngDesc': 'Keeps the purple identity while reducing page noise',
-    'whale-orange': 'Whale Orange',
-    'whale-orangeDesc': 'Keeps the orange energy for operational and review contexts',
+    violet: 'Violet',
+    violetDesc: 'A purple accent with quiet neutral surfaces',
+    'warm-orange': 'Warm Orange',
+    'warm-orangeDesc': 'A warm orange accent for operational and review contexts',
     // Theme switcher
     toggleTheme: 'Toggle theme',
     chooseTheme: 'Choose Theme',

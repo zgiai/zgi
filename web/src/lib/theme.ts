@@ -1,4 +1,4 @@
-// Theme management system for ZGI platform
+// Theme management system
 
 import { ENABLE_THEME_SWITCH, DEFAULT_THEME_NAME } from '@/lib/config';
 
@@ -8,8 +8,8 @@ export type Theme =
   | 'tech-blue'
   | 'graphite-cyan'
   | 'emerald'
-  | 'ai-young'
-  | 'whale-orange';
+  | 'violet'
+  | 'warm-orange';
 
 export interface ThemeConfig {
   name: string;
@@ -26,7 +26,7 @@ export interface ThemeConfig {
 export const THEMES: Record<Theme, ThemeConfig> = {
   light: {
     name: 'light',
-    displayName: 'ZGI Blue',
+    displayName: 'Default Blue',
     description: 'Chainlink-inspired blue, cool canvas, and restrained action states',
     preview: {
       primary: '#0847F7',
@@ -64,9 +64,9 @@ export const THEMES: Record<Theme, ThemeConfig> = {
       background: '#ffffff',
     },
   },
-  'ai-young': {
-    name: 'ai-young',
-    displayName: 'AI Young',
+  violet: {
+    name: 'violet',
+    displayName: 'Violet',
     description: 'Vibrant purple primary on light background',
     preview: {
       primary: '#6E56CF',
@@ -74,9 +74,9 @@ export const THEMES: Record<Theme, ThemeConfig> = {
       background: '#ffffff',
     },
   },
-  'whale-orange': {
-    name: 'whale-orange',
-    displayName: 'Whale Orange',
+  'warm-orange': {
+    name: 'warm-orange',
+    displayName: 'Warm Orange',
     description: 'Warm orange primary on light background',
     preview: {
       primary: '#C26A00',
@@ -97,15 +97,20 @@ export const THEMES: Record<Theme, ThemeConfig> = {
 };
 
 const TEMPORARILY_DISABLED_THEMES: readonly Theme[] = ['dark'];
+const LEGACY_THEME_ALIASES: Record<string, Theme> = {
+  'ai-young': 'violet',
+  'whale-orange': 'warm-orange',
+};
 
-export function normalizeTheme(theme: Theme): Theme {
-  return TEMPORARILY_DISABLED_THEMES.includes(theme) ? 'light' : theme;
+export function normalizeTheme(theme: string | undefined): Theme {
+  const themeName = theme?.trim();
+  const aliasedTheme = themeName ? LEGACY_THEME_ALIASES[themeName] || themeName : 'light';
+  const resolvedTheme = aliasedTheme in THEMES ? (aliasedTheme as Theme) : 'light';
+  return TEMPORARILY_DISABLED_THEMES.includes(resolvedTheme) ? 'light' : resolvedTheme;
 }
 
 // Resolve default theme from env config, fallback to 'light' if invalid
-export const DEFAULT_THEME: Theme = normalizeTheme(
-  (DEFAULT_THEME_NAME in THEMES ? DEFAULT_THEME_NAME : 'light') as Theme
-);
+export const DEFAULT_THEME: Theme = normalizeTheme(DEFAULT_THEME_NAME);
 
 // Theme storage key
 const THEME_STORAGE_KEY = 'theme';
@@ -125,9 +130,13 @@ export function getCurrentTheme(): Theme {
   }
 
   try {
-    const stored = localStorage.getItem(THEME_STORAGE_KEY) as Theme;
-    if (stored && stored in THEMES) {
-      return normalizeTheme(stored);
+    const stored = localStorage.getItem(THEME_STORAGE_KEY);
+    if (stored) {
+      const resolvedTheme = normalizeTheme(stored);
+      if (stored !== resolvedTheme) {
+        localStorage.setItem(THEME_STORAGE_KEY, resolvedTheme);
+      }
+      return resolvedTheme;
     }
   } catch (error) {
     console.warn('Failed to read theme from localStorage:', error);

@@ -47,7 +47,7 @@
   --popover: var(--neutral-0);
   --popover-foreground: var(--neutral-900);
 
-  /* Primary - ZGI Blue for calm default actions */
+  /* Primary - default blue for calm actions */
   --primary: var(--zgi-blue-600);
   --primary-foreground: var(--neutral-50);
   --primary-hover: var(--zgi-blue-700);

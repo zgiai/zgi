@@ -31,15 +31,15 @@ interface ThemeOption {
     | 'settings.themes.tech-blue'
     | 'settings.themes.graphite-cyan'
     | 'settings.themes.emerald'
-    | 'settings.themes.ai-young'
-    | 'settings.themes.whale-orange';
+    | 'settings.themes.violet'
+    | 'settings.themes.warm-orange';
   descKey:
     | 'settings.themes.lightDesc'
     | 'settings.themes.tech-blueDesc'
     | 'settings.themes.graphite-cyanDesc'
     | 'settings.themes.emeraldDesc'
-    | 'settings.themes.ai-youngDesc'
-    | 'settings.themes.whale-orangeDesc';
+    | 'settings.themes.violetDesc'
+    | 'settings.themes.warm-orangeDesc';
   icon: React.ReactNode;
 }
 
@@ -63,15 +63,15 @@ const THEME_OPTIONS: ThemeOption[] = [
     icon: <Sparkles className="h-4 w-4" />,
   },
   {
-    key: 'ai-young',
-    labelKey: 'settings.themes.ai-young',
-    descKey: 'settings.themes.ai-youngDesc',
+    key: 'violet',
+    labelKey: 'settings.themes.violet',
+    descKey: 'settings.themes.violetDesc',
     icon: <Sparkles className="h-4 w-4" />,
   },
   {
-    key: 'whale-orange',
-    labelKey: 'settings.themes.whale-orange',
-    descKey: 'settings.themes.whale-orangeDesc',
+    key: 'warm-orange',
+    labelKey: 'settings.themes.warm-orange',
+    descKey: 'settings.themes.warm-orangeDesc',
     icon: <Sparkles className="h-4 w-4" />,
   },
   {

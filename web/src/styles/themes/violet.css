@@ -1,4 +1,7 @@
-[data-theme='whale-orange'] {
+/* Violet Theme Variables - Light base with purple primary */
+[data-theme='violet'],
+[data-theme='ai-young'] {
+  /* === Primitives (Base Values) === */
   --neutral-0: oklch(1 0 0);
   --neutral-50: oklch(0.985 0 0);
   --neutral-100: oklch(0.97 0 0);
@@ -11,6 +14,7 @@
   --neutral-800: oklch(0.205 0 0);
   --neutral-900: oklch(0.145 0 0);
 
+  /* Brand Blue */
   --blue-50: oklch(0.97 0.01 250);
   --blue-100: oklch(0.92 0.03 250);
   --blue-400: oklch(0.65 0.15 250);
@@ -18,41 +22,54 @@
   --blue-600: oklch(0.5 0.2 250);
   --blue-700: oklch(0.4 0.18 250);
 
-  --orange-50: oklch(0.97 0.02 56);
-  --orange-100: oklch(0.93 0.05 56);
-  --orange-200: oklch(0.88 0.09 56);
-  --orange-300: oklch(0.8 0.14 56);
-  --orange-400: oklch(0.75 0.18 56);
-  --orange-500: oklch(0.68 0.22 56);
-  --orange-600: oklch(0.62 0.25 56);
-  --orange-700: oklch(0.55 0.23 56);
-  --orange-800: oklch(0.4 0.14 56);
-  --orange-900: oklch(0.3 0.1 56);
+  /* Purple - Primary accent color based on #3D0FBA */
+  --purple-50: oklch(0.97 0.02 285);
+  --purple-100: oklch(0.93 0.05 285);
+  --purple-200: oklch(0.85 0.1 285);
+  --purple-300: oklch(0.75 0.16 285);
+  --purple-400: oklch(0.6 0.22 285);
+  --purple-500: oklch(0.45 0.25 285);
+  --purple-600: oklch(0.35 0.25 285);
+  --purple-700: oklch(0.28 0.22 285);
+  --purple-800: oklch(0.22 0.18 285);
+  --purple-900: oklch(0.16 0.14 285);
 
+  /* Status Colors */
   --green-500: oklch(0.627 0.194 149.214);
   --yellow-500: oklch(0.769 0.188 70.08);
   --red-500: oklch(0.577 0.245 27.325);
   --sky-500: oklch(0.6 0.118 184.704);
 
+  /* === Core Semantic Tokens === */
   --background: var(--neutral-0);
   --foreground: var(--neutral-900);
+
   --card: var(--neutral-0);
   --card-foreground: var(--neutral-900);
+
   --popover: var(--neutral-0);
   --popover-foreground: var(--neutral-900);
-  --primary: #c26a00;
+
+  /* Primary - Purple for vibrant accent (#3D0FBA base) */
+  --primary: #6e56cf;
   --primary-foreground: var(--neutral-0);
-  --primary-hover: #a45f00;
-  --primary-active: #713f12;
-  --secondary: #fff7ed;
+  --primary-hover: #654dc4;
+  --primary-active: #2f265f;
+
+  /* Secondary */
+  --secondary: #f1eefe;
   --secondary-foreground: var(--neutral-800);
-  --secondary-hover: #ffedd5;
-  --secondary-active: #fed7aa;
+  --secondary-hover: #e6dfff;
+  --secondary-active: #d7ccff;
+
+  /* Neutral/Muted */
   --muted: var(--neutral-100);
   --muted-foreground: var(--neutral-500);
   --accent: var(--neutral-100);
   --accent-foreground: var(--neutral-800);
-  --highlight: #c26a00;
+
+  /* Status Colors */
+  --highlight: #6e56cf;
   --highlight-foreground: var(--neutral-0);
   --destructive: var(--red-500);
   --destructive-foreground: var(--neutral-0);
@@ -62,68 +79,92 @@
   --success-foreground: var(--neutral-0);
   --info: var(--sky-500);
   --info-foreground: var(--neutral-0);
+
+  /* Borders */
   --border: var(--neutral-200);
   --border-strong: var(--neutral-400);
   --border-subtle: oklch(from var(--neutral-200) l c h / 0.5);
   --input: var(--neutral-200);
-  --ring: #f59e0b;
+  --ring: #8b7cf6;
+
+  /* Semantic Surfaces */
   --bg-canvas: var(--neutral-50);
   --bg-surface: var(--neutral-0);
   --bg-subtle: var(--neutral-100);
+
+  /* Sidebar */
   --sidebar: var(--neutral-0);
   --sidebar-foreground: var(--neutral-900);
-  --sidebar-primary: #d97706;
+  --sidebar-primary: #5b3fd7;
   --sidebar-primary-foreground: var(--neutral-50);
   --sidebar-accent: var(--neutral-100);
   --sidebar-accent-foreground: var(--neutral-800);
   --sidebar-border: var(--neutral-200);
-  --sidebar-ring: #f59e0b;
-  --chart-1: #d97706;
+  --sidebar-ring: #8b7cf6;
+
+  /* Charts */
+  --chart-1: #5b3fd7;
   --chart-2: var(--green-500);
   --chart-3: var(--yellow-500);
   --chart-4: var(--sky-500);
   --chart-5: var(--red-500);
-  --brand-main: #c26a00;
-  --brand-subtle: #fff7ed;
-  --brand-strong: #924b07;
+
+  /* Brand Colors */
+  --brand-main: #6e56cf;
+  --brand-subtle: #f1eefe;
+  --brand-strong: #2f265f;
+
+  /* Additional Design System */
   --text-primary: var(--neutral-900);
   --text-secondary: var(--neutral-600);
   --text-placeholder: var(--neutral-400);
-  --text-highlight: #c26a00;
-  --button-primary: #c26a00;
-  --button-primary-hover: #a45f00;
+  --text-highlight: #6e56cf;
+
+  /* Button States */
+  --button-primary: #6e56cf;
+  --button-primary-hover: #654dc4;
   --button-primary-disabled: var(--neutral-300);
   --button-secondary-bg: var(--neutral-0);
   --button-secondary-text: var(--neutral-600);
   --button-secondary-hover-border: var(--neutral-400);
   --button-danger: var(--red-500);
   --button-danger-hover: oklch(0.52 0.24 27);
+
+  /* Form Elements */
   --input-hover: var(--neutral-400);
   --input-disabled: var(--neutral-200);
-  --checkbox-bg: var(--orange-50);
-  --checkbox-hover: var(--orange-300);
-  --checkbox-selected: #c26a00;
+  --checkbox-bg: var(--purple-50);
+  --checkbox-hover: var(--purple-300);
+  --checkbox-selected: #6e56cf;
   --switch-off: var(--neutral-400);
-  --switch-on: #c26a00;
-  --table-header: #fff7ed;
-  --selection-layer: oklch(from #c26a00 l c h / 0.2);
+  --switch-on: #6e56cf;
+
+  /* Layout */
+  --table-header: var(--purple-50);
+  --selection-layer: oklch(from #6e56cf l c h / 0.2);
   --annotation: var(--neutral-500);
-  --tag-primary-bg: #fff7ed;
-  --tag-primary-text: #b95f04;
+
+  /* Tags */
+  --tag-primary-bg: #f2efff;
+  --tag-primary-text: #654dc4;
   --tag-normal-bg: oklch(from var(--green-500) l c h / 0.1);
   --tag-normal-text: var(--green-500);
   --tag-warning-bg: oklch(from var(--yellow-500) l c h / 0.1);
   --tag-warning-text: var(--yellow-500);
   --tag-error-bg: oklch(from var(--red-500) l c h / 0.1);
   --tag-error-text: var(--red-500);
-  --edge-default: #d97706;
-  --edge-hover: #b95f04;
-  --edge-selected: #b95f04;
+
+  /* Workflow Edge Colors */
+  --edge-default: #6e56cf;
+  --edge-hover: #654dc4;
+  --edge-selected: #654dc4;
   --edge-running: var(--sky-500);
   --edge-succeeded: var(--green-500);
   --edge-failed: var(--red-500);
   --edge-stopped: var(--neutral-500);
   --edge-paused: var(--warning);
+
+  /* Shadows */
   --shadow-color: oklch(0 0 0);
   --glass-blur: 12px;
 }
