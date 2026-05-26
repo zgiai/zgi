@@ -316,6 +316,15 @@ func recoverableErrorPayload(err error, nextAction string) map[string]interface{
 	return payload
 }
 
+func recoverableSkillToolErrorPayload(err error, nextAction string, skillID string, toolName string) map[string]interface{} {
+	payload := recoverableErrorPayload(err, nextAction)
+	if expected := skills.ExpectedSkillToolArguments(skillID, toolName); expected != nil {
+		payload["expected_arguments"] = expected
+		payload["next_action"] = strings.TrimSpace(nextAction + ". Retry call_skill_tool with arguments matching expected_arguments.schema")
+	}
+	return payload
+}
+
 func guardrailPayload(trace skills.SkillTrace) map[string]interface{} {
 	return map[string]interface{}{
 		"error":     trace.Error,

@@ -412,8 +412,8 @@ func MetaToolsForSkillState(resolved *ResolvedSkills, loadedSkillIDs map[string]
 	if referenceSkillIDs, referencePaths := loadedReferenceOptions(resolved, loaded); len(referenceSkillIDs) > 0 && len(referencePaths) > 0 {
 		tools = append(tools, readReferenceMetaTool(referenceSkillIDs, referencePaths))
 	}
-	if toolSkillIDs, toolNames, pairs, argumentHints := loadedToolOptions(resolved, loaded); len(toolSkillIDs) > 0 && len(toolNames) > 0 {
-		tools = append(tools, callSkillToolMetaTool(toolSkillIDs, toolNames, pairs, argumentHints))
+	if toolSkillIDs, toolNames, pairs, contracts, hasUntyped := loadedToolOptions(resolved, loaded); len(toolSkillIDs) > 0 && len(toolNames) > 0 {
+		tools = append(tools, callSkillToolMetaTool(toolSkillIDs, toolNames, pairs, contracts, hasUntyped))
 	}
 	return tools
 }
@@ -425,7 +425,7 @@ func metaTools(includeToolCaller bool) []llmadapter.Tool {
 		intermediateAnswerMetaTool(),
 	}
 	if includeToolCaller {
-		tools = append(tools, callSkillToolMetaTool(nil, nil, nil, nil))
+		tools = append(tools, callSkillToolMetaTool(nil, nil, nil, nil, true))
 	}
 	return tools
 }
@@ -489,15 +489,12 @@ func intermediateAnswerMetaTool() llmadapter.Tool {
 	}
 }
 
-func callSkillToolMetaTool(skillIDs []string, toolNames []string, pairs []string, argumentHints []string) llmadapter.Tool {
+func callSkillToolMetaTool(skillIDs []string, toolNames []string, pairs []string, contracts []SkillToolArgumentContract, hasUntypedTools bool) llmadapter.Tool {
 	description := "Call a tool allowed by a loaded skill after reading its instructions."
 	if len(pairs) > 0 {
 		description += " Allowed skill/tool pairs: " + strings.Join(pairs, "; ") + "."
 	}
-	argumentsDescription := "Arguments for the skill tool. Pass a non-empty object that satisfies the selected tool's required parameters."
-	if len(argumentHints) > 0 {
-		argumentsDescription += " Tool argument requirements: " + strings.Join(argumentHints, " ")
-	}
+	argumentsSchema := callSkillToolArgumentsSchema(contracts, hasUntypedTools)
 	return llmadapter.Tool{
 		Type: "function",
 		Function: llmadapter.Function{
@@ -508,15 +505,44 @@ func callSkillToolMetaTool(skillIDs []string, toolNames []string, pairs []string
 				"properties": map[string]interface{}{
 					"skill_id":  stringSchema("The loaded skill ID that allows the tool.", skillIDs),
 					"tool_name": stringSchema("The allowed tool name to call.", toolNames),
-					"arguments": map[string]interface{}{
-						"type":        "object",
-						"description": argumentsDescription,
-					},
+					"arguments": argumentsSchema,
 				},
 				"required": []string{"skill_id", "tool_name", "arguments"},
 			},
 		},
 	}
+}
+
+func callSkillToolArgumentsSchema(contracts []SkillToolArgumentContract, hasUntypedTools bool) map[string]interface{} {
+	schema := map[string]interface{}{
+		"type":        "object",
+		"description": "Arguments for the selected skill tool. Pass a non-empty object that satisfies the selected tool's required parameters.",
+	}
+	if len(contracts) == 0 {
+		return schema
+	}
+	options := make([]interface{}, 0, len(contracts)+1)
+	for _, contract := range contracts {
+		if len(contract.Schema) == 0 {
+			continue
+		}
+		options = append(options, contract.Schema)
+	}
+	if hasUntypedTools {
+		options = append(options, map[string]interface{}{
+			"type":        "object",
+			"description": "Arguments for a skill tool that does not expose a structured argument schema.",
+		})
+	}
+	if len(options) == 0 {
+		return schema
+	}
+	if hasUntypedTools {
+		schema["anyOf"] = options
+	} else {
+		schema["oneOf"] = options
+	}
+	return schema
 }
 
 func stringSchema(description string, values []string) map[string]interface{} {
@@ -589,16 +615,17 @@ func loadedReferenceOptions(resolved *ResolvedSkills, loaded map[string]struct{}
 	return skillIDs, paths
 }
 
-func loadedToolOptions(resolved *ResolvedSkills, loaded map[string]struct{}) ([]string, []string, []string, []string) {
+func loadedToolOptions(resolved *ResolvedSkills, loaded map[string]struct{}) ([]string, []string, []string, []SkillToolArgumentContract, bool) {
 	if resolved == nil || len(loaded) == 0 {
-		return nil, nil, nil, nil
+		return nil, nil, nil, nil, false
 	}
 	skillSeen := map[string]struct{}{}
 	toolSeen := map[string]struct{}{}
 	skillIDs := []string{}
 	toolNames := []string{}
 	pairs := []string{}
-	argumentHints := []string{}
+	contracts := []SkillToolArgumentContract{}
+	hasUntyped := false
 	for _, doc := range resolved.Skills {
 		skillID := normalizeSkillID(doc.Metadata.ID)
 		if _, ok := loaded[skillID]; !ok || len(doc.Tools) == 0 {
@@ -619,41 +646,136 @@ func loadedToolOptions(resolved *ResolvedSkills, loaded map[string]struct{}) ([]
 				toolSeen[name] = struct{}{}
 				toolNames = append(toolNames, name)
 			}
+			if contract, ok := SkillToolArgumentContractFor(skillID, name); ok {
+				contracts = append(contracts, contract)
+			} else {
+				hasUntyped = true
+			}
 		}
 		sort.Strings(docToolNames)
 		if len(docToolNames) > 0 {
 			pairs = append(pairs, skillID+": "+strings.Join(docToolNames, ", "))
-			if hint := skillToolArgumentHint(skillID, docToolNames); hint != "" {
-				argumentHints = append(argumentHints, hint)
-			}
 		}
 	}
 	sort.Strings(skillIDs)
 	sort.Strings(toolNames)
 	sort.Strings(pairs)
-	sort.Strings(argumentHints)
-	return skillIDs, toolNames, pairs, argumentHints
+	sort.Slice(contracts, func(i, j int) bool {
+		left := contracts[i].SkillID + "/" + contracts[i].ToolName
+		right := contracts[j].SkillID + "/" + contracts[j].ToolName
+		return left < right
+	})
+	return skillIDs, toolNames, pairs, contracts, hasUntyped
 }
 
-func skillToolArgumentHint(skillID string, toolNames []string) string {
-	if normalizeSkillID(skillID) != SkillCalculator {
-		return ""
+func SkillToolArgumentContractFor(skillID string, toolName string) (SkillToolArgumentContract, bool) {
+	skillID = normalizeSkillID(skillID)
+	toolName = strings.TrimSpace(toolName)
+	if skillID != SkillCalculator {
+		return SkillToolArgumentContract{}, false
 	}
-	available := map[string]struct{}{}
-	for _, name := range toolNames {
-		available[strings.TrimSpace(name)] = struct{}{}
+	switch toolName {
+	case "evaluate_expression":
+		return SkillToolArgumentContract{
+			SkillID:     skillID,
+			ToolName:    toolName,
+			Description: "Evaluate one deterministic arithmetic expression.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"expression": map[string]interface{}{
+						"type":        "string",
+						"description": "Arithmetic expression to evaluate, such as 23*17+9. Only numbers, parentheses, +, -, *, /, %, and ^ are allowed.",
+					},
+					"precision": precisionSchema(),
+				},
+				[]string{"expression"},
+			),
+			Example: map[string]interface{}{"expression": "23*17+9"},
+		}, true
+	case "calculate":
+		return SkillToolArgumentContract{
+			SkillID:     skillID,
+			ToolName:    toolName,
+			Description: "Perform deterministic binary arithmetic between two numbers.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"operation": map[string]interface{}{
+						"type":        "string",
+						"description": "Arithmetic operation.",
+						"enum":        []string{"add", "subtract", "multiply", "divide", "power", "mod"},
+					},
+					"left":      numberSchema("Left operand."),
+					"right":     numberSchema("Right operand."),
+					"precision": precisionSchema(),
+				},
+				[]string{"operation", "left", "right"},
+			),
+			Example: map[string]interface{}{"operation": "multiply", "left": 23, "right": 17},
+		}, true
+	case "percentage":
+		return SkillToolArgumentContract{
+			SkillID:     skillID,
+			ToolName:    toolName,
+			Description: "Calculate percent-of, percentage change, or apply a percentage increase/decrease.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"operation": map[string]interface{}{
+						"type":        "string",
+						"description": "Percentage operation. percent_of/apply_* require value and percent; change requires from and to.",
+						"enum":        []string{"percent_of", "change", "apply_increase", "apply_decrease"},
+					},
+					"value":     numberSchema("Base value for percent_of, apply_increase, and apply_decrease."),
+					"percent":   numberSchema("Percentage value, such as 15 for 15 percent."),
+					"from":      numberSchema("Original value for change."),
+					"to":        numberSchema("New value for change."),
+					"precision": precisionSchema(),
+				},
+				[]string{"operation"},
+			),
+			Example: map[string]interface{}{"operation": "percent_of", "value": 200, "percent": 15},
+		}, true
+	default:
+		return SkillToolArgumentContract{}, false
 	}
-	parts := []string{}
-	if _, ok := available["evaluate_expression"]; ok {
-		parts = append(parts, "calculator/evaluate_expression requires arguments.expression string and optional arguments.precision integer.")
+}
+
+func ExpectedSkillToolArguments(skillID string, toolName string) map[string]interface{} {
+	contract, ok := SkillToolArgumentContractFor(skillID, toolName)
+	if !ok {
+		return nil
 	}
-	if _, ok := available["calculate"]; ok {
-		parts = append(parts, "calculator/calculate requires arguments.operation plus numeric arguments.left and arguments.right; optional arguments.precision.")
+	return map[string]interface{}{
+		"skill_id":    contract.SkillID,
+		"tool_name":   contract.ToolName,
+		"description": contract.Description,
+		"schema":      contract.Schema,
+		"example":     contract.Example,
 	}
-	if _, ok := available["percentage"]; ok {
-		parts = append(parts, "calculator/percentage requires arguments.operation; percent_of/apply_* require value and percent; change requires from and to; optional precision.")
+}
+
+func objectSchema(properties map[string]interface{}, required []string) map[string]interface{} {
+	return map[string]interface{}{
+		"type":                 "object",
+		"properties":           properties,
+		"required":             required,
+		"additionalProperties": false,
 	}
-	return strings.Join(parts, " ")
+}
+
+func numberSchema(description string) map[string]interface{} {
+	return map[string]interface{}{
+		"type":        "number",
+		"description": description,
+	}
+}
+
+func precisionSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type":        "number",
+		"description": "Optional decimal places to round the result to. Defaults to 6 and must be between 0 and 12.",
+		"minimum":     0,
+		"maximum":     12,
+	}
 }
 
 func SkillMetadataSystemMessage(metadata []SkillPromptMetadata) llmadapter.Message {

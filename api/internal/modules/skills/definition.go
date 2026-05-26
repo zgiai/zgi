@@ -156,6 +156,14 @@ type SkillTrace struct {
 	Error      string                 `json:"error,omitempty"`
 }
 
+type SkillToolArgumentContract struct {
+	SkillID     string                 `json:"skill_id"`
+	ToolName    string                 `json:"tool_name"`
+	Schema      map[string]interface{} `json:"schema"`
+	Example     map[string]interface{} `json:"example,omitempty"`
+	Description string                 `json:"description,omitempty"`
+}
+
 type ResolvedSkills struct {
 	Skills []SkillDocument
 }

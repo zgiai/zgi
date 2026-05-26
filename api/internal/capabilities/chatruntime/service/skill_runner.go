@@ -852,11 +852,11 @@ func (s *service) handleCallSkillTool(
 		trace := failedSkillTrace("tool_call", toolName, err)
 		trace.SkillID = skillID
 		trace.Arguments = argumentSummary
-		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "fix the tool_name or arguments and retry")), true, false)
+		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, "fix the tool_name or arguments and retry", skillID, toolName)), true, false)
 	}
 	invocation.Trace.Arguments = argumentSummary
 	if err != nil {
-		return recoverableSkillStep(invocation.Trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "fix the tool arguments based on the error and retry")), true, false)
+		return recoverableSkillStep(invocation.Trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, "fix the tool arguments based on the error and retry", skillID, toolName)), true, false)
 	}
 	invocation.Trace.Result = summarizeSkillToolResult(invocation.Trace.SkillID, invocation.Trace.ToolName, invocation.Messages)
 	logger.DebugContext(ctx, "aichat skill tool completed",
