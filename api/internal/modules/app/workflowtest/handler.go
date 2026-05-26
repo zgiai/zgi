@@ -154,7 +154,7 @@ func (h *Handler) SaveScenarios(c *gin.Context) {
 	}
 	items, err := h.service.SaveScenarios(c.Request.Context(), agentID, req)
 	if err != nil {
-		response.Fail(c, response.ErrInvalidParam)
+		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 		return
 	}
 	response.Success(c, gin.H{"items": items})

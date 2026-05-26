@@ -47,14 +47,15 @@ func (r *Repository) UpdateScenario(ctx context.Context, scenario *Scenario) err
 }
 
 func (r *Repository) DeleteScenario(ctx context.Context, agentID string, scenarioID string) error {
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&Case{}).
-			Where("agent_id = ? AND scenario_id = ?", agentID, scenarioID).
-			Updates(map[string]interface{}{"scenario_id": nil, "updated_at": time.Now()}).Error; err != nil {
-			return err
-		}
-		return tx.Where("agent_id = ? AND id = ?", agentID, scenarioID).Delete(&Scenario{}).Error
-	})
+	return r.db.WithContext(ctx).Where("agent_id = ? AND id = ?", agentID, scenarioID).Delete(&Scenario{}).Error
+}
+
+func (r *Repository) CountCasesByScenario(ctx context.Context, agentID string, scenarioID string) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&Case{}).
+		Where("agent_id = ? AND scenario_id = ?", agentID, scenarioID).
+		Count(&count).Error
+	return count, err
 }
 
 func (r *Repository) GetScenarioByName(ctx context.Context, agentID string, name string) (*Scenario, error) {

@@ -1081,7 +1081,7 @@ const messages = {
       scenario: {
         title: 'Edit Business Scenarios',
         description:
-          'Adjust recognized business scenarios. Deleting a scenario does not delete existing test questions.',
+          'Adjust recognized business scenarios. Scenarios with assigned test questions cannot be deleted.',
         itemTitle: 'Scenario {index}',
         caseCount: '{count} test questions assigned',
         nameLabel: 'Scenario Name',
@@ -1094,7 +1094,7 @@ const messages = {
       recognizeScenarios: {
         title: 'Recognize Business Scenarios?',
         description:
-          'The system will use the prompt below and the current workflow structure to recognize business scenarios and update the coverage module. Existing test questions are kept and will not be deleted or overwritten.',
+          'The system will incrementally recognize business scenarios from the current workflow. Newly recognized scenarios will be appended to the list. Existing scenarios and test questions will be kept and will not be deleted or overwritten.',
         modelLabel: 'Recognition Model',
         modelPlaceholder: 'Select recognition model',
         promptLabel: 'Recognition Prompt',

@@ -1042,7 +1042,7 @@ const messages: AgentsMessages = {
     dialogs: {
       scenario: {
         title: '编辑业务场景',
-        description: '调整已识别的业务场景。删除场景不会删除已有测试问题。',
+        description: '调整已识别的业务场景。已归类测试问题的场景不允许删除。',
         itemTitle: '场景 {index}',
         caseCount: '已归类 {count} 条测试问题',
         nameLabel: '场景名称',
@@ -1055,7 +1055,7 @@ const messages: AgentsMessages = {
       recognizeScenarios: {
         title: '识别业务场景？',
         description:
-          '系统将根据下方提示词和当前工作流结构识别业务场景，并更新覆盖模块。已有测试问题会保留，不会被删除或覆盖。',
+          '系统将基于当前工作流结构增量识别业务场景。新识别出的场景会追加到列表；已有场景和测试问题会保留，不会被删除或覆盖。',
         modelLabel: '识别模型',
         modelPlaceholder: '选择识别模型',
         promptLabel: '识别提示词',

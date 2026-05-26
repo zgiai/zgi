@@ -9,7 +9,9 @@ import {
   Loader2,
   WandSparkles,
   Plus,
+  ScanSearch,
   Settings2,
+  SquarePen,
   MoreHorizontal,
   Trash2,
   PlayCircle,
@@ -479,33 +481,35 @@ export function BatchTestOverview({
         {view === 'case-library' ? (
           <>
             <Card className="rounded-2xl">
-              <CardHeader className="flex-row items-center justify-between">
+              <CardHeader className="flex-row items-start justify-between gap-4">
                 <div>
                   <CardTitle>{t('scenarios.title')}</CardTitle>
                   <p className="mt-2 text-sm text-slate-600">{t('scenarios.description')}</p>
                 </div>
-                {sceneCards.length > 0 ? (
-                  <div className="flex gap-2">
+                <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                  {sceneCards.length > 0 ? (
                     <Button
                       variant="outline"
                       disabled={isScenarioRecognitionActive}
                       onClick={() => setRecognizeScenariosOpen(true)}
                     >
+                      <ScanSearch className="mr-2 size-4" />
                       {isScenarioRecognitionActive
                         ? t('actions.recognizingScenarios')
                         : t('actions.rerecognizeScenarios')}
                     </Button>
-                    <Button variant="outline" onClick={() => setScenarioDialogOpen(true)}>
-                      {t('actions.editScenarios')}
-                    </Button>
-                  </div>
-                ) : null}
+                  ) : null}
+                  <Button variant="outline" onClick={() => setScenarioDialogOpen(true)}>
+                    <SquarePen className="mr-2 size-4" />
+                    {t('actions.editScenarios')}
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent>
                 {sceneCards.length === 0 ? (
                   <div className="flex min-h-[220px] flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 px-6 text-center">
                     <div className="rounded-xl bg-white p-3 text-blue-600 shadow-sm">
-                      <WandSparkles className="size-5" />
+                      <ScanSearch className="size-5" />
                     </div>
                     <div className="mt-4 font-semibold text-slate-950">
                       {t('scenarios.emptyTitle')}
@@ -525,6 +529,7 @@ export function BatchTestOverview({
                       disabled={isScenarioRecognitionActive}
                       onClick={() => setRecognizeScenariosOpen(true)}
                     >
+                      <ScanSearch className="mr-2 size-4" />
                       {isScenarioRecognitionActive
                         ? t('actions.recognizingScenarios')
                         : t('actions.recognizeScenarios')}
@@ -537,11 +542,11 @@ export function BatchTestOverview({
                         {t('scenarios.recognizingDescription')}
                       </p>
                     ) : null}
-                    <div className="grid grid-cols-1 gap-4 md:grid-cols-3 xl:grid-cols-5">
+                    <div className="scrollbar-thin flex gap-4 overflow-x-auto pb-2">
                       {sceneCards.map(scene => (
                         <div
                           key={scene.name}
-                          className="rounded-xl border border-slate-200 bg-slate-50 p-4"
+                          className="min-h-[150px] w-[280px] shrink-0 rounded-xl border border-slate-200 bg-slate-50 p-4"
                         >
                           <div className="flex items-start justify-between gap-2">
                             <div className="font-semibold text-slate-950">{scene.name}</div>

@@ -241,8 +241,14 @@ func (s *Service) SaveScenarios(ctx context.Context, agentID string, req SaveSce
 		existingByID[scenario.ID] = scenario
 	}
 
+	type normalizedScenarioItem struct {
+		ID          string
+		Name        string
+		Description string
+	}
 	seenNames := map[string]struct{}{}
-	keptIDs := map[string]struct{}{}
+	keptExistingIDs := map[string]struct{}{}
+	normalizedItems := make([]normalizedScenarioItem, 0, len(req.Scenarios))
 	for _, item := range req.Scenarios {
 		name := strings.TrimSpace(item.Name)
 		if name == "" {
@@ -252,12 +258,40 @@ func (s *Service) SaveScenarios(ctx context.Context, agentID string, req SaveSce
 			return nil, fmt.Errorf("duplicate scenario name")
 		}
 		seenNames[name] = struct{}{}
+		if item.ID != "" {
+			if _, ok := existingByID[item.ID]; !ok {
+				return nil, fmt.Errorf("scenario not found")
+			}
+			keptExistingIDs[item.ID] = struct{}{}
+		}
+		normalizedItems = append(normalizedItems, normalizedScenarioItem{
+			ID:          item.ID,
+			Name:        name,
+			Description: strings.TrimSpace(item.Description),
+		})
+	}
 
-		description := strings.TrimSpace(item.Description)
+	for _, scenario := range existing {
+		if _, ok := keptExistingIDs[scenario.ID]; !ok {
+			if scenario.CaseCount > 0 {
+				return nil, fmt.Errorf("scenario has assigned cases")
+			}
+			count, err := s.repo.CountCasesByScenario(ctx, agentID, scenario.ID)
+			if err != nil {
+				return nil, err
+			}
+			if count > 0 {
+				return nil, fmt.Errorf("scenario has assigned cases")
+			}
+		}
+	}
+
+	keptIDs := map[string]struct{}{}
+	for _, item := range normalizedItems {
 		if item.ID == "" {
 			created, err := s.CreateScenario(ctx, agentID, CreateScenarioRequest{
-				Name:        name,
-				Description: description,
+				Name:        item.Name,
+				Description: item.Description,
 				Source:      "manual",
 			})
 			if err != nil {
@@ -267,12 +301,9 @@ func (s *Service) SaveScenarios(ctx context.Context, agentID string, req SaveSce
 			continue
 		}
 
-		scenario, ok := existingByID[item.ID]
-		if !ok {
-			return nil, fmt.Errorf("scenario not found")
-		}
-		scenario.Name = name
-		scenario.Description = description
+		scenario := existingByID[item.ID]
+		scenario.Name = item.Name
+		scenario.Description = item.Description
 		scenario.UpdatedAt = time.Now()
 		if err := s.repo.UpdateScenario(ctx, &scenario); err != nil {
 			return nil, err
