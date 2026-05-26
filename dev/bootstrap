@@ -50,7 +50,7 @@ generate_secret_32() {
 is_unset_or_placeholder() {
   local value="$1"
   case "$value" in
-    ""|"replace-with-strong-random-secret"|"replace-with-32-byte-random-key"|"change-me-in-production")
+    ""|"replace-with-strong-random-secret"|"replace-with-32-byte-random-key"|"change-me-in-production"|"change-me")
       return 0
       ;;
     *)
@@ -123,6 +123,11 @@ copy_if_missing "$ROOT/runner/.env.example" "$ROOT/runner/.env"
 
 api_secret="$(generate_secret_32)"
 api_docker_secret="$(generate_secret_32)"
+postgres_password="$(generate_secret_32)"
+redis_password="$(generate_secret_32)"
+neo4j_password="$(generate_secret_32)"
+runner_api_key="$(generate_secret_32)"
+sandbox_postgres_password="$(generate_secret_32)"
 ensure_env_value "$ROOT/api/.env" "SECRET_KEY" "$(generate_secret_32)"
 ensure_env_value "$ROOT/api/.env" "API_KEY_ENCRYPTION_KEY" "$api_secret"
 ensure_env_value "$ROOT/api/.env.docker" "SECRET_KEY" "$(generate_secret_32)"
@@ -131,6 +136,30 @@ replace_env_value_if_current "$ROOT/api/.env.docker" "SQL_BASE_INTERNAL_DB" "zgi
 ensure_env_value "$ROOT/docker/.env" "PUBLIC_PORT" "2679"
 public_port="$(get_env_value "$ROOT/docker/.env" "PUBLIC_PORT" || printf '%s' "2679")"
 ensure_env_value "$ROOT/docker/.env" "PUBLIC_URL" "http://localhost:${public_port}"
+ensure_env_value "$ROOT/docker/.env" "POSTGRES_PASSWORD" "$postgres_password"
+ensure_env_value "$ROOT/docker/.env" "REDIS_PASSWORD" "$redis_password"
+ensure_env_value "$ROOT/docker/.env" "NEO4J_PASSWORD" "$neo4j_password"
+
+postgres_password="$(get_env_value "$ROOT/docker/.env" "POSTGRES_PASSWORD" || printf '%s' "$postgres_password")"
+redis_password="$(get_env_value "$ROOT/docker/.env" "REDIS_PASSWORD" || printf '%s' "$redis_password")"
+neo4j_password="$(get_env_value "$ROOT/docker/.env" "NEO4J_PASSWORD" || printf '%s' "$neo4j_password")"
+ensure_env_value "$ROOT/api/.env" "DB_PASSWORD" "$postgres_password"
+ensure_env_value "$ROOT/api/.env" "REDIS_PASSWORD" "$redis_password"
+ensure_env_value "$ROOT/api/.env" "NEO4J_PASSWORD" "$neo4j_password"
+ensure_env_value "$ROOT/api/.env.docker" "DB_PASSWORD" "$postgres_password"
+ensure_env_value "$ROOT/api/.env.docker" "REDIS_PASSWORD" "$redis_password"
+ensure_env_value "$ROOT/api/.env.docker" "NEO4J_PASSWORD" "$neo4j_password"
+
+ensure_env_value "$ROOT/runner/.env" "EXECUTOR_API_KEY" "$runner_api_key"
+runner_api_key="$(get_env_value "$ROOT/runner/.env" "EXECUTOR_API_KEY" || printf '%s' "$runner_api_key")"
+ensure_env_value "$ROOT/api/.env" "PLUGIN_RUNNER_API_KEY" "$runner_api_key"
+ensure_env_value "$ROOT/api/.env.docker" "PLUGIN_RUNNER_API_KEY" "$runner_api_key"
+ensure_env_value "$ROOT/runner/.env" "EXECUTOR_DB_PASSWORD" "$postgres_password"
+ensure_env_value "$ROOT/runner/.env" "EXECUTOR_REDIS_PASSWORD" "$redis_password"
+
+ensure_env_value "$ROOT/sandbox/.env" "POSTGRES_PASSWORD" "$sandbox_postgres_password"
+sandbox_postgres_password="$(get_env_value "$ROOT/sandbox/.env" "POSTGRES_PASSWORD" || printf '%s' "$sandbox_postgres_password")"
+ensure_env_value "$ROOT/sandbox/.env" "ZGI_SANDBOX_DATABASE_URL" "postgres://postgres:${sandbox_postgres_password}@sandbox-postgres:5432/zgi_sandbox?sslmode=disable"
 
 echo "[bootstrap] generate docker compose"
 "$ROOT/docker/generate_docker_compose"
