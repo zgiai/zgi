@@ -40,14 +40,6 @@ const staticBrandName = (process.env.NEXT_PUBLIC_BRAND_NAME ?? staticAppName).tr
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
-  async rewrites() {
-    return [
-      {
-        source: '/market-api/:path*',
-        destination: 'http://localhost:8025/:path*',
-      },
-    ];
-  },
   env: {
     APP_NAME_STATIC: staticAppName,
     APP_BRAND_STATIC: staticBrandName,
