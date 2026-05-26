@@ -67,7 +67,12 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	RegisterDatasetRoutes(v1, serviceContainer)
 
 	// ---------- Content Parse ----------
-	RegisterContentParseRoutes(v1, serviceContainer)
+	RegisterContentParseRoutes(v1, ContentParseRouteDeps{
+		DB:                  db,
+		AccountService:      accountService,
+		LLMClient:           serviceContainer.GetLLMClient(),
+		DefaultModelService: serviceContainer.GetDefaultModelService(),
+	})
 
 	// ---------- Data Library ----------
 	RegisterDataLibraryRoutes(v1, serviceContainer)
