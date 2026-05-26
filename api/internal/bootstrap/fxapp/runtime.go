@@ -27,21 +27,27 @@ import (
 type runtimeParams struct {
 	fx.In
 
-	HTTPServer            *http.Server
-	GRPCServer            *grpcinfra.Server
-	HTTPListener          net.Listener `name:"http_listener"`
-	GRPCListener          net.Listener `name:"grpc_listener"`
-	Config                *config.Config
+	HTTPServer          *http.Server
+	GRPCServer          *grpcinfra.Server
+	HTTPListener        net.Listener `name:"http_listener"`
+	GRPCListener        net.Listener `name:"grpc_listener"`
+	Config              *config.Config
+	BootstrapService    *system_service.BootstrapService
+	GraphFlowService    *graphflow.Service
+	TaskManager         *queue.TaskManager
+	TaskHandlerRegistry *container.TaskHandlerRegistrar
+	Scheduler           *pkgscheduler.Scheduler
+	Sentry              *SentryResource
+	OpenTelemetry       *OpenTelemetryResource
+	Logger              *zap.Logger
+}
+
+type routeParams struct {
+	fx.In
+
 	Engine                *gin.Engine
 	ServiceContainer      *container.ServiceContainer
-	GraphFlowService      *graphflow.Service
 	WorkflowEngineFactory *graph_engine.EngineFactory
-	TaskManager           *queue.TaskManager
-	TaskHandlerRegistry   *container.TaskHandlerRegistrar
-	Scheduler             *pkgscheduler.Scheduler
-	Sentry                *SentryResource
-	OpenTelemetry         *OpenTelemetryResource
-	Logger                *zap.Logger
 }
 
 // GRPCServerLifecycle describes the runtime operations required for a gRPC server.
@@ -70,14 +76,16 @@ type SchedulerLifecycle interface {
 
 var runtimeModule = fx.Module("runtime",
 	fx.Invoke(
+		registerRoutes,
 		registerRuntime,
 	),
 )
 
-func registerRuntime(lc fx.Lifecycle, params runtimeParams) error {
-	params.ServiceContainer.SetWorkflowEngineFactory(params.WorkflowEngineFactory)
-	routes.RegisterRoutes(params.Engine, params.ServiceContainer)
+func registerRoutes(params routeParams) {
+	routes.RegisterRoutes(params.Engine, params.ServiceContainer, params.WorkflowEngineFactory)
+}
 
+func registerRuntime(lc fx.Lifecycle, params runtimeParams) error {
 	graphflowworker.RegisterGraphFlowHandlers(
 		params.TaskHandlerRegistry,
 		params.GraphFlowService,
@@ -94,7 +102,7 @@ func registerRuntime(lc fx.Lifecycle, params runtimeParams) error {
 
 	RegisterCloudBootstrapLifecycle(
 		lc,
-		system_service.NewCloudBootstrapRunner(params.Config, params.ServiceContainer.GetBootstrapService()),
+		system_service.NewCloudBootstrapRunner(params.Config, params.BootstrapService),
 		params.Logger,
 	)
 	registerOpenTelemetryLifecycle(lc, params.OpenTelemetry, params.Logger)

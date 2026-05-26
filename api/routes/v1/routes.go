@@ -6,12 +6,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/container"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
 	workspace_service "github.com/zgiai/zgi/api/internal/modules/workspace/service"
 	"github.com/zgiai/zgi/api/pkg/database"
 )
 
 // RegisterRoutes registers all v1 version routes
-func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *container.ServiceContainer) {
+func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *container.ServiceContainer, workflowEngineFactory *graph_engine.EngineFactory) {
 	// Health & setup routes first
 	RegisterHealthRoutes(v1)
 	RegisterSetupRoutes(v1, serviceContainer)
@@ -77,11 +78,11 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	RegisterQuotaRoutes(v1, serviceContainer)
 
 	// ---------- Workflow ----------
-	RegisterWorkflowRoutes(v1, accountService, tenantService, serviceContainer.GetFileService(), db, serviceContainer.GetContentExtractor(), serviceContainer.GetQuotaService(), serviceContainer.GetOrganizationService(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), serviceContainer.GetAutomationDefinitionService(), serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetScheduler(), serviceContainer.GetWorkflowEngineFactory(), serviceContainer)
+	RegisterWorkflowRoutes(v1, accountService, tenantService, serviceContainer.GetFileService(), db, serviceContainer.GetContentExtractor(), serviceContainer.GetQuotaService(), serviceContainer.GetOrganizationService(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), serviceContainer.GetAutomationDefinitionService(), serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetScheduler(), workflowEngineFactory, serviceContainer)
 
 	// ---------- Agent ----------
 	resourcePermissionService := serviceContainer.GetResourcePermissionService()
-	RegisterAgentsRoutes(v1, db, accountService, tenantService, resourcePermissionService, serviceContainer.GetOrganizationService(), serviceContainer.GetQuotaService(), serviceContainer.GetFileService(), serviceContainer.GetContentExtractor(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), serviceContainer.GetWorkflowEngineFactory(), serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry())
+	RegisterAgentsRoutes(v1, db, accountService, tenantService, resourcePermissionService, serviceContainer.GetOrganizationService(), serviceContainer.GetQuotaService(), serviceContainer.GetFileService(), serviceContainer.GetContentExtractor(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), workflowEngineFactory, serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry())
 
 	// ---------- Prompt Library ----------
 	RegisterPromptRoutes(v1, serviceContainer)
