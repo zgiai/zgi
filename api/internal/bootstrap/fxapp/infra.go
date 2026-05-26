@@ -15,7 +15,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 	"github.com/zgiai/zgi/api/config"
-	"github.com/zgiai/zgi/api/internal/container"
 	grpcinfra "github.com/zgiai/zgi/api/internal/infra/grpc"
 	"github.com/zgiai/zgi/api/internal/infra/platform"
 	"github.com/zgiai/zgi/api/middleware"
@@ -213,8 +212,8 @@ func provideHTTPServer(cfg *config.Config, addresses ServerAddresses, engine *gi
 	}
 }
 
-func provideGRPCServer(serviceContainer *container.ServiceContainer) *grpcinfra.Server {
-	return grpcinfra.NewServer(serviceContainer)
+func provideGRPCServer(db *gorm.DB) *grpcinfra.Server {
+	return grpcinfra.NewServer(db)
 }
 
 func registerInfraLifecycle(lc fx.Lifecycle, db *gorm.DB, redisClient *redis.Client) {

@@ -4,34 +4,33 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/zgiai/zgi/api/internal/container"
 	"github.com/zgiai/zgi/api/internal/infra/grpc/services"
+	modelrepo "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/repository"
+	providerrepo "github.com/zgiai/zgi/api/internal/modules/llm/provider/repository"
 	"github.com/zgiai/zgi/api/internal/observability"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	pb "github.com/zgiai/zgi/api/pkg/rpc/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
+	"gorm.io/gorm"
 )
 
 type Server struct {
 	grpcServer *grpc.Server
-	container  *container.ServiceContainer
 }
 
-func NewServer(c *container.ServiceContainer) *Server {
+func NewServer(db *gorm.DB) *Server {
 	s := grpc.NewServer(observability.GRPCServerOptions()...)
 
-	// Register services
-	modelService := services.NewModelService(c)
+	modelService := services.NewModelService(modelrepo.NewModelRepository(db))
 	pb.RegisterModelServiceServer(s, modelService)
 
-	providerService := services.NewProviderService(c)
+	providerService := services.NewProviderService(providerrepo.NewProviderRepository(db))
 	pb.RegisterProviderServiceServer(s, providerService)
 
 	reflection.Register(s)
 	return &Server{
 		grpcServer: s,
-		container:  c,
 	}
 }
 
