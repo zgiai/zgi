@@ -7,6 +7,7 @@ import (
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/container"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
+	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
 	workspace_service "github.com/zgiai/zgi/api/internal/modules/workspace/service"
 	"github.com/zgiai/zgi/api/pkg/database"
 )
@@ -15,7 +16,10 @@ import (
 func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *container.ServiceContainer, workflowEngineFactory *graph_engine.EngineFactory) {
 	// Health & setup routes first
 	RegisterHealthRoutes(v1)
-	RegisterSetupRoutes(v1, serviceContainer)
+	RegisterSetupRoutes(v1, SetupRouteDeps{
+		BootstrapService: serviceContainer.GetBootstrapService(),
+		FeatureService:   system_service.NewFeatureService(),
+	})
 
 	// TaskQueue debug routes removed (module deprecated)
 
