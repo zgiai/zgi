@@ -383,6 +383,8 @@ func (s *KnowledgeRetrievalService) findAccessibleDatasets(ctx context.Context, 
 		return []*dataset_model.Dataset{}, nil
 	}
 
+	// Runtime retrieval intentionally uses organization/workspace membership as its access boundary.
+	// Legacy dataset_permissions and per-dataset visibility fields are deprecated for AIChat/Agent tools.
 	dbQuery := s.db.WithContext(ctx).
 		Model(&dataset_model.Dataset{}).
 		Where("workspace_id IN ?", workspaceIDs)

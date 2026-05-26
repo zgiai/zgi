@@ -172,7 +172,8 @@ func (h *AgentsHandler) agentRuntimeContext(c *gin.Context) (agentRuntimeContext
 		response.Fail(c, response.ErrInvalidParam)
 		return agentRuntimeContext{}, false
 	}
-	cfg, err := h.appService.GetAgentConfig(c.Request.Context(), agentID.String(), accountID.String())
+	ctx := agentRuntimeRequestContext(c, accountID.String())
+	cfg, err := h.appService.GetAgentConfig(ctx, agentID.String(), accountID.String())
 	if err != nil {
 		h.failRuntime(c, err)
 		return agentRuntimeContext{}, false

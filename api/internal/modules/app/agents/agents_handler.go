@@ -318,7 +318,8 @@ func (h *AgentsHandler) GetAgentConfig(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
-	result, err := h.appService.GetAgentConfig(c.Request.Context(), c.Param("agent_id"), accountID)
+	ctx := agentRuntimeRequestContext(c, accountID)
+	result, err := h.appService.GetAgentConfig(ctx, c.Param("agent_id"), accountID)
 	if err != nil {
 		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
 		return
@@ -341,7 +342,8 @@ func (h *AgentsHandler) UpdateAgentConfig(c *gin.Context) {
 		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
 		return
 	}
-	result, err := h.appService.UpdateAgentConfig(c.Request.Context(), c.Param("agent_id"), accountID, req)
+	ctx := agentRuntimeRequestContext(c, accountID)
+	result, err := h.appService.UpdateAgentConfig(ctx, c.Param("agent_id"), accountID, req)
 	if err != nil {
 		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
 		return
@@ -359,7 +361,8 @@ func (h *AgentsHandler) PublishAgent(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		req = dto.PublishAgentRequest{}
 	}
-	cfg, err := h.appService.GetAgentConfig(c.Request.Context(), c.Param("agent_id"), accountID)
+	ctx := agentRuntimeRequestContext(c, accountID)
+	cfg, err := h.appService.GetAgentConfig(ctx, c.Param("agent_id"), accountID)
 	if err != nil {
 		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
 		return
@@ -371,7 +374,7 @@ func (h *AgentsHandler) PublishAgent(c *gin.Context) {
 		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
 		return
 	}
-	result, err := h.appService.PublishAgent(c.Request.Context(), c.Param("agent_id"), accountID, req)
+	result, err := h.appService.PublishAgent(ctx, c.Param("agent_id"), accountID, req)
 	if err != nil {
 		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
 		return
@@ -381,12 +384,17 @@ func (h *AgentsHandler) PublishAgent(c *gin.Context) {
 
 func (h *AgentsHandler) GenerateAgentSuggestedQuestions(c *gin.Context) {
 	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
 	var req dto.GenerateAgentSuggestedQuestionsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	result, err := h.appService.GenerateAgentSuggestedQuestions(c.Request.Context(), c.Param("agent_id"), accountID, &req)
+	ctx := agentRuntimeRequestContext(c, accountID)
+	result, err := h.appService.GenerateAgentSuggestedQuestions(ctx, c.Param("agent_id"), accountID, &req)
 	if err != nil {
 		if isAgentSuggestedQuestionsConfigurationError(err) {
 			response.FailWithMessage(c, response.ErrConfigError, "Please configure a default LLM model before generating suggested questions.")
@@ -433,7 +441,8 @@ func (h *AgentsHandler) ChatAgent(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	cfg, err := h.appService.GetAgentConfig(c.Request.Context(), agentID.String(), accountID.String())
+	ctx := agentRuntimeRequestContext(c, accountID.String())
+	cfg, err := h.appService.GetAgentConfig(ctx, agentID.String(), accountID.String())
 	if err != nil {
 		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
 		return
@@ -452,7 +461,7 @@ func (h *AgentsHandler) ChatAgent(c *gin.Context) {
 		BillingAppType:           runtimemodel.ConversationCallerAgent,
 	}
 	prepared, err := h.chatRuntimeService.PrepareConfiguredChat(
-		c.Request.Context(),
+		ctx,
 		runtimeservice.Scope{OrganizationID: organizationID, AccountID: accountID, WorkspaceID: workspaceID},
 		runtimeservice.Caller{Type: runtimemodel.ConversationCallerAgent, ID: &agentID, Source: runtimemodel.ConversationSourceConsole},
 		runConfig,
@@ -504,6 +513,11 @@ func (h *AgentsHandler) ChatAgent(c *gin.Context) {
 }
 
 func (h *AgentsHandler) ListAgentPublishedVersions(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
 	page := 1
 	limit := 20
 	if parsed, err := strconv.Atoi(c.DefaultQuery("page", "1")); err == nil {
@@ -512,7 +526,8 @@ func (h *AgentsHandler) ListAgentPublishedVersions(c *gin.Context) {
 	if parsed, err := strconv.Atoi(c.DefaultQuery("limit", "20")); err == nil {
 		limit = parsed
 	}
-	result, err := h.appService.ListAgentPublishedVersions(c.Request.Context(), c.Param("agent_id"), page, limit)
+	ctx := agentRuntimeRequestContext(c, accountID)
+	result, err := h.appService.ListAgentPublishedVersions(ctx, c.Param("agent_id"), accountID, page, limit)
 	if err != nil {
 		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
 		return
@@ -531,7 +546,8 @@ func (h *AgentsHandler) RollbackAgentPublishedVersion(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	result, err := h.appService.RollbackAgentPublishedVersion(c.Request.Context(), c.Param("agent_id"), accountID, req)
+	ctx := agentRuntimeRequestContext(c, accountID)
+	result, err := h.appService.RollbackAgentPublishedVersion(ctx, c.Param("agent_id"), accountID, req)
 	if err != nil {
 		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
 		return
@@ -561,12 +577,42 @@ func (h *AgentsHandler) GetWebAppRuntimeConfig(c *gin.Context) {
 			"title":      result.Name,
 			"web_app_id": result.WebAppID,
 		},
-		"agent_config": result.Config,
+		"agent_config": publicAgentWebAppConfig(result),
 		"version": gin.H{
 			"version":      result.Version,
 			"version_uuid": result.VersionUUID,
 		},
 	})
+}
+
+func agentRuntimeRequestContext(c *gin.Context, accountID string) context.Context {
+	ctx := context.WithValue(c.Request.Context(), "account_id", accountID)
+	if callerOrganizationID := util.GetOrganizationID(c); callerOrganizationID != "" {
+		ctx = context.WithValue(ctx, "tenant_id", callerOrganizationID)
+	}
+	return ctx
+}
+
+func publicAgentWebAppConfig(result *dto.AgentWebAppRuntimeConfigResponse) dto.AgentPublicWebAppConfigResponse {
+	if result == nil {
+		return dto.AgentPublicWebAppConfigResponse{}
+	}
+	return dto.AgentPublicWebAppConfigResponse{
+		AgentID:            result.AgentID,
+		WebAppID:           result.WebAppID,
+		AgentType:          result.AgentType,
+		Name:               result.Name,
+		Description:        result.Description,
+		Icon:               result.Icon,
+		IconType:           result.IconType,
+		IconURL:            result.IconURL,
+		HomeTitle:          result.Config.HomeTitle,
+		InputPlaceholder:   result.Config.InputPlaceholder,
+		SuggestedQuestions: result.Config.SuggestedQuestions,
+		FileUpload:         result.Config.FileUpload,
+		Version:            result.Version,
+		VersionUUID:        result.VersionUUID,
+	}
 }
 
 func (h *AgentsHandler) ChatWebAppAgent(c *gin.Context) {

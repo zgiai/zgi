@@ -488,12 +488,12 @@ func applyRunConfigToChatRequest(config RunConfig, req runtimedto.ChatRequest) r
 }
 
 func applyRunConfigToRegenerateRequest(config RunConfig, req runtimedto.RegenerateMessageRequest) runtimedto.RegenerateMessageRequest {
-	if req.Model == nil {
+	if req.Model == nil || strings.TrimSpace(*req.Model) == "" {
 		if model := strings.TrimSpace(config.Model); model != "" {
 			req.Model = &model
 		}
 	}
-	if req.Provider == nil {
+	if req.Provider == nil || strings.TrimSpace(*req.Provider) == "" {
 		if provider := strings.TrimSpace(config.ModelProvider); provider != "" {
 			req.Provider = &provider
 		}

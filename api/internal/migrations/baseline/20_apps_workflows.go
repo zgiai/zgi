@@ -100,18 +100,6 @@ var AppsWorkflowsSchema = File{
     external_data_tools text,
     file_upload text
 );`,
-		`CREATE TABLE public.agent_published_versions (
-    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
-    agent_id uuid NOT NULL,
-    workspace_id uuid NOT NULL,
-    version character varying(255) NOT NULL,
-    version_uuid uuid NOT NULL,
-    config_snapshot jsonb DEFAULT '{}'::jsonb NOT NULL,
-    description text DEFAULT ''::text NOT NULL,
-    created_by uuid,
-    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    deleted_at timestamp with time zone
-);`,
 		`CREATE TABLE public.agents_conversations (
     id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
     agent_id uuid NOT NULL,
@@ -182,13 +170,11 @@ var AppsWorkflowsSchema = File{
     workflow_version_uuid uuid,
     web_app_id uuid
 );`,
-		`CREATE TABLE public.chat_runtime_conversations (
+		`CREATE TABLE public.aichat_conversations (
     id uuid NOT NULL,
     organization_id uuid NOT NULL,
     workspace_id uuid,
     account_id uuid NOT NULL,
-    caller_type character varying(32) DEFAULT 'aichat'::character varying NOT NULL,
-    caller_id uuid,
     title character varying(255) NOT NULL,
     status character varying(32) DEFAULT 'normal'::character varying NOT NULL,
     runtime_status character varying(32) DEFAULT 'idle'::character varying NOT NULL,
@@ -203,7 +189,7 @@ var AppsWorkflowsSchema = File{
     deleted_at timestamp with time zone,
     metadata jsonb DEFAULT '{}'::jsonb NOT NULL
 );`,
-		`CREATE TABLE public.chat_runtime_custom_skills (
+		`CREATE TABLE public.aichat_custom_skills (
     id uuid NOT NULL,
     organization_id uuid NOT NULL,
     skill_id character varying(128) NOT NULL,
@@ -221,7 +207,7 @@ var AppsWorkflowsSchema = File{
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     deleted_at timestamp with time zone
 );`,
-		`CREATE TABLE public.chat_runtime_messages (
+		`CREATE TABLE public.aichat_messages (
     id uuid NOT NULL,
     conversation_id uuid NOT NULL,
     parent_id uuid,
@@ -239,18 +225,10 @@ var AppsWorkflowsSchema = File{
     updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     deleted_at timestamp with time zone
 );`,
-		`CREATE TABLE public.chat_runtime_organization_skill_configs (
+		`CREATE TABLE public.aichat_organization_skill_configs (
     organization_id uuid NOT NULL,
     skill_id character varying(128) NOT NULL,
     enabled boolean DEFAULT true NOT NULL,
-    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
-);`,
-		`CREATE TABLE public.chat_runtime_account_skill_preferences (
-    organization_id uuid NOT NULL,
-    account_id uuid NOT NULL,
-    caller_type character varying(32) NOT NULL,
-    enabled_skill_ids jsonb DEFAULT '[]'::jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
 );`,

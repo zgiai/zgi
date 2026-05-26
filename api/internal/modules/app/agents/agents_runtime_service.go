@@ -24,19 +24,22 @@ func (s *agentsService) GetAgentConfig(ctx context.Context, agentID, accountID s
 	if ag.AgentsType != "AGENT" {
 		return nil, fmt.Errorf("agent config is only available for AGENT type")
 	}
+	if err := s.ensureCanManageAgent(ctx, ag, accountID); err != nil {
+		return nil, err
+	}
 	return agentConfigResponse(ag.ID.String(), cfg), nil
 }
 
 func (s *agentsService) UpdateAgentConfig(ctx context.Context, agentID, accountID string, req dto.AgentConfigRequest) (*dto.AgentConfigResponse, error) {
-	if err := s.ensureAgentEditor(ctx, accountID); err != nil {
-		return nil, err
-	}
 	ag, cfg, err := s.loadAgentRuntimeConfig(ctx, agentID)
 	if err != nil {
 		return nil, err
 	}
 	if ag.AgentsType != "AGENT" {
 		return nil, fmt.Errorf("agent config is only available for AGENT type")
+	}
+	if err := s.ensureCanManageAgent(ctx, ag, accountID); err != nil {
+		return nil, err
 	}
 	if _, err := applyAgentConfigRequestToDraft(cfg, req); err != nil {
 		return nil, err
@@ -51,15 +54,15 @@ func (s *agentsService) UpdateAgentConfig(ctx context.Context, agentID, accountI
 }
 
 func (s *agentsService) PublishAgent(ctx context.Context, agentID, accountID string, req dto.PublishAgentRequest) (*dto.PublishAgentResponse, error) {
-	if err := s.ensureAgentEditor(ctx, accountID); err != nil {
-		return nil, err
-	}
 	ag, cfg, err := s.loadAgentRuntimeConfig(ctx, agentID)
 	if err != nil {
 		return nil, err
 	}
 	if ag.AgentsType != "AGENT" {
 		return nil, fmt.Errorf("publish agent is only available for AGENT type")
+	}
+	if err := s.ensureCanManageAgent(ctx, ag, accountID); err != nil {
+		return nil, err
 	}
 	snapshot := agentConfigSnapshot(ag.ID.String(), cfg)
 	now := time.Now()
@@ -88,7 +91,17 @@ func (s *agentsService) PublishAgent(ctx context.Context, agentID, accountID str
 	}, nil
 }
 
-func (s *agentsService) ListAgentPublishedVersions(ctx context.Context, agentID string, page, limit int) (*dto.AgentPublishedVersionsResponse, error) {
+func (s *agentsService) ListAgentPublishedVersions(ctx context.Context, agentID, accountID string, page, limit int) (*dto.AgentPublishedVersionsResponse, error) {
+	ag, _, err := s.loadAgentRuntimeConfig(ctx, agentID)
+	if err != nil {
+		return nil, err
+	}
+	if ag.AgentsType != "AGENT" {
+		return nil, fmt.Errorf("published versions are only available for AGENT type")
+	}
+	if err := s.ensureCanManageAgent(ctx, ag, accountID); err != nil {
+		return nil, err
+	}
 	if page <= 0 {
 		page = 1
 	}
@@ -130,15 +143,15 @@ func (s *agentsService) ListAgentPublishedVersions(ctx context.Context, agentID 
 }
 
 func (s *agentsService) RollbackAgentPublishedVersion(ctx context.Context, agentID, accountID string, req dto.RollbackAgentPublishedVersionRequest) (*dto.AgentConfigResponse, error) {
-	if err := s.ensureAgentEditor(ctx, accountID); err != nil {
-		return nil, err
-	}
 	ag, cfg, err := s.loadAgentRuntimeConfig(ctx, agentID)
 	if err != nil {
 		return nil, err
 	}
 	if ag.AgentsType != "AGENT" {
 		return nil, fmt.Errorf("rollback agent version is only available for AGENT type")
+	}
+	if err := s.ensureCanManageAgent(ctx, ag, accountID); err != nil {
+		return nil, err
 	}
 	versionID := strings.TrimSpace(req.VersionID)
 	if versionID == "" {
@@ -422,6 +435,9 @@ func (s *agentsService) GenerateAgentSuggestedQuestions(ctx context.Context, age
 	}
 	if ag.AgentsType != "AGENT" {
 		return nil, fmt.Errorf("suggested questions are only available for AGENT type")
+	}
+	if err := s.ensureCanManageAgent(ctx, ag, accountID); err != nil {
+		return nil, err
 	}
 	if s.llmClient == nil {
 		return nil, fmt.Errorf("llm client is not configured")

@@ -1,20 +1,16 @@
 package migrations
 
 import (
-	"github.com/go-gormigrate/gormigrate/v2"
-	"gorm.io/gorm"
+	mschema "github.com/zgiai/zgi/api/internal/migrations/schema"
 )
 
 const migration20260525090000ID = "20260525090000_create_chat_runtime_and_agent_versions"
 
 func init() {
-	registerMigration(&gormigrate.Migration{
-		ID:      migration20260525090000ID,
-		Migrate: upCreateChatRuntimeAndAgentVersions,
-	})
+	registerSchemaMigration(migration20260525090000ID, upCreateChatRuntimeAndAgentVersions, nil)
 }
 
-func upCreateChatRuntimeAndAgentVersions(tx *gorm.DB) error {
+func upCreateChatRuntimeAndAgentVersions(schema *mschema.Builder) error {
 	statements := []string{
 		`
 		DO $$
@@ -137,7 +133,7 @@ func upCreateChatRuntimeAndAgentVersions(tx *gorm.DB) error {
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_published_versions_version_uuid ON agent_published_versions (version_uuid) WHERE deleted_at IS NULL`,
 	}
 	for _, statement := range statements {
-		if err := tx.Exec(statement).Error; err != nil {
+		if err := schema.Raw(statement); err != nil {
 			return err
 		}
 	}

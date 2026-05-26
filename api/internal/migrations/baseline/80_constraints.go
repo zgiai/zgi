@@ -22,24 +22,20 @@ var ConstraintsSchema = File{
     ADD CONSTRAINT agent_extensions_pkey PRIMARY KEY (id);`,
 		`ALTER TABLE ONLY public.agents_configs
     ADD CONSTRAINT agents_configs_pkey PRIMARY KEY (id);`,
-		`ALTER TABLE ONLY public.agent_published_versions
-    ADD CONSTRAINT agent_published_versions_pkey PRIMARY KEY (id);`,
 		`ALTER TABLE ONLY public.agents_conversations
     ADD CONSTRAINT agents_conversations_pkey PRIMARY KEY (id);`,
 		`ALTER TABLE ONLY public.agents_messages
     ADD CONSTRAINT agents_messages_pkey PRIMARY KEY (id);`,
 		`ALTER TABLE ONLY public.agents
     ADD CONSTRAINT agents_pkey PRIMARY KEY (id);`,
-		`ALTER TABLE ONLY public.chat_runtime_conversations
-    ADD CONSTRAINT chat_runtime_conversations_pkey PRIMARY KEY (id);`,
-		`ALTER TABLE ONLY public.chat_runtime_custom_skills
-    ADD CONSTRAINT chat_runtime_custom_skills_pkey PRIMARY KEY (id);`,
-		`ALTER TABLE ONLY public.chat_runtime_messages
-    ADD CONSTRAINT chat_runtime_messages_pkey PRIMARY KEY (id);`,
-		`ALTER TABLE ONLY public.chat_runtime_organization_skill_configs
-    ADD CONSTRAINT chat_runtime_organization_skill_configs_pkey PRIMARY KEY (organization_id, skill_id);`,
-		`ALTER TABLE ONLY public.chat_runtime_account_skill_preferences
-    ADD CONSTRAINT chat_runtime_account_skill_preferences_pkey PRIMARY KEY (organization_id, account_id, caller_type);`,
+		`ALTER TABLE ONLY public.aichat_conversations
+    ADD CONSTRAINT aichat_conversations_pkey PRIMARY KEY (id);`,
+		`ALTER TABLE ONLY public.aichat_custom_skills
+    ADD CONSTRAINT aichat_custom_skills_pkey PRIMARY KEY (id);`,
+		`ALTER TABLE ONLY public.aichat_messages
+    ADD CONSTRAINT aichat_messages_pkey PRIMARY KEY (id);`,
+		`ALTER TABLE ONLY public.aichat_organization_skill_configs
+    ADD CONSTRAINT aichat_organization_skill_configs_pkey PRIMARY KEY (organization_id, skill_id);`,
 		`ALTER TABLE ONLY public.app_prompt_optimization_runs
     ADD CONSTRAINT app_prompt_optimization_runs_pkey PRIMARY KEY (id);`,
 		`ALTER TABLE ONLY public.app_prompt_versions
@@ -132,6 +128,8 @@ var ConstraintsSchema = File{
     ADD CONSTRAINT dataset_metadata_bindings_pkey PRIMARY KEY (id);`,
 		`ALTER TABLE ONLY public.dataset_metadatas
     ADD CONSTRAINT dataset_metadatas_pkey PRIMARY KEY (id);`,
+		`ALTER TABLE ONLY public.dataset_permissions
+    ADD CONSTRAINT dataset_permissions_pkey PRIMARY KEY (id);`,
 		`ALTER TABLE ONLY public.dataset_process_rules
     ADD CONSTRAINT dataset_process_rules_pkey PRIMARY KEY (id);`,
 		`ALTER TABLE ONLY public.dataset_queries

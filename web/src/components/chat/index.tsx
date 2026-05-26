@@ -112,6 +112,7 @@ interface AIChatVariantProps {
   onModelChange: (value: ModelSelectorValue) => void;
   variant?: 'full' | 'embedded';
   showModelSelector?: boolean;
+  requireModel?: boolean;
   showMemoryToggle?: boolean;
   forcedUseMemory?: boolean;
   enableUpload?: boolean;

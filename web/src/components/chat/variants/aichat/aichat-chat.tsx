@@ -81,6 +81,7 @@ interface AIChatShellProps {
   onModelChange: (value: ModelSelectorValue) => void;
   variant?: 'full' | 'embedded';
   showModelSelector?: boolean;
+  requireModel?: boolean;
   showMemoryToggle?: boolean;
   forcedUseMemory?: boolean;
   enableUpload?: boolean;
@@ -128,6 +129,7 @@ export function AIChatShell({
   onModelChange,
   variant = 'full',
   showModelSelector = true,
+  requireModel = true,
   showMemoryToggle = true,
   forcedUseMemory,
   enableUpload = true,
@@ -235,7 +237,7 @@ export function AIChatShell({
     [displayMessageIds, messageTopology]
   );
   const isHome = !activeConversationId && messages.length === 0 && !isSending;
-  const modelMissing = !modelSelectorValue.model;
+  const modelMissing = requireModel && !modelSelectorValue.model;
   const {
     bottomRef,
     scrollViewportRef,
@@ -373,7 +375,7 @@ export function AIChatShell({
     (files: AIChatMessageFile[] = [], useMemory = false) => {
       const query = input.trim();
       if (!query || isSending) return;
-      if (!modelSelectorValue.model) {
+      if (requireModel && !modelSelectorValue.model) {
         toast.error(t('consoleChat.modelRequired'));
         return;
       }
@@ -390,7 +392,7 @@ export function AIChatShell({
         useMemory: forcedUseMemory ?? useMemory,
       });
     },
-    [controller, forcedUseMemory, input, isSending, modelSelectorValue, t]
+    [controller, forcedUseMemory, input, isSending, modelSelectorValue, requireModel, t]
   );
 
   const handleRegenerate = useCallback(
@@ -398,7 +400,7 @@ export function AIChatShell({
       const branchCount = branchNavigationByMessageId.get(message.id)?.total ?? 1;
       const canReplaceRoot = canReplaceRootMessage(message);
       if (!canReplaceRoot && (!message.parent_id || branchCount >= MAX_AICHAT_BRANCHES)) return;
-      if (!modelSelectorValue.model) {
+      if (requireModel && !modelSelectorValue.model) {
         toast.error(t('consoleChat.modelRequired'));
         return;
       }
@@ -409,7 +411,7 @@ export function AIChatShell({
         parameters: modelSelectorValue.params,
       });
     },
-    [branchNavigationByMessageId, canReplaceRootMessage, controller, modelSelectorValue, t]
+    [branchNavigationByMessageId, canReplaceRootMessage, controller, modelSelectorValue, requireModel, t]
   );
 
   const handleEditStart = useCallback(
@@ -440,7 +442,7 @@ export function AIChatShell({
       ) {
         return;
       }
-      if (!modelSelectorValue.model) {
+      if (requireModel && !modelSelectorValue.model) {
         toast.error(t('consoleChat.modelRequired'));
         return;
       }
@@ -478,6 +480,7 @@ export function AIChatShell({
       editingQuery,
       isSending,
       modelSelectorValue,
+      requireModel,
       t,
     ]
   );

@@ -335,6 +335,14 @@ var DataKnowledgeSchema = File{
     created_by uuid NOT NULL,
     updated_by uuid
 );`,
+		`CREATE TABLE public.dataset_permissions (
+    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    dataset_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    has_permission boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    tenant_id uuid NOT NULL
+);`,
 		`CREATE TABLE public.dataset_process_rules (
     id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
     dataset_id uuid NOT NULL,

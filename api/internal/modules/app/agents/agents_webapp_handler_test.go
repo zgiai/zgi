@@ -65,6 +65,41 @@ func TestAgentsHandler_UpdateWebAppStatus_MapsInvalidStatus(t *testing.T) {
 	require.True(t, service.called)
 }
 
+func TestPublicAgentWebAppConfig_DoesNotExposeRuntimeSecrets(t *testing.T) {
+	public := publicAgentWebAppConfig(&dto.AgentWebAppRuntimeConfigResponse{
+		AgentID:     "agent-1",
+		WebAppID:    "webapp-1",
+		AgentType:   "AGENT",
+		Name:        "Agent",
+		Description: "Public description",
+		Icon:        "AG",
+		IconType:    "text",
+		IconURL:     "",
+		Version:     "20260526000000",
+		VersionUUID: "version-1",
+		Config: dto.AgentConfigResponse{
+			SystemPrompt:        "secret prompt",
+			ModelProvider:       "secret-provider",
+			Model:               "secret-model",
+			EnabledSkillIDs:     []string{"secret-skill"},
+			KnowledgeDatasetIDs: []string{"secret-dataset"},
+			HomeTitle:           "Home",
+			InputPlaceholder:    "Ask",
+			SuggestedQuestions:  []string{"Q1"},
+			FileUpload:          true,
+		},
+	})
+
+	encoded, err := json.Marshal(public)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "system_prompt")
+	require.NotContains(t, string(encoded), "secret prompt")
+	require.NotContains(t, string(encoded), "secret-model")
+	require.NotContains(t, string(encoded), "secret-dataset")
+	require.Contains(t, string(encoded), "Home")
+	require.Contains(t, string(encoded), "file_upload_enabled")
+}
+
 func newWebAppStatusHandlerTestRouter(service AgentsService) *gin.Engine {
 	handler := NewAgentsHandler(service, nil, nil, nil, nil)
 	router := gin.New()
@@ -136,7 +171,7 @@ func (s *stubWebAppStatusHandlerService) PublishAgent(context.Context, string, s
 	return nil, nil
 }
 
-func (s *stubWebAppStatusHandlerService) ListAgentPublishedVersions(context.Context, string, int, int) (*dto.AgentPublishedVersionsResponse, error) {
+func (s *stubWebAppStatusHandlerService) ListAgentPublishedVersions(context.Context, string, string, int, int) (*dto.AgentPublishedVersionsResponse, error) {
 	return nil, nil
 }
 

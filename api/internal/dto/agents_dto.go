@@ -264,3 +264,20 @@ type AgentWebAppRuntimeConfigResponse struct {
 	VersionUUID    string              `json:"version_uuid"`
 	Config         AgentConfigResponse `json:"config"`
 }
+
+type AgentPublicWebAppConfigResponse struct {
+	AgentID            string   `json:"agent_id"`
+	WebAppID           string   `json:"web_app_id"`
+	AgentType          string   `json:"agent_type"`
+	Name               string   `json:"name"`
+	Description        string   `json:"description"`
+	Icon               string   `json:"icon"`
+	IconType           string   `json:"icon_type"`
+	IconURL            string   `json:"icon_url"`
+	HomeTitle          string   `json:"home_title"`
+	InputPlaceholder   string   `json:"input_placeholder"`
+	SuggestedQuestions []string `json:"suggested_questions"`
+	FileUpload         bool     `json:"file_upload_enabled"`
+	Version            string   `json:"version"`
+	VersionUUID        string   `json:"version_uuid"`
+}

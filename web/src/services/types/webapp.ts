@@ -92,16 +92,9 @@ export interface WebAppWorkflowConfig {
   features: WebAppFeatures;
   config: WebAppWorkflowMeta;
   agent_config?: {
-    system_prompt?: string;
-    model_provider?: string;
-    model?: string;
-    model_parameters?: Record<string, unknown>;
-    enabled_skill_ids?: string[];
-    use_memory?: boolean;
     file_upload_enabled?: boolean;
     home_title?: string;
     input_placeholder?: string;
-    theme_color?: string;
     suggested_questions?: string[];
   };
 }
