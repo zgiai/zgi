@@ -54,10 +54,6 @@ next-env.d.ts
 
 # local overrides
 /.local-overrides/
-/.overlay/
-/.customer/
-/src/app/console/(customer)/
-/src/app/dashboard/(customer)/
 
 # Sentry Config File
 .env.sentry-build-plugin

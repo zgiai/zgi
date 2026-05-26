@@ -1,1 +1,1 @@
-export { customerAdapter } from '@customer/active';
+export { defaultCustomerAdapter as customerAdapter } from './default';
