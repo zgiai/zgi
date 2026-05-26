@@ -90,7 +90,13 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	RegisterAgentsRoutes(v1, db, accountService, tenantService, resourcePermissionService, serviceContainer.GetOrganizationService(), serviceContainer.GetQuotaService(), serviceContainer.GetFileService(), serviceContainer.GetContentExtractor(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), workflowEngineFactory, serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry())
 
 	// ---------- Prompt Library ----------
-	RegisterPromptRoutes(v1, serviceContainer)
+	RegisterPromptRoutes(v1, PromptRouteDeps{
+		DB:                  serviceContainer.GetDB(),
+		AccountService:      serviceContainer.GetAccountService(),
+		OrganizationService: serviceContainer.GetOrganizationService(),
+		LLMClient:           serviceContainer.GetLLMClient(),
+		DefaultModelService: serviceContainer.GetDefaultModelService(),
+	})
 
 	// ---------- LLM Management ----------
 	llmModule := RegisterLLMRoutes(v1, serviceContainer)
