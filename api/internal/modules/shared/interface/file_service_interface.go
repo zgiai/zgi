@@ -33,6 +33,7 @@ type FileService interface {
 	GetFilePreview(ctx context.Context, fileID string) (string, error)
 	GetFilePreviewWithOCR(ctx context.Context, fileID string, enableOCR bool) (string, error)
 	GetFile(ctx context.Context, fileID string) (string, error)
+	ExtractFileWithSetting(ctx context.Context, fileID string, setting FileExtractionSetting) (string, error)
 	GetSupportedFileTypes() []string
 	IsFileSizeWithinLimit(extension string, fileSize int64) bool
 	ParseFileContent(ctx context.Context, uploadFileID string)
@@ -51,4 +52,13 @@ type FileService interface {
 	CleanupExpiredTemporaryFiles(ctx context.Context, ttl time.Duration) (int64, error)
 	// GetFileURL gets the URL for a file by its ID
 	GetFileURL(ctx context.Context, fileID string) (string, error)
+}
+
+// FileExtractionSetting controls explicit file extraction calls that should not
+// reuse cached upload text.
+type FileExtractionSetting struct {
+	ExtractionStrategy        string
+	ExtractionFallbackEnabled *bool
+	EnableOCR                 *bool
+	CacheNamespace            string
 }

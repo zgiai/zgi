@@ -134,6 +134,7 @@ type QueryRecordResponse struct {
 // AnalyzeFileForTableResponse represents the response for analyzing a file to infer table structure
 type AnalyzeFileForTableResponse struct {
 	Columns []TableColumn `json:"columns"`
+	Content string        `json:"content,omitempty"`
 }
 
 // ModelSpec represents the specification of a model to use
@@ -163,6 +164,7 @@ type IngestFileToTableResponse struct {
 	Records []map[string]interface{} `json:"records"`
 	Columns []TableColumn            `json:"columns"`
 	Message string                   `json:"message"`
+	Content string                   `json:"content,omitempty"`
 }
 
 // BatchIngestFileToTableRequest defines the request for ingesting multiple files content into a table
@@ -186,6 +188,7 @@ type FileIngestResult struct {
 	FileName string                   `json:"file_name"`
 	Records  []map[string]interface{} `json:"records"`
 	Message  string                   `json:"message"`
+	Content  string                   `json:"content,omitempty"`
 	Error    *string                  `json:"error,omitempty"`
 }
 

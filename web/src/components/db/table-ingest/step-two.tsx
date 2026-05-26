@@ -65,6 +65,7 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
 
   // Editable values per file_id
   const [valuesByFile, setValuesByFile] = useState<Record<string, DbTableRecord>>({});
+  const [contentByFile, setContentByFile] = useState<Record<string, string>>({});
 
   // Drafts for timestamp inputs to allow partial edits before committing
   const [tsDrafts, setTsDrafts] = useState<Record<string, string>>({});
@@ -101,6 +102,7 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
     setColumns([]);
     setRecognizedByFile({});
     setValuesByFile({});
+    setContentByFile({});
     setTsDrafts({});
     setActiveFileId(selectedFiles[0]?.id);
   }, [reRecognitionNonce, selectedFiles]);
@@ -121,11 +123,14 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
 
         // Map first record of each file into recognizedByFile
         const nextRecognized: Record<string, DbTableRecord> = {};
+        const nextContent: Record<string, string> = {};
         Object.values(res.results || {}).forEach(item => {
           const first = (item.records || [])[0] || ({} as DbTableRecord);
           nextRecognized[item.file_id] = first;
+          nextContent[item.file_id] = item.content || '';
         });
         setRecognizedByFile(nextRecognized);
+        setContentByFile(nextContent);
         // Initialize editable values
         setValuesByFile(prev => {
           const copy = { ...prev };
@@ -159,6 +164,8 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
     gcTime: 300_000,
     refetchOnWindowFocus: false,
   });
+  const displayedPreviewContent =
+    (activeFileId && contentByFile[activeFileId]) || previewContent;
 
   // Build highlight terms from recognized values for active file
   const highlightTerms = useMemo(() => {
@@ -424,8 +431,8 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
                   <Skeleton key={i} className="h-4 w-full" />
                 ))}
               </div>
-            ) : previewContent ? (
-              <MarkdownViewer content={previewContent} highlights={highlightTerms} />
+            ) : displayedPreviewContent ? (
+              <MarkdownViewer content={displayedPreviewContent} highlights={highlightTerms} />
             ) : (
               <div className="text-sm text-muted-foreground">
                 {t('tableIngest.stepTwo.noPreview')}

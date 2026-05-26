@@ -66,7 +66,7 @@ type DataSourceService interface {
 	ImportTableRecordsFromUploadFile(ctx context.Context, organizationID, dataSourceID, tableID, accountID, uploadFileID string) (dto.ImportRecordResponse, error)
 
 	// File analysis for table structure
-	AnalyzeFileForTable(ctx context.Context, dataSourceID, accountID, fileID string, description *string, modelSpec *dto.ModelSpec) ([]dto.TableColumn, error)
+	AnalyzeFileForTable(ctx context.Context, dataSourceID, accountID, fileID string, description *string, modelSpec *dto.ModelSpec) (dto.AnalyzeFileForTableResponse, error)
 	// File ingestion into table
 	IngestFileToTable(ctx context.Context, organizationID, accountID string, req dto.IngestFileToTableRequest) (dto.IngestFileToTableResponse, error)
 	BatchIngestFileToTable(ctx context.Context, organizationID, accountID string, req dto.BatchIngestFileToTableRequest) (dto.BatchIngestFileToTableResponse, error)
@@ -1803,14 +1803,14 @@ func quoteIdentifiers(identifiers []string) []string {
 }
 
 // AnalyzeFileForTable analyzes a file and infers table structure
-func (s *dataSourceService) AnalyzeFileForTable(ctx context.Context, dataSourceID, accountID, fileID string, prompt *string, modelSpec *dto.ModelSpec) ([]dto.TableColumn, error) {
+func (s *dataSourceService) AnalyzeFileForTable(ctx context.Context, dataSourceID, accountID, fileID string, prompt *string, modelSpec *dto.ModelSpec) (dto.AnalyzeFileForTableResponse, error) {
 	// Get data source to retrieve organization scope
 	dataSource, err := s.repo.FindByID(ctx, dataSourceID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find data source: %w", err)
+		return dto.AnalyzeFileForTableResponse{}, fmt.Errorf("failed to find data source: %w", err)
 	}
 	if dataSource == nil {
-		return nil, fmt.Errorf("data source with id '%s' not found", dataSourceID)
+		return dto.AnalyzeFileForTableResponse{}, fmt.Errorf("data source with id '%s' not found", dataSourceID)
 	}
 
 	// Get organization ID from data source
@@ -1818,7 +1818,7 @@ func (s *dataSourceService) AnalyzeFileForTable(ctx context.Context, dataSourceI
 	if dataSource.OrganizationID != "" {
 		organizationID = dataSource.OrganizationID
 	} else {
-		return nil, fmt.Errorf("data source '%s' has no associated organization_id", dataSourceID)
+		return dto.AnalyzeFileForTableResponse{}, fmt.Errorf("data source '%s' has no associated organization_id", dataSourceID)
 	}
 
 	var content string
@@ -1828,23 +1828,35 @@ func (s *dataSourceService) AnalyzeFileForTable(ctx context.Context, dataSourceI
 		// Get file service to retrieve file content
 		_, err := s.fileService.GetFileByID(ctx, fileID)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get file: %w", err)
+			return dto.AnalyzeFileForTableResponse{}, fmt.Errorf("failed to get file: %w", err)
 		}
 
-		// Get file content
-		content, err = s.fileService.GetFile(ctx, fileID)
+		// Get file content with database ingestion extraction settings.
+		content, err = s.extractDatabaseIngestionFileContent(ctx, fileID)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get file content: %w", err)
+			return dto.AnalyzeFileForTableResponse{}, fmt.Errorf("failed to get file content: %w", err)
 		}
 	}
 
 	// Analyze file content to infer table structure using data source's organization scope
 	columns, err := s.inferTableStructureFromFile(ctx, organizationID, accountID, content, prompt, modelSpec)
 	if err != nil {
-		return nil, fmt.Errorf("failed to infer table structure: %w", err)
+		return dto.AnalyzeFileForTableResponse{}, fmt.Errorf("failed to infer table structure: %w", err)
 	}
 
-	return columns, nil
+	return dto.AnalyzeFileForTableResponse{
+		Columns: columns,
+		Content: content,
+	}, nil
+}
+
+func (s *dataSourceService) extractDatabaseIngestionFileContent(ctx context.Context, fileID string) (string, error) {
+	fallbackEnabled := false
+	return s.fileService.ExtractFileWithSetting(ctx, fileID, interfaces.FileExtractionSetting{
+		ExtractionStrategy:        dto.DocumentExtractionStrategyHyperParseMineru,
+		ExtractionFallbackEnabled: &fallbackEnabled,
+		CacheNamespace:            "database_ingestion",
+	})
 }
 
 // inferTableStructureFromFile infers table structure from file content or user prompt
@@ -2032,7 +2044,7 @@ func (s *dataSourceService) IngestFileToTable(ctx context.Context, organizationI
 	}
 
 	// 3. Get file content
-	content, err := s.fileService.GetFile(ctx, req.FileID)
+	content, err := s.extractDatabaseIngestionFileContent(ctx, req.FileID)
 	if err != nil {
 		return dto.IngestFileToTableResponse{}, fmt.Errorf("failed to get file content: %w", err)
 	}
@@ -2047,6 +2059,7 @@ func (s *dataSourceService) IngestFileToTable(ctx context.Context, organizationI
 		Records: records,
 		Columns: columns.Columns,
 		Message: fmt.Sprintf("Successfully parsed %d records from file", len(records)),
+		Content: content,
 	}, nil
 }
 
@@ -2212,7 +2225,7 @@ func (s *dataSourceService) BatchIngestFileToTable(ctx context.Context, organiza
 			}
 
 			// Get file content
-			content, err := s.fileService.GetFile(ctx, id)
+			content, err := s.extractDatabaseIngestionFileContent(ctx, id)
 			if err != nil {
 				errMsg := fmt.Sprintf("failed to get file content: %v", err)
 				resultChan <- result{
@@ -2222,6 +2235,7 @@ func (s *dataSourceService) BatchIngestFileToTable(ctx context.Context, organiza
 						FileName: fileInfo.Name,
 						Records:  nil,
 						Message:  "",
+						Content:  content,
 						Error:    &errMsg,
 					},
 					err: nil,
@@ -2240,6 +2254,7 @@ func (s *dataSourceService) BatchIngestFileToTable(ctx context.Context, organiza
 						FileName: fileInfo.Name,
 						Records:  nil,
 						Message:  "",
+						Content:  content,
 						Error:    &errMsg,
 					},
 					err: nil,
@@ -2254,6 +2269,7 @@ func (s *dataSourceService) BatchIngestFileToTable(ctx context.Context, organiza
 					FileName: fileInfo.Name,
 					Records:  records,
 					Message:  fmt.Sprintf("Successfully parsed %d records from file", len(records)),
+					Content:  content,
 					Error:    nil,
 				},
 				err: nil,
