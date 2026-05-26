@@ -765,3 +765,47 @@ func TestValidatorValidateModelsForCreation_RejectsWhenAllRepresentativeModelsFa
 	require.Contains(t, fmt.Sprint(result.Report[keyFailedModels]), "chat-a")
 	require.Contains(t, fmt.Sprint(result.Report[keyFailedModels]), "embed-a")
 }
+
+func TestValidatorValidateModelsForCreation_ReturnsFriendlyProviderAPIKeyError(t *testing.T) {
+	modelRepo := &fakeModelLookupRepo{
+		models: map[string]*llmmodelmodel.LLMModel{
+			"deepseek-v4-pro": {Model: "deepseek-v4-pro", UseCases: llmmodelmodel.StringArray{"text-chat"}},
+		},
+	}
+	fakeAdapter := &fakeValidationAdapter{
+		listModelsErr: errors.New("list models should not be called"),
+		chatFailures: map[string]error{
+			"deepseek-v4-pro": adapter.NewAdapterError(
+				"invalid_api_key",
+				"Authentication Fails, Your api key: ****1d35 is invalid",
+				401,
+				adapter.ErrAuthFailed,
+			),
+		},
+		embeddingFailures: map[string]error{},
+		imageFailures:     map[string]error{},
+		rerankFailures:    map[string]error{},
+	}
+
+	validator := NewValidator(nil, nil)
+	validator.modelRepo = modelRepo
+	validator.newAdapter = func(*adapter.AdapterConfig) (adapter.LLMProviderAdapter, error) {
+		return fakeAdapter, nil
+	}
+
+	result, err := validator.ValidateModelsForCreation(
+		context.Background(),
+		uuid.Nil,
+		"deepseek",
+		"key",
+		"",
+		[]string{"deepseek-v4-pro"},
+	)
+	require.Error(t, err)
+	require.NotNil(t, result)
+	require.ErrorIs(t, err, ErrProviderAPIKeyInvalid)
+	require.Equal(t, providerAPIKeyInvalidMessage, err.Error())
+	require.NotContains(t, err.Error(), "Authentication Fails")
+	require.NotContains(t, err.Error(), "1d35")
+	require.Equal(t, 0, fakeAdapter.listModelsCalls)
+}
