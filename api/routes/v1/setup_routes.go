@@ -6,7 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/zgiai/zgi/api/config"
 
-	"github.com/zgiai/zgi/api/internal/container"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	system_handler "github.com/zgiai/zgi/api/internal/modules/system/handler"
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
 )
@@ -21,13 +21,23 @@ func RegisterSetupPaths(router *gin.RouterGroup, setupStatusHandler, setupSystem
 	router.GET("/system-features", systemFeaturesHandler)
 }
 
-// RegisterSetupRoutes wires setup and system feature handlers.
-func RegisterSetupRoutes(router *gin.RouterGroup, serviceContainer *container.ServiceContainer) {
-	setupService := serviceContainer.GetBootstrapService()
-	featureService := system_service.NewFeatureService()
+// SetupRouteDeps contains dependencies required by setup routes.
+type SetupRouteDeps struct {
+	BootstrapService *system_service.BootstrapService
+	FeatureService   interfaces.FeatureService
+}
 
-	setupHandler := system_handler.NewSetupHandler(setupService)
-	featureHandler := system_handler.NewFeatureHandler(featureService)
+// RegisterSetupRoutes wires setup and system feature handlers.
+func RegisterSetupRoutes(router *gin.RouterGroup, deps SetupRouteDeps) {
+	if deps.BootstrapService == nil {
+		panic("setup routes require bootstrap service")
+	}
+	if deps.FeatureService == nil {
+		panic("setup routes require feature service")
+	}
+
+	setupHandler := system_handler.NewSetupHandler(deps.BootstrapService)
+	featureHandler := system_handler.NewFeatureHandler(deps.FeatureService)
 
 	RegisterSetupPaths(router, setupHandler.GetSetupStatus, setupHandler.SetupSystem, featureHandler.GetSystemFeatures)
 }
