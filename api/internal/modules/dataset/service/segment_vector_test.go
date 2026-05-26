@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"sort"
 	"testing"
 
 	"github.com/zgiai/zgi/api/internal/dto"
@@ -51,6 +52,7 @@ type segmentVectorDB struct {
 	storedVector []float64
 	deletedID    string
 	deletedClass string
+	deletedIDs   []string
 	storeCalls   int
 	deleteCalls  int
 }
@@ -68,6 +70,7 @@ func (s *segmentVectorDB) DeleteVector(ctx context.Context, id, className string
 	s.deleteCalls++
 	s.deletedID = id
 	s.deletedClass = className
+	s.deletedIDs = append(s.deletedIDs, id)
 	return nil
 }
 
@@ -243,6 +246,26 @@ func createSegmentVectorTestTables(t *testing.T, db *gorm.DB) {
 	for _, statement := range statements {
 		if err := db.Exec(statement).Error; err != nil {
 			t.Fatalf("create test table: %v", err)
+		}
+	}
+}
+
+func stringPtr(value string) *string {
+	return &value
+}
+
+func assertStringSet(t *testing.T, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("strings = %#v, want %#v", got, want)
+	}
+	gotCopy := append([]string(nil), got...)
+	wantCopy := append([]string(nil), want...)
+	sort.Strings(gotCopy)
+	sort.Strings(wantCopy)
+	for i := range gotCopy {
+		if gotCopy[i] != wantCopy[i] {
+			t.Fatalf("strings = %#v, want %#v", got, want)
 		}
 	}
 }
@@ -444,9 +467,120 @@ func TestDeleteChildChunkDeletesVector(t *testing.T) {
 	}
 }
 
-func TestUpdateSegmentStoresUpdatedVector(t *testing.T) {
+func TestDeleteSegmentDeletesChildChunksAndVectors(t *testing.T) {
 	ctx := context.Background()
-	service, vectorDB, embeddingSvc, db := newSegmentVectorTestService(t)
+	service, vectorDB, _, db := newSegmentVectorTestService(t)
+	seedSegmentVectorDatasetAndSegment(t, db)
+	parentIndexNodeID := "parent-node-1"
+	if err := db.Model(&model.DocumentSegment{}).
+		Where("id = ?", "segment-1").
+		Update("index_node_id", parentIndexNodeID).Error; err != nil {
+		t.Fatalf("seed parent index node id: %v", err)
+	}
+
+	childChunks := []*model.ChildChunk{
+		{
+			ID:             "child-1",
+			OrganizationID: "org-1",
+			DatasetID:      "dataset-1",
+			DocumentID:     "document-1",
+			SegmentID:      "segment-1",
+			Position:       1,
+			Content:        "child content one",
+			WordCount:      len([]rune("child content one")),
+			Type:           model.ChildChunkTypeAutomatic,
+			IndexNodeID:    stringPtr("child-node-1"),
+			CreatedBy:      "user-1",
+		},
+		{
+			ID:             "child-2",
+			OrganizationID: "org-1",
+			DatasetID:      "dataset-1",
+			DocumentID:     "document-1",
+			SegmentID:      "segment-1",
+			Position:       2,
+			Content:        "child content two",
+			WordCount:      len([]rune("child content two")),
+			Type:           model.ChildChunkTypeAutomatic,
+			IndexNodeID:    stringPtr("child-node-2"),
+			CreatedBy:      "user-1",
+		},
+	}
+	if err := db.Create(childChunks).Error; err != nil {
+		t.Fatalf("seed child chunks: %v", err)
+	}
+
+	if err := service.DeleteSegment(ctx, "segment-1"); err != nil {
+		t.Fatalf("DeleteSegment returned error: %v", err)
+	}
+
+	if vectorDB.deleteCalls != 2 {
+		t.Fatalf("delete calls = %d, want 2", vectorDB.deleteCalls)
+	}
+	assertStringSet(t, vectorDB.deletedIDs, []string{"child-node-1", "child-node-2"})
+	for _, deletedID := range vectorDB.deletedIDs {
+		if deletedID == parentIndexNodeID {
+			t.Fatalf("deleted parent segment vector id %q; only child chunk vectors should be deleted", parentIndexNodeID)
+		}
+	}
+	var childCount int64
+	if err := db.Model(&model.ChildChunk{}).Where("segment_id = ?", "segment-1").Count(&childCount).Error; err != nil {
+		t.Fatalf("count child chunks: %v", err)
+	}
+	if childCount != 0 {
+		t.Fatalf("child chunk count = %d, want 0", childCount)
+	}
+	var segmentCount int64
+	if err := db.Model(&model.DocumentSegment{}).Where("id = ?", "segment-1").Count(&segmentCount).Error; err != nil {
+		t.Fatalf("count segments: %v", err)
+	}
+	if segmentCount != 0 {
+		t.Fatalf("segment count = %d, want 0", segmentCount)
+	}
+}
+
+func TestDeleteSegmentDeletesSharedChildVectorID(t *testing.T) {
+	ctx := context.Background()
+	service, vectorDB, _, db := newSegmentVectorTestService(t)
+	seedSegmentVectorDatasetAndSegment(t, db)
+	sharedIndexNodeID := "shared-node-1"
+	if err := db.Model(&model.DocumentSegment{}).
+		Where("id = ?", "segment-1").
+		Update("index_node_id", sharedIndexNodeID).Error; err != nil {
+		t.Fatalf("seed parent index node id: %v", err)
+	}
+	childChunk := &model.ChildChunk{
+		ID:             "child-1",
+		OrganizationID: "org-1",
+		DatasetID:      "dataset-1",
+		DocumentID:     "document-1",
+		SegmentID:      "segment-1",
+		Position:       1,
+		Content:        "child content",
+		WordCount:      len([]rune("child content")),
+		Type:           model.ChildChunkTypeAutomatic,
+		IndexNodeID:    &sharedIndexNodeID,
+		CreatedBy:      "user-1",
+	}
+	if err := db.Create(childChunk).Error; err != nil {
+		t.Fatalf("seed child chunk: %v", err)
+	}
+
+	if err := service.DeleteSegment(ctx, "segment-1"); err != nil {
+		t.Fatalf("DeleteSegment returned error: %v", err)
+	}
+
+	if vectorDB.deleteCalls != 1 {
+		t.Fatalf("delete calls = %d, want 1", vectorDB.deleteCalls)
+	}
+	if vectorDB.deletedID != sharedIndexNodeID {
+		t.Fatalf("deleted id = %q, want %q", vectorDB.deletedID, sharedIndexNodeID)
+	}
+}
+
+func TestUpdateSegmentDoesNotStoreParentVector(t *testing.T) {
+	ctx := context.Background()
+	service, vectorDB, _, db := newSegmentVectorTestService(t)
 	seedSegmentVectorDatasetAndSegment(t, db)
 	oldHash := simpleHash("parent content")
 	indexNodeID := "parent-node-1"
@@ -469,23 +603,11 @@ func TestUpdateSegmentStoresUpdatedVector(t *testing.T) {
 	if response.IndexNodeID == nil || *response.IndexNodeID != indexNodeID {
 		t.Fatalf("response index node id = %v, want %q", response.IndexNodeID, indexNodeID)
 	}
-	if vectorDB.deleteCalls != 1 {
-		t.Fatalf("delete calls = %d, want 1", vectorDB.deleteCalls)
+	if vectorDB.deleteCalls != 0 {
+		t.Fatalf("delete calls = %d, want 0", vectorDB.deleteCalls)
 	}
-	if vectorDB.deletedID != indexNodeID {
-		t.Fatalf("deleted id = %q, want %q", vectorDB.deletedID, indexNodeID)
-	}
-	if vectorDB.storeCalls != 1 {
-		t.Fatalf("store calls = %d, want 1", vectorDB.storeCalls)
-	}
-	if vectorDB.storedID != indexNodeID {
-		t.Fatalf("stored id = %q, want %q", vectorDB.storedID, indexNodeID)
-	}
-	if vectorDB.storedProps["text"] != "updated parent content" {
-		t.Fatalf("stored text = %v", vectorDB.storedProps["text"])
-	}
-	if len(embeddingSvc.texts) != 1 || embeddingSvc.texts[0] != "updated parent content" {
-		t.Fatalf("embedded texts = %#v", embeddingSvc.texts)
+	if vectorDB.storeCalls != 0 {
+		t.Fatalf("store calls = %d, want 0", vectorDB.storeCalls)
 	}
 	var segment model.DocumentSegment
 	if err := db.Where("id = ?", "segment-1").First(&segment).Error; err != nil {
@@ -538,14 +660,17 @@ func TestUpdateSegmentRegeneratesChildChunksAndVectors(t *testing.T) {
 		t.Fatalf("UpdateSegment returned error: %v", err)
 	}
 
-	if vectorDB.deleteCalls != 2 {
-		t.Fatalf("delete calls = %d, want 2", vectorDB.deleteCalls)
+	if vectorDB.deleteCalls != 1 {
+		t.Fatalf("delete calls = %d, want 1", vectorDB.deleteCalls)
 	}
-	if vectorDB.storeCalls != 3 {
-		t.Fatalf("store calls = %d, want 3", vectorDB.storeCalls)
+	if vectorDB.deletedID != oldChildNodeID {
+		t.Fatalf("deleted id = %q, want %q", vectorDB.deletedID, oldChildNodeID)
 	}
-	if len(embeddingSvc.texts) != 3 {
-		t.Fatalf("embedded text count = %d, want 3: %#v", len(embeddingSvc.texts), embeddingSvc.texts)
+	if vectorDB.storeCalls != 2 {
+		t.Fatalf("store calls = %d, want 2", vectorDB.storeCalls)
+	}
+	if len(embeddingSvc.texts) != 2 {
+		t.Fatalf("embedded text count = %d, want 2: %#v", len(embeddingSvc.texts), embeddingSvc.texts)
 	}
 	var oldCount int64
 	if err := db.Model(&model.ChildChunk{}).Where("id = ?", "old-child-1").Count(&oldCount).Error; err != nil {
@@ -619,12 +744,12 @@ func TestUpdateSegmentRegeneratesChildChunksWithDocumentProcessRule(t *testing.T
 	if childChunks[0].Content != "alpha line\nstill first" || childChunks[1].Content != "beta line\nstill second" {
 		t.Fatalf("child contents = %#v", []string{childChunks[0].Content, childChunks[1].Content})
 	}
-	if len(embeddingSvc.texts) != 3 {
-		t.Fatalf("embedded text count = %d, want 3: %#v", len(embeddingSvc.texts), embeddingSvc.texts)
+	if len(embeddingSvc.texts) != 2 {
+		t.Fatalf("embedded text count = %d, want 2: %#v", len(embeddingSvc.texts), embeddingSvc.texts)
 	}
 }
 
-func TestUpdateSegmentRegenerationKeepsSharedParentVector(t *testing.T) {
+func TestUpdateSegmentRegenerationDeletesSharedChildVectorID(t *testing.T) {
 	ctx := context.Background()
 	service, vectorDB, _, db := newSegmentVectorTestService(t)
 	seedSegmentVectorDatasetAndSegment(t, db)
@@ -665,7 +790,7 @@ func TestUpdateSegmentRegenerationKeepsSharedParentVector(t *testing.T) {
 	}
 
 	if vectorDB.deleteCalls != 1 {
-		t.Fatalf("delete calls = %d, want 1 for parent replacement only", vectorDB.deleteCalls)
+		t.Fatalf("delete calls = %d, want 1", vectorDB.deleteCalls)
 	}
 	if vectorDB.deletedID != sharedIndexNodeID {
 		t.Fatalf("deleted id = %q, want %q", vectorDB.deletedID, sharedIndexNodeID)

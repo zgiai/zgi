@@ -331,7 +331,6 @@ func (s *segmentServiceImpl) UpdateSegment(ctx context.Context, segmentID string
 		return nil, err
 	}
 
-	originalSegment := *segment
 	contentChanged := req.Content != "" && segment.Content != req.Content
 	var dataset *model.Dataset
 	if req.Content != "" {
@@ -344,60 +343,11 @@ func (s *segmentServiceImpl) UpdateSegment(ctx context.Context, segmentID string
 	}
 
 	if contentChanged {
-		dataset, err = s.datasetRepo.GetByID(ctx, segment.DatasetID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get dataset for segment vector: %w", err)
-		}
-		if segment.IndexNodeID == nil || strings.TrimSpace(*segment.IndexNodeID) == "" {
-			indexNodeID := uuid.New().String()
-			segment.IndexNodeID = &indexNodeID
-		} else if originalSegment.IndexNodeID != nil && strings.TrimSpace(*originalSegment.IndexNodeID) != "" {
-			if err := s.deleteSegmentVector(ctx, originalSegment.DatasetID, *originalSegment.IndexNodeID); err != nil {
-				return nil, err
-			}
-		}
 		hash := simpleHash(segment.Content)
 		segment.IndexNodeHash = &hash
-		if err := s.storeSegmentVector(ctx, segmentVectorTarget{
-			Dataset:     dataset,
-			DocumentID:  segment.DocumentID,
-			IndexNodeID: *segment.IndexNodeID,
-			Content:     segment.Content,
-			DocHash:     hash,
-		}); err != nil {
-			if originalSegment.IndexNodeID != nil && strings.TrimSpace(*originalSegment.IndexNodeID) != "" {
-				if restoreErr := s.storeSegmentVector(ctx, segmentVectorTarget{
-					Dataset:     dataset,
-					DocumentID:  originalSegment.DocumentID,
-					IndexNodeID: *originalSegment.IndexNodeID,
-					Content:     originalSegment.Content,
-					DocHash:     valueOrEmpty(originalSegment.IndexNodeHash),
-				}); restoreErr != nil {
-					return nil, fmt.Errorf("failed to store updated segment vector: %w; restore error: %v", err, restoreErr)
-				}
-			}
-			return nil, err
-		}
-
 	}
 
 	if err := s.chunkService.UpdateChunk(ctx, segment); err != nil {
-		if contentChanged {
-			if segment.IndexNodeID != nil && strings.TrimSpace(*segment.IndexNodeID) != "" {
-				_ = s.deleteSegmentVector(ctx, segment.DatasetID, *segment.IndexNodeID)
-			}
-			if originalSegment.IndexNodeID != nil && strings.TrimSpace(*originalSegment.IndexNodeID) != "" {
-				if dataset, datasetErr := s.datasetRepo.GetByID(ctx, originalSegment.DatasetID); datasetErr == nil {
-					_ = s.storeSegmentVector(ctx, segmentVectorTarget{
-						Dataset:     dataset,
-						DocumentID:  originalSegment.DocumentID,
-						IndexNodeID: *originalSegment.IndexNodeID,
-						Content:     originalSegment.Content,
-						DocHash:     valueOrEmpty(originalSegment.IndexNodeHash),
-					})
-				}
-			}
-		}
 		return nil, err
 	}
 
@@ -418,6 +368,13 @@ func (s *segmentServiceImpl) UpdateSegment(ctx context.Context, segmentID string
 }
 
 func (s *segmentServiceImpl) DeleteSegment(ctx context.Context, segmentID string) error {
+	segment, err := s.chunkService.GetChunkByID(ctx, segmentID)
+	if err != nil {
+		return err
+	}
+	if err := s.deleteChildChunkVectorsForSegment(ctx, segment); err != nil {
+		return err
+	}
 	return s.chunkService.DeleteChunk(ctx, segmentID)
 }
 
@@ -482,22 +439,29 @@ func (s *segmentServiceImpl) deleteChildChunksForSegment(ctx context.Context, se
 	if segment == nil {
 		return fmt.Errorf("segment is required")
 	}
+	if err := s.deleteChildChunkVectorsForSegment(ctx, segment); err != nil {
+		return err
+	}
+	if err := s.chunkService.DeleteChildChunksBySegmentID(ctx, segment.ID); err != nil {
+		return fmt.Errorf("failed to delete child chunks for segment %s: %w", segment.ID, err)
+	}
+	return nil
+}
+
+func (s *segmentServiceImpl) deleteChildChunkVectorsForSegment(ctx context.Context, segment *model.DocumentSegment) error {
+	if segment == nil {
+		return fmt.Errorf("segment is required")
+	}
 	childChunks, err := s.chunkService.GetChildChunksBySegmentID(ctx, segment.ID)
 	if err != nil {
 		return fmt.Errorf("failed to get child chunks for segment %s: %w", segment.ID, err)
 	}
 	for _, childChunk := range childChunks {
 		if childChunk.IndexNodeID != nil && strings.TrimSpace(*childChunk.IndexNodeID) != "" {
-			if segment.IndexNodeID != nil && *childChunk.IndexNodeID == *segment.IndexNodeID {
-				continue
-			}
 			if err := s.deleteSegmentVector(ctx, childChunk.DatasetID, *childChunk.IndexNodeID); err != nil {
 				return err
 			}
 		}
-	}
-	if err := s.chunkService.DeleteChildChunksBySegmentID(ctx, segment.ID); err != nil {
-		return fmt.Errorf("failed to delete child chunks for segment %s: %w", segment.ID, err)
 	}
 	return nil
 }
@@ -598,13 +562,6 @@ func buildSegmentSubchunkSeparators(preferredSeparator string) (string, []string
 		separators = append(separators, separator)
 	}
 	return fixedSeparator, separators
-}
-
-func valueOrEmpty(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
 }
 
 type segmentVectorTarget struct {
