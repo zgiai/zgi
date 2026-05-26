@@ -78,7 +78,11 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	RegisterDataLibraryRoutes(v1, serviceContainer)
 
 	// ---------- DataSource ----------
-	RegisterDataSourceRoutes(v1, serviceContainer)
+	RegisterDataSourceRoutes(v1, DataSourceRouteDeps{
+		DataSourceService:   serviceContainer.GetDataSourceService(),
+		AccountService:      serviceContainer.GetAccountService(),
+		OrganizationService: serviceContainer.GetOrganizationService(),
+	})
 
 	// ---------- Automation ----------
 	RegisterAutomationRoutes(v1, serviceContainer)
