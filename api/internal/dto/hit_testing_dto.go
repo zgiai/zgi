@@ -22,29 +22,29 @@ const (
 
 // HitTestingResponse represents the response for hit testing
 type HitTestingResponse struct {
-	Query             HitTestingQueryResponse     `json:"query"`
-	Records           []HitTestingRecordResponse  `json:"records"`
-	ElapsedTime       float64                     `json:"elapsed_time,omitempty"`
-	GraphExecution    *GraphExecution             `json:"graph_execution,omitempty"`
-	RetrievalPipeline *RetrievalPipelineResponse  `json:"retrieval_pipeline,omitempty"`
+	Query             HitTestingQueryResponse    `json:"query"`
+	Records           []HitTestingRecordResponse `json:"records"`
+	ElapsedTime       float64                    `json:"elapsed_time,omitempty"`
+	GraphExecution    *GraphExecution            `json:"graph_execution,omitempty"`
+	RetrievalPipeline *RetrievalPipelineResponse `json:"retrieval_pipeline,omitempty"`
 }
 
 // GraphExecution represents the graph retrieval process and details
 type GraphExecution struct {
-	Entities []string             `json:"entities"`               // Entities extracted from query
-	Triples  []TripleResponse     `json:"triples"`                // Related triples found in graph
-	Steps    []GraphExecutionStep `json:"steps,omitempty"`        // Steps taken in graph retrieval
-	Summary  string               `json:"summary,omitempty"`      // Human-readable summary of graph reasoning
-	Thinking string               `json:"thinking,omitempty"`     // Internal thinking/reasoning
+	Entities  []string               `json:"entities"`             // Entities extracted from query
+	Triples   []TripleResponse       `json:"triples"`              // Related triples found in graph
+	Steps     []GraphExecutionStep   `json:"steps,omitempty"`      // Steps taken in graph retrieval
+	Summary   string                 `json:"summary,omitempty"`    // Human-readable summary of graph reasoning
+	Thinking  string                 `json:"thinking,omitempty"`   // Internal thinking/reasoning
 	DebugInfo map[string]interface{} `json:"debug_info,omitempty"` // Internal debug information
 }
 
 // GraphExecutionStep represents a step in the graph retrieval process
 type GraphExecutionStep struct {
-	Step        int    `json:"step"`                   // Step number
-	Action      string `json:"action"`                 // Action taken (e.g., "extract_entities", "query_graph", "find_relations")
-	Description string `json:"description"`            // Human-readable description
-	Result      string `json:"result,omitempty"`       // Result of this step
+	Step        int    `json:"step"`             // Step number
+	Action      string `json:"action"`           // Action taken (e.g., "extract_entities", "query_graph", "find_relations")
+	Description string `json:"description"`      // Human-readable description
+	Result      string `json:"result,omitempty"` // Result of this step
 }
 
 // TripleResponse represents a single triple (S-P-O) from knowledge graph
@@ -95,19 +95,19 @@ type HitTestingQueryResponse struct {
 
 // HitTestingRecordResponse represents a single record in the hit testing response
 type HitTestingRecordResponse struct {
-	Segment         SegmentResponse           `json:"segment"`
-	Score           float64                   `json:"score"`
-	TSNEPosition    map[string]interface{}    `json:"tsne_position,omitempty"`
-	ChildChunks     []ChildChunkResponse      `json:"child_chunks,omitempty"`
-	MatchType       string                    `json:"match_type"`
-	RetrievalSource *RetrievalSourceResponse  `json:"retrieval_source,omitempty"`
+	Segment         SegmentResponse          `json:"segment"`
+	Score           float64                  `json:"score"`
+	TSNEPosition    map[string]interface{}   `json:"tsne_position,omitempty"`
+	ChildChunks     []ChildChunkResponse     `json:"child_chunks,omitempty"`
+	MatchType       string                   `json:"match_type"`
+	RetrievalSource *RetrievalSourceResponse `json:"retrieval_source,omitempty"`
 }
 
 // RetrievalSourceResponse explains why a segment was returned
 type RetrievalSourceResponse struct {
-	Method          string   `json:"method"`                      // "semantic_search", "full_text_search", "graph_knowledge"
-	Reason          string   `json:"reason,omitempty"`            // Human-readable explanation
-	MatchedTerms    []string `json:"matched_terms,omitempty"`     // For full-text: matched keywords
+	Method          string   `json:"method"`                     // "semantic_search", "full_text_search", "graph_knowledge"
+	Reason          string   `json:"reason,omitempty"`           // Human-readable explanation
+	MatchedTerms    []string `json:"matched_terms,omitempty"`    // For full-text: matched keywords
 	MatchedEntities []string `json:"matched_entities,omitempty"` // For graph: matched entity names
 }
 
@@ -127,30 +127,30 @@ type RetrievalMethodSummary struct {
 
 // SegmentResponse represents a document segment in the response
 type SegmentResponse struct {
-	ID            string                     `json:"id"`
-	Position      int                        `json:"position"`
-	DocumentID    string                     `json:"document_id"`
-	Content       string                     `json:"content"`
-	SignContent   string                     `json:"sign_content"`
-	Answer        *string                    `json:"answer"`
-	WordCount     int                        `json:"word_count"`
-	Tokens        int                        `json:"tokens"`
-	Keywords      []string                   `json:"keywords"`
-	IndexNodeID   *string                    `json:"index_node_id"`
-	IndexNodeHash *string                    `json:"index_node_hash"`
-	HitCount      int                        `json:"hit_count"`
-	Enabled       bool                       `json:"enabled"`
-	DisabledAt    *int64                     `json:"disabled_at"` // Unix timestamp
-	DisabledBy    *string                    `json:"disabled_by"`
-	Status        string                     `json:"status"`
-	CreatedBy     string                     `json:"created_by"`
-	CreatedAt     int64                      `json:"created_at"`   // Unix timestamp
-	IndexingAt    *int64                     `json:"indexing_at"`  // Unix timestamp
-	CompletedAt   *int64                     `json:"completed_at"` // Unix timestamp
-	Error         *string                    `json:"error"`
-	StoppedAt     *int64                     `json:"stopped_at"` // Unix timestamp
-	Document      HitTestingDocumentResponse `json:"document,omitempty"`
-	DatasetProcessRule map[string]interface{} `json:"dataset_process_rule,omitempty"` // Process rule used for segment creation
+	ID                 string                     `json:"id"`
+	Position           int                        `json:"position"`
+	DocumentID         string                     `json:"document_id"`
+	Content            string                     `json:"content"`
+	SignContent        string                     `json:"sign_content"`
+	Answer             *string                    `json:"answer"`
+	WordCount          int                        `json:"word_count"`
+	Tokens             int                        `json:"tokens"`
+	Keywords           []string                   `json:"keywords"`
+	IndexNodeID        *string                    `json:"index_node_id"`
+	IndexNodeHash      *string                    `json:"index_node_hash"`
+	HitCount           int                        `json:"hit_count"`
+	Enabled            bool                       `json:"enabled"`
+	DisabledAt         *int64                     `json:"disabled_at"` // Unix timestamp
+	DisabledBy         *string                    `json:"disabled_by"`
+	Status             string                     `json:"status"`
+	CreatedBy          string                     `json:"created_by"`
+	CreatedAt          int64                      `json:"created_at"`   // Unix timestamp
+	IndexingAt         *int64                     `json:"indexing_at"`  // Unix timestamp
+	CompletedAt        *int64                     `json:"completed_at"` // Unix timestamp
+	Error              *string                    `json:"error"`
+	StoppedAt          *int64                     `json:"stopped_at"` // Unix timestamp
+	Document           HitTestingDocumentResponse `json:"document,omitempty"`
+	DatasetProcessRule map[string]interface{}     `json:"dataset_process_rule,omitempty"` // Process rule used for segment creation
 }
 
 // HitTestingDocumentResponse represents document information in hit testing response
@@ -256,8 +256,9 @@ type SegmentCreateRequest struct {
 
 // SegmentUpdateRequest represents the request for updating a segment
 type SegmentUpdateRequest struct {
-	Content string  `json:"content" binding:"required"` // Updated segment content
-	Answer  *string `json:"answer"`                     // Updated answer for Q&A model (optional)
+	Content               string  `json:"content" binding:"required"`        // Updated segment content
+	Answer                *string `json:"answer"`                            // Updated answer for Q&A model (optional)
+	RegenerateChildChunks bool    `json:"regenerate_child_chunks,omitempty"` // Whether to rebuild child chunks
 }
 
 // SegmentActionRequest represents the request for batch segment actions (enable/disable)
@@ -311,7 +312,7 @@ type FailedSegment struct {
 
 // BatchHitTestingRequest represents the request for batch hit testing
 type BatchHitTestingRequest struct {
-	Queries                []string `json:"queries" binding:"required"`
+	Queries                []string               `json:"queries" binding:"required"`
 	ExternalRetrievalModel map[string]interface{} `json:"external_retrieval_model,omitempty"`
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/model"
 	datasetrepo "github.com/zgiai/zgi/api/internal/modules/dataset/repository"
 	"github.com/zgiai/zgi/api/pkg/embedding"
@@ -99,6 +100,7 @@ func newSegmentVectorTestService(t *testing.T) (*segmentServiceImpl, *segmentVec
 	service := &segmentServiceImpl{
 		chunkService: NewChunkService(datasetrepo.NewChunkRepository(db), nil, db),
 		datasetRepo:  datasetrepo.NewDatasetRepository(db),
+		documentRepo: datasetrepo.NewDocumentRepository(db),
 		vectorDB:     vectorDB,
 		embeddingFactory: func(ctx context.Context, dataset *model.Dataset) (embedding.EmbeddingService, error) {
 			return embeddingSvc, nil
@@ -135,6 +137,56 @@ func createSegmentVectorTestTables(t *testing.T, db *gorm.DB) {
 			icon text,
 			icon_background text,
 			process_rule text
+		)`,
+		`CREATE TABLE documents (
+			id text PRIMARY KEY,
+			organization_id text NOT NULL,
+			dataset_id text NOT NULL,
+			position integer NOT NULL,
+			data_source_type text NOT NULL,
+			data_source_info text,
+			dataset_process_rule_id text,
+			batch text NOT NULL,
+			name text NOT NULL,
+			created_from text NOT NULL,
+			created_by text NOT NULL,
+			created_api_request_id text,
+			created_at datetime,
+			processing_started_at datetime,
+			file_id text,
+			word_count integer,
+			parsing_completed_at datetime,
+			cleaning_completed_at datetime,
+			splitting_completed_at datetime,
+			tokens integer,
+			indexing_latency real,
+			completed_at datetime,
+			is_paused boolean,
+			paused_by text,
+			paused_at datetime,
+			error text,
+			stopped_at datetime,
+			indexing_status text NOT NULL,
+			enabled boolean NOT NULL,
+			disabled_at datetime,
+			disabled_by text,
+			archived boolean NOT NULL,
+			archived_reason text,
+			archived_by text,
+			archived_at datetime,
+			updated_at datetime,
+			doc_type text,
+			doc_metadata text,
+			doc_form text NOT NULL,
+			doc_language text
+		)`,
+		`CREATE TABLE dataset_process_rules (
+			id text PRIMARY KEY,
+			dataset_id text NOT NULL,
+			mode text NOT NULL,
+			rules text,
+			created_by text NOT NULL,
+			created_at datetime
 		)`,
 		`CREATE TABLE document_segments (
 			id text PRIMARY KEY,
@@ -392,6 +444,234 @@ func TestDeleteChildChunkDeletesVector(t *testing.T) {
 	}
 }
 
+func TestUpdateSegmentStoresUpdatedVector(t *testing.T) {
+	ctx := context.Background()
+	service, vectorDB, embeddingSvc, db := newSegmentVectorTestService(t)
+	seedSegmentVectorDatasetAndSegment(t, db)
+	oldHash := simpleHash("parent content")
+	indexNodeID := "parent-node-1"
+	if err := db.Model(&model.DocumentSegment{}).
+		Where("id = ?", "segment-1").
+		Updates(map[string]interface{}{
+			"index_node_id":   indexNodeID,
+			"index_node_hash": oldHash,
+		}).Error; err != nil {
+		t.Fatalf("seed parent vector fields: %v", err)
+	}
+
+	response, err := service.UpdateSegment(ctx, "segment-1", &dto.SegmentUpdateRequest{
+		Content: "updated parent content",
+	})
+	if err != nil {
+		t.Fatalf("UpdateSegment returned error: %v", err)
+	}
+
+	if response.IndexNodeID == nil || *response.IndexNodeID != indexNodeID {
+		t.Fatalf("response index node id = %v, want %q", response.IndexNodeID, indexNodeID)
+	}
+	if vectorDB.deleteCalls != 1 {
+		t.Fatalf("delete calls = %d, want 1", vectorDB.deleteCalls)
+	}
+	if vectorDB.deletedID != indexNodeID {
+		t.Fatalf("deleted id = %q, want %q", vectorDB.deletedID, indexNodeID)
+	}
+	if vectorDB.storeCalls != 1 {
+		t.Fatalf("store calls = %d, want 1", vectorDB.storeCalls)
+	}
+	if vectorDB.storedID != indexNodeID {
+		t.Fatalf("stored id = %q, want %q", vectorDB.storedID, indexNodeID)
+	}
+	if vectorDB.storedProps["text"] != "updated parent content" {
+		t.Fatalf("stored text = %v", vectorDB.storedProps["text"])
+	}
+	if len(embeddingSvc.texts) != 1 || embeddingSvc.texts[0] != "updated parent content" {
+		t.Fatalf("embedded texts = %#v", embeddingSvc.texts)
+	}
+	var segment model.DocumentSegment
+	if err := db.Where("id = ?", "segment-1").First(&segment).Error; err != nil {
+		t.Fatalf("load segment: %v", err)
+	}
+	if segment.IndexNodeHash == nil || *segment.IndexNodeHash != simpleHash("updated parent content") {
+		t.Fatalf("segment hash = %v", segment.IndexNodeHash)
+	}
+}
+
+func TestUpdateSegmentRegeneratesChildChunksAndVectors(t *testing.T) {
+	ctx := context.Background()
+	service, vectorDB, embeddingSvc, db := newSegmentVectorTestService(t)
+	seedSegmentVectorDatasetAndSegment(t, db)
+	parentHash := simpleHash("parent content")
+	parentIndexNodeID := "parent-node-1"
+	if err := db.Model(&model.DocumentSegment{}).
+		Where("id = ?", "segment-1").
+		Updates(map[string]interface{}{
+			"index_node_id":   parentIndexNodeID,
+			"index_node_hash": parentHash,
+		}).Error; err != nil {
+		t.Fatalf("seed parent vector fields: %v", err)
+	}
+	oldChildHash := simpleHash("old child content")
+	oldChildNodeID := "old-child-node-1"
+	oldChildChunk := &model.ChildChunk{
+		ID:             "old-child-1",
+		OrganizationID: "org-1",
+		DatasetID:      "dataset-1",
+		DocumentID:     "document-1",
+		SegmentID:      "segment-1",
+		Position:       1,
+		Content:        "old child content",
+		WordCount:      len([]rune("old child content")),
+		Type:           model.ChildChunkTypeAutomatic,
+		IndexNodeID:    &oldChildNodeID,
+		IndexNodeHash:  &oldChildHash,
+		CreatedBy:      "user-1",
+	}
+	if err := db.Create(oldChildChunk).Error; err != nil {
+		t.Fatalf("seed child chunk: %v", err)
+	}
+
+	_, err := service.UpdateSegment(ctx, "segment-1", &dto.SegmentUpdateRequest{
+		Content:               "new child one\nnew child two",
+		RegenerateChildChunks: true,
+	})
+	if err != nil {
+		t.Fatalf("UpdateSegment returned error: %v", err)
+	}
+
+	if vectorDB.deleteCalls != 2 {
+		t.Fatalf("delete calls = %d, want 2", vectorDB.deleteCalls)
+	}
+	if vectorDB.storeCalls != 3 {
+		t.Fatalf("store calls = %d, want 3", vectorDB.storeCalls)
+	}
+	if len(embeddingSvc.texts) != 3 {
+		t.Fatalf("embedded text count = %d, want 3: %#v", len(embeddingSvc.texts), embeddingSvc.texts)
+	}
+	var oldCount int64
+	if err := db.Model(&model.ChildChunk{}).Where("id = ?", "old-child-1").Count(&oldCount).Error; err != nil {
+		t.Fatalf("count old child: %v", err)
+	}
+	if oldCount != 0 {
+		t.Fatalf("old child count = %d, want 0", oldCount)
+	}
+	var childChunks []model.ChildChunk
+	if err := db.Where("segment_id = ?", "segment-1").Order("position ASC").Find(&childChunks).Error; err != nil {
+		t.Fatalf("load regenerated child chunks: %v", err)
+	}
+	if len(childChunks) != 2 {
+		t.Fatalf("child chunks = %d, want 2", len(childChunks))
+	}
+	if childChunks[0].Content != "new child one" || childChunks[1].Content != "new child two" {
+		t.Fatalf("child contents = %#v", []string{childChunks[0].Content, childChunks[1].Content})
+	}
+	for _, childChunk := range childChunks {
+		if childChunk.IndexNodeID == nil || *childChunk.IndexNodeID == "" {
+			t.Fatalf("child chunk %s missing index node id", childChunk.ID)
+		}
+		if childChunk.IndexNodeHash == nil || *childChunk.IndexNodeHash != simpleHash(childChunk.Content) {
+			t.Fatalf("child chunk hash = %v for content %q", childChunk.IndexNodeHash, childChunk.Content)
+		}
+	}
+}
+
+func TestUpdateSegmentRegeneratesChildChunksWithDocumentProcessRule(t *testing.T) {
+	ctx := context.Background()
+	service, _, embeddingSvc, db := newSegmentVectorTestService(t)
+	seedSegmentVectorDatasetAndSegment(t, db)
+	ruleID := "rule-1"
+	rule := &model.DatasetProcessRule{
+		ID:        ruleID,
+		DatasetID: "dataset-1",
+		Mode:      "hierarchical",
+		Rules: model.JSONMap{
+			"subchunk_segmentation": map[string]interface{}{
+				"separator":     "||",
+				"max_tokens":    1000,
+				"chunk_overlap": 0,
+			},
+		},
+		CreatedBy: "user-1",
+	}
+	if err := db.Create(rule).Error; err != nil {
+		t.Fatalf("seed process rule: %v", err)
+	}
+	if err := db.Model(&model.Document{}).
+		Where("id = ?", "document-1").
+		Update("dataset_process_rule_id", ruleID).Error; err != nil {
+		t.Fatalf("bind process rule: %v", err)
+	}
+
+	_, err := service.UpdateSegment(ctx, "segment-1", &dto.SegmentUpdateRequest{
+		Content:               "alpha line\nstill first||beta line\nstill second",
+		RegenerateChildChunks: true,
+	})
+	if err != nil {
+		t.Fatalf("UpdateSegment returned error: %v", err)
+	}
+
+	var childChunks []model.ChildChunk
+	if err := db.Where("segment_id = ?", "segment-1").Order("position ASC").Find(&childChunks).Error; err != nil {
+		t.Fatalf("load regenerated child chunks: %v", err)
+	}
+	if len(childChunks) != 2 {
+		t.Fatalf("child chunks = %d, want 2", len(childChunks))
+	}
+	if childChunks[0].Content != "alpha line\nstill first" || childChunks[1].Content != "beta line\nstill second" {
+		t.Fatalf("child contents = %#v", []string{childChunks[0].Content, childChunks[1].Content})
+	}
+	if len(embeddingSvc.texts) != 3 {
+		t.Fatalf("embedded text count = %d, want 3: %#v", len(embeddingSvc.texts), embeddingSvc.texts)
+	}
+}
+
+func TestUpdateSegmentRegenerationKeepsSharedParentVector(t *testing.T) {
+	ctx := context.Background()
+	service, vectorDB, _, db := newSegmentVectorTestService(t)
+	seedSegmentVectorDatasetAndSegment(t, db)
+	parentHash := simpleHash("parent content")
+	sharedIndexNodeID := "shared-parent-child-node"
+	if err := db.Model(&model.DocumentSegment{}).
+		Where("id = ?", "segment-1").
+		Updates(map[string]interface{}{
+			"index_node_id":   sharedIndexNodeID,
+			"index_node_hash": parentHash,
+		}).Error; err != nil {
+		t.Fatalf("seed parent vector fields: %v", err)
+	}
+	oldChildChunk := &model.ChildChunk{
+		ID:             "shared-child-1",
+		OrganizationID: "org-1",
+		DatasetID:      "dataset-1",
+		DocumentID:     "document-1",
+		SegmentID:      "segment-1",
+		Position:       1,
+		Content:        "old child content",
+		WordCount:      len([]rune("old child content")),
+		Type:           model.ChildChunkTypeManual,
+		IndexNodeID:    &sharedIndexNodeID,
+		IndexNodeHash:  &parentHash,
+		CreatedBy:      "user-1",
+	}
+	if err := db.Create(oldChildChunk).Error; err != nil {
+		t.Fatalf("seed child chunk: %v", err)
+	}
+
+	_, err := service.UpdateSegment(ctx, "segment-1", &dto.SegmentUpdateRequest{
+		Content:               "new shared child one\nnew shared child two",
+		RegenerateChildChunks: true,
+	})
+	if err != nil {
+		t.Fatalf("UpdateSegment returned error: %v", err)
+	}
+
+	if vectorDB.deleteCalls != 1 {
+		t.Fatalf("delete calls = %d, want 1 for parent replacement only", vectorDB.deleteCalls)
+	}
+	if vectorDB.deletedID != sharedIndexNodeID {
+		t.Fatalf("deleted id = %q, want %q", vectorDB.deletedID, sharedIndexNodeID)
+	}
+}
+
 func seedSegmentVectorDatasetAndSegment(t *testing.T, db *gorm.DB) {
 	t.Helper()
 
@@ -405,6 +685,24 @@ func seedSegmentVectorDatasetAndSegment(t *testing.T, db *gorm.DB) {
 	}
 	if err := db.Create(dataset).Error; err != nil {
 		t.Fatalf("seed dataset: %v", err)
+	}
+	document := &model.Document{
+		ID:             "document-1",
+		OrganizationID: "org-1",
+		DatasetID:      "dataset-1",
+		Position:       1,
+		DataSourceType: "upload_file",
+		Batch:          "batch-1",
+		Name:           "document",
+		CreatedFrom:    "web",
+		CreatedBy:      "user-1",
+		IndexingStatus: "completed",
+		Enabled:        true,
+		Archived:       false,
+		DocForm:        "hierarchical_model",
+	}
+	if err := db.Create(document).Error; err != nil {
+		t.Fatalf("seed document: %v", err)
 	}
 	segment := &model.DocumentSegment{
 		ID:             "segment-1",
