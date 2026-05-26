@@ -11,9 +11,9 @@ import {
 import { Badge } from '@/components/ui/badge';
 import type { DbTableColumn, DbTableRecord } from '@/services/types/db';
 import { Type } from '@/services/types/db';
-import { formatDate as formatDateDisplay } from '@/utils/format';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
+import { formatTimestampWallTime } from './timestamp-utils';
 
 interface RowDetailDialogProps {
   open: boolean;
@@ -28,7 +28,7 @@ function formatCellValue(row: DbTableRecord, col: DbTableColumn): string {
   if (val === null || val === undefined) return '';
   if (col.type === Type.Timestamp) {
     if (typeof val === 'string' && val.trim().length === 0) return '';
-    return formatDateDisplay(val as number | string | Date, 'YYYY-MM-DD HH:mm:ss');
+    return formatTimestampWallTime(val);
   }
   return String(val);
 }

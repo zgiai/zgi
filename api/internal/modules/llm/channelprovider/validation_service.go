@@ -127,7 +127,11 @@ func (v *Validator) ValidateModels(ctx context.Context, organizationID uuid.UUID
 		return v.validateWithModelListing(ctx, adapterInstance, normalizedModels, capabilities, upstreamModels, report)
 	}
 	if !adapter.IsCapabilityUnsupported(err) {
-		return result, fmt.Errorf("failed to list upstream models: %s", normalizeValidationError(err))
+		normalizedErr := normalizeValidationError(err)
+		if normalizedErr == providerAPIKeyInvalidMessage {
+			return result, newProviderAPIKeyInvalidError(fmt.Errorf("failed to list upstream models: %w", err))
+		}
+		return result, fmt.Errorf("failed to list upstream models: %s", normalizedErr)
 	}
 
 	return v.validateWithoutModelListing(ctx, spec.Name, apiBaseURL, adapterInstance, normalizedModels, capabilities, report)
@@ -192,7 +196,7 @@ func (v *Validator) ValidateModelsForCreation(ctx context.Context, organizationI
 
 	result.Warnings = warnings
 	if passCount == 0 {
-		return result, fmt.Errorf("channel validation failed: all representative models failed: %s", formatFailures(failures))
+		return result, newValidationFailureError("channel validation failed: all representative models failed", failures)
 	}
 
 	return result, nil
@@ -292,7 +296,7 @@ func (v *Validator) validateWithModelListing(
 		NormalizedModels: normalizedModels,
 	}
 	if len(failures) > 0 {
-		return result, fmt.Errorf("channel validation failed: %s", formatFailures(failures))
+		return result, newValidationFailureError("channel validation failed", failures)
 	}
 	return result, nil
 }
@@ -338,17 +342,15 @@ func (v *Validator) validateWithoutModelListing(
 
 	if validationMode == validationModeFull {
 		if len(failures) > 0 {
-			return result, fmt.Errorf("channel validation failed: %s", formatFailures(failures))
+			return result, newValidationFailureError("channel validation failed", failures)
 		}
 		return result, nil
 	}
 
 	if passCount < sampledValidationMinPass {
-		return result, fmt.Errorf(
-			"sample validation failed: %d/%d sampled models passed; failures: %s",
-			passCount,
-			len(probeTargets),
-			formatFailures(failures),
+		return result, newValidationFailureError(
+			fmt.Sprintf("sample validation failed: %d/%d sampled models passed; failures", passCount, len(probeTargets)),
+			failures,
 		)
 	}
 
@@ -817,6 +819,25 @@ func formatFailures(failures []validationFailure) string {
 		parts = append(parts, fmt.Sprintf("%s [%s] (%s)", failure.Model, failure.UseCase, failure.Message))
 	}
 	return strings.Join(parts, "; ")
+}
+
+func newValidationFailureError(prefix string, failures []validationFailure) error {
+	if allFailuresAreProviderAPIKeyInvalid(failures) {
+		return newProviderAPIKeyInvalidError(fmt.Errorf("%s: %s", prefix, formatFailures(failures)))
+	}
+	return fmt.Errorf("%s: %s", prefix, formatFailures(failures))
+}
+
+func allFailuresAreProviderAPIKeyInvalid(failures []validationFailure) bool {
+	if len(failures) == 0 {
+		return false
+	}
+	for _, failure := range failures {
+		if strings.TrimSpace(failure.Message) != providerAPIKeyInvalidMessage {
+			return false
+		}
+	}
+	return true
 }
 
 func buildWarnings(validationMode string, normalizedModels []string, probeTargets []modelCapability, failures []validationFailure, unvalidatedCount int) []string {

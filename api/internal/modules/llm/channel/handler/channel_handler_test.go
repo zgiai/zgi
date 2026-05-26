@@ -2,12 +2,15 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/zgiai/zgi/api/internal/modules/llm/channelprovider"
 )
 
 func TestParsePlatformUpdateChannelRequestRejectsIsActive(t *testing.T) {
@@ -72,6 +75,39 @@ func TestParseCreateRouteRequestRejectsInitialQuota(t *testing.T) {
 	msg, _ := resp["message"].(string)
 	if !strings.Contains(msg, "initial_funds") {
 		t.Fatalf("expected error message to mention initial_funds, got %q", msg)
+	}
+}
+
+func TestHandleCreateRouteErrorReturnsInvalidParamForValidationFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	c, w := newJSONContext(`{}`)
+
+	handleCreateRouteError(c, errors.New("channel validation failed: all representative models failed: qwen-plus: unauthorized"))
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", w.Code)
+	}
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	msg, _ := resp["message"].(string)
+	if !strings.Contains(msg, "channel validation failed") {
+		t.Fatalf("expected validation failure message, got %q", msg)
+	}
+}
+
+func TestHandleCreateRouteErrorKeepsSystemErrorsInternal(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	c, w := newJSONContext(`{}`)
+
+	handleCreateRouteError(c, errors.New("failed to create route: database unavailable"))
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status 500, got %d", w.Code)
 	}
 }
 
@@ -240,6 +276,37 @@ func TestParseDraftTestChannelModelRequestAcceptsOllamaWithoutAPIKey(t *testing.
 	}
 	if req.APIKey != "" {
 		t.Fatalf("expected empty api_key, got %q", req.APIKey)
+	}
+}
+
+func TestHandleChannelMutationErrorMapsProviderAPIKeyInvalidToBadRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	c, w := newJSONContext(`{}`)
+	err := fmt.Errorf("Authentication Fails, Your api key: ****1d35 is invalid: %w", channelprovider.ErrProviderAPIKeyInvalid)
+	handleChannelMutationError(c, err)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", w.Code)
+	}
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if got := resp["code"]; got != "199001" {
+		t.Fatalf("expected code 199001, got %v", got)
+	}
+	expectedMsg, ok := channelprovider.UserVisibleValidationMessage(err)
+	if !ok {
+		t.Fatalf("expected provider api key error to be user visible")
+	}
+	msg, _ := resp["message"].(string)
+	if msg != expectedMsg {
+		t.Fatalf("expected friendly provider api key message, got %q", msg)
+	}
+	if strings.Contains(msg, "Authentication Fails") || strings.Contains(msg, "1d35") {
+		t.Fatalf("message leaked upstream details: %q", msg)
 	}
 }
 

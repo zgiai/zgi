@@ -445,7 +445,19 @@ export function DashboardMobileSidebar({
 
   React.useEffect(() => {
     const defaults = getDefaultOpenState(navGroups);
-    setOpenGroups(prev => ({ ...defaults, ...prev }));
+    setOpenGroups(prev => {
+      let changed = false;
+      const next = { ...prev };
+
+      Object.entries(defaults).forEach(([key, value]) => {
+        if (!(key in next)) {
+          next[key] = value;
+          changed = true;
+        }
+      });
+
+      return changed ? next : prev;
+    });
   }, [navGroups]);
 
   const closeSidebar = () => onOpenChange(false);

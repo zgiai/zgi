@@ -37,6 +37,12 @@ jobs:
       - name: Push deploy-dev
         run: |
           git fetch origin dev
+          source_sha="$(git rev-parse origin/dev)"
+          source_short_sha="$(git rev-parse --short origin/dev)"
+          source_subject="$(git log -1 --format=%s origin/dev)"
           git checkout -B deploy-dev origin/dev
-          git commit --allow-empty -m "chore: trigger web deployment"
+          git commit --allow-empty \
+            -m "chore: deploy dev ${source_short_sha}" \
+            -m "Source commit: ${source_sha}" \
+            -m "Source subject: ${source_subject}"
           git push --force-with-lease origin deploy-dev

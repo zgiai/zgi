@@ -31,3 +31,41 @@ func TestReassignLabelsRequiresExistingTargetWhenRequested(t *testing.T) {
 		t.Fatalf("expected prompt version not found error, got %v", err)
 	}
 }
+
+func TestPromptOptimizerOutputLanguageNormalizesInterfaceLocale(t *testing.T) {
+	tests := []struct {
+		name     string
+		language string
+		want     string
+	}{
+		{name: "simplified chinese", language: "zh-Hans", want: "Simplified Chinese"},
+		{name: "english", language: "en-US", want: "English"},
+		{name: "fallback custom", language: "fr-FR", want: "fr-FR"},
+		{name: "empty", language: " ", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := promptOptimizerOutputLanguage(tt.language); got != tt.want {
+				t.Fatalf("expected language %q, got %q", tt.want, got)
+			}
+		})
+	}
+}
+
+func TestBuildPromptOptimizerUserPromptUsesInterfaceLanguageForDeepOptimization(t *testing.T) {
+	prompt := buildPromptOptimizerUserPrompt(
+		promptOptimizerGoalDeep,
+		"Write a sales email.",
+		true,
+		nil,
+		"Simplified Chinese",
+	)
+
+	if !strings.Contains(prompt, "Use the system/interface language for the final optimized prompt: Simplified Chinese.") {
+		t.Fatalf("expected deep optimizer prompt to require interface language, got:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "Match the primary language of the user's original prompt") {
+		t.Fatalf("deep optimizer prompt should not prefer original prompt language, got:\n%s", prompt)
+	}
+}

@@ -48,8 +48,11 @@ func (s *Seeder) RunAll(ctx context.Context, force bool) error {
 			if err := SeedBuiltInWorkflows(ctx, s.db); err != nil {
 				return fmt.Errorf("ensure built-in workflow seeds: %w", err)
 			}
+			if err := SeedOfficialPrompts(ctx, s.db); err != nil {
+				return fmt.Errorf("ensure official prompt seeds: %w", err)
+			}
 			logger.Info(
-				"Initial seed already executed, ensured built-in workflow seeds and skipped remaining seeds",
+				"Initial seed already executed, ensured built-in workflow and official prompt seeds and skipped remaining seeds",
 				"name", initialSeedExecutionName,
 				"version", initialSeedExecutionVersion,
 			)
@@ -67,8 +70,11 @@ func (s *Seeder) RunAll(ctx context.Context, force bool) error {
 			if err := SeedBuiltInWorkflows(ctx, s.db); err != nil {
 				return fmt.Errorf("ensure built-in workflow seeds: %w", err)
 			}
+			if err := SeedOfficialPrompts(ctx, s.db); err != nil {
+				return fmt.Errorf("ensure official prompt seeds: %w", err)
+			}
 			logger.Info(
-				"Historical initial seed data detected, backfilled execution marker, ensured built-in workflow seeds and skipped remaining seeds",
+				"Historical initial seed data detected, backfilled execution marker, ensured built-in workflow and official prompt seeds and skipped remaining seeds",
 				"name", initialSeedExecutionName,
 				"version", initialSeedExecutionVersion,
 			)
@@ -82,6 +88,9 @@ func (s *Seeder) RunAll(ctx context.Context, force bool) error {
 	}
 	if err := SeedBuiltInWorkflows(ctx, s.db); err != nil {
 		return fmt.Errorf("failed to seed built-in workflows: %w", err)
+	}
+	if err := SeedOfficialPrompts(ctx, s.db); err != nil {
+		return fmt.Errorf("failed to seed official prompts: %w", err)
 	}
 
 	// Execute environment-specific data

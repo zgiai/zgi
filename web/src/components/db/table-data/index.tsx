@@ -31,6 +31,11 @@ import {
 } from '@/components/db/schema-health';
 import { toast } from 'sonner';
 import { getErrorMessage } from '@/utils/error-notifications';
+import {
+  datetimeLocalToWallTime,
+  formatTimestampWallTime,
+  isTimestampValueValid,
+} from './timestamp-utils';
 
 interface TableDataProps {
   dbId: string;
@@ -184,8 +189,7 @@ const TableData: FC<TableDataProps> = ({ dbId, tableId }) => {
           defaultValue = '';
           break;
         case Type.Timestamp:
-          // Default to current time (ISO) for timestamp fields
-          defaultValue = new Date().toISOString();
+          defaultValue = formatTimestampWallTime(new Date());
           break;
         case Type.Text:
         default:
@@ -252,15 +256,9 @@ const TableData: FC<TableDataProps> = ({ dbId, tableId }) => {
     if (col.type === Type.Timestamp) {
       if (val === undefined || val === null) return col.is_required ? undefined : null;
       if (typeof val === 'string' && val.trim() === '') return col.is_required ? undefined : null;
-      // Accept ISO strings; otherwise, try to coerce if possible
       if (typeof val === 'string') {
-        const time = Date.parse(val);
-        if (Number.isNaN(time)) {
-          // Invalid timestamp string – keep as-is for required check
-          return val;
-        }
-        // Ensure ISO format for consistency
-        return new Date(time).toISOString();
+        const formatted = formatTimestampWallTime(val);
+        return formatted ? datetimeLocalToWallTime(formatted.replace(' ', 'T')) : val;
       }
       return val;
     }
@@ -311,8 +309,7 @@ const TableData: FC<TableDataProps> = ({ dbId, tableId }) => {
                 break;
               }
               if (typeof v === 'string') {
-                const time = Date.parse(v);
-                if (Number.isNaN(time)) {
+                if (!isTimestampValueValid(v)) {
                   errors.push(t('dbs.tableData.validation.timestampInvalid', { field: col.name }));
                 }
               }

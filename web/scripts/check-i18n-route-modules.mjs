@@ -131,7 +131,7 @@ function walkFiles(dir) {
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (['.next', '.customer', 'node_modules'].includes(entry.name)) continue;
+      if (['.next', 'node_modules'].includes(entry.name)) continue;
       files.push(...walkFiles(fullPath));
     } else if (/\.(ts|tsx)$/.test(entry.name) && !entry.name.endsWith('.d.ts')) {
       files.push(fullPath);

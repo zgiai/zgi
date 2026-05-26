@@ -53,6 +53,7 @@ export function LoginForm({ className }: LoginFormProps) {
   const {
     register,
     handleSubmit,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<LoginFormData>({
     resolver: zodResolver(loginSchema),
@@ -63,6 +64,11 @@ export function LoginForm({ className }: LoginFormProps) {
   });
   const inviteToken = searchParams.get('invite_token');
   const [mounted, setMounted] = useState(false);
+  const emailValue = watch('email');
+  const forgotPasswordEmail = emailValue.trim();
+  const forgotPasswordHref = forgotPasswordEmail
+    ? `/forgot-password?email=${encodeURIComponent(forgotPasswordEmail)}`
+    : '/forgot-password';
 
   useEffect(() => {
     setMounted(true);
@@ -179,7 +185,7 @@ export function LoginForm({ className }: LoginFormProps) {
                   {t('password')}
                 </Label>
                 <Link
-                  href="/forgot-password"
+                  href={forgotPasswordHref}
                   className="text-xs font-medium text-primary/70 hover:text-primary transition-colors"
                   tabIndex={-1}
                 >

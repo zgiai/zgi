@@ -22,8 +22,11 @@ import { PROMPT_KEYS } from '@/hooks/query-keys';
 import { getErrorMessage } from '@/utils/error-notifications';
 import { toast } from 'sonner';
 import { useT } from '@/i18n';
+import { useLocale } from '@/hooks/use-locale';
+import { localizePromptDetail, localizePromptSummary } from './prompt-localization';
 
 export function usePrompts(params: PromptListParams = {}, enabled = true) {
+  const { locale } = useLocale();
   const query = useQuery({
     queryKey: PROMPT_KEYS.list(params),
     queryFn: () => promptService.listPrompts(params),
@@ -31,11 +34,23 @@ export function usePrompts(params: PromptListParams = {}, enabled = true) {
     staleTime: 60 * 1000,
   });
 
-  const prompts = useMemo<PromptSummary[]>(() => query.data?.data?.data ?? [], [query.data]);
+  const prompts = useMemo<PromptSummary[]>(
+    () => (query.data?.data?.data ?? []).map(prompt => localizePromptSummary(prompt, locale)),
+    [locale, query.data]
+  );
+  const pageData = useMemo(() => {
+    if (!query.data?.data) {
+      return undefined;
+    }
+    return {
+      ...query.data.data,
+      data: prompts,
+    };
+  }, [prompts, query.data]);
 
   return {
     prompts,
-    pageData: query.data?.data,
+    pageData,
     isLoading: query.isLoading,
     isFetching: query.isFetching,
     error: query.error ? getErrorMessage(query.error) : null,
@@ -44,6 +59,7 @@ export function usePrompts(params: PromptListParams = {}, enabled = true) {
 }
 
 export function usePrompt(promptId?: string, enabled = true) {
+  const { locale } = useLocale();
   const query = useQuery({
     queryKey: PROMPT_KEYS.detail(promptId || ''),
     queryFn: () => promptService.getPrompt(promptId || ''),
@@ -51,8 +67,13 @@ export function usePrompt(promptId?: string, enabled = true) {
     staleTime: 60 * 1000,
   });
 
+  const prompt = useMemo(
+    () => (query.data?.data ? localizePromptDetail(query.data.data as PromptDetail, locale) : undefined),
+    [locale, query.data]
+  );
+
   return {
-    prompt: query.data?.data as PromptDetail | undefined,
+    prompt,
     isLoading: query.isLoading,
     isFetching: query.isFetching,
     error: query.error ? getErrorMessage(query.error) : null,
@@ -158,9 +179,11 @@ export function usePromptContentHelpers() {
 export function useOptimizePrompt() {
   const queryClient = useQueryClient();
   const t = useT('prompts');
+  const { locale } = useLocale();
 
   return useMutation({
-    mutationFn: (data: PromptOptimizeRequest) => promptService.optimizePrompt(data),
+    mutationFn: (data: PromptOptimizeRequest) =>
+      promptService.optimizePrompt({ ...data, language: data.language || locale }),
     onSuccess: (_data, variables) => {
       if (variables.prompt_id) {
         queryClient.invalidateQueries({

@@ -5,6 +5,7 @@ import (
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 	"github.com/zgiai/zgi/api/internal/container"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
 	contentparsemodule "github.com/zgiai/zgi/api/internal/modules/contentparse"
 	"github.com/zgiai/zgi/api/middleware"
@@ -15,7 +16,7 @@ import (
 )
 
 // RegisterRoutes registers all routes
-func RegisterRoutes(r *gin.Engine, serviceContainer *container.ServiceContainer) {
+func RegisterRoutes(r *gin.Engine, serviceContainer *container.ServiceContainer, workflowEngineFactory *graph_engine.EngineFactory) {
 	// Fail fast in CLOUD mode if LLM client cannot be initialized.
 	if err := serviceContainer.EnsureLLMClient(); err != nil {
 		logger.Fatal("BOOT_LLMCLIENT_INIT_FAILED: %v", err)
@@ -48,9 +49,9 @@ func RegisterRoutes(r *gin.Engine, serviceContainer *container.ServiceContainer)
 
 	// API v1 routes
 	v1Group := r.Group("/console/api")
-	v1.RegisterRoutes(r, v1Group, serviceContainer)
+	v1.RegisterRoutes(r, v1Group, serviceContainer, workflowEngineFactory)
 
-	external.RegisterExternalRoutes(r, serviceContainer)
+	external.RegisterExternalRoutes(r, serviceContainer, workflowEngineFactory)
 
 	registerConsoleInternalRoutes(r, serviceContainer.GetDB())
 

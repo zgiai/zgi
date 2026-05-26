@@ -52,6 +52,12 @@ pnpm type-check
 pnpm build
 ```
 
+## Customer Customization
+
+The main project uses `src/customer/active.ts` to select the active customer adapter. Forks should add their implementation under `src/customer/<customer>/` and update `active.ts` to export that adapter.
+
+Customer-specific routes should live directly in the fork under `src/app` using a customer-named route group, such as `src/app/console/(acme)/...`. The legacy build-time overlay paths are no longer supported.
+
 ## Contributing
 
 Use the repository-level guide at [../CONTRIBUTING.md](../CONTRIBUTING.md). Web changes follow the same commit, review, and open-source hygiene rules as the rest of the monorepo.

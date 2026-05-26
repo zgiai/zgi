@@ -185,6 +185,28 @@ type DraftTestChannelModelRequest struct {
 	TestMethod      string `json:"test_method"`
 }
 
+type DiscoverDraftChannelModelsRequest struct {
+	ChannelProvider string `json:"channel_provider" binding:"required"`
+	APIKey          string `json:"api_key"`
+	APIBaseURL      string `json:"api_base_url"`
+}
+
+type DiscoveredChannelModelView struct {
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	DisplayName   string   `json:"display_name"`
+	Provider      string   `json:"provider,omitempty"`
+	OwnedBy       string   `json:"owned_by,omitempty"`
+	ContextLength int      `json:"context_length,omitempty"`
+	Capabilities  []string `json:"capabilities,omitempty"`
+	Created       int64    `json:"created,omitempty"`
+}
+
+type DiscoverDraftChannelModelsResponse struct {
+	Models []DiscoveredChannelModelView `json:"models"`
+	Total  int                          `json:"total"`
+}
+
 type DiscoverOllamaModelsRequest struct {
 	APIBaseURL string `json:"api_base_url" binding:"required"`
 	APIKey     string `json:"api_key"`

@@ -9,7 +9,7 @@ Current checks:
 
 Release workflows:
 
-- `vercel-web-deploy.yml` deploys the `web/` Next.js app to Vercel from `deploy-dev`.
+- `vercel-web-deploy.yml` deploys the `web/` Next.js app to Vercel from `deploy-dev`; Vercel performs the production build.
 - `sync-deploy-dev.yml` updates `deploy-dev` only when `dev` changes web deployment paths, or when manually dispatched.
 - Required repository secrets: `VERCEL_TOKEN`, `VERCEL_ORG_ID`, and `VERCEL_PROJECT_ID`.
 - `docker-release.yml` publishes `zgiai/zgi-api`, `zgiai/zgi-web`, `zgiai/zgi-sandbox`, and `zgiai/zgi-runner` to Docker Hub.

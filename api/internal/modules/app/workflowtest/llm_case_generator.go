@@ -18,11 +18,13 @@ type LLMCaseGenerator struct {
 	AgentID     string
 }
 
+const llmCaseGenerationTimeout = 3 * time.Minute
+
 func (g *LLMCaseGenerator) GenerateCases(ctx context.Context, req GenerateCasesRequest) (*GenerateCasesResult, error) {
 	if g == nil || g.Client == nil {
 		return nil, fmt.Errorf("llm case generator is not configured")
 	}
-	timeoutCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	timeoutCtx, cancel := context.WithTimeout(ctx, llmCaseGenerationTimeout)
 	defer cancel()
 
 	temperature := 0.4
@@ -109,13 +111,14 @@ func normalizeQuestionTypes(values []string) []string {
 	seen := map[string]struct{}{}
 	result := make([]string, 0, len(values))
 	for _, value := range values {
-		switch strings.TrimSpace(value) {
+		questionType := strings.TrimSpace(value)
+		switch questionType {
 		case CaseTypeCore, CaseTypeExtension, CaseTypeFuzzy:
-			if _, ok := seen[value]; ok {
+			if _, ok := seen[questionType]; ok {
 				continue
 			}
-			seen[value] = struct{}{}
-			result = append(result, value)
+			seen[questionType] = struct{}{}
+			result = append(result, questionType)
 		}
 	}
 	return result

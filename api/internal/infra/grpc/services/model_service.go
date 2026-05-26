@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/zgi/api/internal/container"
 	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/repository"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -16,15 +15,12 @@ import (
 
 type ModelService struct {
 	pb.UnimplementedModelServiceServer
-	container *container.ServiceContainer
-	repo      repository.ModelRepository
+	repo repository.ModelRepository
 }
 
-func NewModelService(c *container.ServiceContainer) *ModelService {
-	db := c.GetDB()
+func NewModelService(repo repository.ModelRepository) *ModelService {
 	return &ModelService{
-		container: c,
-		repo:      repository.NewModelRepository(db),
+		repo: repo,
 	}
 }
 

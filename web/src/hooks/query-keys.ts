@@ -138,6 +138,18 @@ export const WORKFLOW_TEST_KEYS = {
   scenarios: (agentId: string) => [...WORKFLOW_TEST_KEYS.all, agentId, 'scenarios'] as const,
   cases: (agentId: string, params?: unknown) =>
     [...WORKFLOW_TEST_KEYS.all, agentId, 'cases', params] as const,
+  generationTaskActive: (agentId: string) =>
+    [...WORKFLOW_TEST_KEYS.all, agentId, 'generation-task-active'] as const,
+  generationTaskLatest: (agentId: string) =>
+    [...WORKFLOW_TEST_KEYS.all, agentId, 'generation-task-latest'] as const,
+  generationTask: (agentId: string, taskId: string) =>
+    [...WORKFLOW_TEST_KEYS.all, agentId, 'generation-task', taskId] as const,
+  scenarioRecognitionTaskActive: (agentId: string) =>
+    [...WORKFLOW_TEST_KEYS.all, agentId, 'scenario-recognition-task-active'] as const,
+  scenarioRecognitionTaskLatest: (agentId: string) =>
+    [...WORKFLOW_TEST_KEYS.all, agentId, 'scenario-recognition-task-latest'] as const,
+  scenarioRecognitionTask: (agentId: string, taskId: string) =>
+    [...WORKFLOW_TEST_KEYS.all, agentId, 'scenario-recognition-task', taskId] as const,
   batches: (agentId: string) => [...WORKFLOW_TEST_KEYS.all, agentId, 'batches'] as const,
   batchItems: (agentId: string, batchId: string) =>
     [...WORKFLOW_TEST_KEYS.all, agentId, 'batches', batchId, 'items'] as const,
@@ -199,7 +211,8 @@ export const PROVIDER_KEYS = {
   all: ['providers'] as const,
   list: (params: unknown) => [...PROVIDER_KEYS.all, params] as const,
   detail: (provider: string) => ['provider', provider] as const,
-  availableCounts: (providers: string[]) => [...PROVIDER_KEYS.all, 'available-counts', providers] as const,
+  availableCounts: (providers: string[]) =>
+    [...PROVIDER_KEYS.all, 'available-counts', providers] as const,
 } as const;
 
 export const MODEL_KEYS = {
@@ -251,9 +264,14 @@ export const PLUGIN_KEYS = {
   all: ['plugins'] as const,
   marketplace: () => [...PLUGIN_KEYS.all, 'marketplace'] as const,
   marketplaceList: (params: unknown) => [...PLUGIN_KEYS.marketplace(), 'list', params] as const,
+  marketplaceCategories: (params: unknown) =>
+    [...PLUGIN_KEYS.marketplace(), 'categories', params] as const,
+  marketplaceBranding: () => [...PLUGIN_KEYS.marketplace(), 'branding'] as const,
   marketplaceDetail: (id: string) => [...PLUGIN_KEYS.marketplace(), 'detail', id] as const,
   marketplaceVersions: (pluginId: string, params: unknown) =>
     [...PLUGIN_KEYS.marketplace(), 'versions', pluginId, params] as const,
+  marketplaceFavorite: (pluginId: string, submitterId: string) =>
+    [...PLUGIN_KEYS.marketplace(), 'favorite', pluginId, submitterId] as const,
   installationStatus: (versionId: string) =>
     [...PLUGIN_KEYS.all, 'installation-status', versionId] as const,
 } as const;

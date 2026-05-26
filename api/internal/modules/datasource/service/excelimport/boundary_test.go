@@ -2,6 +2,9 @@ package excelimport
 
 import (
 	"bytes"
+	"go/build"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/xuri/excelize/v2"
@@ -47,6 +50,49 @@ func TestParseWorkbookTrimsTrailingEmptyRowsAndRecommendsVisibleSheet(t *testing
 	}
 }
 
+func TestRecommendedSheetPrefersParserRecommendation(t *testing.T) {
+	workbook := &ParsedWorkbook{
+		SourceType: "excel",
+		Sheets: []ParsedSheet{
+			{
+				Name: "Cover",
+				Rows: [][]string{{"Title"}, {"Import notes"}},
+			},
+			{
+				Name:        "Data",
+				Rows:        [][]string{{"Name", "Amount"}, {"Alice", "10"}},
+				Recommended: true,
+			},
+		},
+	}
+
+	sheet, err := RecommendedSheet(workbook)
+	if err != nil {
+		t.Fatalf("RecommendedSheet returned error: %v", err)
+	}
+	if sheet.Name != "Data" {
+		t.Fatalf("recommended sheet = %q, want Data", sheet.Name)
+	}
+}
+
+func TestRecommendedSheetFallsBackToFirstSheet(t *testing.T) {
+	workbook := &ParsedWorkbook{
+		SourceType: "excel",
+		Sheets: []ParsedSheet{
+			{Name: "Sheet1", Rows: [][]string{{"Name"}, {"Alice"}}},
+			{Name: "Sheet2", Rows: [][]string{{"Name"}, {"Bob"}}},
+		},
+	}
+
+	sheet, err := RecommendedSheet(workbook)
+	if err != nil {
+		t.Fatalf("RecommendedSheet returned error: %v", err)
+	}
+	if sheet.Name != "Sheet1" {
+		t.Fatalf("fallback sheet = %q, want Sheet1", sheet.Name)
+	}
+}
+
 func TestParseCSVAllowsRaggedRowsAndEmptyTrailingRows(t *testing.T) {
 	wb, err := ParseWorkbook("ragged.csv", []byte("Name,Amount,Status\nA,1\nB,2,done\n,,\n"))
 	if err != nil {
@@ -61,6 +107,64 @@ func TestParseCSVAllowsRaggedRowsAndEmptyTrailingRows(t *testing.T) {
 	}
 	if got := sheet.ColumnCount; got != 3 {
 		t.Fatalf("column count = %d, want 3", got)
+	}
+}
+
+func TestParseWorkbookReadsLegacyXLS(t *testing.T) {
+	content := legacyXLSFixtureBytes(t)
+	wb, err := ParseWorkbook("legacy.xls", content)
+	if err != nil {
+		t.Fatalf("ParseWorkbook returned error: %v", err)
+	}
+	if wb.SourceType != "excel" {
+		t.Fatalf("source type = %q, want excel", wb.SourceType)
+	}
+	if len(wb.Sheets) == 0 {
+		t.Fatalf("expected at least one sheet")
+	}
+	sheet := wb.Sheets[0]
+	if sheet.Name == "" {
+		t.Fatalf("expected sheet name")
+	}
+	if len(sheet.Rows) == 0 {
+		t.Fatalf("expected rows from legacy xls")
+	}
+	if sheet.ColumnCount == 0 {
+		t.Fatalf("expected columns from legacy xls")
+	}
+}
+
+func TestParseWorkbookReadsSpreadsheetMLXLS(t *testing.T) {
+	content := []byte(`<?xml version="1.0"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+  xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+  <Worksheet ss:Name="Intel Queue">
+    <Table>
+      <Row>
+        <Cell><Data ss:Type="String">Intel ID</Data></Cell>
+        <Cell><Data ss:Type="String">Risk Level</Data></Cell>
+      </Row>
+      <Row>
+        <Cell><Data ss:Type="String">RI-XLS-2026-0001</Data></Cell>
+        <Cell><Data ss:Type="String">High</Data></Cell>
+      </Row>
+    </Table>
+  </Worksheet>
+</Workbook>`)
+	wb, err := ParseWorkbook("spreadsheetml.xls", content)
+	if err != nil {
+		t.Fatalf("ParseWorkbook returned error: %v", err)
+	}
+	if len(wb.Sheets) != 1 {
+		t.Fatalf("sheet count = %d, want 1", len(wb.Sheets))
+	}
+	sheet := wb.Sheets[0]
+	if sheet.Name != "Intel Queue" {
+		t.Fatalf("sheet name = %q, want Intel Queue", sheet.Name)
+	}
+	if got := sheet.Rows[1][0]; got != "RI-XLS-2026-0001" {
+		t.Fatalf("first data cell = %q, want RI-XLS-2026-0001", got)
 	}
 }
 
@@ -162,6 +266,33 @@ func TestValidateRowsFailFastStopsAtFirstInvalidRow(t *testing.T) {
 	}
 }
 
+func TestValidateRowsKeepsLocalTimestampWallTime(t *testing.T) {
+	wb := &ParsedWorkbook{
+		SourceType: "excel",
+		Sheets: []ParsedSheet{
+			{
+				Name:        "Sheet1",
+				Rows:        [][]string{{"Collection Time"}, {"2026-05-11 17:17:18"}},
+				RowCount:    2,
+				ColumnCount: 1,
+				Recommended: true,
+			},
+		},
+	}
+	req := emptyConfirmRequest()
+	req.Columns = []dto.InferredExcelColumn{
+		{SourceColumnIndex: 0, Name: "collection_time", Type: "timestamp", IsRequired: true},
+	}
+
+	result, err := ValidateRows(wb, req)
+	if err != nil {
+		t.Fatalf("ValidateRows returned error: %v", err)
+	}
+	if got := result.Records[0]["collection_time"]; got != "2026-05-11 17:17:18" {
+		t.Fatalf("collection_time = %#v, want original wall time", got)
+	}
+}
+
 func workbookBytes(t *testing.T, sheets map[string][][]string) []byte {
 	t.Helper()
 	f := excelize.NewFile()
@@ -193,4 +324,18 @@ func workbookBytes(t *testing.T, sheets map[string][][]string) []byte {
 		t.Fatalf("Write workbook: %v", err)
 	}
 	return buf.Bytes()
+}
+
+func legacyXLSFixtureBytes(t *testing.T) []byte {
+	t.Helper()
+	modCache := os.Getenv("GOMODCACHE")
+	if modCache == "" {
+		modCache = filepath.Join(build.Default.GOPATH, "pkg", "mod")
+	}
+	path := filepath.Join(modCache, "github.com", "extrame", "xls@v0.0.1", "Table.xls")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(%s): %v", path, err)
+	}
+	return content
 }

@@ -13,6 +13,7 @@ interface ModelsActionsBarProps {
   onDisableVisible: () => void;
   extraActions?: React.ReactNode;
   onAdd?: () => void;
+  addLabel?: string;
   disabled: boolean;
   hasActiveFilters?: boolean;
 }
@@ -26,6 +27,7 @@ export default function ModelsActionsBar({
   onDisableVisible,
   extraActions,
   onAdd,
+  addLabel,
   disabled,
   hasActiveFilters = false,
 }: ModelsActionsBarProps): JSX.Element {
@@ -79,7 +81,7 @@ export default function ModelsActionsBar({
             onClick={onAdd}
             disabled={disabled}
           >
-            {t('aiProviders.models.actions.add') || 'Add Model'}
+            {addLabel || t('aiProviders.models.actions.add') || 'Add Model'}
           </Button>
         )}
         <div className="w-80">

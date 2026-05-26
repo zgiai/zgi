@@ -40,6 +40,18 @@ func getOrganizationID(c *gin.Context) (uuid.UUID, error) {
 	return uuid.Parse(orgIDStr)
 }
 
+func handleChannelMutationError(c *gin.Context, err error) {
+	if msg, ok := channelprovider.UserVisibleValidationMessage(err); ok {
+		response.FailWithMessage(c, response.ErrInvalidParam, msg)
+		return
+	}
+	if isCreateRouteInputError(err) {
+		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+		return
+	}
+	response.FailWithMessage(c, response.ErrSystemError, err.Error())
+}
+
 // Tenant Route Operations
 
 func (h *ChannelHandler) CreateRoute(c *gin.Context) {
@@ -56,11 +68,42 @@ func (h *ChannelHandler) CreateRoute(c *gin.Context) {
 
 	route, err := h.service.CreateRoute(c.Request.Context(), organizationID, req)
 	if err != nil {
-		h.Error(c, err)
+		handleChannelMutationError(c, err)
 		return
 	}
 
 	h.Success(c, route)
+}
+
+func handleCreateRouteError(c *gin.Context, err error) {
+	handleChannelMutationError(c, err)
+}
+
+func isCreateRouteInputError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	msg := err.Error()
+	inputErrorMarkers := []string{
+		"initial funds must be greater than or equal to 0",
+		"channel validation failed:",
+		"validation failed:",
+		"must use the full model name",
+		"unsupported channel_provider:",
+		"unsupported test method ",
+		"use case is unsupported for channel validation",
+		"is not supported by this adapter",
+		"api_base_url is required",
+		"api_key is required",
+	}
+	for _, marker := range inputErrorMarkers {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func parseCreateRouteRequest(c *gin.Context) (*dto.CreateRouteRequest, bool) {
@@ -205,7 +248,7 @@ func (h *ChannelHandler) UpdateRoute(c *gin.Context) {
 	}
 	route, err := h.service.UpdateRoute(c.Request.Context(), organizationID, id, &req)
 	if err != nil {
-		h.Error(c, err)
+		handleChannelMutationError(c, err)
 		return
 	}
 	h.Success(c, route)
@@ -557,6 +600,41 @@ func (h *ChannelHandler) TestDraftChannelModel(c *gin.Context) {
 	}
 
 	result, err := h.service.TestDraftChannelModel(c.Request.Context(), organizationID, req)
+	if err != nil {
+		h.Error(c, err)
+		return
+	}
+	h.Success(c, result)
+}
+
+// DiscoverDraftChannelModels lists upstream models before the channel is created.
+// POST /channels/draft/discover-models
+func (h *ChannelHandler) DiscoverDraftChannelModels(c *gin.Context) {
+	if _, ok := h.GetOrganizationID(c); !ok {
+		return
+	}
+
+	var req dto.DiscoverDraftChannelModelsRequest
+	if !h.BindJSON(c, &req) {
+		return
+	}
+
+	if strings.TrimSpace(req.ChannelProvider) == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "channel_provider is required")
+		return
+	}
+
+	spec, err := channelprovider.ValidateConnectionFields(req.ChannelProvider, req.APIBaseURL)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+		return
+	}
+	if err := channelprovider.ValidateAPIKey(spec, req.APIKey); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+		return
+	}
+
+	result, err := h.service.DiscoverDraftChannelModels(c.Request.Context(), &req)
 	if err != nil {
 		h.Error(c, err)
 		return

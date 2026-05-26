@@ -44,7 +44,7 @@ func registerFileRoutesLegacy(v1 *gin.RouterGroup, accountService interfaces.Acc
 	fileFavoriteHandler := fileProcessHandler.NewFileFavoriteHandler(fileFavoriteService, fileService, accountService)
 
 	// Create image preview handler
-	imagePreviewHandler := fileProcessHandler.NewImagePreviewHandler(fileService, accountService)
+	imagePreviewHandler := fileProcessHandler.NewImagePreviewHandler(fileService, accountService, enterpriseService)
 	toolFileHandler := tool_file.NewHTTPHandler(tool_file.GlobalToolFileManager)
 
 	files := v1.Group("/files",

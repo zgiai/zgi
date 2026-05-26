@@ -2,6 +2,7 @@ package workflowtest
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -79,4 +80,20 @@ func TestLLMJudgePassesConfiguredModel(t *testing.T) {
 	require.Equal(t, "chatgpt-4o-latest", client.req.Model)
 	require.Contains(t, client.req.Messages[1].Content, "预期结果")
 	require.Contains(t, client.req.Messages[1].Content, "应说明企业版支持团队协作和权限控制。")
+}
+
+type failingJudge struct {
+	err error
+}
+
+func (j failingJudge) JudgeCase(ctx context.Context, req JudgeRequest) (*JudgeResult, error) {
+	return nil, j.err
+}
+
+func TestRunJudgeReturnsStableEnglishReasonWhenModelIsMissing(t *testing.T) {
+	result := runJudge(context.Background(), failingJudge{err: errors.New("model field is required")}, JudgeRequest{})
+
+	require.Equal(t, BatchItemStatusReview, result.Status)
+	require.Equal(t, "judge failed: model field is required", result.Reason)
+	require.Equal(t, "AI scoring failed; review manually or rerun the test", result.Suggestion)
 }

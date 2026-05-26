@@ -37,18 +37,23 @@ RUN if [ -n "$APK_MIRROR" ]; then \
     fi
 
 # Install runtime tools.
-# poppler-utils supplies pdftoppm for PDF rasterization; tesseract handles
-# self-hosted OCR fallback for scan/image-like documents.
+# poppler-utils supplies pdftocairo/pdftoppm for PDF rasterization; fontconfig
+# and core fonts provide Helvetica-compatible fallbacks for PDF text rendering.
+# tesseract handles self-hosted OCR fallback for scan/image-like documents.
 RUN apk --no-cache add \
     ca-certificates \
     tzdata \
     bash \
     wget \
     su-exec \
+    fontconfig \
+    ttf-dejavu \
+    font-liberation \
     poppler-utils \
     tesseract-ocr \
     tesseract-ocr-data-eng \
-    tesseract-ocr-data-chi_sim
+    tesseract-ocr-data-chi_sim \
+    && fc-cache -f
 
 # Set timezone
 ENV TZ=Asia/Shanghai

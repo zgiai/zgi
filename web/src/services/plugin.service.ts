@@ -1,11 +1,16 @@
 import { BaseService } from '@/lib/http/services';
+import { MARKETPLACE_CHANNEL } from '@/lib/config';
 import type {
   InstalledPlugin,
   UninstallResult,
   MarketplacePluginCategory,
+  MarketplaceCategory,
   MarketplacePluginListResponse,
   MarketplacePlugin,
+  MarketplaceBrandingSettings,
   MarketplacePluginVersionListResponse,
+  MarketplacePluginFavoriteStatus,
+  SubmitMarketplacePluginFeedbackRequest,
 } from './types/plugin';
 import type { ApiResponseData } from './types/common';
 
@@ -67,7 +72,8 @@ class PluginService extends BaseService {
     category?: MarketplacePluginCategory;
     search?: string;
     developer_id?: string;
-    sort?: 'downloads' | 'newest' | 'rating';
+    locale?: string;
+    sort?: 'downloads' | 'newest';
     is_featured?: boolean;
     is_official?: boolean;
   }): Promise<ApiResponseData<MarketplacePluginListResponse>> {
@@ -82,22 +88,113 @@ class PluginService extends BaseService {
         category: params.category,
         search: params.search,
         developer_id: params.developer_id,
+        locale: params.locale,
         sort: params.sort,
         is_featured: params.is_featured !== undefined ? params.is_featured.toString() : undefined,
         is_official: params.is_official !== undefined ? params.is_official.toString() : undefined,
+        channel: MARKETPLACE_CHANNEL || undefined,
       },
     });
+  }
+
+  /**
+   * Get visible marketplace categories.
+   */
+  getMarketplaceCategories(params?: {
+    locale?: string;
+  }): Promise<ApiResponseData<{ items: MarketplaceCategory[] }>> {
+    return this.request('get', 'v1/market/categories', undefined, {
+      skipAuth: true,
+      skipErrorHandling: true,
+      endpoint: 'market',
+      timeout: 60000,
+      params: {
+        locale: params?.locale,
+      },
+    });
+  }
+
+  submitMarketplacePluginFeedback(
+    data: SubmitMarketplacePluginFeedbackRequest
+  ): Promise<ApiResponseData<{ id: string }>> {
+    return this.request('post', 'v1/market/feedback', data, {
+      skipAuth: true,
+      skipErrorHandling: true,
+      endpoint: 'market',
+      timeout: 60000,
+    });
+  }
+
+  /**
+   * Get public marketplace branding settings from console.
+   * GET /v1/public/settings
+   */
+  getMarketplaceBrandingSettings(): Promise<
+    ApiResponseData<{ settings: Record<string, string>; updated: string }>
+  > {
+    return this.request('get', 'v1/public/settings', undefined, {
+      skipAuth: true,
+      skipErrorHandling: true,
+      endpoint: 'market',
+      timeout: 60000,
+    });
+  }
+
+  async getMarketplaceBrandingConfig(locale?: string): Promise<MarketplaceBrandingSettings> {
+    const response = await this.getMarketplaceBrandingSettings();
+    const settings = response.data?.settings ?? {};
+    const suffix = locale?.toLowerCase().startsWith('en') ? 'en_us' : 'zh_hans';
+    const localizedTip = (baseKey: string) =>
+      settings[`marketplace.metrics.${baseKey}_tip_${suffix}`] ||
+      settings[`marketplace.metrics.${baseKey}_tip`];
+
+    return {
+      official_logo_url: settings['marketplace.official_logo_url'],
+      blue_v_icon_url: settings['marketplace.blue_v_icon_url'],
+      yellow_v_icon_url: settings['marketplace.yellow_v_icon_url'],
+      feedback_enabled: settings['marketplace.feedback_enabled'] !== 'false',
+      upload_application_enabled: settings['marketplace.upload_application_enabled'] !== 'false',
+      metric_icon_urls: {
+        downloads: settings['marketplace.metrics.download_icon_url'],
+        runs: settings['marketplace.metrics.run_icon_url'],
+        runtime: settings['marketplace.metrics.runtime_icon_url'],
+        success: settings['marketplace.metrics.success_icon_url'],
+        favorites: settings['marketplace.metrics.favorite_icon_url'],
+      },
+      metric_enabled: {
+        downloads: settings['marketplace.metrics.downloads_enabled'] !== 'false',
+        runs: settings['marketplace.metrics.runs_enabled'] !== 'false',
+        runtime: settings['marketplace.metrics.runtime_enabled'] !== 'false',
+        success: settings['marketplace.metrics.success_enabled'] !== 'false',
+        favorites: settings['marketplace.metrics.favorites_enabled'] !== 'false',
+      },
+      metric_tips: {
+        downloads: localizedTip('download'),
+        runs: localizedTip('run'),
+        runtime: localizedTip('runtime'),
+        success: localizedTip('success'),
+        favorites: localizedTip('favorite'),
+      },
+    };
   }
 
   /**
    * Get plugin detail from marketplace
    * GET /v1/market/plugins/{id}
    */
-  getMarketplacePluginDetail(id: string): Promise<ApiResponseData<MarketplacePlugin>> {
+  getMarketplacePluginDetail(
+    id: string,
+    params?: {
+      locale?: string;
+    }
+  ): Promise<ApiResponseData<MarketplacePlugin>> {
     return this.request('get', `v1/market/plugins/${id}`, undefined, {
       skipAuth: true,
       skipErrorHandling: true,
       endpoint: 'market',
+      params: {
+        locale: params?.locale,
+      },
     });
   }
 
@@ -120,6 +217,46 @@ class PluginService extends BaseService {
         page: params?.page,
         page_size: params?.page_size,
       },
+    });
+  }
+
+  getMarketplacePluginFavoriteStatus(
+    pluginId: string,
+    submitterId?: string | null
+  ): Promise<ApiResponseData<MarketplacePluginFavoriteStatus>> {
+    return this.request('get', `v1/market/plugins/${pluginId}/favorite`, undefined, {
+      skipAuth: true,
+      skipErrorHandling: true,
+      endpoint: 'market',
+      params: { submitter_id: submitterId || undefined },
+    });
+  }
+
+  favoriteMarketplacePlugin(
+    pluginId: string,
+    submitterId: string
+  ): Promise<ApiResponseData<MarketplacePluginFavoriteStatus>> {
+    return this.request(
+      'post',
+      `v1/market/plugins/${pluginId}/favorite`,
+      { submitter_id: submitterId },
+      {
+        skipAuth: true,
+        skipErrorHandling: true,
+        endpoint: 'market',
+      }
+    );
+  }
+
+  unfavoriteMarketplacePlugin(
+    pluginId: string,
+    submitterId: string
+  ): Promise<ApiResponseData<MarketplacePluginFavoriteStatus>> {
+    return this.request('delete', `v1/market/plugins/${pluginId}/favorite`, undefined, {
+      skipAuth: true,
+      skipErrorHandling: true,
+      endpoint: 'market',
+      params: { submitter_id: submitterId },
     });
   }
 }

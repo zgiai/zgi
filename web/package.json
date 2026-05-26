@@ -4,9 +4,9 @@
   "description": "ZGI Web Scaffold - Modern web application scaffold built with Next.js, TypeScript, and Tailwind CSS",
   "private": true,
   "scripts": {
-    "dev": "node scripts/prepare-customer-overlay.mjs && node scripts/generate-sensitive-word-filter.mjs && next dev",
-    "dev:webpack": "node scripts/prepare-customer-overlay.mjs && node scripts/generate-sensitive-word-filter.mjs && next dev --webpack",
-    "build": "node scripts/prepare-customer-overlay.mjs && node scripts/generate-sensitive-word-filter.mjs && node scripts/check-i18n-route-modules.mjs && next build",
+    "dev": "node scripts/generate-sensitive-word-filter.mjs && next dev",
+    "dev:webpack": "node scripts/generate-sensitive-word-filter.mjs && next dev --webpack",
+    "build": "node scripts/generate-sensitive-word-filter.mjs && node scripts/check-i18n-route-modules.mjs && next build",
     "start": "next start",
     "pm2:start": "node start-pm2.js",
     "pm2:stop": "pm2 stop zgi-web",
@@ -14,15 +14,15 @@
     "pm2:logs": "pm2 logs zgi-web",
     "pm2:status": "pm2 status",
     "vercel-build": "npm run build",
-    "lint": "node scripts/prepare-customer-overlay.mjs && eslint .",
-    "lint:fix": "node scripts/prepare-customer-overlay.mjs && eslint . --fix",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
     "test:workflow-tool-validation": "node scripts/test-workflow-tool-validation.mjs",
-    "type-check": "node scripts/prepare-customer-overlay.mjs && node scripts/generate-sensitive-word-filter.mjs && node scripts/check-i18n-route-modules.mjs && tsc --noEmit",
+    "test:code-node-validation": "node scripts/test-code-node-validation.mjs",
+    "type-check": "node scripts/generate-sensitive-word-filter.mjs && node scripts/check-i18n-route-modules.mjs && tsc --noEmit",
     "check:i18n-routes": "node scripts/check-i18n-route-modules.mjs",
     "validate:agent-templates": "node scripts/validate-agent-templates.mjs",
     "format": "prettier --write .",
-    "prepare:sensitive-words": "node scripts/generate-sensitive-word-filter.mjs",
-    "prepare:customer": "node scripts/prepare-customer-overlay.mjs"
+    "prepare:sensitive-words": "node scripts/generate-sensitive-word-filter.mjs"
   },
   "keywords": [
     "nextjs",

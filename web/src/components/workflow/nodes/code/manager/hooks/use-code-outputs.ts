@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
-import type { CodeNodeData, OutputVariable } from '../../../../store/type';
+import { isCodeOutputType, type CodeNodeData, type CodeOutputType } from '../../config';
 import {
   KeyboardSensor,
   PointerSensor,
@@ -14,7 +14,7 @@ import { useNodeDataUpdate } from '../../../../hooks/use-node-data-update';
 
 export interface OutputRowModel {
   key: string;
-  type: OutputVariable['type'];
+  type: CodeOutputType;
   children: unknown | null;
 }
 
@@ -30,7 +30,7 @@ export interface UseCodeOutputsResult {
   handleAddOutput: () => void;
   handleRemoveOutput: (key: string) => void;
   handleOutputKeyChangeAtIndex: (index: number, newKey: string) => void;
-  handleOutputTypeChange: (key: string, type: OutputVariable['type']) => void;
+  handleOutputTypeChange: (key: string, type: CodeOutputType) => void;
   handleDragEnd: (event: DragEndEvent) => void;
 }
 
@@ -52,11 +52,14 @@ export function useCodeOutputs(nodeId: string): UseCodeOutputsResult {
       data.outputKeyOrders && data.outputKeyOrders.length > 0
         ? data.outputKeyOrders
         : Object.keys(outputs || {});
-    return orders.map((key: string) => ({
-      key,
-      type: (outputs?.[key]?.type as OutputVariable['type']) || 'string',
-      children: outputs?.[key]?.children ?? null,
-    }));
+    return orders.map((key: string) => {
+      const outputType = outputs?.[key]?.type;
+      return {
+        key,
+        type: isCodeOutputType(outputType) ? outputType : 'string',
+        children: outputs?.[key]?.children ?? null,
+      };
+    });
   }, []);
 
   const [rows, setRows] = React.useState<OutputRowModel[]>(() => deriveRowsFromNode(nodeData));
@@ -104,8 +107,7 @@ export function useCodeOutputs(nodeId: string): UseCodeOutputsResult {
 
   const serializeAndCommit = useCallback(
     (nextRows: OutputRowModel[]) => {
-      const outputs: Record<string, { type: OutputVariable['type']; children: unknown | null }> =
-        {};
+      const outputs: Record<string, { type: CodeOutputType; children: unknown | null }> = {};
       const outputKeyOrders: string[] = [];
       nextRows.forEach(row => {
         outputKeyOrders.push(row.key);
@@ -140,7 +142,7 @@ export function useCodeOutputs(nodeId: string): UseCodeOutputsResult {
     }
     const nextRows: OutputRowModel[] = [
       ...rows,
-      { key: candidate, type: 'string' as OutputVariable['type'], children: null },
+      { key: candidate, type: 'string', children: null },
     ];
     idsRef.current.push(`${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
     setRows(nextRows);
@@ -177,7 +179,7 @@ export function useCodeOutputs(nodeId: string): UseCodeOutputsResult {
   );
 
   const handleOutputTypeChange = useCallback(
-    (key: string, type: OutputVariable['type']) => {
+    (key: string, type: CodeOutputType) => {
       const nextRows = rows.map(row => (row.key === key ? { ...row, type } : row));
       setRows(nextRows);
       serializeAndCommit(nextRows);

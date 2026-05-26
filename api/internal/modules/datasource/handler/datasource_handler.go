@@ -1316,13 +1316,13 @@ func (h *DataSourceHandler) AnalyzeFileForTable(c *gin.Context) {
 	}
 
 	// Analyze file for table structure using dataSourceID to resolve organization scope
-	columns, err := h.service.AnalyzeFileForTable(c.Request.Context(), req.DataSourceID, accountID, fileID, req.Prompt, req.Model)
+	result, err := h.service.AnalyzeFileForTable(c.Request.Context(), req.DataSourceID, accountID, fileID, req.Prompt, req.Model)
 	if err != nil {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
 	}
 
-	response.Success(c, dto.AnalyzeFileForTableResponse{Columns: columns})
+	response.Success(c, result)
 }
 
 // DownloadTableTemplate downloads an Excel template for the specified table

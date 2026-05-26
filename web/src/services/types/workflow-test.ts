@@ -174,6 +174,43 @@ export interface GenerateWorkflowTestCasesResponse {
   items: WorkflowTestCase[];
 }
 
+export type WorkflowTestGenerationTaskStatus =
+  | 'queued'
+  | 'running'
+  | 'canceling'
+  | 'canceled'
+  | 'completed'
+  | 'failed';
+
+export interface WorkflowTestGenerationTask {
+  id: string;
+  agent_id: string;
+  workspace_id: string;
+  account_id: string;
+  status: WorkflowTestGenerationTaskStatus;
+  requested_count: number;
+  created_count: number;
+  scenario_ids: string[];
+  question_types: string[];
+  turn_strategy: 'single' | 'multi' | 'mixed' | string;
+  prompt: string;
+  context: string;
+  model_provider: string;
+  model_name: string;
+  error: string;
+  started_at?: string;
+  cancel_requested_at?: string;
+  completed_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkflowTestGenerationTaskResponse {
+  task: WorkflowTestGenerationTask | null;
+}
+
+export type CreateWorkflowTestGenerationTaskRequest = GenerateWorkflowTestCasesRequest;
+
 export interface RecognizeWorkflowTestScenariosRequest {
   context?: string;
   prompt?: string;
@@ -194,3 +231,31 @@ export interface RecognizeWorkflowTestScenariosResponse {
   }>;
   cases: WorkflowTestCase[];
 }
+
+export interface WorkflowTestScenarioRecognitionTask {
+  id: string;
+  agent_id: string;
+  workspace_id: string;
+  account_id: string;
+  status: WorkflowTestGenerationTaskStatus;
+  prompt: string;
+  context: string;
+  workflow_context_snapshot: string;
+  model_provider: string;
+  model_name: string;
+  recognized_count: number;
+  assigned_case_count: number;
+  error: string;
+  started_at?: string;
+  cancel_requested_at?: string;
+  completed_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkflowTestScenarioRecognitionTaskResponse {
+  task: WorkflowTestScenarioRecognitionTask | null;
+}
+
+export type CreateWorkflowTestScenarioRecognitionTaskRequest =
+  RecognizeWorkflowTestScenariosRequest;

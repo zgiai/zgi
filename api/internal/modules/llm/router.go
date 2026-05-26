@@ -172,6 +172,7 @@ func RegisterCommonRoutes(r *gin.RouterGroup, m *LLMModule) {
 		tenantChannels.POST("/select", m.ChannelHandler.SelectRoute)
 		tenantChannels.GET("/by-model", m.ChannelHandler.GetRoutesForModel)
 		tenantChannels.POST("/init", m.ChannelHandler.InitTenantRoutes)
+		tenantChannels.POST("/draft/discover-models", m.ChannelHandler.DiscoverDraftChannelModels)
 		tenantChannels.POST("/draft/test/model", m.ChannelHandler.TestDraftChannelModel)
 		tenantChannels.POST("/ollama/discover-models", m.ChannelHandler.DiscoverOllamaModels)
 		tenantChannels.POST("/:id/test/model", m.ChannelHandler.TestChannelModel)

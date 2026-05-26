@@ -59,6 +59,7 @@ type PromptOptimizeRequest struct {
 	Provider          string `json:"provider" binding:"omitempty,max=128"`
 	Model             string `json:"model" binding:"omitempty,max=255"`
 	PromptID          string `json:"prompt_id" binding:"omitempty,uuid"`
+	Language          string `json:"language" binding:"omitempty,max=32"`
 }
 
 type PromptOptimizationRunListRequest struct {

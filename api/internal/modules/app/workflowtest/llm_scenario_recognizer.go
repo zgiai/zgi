@@ -18,15 +18,19 @@ type LLMScenarioRecognizer struct {
 	AgentID     string
 }
 
+const scenarioRecognitionCaseContentMaxChars = 160
+
+const llmScenarioRecognitionTimeout = 3 * time.Minute
+
 func (r *LLMScenarioRecognizer) RecognizeScenarios(ctx context.Context, req ScenarioRecognitionInput) (*ScenarioRecognitionResult, error) {
 	if r == nil || r.Client == nil {
 		return nil, fmt.Errorf("llm scenario recognizer is not configured")
 	}
-	timeoutCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	timeoutCtx, cancel := context.WithTimeout(ctx, llmScenarioRecognitionTimeout)
 	defer cancel()
 
 	temperature := 0.2
-	maxTokens := 1600
+	maxTokens := 3200
 	chatReq := &adapter.ChatRequest{
 		Messages: []adapter.Message{
 			{Role: "system", Content: "你是工作流自动化批量测试的业务场景识别助手。请只做轻量归类，不要把近义场景自动合并。"},
@@ -74,7 +78,7 @@ func buildScenarioRecognitionPrompt(req ScenarioRecognitionInput) string {
 	for _, item := range req.Cases {
 		cases = append(cases, promptCase{
 			ID:           item.ID,
-			Content:      item.Content,
+			Content:      truncateForScenarioRecognition(item.Content),
 			QuestionType: item.QuestionType,
 		})
 	}
@@ -95,14 +99,17 @@ func buildScenarioRecognitionPrompt(req ScenarioRecognitionInput) string {
 
 输出 JSON 对象，格式为：{"scenarios":[{"name":"售前咨询","description":"产品能力、价格和采购咨询"}],"assignments":[{"case_id":"问题ID","scenario_name":"售前咨询"}]}
 
-业务上下文：
+工作流上下文（系统自动从当前草稿提取，优先用于识别场景）：
+%s
+
+用户补充业务上下文：
 %s
 
 已有场景：
 %s
 
 测试问题：
-%s`, prompt, strings.TrimSpace(req.Context), string(existingJSON), string(caseJSON))
+%s`, prompt, strings.TrimSpace(req.WorkflowContext), strings.TrimSpace(req.Context), string(existingJSON), string(caseJSON))
 }
 
 func defaultScenarioRecognitionPrompt() string {
@@ -117,11 +124,20 @@ func defaultScenarioRecognitionPrompt() string {
 6. 如果提供了测试问题，请把能明确归类的问题分配到 assignments；无法明确归类的问题可以不分配。`
 }
 
+func truncateForScenarioRecognition(value string) string {
+	value = strings.TrimSpace(value)
+	runes := []rune(value)
+	if len(runes) <= scenarioRecognitionCaseContentMaxChars {
+		return value
+	}
+	return strings.TrimSpace(string(runes[:scenarioRecognitionCaseContentMaxChars])) + "..."
+}
+
 func parseScenarioRecognitionResponse(content string) (*ScenarioRecognitionResult, error) {
 	raw := stripJSONCodeFence(strings.TrimSpace(content))
 	var result ScenarioRecognitionResult
 	if err := json.Unmarshal([]byte(raw), &result); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse scenario recognition JSON: %w", err)
 	}
 	normalized, err := normalizeScenarioRecognitionResult(&result)
 	if err != nil {

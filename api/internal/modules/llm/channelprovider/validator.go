@@ -2,6 +2,7 @@ package channelprovider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -169,14 +170,20 @@ func ValidateModels(ctx context.Context, channelProvider, baseURL, apiKey string
 
 func normalizeValidationError(err error) string {
 	errorMsg := err.Error()
+	lowerMsg := strings.ToLower(errorMsg)
 	switch {
-	case strings.Contains(errorMsg, "401"), strings.Contains(strings.ToLower(errorMsg), "unauthorized"):
-		return "invalid API key or unauthorized"
+	case errors.Is(err, adapter.ErrAuthFailed),
+		strings.Contains(errorMsg, "401"),
+		strings.Contains(lowerMsg, "unauthorized"),
+		strings.Contains(lowerMsg, "authentication failed"),
+		strings.Contains(lowerMsg, "invalid api key"),
+		strings.Contains(lowerMsg, "invalid_api_key"):
+		return providerAPIKeyInvalidMessage
 	case strings.Contains(errorMsg, "404"):
 		return "model not found or endpoint not available"
 	case strings.Contains(errorMsg, "429"):
 		return "rate limit exceeded"
-	case strings.Contains(strings.ToLower(errorMsg), "timeout"):
+	case strings.Contains(lowerMsg, "timeout"):
 		return "request timeout"
 	default:
 		return errorMsg
