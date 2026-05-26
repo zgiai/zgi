@@ -75,7 +75,9 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	RegisterPaymentRoutes(v1, serviceContainer)
 
 	// ---------- Quota ----------
-	RegisterQuotaRoutes(v1, serviceContainer)
+	RegisterQuotaRoutes(v1, QuotaRouteDeps{
+		QuotaService: serviceContainer.GetQuotaService(),
+	})
 
 	// ---------- Workflow ----------
 	RegisterWorkflowRoutes(v1, accountService, tenantService, serviceContainer.GetFileService(), db, serviceContainer.GetContentExtractor(), serviceContainer.GetQuotaService(), serviceContainer.GetOrganizationService(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), serviceContainer.GetAutomationDefinitionService(), serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetScheduler(), workflowEngineFactory, serviceContainer)
