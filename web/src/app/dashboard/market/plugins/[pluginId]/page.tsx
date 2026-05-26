@@ -211,7 +211,10 @@ export default function MarketplacePluginDetailPage() {
     );
   }
 
-  const stats = buildStats(plugin, favorite.favoriteCount, isZh, branding);
+  const visibleFavoriteCount = favorite.isLoading
+    ? plugin.rating_count || 0
+    : favorite.favoriteCount;
+  const stats = buildStats(plugin, visibleFavoriteCount, isZh, branding);
   const labels = Array.from(new Set([...(plugin.official_labels || []), ...(plugin.tags || [])]));
   const toolDefinitions = normalizeToolDefinitions(selectedVersion?.manifest?.tools, isZh);
   const hasNewerVersion = Boolean(
@@ -479,7 +482,7 @@ function buildStats(
 ) {
   const hash = stableHash(plugin.id);
   const installs = plugin.download_count || 0;
-  const favorites = favoriteCount || plugin.rating_count || 0;
+  const favorites = favoriteCount;
   const metricEnabled = branding.metric_enabled ?? {};
   const metricStats = [
     {
