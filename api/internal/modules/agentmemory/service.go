@@ -16,10 +16,9 @@ import (
 )
 
 const (
-	defaultSlotMaxChars     = 1000
-	maxSlotMaxChars         = 4000
-	maxSlotDescriptionChars = 1000
-	maxSlotsPerAgent        = 50
+	defaultSlotMaxChars     = 2000
+	maxSlotDescriptionChars = 200
+	maxSlotsPerAgent        = 5
 	defaultRenderBudget     = 4000
 )
 
@@ -46,6 +45,7 @@ type store interface {
 	ListSlots(ctx context.Context, workspaceID, agentID uuid.UUID, enabledOnly bool) ([]*AgentMemorySlot, error)
 	CreateSlot(ctx context.Context, slot *AgentMemorySlot) error
 	UpdateSlotScoped(ctx context.Context, workspaceID, agentID, slotID uuid.UUID, values map[string]interface{}) (*AgentMemorySlot, error)
+	DeleteSlotScoped(ctx context.Context, workspaceID, agentID, slotID uuid.UUID) error
 	ListValuesForAgent(ctx context.Context, workspaceID, agentID uuid.UUID) ([]*AgentMemoryValue, error)
 	ListValuesForUser(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) ([]*AgentMemoryValue, error)
 	GetValueScoped(ctx context.Context, workspaceID, agentID uuid.UUID, slotKey string, userScope string, userID uuid.UUID) (*AgentMemoryValue, error)
@@ -174,19 +174,14 @@ func (s *Service) ReplaceSlots(ctx context.Context, agentID, actorID uuid.UUID, 
 			}
 		}
 		for _, stale := range existingByKey {
-			if stale == nil || !stale.Enabled {
+			if stale == nil {
 				continue
 			}
 			before := *stale
-			updated, err := tx.UpdateSlotScoped(ctx, workspaceID, agentID, stale.ID, map[string]interface{}{
-				"enabled":    false,
-				"updated_by": actorID,
-				"updated_at": now,
-			})
-			if err != nil {
-				return mapRepoError(err, "disable missing agent memory slot")
+			if err := tx.DeleteSlotScoped(ctx, workspaceID, agentID, stale.ID); err != nil {
+				return mapRepoError(err, "delete removed agent memory slot")
 			}
-			if err := recordSlotEvent(ctx, tx, workspaceID, agentID, updated.Key, EventActionSlotDisable, organizerMetadata(), &before, updated); err != nil {
+			if err := recordSlotEvent(ctx, tx, workspaceID, agentID, before.Key, EventActionSlotDelete, organizerMetadata(), &before, nil); err != nil {
 				return err
 			}
 		}
@@ -462,7 +457,7 @@ func (s *Service) configuredSlotByKey(ctx context.Context, workspaceID, agentID 
 			return RuntimeSlot{
 				Key:         slot.Key,
 				Description: slot.Description,
-				MaxChars:    slot.MaxChars,
+				MaxChars:    defaultSlotMaxChars,
 				Enabled:     true,
 				SortOrder:   slot.SortOrder,
 			}, nil
@@ -497,13 +492,7 @@ func normalizeSlotInput(req SlotUpsertRequest, index int) (normalizedSlotInput, 
 	if len([]rune(description)) > maxSlotDescriptionChars {
 		return normalizedSlotInput{}, fmt.Errorf("%w: description is too long for %s", ErrInvalidInput, key)
 	}
-	maxChars := req.MaxChars
-	if maxChars <= 0 {
-		maxChars = defaultSlotMaxChars
-	}
-	if maxChars > maxSlotMaxChars {
-		return normalizedSlotInput{}, fmt.Errorf("%w: max_chars exceeds limit for %s", ErrInvalidInput, key)
-	}
+	maxChars := defaultSlotMaxChars
 	enabled := true
 	if req.Enabled != nil {
 		enabled = *req.Enabled
@@ -558,9 +547,7 @@ func normalizeRuntimeSlots(slots []RuntimeSlot) []RuntimeSlot {
 		if maxChars <= 0 {
 			maxChars = defaultSlotMaxChars
 		}
-		if maxChars > maxSlotMaxChars {
-			maxChars = maxSlotMaxChars
-		}
+		maxChars = defaultSlotMaxChars
 		sortOrder := slot.SortOrder
 		if sortOrder == 0 {
 			sortOrder = i
@@ -609,7 +596,7 @@ func slotResponse(slot *AgentMemorySlot) SlotResponse {
 		ID:               slot.ID.String(),
 		Key:              slot.Key,
 		Description:      slot.Description,
-		MaxChars:         slot.MaxChars,
+		MaxChars:         defaultSlotMaxChars,
 		Enabled:          slot.Enabled,
 		SortOrder:        slot.SortOrder,
 		CreatedAt:        createdAt.unix,

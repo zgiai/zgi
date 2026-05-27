@@ -18,6 +18,7 @@ const (
 	EventActionSlotCreate  = "slot_create"
 	EventActionSlotUpdate  = "slot_update"
 	EventActionSlotDisable = "slot_disable"
+	EventActionSlotDelete  = "slot_delete"
 	EventActionValueUpdate = "value_update"
 	EventActionValueClear  = "value_clear"
 

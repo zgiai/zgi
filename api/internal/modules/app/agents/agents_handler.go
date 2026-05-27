@@ -399,7 +399,7 @@ func (h *AgentsHandler) ListAgentMemoryValues(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
-	result, err := h.appService.ListAgentMemoryValues(c.Request.Context(), c.Param("agent_id"), accountID.String(), c.Query("user_scope"), c.Query("user_id"))
+	result, err := h.appService.ListAgentMemoryValues(c.Request.Context(), c.Param("agent_id"), accountID.String())
 	if err != nil {
 		h.failRuntime(c, err)
 		return
@@ -432,7 +432,7 @@ func (h *AgentsHandler) ClearAgentMemoryValue(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
-	result, err := h.appService.ClearAgentMemoryValue(c.Request.Context(), c.Param("agent_id"), accountID.String(), c.Query("user_scope"), c.Query("user_id"), c.Param("key"))
+	result, err := h.appService.ClearAgentMemoryValue(c.Request.Context(), c.Param("agent_id"), accountID.String(), c.Param("key"))
 	if err != nil {
 		h.failRuntime(c, err)
 		return

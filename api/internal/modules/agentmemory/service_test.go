@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -82,6 +83,15 @@ func (f *fakeStore) UpdateSlotScoped(ctx context.Context, workspaceID, agentID, 
 	}
 	copy := *slot
 	return &copy, nil
+}
+
+func (f *fakeStore) DeleteSlotScoped(ctx context.Context, workspaceID, agentID, slotID uuid.UUID) error {
+	slot := f.slots[slotID]
+	if slot == nil || slot.WorkspaceID != workspaceID || slot.AgentID != agentID {
+		return gorm.ErrRecordNotFound
+	}
+	delete(f.slots, slotID)
+	return nil
 }
 
 func (f *fakeStore) ListValuesForUser(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) ([]*AgentMemoryValue, error) {
@@ -188,6 +198,45 @@ func TestReplaceSlotsRejectsKeyRenameByID(t *testing.T) {
 	}
 }
 
+func TestReplaceSlotsDeletesOmittedSlots(t *testing.T) {
+	store := newFakeStore(uuid.New())
+	svc := &Service{repo: store}
+	agentID := uuid.New()
+	_, err := svc.ReplaceSlots(context.Background(), agentID, uuid.New(), ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{Key: "profile"}, {Key: "preference"}}})
+	if err != nil {
+		t.Fatalf("ReplaceSlots initial error = %v", err)
+	}
+
+	slots, err := svc.ReplaceSlots(context.Background(), agentID, uuid.New(), ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{Key: "profile"}}})
+	if err != nil {
+		t.Fatalf("ReplaceSlots delete error = %v", err)
+	}
+	if len(slots) != 1 || slots[0].Key != "profile" {
+		t.Fatalf("slots = %#v, want only profile", slots)
+	}
+	if _, err := svc.ReplaceSlots(context.Background(), agentID, uuid.New(), ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{Key: "preference"}}}); err != nil {
+		t.Fatalf("ReplaceSlots recreate deleted key error = %v", err)
+	}
+}
+
+func TestReplaceSlotsLimitsSlotCountAndDescriptionLength(t *testing.T) {
+	svc := &Service{repo: newFakeStore(uuid.New())}
+	agentID := uuid.New()
+	_, err := svc.ReplaceSlots(context.Background(), agentID, uuid.New(), ReplaceSlotsRequest{Slots: []SlotUpsertRequest{
+		{Key: "memory_1"}, {Key: "memory_2"}, {Key: "memory_3"}, {Key: "memory_4"}, {Key: "memory_5"}, {Key: "memory_6"},
+	}})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("ReplaceSlots too many error = %v, want ErrInvalidInput", err)
+	}
+	_, err = svc.ReplaceSlots(context.Background(), agentID, uuid.New(), ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{
+		Key:         "profile",
+		Description: strings.Repeat("x", 201),
+	}}})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("ReplaceSlots long description error = %v, want ErrInvalidInput", err)
+	}
+}
+
 func TestUpdateValueRequiresExistingEnabledSlot(t *testing.T) {
 	store := newFakeStore(uuid.New())
 	svc := &Service{repo: store}
@@ -238,14 +287,14 @@ func TestUpdateValueRejectsContentOverSlotLimit(t *testing.T) {
 	svc := &Service{repo: store}
 	agentID := uuid.New()
 	userID := uuid.New()
-	_, err := svc.ReplaceSlots(context.Background(), agentID, uuid.New(), ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{Key: "profile", MaxChars: 5}}})
+	_, err := svc.ReplaceSlots(context.Background(), agentID, uuid.New(), ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{Key: "profile"}}})
 	if err != nil {
 		t.Fatalf("ReplaceSlots error = %v", err)
 	}
 
 	_, err = svc.UpdateValue(context.Background(), store.workspaceID, agentID, []RuntimeSlot{{Key: "profile", MaxChars: 5, Enabled: true}}, UserScopeAccount, userID, UpdateValueRequest{
 		Key:     "profile",
-		Content: "too long",
+		Content: strings.Repeat("x", 2001),
 	}, MutationMetadata{})
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("UpdateValue error = %v, want ErrInvalidInput", err)

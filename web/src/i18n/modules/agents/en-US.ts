@@ -1482,6 +1482,12 @@ const messages = {
         'Define memory types the Agent can read and update for each user. The model manages content within these stable keys.',
       emptySlots: 'No memory items configured yet.',
       addSlot: 'Add memory item',
+      addDialogTitle: 'Add memory item',
+      addDialogDescription:
+        'Create a stable key the model can use to manage one type of memory.',
+      addDialogConfirm: 'Add item',
+      addDialogCancel: 'Cancel',
+      maxItemsReached: 'Up to 5 memory items',
       removeSlot: 'Remove memory item',
       viewValues: 'View memory',
       keyLabel: 'Key',
@@ -1489,7 +1495,7 @@ const messages = {
       keyLockedHelp:
         'This key has been saved and cannot be changed. Delete it and create a new item to use another key.',
       descriptionLabel: 'Description',
-      descriptionHelp: 'Tell the model what this memory type should store and when to update it.',
+      descriptionHelp: 'Tell the model what this memory type should store and when to update it. Up to 200 characters.',
       slotKeyPlaceholder: 'memory_key',
       slotDescriptionPlaceholder: 'Describe what this memory item stores',
       maxChars: 'Maximum characters',
@@ -1504,12 +1510,13 @@ const messages = {
         pattern:
           'Use lowercase letters, numbers, and underscores. The first character must be a letter.',
         duplicate: 'This key is already used.',
+        too_many: 'An Agent can have up to 5 memory items.',
       },
     },
     memoryValues: {
       title: 'Agent memory',
       description:
-        'View and edit memory values for a specific user. Only configured memory keys can be changed.',
+        'View and edit your own memory values for draft debugging. Only configured memory keys can be changed.',
       scopeAccount: 'Account user',
       scopeEndUser: 'End user',
       userIdPlaceholder: 'User ID',

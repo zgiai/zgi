@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { Loader2, RefreshCw, Save, Trash2 } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Loader2, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -14,14 +14,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { useT } from '@/i18n';
 import agentService from '@/services/agent.service';
@@ -35,8 +27,6 @@ interface AgentRuntimeMemoryValuesDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
-type UserScope = 'account' | 'end_user';
-
 export function AgentRuntimeMemoryValuesDialog({
   agentId,
   open,
@@ -44,8 +34,6 @@ export function AgentRuntimeMemoryValuesDialog({
   onOpenChange,
 }: AgentRuntimeMemoryValuesDialogProps) {
   const t = useT('agents.agentRuntime');
-  const [userScope, setUserScope] = useState<UserScope>('account');
-  const [userId, setUserId] = useState(defaultUserId ?? '');
   const [values, setValues] = useState<AgentMemoryValue[]>([]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(false);
@@ -53,26 +41,15 @@ export function AgentRuntimeMemoryValuesDialog({
   const [clearingKey, setClearingKey] = useState('');
   const [pendingClearKey, setPendingClearKey] = useState('');
 
-  useEffect(() => {
-    if (open && defaultUserId && !userId) {
-      setUserId(defaultUserId);
-    }
-  }, [defaultUserId, open, userId]);
-
-  const canLoad = Boolean(userId.trim());
   const valuesByKey = useMemo(() => new Map(values.map(value => [value.key, value])), [values]);
 
-  const loadValues = async () => {
-    if (!canLoad) {
-      toast.error(t('memoryValues.userRequired'));
+  const loadValues = useCallback(async () => {
+    if (!defaultUserId) {
       return;
     }
     setIsLoading(true);
     try {
-      const response = await agentService.getAgentMemoryValues(agentId, {
-        user_scope: userScope,
-        user_id: userId.trim(),
-      });
+      const response = await agentService.getAgentMemoryValues(agentId);
       const nextValues = response.data.values ?? [];
       setValues(nextValues);
       setDrafts(Object.fromEntries(nextValues.map(value => [value.key, value.content ?? ''])));
@@ -81,7 +58,12 @@ export function AgentRuntimeMemoryValuesDialog({
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [agentId, defaultUserId, t]);
+
+  useEffect(() => {
+    if (!open) return;
+    void loadValues();
+  }, [loadValues, open]);
 
   const saveValue = async (key: string) => {
     const value = valuesByKey.get(key);
@@ -89,8 +71,6 @@ export function AgentRuntimeMemoryValuesDialog({
     setSavingKey(key);
     try {
       const response = await agentService.updateAgentMemoryValue(agentId, {
-        user_scope: userScope,
-        user_id: userId.trim(),
         key,
         content: drafts[key] ?? '',
       });
@@ -108,8 +88,6 @@ export function AgentRuntimeMemoryValuesDialog({
     setClearingKey(key);
     try {
       const response = await agentService.clearAgentMemoryValue(agentId, {
-        user_scope: userScope,
-        user_id: userId.trim(),
         key,
       });
       setValues(current => current.map(item => (item.key === key ? response.data : item)));
@@ -147,31 +125,6 @@ export function AgentRuntimeMemoryValuesDialog({
             <DialogDescription>{t('memoryValues.description')}</DialogDescription>
           </DialogHeader>
           <DialogBody className="space-y-4">
-            <div className="grid gap-3 md:grid-cols-[180px_1fr_auto]">
-              <Select value={userScope} onValueChange={value => setUserScope(value as UserScope)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="account">{t('memoryValues.scopeAccount')}</SelectItem>
-                  <SelectItem value="end_user">{t('memoryValues.scopeEndUser')}</SelectItem>
-                </SelectContent>
-              </Select>
-              <Input
-                value={userId}
-                placeholder={t('memoryValues.userIdPlaceholder')}
-                onChange={event => setUserId(event.target.value)}
-              />
-              <Button onClick={() => void loadValues()} disabled={isLoading || !canLoad}>
-                {isLoading ? (
-                  <Loader2 className="size-4 animate-spin" />
-                ) : (
-                  <RefreshCw className="size-4" />
-                )}
-                {t('memoryValues.load')}
-              </Button>
-            </div>
-
             {values.length === 0 ? (
               <div className="rounded-md border border-dashed p-6 text-sm text-muted-foreground">
                 {isLoading ? t('memoryValues.loading') : t('memoryValues.empty')}
@@ -195,16 +148,18 @@ export function AgentRuntimeMemoryValuesDialog({
                             })}
                           </div>
                         </div>
-                        <div className="text-xs text-muted-foreground">
-                          {Array.from(draft).length}/{value.max_chars}
-                        </div>
                       </div>
                       <Textarea
                         className="mt-3 min-h-24"
                         value={draft}
+                        maxLength={2000}
+                        showCharacterCount
                         placeholder={t('memoryValues.contentPlaceholder')}
                         onChange={event =>
-                          setDrafts(current => ({ ...current, [value.key]: event.target.value }))
+                          setDrafts(current => ({
+                            ...current,
+                            [value.key]: event.target.value.slice(0, 2000),
+                          }))
                         }
                       />
                       {overLimit && (

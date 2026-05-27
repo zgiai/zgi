@@ -76,6 +76,7 @@ func (s *agentsService) PublishAgent(ctx context.Context, agentID, accountID str
 		snapshotMemorySlots = s.enabledAgentMemorySlotsForSnapshot(ctx, ag.ID)
 	}
 	snapshot["agent_memory_slots"] = snapshotMemorySlots
+	currentMemorySlots := s.agentMemorySlotsForDraft(ctx, ag.ID)
 	now := time.Now()
 	versionUUID := uuid.New()
 	version := &AgentPublishedVersion{
@@ -94,7 +95,7 @@ func (s *agentsService) PublishAgent(ctx context.Context, agentID, accountID str
 		return nil, err
 	}
 	if s.agentMemoryService != nil {
-		if err := s.agentMemoryService.ClearValuesNotInKeys(ctx, ag.ID, agentMemoryKeys(snapshotMemorySlots)); err != nil {
+		if err := s.agentMemoryService.ClearValuesNotInKeys(ctx, ag.ID, agentMemoryKeys(currentMemorySlots)); err != nil {
 			return nil, err
 		}
 	}
@@ -234,7 +235,7 @@ func (s *agentsService) ReplaceAgentMemorySlots(ctx context.Context, agentID, ac
 	return agentMemorySlotConfigsFromResponses(updated), nil
 }
 
-func (s *agentsService) ListAgentMemoryValues(ctx context.Context, agentID, accountID, userScope, userID string) (*dto.AgentMemoryValuesResponse, error) {
+func (s *agentsService) ListAgentMemoryValues(ctx context.Context, agentID, accountID string) (*dto.AgentMemoryValuesResponse, error) {
 	ag, _, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, false)
 	if err != nil {
 		return nil, err
@@ -242,16 +243,16 @@ func (s *agentsService) ListAgentMemoryValues(ctx context.Context, agentID, acco
 	if s.agentMemoryService == nil {
 		return nil, fmt.Errorf("agent memory service is not configured")
 	}
-	targetUserID, err := uuid.Parse(strings.TrimSpace(userID))
+	targetUserID, err := uuid.Parse(strings.TrimSpace(accountID))
 	if err != nil {
-		return nil, fmt.Errorf("user id is invalid")
+		return nil, fmt.Errorf("account id is invalid")
 	}
-	values, err := s.agentMemoryService.ListOrganizerValues(ctx, ag.ID, userScope, targetUserID)
+	values, err := s.agentMemoryService.ListOrganizerValues(ctx, ag.ID, agentmemory.UserScopeAccount, targetUserID)
 	if err != nil {
 		return nil, err
 	}
 	return &dto.AgentMemoryValuesResponse{
-		UserScope: normalizeAgentMemoryUserScope(userScope),
+		UserScope: agentmemory.UserScopeAccount,
 		UserID:    targetUserID.String(),
 		Values:    agentMemoryValueConfigsFromResponses(values),
 	}, nil
@@ -265,11 +266,11 @@ func (s *agentsService) UpdateAgentMemoryValue(ctx context.Context, agentID, acc
 	if s.agentMemoryService == nil {
 		return nil, fmt.Errorf("agent memory service is not configured")
 	}
-	targetUserID, err := uuid.Parse(strings.TrimSpace(req.UserID))
+	targetUserID, err := uuid.Parse(strings.TrimSpace(accountID))
 	if err != nil {
-		return nil, fmt.Errorf("user id is invalid")
+		return nil, fmt.Errorf("account id is invalid")
 	}
-	value, err := s.agentMemoryService.UpdateOrganizerValue(ctx, ag.ID, req.UserScope, targetUserID, agentmemory.UpdateValueRequest{
+	value, err := s.agentMemoryService.UpdateOrganizerValue(ctx, ag.ID, agentmemory.UserScopeAccount, targetUserID, agentmemory.UpdateValueRequest{
 		Key:     req.Key,
 		Content: req.Content,
 	})
@@ -280,7 +281,7 @@ func (s *agentsService) UpdateAgentMemoryValue(ctx context.Context, agentID, acc
 	return &resp, nil
 }
 
-func (s *agentsService) ClearAgentMemoryValue(ctx context.Context, agentID, accountID, userScope, userID, key string) (*dto.AgentMemoryValueResponse, error) {
+func (s *agentsService) ClearAgentMemoryValue(ctx context.Context, agentID, accountID, key string) (*dto.AgentMemoryValueResponse, error) {
 	ag, _, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, false)
 	if err != nil {
 		return nil, err
@@ -288,11 +289,11 @@ func (s *agentsService) ClearAgentMemoryValue(ctx context.Context, agentID, acco
 	if s.agentMemoryService == nil {
 		return nil, fmt.Errorf("agent memory service is not configured")
 	}
-	targetUserID, err := uuid.Parse(strings.TrimSpace(userID))
+	targetUserID, err := uuid.Parse(strings.TrimSpace(accountID))
 	if err != nil {
-		return nil, fmt.Errorf("user id is invalid")
+		return nil, fmt.Errorf("account id is invalid")
 	}
-	value, err := s.agentMemoryService.ClearOrganizerValue(ctx, ag.ID, userScope, targetUserID, key)
+	value, err := s.agentMemoryService.ClearOrganizerValue(ctx, ag.ID, agentmemory.UserScopeAccount, targetUserID, key)
 	if err != nil {
 		return nil, err
 	}
@@ -647,7 +648,7 @@ func agentMemoryReplaceRequestFromConfig(slots []dto.AgentMemorySlotConfig) agen
 			ID:          strings.TrimSpace(slot.ID),
 			Key:         strings.TrimSpace(slot.Key),
 			Description: strings.TrimSpace(slot.Description),
-			MaxChars:    slot.MaxChars,
+			MaxChars:    2000,
 			Enabled:     &enabled,
 			SortOrder:   firstNonZeroInt(slot.SortOrder, i),
 		})
@@ -666,18 +667,22 @@ func agentMemoryKeys(slots []dto.AgentMemorySlotConfig) []string {
 	return keys
 }
 
-func normalizeAgentMemoryUserScope(value string) string {
-	if strings.EqualFold(strings.TrimSpace(value), "end_user") {
-		return "end_user"
-	}
-	return "account"
-}
-
 func firstNonZeroInt(value, fallback int) int {
 	if value != 0 {
 		return value
 	}
 	return fallback
+}
+
+func truncateRunes(value string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit])
 }
 
 func normalizeAgentMemorySlotConfigs(slots []dto.AgentMemorySlotConfig) []dto.AgentMemorySlotConfig {
@@ -695,13 +700,7 @@ func normalizeAgentMemorySlotConfigs(slots []dto.AgentMemorySlotConfig) []dto.Ag
 			continue
 		}
 		seen[key] = struct{}{}
-		maxChars := slot.MaxChars
-		if maxChars <= 0 {
-			maxChars = 1000
-		}
-		if maxChars > 4000 {
-			maxChars = 4000
-		}
+		maxChars := 2000
 		sortOrder := slot.SortOrder
 		if sortOrder == 0 {
 			sortOrder = i
@@ -709,7 +708,7 @@ func normalizeAgentMemorySlotConfigs(slots []dto.AgentMemorySlotConfig) []dto.Ag
 		out = append(out, dto.AgentMemorySlotConfig{
 			ID:          strings.TrimSpace(slot.ID),
 			Key:         key,
-			Description: strings.TrimSpace(slot.Description),
+			Description: truncateRunes(strings.TrimSpace(slot.Description), 200),
 			MaxChars:    maxChars,
 			Enabled:     slot.Enabled,
 			SortOrder:   sortOrder,

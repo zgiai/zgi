@@ -74,6 +74,19 @@ func (r *Repository) UpdateSlotScoped(ctx context.Context, workspaceID, agentID,
 	return r.GetSlotScoped(ctx, workspaceID, agentID, slotID)
 }
 
+func (r *Repository) DeleteSlotScoped(ctx context.Context, workspaceID, agentID, slotID uuid.UUID) error {
+	result := r.db.WithContext(ctx).
+		Where("workspace_id = ? AND agent_id = ? AND id = ?", workspaceID, agentID, slotID).
+		Delete(&AgentMemorySlot{})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
 func (r *Repository) GetSlotScoped(ctx context.Context, workspaceID, agentID, slotID uuid.UUID) (*AgentMemorySlot, error) {
 	var slot AgentMemorySlot
 	err := r.db.WithContext(ctx).

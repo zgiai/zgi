@@ -167,12 +167,8 @@ class AgentService extends BaseService {
     );
   }
 
-  getAgentMemoryValues(
-    agentId: string,
-    params: { user_scope: 'account' | 'end_user'; user_id: string }
-  ): Promise<ApiResponseData<AgentMemoryValuesResponse>> {
+  getAgentMemoryValues(agentId: string): Promise<ApiResponseData<AgentMemoryValuesResponse>> {
     return this.request('get', `/agents/${agentId}/memory/values`, undefined, {
-      params,
       headers: { 'Content-Type': 'application/json' },
     });
   }
@@ -188,17 +184,13 @@ class AgentService extends BaseService {
 
   clearAgentMemoryValue(
     agentId: string,
-    params: { user_scope: 'account' | 'end_user'; user_id: string; key: string }
+    params: { key: string }
   ): Promise<ApiResponseData<AgentMemoryValue>> {
     return this.request(
       'delete',
       `/agents/${agentId}/memory/values/${encodeURIComponent(params.key)}`,
       undefined,
       {
-        params: {
-          user_scope: params.user_scope,
-          user_id: params.user_id,
-        },
         headers: { 'Content-Type': 'application/json' },
       }
     );

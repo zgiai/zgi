@@ -202,7 +202,12 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
       enabled_skill_ids: normalizedSelectedSkillIds,
       use_memory: false,
       agent_memory_enabled: agentMemoryEnabled,
-      agent_memory_slots: agentMemorySlots,
+      agent_memory_slots: agentMemorySlots.slice(0, 5).map((slot, index) => ({
+        ...slot,
+        description: slot.description.slice(0, 200),
+        max_chars: 2000,
+        sort_order: index,
+      })),
       file_upload_enabled: fileUploadEnabled,
       home_title: homeTitle.trim() || defaultHomeTitle,
       input_placeholder: inputPlaceholder.trim() || defaultInputPlaceholder,
@@ -672,7 +677,6 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
           onChangeFileUploadEnabled={setFileUploadEnabled}
           onChangeAgentMemoryEnabled={setAgentMemoryEnabled}
           onChangeAgentMemorySlots={setAgentMemorySlots}
-          onOpenMemoryValues={() => setMemoryValuesOpen(true)}
         />
         <AgentRuntimePreviewPanel
           controller={chatController}
@@ -683,6 +687,7 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
           inputPlaceholder={currentPayload.input_placeholder}
           homeBrand={agentHomeBrand}
           homeTitle={currentPayload.home_title}
+          onOpenMemoryValues={() => setMemoryValuesOpen(true)}
           onModelChange={handleModelChange}
         />
       </div>

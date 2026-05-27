@@ -194,7 +194,7 @@ func (s *stubWebAppStatusHandlerService) ReplaceAgentMemorySlots(context.Context
 	return nil, nil
 }
 
-func (s *stubWebAppStatusHandlerService) ListAgentMemoryValues(context.Context, string, string, string, string) (*dto.AgentMemoryValuesResponse, error) {
+func (s *stubWebAppStatusHandlerService) ListAgentMemoryValues(context.Context, string, string) (*dto.AgentMemoryValuesResponse, error) {
 	return nil, nil
 }
 
@@ -202,7 +202,7 @@ func (s *stubWebAppStatusHandlerService) UpdateAgentMemoryValue(context.Context,
 	return nil, nil
 }
 
-func (s *stubWebAppStatusHandlerService) ClearAgentMemoryValue(context.Context, string, string, string, string, string) (*dto.AgentMemoryValueResponse, error) {
+func (s *stubWebAppStatusHandlerService) ClearAgentMemoryValue(context.Context, string, string, string) (*dto.AgentMemoryValueResponse, error) {
 	return nil, nil
 }
 

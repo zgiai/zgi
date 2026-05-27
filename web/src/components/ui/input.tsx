@@ -32,11 +32,33 @@ interface InputProps extends React.ComponentProps<'input'>, VariantProps<typeof 
   error?: boolean;
   errorText?: React.ReactNode;
   root?: boolean;
+  showCharacterCount?: boolean;
+  characterCountClassName?: string;
 }
 
 const Input = React.forwardRef<HTMLInputElement, InputProps>(
-  ({ className, variant, type, leftIcon, rightIcon, error, errorText, root, ...props }, ref) => {
+  (
+    {
+      className,
+      variant,
+      type,
+      leftIcon,
+      rightIcon,
+      error,
+      errorText,
+      root,
+      showCharacterCount,
+      characterCountClassName,
+      maxLength,
+      value,
+      defaultValue,
+      ...props
+    },
+    ref
+  ) => {
     const isError = error || !!errorText;
+    const countValue = value ?? defaultValue ?? '';
+    const count = Array.from(String(countValue)).length;
 
     const inputNode = (
       <input
@@ -47,8 +69,12 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
           inputVariants({ variant, error: isError, className: !root ? className : undefined }),
           (leftIcon || rightIcon) && 'w-full',
           leftIcon && 'pl-10',
-          rightIcon && 'pr-10'
+          rightIcon && 'pr-10',
+          showCharacterCount && maxLength && 'w-full pr-16'
         )}
+        maxLength={maxLength}
+        value={value}
+        defaultValue={defaultValue}
         onWheel={e => {
           if (type === 'number') {
             e.currentTarget.blur();
@@ -72,9 +98,33 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
               {React.cloneElement(rightIcon as React.ReactElement, { className: 'size-4' })}
             </div>
           )}
+          {showCharacterCount && maxLength && !rightIcon && (
+            <span
+              className={cn(
+                'pointer-events-none absolute bottom-1.5 right-3 rounded bg-background/80 px-1 text-[11px] text-muted-foreground',
+                count > maxLength && 'text-destructive',
+                characterCountClassName
+              )}
+            >
+              {count}/{maxLength}
+            </span>
+          )}
         </div>
       ) : (
-        inputNode
+        <div className="relative flex w-full items-center">
+          {inputNode}
+          {showCharacterCount && maxLength && (
+            <span
+              className={cn(
+                'pointer-events-none absolute bottom-1.5 right-3 rounded bg-background/80 px-1 text-[11px] text-muted-foreground',
+                count > maxLength && 'text-destructive',
+                characterCountClassName
+              )}
+            >
+              {count}/{maxLength}
+            </span>
+          )}
+        </div>
       );
 
     return (

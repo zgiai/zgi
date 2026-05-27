@@ -3,7 +3,12 @@ import type {
   UpdateAgentRuntimeConfigRequest,
 } from '@/services/types/agent';
 
-export type AgentMemorySlotValidationError = 'required' | 'pattern' | 'duplicate' | null;
+export type AgentMemorySlotValidationError =
+  | 'required'
+  | 'pattern'
+  | 'duplicate'
+  | 'too_many'
+  | null;
 
 const AGENT_MEMORY_SLOT_KEY_PATTERN = /^[a-z][a-z0-9_]*$/;
 
@@ -48,6 +53,7 @@ export function validateAgentMemorySlots(
   }, {});
 
   return normalizedKeys.map(key => {
+    if (slots.length > 5) return 'too_many';
     if (!key) return 'required';
     if (!AGENT_MEMORY_SLOT_KEY_PATTERN.test(key)) return 'pattern';
     if ((keyCounts[key] ?? 0) > 1) return 'duplicate';

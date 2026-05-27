@@ -220,8 +220,6 @@ export interface AgentMemoryValuesResponse {
 }
 
 export interface UpdateAgentMemoryValueRequest {
-  user_scope: 'account' | 'end_user';
-  user_id: string;
   key: string;
   content: string;
 }
