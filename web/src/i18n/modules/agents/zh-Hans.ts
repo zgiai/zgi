@@ -1315,6 +1315,7 @@ const messages: AgentsMessages = {
       copyWebAppLink: '复制 WebApp 链接',
       publishedVersions: '发布版本',
       versions: '版本',
+      preview: '预览与调试',
       runtimeLogs: '运行日志',
     },
     prompt: {

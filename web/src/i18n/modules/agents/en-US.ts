@@ -1396,6 +1396,7 @@ const messages = {
       copyWebAppLink: 'Copy WebApp link',
       publishedVersions: 'Published versions',
       versions: 'Versions',
+      preview: 'Preview and debug',
       runtimeLogs: 'Runtime logs',
     },
     prompt: {

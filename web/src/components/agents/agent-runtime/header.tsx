@@ -3,10 +3,10 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import {
-  ArrowLeft,
   Bot,
   CheckCircle2,
   Copy,
+  Eye,
   ExternalLink,
   History,
   Loader2,
@@ -22,6 +22,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type { AgentRuntimeAgent, AgentRuntimeSaveState } from './types';
@@ -37,10 +38,11 @@ interface AgentRuntimeHeaderProps {
   disablePrimaryActions?: boolean;
   webAppUrl: string;
   versionControl?: ReactNode;
-  onBack: () => void;
+  showPreviewAction?: boolean;
   onSave: () => void;
   onPublish: () => void;
   onCopyWebAppUrl: () => void;
+  onOpenPreview?: () => void;
   onOpenPublishedVersions: () => void;
 }
 
@@ -54,20 +56,26 @@ export function AgentRuntimeHeader({
   disablePrimaryActions = false,
   webAppUrl,
   versionControl,
-  onBack,
+  showPreviewAction = false,
   onSave,
   onPublish,
   onCopyWebAppUrl,
+  onOpenPreview,
   onOpenPublishedVersions,
 }: AgentRuntimeHeaderProps) {
   const t = useT('agents.agentRuntime');
+  const saveDotClassName =
+    saveState === 'error'
+      ? 'bg-destructive'
+      : isDirty
+        ? 'bg-yellow-400'
+        : saveState === 'saved'
+          ? 'bg-emerald-500'
+          : 'bg-muted-foreground/40';
 
   return (
     <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b bg-background px-4">
       <div className="flex min-w-0 items-center gap-3">
-        <Button isIcon variant="ghost" className="size-8" onClick={onBack}>
-          <ArrowLeft className="size-4" />
-        </Button>
         <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-sm font-semibold text-primary">
           {agent?.icon_type === 'image' && agent.icon_url ? (
             <img src={agent.icon_url} alt="" className="size-full rounded-lg object-cover" />
@@ -78,20 +86,20 @@ export function AgentRuntimeHeader({
         <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-2">
             <h1 className="truncate text-sm font-semibold">{agent?.name || t('fallbackName')}</h1>
-            <Badge variant="outline" className="h-6 gap-1 rounded-md px-2 text-[11px]">
+            <Badge variant="outline" className="hidden h-6 gap-1 rounded-md px-2 text-[11px] sm:inline-flex">
               <Bot className="size-3" />
               {t('fallbackName')}
             </Badge>
           </div>
-          <div className="truncate text-xs text-muted-foreground">
+          <div className="hidden truncate text-xs text-muted-foreground lg:block">
             {agent?.description || t('defaultModeDescription')}
           </div>
         </div>
       </div>
-      <div className="flex shrink-0 items-center gap-2">
+      <div className="flex shrink-0 items-center gap-1.5">
         <div
           className={cn(
-            'hidden items-center gap-1.5 text-xs text-muted-foreground md:flex',
+            'hidden items-center gap-1.5 text-xs text-muted-foreground xl:flex',
             saveState === 'error' ? 'text-destructive' : ''
           )}
         >
@@ -102,31 +110,87 @@ export function AgentRuntimeHeader({
           ) : null}
           {saveText}
         </div>
-        <Button
-          variant="outline"
-          onClick={onSave}
-          disabled={disablePrimaryActions || saveState === 'saving' || !isDirty}
-        >
-          <Save className="mr-2 size-4" />
-          {t('header.save')}
-        </Button>
-        <Button onClick={onPublish} disabled={disablePrimaryActions || isPublishing || saveState === 'saving'}>
-          <Upload className="mr-2 size-4" />
-          {t('header.publish')}
-        </Button>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className="relative">
+              <Button
+                isIcon
+                variant="ghost"
+                className="size-8"
+                onClick={onSave}
+                disabled={disablePrimaryActions || saveState === 'saving' || !isDirty}
+                aria-label={t('header.save')}
+              >
+                <Save className="size-4" />
+                <span
+                  className={cn(
+                    'absolute right-1 top-1 size-2 rounded-full border-2 border-background',
+                    saveDotClassName
+                  )}
+                />
+              </Button>
+            </div>
+          </TooltipTrigger>
+          <TooltipContent>{t('header.save')}</TooltipContent>
+        </Tooltip>
+
         {versionControl ?? (
-          <Button variant="outline" onClick={onOpenPublishedVersions} className="gap-2">
-            <History className="size-4" />
-            {t('header.versions')}
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                isIcon
+                variant="ghost"
+                className="size-8"
+                onClick={onOpenPublishedVersions}
+                aria-label={t('header.versions')}
+              >
+                <History className="size-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('header.versions')}</TooltipContent>
+          </Tooltip>
         )}
+
+        {showPreviewAction ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                isIcon
+                variant="ghost"
+                className="size-8 2xl:hidden"
+                onClick={onOpenPreview}
+                aria-label={t('header.preview')}
+              >
+                <Eye className="size-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('header.preview')}</TooltipContent>
+          </Tooltip>
+        ) : null}
+
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button isIcon variant="ghost" className="size-8" aria-label={t('header.more')}>
-              <MoreHorizontal className="size-4" />
+            <Button
+              size="sm"
+              className="gap-1.5 rounded-md border border-primary/25 bg-primary/10 px-3 text-primary shadow-none hover:border-primary/35 hover:bg-primary/15"
+            >
+              {isPublishing ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+              <span className="hidden font-semibold sm:inline">{t('header.publish')}</span>
+              <MoreHorizontal className="size-3.5" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-48">
+          <DropdownMenuContent align="end" className="w-56">
+            <div className="px-2 py-1">
+              <Button
+                className="w-full rounded-md border border-primary/25 bg-primary/10 text-primary shadow-none hover:border-primary/35 hover:bg-primary/15"
+                onClick={onPublish}
+                disabled={disablePrimaryActions || isPublishing || saveState === 'saving'}
+              >
+                {isPublishing ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+                {t('header.publish')}
+              </Button>
+            </div>
             <DropdownMenuItem
               disabled={!webAppUrl}
               onSelect={() => webAppUrl && window.open(webAppUrl, '_blank')}
