@@ -7,10 +7,13 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/hibiken/asynq"
+	"gorm.io/gorm"
 
 	"github.com/zgiai/zgi/api/config"
 	contentparseRepo "github.com/zgiai/zgi/api/internal/modules/contentparse/repository"
 	contentparseService "github.com/zgiai/zgi/api/internal/modules/contentparse/service"
+	graphflow "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	graphflow_model "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/model"
 	graphflow_repo "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/repository"
 	datasetHandler "github.com/zgiai/zgi/api/internal/modules/dataset/handler"
@@ -22,13 +25,16 @@ import (
 
 	fileProcessRepo "github.com/zgiai/zgi/api/internal/modules/file_process/repository"
 	fileProcess "github.com/zgiai/zgi/api/internal/modules/file_process/service"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/queue"
 	"github.com/zgiai/zgi/api/pkg/vectordb"
 
 	"github.com/zgiai/zgi/api/pkg/storage"
 
 	// Security and Redis
-	"github.com/zgiai/zgi/api/internal/container"
 	"github.com/zgiai/zgi/api/internal/util"
 	redisPkg "github.com/zgiai/zgi/api/pkg/redis"
 	sec "github.com/zgiai/zgi/api/pkg/security"
@@ -41,23 +47,37 @@ import (
 	"github.com/zgiai/zgi/api/pkg/response"
 )
 
-func RegisterDatasetRoutes(router *gin.RouterGroup, container *container.ServiceContainer) {
-	tenantService := container.GetTenantServiceAdapter()
-	accountService := container.GetAccountServiceAdapter()
-	enterpriseService := container.GetOrganizationService()
-	billingService := container.GetBillingService()
+type datasetTaskHandlerRegistry interface {
+	Register(taskType string, handler func(context.Context, *asynq.Task) error) bool
+}
 
-	datasetRepoObj := datasetRepo.NewDatasetRepository(container.GetDB())
-	documentRepoObj := datasetRepo.NewDocumentRepository(container.GetDB())
-	chunkRepoObj := datasetRepo.NewChunkRepository(container.GetDB())
-	datasetQueryRepoObj := datasetRepo.NewDatasetQueryRepository(container.GetDB())
+type DatasetRouteDeps struct {
+	DB                         *gorm.DB
+	Storage                    storage.Storage
+	AccountService             interfaces.AccountService
+	WorkspaceManagementService interfaces.WorkspaceManagementService
+	OrganizationService        interfaces.OrganizationService
+	BillingService             interfaces.BillingService
+	QuotaService               interfaces.QuotaService
+	LLMClient                  llmclient.LLMClient
+	DefaultModelService        llmdefaultservice.DefaultModelService
+	TaskManager                *queue.TaskManager
+	GraphFlowService           *graphflow.Service
+	TaskHandlerRegistry        datasetTaskHandlerRegistry
+	ResourcePermissionService  interfaces.ResourcePermissionService
+}
 
-	fileRepo := fileProcessRepo.NewFileRepository(container.GetDB())
-	storageInstance := storage.GetStorage()
-	// Get quota and enterprise services from container
-	quotaSvc := container.GetQuotaService()
-	enterpriseSvc := container.GetOrganizationService()
-	fileServiceObj := fileProcess.NewFileServiceWithVision(fileRepo, storageInstance, container.GetDB(), quotaSvc, enterpriseSvc, container.GetLLMClient(), container.GetDefaultModelService())
+func RegisterDatasetRoutes(router *gin.RouterGroup, deps DatasetRouteDeps) {
+	validateDatasetRouteDeps(deps)
+
+	datasetRepoObj := datasetRepo.NewDatasetRepository(deps.DB)
+	documentRepoObj := datasetRepo.NewDocumentRepository(deps.DB)
+	chunkRepoObj := datasetRepo.NewChunkRepository(deps.DB)
+	datasetQueryRepoObj := datasetRepo.NewDatasetQueryRepository(deps.DB)
+
+	fileRepo := fileProcessRepo.NewFileRepository(deps.DB)
+	storageInstance := deps.Storage
+	fileServiceObj := fileProcess.NewFileServiceWithVision(fileRepo, storageInstance, deps.DB, deps.QuotaService, deps.OrganizationService, deps.LLMClient, deps.DefaultModelService)
 
 	vectorClient := vectordb.NewWeaviateClient(&config.GlobalConfig.VectorStore)
 	redisClient := redisPkg.GetClient()
@@ -68,83 +88,75 @@ func RegisterDatasetRoutes(router *gin.RouterGroup, container *container.Service
 		}
 	}
 
-	// Get LLM client from container for dataset services
-	llmClient := container.GetLLMClient()
-	defaultModelService := container.GetDefaultModelService()
-
 	indexingServiceObj := datasetService.NewDocumentIndexingService(
 		documentRepoObj,
 		datasetRepoObj,
 		fileServiceObj,
 		storageInstance,
 		config.GlobalConfig,
-		container.GetDB(),
+		deps.DB,
 		redisClient,
 		encrypter,
-		llmClient,
-		defaultModelService,
-		container.GetTaskManager(),
+		deps.LLMClient,
+		deps.DefaultModelService,
+		deps.TaskManager,
 	)
 
 	// Create embedding service for dataset service
 	var embeddingService retrieval.Embedding
 
-	// Get GraphFlowService from container
-	graphFlowServiceObj := container.GetGraphFlowService()
-	taskManager := container.GetTaskManager()
+	graphFlowServiceObj := deps.GraphFlowService
+	taskManager := deps.TaskManager
 
-	graphFlowTaskRepoObj := graphflow_repo.NewGraphFlowTaskRepository(container.GetDB())
+	graphFlowTaskRepoObj := graphflow_repo.NewGraphFlowTaskRepository(deps.DB)
 
-	datasetServiceObj := datasetService.NewDatasetService(datasetRepoObj, documentRepoObj, chunkRepoObj, tenantService, fileServiceObj, embeddingService, vectorClient, defaultModelService, storageInstance, container.GetDB(), quotaSvc, enterpriseSvc, llmClient, taskManager)
-	documentServiceObj := datasetService.NewDocumentService(documentRepoObj, datasetRepoObj, tenantService, indexingServiceObj, fileServiceObj, taskManager, graphFlowTaskRepoObj)
+	datasetServiceObj := datasetService.NewDatasetService(datasetRepoObj, documentRepoObj, chunkRepoObj, deps.WorkspaceManagementService, fileServiceObj, embeddingService, vectorClient, deps.DefaultModelService, storageInstance, deps.DB, deps.QuotaService, deps.OrganizationService, deps.LLMClient, taskManager)
+	documentServiceObj := datasetService.NewDocumentService(documentRepoObj, datasetRepoObj, deps.WorkspaceManagementService, indexingServiceObj, fileServiceObj, taskManager, graphFlowTaskRepoObj)
 
 	datasetQueryServiceObj := datasetService.NewDatasetQueryService(datasetQueryRepoObj, datasetServiceObj)
 
-	hitTestingServiceObj := datasetService.NewHitTestingService(datasetRepoObj, datasetQueryServiceObj, documentRepoObj, vectorClient, config.GlobalConfig, defaultModelService, container.GetDB(), llmClient, graphFlowServiceObj)
-	chunkServiceObj := datasetService.NewChunkService(chunkRepoObj, documentRepoObj, container.GetDB())
-	segmentServiceObj := datasetService.NewSegmentService(chunkServiceObj, datasetRepoObj, documentRepoObj, defaultModelService, container.GetDB(), vectorClient, llmClient, graphFlowTaskRepoObj, taskManager)
-	folderRepo := datasetRepo.NewDatasetFolderRepository(container.GetDB())
-	folderService := datasetService.NewDatasetFolderService(folderRepo, accountService, tenantService)
+	hitTestingServiceObj := datasetService.NewHitTestingService(datasetRepoObj, datasetQueryServiceObj, documentRepoObj, vectorClient, config.GlobalConfig, deps.DefaultModelService, deps.DB, deps.LLMClient, graphFlowServiceObj)
+	chunkServiceObj := datasetService.NewChunkService(chunkRepoObj, documentRepoObj, deps.DB)
+	segmentServiceObj := datasetService.NewSegmentService(chunkServiceObj, datasetRepoObj, documentRepoObj, deps.DefaultModelService, deps.DB, vectorClient, deps.LLMClient, graphFlowTaskRepoObj, taskManager)
+	folderRepo := datasetRepo.NewDatasetFolderRepository(deps.DB)
+	folderService := datasetService.NewDatasetFolderService(folderRepo, deps.AccountService, deps.WorkspaceManagementService)
 
 	// Create BatchHitTestingTaskRepository instance
-	batchHitTestingTaskRepo := datasetRepo.NewBatchHitTestingTaskRepository(container.GetDB())
+	batchHitTestingTaskRepo := datasetRepo.NewBatchHitTestingTaskRepository(deps.DB)
 
 	// Create BatchHitTestingTaskManager instance
 	batchTaskManager := datasetService.NewBatchHitTestingTaskManager(batchHitTestingTaskRepo)
 
-	// Get permission service from container
-	permissionService := container.GetResourcePermissionService()
-
 	datasetHandlerObj := datasetHandler.NewDatasetHandler(
-		accountService,
+		deps.AccountService,
 		datasetServiceObj,
 		documentServiceObj,
-		tenantService,
+		deps.WorkspaceManagementService,
 		hitTestingServiceObj,
 		datasetQueryServiceObj,
-		enterpriseService, // EnterpriseService from container
-		billingService,    // BillingService from container
-		defaultModelService,
+		deps.OrganizationService,
+		deps.BillingService,
+		deps.DefaultModelService,
 		segmentServiceObj,
-		folderService,     // Add folder service
-		batchTaskManager,  // Add batch task manager
-		permissionService, // Add permission service
+		folderService,
+		batchTaskManager,
+		deps.ResourcePermissionService,
 	)
 	documentHandlerObj := datasetHandler.NewDocumentHandler(
 		documentServiceObj,
 		datasetServiceObj,
-		accountService,
-		enterpriseService,
+		deps.AccountService,
+		deps.OrganizationService,
 	)
 	segmentHandlerObj := datasetHandler.NewSegmentHandler(
 		segmentServiceObj,
 		datasetServiceObj,
 		documentServiceObj,
-		accountService,
-		enterpriseService,
+		deps.AccountService,
+		deps.OrganizationService,
 	)
 
-	folderHandler := datasetHandler.NewDatasetFolderHandler(datasetServiceObj, folderService, tenantService, accountService, enterpriseService, permissionService)
+	folderHandler := datasetHandler.NewDatasetFolderHandler(datasetServiceObj, folderService, deps.WorkspaceManagementService, deps.AccountService, deps.OrganizationService, deps.ResourcePermissionService)
 
 	datasetHandlerObj.RegisterRoutes(router)
 	documentHandlerObj.RegisterRoutes(router)
@@ -159,29 +171,71 @@ func RegisterDatasetRoutes(router *gin.RouterGroup, container *container.Service
 
 	// Register the handler with the centralized task handler registry instead of starting a separate server
 	// Check if the handler was newly registered to avoid duplicate registration
-	if isNew := container.GetTaskHandlerRegistry().Register(documentIndexingTaskType, task.HandleDocumentIndexingTask(documentServiceObj)); !isNew {
+	if isNew := deps.TaskHandlerRegistry.Register(documentIndexingTaskType, task.HandleDocumentIndexingTask(documentServiceObj)); !isNew {
 		logger.Warn("Document indexing task handler was replaced", map[string]interface{}{
 			"task_type": documentIndexingTaskType,
 		})
 	}
 
 	// Register Graph API endpoint for knowledge graph visualization
-	router.GET("/datasets/:dataset_id/graph", middleware.JWTWithOrganizationAndService(accountService), newDatasetGraphHandler(datasetServiceObj, graphFlowServiceObj))
+	router.GET("/datasets/:dataset_id/graph", middleware.JWTWithOrganizationAndService(deps.AccountService), newDatasetGraphHandler(datasetServiceObj, graphFlowServiceObj))
 
 	contentParseRunService := contentparseService.NewRunQueryService(
-		contentparseRepo.NewParseRunRepository(container.GetDB()),
-		contentparseRepo.NewChunkingRunRepository(container.GetDB()),
+		contentparseRepo.NewParseRunRepository(deps.DB),
+		contentparseRepo.NewChunkingRunRepository(deps.DB),
 	)
 	router.GET(
 		"/datasets/:dataset_id/content-parse/shadow-quality",
-		middleware.JWTWithOrganizationAndService(accountService),
+		middleware.JWTWithOrganizationAndService(deps.AccountService),
 		newDatasetContentParseShadowQualityHandler(datasetServiceObj, contentParseRunService),
 	)
 	router.POST(
 		"/datasets/:dataset_id/content-parse/shadow-quality/sample",
-		middleware.JWTWithOrganizationAndService(accountService),
+		middleware.JWTWithOrganizationAndService(deps.AccountService),
 		newDatasetContentParseShadowSamplingHandler(datasetServiceObj, indexingServiceObj),
 	)
+}
+
+func validateDatasetRouteDeps(deps DatasetRouteDeps) {
+	if deps.DB == nil {
+		panic("dataset routes require db")
+	}
+	if deps.Storage == nil {
+		panic("dataset routes require storage")
+	}
+	if deps.AccountService == nil {
+		panic("dataset routes require account service")
+	}
+	if deps.WorkspaceManagementService == nil {
+		panic("dataset routes require workspace management service")
+	}
+	if deps.OrganizationService == nil {
+		panic("dataset routes require organization service")
+	}
+	if deps.BillingService == nil {
+		panic("dataset routes require billing service")
+	}
+	if deps.QuotaService == nil {
+		panic("dataset routes require quota service")
+	}
+	if deps.LLMClient == nil {
+		panic("dataset routes require llm client")
+	}
+	if deps.DefaultModelService == nil {
+		panic("dataset routes require default model service")
+	}
+	if deps.TaskManager == nil {
+		panic("dataset routes require task manager")
+	}
+	if deps.GraphFlowService == nil {
+		panic("dataset routes require graph flow service")
+	}
+	if deps.TaskHandlerRegistry == nil {
+		panic("dataset routes require task handler registry")
+	}
+	if deps.ResourcePermissionService == nil {
+		panic("dataset routes require resource permission service")
+	}
 }
 
 type datasetGraphPermissionChecker interface {
