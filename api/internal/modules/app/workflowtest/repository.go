@@ -210,6 +210,12 @@ func (r *Repository) UpdateBatchStatusIfCurrent(ctx context.Context, agentID str
 	return result.RowsAffected > 0, nil
 }
 
+func (r *Repository) TouchBatch(ctx context.Context, agentID string, batchID string) error {
+	return r.db.WithContext(ctx).Model(&Batch{}).
+		Where("agent_id = ? AND id = ?", agentID, batchID).
+		Update("updated_at", time.Now()).Error
+}
+
 func (r *Repository) UpdateBatchSummary(ctx context.Context, agentID string, batchID string, status string, passed, failed, review int, summary string) error {
 	return r.db.WithContext(ctx).Model(&Batch{}).
 		Where("agent_id = ? AND id = ?", agentID, batchID).
@@ -263,6 +269,19 @@ func (r *Repository) UpdateBatchItemsStatus(ctx context.Context, agentID string,
 	return query.Updates(map[string]interface{}{"status": toStatus, "updated_at": time.Now()}).Error
 }
 
+func (r *Repository) UpdateBatchItemStatusIfCurrent(ctx context.Context, agentID string, itemID string, currentStatus string, nextStatus string) (bool, error) {
+	result := r.db.WithContext(ctx).Model(&BatchItem{}).
+		Where("agent_id = ? AND id = ? AND status = ?", agentID, itemID, currentStatus).
+		Updates(map[string]interface{}{
+			"status":     nextStatus,
+			"updated_at": time.Now(),
+		})
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected > 0, nil
+}
+
 func (r *Repository) UpdateBatchItemResult(ctx context.Context, item *BatchItem) error {
 	result := r.db.WithContext(ctx).Model(&BatchItem{}).
 		Where("agent_id = ? AND id = ? AND status = ?", item.AgentID, item.ID, string(BatchItemStatusRunning)).
@@ -283,6 +302,39 @@ func (r *Repository) UpdateBatchItemResult(ctx context.Context, item *BatchItem)
 		return gorm.ErrRecordNotFound
 	}
 	return nil
+}
+
+func (r *Repository) RecoverStaleRunningBatches(ctx context.Context, agentID string, staleBefore time.Time, summary string, itemError string, completedAt time.Time) (int64, error) {
+	var batchIDs []string
+	if err := r.db.WithContext(ctx).Model(&Batch{}).
+		Where("agent_id = ? AND status = ? AND updated_at < ?", agentID, BatchStatusRunning, staleBefore).
+		Pluck("id", &batchIDs).Error; err != nil {
+		return 0, err
+	}
+	if len(batchIDs) == 0 {
+		return 0, nil
+	}
+	return int64(len(batchIDs)), r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&Batch{}).
+			Where("agent_id = ? AND id IN ?", agentID, batchIDs).
+			Updates(map[string]interface{}{
+				"status":     BatchStatusStopped,
+				"summary":    summary,
+				"updated_at": completedAt,
+			}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&BatchItem{}).
+			Where("agent_id = ? AND batch_id IN ? AND status IN ?", agentID, batchIDs, []string{
+				string(BatchItemStatusPending),
+				string(BatchItemStatusRunning),
+			}).
+			Updates(map[string]interface{}{
+				"status":     string(BatchItemStatusFailed),
+				"error":      itemError,
+				"updated_at": completedAt,
+			}).Error
+	})
 }
 
 func activeGenerationStatuses() []string {

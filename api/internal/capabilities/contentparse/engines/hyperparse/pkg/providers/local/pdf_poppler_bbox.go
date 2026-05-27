@@ -17,6 +17,7 @@ import (
 	"unicode"
 
 	extractcommon "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/envconfig"
 )
 
 type popplerXMLDoc struct {
@@ -181,7 +182,7 @@ func applyPopplerBBoxRefinement(ctx context.Context, filename string, data []byt
 }
 
 func popplerBBoxEnabled() bool {
-	raw := strings.TrimSpace(os.Getenv("LOCAL_POPPLER_BBOX"))
+	raw := envconfig.String("LOCAL_POPPLER_BBOX")
 	if raw == "" {
 		return true
 	}
@@ -194,7 +195,7 @@ func popplerBBoxEnabled() bool {
 }
 
 func popplerBBoxMaxPages() int {
-	raw := strings.TrimSpace(os.Getenv("LOCAL_POPPLER_BBOX_MAX_PAGES"))
+	raw := envconfig.String("LOCAL_POPPLER_BBOX_MAX_PAGES")
 	if raw == "" {
 		return 8
 	}
@@ -206,7 +207,7 @@ func popplerBBoxMaxPages() int {
 }
 
 func popplerBBoxTimeoutSeconds() int {
-	raw := strings.TrimSpace(os.Getenv("LOCAL_POPPLER_BBOX_TIMEOUT_SEC"))
+	raw := envconfig.String("LOCAL_POPPLER_BBOX_TIMEOUT_SEC")
 	if raw == "" {
 		return 15
 	}
@@ -218,7 +219,7 @@ func popplerBBoxTimeoutSeconds() int {
 }
 
 func popplerBBoxLongDocumentEnabled() bool {
-	raw := strings.ToLower(strings.TrimSpace(os.Getenv("LOCAL_POPPLER_BBOX_LONG_DOC")))
+	raw := strings.ToLower(envconfig.String("LOCAL_POPPLER_BBOX_LONG_DOC"))
 	switch raw {
 	case "1", "true", "yes", "on":
 		return true

@@ -1,8 +1,9 @@
 package inspectsvc
 
 import (
-	"os"
 	"strings"
+
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/envconfig"
 )
 
 // Vision model environment variables. Prefer VLM_*, keep legacy DASHSCOPE_*,
@@ -29,7 +30,7 @@ const missingVLMAPIKeyMessage = "missing VLM_API_KEY (or legacy DASHSCOPE_API_KE
 
 func getenvFirst(keys ...string) string {
 	for _, key := range keys {
-		if s := strings.TrimSpace(os.Getenv(key)); s != "" {
+		if s := envconfig.String(key); s != "" {
 			return s
 		}
 	}

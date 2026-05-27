@@ -68,6 +68,7 @@ export function GenerateCasesDialog({
   const [model, setModel] = React.useState<ModelSelectorValue | null>(null);
   const [prompt, setPrompt] = React.useState('');
   const [context, setContext] = React.useState('');
+  const scenarioSelectionTouchedRef = React.useRef(false);
 
   React.useEffect(() => {
     if (!user?.id) return;
@@ -89,15 +90,17 @@ export function GenerateCasesDialog({
     setTurnStrategy('mixed');
     setPrompt('');
     setContext('');
+    scenarioSelectionTouchedRef.current = false;
   }, [open]);
 
   React.useEffect(() => {
     if (!open) return;
+    setPrompt(prev => prev || t('promptDefault'));
+    if (scenarioSelectionTouchedRef.current || scenarios.length === 0) return;
     setScenarioIds(prev => {
-      if (prev.length > 0 || scenarios.length === 0) return prev;
+      if (prev.length > 0) return prev;
       return scenarios.map(scene => scene.id);
     });
-    setPrompt(prev => prev || t('promptDefault'));
   }, [open, scenarios, t]);
 
   const safeCount = Number.isFinite(count) ? count : 0;
@@ -110,9 +113,20 @@ export function GenerateCasesDialog({
     !createGenerationTask.isPending;
 
   const toggleScenario = (id: string, checked: boolean) => {
+    scenarioSelectionTouchedRef.current = true;
     setScenarioIds(prev =>
       checked ? Array.from(new Set([...prev, id])) : prev.filter(sceneId => sceneId !== id)
     );
+  };
+
+  const selectAllScenarios = () => {
+    scenarioSelectionTouchedRef.current = true;
+    setScenarioIds(scenarios.map(scene => scene.id));
+  };
+
+  const clearScenarios = () => {
+    scenarioSelectionTouchedRef.current = true;
+    setScenarioIds([]);
   };
 
   const toggleQuestionType = (value: string, checked: boolean) => {
@@ -169,11 +183,11 @@ export function GenerateCasesDialog({
                 <button
                   type="button"
                   className="font-medium"
-                  onClick={() => setScenarioIds(scenarios.map(scene => scene.id))}
+                  onClick={selectAllScenarios}
                 >
                   {commonT('selectAll')}
                 </button>
-                <button type="button" className="font-medium" onClick={() => setScenarioIds([])}>
+                <button type="button" className="font-medium" onClick={clearScenarios}>
                   {commonT('clearSelection')}
                 </button>
               </div>

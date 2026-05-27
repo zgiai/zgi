@@ -45,6 +45,8 @@ var defaultSubchunkSeparators = []string{
 	"",
 }
 
+const defaultParentChunkMergeTarget = 500
+
 // NewParentChildIndexProcessor creates a new parent-child index processor
 func NewParentChildIndexProcessor(storage storage.Storage, documentRepo dataset_repository.DocumentRepository, defaultModelSvc llmdefaultservice.DefaultModelService, llmClient llmclient.LLMClient, tenantID string) BaseIndexProcessor {
 	return &ParentChildIndexProcessor{
@@ -119,6 +121,9 @@ func (p *ParentChildIndexProcessor) Transform(ctx context.Context, output *dto.E
 	}
 	if err != nil {
 		return nil, err
+	}
+	if parentMode == "" || parentMode == "paragraph" || parentMode == "parent_child" {
+		parentChunks = mergeSmallParentChunks(parentChunks, parentChunkMergeTarget(rule.Segmentation))
 	}
 	if len(parentChunks) == 0 {
 		return parentChunks, nil
@@ -425,6 +430,123 @@ func parentChildMetadataForElements(output *dto.ExtractOutput, elements []dto.Ex
 	return metadata
 }
 
+func parentChunkMergeTarget(segmentation *SegmentationRule) int {
+	if segmentation != nil && segmentation.MaxTokens > 0 {
+		return segmentation.MaxTokens
+	}
+	return defaultParentChunkMergeTarget
+}
+
+func mergeSmallParentChunks(chunks []dto.TransformedChunk, target int) []dto.TransformedChunk {
+	if len(chunks) <= 1 || target <= 0 {
+		return chunks
+	}
+
+	merged := make([]dto.TransformedChunk, 0, len(chunks))
+	var current *dto.TransformedChunk
+	currentLen := 0
+
+	flush := func() {
+		if current == nil {
+			return
+		}
+		merged = append(merged, *current)
+		current = nil
+		currentLen = 0
+	}
+
+	for _, chunk := range chunks {
+		content := strings.TrimSpace(chunk.Content)
+		if content == "" {
+			continue
+		}
+
+		chunk.Content = content
+		if !isMergeableParentChunk(chunk) {
+			flush()
+			merged = append(merged, chunk)
+			continue
+		}
+
+		chunkLen := len([]rune(content))
+		if current == nil {
+			current = cloneParentChunkForMerge(chunk)
+			currentLen = chunkLen
+			if currentLen >= target {
+				flush()
+			}
+			continue
+		}
+
+		separatorLen := 1
+		if currentLen+separatorLen+chunkLen > target && currentLen > 0 {
+			flush()
+			current = cloneParentChunkForMerge(chunk)
+			currentLen = chunkLen
+			if currentLen >= target {
+				flush()
+			}
+			continue
+		}
+
+		current.Content += "\n" + content
+		currentLen += separatorLen + chunkLen
+		current.BBox = mergeParentChunkBBox(current.BBox, chunk.BBox)
+		current.Metadata = mergeParentChunkMetadata(current.Metadata, chunk.Metadata)
+	}
+
+	flush()
+	return merged
+}
+
+func cloneParentChunkForMerge(chunk dto.TransformedChunk) *dto.TransformedChunk {
+	return &dto.TransformedChunk{
+		Content:  strings.TrimSpace(chunk.Content),
+		BBox:     chunk.BBox,
+		Metadata: cloneChunkMetadata(chunk.Metadata),
+	}
+}
+
+func mergeParentChunkMetadata(left, right map[string]any) map[string]any {
+	merged := cloneChunkMetadata(left)
+	if len(right) == 0 {
+		deleteMergedParentIdentity(merged)
+		return merged
+	}
+
+	if page, ok := right["page"]; ok {
+		if _, exists := merged["page"]; !exists {
+			merged["page"] = page
+		}
+	}
+
+	deleteMergedParentIdentity(merged)
+	return merged
+}
+
+func deleteMergedParentIdentity(metadata map[string]any) {
+	delete(metadata, "doc_id")
+	delete(metadata, "doc_hash")
+	delete(metadata, "chunk_index")
+	delete(metadata, "total_chunks")
+	delete(metadata, "child_count")
+}
+
+func mergeParentChunkBBox(left, right *dto.ExtractBoundingBox) *dto.ExtractBoundingBox {
+	if left != nil {
+		return left
+	}
+	return right
+}
+
+func isMergeableParentChunk(chunk dto.TransformedChunk) bool {
+	if len(chunk.Children) > 0 {
+		return false
+	}
+	elementType, _ := chunk.Metadata["element_type"].(string)
+	return isParagraphTextElement(elementType)
+}
+
 // enhanceContent enhances document content using LLM when segment_content_auto_fill is enabled
 func (p *ParentChildIndexProcessor) enhanceContent(ctx context.Context, content string, options *ProcessOptions) (string, error) {
 	return p.BaseIndexProcessorImpl.enhanceContent(ctx, content, options)
@@ -693,7 +815,7 @@ func cloneChunkMetadata(metadata map[string]any) map[string]any {
 
 func buildSubchunkSeparators(preferredSeparator string) (string, []string) {
 	fixedSeparator := preferredSeparator
-	if strings.TrimSpace(fixedSeparator) == "" {
+	if fixedSeparator == "" {
 		fixedSeparator = "\n\n"
 	}
 

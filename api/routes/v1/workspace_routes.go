@@ -2,7 +2,6 @@ package v1
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/zgi/api/internal/container"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	workspaceHandler "github.com/zgiai/zgi/api/internal/modules/workspace/handler"
 	workspaceRepo "github.com/zgiai/zgi/api/internal/modules/workspace/repository"
@@ -10,85 +9,86 @@ import (
 	"gorm.io/gorm"
 )
 
+// WorkspaceRouteDeps contains dependencies required by workspace routes.
+type WorkspaceRouteDeps struct {
+	DB                               *gorm.DB
+	AccountService                   interfaces.AccountService
+	OrganizationService              interfaces.OrganizationService
+	WorkspacePermissionFilterService workspaceService.WorkspacePermissionFilterService
+	DepartmentService                workspaceService.DepartmentService
+	ConsoleWebURL                    string
+}
+
 func registerWorkspaceRoutesLegacy(
 	router *gin.RouterGroup,
-	db *gorm.DB,
-	accountService interfaces.AccountService,
-	serviceContainer *container.ServiceContainer,
+	deps WorkspaceRouteDeps,
 ) {
-	workspaceRepository := workspaceRepo.NewWorkspaceRepository(db)
+	workspaceRepository := workspaceRepo.NewWorkspaceRepository(deps.DB)
 
 	workspaceServiceImpl := workspaceService.NewWorkspaceService(workspaceRepository)
 	workspaceHandlerObj := workspaceHandler.NewWorkspaceHandler(
 		workspaceServiceImpl,
-		accountService,
-		serviceContainer.GetOrganizationService(),
+		deps.AccountService,
+		deps.OrganizationService,
 	)
 
 	workspaceHandlerObj.RegisterRoutes(router)
 }
 
-func RegisterWorkspaceRoutes(router *gin.RouterGroup, db *gorm.DB, accountService interfaces.AccountService, consoleWebURL string, serviceContainer *container.ServiceContainer) {
-	registerWorkspaceRoutesLegacy(router, db, accountService, serviceContainer)
+func RegisterWorkspaceRoutes(router *gin.RouterGroup, deps WorkspaceRouteDeps) {
+	if deps.DB == nil {
+		panic("workspace routes require db")
+	}
+	if deps.AccountService == nil {
+		panic("workspace routes require account service")
+	}
+	if deps.OrganizationService == nil {
+		panic("workspace routes require organization service")
+	}
+	if deps.WorkspacePermissionFilterService == nil {
+		panic("workspace routes require workspace permission filter service")
+	}
+	if deps.DepartmentService == nil {
+		panic("workspace routes require department service")
+	}
+
+	registerWorkspaceRoutesLegacy(router, deps)
 
 	// Register tenant permission filter routes
-	registerTenantPermissionFilterRoutes(router, serviceContainer)
+	registerTenantPermissionFilterRoutes(router, deps)
 
 	// Register department routes
-	registerDepartmentRoutes(router, db, accountService, consoleWebURL, serviceContainer)
+	registerDepartmentRoutes(router, deps)
 
 	// Register organization workspace asset move routes
-	registerWorkspaceAssetMoveRoutes(router, accountService, serviceContainer)
-
-	// registerTenantAndMemberRoutesLegacy(router, db, accountService, consoleWebURL)
+	registerWorkspaceAssetMoveRoutes(router, deps)
 }
 
 // registerTenantPermissionFilterRoutes registers routes for tenant permission filtering
-func registerTenantPermissionFilterRoutes(router *gin.RouterGroup, serviceContainer *container.ServiceContainer) {
-	workspacePermissionFilterService := serviceContainer.GetWorkspacePermissionFilterService()
-	workspacePermissionFilterHandler := workspaceHandler.NewWorkspacePermissionFilterHandler(workspacePermissionFilterService)
+func registerTenantPermissionFilterRoutes(router *gin.RouterGroup, deps WorkspaceRouteDeps) {
+	workspacePermissionFilterHandler := workspaceHandler.NewWorkspacePermissionFilterHandler(deps.WorkspacePermissionFilterService)
 
 	workspacePermissionFilterHandler.RegisterRoutes(router)
 }
 
 // registerDepartmentRoutes registers routes for department management
-func registerDepartmentRoutes(router *gin.RouterGroup, db *gorm.DB, accountService interfaces.AccountService, consoleWebURL string, serviceContainer *container.ServiceContainer) {
-	deptService := serviceContainer.GetDepartmentService()
-	enterpriseService := serviceContainer.GetOrganizationService()
-	deptHandler := workspaceHandler.NewDepartmentHandler(deptService, accountService, enterpriseService, consoleWebURL)
+func registerDepartmentRoutes(router *gin.RouterGroup, deps WorkspaceRouteDeps) {
+	deptHandler := workspaceHandler.NewDepartmentHandler(
+		deps.DepartmentService,
+		deps.AccountService,
+		deps.OrganizationService,
+		deps.ConsoleWebURL,
+	)
 
 	deptHandler.RegisterRoutes(router)
 }
 
-func registerWorkspaceAssetMoveRoutes(router *gin.RouterGroup, accountService interfaces.AccountService, serviceContainer *container.ServiceContainer) {
+func registerWorkspaceAssetMoveRoutes(router *gin.RouterGroup, deps WorkspaceRouteDeps) {
 	assetMoveService := workspaceService.NewWorkspaceAssetMoveService(
-		serviceContainer.GetDB(),
-		serviceContainer.GetOrganizationService(),
+		deps.DB,
+		deps.OrganizationService,
 	)
-	assetMoveHandler := workspaceHandler.NewWorkspaceAssetMoveHandler(accountService, assetMoveService)
+	assetMoveHandler := workspaceHandler.NewWorkspaceAssetMoveHandler(deps.AccountService, assetMoveService)
 
 	assetMoveHandler.RegisterRoutes(router)
-}
-
-// func registerTenantAndMemberRoutesLegacy(...) { ... }
-
-func registerTenantAndMemberRoutesLegacy(router *gin.RouterGroup, db *gorm.DB, accountService interfaces.AccountService, serviceContainer *container.ServiceContainer, consoleWebURL string) {
-	tenantRepo := workspaceRepo.NewWorkspaceRepository(db)
-	workspaceMemberRepo := workspaceRepo.NewWorkspaceMemberRepository(db)
-
-	tenantService := workspaceService.NewWorkspaceManagementService(
-		db,
-		tenantRepo,
-		workspaceMemberRepo,
-		accountService,
-		serviceContainer.GetQuotaService(),
-		serviceContainer.GetOrganizationService(),
-	)
-
-	enterpriseService := serviceContainer.GetOrganizationService()
-	membersHandler := workspaceHandler.NewMembersHandler(tenantService, accountService, enterpriseService, consoleWebURL)
-
-	membersHandler.RegisterRoutes(router)
-
-	// tenant API legacy routes have been removed
 }

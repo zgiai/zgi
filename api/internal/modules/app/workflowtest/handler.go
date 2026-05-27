@@ -16,6 +16,8 @@ import (
 	"github.com/zgiai/zgi/api/pkg/response"
 )
 
+const staleRunningBatchThreshold = 60 * time.Minute
+
 type Handler struct {
 	service             *Service
 	workflowService     interfaces.WorkflowService
@@ -549,6 +551,7 @@ func (h *Handler) ListBatches(c *gin.Context) {
 	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentView) {
 		return
 	}
+	h.recoverStaleRunningBatches(c, agentID)
 	items, err := h.service.ListBatches(c.Request.Context(), agentID)
 	if err != nil {
 		logger.Error("workflow test list batches failed", err)
@@ -672,18 +675,35 @@ func (h *Handler) ExecuteBatch(c *gin.Context) {
 		WorkspaceID: workspaceID,
 		AccountID:   accountID,
 	}
+	h.recoverStaleRunningBatches(c, agentID)
 	batch, err := h.service.StartBatch(c.Request.Context(), agentID, batchID)
 	if err != nil {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
 	go func() {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				err := fmt.Errorf("panic: %v", recovered)
+				logger.Error("workflow test async execute panic", err)
+				h.service.MarkBatchExecutionFailed(context.Background(), agentID, batchID, err)
+			}
+		}()
 		if _, err := h.service.ExecuteStartedBatchWithRunnerJudgeAndSummarizer(context.Background(), agentID, batchID, runner, judge, summarizer); err != nil {
 			logger.Error("workflow test async execute failed", err)
 			h.service.MarkBatchExecutionFailed(context.Background(), agentID, batchID, err)
 		}
 	}()
 	response.Success(c, batch)
+}
+
+func (h *Handler) recoverStaleRunningBatches(c *gin.Context, agentID string) {
+	if _, err := h.service.RecoverStaleRunningBatches(c.Request.Context(), agentID, time.Now().Add(-staleRunningBatchThreshold)); err != nil {
+		logger.Warn("workflow test recover stale batches failed", map[string]interface{}{
+			"agent_id": agentID,
+			"error":    err.Error(),
+		})
+	}
 }
 
 func (h *Handler) CancelBatch(c *gin.Context) {

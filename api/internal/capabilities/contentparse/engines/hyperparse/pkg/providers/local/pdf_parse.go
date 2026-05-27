@@ -23,6 +23,7 @@ import (
 	localocr "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/ocr"
 	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/hyperparse"
 	extractcommon "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/envconfig"
 )
 
 const (
@@ -818,7 +819,7 @@ func newID() string {
 }
 
 func localOCREnabled() bool {
-	raw := strings.TrimSpace(os.Getenv("LOCAL_OCR_FALLBACK"))
+	raw := envconfig.String("LOCAL_OCR_FALLBACK")
 	if raw == "" {
 		return true
 	}
@@ -1429,7 +1430,7 @@ func normalizeRequestedOCREngine(raw string) string {
 
 func explicitLocalOCRLang() string {
 	for _, key := range []string{"CONTENT_PARSE_OCR_LANG", "CONTENT_PARSE_LOCAL_OCR_LANG", "DOCSTILL_OCR_LANG", "LOCAL_OCR_LANG", "DOCSTILL_LOCAL_OCR_LANG"} {
-		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		if v := envconfig.String(key); v != "" {
 			return v
 		}
 	}
@@ -1438,7 +1439,7 @@ func explicitLocalOCRLang() string {
 
 func explicitTesseractPSM() int {
 	for _, key := range []string{"CONTENT_PARSE_TESSERACT_PSM", "CONTENT_PARSE_OCR_TESSERACT_PSM", "DOCSTILL_TESSERACT_PSM", "DOCSTILL_OCR_TESSERACT_PSM"} {
-		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		if v := envconfig.String(key); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
 				return n
 			}
@@ -1475,7 +1476,7 @@ func localOCRTimeout() time.Duration {
 			return time.Duration(n) * time.Second
 		}
 	}
-	if v := strings.TrimSpace(os.Getenv("LOCAL_OCR_TIMEOUT_SECONDS")); v != "" {
+	if v := envconfig.String("LOCAL_OCR_TIMEOUT_SECONDS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			return time.Duration(n) * time.Second
 		}
@@ -1489,7 +1490,7 @@ func localOCRMaxPages() int {
 			return n
 		}
 	}
-	if v := strings.TrimSpace(os.Getenv("LOCAL_OCR_MAX_PAGES")); v != "" {
+	if v := envconfig.String("LOCAL_OCR_MAX_PAGES"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			return n
 		}
@@ -1507,7 +1508,7 @@ func localOCRConcurrency() int {
 	}
 	raw := strings.TrimSpace(firstNonEmptyEnv("CONTENT_PARSE_LOCAL_OCR_CONCURRENCY", "DOCSTILL_LOCAL_OCR_CONCURRENCY"))
 	if raw == "" {
-		raw = strings.TrimSpace(os.Getenv("LOCAL_OCR_CONCURRENCY"))
+		raw = envconfig.String("LOCAL_OCR_CONCURRENCY")
 	}
 	if raw == "" {
 		return defaultConcurrency

@@ -1,25 +1,26 @@
 package inspectsvc
 
 import (
-	"os"
 	"strconv"
 	"strings"
+
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/envconfig"
 )
 
 func contentParseEnv(key string) string {
 	if strings.HasPrefix(key, "CONTENT_PARSE_") {
-		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		if v := envconfig.String(key); v != "" {
 			return v
 		}
-		return strings.TrimSpace(os.Getenv("DOCSTILL_" + strings.TrimPrefix(key, "CONTENT_PARSE_")))
+		return envconfig.String("DOCSTILL_" + strings.TrimPrefix(key, "CONTENT_PARSE_"))
 	}
 	if strings.HasPrefix(key, "DOCSTILL_") {
 		primary := "CONTENT_PARSE_" + strings.TrimPrefix(key, "DOCSTILL_")
-		if v := strings.TrimSpace(os.Getenv(primary)); v != "" {
+		if v := envconfig.String(primary); v != "" {
 			return v
 		}
 	}
-	return strings.TrimSpace(os.Getenv(key))
+	return envconfig.String(key)
 }
 
 // VLMFallbackMaxPages reads the maximum number of pages for full-page VLM fallback.

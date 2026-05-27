@@ -12,6 +12,10 @@ import (
 	"gorm.io/gorm"
 )
 
+const batchStaleFailureMessage = "测试执行长时间无进展，系统已自动停止未完成问题"
+
+var batchItemExecutionTimeout = 10 * time.Minute
+
 type Service struct {
 	repo                    *Repository
 	runner                  Runner
@@ -1320,9 +1324,6 @@ func (s *Service) StartBatch(ctx context.Context, agentID string, batchID string
 	if !updated {
 		return nil, fmt.Errorf("batch can only be started from queued status")
 	}
-	if err := s.repo.UpdateBatchItemsStatus(ctx, agentID, batchID, []string{string(BatchItemStatusPending)}, string(BatchItemStatusRunning)); err != nil {
-		return nil, err
-	}
 	return s.repo.GetBatch(ctx, agentID, batchID)
 }
 
@@ -1393,17 +1394,37 @@ func (s *Service) ExecuteStartedBatchWithRunnerJudgeAndSummarizer(ctx context.Co
 		if item.Status == string(BatchItemStatusCanceled) {
 			continue
 		}
+		if item.Status == string(BatchItemStatusPending) {
+			updated, err := s.repo.UpdateBatchItemStatusIfCurrent(ctx, agentID, item.ID, string(BatchItemStatusPending), string(BatchItemStatusRunning))
+			if err != nil {
+				return nil, err
+			}
+			if !updated {
+				continue
+			}
+			item.Status = string(BatchItemStatusRunning)
+		}
+		if item.Status != string(BatchItemStatusRunning) {
+			continue
+		}
 		snapshot := CaseSnapshot(item.CaseSnapshot)
-		result, runErr := runBatchItem(ctx, runner, RunCaseRequest{
+		itemCtx, cancel := context.WithTimeout(ctx, batchItemExecutionTimeout)
+		result, runErr := runBatchItem(itemCtx, runner, RunCaseRequest{
 			AgentID:      agentID,
 			BatchID:      batchID,
 			BatchItemID:  item.ID,
 			CaseSnapshot: snapshot,
 		})
+		timedOut := errors.Is(itemCtx.Err(), context.DeadlineExceeded)
+		cancel()
 		item.Outputs = JSONMap{}
 		if runErr != nil {
 			item.Status = string(BatchItemStatusFailed)
-			item.Error = runErr.Error()
+			if timedOut {
+				item.Error = "测试问题执行超时"
+			} else {
+				item.Error = runErr.Error()
+			}
 			failed++
 		} else {
 			if batch.JudgeModelNameSnapshot != "" {
@@ -1444,6 +1465,9 @@ func (s *Service) ExecuteStartedBatchWithRunnerJudgeAndSummarizer(ctx context.Co
 			return nil, err
 		}
 		processedItems = append(processedItems, item)
+		if err := s.repo.TouchBatch(ctx, agentID, batchID); err != nil {
+			return nil, err
+		}
 	}
 	batch.PassedCount = passed
 	batch.FailedCount = failed
@@ -1480,6 +1504,10 @@ func (s *Service) MarkBatchExecutionFailed(ctx context.Context, agentID string, 
 	if updateErr := s.repo.UpdateBatchItemsStatus(ctx, agentID, batchID, unfinished, string(BatchItemStatusFailed)); updateErr != nil {
 		logger.Error("workflow test mark batch items failed", updateErr)
 	}
+}
+
+func (s *Service) RecoverStaleRunningBatches(ctx context.Context, agentID string, staleBefore time.Time) (int64, error) {
+	return s.repo.RecoverStaleRunningBatches(ctx, agentID, staleBefore, batchStaleFailureMessage, batchStaleFailureMessage, time.Now())
 }
 
 func runBatchItem(ctx context.Context, runner Runner, req RunCaseRequest) (*RunCaseResult, error) {

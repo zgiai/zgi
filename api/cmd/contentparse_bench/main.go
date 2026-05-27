@@ -12,9 +12,11 @@ import (
 	"strings"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
+	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/capabilities/contentparse"
 	"github.com/zgiai/zgi/api/internal/contracts"
-	"gopkg.in/yaml.v3"
 )
 
 type manifest struct {
@@ -257,7 +259,7 @@ func assertArtifact(expect expectation, artifact *contracts.ParseArtifact, durat
 }
 
 func resolveFixturePath(manifestDir, raw string) string {
-	expanded := os.ExpandEnv(strings.TrimSpace(raw))
+	expanded := config.ExpandEnv(strings.TrimSpace(raw))
 	if filepath.IsAbs(expanded) {
 		return expanded
 	}
@@ -266,7 +268,7 @@ func resolveFixturePath(manifestDir, raw string) string {
 
 func checkRequirements(req requirements) (bool, string) {
 	for _, key := range req.Env {
-		if strings.TrimSpace(os.Getenv(key)) == "" {
+		if strings.TrimSpace(config.GetString(key, "")) == "" {
 			return true, fmt.Sprintf("missing env %s", key)
 		}
 	}

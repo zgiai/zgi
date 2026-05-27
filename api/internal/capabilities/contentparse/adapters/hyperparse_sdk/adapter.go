@@ -3,7 +3,6 @@ package hyperparsesdk
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
 	extractcommon "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
@@ -11,6 +10,7 @@ import (
 	extractmineru "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/mineru"
 	extractreducto "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/reducto"
 	extractvlm "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/vlm"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/envconfig"
 	"github.com/zgiai/zgi/api/internal/contracts"
 )
 
@@ -73,7 +73,7 @@ func (a *Adapter) Health(_ context.Context) (contracts.AdapterHealth, error) {
 			"embedded_sdk":          true,
 			"mineru_api_configured": extractmineru.Configured(),
 			"mineru_mode":           extractmineru.Mode(),
-			"reducto_configured":    strings.TrimSpace(os.Getenv("REDUCTO_API_KEY")) != "",
+			"reducto_configured":    envconfig.String("REDUCTO_API_KEY") != "",
 		},
 	}, nil
 }

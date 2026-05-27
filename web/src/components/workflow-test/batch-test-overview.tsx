@@ -203,6 +203,10 @@ export function BatchTestOverview({
   const deleteCases = useDeleteWorkflowTestCases(agentId);
   const cases = React.useMemo(() => casesData?.data?.items ?? [], [casesData]);
   const scenarios = React.useMemo(() => scenariosData?.data?.items ?? [], [scenariosData]);
+  const scenarioOptions = React.useMemo(
+    () => scenarios.map(scene => ({ id: scene.id, name: scene.name })),
+    [scenarios]
+  );
   const batches = React.useMemo(() => batchesData?.data?.items ?? [], [batchesData]);
   const generationTask = latestGenerationTaskData?.data?.task ?? null;
   const scenarioRecognitionTask = latestScenarioRecognitionTaskData?.data?.task ?? null;
@@ -1077,14 +1081,14 @@ export function BatchTestOverview({
       />
       <CaseDialog
         agentId={agentId}
-        scenarios={scenarios.map(scene => ({ id: scene.id, name: scene.name }))}
+        scenarios={scenarioOptions}
         open={caseDialogOpen}
         onOpenChange={setCaseDialogOpen}
         supportsAttachments={supportsAttachments}
       />
       <CaseDialog
         agentId={agentId}
-        scenarios={scenarios.map(scene => ({ id: scene.id, name: scene.name }))}
+        scenarios={scenarioOptions}
         caseItem={editingCase}
         open={!!editingCaseId}
         onOpenChange={open => {
@@ -1094,7 +1098,7 @@ export function BatchTestOverview({
       />
       <GenerateCasesDialog
         agentId={agentId}
-        scenarios={scenarios.map(scene => ({ id: scene.id, name: scene.name }))}
+        scenarios={scenarioOptions}
         open={generateDialogOpen}
         onOpenChange={setGenerateDialogOpen}
         onGenerationStart={setPendingGenerationCount}

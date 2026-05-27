@@ -85,8 +85,8 @@ func ParseRule(rulesMap map[string]interface{}) (*Rule, error) {
 
 	// Parse subchunk_segmentation with default values
 	subchunkSegmentation := SubchunkSegmentationRule{
-		MaxTokens:    1000, // Default value for subchunk
-		ChunkOverlap: 50,   // Default value for subchunk
+		MaxTokens:    100,  // Default value for subchunk
+		ChunkOverlap: 20,   // Default value for subchunk
 		Separator:    "\n", // Default value for subchunk
 	}
 	if subchunkSegmentationMap, ok := rulesMap["subchunk_segmentation"].(map[string]interface{}); ok {
