@@ -34,7 +34,14 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	tenantService := serviceContainer.GetTenantServiceAdapter()
 
 	// ---------- User / Auth domain ----------
-	RegisterUserRoutes(v1, serviceContainer, config.GlobalConfig.Email.ConsoleWebURL)
+	RegisterUserRoutes(v1, UserRouteDeps{
+		DB:                         db,
+		AccountService:             serviceContainer.GetAccountService(),
+		WorkspaceManagementService: serviceContainer.GetTenantService(),
+		OrganizationService:        serviceContainer.GetOrganizationService(),
+		DepartmentService:          serviceContainer.GetDepartmentService(),
+		ConsoleWebURL:              config.GlobalConfig.Email.ConsoleWebURL,
+	})
 
 	// ---------- Workspace / Tenant ----------
 	RegisterWorkspaceRoutes(v1, db, accountService, config.GlobalConfig.Email.ConsoleWebURL, serviceContainer)
