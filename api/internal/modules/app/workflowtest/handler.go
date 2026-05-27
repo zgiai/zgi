@@ -2,6 +2,7 @@ package workflowtest
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -576,6 +577,10 @@ func (h *Handler) CreateBatch(c *gin.Context) {
 	}
 	item, err := h.service.CreateBatch(c.Request.Context(), agentID, req)
 	if err != nil {
+		if errors.Is(err, ErrJudgeModelNotConfigured) {
+			response.FailWithMessage(c, response.ErrInvalidParam, "judge model is not configured")
+			return
+		}
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
@@ -621,6 +626,10 @@ func (h *Handler) RetestBatch(c *gin.Context) {
 	}
 	batch, err := h.service.RetestBatch(c.Request.Context(), agentID, batchID, req.Name)
 	if err != nil {
+		if errors.Is(err, ErrJudgeModelNotConfigured) {
+			response.FailWithMessage(c, response.ErrInvalidParam, "judge model is not configured")
+			return
+		}
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}

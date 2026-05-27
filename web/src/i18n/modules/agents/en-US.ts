@@ -1112,6 +1112,8 @@ const messages = {
           'This model and prompt are used as the scoring template for newly created test batches. Historical batches keep their creation-time snapshot.',
         warning:
           'Keep the "Passed / Failed / Needs Review" judgment criteria. The backend adds structured output constraints to avoid unparseable scoring results.',
+        defaultModelNotice:
+          'The displayed model is the system default. After saving, it will be used as the scoring model for newly created test batches; without saving, new batches can still fall back to the system default model.',
         modelLabel: 'Scoring Model',
         modelPlaceholder: 'Select scoring model',
         label: 'Scoring Prompt Template',

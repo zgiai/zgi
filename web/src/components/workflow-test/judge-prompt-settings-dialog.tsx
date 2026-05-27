@@ -42,6 +42,10 @@ export function JudgePromptSettingsDialog({
   const resetPrompt = useResetWorkflowTestJudgePrompt(agentId);
   const [prompt, setPrompt] = React.useState('');
   const [selectedModel, setSelectedModel] = React.useState<ModelSelectorValue | null>(null);
+  const hasSavedJudgeModel = Boolean(
+    data?.data?.judge_model_provider && data.data.judge_model_name
+  );
+  const isUsingUnsavedDefaultModel = Boolean(!hasSavedJudgeModel && selectedModel?.provider && selectedModel?.model);
 
   React.useEffect(() => {
     if (!open || !data?.data) return;
@@ -86,6 +90,11 @@ export function JudgePromptSettingsDialog({
           <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
             {t('warning')}
           </div>
+          {isUsingUnsavedDefaultModel ? (
+            <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+              {t('defaultModelNotice')}
+            </div>
+          ) : null}
           <div className="space-y-2">
             <Label htmlFor="workflow-test-judge-prompt">{t('label')}</Label>
             <Textarea

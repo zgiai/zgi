@@ -8,6 +8,8 @@ import (
 	"time"
 
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
+	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/gorm"
 )
@@ -16,12 +18,15 @@ const batchStaleFailureMessage = "测试执行长时间无进展，系统已自�
 
 var batchItemExecutionTimeout = 10 * time.Minute
 
+var ErrJudgeModelNotConfigured = errors.New("judge model is not configured")
+
 type Service struct {
 	repo                    *Repository
 	runner                  Runner
 	judge                   Judge
 	summarizer              Summarizer
 	workflowContextProvider WorkflowContextProvider
+	defaultModelResolver    llmdefaultservice.DefaultModelResolver
 }
 
 func NewService(repo *Repository) *Service {
@@ -42,6 +47,10 @@ func (s *Service) SetSummarizer(summarizer Summarizer) {
 
 func (s *Service) SetWorkflowContextProvider(provider WorkflowContextProvider) {
 	s.workflowContextProvider = provider
+}
+
+func (s *Service) SetDefaultModelResolver(resolver llmdefaultservice.DefaultModelResolver) {
+	s.defaultModelResolver = resolver
 }
 
 type UpdateSettingsRequest struct {
@@ -201,6 +210,41 @@ func (s *Service) ResetSettings(ctx context.Context, agentID string) (*Setting, 
 		JudgeModelProvider:  existing.JudgeModelProvider,
 		JudgeModelName:      existing.JudgeModelName,
 	})
+}
+
+func (s *Service) resolveBatchJudgeSettings(ctx context.Context, agentID string) (*Setting, error) {
+	settings, err := s.GetSettings(ctx, agentID)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(settings.JudgeModelProvider) != "" && strings.TrimSpace(settings.JudgeModelName) != "" {
+		return settings, nil
+	}
+	if s.defaultModelResolver == nil {
+		return nil, ErrJudgeModelNotConfigured
+	}
+
+	organizationID, err := s.repo.GetAgentOrganizationID(ctx, agentID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve judge model organization: %w", err)
+	}
+	organizationID = strings.TrimSpace(organizationID)
+	if organizationID == "" {
+		return nil, ErrJudgeModelNotConfigured
+	}
+
+	resolved, err := s.defaultModelResolver.ResolveUseCase(ctx, organizationID, llmmodelmodel.UseCaseTextChat, nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("resolve default judge model: %w", err)
+	}
+	if resolved == nil || strings.TrimSpace(resolved.Provider) == "" || strings.TrimSpace(resolved.Model) == "" {
+		return nil, ErrJudgeModelNotConfigured
+	}
+
+	copy := *settings
+	copy.JudgeModelProvider = strings.TrimSpace(resolved.Provider)
+	copy.JudgeModelName = strings.TrimSpace(resolved.Model)
+	return &copy, nil
 }
 
 func (s *Service) CreateScenario(ctx context.Context, agentID string, req CreateScenarioRequest) (*Scenario, error) {
@@ -1170,7 +1214,7 @@ func (s *Service) CreateBatch(ctx context.Context, agentID string, req CreateBat
 	if name == "" {
 		return nil, fmt.Errorf("name is required")
 	}
-	settings, err := s.GetSettings(ctx, agentID)
+	settings, err := s.resolveBatchJudgeSettings(ctx, agentID)
 	if err != nil {
 		return nil, err
 	}
@@ -1257,7 +1301,7 @@ func (s *Service) RetestBatch(ctx context.Context, agentID string, batchID strin
 	if len(originalItems) == 0 {
 		return nil, fmt.Errorf("batch has no test items")
 	}
-	settings, err := s.GetSettings(ctx, agentID)
+	settings, err := s.resolveBatchJudgeSettings(ctx, agentID)
 	if err != nil {
 		return nil, err
 	}

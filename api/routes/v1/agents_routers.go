@@ -69,6 +69,9 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	appHandler := app.NewAgentsHandler(service, tenantService, accountService, enterpriseService, db, chatRuntimeService)
 	appHandler.SetFileService(fileService)
 	workflowTestService := workflowtest.NewService(workflowtest.NewRepository(db))
+	if defaultModelResolver != nil {
+		workflowTestService.SetDefaultModelResolver(defaultModelResolver)
+	}
 	workflowTestHandler := workflowtest.NewHandler(workflowTestService, workflowService, enterpriseService, llmClient, taskManager)
 	if taskRegistry != nil && taskManager != nil {
 		if client, ok := llmClient.(llmclient.LLMClient); ok {

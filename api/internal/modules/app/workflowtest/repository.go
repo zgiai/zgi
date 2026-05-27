@@ -25,6 +25,22 @@ func (r *Repository) GetSettings(ctx context.Context, agentID string) (*Setting,
 	return &settings, nil
 }
 
+func (r *Repository) GetAgentOrganizationID(ctx context.Context, agentID string) (string, error) {
+	var row struct {
+		OrganizationID string `gorm:"column:organization_id"`
+	}
+	err := r.db.WithContext(ctx).
+		Table("agents").
+		Select("workspaces.organization_id").
+		Joins("JOIN workspaces ON workspaces.id = agents.tenant_id").
+		Where("agents.id = ? AND agents.deleted_at IS NULL", agentID).
+		Take(&row).Error
+	if err != nil {
+		return "", err
+	}
+	return row.OrganizationID, nil
+}
+
 func (r *Repository) UpsertSettings(ctx context.Context, settings *Setting) error {
 	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "agent_id"}},
