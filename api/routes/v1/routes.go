@@ -7,6 +7,7 @@ import (
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/container"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
 	workspace_service "github.com/zgiai/zgi/api/internal/modules/workspace/service"
 	"github.com/zgiai/zgi/api/pkg/database"
@@ -128,7 +129,17 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	llmModule := RegisterLLMRoutes(v1, serviceContainer)
 
 	// ---------- AIChat ----------
-	RegisterAIChatRoutes(v1, serviceContainer)
+	RegisterAIChatRoutes(v1, AIChatRouteDeps{
+		DB:                         db,
+		LLMClient:                  serviceContainer.GetLLMClient(),
+		DefaultModelService:        serviceContainer.GetDefaultModelService(),
+		FileService:                serviceContainer.GetFileService(),
+		ContentExtractor:           serviceContainer.GetContentExtractor(),
+		WorkspacePermissionService: serviceContainer.GetOrganizationService(),
+		MemoryService:              serviceContainer.GetMemoryService(),
+		SkillRuntime:               skills.NewRuntime(serviceContainer.GetToolEngine(), serviceContainer.GetToolManager()),
+		AccountService:             accountService,
+	})
 
 	// ---------- Dashboard ----------
 	var availableModels system_service.AvailableModelsLister
