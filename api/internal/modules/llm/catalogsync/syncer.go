@@ -243,33 +243,38 @@ func (s *Synchronizer) applyPublishedVersion(ctx context.Context, client catalog
 
 	for _, model := range resp.GetModels() {
 		catalog.Models = append(catalog.Models, modelmeta.PublishedModel{
-			Provider:            model.GetProvider(),
-			Model:               model.GetModel(),
-			ModelName:           model.GetModelName(),
-			Type:                model.GetType(),
-			Family:              model.GetFamily(),
-			FamilyName:          model.GetFamilyName(),
-			Status:              model.GetStatus(),
-			Tagline:             model.GetTagline(),
-			IsFlagship:          model.GetIsFlagship(),
-			IsRecommended:       model.GetIsRecommended(),
-			IsFeatured:          model.GetIsFeatured(),
-			IsNew:               model.GetIsNew(),
-			AccessType:          model.GetAccessType(),
-			Currency:            model.GetCurrency(),
-			ContextWindow:       int(model.GetContextWindow()),
-			MaxOutputTokens:     int(model.GetMaxOutputTokens()),
-			InputPrice:          model.GetInputPrice(),
-			OutputPrice:         model.GetOutputPrice(),
-			CachedInputPrice:    model.GetCachedInputPrice(),
-			UseCases:            model.GetUseCases(),
-			InputModalities:     model.GetInputModalities(),
-			OutputModalities:    model.GetOutputModalities(),
-			KnowledgeCutoff:     model.GetKnowledgeCutoff(),
-			IsActive:            model.GetIsActive(),
-			IsSystemEnabled:     model.GetIsSystemEnabled(),
-			SupportedParameters: json.RawMessage(model.GetSupportedParametersJson()),
-			ConfigParameters:    normalizeConfigParametersPayload(model.GetConfigParametersJson()),
+			Provider:               model.GetProvider(),
+			Model:                  model.GetModel(),
+			ModelName:              model.GetModelName(),
+			Type:                   model.GetType(),
+			Family:                 model.GetFamily(),
+			FamilyName:             model.GetFamilyName(),
+			Status:                 model.GetStatus(),
+			Tagline:                model.GetTagline(),
+			IsFlagship:             model.GetIsFlagship(),
+			IsRecommended:          model.GetIsRecommended(),
+			IsFeatured:             model.GetIsFeatured(),
+			IsNew:                  model.GetIsNew(),
+			AccessType:             model.GetAccessType(),
+			Currency:               model.GetCurrency(),
+			ContextWindow:          int(model.GetContextWindow()),
+			MaxOutputTokens:        int(model.GetMaxOutputTokens()),
+			InputPrice:             model.GetInputPrice(),
+			OutputPrice:            model.GetOutputPrice(),
+			CachedInputPrice:       model.GetCachedInputPrice(),
+			UseCases:               model.GetUseCases(),
+			InputModalities:        model.GetInputModalities(),
+			OutputModalities:       model.GetOutputModalities(),
+			KnowledgeCutoff:        model.GetKnowledgeCutoff(),
+			IsActive:               model.GetIsActive(),
+			IsSystemEnabled:        model.GetIsSystemEnabled(),
+			SupportedParameters:    json.RawMessage(model.GetSupportedParametersJson()),
+			ConfigParameters:       normalizeConfigParametersPayload(model.GetConfigParametersJson()),
+			Endpoints:              publishedModelEndpoints(model.GetEndpoints()),
+			EndpointsAuthoritative: model.GetEndpoints() != nil,
+			Features:               publishedModelFeatures(model.GetFeatures()),
+			Tools:                  publishedModelTools(model.GetTools()),
+			Parameters:             publishedModelParameters(model.GetParameters()),
 		})
 	}
 
@@ -280,6 +285,83 @@ func (s *Synchronizer) applyPublishedVersion(ctx context.Context, client catalog
 	}
 
 	return nil
+}
+
+func publishedModelEndpoints(source *pb.CatalogModelEndpoints) *llmmodel.ModelEndpoints {
+	if source == nil {
+		return nil
+	}
+	return &llmmodel.ModelEndpoints{
+		ChatCompletions:  source.GetChatCompletions(),
+		Responses:        source.GetResponses(),
+		Realtime:         source.GetRealtime(),
+		Assistants:       source.GetAssistants(),
+		Batch:            source.GetBatch(),
+		Embeddings:       source.GetEmbeddings(),
+		FineTuning:       source.GetFineTuning(),
+		ImageGeneration:  source.GetImageGeneration(),
+		Vision:           source.GetVision(),
+		SpeechGeneration: source.GetSpeechGeneration(),
+		Transcription:    source.GetTranscription(),
+		Translation:      source.GetTranslation(),
+		Moderation:       source.GetModeration(),
+		Videos:           source.GetVideos(),
+		ImageEdit:        source.GetImageEdit(),
+	}
+}
+
+func publishedModelFeatures(source *pb.CatalogModelFeatures) *llmmodel.ModelFeatures {
+	if source == nil {
+		return nil
+	}
+	return &llmmodel.ModelFeatures{
+		Streaming:        source.GetStreaming(),
+		FunctionCalling:  source.GetFunctionCalling(),
+		StructuredOutput: source.GetStructuredOutput(),
+		JsonMode:         source.GetJsonMode(),
+		Distillation:     source.GetDistillation(),
+		Reasoning:        source.GetReasoning(),
+		SystemPrompt:     source.GetSystemPrompt(),
+		Logprobs:         source.GetLogprobs(),
+		WebSearch:        source.GetWebSearch(),
+		FileSearch:       source.GetFileSearch(),
+		CodeInterpreter:  source.GetCodeInterpreter(),
+		ComputerUse:      source.GetComputerUse(),
+		Mcp:              source.GetMcp(),
+		ReasoningEffort:  source.GetReasoningEffort(),
+		Attachment:       source.GetAttachment(),
+	}
+}
+
+func publishedModelTools(source *pb.CatalogModelTools) *llmmodel.ModelTools {
+	if source == nil {
+		return nil
+	}
+	return &llmmodel.ModelTools{
+		WebSearch:         source.GetWebSearch(),
+		FileSearch:        source.GetFileSearch(),
+		ImageGeneration:   source.GetImageGeneration(),
+		CodeInterpreter:   source.GetCodeInterpreter(),
+		ComputerUse:       source.GetComputerUse(),
+		Mcp:               source.GetMcp(),
+		ParallelToolCalls: source.GetParallelToolCalls(),
+	}
+}
+
+func publishedModelParameters(source *pb.CatalogModelParameters) *llmmodel.ModelParameters {
+	if source == nil {
+		return nil
+	}
+	return &llmmodel.ModelParameters{
+		SupportsTemperature:      source.GetTemperature(),
+		SupportsTopP:             source.GetTopP(),
+		SupportsPresencePenalty:  source.GetPresencePenalty(),
+		SupportsFrequencyPenalty: source.GetFrequencyPenalty(),
+		SupportsLogitBias:        source.GetLogitBias(),
+		SupportsSeed:             source.GetSeed(),
+		SupportsStop:             source.GetStop(),
+		MaxStopSequences:         int(source.GetMaxStopSequences()),
+	}
 }
 
 func (s *Synchronizer) loadLastAppliedVersion(ctx context.Context) (int64, error) {
