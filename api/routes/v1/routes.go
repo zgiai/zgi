@@ -97,7 +97,21 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	})
 
 	// ---------- Dataset ----------
-	RegisterDatasetRoutes(v1, serviceContainer)
+	RegisterDatasetRoutes(v1, DatasetRouteDeps{
+		DB:                         db,
+		Storage:                    storage.GetStorage(),
+		AccountService:             accountService,
+		WorkspaceManagementService: tenantService,
+		OrganizationService:        serviceContainer.GetOrganizationService(),
+		BillingService:             serviceContainer.GetBillingService(),
+		QuotaService:               serviceContainer.GetQuotaService(),
+		LLMClient:                  serviceContainer.GetLLMClient(),
+		DefaultModelService:        serviceContainer.GetDefaultModelService(),
+		TaskManager:                serviceContainer.GetTaskManager(),
+		GraphFlowService:           serviceContainer.GetGraphFlowService(),
+		TaskHandlerRegistry:        serviceContainer.GetTaskHandlerRegistry(),
+		ResourcePermissionService:  serviceContainer.GetResourcePermissionService(),
+	})
 
 	// ---------- Content Parse ----------
 	RegisterContentParseRoutes(v1, ContentParseRouteDeps{
