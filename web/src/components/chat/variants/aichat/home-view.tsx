@@ -15,6 +15,7 @@ interface AIChatHomeViewProps {
   brand?: React.ReactNode;
   title?: string;
   description?: string;
+  surface?: 'aichat' | 'agent-draft' | 'agent-webapp';
 }
 
 /**
@@ -33,6 +34,7 @@ export function AIChatHomeView({
   brand,
   title,
   description,
+  surface = 'aichat',
 }: AIChatHomeViewProps) {
   const t = useT('webapp');
   const [isHydrated, setIsHydrated] = React.useState(false);
@@ -51,7 +53,12 @@ export function AIChatHomeView({
         isVisible ? 'scale-100 opacity-100' : 'pointer-events-none -z-10 scale-95 opacity-0'
       )}
     >
-      <div className="flex w-full max-w-3xl animate-in flex-col items-center gap-8 -mt-20 duration-500 fade-in zoom-in">
+      <div
+        className={cn(
+          'flex w-full animate-in flex-col items-center duration-500 fade-in zoom-in',
+          surface === 'agent-draft' ? '-mt-10 max-w-[560px] gap-6' : '-mt-20 max-w-3xl gap-8'
+        )}
+      >
         <div className="flex flex-col items-center gap-4">
           {brand ? (
             brand
@@ -66,14 +73,24 @@ export function AIChatHomeView({
               )}
             </div>
           ) : null}
-          <h2 className="text-2xl font-bold text-foreground">
+          <h2
+            className={cn(
+              'font-bold text-foreground',
+              surface === 'agent-draft' ? 'text-xl xl:text-2xl' : 'text-2xl'
+            )}
+          >
             {title || t('chat.startConversation')}
           </h2>
           {resolvedDescription ? (
             <p className="text-sm text-muted-foreground">{resolvedDescription}</p>
           ) : null}
         </div>
-        <div className="h-[140px] w-full shrink-0" />
+        <div
+          className={cn(
+            'w-full shrink-0',
+            surface === 'agent-draft' ? 'h-[96px]' : 'h-[140px]'
+          )}
+        />
         <div className="flex flex-wrap items-center justify-center gap-2">
           {suggestions.map(suggestion => (
             <Button

@@ -56,8 +56,14 @@ export function AgentRuntimeVersionPopover({
         <span>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button isIcon variant="ghost" className="size-8" aria-label={t('header.versions')}>
-                <History className="size-4" />
+              <Button
+                isIcon
+                variant="ghost"
+                size="sm"
+                interactive="subtle"
+                aria-label={t('header.versions')}
+              >
+                <History className="size-[18px]" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>{t('header.versions')}</TooltipContent>

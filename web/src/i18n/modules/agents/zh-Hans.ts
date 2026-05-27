@@ -1316,6 +1316,8 @@ const messages: AgentsMessages = {
       publishedVersions: '发布版本',
       versions: '版本',
       preview: '预览与调试',
+      debug: '调试',
+      closeDebug: '关闭调试',
       runtimeLogs: '运行日志',
     },
     prompt: {
@@ -1462,6 +1464,7 @@ const messages: AgentsMessages = {
       badge: '草稿调试',
       conversations: '会话管理',
       newConversation: '新建会话',
+      close: '关闭预览',
     },
     publishedVersions: {
       title: '发布版本',

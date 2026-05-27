@@ -598,7 +598,7 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
     return <AgentRuntimeLoadingState />;
   }
 
-  const renderPreviewPanel = () => (
+  const renderPreviewPanel = (surfaceMode: 'inline' | 'sheet' = 'inline') => (
     <AgentRuntimePreviewPanel
       controller={chatController}
       modelSelectorValue={modelSelectorValue}
@@ -608,8 +608,10 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
       inputPlaceholder={currentPayload.input_placeholder}
       homeBrand={agentHomeBrand}
       homeTitle={currentPayload.home_title}
+      surfaceMode={surfaceMode}
       onOpenMemoryValues={() => setMemoryValuesOpen(true)}
       onModelChange={handleModelChange}
+      onClose={() => setPreviewSheetOpen(false)}
     />
   );
 
@@ -643,68 +645,80 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
           />
         }
         showPreviewAction
+        isPreviewOpen={previewSheetOpen}
         onSave={handleManualSave}
         onPublish={handlePublish}
         onCopyWebAppUrl={handleCopyWebAppUrl}
-        onOpenPreview={() => setPreviewSheetOpen(true)}
+        onTogglePreview={() => setPreviewSheetOpen(current => !current)}
         onOpenPublishedVersions={handleOpenPublishedVersions}
       />
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)_minmax(0,1fr)] overflow-hidden lg:grid-cols-[minmax(320px,1fr)_minmax(360px,1fr)] lg:grid-rows-1 lg:divide-x 2xl:grid-cols-[minmax(320px,0.95fr)_minmax(320px,0.95fr)_minmax(420px,1.2fr)]">
-        <AgentRuntimePromptPanel
-          systemPrompt={systemPrompt}
-          onChangeSystemPrompt={setSystemPrompt}
-          onOpenOptimizer={() => setPromptOptimizerOpen(true)}
-        />
-        <AgentRuntimeOrchestrationPanel
-          locale={locale}
-          openSections={openSections}
-          modelValue={modelValue}
-          homeTitle={homeTitle}
-          inputPlaceholder={inputPlaceholder}
-          selectedSkills={selectedSkills}
-          normalizedSelectedSkillIds={normalizedSelectedSkillIds}
-          selectableSkillsCount={selectableSkills.length}
-          isSkillsLoading={isSkillsLoading}
-          isSkillConfigLoading={false}
-          isDatasetsLoading={isDatasetsLoading}
-          availableDatasets={availableDatasets}
-          selectedKnowledgeDatasetIds={knowledgeDatasetIds}
-          suggestedQuestions={suggestedQuestions}
-          isGeneratingSuggestions={isGeneratingSuggestions}
-          systemPrompt={systemPrompt}
-          fileUploadEnabled={fileUploadEnabled}
-          agentMemoryEnabled={agentMemoryEnabled}
-          agentMemorySlots={agentMemorySlots}
-          agentMemorySlotValidationErrors={agentMemorySlotValidationErrors}
-          defaultHomeTitle={defaultHomeTitle}
-          defaultInputPlaceholder={defaultInputPlaceholder}
-          onToggleSection={section =>
-            setOpenSections(current => ({ ...current, [section]: !current[section] }))
-          }
-          onChangeModelValue={setModelValue}
-          onChangeHomeTitle={setHomeTitle}
-          onChangeInputPlaceholder={setInputPlaceholder}
-          onOpenSkillDialog={() => setSkillDialogOpen(true)}
-          onToggleSkill={handleToggleSkill}
-          onToggleKnowledgeDataset={handleToggleKnowledgeDataset}
-          onGenerateSuggestedQuestions={() => void handleGenerateSuggestedQuestions()}
-          onChangeSuggestedQuestions={setSuggestedQuestions}
-          onChangeFileUploadEnabled={setFileUploadEnabled}
-          onChangeAgentMemoryEnabled={setAgentMemoryEnabled}
-          onChangeAgentMemorySlots={setAgentMemorySlots}
-        />
+      <div className="min-h-0 flex-1 overflow-y-auto lg:overflow-hidden">
+        <div className="grid min-h-full grid-cols-1 lg:h-full lg:min-h-0 lg:grid-cols-[minmax(320px,1fr)_minmax(360px,1fr)] lg:divide-x 2xl:grid-cols-[minmax(320px,0.95fr)_minmax(320px,0.95fr)_minmax(440px,1.2fr)]">
+          <div className="h-[45vh] min-h-[360px] border-b lg:h-full lg:min-h-0 lg:border-b-0">
+            <AgentRuntimePromptPanel
+              className="h-full"
+              systemPrompt={systemPrompt}
+              onChangeSystemPrompt={setSystemPrompt}
+              onOpenOptimizer={() => setPromptOptimizerOpen(true)}
+            />
+          </div>
+          <div className="min-h-0 lg:h-full">
+            <AgentRuntimeOrchestrationPanel
+              className="min-h-0 lg:h-full"
+              scrollAreaClassName="overflow-visible lg:overflow-hidden"
+              scrollViewportClassName="h-auto w-full rounded-[inherit] lg:h-full"
+              locale={locale}
+              openSections={openSections}
+              modelValue={modelValue}
+              homeTitle={homeTitle}
+              inputPlaceholder={inputPlaceholder}
+              selectedSkills={selectedSkills}
+              normalizedSelectedSkillIds={normalizedSelectedSkillIds}
+              selectableSkillsCount={selectableSkills.length}
+              isSkillsLoading={isSkillsLoading}
+              isSkillConfigLoading={false}
+              isDatasetsLoading={isDatasetsLoading}
+              availableDatasets={availableDatasets}
+              selectedKnowledgeDatasetIds={knowledgeDatasetIds}
+              suggestedQuestions={suggestedQuestions}
+              isGeneratingSuggestions={isGeneratingSuggestions}
+              systemPrompt={systemPrompt}
+              fileUploadEnabled={fileUploadEnabled}
+              agentMemoryEnabled={agentMemoryEnabled}
+              agentMemorySlots={agentMemorySlots}
+              agentMemorySlotValidationErrors={agentMemorySlotValidationErrors}
+              defaultHomeTitle={defaultHomeTitle}
+              defaultInputPlaceholder={defaultInputPlaceholder}
+              onToggleSection={section =>
+                setOpenSections(current => ({ ...current, [section]: !current[section] }))
+              }
+              onChangeModelValue={setModelValue}
+              onChangeHomeTitle={setHomeTitle}
+              onChangeInputPlaceholder={setInputPlaceholder}
+              onOpenSkillDialog={() => setSkillDialogOpen(true)}
+              onToggleSkill={handleToggleSkill}
+              onToggleKnowledgeDataset={handleToggleKnowledgeDataset}
+              onGenerateSuggestedQuestions={() => void handleGenerateSuggestedQuestions()}
+              onChangeSuggestedQuestions={setSuggestedQuestions}
+              onChangeFileUploadEnabled={setFileUploadEnabled}
+              onChangeAgentMemoryEnabled={setAgentMemoryEnabled}
+              onChangeAgentMemorySlots={setAgentMemorySlots}
+            />
+          </div>
         <div className="hidden min-w-0 overflow-hidden 2xl:flex">{renderPreviewPanel()}</div>
+        </div>
       </div>
 
       <Sheet open={previewSheetOpen} onOpenChange={setPreviewSheetOpen}>
         <SheetContent
           side="right"
-          className="flex w-[min(720px,100vw)] max-w-none flex-col p-0 sm:max-w-none 2xl:hidden"
+          showClose={false}
+          className="flex h-full min-h-0 w-[min(720px,100vw)] max-w-none flex-col p-0 sm:max-w-none 2xl:hidden"
         >
           <SheetTitle className="sr-only">{t('preview.title')}</SheetTitle>
           <SheetDescription className="sr-only">{t('preview.description')}</SheetDescription>
-          {renderPreviewPanel()}
+          {renderPreviewPanel('sheet')}
         </SheetContent>
       </Sheet>
 

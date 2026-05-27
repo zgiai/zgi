@@ -1,7 +1,7 @@
 'use client';
 
 import { useId, type ReactNode } from 'react';
-import { Eye, MessageSquarePlus, PanelLeft } from 'lucide-react';
+import { Eye, MessageSquarePlus, PanelLeft, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import Chat, { type AIChatController } from '@/components/chat';
 import type { ModelSelectorParameterValue, ModelSelectorValue } from '@/components/common/model-selector';
@@ -16,8 +16,10 @@ interface AgentRuntimePreviewPanelProps {
   inputPlaceholder: string;
   homeBrand: ReactNode;
   homeTitle: string;
+  surfaceMode?: 'inline' | 'sheet';
   onOpenMemoryValues: () => void;
   onModelChange: (value: ModelSelectorValue) => void;
+  onClose?: () => void;
 }
 
 export function AgentRuntimePreviewPanel({
@@ -29,20 +31,22 @@ export function AgentRuntimePreviewPanel({
   inputPlaceholder,
   homeBrand,
   homeTitle,
+  surfaceMode = 'inline',
   onOpenMemoryValues,
   onModelChange,
+  onClose,
 }: AgentRuntimePreviewPanelProps) {
   const t = useT('agents.agentRuntime');
   const controlsPortalId = useId();
 
   return (
-    <section className="flex min-w-0 flex-col overflow-hidden">
-      <div className="flex h-12 shrink-0 items-center justify-between px-5">
-        <div>
+    <section className="flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden">
+      <div className="flex h-14 shrink-0 items-center justify-between gap-3 px-5">
+        <div className="min-w-0">
           <h2 className="text-sm font-semibold">{t('preview.title')}</h2>
-          <p className="text-xs text-muted-foreground">{t('preview.description')}</p>
+          <p className="truncate text-xs text-muted-foreground">{t('preview.description')}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <Button
             variant="outline"
             size="sm"
@@ -53,6 +57,19 @@ export function AgentRuntimePreviewPanel({
             {t('memory.viewValues')}
           </Button>
           <div id={controlsPortalId} className="flex shrink-0 items-center" />
+          {surfaceMode === 'sheet' ? (
+            <Button
+              variant="ghost"
+              isIcon
+              size="sm"
+              interactive="subtle"
+              aria-label={t('preview.close')}
+              title={t('preview.close')}
+              onClick={onClose}
+            >
+              <X className="size-[18px]" />
+            </Button>
+          ) : null}
         </div>
       </div>
       <div className="min-h-0 flex-1">

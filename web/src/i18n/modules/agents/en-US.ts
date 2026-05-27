@@ -1397,6 +1397,8 @@ const messages = {
       publishedVersions: 'Published versions',
       versions: 'Versions',
       preview: 'Preview and debug',
+      debug: 'Debug',
+      closeDebug: 'Close debug',
       runtimeLogs: 'Runtime logs',
     },
     prompt: {
@@ -1549,6 +1551,7 @@ const messages = {
       badge: 'Draft debug',
       conversations: 'Conversations',
       newConversation: 'New conversation',
+      close: 'Close preview',
     },
     publishedVersions: {
       title: 'Published versions',

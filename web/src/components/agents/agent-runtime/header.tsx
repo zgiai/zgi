@@ -6,13 +6,14 @@ import {
   Bot,
   CheckCircle2,
   Copy,
-  Eye,
   ExternalLink,
   History,
   Loader2,
   MoreHorizontal,
+  Play,
   Save,
   Upload,
+  X,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -39,10 +40,11 @@ interface AgentRuntimeHeaderProps {
   webAppUrl: string;
   versionControl?: ReactNode;
   showPreviewAction?: boolean;
+  isPreviewOpen?: boolean;
   onSave: () => void;
   onPublish: () => void;
   onCopyWebAppUrl: () => void;
-  onOpenPreview?: () => void;
+  onTogglePreview?: () => void;
   onOpenPublishedVersions: () => void;
 }
 
@@ -57,10 +59,11 @@ export function AgentRuntimeHeader({
   webAppUrl,
   versionControl,
   showPreviewAction = false,
+  isPreviewOpen = false,
   onSave,
   onPublish,
   onCopyWebAppUrl,
-  onOpenPreview,
+  onTogglePreview,
   onOpenPublishedVersions,
 }: AgentRuntimeHeaderProps) {
   const t = useT('agents.agentRuntime');
@@ -115,14 +118,19 @@ export function AgentRuntimeHeader({
           <TooltipTrigger asChild>
             <div className="relative">
               <Button
-                isIcon
                 variant="ghost"
-                className="size-8"
+                size="sm"
+                isIcon
+                interactive="subtle"
                 onClick={onSave}
-                disabled={disablePrimaryActions || saveState === 'saving' || !isDirty}
+                disabled={disablePrimaryActions || saveState === 'saving'}
                 aria-label={t('header.save')}
               >
-                <Save className="size-4" />
+                {saveState === 'saving' ? (
+                  <Loader2 className="size-[18px] animate-spin" />
+                ) : (
+                  <Save className="size-[18px]" />
+                )}
                 <span
                   className={cn(
                     'absolute right-1 top-1 size-2 rounded-full border-2 border-background',
@@ -141,11 +149,12 @@ export function AgentRuntimeHeader({
               <Button
                 isIcon
                 variant="ghost"
-                className="size-8"
+                size="sm"
+                interactive="subtle"
                 onClick={onOpenPublishedVersions}
                 aria-label={t('header.versions')}
               >
-                <History className="size-4" />
+                <History className="size-[18px]" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>{t('header.versions')}</TooltipContent>
@@ -153,28 +162,28 @@ export function AgentRuntimeHeader({
         )}
 
         {showPreviewAction ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                isIcon
-                variant="ghost"
-                className="size-8 2xl:hidden"
-                onClick={onOpenPreview}
-                aria-label={t('header.preview')}
-              >
-                <Eye className="size-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>{t('header.preview')}</TooltipContent>
-          </Tooltip>
+          <Button
+            size="sm"
+            aria-pressed={isPreviewOpen}
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-md border px-2 text-white shadow-none transition-colors focus-visible:ring-emerald-500/30 focus-visible:ring-offset-1 active:border-emerald-700 active:bg-emerald-700 sm:px-3.5 2xl:hidden',
+              isPreviewOpen
+                ? 'border-emerald-600 bg-emerald-600 ring-2 ring-emerald-400/25 hover:border-emerald-700 hover:bg-emerald-700'
+                : 'border-emerald-600/30 bg-emerald-600 hover:border-emerald-700 hover:bg-emerald-700'
+            )}
+            onClick={onTogglePreview}
+            aria-label={isPreviewOpen ? t('header.closeDebug') : t('header.debug')}
+          >
+            {isPreviewOpen ? <X className="size-4" /> : <Play className="size-4" fill="currentColor" />}
+            <span className="hidden font-semibold lg:inline">
+              {isPreviewOpen ? t('header.closeDebug') : t('header.debug')}
+            </span>
+          </Button>
         ) : null}
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button
-              size="sm"
-              className="gap-1.5 rounded-md border border-primary/25 bg-primary/10 px-3 text-primary shadow-none hover:border-primary/35 hover:bg-primary/15"
-            >
+            <Button size="sm" className="gap-1.5 px-3">
               {isPublishing ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
               <span className="hidden font-semibold sm:inline">{t('header.publish')}</span>
               <MoreHorizontal className="size-3.5" />
@@ -183,7 +192,7 @@ export function AgentRuntimeHeader({
           <DropdownMenuContent align="end" className="w-56">
             <div className="px-2 py-1">
               <Button
-                className="w-full rounded-md border border-primary/25 bg-primary/10 text-primary shadow-none hover:border-primary/35 hover:bg-primary/15"
+                className="w-full"
                 onClick={onPublish}
                 disabled={disablePrimaryActions || isPublishing || saveState === 'saving'}
               >

@@ -27,6 +27,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useT } from '@/i18n';
+import { cn } from '@/lib/utils';
 import type { AIChatSkillMetadata } from '@/services/types/aichat';
 import type { AgentMemorySlotConfig } from '@/services/types/agent';
 import type { Dataset } from '@/services/types/dataset';
@@ -58,6 +59,9 @@ interface AgentRuntimeOrchestrationPanelProps {
   agentMemorySlotValidationErrors: AgentMemorySlotValidationError[];
   defaultHomeTitle: string;
   defaultInputPlaceholder: string;
+  className?: string;
+  scrollAreaClassName?: string;
+  scrollViewportClassName?: string;
   onToggleSection: (section: AgentConfigSection) => void;
   onChangeModelValue: (value: ModelSelectorParameterValue) => void;
   onChangeHomeTitle: (value: string) => void;
@@ -95,6 +99,9 @@ export function AgentRuntimeOrchestrationPanel({
   agentMemorySlotValidationErrors,
   defaultHomeTitle,
   defaultInputPlaceholder,
+  className,
+  scrollAreaClassName,
+  scrollViewportClassName,
   onToggleSection,
   onChangeModelValue,
   onChangeHomeTitle,
@@ -165,7 +172,7 @@ export function AgentRuntimeOrchestrationPanel({
   })() as AgentMemorySlotValidationError;
 
   return (
-    <section className="flex min-w-0 flex-col overflow-hidden">
+    <section className={cn('flex min-w-0 flex-col overflow-hidden', className)}>
       <ConfirmDialog
         open={pendingRemoveMemoryIndex !== null}
         onOpenChange={open => {
@@ -230,7 +237,10 @@ export function AgentRuntimeOrchestrationPanel({
           <p className="text-xs text-muted-foreground">{t('orchestration.description')}</p>
         </div>
       </div>
-      <ScrollArea className="min-h-0 flex-1">
+      <ScrollArea
+        className={cn('min-h-0 flex-1', scrollAreaClassName)}
+        viewportProps={scrollViewportClassName ? { className: scrollViewportClassName } : undefined}
+      >
         <div className="space-y-5 px-5 pb-6">
           <RuntimeSection
             title={t('sections.model')}

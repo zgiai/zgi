@@ -142,6 +142,7 @@ interface AIChatInputAreaProps {
   uploadScope?: AIChatUploadScope;
   showFileLibraryPicker?: boolean;
   inputPlaceholder?: string;
+  surface?: 'aichat' | 'agent-draft' | 'agent-webapp';
 }
 
 /**
@@ -172,6 +173,7 @@ export function AIChatInputArea({
   uploadScope = { type: 'console' },
   showFileLibraryPicker = true,
   inputPlaceholder,
+  surface = 'aichat',
 }: AIChatInputAreaProps) {
   const t = useT('webapp');
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -596,7 +598,11 @@ export function AIChatInputArea({
         <div
           className={cn(
             'pointer-events-auto mx-auto w-full transition-[max-width] duration-300 ease-in-out',
-            isHome && !isLoadingMessages ? 'max-w-3xl' : 'max-w-4xl'
+            surface === 'agent-draft'
+              ? 'max-w-[560px]'
+              : isHome && !isLoadingMessages
+                ? 'max-w-3xl'
+                : 'max-w-4xl'
           )}
         >
           {modelMissing ? (
