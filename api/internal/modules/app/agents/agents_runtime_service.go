@@ -15,6 +15,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/suggestedquestions"
 	sharedmodel "github.com/zgiai/zgi/api/internal/modules/shared/model"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
+	"gorm.io/gorm"
 )
 
 var (
@@ -71,12 +72,15 @@ func (s *agentsService) PublishAgent(ctx context.Context, agentID, accountID str
 		return nil, err
 	}
 	snapshot := agentConfigSnapshot(ag.ID.String(), cfg)
+	currentMemorySlots, err := s.loadAgentMemorySlotsForDraft(ctx, ag.ID)
+	if err != nil {
+		return nil, fmt.Errorf("load agent memory slots for publish: %w", err)
+	}
 	snapshotMemorySlots := []dto.AgentMemorySlotConfig{}
 	if enabled, _ := snapshot["agent_memory_enabled"].(bool); enabled {
-		snapshotMemorySlots = s.enabledAgentMemorySlotsForSnapshot(ctx, ag.ID)
+		snapshotMemorySlots = enabledAgentMemorySlots(currentMemorySlots)
 	}
 	snapshot["agent_memory_slots"] = snapshotMemorySlots
-	currentMemorySlots := s.agentMemorySlotsForDraft(ctx, ag.ID)
 	now := time.Now()
 	versionUUID := uuid.New()
 	version := &AgentPublishedVersion{
@@ -91,13 +95,8 @@ func (s *agentsService) PublishAgent(ctx context.Context, agentID, accountID str
 	if uid, err := uuid.Parse(accountID); err == nil {
 		version.CreatedBy = &uid
 	}
-	if err := s.agentsRepo.CreateAgentPublishedVersion(ctx, version); err != nil {
+	if err := s.createAgentPublishedVersion(ctx, version, ag.ID, currentMemorySlots); err != nil {
 		return nil, err
-	}
-	if s.agentMemoryService != nil {
-		if err := s.agentMemoryService.ClearValuesNotInKeys(ctx, ag.ID, agentMemoryKeys(currentMemorySlots)); err != nil {
-			return nil, err
-		}
 	}
 	return &dto.PublishAgentResponse{
 		AgentID:     ag.ID.String(),
@@ -106,6 +105,28 @@ func (s *agentsService) PublishAgent(ctx context.Context, agentID, accountID str
 		WebAppID:    ag.WebAppID.String(),
 		PublishedAt: now.Unix(),
 	}, nil
+}
+
+func (s *agentsService) createAgentPublishedVersion(ctx context.Context, version *AgentPublishedVersion, agentID uuid.UUID, currentMemorySlots []dto.AgentMemorySlotConfig) error {
+	if version == nil {
+		return fmt.Errorf("agent published version is required")
+	}
+	if s.db == nil {
+		return fmt.Errorf("database is required")
+	}
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(version).Error; err != nil {
+			return fmt.Errorf("failed to create agent published version: %w", err)
+		}
+		if s.agentMemoryService == nil {
+			return nil
+		}
+		memoryService := agentmemory.NewService(tx)
+		if err := memoryService.ClearValuesNotInKeys(ctx, agentID, agentMemoryKeys(currentMemorySlots)); err != nil {
+			return fmt.Errorf("clear removed agent memory values: %w", err)
+		}
+		return nil
+	})
 }
 
 func (s *agentsService) ListAgentPublishedVersions(ctx context.Context, agentID, accountID string, page, limit int) (*dto.AgentPublishedVersionsResponse, error) {
@@ -571,18 +592,25 @@ func agentConfigResponseFromSnapshot(agentID string, snapshot map[string]interfa
 }
 
 func (s *agentsService) agentMemorySlotsForDraft(ctx context.Context, agentID uuid.UUID) []dto.AgentMemorySlotConfig {
-	if s.agentMemoryService == nil || agentID == uuid.Nil {
-		return []dto.AgentMemorySlotConfig{}
-	}
-	slots, err := s.agentMemoryService.ListSlots(ctx, agentID)
+	slots, err := s.loadAgentMemorySlotsForDraft(ctx, agentID)
 	if err != nil {
 		return []dto.AgentMemorySlotConfig{}
 	}
-	return agentMemorySlotConfigsFromResponses(slots)
+	return slots
 }
 
-func (s *agentsService) enabledAgentMemorySlotsForSnapshot(ctx context.Context, agentID uuid.UUID) []dto.AgentMemorySlotConfig {
-	slots := s.agentMemorySlotsForDraft(ctx, agentID)
+func (s *agentsService) loadAgentMemorySlotsForDraft(ctx context.Context, agentID uuid.UUID) ([]dto.AgentMemorySlotConfig, error) {
+	if s.agentMemoryService == nil || agentID == uuid.Nil {
+		return []dto.AgentMemorySlotConfig{}, nil
+	}
+	slots, err := s.agentMemoryService.ListSlots(ctx, agentID)
+	if err != nil {
+		return nil, fmt.Errorf("list agent memory slots: %w", err)
+	}
+	return agentMemorySlotConfigsFromResponses(slots), nil
+}
+
+func enabledAgentMemorySlots(slots []dto.AgentMemorySlotConfig) []dto.AgentMemorySlotConfig {
 	out := make([]dto.AgentMemorySlotConfig, 0, len(slots))
 	for _, slot := range slots {
 		if slot.Enabled {
