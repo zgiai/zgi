@@ -280,6 +280,13 @@ func GetString(key, defaultValue string) string {
 	return defaultValue
 }
 
+func ExpandEnv(value string) string {
+	return os.Expand(value, func(key string) string {
+		resolved, _ := Lookup(key)
+		return resolved
+	})
+}
+
 func GetBool(key string, defaultValue bool) bool {
 	value, ok := Lookup(key)
 	if !ok {

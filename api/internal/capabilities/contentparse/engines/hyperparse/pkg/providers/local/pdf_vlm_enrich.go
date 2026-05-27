@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	localocr "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/ocr"
 	pdforchestrator "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/orchestrators/pdf"
 	extractcommon "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/envconfig"
 )
 
 const envLocalVLMFallback = "LOCAL_VLM_FALLBACK"
@@ -316,7 +316,7 @@ func localVLMOCRBBoxAnchors(ctx context.Context, filename string, pageDataURLs [
 }
 
 func localVLMOCRBBoxAnchorsEnabled() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv(envLocalVLMOCRBBoxAnchors))) {
+	switch strings.ToLower(envconfig.String(envLocalVLMOCRBBoxAnchors)) {
 	case "0", "false", "no", "off", "disabled":
 		return false
 	default:
@@ -326,7 +326,7 @@ func localVLMOCRBBoxAnchorsEnabled() bool {
 
 func localVLMFallbackTimeout() time.Duration {
 	for _, key := range []string{envLocalVLMFallbackTimeoutSeconds, "CONTENT_PARSE_VLM_FALLBACK_TIMEOUT_SECONDS", "DOCSTILL_VLM_FALLBACK_TIMEOUT_SECONDS"} {
-		raw := strings.TrimSpace(os.Getenv(key))
+		raw := envconfig.String(key)
 		if raw == "" {
 			continue
 		}
@@ -1145,7 +1145,7 @@ func localVLMFallbackSettingForOptions(force bool) string {
 	if force {
 		return "force"
 	}
-	raw := strings.ToLower(strings.TrimSpace(os.Getenv(envLocalVLMFallback)))
+	raw := strings.ToLower(envconfig.String(envLocalVLMFallback))
 	switch raw {
 	case "0", "false", "no", "off", "disabled":
 		return "disabled"
@@ -1164,7 +1164,7 @@ func localVLMSidebarRecoverySettingForOptions(force bool) string {
 	if force {
 		return "force"
 	}
-	raw := strings.ToLower(strings.TrimSpace(os.Getenv(envLocalVLMSidebarRecovery)))
+	raw := strings.ToLower(envconfig.String(envLocalVLMSidebarRecovery))
 	switch raw {
 	case "0", "false", "no", "off", "disabled":
 		return "disabled"
@@ -1176,7 +1176,7 @@ func localVLMSidebarRecoverySettingForOptions(force bool) string {
 }
 
 func localVLMFallbackMaxPages() int {
-	raw := strings.TrimSpace(os.Getenv(envLocalVLMFallbackMaxPages))
+	raw := envconfig.String(envLocalVLMFallbackMaxPages)
 	if raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil || n < 0 {
@@ -1191,7 +1191,7 @@ func localVLMFallbackMaxPages() int {
 }
 
 func localVLMSidebarRecoveryMaxPages() int {
-	raw := strings.TrimSpace(os.Getenv(envLocalVLMSidebarRecoveryMaxPages))
+	raw := envconfig.String(envLocalVLMSidebarRecoveryMaxPages)
 	if raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil || n < 0 {
@@ -1556,7 +1556,7 @@ func localVLMFallbackVisualType(typ string) bool {
 }
 
 func localVLMFallbackMinRunesPerPage() int {
-	raw := strings.TrimSpace(os.Getenv("LOCAL_VLM_FALLBACK_MIN_RUNES_PER_PAGE"))
+	raw := envconfig.String("LOCAL_VLM_FALLBACK_MIN_RUNES_PER_PAGE")
 	if raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err == nil && n >= 0 {
@@ -1567,7 +1567,7 @@ func localVLMFallbackMinRunesPerPage() int {
 }
 
 func localSidebarOCREnabled() bool {
-	raw := strings.ToLower(strings.TrimSpace(os.Getenv("LOCAL_SIDEBAR_OCR")))
+	raw := strings.ToLower(envconfig.String("LOCAL_SIDEBAR_OCR"))
 	switch raw {
 	case "0", "false", "no", "off", "disabled":
 		return false

@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -18,8 +17,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/envconfig"
+
 	pdfapi "github.com/pdfcpu/pdfcpu/pkg/api"
 	pdfmodel "github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+
 	extractcommon "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
 )
 
@@ -138,7 +140,7 @@ func fallbackModel() string {
 
 func firstEnv(keys ...string) string {
 	for _, key := range keys {
-		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		if v := envconfig.String(key); v != "" {
 			return v
 		}
 	}
@@ -155,7 +157,7 @@ func firstNonEmptyString(values ...string) string {
 }
 
 func timeout() time.Duration {
-	if v := strings.TrimSpace(os.Getenv("GEMINI_TIMEOUT_SECONDS")); v != "" {
+	if v := envconfig.String("GEMINI_TIMEOUT_SECONDS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			return time.Duration(n) * time.Second
 		}
@@ -164,7 +166,7 @@ func timeout() time.Duration {
 }
 
 func maxTokens() int {
-	if v := strings.TrimSpace(os.Getenv("GEMINI_MAX_TOKENS")); v != "" {
+	if v := envconfig.String("GEMINI_MAX_TOKENS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			return n
 		}
@@ -173,7 +175,7 @@ func maxTokens() int {
 }
 
 func pageBatch() int {
-	if v := strings.TrimSpace(os.Getenv("GEMINI_PAGE_BATCH")); v != "" {
+	if v := envconfig.String("GEMINI_PAGE_BATCH"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			return n
 		}
@@ -182,7 +184,7 @@ func pageBatch() int {
 }
 
 func maxConcurrency() int {
-	if v := strings.TrimSpace(os.Getenv("GEMINI_MAX_CONCURRENCY")); v != "" {
+	if v := envconfig.String("GEMINI_MAX_CONCURRENCY"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			return n
 		}

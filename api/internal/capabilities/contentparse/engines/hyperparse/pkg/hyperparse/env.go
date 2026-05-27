@@ -4,6 +4,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/envconfig"
 )
 
 // ApplyEnviron writes non-empty Config fields into process environment variables.
@@ -15,13 +17,13 @@ func (c *Config) ApplyEnviron() {
 		if val == "" {
 			return
 		}
-		if os.Getenv(key) != "" {
+		if envconfig.String(key) != "" {
 			return
 		}
 		_ = os.Setenv(key, val)
 	}
 	setIfInt := func(key string, n int) {
-		if os.Getenv(key) != "" {
+		if envconfig.String(key) != "" {
 			return
 		}
 		_ = os.Setenv(key, strconv.Itoa(n))

@@ -8,12 +8,12 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
-	"os"
 	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/core/chunking"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/envconfig"
 )
 
 type dptBuilt struct {
@@ -342,9 +342,9 @@ var htmlTagStripRE = regexp.MustCompile(`<[^>]+>`)
 
 // extraSectionRE reads an optional Go regexp for additional section starts.
 func extraSectionRE() *regexp.Regexp {
-	pat := strings.TrimSpace(os.Getenv("CONTENT_PARSE_DPT_SECTION_LINE_RE"))
+	pat := envconfig.String("CONTENT_PARSE_DPT_SECTION_LINE_RE")
 	if pat == "" {
-		pat = strings.TrimSpace(os.Getenv("DOCSTILL_DPT_SECTION_LINE_RE"))
+		pat = envconfig.String("DOCSTILL_DPT_SECTION_LINE_RE")
 	}
 	if pat == "" {
 		return nil

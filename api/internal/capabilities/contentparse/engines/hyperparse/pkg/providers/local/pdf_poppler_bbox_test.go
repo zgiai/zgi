@@ -2,6 +2,7 @@ package local
 
 import (
 	"context"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -36,6 +37,10 @@ func TestPreparePopplerPageNormalizesTextAndImageBoxes(t *testing.T) {
 }
 
 func TestApplyPopplerBBoxRefinementSkipsLargeDocumentsByDefault(t *testing.T) {
+	if _, err := exec.LookPath("pdftohtml"); err != nil {
+		t.Skip("pdftohtml is required to reach the large-document skip branch")
+	}
+
 	t.Setenv("LOCAL_POPPLER_BBOX_MAX_PAGES", "2")
 	t.Setenv("LOCAL_POPPLER_BBOX_LONG_DOC", "")
 

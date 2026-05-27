@@ -10,13 +10,13 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	extractcommon "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/envconfig"
 )
 
 const (
@@ -52,9 +52,9 @@ func (c *Client) ParsePDFBytes(ctx context.Context, filename string, data []byte
 
 func Configured() bool {
 	if mineruMode() == "official" {
-		return strings.TrimSpace(os.Getenv("MINERU_OFFICIAL_TOKEN")) != ""
+		return envconfig.String("MINERU_OFFICIAL_TOKEN") != ""
 	}
-	return strings.TrimSpace(os.Getenv("MINERU_API_URL")) != ""
+	return envconfig.String("MINERU_API_URL") != ""
 }
 
 func Mode() string {
@@ -65,7 +65,7 @@ func ConfiguredBaseURL() string {
 	if mineruMode() == "official" {
 		return officialBaseURL()
 	}
-	return strings.TrimSpace(os.Getenv("MINERU_API_URL"))
+	return envconfig.String("MINERU_API_URL")
 }
 
 func APIKeyEnv() string {
@@ -85,7 +85,7 @@ func TimeoutSeconds() int {
 }
 
 func mineruMode() string {
-	mode := strings.ToLower(strings.TrimSpace(os.Getenv("MINERU_MODE")))
+	mode := strings.ToLower(envconfig.String("MINERU_MODE"))
 	if mode == "" {
 		return "sidecar"
 	}
@@ -93,7 +93,7 @@ func mineruMode() string {
 }
 
 func baseURL() string {
-	if v := strings.TrimSpace(os.Getenv("MINERU_API_URL")); v != "" {
+	if v := envconfig.String("MINERU_API_URL"); v != "" {
 		return strings.TrimRight(v, "/")
 	}
 	return defaultBaseURL
@@ -107,7 +107,7 @@ func timeout() time.Duration {
 }
 
 func officialBaseURL() string {
-	if v := strings.TrimSpace(os.Getenv("MINERU_OFFICIAL_BASE_URL")); v != "" {
+	if v := envconfig.String("MINERU_OFFICIAL_BASE_URL"); v != "" {
 		return strings.TrimRight(v, "/")
 	}
 	return defaultOfficialBaseURL
@@ -128,7 +128,7 @@ func officialPollInterval() time.Duration {
 }
 
 func secondsFromEnv(key string) int {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+	if v := envconfig.String(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			return n
 		}
@@ -333,7 +333,7 @@ type officialZipArtifacts struct {
 }
 
 func callOfficialMineruParse(ctx context.Context, filename string, data []byte) (*parseResponse, error) {
-	token := strings.TrimSpace(os.Getenv("MINERU_OFFICIAL_TOKEN"))
+	token := envconfig.String("MINERU_OFFICIAL_TOKEN")
 	if token == "" {
 		return nil, fmt.Errorf("mineru official: MINERU_OFFICIAL_TOKEN is required")
 	}
@@ -623,7 +623,7 @@ func officialModelVersion(filename string) string {
 	if strings.EqualFold(filepath.Ext(filename), ".html") || strings.EqualFold(filepath.Ext(filename), ".htm") {
 		return "MinerU-HTML"
 	}
-	if v := strings.TrimSpace(os.Getenv("MINERU_OFFICIAL_MODEL_VERSION")); v != "" {
+	if v := envconfig.String("MINERU_OFFICIAL_MODEL_VERSION"); v != "" {
 		return v
 	}
 	return "vlm"

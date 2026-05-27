@@ -8,11 +8,11 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/envconfig"
 	"github.com/zgiai/zgi/api/internal/contracts"
 )
 
@@ -26,7 +26,7 @@ type Adapter struct {
 
 func NewAdapter() *Adapter {
 	return &Adapter{
-		baseURL: strings.TrimRight(strings.TrimSpace(os.Getenv("CONTENT_PARSE_HYPERPARSE_API_BASE_URL")), "/"),
+		baseURL: strings.TrimRight(envconfig.String("CONTENT_PARSE_HYPERPARSE_API_BASE_URL"), "/"),
 		apiKey:  firstNonEmptyEnv("CONTENT_PARSE_HYPERPARSE_API_KEY", "HYPERPARSE_API_KEY"),
 		timeout: timeoutFromEnv("CONTENT_PARSE_HYPERPARSE_API_TIMEOUT_SECONDS", 180*time.Second),
 	}
@@ -300,7 +300,7 @@ func readConfidence(metadata map[string]any) *float64 {
 }
 
 func timeoutFromEnv(key string, fallback time.Duration) time.Duration {
-	raw := strings.TrimSpace(os.Getenv(key))
+	raw := envconfig.String(key)
 	if raw == "" {
 		return fallback
 	}
@@ -313,7 +313,7 @@ func timeoutFromEnv(key string, fallback time.Duration) time.Duration {
 
 func firstNonEmptyEnv(keys ...string) string {
 	for _, key := range keys {
-		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+		if value := envconfig.String(key); value != "" {
 			return value
 		}
 	}

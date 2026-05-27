@@ -1,11 +1,10 @@
 package contentparse
 
 import (
-	"os"
 	"strconv"
-	"strings"
 
 	extractmineru "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/mineru"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/envconfig"
 	"github.com/zgiai/zgi/api/internal/contracts"
 )
 
@@ -45,11 +44,11 @@ func DefaultProviderCatalog() *contracts.ParseProviderCatalog {
 				Name:        "reducto",
 				DisplayName: "Reducto",
 				Type:        contracts.ParseProviderTypeBuiltin,
-				Enabled:     strings.TrimSpace(os.Getenv("REDUCTO_API_KEY")) != "",
+				Enabled:     envconfig.String("REDUCTO_API_KEY") != "",
 				Priority:    100,
 				Adapter:     "hyperparse_sdk",
 				Engine:      contracts.ParseEngineReducto,
-				BaseURL:     strings.TrimSpace(os.Getenv("REDUCTO_BASE_URL")),
+				BaseURL:     envconfig.String("REDUCTO_BASE_URL"),
 				APIKeyEnv:   "REDUCTO_API_KEY",
 				TimeoutSec:  intFromEnv("REDUCTO_TIMEOUT_SECONDS"),
 				Metadata: map[string]any{
@@ -61,10 +60,10 @@ func DefaultProviderCatalog() *contracts.ParseProviderCatalog {
 				Name:        "hyperparse_api",
 				DisplayName: "Hyperparse API",
 				Type:        contracts.ParseProviderTypeRemote,
-				Enabled:     strings.TrimSpace(os.Getenv("CONTENT_PARSE_HYPERPARSE_API_BASE_URL")) != "",
+				Enabled:     envconfig.String("CONTENT_PARSE_HYPERPARSE_API_BASE_URL") != "",
 				Priority:    300,
 				Adapter:     "hyperparse_api",
-				BaseURL:     strings.TrimSpace(os.Getenv("CONTENT_PARSE_HYPERPARSE_API_BASE_URL")),
+				BaseURL:     envconfig.String("CONTENT_PARSE_HYPERPARSE_API_BASE_URL"),
 				APIKeyEnv:   firstNonEmptyEnvName("CONTENT_PARSE_HYPERPARSE_API_KEY", "HYPERPARSE_API_KEY"),
 				TimeoutSec:  intFromEnv("CONTENT_PARSE_HYPERPARSE_API_TIMEOUT_SECONDS"),
 				Metadata: map[string]any{
@@ -95,7 +94,7 @@ func SystemVLMProviderConfig(enabled bool) contracts.ParseProviderConfig {
 }
 
 func intFromEnv(key string) int {
-	raw := strings.TrimSpace(os.Getenv(key))
+	raw := envconfig.String(key)
 	if raw == "" {
 		return 0
 	}
@@ -108,7 +107,7 @@ func intFromEnv(key string) int {
 
 func firstNonEmptyEnv(keys ...string) string {
 	for _, key := range keys {
-		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+		if value := envconfig.String(key); value != "" {
 			return value
 		}
 	}
@@ -117,7 +116,7 @@ func firstNonEmptyEnv(keys ...string) string {
 
 func firstNonEmptyEnvName(keys ...string) string {
 	for _, key := range keys {
-		if strings.TrimSpace(os.Getenv(key)) != "" {
+		if envconfig.String(key) != "" {
 			return key
 		}
 	}

@@ -13,6 +13,7 @@ import (
 	pdfadapter "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/adapters/pdf"
 	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/core/chunking"
 	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/core/layoutdoc"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/envconfig"
 )
 
 // full_document progress logging is enabled by CONTENT_PARSE_FULLDOC_LOG=1
@@ -62,12 +63,12 @@ func envTruthy(s string) bool {
 
 func contentParseEnv(key string) string {
 	if strings.HasPrefix(key, "CONTENT_PARSE_") {
-		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		if v := envconfig.String(key); v != "" {
 			return v
 		}
-		return strings.TrimSpace(os.Getenv("DOCSTILL_" + strings.TrimPrefix(key, "CONTENT_PARSE_")))
+		return envconfig.String("DOCSTILL_" + strings.TrimPrefix(key, "CONTENT_PARSE_"))
 	}
-	return strings.TrimSpace(os.Getenv(key))
+	return envconfig.String(key)
 }
 
 // maxFullDocumentCombinedTextBytes caps text_summary.combined_text so large

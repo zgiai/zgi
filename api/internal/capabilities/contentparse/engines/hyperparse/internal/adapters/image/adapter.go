@@ -17,6 +17,7 @@ import (
 
 	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/core/model"
 	localocr "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/ocr"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/envconfig"
 )
 
 type Adapter struct{}
@@ -281,7 +282,7 @@ func cleanupOCRCandidates(candidates []ocrCandidate) {
 
 func hasExplicitOCRLang() bool {
 	for _, key := range []string{"CONTENT_PARSE_OCR_LANG", "CONTENT_PARSE_LOCAL_OCR_LANG", "DOCSTILL_OCR_LANG", "DOCSTILL_LOCAL_OCR_LANG", "LOCAL_OCR_LANG"} {
-		if strings.TrimSpace(os.Getenv(key)) != "" {
+		if envconfig.String(key) != "" {
 			return true
 		}
 	}
@@ -290,7 +291,7 @@ func hasExplicitOCRLang() bool {
 
 func hasExplicitTesseractPSM() bool {
 	for _, key := range []string{"CONTENT_PARSE_TESSERACT_PSM", "CONTENT_PARSE_OCR_TESSERACT_PSM", "DOCSTILL_TESSERACT_PSM", "DOCSTILL_OCR_TESSERACT_PSM"} {
-		if strings.TrimSpace(os.Getenv(key)) != "" {
+		if envconfig.String(key) != "" {
 			return true
 		}
 	}

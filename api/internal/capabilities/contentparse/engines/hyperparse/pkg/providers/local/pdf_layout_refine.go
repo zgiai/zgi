@@ -3,11 +3,12 @@ package local
 import (
 	"fmt"
 	"math"
-	"os"
 	"regexp"
 	"sort"
 	"strings"
 	"unicode"
+
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/envconfig"
 )
 
 var layoutKVLabelRE = regexp.MustCompile(`^\s*([^:：]{1,36})\s*[:：]\s*(.*)$`)
@@ -107,7 +108,7 @@ func refineNativeFullDocumentLayout(fullDoc map[string]any, inspect map[string]a
 }
 
 func nativeLayoutRefinementEnabled() bool {
-	raw := strings.TrimSpace(os.Getenv("LOCAL_LAYOUT_REFINEMENT"))
+	raw := envconfig.String("LOCAL_LAYOUT_REFINEMENT")
 	if raw == "" {
 		return true
 	}
