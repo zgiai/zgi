@@ -78,11 +78,12 @@ export function useUpdateAIChatSkillConfig() {
     mutationFn: ({ payload }: UpdateAIChatSkillConfigVariables) =>
       aichatService.updateSkillConfig(payload),
     onSuccess: async (response, variables) => {
-      if (response.data) {
-        queryClient.setQueryData(AICHAT_KEYS.skillConfig(), response.data);
-      }
       if (variables.silent) {
         return;
+      }
+
+      if (response.data) {
+        queryClient.setQueryData(AICHAT_KEYS.skillConfig(), response.data);
       }
 
       await Promise.all([

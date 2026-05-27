@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { AlertCircle, CheckCircle2, Loader2, Trash2, Upload, Wrench } from 'lucide-react';
 import { toast } from 'sonner';
@@ -82,12 +82,6 @@ const AUTO_SAVE_LABEL_KEYS = {
   error: 'organization.aichatSkills.autoSave.error',
 } as const satisfies Record<SaveStatus, DashboardSuffix>;
 
-function sameSkillIds(left: string[], right: string[]): boolean {
-  if (left.length !== right.length) return false;
-  const leftSet = new Set(left);
-  return right.every(skillId => leftSet.has(skillId));
-}
-
 function normalizeSkillIds(ids: string[]): string[] {
   return Array.from(new Set(ids.map(id => id.trim().toLowerCase()).filter(Boolean))).sort((a, b) =>
     a.localeCompare(b)
@@ -103,6 +97,10 @@ function getInitialEnabledSkillIds(
     ? configIds.filter(skillId => manageableIds.has(skillId.trim().toLowerCase()))
     : skills.filter(skill => skill.enabled).map(skill => skill.skill_id);
   return normalizeSkillIds(ids);
+}
+
+function getSkillIdsKey(ids: string[]): string {
+  return normalizeSkillIds(ids).join('\u0000');
 }
 
 function getSkillSource(skill: AIChatSkillMetadata): AIChatSkillSource {
@@ -342,6 +340,94 @@ function AutoSaveStatusIndicator({ status }: AutoSaveStatusIndicatorProps) {
       {t(AUTO_SAVE_LABEL_KEYS[status])}
     </span>
   );
+}
+
+interface UseAIChatSkillConfigAutosaveOptions {
+  initialEnabledSkillIds: string[];
+  isLoading: boolean;
+  save: (enabledSkillIds: string[]) => Promise<string[]>;
+  onError: (error: unknown) => void;
+}
+
+function useAIChatSkillConfigAutosave({
+  initialEnabledSkillIds,
+  isLoading,
+  save,
+  onError,
+}: UseAIChatSkillConfigAutosaveOptions) {
+  const [enabledSkillIds, setEnabledSkillIds] = useState<string[]>([]);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
+  const confirmedSkillIdsRef = useRef<string[]>([]);
+  const hasHydratedRef = useRef(false);
+  const saveRef = useRef(save);
+  const onErrorRef = useRef(onError);
+  const draftKey = useMemo(() => getSkillIdsKey(enabledSkillIds), [enabledSkillIds]);
+  const confirmedKey = getSkillIdsKey(confirmedSkillIdsRef.current);
+  const latestDraftKeyRef = useRef(draftKey);
+
+  latestDraftKeyRef.current = draftKey;
+
+  useEffect(() => {
+    saveRef.current = save;
+  }, [save]);
+
+  useEffect(() => {
+    onErrorRef.current = onError;
+  }, [onError]);
+
+  useEffect(() => {
+    const normalizedInitialSkillIds = normalizeSkillIds(initialEnabledSkillIds);
+    const initialKey = getSkillIdsKey(normalizedInitialSkillIds);
+    const currentConfirmedKey = getSkillIdsKey(confirmedSkillIdsRef.current);
+
+    if (hasHydratedRef.current && initialKey === currentConfirmedKey) return;
+
+    hasHydratedRef.current = true;
+    confirmedSkillIdsRef.current = normalizedInitialSkillIds;
+    setEnabledSkillIds(normalizedInitialSkillIds);
+    setSaveStatus('idle');
+  }, [initialEnabledSkillIds]);
+
+  useEffect(() => {
+    if (isLoading || draftKey === confirmedKey) return;
+
+    setSaveStatus('saving');
+
+    const timeout = window.setTimeout(async () => {
+      const requestedSkillIds = normalizeSkillIds(enabledSkillIds);
+      const requestedKey = getSkillIdsKey(requestedSkillIds);
+
+      try {
+        const savedSkillIds = normalizeSkillIds(await saveRef.current(requestedSkillIds));
+        const savedKey = getSkillIdsKey(savedSkillIds);
+
+        if (latestDraftKeyRef.current !== requestedKey) return;
+
+        confirmedSkillIdsRef.current = savedSkillIds;
+        setEnabledSkillIds(current =>
+          getSkillIdsKey(current) === requestedKey ? savedSkillIds : current
+        );
+        setSaveStatus(savedKey === requestedKey ? 'saved' : 'idle');
+      } catch (error) {
+        if (latestDraftKeyRef.current !== requestedKey) return;
+
+        setEnabledSkillIds(confirmedSkillIdsRef.current);
+        setSaveStatus('error');
+        onErrorRef.current(error);
+      }
+    }, AUTO_SAVE_DELAY_MS);
+
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [confirmedKey, draftKey, enabledSkillIds, isLoading]);
+
+  return {
+    enabledSkillIds,
+    setEnabledSkillIds,
+    saveStatus,
+    resetToServerValue: () => setEnabledSkillIds(confirmedSkillIdsRef.current),
+  };
 }
 
 interface SkillFilterToolbarProps {
@@ -588,13 +674,11 @@ export function AIChatSkillSettingsSection() {
   const { data: skills = [], isLoading: isLoadingSkills, isError } = useAIChatSkills();
   const { data: config, isLoading: isLoadingConfig } = useAIChatSkillConfig();
   const updateConfig = useUpdateAIChatSkillConfig();
+  const updateSkillConfig = updateConfig.mutateAsync;
   const previewImportSkill = usePreviewImportAIChatSkill();
   const confirmImportSkill = useConfirmImportAIChatSkill();
   const cancelImportPreview = useCancelImportAIChatSkillPreview();
   const deleteSkill = useDeleteAIChatSkill();
-  const [enabledSkillIds, setEnabledSkillIds] = useState<string[]>([]);
-  const [persistedSkillIds, setPersistedSkillIds] = useState<string[]>([]);
-  const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [searchQuery, setSearchQuery] = useState('');
   const [runtimeFilter, setRuntimeFilter] = useState<RuntimeFilter>('all');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
@@ -603,8 +687,6 @@ export function AIChatSkillSettingsSection() {
   const [importPreview, setImportPreview] = useState<AIChatImportSkillPreview | null>(null);
   const [isImportPreviewOpen, setIsImportPreviewOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const saveSequenceRef = useRef(0);
-  const updateConfigRef = useRef(updateConfig.mutateAsync);
   const importConfirmedRef = useRef(false);
   const manageableSkills = useMemo(
     () => skills.filter(skill => !isHiddenSystemSkill(skill.skill_id)),
@@ -628,6 +710,36 @@ export function AIChatSkillSettingsSection() {
   const isLoading = isLoadingSkills || isLoadingConfig;
   const isImporting = previewImportSkill.isPending || confirmImportSkill.isPending;
   const isMutating = updateConfig.isPending || isImporting || deleteSkill.isPending;
+  const saveSkillConfig = useCallback(
+    async (requestedSkillIds: string[]) => {
+      const response = await updateSkillConfig({
+        payload: {
+          enabled_skill_ids: requestedSkillIds,
+        },
+        silent: true,
+      });
+      const savedSkillIds = normalizeSkillIds(response.data?.enabled_skill_ids ?? requestedSkillIds);
+      queryClient.setQueryData(AICHAT_KEYS.skillConfig(), { enabled_skill_ids: savedSkillIds });
+      return savedSkillIds;
+    },
+    [queryClient, updateSkillConfig]
+  );
+  const handleAutosaveError = useCallback(
+    (error: unknown) => {
+      toast.error(
+        error instanceof Error ? error.message : t('organization.aichatSkills.messages.saveFailed')
+      );
+    },
+    [t]
+  );
+  const { enabledSkillIds, setEnabledSkillIds, saveStatus } = useAIChatSkillConfigAutosave(
+    {
+      initialEnabledSkillIds,
+      isLoading,
+      save: saveSkillConfig,
+      onError: handleAutosaveError,
+    }
+  );
   const enabledCount = enabledSkillIds.length;
   const systemSkills = useMemo(
     () => manageableSkills.filter(skill => getSkillSource(skill) === 'system'),
@@ -663,65 +775,6 @@ export function AIChatSkillSettingsSection() {
       ),
     [customSkills, enabledSkillIds, runtimeFilter, searchQuery, skillDisplays, statusFilter]
   );
-
-  useEffect(() => {
-    setEnabledSkillIds(initialEnabledSkillIds);
-    setPersistedSkillIds(initialEnabledSkillIds);
-    setSaveStatus('idle');
-    saveSequenceRef.current += 1;
-  }, [initialEnabledSkillIds]);
-
-  useEffect(() => {
-    updateConfigRef.current = updateConfig.mutateAsync;
-  }, [updateConfig.mutateAsync]);
-
-  useEffect(() => {
-    if (isLoading) return;
-    if (sameSkillIds(enabledSkillIds, persistedSkillIds)) return;
-
-    const sequence = saveSequenceRef.current + 1;
-    saveSequenceRef.current = sequence;
-    setSaveStatus('saving');
-
-    const timeout = window.setTimeout(async () => {
-      const requestedSkillIds = normalizeSkillIds(enabledSkillIds);
-
-      try {
-        const response = await updateConfigRef.current({
-          payload: {
-            enabled_skill_ids: requestedSkillIds,
-          },
-          silent: true,
-        });
-
-        if (sequence !== saveSequenceRef.current) return;
-
-        const savedSkillIds = normalizeSkillIds(
-          response.data?.enabled_skill_ids ?? requestedSkillIds
-        );
-        queryClient.setQueryData(AICHAT_KEYS.skillConfig(), { enabled_skill_ids: savedSkillIds });
-        setPersistedSkillIds(savedSkillIds);
-        setEnabledSkillIds(current =>
-          sameSkillIds(current, requestedSkillIds) ? savedSkillIds : current
-        );
-        setSaveStatus('saved');
-      } catch (error) {
-        if (sequence !== saveSequenceRef.current) return;
-
-        setEnabledSkillIds(persistedSkillIds);
-        setSaveStatus('error');
-        toast.error(
-          error instanceof Error
-            ? error.message
-            : t('organization.aichatSkills.messages.saveFailed')
-        );
-      }
-    }, AUTO_SAVE_DELAY_MS);
-
-    return () => {
-      window.clearTimeout(timeout);
-    };
-  }, [enabledSkillIds, isLoading, persistedSkillIds, queryClient, t]);
 
   const handleToggle = (skillId: string, enabled: boolean) => {
     setEnabledSkillIds(current => {
