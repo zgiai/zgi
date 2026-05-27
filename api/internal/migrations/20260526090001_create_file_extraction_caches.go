@@ -15,7 +15,7 @@ func init() {
 func upCreateFileExtractionCaches(schema *mschema.Builder) error {
 	return schema.Create("file_extraction_caches", func(table *mschema.Blueprint) {
 		table.ID()
-		table.String("file_id").NotNull()
+		table.UUID("file_id").NotNull()
 		table.String("cache_key").NotNull()
 		table.Text("content").NotNull()
 		table.String("source").NotNull()
