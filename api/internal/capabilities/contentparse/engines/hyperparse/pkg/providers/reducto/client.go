@@ -10,13 +10,13 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	extractcommon "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/envconfig"
 )
 
 const (
@@ -29,7 +29,7 @@ type Client struct{}
 func New() *Client { return &Client{} }
 
 func Configured() bool {
-	return reductoEnabled() && strings.TrimSpace(os.Getenv("REDUCTO_API_KEY")) != ""
+	return reductoEnabled() && envconfig.String("REDUCTO_API_KEY") != ""
 }
 
 func (c *Client) ParseBytes(ctx context.Context, filename string, data []byte, opts extractcommon.ParseOptions) (*extractcommon.DocumentResult, error) {
@@ -63,7 +63,7 @@ func (c *Client) ParseInput(ctx context.Context, input string, opts extractcommo
 }
 
 func reductoEnabled() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("REDUCTO_ENABLED"))) {
+	switch strings.ToLower(envconfig.String("REDUCTO_ENABLED")) {
 	case "", "1", "true", "yes", "on", "enabled":
 		return true
 	case "0", "false", "no", "off", "disabled":
@@ -74,14 +74,14 @@ func reductoEnabled() bool {
 }
 
 func baseURL() string {
-	if v := strings.TrimSpace(os.Getenv("REDUCTO_BASE_URL")); v != "" {
+	if v := envconfig.String("REDUCTO_BASE_URL"); v != "" {
 		return strings.TrimRight(v, "/")
 	}
 	return defaultBaseURL
 }
 
 func timeout() time.Duration {
-	if v := strings.TrimSpace(os.Getenv("REDUCTO_TIMEOUT_SECONDS")); v != "" {
+	if v := envconfig.String("REDUCTO_TIMEOUT_SECONDS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			return time.Duration(n) * time.Second
 		}
@@ -109,7 +109,7 @@ func upload(ctx context.Context, filename string, data []byte) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("reducto: new upload request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(os.Getenv("REDUCTO_API_KEY")))
+	req.Header.Set("Authorization", "Bearer "+envconfig.String("REDUCTO_API_KEY"))
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 
 	resp, err := http.DefaultClient.Do(req)
@@ -210,7 +210,7 @@ func parse(ctx context.Context, input string) (*parseResponse, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reducto: new parse request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(os.Getenv("REDUCTO_API_KEY")))
+	req.Header.Set("Authorization", "Bearer "+envconfig.String("REDUCTO_API_KEY"))
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)

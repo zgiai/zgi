@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/binutil"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/envconfig"
 )
 
 const (
@@ -645,7 +646,7 @@ func paddleOCRLang(lang string) string {
 
 func firstEnv(keys ...string) string {
 	for _, key := range keys {
-		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		if v := envconfig.String(key); v != "" {
 			return v
 		}
 	}
@@ -662,7 +663,7 @@ func firstEnvInt(keys ...string) int {
 }
 
 func envInt(key string) int {
-	n, _ := strconv.Atoi(strings.TrimSpace(os.Getenv(key)))
+	n, _ := strconv.Atoi(envconfig.String(key))
 	return n
 }
 

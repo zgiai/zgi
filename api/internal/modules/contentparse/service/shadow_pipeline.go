@@ -2,11 +2,11 @@ package service
 
 import (
 	"context"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/envconfig"
 	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/routing"
 	"github.com/zgiai/zgi/api/internal/contracts"
 	"github.com/zgiai/zgi/api/internal/dto"
@@ -243,7 +243,7 @@ func ShadowPipelineOptionsFromEnv() ShadowPipelineOptions {
 }
 
 func readBoundedIntEnv(key string, fallback int, maxValue int) int {
-	raw := strings.TrimSpace(os.Getenv(key))
+	raw := envconfig.String(key)
 	if raw == "" {
 		return fallback
 	}
