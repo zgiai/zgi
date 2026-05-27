@@ -2,11 +2,11 @@ package migrations
 
 import mschema "github.com/zgiai/zgi/api/internal/migrations/schema"
 
-const migration20260526090000ID = "20260526090000_create_file_extraction_caches"
+const migration20260526090001ID = "20260526090001_create_file_extraction_caches"
 
 func init() {
 	registerSchemaMigration(
-		migration20260526090000ID,
+		migration20260526090001ID,
 		upCreateFileExtractionCaches,
 		downCreateFileExtractionCaches,
 	)
