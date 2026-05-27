@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "node scripts/generate-sensitive-word-filter.mjs && next dev",
     "dev:webpack": "node scripts/generate-sensitive-word-filter.mjs && next dev --webpack",
-    "build": "node scripts/generate-sensitive-word-filter.mjs && node scripts/check-i18n-route-modules.mjs && next build",
+    "build": "node scripts/build-with-resource-defaults.mjs",
     "start": "next start",
     "pm2:start": "node start-pm2.js",
     "pm2:stop": "pm2 stop zgi-web",
