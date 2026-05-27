@@ -332,6 +332,39 @@ func TestLegacyBridgePreflightExcludesBackfilledTablesOnly(t *testing.T) {
 	}
 }
 
+func TestLegacyBridgeBaselinePreflightRunsOnlyBeforeInitialMarker(t *testing.T) {
+	if !shouldValidatePublicBaselineBeforeBridge(map[string]struct{}{}) {
+		t.Fatal("expected first legacy bridge run to validate the public baseline shape")
+	}
+	if shouldValidatePublicBaselineBeforeBridge(map[string]struct{}{initialSchemaMigrationID: {}}) {
+		t.Fatal("expected resumed legacy bridge run to trust migration history after the initial marker")
+	}
+	if shouldValidatePublicBaselineBeforeBridge(map[string]struct{}{
+		initialSchemaMigrationID:                        {},
+		migrationCreateChatRuntimeAndAgentVersionsID:    {},
+		migration20260526090001ID:                       {},
+		"closed_source_private_history_before_baseline": {},
+	}) {
+		t.Fatal("expected partially applied public migration history to skip initial baseline table checks")
+	}
+}
+
+func TestLegacyBridgePostRunVerifiesPublicMigrationRecords(t *testing.T) {
+	applied := make(map[string]struct{}, len(currentMigrationIDs()))
+	for _, id := range currentMigrationIDs() {
+		applied[id] = struct{}{}
+	}
+	if missing := missingPublicMigrationIDs(applied); len(missing) != 0 {
+		t.Fatalf("expected complete public migration history, got missing %v", missing)
+	}
+
+	delete(applied, migration20260526090001ID)
+	missing := missingPublicMigrationIDs(applied)
+	if len(missing) != 1 || missing[0] != migration20260526090001ID {
+		t.Fatalf("expected missing file extraction cache migration, got %v", missing)
+	}
+}
+
 func TestLegacyBridgeDoesNotHardcodeClosedSourceMigrationIDs(t *testing.T) {
 	_, filename, _, ok := runtime.Caller(0)
 	if !ok {
