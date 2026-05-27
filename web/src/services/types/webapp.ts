@@ -80,16 +80,23 @@ export interface WebAppWorkflowMeta {
   icon?: string;
   icon_type?: 'image' | 'text' | string;
   icon_url?: string;
-  type?: 'WORKFLOW' | 'CONVERSATIONAL_WORKFLOW' | string;
+  type?: 'WORKFLOW' | 'CONVERSATIONAL_WORKFLOW' | 'AGENT' | string;
   title: string;
   /** Agent ID for stop functionality */
   agent_id?: string;
+  web_app_id?: string;
 }
 
 export interface WebAppWorkflowConfig {
   variables: WebAppVariable[];
   features: WebAppFeatures;
   config: WebAppWorkflowMeta;
+  agent_config?: {
+    file_upload_enabled?: boolean;
+    home_title?: string;
+    input_placeholder?: string;
+    suggested_questions?: string[];
+  };
 }
 
 export interface WebAppRunRequest {

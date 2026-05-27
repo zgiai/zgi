@@ -107,6 +107,14 @@ const messages: WebappMessages = {
     title: '该 WebApp 已下架',
     description: '当前应用暂不可访问。请联系应用管理员，或等待应用重新上架后再试。',
   },
+  notPublished: {
+    title: 'WebApp 尚未发布',
+    description: '请先发布这个智能体，再打开它的 WebApp。',
+  },
+  agentChat: {
+    fallbackTitle: '智能体',
+    defaultHomeTitle: 'title',
+  },
   billing: {
     precheckWarnings: {
       '207008': {
@@ -166,6 +174,16 @@ const messages: WebappMessages = {
     sendEdited: '发送修改后的消息',
     previousBranch: '上一个分支',
     nextBranch: '下一个分支',
+    skillPreferences: {
+      action: '我的 Skill',
+      title: '我的 AIChat Skill',
+      description: '选择当前组织已启用、并在你的 AIChat 中默认开启的 Skill。',
+      empty: '当前组织还没有启用可用于 AIChat 的 Skill。',
+      save: '保存',
+      cancel: '取消',
+      saved: 'AIChat Skill 偏好已保存',
+      saveFailed: 'AIChat Skill 偏好保存失败',
+    },
     skills: {
       trace: {
         unknownSkill: 'Skill',

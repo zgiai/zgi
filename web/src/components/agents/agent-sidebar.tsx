@@ -46,7 +46,10 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
 
   const toggleCollapse = () => setIsCollapsed(prev => !prev);
   const agentData = agent?.data;
-  const editHref = `/console/agents/${agentId}/workflow`;
+  const editHref =
+    agentData?.agent_type === 'AGENT'
+      ? `/console/agents/${agentId}/agent`
+      : `/console/agents/${agentId}/workflow`;
 
   const navItems: ResourceSidebarNavItem[] = React.useMemo(() => {
     const items: ResourceSidebarNavItem[] = [

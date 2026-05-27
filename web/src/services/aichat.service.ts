@@ -25,6 +25,8 @@ import type {
   AIChatSkillDetailResponse,
   AIChatSkillListResponse,
   AIChatSkillOrganizationConfig,
+  AIChatSkillPreference,
+  AIChatSkillPreferenceResponse,
   AIChatSseEnvelope,
   AIChatStopConversationResponseData,
   AIChatUpdateConversationRequest,
@@ -191,6 +193,17 @@ export const aichatService = {
 
   updateSkillConfig(payload: AIChatSkillOrganizationConfig) {
     return http.put<AIChatSkillConfigResponse>(`${AICHAT_BASE_PATH}/skills/config`, payload);
+  },
+
+  getSkillPreference() {
+    return http.get<AIChatSkillPreferenceResponse>(`${AICHAT_BASE_PATH}/skill-preferences/me`);
+  },
+
+  updateSkillPreference(payload: AIChatSkillPreference) {
+    return http.put<AIChatSkillPreferenceResponse>(
+      `${AICHAT_BASE_PATH}/skill-preferences/me`,
+      payload
+    );
   },
 
   previewImportSkill(file: File) {

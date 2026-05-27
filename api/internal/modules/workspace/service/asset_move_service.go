@@ -445,11 +445,6 @@ func (s *WorkspaceAssetMoveService) movePreviewItem(ctx context.Context, tx *gor
 			Updates(map[string]interface{}{"workspace_id": item.TargetWorkspaceID, "updated_by": accountID, "updated_at": now}).Error; err != nil {
 			return err
 		}
-		if err := tx.WithContext(ctx).Table("dataset_permissions").
-			Where("dataset_id = ?", item.ID).
-			Update("tenant_id", item.TargetWorkspaceID).Error; err != nil {
-			return err
-		}
 		if err := tx.WithContext(ctx).Exec("DELETE FROM dataset_folder_joins WHERE dataset_id = ?", item.ID).Error; err != nil {
 			return err
 		}

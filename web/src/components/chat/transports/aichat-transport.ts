@@ -91,17 +91,51 @@ export interface AIChatStreamCallbacks {
     eventId?: string | null
   ) => void;
   onMessageChunk: (payload: AIChatMessageChunkEventData, eventId?: string | null) => void;
-  onMessageRetract: (
-    payload: AIChatMessageRetractEventData,
-    eventId?: string | null
-  ) => void;
+  onMessageRetract: (payload: AIChatMessageRetractEventData, eventId?: string | null) => void;
   onMessageEnd: (payload: AIChatMessageEndEventData, eventId?: string | null) => void;
   onErrorEvent: (payload: AIChatErrorEventData, eventId?: string | null) => void;
   onRequestError: (error: Error) => void;
   onClose: () => void;
 }
 
-function dispatchAIChatStreamEvent(
+export interface AIChatRuntimeTransport {
+  listConversations(params: { page: number; limit: number }): Promise<AIChatConversationListResult>;
+  getConversation(conversationId: string): Promise<AIChatConversationDetail>;
+  listMessages(
+    conversationId: string,
+    params: { page: number; limit: number }
+  ): Promise<AIChatMessageListResult>;
+  refreshConversation(conversationId: string): Promise<AIChatConversation>;
+  updateConversation(
+    conversationId: string,
+    payload: {
+      title?: AIChatConversation['title'];
+      status?: AIChatConversation['status'];
+      current_leaf_message_id?: string;
+    }
+  ): Promise<AIChatConversation>;
+  removeConversation(conversationId: string): Promise<void>;
+  stopConversation(conversationId: string): Promise<AIChatStopConversationResponseData>;
+  streamChat(
+    payload: AIChatChatRequest,
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ): Promise<{ close: () => void }>;
+  regenerateMessage(
+    messageId: string,
+    payload: AIChatRegenerateMessageRequest,
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ): Promise<{ close: () => void }>;
+  recoverConversationStream(
+    conversationId: string,
+    params: { messageId: string; afterId?: string },
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ): Promise<{ close: () => void }>;
+}
+
+export function dispatchAIChatStreamEvent(
   event: string,
   data: unknown,
   eventId: string | null | undefined,
@@ -167,7 +201,7 @@ function dispatchAIChatStreamEvent(
   }
 }
 
-export class AIChatTransport {
+export class AIChatTransport implements AIChatRuntimeTransport {
   async listConversations(params: {
     page: number;
     limit: number;

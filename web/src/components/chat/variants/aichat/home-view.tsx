@@ -12,6 +12,9 @@ interface AIChatHomeViewProps {
   isVisible: boolean;
   suggestions: AIChatSuggestion[];
   onSelectSuggestion: (value: string) => void;
+  brand?: React.ReactNode;
+  title?: string;
+  description?: string;
 }
 
 /**
@@ -27,10 +30,15 @@ export function AIChatHomeView({
   isVisible,
   suggestions,
   onSelectSuggestion,
+  brand,
+  title,
+  description,
 }: AIChatHomeViewProps) {
   const t = useT('webapp');
   const [isHydrated, setIsHydrated] = React.useState(false);
   const fallbackText = (ICON_TEXT || APP_NAME.charAt(0) || 'A').slice(0, 2).toUpperCase();
+  const resolvedDescription =
+    description === '' ? '' : description || t('chat.chooseAssistant');
 
   React.useEffect(() => {
     setIsHydrated(true);
@@ -45,7 +53,9 @@ export function AIChatHomeView({
     >
       <div className="flex w-full max-w-3xl animate-in flex-col items-center gap-8 -mt-20 duration-500 fade-in zoom-in">
         <div className="flex flex-col items-center gap-4">
-          {isHydrated ? (
+          {brand ? (
+            brand
+          ) : isHydrated ? (
             <div className="flex size-16 items-center justify-center rounded-2xl border border-brand-main/50 bg-bg-surface shadow-[0_0_0_4px_rgba(0,75,255,0.04),0_8px_18px_rgba(10,11,13,0.06)]">
               {IS_ZGI_BRAND ? (
                 <ZgiDrawingWordmark className="w-11" loop={false} />
@@ -56,8 +66,12 @@ export function AIChatHomeView({
               )}
             </div>
           ) : null}
-          <h2 className="text-2xl font-bold text-foreground">{t('chat.startConversation')}</h2>
-          <p className="text-sm text-muted-foreground">{t('chat.chooseAssistant')}</p>
+          <h2 className="text-2xl font-bold text-foreground">
+            {title || t('chat.startConversation')}
+          </h2>
+          {resolvedDescription ? (
+            <p className="text-sm text-muted-foreground">{resolvedDescription}</p>
+          ) : null}
         </div>
         <div className="h-[140px] w-full shrink-0" />
         <div className="flex flex-wrap items-center justify-center gap-2">

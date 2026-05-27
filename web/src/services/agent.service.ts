@@ -1,6 +1,6 @@
 import { BaseService } from '@/lib/http/services';
 import { wrapModelOutputSseCallbacks } from '@/utils/model-output-filter';
-import { webappHttp } from '@/lib/http';
+import { http, webappHttp } from '@/lib/http';
 import type {
   Agent,
   AgentList,
@@ -10,6 +10,14 @@ import type {
   UpdateAgentRequest,
   UpdateWebAppStatusRequest,
   UpdateWebAppStatusResponse,
+  AgentRuntimeConfig,
+  UpdateAgentRuntimeConfigRequest,
+  PublishAgentResponse,
+  AgentPublishedVersionsResponse,
+  RollbackAgentPublishedVersionRequest,
+  AgentChatRequest,
+  AgentChatSseEnvelope,
+  AgentChatStreamCallbacks,
   AgentListParams,
   AgentApiKey,
   AgentApiKeyList,
@@ -18,6 +26,8 @@ import type {
   AgentApiKeyCreateResponse,
   RunnableWebAppsData,
   RunnableWebAppsParams,
+  GenerateAgentSuggestedQuestionsRequest,
+  GenerateAgentSuggestedQuestionsResponse,
 } from './types/agent';
 import type { WebAppRunRequest, WebAppRunSseCallbacks } from './types/webapp';
 import type { ApiResponseData } from './types/common';
@@ -113,6 +123,85 @@ class AgentService extends BaseService {
   ): Promise<ApiResponseData<UpdateWebAppStatusResponse>> {
     return this.request('patch', `/agents/${agentId}/webapp/status`, data, {
       headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  getAgentConfig(agentId: string): Promise<ApiResponseData<AgentRuntimeConfig>> {
+    return this.request('get', `/agents/${agentId}/config`, undefined, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  updateAgentConfig(
+    agentId: string,
+    data: UpdateAgentRuntimeConfigRequest
+  ): Promise<ApiResponseData<AgentRuntimeConfig>> {
+    return this.request('put', `/agents/${agentId}/config`, data, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  publishAgent(agentId: string): Promise<ApiResponseData<PublishAgentResponse>> {
+    return this.request('post', `/agents/${agentId}/publish`, undefined, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  getPublishedVersions(
+    agentId: string
+  ): Promise<ApiResponseData<AgentPublishedVersionsResponse>> {
+    return this.request('get', `/agents/${agentId}/published-versions`, undefined, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  rollbackPublishedVersion(
+    agentId: string,
+    data: RollbackAgentPublishedVersionRequest
+  ): Promise<ApiResponseData<AgentRuntimeConfig>> {
+    return this.request('post', `/agents/${agentId}/published-versions/rollback`, data, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  generateSuggestedQuestions(
+    agentId: string,
+    data: GenerateAgentSuggestedQuestionsRequest
+  ): Promise<ApiResponseData<GenerateAgentSuggestedQuestionsResponse>> {
+    return this.request('post', `/agents/${agentId}/suggested-questions/generate`, data, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  streamAgentChat(
+    agentId: string,
+    payload: AgentChatRequest,
+    callbacks: AgentChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ): Promise<{ close: () => void }> {
+    return http.sse<AgentChatSseEnvelope, AgentChatRequest>(`/console/api/agents/${agentId}/chat`, {
+      method: 'POST',
+      body: {
+        ...payload,
+        response_mode: payload.response_mode ?? 'streaming',
+      },
+      abortSignal,
+      isTerminalMessage: message => {
+        const data = message.data as AgentChatSseEnvelope | undefined;
+        const event = data?.event ?? message.event;
+        return event === 'message_end' || event === 'error';
+      },
+      onMessage: message => {
+        const envelope = message.data;
+        const event = envelope.event ?? message.event ?? '';
+        const data = envelope.data ?? {};
+        if (event === 'message_start') callbacks.onMessageStart?.(data);
+        else if (event === 'message') callbacks.onMessage?.(data);
+        else if (event === 'message_end') callbacks.onMessageEnd?.(data);
+        else if (event === 'error') callbacks.onError?.(data);
+      },
+      onError: error => callbacks.onError?.(error),
+      onClose: callbacks.onClose,
     });
   }
 

@@ -3,7 +3,11 @@ import { useEffect } from 'react';
 import { toast } from 'sonner';
 import { WebAppService } from '@/services/webapp.service';
 import type { WebAppApiResponseData, WebAppWorkflowConfig } from '@/services/types/webapp';
-import { emitWebAppOffline, isWebAppOfflineError } from '@/utils/webapp/errors';
+import {
+  emitWebAppOffline,
+  isWebAppNotPublishedError,
+  isWebAppOfflineError,
+} from '@/utils/webapp/errors';
 
 /**
  * Fetch webapp config by version UUID using webappHttp.
@@ -25,6 +29,9 @@ export function useWebAppConfig(versionUuid: string | null) {
     if (query.isError) {
       if (isWebAppOfflineError(query.error)) {
         emitWebAppOffline();
+        return;
+      }
+      if (isWebAppNotPublishedError(query.error)) {
         return;
       }
       const err = query.error as unknown as { message?: string };

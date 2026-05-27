@@ -10,7 +10,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/dto"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	quota_model "github.com/zgiai/zgi/api/internal/modules/quota/model"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	shared_visibility "github.com/zgiai/zgi/api/internal/modules/shared/visibility"
@@ -65,10 +68,13 @@ type agentsService struct {
 	accountService            interfaces.AccountService
 	tenantService             interfaces.WorkspaceManagementService
 	workflowService           interfaces.WorkflowService
+	chatRuntimeService        runtimeservice.Service
 	resourcePermissionService interfaces.ResourcePermissionService
 	enterpriseService         interfaces.OrganizationService
 	quotaService              interfaces.QuotaService
 	fileService               interfaces.FileService
+	llmClient                 llmclient.LLMClient
+	defaultModelResolver      llmdefaultservice.DefaultModelResolver
 	db                        *gorm.DB
 }
 
@@ -77,10 +83,13 @@ func NewAgentsService(
 	accountService interfaces.AccountService,
 	tenantService interfaces.WorkspaceManagementService,
 	workflowService interfaces.WorkflowService,
+	chatRuntimeService runtimeservice.Service,
 	resourcePermissionService interfaces.ResourcePermissionService,
 	enterpriseService interfaces.OrganizationService,
 	quotaService interfaces.QuotaService,
 	fileService interfaces.FileService,
+	llmClient llmclient.LLMClient,
+	defaultModelResolver llmdefaultservice.DefaultModelResolver,
 	db *gorm.DB,
 ) AgentsService {
 	return &agentsService{
@@ -88,10 +97,13 @@ func NewAgentsService(
 		accountService:            accountService,
 		tenantService:             tenantService,
 		workflowService:           workflowService,
+		chatRuntimeService:        chatRuntimeService,
 		resourcePermissionService: resourcePermissionService,
 		enterpriseService:         enterpriseService,
 		quotaService:              quotaService,
 		fileService:               fileService,
+		llmClient:                 llmClient,
+		defaultModelResolver:      defaultModelResolver,
 		db:                        db,
 	}
 }
@@ -563,9 +575,8 @@ func (s *agentsService) GetAgentsListWithPermissions(
 			createdByPtr = &createdBy
 		}
 
-		// Check if agent has published workflow (best effort)
 		isPublished := false
-		if hasPublished, err := s.agentsRepo.HasPublishedWorkflow(ctx, a.ID.String()); err == nil {
+		if hasPublished, err := s.hasPublishedVersion(ctx, &a); err == nil {
 			isPublished = hasPublished
 		} else {
 			// Requirement 11.5: Add structured logging with context
@@ -1293,10 +1304,8 @@ func (s *agentsService) GetAgentsListMultipleTenants(ctx context.Context, accoun
 			createdByPtr = &createdBy
 		}
 
-		// Check if agent has published workflow
-		// Requirement 9.5: Add appropriate error messages for debugging
 		isPublished := false
-		if hasPublished, err := s.agentsRepo.HasPublishedWorkflow(ctx, a.ID.String()); err == nil {
+		if hasPublished, err := s.hasPublishedVersion(ctx, &a); err == nil {
 			isPublished = hasPublished
 		} else {
 			logger.Error(fmt.Sprintf("GetAgentsListMultipleTenants: Failed to check published workflow for agent %s: %v", a.ID.String(), err), err)
@@ -1444,10 +1453,8 @@ func (s *agentsService) GetInternalAgentsList(ctx context.Context, accountID str
 			createdByPtr = &createdBy
 		}
 
-		// Check if agent has published workflow
-		// Requirement 9.5: Add appropriate error messages for debugging
 		isPublished := false
-		if hasPublished, err := s.agentsRepo.HasPublishedWorkflow(ctx, a.ID.String()); err == nil {
+		if hasPublished, err := s.hasPublishedVersion(ctx, &a); err == nil {
 			isPublished = hasPublished
 		} else {
 			logger.Error(fmt.Sprintf("GetInternalAgentsList: Failed to check published workflow for agent %s: %v", a.ID.String(), err), err)
@@ -1571,7 +1578,7 @@ func (s *agentsService) GetAgent(ctx context.Context, agentID string) (interface
 	}
 
 	isPublished := false
-	if hasPublished, err := s.agentsRepo.HasPublishedWorkflow(ctx, ag.ID.String()); err == nil {
+	if hasPublished, err := s.hasPublishedVersion(ctx, ag); err == nil {
 		isPublished = hasPublished
 	} else {
 		logger.Warn("GetAgent: Failed to check published workflow", map[string]interface{}{
@@ -1589,6 +1596,7 @@ func (s *agentsService) GetAgent(ctx context.Context, agentID string) (interface
 		"icon":           ag.Icon,
 		"icon_url":       iconUrl,
 		"enable_api":     ag.EnableAPI,
+		"web_app_id":     ag.WebAppID.String(),
 		"web_app_status": string(NormalizeAgentWebAppStatus(ag.WebAppStatus)),
 		"is_published":   isPublished,
 		"created_at":     ag.CreatedAt.Unix(),
@@ -2080,6 +2088,16 @@ func normalizeMode(agentType string) string {
 	default:
 		return "AGENT"
 	}
+}
+
+func (s *agentsService) hasPublishedVersion(ctx context.Context, ag *Agent) (bool, error) {
+	if ag == nil {
+		return false, fmt.Errorf("agent is required")
+	}
+	if ag.AgentsType == "AGENT" {
+		return s.agentsRepo.HasPublishedAgentVersion(ctx, ag.ID.String())
+	}
+	return s.agentsRepo.HasPublishedWorkflow(ctx, ag.ID.String())
 }
 
 func changeWorkflowType(workflowType string) dto.WorkflowType {

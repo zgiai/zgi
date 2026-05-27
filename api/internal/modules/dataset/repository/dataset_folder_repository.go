@@ -543,7 +543,6 @@ func (r *datasetFolderRepository) GetDatasetsInFolderByIDWithPagination(ctx cont
 // - only_me: Only creator can see
 // - all_team: All members of the department can see
 // - all_group: All members of the organization can see
-// - partial_members: Specific members can see (requires checking dataset_permissions table)
 // - all_team_members: All members of the department can see (legacy, treated as all_team)
 func (r *datasetFolderRepository) GetDatasetsInFolderByIDWithPaginationWithPermissions(
 	ctx context.Context,
@@ -608,12 +607,7 @@ func (r *datasetFolderRepository) GetDatasetsInFolderByIDWithPaginationWithPermi
 		// All users in the group can see datasets with all_group permission
 		// allGroupCondition := r.db.Where("permission = ?", "all_group")
 
-		// 5. partial_members_condition: Dataset permission is partial_members and user is in the list
-		// This requires checking the dataset_permissions table (if it exists)
-		// For now, we'll skip this condition as it requires additional table structure
-		// TODO: Add partial_members support when dataset_permissions table is available
-
-		// 6. all_read_condition: Dataset permission is all_read (everyone can read)
+		// 5. all_read_condition: Dataset permission is all_read (everyone can read)
 		// allReadCondition := r.db.Where("permission = ?", "all_read")
 
 		// Combine permission conditions with OR

@@ -113,6 +113,7 @@ func (m *ToolManager) GetToolRuntime(
 	tenantID string,
 	invokeFrom ToolInvokeFrom,
 	credentialID string,
+	runtimeParameters map[string]interface{},
 ) (Tool, error) {
 	// Get the provider
 	provider, err := m.GetProvider(ctx, providerType, providerID, tenantID)
@@ -128,11 +129,22 @@ func (m *ToolManager) GetToolRuntime(
 
 	runtime := &ToolRuntime{
 		TenantID:          tenantID,
-		RuntimeParameters: make(map[string]interface{}),
+		RuntimeParameters: copyRuntimeParameters(runtimeParameters),
 		InvokeFrom:        invokeFrom,
 	}
 
 	return tool.ForkToolRuntime(runtime), nil
+}
+
+func copyRuntimeParameters(source map[string]interface{}) map[string]interface{} {
+	if len(source) == 0 {
+		return map[string]interface{}{}
+	}
+	out := make(map[string]interface{}, len(source))
+	for key, value := range source {
+		out[key] = value
+	}
+	return out
 }
 
 // ListProviders lists all registered providers of a given type

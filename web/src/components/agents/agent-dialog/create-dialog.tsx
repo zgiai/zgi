@@ -38,7 +38,7 @@ import {
 } from '@/services/types/agent';
 import type { ApiResponseData } from '@/services/types/common';
 import { useCreateAgent } from '@/hooks/agent/use-agents';
-import { MessageSquareQuote, Workflow } from 'lucide-react';
+import { Bot, MessageSquareQuote, Workflow } from 'lucide-react';
 import {
   WorkspaceSelector,
   type WorkspaceSelectorValue,
@@ -109,7 +109,7 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
       description: '',
       icon: '',
       icon_type: 'text',
-      agent_type: AgentType.CONVERSATIONAL_AGENT,
+      agent_type: AgentType.AGENT,
     },
   });
 
@@ -158,7 +158,11 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
       onSuccess: (res: ApiResponseData<AgentCreateResponse>) => {
         const newId = res.data?.id;
         if (newId) {
-          router.push(`/console/agents/${newId}/workflow`);
+          router.push(
+            data.agent_type === AgentType.AGENT
+              ? `/console/agents/${newId}/agent`
+              : `/console/agents/${newId}/workflow`
+          );
         }
         resetFormState();
         onOpenChange(false);
@@ -214,6 +218,14 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
                             onValueChange={field.onChange}
                             className="gap-2"
                           >
+                            <RadioCard
+                              value={AgentType.AGENT}
+                              title={t('modes.agent')}
+                              description={t('modes.agentDesc')}
+                              checked={field.value === AgentType.AGENT}
+                              hiddenRadio
+                              icon={<Bot className="w-6 h-6" />}
+                            />
                             <RadioCard
                               value={AgentType.CONVERSATIONAL_AGENT}
                               title={t('modes.chatWorkflow')}

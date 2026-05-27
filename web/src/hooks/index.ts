@@ -166,8 +166,12 @@ export {
   useDeleteAIChatSkill,
   useAIChatSkill,
   useAIChatSkillConfig,
+  useAIChatSkillPreference,
   useAIChatSkills,
+  useOrganizationSkillPolicy,
+  useSkillCatalog,
   useUpdateAIChatSkillConfig,
+  useUpdateAIChatSkillPreference,
 } from './aichat/use-aichat-skills';
 
 // Hook-specific types

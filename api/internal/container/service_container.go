@@ -63,6 +63,7 @@ import (
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/memory"
+	knowledge_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/knowledge"
 	helper "github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/queue"
@@ -195,6 +196,9 @@ type ServiceContainer struct {
 
 	// Account memory
 	memoryService *memory.Service
+
+	// Knowledge retrieval for builtin knowledge tools
+	knowledgeRetrievalService *dataset_service.KnowledgeRetrievalService
 
 	// Platform container
 	platformContainer *platform.Container
@@ -774,6 +778,7 @@ func (c *ServiceContainer) GetToolManager() *tools.ToolManager {
 		// Register builtin tool providers
 		c.toolManager.RegisterBuiltinProviders(getBuiltinToolProviders())
 		_ = c.toolManager.RegisterProvider(memory.NewProvider(c.GetMemoryService()))
+		_ = c.toolManager.RegisterProvider(knowledge_tools.NewProvider(c.GetKnowledgeRetrievalService()))
 
 		logger.Info("ToolManager initialized with builtin providers")
 	}
@@ -793,6 +798,19 @@ func (c *ServiceContainer) GetMemoryService() *memory.Service {
 		c.memoryService = memory.NewService(c.db)
 	}
 	return c.memoryService
+}
+
+func (c *ServiceContainer) GetKnowledgeRetrievalService() *dataset_service.KnowledgeRetrievalService {
+	if c.knowledgeRetrievalService == nil {
+		c.knowledgeRetrievalService = dataset_service.NewKnowledgeRetrievalService(
+			c.db,
+			c.config,
+			c.GetLLMClient(),
+			c.GetDefaultModelService(),
+			c.GetGraphFlowService(),
+		)
+	}
+	return c.knowledgeRetrievalService
 }
 
 func (c *ServiceContainer) GetConsoleProvider() console.ConsoleProvider {

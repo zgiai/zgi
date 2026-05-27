@@ -59,6 +59,8 @@ export interface AIChatSkillMetadata {
   timeout_seconds: number;
   status?: AIChatSkillStatus;
   validation_error?: string;
+  supported_callers?: Array<'aichat' | 'agent'>;
+  required_config?: string[];
 }
 
 export type AIChatSkillListResponse = ApiResponseData<AIChatSkillMetadata[]>;
@@ -69,6 +71,13 @@ export interface AIChatSkillOrganizationConfig {
 }
 
 export type AIChatSkillConfigResponse = ApiResponseData<AIChatSkillOrganizationConfig>;
+
+export interface AIChatSkillPreference {
+  enabled_skill_ids: string[];
+  defaulted?: boolean;
+}
+
+export type AIChatSkillPreferenceResponse = ApiResponseData<AIChatSkillPreference>;
 
 export interface AIChatDeleteSkillResponseData {
   deleted: boolean;
@@ -231,7 +240,7 @@ export interface AIChatMessage {
   error?: string;
   model_provider?: string;
   model_name: string;
-  billing_reason_source?: 'aichat';
+  billing_reason_source?: 'aichat' | 'agent';
   model_parameters?: Record<string, unknown>;
   metadata?: AIChatMessageMetadata;
   source_message_id?: string;

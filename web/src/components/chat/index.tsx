@@ -15,6 +15,7 @@ import { SysChat, type SysChatProps } from './variants/sys/sys-chat';
 import { ImgChat } from './variants/img/img-chat';
 import { type ModelSelectorValue } from '../common/model-selector/model-selector';
 import { AIChatShell, type AIChatModelValue } from '@/components/chat/variants/aichat/aichat-chat';
+import type { AIChatUploadScope } from '@/components/chat/variants/aichat/input-area';
 import type { AIChatController } from '@/components/chat/controllers/aichat-controller';
 
 interface SingleTestVariantProps {
@@ -110,6 +111,31 @@ interface AIChatVariantProps {
   controller: AIChatController;
   modelSelectorValue: AIChatModelValue;
   onModelChange: (value: ModelSelectorValue) => void;
+  variant?: 'full' | 'embedded';
+  showModelSelector?: boolean;
+  requireModel?: boolean;
+  showMemoryToggle?: boolean;
+  forcedUseMemory?: boolean;
+  enableUpload?: boolean;
+  uploadScope?: AIChatUploadScope;
+  showFileLibraryPicker?: boolean;
+  homeBrand?: React.ReactNode;
+  homeTitle?: string;
+  homeDescription?: string;
+  suggestions?: string[];
+  inputPlaceholder?: string;
+  embeddedConversationMode?: 'none' | 'drawer';
+  embeddedConversationControlsMode?: 'internal' | 'external';
+  embeddedConversationControlsClassName?: string;
+  embeddedConversationControlsPortalId?: string;
+  renderEmbeddedConversationControls?: (controls: {
+    openConversations: () => void;
+    startNewConversation: () => void;
+    isHome: boolean;
+  }) => React.ReactNode;
+  showAssistantModelMeta?: boolean;
+  surface?: 'aichat' | 'agent-draft' | 'agent-webapp';
+  themeColor?: string;
 }
 
 type ChatProps =
@@ -153,9 +179,7 @@ const SingleTestChat: React.FC<SingleTestVariantProps> = ({
   const initSingle = useChatStore.use.initSingle();
   // Select live conversation by id to refresh UI on store updates
   const conv = useChatStore(state => state.conversations[conversation.id]);
-  const [draftSuggestion, setDraftSuggestion] = useState<{ id: number; text: string } | null>(
-    null
-  );
+  const [draftSuggestion, setDraftSuggestion] = useState<{ id: number; text: string } | null>(null);
 
   useEffect(() => {
     if (mode !== 'singleTest' || !enableInit) return;
@@ -341,11 +365,16 @@ export { SingleChatController } from '@/components/chat/controllers/single-chat-
 export { WebappConversationTransport } from '@/components/chat/transports/webapp-transport';
 export { AgentAdvancedChatTransport } from '@/components/chat/transports/agent-advanced-chat-transport';
 export { AIChatTransport } from '@/components/chat/transports/aichat-transport';
-export { useAIChatController } from '@/components/chat/hooks/use-aichat-controller';
 export {
-  AIChatShell,
-  AIChatMessageBubble,
-} from '@/components/chat/variants/aichat/aichat-chat';
+  AgentRuntimeTransport,
+  createAgentDraftTransport,
+  createAgentWebAppTransport,
+} from '@/components/chat/transports/agent-runtime-transport';
+export {
+  useAIChatController,
+  useChatRuntimeController,
+} from '@/components/chat/runtime/controller/use-chat-runtime-controller';
+export { AIChatShell, AIChatMessageBubble } from '@/components/chat/variants/aichat/aichat-chat';
 export {
   buildCurrentChatPath,
   buildChatMessageTopology,

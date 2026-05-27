@@ -1,5 +1,6 @@
 'use client';
 
+import type { ReactNode } from 'react';
 import { Menu, PanelLeft, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useT } from '@/i18n/translations';
@@ -9,6 +10,7 @@ interface AIChatHeaderProps {
   isMobile: boolean;
   isHome: boolean;
   title: string;
+  rightAction?: ReactNode;
   onToggleSidebar: () => void;
   onStartNew: () => void;
 }
@@ -26,6 +28,7 @@ export function AIChatHeader({
   isMobile,
   isHome,
   title,
+  rightAction,
   onToggleSidebar,
   onStartNew,
 }: AIChatHeaderProps) {
@@ -63,7 +66,7 @@ export function AIChatHeader({
       >
         <h1 className="truncate text-sm font-semibold">{title}</h1>
       </div>
-      <div className="w-20" />
+      <div className="flex w-20 justify-end">{rightAction}</div>
     </header>
   );
 }

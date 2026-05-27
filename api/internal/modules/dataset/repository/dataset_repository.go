@@ -186,7 +186,7 @@ func (r *datasetRepository) GetPaginatedByTenantIDsWithPermissions(ctx context.C
 	}
 
 	// NOTE: Temporary simplification - dataset visibility is unified at group level.
-	// Original per-dataset permission filters (only_me, all_team, all_group, partial_members)
+	// Original per-dataset permission filters (only_me, all_team, all_group)
 	// are disabled for now to make datasets visible based on tenantIDs/allGroupTenantIDs.
 	// To avoid exposing datasets from tenants where the user is not a member,
 	// we still enforce a basic membership check for non-group-admin users.
@@ -296,18 +296,10 @@ func (r *datasetRepository) GetByTenantIDs(
 			)`,
 			"permission = 'all_team'",
 			"(permission = 'only_me' AND created_by = ?)",
-			`EXISTS (
-				SELECT 1 FROM dataset_permissions
-				WHERE dataset_permissions.dataset_id = datasets.id
-				AND dataset_permissions.account_id = ?
-				AND dataset_permissions.has_permission = true
-				AND dataset_permissions.workspace_id = datasets.workspace_id
-				LIMIT 1
-			)`,
 		}
 
 		whereClause := "(" + strings.Join(permissionConditions, " OR ") + ")"
-		query = query.Where(whereClause, accountID, accountID, accountID)
+		query = query.Where(whereClause, accountID, accountID)
 	}
 
 	countQuery := query.Session(&gorm.Session{})

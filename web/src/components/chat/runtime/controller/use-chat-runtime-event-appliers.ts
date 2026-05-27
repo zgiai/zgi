@@ -1,0 +1,339 @@
+import { useCallback } from 'react';
+import type { MutableRefObject } from 'react';
+import type {
+  AIChatAgentProgressEventData,
+  AIChatErrorEventData,
+  AIChatFileParseEndEventData,
+  AIChatFileParseErrorEventData,
+  AIChatFileParseStartEventData,
+  AIChatIntermediateAnswerEventData,
+  AIChatMessageChunkEventData,
+  AIChatMessageEndEventData,
+  AIChatMessageRetractEventData,
+  AIChatMessageStartEventData,
+  AIChatSkillArtifactCreatedEventData,
+  AIChatSkillCallEndEventData,
+  AIChatSkillCallErrorEventData,
+  AIChatSkillCallStartEventData,
+  AIChatSkillLoadEndEventData,
+  AIChatSkillLoadStartEventData,
+  AIChatSkillReferenceReadEventData,
+} from '@/services/types/aichat';
+import type {
+  AIChatControllerState,
+  AIChatControllerStore,
+  AIChatMessageStartContext,
+  AIChatRecoveryMode,
+  AIChatSetControllerState,
+} from '@/components/chat/controllers/aichat';
+import {
+  applyAgentProgressState,
+  applyFileParseEndState,
+  applyFileParseErrorState,
+  applyFileParseStartState,
+  applyIntermediateAnswerState,
+  applyMessageChunkState,
+  applyMessageEndState,
+  applyMessageRetractState,
+  applyMessageStartState,
+  applySkillArtifactCreatedState,
+  applySkillCallEndState,
+  applySkillCallErrorState,
+  applySkillCallStartState,
+  applySkillLoadEndState,
+  applySkillLoadStartState,
+  applySkillReferenceReadState,
+  applyStreamErrorState,
+} from '@/components/chat/controllers/aichat/state-reducers';
+import { isDraftAIChatConversationId } from '@/components/chat/utils/aichat-message';
+
+interface UseAIChatEventAppliersArgs {
+  stateRef: MutableRefObject<AIChatControllerStore>;
+  backgroundConversationIdRef: MutableRefObject<string | null>;
+  streamingMessageRef: MutableRefObject<{ conversationId: string; messageId: string } | null>;
+  recoveryModeByConversationRef: MutableRefObject<Record<string, AIChatRecoveryMode>>;
+  setControllerState: AIChatSetControllerState;
+  resolveMessageStartMode: (
+    payload: AIChatMessageStartEventData,
+    context: {
+      previousConversationId?: string | null;
+      mode?: AIChatRecoveryMode;
+    }
+  ) => AIChatRecoveryMode;
+  migrateLatestSelectionTarget: (from: string | null, to: string) => void;
+  clearRecoveryRetry: (conversationId: string) => void;
+  refreshConversationSilently: (conversationId: string) => void;
+  refreshMessagesSilently: (conversationId: string) => void;
+}
+
+/**
+ * @hook useChatRuntimeEventAppliers
+ * @description Maps ChatRuntime SSE events into controller state mutations.
+ */
+export function useChatRuntimeEventAppliers({
+  stateRef,
+  backgroundConversationIdRef,
+  streamingMessageRef,
+  recoveryModeByConversationRef,
+  setControllerState,
+  resolveMessageStartMode,
+  migrateLatestSelectionTarget,
+  clearRecoveryRetry,
+  refreshConversationSilently,
+  refreshMessagesSilently,
+}: UseAIChatEventAppliersArgs) {
+  const applyMessageStart = useCallback(
+    (
+      payload: AIChatMessageStartEventData,
+      context: AIChatMessageStartContext = {},
+      eventId?: string | null
+    ) => {
+      if (!payload.conversation_id || !payload.message_id) return;
+
+      const mode = resolveMessageStartMode(payload, context);
+      const previousConversationId = context.previousConversationId ?? null;
+      const shouldRetargetDraftSelection =
+        mode === 'active' &&
+        previousConversationId !== null &&
+        previousConversationId !== payload.conversation_id &&
+        isDraftAIChatConversationId(previousConversationId) &&
+        stateRef.current.activeConversationId === previousConversationId;
+      const shouldRetargetBackgroundDraft =
+        mode === 'background' &&
+        previousConversationId !== null &&
+        previousConversationId !== payload.conversation_id &&
+        isDraftAIChatConversationId(previousConversationId) &&
+        backgroundConversationIdRef.current === previousConversationId;
+      const resolvedContext = {
+        ...context,
+        mode,
+      };
+
+      streamingMessageRef.current = {
+        conversationId: payload.conversation_id,
+        messageId: payload.message_id,
+      };
+      setControllerState(current =>
+        applyMessageStartState(current, payload, resolvedContext, eventId)
+      );
+      if (shouldRetargetDraftSelection) {
+        migrateLatestSelectionTarget(previousConversationId, payload.conversation_id);
+      }
+      if (shouldRetargetBackgroundDraft) {
+        backgroundConversationIdRef.current = payload.conversation_id;
+      }
+    },
+    [
+      backgroundConversationIdRef,
+      migrateLatestSelectionTarget,
+      resolveMessageStartMode,
+      setControllerState,
+      stateRef,
+      streamingMessageRef,
+    ]
+  );
+
+  const applyMessageChunk = useCallback(
+    (payload: AIChatMessageChunkEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id) return;
+      setControllerState(current => applyMessageChunkState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
+  const applyMessageRetract = useCallback(
+    (payload: AIChatMessageRetractEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id) return;
+      setControllerState(current => applyMessageRetractState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
+  const applyFileParseStart = useCallback(
+    (payload: AIChatFileParseStartEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id || !payload.file_id) return;
+      setControllerState(current => applyFileParseStartState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
+  const applyFileParseEnd = useCallback(
+    (payload: AIChatFileParseEndEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id || !payload.file_id) return;
+      setControllerState(current => applyFileParseEndState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
+  const applyFileParseError = useCallback(
+    (payload: AIChatFileParseErrorEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id || !payload.file_id) return;
+      setControllerState(current => applyFileParseErrorState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
+  const applySkillCallStart = useCallback(
+    (payload: AIChatSkillCallStartEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id || !payload.skill_id) return;
+      setControllerState(current => applySkillCallStartState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
+  const applySkillLoadStart = useCallback(
+    (payload: AIChatSkillLoadStartEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id || !payload.skill_id) return;
+      setControllerState(current => applySkillLoadStartState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
+  const applySkillLoadEnd = useCallback(
+    (payload: AIChatSkillLoadEndEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id || !payload.skill_id) return;
+      setControllerState(current => applySkillLoadEndState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
+  const applySkillReferenceRead = useCallback(
+    (payload: AIChatSkillReferenceReadEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id || !payload.skill_id) return;
+      setControllerState(current => applySkillReferenceReadState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
+  const applySkillCallEnd = useCallback(
+    (payload: AIChatSkillCallEndEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id || !payload.skill_id) return;
+      setControllerState(current => applySkillCallEndState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
+  const applySkillCallError = useCallback(
+    (payload: AIChatSkillCallErrorEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id || !payload.skill_id) return;
+      setControllerState(current => applySkillCallErrorState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
+  const applySkillArtifactCreated = useCallback(
+    (payload: AIChatSkillArtifactCreatedEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id) {
+        return;
+      }
+
+      setControllerState(current => applySkillArtifactCreatedState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
+  const applyAgentProgress = useCallback(
+    (payload: AIChatAgentProgressEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id) return;
+      if (!payload.content && !payload.phase) return;
+      setControllerState(current => applyAgentProgressState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
+  const applyIntermediateAnswer = useCallback(
+    (payload: AIChatIntermediateAnswerEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id) return;
+      if (!payload.content && payload.done !== true) return;
+      setControllerState(current => applyIntermediateAnswerState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
+  const applyMessageEnd = useCallback(
+    (payload: AIChatMessageEndEventData, _eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id) return;
+      if (streamingMessageRef.current?.messageId === payload.message_id) {
+        streamingMessageRef.current = null;
+      }
+      setControllerState(current => applyMessageEndState(current, payload));
+
+      clearRecoveryRetry(payload.conversation_id);
+      delete recoveryModeByConversationRef.current[payload.conversation_id];
+      if (backgroundConversationIdRef.current === payload.conversation_id) {
+        backgroundConversationIdRef.current = null;
+      }
+      refreshConversationSilently(payload.conversation_id);
+      refreshMessagesSilently(payload.conversation_id);
+    },
+    [
+      backgroundConversationIdRef,
+      clearRecoveryRetry,
+      recoveryModeByConversationRef,
+      refreshConversationSilently,
+      refreshMessagesSilently,
+      setControllerState,
+      streamingMessageRef,
+    ]
+  );
+
+  const applyStreamError = useCallback(
+    (
+      payload: AIChatErrorEventData,
+      _eventId?: string | null,
+      fallbackConversationId?: string | null
+    ) => {
+      const conversationId =
+        payload.conversation_id || fallbackConversationId || stateRef.current.activeConversationId;
+      setControllerState((current: AIChatControllerState) => {
+        const previousError = current.error;
+        const nextState = applyStreamErrorState(current, payload, conversationId);
+        return current.activeConversationId === conversationId
+          ? nextState
+          : {
+              ...nextState,
+              error: previousError,
+            };
+      });
+
+      if (conversationId) {
+        clearRecoveryRetry(conversationId);
+        delete recoveryModeByConversationRef.current[conversationId];
+        if (backgroundConversationIdRef.current === conversationId) {
+          backgroundConversationIdRef.current = null;
+        }
+        refreshConversationSilently(conversationId);
+      }
+    },
+    [
+      backgroundConversationIdRef,
+      clearRecoveryRetry,
+      recoveryModeByConversationRef,
+      refreshConversationSilently,
+      setControllerState,
+      stateRef,
+    ]
+  );
+
+  return {
+    applyMessageStart,
+    applyMessageChunk,
+    applyMessageRetract,
+    applyFileParseStart,
+    applyFileParseEnd,
+    applyFileParseError,
+    applySkillCallStart,
+    applySkillLoadStart,
+    applySkillLoadEnd,
+    applySkillReferenceRead,
+    applySkillCallEnd,
+    applySkillCallError,
+    applySkillArtifactCreated,
+    applyAgentProgress,
+    applyIntermediateAnswer,
+    applyMessageEnd,
+    applyStreamError,
+  };
+}
+
+export type ChatRuntimeEventAppliers = ReturnType<typeof useChatRuntimeEventAppliers>;

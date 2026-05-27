@@ -6,6 +6,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	runtimerepo "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
+	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	agentsHandlerPkg "github.com/zgiai/zgi/api/internal/modules/app/agents"
 	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
 	workflowHandlerPkg "github.com/zgiai/zgi/api/internal/modules/app/workflow"
@@ -83,6 +85,21 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, accountService interfaces.A
 		conversation.NewAgentConversationService(conversationRepo, messageRepo),
 		conversation.NewAgentMessageService(messageRepo, conversationRepo),
 	)
+	runtimeLogHandler := workflowHandlerPkg.NewRuntimeLogHandler(workflowRunLogRepo, workflowNodeRuntimeLogRepo)
+	agentHistoryDispatchHandler := workflowHandlerPkg.NewAgentHistoryDispatchHandler(
+		agentsRepo,
+		agentHistoryHandler,
+		runtimeLogHandler,
+		runtimeservice.NewServiceWithDependencies(
+			runtimerepo.NewRepositories(db),
+			nil,
+			nil,
+			nil,
+			nil,
+			nil,
+			enterpriseService,
+		),
+	)
 
 	apps := router.Group("/agents")
 	// Add middleware for workflow routes
@@ -110,9 +127,9 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, accountService interfaces.A
 	apps.GET("/:agent_id/workflow-runs/:run_id", handler.GetWorkflowRunDetail)
 	apps.GET("/:agent_id/workflow-runs/:run_id/node-executions", handler.GetWorkflowRunNodeExecutions)
 	apps.POST("/:agent_id/workflow-runs/:run_id/nodes/:node_log_id/diagnose", handler.ManualDiagnoseNode)
-	apps.GET("/:agent_id/conversations", agentHistoryHandler.GetConversations)
-	apps.GET("/:agent_id/conversations/:conversation_id", agentHistoryHandler.GetConversationDetail)
-	apps.GET("/:agent_id/chat-messages", agentHistoryHandler.GetChatMessages)
+	apps.GET("/:agent_id/conversations", agentHistoryDispatchHandler.GetConversations)
+	apps.GET("/:agent_id/conversations/:conversation_id", agentHistoryDispatchHandler.GetConversationDetail)
+	apps.GET("/:agent_id/chat-messages", agentHistoryDispatchHandler.GetChatMessages)
 
 	// Get latest version
 	apps.GET("/:agent_id/workflows/published-versions", handler.GetPublishedWorkflowVersions)
@@ -123,8 +140,7 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, accountService interfaces.A
 	apps.POST("/workflows/import", handler.ImportWorkflow)
 
 	// Runtime log handler (still use agent_id for internal management)
-	runtimeLogHandler := workflowHandlerPkg.NewRuntimeLogHandler(workflowRunLogRepo, workflowNodeRuntimeLogRepo)
-	apps.POST("/:agent_id/runtime-logs", runtimeLogHandler.GetRuntimeLogs)
+	apps.POST("/:agent_id/runtime-logs", agentHistoryDispatchHandler.GetRuntimeLogs)
 	apps.GET("/:agent_id/workflow-runs/:run_id/nodes", runtimeLogHandler.GetWorkflowRunNodeLogs)
 
 	approvalService := approvalruntime.NewService(db)

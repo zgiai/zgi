@@ -31,6 +31,15 @@ func NewGenerator(llmClient client.LLMClient) *Generator {
 	return &Generator{llmClient: llmClient}
 }
 
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
 // Generate returns editable suggested questions for the supplied workflow context.
 func (g *Generator) Generate(ctx context.Context, req GenerateRequest) (*GenerateResult, error) {
 	if g == nil || g.llmClient == nil {
@@ -82,7 +91,7 @@ func (g *Generator) Generate(ctx context.Context, req GenerateRequest) (*Generat
 		WorkspaceID:        req.WorkspaceID,
 		BillingSubjectType: client.BillingSubjectTypeWorkspace,
 		AppID:              req.AgentID,
-		AppType:            "workflow",
+		AppType:            firstNonEmpty(req.AppType, "workflow"),
 		AccountID:          req.AccountID,
 	}
 

@@ -65,6 +65,60 @@ func TestAgentsHandler_UpdateWebAppStatus_MapsInvalidStatus(t *testing.T) {
 	require.True(t, service.called)
 }
 
+func TestPublicAgentWebAppConfig_DoesNotExposeRuntimeSecrets(t *testing.T) {
+	public := publicAgentWebAppConfig(&dto.AgentWebAppRuntimeConfigResponse{
+		AgentID:     "agent-1",
+		WebAppID:    "webapp-1",
+		AgentType:   "AGENT",
+		Name:        "Agent",
+		Description: "Public description",
+		Icon:        "AG",
+		IconType:    "text",
+		IconURL:     "",
+		Version:     "20260526000000",
+		VersionUUID: "version-1",
+		Config: dto.AgentConfigResponse{
+			SystemPrompt:        "secret prompt",
+			ModelProvider:       "secret-provider",
+			Model:               "secret-model",
+			EnabledSkillIDs:     []string{"secret-skill"},
+			KnowledgeDatasetIDs: []string{"secret-dataset"},
+			HomeTitle:           "Home",
+			InputPlaceholder:    "Ask",
+			SuggestedQuestions:  []string{"Q1"},
+			FileUpload:          true,
+		},
+	})
+
+	encoded, err := json.Marshal(public)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "system_prompt")
+	require.NotContains(t, string(encoded), "secret prompt")
+	require.NotContains(t, string(encoded), "secret-model")
+	require.NotContains(t, string(encoded), "secret-dataset")
+	require.Contains(t, string(encoded), "Home")
+	require.Contains(t, string(encoded), "file_upload_enabled")
+}
+
+func TestAgentsHandler_GetWebAppRuntimeConfig_MapsNotPublishedError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	service := &stubWebAppStatusHandlerService{err: errAgentWebAppNotPublished}
+	handler := NewAgentsHandler(service, nil, nil, nil, nil)
+	router := gin.New()
+	router.GET("/webapps/:web_app_id/config", handler.GetWebAppRuntimeConfig)
+
+	req := httptest.NewRequest(http.MethodGet, "/webapps/33333333-3333-3333-3333-333333333333/config", nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+	var body map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Equal(t, "204009", body["code"])
+}
+
 func newWebAppStatusHandlerTestRouter(service AgentsService) *gin.Engine {
 	handler := NewAgentsHandler(service, nil, nil, nil, nil)
 	router := gin.New()
@@ -118,6 +172,38 @@ func (s *stubWebAppStatusHandlerService) GetAgent(context.Context, string) (inte
 
 func (s *stubWebAppStatusHandlerService) UpdateAgent(context.Context, string, interface{}) (interface{}, error) {
 	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) GetAgentConfig(context.Context, string, string) (*dto.AgentConfigResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) GetAgentDraftRuntimeConfig(context.Context, string, string) (*dto.AgentDraftRuntimeConfigResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) UpdateAgentConfig(context.Context, string, string, dto.AgentConfigRequest) (*dto.AgentConfigResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) GenerateAgentSuggestedQuestions(context.Context, string, string, *dto.GenerateAgentSuggestedQuestionsRequest) (*dto.GenerateSuggestedQuestionsResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) PublishAgent(context.Context, string, string, dto.PublishAgentRequest) (*dto.PublishAgentResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) ListAgentPublishedVersions(context.Context, string, string, int, int) (*dto.AgentPublishedVersionsResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) RollbackAgentPublishedVersion(context.Context, string, string, dto.RollbackAgentPublishedVersionRequest) (*dto.AgentConfigResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) GetPublishedAgentWebAppConfig(context.Context, string) (*dto.AgentWebAppRuntimeConfigResponse, error) {
+	return nil, s.err
 }
 
 func (s *stubWebAppStatusHandlerService) UpdateWebAppStatus(ctx context.Context, agentID string, req dto.UpdateWebAppStatusRequest) (*dto.WebAppStatusResponse, error) {

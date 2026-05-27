@@ -51,6 +51,8 @@ import {
 } from '@/components/chat/variants/aichat/input-area-utils';
 import type { AIChatModelValue } from '@/components/chat/variants/aichat/types';
 
+export type AIChatUploadScope = { type: 'console' } | { type: 'webapp'; webAppId: string };
+
 const FileSelectorDialog = dynamic(() => import('@/components/files/file-selector-dialog'), {
   ssr: false,
 });
@@ -134,6 +136,12 @@ interface AIChatInputAreaProps {
   onStop: () => void;
   onModelChange: (value: ModelSelectorValue) => void;
   onHeightChange?: (height: number) => void;
+  showModelSelector?: boolean;
+  showMemoryToggle?: boolean;
+  enableUpload?: boolean;
+  uploadScope?: AIChatUploadScope;
+  showFileLibraryPicker?: boolean;
+  inputPlaceholder?: string;
 }
 
 /**
@@ -158,6 +166,12 @@ export function AIChatInputArea({
   onStop,
   onModelChange,
   onHeightChange,
+  showModelSelector = true,
+  showMemoryToggle = true,
+  enableUpload = true,
+  uploadScope = { type: 'console' },
+  showFileLibraryPicker = true,
+  inputPlaceholder,
 }: AIChatInputAreaProps) {
   const t = useT('webapp');
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -172,7 +186,10 @@ export function AIChatInputArea({
     null
   );
   const [useMemory, setUseMemory] = useState(false);
-  const { data: uploadConfig } = useUploadConfig({ enabled: true });
+  const { data: uploadConfig } = useUploadConfig({
+    enabled: enableUpload,
+    scope: uploadScope.type === 'webapp' ? uploadScope : undefined,
+  });
   const allowedExtensions = useMemo(
     () => filterLowercaseExtensions([...AICHAT_DOCUMENT_EXTENSIONS]),
     []
@@ -208,10 +225,7 @@ export function AIChatInputArea({
     () => formatExtensionsForDisplay(allSelectableExtensions).join(' / '),
     [allSelectableExtensions]
   );
-  const uploadedFiles = useMemo(
-    () => getUploadedAIChatFiles(attachments),
-    [attachments]
-  );
+  const uploadedFiles = useMemo(() => getUploadedAIChatFiles(attachments), [attachments]);
   const canClickSend = Boolean(input.trim()) && !modelMissing && !isUploading && !hasUploadError;
 
   const validateFile = useCallback(
@@ -238,15 +252,19 @@ export function AIChatInputArea({
   const uploadOneFile = useCallback(
     async (file: File, localId: string, kind: AIChatAttachmentUploadKind) => {
       try {
-        const response = await uploadService.uploadSingle(file, {
-          is_temporary: true,
-          onProgress: progress =>
-            setAttachments(current =>
-              current.map(attachment =>
-                attachment.id === localId ? { ...attachment, progress } : attachment
-              )
-            ),
-        });
+        const onProgress = (progress: number) =>
+          setAttachments(current =>
+            current.map(attachment =>
+              attachment.id === localId ? { ...attachment, progress } : attachment
+            )
+          );
+        const response =
+          uploadScope.type === 'webapp'
+            ? await uploadService.uploadWebAppSingle(uploadScope.webAppId, file, { onProgress })
+            : await uploadService.uploadSingle(file, {
+                is_temporary: true,
+                onProgress,
+              });
         const uploadedFile = toAIChatMessageFile(response, kind);
         setAttachments(current =>
           current.map(attachment =>
@@ -284,12 +302,13 @@ export function AIChatInputArea({
         );
       }
     },
-    [t]
+    [t, uploadScope]
   );
 
   const enqueueFiles = useCallback(
     (files: File[], fallbackKind?: AIChatAttachmentUploadKind) => {
       if (files.length === 0) return;
+      if (!enableUpload) return;
       if (isSending || isUploading) {
         toast.error(t('consoleChat.attachments.uploadUnavailable'));
         return;
@@ -333,7 +352,16 @@ export function AIChatInputArea({
         void uploadOneFile(file, localId, kind);
       });
     },
-    [attachments.length, imageExtensions, isSending, isUploading, t, uploadOneFile, validateFile]
+    [
+      attachments.length,
+      enableUpload,
+      imageExtensions,
+      isSending,
+      isUploading,
+      t,
+      uploadOneFile,
+      validateFile,
+    ]
   );
 
   const handleFilesSelected = useCallback(
@@ -459,6 +487,9 @@ export function AIChatInputArea({
   const handlePaste = useCallback(
     (event: ClipboardEvent<HTMLTextAreaElement>) => {
       const files = getPastedFiles(event);
+      if (!enableUpload) {
+        return;
+      }
       if (files.length === 0) {
         return;
       }
@@ -466,7 +497,7 @@ export function AIChatInputArea({
       event.preventDefault();
       enqueueFiles(files);
     },
-    [enqueueFiles]
+    [enableUpload, enqueueFiles]
   );
 
   useEffect(() => {
@@ -487,6 +518,7 @@ export function AIChatInputArea({
   }, [onHeightChange]);
 
   useEffect(() => {
+    if (!enableUpload) return;
     const hasDraggedFiles = (event: DragEvent) =>
       Array.from(event.dataTransfer?.types ?? []).includes('Files');
 
@@ -539,11 +571,11 @@ export function AIChatInputArea({
       window.removeEventListener('dragleave', handleDragLeave);
       window.removeEventListener('drop', handleDrop);
     };
-  }, [enqueueFiles, isSending, isUploading, remainingSlots]);
+  }, [enableUpload, enqueueFiles, isSending, isUploading, remainingSlots]);
 
   return (
     <>
-      {isDraggingFiles ? (
+      {enableUpload && isDraggingFiles ? (
         <AIChatDragUploadOverlay
           isSending={isSending}
           isUploading={isUploading}
@@ -596,7 +628,7 @@ export function AIChatInputArea({
                   handleSend();
                 }
               }}
-              placeholder={t('chat.enterCommand')}
+              placeholder={inputPlaceholder || t('chat.enterCommand')}
               className="max-h-36 min-h-12 resize-none border-0 bg-transparent px-3 py-2 shadow-none focus-visible:ring-0"
             />
             <input
@@ -631,6 +663,10 @@ export function AIChatInputArea({
               imageMaxSizeMB={imageMaxSizeMB}
               allowedExtensions={allowedExtensions}
               imageExtensions={imageExtensions}
+              showModelSelector={showModelSelector}
+              showMemoryToggle={showMemoryToggle}
+              enableUpload={enableUpload}
+              showFileLibraryPicker={showFileLibraryPicker}
               onModelChange={onModelChange}
               onModelPropsChange={setSelectedModelProps}
               onUploadDocument={() => fileInputRef.current?.click()}
