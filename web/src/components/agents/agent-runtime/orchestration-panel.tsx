@@ -13,6 +13,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { useT } from '@/i18n';
 import type { AIChatSkillMetadata } from '@/services/types/aichat';
+import type { AgentMemorySlotConfig } from '@/services/types/agent';
 import type { Dataset } from '@/services/types/dataset';
 import {
   AGENT_HOME_TITLE_MAX_LENGTH,
@@ -39,7 +40,8 @@ interface AgentRuntimeOrchestrationPanelProps {
   isGeneratingSuggestions: boolean;
   systemPrompt: string;
   fileUploadEnabled: boolean;
-  useMemory: boolean;
+  agentMemoryEnabled: boolean;
+  agentMemorySlots: AgentMemorySlotConfig[];
   defaultHomeTitle: string;
   defaultInputPlaceholder: string;
   onToggleSection: (section: AgentConfigSection) => void;
@@ -52,7 +54,8 @@ interface AgentRuntimeOrchestrationPanelProps {
   onGenerateSuggestedQuestions: () => void;
   onChangeSuggestedQuestions: (value: string[]) => void;
   onChangeFileUploadEnabled: (value: boolean) => void;
-  onChangeUseMemory: (value: boolean) => void;
+  onChangeAgentMemoryEnabled: (value: boolean) => void;
+  onChangeAgentMemorySlots: (value: AgentMemorySlotConfig[]) => void;
 }
 
 export function AgentRuntimeOrchestrationPanel({
@@ -73,7 +76,8 @@ export function AgentRuntimeOrchestrationPanel({
   isGeneratingSuggestions,
   systemPrompt,
   fileUploadEnabled,
-  useMemory,
+  agentMemoryEnabled,
+  agentMemorySlots,
   defaultHomeTitle,
   defaultInputPlaceholder,
   onToggleSection,
@@ -86,9 +90,46 @@ export function AgentRuntimeOrchestrationPanel({
   onGenerateSuggestedQuestions,
   onChangeSuggestedQuestions,
   onChangeFileUploadEnabled,
-  onChangeUseMemory,
+  onChangeAgentMemoryEnabled,
+  onChangeAgentMemorySlots,
 }: AgentRuntimeOrchestrationPanelProps) {
   const t = useT('agents.agentRuntime');
+  const usedAgentMemorySlotKeys = new Set(
+    agentMemorySlots.map(slot => slot.key.trim().toLowerCase()).filter(Boolean)
+  );
+  const nextAgentMemorySlotKey = (() => {
+    for (let index = agentMemorySlots.length + 1; index <= 50; index += 1) {
+      const candidate = `memory_${index}`;
+      if (!usedAgentMemorySlotKeys.has(candidate)) return candidate;
+    }
+    return `memory_${Date.now().toString(36).slice(-6)}`;
+  })();
+  const addAgentMemorySlot = () => {
+    if (agentMemorySlots.length >= 50) return;
+    onChangeAgentMemorySlots([
+      ...agentMemorySlots,
+      {
+        key: nextAgentMemorySlotKey,
+        description: '',
+        max_chars: 1000,
+        enabled: true,
+        sort_order: agentMemorySlots.length,
+      },
+    ]);
+  };
+  const updateAgentMemorySlot = (
+    index: number,
+    patch: Partial<AgentMemorySlotConfig>
+  ) => {
+    onChangeAgentMemorySlots(
+      agentMemorySlots.map((slot, currentIndex) =>
+        currentIndex === index ? { ...slot, ...patch } : slot
+      )
+    );
+  };
+  const removeAgentMemorySlot = (index: number) => {
+    onChangeAgentMemorySlots(agentMemorySlots.filter((_, currentIndex) => currentIndex !== index));
+  };
 
   return (
     <section className="flex min-w-0 flex-col overflow-hidden">
@@ -259,12 +300,100 @@ export function AgentRuntimeOrchestrationPanel({
             open={openSections.memory}
             onToggle={onToggleSection}
           >
-            <div className="flex items-center justify-between rounded-md border p-3">
-              <div>
-                <div className="text-sm font-medium">{t('memory.title')}</div>
-                <div className="text-xs text-muted-foreground">{t('memory.description')}</div>
+            <div className="space-y-3">
+              <div className="space-y-3 rounded-md border p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-medium">{t('memory.agentTitle')}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {t('memory.agentDescription')}
+                    </div>
+                  </div>
+                  <Switch
+                    checked={agentMemoryEnabled}
+                    onCheckedChange={onChangeAgentMemoryEnabled}
+                  />
+                </div>
+                {agentMemoryEnabled && (
+                  <div className="space-y-2">
+                    {agentMemorySlots.length === 0 ? (
+                      <div className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+                        {t('memory.emptySlots')}
+                      </div>
+                    ) : (
+                      agentMemorySlots.map((slot, index) => (
+                        <div key={`${slot.id ?? 'slot'}-${index}`} className="space-y-2 rounded-md border p-2">
+                          <div className="flex items-center gap-2">
+                            <Input
+                              value={slot.key}
+                              maxLength={64}
+                              placeholder={t('memory.slotKeyPlaceholder')}
+                              onChange={event =>
+                                updateAgentMemorySlot(index, {
+                                  key: event.target.value
+                                    .toLowerCase()
+                                    .replace(/[^a-z0-9_]/g, '')
+                                    .slice(0, 64),
+                                })
+                              }
+                            />
+                            <Input
+                              type="number"
+                              min={1}
+                              max={4000}
+                              value={slot.max_chars}
+                              className="w-24"
+                              aria-label={t('memory.maxChars')}
+                              onChange={event =>
+                                updateAgentMemorySlot(index, {
+                                  max_chars: Math.min(
+                                    4000,
+                                    Math.max(1, Number(event.target.value) || 1000)
+                                  ),
+                                })
+                              }
+                            />
+                            <Switch
+                              checked={slot.enabled}
+                              onCheckedChange={checked =>
+                                updateAgentMemorySlot(index, { enabled: checked })
+                              }
+                            />
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              isIcon
+                              aria-label={t('memory.removeSlot')}
+                              onClick={() => removeAgentMemorySlot(index)}
+                            >
+                              <Trash2 className="size-4" />
+                            </Button>
+                          </div>
+                          <Input
+                            value={slot.description}
+                            placeholder={t('memory.slotDescriptionPlaceholder')}
+                            onChange={event =>
+                              updateAgentMemorySlot(index, {
+                                description: event.target.value.slice(0, 1000),
+                              })
+                            }
+                          />
+                        </div>
+                      ))
+                    )}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={addAgentMemorySlot}
+                      disabled={agentMemorySlots.length >= 50}
+                    >
+                      <Plus className="size-4" />
+                      {t('memory.addSlot')}
+                    </Button>
+                  </div>
+                )}
               </div>
-              <Switch checked={useMemory} onCheckedChange={onChangeUseMemory} />
             </div>
           </RuntimeSection>
 

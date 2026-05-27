@@ -1286,6 +1286,7 @@ const messages: AgentsMessages = {
     toasts: {
       saveSuccess: '配置已保存',
       saveFailed: '保存失败',
+      saveFailedDraftKept: '保存失败，修改已保留。',
       noGeneratedSuggestions: '没有生成可用的请求示例',
       suggestionsGenerated: '已生成请求示例',
       generateSuggestionsFailed: '生成请求示例失败',
@@ -1296,6 +1297,13 @@ const messages: AgentsMessages = {
       rollbackSuccess: '已从所选版本恢复到草稿',
       rollbackFailed: '恢复所选版本失败',
       finishVersionPreviewFirst: '请先确认或取消版本预览',
+    },
+    leaveGuard: {
+      title: '离开前保存更改？',
+      description: '这个智能体还有未保存的修改。你可以保存后离开、放弃修改，或继续编辑。',
+      saveAndLeave: '保存并离开',
+      discardAndLeave: '放弃并离开',
+      continueEditing: '继续编辑',
     },
     header: {
       save: '保存',
@@ -1386,8 +1394,14 @@ const messages: AgentsMessages = {
       description: '开启后，调试和 WebApp 聊天可以上传文档或图片。',
     },
     memory: {
-      title: '长期记忆',
-      description: '开启后，调试与运行会允许 runtime 调用记忆能力。',
+      agentTitle: '智能体固定槽位记忆',
+      agentDescription: '配置智能体可为每个用户读取和更新的固定记忆键。',
+      emptySlots: '还没有配置记忆槽位。',
+      addSlot: '添加槽位',
+      removeSlot: '删除记忆槽位',
+      slotKeyPlaceholder: 'slot_key',
+      slotDescriptionPlaceholder: '描述这个槽位保存什么内容',
+      maxChars: '最大字符数',
     },
     preview: {
       title: '预览与调试',

@@ -21,12 +21,13 @@ import {
   AgentRuntimePromptPanel,
   AgentRuntimeVersionPopover,
   AgentRuntimeSkillDialog,
-  buildAgentRuntimeSignature,
   pickAgentInitials,
   toModelParams,
+  useAgentRuntimeDraftPersistence,
+  useAgentRuntimeLeaveGuard,
   type AgentConfigSection,
+  type AgentRuntimeDraftPersistenceSnapshot,
   type AgentPublishedVersionListItem,
-  type AgentRuntimeSaveState,
 } from '@/components/agents/agent-runtime';
 import { PromptOptimizerDialog } from '@/components/prompts/prompt-optimizer-dialog';
 import { useAgent, useAgentConfig, usePublishAgent } from '@/hooks/agent/use-agents';
@@ -36,7 +37,11 @@ import { AGENT_KEYS } from '@/hooks/query-keys';
 import { useLocale } from '@/hooks/use-locale';
 import { useT } from '@/i18n';
 import agentService from '@/services/agent.service';
-import type { AgentRuntimeConfig, UpdateAgentRuntimeConfigRequest } from '@/services/types/agent';
+import type {
+  AgentMemorySlotConfig,
+  AgentRuntimeConfig,
+  UpdateAgentRuntimeConfigRequest,
+} from '@/services/types/agent';
 import type { AIChatSkillMetadata } from '@/services/types/aichat';
 import { getErrorMessage } from '@/utils/error-notifications';
 
@@ -46,7 +51,7 @@ interface AgentRuntimePageProps {
 
 function getSaveText(
   t: ReturnType<typeof useT<'agents.agentRuntime'>>,
-  saveState: AgentRuntimeSaveState,
+  saveState: ReturnType<typeof useAgentRuntimeDraftPersistence>['saveState'],
   lastSavedAt: number | null
 ) {
   if (saveState === 'saving') return t('saveState.saving');
@@ -63,9 +68,7 @@ function getSaveText(
 
 interface VersionPreviewBackup {
   payload: UpdateAgentRuntimeConfigRequest;
-  lastSavedAt: number | null;
-  lastSavedSignature: string;
-  saveState: AgentRuntimeSaveState;
+  persistence: AgentRuntimeDraftPersistenceSnapshot;
 }
 
 export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
@@ -95,7 +98,8 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
     params: {},
   });
   const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
-  const [useMemory, setUseMemory] = useState(false);
+  const [agentMemoryEnabled, setAgentMemoryEnabled] = useState(false);
+  const [agentMemorySlots, setAgentMemorySlots] = useState<AgentMemorySlotConfig[]>([]);
   const [fileUploadEnabled, setFileUploadEnabled] = useState(false);
   const [homeTitle, setHomeTitle] = useState(defaultHomeTitle);
   const [inputPlaceholder, setInputPlaceholder] = useState(defaultInputPlaceholder);
@@ -120,10 +124,7 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
     files: true,
     memory: true,
   });
-  const [saveState, setSaveState] = useState<AgentRuntimeSaveState>('idle');
-  const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
-  const lastSavedSignatureRef = useRef('');
-  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hydratedAgentIdRef = useRef<string | null>(null);
   const versionPreviewBackupRef = useRef<VersionPreviewBackup | null>(null);
 
   const selectableSkills = useMemo(
@@ -188,7 +189,9 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
       model: modelValue.model,
       model_parameters: modelValue.params,
       enabled_skill_ids: normalizedSelectedSkillIds,
-      use_memory: useMemory,
+      use_memory: false,
+      agent_memory_enabled: agentMemoryEnabled,
+      agent_memory_slots: agentMemorySlots,
       file_upload_enabled: fileUploadEnabled,
       home_title: homeTitle.trim() || defaultHomeTitle,
       input_placeholder: inputPlaceholder.trim() || defaultInputPlaceholder,
@@ -204,6 +207,8 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
       defaultHomeTitle,
       defaultInputPlaceholder,
       fileUploadEnabled,
+      agentMemoryEnabled,
+      agentMemorySlots,
       homeTitle,
       inputPlaceholder,
       modelValue,
@@ -211,17 +216,7 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
       suggestedQuestions,
       knowledgeDatasetIds,
       systemPrompt,
-      useMemory,
     ]
-  );
-  const currentSignature = useMemo(
-    () => buildAgentRuntimeSignature(currentPayload),
-    [currentPayload]
-  );
-  const isDirty = Boolean(
-    !isVersionPreviewing &&
-      lastSavedSignatureRef.current &&
-      currentSignature !== lastSavedSignatureRef.current
   );
   const agentHomeBrand = useMemo(
     () => (
@@ -240,44 +235,6 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
     initChatController(null);
   }, [initChatController]);
 
-  useEffect(() => {
-    if (!config) return;
-    const nextPayload: UpdateAgentRuntimeConfigRequest = {
-      system_prompt: config.system_prompt ?? '',
-      model_provider: config.model_provider ?? '',
-      model: config.model ?? '',
-      model_parameters: toModelParams(config.model_parameters),
-      enabled_skill_ids: config.enabled_skill_ids ?? [],
-      use_memory: config.use_memory ?? false,
-      file_upload_enabled: config.file_upload_enabled ?? false,
-      home_title:
-        !config.home_title || config.home_title === 'title'
-          ? defaultHomeTitle
-          : config.home_title,
-      input_placeholder: config.input_placeholder ?? defaultInputPlaceholder,
-      theme_color: 'default',
-      suggested_questions: config.suggested_questions ?? [],
-      knowledge_dataset_ids: config.knowledge_dataset_ids ?? [],
-      knowledge_retrieval_config: config.knowledge_retrieval_config ?? {},
-    };
-    setSystemPrompt(nextPayload.system_prompt);
-    setModelValue({
-      provider: nextPayload.model_provider,
-      model: nextPayload.model,
-      params: toModelParams(nextPayload.model_parameters),
-    });
-    setSelectedSkillIds(nextPayload.enabled_skill_ids);
-    setUseMemory(nextPayload.use_memory);
-    setFileUploadEnabled(nextPayload.file_upload_enabled);
-    setHomeTitle(nextPayload.home_title);
-    setInputPlaceholder(nextPayload.input_placeholder);
-    setSuggestedQuestions(nextPayload.suggested_questions);
-    setKnowledgeDatasetIds(nextPayload.knowledge_dataset_ids ?? []);
-    setLastSavedAt(config.updated_at ?? null);
-    lastSavedSignatureRef.current = buildAgentRuntimeSignature(nextPayload);
-    setSaveState('saved');
-  }, [config, defaultHomeTitle, defaultInputPlaceholder]);
-
   const applyRuntimePayload = useCallback((payload: UpdateAgentRuntimeConfigRequest) => {
     setSystemPrompt(payload.system_prompt);
     setModelValue({
@@ -286,7 +243,8 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
       params: toModelParams(payload.model_parameters),
     });
     setSelectedSkillIds(payload.enabled_skill_ids);
-    setUseMemory(payload.use_memory);
+    setAgentMemoryEnabled(payload.agent_memory_enabled ?? false);
+    setAgentMemorySlots(payload.agent_memory_slots ?? []);
     setFileUploadEnabled(payload.file_upload_enabled);
     setHomeTitle(payload.home_title);
     setInputPlaceholder(payload.input_placeholder);
@@ -302,6 +260,8 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
       model_parameters: toModelParams(runtimeConfig.model_parameters),
       enabled_skill_ids: runtimeConfig.enabled_skill_ids ?? [],
       use_memory: runtimeConfig.use_memory ?? false,
+      agent_memory_enabled: runtimeConfig.agent_memory_enabled ?? false,
+      agent_memory_slots: runtimeConfig.agent_memory_slots ?? [],
       file_upload_enabled: runtimeConfig.file_upload_enabled ?? false,
       home_title:
         !runtimeConfig.home_title || runtimeConfig.home_title === 'title'
@@ -316,75 +276,65 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
     [defaultHomeTitle, defaultInputPlaceholder]
   );
 
-  useEffect(() => {
-    if (!lastSavedSignatureRef.current || isVersionPreviewing) return;
-    setSaveState(currentSignature === lastSavedSignatureRef.current ? 'saved' : 'dirty');
-  }, [currentSignature, isVersionPreviewing]);
+  const saveRuntimePayload = useCallback(
+    async (payload: UpdateAgentRuntimeConfigRequest) => {
+      const response = await agentService.updateAgentConfig(agentId, payload);
+      const slotsResponse = await agentService.updateAgentMemorySlots(
+        agentId,
+        payload.agent_memory_slots ?? []
+      );
+      const updatedAt = response.data.updated_at ?? Math.floor(Date.now() / 1000);
 
-  const saveConfig = useCallback(
-    async (silent: boolean) => {
-      if (isVersionPreviewing) {
-        if (!silent) {
-          toast.info(t('toasts.finishVersionPreviewFirst'));
-        }
-        return;
-      }
-      if (currentSignature === lastSavedSignatureRef.current) return;
-      setSaveState('saving');
-      try {
-        const response = await agentService.updateAgentConfig(agentId, currentPayload);
-        const updatedAt = response.data.updated_at ?? Math.floor(Date.now() / 1000);
-        const savedPayload = {
-          ...currentPayload,
-          model_parameters: toModelParams(response.data.model_parameters),
-          file_upload_enabled:
-            response.data.file_upload_enabled ?? currentPayload.file_upload_enabled,
-          home_title: response.data.home_title ?? currentPayload.home_title,
-          input_placeholder:
-            response.data.input_placeholder ?? currentPayload.input_placeholder,
-          theme_color: 'default',
-          suggested_questions:
-            response.data.suggested_questions ?? currentPayload.suggested_questions,
-          knowledge_dataset_ids:
-            response.data.knowledge_dataset_ids ?? currentPayload.knowledge_dataset_ids,
-          knowledge_retrieval_config:
-            response.data.knowledge_retrieval_config ?? currentPayload.knowledge_retrieval_config,
-        };
-        setLastSavedAt(updatedAt);
-        lastSavedSignatureRef.current = buildAgentRuntimeSignature(savedPayload);
-        queryClient.setQueryData(AGENT_KEYS.config(agentId), response);
-        queryClient.invalidateQueries({ queryKey: AGENT_KEYS.detail(agentId) });
-        setSaveState('saved');
-        if (!silent) {
-          toast.success(t('toasts.saveSuccess'));
-        }
-      } catch (error) {
-        setSaveState('error');
-        if (!silent) {
-          toast.error(getErrorMessage(error) || t('toasts.saveFailed'));
-        }
-      }
+      queryClient.setQueryData(AGENT_KEYS.config(agentId), {
+        ...response,
+        data: {
+          ...response.data,
+          agent_memory_enabled: payload.agent_memory_enabled,
+          agent_memory_slots:
+            slotsResponse.data.slots ?? response.data.agent_memory_slots ?? payload.agent_memory_slots,
+        },
+      });
+      queryClient.invalidateQueries({ queryKey: AGENT_KEYS.detail(agentId) });
+
+      return {
+        savedPayload: payload,
+        updatedAt,
+      };
     },
-    [agentId, currentPayload, currentSignature, isVersionPreviewing, queryClient, t]
+    [agentId, queryClient]
   );
 
-  useEffect(() => {
-    if (isVersionPreviewing) return;
-    if (!lastSavedSignatureRef.current || currentSignature === lastSavedSignatureRef.current) {
-      return;
-    }
-    if (autosaveTimerRef.current) {
-      clearTimeout(autosaveTimerRef.current);
-    }
-    autosaveTimerRef.current = setTimeout(() => {
-      void saveConfig(true);
-    }, 900);
-    return () => {
-      if (autosaveTimerRef.current) {
-        clearTimeout(autosaveTimerRef.current);
+  const {
+    saveState,
+    lastSavedAt,
+    isDirty,
+    isSaving,
+    saveNow,
+    markHydrated,
+    markServerSaved,
+    setPreviewing,
+    getSnapshot,
+    restoreSnapshot,
+  } = useAgentRuntimeDraftPersistence({
+    currentPayload,
+    enabled: !isVersionPreviewing,
+    savePayload: saveRuntimePayload,
+    onSaveFailed: (error, options) => {
+      if (!options.silent) {
+        toast.error(getErrorMessage(error) || t('toasts.saveFailedDraftKept'));
       }
-    };
-  }, [currentSignature, isVersionPreviewing, saveConfig]);
+    },
+  });
+
+  useEffect(() => {
+    if (!config || !agentDetail) return;
+    if (hydratedAgentIdRef.current === agentId) return;
+
+    const nextPayload = payloadFromRuntimeConfig(config);
+    applyRuntimePayload(nextPayload);
+    hydratedAgentIdRef.current = agentId;
+    markHydrated(nextPayload, config.updated_at ?? null);
+  }, [agentDetail, agentId, applyRuntimePayload, config, markHydrated, payloadFromRuntimeConfig]);
 
   const handleModelChange = useCallback((value: ModelSelectorValue) => {
     setModelValue(current => ({
@@ -488,14 +438,12 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
     const backup = versionPreviewBackupRef.current;
     if (backup) {
       applyRuntimePayload(backup.payload);
-      setLastSavedAt(backup.lastSavedAt);
-      lastSavedSignatureRef.current = backup.lastSavedSignature;
-      setSaveState(backup.saveState);
+      restoreSnapshot(backup.persistence);
     }
     versionPreviewBackupRef.current = null;
     setSelectedPublishedVersionId('');
     setIsVersionPreviewing(false);
-  }, [applyRuntimePayload]);
+  }, [applyRuntimePayload, restoreSnapshot]);
 
   const handlePublishedVersionsOpenChange = useCallback(
     (open: boolean) => {
@@ -516,22 +464,16 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
       if (!versionPreviewBackupRef.current) {
         versionPreviewBackupRef.current = {
           payload: currentPayload,
-          lastSavedAt,
-          lastSavedSignature: lastSavedSignatureRef.current,
-          saveState,
+          persistence: getSnapshot(),
         };
-      }
-      if (autosaveTimerRef.current) {
-        clearTimeout(autosaveTimerRef.current);
-        autosaveTimerRef.current = null;
       }
       const nextPayload = payloadFromRuntimeConfig(version.config_snapshot);
       applyRuntimePayload(nextPayload);
       setSelectedPublishedVersionId(version.id);
       setIsVersionPreviewing(true);
-      setSaveState('previewing');
+      setPreviewing();
     },
-    [applyRuntimePayload, currentPayload, lastSavedAt, payloadFromRuntimeConfig, publishedVersions, saveState]
+    [applyRuntimePayload, currentPayload, getSnapshot, payloadFromRuntimeConfig, publishedVersions, setPreviewing]
   );
 
   const handleConfirmVersionRollback = useCallback(
@@ -544,10 +486,8 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
         });
         const nextPayload = payloadFromRuntimeConfig(response.data);
         applyRuntimePayload(nextPayload);
-        setLastSavedAt(response.data.updated_at ?? Math.floor(Date.now() / 1000));
-        lastSavedSignatureRef.current = buildAgentRuntimeSignature(nextPayload);
+        markServerSaved(nextPayload, response.data.updated_at ?? Math.floor(Date.now() / 1000));
         queryClient.setQueryData(AGENT_KEYS.config(agentId), response);
-        setSaveState('saved');
         versionPreviewBackupRef.current = null;
         setIsVersionPreviewing(false);
         setSelectedPublishedVersionId('');
@@ -563,6 +503,7 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
       applyRuntimePayload,
       agentId,
       isRollingBackVersion,
+      markServerSaved,
       payloadFromRuntimeConfig,
       queryClient,
       selectedPublishedVersionId,
@@ -575,14 +516,31 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
     setPromptOptimizerOpen(false);
   }, []);
 
-  const handleManualSave = useCallback(() => {
-    void saveConfig(false);
-  }, [saveConfig]);
+  const handleManualSave = useCallback(async () => {
+    const saved = await saveNow({ silent: false, force: true });
+    if (saved) {
+      toast.success(t('toasts.saveSuccess'));
+    }
+  }, [saveNow, t]);
 
   const handlePublish = useCallback(async () => {
-    await saveConfig(true);
-    publishAgent.mutate({ agentId });
-  }, [agentId, publishAgent, saveConfig]);
+    const saved = await saveNow({ silent: true, force: true });
+    if (saved) {
+      publishAgent.mutate({ agentId });
+    }
+  }, [agentId, publishAgent, saveNow]);
+
+  const handleSaveBeforeLeave = useCallback(
+    () => saveNow({ silent: false, force: true }),
+    [saveNow]
+  );
+
+  const leaveGuardNode = useAgentRuntimeLeaveGuard({
+    enabled: !isVersionPreviewing,
+    hasUnsavedChanges: isDirty,
+    isSaving,
+    onSave: handleSaveBeforeLeave,
+  });
 
   const webAppUrl = agentDetail?.web_app_id ? `/webapp/${agentDetail.web_app_id}/chat` : '';
 
@@ -592,6 +550,7 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-background">
+      {leaveGuardNode}
       <AgentRuntimeHeader
         agentId={agentId}
         agent={agentDetail}
@@ -649,7 +608,8 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
           isGeneratingSuggestions={isGeneratingSuggestions}
           systemPrompt={systemPrompt}
           fileUploadEnabled={fileUploadEnabled}
-          useMemory={useMemory}
+          agentMemoryEnabled={agentMemoryEnabled}
+          agentMemorySlots={agentMemorySlots}
           defaultHomeTitle={defaultHomeTitle}
           defaultInputPlaceholder={defaultInputPlaceholder}
           onToggleSection={section =>
@@ -664,12 +624,13 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
           onGenerateSuggestedQuestions={() => void handleGenerateSuggestedQuestions()}
           onChangeSuggestedQuestions={setSuggestedQuestions}
           onChangeFileUploadEnabled={setFileUploadEnabled}
-          onChangeUseMemory={setUseMemory}
+          onChangeAgentMemoryEnabled={setAgentMemoryEnabled}
+          onChangeAgentMemorySlots={setAgentMemorySlots}
         />
         <AgentRuntimePreviewPanel
           controller={chatController}
           modelSelectorValue={modelSelectorValue}
-          useMemory={useMemory}
+          useMemory={false}
           fileUploadEnabled={fileUploadEnabled}
           suggestions={currentPayload.suggested_questions}
           inputPlaceholder={currentPayload.input_placeholder}

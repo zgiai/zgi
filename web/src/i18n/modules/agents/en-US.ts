@@ -1366,6 +1366,7 @@ const messages = {
     toasts: {
       saveSuccess: 'Configuration saved',
       saveFailed: 'Save failed',
+      saveFailedDraftKept: 'Save failed. Your changes are kept.',
       noGeneratedSuggestions: 'No usable request examples were generated',
       suggestionsGenerated: 'Request examples generated',
       generateSuggestionsFailed: 'Failed to generate request examples',
@@ -1376,6 +1377,14 @@ const messages = {
       rollbackSuccess: 'Draft restored from the selected version',
       rollbackFailed: 'Failed to restore the selected version',
       finishVersionPreviewFirst: 'Confirm or cancel version preview first',
+    },
+    leaveGuard: {
+      title: 'Save changes before leaving?',
+      description:
+        'This Agent has unsaved changes. You can save them before leaving, discard them, or keep editing.',
+      saveAndLeave: 'Save and leave',
+      discardAndLeave: 'Discard and leave',
+      continueEditing: 'Keep editing',
     },
     header: {
       save: 'Save',
@@ -1466,8 +1475,14 @@ const messages = {
       description: 'When enabled, debugging and WebApp chat can upload documents or images.',
     },
     memory: {
-      title: 'Long-term memory',
-      description: 'When enabled, runtime may call memory capabilities during debug and run.',
+      agentTitle: 'Agent fixed-slot memory',
+      agentDescription: 'Configure fixed keys the Agent can read and update for each user.',
+      emptySlots: 'No memory slots configured yet.',
+      addSlot: 'Add slot',
+      removeSlot: 'Remove memory slot',
+      slotKeyPlaceholder: 'slot_key',
+      slotDescriptionPlaceholder: 'Describe what this slot stores',
+      maxChars: 'Maximum characters',
     },
     preview: {
       title: 'Preview and debug',

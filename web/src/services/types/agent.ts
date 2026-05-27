@@ -180,6 +180,8 @@ export interface AgentRuntimeConfig {
   model_parameters: Record<string, unknown>;
   enabled_skill_ids: string[];
   use_memory: boolean;
+  agent_memory_enabled?: boolean;
+  agent_memory_slots?: AgentMemorySlotConfig[];
   file_upload_enabled: boolean;
   home_title: string;
   input_placeholder: string;
@@ -190,6 +192,17 @@ export interface AgentRuntimeConfig {
   updated_at: number;
 }
 
+export interface AgentMemorySlotConfig {
+  id?: string;
+  key: string;
+  description: string;
+  max_chars: number;
+  enabled: boolean;
+  sort_order: number;
+  created_at?: number;
+  updated_at?: number;
+}
+
 export interface UpdateAgentRuntimeConfigRequest {
   system_prompt: string;
   model_provider: string;
@@ -197,6 +210,8 @@ export interface UpdateAgentRuntimeConfigRequest {
   model_parameters: Record<string, unknown>;
   enabled_skill_ids: string[];
   use_memory: boolean;
+  agent_memory_enabled?: boolean;
+  agent_memory_slots?: AgentMemorySlotConfig[];
   file_upload_enabled: boolean;
   home_title: string;
   input_placeholder: string;

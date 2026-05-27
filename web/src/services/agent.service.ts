@@ -12,6 +12,7 @@ import type {
   UpdateWebAppStatusResponse,
   AgentRuntimeConfig,
   UpdateAgentRuntimeConfigRequest,
+  AgentMemorySlotConfig,
   PublishAgentResponse,
   AgentPublishedVersionsResponse,
   RollbackAgentPublishedVersionRequest,
@@ -137,6 +138,23 @@ class AgentService extends BaseService {
     data: UpdateAgentRuntimeConfigRequest
   ): Promise<ApiResponseData<AgentRuntimeConfig>> {
     return this.request('put', `/agents/${agentId}/config`, data, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  getAgentMemorySlots(
+    agentId: string
+  ): Promise<ApiResponseData<{ slots: AgentMemorySlotConfig[] }>> {
+    return this.request('get', `/agents/${agentId}/memory/slots`, undefined, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  updateAgentMemorySlots(
+    agentId: string,
+    slots: AgentMemorySlotConfig[]
+  ): Promise<ApiResponseData<{ slots: AgentMemorySlotConfig[] }>> {
+    return this.request('put', `/agents/${agentId}/memory/slots`, { slots }, {
       headers: { 'Content-Type': 'application/json' },
     });
   }
