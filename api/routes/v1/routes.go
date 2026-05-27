@@ -153,7 +153,13 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	})
 
 	// ---------- LLM Management ----------
-	llmModule := RegisterLLMRoutes(v1, serviceContainer)
+	llmModule := RegisterLLMRoutes(v1, LLMRouteDeps{
+		DB:                         db,
+		AccountService:             serviceContainer.GetAccountService(),
+		WorkspaceManagementService: serviceContainer.GetTenantService(),
+		OrganizationService:        serviceContainer.GetOrganizationService(),
+		ConsoleProvider:            serviceContainer.GetConsoleProvider(),
+	})
 
 	// ---------- AIChat ----------
 	RegisterAIChatRoutes(v1, AIChatRouteDeps{
