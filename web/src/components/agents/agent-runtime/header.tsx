@@ -189,6 +189,7 @@ export function AgentRuntimeHeader({
             <Button
               size="sm"
               className="flex items-center gap-1.5 rounded-md border border-primary/25 bg-primary/10 px-3.5 text-primary shadow-none transition-colors hover:border-primary/35 hover:bg-primary/15"
+              aria-label={isPublishing ? publishingLabel : publishLabel}
             >
               {isPublishing ? <Loader2 className="size-4 animate-spin" /> : <UploadCloud className="size-4" />}
               <span className="hidden font-semibold sm:inline">{t('header.publish')}</span>
