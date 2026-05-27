@@ -702,6 +702,7 @@ export function AIChatShell({
           brand={homeBrand}
           title={homeTitle}
           description={homeDescription}
+          surface={surface}
         />
 
         {showResumeScrollButton ? (
@@ -737,6 +738,7 @@ export function AIChatShell({
           uploadScope={uploadScope}
           showFileLibraryPicker={showFileLibraryPicker}
           inputPlaceholder={inputPlaceholder}
+          surface={surface}
         />
       </main>
 

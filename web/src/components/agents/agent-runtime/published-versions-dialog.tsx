@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/popover';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type { AgentPublishedVersionListItem } from './types';
@@ -51,12 +52,22 @@ export function AgentRuntimeVersionPopover({
 
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
-      <PopoverTrigger asChild>
-        <Button variant="outline" className="gap-2">
-          <History className="size-4" />
-          {t('header.versions')}
-        </Button>
-      </PopoverTrigger>
+      <Tooltip>
+        <PopoverTrigger asChild>
+          <TooltipTrigger asChild>
+            <Button
+              isIcon
+              variant="ghost"
+              size="sm"
+              interactive="subtle"
+              aria-label={t('header.versions')}
+            >
+              <History className="size-[18px]" />
+            </Button>
+          </TooltipTrigger>
+        </PopoverTrigger>
+        <TooltipContent>{t('header.versions')}</TooltipContent>
+      </Tooltip>
       <PopoverContent align="end" sideOffset={10} className="w-[360px] p-0">
         <PopoverHeader className="border-b px-4 py-3">
           <PopoverTitle>{t('publishedVersions.title')}</PopoverTitle>

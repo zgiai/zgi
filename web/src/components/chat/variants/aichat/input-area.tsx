@@ -142,6 +142,7 @@ interface AIChatInputAreaProps {
   uploadScope?: AIChatUploadScope;
   showFileLibraryPicker?: boolean;
   inputPlaceholder?: string;
+  surface?: 'aichat' | 'agent-draft' | 'agent-webapp';
 }
 
 /**
@@ -172,6 +173,7 @@ export function AIChatInputArea({
   uploadScope = { type: 'console' },
   showFileLibraryPicker = true,
   inputPlaceholder,
+  surface = 'aichat',
 }: AIChatInputAreaProps) {
   const t = useT('webapp');
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -589,14 +591,20 @@ export function AIChatInputArea({
         className={cn(
           'pointer-events-none absolute inset-x-0 z-20 px-4 transition-[top,transform,padding,background-color,box-shadow] duration-300 ease-in-out sm:px-6 lg:px-8',
           isHome && !isLoadingMessages
-            ? 'top-[58%] -translate-y-1/2 pb-0 pt-0 sm:top-1/2'
+            ? surface === 'agent-draft'
+              ? 'top-[58%] -translate-y-1/2 pb-0 pt-0 sm:top-1/2'
+              : 'top-[58%] -translate-y-1/2 pb-0 pt-0 sm:top-1/2'
             : 'top-full -translate-y-full bg-background pb-1 shadow-[0_-18px_36px_hsl(var(--background))]'
         )}
       >
         <div
           className={cn(
             'pointer-events-auto mx-auto w-full transition-[max-width] duration-300 ease-in-out',
-            isHome && !isLoadingMessages ? 'max-w-3xl' : 'max-w-4xl'
+            surface === 'agent-draft'
+              ? 'max-w-[560px]'
+              : isHome && !isLoadingMessages
+                ? 'max-w-3xl'
+                : 'max-w-4xl'
           )}
         >
           {modelMissing ? (

@@ -4,26 +4,31 @@ import { Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { useT } from '@/i18n';
+import { cn } from '@/lib/utils';
 
 interface AgentRuntimePromptPanelProps {
   systemPrompt: string;
+  className?: string;
   onChangeSystemPrompt: (value: string) => void;
   onOpenOptimizer: () => void;
 }
 
 export function AgentRuntimePromptPanel({
   systemPrompt,
+  className,
   onChangeSystemPrompt,
   onOpenOptimizer,
 }: AgentRuntimePromptPanelProps) {
   const t = useT('agents.agentRuntime');
 
   return (
-    <section className="flex min-w-0 flex-col overflow-hidden">
+    <section className={cn('flex min-w-0 flex-col overflow-hidden', className)}>
       <div className="flex h-12 shrink-0 items-center justify-between px-5">
         <div>
           <h2 className="text-sm font-semibold">{t('prompt.title')}</h2>
-          <p className="text-xs text-muted-foreground">{t('prompt.description')}</p>
+          {t('prompt.description') ? (
+            <p className="text-xs text-muted-foreground">{t('prompt.description')}</p>
+          ) : null}
         </div>
         <Button
           variant="ghost"
