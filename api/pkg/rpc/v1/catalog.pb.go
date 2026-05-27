@@ -378,34 +378,38 @@ func (x *CatalogProvider) GetMetadataJson() string {
 }
 
 type CatalogModel struct {
-	state                   protoimpl.MessageState `protogen:"open.v1"`
-	Provider                string                 `protobuf:"bytes,1,opt,name=provider,proto3" json:"provider,omitempty"`
-	Model                   string                 `protobuf:"bytes,2,opt,name=model,proto3" json:"model,omitempty"`
-	ModelName               string                 `protobuf:"bytes,3,opt,name=model_name,json=modelName,proto3" json:"model_name,omitempty"`
-	Type                    string                 `protobuf:"bytes,4,opt,name=type,proto3" json:"type,omitempty"`
-	Family                  string                 `protobuf:"bytes,5,opt,name=family,proto3" json:"family,omitempty"`
-	FamilyName              string                 `protobuf:"bytes,6,opt,name=family_name,json=familyName,proto3" json:"family_name,omitempty"`
-	Status                  string                 `protobuf:"bytes,7,opt,name=status,proto3" json:"status,omitempty"`
-	Tagline                 string                 `protobuf:"bytes,8,opt,name=tagline,proto3" json:"tagline,omitempty"`
-	IsFlagship              bool                   `protobuf:"varint,9,opt,name=is_flagship,json=isFlagship,proto3" json:"is_flagship,omitempty"`
-	IsRecommended           bool                   `protobuf:"varint,10,opt,name=is_recommended,json=isRecommended,proto3" json:"is_recommended,omitempty"`
-	IsFeatured              bool                   `protobuf:"varint,11,opt,name=is_featured,json=isFeatured,proto3" json:"is_featured,omitempty"`
-	IsNew                   bool                   `protobuf:"varint,12,opt,name=is_new,json=isNew,proto3" json:"is_new,omitempty"`
-	AccessType              string                 `protobuf:"bytes,13,opt,name=access_type,json=accessType,proto3" json:"access_type,omitempty"`
-	Currency                string                 `protobuf:"bytes,14,opt,name=currency,proto3" json:"currency,omitempty"`
-	ContextWindow           int32                  `protobuf:"varint,15,opt,name=context_window,json=contextWindow,proto3" json:"context_window,omitempty"`
-	MaxOutputTokens         int32                  `protobuf:"varint,16,opt,name=max_output_tokens,json=maxOutputTokens,proto3" json:"max_output_tokens,omitempty"`
-	InputPrice              float64                `protobuf:"fixed64,17,opt,name=input_price,json=inputPrice,proto3" json:"input_price,omitempty"`
-	OutputPrice             float64                `protobuf:"fixed64,18,opt,name=output_price,json=outputPrice,proto3" json:"output_price,omitempty"`
-	CachedInputPrice        float64                `protobuf:"fixed64,19,opt,name=cached_input_price,json=cachedInputPrice,proto3" json:"cached_input_price,omitempty"`
-	UseCases                []string               `protobuf:"bytes,20,rep,name=use_cases,json=useCases,proto3" json:"use_cases,omitempty"`
-	InputModalities         []string               `protobuf:"bytes,21,rep,name=input_modalities,json=inputModalities,proto3" json:"input_modalities,omitempty"`
-	OutputModalities        []string               `protobuf:"bytes,22,rep,name=output_modalities,json=outputModalities,proto3" json:"output_modalities,omitempty"`
-	KnowledgeCutoff         string                 `protobuf:"bytes,23,opt,name=knowledge_cutoff,json=knowledgeCutoff,proto3" json:"knowledge_cutoff,omitempty"`
-	IsActive                bool                   `protobuf:"varint,24,opt,name=is_active,json=isActive,proto3" json:"is_active,omitempty"`
-	IsSystemEnabled         bool                   `protobuf:"varint,25,opt,name=is_system_enabled,json=isSystemEnabled,proto3" json:"is_system_enabled,omitempty"`
-	SupportedParametersJson string                 `protobuf:"bytes,26,opt,name=supported_parameters_json,json=supportedParametersJson,proto3" json:"supported_parameters_json,omitempty"`
-	ConfigParametersJson    string                 `protobuf:"bytes,27,opt,name=config_parameters_json,json=configParametersJson,proto3" json:"config_parameters_json,omitempty"`
+	state                   protoimpl.MessageState  `protogen:"open.v1"`
+	Provider                string                  `protobuf:"bytes,1,opt,name=provider,proto3" json:"provider,omitempty"`
+	Model                   string                  `protobuf:"bytes,2,opt,name=model,proto3" json:"model,omitempty"`
+	ModelName               string                  `protobuf:"bytes,3,opt,name=model_name,json=modelName,proto3" json:"model_name,omitempty"`
+	Type                    string                  `protobuf:"bytes,4,opt,name=type,proto3" json:"type,omitempty"`
+	Family                  string                  `protobuf:"bytes,5,opt,name=family,proto3" json:"family,omitempty"`
+	FamilyName              string                  `protobuf:"bytes,6,opt,name=family_name,json=familyName,proto3" json:"family_name,omitempty"`
+	Status                  string                  `protobuf:"bytes,7,opt,name=status,proto3" json:"status,omitempty"`
+	Tagline                 string                  `protobuf:"bytes,8,opt,name=tagline,proto3" json:"tagline,omitempty"`
+	IsFlagship              bool                    `protobuf:"varint,9,opt,name=is_flagship,json=isFlagship,proto3" json:"is_flagship,omitempty"`
+	IsRecommended           bool                    `protobuf:"varint,10,opt,name=is_recommended,json=isRecommended,proto3" json:"is_recommended,omitempty"`
+	IsFeatured              bool                    `protobuf:"varint,11,opt,name=is_featured,json=isFeatured,proto3" json:"is_featured,omitempty"`
+	IsNew                   bool                    `protobuf:"varint,12,opt,name=is_new,json=isNew,proto3" json:"is_new,omitempty"`
+	AccessType              string                  `protobuf:"bytes,13,opt,name=access_type,json=accessType,proto3" json:"access_type,omitempty"`
+	Currency                string                  `protobuf:"bytes,14,opt,name=currency,proto3" json:"currency,omitempty"`
+	ContextWindow           int32                   `protobuf:"varint,15,opt,name=context_window,json=contextWindow,proto3" json:"context_window,omitempty"`
+	MaxOutputTokens         int32                   `protobuf:"varint,16,opt,name=max_output_tokens,json=maxOutputTokens,proto3" json:"max_output_tokens,omitempty"`
+	InputPrice              float64                 `protobuf:"fixed64,17,opt,name=input_price,json=inputPrice,proto3" json:"input_price,omitempty"`
+	OutputPrice             float64                 `protobuf:"fixed64,18,opt,name=output_price,json=outputPrice,proto3" json:"output_price,omitempty"`
+	CachedInputPrice        float64                 `protobuf:"fixed64,19,opt,name=cached_input_price,json=cachedInputPrice,proto3" json:"cached_input_price,omitempty"`
+	UseCases                []string                `protobuf:"bytes,20,rep,name=use_cases,json=useCases,proto3" json:"use_cases,omitempty"`
+	InputModalities         []string                `protobuf:"bytes,21,rep,name=input_modalities,json=inputModalities,proto3" json:"input_modalities,omitempty"`
+	OutputModalities        []string                `protobuf:"bytes,22,rep,name=output_modalities,json=outputModalities,proto3" json:"output_modalities,omitempty"`
+	KnowledgeCutoff         string                  `protobuf:"bytes,23,opt,name=knowledge_cutoff,json=knowledgeCutoff,proto3" json:"knowledge_cutoff,omitempty"`
+	IsActive                bool                    `protobuf:"varint,24,opt,name=is_active,json=isActive,proto3" json:"is_active,omitempty"`
+	IsSystemEnabled         bool                    `protobuf:"varint,25,opt,name=is_system_enabled,json=isSystemEnabled,proto3" json:"is_system_enabled,omitempty"`
+	SupportedParametersJson string                  `protobuf:"bytes,26,opt,name=supported_parameters_json,json=supportedParametersJson,proto3" json:"supported_parameters_json,omitempty"`
+	ConfigParametersJson    string                  `protobuf:"bytes,27,opt,name=config_parameters_json,json=configParametersJson,proto3" json:"config_parameters_json,omitempty"`
+	Endpoints               *CatalogModelEndpoints  `protobuf:"bytes,28,opt,name=endpoints,proto3" json:"endpoints,omitempty"`
+	Features                *CatalogModelFeatures   `protobuf:"bytes,29,opt,name=features,proto3" json:"features,omitempty"`
+	Tools                   *CatalogModelTools      `protobuf:"bytes,30,opt,name=tools,proto3" json:"tools,omitempty"`
+	Parameters              *CatalogModelParameters `protobuf:"bytes,31,opt,name=parameters,proto3" json:"parameters,omitempty"`
 	unknownFields           protoimpl.UnknownFields
 	sizeCache               protoimpl.SizeCache
 }
@@ -629,6 +633,538 @@ func (x *CatalogModel) GetConfigParametersJson() string {
 	return ""
 }
 
+func (x *CatalogModel) GetEndpoints() *CatalogModelEndpoints {
+	if x != nil {
+		return x.Endpoints
+	}
+	return nil
+}
+
+func (x *CatalogModel) GetFeatures() *CatalogModelFeatures {
+	if x != nil {
+		return x.Features
+	}
+	return nil
+}
+
+func (x *CatalogModel) GetTools() *CatalogModelTools {
+	if x != nil {
+		return x.Tools
+	}
+	return nil
+}
+
+func (x *CatalogModel) GetParameters() *CatalogModelParameters {
+	if x != nil {
+		return x.Parameters
+	}
+	return nil
+}
+
+type CatalogModelEndpoints struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	ChatCompletions  bool                   `protobuf:"varint,1,opt,name=chat_completions,json=chatCompletions,proto3" json:"chat_completions,omitempty"`
+	Responses        bool                   `protobuf:"varint,2,opt,name=responses,proto3" json:"responses,omitempty"`
+	Realtime         bool                   `protobuf:"varint,3,opt,name=realtime,proto3" json:"realtime,omitempty"`
+	Assistants       bool                   `protobuf:"varint,4,opt,name=assistants,proto3" json:"assistants,omitempty"`
+	Batch            bool                   `protobuf:"varint,5,opt,name=batch,proto3" json:"batch,omitempty"`
+	Embeddings       bool                   `protobuf:"varint,6,opt,name=embeddings,proto3" json:"embeddings,omitempty"`
+	FineTuning       bool                   `protobuf:"varint,7,opt,name=fine_tuning,json=fineTuning,proto3" json:"fine_tuning,omitempty"`
+	ImageGeneration  bool                   `protobuf:"varint,8,opt,name=image_generation,json=imageGeneration,proto3" json:"image_generation,omitempty"`
+	Vision           bool                   `protobuf:"varint,9,opt,name=vision,proto3" json:"vision,omitempty"`
+	SpeechGeneration bool                   `protobuf:"varint,10,opt,name=speech_generation,json=speechGeneration,proto3" json:"speech_generation,omitempty"`
+	Transcription    bool                   `protobuf:"varint,11,opt,name=transcription,proto3" json:"transcription,omitempty"`
+	Translation      bool                   `protobuf:"varint,12,opt,name=translation,proto3" json:"translation,omitempty"`
+	Moderation       bool                   `protobuf:"varint,13,opt,name=moderation,proto3" json:"moderation,omitempty"`
+	Videos           bool                   `protobuf:"varint,14,opt,name=videos,proto3" json:"videos,omitempty"`
+	ImageEdit        bool                   `protobuf:"varint,15,opt,name=image_edit,json=imageEdit,proto3" json:"image_edit,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *CatalogModelEndpoints) Reset() {
+	*x = CatalogModelEndpoints{}
+	mi := &file_pkg_rpc_v1_catalog_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CatalogModelEndpoints) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CatalogModelEndpoints) ProtoMessage() {}
+
+func (x *CatalogModelEndpoints) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_rpc_v1_catalog_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CatalogModelEndpoints.ProtoReflect.Descriptor instead.
+func (*CatalogModelEndpoints) Descriptor() ([]byte, []int) {
+	return file_pkg_rpc_v1_catalog_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *CatalogModelEndpoints) GetChatCompletions() bool {
+	if x != nil {
+		return x.ChatCompletions
+	}
+	return false
+}
+
+func (x *CatalogModelEndpoints) GetResponses() bool {
+	if x != nil {
+		return x.Responses
+	}
+	return false
+}
+
+func (x *CatalogModelEndpoints) GetRealtime() bool {
+	if x != nil {
+		return x.Realtime
+	}
+	return false
+}
+
+func (x *CatalogModelEndpoints) GetAssistants() bool {
+	if x != nil {
+		return x.Assistants
+	}
+	return false
+}
+
+func (x *CatalogModelEndpoints) GetBatch() bool {
+	if x != nil {
+		return x.Batch
+	}
+	return false
+}
+
+func (x *CatalogModelEndpoints) GetEmbeddings() bool {
+	if x != nil {
+		return x.Embeddings
+	}
+	return false
+}
+
+func (x *CatalogModelEndpoints) GetFineTuning() bool {
+	if x != nil {
+		return x.FineTuning
+	}
+	return false
+}
+
+func (x *CatalogModelEndpoints) GetImageGeneration() bool {
+	if x != nil {
+		return x.ImageGeneration
+	}
+	return false
+}
+
+func (x *CatalogModelEndpoints) GetVision() bool {
+	if x != nil {
+		return x.Vision
+	}
+	return false
+}
+
+func (x *CatalogModelEndpoints) GetSpeechGeneration() bool {
+	if x != nil {
+		return x.SpeechGeneration
+	}
+	return false
+}
+
+func (x *CatalogModelEndpoints) GetTranscription() bool {
+	if x != nil {
+		return x.Transcription
+	}
+	return false
+}
+
+func (x *CatalogModelEndpoints) GetTranslation() bool {
+	if x != nil {
+		return x.Translation
+	}
+	return false
+}
+
+func (x *CatalogModelEndpoints) GetModeration() bool {
+	if x != nil {
+		return x.Moderation
+	}
+	return false
+}
+
+func (x *CatalogModelEndpoints) GetVideos() bool {
+	if x != nil {
+		return x.Videos
+	}
+	return false
+}
+
+func (x *CatalogModelEndpoints) GetImageEdit() bool {
+	if x != nil {
+		return x.ImageEdit
+	}
+	return false
+}
+
+type CatalogModelFeatures struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Streaming        bool                   `protobuf:"varint,1,opt,name=streaming,proto3" json:"streaming,omitempty"`
+	FunctionCalling  bool                   `protobuf:"varint,2,opt,name=function_calling,json=functionCalling,proto3" json:"function_calling,omitempty"`
+	StructuredOutput bool                   `protobuf:"varint,3,opt,name=structured_output,json=structuredOutput,proto3" json:"structured_output,omitempty"`
+	JsonMode         bool                   `protobuf:"varint,4,opt,name=json_mode,json=jsonMode,proto3" json:"json_mode,omitempty"`
+	Distillation     bool                   `protobuf:"varint,5,opt,name=distillation,proto3" json:"distillation,omitempty"`
+	Reasoning        bool                   `protobuf:"varint,6,opt,name=reasoning,proto3" json:"reasoning,omitempty"`
+	SystemPrompt     bool                   `protobuf:"varint,7,opt,name=system_prompt,json=systemPrompt,proto3" json:"system_prompt,omitempty"`
+	Logprobs         bool                   `protobuf:"varint,8,opt,name=logprobs,proto3" json:"logprobs,omitempty"`
+	WebSearch        bool                   `protobuf:"varint,9,opt,name=web_search,json=webSearch,proto3" json:"web_search,omitempty"`
+	FileSearch       bool                   `protobuf:"varint,10,opt,name=file_search,json=fileSearch,proto3" json:"file_search,omitempty"`
+	CodeInterpreter  bool                   `protobuf:"varint,11,opt,name=code_interpreter,json=codeInterpreter,proto3" json:"code_interpreter,omitempty"`
+	ComputerUse      bool                   `protobuf:"varint,12,opt,name=computer_use,json=computerUse,proto3" json:"computer_use,omitempty"`
+	Mcp              bool                   `protobuf:"varint,13,opt,name=mcp,proto3" json:"mcp,omitempty"`
+	ReasoningEffort  bool                   `protobuf:"varint,14,opt,name=reasoning_effort,json=reasoningEffort,proto3" json:"reasoning_effort,omitempty"`
+	Attachment       bool                   `protobuf:"varint,15,opt,name=attachment,proto3" json:"attachment,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *CatalogModelFeatures) Reset() {
+	*x = CatalogModelFeatures{}
+	mi := &file_pkg_rpc_v1_catalog_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CatalogModelFeatures) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CatalogModelFeatures) ProtoMessage() {}
+
+func (x *CatalogModelFeatures) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_rpc_v1_catalog_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CatalogModelFeatures.ProtoReflect.Descriptor instead.
+func (*CatalogModelFeatures) Descriptor() ([]byte, []int) {
+	return file_pkg_rpc_v1_catalog_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *CatalogModelFeatures) GetStreaming() bool {
+	if x != nil {
+		return x.Streaming
+	}
+	return false
+}
+
+func (x *CatalogModelFeatures) GetFunctionCalling() bool {
+	if x != nil {
+		return x.FunctionCalling
+	}
+	return false
+}
+
+func (x *CatalogModelFeatures) GetStructuredOutput() bool {
+	if x != nil {
+		return x.StructuredOutput
+	}
+	return false
+}
+
+func (x *CatalogModelFeatures) GetJsonMode() bool {
+	if x != nil {
+		return x.JsonMode
+	}
+	return false
+}
+
+func (x *CatalogModelFeatures) GetDistillation() bool {
+	if x != nil {
+		return x.Distillation
+	}
+	return false
+}
+
+func (x *CatalogModelFeatures) GetReasoning() bool {
+	if x != nil {
+		return x.Reasoning
+	}
+	return false
+}
+
+func (x *CatalogModelFeatures) GetSystemPrompt() bool {
+	if x != nil {
+		return x.SystemPrompt
+	}
+	return false
+}
+
+func (x *CatalogModelFeatures) GetLogprobs() bool {
+	if x != nil {
+		return x.Logprobs
+	}
+	return false
+}
+
+func (x *CatalogModelFeatures) GetWebSearch() bool {
+	if x != nil {
+		return x.WebSearch
+	}
+	return false
+}
+
+func (x *CatalogModelFeatures) GetFileSearch() bool {
+	if x != nil {
+		return x.FileSearch
+	}
+	return false
+}
+
+func (x *CatalogModelFeatures) GetCodeInterpreter() bool {
+	if x != nil {
+		return x.CodeInterpreter
+	}
+	return false
+}
+
+func (x *CatalogModelFeatures) GetComputerUse() bool {
+	if x != nil {
+		return x.ComputerUse
+	}
+	return false
+}
+
+func (x *CatalogModelFeatures) GetMcp() bool {
+	if x != nil {
+		return x.Mcp
+	}
+	return false
+}
+
+func (x *CatalogModelFeatures) GetReasoningEffort() bool {
+	if x != nil {
+		return x.ReasoningEffort
+	}
+	return false
+}
+
+func (x *CatalogModelFeatures) GetAttachment() bool {
+	if x != nil {
+		return x.Attachment
+	}
+	return false
+}
+
+type CatalogModelTools struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	WebSearch         bool                   `protobuf:"varint,1,opt,name=web_search,json=webSearch,proto3" json:"web_search,omitempty"`
+	FileSearch        bool                   `protobuf:"varint,2,opt,name=file_search,json=fileSearch,proto3" json:"file_search,omitempty"`
+	ImageGeneration   bool                   `protobuf:"varint,3,opt,name=image_generation,json=imageGeneration,proto3" json:"image_generation,omitempty"`
+	CodeInterpreter   bool                   `protobuf:"varint,4,opt,name=code_interpreter,json=codeInterpreter,proto3" json:"code_interpreter,omitempty"`
+	ComputerUse       bool                   `protobuf:"varint,5,opt,name=computer_use,json=computerUse,proto3" json:"computer_use,omitempty"`
+	Mcp               bool                   `protobuf:"varint,6,opt,name=mcp,proto3" json:"mcp,omitempty"`
+	ParallelToolCalls bool                   `protobuf:"varint,7,opt,name=parallel_tool_calls,json=parallelToolCalls,proto3" json:"parallel_tool_calls,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *CatalogModelTools) Reset() {
+	*x = CatalogModelTools{}
+	mi := &file_pkg_rpc_v1_catalog_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CatalogModelTools) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CatalogModelTools) ProtoMessage() {}
+
+func (x *CatalogModelTools) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_rpc_v1_catalog_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CatalogModelTools.ProtoReflect.Descriptor instead.
+func (*CatalogModelTools) Descriptor() ([]byte, []int) {
+	return file_pkg_rpc_v1_catalog_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *CatalogModelTools) GetWebSearch() bool {
+	if x != nil {
+		return x.WebSearch
+	}
+	return false
+}
+
+func (x *CatalogModelTools) GetFileSearch() bool {
+	if x != nil {
+		return x.FileSearch
+	}
+	return false
+}
+
+func (x *CatalogModelTools) GetImageGeneration() bool {
+	if x != nil {
+		return x.ImageGeneration
+	}
+	return false
+}
+
+func (x *CatalogModelTools) GetCodeInterpreter() bool {
+	if x != nil {
+		return x.CodeInterpreter
+	}
+	return false
+}
+
+func (x *CatalogModelTools) GetComputerUse() bool {
+	if x != nil {
+		return x.ComputerUse
+	}
+	return false
+}
+
+func (x *CatalogModelTools) GetMcp() bool {
+	if x != nil {
+		return x.Mcp
+	}
+	return false
+}
+
+func (x *CatalogModelTools) GetParallelToolCalls() bool {
+	if x != nil {
+		return x.ParallelToolCalls
+	}
+	return false
+}
+
+type CatalogModelParameters struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Temperature      bool                   `protobuf:"varint,1,opt,name=temperature,proto3" json:"temperature,omitempty"`
+	TopP             bool                   `protobuf:"varint,2,opt,name=top_p,json=topP,proto3" json:"top_p,omitempty"`
+	PresencePenalty  bool                   `protobuf:"varint,3,opt,name=presence_penalty,json=presencePenalty,proto3" json:"presence_penalty,omitempty"`
+	FrequencyPenalty bool                   `protobuf:"varint,4,opt,name=frequency_penalty,json=frequencyPenalty,proto3" json:"frequency_penalty,omitempty"`
+	LogitBias        bool                   `protobuf:"varint,5,opt,name=logit_bias,json=logitBias,proto3" json:"logit_bias,omitempty"`
+	Seed             bool                   `protobuf:"varint,6,opt,name=seed,proto3" json:"seed,omitempty"`
+	Stop             bool                   `protobuf:"varint,7,opt,name=stop,proto3" json:"stop,omitempty"`
+	MaxStopSequences int32                  `protobuf:"varint,8,opt,name=max_stop_sequences,json=maxStopSequences,proto3" json:"max_stop_sequences,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *CatalogModelParameters) Reset() {
+	*x = CatalogModelParameters{}
+	mi := &file_pkg_rpc_v1_catalog_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CatalogModelParameters) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CatalogModelParameters) ProtoMessage() {}
+
+func (x *CatalogModelParameters) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_rpc_v1_catalog_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CatalogModelParameters.ProtoReflect.Descriptor instead.
+func (*CatalogModelParameters) Descriptor() ([]byte, []int) {
+	return file_pkg_rpc_v1_catalog_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *CatalogModelParameters) GetTemperature() bool {
+	if x != nil {
+		return x.Temperature
+	}
+	return false
+}
+
+func (x *CatalogModelParameters) GetTopP() bool {
+	if x != nil {
+		return x.TopP
+	}
+	return false
+}
+
+func (x *CatalogModelParameters) GetPresencePenalty() bool {
+	if x != nil {
+		return x.PresencePenalty
+	}
+	return false
+}
+
+func (x *CatalogModelParameters) GetFrequencyPenalty() bool {
+	if x != nil {
+		return x.FrequencyPenalty
+	}
+	return false
+}
+
+func (x *CatalogModelParameters) GetLogitBias() bool {
+	if x != nil {
+		return x.LogitBias
+	}
+	return false
+}
+
+func (x *CatalogModelParameters) GetSeed() bool {
+	if x != nil {
+		return x.Seed
+	}
+	return false
+}
+
+func (x *CatalogModelParameters) GetStop() bool {
+	if x != nil {
+		return x.Stop
+	}
+	return false
+}
+
+func (x *CatalogModelParameters) GetMaxStopSequences() int32 {
+	if x != nil {
+		return x.MaxStopSequences
+	}
+	return 0
+}
+
 var File_pkg_rpc_v1_catalog_proto protoreflect.FileDescriptor
 
 const file_pkg_rpc_v1_catalog_proto_rawDesc = "" +
@@ -664,7 +1200,7 @@ const file_pkg_rpc_v1_catalog_proto_rawDesc = "" +
 	"\x06status\x18\v \x01(\tR\x06status\x12\x1b\n" +
 	"\tis_active\x18\f \x01(\bR\bisActive\x12*\n" +
 	"\x11is_system_enabled\x18\r \x01(\bR\x0fisSystemEnabled\x12#\n" +
-	"\rmetadata_json\x18\x0e \x01(\tR\fmetadataJson\"\xbb\a\n" +
+	"\rmetadata_json\x18\x0e \x01(\tR\fmetadataJson\"\xb3\t\n" +
 	"\fCatalogModel\x12\x1a\n" +
 	"\bprovider\x18\x01 \x01(\tR\bprovider\x12\x14\n" +
 	"\x05model\x18\x02 \x01(\tR\x05model\x12\x1d\n" +
@@ -699,10 +1235,82 @@ const file_pkg_rpc_v1_catalog_proto_rawDesc = "" +
 	"\tis_active\x18\x18 \x01(\bR\bisActive\x12*\n" +
 	"\x11is_system_enabled\x18\x19 \x01(\bR\x0fisSystemEnabled\x12:\n" +
 	"\x19supported_parameters_json\x18\x1a \x01(\tR\x17supportedParametersJson\x124\n" +
-	"\x16config_parameters_json\x18\x1b \x01(\tR\x14configParametersJson2\xde\x01\n" +
+	"\x16config_parameters_json\x18\x1b \x01(\tR\x14configParametersJson\x12?\n" +
+	"\tendpoints\x18\x1c \x01(\v2!.zgi.rpc.v1.CatalogModelEndpointsR\tendpoints\x12<\n" +
+	"\bfeatures\x18\x1d \x01(\v2 .zgi.rpc.v1.CatalogModelFeaturesR\bfeatures\x123\n" +
+	"\x05tools\x18\x1e \x01(\v2\x1d.zgi.rpc.v1.CatalogModelToolsR\x05tools\x12B\n" +
+	"\n" +
+	"parameters\x18\x1f \x01(\v2\".zgi.rpc.v1.CatalogModelParametersR\n" +
+	"parameters\"\x82\x04\n" +
+	"\x15CatalogModelEndpoints\x12)\n" +
+	"\x10chat_completions\x18\x01 \x01(\bR\x0fchatCompletions\x12\x1c\n" +
+	"\tresponses\x18\x02 \x01(\bR\tresponses\x12\x1a\n" +
+	"\brealtime\x18\x03 \x01(\bR\brealtime\x12\x1e\n" +
+	"\n" +
+	"assistants\x18\x04 \x01(\bR\n" +
+	"assistants\x12\x14\n" +
+	"\x05batch\x18\x05 \x01(\bR\x05batch\x12\x1e\n" +
+	"\n" +
+	"embeddings\x18\x06 \x01(\bR\n" +
+	"embeddings\x12\x1f\n" +
+	"\vfine_tuning\x18\a \x01(\bR\n" +
+	"fineTuning\x12)\n" +
+	"\x10image_generation\x18\b \x01(\bR\x0fimageGeneration\x12\x16\n" +
+	"\x06vision\x18\t \x01(\bR\x06vision\x12+\n" +
+	"\x11speech_generation\x18\n" +
+	" \x01(\bR\x10speechGeneration\x12$\n" +
+	"\rtranscription\x18\v \x01(\bR\rtranscription\x12 \n" +
+	"\vtranslation\x18\f \x01(\bR\vtranslation\x12\x1e\n" +
+	"\n" +
+	"moderation\x18\r \x01(\bR\n" +
+	"moderation\x12\x16\n" +
+	"\x06videos\x18\x0e \x01(\bR\x06videos\x12\x1d\n" +
+	"\n" +
+	"image_edit\x18\x0f \x01(\bR\timageEdit\"\x97\x04\n" +
+	"\x14CatalogModelFeatures\x12\x1c\n" +
+	"\tstreaming\x18\x01 \x01(\bR\tstreaming\x12)\n" +
+	"\x10function_calling\x18\x02 \x01(\bR\x0ffunctionCalling\x12+\n" +
+	"\x11structured_output\x18\x03 \x01(\bR\x10structuredOutput\x12\x1b\n" +
+	"\tjson_mode\x18\x04 \x01(\bR\bjsonMode\x12\"\n" +
+	"\fdistillation\x18\x05 \x01(\bR\fdistillation\x12\x1c\n" +
+	"\treasoning\x18\x06 \x01(\bR\treasoning\x12#\n" +
+	"\rsystem_prompt\x18\a \x01(\bR\fsystemPrompt\x12\x1a\n" +
+	"\blogprobs\x18\b \x01(\bR\blogprobs\x12\x1d\n" +
+	"\n" +
+	"web_search\x18\t \x01(\bR\twebSearch\x12\x1f\n" +
+	"\vfile_search\x18\n" +
+	" \x01(\bR\n" +
+	"fileSearch\x12)\n" +
+	"\x10code_interpreter\x18\v \x01(\bR\x0fcodeInterpreter\x12!\n" +
+	"\fcomputer_use\x18\f \x01(\bR\vcomputerUse\x12\x10\n" +
+	"\x03mcp\x18\r \x01(\bR\x03mcp\x12)\n" +
+	"\x10reasoning_effort\x18\x0e \x01(\bR\x0freasoningEffort\x12\x1e\n" +
+	"\n" +
+	"attachment\x18\x0f \x01(\bR\n" +
+	"attachment\"\x8e\x02\n" +
+	"\x11CatalogModelTools\x12\x1d\n" +
+	"\n" +
+	"web_search\x18\x01 \x01(\bR\twebSearch\x12\x1f\n" +
+	"\vfile_search\x18\x02 \x01(\bR\n" +
+	"fileSearch\x12)\n" +
+	"\x10image_generation\x18\x03 \x01(\bR\x0fimageGeneration\x12)\n" +
+	"\x10code_interpreter\x18\x04 \x01(\bR\x0fcodeInterpreter\x12!\n" +
+	"\fcomputer_use\x18\x05 \x01(\bR\vcomputerUse\x12\x10\n" +
+	"\x03mcp\x18\x06 \x01(\bR\x03mcp\x12.\n" +
+	"\x13parallel_tool_calls\x18\a \x01(\bR\x11parallelToolCalls\"\x9c\x02\n" +
+	"\x16CatalogModelParameters\x12 \n" +
+	"\vtemperature\x18\x01 \x01(\bR\vtemperature\x12\x13\n" +
+	"\x05top_p\x18\x02 \x01(\bR\x04topP\x12)\n" +
+	"\x10presence_penalty\x18\x03 \x01(\bR\x0fpresencePenalty\x12+\n" +
+	"\x11frequency_penalty\x18\x04 \x01(\bR\x10frequencyPenalty\x12\x1d\n" +
+	"\n" +
+	"logit_bias\x18\x05 \x01(\bR\tlogitBias\x12\x12\n" +
+	"\x04seed\x18\x06 \x01(\bR\x04seed\x12\x12\n" +
+	"\x04stop\x18\a \x01(\bR\x04stop\x12,\n" +
+	"\x12max_stop_sequences\x18\b \x01(\x05R\x10maxStopSequences2\xde\x01\n" +
 	"\x0eCatalogService\x12f\n" +
 	"\x13GetPublishedCatalog\x12&.zgi.rpc.v1.GetPublishedCatalogRequest\x1a'.zgi.rpc.v1.GetPublishedCatalogResponse\x12d\n" +
-	"\x15WatchCatalogPublishes\x12(.zgi.rpc.v1.WatchCatalogPublishesRequest\x1a\x1f.zgi.rpc.v1.CatalogPublishEvent0\x01B'Z%github.com/zgiai/zgi/api/pkg/rpc/v1;v1b\x06proto3"
+	"\x15WatchCatalogPublishes\x12(.zgi.rpc.v1.WatchCatalogPublishesRequest\x1a\x1f.zgi.rpc.v1.CatalogPublishEvent0\x01B(Z&github.com/zgiai/zgi/api/pkg/rpc/v1;v1b\x06proto3"
 
 var (
 	file_pkg_rpc_v1_catalog_proto_rawDescOnce sync.Once
@@ -716,7 +1324,7 @@ func file_pkg_rpc_v1_catalog_proto_rawDescGZIP() []byte {
 	return file_pkg_rpc_v1_catalog_proto_rawDescData
 }
 
-var file_pkg_rpc_v1_catalog_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_pkg_rpc_v1_catalog_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_pkg_rpc_v1_catalog_proto_goTypes = []any{
 	(*WatchCatalogPublishesRequest)(nil), // 0: zgi.rpc.v1.WatchCatalogPublishesRequest
 	(*CatalogPublishEvent)(nil),          // 1: zgi.rpc.v1.CatalogPublishEvent
@@ -724,19 +1332,27 @@ var file_pkg_rpc_v1_catalog_proto_goTypes = []any{
 	(*GetPublishedCatalogResponse)(nil),  // 3: zgi.rpc.v1.GetPublishedCatalogResponse
 	(*CatalogProvider)(nil),              // 4: zgi.rpc.v1.CatalogProvider
 	(*CatalogModel)(nil),                 // 5: zgi.rpc.v1.CatalogModel
+	(*CatalogModelEndpoints)(nil),        // 6: zgi.rpc.v1.CatalogModelEndpoints
+	(*CatalogModelFeatures)(nil),         // 7: zgi.rpc.v1.CatalogModelFeatures
+	(*CatalogModelTools)(nil),            // 8: zgi.rpc.v1.CatalogModelTools
+	(*CatalogModelParameters)(nil),       // 9: zgi.rpc.v1.CatalogModelParameters
 }
 var file_pkg_rpc_v1_catalog_proto_depIdxs = []int32{
 	4, // 0: zgi.rpc.v1.GetPublishedCatalogResponse.providers:type_name -> zgi.rpc.v1.CatalogProvider
 	5, // 1: zgi.rpc.v1.GetPublishedCatalogResponse.models:type_name -> zgi.rpc.v1.CatalogModel
-	2, // 2: zgi.rpc.v1.CatalogService.GetPublishedCatalog:input_type -> zgi.rpc.v1.GetPublishedCatalogRequest
-	0, // 3: zgi.rpc.v1.CatalogService.WatchCatalogPublishes:input_type -> zgi.rpc.v1.WatchCatalogPublishesRequest
-	3, // 4: zgi.rpc.v1.CatalogService.GetPublishedCatalog:output_type -> zgi.rpc.v1.GetPublishedCatalogResponse
-	1, // 5: zgi.rpc.v1.CatalogService.WatchCatalogPublishes:output_type -> zgi.rpc.v1.CatalogPublishEvent
-	4, // [4:6] is the sub-list for method output_type
-	2, // [2:4] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	6, // 2: zgi.rpc.v1.CatalogModel.endpoints:type_name -> zgi.rpc.v1.CatalogModelEndpoints
+	7, // 3: zgi.rpc.v1.CatalogModel.features:type_name -> zgi.rpc.v1.CatalogModelFeatures
+	8, // 4: zgi.rpc.v1.CatalogModel.tools:type_name -> zgi.rpc.v1.CatalogModelTools
+	9, // 5: zgi.rpc.v1.CatalogModel.parameters:type_name -> zgi.rpc.v1.CatalogModelParameters
+	2, // 6: zgi.rpc.v1.CatalogService.GetPublishedCatalog:input_type -> zgi.rpc.v1.GetPublishedCatalogRequest
+	0, // 7: zgi.rpc.v1.CatalogService.WatchCatalogPublishes:input_type -> zgi.rpc.v1.WatchCatalogPublishesRequest
+	3, // 8: zgi.rpc.v1.CatalogService.GetPublishedCatalog:output_type -> zgi.rpc.v1.GetPublishedCatalogResponse
+	1, // 9: zgi.rpc.v1.CatalogService.WatchCatalogPublishes:output_type -> zgi.rpc.v1.CatalogPublishEvent
+	8, // [8:10] is the sub-list for method output_type
+	6, // [6:8] is the sub-list for method input_type
+	6, // [6:6] is the sub-list for extension type_name
+	6, // [6:6] is the sub-list for extension extendee
+	0, // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_pkg_rpc_v1_catalog_proto_init() }
@@ -750,7 +1366,7 @@ func file_pkg_rpc_v1_catalog_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pkg_rpc_v1_catalog_proto_rawDesc), len(file_pkg_rpc_v1_catalog_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
