@@ -56,7 +56,7 @@ func TestAgentMemoryToolReadsCurrentAgentAndUser(t *testing.T) {
 	if len(messages) != 1 || messages[0].Text == "" {
 		t.Fatalf("messages = %#v, want JSON text", messages)
 	}
-	if got := messages[0].Text; !containsAll(got, "current user", "profile") || containsAll(got, "other user") {
+	if got := messages[0].Text; !containsAll(got, "current user", "profile", "created_at_unix", "updated_at_iso", "updated_at_display") || containsAll(got, "other user") {
 		t.Fatalf("message text = %s, want only current user memory", got)
 	}
 }

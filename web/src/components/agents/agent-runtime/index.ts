@@ -1,6 +1,7 @@
 export { AgentRuntimeHeader } from './header';
 export { AgentRuntimeLoadingState } from './loading-state';
 export { AgentRuntimeOrchestrationPanel } from './orchestration-panel';
+export { AgentRuntimeMemoryValuesDialog } from './memory-values-dialog';
 export { AgentRuntimePreviewPanel } from './preview-panel';
 export { AgentRuntimePromptPanel } from './prompt-panel';
 export { AgentRuntimeVersionPopover } from './published-versions-dialog';

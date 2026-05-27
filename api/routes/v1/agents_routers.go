@@ -119,6 +119,9 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	appsGroup.DELETE("/:agent_id", appHandler.DeleteAgent)
 	appsGroup.GET("/:agent_id/memory/slots", appHandler.ListAgentMemorySlots)
 	appsGroup.PUT("/:agent_id/memory/slots", appHandler.ReplaceAgentMemorySlots)
+	appsGroup.GET("/:agent_id/memory/values", appHandler.ListAgentMemoryValues)
+	appsGroup.PUT("/:agent_id/memory/values", appHandler.UpdateAgentMemoryValue)
+	appsGroup.DELETE("/:agent_id/memory/values/:key", appHandler.ClearAgentMemoryValue)
 
 	publicWebApps := v1.Group("/webapps")
 	publicWebApps.Use(middleware.SetupRequired())

@@ -46,6 +46,7 @@ type store interface {
 	ListSlots(ctx context.Context, workspaceID, agentID uuid.UUID, enabledOnly bool) ([]*AgentMemorySlot, error)
 	CreateSlot(ctx context.Context, slot *AgentMemorySlot) error
 	UpdateSlotScoped(ctx context.Context, workspaceID, agentID, slotID uuid.UUID, values map[string]interface{}) (*AgentMemorySlot, error)
+	ListValuesForAgent(ctx context.Context, workspaceID, agentID uuid.UUID) ([]*AgentMemoryValue, error)
 	ListValuesForUser(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) ([]*AgentMemoryValue, error)
 	GetValueScoped(ctx context.Context, workspaceID, agentID uuid.UUID, slotKey string, userScope string, userID uuid.UUID) (*AgentMemoryValue, error)
 	UpsertValue(ctx context.Context, value *AgentMemoryValue) error
@@ -115,13 +116,24 @@ func (s *Service) ReplaceSlots(ctx context.Context, agentID, actorID uuid.UUID, 
 			return fmt.Errorf("list existing agent memory slots: %w", err)
 		}
 		existingByKey := map[string]*AgentMemorySlot{}
+		existingByID := map[uuid.UUID]*AgentMemorySlot{}
 		for _, slot := range existing {
 			if slot != nil {
 				existingByKey[slot.Key] = slot
+				existingByID[slot.ID] = slot
 			}
 		}
 		now := time.Now()
 		for _, input := range normalized {
+			if input.id != uuid.Nil {
+				current := existingByID[input.id]
+				if current == nil {
+					return fmt.Errorf("%w: memory item does not exist", ErrInvalidInput)
+				}
+				if current.Key != input.key {
+					return fmt.Errorf("%w: memory key cannot be changed after creation", ErrInvalidInput)
+				}
+			}
 			if current := existingByKey[input.key]; current != nil {
 				before := *current
 				updated, err := tx.UpdateSlotScoped(ctx, workspaceID, agentID, current.ID, map[string]interface{}{
@@ -206,6 +218,50 @@ func (s *Service) ReadUserMemory(ctx context.Context, workspaceID, agentID uuid.
 	return runtimeSlotValueResponses(slots, values), nil
 }
 
+func (s *Service) ListOrganizerValues(ctx context.Context, agentID uuid.UUID, userScope string, userID uuid.UUID) ([]SlotValueResponse, error) {
+	workspaceID, err := s.resolveAgentWorkspace(ctx, agentID)
+	if err != nil {
+		return nil, err
+	}
+	userScope, err = s.resolveRuntimeScope(userScope, userID)
+	if err != nil {
+		return nil, err
+	}
+	slots, err := s.repo.ListSlots(ctx, workspaceID, agentID, false)
+	if err != nil {
+		return nil, fmt.Errorf("list agent memory slots: %w", err)
+	}
+	values, err := s.repo.ListValuesForUser(ctx, workspaceID, agentID, userScope, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list agent memory values: %w", err)
+	}
+	return slotValueResponses(slots, values), nil
+}
+
+func (s *Service) UpdateOrganizerValue(ctx context.Context, agentID uuid.UUID, userScope string, userID uuid.UUID, req UpdateValueRequest) (*SlotValueResponse, error) {
+	workspaceID, err := s.resolveAgentWorkspace(ctx, agentID)
+	if err != nil {
+		return nil, err
+	}
+	slot, err := s.configuredSlotByKey(ctx, workspaceID, agentID, req.Key)
+	if err != nil {
+		return nil, err
+	}
+	return s.updateValueForSlot(ctx, workspaceID, agentID, slot, userScope, userID, req, organizerMetadata())
+}
+
+func (s *Service) ClearOrganizerValue(ctx context.Context, agentID uuid.UUID, userScope string, userID uuid.UUID, key string) (*SlotValueResponse, error) {
+	workspaceID, err := s.resolveAgentWorkspace(ctx, agentID)
+	if err != nil {
+		return nil, err
+	}
+	slot, err := s.configuredSlotByKey(ctx, workspaceID, agentID, key)
+	if err != nil {
+		return nil, err
+	}
+	return s.clearValueForSlot(ctx, workspaceID, agentID, slot, userScope, userID, organizerMetadata())
+}
+
 func (s *Service) UpdateValue(ctx context.Context, workspaceID, agentID uuid.UUID, slots []RuntimeSlot, userScope string, userID uuid.UUID, req UpdateValueRequest, meta MutationMetadata) (*SlotValueResponse, error) {
 	key, err := normalizeKey(req.Key)
 	if err != nil {
@@ -215,7 +271,12 @@ func (s *Service) UpdateValue(ctx context.Context, workspaceID, agentID uuid.UUI
 	if err != nil {
 		return nil, err
 	}
-	userScope, err = s.resolveRuntimeScope(userScope, userID)
+	return s.updateValueForSlot(ctx, workspaceID, agentID, slot, userScope, userID, req, meta)
+}
+
+func (s *Service) updateValueForSlot(ctx context.Context, workspaceID, agentID uuid.UUID, slot RuntimeSlot, userScope string, userID uuid.UUID, req UpdateValueRequest, meta MutationMetadata) (*SlotValueResponse, error) {
+	key := slot.Key
+	userScope, err := s.resolveRuntimeScope(userScope, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -269,7 +330,11 @@ func (s *Service) ClearValue(ctx context.Context, workspaceID, agentID uuid.UUID
 	if err != nil {
 		return nil, err
 	}
-	userScope, err = s.resolveRuntimeScope(userScope, userID)
+	return s.clearValueForSlot(ctx, workspaceID, agentID, slot, userScope, userID, meta)
+}
+
+func (s *Service) clearValueForSlot(ctx context.Context, workspaceID, agentID uuid.UUID, slot RuntimeSlot, userScope string, userID uuid.UUID, meta MutationMetadata) (*SlotValueResponse, error) {
+	userScope, err := s.resolveRuntimeScope(userScope, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -306,6 +371,54 @@ func (s *Service) ClearValue(ctx context.Context, workspaceID, agentID uuid.UUID
 	return response, nil
 }
 
+func (s *Service) ClearValuesNotInKeys(ctx context.Context, agentID uuid.UUID, keepKeys []string) error {
+	workspaceID, err := s.resolveAgentWorkspace(ctx, agentID)
+	if err != nil {
+		return err
+	}
+	keep := map[string]struct{}{}
+	for _, key := range keepKeys {
+		normalized, err := normalizeKey(key)
+		if err == nil {
+			keep[normalized] = struct{}{}
+		}
+	}
+	values, err := s.repo.ListValuesForAgent(ctx, workspaceID, agentID)
+	if err != nil {
+		return fmt.Errorf("list agent memory values: %w", err)
+	}
+	return s.repo.WithTransaction(ctx, func(tx store) error {
+		meta := organizerMetadata()
+		for _, before := range values {
+			if before == nil || strings.TrimSpace(before.Content) == "" {
+				continue
+			}
+			if _, ok := keep[before.SlotKey]; ok {
+				continue
+			}
+			value := &AgentMemoryValue{
+				WorkspaceID: before.WorkspaceID,
+				AgentID:     before.AgentID,
+				SlotKey:     before.SlotKey,
+				UserScope:   before.UserScope,
+				UserID:      before.UserID,
+				Content:     "",
+			}
+			if err := tx.UpsertValue(ctx, value); err != nil {
+				return fmt.Errorf("clear removed agent memory value: %w", err)
+			}
+			after, err := tx.GetValueScoped(ctx, before.WorkspaceID, before.AgentID, before.SlotKey, before.UserScope, before.UserID)
+			if err != nil {
+				return fmt.Errorf("get cleared removed agent memory value: %w", err)
+			}
+			if err := recordValueEvent(ctx, tx, before.WorkspaceID, before.AgentID, before.SlotKey, before.UserScope, before.UserID, EventActionValueClear, meta, before, after); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 func (s *Service) RenderContext(ctx context.Context, workspaceID, agentID uuid.UUID, slots []RuntimeSlot, userScope string, userID uuid.UUID, budget int) (string, error) {
 	if budget <= 0 {
 		budget = defaultRenderBudget
@@ -335,7 +448,31 @@ func (s *Service) resolveRuntimeScope(userScope string, userID uuid.UUID) (strin
 	return normalizeUserScope(userScope), nil
 }
 
+func (s *Service) configuredSlotByKey(ctx context.Context, workspaceID, agentID uuid.UUID, key string) (RuntimeSlot, error) {
+	normalizedKey, err := normalizeKey(key)
+	if err != nil {
+		return RuntimeSlot{}, err
+	}
+	slots, err := s.repo.ListSlots(ctx, workspaceID, agentID, false)
+	if err != nil {
+		return RuntimeSlot{}, fmt.Errorf("list agent memory slots: %w", err)
+	}
+	for _, slot := range slots {
+		if slot != nil && slot.Key == normalizedKey {
+			return RuntimeSlot{
+				Key:         slot.Key,
+				Description: slot.Description,
+				MaxChars:    slot.MaxChars,
+				Enabled:     true,
+				SortOrder:   slot.SortOrder,
+			}, nil
+		}
+	}
+	return RuntimeSlot{}, fmt.Errorf("%w: memory key %s is not configured for this agent", ErrInvalidInput, normalizedKey)
+}
+
 type normalizedSlotInput struct {
+	id          uuid.UUID
 	key         string
 	description string
 	maxChars    int
@@ -347,6 +484,14 @@ func normalizeSlotInput(req SlotUpsertRequest, index int) (normalizedSlotInput, 
 	key, err := normalizeKey(req.Key)
 	if err != nil {
 		return normalizedSlotInput{}, err
+	}
+	id := uuid.Nil
+	if trimmedID := strings.TrimSpace(req.ID); trimmedID != "" {
+		parsedID, err := uuid.Parse(trimmedID)
+		if err != nil {
+			return normalizedSlotInput{}, fmt.Errorf("%w: memory id is invalid", ErrInvalidInput)
+		}
+		id = parsedID
 	}
 	description := strings.TrimSpace(req.Description)
 	if len([]rune(description)) > maxSlotDescriptionChars {
@@ -368,6 +513,7 @@ func normalizeSlotInput(req SlotUpsertRequest, index int) (normalizedSlotInput, 
 		sortOrder = index
 	}
 	return normalizedSlotInput{
+		id:          id,
 		key:         key,
 		description: description,
 		maxChars:    maxChars,
@@ -457,15 +603,23 @@ func slotResponses(slots []*AgentMemorySlot) []SlotResponse {
 }
 
 func slotResponse(slot *AgentMemorySlot) SlotResponse {
+	createdAt := timeFields(slot.CreatedAt)
+	updatedAt := timeFields(slot.UpdatedAt)
 	return SlotResponse{
-		ID:          slot.ID.String(),
-		Key:         slot.Key,
-		Description: slot.Description,
-		MaxChars:    slot.MaxChars,
-		Enabled:     slot.Enabled,
-		SortOrder:   slot.SortOrder,
-		CreatedAt:   slot.CreatedAt.Unix(),
-		UpdatedAt:   slot.UpdatedAt.Unix(),
+		ID:               slot.ID.String(),
+		Key:              slot.Key,
+		Description:      slot.Description,
+		MaxChars:         slot.MaxChars,
+		Enabled:          slot.Enabled,
+		SortOrder:        slot.SortOrder,
+		CreatedAt:        createdAt.unix,
+		UpdatedAt:        updatedAt.unix,
+		CreatedAtUnix:    createdAt.unix,
+		UpdatedAtUnix:    updatedAt.unix,
+		CreatedAtISO:     createdAt.iso,
+		UpdatedAtISO:     updatedAt.iso,
+		CreatedAtDisplay: createdAt.display,
+		UpdatedAtDisplay: updatedAt.display,
 	}
 }
 
@@ -503,7 +657,17 @@ func runtimeSlotValueResponses(slots []RuntimeSlot, values []*AgentMemoryValue) 
 func slotValueResponse(slot *AgentMemorySlot, value *AgentMemoryValue) SlotValueResponse {
 	resp := SlotValueResponse{SlotResponse: slotResponse(slot)}
 	if value != nil {
+		createdAt := timeFields(value.CreatedAt)
+		updatedAt := timeFields(value.UpdatedAt)
 		resp.Content = value.Content
+		resp.CreatedAt = createdAt.unix
+		resp.UpdatedAt = updatedAt.unix
+		resp.CreatedAtUnix = createdAt.unix
+		resp.UpdatedAtUnix = updatedAt.unix
+		resp.CreatedAtISO = createdAt.iso
+		resp.UpdatedAtISO = updatedAt.iso
+		resp.CreatedAtDisplay = createdAt.display
+		resp.UpdatedAtDisplay = updatedAt.display
 	}
 	return resp
 }
@@ -519,11 +683,37 @@ func runtimeSlotValueResponse(slot RuntimeSlot, value *AgentMemoryValue) SlotVal
 		},
 	}
 	if value != nil {
+		createdAt := timeFields(value.CreatedAt)
+		updatedAt := timeFields(value.UpdatedAt)
 		resp.Content = value.Content
-		resp.CreatedAt = value.CreatedAt.Unix()
-		resp.UpdatedAt = value.UpdatedAt.Unix()
+		resp.CreatedAt = createdAt.unix
+		resp.UpdatedAt = updatedAt.unix
+		resp.CreatedAtUnix = createdAt.unix
+		resp.UpdatedAtUnix = updatedAt.unix
+		resp.CreatedAtISO = createdAt.iso
+		resp.UpdatedAtISO = updatedAt.iso
+		resp.CreatedAtDisplay = createdAt.display
+		resp.UpdatedAtDisplay = updatedAt.display
 	}
 	return resp
+}
+
+type responseTimeFields struct {
+	unix    int64
+	iso     string
+	display string
+}
+
+func timeFields(value time.Time) responseTimeFields {
+	if value.IsZero() {
+		return responseTimeFields{}
+	}
+	utc := value.UTC()
+	return responseTimeFields{
+		unix:    utc.Unix(),
+		iso:     utc.Format(time.RFC3339),
+		display: utc.Format("2006-01-02 15:04:05 UTC"),
+	}
 }
 
 func renderMemoryContext(entries []SlotValueResponse, budget int) string {
@@ -531,7 +721,7 @@ func renderMemoryContext(entries []SlotValueResponse, budget int) string {
 		return ""
 	}
 	var builder strings.Builder
-	header := "Agent memory is enabled for this agent and current user.\nOnly use the listed memory keys. Do not invent new keys or temporary memories.\n\nAvailable memory slots:\n"
+	header := "Agent memory is enabled for this agent and current user.\nOnly use the listed memory keys. Do not invent new keys or temporary memories.\n\nAvailable memory items:\n"
 	if len(header) > budget {
 		return ""
 	}

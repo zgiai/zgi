@@ -26,8 +26,8 @@ func NewProvider(service *Service) *Provider {
 			"zh_Hans": "Agent Memory",
 		},
 		Description: tools.I18nText{
-			"en_US":   "Agent-scoped fixed-slot memory tools.",
-			"zh_Hans": "Agent-scoped fixed-slot memory tools.",
+			"en_US":   "Agent-scoped memory tools.",
+			"zh_Hans": "智能体记忆工具。",
 		},
 		Icon: "brain",
 		Tags: []string{"system", "memory", HiddenProviderTag},
@@ -49,18 +49,18 @@ type agentMemoryTool struct {
 }
 
 func newReadAgentMemoryTool(service *Service) tools.Tool {
-	return newAgentMemoryTool(service, "read_agent_memory", "Read Agent Memory", "Read the fixed memory slots configured by this agent's organizer for the current user. Do not invent new keys.", nil)
+	return newAgentMemoryTool(service, "read_agent_memory", "Read Agent Memory", "Read the memory items configured by this agent's organizer for the current user. Do not invent new keys. Time fields ending with _unix are Unix seconds; prefer *_display or *_iso when explaining saved or updated time to users, and do not guess relative dates.", nil)
 }
 
 func newUpdateAgentMemoryTool(service *Service) tools.Tool {
-	return newAgentMemoryTool(service, "update_agent_memory", "Update Agent Memory", "Update one existing fixed memory key for this agent and current user. The key must already be listed by read_agent_memory.", []tools.ToolParameter{
+	return newAgentMemoryTool(service, "update_agent_memory", "Update Agent Memory", "Update one existing memory key for this agent and current user. The key must already be listed by read_agent_memory.", []tools.ToolParameter{
 		stringParam("key", "Key", "Existing memory key configured by the agent organizer.", true),
-		stringParam("content", "Content", "Concise content to store in this fixed memory key. Must fit the key's max_chars limit.", true),
+		stringParam("content", "Content", "Concise content to store in this memory key. Must fit the key's max_chars limit.", true),
 	})
 }
 
 func newClearAgentMemoryTool(service *Service) tools.Tool {
-	return newAgentMemoryTool(service, "clear_agent_memory", "Clear Agent Memory", "Clear one existing fixed memory key for this agent and current user.", []tools.ToolParameter{
+	return newAgentMemoryTool(service, "clear_agent_memory", "Clear Agent Memory", "Clear one existing memory key for this agent and current user.", []tools.ToolParameter{
 		stringParam("key", "Key", "Existing memory key configured by the agent organizer.", true),
 	})
 }
@@ -219,15 +219,21 @@ func stringValue(params map[string]interface{}, key string) string {
 
 func agentMemoryEntryMap(entry SlotValueResponse) map[string]interface{} {
 	return map[string]interface{}{
-		"id":          entry.ID,
-		"key":         entry.Key,
-		"description": entry.Description,
-		"max_chars":   entry.MaxChars,
-		"enabled":     entry.Enabled,
-		"sort_order":  entry.SortOrder,
-		"content":     entry.Content,
-		"created_at":  entry.CreatedAt,
-		"updated_at":  entry.UpdatedAt,
+		"id":                 entry.ID,
+		"key":                entry.Key,
+		"description":        entry.Description,
+		"max_chars":          entry.MaxChars,
+		"enabled":            entry.Enabled,
+		"sort_order":         entry.SortOrder,
+		"content":            entry.Content,
+		"created_at":         entry.CreatedAt,
+		"updated_at":         entry.UpdatedAt,
+		"created_at_unix":    entry.CreatedAtUnix,
+		"updated_at_unix":    entry.UpdatedAtUnix,
+		"created_at_iso":     entry.CreatedAtISO,
+		"updated_at_iso":     entry.UpdatedAtISO,
+		"created_at_display": entry.CreatedAtDisplay,
+		"updated_at_display": entry.UpdatedAtDisplay,
 	}
 }
 

@@ -1,6 +1,7 @@
 'use client';
 
-import { Loader2, Plus, Sparkles, Trash2 } from 'lucide-react';
+import { useState } from 'react';
+import { Eye, Loader2, Plus, Sparkles, Trash2 } from 'lucide-react';
 import { getAIChatSkillDisplayInfo } from '@/components/chat/variants/aichat/skill-display';
 import {
   ModelSelectorParameter,
@@ -9,10 +10,12 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { useT } from '@/i18n';
 import type { AIChatSkillMetadata } from '@/services/types/aichat';
@@ -58,6 +61,7 @@ interface AgentRuntimeOrchestrationPanelProps {
   onChangeFileUploadEnabled: (value: boolean) => void;
   onChangeAgentMemoryEnabled: (value: boolean) => void;
   onChangeAgentMemorySlots: (value: AgentMemorySlotConfig[]) => void;
+  onOpenMemoryValues: () => void;
 }
 
 export function AgentRuntimeOrchestrationPanel({
@@ -95,8 +99,10 @@ export function AgentRuntimeOrchestrationPanel({
   onChangeFileUploadEnabled,
   onChangeAgentMemoryEnabled,
   onChangeAgentMemorySlots,
+  onOpenMemoryValues,
 }: AgentRuntimeOrchestrationPanelProps) {
   const t = useT('agents.agentRuntime');
+  const [pendingRemoveMemoryIndex, setPendingRemoveMemoryIndex] = useState<number | null>(null);
   const usedAgentMemorySlotKeys = new Set(
     agentMemorySlots.map(slot => slot.key.trim().toLowerCase()).filter(Boolean)
   );
@@ -130,6 +136,7 @@ export function AgentRuntimeOrchestrationPanel({
   const removeAgentMemorySlot = (index: number) => {
     onChangeAgentMemorySlots(agentMemorySlots.filter((_, currentIndex) => currentIndex !== index));
   };
+  const clampMaxChars = (value: number) => Math.min(4000, Math.max(100, value || 1000));
   const getAgentMemorySlotErrorText = (error: AgentMemorySlotValidationError) => {
     if (!error) return '';
     return t(`memory.validation.${error}`);
@@ -137,6 +144,23 @@ export function AgentRuntimeOrchestrationPanel({
 
   return (
     <section className="flex min-w-0 flex-col overflow-hidden">
+      <ConfirmDialog
+        open={pendingRemoveMemoryIndex !== null}
+        onOpenChange={open => {
+          if (!open) setPendingRemoveMemoryIndex(null);
+        }}
+        title={t('memory.deleteConfirmTitle')}
+        description={t('memory.deleteConfirmDescription')}
+        confirmText={t('memory.deleteConfirmAction')}
+        cancelText={t('memory.deleteConfirmCancel')}
+        variant="warning"
+        onConfirm={() => {
+          if (pendingRemoveMemoryIndex !== null) {
+            removeAgentMemorySlot(pendingRemoveMemoryIndex);
+          }
+          setPendingRemoveMemoryIndex(null);
+        }}
+      />
       <div className="flex h-12 shrink-0 items-center justify-between px-5">
         <div>
           <h2 className="text-sm font-semibold">{t('orchestration.title')}</h2>
@@ -303,6 +327,17 @@ export function AgentRuntimeOrchestrationPanel({
             section="memory"
             open={openSections.memory}
             onToggle={onToggleSection}
+            action={
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5 px-2 text-xs"
+                onClick={onOpenMemoryValues}
+              >
+                <Eye className="size-3.5" />
+                {t('memory.viewValues')}
+              </Button>
+            }
           >
             <div className="space-y-3">
               <div className="space-y-3 rounded-md border p-3">
@@ -333,13 +368,17 @@ export function AgentRuntimeOrchestrationPanel({
                             key={`${slot.id ?? 'slot'}-${index}`}
                             className="space-y-2 rounded-md border p-2"
                           >
-                            <div className="flex items-start gap-2">
+                            <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0 flex-1 space-y-1">
+                                <div className="text-xs font-medium text-muted-foreground">
+                                  {t('memory.keyLabel')}
+                                </div>
                                 <Input
                                   value={slot.key}
                                   maxLength={64}
                                   placeholder={t('memory.slotKeyPlaceholder')}
                                   aria-invalid={Boolean(keyError)}
+                                  disabled={Boolean(slot.id)}
                                   onChange={event =>
                                     updateAgentMemorySlot(index, {
                                       key: event.target.value.toLowerCase().slice(0, 64),
@@ -349,23 +388,10 @@ export function AgentRuntimeOrchestrationPanel({
                                 {keyErrorText && (
                                   <div className="text-xs text-destructive">{keyErrorText}</div>
                                 )}
+                                <div className="text-[11px] text-muted-foreground">
+                                  {slot.id ? t('memory.keyLockedHelp') : t('memory.keyHelp')}
+                                </div>
                               </div>
-                              <Input
-                                type="number"
-                                min={1}
-                                max={4000}
-                                value={slot.max_chars}
-                                className="w-24"
-                                aria-label={t('memory.maxChars')}
-                                onChange={event =>
-                                  updateAgentMemorySlot(index, {
-                                    max_chars: Math.min(
-                                      4000,
-                                      Math.max(1, Number(event.target.value) || 1000)
-                                    ),
-                                  })
-                                }
-                              />
                               <Switch
                                 checked={slot.enabled}
                                 onCheckedChange={checked =>
@@ -377,20 +403,72 @@ export function AgentRuntimeOrchestrationPanel({
                                 variant="ghost"
                                 isIcon
                                 aria-label={t('memory.removeSlot')}
-                                onClick={() => removeAgentMemorySlot(index)}
+                                onClick={() => {
+                                  if (slot.id) {
+                                    setPendingRemoveMemoryIndex(index);
+                                    return;
+                                  }
+                                  removeAgentMemorySlot(index);
+                                }}
                               >
                                 <Trash2 className="size-4" />
                               </Button>
                             </div>
-                            <Input
-                              value={slot.description}
-                              placeholder={t('memory.slotDescriptionPlaceholder')}
-                              onChange={event =>
-                                updateAgentMemorySlot(index, {
-                                  description: event.target.value.slice(0, 1000),
-                                })
-                              }
-                            />
+                            <div className="space-y-1">
+                              <div className="text-xs font-medium text-muted-foreground">
+                                {t('memory.descriptionLabel')}
+                              </div>
+                              <Input
+                                value={slot.description}
+                                placeholder={t('memory.slotDescriptionPlaceholder')}
+                                onChange={event =>
+                                  updateAgentMemorySlot(index, {
+                                    description: event.target.value.slice(0, 1000),
+                                  })
+                                }
+                              />
+                              <div className="text-[11px] text-muted-foreground">
+                                {t('memory.descriptionHelp')}
+                              </div>
+                            </div>
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between gap-3">
+                                <div>
+                                  <div className="text-xs font-medium text-muted-foreground">
+                                    {t('memory.maxChars')}
+                                  </div>
+                                  <div className="text-[11px] text-muted-foreground">
+                                    {t('memory.maxCharsHelp')}
+                                  </div>
+                                </div>
+                                <Input
+                                  type="number"
+                                  inputMode="numeric"
+                                  min={100}
+                                  max={4000}
+                                  step={100}
+                                  value={slot.max_chars}
+                                  className="w-24"
+                                  aria-label={t('memory.maxChars')}
+                                  onChange={event =>
+                                    updateAgentMemorySlot(index, {
+                                      max_chars: clampMaxChars(Number(event.target.value)),
+                                    })
+                                  }
+                                />
+                              </div>
+                              <Slider
+                                min={100}
+                                max={4000}
+                                step={100}
+                                value={[clampMaxChars(slot.max_chars)]}
+                                onValueChange={value =>
+                                  updateAgentMemorySlot(index, {
+                                    max_chars: clampMaxChars(value[0]),
+                                  })
+                                }
+                              />
+                            </div>
                           </div>
                         );
                       })

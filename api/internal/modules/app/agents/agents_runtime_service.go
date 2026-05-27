@@ -71,7 +71,11 @@ func (s *agentsService) PublishAgent(ctx context.Context, agentID, accountID str
 		return nil, err
 	}
 	snapshot := agentConfigSnapshot(ag.ID.String(), cfg)
-	snapshot["agent_memory_slots"] = s.enabledAgentMemorySlotsForSnapshot(ctx, ag.ID)
+	snapshotMemorySlots := []dto.AgentMemorySlotConfig{}
+	if enabled, _ := snapshot["agent_memory_enabled"].(bool); enabled {
+		snapshotMemorySlots = s.enabledAgentMemorySlotsForSnapshot(ctx, ag.ID)
+	}
+	snapshot["agent_memory_slots"] = snapshotMemorySlots
 	now := time.Now()
 	versionUUID := uuid.New()
 	version := &AgentPublishedVersion{
@@ -88,6 +92,11 @@ func (s *agentsService) PublishAgent(ctx context.Context, agentID, accountID str
 	}
 	if err := s.agentsRepo.CreateAgentPublishedVersion(ctx, version); err != nil {
 		return nil, err
+	}
+	if s.agentMemoryService != nil {
+		if err := s.agentMemoryService.ClearValuesNotInKeys(ctx, ag.ID, agentMemoryKeys(snapshotMemorySlots)); err != nil {
+			return nil, err
+		}
 	}
 	return &dto.PublishAgentResponse{
 		AgentID:     ag.ID.String(),
@@ -223,6 +232,72 @@ func (s *agentsService) ReplaceAgentMemorySlots(ctx context.Context, agentID, ac
 		return nil, err
 	}
 	return agentMemorySlotConfigsFromResponses(updated), nil
+}
+
+func (s *agentsService) ListAgentMemoryValues(ctx context.Context, agentID, accountID, userScope, userID string) (*dto.AgentMemoryValuesResponse, error) {
+	ag, _, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, false)
+	if err != nil {
+		return nil, err
+	}
+	if s.agentMemoryService == nil {
+		return nil, fmt.Errorf("agent memory service is not configured")
+	}
+	targetUserID, err := uuid.Parse(strings.TrimSpace(userID))
+	if err != nil {
+		return nil, fmt.Errorf("user id is invalid")
+	}
+	values, err := s.agentMemoryService.ListOrganizerValues(ctx, ag.ID, userScope, targetUserID)
+	if err != nil {
+		return nil, err
+	}
+	return &dto.AgentMemoryValuesResponse{
+		UserScope: normalizeAgentMemoryUserScope(userScope),
+		UserID:    targetUserID.String(),
+		Values:    agentMemoryValueConfigsFromResponses(values),
+	}, nil
+}
+
+func (s *agentsService) UpdateAgentMemoryValue(ctx context.Context, agentID, accountID string, req dto.UpdateAgentMemoryValueRequest) (*dto.AgentMemoryValueResponse, error) {
+	ag, _, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, false)
+	if err != nil {
+		return nil, err
+	}
+	if s.agentMemoryService == nil {
+		return nil, fmt.Errorf("agent memory service is not configured")
+	}
+	targetUserID, err := uuid.Parse(strings.TrimSpace(req.UserID))
+	if err != nil {
+		return nil, fmt.Errorf("user id is invalid")
+	}
+	value, err := s.agentMemoryService.UpdateOrganizerValue(ctx, ag.ID, req.UserScope, targetUserID, agentmemory.UpdateValueRequest{
+		Key:     req.Key,
+		Content: req.Content,
+	})
+	if err != nil {
+		return nil, err
+	}
+	resp := agentMemoryValueConfigFromResponse(*value)
+	return &resp, nil
+}
+
+func (s *agentsService) ClearAgentMemoryValue(ctx context.Context, agentID, accountID, userScope, userID, key string) (*dto.AgentMemoryValueResponse, error) {
+	ag, _, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, false)
+	if err != nil {
+		return nil, err
+	}
+	if s.agentMemoryService == nil {
+		return nil, fmt.Errorf("agent memory service is not configured")
+	}
+	targetUserID, err := uuid.Parse(strings.TrimSpace(userID))
+	if err != nil {
+		return nil, fmt.Errorf("user id is invalid")
+	}
+	value, err := s.agentMemoryService.ClearOrganizerValue(ctx, ag.ID, userScope, targetUserID, key)
+	if err != nil {
+		return nil, err
+	}
+	resp := agentMemoryValueConfigFromResponse(*value)
+	return &resp, nil
 }
 
 func (s *agentsService) GetPublishedAgentWebAppConfig(ctx context.Context, webAppID string) (*dto.AgentWebAppRuntimeConfigResponse, error) {
@@ -519,18 +594,49 @@ func (s *agentsService) enabledAgentMemorySlotsForSnapshot(ctx context.Context, 
 func agentMemorySlotConfigsFromResponses(slots []agentmemory.SlotResponse) []dto.AgentMemorySlotConfig {
 	out := make([]dto.AgentMemorySlotConfig, 0, len(slots))
 	for _, slot := range slots {
-		out = append(out, dto.AgentMemorySlotConfig{
-			ID:          slot.ID,
-			Key:         strings.TrimSpace(slot.Key),
-			Description: strings.TrimSpace(slot.Description),
-			MaxChars:    slot.MaxChars,
-			Enabled:     slot.Enabled,
-			SortOrder:   slot.SortOrder,
-			CreatedAt:   slot.CreatedAt,
-			UpdatedAt:   slot.UpdatedAt,
-		})
+		out = append(out, agentMemorySlotConfigFromResponse(slot))
 	}
 	return normalizeAgentMemorySlotConfigs(out)
+}
+
+func agentMemoryValueConfigsFromResponses(values []agentmemory.SlotValueResponse) []dto.AgentMemoryValueResponse {
+	out := make([]dto.AgentMemoryValueResponse, 0, len(values))
+	for _, value := range values {
+		out = append(out, agentMemoryValueConfigFromResponse(value))
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].SortOrder != out[j].SortOrder {
+			return out[i].SortOrder < out[j].SortOrder
+		}
+		return out[i].Key < out[j].Key
+	})
+	return out
+}
+
+func agentMemoryValueConfigFromResponse(value agentmemory.SlotValueResponse) dto.AgentMemoryValueResponse {
+	return dto.AgentMemoryValueResponse{
+		AgentMemorySlotConfig: agentMemorySlotConfigFromResponse(value.SlotResponse),
+		Content:               value.Content,
+	}
+}
+
+func agentMemorySlotConfigFromResponse(slot agentmemory.SlotResponse) dto.AgentMemorySlotConfig {
+	return dto.AgentMemorySlotConfig{
+		ID:               slot.ID,
+		Key:              strings.TrimSpace(slot.Key),
+		Description:      strings.TrimSpace(slot.Description),
+		MaxChars:         slot.MaxChars,
+		Enabled:          slot.Enabled,
+		SortOrder:        slot.SortOrder,
+		CreatedAt:        slot.CreatedAt,
+		UpdatedAt:        slot.UpdatedAt,
+		CreatedAtUnix:    slot.CreatedAtUnix,
+		UpdatedAtUnix:    slot.UpdatedAtUnix,
+		CreatedAtISO:     slot.CreatedAtISO,
+		UpdatedAtISO:     slot.UpdatedAtISO,
+		CreatedAtDisplay: slot.CreatedAtDisplay,
+		UpdatedAtDisplay: slot.UpdatedAtDisplay,
+	}
 }
 
 func agentMemoryReplaceRequestFromConfig(slots []dto.AgentMemorySlotConfig) agentmemory.ReplaceSlotsRequest {
@@ -538,6 +644,7 @@ func agentMemoryReplaceRequestFromConfig(slots []dto.AgentMemorySlotConfig) agen
 	for i, slot := range slots {
 		enabled := slot.Enabled
 		req.Slots = append(req.Slots, agentmemory.SlotUpsertRequest{
+			ID:          strings.TrimSpace(slot.ID),
 			Key:         strings.TrimSpace(slot.Key),
 			Description: strings.TrimSpace(slot.Description),
 			MaxChars:    slot.MaxChars,
@@ -546,6 +653,24 @@ func agentMemoryReplaceRequestFromConfig(slots []dto.AgentMemorySlotConfig) agen
 		})
 	}
 	return req
+}
+
+func agentMemoryKeys(slots []dto.AgentMemorySlotConfig) []string {
+	keys := make([]string, 0, len(slots))
+	for _, slot := range slots {
+		key := strings.TrimSpace(slot.Key)
+		if key != "" {
+			keys = append(keys, key)
+		}
+	}
+	return keys
+}
+
+func normalizeAgentMemoryUserScope(value string) string {
+	if strings.EqualFold(strings.TrimSpace(value), "end_user") {
+		return "end_user"
+	}
+	return "account"
 }
 
 func firstNonZeroInt(value, fallback int) int {

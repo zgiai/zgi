@@ -16,6 +16,7 @@ import type {
 import {
   AgentRuntimeHeader,
   AgentRuntimeLoadingState,
+  AgentRuntimeMemoryValuesDialog,
   AgentRuntimeOrchestrationPanel,
   AgentRuntimePreviewPanel,
   AgentRuntimePromptPanel,
@@ -36,6 +37,7 @@ import { useAIChatSkills } from '@/hooks/aichat/use-aichat-skills';
 import { useDatasets } from '@/hooks/dataset/use-datasets';
 import { AGENT_KEYS } from '@/hooks/query-keys';
 import { useLocale } from '@/hooks/use-locale';
+import { useAutoProfile } from '@/hooks/use-profile';
 import { useT } from '@/i18n';
 import agentService from '@/services/agent.service';
 import type {
@@ -79,6 +81,7 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
   const { locale } = useLocale();
   const t = useT('agents.agentRuntime');
   const { agent, isLoading: isAgentLoading } = useAgent(agentId);
+  const { data: profile } = useAutoProfile({ staleTime: 1_800_000 });
   const { data: configResponse, isLoading: isConfigLoading } = useAgentConfig(agentId);
   const { data: allSkills = [], isLoading: isSkillsLoading } = useAIChatSkills();
   const { pages: datasetPages, isLoading: isDatasetsLoading } = useDatasets({ limit: 100 });
@@ -108,6 +111,7 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
   const [knowledgeDatasetIds, setKnowledgeDatasetIds] = useState<string[]>([]);
   const [skillDialogOpen, setSkillDialogOpen] = useState(false);
   const [promptOptimizerOpen, setPromptOptimizerOpen] = useState(false);
+  const [memoryValuesOpen, setMemoryValuesOpen] = useState(false);
   const [skillSearch, setSkillSearch] = useState('');
   const [showSelectedSkillsOnly, setShowSelectedSkillsOnly] = useState(false);
   const [isGeneratingSuggestions, setIsGeneratingSuggestions] = useState(false);
@@ -285,28 +289,39 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
 
   const saveRuntimePayload = useCallback(
     async (payload: UpdateAgentRuntimeConfigRequest) => {
-      const response = await agentService.updateAgentConfig(agentId, payload);
-      const slotsResponse = await agentService.updateAgentMemorySlots(
-        agentId,
+      let slotsResponse: Awaited<ReturnType<typeof agentService.updateAgentMemorySlots>> | null =
+        null;
+      const payloadMemorySlotErrors = validateAgentMemorySlots(
         payload.agent_memory_slots ?? []
-      );
+      ).some(Boolean);
+      if (payload.agent_memory_enabled || !payloadMemorySlotErrors) {
+        slotsResponse = await agentService.updateAgentMemorySlots(
+          agentId,
+          payload.agent_memory_slots ?? []
+        );
+      }
+      const response = await agentService.updateAgentConfig(agentId, payload);
       const updatedAt = response.data.updated_at ?? Math.floor(Date.now() / 1000);
+      const savedPayload = {
+        ...payload,
+        agent_memory_slots:
+          slotsResponse?.data.slots ??
+          response.data.agent_memory_slots ??
+          payload.agent_memory_slots,
+      };
 
       queryClient.setQueryData(AGENT_KEYS.config(agentId), {
         ...response,
         data: {
           ...response.data,
           agent_memory_enabled: payload.agent_memory_enabled,
-          agent_memory_slots:
-            slotsResponse.data.slots ??
-            response.data.agent_memory_slots ??
-            payload.agent_memory_slots,
+          agent_memory_slots: savedPayload.agent_memory_slots,
         },
       });
       queryClient.invalidateQueries({ queryKey: AGENT_KEYS.detail(agentId) });
 
       return {
-        savedPayload: payload,
+        savedPayload,
         updatedAt,
       };
     },
@@ -329,6 +344,9 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
     enabled: !isVersionPreviewing,
     canSave: () => !hasAgentMemorySlotErrors,
     savePayload: saveRuntimePayload,
+    onSaveCommitted: result => {
+      setAgentMemorySlots(result.savedPayload.agent_memory_slots ?? []);
+    },
     onSaveFailed: (error, options) => {
       if (!options.silent) {
         toast.error(getErrorMessage(error) || t('toasts.saveFailedDraftKept'));
@@ -654,6 +672,7 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
           onChangeFileUploadEnabled={setFileUploadEnabled}
           onChangeAgentMemoryEnabled={setAgentMemoryEnabled}
           onChangeAgentMemorySlots={setAgentMemorySlots}
+          onOpenMemoryValues={() => setMemoryValuesOpen(true)}
         />
         <AgentRuntimePreviewPanel
           controller={chatController}
@@ -699,6 +718,13 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
         onChangeSkillSearch={setSkillSearch}
         onChangeShowSelectedSkillsOnly={setShowSelectedSkillsOnly}
         onToggleSkill={handleToggleSkill}
+      />
+
+      <AgentRuntimeMemoryValuesDialog
+        agentId={agentId}
+        open={memoryValuesOpen}
+        defaultUserId={profile?.id}
+        onOpenChange={setMemoryValuesOpen}
       />
     </div>
   );

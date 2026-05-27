@@ -165,14 +165,38 @@ type AgentRuntimeModeConfig struct {
 }
 
 type AgentMemorySlotConfig struct {
-	ID          string `json:"id,omitempty"`
-	Key         string `json:"key"`
-	Description string `json:"description"`
-	MaxChars    int    `json:"max_chars"`
-	Enabled     bool   `json:"enabled"`
-	SortOrder   int    `json:"sort_order"`
-	CreatedAt   int64  `json:"created_at,omitempty"`
-	UpdatedAt   int64  `json:"updated_at,omitempty"`
+	ID               string `json:"id,omitempty"`
+	Key              string `json:"key"`
+	Description      string `json:"description"`
+	MaxChars         int    `json:"max_chars"`
+	Enabled          bool   `json:"enabled"`
+	SortOrder        int    `json:"sort_order"`
+	CreatedAt        int64  `json:"created_at,omitempty"`
+	UpdatedAt        int64  `json:"updated_at,omitempty"`
+	CreatedAtUnix    int64  `json:"created_at_unix,omitempty"`
+	UpdatedAtUnix    int64  `json:"updated_at_unix,omitempty"`
+	CreatedAtISO     string `json:"created_at_iso,omitempty"`
+	UpdatedAtISO     string `json:"updated_at_iso,omitempty"`
+	CreatedAtDisplay string `json:"created_at_display,omitempty"`
+	UpdatedAtDisplay string `json:"updated_at_display,omitempty"`
+}
+
+type AgentMemoryValueResponse struct {
+	AgentMemorySlotConfig
+	Content string `json:"content"`
+}
+
+type AgentMemoryValuesResponse struct {
+	UserScope string                     `json:"user_scope"`
+	UserID    string                     `json:"user_id"`
+	Values    []AgentMemoryValueResponse `json:"values"`
+}
+
+type UpdateAgentMemoryValueRequest struct {
+	UserScope string `json:"user_scope" binding:"required"`
+	UserID    string `json:"user_id" binding:"required"`
+	Key       string `json:"key" binding:"required"`
+	Content   string `json:"content"`
 }
 
 type AgentConfigRequest struct {

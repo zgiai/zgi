@@ -13,6 +13,9 @@ import type {
   AgentRuntimeConfig,
   UpdateAgentRuntimeConfigRequest,
   AgentMemorySlotConfig,
+  AgentMemoryValuesResponse,
+  UpdateAgentMemoryValueRequest,
+  AgentMemoryValue,
   PublishAgentResponse,
   AgentPublishedVersionsResponse,
   RollbackAgentPublishedVersionRequest,
@@ -154,9 +157,51 @@ class AgentService extends BaseService {
     agentId: string,
     slots: AgentMemorySlotConfig[]
   ): Promise<ApiResponseData<{ slots: AgentMemorySlotConfig[] }>> {
-    return this.request('put', `/agents/${agentId}/memory/slots`, { slots }, {
+    return this.request(
+      'put',
+      `/agents/${agentId}/memory/slots`,
+      { slots },
+      {
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
+  }
+
+  getAgentMemoryValues(
+    agentId: string,
+    params: { user_scope: 'account' | 'end_user'; user_id: string }
+  ): Promise<ApiResponseData<AgentMemoryValuesResponse>> {
+    return this.request('get', `/agents/${agentId}/memory/values`, undefined, {
+      params,
       headers: { 'Content-Type': 'application/json' },
     });
+  }
+
+  updateAgentMemoryValue(
+    agentId: string,
+    data: UpdateAgentMemoryValueRequest
+  ): Promise<ApiResponseData<AgentMemoryValue>> {
+    return this.request('put', `/agents/${agentId}/memory/values`, data, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  clearAgentMemoryValue(
+    agentId: string,
+    params: { user_scope: 'account' | 'end_user'; user_id: string; key: string }
+  ): Promise<ApiResponseData<AgentMemoryValue>> {
+    return this.request(
+      'delete',
+      `/agents/${agentId}/memory/values/${encodeURIComponent(params.key)}`,
+      undefined,
+      {
+        params: {
+          user_scope: params.user_scope,
+          user_id: params.user_id,
+        },
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
   }
 
   publishAgent(agentId: string): Promise<ApiResponseData<PublishAgentResponse>> {
@@ -165,9 +210,7 @@ class AgentService extends BaseService {
     });
   }
 
-  getPublishedVersions(
-    agentId: string
-  ): Promise<ApiResponseData<AgentPublishedVersionsResponse>> {
+  getPublishedVersions(agentId: string): Promise<ApiResponseData<AgentPublishedVersionsResponse>> {
     return this.request('get', `/agents/${agentId}/published-versions`, undefined, {
       headers: { 'Content-Type': 'application/json' },
     });

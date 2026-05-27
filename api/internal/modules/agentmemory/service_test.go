@@ -95,6 +95,17 @@ func (f *fakeStore) ListValuesForUser(ctx context.Context, workspaceID, agentID 
 	return out, nil
 }
 
+func (f *fakeStore) ListValuesForAgent(ctx context.Context, workspaceID, agentID uuid.UUID) ([]*AgentMemoryValue, error) {
+	out := []*AgentMemoryValue{}
+	for _, value := range f.values {
+		if value.WorkspaceID == workspaceID && value.AgentID == agentID {
+			copy := *value
+			out = append(out, &copy)
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeStore) GetValueScoped(ctx context.Context, workspaceID, agentID uuid.UUID, slotKey string, userScope string, userID uuid.UUID) (*AgentMemoryValue, error) {
 	value := f.values[valueKey(workspaceID, agentID, slotKey, userScope, userID)]
 	if value == nil {
@@ -156,6 +167,24 @@ func TestReplaceSlotsRejectsInvalidRowsWithoutDisablingExistingSlots(t *testing.
 	}
 	if len(remaining) != 1 || remaining[0].Key != "profile" || !remaining[0].Enabled {
 		t.Fatalf("remaining slots = %#v, want profile still enabled", remaining)
+	}
+}
+
+func TestReplaceSlotsRejectsKeyRenameByID(t *testing.T) {
+	store := newFakeStore(uuid.New())
+	svc := &Service{repo: store}
+	agentID := uuid.New()
+	slots, err := svc.ReplaceSlots(context.Background(), agentID, uuid.New(), ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{Key: "profile"}}})
+	if err != nil {
+		t.Fatalf("ReplaceSlots initial error = %v", err)
+	}
+
+	_, err = svc.ReplaceSlots(context.Background(), agentID, uuid.New(), ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{
+		ID:  slots[0].ID,
+		Key: "profile_new",
+	}}})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("ReplaceSlots rename error = %v, want ErrInvalidInput", err)
 	}
 }
 
@@ -264,5 +293,32 @@ func TestClearValueRedactsClearedContentInEventSnapshots(t *testing.T) {
 	}
 	if before["content_length"] == nil {
 		t.Fatalf("before snapshot missing content_length: %#v", before)
+	}
+}
+
+func TestClearValuesNotInKeysClearsRemovedMemoryValues(t *testing.T) {
+	store := newFakeStore(uuid.New())
+	svc := &Service{repo: store}
+	agentID := uuid.New()
+	userID := uuid.New()
+	_, err := svc.ReplaceSlots(context.Background(), agentID, uuid.New(), ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{Key: "profile"}, {Key: "preference"}}})
+	if err != nil {
+		t.Fatalf("ReplaceSlots error = %v", err)
+	}
+	store.values[valueKey(store.workspaceID, agentID, "profile", UserScopeAccount, userID)] = &AgentMemoryValue{
+		ID: uuid.New(), WorkspaceID: store.workspaceID, AgentID: agentID, SlotKey: "profile", UserScope: UserScopeAccount, UserID: userID, Content: "keep me",
+	}
+	store.values[valueKey(store.workspaceID, agentID, "preference", UserScopeAccount, userID)] = &AgentMemoryValue{
+		ID: uuid.New(), WorkspaceID: store.workspaceID, AgentID: agentID, SlotKey: "preference", UserScope: UserScopeAccount, UserID: userID, Content: "clear me",
+	}
+
+	if err := svc.ClearValuesNotInKeys(context.Background(), agentID, []string{"profile"}); err != nil {
+		t.Fatalf("ClearValuesNotInKeys error = %v", err)
+	}
+	if got := store.values[valueKey(store.workspaceID, agentID, "profile", UserScopeAccount, userID)].Content; got != "keep me" {
+		t.Fatalf("profile content = %q, want keep me", got)
+	}
+	if got := store.values[valueKey(store.workspaceID, agentID, "preference", UserScopeAccount, userID)].Content; got != "" {
+		t.Fatalf("preference content = %q, want empty", got)
 	}
 }

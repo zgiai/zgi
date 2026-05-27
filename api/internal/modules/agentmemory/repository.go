@@ -85,6 +85,14 @@ func (r *Repository) GetSlotScoped(ctx context.Context, workspaceID, agentID, sl
 	return &slot, nil
 }
 
+func (r *Repository) ListValuesForAgent(ctx context.Context, workspaceID, agentID uuid.UUID) ([]*AgentMemoryValue, error) {
+	var values []*AgentMemoryValue
+	err := r.db.WithContext(ctx).
+		Where("workspace_id = ? AND agent_id = ?", workspaceID, agentID).
+		Find(&values).Error
+	return values, err
+}
+
 func (r *Repository) ListValuesForUser(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) ([]*AgentMemoryValue, error) {
 	var values []*AgentMemoryValue
 	err := r.db.WithContext(ctx).

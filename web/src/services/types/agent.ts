@@ -201,6 +201,29 @@ export interface AgentMemorySlotConfig {
   sort_order: number;
   created_at?: number;
   updated_at?: number;
+  created_at_unix?: number;
+  updated_at_unix?: number;
+  created_at_iso?: string;
+  updated_at_iso?: string;
+  created_at_display?: string;
+  updated_at_display?: string;
+}
+
+export interface AgentMemoryValue extends AgentMemorySlotConfig {
+  content: string;
+}
+
+export interface AgentMemoryValuesResponse {
+  user_scope: 'account' | 'end_user';
+  user_id: string;
+  values: AgentMemoryValue[];
+}
+
+export interface UpdateAgentMemoryValueRequest {
+  user_scope: 'account' | 'end_user';
+  user_id: string;
+  key: string;
+  content: string;
 }
 
 export interface UpdateAgentRuntimeConfigRequest {

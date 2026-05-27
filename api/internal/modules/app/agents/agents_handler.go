@@ -393,6 +393,53 @@ func (h *AgentsHandler) ReplaceAgentMemorySlots(c *gin.Context) {
 	response.Success(c, gin.H{"slots": result})
 }
 
+func (h *AgentsHandler) ListAgentMemoryValues(c *gin.Context) {
+	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))
+	if err != nil {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	result, err := h.appService.ListAgentMemoryValues(c.Request.Context(), c.Param("agent_id"), accountID.String(), c.Query("user_scope"), c.Query("user_id"))
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *AgentsHandler) UpdateAgentMemoryValue(c *gin.Context) {
+	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))
+	if err != nil {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	var req dto.UpdateAgentMemoryValueRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+		return
+	}
+	result, err := h.appService.UpdateAgentMemoryValue(c.Request.Context(), c.Param("agent_id"), accountID.String(), req)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *AgentsHandler) ClearAgentMemoryValue(c *gin.Context) {
+	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))
+	if err != nil {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	result, err := h.appService.ClearAgentMemoryValue(c.Request.Context(), c.Param("agent_id"), accountID.String(), c.Query("user_scope"), c.Query("user_id"), c.Param("key"))
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
 func (h *AgentsHandler) PublishAgent(c *gin.Context) {
 	accountID := c.GetString("account_id")
 	if accountID == "" {
