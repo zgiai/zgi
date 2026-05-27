@@ -1,7 +1,7 @@
 'use client';
 
 import { useId, type ReactNode } from 'react';
-import { MessageSquarePlus, PanelLeft } from 'lucide-react';
+import { Eye, MessageSquarePlus, PanelLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import Chat, { type AIChatController } from '@/components/chat';
 import type { ModelSelectorParameterValue, ModelSelectorValue } from '@/components/common/model-selector';
@@ -16,6 +16,7 @@ interface AgentRuntimePreviewPanelProps {
   inputPlaceholder: string;
   homeBrand: ReactNode;
   homeTitle: string;
+  onOpenMemoryValues: () => void;
   onModelChange: (value: ModelSelectorValue) => void;
 }
 
@@ -28,6 +29,7 @@ export function AgentRuntimePreviewPanel({
   inputPlaceholder,
   homeBrand,
   homeTitle,
+  onOpenMemoryValues,
   onModelChange,
 }: AgentRuntimePreviewPanelProps) {
   const t = useT('agents.agentRuntime');
@@ -41,6 +43,15 @@ export function AgentRuntimePreviewPanel({
           <p className="text-xs text-muted-foreground">{t('preview.description')}</p>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1.5 px-2 text-xs"
+            onClick={onOpenMemoryValues}
+          >
+            <Eye className="size-3.5" />
+            {t('memory.viewValues')}
+          </Button>
           <div id={controlsPortalId} className="flex shrink-0 items-center" />
         </div>
       </div>

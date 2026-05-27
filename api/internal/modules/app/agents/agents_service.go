@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	quota_model "github.com/zgiai/zgi/api/internal/modules/quota/model"
@@ -69,6 +70,7 @@ type agentsService struct {
 	tenantService             interfaces.WorkspaceManagementService
 	workflowService           interfaces.WorkflowService
 	chatRuntimeService        runtimeservice.Service
+	agentMemoryService        *agentmemory.Service
 	resourcePermissionService interfaces.ResourcePermissionService
 	enterpriseService         interfaces.OrganizationService
 	quotaService              interfaces.QuotaService
@@ -84,6 +86,7 @@ func NewAgentsService(
 	tenantService interfaces.WorkspaceManagementService,
 	workflowService interfaces.WorkflowService,
 	chatRuntimeService runtimeservice.Service,
+	agentMemoryService *agentmemory.Service,
 	resourcePermissionService interfaces.ResourcePermissionService,
 	enterpriseService interfaces.OrganizationService,
 	quotaService interfaces.QuotaService,
@@ -98,6 +101,7 @@ func NewAgentsService(
 		tenantService:             tenantService,
 		workflowService:           workflowService,
 		chatRuntimeService:        chatRuntimeService,
+		agentMemoryService:        agentMemoryService,
 		resourcePermissionService: resourcePermissionService,
 		enterpriseService:         enterpriseService,
 		quotaService:              quotaService,

@@ -180,6 +180,8 @@ export interface AgentRuntimeConfig {
   model_parameters: Record<string, unknown>;
   enabled_skill_ids: string[];
   use_memory: boolean;
+  agent_memory_enabled?: boolean;
+  agent_memory_slots?: AgentMemorySlotConfig[];
   file_upload_enabled: boolean;
   home_title: string;
   input_placeholder: string;
@@ -190,6 +192,38 @@ export interface AgentRuntimeConfig {
   updated_at: number;
 }
 
+export interface AgentMemorySlotConfig {
+  id?: string;
+  key: string;
+  description: string;
+  max_chars: number;
+  enabled: boolean;
+  sort_order: number;
+  created_at?: number;
+  updated_at?: number;
+  created_at_unix?: number;
+  updated_at_unix?: number;
+  created_at_iso?: string;
+  updated_at_iso?: string;
+  created_at_display?: string;
+  updated_at_display?: string;
+}
+
+export interface AgentMemoryValue extends AgentMemorySlotConfig {
+  content: string;
+}
+
+export interface AgentMemoryValuesResponse {
+  user_scope: 'account' | 'end_user';
+  user_id: string;
+  values: AgentMemoryValue[];
+}
+
+export interface UpdateAgentMemoryValueRequest {
+  key: string;
+  content: string;
+}
+
 export interface UpdateAgentRuntimeConfigRequest {
   system_prompt: string;
   model_provider: string;
@@ -197,6 +231,8 @@ export interface UpdateAgentRuntimeConfigRequest {
   model_parameters: Record<string, unknown>;
   enabled_skill_ids: string[];
   use_memory: boolean;
+  agent_memory_enabled?: boolean;
+  agent_memory_slots?: AgentMemorySlotConfig[];
   file_upload_enabled: boolean;
   home_title: string;
   input_placeholder: string;

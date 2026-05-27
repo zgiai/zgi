@@ -185,22 +185,24 @@ type AgentToolInvokeRequest struct {
 	Parameters     map[string]interface{} `json:"parameters"`
 	ConversationID string                 `json:"conversation_id,omitempty"`
 	MessageID      string                 `json:"message_id,omitempty"`
+	UserScope      string                 `json:"user_scope,omitempty"`
 }
 
 // InvokeForAgent invokes a tool for agent execution
 func (e *ToolEngine) InvokeForAgent(ctx context.Context, req AgentToolInvokeRequest) (*InvokeResult, error) {
 	return e.Invoke(ctx, InvokeRequest{
-		ProviderType:   req.ProviderType,
-		ProviderID:     req.ProviderID,
-		ToolName:       req.ToolName,
-		TenantID:       req.TenantID,
-		UserID:         req.UserID,
-		Parameters:     req.Parameters,
-		CredentialID:   req.CredentialID,
-		ConversationID: req.ConversationID,
-		AppID:          req.AppID,
-		MessageID:      req.MessageID,
-		InvokeFrom:     ToolInvokeFromAgent,
+		ProviderType:      req.ProviderType,
+		ProviderID:        req.ProviderID,
+		ToolName:          req.ToolName,
+		TenantID:          req.TenantID,
+		UserID:            req.UserID,
+		Parameters:        req.Parameters,
+		CredentialID:      req.CredentialID,
+		ConversationID:    req.ConversationID,
+		AppID:             req.AppID,
+		MessageID:         req.MessageID,
+		InvokeFrom:        ToolInvokeFromAgent,
+		RuntimeParameters: map[string]interface{}{"user_scope": req.UserScope},
 	})
 }
 

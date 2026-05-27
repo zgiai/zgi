@@ -132,6 +132,9 @@ func (m *ToolManager) GetToolRuntime(
 		RuntimeParameters: copyRuntimeParameters(runtimeParameters),
 		InvokeFrom:        invokeFrom,
 	}
+	for key, value := range runtimeParameters {
+		runtime.RuntimeParameters[key] = value
+	}
 
 	return tool.ForkToolRuntime(runtime), nil
 }

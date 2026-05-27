@@ -186,6 +186,26 @@ func (s *stubWebAppStatusHandlerService) UpdateAgentConfig(context.Context, stri
 	return nil, nil
 }
 
+func (s *stubWebAppStatusHandlerService) ListAgentMemorySlots(context.Context, string, string) ([]dto.AgentMemorySlotConfig, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) ReplaceAgentMemorySlots(context.Context, string, string, []dto.AgentMemorySlotConfig) ([]dto.AgentMemorySlotConfig, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) ListAgentMemoryValues(context.Context, string, string) (*dto.AgentMemoryValuesResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) UpdateAgentMemoryValue(context.Context, string, string, dto.UpdateAgentMemoryValueRequest) (*dto.AgentMemoryValueResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) ClearAgentMemoryValue(context.Context, string, string, string) (*dto.AgentMemoryValueResponse, error) {
+	return nil, nil
+}
+
 func (s *stubWebAppStatusHandlerService) GenerateAgentSuggestedQuestions(context.Context, string, string, *dto.GenerateAgentSuggestedQuestionsRequest) (*dto.GenerateSuggestedQuestionsResponse, error) {
 	return nil, nil
 }

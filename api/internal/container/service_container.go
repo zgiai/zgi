@@ -10,6 +10,7 @@ import (
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/infra/platform"
 	"github.com/zgiai/zgi/api/internal/infra/platform/console"
+	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/diagnosis"
 	workflow_file "github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
@@ -195,7 +196,8 @@ type ServiceContainer struct {
 	toolEngine *tools.ToolEngine
 
 	// Account memory
-	memoryService *memory.Service
+	memoryService      *memory.Service
+	agentMemoryService *agentmemory.Service
 
 	// Knowledge retrieval for builtin knowledge tools
 	knowledgeRetrievalService *dataset_service.KnowledgeRetrievalService
@@ -779,6 +781,7 @@ func (c *ServiceContainer) GetToolManager() *tools.ToolManager {
 		c.toolManager.RegisterBuiltinProviders(getBuiltinToolProviders())
 		_ = c.toolManager.RegisterProvider(memory.NewProvider(c.GetMemoryService()))
 		_ = c.toolManager.RegisterProvider(knowledge_tools.NewProvider(c.GetKnowledgeRetrievalService()))
+		_ = c.toolManager.RegisterProvider(agentmemory.NewProvider(c.GetAgentMemoryService()))
 
 		logger.Info("ToolManager initialized with builtin providers")
 	}
@@ -811,6 +814,13 @@ func (c *ServiceContainer) GetKnowledgeRetrievalService() *dataset_service.Knowl
 		)
 	}
 	return c.knowledgeRetrievalService
+}
+
+func (c *ServiceContainer) GetAgentMemoryService() *agentmemory.Service {
+	if c.agentMemoryService == nil {
+		c.agentMemoryService = agentmemory.NewService(c.db)
+	}
+	return c.agentMemoryService
 }
 
 func (c *ServiceContainer) GetConsoleProvider() console.ConsoleProvider {
