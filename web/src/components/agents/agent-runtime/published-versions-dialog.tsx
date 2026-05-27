@@ -52,24 +52,22 @@ export function AgentRuntimeVersionPopover({
 
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
-      <PopoverTrigger asChild>
-        <span>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                isIcon
-                variant="ghost"
-                size="sm"
-                interactive="subtle"
-                aria-label={t('header.versions')}
-              >
-                <History className="size-[18px]" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>{t('header.versions')}</TooltipContent>
-          </Tooltip>
-        </span>
-      </PopoverTrigger>
+      <Tooltip>
+        <PopoverTrigger asChild>
+          <TooltipTrigger asChild>
+            <Button
+              isIcon
+              variant="ghost"
+              size="sm"
+              interactive="subtle"
+              aria-label={t('header.versions')}
+            >
+              <History className="size-[18px]" />
+            </Button>
+          </TooltipTrigger>
+        </PopoverTrigger>
+        <TooltipContent>{t('header.versions')}</TooltipContent>
+      </Tooltip>
       <PopoverContent align="end" sideOffset={10} className="w-[360px] p-0">
         <PopoverHeader className="border-b px-4 py-3">
           <PopoverTitle>{t('publishedVersions.title')}</PopoverTitle>

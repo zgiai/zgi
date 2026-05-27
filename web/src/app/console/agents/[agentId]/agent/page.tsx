@@ -714,7 +714,9 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
               onChangeAgentMemorySlots={setAgentMemorySlots}
             />
           </div>
-        <div className="hidden min-w-0 overflow-hidden 2xl:flex">{renderPreviewPanel()}</div>
+          {isTwoXlViewport ? (
+            <div className="hidden min-w-0 overflow-hidden 2xl:flex">{renderPreviewPanel()}</div>
+          ) : null}
         </div>
       </div>
 
