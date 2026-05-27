@@ -190,7 +190,7 @@ func (h *AgentsHandler) agentRuntimeContext(c *gin.Context) (agentRuntimeContext
 			ID:     &agentID,
 			Source: runtimemodel.ConversationSourceConsole,
 		},
-		RunConfig: agentRunConfig(agentID.String(), "agent.draft", draft.Config),
+		RunConfig: agentRunConfig(agentID.String(), "agent.draft", draft.Config, "account"),
 	}, true
 }
 
@@ -242,11 +242,11 @@ func (h *AgentsHandler) webAppAgentRuntimeContext(c *gin.Context) (agentRuntimeC
 			Source:         runtimemodel.ConversationSourceWebApp,
 			SourceWebAppID: &webAppID,
 		},
-		RunConfig: agentRunConfig(published.AgentID, "agent.published."+published.Version, published.Config),
+		RunConfig: agentRunConfig(published.AgentID, "agent.published."+published.Version, published.Config, webAppAgentMemoryUserScope(c)),
 	}, true
 }
 
-func agentRunConfig(agentID, systemPromptVersion string, cfg dto.AgentConfigResponse) runtimeservice.RunConfig {
+func agentRunConfig(agentID, systemPromptVersion string, cfg dto.AgentConfigResponse, agentMemoryUserScope string) runtimeservice.RunConfig {
 	return runtimeservice.RunConfig{
 		SystemPrompt:             cfg.SystemPrompt,
 		SystemPromptVersion:      systemPromptVersion,
@@ -256,10 +256,37 @@ func agentRunConfig(agentID, systemPromptVersion string, cfg dto.AgentConfigResp
 		EnabledSkillIDs:          cfg.EnabledSkillIDs,
 		KnowledgeDatasetIDs:      cfg.KnowledgeDatasetIDs,
 		KnowledgeRetrievalConfig: cfg.KnowledgeRetrievalConfig,
-		UseMemory:                cfg.UseMemory,
+		UseMemory:                false,
+		AgentMemoryEnabled:       cfg.AgentMemoryEnabled,
+		AgentMemorySlots:         agentMemoryRuntimeSlots(cfg.AgentMemorySlots),
+		AgentMemoryUserScope:     agentMemoryUserScope,
 		BillingAppID:             agentID,
 		BillingAppType:           runtimemodel.ConversationCallerAgent,
 	}
+}
+
+func webAppAgentMemoryUserScope(c *gin.Context) string {
+	if c.GetBool("is_authenticated") {
+		return "account"
+	}
+	return "end_user"
+}
+
+func agentMemoryRuntimeSlots(slots []dto.AgentMemorySlotConfig) []runtimeservice.AgentMemorySlotConfig {
+	out := make([]runtimeservice.AgentMemorySlotConfig, 0, len(slots))
+	for _, slot := range slots {
+		if !slot.Enabled {
+			continue
+		}
+		out = append(out, runtimeservice.AgentMemorySlotConfig{
+			Key:         slot.Key,
+			Description: slot.Description,
+			MaxChars:    slot.MaxChars,
+			Enabled:     slot.Enabled,
+			SortOrder:   slot.SortOrder,
+		})
+	}
+	return out
 }
 
 func (h *AgentsHandler) listRuntimeConversations(c *gin.Context, runtimeCtx agentRuntimeContext) {

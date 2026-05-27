@@ -938,6 +938,16 @@ func skillRuntimeParameters(scope Scope, config RunConfig) map[string]interface{
 	if len(config.KnowledgeRetrievalConfig) > 0 {
 		params["knowledge_retrieval_config"] = copyStringAnyMap(config.KnowledgeRetrievalConfig)
 	}
+	if strings.EqualFold(strings.TrimSpace(config.BillingAppType), runtimemodel.ConversationCallerAgent) && strings.TrimSpace(config.BillingAppID) != "" {
+		params["agent_id"] = strings.TrimSpace(config.BillingAppID)
+	}
+	if config.AgentMemoryEnabled {
+		params["agent_memory_enabled"] = true
+		params["agent_memory_slots"] = normalizeAgentMemorySlots(config.AgentMemorySlots)
+		if userScope := strings.TrimSpace(config.AgentMemoryUserScope); userScope != "" {
+			params["user_scope"] = userScope
+		}
+	}
 	return params
 }
 

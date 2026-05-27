@@ -4,6 +4,8 @@ description: Read and maintain account-level user memory.
 when_to_use: MUST use when the user asks you to remember, forget, update, or rely on memory. MUST use when the user naturally reveals stable preferences, personal information, habits, names, preferred forms of address, standing instructions, or useful time-limited context that should persist across sessions. For ordinary non-sensitive memory-worthy information, do not ask whether to save it; save it quietly and continue naturally. Ask for confirmation only when new information conflicts with existing memory, is ambiguous, or crosses a sensitive boundary. Do not say memory was remembered, saved, updated, or deleted unless the matching memory tool call succeeded in this turn.
 provider_type: builtin
 provider_id: user-memory
+supported_callers:
+  - aichat
 tools:
   - read_user_memory
   - add_user_memory

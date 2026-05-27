@@ -358,6 +358,41 @@ func (h *AgentsHandler) UpdateAgentConfig(c *gin.Context) {
 	response.Success(c, result)
 }
 
+func (h *AgentsHandler) ListAgentMemorySlots(c *gin.Context) {
+	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))
+	if err != nil {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	result, err := h.appService.ListAgentMemorySlots(c.Request.Context(), c.Param("agent_id"), accountID.String())
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, gin.H{"slots": result})
+}
+
+func (h *AgentsHandler) ReplaceAgentMemorySlots(c *gin.Context) {
+	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))
+	if err != nil {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	var req struct {
+		Slots []dto.AgentMemorySlotConfig `json:"slots" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+		return
+	}
+	result, err := h.appService.ReplaceAgentMemorySlots(c.Request.Context(), c.Param("agent_id"), accountID.String(), req.Slots)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, gin.H{"slots": result})
+}
+
 func (h *AgentsHandler) PublishAgent(c *gin.Context) {
 	accountID := c.GetString("account_id")
 	if accountID == "" {
@@ -463,7 +498,10 @@ func (h *AgentsHandler) ChatAgent(c *gin.Context) {
 		EnabledSkillIDs:          cfg.EnabledSkillIDs,
 		KnowledgeDatasetIDs:      cfg.KnowledgeDatasetIDs,
 		KnowledgeRetrievalConfig: cfg.KnowledgeRetrievalConfig,
-		UseMemory:                cfg.UseMemory,
+		UseMemory:                false,
+		AgentMemoryEnabled:       cfg.AgentMemoryEnabled,
+		AgentMemorySlots:         agentMemoryRuntimeSlots(cfg.AgentMemorySlots),
+		AgentMemoryUserScope:     "account",
 		BillingAppID:             agentID.String(),
 		BillingAppType:           runtimemodel.ConversationCallerAgent,
 	}
@@ -760,7 +798,10 @@ func (h *AgentsHandler) ChatWebAppAgent(c *gin.Context) {
 		EnabledSkillIDs:          published.Config.EnabledSkillIDs,
 		KnowledgeDatasetIDs:      published.Config.KnowledgeDatasetIDs,
 		KnowledgeRetrievalConfig: published.Config.KnowledgeRetrievalConfig,
-		UseMemory:                published.Config.UseMemory,
+		UseMemory:                false,
+		AgentMemoryEnabled:       published.Config.AgentMemoryEnabled,
+		AgentMemorySlots:         agentMemoryRuntimeSlots(published.Config.AgentMemorySlots),
+		AgentMemoryUserScope:     webAppAgentMemoryUserScope(c),
 		BillingAppID:             published.AgentID,
 		BillingAppType:           runtimemodel.ConversationCallerAgent,
 	}

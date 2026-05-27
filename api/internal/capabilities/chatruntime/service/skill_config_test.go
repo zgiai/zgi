@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
@@ -43,10 +44,44 @@ func TestEffectiveAgentSkillIDsSkipsKnowledgeWithoutDatasets(t *testing.T) {
 	}
 }
 
+func TestEffectiveAgentSkillIDsAutoAddsHiddenAgentMemory(t *testing.T) {
+	catalog := []skills.SkillDiscoveryMetadata{
+		{ID: skills.SkillAgentMemory, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAgent}},
+		{ID: skills.SkillUserMemory, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
+	}
+
+	got := effectiveAgentSkillIDs(
+		[]string{skills.SkillUserMemory},
+		catalog,
+		&RunConfig{
+			AgentMemoryEnabled: true,
+			AgentMemorySlots: []AgentMemorySlotConfig{{
+				Key:      "profile",
+				MaxChars: 1000,
+				Enabled:  true,
+			}},
+		},
+	)
+	want := []string{skills.SkillAgentMemory}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("effectiveAgentSkillIDs() = %#v, want %#v", got, want)
+	}
+}
+
+func TestRunConfigAllowsUserMemoryRejectsAgent(t *testing.T) {
+	if runConfigAllowsUserMemory(RunConfig{UseMemory: true, BillingAppType: runtimemodel.ConversationCallerAgent}) {
+		t.Fatal("runConfigAllowsUserMemory() = true for agent, want false")
+	}
+	if !runConfigAllowsUserMemory(RunConfig{UseMemory: true, BillingAppType: runtimemodel.ConversationCallerAIChat}) {
+		t.Fatal("runConfigAllowsUserMemory() = false for aichat, want true")
+	}
+}
+
 func TestVisibleSkillMetadataHidesRuntimeManagedSkills(t *testing.T) {
 	metadata := []skills.SkillDiscoveryMetadata{
 		{ID: skills.SkillInternalKnowledge},
 		{ID: skills.SkillAgentKnowledge},
+		{ID: skills.SkillAgentMemory},
 		{ID: skills.SkillUserMemory},
 		{ID: skills.SkillCalculator},
 	}

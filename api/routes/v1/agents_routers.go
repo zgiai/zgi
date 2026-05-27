@@ -4,6 +4,7 @@ import (
 	"github.com/gin-gonic/gin"
 	runtimerepo "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	app "github.com/zgiai/zgi/api/internal/modules/app/agents"
 	workflow "github.com/zgiai/zgi/api/internal/modules/app/workflow"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
@@ -63,7 +64,8 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	if graphFlowService != nil {
 		defaultModelResolver = graphFlowService.DefaultModelSvc
 	}
-	service := app.NewAgentsService(repo, accountService, tenantService, workflowService, chatRuntimeService, resourcePermissionService, enterpriseService, quotaService, fileService, llmClient, defaultModelResolver, db)
+	agentMemoryService := agentmemory.NewService(db)
+	service := app.NewAgentsService(repo, accountService, tenantService, workflowService, chatRuntimeService, agentMemoryService, resourcePermissionService, enterpriseService, quotaService, fileService, llmClient, defaultModelResolver, db)
 	appHandler := app.NewAgentsHandler(service, tenantService, accountService, enterpriseService, db, chatRuntimeService)
 	appHandler.SetFileService(fileService)
 	workflowTestService := workflowtest.NewService(workflowtest.NewRepository(db))
@@ -115,6 +117,8 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	appsGroup.PUT("/:agent_id", appHandler.UpdateAgent)
 	appsGroup.PATCH("/:agent_id/webapp/status", appHandler.UpdateWebAppStatus)
 	appsGroup.DELETE("/:agent_id", appHandler.DeleteAgent)
+	appsGroup.GET("/:agent_id/memory/slots", appHandler.ListAgentMemorySlots)
+	appsGroup.PUT("/:agent_id/memory/slots", appHandler.ReplaceAgentMemorySlots)
 
 	publicWebApps := v1.Group("/webapps")
 	publicWebApps.Use(middleware.SetupRequired())

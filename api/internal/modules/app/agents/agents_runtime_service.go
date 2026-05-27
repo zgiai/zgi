@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/suggestedquestions"
 	sharedmodel "github.com/zgiai/zgi/api/internal/modules/shared/model"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
@@ -26,7 +27,9 @@ func (s *agentsService) GetAgentConfig(ctx context.Context, agentID, accountID s
 	if err != nil {
 		return nil, err
 	}
-	return agentConfigResponse(ag.ID.String(), cfg), nil
+	resp := agentConfigResponse(ag.ID.String(), cfg)
+	resp.AgentMemorySlots = s.agentMemorySlotsForDraft(ctx, ag.ID)
+	return resp, nil
 }
 
 func (s *agentsService) GetAgentDraftRuntimeConfig(ctx context.Context, agentID, accountID string) (*dto.AgentDraftRuntimeConfigResponse, error) {
@@ -34,10 +37,12 @@ func (s *agentsService) GetAgentDraftRuntimeConfig(ctx context.Context, agentID,
 	if err != nil {
 		return nil, err
 	}
+	resp := agentConfigResponse(ag.ID.String(), cfg)
+	resp.AgentMemorySlots = s.agentMemorySlotsForDraft(ctx, ag.ID)
 	return &dto.AgentDraftRuntimeConfigResponse{
 		AgentID:     ag.ID.String(),
 		WorkspaceID: ag.TenantID.String(),
-		Config:      *agentConfigResponse(ag.ID.String(), cfg),
+		Config:      *resp,
 	}, nil
 }
 
@@ -55,7 +60,9 @@ func (s *agentsService) UpdateAgentConfig(ctx context.Context, agentID, accountI
 	if err := s.agentsRepo.UpdateAgentsConfig(ctx, cfg); err != nil {
 		return nil, err
 	}
-	return agentConfigResponse(ag.ID.String(), cfg), nil
+	resp := agentConfigResponse(ag.ID.String(), cfg)
+	resp.AgentMemorySlots = s.agentMemorySlotsForDraft(ctx, ag.ID)
+	return resp, nil
 }
 
 func (s *agentsService) PublishAgent(ctx context.Context, agentID, accountID string, req dto.PublishAgentRequest) (*dto.PublishAgentResponse, error) {
@@ -64,6 +71,7 @@ func (s *agentsService) PublishAgent(ctx context.Context, agentID, accountID str
 		return nil, err
 	}
 	snapshot := agentConfigSnapshot(ag.ID.String(), cfg)
+	snapshot["agent_memory_slots"] = s.enabledAgentMemorySlotsForSnapshot(ctx, ag.ID)
 	now := time.Now()
 	versionUUID := uuid.New()
 	version := &AgentPublishedVersion{
@@ -158,7 +166,8 @@ func (s *agentsService) RollbackAgentPublishedVersion(ctx context.Context, agent
 		Model:                    snapshot.Model,
 		ModelParameters:          snapshot.ModelParameters,
 		EnabledSkillIDs:          snapshot.EnabledSkillIDs,
-		UseMemory:                snapshot.UseMemory,
+		UseMemory:                false,
+		AgentMemoryEnabled:       snapshot.AgentMemoryEnabled,
 		FileUpload:               snapshot.FileUpload,
 		HomeTitle:                snapshot.HomeTitle,
 		InputPlaceholder:         snapshot.InputPlaceholder,
@@ -176,9 +185,44 @@ func (s *agentsService) RollbackAgentPublishedVersion(ctx context.Context, agent
 	if err := s.agentsRepo.UpdateAgentsConfig(ctx, cfg); err != nil {
 		return nil, err
 	}
+	if s.agentMemoryService != nil {
+		actorID, _ := uuid.Parse(accountID)
+		_, err = s.agentMemoryService.ReplaceSlots(ctx, ag.ID, actorID, agentMemoryReplaceRequestFromConfig(snapshot.AgentMemorySlots))
+		if err != nil {
+			return nil, err
+		}
+	}
 	resp := agentConfigResponse(ag.ID.String(), cfg)
+	resp.AgentMemorySlots = s.agentMemorySlotsForDraft(ctx, ag.ID)
 	resp.EnabledSkillIDs = applied.EnabledSkillIDs
 	return resp, nil
+}
+
+func (s *agentsService) ListAgentMemorySlots(ctx context.Context, agentID, accountID string) ([]dto.AgentMemorySlotConfig, error) {
+	ag, _, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, false)
+	if err != nil {
+		return nil, err
+	}
+	return s.agentMemorySlotsForDraft(ctx, ag.ID), nil
+}
+
+func (s *agentsService) ReplaceAgentMemorySlots(ctx context.Context, agentID, accountID string, slots []dto.AgentMemorySlotConfig) ([]dto.AgentMemorySlotConfig, error) {
+	ag, _, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, false)
+	if err != nil {
+		return nil, err
+	}
+	if s.agentMemoryService == nil {
+		return nil, fmt.Errorf("agent memory service is not configured")
+	}
+	actorID, err := uuid.Parse(accountID)
+	if err != nil {
+		return nil, fmt.Errorf("account id is invalid")
+	}
+	updated, err := s.agentMemoryService.ReplaceSlots(ctx, ag.ID, actorID, agentMemoryReplaceRequestFromConfig(slots))
+	if err != nil {
+		return nil, err
+	}
+	return agentMemorySlotConfigsFromResponses(updated), nil
 }
 
 func (s *agentsService) GetPublishedAgentWebAppConfig(ctx context.Context, webAppID string) (*dto.AgentWebAppRuntimeConfigResponse, error) {
@@ -342,7 +386,8 @@ func applyAgentConfigRequestToDraft(cfg *AgentsConfig, req dto.AgentConfigReques
 	cfg.Configs = &params
 	modeJSON, err := json.Marshal(dto.AgentRuntimeModeConfig{
 		EnabledSkillIDs:          runtimeCfg.EnabledSkillIDs,
-		UseMemory:                runtimeCfg.UseMemory,
+		UseMemory:                false,
+		AgentMemoryEnabled:       runtimeCfg.AgentMemoryEnabled,
 		FileUploadEnabled:        runtimeCfg.FileUpload,
 		HomeTitle:                runtimeCfg.HomeTitle,
 		InputPlaceholder:         runtimeCfg.InputPlaceholder,
@@ -372,7 +417,9 @@ func agentConfigResponse(agentID string, cfg *AgentsConfig) *dto.AgentConfigResp
 		AgentID:                  agentID,
 		ModelParameters:          params,
 		EnabledSkillIDs:          normalizeAgentEnabledSkillIDs(mode.EnabledSkillIDs),
-		UseMemory:                mode.UseMemory,
+		UseMemory:                false,
+		AgentMemoryEnabled:       mode.AgentMemoryEnabled,
+		AgentMemorySlots:         normalizeAgentMemorySlotConfigs(mode.AgentMemorySlots),
 		FileUpload:               mode.FileUploadEnabled,
 		HomeTitle:                normalizeAgentHomeTitle(mode.HomeTitle),
 		InputPlaceholder:         normalizeAgentInputPlaceholder(mode.InputPlaceholder),
@@ -399,7 +446,9 @@ func agentConfigSnapshot(agentID string, cfg *AgentsConfig) map[string]interface
 		"model":                      resp.Model,
 		"model_parameters":           resp.ModelParameters,
 		"enabled_skill_ids":          resp.EnabledSkillIDs,
-		"use_memory":                 resp.UseMemory,
+		"use_memory":                 false,
+		"agent_memory_enabled":       resp.AgentMemoryEnabled,
+		"agent_memory_slots":         normalizeAgentMemorySlotConfigs(resp.AgentMemorySlots),
 		"file_upload_enabled":        resp.FileUpload,
 		"home_title":                 resp.HomeTitle,
 		"input_placeholder":          resp.InputPlaceholder,
@@ -426,9 +475,11 @@ func agentConfigResponseFromSnapshot(agentID string, snapshot map[string]interfa
 		resp.ModelParameters = params
 	}
 	resp.EnabledSkillIDs = normalizeAgentEnabledSkillIDs(stringSliceFromSnapshot(snapshot["enabled_skill_ids"]))
-	if useMemory, ok := snapshot["use_memory"].(bool); ok {
-		resp.UseMemory = useMemory
+	resp.UseMemory = false
+	if enabled, ok := snapshot["agent_memory_enabled"].(bool); ok {
+		resp.AgentMemoryEnabled = enabled
 	}
+	resp.AgentMemorySlots = agentMemorySlotConfigsFromSnapshot(snapshot["agent_memory_slots"])
 	if fileUpload, ok := snapshot["file_upload_enabled"].(bool); ok {
 		resp.FileUpload = fileUpload
 	}
@@ -441,6 +492,122 @@ func agentConfigResponseFromSnapshot(agentID string, snapshot map[string]interfa
 		resp.KnowledgeRetrievalConfig = copyStringAnyMap(cfg)
 	}
 	return resp
+}
+
+func (s *agentsService) agentMemorySlotsForDraft(ctx context.Context, agentID uuid.UUID) []dto.AgentMemorySlotConfig {
+	if s.agentMemoryService == nil || agentID == uuid.Nil {
+		return []dto.AgentMemorySlotConfig{}
+	}
+	slots, err := s.agentMemoryService.ListSlots(ctx, agentID)
+	if err != nil {
+		return []dto.AgentMemorySlotConfig{}
+	}
+	return agentMemorySlotConfigsFromResponses(slots)
+}
+
+func (s *agentsService) enabledAgentMemorySlotsForSnapshot(ctx context.Context, agentID uuid.UUID) []dto.AgentMemorySlotConfig {
+	slots := s.agentMemorySlotsForDraft(ctx, agentID)
+	out := make([]dto.AgentMemorySlotConfig, 0, len(slots))
+	for _, slot := range slots {
+		if slot.Enabled {
+			out = append(out, slot)
+		}
+	}
+	return out
+}
+
+func agentMemorySlotConfigsFromResponses(slots []agentmemory.SlotResponse) []dto.AgentMemorySlotConfig {
+	out := make([]dto.AgentMemorySlotConfig, 0, len(slots))
+	for _, slot := range slots {
+		out = append(out, dto.AgentMemorySlotConfig{
+			ID:          slot.ID,
+			Key:         strings.TrimSpace(slot.Key),
+			Description: strings.TrimSpace(slot.Description),
+			MaxChars:    slot.MaxChars,
+			Enabled:     slot.Enabled,
+			SortOrder:   slot.SortOrder,
+			CreatedAt:   slot.CreatedAt,
+			UpdatedAt:   slot.UpdatedAt,
+		})
+	}
+	return normalizeAgentMemorySlotConfigs(out)
+}
+
+func agentMemoryReplaceRequestFromConfig(slots []dto.AgentMemorySlotConfig) agentmemory.ReplaceSlotsRequest {
+	normalized := normalizeAgentMemorySlotConfigs(slots)
+	req := agentmemory.ReplaceSlotsRequest{Slots: make([]agentmemory.SlotUpsertRequest, 0, len(normalized))}
+	for _, slot := range normalized {
+		enabled := slot.Enabled
+		req.Slots = append(req.Slots, agentmemory.SlotUpsertRequest{
+			Key:         slot.Key,
+			Description: slot.Description,
+			MaxChars:    slot.MaxChars,
+			Enabled:     &enabled,
+			SortOrder:   slot.SortOrder,
+		})
+	}
+	return req
+}
+
+func normalizeAgentMemorySlotConfigs(slots []dto.AgentMemorySlotConfig) []dto.AgentMemorySlotConfig {
+	if len(slots) == 0 {
+		return []dto.AgentMemorySlotConfig{}
+	}
+	out := make([]dto.AgentMemorySlotConfig, 0, len(slots))
+	seen := map[string]struct{}{}
+	for i, slot := range slots {
+		key := strings.ToLower(strings.TrimSpace(slot.Key))
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		maxChars := slot.MaxChars
+		if maxChars <= 0 {
+			maxChars = 1000
+		}
+		if maxChars > 4000 {
+			maxChars = 4000
+		}
+		sortOrder := slot.SortOrder
+		if sortOrder == 0 {
+			sortOrder = i
+		}
+		out = append(out, dto.AgentMemorySlotConfig{
+			ID:          strings.TrimSpace(slot.ID),
+			Key:         key,
+			Description: strings.TrimSpace(slot.Description),
+			MaxChars:    maxChars,
+			Enabled:     slot.Enabled,
+			SortOrder:   sortOrder,
+			CreatedAt:   slot.CreatedAt,
+			UpdatedAt:   slot.UpdatedAt,
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].SortOrder != out[j].SortOrder {
+			return out[i].SortOrder < out[j].SortOrder
+		}
+		return out[i].Key < out[j].Key
+	})
+	return out
+}
+
+func agentMemorySlotConfigsFromSnapshot(raw interface{}) []dto.AgentMemorySlotConfig {
+	if raw == nil {
+		return []dto.AgentMemorySlotConfig{}
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return []dto.AgentMemorySlotConfig{}
+	}
+	var slots []dto.AgentMemorySlotConfig
+	if err := json.Unmarshal(data, &slots); err != nil {
+		return []dto.AgentMemorySlotConfig{}
+	}
+	return normalizeAgentMemorySlotConfigs(slots)
 }
 
 func (s *agentsService) GenerateAgentSuggestedQuestions(ctx context.Context, agentID, accountID string, req *dto.GenerateAgentSuggestedQuestionsRequest) (*dto.GenerateSuggestedQuestionsResponse, error) {

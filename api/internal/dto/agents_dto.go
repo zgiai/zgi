@@ -151,15 +151,28 @@ type WebAppStatusResponse struct {
 }
 
 type AgentRuntimeModeConfig struct {
-	EnabledSkillIDs          []string               `json:"enabled_skill_ids"`
-	UseMemory                bool                   `json:"use_memory"`
-	FileUploadEnabled        bool                   `json:"file_upload_enabled"`
-	HomeTitle                string                 `json:"home_title"`
-	InputPlaceholder         string                 `json:"input_placeholder"`
-	ThemeColor               string                 `json:"theme_color"`
-	SuggestedQuestions       []string               `json:"suggested_questions"`
-	KnowledgeDatasetIDs      []string               `json:"knowledge_dataset_ids"`
-	KnowledgeRetrievalConfig map[string]interface{} `json:"knowledge_retrieval_config"`
+	EnabledSkillIDs          []string                `json:"enabled_skill_ids"`
+	UseMemory                bool                    `json:"use_memory"`
+	AgentMemoryEnabled       bool                    `json:"agent_memory_enabled"`
+	AgentMemorySlots         []AgentMemorySlotConfig `json:"agent_memory_slots"`
+	FileUploadEnabled        bool                    `json:"file_upload_enabled"`
+	HomeTitle                string                  `json:"home_title"`
+	InputPlaceholder         string                  `json:"input_placeholder"`
+	ThemeColor               string                  `json:"theme_color"`
+	SuggestedQuestions       []string                `json:"suggested_questions"`
+	KnowledgeDatasetIDs      []string                `json:"knowledge_dataset_ids"`
+	KnowledgeRetrievalConfig map[string]interface{}  `json:"knowledge_retrieval_config"`
+}
+
+type AgentMemorySlotConfig struct {
+	ID          string `json:"id,omitempty"`
+	Key         string `json:"key"`
+	Description string `json:"description"`
+	MaxChars    int    `json:"max_chars"`
+	Enabled     bool   `json:"enabled"`
+	SortOrder   int    `json:"sort_order"`
+	CreatedAt   int64  `json:"created_at,omitempty"`
+	UpdatedAt   int64  `json:"updated_at,omitempty"`
 }
 
 type AgentConfigRequest struct {
@@ -169,6 +182,7 @@ type AgentConfigRequest struct {
 	ModelParameters          map[string]interface{} `json:"model_parameters"`
 	EnabledSkillIDs          []string               `json:"enabled_skill_ids"`
 	UseMemory                bool                   `json:"use_memory"`
+	AgentMemoryEnabled       bool                   `json:"agent_memory_enabled"`
 	FileUpload               bool                   `json:"file_upload_enabled"`
 	HomeTitle                string                 `json:"home_title"`
 	InputPlaceholder         string                 `json:"input_placeholder"`
@@ -179,21 +193,23 @@ type AgentConfigRequest struct {
 }
 
 type AgentConfigResponse struct {
-	AgentID                  string                 `json:"agent_id"`
-	SystemPrompt             string                 `json:"system_prompt"`
-	ModelProvider            string                 `json:"model_provider"`
-	Model                    string                 `json:"model"`
-	ModelParameters          map[string]interface{} `json:"model_parameters"`
-	EnabledSkillIDs          []string               `json:"enabled_skill_ids"`
-	UseMemory                bool                   `json:"use_memory"`
-	FileUpload               bool                   `json:"file_upload_enabled"`
-	HomeTitle                string                 `json:"home_title"`
-	InputPlaceholder         string                 `json:"input_placeholder"`
-	ThemeColor               string                 `json:"theme_color"`
-	SuggestedQuestions       []string               `json:"suggested_questions"`
-	UpdatedAt                int64                  `json:"updated_at"`
-	KnowledgeDatasetIDs      []string               `json:"knowledge_dataset_ids"`
-	KnowledgeRetrievalConfig map[string]interface{} `json:"knowledge_retrieval_config"`
+	AgentID                  string                  `json:"agent_id"`
+	SystemPrompt             string                  `json:"system_prompt"`
+	ModelProvider            string                  `json:"model_provider"`
+	Model                    string                  `json:"model"`
+	ModelParameters          map[string]interface{}  `json:"model_parameters"`
+	EnabledSkillIDs          []string                `json:"enabled_skill_ids"`
+	UseMemory                bool                    `json:"use_memory"`
+	AgentMemoryEnabled       bool                    `json:"agent_memory_enabled"`
+	AgentMemorySlots         []AgentMemorySlotConfig `json:"agent_memory_slots"`
+	FileUpload               bool                    `json:"file_upload_enabled"`
+	HomeTitle                string                  `json:"home_title"`
+	InputPlaceholder         string                  `json:"input_placeholder"`
+	ThemeColor               string                  `json:"theme_color"`
+	SuggestedQuestions       []string                `json:"suggested_questions"`
+	UpdatedAt                int64                   `json:"updated_at"`
+	KnowledgeDatasetIDs      []string                `json:"knowledge_dataset_ids"`
+	KnowledgeRetrievalConfig map[string]interface{}  `json:"knowledge_retrieval_config"`
 }
 
 type AgentDraftRuntimeConfigResponse struct {

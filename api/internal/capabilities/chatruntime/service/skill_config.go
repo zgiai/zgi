@@ -189,6 +189,12 @@ func effectiveAgentSkillIDs(input []string, catalog []skills.SkillDiscoveryMetad
 			out = append(out, id)
 		}
 	}
+	if runConfigHasAgentMemory(runConfig) && agentMemoryAvailable(catalog) {
+		id := skills.SkillAgentMemory
+		if _, ok := seen[id]; !ok {
+			out = append(out, id)
+		}
+	}
 	sort.Strings(out)
 	return out
 }
@@ -419,6 +425,19 @@ func visibleSkillMetadata(metadata []skills.SkillDiscoveryMetadata) []skills.Ski
 
 func runConfigHasKnowledgeDatasets(runConfig *RunConfig) bool {
 	return runConfig != nil && len(normalizedSkillIDs(runConfig.KnowledgeDatasetIDs)) > 0
+}
+
+func runConfigHasAgentMemory(runConfig *RunConfig) bool {
+	return runConfig != nil && runConfig.AgentMemoryEnabled && len(normalizeAgentMemorySlots(runConfig.AgentMemorySlots)) > 0
+}
+
+func agentMemoryAvailable(catalog []skills.SkillDiscoveryMetadata) bool {
+	for _, item := range catalog {
+		if strings.EqualFold(strings.TrimSpace(item.ID), skills.SkillAgentMemory) && item.Status != skills.SkillStatusInvalid {
+			return skillSupportsCaller(item, runtimemodel.ConversationCallerAgent)
+		}
+	}
+	return false
 }
 
 func agentKnowledgeAvailable(catalog []skills.SkillDiscoveryMetadata) bool {

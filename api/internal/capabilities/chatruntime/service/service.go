@@ -83,8 +83,19 @@ type RunConfig struct {
 	KnowledgeDatasetIDs      []string
 	KnowledgeRetrievalConfig map[string]interface{}
 	UseMemory                bool
+	AgentMemoryEnabled       bool
+	AgentMemorySlots         []AgentMemorySlotConfig
+	AgentMemoryUserScope     string
 	BillingAppID             string
 	BillingAppType           string
+}
+
+type AgentMemorySlotConfig struct {
+	Key         string `json:"key"`
+	Description string `json:"description"`
+	MaxChars    int    `json:"max_chars"`
+	Enabled     bool   `json:"enabled"`
+	SortOrder   int    `json:"sort_order"`
 }
 
 type Service interface {
@@ -280,6 +291,9 @@ type chatRequestParts struct {
 	ConfiguredSkillIDs           []string
 	KnowledgeDatasetIDs          []string
 	KnowledgeRetrievalConfig     map[string]interface{}
+	AgentMemoryEnabled           bool
+	AgentMemorySlots             []AgentMemorySlotConfig
+	AgentMemoryUserScope         string
 	BillingSource                string
 }
 

@@ -481,7 +481,7 @@ func applyRunConfigToChatRequest(config RunConfig, req runtimedto.ChatRequest) r
 	if req.Parameters == nil && config.ModelParameters != nil {
 		req.Parameters = copyStringAnyMap(config.ModelParameters)
 	}
-	if config.UseMemory {
+	if runConfigAllowsUserMemory(config) {
 		req.UseMemory = true
 	}
 	return req
@@ -501,7 +501,7 @@ func applyRunConfigToRegenerateRequest(config RunConfig, req runtimedto.Regenera
 	if req.Parameters == nil && config.ModelParameters != nil {
 		req.Parameters = copyStringAnyMap(config.ModelParameters)
 	}
-	if config.UseMemory && req.UseMemory == nil {
+	if runConfigAllowsUserMemory(config) && req.UseMemory == nil {
 		useMemory := true
 		req.UseMemory = &useMemory
 	}
@@ -517,7 +517,51 @@ func applyRunConfigToParts(config RunConfig, parts *chatRequestParts) {
 	parts.ConfiguredSkillIDs = normalizedSkillIDs(config.EnabledSkillIDs)
 	parts.KnowledgeDatasetIDs = normalizedSkillIDs(config.KnowledgeDatasetIDs)
 	parts.KnowledgeRetrievalConfig = copyStringAnyMap(config.KnowledgeRetrievalConfig)
+	parts.AgentMemoryEnabled = config.AgentMemoryEnabled
+	parts.AgentMemorySlots = normalizeAgentMemorySlots(config.AgentMemorySlots)
+	parts.AgentMemoryUserScope = strings.TrimSpace(config.AgentMemoryUserScope)
 	parts.BillingSource = strings.TrimSpace(config.BillingAppType)
+	if !runConfigAllowsUserMemory(config) {
+		parts.UseMemory = false
+	}
+}
+
+func runConfigAllowsUserMemory(config RunConfig) bool {
+	return config.UseMemory && !strings.EqualFold(strings.TrimSpace(config.BillingAppType), runtimemodel.ConversationCallerAgent)
+}
+
+func normalizeAgentMemorySlots(input []AgentMemorySlotConfig) []AgentMemorySlotConfig {
+	if len(input) == 0 {
+		return nil
+	}
+	out := make([]AgentMemorySlotConfig, 0, len(input))
+	seen := map[string]struct{}{}
+	for i, slot := range input {
+		key := strings.ToLower(strings.TrimSpace(slot.Key))
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		maxChars := slot.MaxChars
+		if maxChars <= 0 {
+			maxChars = 1000
+		}
+		sortOrder := slot.SortOrder
+		if sortOrder == 0 {
+			sortOrder = i
+		}
+		out = append(out, AgentMemorySlotConfig{
+			Key:         key,
+			Description: strings.TrimSpace(slot.Description),
+			MaxChars:    maxChars,
+			Enabled:     slot.Enabled,
+			SortOrder:   sortOrder,
+		})
+	}
+	return out
 }
 
 func normalizedSkillIDs(input []string) []string {
