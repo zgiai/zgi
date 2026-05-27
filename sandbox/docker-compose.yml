@@ -9,6 +9,8 @@ services:
     image: zgi-sandbox:local
     env_file:
       - .env
+    environment:
+      ZGI_SANDBOX_DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in sandbox/.env or your environment}@sandbox-postgres:5432/${POSTGRES_DB:-zgi_sandbox}?sslmode=disable
     networks:
       default:
       zgi-network:
@@ -39,6 +41,8 @@ services:
     image: postgres:16-alpine
     env_file:
       - .env
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in sandbox/.env or your environment}
     networks:
       default:
         aliases:
