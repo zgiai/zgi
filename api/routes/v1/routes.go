@@ -131,7 +131,16 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	RegisterAIChatRoutes(v1, serviceContainer)
 
 	// ---------- Dashboard ----------
-	RegisterDashboardRoutes(v1, serviceContainer, llmModule)
+	var availableModels system_service.AvailableModelsLister
+	if llmModule != nil && llmModule.LLMModelModule != nil {
+		availableModels = llmModule.LLMModelModule.AvailableModelsSvc
+	}
+	RegisterDashboardRoutes(v1, DashboardRouteDeps{
+		DB:                  db,
+		AccountService:      accountService,
+		OrganizationService: serviceContainer.GetOrganizationService(),
+		AvailableModels:     availableModels,
+	})
 
 	// ---------- GDPR Compliance ----------
 	RegisterGDPRRoutes(v1, GDPRRouteDeps{
