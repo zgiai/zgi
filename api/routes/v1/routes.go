@@ -47,7 +47,13 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	RegisterPluginRunnerTenantRoutes(v1, accountService, tenantServiceImpl, db)
 
 	// ---------- Tool ----------
-	RegisterToolRoutes(v1, serviceContainer)
+	RegisterToolRoutes(v1, ToolRouteDeps{
+		ToolManager:                serviceContainer.GetToolManager(),
+		AccountInstallationService: serviceContainer.GetAccountInstallationService(),
+		MemberSubscriptionService:  serviceContainer.GetMemberSubscriptionService(),
+		AccountService:             accountService,
+		WorkspaceManagementService: tenantService,
+	})
 
 	// ---------- API Key ----------
 	if tenantServiceImplConcrete, ok := tenantServiceImpl.(*workspace_service.WorkspaceManagementServiceImpl); ok {
