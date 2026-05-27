@@ -11,6 +11,7 @@ import (
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
 	workspace_service "github.com/zgiai/zgi/api/internal/modules/workspace/service"
 	"github.com/zgiai/zgi/api/pkg/database"
+	"github.com/zgiai/zgi/api/pkg/storage"
 )
 
 // RegisterRoutes registers all v1 version routes
@@ -76,7 +77,18 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	}
 
 	// ---------- File (common) ----------
-	RegisterFileRoutes(v1, accountService, serviceContainer)
+	RegisterFileRoutes(v1, FileRouteDeps{
+		DB:                         db,
+		Storage:                    storage.GetStorage(),
+		AccountService:             accountService,
+		WorkspaceManagementService: serviceContainer.GetTenantService(),
+		OrganizationService:        serviceContainer.GetOrganizationService(),
+		QuotaService:               serviceContainer.GetQuotaService(),
+		LLMClient:                  serviceContainer.GetLLMClient(),
+		DefaultModelService:        serviceContainer.GetDefaultModelService(),
+		Scheduler:                  serviceContainer.GetScheduler(),
+		ScheduledFileService:       serviceContainer.GetFileService(),
+	})
 
 	// ---------- Memory (common) ----------
 	RegisterMemoryRoutes(v1, MemoryRouteDeps{
