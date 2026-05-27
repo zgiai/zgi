@@ -234,7 +234,9 @@ export function AgentRuntimeOrchestrationPanel({
       <div className="flex h-12 shrink-0 items-center justify-between px-5">
         <div>
           <h2 className="text-sm font-semibold">{t('orchestration.title')}</h2>
-          <p className="text-xs text-muted-foreground">{t('orchestration.description')}</p>
+          {t('orchestration.description') ? (
+            <p className="text-xs text-muted-foreground">{t('orchestration.description')}</p>
+          ) : null}
         </div>
       </div>
       <ScrollArea

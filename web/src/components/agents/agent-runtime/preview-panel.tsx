@@ -41,20 +41,23 @@ export function AgentRuntimePreviewPanel({
 
   return (
     <section className="flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden">
-      <div className="flex h-14 shrink-0 items-center justify-between gap-3 px-5">
-        <div className="min-w-0">
-          <h2 className="text-sm font-semibold">{t('preview.title')}</h2>
-          <p className="truncate text-xs text-muted-foreground">{t('preview.description')}</p>
+      <div className="flex h-14 shrink-0 items-center justify-between gap-2 px-5">
+        <div className="min-w-[3rem] shrink-0">
+          <h2 className="whitespace-nowrap text-sm font-semibold">{t('preview.title')}</h2>
+          {t('preview.description') ? (
+            <p className="truncate text-xs text-muted-foreground">{t('preview.description')}</p>
+          ) : null}
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex min-w-0 shrink items-center justify-end gap-2">
           <Button
             variant="outline"
             size="sm"
-            className="h-8 gap-1.5 px-2 text-xs"
+            className="h-8 min-w-0 gap-1.5 px-2 text-xs"
             onClick={onOpenMemoryValues}
+            title={t('memory.viewValues')}
           >
             <Eye className="size-3.5" />
-            {t('memory.viewValues')}
+            <span className="hidden sm:inline">{t('memory.viewValues')}</span>
           </Button>
           <div id={controlsPortalId} className="flex shrink-0 items-center" />
           {surfaceMode === 'sheet' ? (

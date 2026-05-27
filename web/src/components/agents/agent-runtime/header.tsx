@@ -12,7 +12,7 @@ import {
   MoreHorizontal,
   Play,
   Save,
-  Upload,
+  UploadCloud,
   X,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -75,6 +75,10 @@ export function AgentRuntimeHeader({
         : saveState === 'saved'
           ? 'bg-emerald-500'
           : 'bg-muted-foreground/40';
+  const isPublished = Boolean(agent?.is_published);
+  const isWebAppOnline = agent?.web_app_status !== 'inactive';
+  const publishLabel = isPublished ? t('header.update') : t('header.publish');
+  const publishingLabel = isPublished ? t('header.updating') : t('header.publishing');
 
   return (
     <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b bg-background px-4">
@@ -183,8 +187,11 @@ export function AgentRuntimeHeader({
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button size="sm" className="gap-1.5 px-3">
-              {isPublishing ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+            <Button
+              size="sm"
+              className="flex items-center gap-1.5 rounded-md border border-primary/25 bg-primary/10 px-3.5 text-primary shadow-none transition-colors hover:border-primary/35 hover:bg-primary/15"
+            >
+              {isPublishing ? <Loader2 className="size-4 animate-spin" /> : <UploadCloud className="size-4" />}
               <span className="hidden font-semibold sm:inline">{t('header.publish')}</span>
               <MoreHorizontal className="size-3.5" />
             </Button>
@@ -192,14 +199,32 @@ export function AgentRuntimeHeader({
           <DropdownMenuContent align="end" className="w-56">
             <div className="px-2 py-1">
               <Button
-                className="w-full"
+                className="w-full rounded-md border border-primary/25 bg-primary/10 text-primary shadow-none hover:border-primary/35 hover:bg-primary/15"
                 onClick={onPublish}
                 disabled={disablePrimaryActions || isPublishing || saveState === 'saving'}
               >
-                {isPublishing ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
-                {t('header.publish')}
+                {isPublishing ? <Loader2 className="size-5 animate-spin" /> : <UploadCloud className="size-5" />}
+                {isPublishing ? publishingLabel : publishLabel}
               </Button>
             </div>
+            {isPublished ? (
+              <>
+                <div className="my-1 h-px w-full bg-border" />
+                <div className="flex items-center justify-between gap-3 px-2 py-1.5 text-xs text-muted-foreground">
+                  <span>{t('header.webAppStatus')}</span>
+                  <Badge
+                    variant="outline"
+                    className={
+                      isWebAppOnline
+                        ? 'border-primary/40 bg-primary/10 text-primary'
+                        : 'border-destructive/40 bg-destructive/10 text-destructive'
+                    }
+                  >
+                    {isWebAppOnline ? t('header.online') : t('header.offline')}
+                  </Badge>
+                </div>
+              </>
+            ) : null}
             <DropdownMenuItem
               disabled={!webAppUrl}
               onSelect={() => webAppUrl && window.open(webAppUrl, '_blank')}

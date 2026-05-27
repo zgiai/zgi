@@ -26,7 +26,9 @@ export function AgentRuntimePromptPanel({
       <div className="flex h-12 shrink-0 items-center justify-between px-5">
         <div>
           <h2 className="text-sm font-semibold">{t('prompt.title')}</h2>
-          <p className="text-xs text-muted-foreground">{t('prompt.description')}</p>
+          {t('prompt.description') ? (
+            <p className="text-xs text-muted-foreground">{t('prompt.description')}</p>
+          ) : null}
         </div>
         <Button
           variant="ghost"

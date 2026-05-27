@@ -1310,9 +1310,15 @@ const messages: AgentsMessages = {
     header: {
       save: '保存',
       publish: '发布',
+      publishing: '发布中',
+      update: '更新',
+      updating: '更新中',
       more: '更多',
       openWebApp: '打开 WebApp',
       copyWebAppLink: '复制 WebApp 链接',
+      webAppStatus: 'WebApp 状态',
+      online: '已上架',
+      offline: '已下架',
       publishedVersions: '发布版本',
       versions: '版本',
       preview: '预览与调试',
@@ -1321,8 +1327,8 @@ const messages: AgentsMessages = {
       runtimeLogs: '运行日志',
     },
     prompt: {
-      title: '人设与回复逻辑',
-      description: '系统提示词会在每轮对话前注入。',
+      title: '系统提示词',
+      description: '',
       optimize: '优化',
       placeholder: '描述智能体的角色、目标、工作方式、限制和回答风格。',
       optimizerSourceLabel: '系统提示词',
@@ -1332,8 +1338,8 @@ const messages: AgentsMessages = {
       optimizerApply: '应用到系统提示词',
     },
     orchestration: {
-      title: '编排',
-      description: '模型、Skill、文件和记忆配置会保存到 AGENT 草稿。',
+      title: '配置',
+      description: '',
     },
     sections: {
       experience: '体验定制',
@@ -1459,8 +1465,8 @@ const messages: AgentsMessages = {
       clearConfirmCancel: '取消',
     },
     preview: {
-      title: '预览与调试',
-      description: '使用当前草稿配置进行回测。',
+      title: '调试',
+      description: '',
       badge: '草稿调试',
       conversations: '会话管理',
       newConversation: '新建会话',

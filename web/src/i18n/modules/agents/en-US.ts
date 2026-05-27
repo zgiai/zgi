@@ -1391,9 +1391,15 @@ const messages = {
     header: {
       save: 'Save',
       publish: 'Publish',
+      publishing: 'Publishing',
+      update: 'Update',
+      updating: 'Updating',
       more: 'More',
       openWebApp: 'Open WebApp',
       copyWebAppLink: 'Copy WebApp link',
+      webAppStatus: 'WebApp status',
+      online: 'Online',
+      offline: 'Offline',
       publishedVersions: 'Published versions',
       versions: 'Versions',
       preview: 'Preview and debug',
@@ -1402,8 +1408,8 @@ const messages = {
       runtimeLogs: 'Runtime logs',
     },
     prompt: {
-      title: 'Persona and response logic',
-      description: 'The system prompt is injected before each conversation turn.',
+      title: 'System prompt',
+      description: '',
       optimize: 'Optimize',
       placeholder: 'Describe the Agent role, goals, workflow, limits, and answer style.',
       optimizerSourceLabel: 'System prompt',
@@ -1413,8 +1419,8 @@ const messages = {
       optimizerApply: 'Apply to system prompt',
     },
     orchestration: {
-      title: 'Orchestration',
-      description: 'Model, Skill, file, and memory settings are saved to the AGENT draft.',
+      title: 'Configuration',
+      description: '',
     },
     sections: {
       experience: 'Experience customization',
@@ -1546,8 +1552,8 @@ const messages = {
       clearConfirmCancel: 'Cancel',
     },
     preview: {
-      title: 'Preview and debug',
-      description: 'Run regression tests with the current draft configuration.',
+      title: 'Debug',
+      description: '',
       badge: 'Draft debug',
       conversations: 'Conversations',
       newConversation: 'New conversation',
