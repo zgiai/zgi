@@ -9,7 +9,6 @@ import {
   ExternalLink,
   History,
   Loader2,
-  MoreHorizontal,
   Play,
   Save,
   UploadCloud,
@@ -193,7 +192,6 @@ export function AgentRuntimeHeader({
             >
               {isPublishing ? <Loader2 className="size-4 animate-spin" /> : <UploadCloud className="size-4" />}
               <span className="hidden font-semibold sm:inline">{t('header.publish')}</span>
-              <MoreHorizontal className="size-3.5" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">

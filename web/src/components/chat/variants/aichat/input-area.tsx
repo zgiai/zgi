@@ -591,7 +591,9 @@ export function AIChatInputArea({
         className={cn(
           'pointer-events-none absolute inset-x-0 z-20 px-4 transition-[top,transform,padding,background-color,box-shadow] duration-300 ease-in-out sm:px-6 lg:px-8',
           isHome && !isLoadingMessages
-            ? 'top-[58%] -translate-y-1/2 pb-0 pt-0 sm:top-1/2'
+            ? surface === 'agent-draft'
+              ? 'top-[58%] -translate-y-1/2 pb-0 pt-0 sm:top-1/2'
+              : 'top-[58%] -translate-y-1/2 pb-0 pt-0 sm:top-1/2'
             : 'top-full -translate-y-full bg-background pb-1 shadow-[0_-18px_36px_hsl(var(--background))]'
         )}
       >

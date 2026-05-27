@@ -1553,7 +1553,7 @@ const messages = {
     },
     preview: {
       title: 'Debug',
-      description: '',
+      description: 'Run regression tests with the current draft configuration.',
       badge: 'Draft debug',
       conversations: 'Conversations',
       newConversation: 'New conversation',

@@ -607,7 +607,7 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
       suggestions={currentPayload.suggested_questions}
       inputPlaceholder={currentPayload.input_placeholder}
       homeBrand={agentHomeBrand}
-      homeTitle={currentPayload.home_title}
+      homeTitle={currentPayload.home_title || defaultHomeTitle}
       surfaceMode={surfaceMode}
       onOpenMemoryValues={() => setMemoryValuesOpen(true)}
       onModelChange={handleModelChange}

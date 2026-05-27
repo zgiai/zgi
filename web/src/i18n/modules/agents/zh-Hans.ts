@@ -1466,7 +1466,7 @@ const messages: AgentsMessages = {
     },
     preview: {
       title: '调试',
-      description: '',
+      description: '使用当前草稿配置进行回测。',
       badge: '草稿调试',
       conversations: '会话管理',
       newConversation: '新建会话',

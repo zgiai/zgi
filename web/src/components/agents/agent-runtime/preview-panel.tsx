@@ -48,31 +48,35 @@ export function AgentRuntimePreviewPanel({
             <p className="truncate text-xs text-muted-foreground">{t('preview.description')}</p>
           ) : null}
         </div>
-        <div className="flex min-w-0 shrink items-center justify-end gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8 min-w-0 gap-1.5 px-2 text-xs"
-            onClick={onOpenMemoryValues}
-            title={t('memory.viewValues')}
-          >
-            <Eye className="size-3.5" />
-            <span className="hidden sm:inline">{t('memory.viewValues')}</span>
-          </Button>
-          <div id={controlsPortalId} className="flex shrink-0 items-center" />
-          {surfaceMode === 'sheet' ? (
+        <div className="flex min-w-0 shrink items-center justify-end">
+          <div className="flex items-center gap-1 rounded-full border bg-background p-1 shadow-sm">
             <Button
               variant="ghost"
-              isIcon
               size="sm"
               interactive="subtle"
-              aria-label={t('preview.close')}
-              title={t('preview.close')}
-              onClick={onClose}
+              className="h-7 min-w-0 rounded-full px-2 text-xs hover:bg-muted/70"
+              onClick={onOpenMemoryValues}
+              title={t('memory.viewValues')}
             >
-              <X className="size-[18px]" />
+              <Eye className="size-3.5" />
+              <span className="hidden sm:inline">{t('memory.viewValues')}</span>
             </Button>
-          ) : null}
+            <div id={controlsPortalId} className="flex shrink-0 items-center" />
+            {surfaceMode === 'sheet' ? (
+              <Button
+                variant="ghost"
+                isIcon
+                size="sm"
+                interactive="subtle"
+                className="size-7 rounded-full hover:bg-muted/70"
+                aria-label={t('preview.close')}
+                title={t('preview.close')}
+                onClick={onClose}
+              >
+                <X className="size-[18px]" />
+              </Button>
+            ) : null}
+          </div>
         </div>
       </div>
       <div className="min-h-0 flex-1">
@@ -92,11 +96,11 @@ export function AgentRuntimePreviewPanel({
           embeddedConversationControlsMode="external"
           embeddedConversationControlsPortalId={controlsPortalId}
           renderEmbeddedConversationControls={controls => (
-            <div className="flex items-center gap-1 rounded-full border bg-background p-1 shadow-sm">
+            <div className="flex items-center gap-1">
               <Button
                 variant="ghost"
                 isIcon
-                className="size-7 text-muted-foreground"
+                className="size-7 rounded-full text-muted-foreground hover:bg-muted/70 hover:text-foreground"
                 onClick={controls.openConversations}
                 title={t('preview.conversations')}
                 aria-label={t('preview.conversations')}
@@ -106,7 +110,7 @@ export function AgentRuntimePreviewPanel({
               <Button
                 variant="ghost"
                 isIcon
-                className="size-7 text-muted-foreground"
+                className="size-7 rounded-full text-muted-foreground hover:bg-muted/70 hover:text-foreground"
                 onClick={controls.startNewConversation}
                 title={t('preview.newConversation')}
                 aria-label={t('preview.newConversation')}

@@ -56,7 +56,7 @@ export function AIChatHomeView({
       <div
         className={cn(
           'flex w-full animate-in flex-col items-center duration-500 fade-in zoom-in',
-          surface === 'agent-draft' ? '-mt-10 max-w-[560px] gap-6' : '-mt-20 max-w-3xl gap-8'
+          surface === 'agent-draft' ? '-mt-20 max-w-[560px] gap-8' : '-mt-20 max-w-3xl gap-8'
         )}
       >
         <div className="flex flex-col items-center gap-4">
@@ -88,7 +88,7 @@ export function AIChatHomeView({
         <div
           className={cn(
             'w-full shrink-0',
-            surface === 'agent-draft' ? 'h-[96px]' : 'h-[140px]'
+            surface === 'agent-draft' ? 'h-[140px]' : 'h-[140px]'
           )}
         />
         <div className="flex flex-wrap items-center justify-center gap-2">
