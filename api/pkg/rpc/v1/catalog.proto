@@ -74,4 +74,65 @@ message CatalogModel {
     bool is_system_enabled = 25;
     string supported_parameters_json = 26;
     string config_parameters_json = 27;
+    CatalogModelEndpoints endpoints = 28;
+    CatalogModelFeatures features = 29;
+    CatalogModelTools tools = 30;
+    CatalogModelParameters parameters = 31;
+}
+
+message CatalogModelEndpoints {
+    bool chat_completions = 1;
+    bool responses = 2;
+    bool realtime = 3;
+    bool assistants = 4;
+    bool batch = 5;
+    bool embeddings = 6;
+    bool fine_tuning = 7;
+    bool image_generation = 8;
+    bool vision = 9;
+    bool speech_generation = 10;
+    bool transcription = 11;
+    bool translation = 12;
+    bool moderation = 13;
+    bool videos = 14;
+    bool image_edit = 15;
+}
+
+message CatalogModelFeatures {
+    bool streaming = 1;
+    bool function_calling = 2;
+    bool structured_output = 3;
+    bool json_mode = 4;
+    bool distillation = 5;
+    bool reasoning = 6;
+    bool system_prompt = 7;
+    bool logprobs = 8;
+    bool web_search = 9;
+    bool file_search = 10;
+    bool code_interpreter = 11;
+    bool computer_use = 12;
+    bool mcp = 13;
+    bool reasoning_effort = 14;
+    bool attachment = 15;
+}
+
+message CatalogModelTools {
+    bool web_search = 1;
+    bool file_search = 2;
+    bool image_generation = 3;
+    bool code_interpreter = 4;
+    bool computer_use = 5;
+    bool mcp = 6;
+    bool parallel_tool_calls = 7;
+}
+
+message CatalogModelParameters {
+    bool temperature = 1;
+    bool top_p = 2;
+    bool presence_penalty = 3;
+    bool frequency_penalty = 4;
+    bool logit_bias = 5;
+    bool seed = 6;
+    bool stop = 7;
+    int32 max_stop_sequences = 8;
 }

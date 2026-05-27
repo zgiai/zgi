@@ -516,6 +516,7 @@ func featureColumnsForPublishedModel(features *llmmodel.ModelFeatures, tools *ll
 		values["computer_use"] = features.ComputerUse
 		values["mcp"] = features.Mcp
 		values["reasoning_effort"] = features.ReasoningEffort
+		values["attachment"] = features.Attachment
 	}
 	if tools != nil {
 		values["web_search"] = values["web_search"] || tools.WebSearch

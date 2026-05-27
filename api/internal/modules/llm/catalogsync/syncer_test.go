@@ -1,0 +1,133 @@
+package catalogsync
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	pb "github.com/zgiai/zgi/api/pkg/rpc/v1"
+)
+
+func TestPublishedModelCapabilityMapping(t *testing.T) {
+	t.Run("endpoints", func(t *testing.T) {
+		require.Nil(t, publishedModelEndpoints(nil))
+
+		require.Equal(t, &llmmodel.ModelEndpoints{
+			ChatCompletions:  true,
+			Responses:        true,
+			Realtime:         true,
+			Assistants:       true,
+			Batch:            true,
+			Embeddings:       true,
+			FineTuning:       true,
+			ImageGeneration:  true,
+			Vision:           true,
+			SpeechGeneration: true,
+			Transcription:    true,
+			Translation:      true,
+			Moderation:       true,
+			Videos:           true,
+			ImageEdit:        true,
+		}, publishedModelEndpoints(&pb.CatalogModelEndpoints{
+			ChatCompletions:  true,
+			Responses:        true,
+			Realtime:         true,
+			Assistants:       true,
+			Batch:            true,
+			Embeddings:       true,
+			FineTuning:       true,
+			ImageGeneration:  true,
+			Vision:           true,
+			SpeechGeneration: true,
+			Transcription:    true,
+			Translation:      true,
+			Moderation:       true,
+			Videos:           true,
+			ImageEdit:        true,
+		}))
+	})
+
+	t.Run("features", func(t *testing.T) {
+		require.Nil(t, publishedModelFeatures(nil))
+
+		require.Equal(t, &llmmodel.ModelFeatures{
+			Streaming:        true,
+			FunctionCalling:  true,
+			StructuredOutput: true,
+			JsonMode:         true,
+			Distillation:     true,
+			Reasoning:        true,
+			SystemPrompt:     true,
+			Logprobs:         true,
+			WebSearch:        true,
+			FileSearch:       true,
+			CodeInterpreter:  true,
+			ComputerUse:      true,
+			Mcp:              true,
+			ReasoningEffort:  true,
+			Attachment:       true,
+		}, publishedModelFeatures(&pb.CatalogModelFeatures{
+			Streaming:        true,
+			FunctionCalling:  true,
+			StructuredOutput: true,
+			JsonMode:         true,
+			Distillation:     true,
+			Reasoning:        true,
+			SystemPrompt:     true,
+			Logprobs:         true,
+			WebSearch:        true,
+			FileSearch:       true,
+			CodeInterpreter:  true,
+			ComputerUse:      true,
+			Mcp:              true,
+			ReasoningEffort:  true,
+			Attachment:       true,
+		}))
+	})
+
+	t.Run("tools", func(t *testing.T) {
+		require.Nil(t, publishedModelTools(nil))
+
+		require.Equal(t, &llmmodel.ModelTools{
+			WebSearch:         true,
+			FileSearch:        true,
+			ImageGeneration:   true,
+			CodeInterpreter:   true,
+			ComputerUse:       true,
+			Mcp:               true,
+			ParallelToolCalls: true,
+		}, publishedModelTools(&pb.CatalogModelTools{
+			WebSearch:         true,
+			FileSearch:        true,
+			ImageGeneration:   true,
+			CodeInterpreter:   true,
+			ComputerUse:       true,
+			Mcp:               true,
+			ParallelToolCalls: true,
+		}))
+	})
+
+	t.Run("parameters", func(t *testing.T) {
+		require.Nil(t, publishedModelParameters(nil))
+
+		require.Equal(t, &llmmodel.ModelParameters{
+			SupportsTemperature:      true,
+			SupportsTopP:             true,
+			SupportsPresencePenalty:  true,
+			SupportsFrequencyPenalty: true,
+			SupportsLogitBias:        true,
+			SupportsSeed:             true,
+			SupportsStop:             true,
+			MaxStopSequences:         8,
+		}, publishedModelParameters(&pb.CatalogModelParameters{
+			Temperature:      true,
+			TopP:             true,
+			PresencePenalty:  true,
+			FrequencyPenalty: true,
+			LogitBias:        true,
+			Seed:             true,
+			Stop:             true,
+			MaxStopSequences: 8,
+		}))
+	})
+}
