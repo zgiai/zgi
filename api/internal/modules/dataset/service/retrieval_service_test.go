@@ -56,6 +56,10 @@ func (s *stubVectorDB) StoreVector(ctx context.Context, id, className string, pr
 	return nil
 }
 
+func (s *stubVectorDB) DeleteVector(ctx context.Context, id, className string) error {
+	return nil
+}
+
 func (s *stubVectorDB) SearchVectors(ctx context.Context, className string, vector []float64, limit int) ([]map[string]interface{}, error) {
 	s.lastVector = vector
 	return []map[string]interface{}{

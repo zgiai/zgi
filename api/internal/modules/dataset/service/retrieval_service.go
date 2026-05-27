@@ -827,8 +827,9 @@ func (s *RetrievalService) convertSearchResultsToRecords(documents []retrieval.S
 	// Track processed segment IDs and child chunk mapping
 	processedSegmentIDs := make(map[string]bool)
 	segmentChildMap := make(map[string]*struct {
-		MaxScore    float64
-		ChildChunks []dto.ChildChunkResponse
+		MaxScore      float64
+		ChildChunks   []dto.ChildChunkResponse
+		ChildChunkIDs map[string]struct{}
 	})
 
 	// Process documents
@@ -1073,7 +1074,7 @@ func (s *RetrievalService) convertSearchResultsToRecords(documents []retrieval.S
 			// Determine if this should be handled as hierarchical (parent-child) document
 			useHierarchical := false
 			var hierarchicalChildChunk *dataset_model.ChildChunk
-			if datasetDocument.DocForm == "hierarchical_model" {
+			if datasetDocument.DocForm == "hierarchical_model" || datasetDocument.DocForm == "table_model" {
 				// doc_id in vector DB is the child chunk's index_node_id, not segment_id
 				indexNodeID, _ := doc.Metadata["doc_id"].(string)
 				childChunk, err := s.documentRepo.GetChildChunkByIndexNodeID(context.Background(), indexNodeID)
@@ -1201,11 +1202,13 @@ func (s *RetrievalService) convertSearchResultsToRecords(documents []retrieval.S
 
 					// Add to segment child chunk mapping
 					segmentChildMap[segment.ID] = &struct {
-						MaxScore    float64
-						ChildChunks []dto.ChildChunkResponse
+						MaxScore      float64
+						ChildChunks   []dto.ChildChunkResponse
+						ChildChunkIDs map[string]struct{}
 					}{
-						MaxScore:    doc.Score,
-						ChildChunks: []dto.ChildChunkResponse{childChunkResp},
+						MaxScore:      doc.Score,
+						ChildChunks:   []dto.ChildChunkResponse{childChunkResp},
+						ChildChunkIDs: map[string]struct{}{childChunk.ID: {}},
 					}
 
 					record := dto.HitTestingRecordResponse{
@@ -1262,7 +1265,10 @@ func (s *RetrievalService) convertSearchResultsToRecords(documents []retrieval.S
 							UpdatedAt: childChunk.UpdatedAt.Unix(),
 						}
 
-						segmentChildMap[segment.ID].ChildChunks = append(segmentChildMap[segment.ID].ChildChunks, childChunkResp)
+						if _, exists := segmentChildMap[segment.ID].ChildChunkIDs[childChunk.ID]; !exists {
+							segmentChildMap[segment.ID].ChildChunks = append(segmentChildMap[segment.ID].ChildChunks, childChunkResp)
+							segmentChildMap[segment.ID].ChildChunkIDs[childChunk.ID] = struct{}{}
+						}
 						if doc.Score > segmentChildMap[segment.ID].MaxScore {
 							segmentChildMap[segment.ID].MaxScore = doc.Score
 						}
@@ -1495,7 +1501,7 @@ func (s *RetrievalService) updateSegmentHitCount(ctx context.Context, documents 
 				}
 
 				// Check if this is a parent-child index type document
-				if document.DocForm == "hierarchical_model" {
+				if document.DocForm == "hierarchical_model" || document.DocForm == "table_model" {
 					// For parent-child index, we need to increment the child chunk hit count
 					childChunkSegmentIDs = append(childChunkSegmentIDs, segment.ID)
 				} else {
@@ -1509,7 +1515,7 @@ func (s *RetrievalService) updateSegmentHitCount(ctx context.Context, documents 
 					continue
 				}
 
-				if datasetDocument.DocForm == "hierarchical_model" {
+				if datasetDocument.DocForm == "hierarchical_model" || datasetDocument.DocForm == "table_model" {
 					// For parent-child index, get child chunk and increment its hit count
 					childChunk, childErr := s.documentRepo.GetChildChunkByIndexNodeID(ctx, indexNodeID)
 					if childErr != nil || childChunk == nil {
