@@ -44,7 +44,14 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	})
 
 	// ---------- Workspace / Tenant ----------
-	RegisterWorkspaceRoutes(v1, db, accountService, config.GlobalConfig.Email.ConsoleWebURL, serviceContainer)
+	RegisterWorkspaceRoutes(v1, WorkspaceRouteDeps{
+		DB:                               db,
+		AccountService:                   accountService,
+		OrganizationService:              serviceContainer.GetOrganizationService(),
+		WorkspacePermissionFilterService: serviceContainer.GetWorkspacePermissionFilterService(),
+		DepartmentService:                serviceContainer.GetDepartmentService(),
+		ConsoleWebURL:                    config.GlobalConfig.Email.ConsoleWebURL,
+	})
 
 	// ---------- Explore ----------
 	RegisterExploreRoutes(v1, accountService)
