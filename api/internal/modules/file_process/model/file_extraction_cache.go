@@ -9,8 +9,8 @@ import (
 
 // FileExtractionCache stores explicit extraction results keyed by parser settings.
 type FileExtractionCache struct {
-	ID        string    `json:"id" gorm:"type:varchar(255);primaryKey"`
-	FileID    string    `json:"file_id" gorm:"type:varchar(255);not null;index:idx_file_extraction_caches_file_key,unique"`
+	ID        string    `json:"id" gorm:"type:uuid;primaryKey"`
+	FileID    string    `json:"file_id" gorm:"type:uuid;not null;index:idx_file_extraction_caches_file_key,unique"`
 	CacheKey  string    `json:"cache_key" gorm:"type:varchar(255);not null;index:idx_file_extraction_caches_file_key,unique"`
 	Content   string    `json:"content" gorm:"type:longtext;not null"`
 	Source    string    `json:"source" gorm:"type:varchar(255);not null"`
