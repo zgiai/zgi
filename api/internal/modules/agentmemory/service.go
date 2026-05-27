@@ -592,7 +592,8 @@ func recordSlotEvent(ctx context.Context, repo store, workspaceID, agentID uuid.
 }
 
 func recordValueEvent(ctx context.Context, repo store, workspaceID, agentID uuid.UUID, slotKey string, userScope string, userID uuid.UUID, action string, meta MutationMetadata, before *AgentMemoryValue, after *AgentMemoryValue) error {
-	return recordEvent(ctx, repo, workspaceID, agentID, slotKey, userScope, &userID, action, meta, valueSnapshot(before), valueSnapshot(after))
+	redactContent := action == EventActionValueClear
+	return recordEvent(ctx, repo, workspaceID, agentID, slotKey, userScope, &userID, action, meta, valueSnapshot(before, redactContent), valueSnapshot(after, redactContent))
 }
 
 func recordEvent(ctx context.Context, repo store, workspaceID, agentID uuid.UUID, slotKey string, userScope string, userID *uuid.UUID, action string, meta MutationMetadata, before datatypes.JSON, after datatypes.JSON) error {
@@ -635,21 +636,27 @@ func slotSnapshot(slot *AgentMemorySlot) datatypes.JSON {
 	})
 }
 
-func valueSnapshot(value *AgentMemoryValue) datatypes.JSON {
+func valueSnapshot(value *AgentMemoryValue, redactContent bool) datatypes.JSON {
 	if value == nil {
 		return datatypes.JSON([]byte("null"))
 	}
-	return mustJSON(map[string]interface{}{
+	snapshot := map[string]interface{}{
 		"id":           value.ID.String(),
 		"workspace_id": value.WorkspaceID.String(),
 		"agent_id":     value.AgentID.String(),
 		"slot_key":     value.SlotKey,
 		"user_scope":   value.UserScope,
 		"user_id":      value.UserID.String(),
-		"content":      value.Content,
 		"created_at":   value.CreatedAt.Unix(),
 		"updated_at":   value.UpdatedAt.Unix(),
-	})
+	}
+	if redactContent {
+		snapshot["content_redacted"] = true
+		snapshot["content_length"] = len([]rune(value.Content))
+	} else {
+		snapshot["content"] = value.Content
+	}
+	return mustJSON(snapshot)
 }
 
 func mustJSON(value interface{}) datatypes.JSON {

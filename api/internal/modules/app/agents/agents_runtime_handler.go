@@ -12,6 +12,7 @@ import (
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -581,6 +582,8 @@ func (h *AgentsHandler) failRuntime(c *gin.Context, err error) {
 	case errors.Is(err, runtimeservice.ErrNotFound):
 		response.Fail(c, response.ErrNotFound)
 	case errors.Is(err, runtimeservice.ErrInvalidInput):
+		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+	case errors.Is(err, agentmemory.ErrInvalidInput):
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 	case errors.Is(err, runtimeservice.ErrUnauthorized):
 		response.Fail(c, response.ErrUnauthorized)

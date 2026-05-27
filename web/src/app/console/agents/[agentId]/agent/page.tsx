@@ -4,15 +4,15 @@ import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import {
-  createAgentDraftTransport,
-  useAIChatController,
-} from '@/components/chat';
+import { createAgentDraftTransport, useAIChatController } from '@/components/chat';
 import {
   getAIChatSkillDisplayInfo,
   isHiddenSystemSkill,
 } from '@/components/chat/variants/aichat/skill-display';
-import type { ModelSelectorParameterValue, ModelSelectorValue } from '@/components/common/model-selector';
+import type {
+  ModelSelectorParameterValue,
+  ModelSelectorValue,
+} from '@/components/common/model-selector';
 import {
   AgentRuntimeHeader,
   AgentRuntimeLoadingState,
@@ -25,6 +25,7 @@ import {
   toModelParams,
   useAgentRuntimeDraftPersistence,
   useAgentRuntimeLeaveGuard,
+  validateAgentMemorySlots,
   type AgentConfigSection,
   type AgentRuntimeDraftPersistenceSnapshot,
   type AgentPublishedVersionListItem,
@@ -173,6 +174,12 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
         return leftDisplay.label.localeCompare(rightDisplay.label, locale);
       });
   }, [locale, normalizedSelectedSkillIds, selectableSkills, showSelectedSkillsOnly, skillSearch]);
+  const agentMemorySlotValidationErrors = useMemo(
+    () => validateAgentMemorySlots(agentMemorySlots),
+    [agentMemorySlots]
+  );
+  const hasAgentMemorySlotErrors =
+    agentMemoryEnabled && agentMemorySlotValidationErrors.some(Boolean);
 
   const modelSelectorValue = useMemo(
     () => ({
@@ -291,7 +298,9 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
           ...response.data,
           agent_memory_enabled: payload.agent_memory_enabled,
           agent_memory_slots:
-            slotsResponse.data.slots ?? response.data.agent_memory_slots ?? payload.agent_memory_slots,
+            slotsResponse.data.slots ??
+            response.data.agent_memory_slots ??
+            payload.agent_memory_slots,
         },
       });
       queryClient.invalidateQueries({ queryKey: AGENT_KEYS.detail(agentId) });
@@ -318,6 +327,7 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
   } = useAgentRuntimeDraftPersistence({
     currentPayload,
     enabled: !isVersionPreviewing,
+    canSave: () => !hasAgentMemorySlotErrors,
     savePayload: saveRuntimePayload,
     onSaveFailed: (error, options) => {
       if (!options.silent) {
@@ -352,7 +362,9 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
 
   const handleToggleKnowledgeDataset = useCallback((datasetId: string, checked: boolean) => {
     setKnowledgeDatasetIds(current =>
-      checked ? Array.from(new Set([...current, datasetId])) : current.filter(id => id !== datasetId)
+      checked
+        ? Array.from(new Set([...current, datasetId]))
+        : current.filter(id => id !== datasetId)
     );
   }, []);
 
@@ -473,43 +485,47 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
       setIsVersionPreviewing(true);
       setPreviewing();
     },
-    [applyRuntimePayload, currentPayload, getSnapshot, payloadFromRuntimeConfig, publishedVersions, setPreviewing]
-  );
-
-  const handleConfirmVersionRollback = useCallback(
-    async () => {
-      if (!selectedPublishedVersionId || isRollingBackVersion) return;
-      setIsRollingBackVersion(true);
-      try {
-        const response = await agentService.rollbackPublishedVersion(agentId, {
-          version_id: selectedPublishedVersionId,
-        });
-        const nextPayload = payloadFromRuntimeConfig(response.data);
-        applyRuntimePayload(nextPayload);
-        markServerSaved(nextPayload, response.data.updated_at ?? Math.floor(Date.now() / 1000));
-        queryClient.setQueryData(AGENT_KEYS.config(agentId), response);
-        versionPreviewBackupRef.current = null;
-        setIsVersionPreviewing(false);
-        setSelectedPublishedVersionId('');
-        setPublishedVersionsOpen(false);
-        toast.success(t('toasts.rollbackSuccess'));
-      } catch (error) {
-        toast.error(getErrorMessage(error) || t('toasts.rollbackFailed'));
-      } finally {
-        setIsRollingBackVersion(false);
-      }
-    },
     [
       applyRuntimePayload,
-      agentId,
-      isRollingBackVersion,
-      markServerSaved,
+      currentPayload,
+      getSnapshot,
       payloadFromRuntimeConfig,
-      queryClient,
-      selectedPublishedVersionId,
-      t,
+      publishedVersions,
+      setPreviewing,
     ]
   );
+
+  const handleConfirmVersionRollback = useCallback(async () => {
+    if (!selectedPublishedVersionId || isRollingBackVersion) return;
+    setIsRollingBackVersion(true);
+    try {
+      const response = await agentService.rollbackPublishedVersion(agentId, {
+        version_id: selectedPublishedVersionId,
+      });
+      const nextPayload = payloadFromRuntimeConfig(response.data);
+      applyRuntimePayload(nextPayload);
+      markServerSaved(nextPayload, response.data.updated_at ?? Math.floor(Date.now() / 1000));
+      queryClient.setQueryData(AGENT_KEYS.config(agentId), response);
+      versionPreviewBackupRef.current = null;
+      setIsVersionPreviewing(false);
+      setSelectedPublishedVersionId('');
+      setPublishedVersionsOpen(false);
+      toast.success(t('toasts.rollbackSuccess'));
+    } catch (error) {
+      toast.error(getErrorMessage(error) || t('toasts.rollbackFailed'));
+    } finally {
+      setIsRollingBackVersion(false);
+    }
+  }, [
+    applyRuntimePayload,
+    agentId,
+    isRollingBackVersion,
+    markServerSaved,
+    payloadFromRuntimeConfig,
+    queryClient,
+    selectedPublishedVersionId,
+    t,
+  ]);
 
   const handleApplyOptimizedPrompt = useCallback((payload: { text: string }) => {
     setSystemPrompt(payload.text);
@@ -517,23 +533,34 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
   }, []);
 
   const handleManualSave = useCallback(async () => {
+    if (hasAgentMemorySlotErrors) {
+      toast.error(t('toasts.fixMemorySlotsBeforeSave'));
+      return;
+    }
     const saved = await saveNow({ silent: false, force: true });
     if (saved) {
       toast.success(t('toasts.saveSuccess'));
     }
-  }, [saveNow, t]);
+  }, [hasAgentMemorySlotErrors, saveNow, t]);
 
   const handlePublish = useCallback(async () => {
+    if (hasAgentMemorySlotErrors) {
+      toast.error(t('toasts.fixMemorySlotsBeforePublish'));
+      return;
+    }
     const saved = await saveNow({ silent: true, force: true });
     if (saved) {
       publishAgent.mutate({ agentId });
     }
-  }, [agentId, publishAgent, saveNow]);
+  }, [agentId, hasAgentMemorySlotErrors, publishAgent, saveNow, t]);
 
-  const handleSaveBeforeLeave = useCallback(
-    () => saveNow({ silent: false, force: true }),
-    [saveNow]
-  );
+  const handleSaveBeforeLeave = useCallback(() => {
+    if (hasAgentMemorySlotErrors) {
+      toast.error(t('toasts.fixMemorySlotsBeforeSave'));
+      return Promise.resolve(false);
+    }
+    return saveNow({ silent: false, force: true });
+  }, [hasAgentMemorySlotErrors, saveNow, t]);
 
   const leaveGuardNode = useAgentRuntimeLeaveGuard({
     enabled: !isVersionPreviewing,
@@ -610,6 +637,7 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
           fileUploadEnabled={fileUploadEnabled}
           agentMemoryEnabled={agentMemoryEnabled}
           agentMemorySlots={agentMemorySlots}
+          agentMemorySlotValidationErrors={agentMemorySlotValidationErrors}
           defaultHomeTitle={defaultHomeTitle}
           defaultInputPlaceholder={defaultInputPlaceholder}
           onToggleSection={section =>
@@ -672,7 +700,6 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
         onChangeShowSelectedSkillsOnly={setShowSelectedSkillsOnly}
         onToggleSkill={handleToggleSkill}
       />
-
     </div>
   );
 }

@@ -1297,6 +1297,8 @@ const messages: AgentsMessages = {
       rollbackSuccess: '已从所选版本恢复到草稿',
       rollbackFailed: '恢复所选版本失败',
       finishVersionPreviewFirst: '请先确认或取消版本预览',
+      fixMemorySlotsBeforeSave: '请先修正记忆槽位 Key 后再保存。',
+      fixMemorySlotsBeforePublish: '请先修正记忆槽位 Key 后再发布。',
     },
     leaveGuard: {
       title: '离开前保存更改？',
@@ -1402,6 +1404,11 @@ const messages: AgentsMessages = {
       slotKeyPlaceholder: 'slot_key',
       slotDescriptionPlaceholder: '描述这个槽位保存什么内容',
       maxChars: '最大字符数',
+      validation: {
+        required: 'Key 不能为空。',
+        pattern: '只能使用小写字母、数字和下划线，且必须以小写字母开头。',
+        duplicate: '这个 Key 已经被使用。',
+      },
     },
     preview: {
       title: '预览与调试',

@@ -26,6 +26,7 @@ interface UseAgentRuntimeDraftPersistenceOptions {
   currentPayload: UpdateAgentRuntimeConfigRequest;
   enabled: boolean;
   intervalMs?: number;
+  canSave?: () => boolean;
   savePayload: (
     payload: UpdateAgentRuntimeConfigRequest,
     options: SaveNowOptions
@@ -37,6 +38,7 @@ export function useAgentRuntimeDraftPersistence({
   currentPayload,
   enabled,
   intervalMs = WORKFLOW_AUTOSAVE_INTERVAL_MS,
+  canSave,
   savePayload,
   onSaveFailed,
 }: UseAgentRuntimeDraftPersistenceOptions) {
@@ -45,6 +47,7 @@ export function useAgentRuntimeDraftPersistence({
   const [isSaving, setIsSaving] = useState(false);
   const lastSavedSignatureRef = useRef('');
   const currentSignatureRef = useRef('');
+  const canSaveRef = useRef(canSave);
   const savePayloadRef = useRef(savePayload);
   const onSaveFailedRef = useRef(onSaveFailed);
   const currentSignature = useMemo(
@@ -53,6 +56,10 @@ export function useAgentRuntimeDraftPersistence({
   );
 
   currentSignatureRef.current = currentSignature;
+
+  useEffect(() => {
+    canSaveRef.current = canSave;
+  }, [canSave]);
 
   useEffect(() => {
     savePayloadRef.current = savePayload;
@@ -97,6 +104,10 @@ export function useAgentRuntimeDraftPersistence({
   const saveNow = useCallback(
     async (options: SaveNowOptions = {}) => {
       if (!enabled && !options.force) return false;
+      if (canSaveRef.current && !canSaveRef.current()) {
+        setSaveState('dirty');
+        return false;
+      }
       const submittedPayload = currentPayload;
       const submittedSignature = buildAgentRuntimeSignature(submittedPayload);
 
@@ -155,6 +166,7 @@ export function useAgentRuntimeDraftPersistence({
       if (!lastSavedSignatureRef.current) return;
       if (isSaving) return;
       if (currentSignatureRef.current === lastSavedSignatureRef.current) return;
+      if (canSaveRef.current && !canSaveRef.current()) return;
       void saveNow({ silent: true });
     }, intervalMs);
 

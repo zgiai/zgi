@@ -1,4 +1,11 @@
-import type { UpdateAgentRuntimeConfigRequest } from '@/services/types/agent';
+import type {
+  AgentMemorySlotConfig,
+  UpdateAgentRuntimeConfigRequest,
+} from '@/services/types/agent';
+
+export type AgentMemorySlotValidationError = 'required' | 'pattern' | 'duplicate' | null;
+
+const AGENT_MEMORY_SLOT_KEY_PATTERN = /^[a-z][a-z0-9_]*$/;
 
 export function toModelParams(
   params: Record<string, unknown> | undefined
@@ -28,6 +35,23 @@ export function buildAgentRuntimeSignature(payload: UpdateAgentRuntimeConfigRequ
     agent_memory_slots: editableMemorySlots.sort((left, right) =>
       left.key.localeCompare(right.key)
     ),
+  });
+}
+
+export function validateAgentMemorySlots(
+  slots: AgentMemorySlotConfig[]
+): AgentMemorySlotValidationError[] {
+  const normalizedKeys = slots.map(slot => slot.key.trim().toLowerCase());
+  const keyCounts = normalizedKeys.reduce<Record<string, number>>((acc, key) => {
+    if (key) acc[key] = (acc[key] ?? 0) + 1;
+    return acc;
+  }, {});
+
+  return normalizedKeys.map(key => {
+    if (!key) return 'required';
+    if (!AGENT_MEMORY_SLOT_KEY_PATTERN.test(key)) return 'pattern';
+    if ((keyCounts[key] ?? 0) > 1) return 'duplicate';
+    return null;
   });
 }
 

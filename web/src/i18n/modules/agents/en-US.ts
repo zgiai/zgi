@@ -1377,6 +1377,8 @@ const messages = {
       rollbackSuccess: 'Draft restored from the selected version',
       rollbackFailed: 'Failed to restore the selected version',
       finishVersionPreviewFirst: 'Confirm or cancel version preview first',
+      fixMemorySlotsBeforeSave: 'Fix memory slot keys before saving.',
+      fixMemorySlotsBeforePublish: 'Fix memory slot keys before publishing.',
     },
     leaveGuard: {
       title: 'Save changes before leaving?',
@@ -1483,6 +1485,12 @@ const messages = {
       slotKeyPlaceholder: 'slot_key',
       slotDescriptionPlaceholder: 'Describe what this slot stores',
       maxChars: 'Maximum characters',
+      validation: {
+        required: 'Key is required.',
+        pattern:
+          'Use lowercase letters, numbers, and underscores. The first character must be a letter.',
+        duplicate: 'This key is already used.',
+      },
     },
     preview: {
       title: 'Preview and debug',

@@ -534,19 +534,25 @@ func agentMemorySlotConfigsFromResponses(slots []agentmemory.SlotResponse) []dto
 }
 
 func agentMemoryReplaceRequestFromConfig(slots []dto.AgentMemorySlotConfig) agentmemory.ReplaceSlotsRequest {
-	normalized := normalizeAgentMemorySlotConfigs(slots)
-	req := agentmemory.ReplaceSlotsRequest{Slots: make([]agentmemory.SlotUpsertRequest, 0, len(normalized))}
-	for _, slot := range normalized {
+	req := agentmemory.ReplaceSlotsRequest{Slots: make([]agentmemory.SlotUpsertRequest, 0, len(slots))}
+	for i, slot := range slots {
 		enabled := slot.Enabled
 		req.Slots = append(req.Slots, agentmemory.SlotUpsertRequest{
-			Key:         slot.Key,
-			Description: slot.Description,
+			Key:         strings.TrimSpace(slot.Key),
+			Description: strings.TrimSpace(slot.Description),
 			MaxChars:    slot.MaxChars,
 			Enabled:     &enabled,
-			SortOrder:   slot.SortOrder,
+			SortOrder:   firstNonZeroInt(slot.SortOrder, i),
 		})
 	}
 	return req
+}
+
+func firstNonZeroInt(value, fallback int) int {
+	if value != 0 {
+		return value
+	}
+	return fallback
 }
 
 func normalizeAgentMemorySlotConfigs(slots []dto.AgentMemorySlotConfig) []dto.AgentMemorySlotConfig {

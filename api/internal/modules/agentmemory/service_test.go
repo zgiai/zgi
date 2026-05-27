@@ -2,6 +2,7 @@ package agentmemory
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -133,6 +134,31 @@ func TestReplaceSlotsValidatesDuplicateKeys(t *testing.T) {
 	}
 }
 
+func TestReplaceSlotsRejectsInvalidRowsWithoutDisablingExistingSlots(t *testing.T) {
+	store := newFakeStore(uuid.New())
+	svc := &Service{repo: store}
+	agentID := uuid.New()
+	slots, err := svc.ReplaceSlots(context.Background(), agentID, uuid.New(), ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{Key: "profile"}}})
+	if err != nil {
+		t.Fatalf("ReplaceSlots initial error = %v", err)
+	}
+	if len(slots) != 1 || !slots[0].Enabled {
+		t.Fatalf("initial slots = %#v, want one enabled slot", slots)
+	}
+
+	_, err = svc.ReplaceSlots(context.Background(), agentID, uuid.New(), ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{Key: ""}}})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("ReplaceSlots invalid error = %v, want ErrInvalidInput", err)
+	}
+	remaining, err := svc.ListSlots(context.Background(), agentID)
+	if err != nil {
+		t.Fatalf("ListSlots error = %v", err)
+	}
+	if len(remaining) != 1 || remaining[0].Key != "profile" || !remaining[0].Enabled {
+		t.Fatalf("remaining slots = %#v, want profile still enabled", remaining)
+	}
+}
+
 func TestUpdateValueRequiresExistingEnabledSlot(t *testing.T) {
 	store := newFakeStore(uuid.New())
 	svc := &Service{repo: store}
@@ -194,5 +220,49 @@ func TestUpdateValueRejectsContentOverSlotLimit(t *testing.T) {
 	}, MutationMetadata{})
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("UpdateValue error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestClearValueRedactsClearedContentInEventSnapshots(t *testing.T) {
+	store := newFakeStore(uuid.New())
+	svc := &Service{repo: store}
+	agentID := uuid.New()
+	userID := uuid.New()
+	slots, err := svc.ReplaceSlots(context.Background(), agentID, uuid.New(), ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{Key: "profile"}}})
+	if err != nil {
+		t.Fatalf("ReplaceSlots error = %v", err)
+	}
+	runtimeSlots := []RuntimeSlot{{Key: slots[0].Key, MaxChars: slots[0].MaxChars, Enabled: true}}
+	_, err = svc.UpdateValue(context.Background(), store.workspaceID, agentID, runtimeSlots, UserScopeAccount, userID, UpdateValueRequest{
+		Key:     "profile",
+		Content: "likes concise answers",
+	}, MutationMetadata{})
+	if err != nil {
+		t.Fatalf("UpdateValue error = %v", err)
+	}
+
+	_, err = svc.ClearValue(context.Background(), store.workspaceID, agentID, runtimeSlots, UserScopeAccount, userID, "profile", MutationMetadata{})
+	if err != nil {
+		t.Fatalf("ClearValue error = %v", err)
+	}
+	if len(store.events) == 0 {
+		t.Fatal("expected clear event")
+	}
+	event := store.events[len(store.events)-1]
+	if event.Action != EventActionValueClear {
+		t.Fatalf("last event action = %s, want %s", event.Action, EventActionValueClear)
+	}
+	var before map[string]interface{}
+	if err := json.Unmarshal(event.BeforeSnapshot, &before); err != nil {
+		t.Fatalf("unmarshal before snapshot: %v", err)
+	}
+	if _, ok := before["content"]; ok {
+		t.Fatalf("before snapshot leaks cleared content: %#v", before)
+	}
+	if before["content_redacted"] != true {
+		t.Fatalf("before snapshot content_redacted = %#v, want true", before["content_redacted"])
+	}
+	if before["content_length"] == nil {
+		t.Fatalf("before snapshot missing content_length: %#v", before)
 	}
 }

@@ -2,7 +2,10 @@
 
 import { Loader2, Plus, Sparkles, Trash2 } from 'lucide-react';
 import { getAIChatSkillDisplayInfo } from '@/components/chat/variants/aichat/skill-display';
-import { ModelSelectorParameter, type ModelSelectorParameterValue } from '@/components/common/model-selector';
+import {
+  ModelSelectorParameter,
+  type ModelSelectorParameterValue,
+} from '@/components/common/model-selector';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -15,12 +18,10 @@ import { useT } from '@/i18n';
 import type { AIChatSkillMetadata } from '@/services/types/aichat';
 import type { AgentMemorySlotConfig } from '@/services/types/agent';
 import type { Dataset } from '@/services/types/dataset';
-import {
-  AGENT_HOME_TITLE_MAX_LENGTH,
-  AGENT_INPUT_PLACEHOLDER_MAX_LENGTH,
-} from './constants';
+import { AGENT_HOME_TITLE_MAX_LENGTH, AGENT_INPUT_PLACEHOLDER_MAX_LENGTH } from './constants';
 import { RuntimeSection } from './runtime-section';
 import type { AgentConfigSection } from './types';
+import type { AgentMemorySlotValidationError } from './utils';
 
 interface AgentRuntimeOrchestrationPanelProps {
   locale: string;
@@ -42,6 +43,7 @@ interface AgentRuntimeOrchestrationPanelProps {
   fileUploadEnabled: boolean;
   agentMemoryEnabled: boolean;
   agentMemorySlots: AgentMemorySlotConfig[];
+  agentMemorySlotValidationErrors: AgentMemorySlotValidationError[];
   defaultHomeTitle: string;
   defaultInputPlaceholder: string;
   onToggleSection: (section: AgentConfigSection) => void;
@@ -78,6 +80,7 @@ export function AgentRuntimeOrchestrationPanel({
   fileUploadEnabled,
   agentMemoryEnabled,
   agentMemorySlots,
+  agentMemorySlotValidationErrors,
   defaultHomeTitle,
   defaultInputPlaceholder,
   onToggleSection,
@@ -117,10 +120,7 @@ export function AgentRuntimeOrchestrationPanel({
       },
     ]);
   };
-  const updateAgentMemorySlot = (
-    index: number,
-    patch: Partial<AgentMemorySlotConfig>
-  ) => {
+  const updateAgentMemorySlot = (index: number, patch: Partial<AgentMemorySlotConfig>) => {
     onChangeAgentMemorySlots(
       agentMemorySlots.map((slot, currentIndex) =>
         currentIndex === index ? { ...slot, ...patch } : slot
@@ -129,6 +129,10 @@ export function AgentRuntimeOrchestrationPanel({
   };
   const removeAgentMemorySlot = (index: number) => {
     onChangeAgentMemorySlots(agentMemorySlots.filter((_, currentIndex) => currentIndex !== index));
+  };
+  const getAgentMemorySlotErrorText = (error: AgentMemorySlotValidationError) => {
+    if (!error) return '';
+    return t(`memory.validation.${error}`);
   };
 
   return (
@@ -321,65 +325,75 @@ export function AgentRuntimeOrchestrationPanel({
                         {t('memory.emptySlots')}
                       </div>
                     ) : (
-                      agentMemorySlots.map((slot, index) => (
-                        <div key={`${slot.id ?? 'slot'}-${index}`} className="space-y-2 rounded-md border p-2">
-                          <div className="flex items-center gap-2">
+                      agentMemorySlots.map((slot, index) => {
+                        const keyError = agentMemorySlotValidationErrors[index] ?? null;
+                        const keyErrorText = getAgentMemorySlotErrorText(keyError);
+                        return (
+                          <div
+                            key={`${slot.id ?? 'slot'}-${index}`}
+                            className="space-y-2 rounded-md border p-2"
+                          >
+                            <div className="flex items-start gap-2">
+                              <div className="min-w-0 flex-1 space-y-1">
+                                <Input
+                                  value={slot.key}
+                                  maxLength={64}
+                                  placeholder={t('memory.slotKeyPlaceholder')}
+                                  aria-invalid={Boolean(keyError)}
+                                  onChange={event =>
+                                    updateAgentMemorySlot(index, {
+                                      key: event.target.value.toLowerCase().slice(0, 64),
+                                    })
+                                  }
+                                />
+                                {keyErrorText && (
+                                  <div className="text-xs text-destructive">{keyErrorText}</div>
+                                )}
+                              </div>
+                              <Input
+                                type="number"
+                                min={1}
+                                max={4000}
+                                value={slot.max_chars}
+                                className="w-24"
+                                aria-label={t('memory.maxChars')}
+                                onChange={event =>
+                                  updateAgentMemorySlot(index, {
+                                    max_chars: Math.min(
+                                      4000,
+                                      Math.max(1, Number(event.target.value) || 1000)
+                                    ),
+                                  })
+                                }
+                              />
+                              <Switch
+                                checked={slot.enabled}
+                                onCheckedChange={checked =>
+                                  updateAgentMemorySlot(index, { enabled: checked })
+                                }
+                              />
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                isIcon
+                                aria-label={t('memory.removeSlot')}
+                                onClick={() => removeAgentMemorySlot(index)}
+                              >
+                                <Trash2 className="size-4" />
+                              </Button>
+                            </div>
                             <Input
-                              value={slot.key}
-                              maxLength={64}
-                              placeholder={t('memory.slotKeyPlaceholder')}
+                              value={slot.description}
+                              placeholder={t('memory.slotDescriptionPlaceholder')}
                               onChange={event =>
                                 updateAgentMemorySlot(index, {
-                                  key: event.target.value
-                                    .toLowerCase()
-                                    .replace(/[^a-z0-9_]/g, '')
-                                    .slice(0, 64),
+                                  description: event.target.value.slice(0, 1000),
                                 })
                               }
                             />
-                            <Input
-                              type="number"
-                              min={1}
-                              max={4000}
-                              value={slot.max_chars}
-                              className="w-24"
-                              aria-label={t('memory.maxChars')}
-                              onChange={event =>
-                                updateAgentMemorySlot(index, {
-                                  max_chars: Math.min(
-                                    4000,
-                                    Math.max(1, Number(event.target.value) || 1000)
-                                  ),
-                                })
-                              }
-                            />
-                            <Switch
-                              checked={slot.enabled}
-                              onCheckedChange={checked =>
-                                updateAgentMemorySlot(index, { enabled: checked })
-                              }
-                            />
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              isIcon
-                              aria-label={t('memory.removeSlot')}
-                              onClick={() => removeAgentMemorySlot(index)}
-                            >
-                              <Trash2 className="size-4" />
-                            </Button>
                           </div>
-                          <Input
-                            value={slot.description}
-                            placeholder={t('memory.slotDescriptionPlaceholder')}
-                            onChange={event =>
-                              updateAgentMemorySlot(index, {
-                                description: event.target.value.slice(0, 1000),
-                              })
-                            }
-                          />
-                        </div>
-                      ))
+                        );
+                      })
                     )}
                     <Button
                       type="button"
