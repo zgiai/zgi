@@ -2,27 +2,38 @@ package v1
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/zgi/api/internal/container"
+	platformchannel "github.com/zgiai/zgi/api/internal/infra/platform/channel"
+	apikeyrepo "github.com/zgiai/zgi/api/internal/modules/llm/apikey/repository"
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	gatewayhandler "github.com/zgiai/zgi/api/internal/modules/llm/gateway/handler"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	_ "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters/provider" // Register adapters
 	"github.com/zgiai/zgi/api/pkg/logger"
 	redisPkg "github.com/zgiai/zgi/api/pkg/redis"
+	"gorm.io/gorm"
 )
+
+// GatewayRouteDeps contains dependencies required by gateway routes.
+type GatewayRouteDeps struct {
+	DB              *gorm.DB
+	APIKeyRepo      apikeyrepo.APIKeyRepository
+	ChannelProvider platformchannel.ChannelProvider
+}
 
 // RegisterGatewayRoutes registers OpenAI-compatible AI API routes at /v1/*
 // These routes use LLM API key authentication (sk-xxx)
-func RegisterGatewayRoutes(router *gin.RouterGroup, serviceContainer *container.ServiceContainer) {
-	db := serviceContainer.GetDB()
-
-	// Initialize repositories
-	apiKeyRepo := serviceContainer.GetLLMAPIKeyRepository()
+func RegisterGatewayRoutes(router *gin.RouterGroup, deps GatewayRouteDeps) {
+	if deps.DB == nil {
+		panic("gateway routes require db")
+	}
+	if deps.APIKeyRepo == nil {
+		panic("gateway routes require api key repository")
+	}
 
 	// Initialize gateway service
 	gatewayService, err := gateway.NewLLMGatewayService(
-		db,
-		apiKeyRepo,
+		deps.DB,
+		deps.APIKeyRepo,
 		adapter.GlobalFactory,
 	)
 	if err != nil {
@@ -31,19 +42,16 @@ func RegisterGatewayRoutes(router *gin.RouterGroup, serviceContainer *container.
 	}
 
 	// Set platform channel provider
-	platformChannels, err := serviceContainer.GetPlatformChannels()
-	if err != nil {
-		logger.Warn("failed to load platform channels, skipping channel provider wiring", err)
-	} else if platformChannels.Channel != nil {
+	if deps.ChannelProvider != nil {
 		if gwImpl, ok := gatewayService.(interface{ SetChannelProvider(p interface{}) }); ok {
-			gwImpl.SetChannelProvider(platformChannels.Channel)
+			gwImpl.SetChannelProvider(deps.ChannelProvider)
 		}
 	}
 
 	// Enable Config Cache if Redis is available
 	redisClient := redisPkg.GetClient()
 	if redisClient != nil {
-		configCache := gateway.NewConfigCache(redisClient, db, nil)
+		configCache := gateway.NewConfigCache(redisClient, deps.DB, nil)
 		gatewayService.SetConfigCache(configCache)
 		logger.Info("gateway config cache enabled")
 	}
@@ -52,7 +60,7 @@ func RegisterGatewayRoutes(router *gin.RouterGroup, serviceContainer *container.
 	llmHandler := gatewayhandler.NewLLMHandler(gatewayService)
 
 	// Create middleware
-	authMiddleware := gatewayhandler.LLMAPIKeyAuthMiddleware(apiKeyRepo)
+	authMiddleware := gatewayhandler.LLMAPIKeyAuthMiddleware(deps.APIKeyRepo)
 
 	// Register routes with authentication middleware
 	// OpenAI-compatible endpoints
