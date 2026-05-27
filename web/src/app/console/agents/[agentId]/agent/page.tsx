@@ -35,6 +35,7 @@ import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/
 import { useAgent, useAgentConfig, usePublishAgent } from '@/hooks/agent/use-agents';
 import { useAIChatSkills } from '@/hooks/aichat/use-aichat-skills';
 import { useDatasets } from '@/hooks/dataset/use-datasets';
+import { useMediaQuery } from '@/hooks/use-media-query';
 import { AGENT_KEYS } from '@/hooks/query-keys';
 import { useLocale } from '@/hooks/use-locale';
 import { useAutoProfile } from '@/hooks/use-profile';
@@ -116,6 +117,7 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
   const [isGeneratingSuggestions, setIsGeneratingSuggestions] = useState(false);
   const [publishedVersionsOpen, setPublishedVersionsOpen] = useState(false);
   const [previewSheetOpen, setPreviewSheetOpen] = useState(false);
+  const isTwoXlViewport = useMediaQuery('(min-width: 1536px)');
   const [publishedVersions, setPublishedVersions] = useState<AgentPublishedVersionListItem[]>([]);
   const [isLoadingVersions, setIsLoadingVersions] = useState(false);
   const [isRollingBackVersion, setIsRollingBackVersion] = useState(false);
@@ -250,6 +252,12 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
   useEffect(() => {
     initChatController(null);
   }, [initChatController]);
+
+  useEffect(() => {
+    if (isTwoXlViewport && previewSheetOpen) {
+      setPreviewSheetOpen(false);
+    }
+  }, [isTwoXlViewport, previewSheetOpen]);
 
   const applyRuntimePayload = useCallback((payload: UpdateAgentRuntimeConfigRequest) => {
     setSystemPrompt(payload.system_prompt);
@@ -710,17 +718,19 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
         </div>
       </div>
 
-      <Sheet open={previewSheetOpen} onOpenChange={setPreviewSheetOpen}>
-        <SheetContent
-          side="right"
-          showClose={false}
-          className="flex h-full min-h-0 w-[min(720px,100vw)] max-w-none flex-col p-0 sm:max-w-none 2xl:hidden"
-        >
-          <SheetTitle className="sr-only">{t('preview.title')}</SheetTitle>
-          <SheetDescription className="sr-only">{t('preview.description')}</SheetDescription>
-          {renderPreviewPanel('sheet')}
-        </SheetContent>
-      </Sheet>
+      {!isTwoXlViewport ? (
+        <Sheet open={previewSheetOpen} onOpenChange={setPreviewSheetOpen}>
+          <SheetContent
+            side="right"
+            showClose={false}
+            className="flex h-full min-h-0 w-[min(720px,100vw)] max-w-none flex-col p-0 sm:max-w-none"
+          >
+            <SheetTitle className="sr-only">{t('preview.title')}</SheetTitle>
+            <SheetDescription className="sr-only">{t('preview.description')}</SheetDescription>
+            {renderPreviewPanel('sheet')}
+          </SheetContent>
+        </Sheet>
+      ) : null}
 
       <PromptOptimizerDialog
         open={promptOptimizerOpen}
