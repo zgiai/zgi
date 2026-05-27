@@ -109,7 +109,20 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	})
 
 	// ---------- Automation ----------
-	RegisterAutomationRoutes(v1, serviceContainer)
+	automationDefinitionService := RegisterAutomationRoutes(v1, AutomationRouteDeps{
+		DB:                               db,
+		TaskManager:                      serviceContainer.GetTaskManager(),
+		TaskHandlerRegistry:              serviceContainer.GetTaskHandlerRegistry(),
+		Scheduler:                        serviceContainer.GetScheduler(),
+		NotificationSMSService:           serviceContainer.GetNotificationSMSService(),
+		AutomationWorkflowRunnerProvider: serviceContainer.GetAutomationWorkflowRunner,
+		AccountService:                   accountService,
+		OrganizationService:              serviceContainer.GetOrganizationService(),
+		WorkspaceManagementService:       tenantService,
+		LLMClient:                        serviceContainer.GetLLMClient(),
+		DefaultModelService:              serviceContainer.GetDefaultModelService(),
+	})
+	serviceContainer.SetAutomationDefinitionService(automationDefinitionService)
 
 	// ---------- Payment ----------
 	RegisterPaymentRoutes(v1, PaymentRouteDeps{
@@ -124,7 +137,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	})
 
 	// ---------- Workflow ----------
-	RegisterWorkflowRoutes(v1, accountService, tenantService, serviceContainer.GetFileService(), db, serviceContainer.GetContentExtractor(), serviceContainer.GetQuotaService(), serviceContainer.GetOrganizationService(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), serviceContainer.GetAutomationDefinitionService(), serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetScheduler(), workflowEngineFactory, serviceContainer)
+	RegisterWorkflowRoutes(v1, accountService, tenantService, serviceContainer.GetFileService(), db, serviceContainer.GetContentExtractor(), serviceContainer.GetQuotaService(), serviceContainer.GetOrganizationService(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), automationDefinitionService, serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetScheduler(), workflowEngineFactory, serviceContainer)
 
 	// ---------- Agent ----------
 	resourcePermissionService := serviceContainer.GetResourcePermissionService()
