@@ -1,11 +1,14 @@
 export { AgentRuntimeHeader } from './header';
 export { AgentRuntimeLoadingState } from './loading-state';
+export { AgentRuntimeDialogs } from './dialogs';
 export { AgentRuntimeOrchestrationPanel } from './orchestration-panel';
 export { AgentRuntimeMemoryValuesDialog } from './memory-values-dialog';
 export { AgentRuntimePreviewPanel } from './preview-panel';
 export { AgentRuntimePromptPanel } from './prompt-panel';
 export { AgentRuntimeVersionPopover } from './published-versions-dialog';
 export { AgentRuntimeSkillDialog } from './skill-dialog';
+export { AgentRuntimeWorkbench } from './workbench';
+export { useAgentRuntimePageModel } from './hooks/use-agent-runtime-page-model';
 export {
   useAgentRuntimeDraftPersistence,
   type AgentRuntimeDraftPersistenceSnapshot,
