@@ -184,14 +184,15 @@ func (h *AgentsHandler) agentRuntimeContext(c *gin.Context) (agentRuntimeContext
 		response.Fail(c, response.ErrInvalidParam)
 		return agentRuntimeContext{}, false
 	}
+	scope := runtimeservice.Scope{OrganizationID: organizationID, AccountID: accountID, WorkspaceID: &agentWorkspaceID}
 	return agentRuntimeContext{
-		Scope: runtimeservice.Scope{OrganizationID: organizationID, AccountID: accountID, WorkspaceID: &agentWorkspaceID},
+		Scope: scope,
 		Caller: runtimeservice.Caller{
 			Type:   runtimemodel.ConversationCallerAgent,
 			ID:     &agentID,
 			Source: runtimemodel.ConversationSourceConsole,
 		},
-		RunConfig: agentRunConfig(agentID.String(), "agent.draft", draft.Config, "account"),
+		RunConfig: h.agentRunConfig(ctx, scope, agentID.String(), "agent.draft", draft.Config, "account"),
 	}, true
 }
 
@@ -230,20 +231,21 @@ func (h *AgentsHandler) webAppAgentRuntimeContext(c *gin.Context) (agentRuntimeC
 		response.Fail(c, response.ErrInvalidParam)
 		return agentRuntimeContext{}, false
 	}
+	scope := runtimeservice.Scope{
+		OrganizationID:  organizationID,
+		AccountID:       accountID,
+		WorkspaceID:     &workspaceID,
+		SkipAccessCheck: true,
+	}
 	return agentRuntimeContext{
-		Scope: runtimeservice.Scope{
-			OrganizationID:  organizationID,
-			AccountID:       accountID,
-			WorkspaceID:     &workspaceID,
-			SkipAccessCheck: true,
-		},
+		Scope: scope,
 		Caller: runtimeservice.Caller{
 			Type:           runtimemodel.ConversationCallerAgent,
 			ID:             &agentID,
 			Source:         runtimemodel.ConversationSourceWebApp,
 			SourceWebAppID: &webAppID,
 		},
-		RunConfig: agentRunConfig(published.AgentID, "agent.published."+published.Version, published.Config, webAppAgentMemoryUserScope(c)),
+		RunConfig: h.agentRunConfig(c.Request.Context(), scope, published.AgentID, "agent.published."+published.Version, published.Config, webAppAgentMemoryUserScope(c)),
 	}, true
 }
 
