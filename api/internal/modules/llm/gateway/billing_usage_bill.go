@@ -84,19 +84,7 @@ func (b *BillingService) buildUsageBill(
 		return nil, fmt.Errorf("billing context is nil")
 	}
 
-	requestCreatedAt := bc.RequestCreatedAt
-	if requestCreatedAt.IsZero() {
-		requestCreatedAt = time.Now().UTC()
-	} else {
-		requestCreatedAt = requestCreatedAt.UTC()
-	}
-
-	settledAt := bc.SettledAt
-	if settledAt.IsZero() {
-		settledAt = time.Now().UTC()
-	} else {
-		settledAt = settledAt.UTC()
-	}
+	requestCreatedAt, settledAt := normalizeUsageBillTimes(bc.RequestCreatedAt, bc.SettledAt)
 
 	appID, appType := normalizedAppUsagePair(bc.AppID, bc.AppType)
 	workspaceID := normalizedTextPtr(bc.WorkspaceID)
@@ -150,6 +138,26 @@ func (b *BillingService) buildUsageBill(
 		RequestCreatedAt:  requestCreatedAt,
 		SettledAt:         settledAt,
 	}, nil
+}
+
+func normalizeUsageBillTimes(requestCreatedAt, settledAt time.Time) (time.Time, time.Time) {
+	if requestCreatedAt.IsZero() {
+		requestCreatedAt = time.Now().UTC()
+	} else {
+		requestCreatedAt = requestCreatedAt.UTC()
+	}
+
+	if settledAt.IsZero() {
+		settledAt = time.Now().UTC()
+	} else {
+		settledAt = settledAt.UTC()
+	}
+
+	if settledAt.Before(requestCreatedAt) {
+		settledAt = requestCreatedAt
+	}
+
+	return requestCreatedAt, settledAt
 }
 
 func usageBillTokens(bc *BillingContext, status string) (int64, int64, int64) {
