@@ -29,7 +29,7 @@ interface AgentRuntimeOrchestrationPanelProps {
   isSkillsLoading: boolean;
   isSkillConfigLoading: boolean;
   isDatasetsLoading: boolean;
-  availableDatasets: Dataset[];
+  selectedKnowledgeDatasets: Dataset[];
   selectedKnowledgeDatasetIds: string[];
   suggestedQuestions: string[];
   isGeneratingSuggestions: boolean;
@@ -48,6 +48,7 @@ interface AgentRuntimeOrchestrationPanelProps {
   onChangeHomeTitle: (value: string) => void;
   onChangeInputPlaceholder: (value: string) => void;
   onOpenSkillDialog: () => void;
+  onOpenKnowledgeDialog: () => void;
   onToggleSkill: (skillId: string, checked: boolean) => void;
   onToggleKnowledgeDataset: (datasetId: string, checked: boolean) => void;
   onGenerateSuggestedQuestions: () => void;
@@ -69,7 +70,7 @@ export function AgentRuntimeOrchestrationPanel({
   isSkillsLoading,
   isSkillConfigLoading,
   isDatasetsLoading,
-  availableDatasets,
+  selectedKnowledgeDatasets,
   selectedKnowledgeDatasetIds,
   suggestedQuestions,
   isGeneratingSuggestions,
@@ -88,6 +89,7 @@ export function AgentRuntimeOrchestrationPanel({
   onChangeHomeTitle,
   onChangeInputPlaceholder,
   onOpenSkillDialog,
+  onOpenKnowledgeDialog,
   onToggleSkill,
   onToggleKnowledgeDataset,
   onGenerateSuggestedQuestions,
@@ -140,9 +142,10 @@ export function AgentRuntimeOrchestrationPanel({
           <AgentRuntimeKnowledgeSection
             open={openSections.knowledge}
             isDatasetsLoading={isDatasetsLoading}
-            availableDatasets={availableDatasets}
+            selectedKnowledgeDatasets={selectedKnowledgeDatasets}
             selectedKnowledgeDatasetIds={selectedKnowledgeDatasetIds}
             onToggleSection={onToggleSection}
+            onOpenKnowledgeDialog={onOpenKnowledgeDialog}
             onToggleKnowledgeDataset={onToggleKnowledgeDataset}
           />
 

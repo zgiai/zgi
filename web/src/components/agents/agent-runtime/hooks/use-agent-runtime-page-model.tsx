@@ -27,6 +27,7 @@ import type {
   UpdateAgentRuntimeConfigRequest,
 } from '@/services/types/agent';
 import type { AIChatSkillMetadata } from '@/services/types/aichat';
+import type { Dataset } from '@/services/types/dataset';
 import { getErrorMessage } from '@/utils/error-notifications';
 import type { AgentConfigSection, AgentPublishedVersionListItem } from '../types';
 import { toModelParams, validateAgentMemorySlots } from '../utils';
@@ -42,7 +43,6 @@ export function useAgentRuntimePageModel(agentId: string) {
   const { data: profile } = useAutoProfile({ staleTime: 1_800_000 });
   const { data: configResponse, isLoading: isConfigLoading } = useAgentConfig(agentId);
   const { data: allSkills = [], isLoading: isSkillsLoading } = useAIChatSkills();
-  const { pages: datasetPages, isLoading: isDatasetsLoading } = useDatasets({ limit: 100 });
   const publishAgent = usePublishAgent();
   const config = configResponse?.data;
   const agentDetail = agent?.data;
@@ -68,10 +68,13 @@ export function useAgentRuntimePageModel(agentId: string) {
   const [suggestedQuestions, setSuggestedQuestions] = useState<string[]>([]);
   const [knowledgeDatasetIds, setKnowledgeDatasetIds] = useState<string[]>([]);
   const [skillDialogOpen, setSkillDialogOpen] = useState(false);
+  const [knowledgeDialogOpen, setKnowledgeDialogOpen] = useState(false);
   const [promptOptimizerOpen, setPromptOptimizerOpen] = useState(false);
   const [memoryValuesOpen, setMemoryValuesOpen] = useState(false);
   const [skillSearch, setSkillSearch] = useState('');
   const [showSelectedSkillsOnly, setShowSelectedSkillsOnly] = useState(false);
+  const [knowledgeSearch, setKnowledgeSearch] = useState('');
+  const [showSelectedKnowledgeOnly, setShowSelectedKnowledgeOnly] = useState(false);
   const [isGeneratingSuggestions, setIsGeneratingSuggestions] = useState(false);
   const [publishedVersionsOpen, setPublishedVersionsOpen] = useState(false);
   const [previewSheetOpen, setPreviewSheetOpen] = useState(false);
@@ -101,7 +104,45 @@ export function useAgentRuntimePageModel(agentId: string) {
       }),
     [allSkills]
   );
-  const availableDatasets = useMemo(() => datasetPages.flat(), [datasetPages]);
+  const { pages: selectedDatasetPages, isLoading: isSelectedDatasetsLoading } = useDatasets(
+    { ids: knowledgeDatasetIds, limit: Math.max(knowledgeDatasetIds.length, 1) },
+    { enabled: knowledgeDatasetIds.length > 0 }
+  );
+  const { pages: knowledgeDialogPages, isLoading: isKnowledgeDialogDatasetsLoading } = useDatasets(
+    { keyword: knowledgeSearch.trim(), limit: 50 },
+    { enabled: knowledgeDialogOpen }
+  );
+  const selectedKnowledgeDatasets = useMemo(() => {
+    const byID = new Map<string, Dataset>();
+    selectedDatasetPages.flat().forEach(dataset => byID.set(dataset.id, dataset));
+    knowledgeDialogPages.flat().forEach(dataset => {
+      if (knowledgeDatasetIds.includes(dataset.id)) {
+        byID.set(dataset.id, dataset);
+      }
+    });
+    return knowledgeDatasetIds
+      .map(id => byID.get(id))
+      .filter((dataset): dataset is Dataset => Boolean(dataset));
+  }, [knowledgeDatasetIds, knowledgeDialogPages, selectedDatasetPages]);
+  const knowledgeDialogDatasets = useMemo(() => {
+    const byID = new Map<string, Dataset>();
+    selectedKnowledgeDatasets.forEach(dataset => byID.set(dataset.id, dataset));
+    knowledgeDialogPages.flat().forEach(dataset => byID.set(dataset.id, dataset));
+    return Array.from(byID.values())
+      .filter(dataset => !showSelectedKnowledgeOnly || knowledgeDatasetIds.includes(dataset.id))
+      .sort((left, right) => {
+        const leftChecked = knowledgeDatasetIds.includes(left.id);
+        const rightChecked = knowledgeDatasetIds.includes(right.id);
+        if (leftChecked !== rightChecked) return leftChecked ? -1 : 1;
+        return left.name.localeCompare(right.name, locale);
+      });
+  }, [
+    knowledgeDatasetIds,
+    knowledgeDialogPages,
+    locale,
+    selectedKnowledgeDatasets,
+    showSelectedKnowledgeOnly,
+  ]);
   const selectableSkillIds = useMemo(
     () => new Set(selectableSkills.map(skill => skill.skill_id)),
     [selectableSkills]
@@ -601,6 +642,8 @@ export function useAgentRuntimePageModel(agentId: string) {
     },
     prompt: {
       systemPrompt,
+      selectedKnowledgeDatasets,
+      selectedSkills,
       onChangeSystemPrompt: setSystemPrompt,
       onOpenOptimizer: () => setPromptOptimizerOpen(true),
     },
@@ -615,8 +658,8 @@ export function useAgentRuntimePageModel(agentId: string) {
       selectableSkillsCount: selectableSkills.length,
       isSkillsLoading,
       isSkillConfigLoading: false,
-      isDatasetsLoading,
-      availableDatasets,
+      isDatasetsLoading: isSelectedDatasetsLoading,
+      selectedKnowledgeDatasets,
       selectedKnowledgeDatasetIds: knowledgeDatasetIds,
       suggestedQuestions,
       isGeneratingSuggestions,
@@ -633,6 +676,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       onChangeHomeTitle: setHomeTitle,
       onChangeInputPlaceholder: setInputPlaceholder,
       onOpenSkillDialog: () => setSkillDialogOpen(true),
+      onOpenKnowledgeDialog: () => setKnowledgeDialogOpen(true),
       onToggleSkill: handleToggleSkill,
       onToggleKnowledgeDataset: handleToggleKnowledgeDataset,
       onGenerateSuggestedQuestions: () => void handleGenerateSuggestedQuestions(),
@@ -683,6 +727,18 @@ export function useAgentRuntimePageModel(agentId: string) {
         onChangeSkillSearch: setSkillSearch,
         onChangeShowSelectedSkillsOnly: setShowSelectedSkillsOnly,
         onToggleSkill: handleToggleSkill,
+      },
+      knowledge: {
+        open: knowledgeDialogOpen,
+        datasets: knowledgeDialogDatasets,
+        selectedDatasetIds: knowledgeDatasetIds,
+        search: knowledgeSearch,
+        showSelectedOnly: showSelectedKnowledgeOnly,
+        isLoading: isKnowledgeDialogDatasetsLoading || isSelectedDatasetsLoading,
+        onOpenChange: setKnowledgeDialogOpen,
+        onChangeSearch: setKnowledgeSearch,
+        onChangeShowSelectedOnly: setShowSelectedKnowledgeOnly,
+        onToggleDataset: handleToggleKnowledgeDataset,
       },
       memoryValues: {
         agentId,
