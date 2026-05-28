@@ -63,12 +63,12 @@ import { buildOpeningGuideBrand } from '@/components/chat/utils/opening-guide-br
 import { cn } from '@/lib/utils';
 
 const ITEM_ROW_CLASS =
-  'flex items-center justify-between rounded-md border border-muted-foreground shadow-sm p-3 gap-1';
-const ITEM_TEXT_CLASS = 'space-y-1 w-0 grow';
+  'flex items-center justify-between rounded-lg border border-border/70 bg-background px-3 py-3 gap-3 transition-colors hover:bg-muted/20';
+const ITEM_TEXT_CLASS = 'min-w-0 grow space-y-1';
 const ITEM_LABEL_CLASS = 'truncate';
 const ITEM_DESC_CLASS = 'text-xs text-muted-foreground line-clamp-3 overflow-ellipsis';
-const ITEM_CONTROL_COLUMN_CLASS = 'space-y-1 flex flex-col';
-const SECTION_CARD_CLASS = 'rounded-md border border-muted-foreground shadow-sm p-3';
+const ITEM_CONTROL_COLUMN_CLASS = 'flex shrink-0 flex-col items-end gap-1.5';
+const SECTION_CARD_CLASS = 'rounded-xl border border-border/70 bg-card p-3.5';
 const SUGGESTED_QUESTION_ID_PREFIX = 'suggested-question-';
 
 interface SortableSuggestedQuestionRowProps {
@@ -109,7 +109,7 @@ const SortableSuggestedQuestionRow: React.FC<SortableSuggestedQuestionRowProps> 
         ref={setNodeRef}
         style={style}
         className={cn(
-          'flex items-center gap-1.5 rounded-md bg-background',
+          'flex items-center gap-1.5 rounded-lg border border-border/60 bg-background px-1.5 py-1 shadow-sm transition-colors hover:border-border',
           isDragging && 'relative z-10 opacity-80 shadow-md'
         )}
       >
@@ -120,7 +120,7 @@ const SortableSuggestedQuestionRow: React.FC<SortableSuggestedQuestionRowProps> 
           size="xs"
           disabled={dragDisabled}
           className={cn(
-            'shrink-0 cursor-grab text-muted-foreground hover:text-foreground',
+            'h-7 w-7 shrink-0 cursor-grab text-muted-foreground hover:text-foreground',
             isDragging && 'cursor-grabbing'
           )}
           aria-label={dragLabel}
@@ -131,7 +131,7 @@ const SortableSuggestedQuestionRow: React.FC<SortableSuggestedQuestionRowProps> 
         </Button>
         <Input
           value={question}
-          className="h-8 min-w-0 flex-1 px-2.5 text-xs"
+          className="h-8 min-w-0 flex-1 border-0 bg-transparent px-2 text-xs shadow-none focus-visible:ring-0"
           placeholder={placeholder}
           onChange={event => onChange(index, event.target.value)}
         />
@@ -140,7 +140,7 @@ const SortableSuggestedQuestionRow: React.FC<SortableSuggestedQuestionRowProps> 
           variant="ghost"
           isIcon
           size="xs"
-          className="shrink-0"
+          className="h-7 w-7 shrink-0"
           aria-label={removeLabel}
           onClick={() => onRemove(index)}
         >
@@ -716,23 +716,23 @@ export default function FeaturesPanel({
       position="top-right"
       aria-hidden={temporarilyHidden}
       className={getRightPanelMotionClassName(
-        `p-0 bg-primary-foreground border border-muted rounded-lg shadow-lg w-[400px] h-[calc(100%-120px)] overflow-hidden ${shake ? 'workflow-panel-attention' : ''}`,
+        `w-[min(400px,calc(100vw-2rem))] overflow-hidden rounded-xl border border-border/70 bg-background p-0 shadow-xl h-[calc(100%-120px)] ${shake ? 'workflow-panel-attention' : ''}`,
         temporarilyHidden
       )}
       style={getRightPanelMotionStyle(panelStyle, temporarilyHidden)}
     >
       <div className="flex flex-col h-full" onContextMenu={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between border-b px-3 py-2">
-          <div className="font-medium flex items-center gap-1">
-            <Settings2 className="h-5 w-5" /> {t('title')}
+        <div className="flex items-center justify-between border-b border-border/60 px-4 py-3">
+          <div className="flex items-center gap-2 text-base font-semibold">
+            <Settings2 className="h-4 w-4 text-muted-foreground" /> {t('title')}
           </div>
           <div className="flex items-center gap-2">
             <Button variant="ghost" isIcon onClick={handleClose} aria-label={tCommon('close')}>
-              <X size={16} className="text-primary" />
+              <X size={16} className="text-muted-foreground" />
             </Button>
           </div>
         </div>
-        <div className="flex-1 min-h-0 overflow-auto p-3 space-y-3">
+        <div className="flex-1 min-h-0 overflow-auto p-4 space-y-3">
           <div className={ITEM_ROW_CLASS}>
             <div className={ITEM_TEXT_CLASS}>
               <Label className={ITEM_LABEL_CLASS}>{t('workflow.features.uploadLabel')}</Label>
@@ -856,14 +856,14 @@ export default function FeaturesPanel({
                 </div>
               </div>
 
-              <div className="space-y-2 rounded-md border border-muted-foreground p-2.5">
+              <div className="space-y-3 rounded-lg border border-border/70 bg-muted/20 p-3">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 flex-1 space-y-1">
                     <div className="flex items-center gap-2">
                       <Label className={ITEM_LABEL_CLASS}>
                         {t('workflow.features.suggestedQuestions.label')}
                       </Label>
-                      <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] leading-4 text-muted-foreground">
+                      <span className="shrink-0 rounded-md bg-background px-1.5 py-0.5 text-[11px] leading-4 text-muted-foreground ring-1 ring-border/60">
                         {t('workflow.features.suggestedQuestions.count', {
                           count: configuredSuggestedQuestionCount,
                           max: SUGGESTED_QUESTIONS_LIMIT,
@@ -879,6 +879,7 @@ export default function FeaturesPanel({
                       type="button"
                       variant="outline"
                       size="xs"
+                      className="bg-background"
                       loading={generateSuggestedQuestions.isPending}
                       onClick={handleGenerateSuggestedQuestions}
                     >
