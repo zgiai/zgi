@@ -124,7 +124,8 @@ function deriveJudgeScore(item: WorkflowTestBatchItem, outputs: Record<string, u
 
 function formatJudgeScore(value: number) {
   const score = Math.max(0, Math.min(5, value));
-  return `${Number.isInteger(score) ? score.toFixed(0) : score.toFixed(1)} / 5`;
+  const rounded = Math.round(score * 10) / 10;
+  return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1)} / 5`;
 }
 
 function localizeWorkflowTestError(
