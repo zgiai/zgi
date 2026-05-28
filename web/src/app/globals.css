@@ -109,6 +109,34 @@
     position: relative;
     min-height: 1.5rem; /* ensure caret area exists */
   }
+
+  .ProseMirror:has(.zgi-template-slot-placeholder-active) {
+    caret-color: transparent;
+  }
+
+  .zgi-template-slot-placeholder-active::before {
+    position: absolute;
+    left: 0.25rem;
+    top: 50%;
+    height: 1em;
+    transform: translateY(-50%);
+    border-left: 1px solid var(--primary, #2563eb);
+    content: '';
+    animation: zgi-template-slot-caret-blink 1s steps(2, start) infinite;
+  }
+
+  @keyframes zgi-template-slot-caret-blink {
+    0%,
+    45% {
+      opacity: 1;
+    }
+
+    46%,
+    100% {
+      opacity: 0;
+    }
+  }
+
   * {
     @apply border-border outline-none;
   }

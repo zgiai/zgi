@@ -6,7 +6,9 @@ const VariableToken = TiptapNode.create<{
   sourceId: string;
   key: string;
   title?: string; // node title for display
+  label?: string; // human readable token label
   invalid?: boolean;
+  syntax?: string;
 }>({
   name: 'variableToken',
   inline: true,
@@ -34,11 +36,21 @@ const VariableToken = TiptapNode.create<{
         renderHTML: () => ({}),
         parseHTML: element => (element as HTMLElement).getAttribute('data-title') ?? '',
       },
+      label: {
+        default: '',
+        renderHTML: () => ({}),
+        parseHTML: element => (element as HTMLElement).getAttribute('data-label') ?? '',
+      },
       invalid: {
         default: false,
         renderHTML: () => ({}),
         parseHTML: element =>
           ((element as HTMLElement).getAttribute('aria-invalid') ?? '') === 'true',
+      },
+      syntax: {
+        default: '',
+        renderHTML: () => ({}),
+        parseHTML: element => (element as HTMLElement).getAttribute('data-syntax') ?? '',
       },
     };
   },
@@ -64,7 +76,9 @@ const VariableToken = TiptapNode.create<{
 
     const title = (node.attrs.title as string) || (node.attrs.sourceId as string) || '';
     const displayKey =
-      (node.attrs.key as string) || (node.attrs.sourceId === 'context' ? 'context' : '');
+      (node.attrs.label as string) ||
+      (node.attrs.key as string) ||
+      (node.attrs.sourceId === 'context' ? 'context' : '');
 
     // Adopt Badge secondary style classes for consistent visuals
     const badgeBase =
@@ -83,6 +97,8 @@ const VariableToken = TiptapNode.create<{
       mergeAttributes(HTMLAttributes, {
         'data-token': token,
         'data-title': title,
+        'data-label': node.attrs.label || undefined,
+        'data-syntax': node.attrs.syntax || undefined,
         contenteditable: 'false',
         class: `${badgeBase} ${badgeSecondary} mx-0.5 align-baseline ${node.attrs.invalid ? 'border-destructive' : ''}`,
         'aria-invalid': node.attrs.invalid ? 'true' : undefined,
