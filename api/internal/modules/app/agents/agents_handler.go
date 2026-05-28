@@ -352,7 +352,7 @@ func (h *AgentsHandler) UpdateAgentConfig(c *gin.Context) {
 	ctx := agentRuntimeRequestContext(c, accountID)
 	result, err := h.appService.UpdateAgentConfig(ctx, c.Param("agent_id"), accountID, req)
 	if err != nil {
-		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
+		h.failRuntime(c, err)
 		return
 	}
 	response.Success(c, result)
@@ -465,7 +465,7 @@ func (h *AgentsHandler) PublishAgent(c *gin.Context) {
 	}
 	result, err := h.appService.PublishAgent(ctx, c.Param("agent_id"), accountID, req)
 	if err != nil {
-		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
+		h.failRuntime(c, err)
 		return
 	}
 	response.Success(c, result)
@@ -536,7 +536,11 @@ func (h *AgentsHandler) ChatAgent(c *gin.Context) {
 		return
 	}
 	scope := runtimeservice.Scope{OrganizationID: organizationID, AccountID: accountID, WorkspaceID: &agentWorkspaceID}
-	runConfig := h.agentRunConfig(ctx, scope, agentID.String(), "agent.draft", draft.Config, "account")
+	runConfig, err := h.agentRunConfig(ctx, scope, agentID.String(), "agent.draft", draft.Config, "account")
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
 	prepared, err := h.chatRuntimeService.PrepareConfiguredChat(
 		ctx,
 		scope,
@@ -822,7 +826,11 @@ func (h *AgentsHandler) ChatWebAppAgent(c *gin.Context) {
 		return
 	}
 	scope := runtimeservice.Scope{OrganizationID: organizationID, AccountID: accountID, WorkspaceID: &workspaceID, SkipAccessCheck: true}
-	runConfig := h.agentRunConfig(c.Request.Context(), scope, published.AgentID, "agent.published."+published.Version, published.Config, webAppAgentMemoryUserScope(c))
+	runConfig, err := h.agentRunConfig(c.Request.Context(), scope, published.AgentID, "agent.published."+published.Version, published.Config, webAppAgentMemoryUserScope(c))
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
 	prepared, err := h.chatRuntimeService.PrepareConfiguredChat(
 		c.Request.Context(),
 		scope,

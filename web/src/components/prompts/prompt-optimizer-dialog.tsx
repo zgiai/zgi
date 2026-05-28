@@ -27,6 +27,7 @@ import type {
   PromptOptimizerVariant,
 } from '@/services/types/prompt';
 import { extractPromptVariables } from './prompt-optimizer-template';
+import { stripZGISlotBlocksForPromptOptimization } from '@/components/workflow/common/workflow-value-editor/utils/value-transform';
 import { getPromptRuntimeErrorMessage } from './prompt-runtime-errors';
 import { useWorkspaceStore } from '@/store/workspace-store';
 import { useLocale } from '@/hooks/use-locale';
@@ -88,7 +89,7 @@ export function PromptOptimizerDialog({
 
   useEffect(() => {
     if (!open) return;
-    setSourcePrompt(initialPrompt ?? '');
+    setSourcePrompt(stripZGISlotBlocksForPromptOptimization(initialPrompt ?? ''));
     setGoal(initialGoal ?? 'general');
     setPreserveVariables(initialPreserveVariables ?? true);
     setSelectedModel(initialModel ?? null);

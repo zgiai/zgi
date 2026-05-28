@@ -17,15 +17,78 @@ import (
 var agentPromptVariablePattern = regexp.MustCompile(`(?s)<zgi:(slot|knowledge|skill)\b([^>]*)>(.*?)</zgi:(slot|knowledge|skill)>`)
 var agentPromptVariableAttrPattern = regexp.MustCompile(`([a-zA-Z_][\w-]*)="([^"]*)"`)
 
+const (
+	agentSystemPromptMaxLength    = 16000
+	agentSystemPromptRawMaxLength = 50000
+)
+
 type agentPromptDatasetSummary struct {
 	ID          string
 	Name        string
 	Description string
 }
 
-func (h *AgentsHandler) agentRunConfig(ctx context.Context, scope runtimeservice.Scope, agentID, systemPromptVersion string, cfg dto.AgentConfigResponse, agentMemoryUserScope string) runtimeservice.RunConfig {
+func (h *AgentsHandler) agentRunConfig(ctx context.Context, scope runtimeservice.Scope, agentID, systemPromptVersion string, cfg dto.AgentConfigResponse, agentMemoryUserScope string) (runtimeservice.RunConfig, error) {
 	cfg.SystemPrompt = h.resolveAgentSystemPrompt(ctx, scope, cfg)
-	return agentRunConfig(agentID, systemPromptVersion, cfg, agentMemoryUserScope)
+	if err := validateAgentResolvedSystemPrompt(cfg.SystemPrompt); err != nil {
+		return runtimeservice.RunConfig{}, err
+	}
+	return agentRunConfig(agentID, systemPromptVersion, cfg, agentMemoryUserScope), nil
+}
+
+func validateAgentSystemPromptSource(source string) error {
+	if promptRuneLength(source) > agentSystemPromptRawMaxLength {
+		return fmt.Errorf("%w: serialized prompt exceeds %d characters", errAgentPromptTooLong, agentSystemPromptRawMaxLength)
+	}
+	length := agentPromptEffectiveLength(source)
+	if length > agentSystemPromptMaxLength {
+		return fmt.Errorf("%w: effective prompt length %d exceeds %d characters", errAgentPromptTooLong, length, agentSystemPromptMaxLength)
+	}
+	return nil
+}
+
+func validateAgentResolvedSystemPrompt(source string) error {
+	length := promptRuneLength(source)
+	if length > agentSystemPromptMaxLength {
+		return fmt.Errorf("%w: resolved prompt length %d exceeds %d characters", errAgentPromptTooLong, length, agentSystemPromptMaxLength)
+	}
+	return nil
+}
+
+func agentPromptEffectiveLength(source string) int {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return 0
+	}
+
+	length := 0
+	lastIndex := 0
+	matches := agentPromptVariablePattern.FindAllStringSubmatchIndex(source, -1)
+	for _, match := range matches {
+		if len(match) < 10 {
+			continue
+		}
+		if match[0] > lastIndex {
+			length += promptRuneLength(source[lastIndex:match[0]])
+		}
+		openKind := source[match[2]:match[3]]
+		closeKind := source[match[8]:match[9]]
+		if openKind == closeKind {
+			content := html.UnescapeString(source[match[6]:match[7]])
+			length += promptRuneLength(content)
+		} else {
+			length += promptRuneLength(source[match[0]:match[1]])
+		}
+		lastIndex = match[1]
+	}
+	if lastIndex < len(source) {
+		length += promptRuneLength(source[lastIndex:])
+	}
+	return length
+}
+
+func promptRuneLength(source string) int {
+	return len([]rune(source))
 }
 
 func (h *AgentsHandler) resolveAgentSystemPrompt(ctx context.Context, scope runtimeservice.Scope, cfg dto.AgentConfigResponse) string {

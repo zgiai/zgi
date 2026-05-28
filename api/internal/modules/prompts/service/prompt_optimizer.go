@@ -26,10 +26,13 @@ const (
 )
 
 var promptOptimizerVariablePatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?s)<zgi:(knowledge|skill)\b[^>]*>.*?</zgi:(knowledge|skill)>`),
 	regexp.MustCompile(`\{\{#[^{}]+#\}\}`),
 	regexp.MustCompile(`\{\{[^{}]+\}\}`),
 	regexp.MustCompile(`\$\{[^{}]+\}`),
 }
+
+var promptOptimizerZGITemplateBlockPattern = regexp.MustCompile(`(?s)<zgi:(slot|knowledge|skill)\b([^>]*)>(.*?)</zgi:(slot|knowledge|skill)>`)
 
 func (s *promptService) Optimize(
 	ctx context.Context,
@@ -42,13 +45,17 @@ func (s *promptService) Optimize(
 	if rawPrompt == "" {
 		return nil, fmt.Errorf("raw prompt cannot be empty")
 	}
+	optimizerPrompt := normalizePromptOptimizerInput(rawPrompt)
+	if optimizerPrompt == "" {
+		return nil, fmt.Errorf("raw prompt cannot be empty")
+	}
 	if s == nil || s.llmClient == nil || s.defaultModelSvc == nil {
 		return nil, fmt.Errorf("prompt optimizer is unavailable")
 	}
 
 	goal := normalizePromptOptimizerGoal(req.Goal)
 	preserveVariables := req.PreserveVariables == nil || *req.PreserveVariables
-	detectedVariables := detectPromptOptimizerVariables(rawPrompt)
+	detectedVariables := detectPromptOptimizerVariables(optimizerPrompt)
 	outputLanguage := promptOptimizerOutputLanguage(req.Language)
 
 	promptID, err := s.resolveOptimizerPromptID(ctx, organizationID, accountID, req.PromptID)
@@ -87,7 +94,7 @@ func (s *promptService) Optimize(
 		buildPromptOptimizerChatRequest(
 			resolvedModel,
 			goal,
-			rawPrompt,
+			optimizerPrompt,
 			preserveVariables,
 			detectedVariables,
 			outputLanguage,
@@ -148,13 +155,17 @@ func (s *promptService) OptimizeStream(
 	if rawPrompt == "" {
 		return nil, fmt.Errorf("raw prompt cannot be empty")
 	}
+	optimizerPrompt := normalizePromptOptimizerInput(rawPrompt)
+	if optimizerPrompt == "" {
+		return nil, fmt.Errorf("raw prompt cannot be empty")
+	}
 	if s == nil || s.llmClient == nil || s.defaultModelSvc == nil {
 		return nil, fmt.Errorf("prompt optimizer is unavailable")
 	}
 
 	goal := normalizePromptOptimizerGoal(req.Goal)
 	preserveVariables := req.PreserveVariables == nil || *req.PreserveVariables
-	detectedVariables := detectPromptOptimizerVariables(rawPrompt)
+	detectedVariables := detectPromptOptimizerVariables(optimizerPrompt)
 	outputLanguage := promptOptimizerOutputLanguage(req.Language)
 
 	promptID, err := s.resolveOptimizerPromptID(ctx, organizationID, accountID, req.PromptID)
@@ -238,7 +249,7 @@ func (s *promptService) OptimizeStream(
 		buildPromptOptimizerChatRequest(
 			resolvedModel,
 			goal,
-			rawPrompt,
+			optimizerPrompt,
 			preserveVariables,
 			detectedVariables,
 			outputLanguage,
@@ -387,6 +398,34 @@ func detectPromptOptimizerVariables(rawPrompt string) []string {
 	return variables
 }
 
+func normalizePromptOptimizerInput(rawPrompt string) string {
+	source := strings.TrimSpace(rawPrompt)
+	if source == "" {
+		return ""
+	}
+	normalized := promptOptimizerZGITemplateBlockPattern.ReplaceAllStringFunc(source, func(token string) string {
+		matches := promptOptimizerZGITemplateBlockPattern.FindStringSubmatch(token)
+		if len(matches) < 5 || matches[1] != matches[4] {
+			return token
+		}
+		if matches[1] != "slot" {
+			return token
+		}
+		return decodePromptOptimizerTemplateText(matches[3])
+	})
+	return strings.TrimSpace(normalized)
+}
+
+func decodePromptOptimizerTemplateText(value string) string {
+	return strings.NewReplacer(
+		"&quot;", `"`,
+		"&apos;", "'",
+		"&lt;", "<",
+		"&gt;", ">",
+		"&amp;", "&",
+	).Replace(value)
+}
+
 func promptOptimizerOutputLanguage(language string) string {
 	normalized := strings.ToLower(strings.TrimSpace(language))
 	switch {
@@ -479,7 +518,7 @@ Output requirements:
 2. Preserve the user's original intent and domain. Strengthen clarity, reliability, structure, actionability, constraints, and evaluation criteria.
 3. Use the requested system/interface language for the final optimized prompt when it is provided. If no requested system/interface language is provided, match the primary language of the user's original prompt.
 4. If the original prompt is for a system prompt, agent instruction, workflow node, RAG answer, classifier, extraction task, JSON generation, code task, email, support reply, or other specific scenario, preserve that scenario and optimize for it.
-5. If variables or placeholders are detected and variable preservation is enabled, preserve them exactly. Do not translate, remove, rename, reorder, or change their bracket syntax.
+5. If variables or placeholders are detected and variable preservation is enabled, preserve every detected variable token exactly as an opaque literal. Do not translate, remove, rename, reorder, escape, split, wrap, or change its syntax. This includes ZGI capability references such as <zgi:knowledge ...>...</zgi:knowledge> and <zgi:skill ...>...</zgi:skill>.
 6. The final prompt should usually contain a strong expert role, useful background/context, a concrete task list, output requirements, constraints/guardrails, and example requirements. For very short original prompts, enrich them with reasonable missing context instead of merely rephrasing them.
 7. Do not output a meta-prompt asking another model to optimize the prompt. Output the optimized prompt that should be used directly.`
 }
@@ -545,6 +584,12 @@ Preserve variables:
 Detected variables:
 %s
 
+Variable preservation rules:
+- If Preserve variables is true, copy every detected variable exactly as listed.
+- Treat detected variables as immutable opaque tokens, not natural language.
+- Do not alter XML-like ZGI tags, attributes, labels, brackets, braces, punctuation, or casing.
+- The original prompt has already had editable slot wrappers removed; do not invent or reintroduce slot wrapper syntax.
+
 Original user prompt:
 %s`, languageInstruction, goalDescription, variableMode, variableList, rawPrompt)
 	}
@@ -564,6 +609,12 @@ Preserve variables:
 
 Detected variables:
 %s
+
+Variable preservation rules:
+- If Preserve variables is true, copy every detected variable exactly as listed.
+- Treat detected variables as immutable opaque tokens, not natural language.
+- Do not alter XML-like ZGI tags, attributes, labels, brackets, braces, punctuation, or casing.
+- The original prompt has already had editable slot wrappers removed; do not invent or reintroduce slot wrapper syntax.
 
 Original user prompt:
 %s`, languageInstruction, goalDescription, variableMode, variableList, rawPrompt)

@@ -125,6 +125,10 @@
     animation: zgi-template-slot-caret-blink 1s steps(2, start) infinite;
   }
 
+  .zgi-template-slot-placeholder-active + .ProseMirror-trailingBreak {
+    display: none;
+  }
+
   @keyframes zgi-template-slot-caret-blink {
     0%,
     45% {

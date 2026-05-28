@@ -21,6 +21,7 @@ import { useLocale } from '@/hooks/use-locale';
 import { useAutoProfile } from '@/hooks/use-profile';
 import { useT } from '@/i18n';
 import agentService from '@/services/agent.service';
+import { getTemplateAwareCharacterCount } from '@/components/workflow/common/workflow-value-editor/utils/value-transform';
 import type {
   AgentMemorySlotConfig,
   AgentRuntimeConfig,
@@ -34,6 +35,7 @@ import { toModelParams, validateAgentMemorySlots } from '../utils';
 import { useAgentRuntimeDraftPersistence } from '../use-agent-runtime-draft-persistence';
 import { useAgentRuntimeLeaveGuard } from '../use-agent-runtime-leave-guard';
 import { AgentHomeBrand, getAgentRuntimeSaveText, type VersionPreviewBackup } from './page-model-utils';
+import { AGENT_SYSTEM_PROMPT_MAX_LENGTH } from '../prompt-limits';
 
 export function useAgentRuntimePageModel(agentId: string) {
   const queryClient = useQueryClient();
@@ -185,6 +187,11 @@ export function useAgentRuntimePageModel(agentId: string) {
   );
   const hasAgentMemorySlotErrors =
     agentMemoryEnabled && agentMemorySlotValidationErrors.some(Boolean);
+  const systemPromptEffectiveLength = useMemo(
+    () => getTemplateAwareCharacterCount(systemPrompt, { templateBlocksEnabled: true }),
+    [systemPrompt]
+  );
+  const isSystemPromptTooLong = systemPromptEffectiveLength > AGENT_SYSTEM_PROMPT_MAX_LENGTH;
 
   const modelSelectorValue = useMemo(
     () => ({
@@ -352,7 +359,7 @@ export function useAgentRuntimePageModel(agentId: string) {
   } = useAgentRuntimeDraftPersistence({
     currentPayload,
     enabled: !isVersionPreviewing,
-    canSave: () => !hasAgentMemorySlotErrors,
+    canSave: () => !hasAgentMemorySlotErrors && !isSystemPromptTooLong,
     savePayload: saveRuntimePayload,
     onSaveCommitted: result => {
       setAgentMemorySlots(result.savedPayload.agent_memory_slots ?? []);
@@ -565,30 +572,48 @@ export function useAgentRuntimePageModel(agentId: string) {
       toast.error(t('toasts.fixMemorySlotsBeforeSave'));
       return;
     }
+    if (isSystemPromptTooLong) {
+      toast.error(
+        t('toasts.systemPromptTooLongBeforeSave', { limit: AGENT_SYSTEM_PROMPT_MAX_LENGTH })
+      );
+      return;
+    }
     const saved = await saveNow({ silent: false, force: true });
     if (saved) {
       toast.success(t('toasts.saveSuccess'));
     }
-  }, [hasAgentMemorySlotErrors, saveNow, t]);
+  }, [hasAgentMemorySlotErrors, isSystemPromptTooLong, saveNow, t]);
 
   const handlePublish = useCallback(async () => {
     if (hasAgentMemorySlotErrors) {
       toast.error(t('toasts.fixMemorySlotsBeforePublish'));
       return;
     }
+    if (isSystemPromptTooLong) {
+      toast.error(
+        t('toasts.systemPromptTooLongBeforePublish', { limit: AGENT_SYSTEM_PROMPT_MAX_LENGTH })
+      );
+      return;
+    }
     const saved = await saveNow({ silent: true, force: true });
     if (saved) {
       publishAgent.mutate({ agentId });
     }
-  }, [agentId, hasAgentMemorySlotErrors, publishAgent, saveNow, t]);
+  }, [agentId, hasAgentMemorySlotErrors, isSystemPromptTooLong, publishAgent, saveNow, t]);
 
   const handleSaveBeforeLeave = useCallback(() => {
     if (hasAgentMemorySlotErrors) {
       toast.error(t('toasts.fixMemorySlotsBeforeSave'));
       return Promise.resolve(false);
     }
+    if (isSystemPromptTooLong) {
+      toast.error(
+        t('toasts.systemPromptTooLongBeforeSave', { limit: AGENT_SYSTEM_PROMPT_MAX_LENGTH })
+      );
+      return Promise.resolve(false);
+    }
     return saveNow({ silent: false, force: true });
-  }, [hasAgentMemorySlotErrors, saveNow, t]);
+  }, [hasAgentMemorySlotErrors, isSystemPromptTooLong, saveNow, t]);
 
   const leaveGuardNode = useAgentRuntimeLeaveGuard({
     enabled: !isVersionPreviewing,

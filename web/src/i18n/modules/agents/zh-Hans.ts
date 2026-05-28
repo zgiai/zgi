@@ -1301,6 +1301,8 @@ const messages: AgentsMessages = {
       finishVersionPreviewFirst: '请先确认或取消版本预览',
       fixMemorySlotsBeforeSave: '请先修正记忆条目 Key 后再保存。',
       fixMemorySlotsBeforePublish: '请先修正记忆条目 Key 后再发布。',
+      systemPromptTooLongBeforeSave: '请先将系统提示词缩短到 {limit} 字以内再保存。',
+      systemPromptTooLongBeforePublish: '请先将系统提示词缩短到 {limit} 字以内再发布。',
     },
     leaveGuard: {
       title: '离开前保存更改？',
@@ -1342,6 +1344,12 @@ const messages: AgentsMessages = {
       insertCapability: '插入能力',
       insertRule: '插入规则',
       usePromptTemplate: '使用提示词模板',
+      length: {
+        counter: '{count}/{max}',
+        recommended: '建议控制在 {limit} 字以内，便于模型更稳定地遵循指令。',
+        warning: '系统提示词较长（{count} 字），可能增加成本并降低指令稳定性。',
+        exceeded: '系统提示词超过 {limit} 字限制（当前 {count} 字），请缩短后再保存或发布。',
+      },
       variables: {
         groupTitle: '智能体能力',
         knowledge: '知识库',

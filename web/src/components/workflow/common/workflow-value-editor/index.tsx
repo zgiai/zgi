@@ -204,6 +204,8 @@ export interface WorkflowValueEditorProps {
   // Optional character counter. It is display-only; validation remains with the caller.
   showCharacterCount?: boolean;
   maxLength?: number;
+  characterCount?: number;
+  characterCountWarningThreshold?: number;
   characterCountFormatter?: (count: number, maxLength: number) => React.ReactNode;
   // Enables ZGI prompt template blocks such as <zgi:slot>, <zgi:knowledge>, and <zgi:skill>.
   templateBlocksEnabled?: boolean;
@@ -243,6 +245,8 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
       portalRoot,
       showCharacterCount = false,
       maxLength,
+      characterCount: characterCountOverride,
+      characterCountWarningThreshold,
       characterCountFormatter,
       templateBlocksEnabled = false,
     },
@@ -256,9 +260,16 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
     const graphVersion = useWorkflowStore.use.graphVersion();
     const t = useT();
     const shouldShowCharacterCount = showCharacterCount && typeof maxLength === 'number';
-    const characterCount = shouldShowCharacterCount ? Array.from(value || '').length : 0;
+    const characterCount = shouldShowCharacterCount
+      ? characterCountOverride ?? Array.from(value || '').length
+      : 0;
     const isCharacterCountExceeded =
       shouldShowCharacterCount && characterCount > (maxLength as number);
+    const isCharacterCountWarning =
+      shouldShowCharacterCount &&
+      !isCharacterCountExceeded &&
+      typeof characterCountWarningThreshold === 'number' &&
+      characterCount > characterCountWarningThreshold;
 
     // Helper to resolve description from descriptionKey
     const resolveDescription = useCallback(
@@ -1202,38 +1213,42 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
 
     return (
       <div className={cn('space-y-0.5', className)}>
-        <div
-          ref={wrapperRef}
-          className={cn(
-            'relative w-full min-w-0 overflow-x-hidden overflow-y-auto rounded-sm border bg-background px-2.5 py-1.5 text-sm ring-offset-background focus-within:outline-none flex flex-col',
-            readOnly ? 'cursor-default' : 'cursor-text',
-            shouldShowCharacterCount && 'pb-6',
-            editorClassName,
-            isCharacterCountExceeded &&
-              'border-destructive/70 focus-within:border-destructive focus-within:ring-1 focus-within:ring-destructive/20'
-          )}
-          onClick={() => {
-            if (!readOnly) {
-              editor?.view?.focus();
-            }
-          }}
-          onBlur={() => {
-            const root = wrapperRef.current;
-            setTimeout(() => {
-              const next = document.activeElement as HTMLElement | null;
-              const suggest = document.querySelector('div[data-wf-suggest="open"]');
-              const inSuggest = !!(suggest && next && suggest.contains(next));
-              if (!inSuggest && root && (!next || !root.contains(next))) {
-                closeSuggest();
+        <div className="relative h-full min-h-0">
+          <div
+            ref={wrapperRef}
+            className={cn(
+              'relative w-full min-w-0 overflow-x-hidden overflow-y-auto rounded-sm border bg-background px-2.5 py-1.5 text-sm ring-offset-background focus-within:outline-none flex flex-col',
+              readOnly ? 'cursor-default' : 'cursor-text',
+              shouldShowCharacterCount && 'pb-6',
+              editorClassName,
+              isCharacterCountExceeded &&
+                'border-destructive/70 focus-within:border-destructive focus-within:ring-1 focus-within:ring-destructive/20'
+            )}
+            onClick={() => {
+              if (!readOnly) {
+                editor?.view?.focus();
               }
-            }, 100);
-          }}
-        >
-          <EditorContent editor={editor} className="min-h-[1.5em] min-w-0" />
+            }}
+            onBlur={() => {
+              const root = wrapperRef.current;
+              setTimeout(() => {
+                const next = document.activeElement as HTMLElement | null;
+                const suggest = document.querySelector('div[data-wf-suggest="open"]');
+                const inSuggest = !!(suggest && next && suggest.contains(next));
+                if (!inSuggest && root && (!next || !root.contains(next))) {
+                  closeSuggest();
+                }
+              }, 100);
+            }}
+          >
+            <EditorContent editor={editor} className="min-h-[1.5em] min-w-0" />
+          </div>
+
           {shouldShowCharacterCount ? (
             <div
               className={cn(
                 'pointer-events-none absolute bottom-1.5 right-2.5 rounded-sm bg-background/90 px-1 text-[11px] leading-4 text-muted-foreground shadow-sm',
+                isCharacterCountWarning && 'text-amber-600',
                 isCharacterCountExceeded && 'text-destructive'
               )}
             >

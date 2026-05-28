@@ -185,6 +185,11 @@ func (h *AgentsHandler) agentRuntimeContext(c *gin.Context) (agentRuntimeContext
 		return agentRuntimeContext{}, false
 	}
 	scope := runtimeservice.Scope{OrganizationID: organizationID, AccountID: accountID, WorkspaceID: &agentWorkspaceID}
+	runConfig, err := h.agentRunConfig(ctx, scope, agentID.String(), "agent.draft", draft.Config, "account")
+	if err != nil {
+		h.failRuntime(c, err)
+		return agentRuntimeContext{}, false
+	}
 	return agentRuntimeContext{
 		Scope: scope,
 		Caller: runtimeservice.Caller{
@@ -192,7 +197,7 @@ func (h *AgentsHandler) agentRuntimeContext(c *gin.Context) (agentRuntimeContext
 			ID:     &agentID,
 			Source: runtimemodel.ConversationSourceConsole,
 		},
-		RunConfig: h.agentRunConfig(ctx, scope, agentID.String(), "agent.draft", draft.Config, "account"),
+		RunConfig: runConfig,
 	}, true
 }
 
@@ -237,6 +242,11 @@ func (h *AgentsHandler) webAppAgentRuntimeContext(c *gin.Context) (agentRuntimeC
 		WorkspaceID:     &workspaceID,
 		SkipAccessCheck: true,
 	}
+	runConfig, err := h.agentRunConfig(c.Request.Context(), scope, published.AgentID, "agent.published."+published.Version, published.Config, webAppAgentMemoryUserScope(c))
+	if err != nil {
+		h.failRuntime(c, err)
+		return agentRuntimeContext{}, false
+	}
 	return agentRuntimeContext{
 		Scope: scope,
 		Caller: runtimeservice.Caller{
@@ -245,7 +255,7 @@ func (h *AgentsHandler) webAppAgentRuntimeContext(c *gin.Context) (agentRuntimeC
 			Source:         runtimemodel.ConversationSourceWebApp,
 			SourceWebAppID: &webAppID,
 		},
-		RunConfig: h.agentRunConfig(c.Request.Context(), scope, published.AgentID, "agent.published."+published.Version, published.Config, webAppAgentMemoryUserScope(c)),
+		RunConfig: runConfig,
 	}, true
 }
 
@@ -595,6 +605,8 @@ func (h *AgentsHandler) failRuntime(c *gin.Context, err error) {
 		response.Fail(c, response.ErrWebAppOffline)
 	case errors.Is(err, errAgentWebAppNotPublished):
 		response.Fail(c, response.ErrWebAppNotPublished)
+	case errors.Is(err, errAgentPromptTooLong):
+		response.Fail(c, response.ErrAgentPromptTooLong)
 	default:
 		logger.ErrorContext(c.Request.Context(), "agent runtime request failed", err)
 		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})

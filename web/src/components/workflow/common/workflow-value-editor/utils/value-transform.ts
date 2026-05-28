@@ -33,6 +33,10 @@ function encodeTemplateAttribute(value: string): string {
   return encodeTemplateText(value).replace(/"/g, '&quot;');
 }
 
+function characterLength(value: string): number {
+  return Array.from(value).length;
+}
+
 function parseZGIAttributes(input: string): Record<string, string> {
   const attrs: Record<string, string> = {};
   input.replace(ZGI_ATTR_REGEX, (_match, key: string, rawValue: string) => {
@@ -159,6 +163,63 @@ export function valueToDoc(value: string, options?: ValueTransformOptions): JSON
   const docContent = paragraphs.length > 0 ? paragraphs : [{ type: 'paragraph' }];
 
   return { type: 'doc', content: docContent } as JSONContent;
+}
+
+export function getTemplateAwareCharacterCount(
+  value: string,
+  options?: ValueTransformOptions
+): number {
+  const source = String(value ?? '');
+  if (!options?.templateBlocksEnabled) {
+    return characterLength(source);
+  }
+
+  let count = 0;
+  let lastIndex = 0;
+  ZGI_BLOCK_REGEX_GLOBAL.lastIndex = 0;
+  source.replace(ZGI_BLOCK_REGEX_GLOBAL, (...args: unknown[]) => {
+    const match = String(args[0] ?? '');
+    const offset = Number(args[args.length - 2] ?? 0);
+    if (offset > lastIndex) {
+      count += characterLength(source.slice(lastIndex, offset));
+    }
+
+    const kind = String(args[1] ?? '');
+    const rawContent = String(args[3] ?? '');
+    const closingKind = String(args[4] ?? '');
+    if (kind !== closingKind) {
+      count += characterLength(match);
+    } else if (kind === 'slot' || kind === 'knowledge' || kind === 'skill') {
+      count += characterLength(decodeTemplateText(rawContent));
+    } else {
+      count += characterLength(match);
+    }
+
+    lastIndex = offset + match.length;
+    return match;
+  });
+
+  if (lastIndex < source.length) {
+    count += characterLength(source.slice(lastIndex));
+  }
+  return count;
+}
+
+export function stripZGISlotBlocksForPromptOptimization(value: string): string {
+  const source = String(value ?? '');
+  ZGI_BLOCK_REGEX_GLOBAL.lastIndex = 0;
+  return source.replace(ZGI_BLOCK_REGEX_GLOBAL, (...args: unknown[]) => {
+    const match = String(args[0] ?? '');
+    const kind = String(args[1] ?? '');
+    const rawContent = String(args[3] ?? '');
+    const closingKind = String(args[4] ?? '');
+
+    if (kind === 'slot' && closingKind === 'slot') {
+      return decodeTemplateText(rawContent);
+    }
+
+    return match;
+  });
 }
 
 // Convert TipTap JSONContent back to string value with tokens

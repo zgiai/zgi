@@ -167,7 +167,7 @@ const TemplateSlot = Mark.create<{
               placeholder: range.mark.attrs.placeholder,
             });
             const tr = state.tr.replaceWith(range.from, range.to, placeholderNode);
-            tr.setSelection(TextSelection.create(tr.doc, range.from + placeholderNode.nodeSize));
+            tr.setSelection(TextSelection.create(tr.doc, range.from));
             view.dispatch(tr.scrollIntoView());
             return true;
           },

@@ -1381,6 +1381,9 @@ const messages = {
       finishVersionPreviewFirst: 'Confirm or cancel version preview first',
       fixMemorySlotsBeforeSave: 'Fix memory item keys before saving.',
       fixMemorySlotsBeforePublish: 'Fix memory item keys before publishing.',
+      systemPromptTooLongBeforeSave: 'Shorten the system prompt to {limit} characters or less before saving.',
+      systemPromptTooLongBeforePublish:
+        'Shorten the system prompt to {limit} characters or less before publishing.',
     },
     leaveGuard: {
       title: 'Save changes before leaving?',
@@ -1423,6 +1426,15 @@ const messages = {
       insertCapability: 'Insert capability',
       insertRule: 'Insert rule',
       usePromptTemplate: 'Use prompt template',
+      length: {
+        counter: '{count}/{max}',
+        recommended:
+          'Recommended length is within {limit} characters so the model can follow the instructions more consistently.',
+        warning:
+          'The system prompt is long ({count} characters). It may increase cost and reduce instruction stability.',
+        exceeded:
+          'The system prompt exceeds the {limit} character limit ({count}). Shorten it before saving or publishing.',
+      },
       variables: {
         groupTitle: 'Agent capabilities',
         knowledge: 'Knowledge',

@@ -6,6 +6,7 @@ import WorkflowValueEditor, {
   type VarOption,
   type WorkflowValueEditorHandle,
 } from '@/components/workflow/common/workflow-value-editor';
+import { getTemplateAwareCharacterCount } from '@/components/workflow/common/workflow-value-editor/utils/value-transform';
 import { getAIChatSkillDisplayInfo } from '@/components/chat/variants/aichat/skill-display';
 import { Button } from '@/components/ui/button';
 import {
@@ -30,6 +31,11 @@ import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type { AIChatSkillMetadata } from '@/services/types/aichat';
 import type { Dataset } from '@/services/types/dataset';
+import {
+  AGENT_SYSTEM_PROMPT_MAX_LENGTH,
+  AGENT_SYSTEM_PROMPT_RECOMMENDED_LENGTH,
+  AGENT_SYSTEM_PROMPT_WARNING_LENGTH,
+} from './prompt-limits';
 
 interface AgentRuntimePromptPanelProps {
   systemPrompt: string;
@@ -78,6 +84,7 @@ export function AgentRuntimePromptPanel({
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
   const [selectedTemplateKey, setSelectedTemplateKey] =
     useState<PromptTemplateKey>('knowledgeQa');
+  const isPromptEmpty = !systemPrompt.trim();
 
   const skillDisplays = useMemo(
     () =>
@@ -146,7 +153,27 @@ export function AgentRuntimePromptPanel({
     [t]
   );
 
-  const isPromptEmpty = !systemPrompt.trim();
+  const promptEffectiveLength = useMemo(
+    () => getTemplateAwareCharacterCount(systemPrompt, { templateBlocksEnabled: true }),
+    [systemPrompt]
+  );
+  const promptLengthMessage =
+    promptEffectiveLength > AGENT_SYSTEM_PROMPT_MAX_LENGTH
+      ? t('prompt.length.exceeded', {
+          count: promptEffectiveLength,
+          limit: AGENT_SYSTEM_PROMPT_MAX_LENGTH,
+        })
+      : promptEffectiveLength > AGENT_SYSTEM_PROMPT_WARNING_LENGTH
+        ? t('prompt.length.warning', {
+            count: promptEffectiveLength,
+            limit: AGENT_SYSTEM_PROMPT_WARNING_LENGTH,
+          })
+        : promptEffectiveLength > AGENT_SYSTEM_PROMPT_RECOMMENDED_LENGTH
+          ? t('prompt.length.recommended', {
+              count: promptEffectiveLength,
+              limit: AGENT_SYSTEM_PROMPT_RECOMMENDED_LENGTH,
+            })
+          : '';
   const selectedTemplate =
     promptTemplates.find(template => template.key === selectedTemplateKey) ?? promptTemplates[0];
 
@@ -240,36 +267,8 @@ export function AgentRuntimePromptPanel({
           </Button>
         </div>
       </div>
-      <div className="min-h-0 flex-1 px-5 pb-5 pt-2">
+      <div className="min-h-0 flex-1 pb-5 pl-5 pt-2">
         <div className="flex h-full min-h-0 flex-col gap-3">
-          {isPromptEmpty ? (
-            <div className="shrink-0 rounded-md border border-dashed bg-muted/20 p-3">
-              <div className="mb-3">
-                <div className="text-sm font-semibold">{t('prompt.templatePicker.title')}</div>
-                <div className="mt-1 text-xs text-muted-foreground">
-                  {t('prompt.templatePicker.description')}
-                </div>
-              </div>
-              <div className="grid gap-2 sm:grid-cols-2">
-                {promptTemplates.map(template => (
-                  <button
-                    key={template.key}
-                    type="button"
-                    className="rounded-md border bg-background p-3 text-left transition-colors hover:border-primary/50 hover:bg-accent focus-ring"
-                    onClick={() => openTemplateDialog(template.key)}
-                  >
-                    <div className="flex items-center gap-2 text-sm font-medium">
-                      <FileText className="size-4 text-primary" />
-                      <span className="truncate">{template.title}</span>
-                    </div>
-                    <div className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
-                      {template.description}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : null}
           <WorkflowValueEditor
             ref={editorRef}
             value={systemPrompt}
@@ -278,11 +277,26 @@ export function AgentRuntimePromptPanel({
             emptyBlockPlaceholder={t('prompt.emptyBlockPlaceholder')}
             extraSuggestGroups={capabilityGroups}
             showCharacterCount
-            maxLength={20000}
+            maxLength={AGENT_SYSTEM_PROMPT_MAX_LENGTH}
+            characterCount={promptEffectiveLength}
+            characterCountWarningThreshold={AGENT_SYSTEM_PROMPT_WARNING_LENGTH}
+            characterCountFormatter={(count, max) => t('prompt.length.counter', { count, max })}
             templateBlocksEnabled
             className="min-h-0 flex-1"
-            editorClassName="h-full min-h-full rounded-none border-0 bg-transparent px-0 py-0 shadow-none focus-within:ring-0 [&_.ProseMirror]:min-h-full [&_.ProseMirror]:px-0 [&_.ProseMirror]:py-0 [&_.ProseMirror]:text-sm [&_.ProseMirror]:leading-6"
+            editorClassName="h-full min-h-full rounded-none border-0 bg-transparent px-0 py-0 shadow-none focus-within:ring-0 [&_.ProseMirror]:min-h-full [&_.ProseMirror]:pl-0 [&_.ProseMirror]:pr-5 [&_.ProseMirror]:py-0 [&_.ProseMirror]:text-sm [&_.ProseMirror]:leading-6"
           />
+          {promptLengthMessage ? (
+            <div
+              className={cn(
+                'mr-5 shrink-0 rounded-md px-3 py-2 text-xs leading-5',
+                promptEffectiveLength > AGENT_SYSTEM_PROMPT_MAX_LENGTH
+                  ? 'bg-destructive/10 text-destructive'
+                  : 'bg-amber-500/10 text-amber-700'
+              )}
+            >
+              {promptLengthMessage}
+            </div>
+          ) : null}
         </div>
       </div>
       <Dialog open={templateDialogOpen} onOpenChange={setTemplateDialogOpen}>

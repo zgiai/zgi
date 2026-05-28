@@ -90,7 +90,7 @@ const TemplateSlotPlaceholder = TiptapNode.create<{
             if (!selection.empty) return DecorationSet.empty;
 
             const placeholder = findTemplateSlotPlaceholderAround(doc, selection.from, this.name);
-            if (!placeholder || selection.from !== placeholder.to) {
+            if (!placeholder || selection.from !== placeholder.from) {
               return DecorationSet.empty;
             }
 
@@ -108,7 +108,7 @@ const TemplateSlotPlaceholder = TiptapNode.create<{
 
             view.dispatch(
               view.state.tr
-                .setSelection(TextSelection.create(view.state.doc, placeholder.to))
+                .setSelection(TextSelection.create(view.state.doc, placeholder.from))
                 .scrollIntoView()
             );
             view.focus();
@@ -119,7 +119,7 @@ const TemplateSlotPlaceholder = TiptapNode.create<{
             if (!text) return false;
 
             const placeholder = findTemplateSlotPlaceholderAround(view.state.doc, from, this.name);
-            if (!placeholder || from !== placeholder.to) return false;
+            if (!placeholder || (from !== placeholder.from && from !== placeholder.to)) return false;
 
             const mark = view.state.schema.marks.templateSlot.create({
               name: placeholder.node.attrs.name,
@@ -145,9 +145,15 @@ const TemplateSlotPlaceholder = TiptapNode.create<{
 
             const isDeleteBefore =
               event.key === 'Delete' && selection.from === placeholder.from;
+            const isBackspaceBefore =
+              event.key === 'Backspace' && selection.from === placeholder.from;
             const isBackspaceAfter =
               event.key === 'Backspace' && selection.from === placeholder.to;
-            if (!isDeleteBefore && !isBackspaceAfter) return false;
+            const isDeleteAfter =
+              event.key === 'Delete' && selection.from === placeholder.to;
+            if (!isDeleteBefore && !isBackspaceBefore && !isBackspaceAfter && !isDeleteAfter) {
+              return false;
+            }
 
             event.preventDefault();
             const tr = state.tr.delete(placeholder.from, placeholder.to);
