@@ -48,30 +48,48 @@ const SelectContent = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof SelectPrimitive.Content> & {
     container?: HTMLElement | null;
   }
->(({ className, children, position = 'popper', container, ...props }, ref) => (
-  <SelectPrimitive.Portal container={container ?? undefined}>
-    <SelectPrimitive.Content
-      ref={ref}
-      className={cn(
-        'relative z-50 min-w-[8rem] max-h-[400px] overflow-y-auto rounded-md border bg-popover text-popover-foreground shadow-md animate-in fade-in-80 p-1',
-        position === 'popper' && 'translate-y-1',
-        className
-      )}
-      position={position}
-      data-select-content
-      {...props}
-    >
-      <SelectPrimitive.Viewport
+>(
+  (
+    {
+      className,
+      children,
+      position = 'popper',
+      container,
+      collisionPadding = 12,
+      sideOffset = 4,
+      sticky = 'partial',
+      ...props
+    },
+    ref
+  ) => (
+    <SelectPrimitive.Portal container={container ?? undefined}>
+      <SelectPrimitive.Content
+        ref={ref}
         className={cn(
+          'relative z-50 min-w-[8rem] max-h-[min(400px,var(--radix-select-content-available-height,calc(100dvh-16px)))] overflow-y-auto rounded-md border bg-popover text-popover-foreground shadow-md animate-in fade-in-80 p-1',
           position === 'popper' &&
-            'h-[var(--radix-select-trigger-height)] w-full min-w-[var(--radix-select-trigger-width)]'
+            'data-[side=bottom]:translate-y-1 data-[side=left]:-translate-x-1 data-[side=right]:translate-x-1 data-[side=top]:-translate-y-1',
+          className
         )}
+        position={position}
+        collisionPadding={collisionPadding}
+        sideOffset={sideOffset}
+        sticky={sticky}
+        data-select-content
+        {...props}
       >
-        {children}
-      </SelectPrimitive.Viewport>
-    </SelectPrimitive.Content>
-  </SelectPrimitive.Portal>
-));
+        <SelectPrimitive.Viewport
+          className={cn(
+            position === 'popper' &&
+              'h-[var(--radix-select-trigger-height)] w-full min-w-[var(--radix-select-trigger-width)]'
+          )}
+        >
+          {children}
+        </SelectPrimitive.Viewport>
+      </SelectPrimitive.Content>
+    </SelectPrimitive.Portal>
+  )
+);
 SelectContent.displayName = SelectPrimitive.Content.displayName;
 
 const SelectLabel = React.forwardRef<
