@@ -1479,6 +1479,8 @@ const messages: AgentsMessages = {
       done: '完成',
       idLabel: 'ID：{id}',
       noDescription: '暂无描述',
+      loadFailedName: '知识库不可用',
+      loadFailedDescription: '知识库详情加载失败，关联关系已保留，请检查权限或知识库是否仍可用。',
     },
     suggestions: {
       generate: '生成',

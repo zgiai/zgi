@@ -1,6 +1,6 @@
 'use client';
 
-import { Database, Plus, Trash2 } from 'lucide-react';
+import { AlertCircle, Database, Plus, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -9,10 +9,12 @@ import type { Dataset } from '@/services/types/dataset';
 import { RuntimeSection } from '../runtime-section';
 import type { AgentConfigSection } from '../types';
 
+type AgentKnowledgeDataset = Dataset & { load_error?: boolean };
+
 interface AgentRuntimeKnowledgeSectionProps {
   open: boolean;
   isDatasetsLoading: boolean;
-  selectedKnowledgeDatasets: Dataset[];
+  selectedKnowledgeDatasets: AgentKnowledgeDataset[];
   selectedKnowledgeDatasetIds: string[];
   onToggleSection: (section: AgentConfigSection) => void;
   onOpenKnowledgeDialog: () => void;
@@ -68,14 +70,23 @@ export function AgentRuntimeKnowledgeSection({
       ) : (
         <div className="space-y-2">
           {selectedKnowledgeDatasets.map(dataset => (
-            <div key={dataset.id} className="flex items-start gap-3 rounded-md border bg-background p-3">
+            <div
+              key={dataset.id}
+              className="flex items-start gap-3 rounded-md border bg-background p-3"
+            >
               <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border bg-muted text-primary">
-                <Database className="size-4" />
+                {dataset.load_error ? (
+                  <AlertCircle className="size-4 text-destructive" />
+                ) : (
+                  <Database className="size-4" />
+                )}
               </div>
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium">{dataset.name}</div>
                 <div className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
-                  {dataset.description || t('knowledge.noDescription')}
+                  {dataset.load_error
+                    ? t('knowledge.loadFailedDescription')
+                    : dataset.description || t('knowledge.noDescription')}
                 </div>
                 <div className="mt-2 text-[11px] text-muted-foreground/70">
                   {t('knowledge.idLabel', { id: dataset.id })}

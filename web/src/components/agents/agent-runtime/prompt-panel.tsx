@@ -37,10 +37,12 @@ import {
   AGENT_SYSTEM_PROMPT_WARNING_LENGTH,
 } from './prompt-limits';
 
+type AgentKnowledgeDataset = Dataset & { load_error?: boolean };
+
 interface AgentRuntimePromptPanelProps {
   systemPrompt: string;
   className?: string;
-  selectedKnowledgeDatasets: Dataset[];
+  selectedKnowledgeDatasets: AgentKnowledgeDataset[];
   selectedSkills: AIChatSkillMetadata[];
   onChangeSystemPrompt: (value: string) => void;
   onOpenOptimizer: () => void;
@@ -115,10 +117,13 @@ export function AgentRuntimePromptPanel({
         sourceId: 'knowledge',
         sourceTitle: t('prompt.variables.knowledge'),
         key: dataset.id,
-        label: dataset.name || dataset.id,
+        label: dataset.name || t('knowledge.loadFailedName'),
         type: 'object',
         showType: false,
-        description: dataset.description || dataset.id,
+        description: dataset.load_error
+          ? t('knowledge.loadFailedDescription')
+          : dataset.description || dataset.id,
+        invalid: dataset.load_error,
       })),
     [selectedKnowledgeDatasets, t]
   );

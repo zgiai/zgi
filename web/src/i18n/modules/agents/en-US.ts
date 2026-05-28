@@ -1567,6 +1567,9 @@ const messages = {
       done: 'Done',
       idLabel: 'ID: {id}',
       noDescription: 'No description',
+      loadFailedName: 'Unavailable knowledge',
+      loadFailedDescription:
+        'Failed to load this knowledge base. The link is kept, but please verify permissions or availability.',
     },
     suggestions: {
       generate: 'Generate',

@@ -223,6 +223,7 @@ export interface VarOption {
   hasChildren?: boolean;
   label?: string;
   showType?: boolean;
+  invalid?: boolean;
 }
 
 const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueEditorProps>(
@@ -573,12 +574,13 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
     }, [idToTitle]);
 
     const extraTokenLabels = useMemo(() => {
-      const map = new Map<string, { label: string; title: string }>();
+      const map = new Map<string, { label: string; title: string; invalid?: boolean }>();
       if (Array.isArray(extraSuggestItems)) {
         for (const item of extraSuggestItems) {
           map.set(`${item.sourceId}\0${item.key}`, {
             label: item.label || item.key || item.sourceTitle,
             title: item.sourceTitle || item.sourceId,
+            invalid: item.invalid,
           });
         }
       }
@@ -588,6 +590,7 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
             map.set(`${item.sourceId}\0${item.key}`, {
               label: item.label || item.key || item.sourceTitle,
               title: item.sourceTitle || item.sourceId,
+              invalid: item.invalid,
             });
           }
         }
@@ -1059,7 +1062,7 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
             const shouldMarkInvalid = Boolean(
               sid &&
                 (isExtraSource
-                  ? !extraLabel
+                  ? !extraLabel || extraLabel.invalid
                   : !allowedSpecial.has(sid) && upstreamSet
                     ? !upstreamSet.has(sid)
                     : false)

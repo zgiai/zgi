@@ -38,6 +38,53 @@ import { useAgentRuntimeLeaveGuard } from '../use-agent-runtime-leave-guard';
 import { AgentHomeBrand, getAgentRuntimeSaveText, type VersionPreviewBackup } from './page-model-utils';
 import { AGENT_SYSTEM_PROMPT_MAX_LENGTH } from '../prompt-limits';
 
+type AgentKnowledgeDataset = Dataset & { load_error?: boolean };
+
+function createAgentKnowledgeDatasetFallback(
+  id: string,
+  name: string,
+  description: string,
+  loadError: boolean
+): AgentKnowledgeDataset {
+  return {
+    id,
+    name,
+    description,
+    provider: '',
+    data_source_type: '',
+    indexing_technique: '',
+    word_count: 0,
+    created_by: '',
+    created_at: '',
+    updated_by: null,
+    updated_at: '',
+    embedding_model: '',
+    embedding_model_provider: '',
+    embedding_available: false,
+    retrieval_config: {
+      search_method: 'semantic_search',
+      reranking_enable: false,
+      top_k: 0,
+      score_threshold_enabled: false,
+      score_threshold: 0,
+    },
+    tags: null,
+    icon: '',
+    icon_type: 'text',
+    icon_background: '',
+    app_count: 0,
+    document_count: 0,
+    available_document_count: 0,
+    available_segment_count: 0,
+    collection_binding_id: null,
+    owner: null,
+    owner_account: null,
+    is_editor: false,
+    can_edit: false,
+    load_error: loadError,
+  };
+}
+
 export function useAgentRuntimePageModel(agentId: string) {
   const queryClient = useQueryClient();
   const { locale } = useLocale();
@@ -121,7 +168,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     { enabled: knowledgeDialogOpen }
   );
   const selectedKnowledgeDatasets = useMemo(() => {
-    const byID = new Map<string, Dataset>();
+    const byID = new Map<string, AgentKnowledgeDataset>();
     selectedDatasetQueries.forEach(query => {
       const dataset = query.data?.data;
       if (dataset?.id) {
@@ -133,10 +180,19 @@ export function useAgentRuntimePageModel(agentId: string) {
         byID.set(dataset.id, dataset);
       }
     });
-    return knowledgeDatasetIds
-      .map(id => byID.get(id))
-      .filter((dataset): dataset is Dataset => Boolean(dataset));
-  }, [knowledgeDatasetIds, knowledgeDialogPages, selectedDatasetQueries]);
+    return knowledgeDatasetIds.map((id, index) => {
+      const dataset = byID.get(id);
+      if (dataset) return dataset;
+      const query = selectedDatasetQueries[index];
+      const hasLoadError = Boolean(query?.isError);
+      return createAgentKnowledgeDatasetFallback(
+        id,
+        hasLoadError ? t('knowledge.loadFailedName') : id,
+        hasLoadError ? t('knowledge.loadFailedDescription') : '',
+        hasLoadError
+      );
+    });
+  }, [knowledgeDatasetIds, knowledgeDialogPages, selectedDatasetQueries, t]);
   const isSelectedDatasetsLoading = selectedDatasetQueries.some(query => query.isLoading);
   const knowledgeDialogDatasets = useMemo(() => {
     const byID = new Map<string, Dataset>();
