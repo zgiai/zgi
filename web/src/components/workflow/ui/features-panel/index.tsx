@@ -1,7 +1,25 @@
 'use client';
 
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { Panel } from '@xyflow/react';
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { usePanelStackItem } from '../../hooks';
 import { useT } from '@/i18n';
 import { Button } from '@/components/ui/button';
@@ -22,8 +40,7 @@ import { Input } from '@/components/ui/input';
 import { useWorkflowStore } from '../../store';
 import type { WorkflowFeatures } from '../../store/type';
 import {
-  ArrowDown,
-  ArrowUp,
+  GripVertical,
   Pencil,
   Plus,
   Settings,
@@ -42,6 +59,8 @@ import { useLocale } from '@/hooks/use-locale';
 import { toast } from 'sonner';
 import type { SuggestedQuestionCandidate } from '@/services/workflow.service';
 import { SUGGESTED_QUESTIONS_LIMIT } from '@/constants/suggested-questions';
+import { buildOpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
+import { cn } from '@/lib/utils';
 
 const ITEM_ROW_CLASS =
   'flex items-center justify-between rounded-md border border-muted-foreground shadow-sm p-3 gap-1';
@@ -50,6 +69,88 @@ const ITEM_LABEL_CLASS = 'truncate';
 const ITEM_DESC_CLASS = 'text-xs text-muted-foreground line-clamp-3 overflow-ellipsis';
 const ITEM_CONTROL_COLUMN_CLASS = 'space-y-1 flex flex-col';
 const SECTION_CARD_CLASS = 'rounded-md border border-muted-foreground shadow-sm p-3';
+const SUGGESTED_QUESTION_ID_PREFIX = 'suggested-question-';
+
+interface SortableSuggestedQuestionRowProps {
+  id: string;
+  index: number;
+  question: string;
+  placeholder: string;
+  dragLabel: string;
+  removeLabel: string;
+  dragDisabled: boolean;
+  onChange: (index: number, value: string) => void;
+  onRemove: (index: number) => void;
+}
+
+const SortableSuggestedQuestionRow: React.FC<SortableSuggestedQuestionRowProps> = React.memo(
+  ({
+    id,
+    index,
+    question,
+    placeholder,
+    dragLabel,
+    removeLabel,
+    dragDisabled,
+    onChange,
+    onRemove,
+  }) => {
+    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+      id,
+      disabled: dragDisabled,
+    });
+    const style: React.CSSProperties = {
+      transform: CSS.Transform.toString(transform),
+      transition,
+    };
+
+    return (
+      <div
+        ref={setNodeRef}
+        style={style}
+        className={cn(
+          'flex items-center gap-1.5 rounded-md bg-background',
+          isDragging && 'relative z-10 opacity-80 shadow-md'
+        )}
+      >
+        <Button
+          type="button"
+          variant="ghost"
+          isIcon
+          size="xs"
+          disabled={dragDisabled}
+          className={cn(
+            'shrink-0 cursor-grab text-muted-foreground hover:text-foreground',
+            isDragging && 'cursor-grabbing'
+          )}
+          aria-label={dragLabel}
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical className="h-3.5 w-3.5" />
+        </Button>
+        <Input
+          value={question}
+          className="h-8 min-w-0 flex-1 px-2.5 text-xs"
+          placeholder={placeholder}
+          onChange={event => onChange(index, event.target.value)}
+        />
+        <Button
+          type="button"
+          variant="ghost"
+          isIcon
+          size="xs"
+          className="shrink-0"
+          aria-label={removeLabel}
+          onClick={() => onRemove(index)}
+        >
+          <Trash2 className="h-3.5 w-3.5 text-destructive" />
+        </Button>
+      </div>
+    );
+  }
+);
+SortableSuggestedQuestionRow.displayName = 'SortableSuggestedQuestionRow';
 
 function dedupeSuggestedQuestions(questions: string[]): string[] {
   const seen = new Set<string>();
@@ -102,12 +203,20 @@ interface FeaturesPanelProps {
   open: boolean;
   temporarilyHidden?: boolean;
   onClose: () => void;
+  agentName?: string;
+  agentIconType?: string;
+  agentIcon?: string;
+  agentIconUrl?: string;
 }
 
 export default function FeaturesPanel({
   open,
   temporarilyHidden = false,
   onClose,
+  agentName,
+  agentIconType,
+  agentIcon,
+  agentIconUrl,
 }: FeaturesPanelProps) {
   const t = useT('agents');
   const tCommon = useT('common');
@@ -343,15 +452,27 @@ export default function FeaturesPanel({
     });
   }, []);
 
-  const moveSuggestedQuestion = useCallback((index: number, direction: -1 | 1) => {
+  const handleSuggestedQuestionDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const activeIndex = Number(String(active.id).replace(SUGGESTED_QUESTION_ID_PREFIX, ''));
+    const overIndex = Number(String(over.id).replace(SUGGESTED_QUESTION_ID_PREFIX, ''));
+    if (!Number.isInteger(activeIndex) || !Number.isInteger(overIndex)) return;
+
     setForm(prev => {
       const questions = normalizeSuggestedQuestionsForEditor(prev.suggested_questions ?? []);
-      const targetIndex = index + direction;
-      if (targetIndex < 0 || targetIndex >= questions.length) return prev;
-      [questions[index], questions[targetIndex]] = [questions[targetIndex], questions[index]];
+      if (
+        activeIndex < 0 ||
+        activeIndex >= questions.length ||
+        overIndex < 0 ||
+        overIndex >= questions.length
+      ) {
+        return prev;
+      }
       return {
         ...prev,
-        suggested_questions: questions,
+        suggested_questions: arrayMove(questions, activeIndex, overIndex),
       };
     });
   }, []);
@@ -559,6 +680,27 @@ export default function FeaturesPanel({
     }
   }, [open, form, storeWorkflowData?.features, updateWorkflowFeatures]);
 
+  const openingGuidePreviewBrand = useMemo(
+    () =>
+      buildOpeningGuideBrand({
+        title: agentName,
+        iconType: agentIconType,
+        icon: agentIcon,
+        iconUrl: agentIconUrl,
+      }),
+    [agentIcon, agentIconType, agentIconUrl, agentName]
+  );
+  const suggestedQuestionDragSensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 4,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
   if (!open) return null;
 
   const hasOpeningContent =
@@ -761,50 +903,36 @@ export default function FeaturesPanel({
                     {t('workflow.features.suggestedQuestions.empty')}
                   </p>
                 ) : (
-                  <div className="space-y-1.5">
-                    {suggestedQuestions.map((question, index) => (
-                      <div key={index} className="flex items-center gap-1.5">
-                        <Input
-                          value={question}
-                          className="h-8 px-2.5 text-xs"
-                          placeholder={t('workflow.features.suggestedQuestions.placeholder')}
-                          onChange={event => updateSuggestedQuestion(index, event.target.value)}
-                        />
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          isIcon
-                          size="xs"
-                          disabled={index === 0}
-                          aria-label={t('workflow.features.suggestedQuestions.moveUp')}
-                          onClick={() => moveSuggestedQuestion(index, -1)}
-                        >
-                          <ArrowUp className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          isIcon
-                          size="xs"
-                          disabled={index === suggestedQuestions.length - 1}
-                          aria-label={t('workflow.features.suggestedQuestions.moveDown')}
-                          onClick={() => moveSuggestedQuestion(index, 1)}
-                        >
-                          <ArrowDown className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          isIcon
-                          size="xs"
-                          aria-label={t('workflow.features.suggestedQuestions.remove')}
-                          onClick={() => removeSuggestedQuestion(index)}
-                        >
-                          <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                        </Button>
+                  <DndContext
+                    sensors={suggestedQuestionDragSensors}
+                    collisionDetection={closestCenter}
+                    modifiers={[restrictToVerticalAxis]}
+                    onDragEnd={handleSuggestedQuestionDragEnd}
+                  >
+                    <SortableContext
+                      items={suggestedQuestions.map(
+                        (_, index) => `${SUGGESTED_QUESTION_ID_PREFIX}${index}`
+                      )}
+                      strategy={verticalListSortingStrategy}
+                    >
+                      <div className="space-y-1.5">
+                        {suggestedQuestions.map((question, index) => (
+                          <SortableSuggestedQuestionRow
+                            key={`${SUGGESTED_QUESTION_ID_PREFIX}${index}`}
+                            id={`${SUGGESTED_QUESTION_ID_PREFIX}${index}`}
+                            index={index}
+                            question={question}
+                            placeholder={t('workflow.features.suggestedQuestions.placeholder')}
+                            dragLabel={t('workflow.features.suggestedQuestions.label')}
+                            removeLabel={t('workflow.features.suggestedQuestions.remove')}
+                            dragDisabled={suggestedQuestions.length <= 1}
+                            onChange={updateSuggestedQuestion}
+                            onRemove={removeSuggestedQuestion}
+                          />
+                        ))}
                       </div>
-                    ))}
-                  </div>
+                    </SortableContext>
+                  </DndContext>
                 )}
               </div>
 
@@ -910,6 +1038,8 @@ export default function FeaturesPanel({
             opening_statement: value.message,
           }))
         }
+        previewBrand={openingGuidePreviewBrand}
+        suggestedQuestions={dedupeSuggestedQuestions(suggestedQuestions)}
       />
       <Dialog open={suggestedQuestionsDialogOpen} onOpenChange={setSuggestedQuestionsDialogOpen}>
         <DialogContent size="lg">

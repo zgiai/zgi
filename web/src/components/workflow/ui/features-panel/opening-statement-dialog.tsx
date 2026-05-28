@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { ChatOpeningMessage } from '@/components/chat/ui/chat-opening-message';
 import { ChatHomeView } from '@/components/chat/ui/chat-home-view';
+import type { OpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useT } from '@/i18n';
 import {
@@ -14,6 +15,7 @@ import {
   OPENING_SLOGAN_MAX_LENGTH,
   type OpeningStatementType,
 } from '@/utils/webapp/opening-statement';
+import { SUGGESTED_QUESTIONS_LIMIT } from '@/constants/suggested-questions';
 
 interface OpeningStatementDialogValue {
   type: OpeningStatementType;
@@ -26,6 +28,8 @@ interface OpeningStatementDialogProps {
   onOpenChange: (open: boolean) => void;
   value: OpeningStatementDialogValue;
   onSave: (value: OpeningStatementDialogValue) => void;
+  previewBrand?: OpeningGuideBrand;
+  suggestedQuestions?: string[];
 }
 
 /**
@@ -42,6 +46,8 @@ const OpeningStatementDialog: React.FC<OpeningStatementDialogProps> = ({
   onOpenChange,
   value,
   onSave,
+  previewBrand,
+  suggestedQuestions,
 }) => {
   const t = useT('agents');
   const tCommon = useT('common');
@@ -110,6 +116,10 @@ const OpeningStatementDialog: React.FC<OpeningStatementDialogProps> = ({
       ? t('workflow.features.openingStatement.previewEmptySlogan')
       : t('workflow.features.openingStatement.previewEmptyMessage');
   const sloganCount = Array.from(draft.slogan).length;
+  const previewSuggestedQuestions = (suggestedQuestions ?? [])
+    .map(question => question.trim())
+    .filter(Boolean)
+    .slice(0, SUGGESTED_QUESTIONS_LIMIT);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -213,7 +223,7 @@ const OpeningStatementDialog: React.FC<OpeningStatementDialogProps> = ({
               </div>
               <div
                 ref={previewScrollRef}
-                className="min-h-0 flex-1 overflow-hidden rounded-lg border bg-muted/20 p-4"
+                className="min-h-0 flex-1 overflow-y-auto rounded-lg border bg-background p-3"
                 onScroll={() => {
                   if (draft.type !== 'message') return;
                   if (syncingSourceRef.current === 'editor') return;
@@ -224,12 +234,24 @@ const OpeningStatementDialog: React.FC<OpeningStatementDialogProps> = ({
               >
                 {activeValue.trim().length > 0 ? (
                   draft.type === 'slogan' ? (
-                    <div className="h-full min-h-0 overflow-y-auto">
-                      <ChatHomeView className="min-h-full max-w-none" title={draft.slogan} />
+                    <div className="mx-auto flex min-h-full w-full min-w-0 max-w-6xl overflow-hidden">
+                      <ChatHomeView
+                        className="max-w-none"
+                        title={draft.slogan}
+                        suggestions={previewSuggestedQuestions}
+                      />
                     </div>
                   ) : (
-                    <div className="h-full min-h-0 overflow-y-auto">
-                      <ChatOpeningMessage content={draft.message} />
+                    <div className="mx-auto flex min-h-full w-full min-w-0 max-w-6xl flex-col items-center justify-center overflow-hidden px-4 py-8">
+                      <ChatOpeningMessage
+                        content={draft.message}
+                        title={previewBrand?.title}
+                        iconType={previewBrand?.iconType}
+                        icon={previewBrand?.icon}
+                        iconBackground={previewBrand?.iconBackground}
+                        iconSrc={previewBrand?.iconSrc}
+                        suggestions={previewSuggestedQuestions}
+                      />
                     </div>
                   )
                 ) : (

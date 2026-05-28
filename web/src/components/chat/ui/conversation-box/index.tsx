@@ -9,6 +9,7 @@ import { eventBus } from '@/lib/event-bus';
 import { cn } from '@/lib/utils';
 import type { OpeningGuideConfig } from '@/utils/webapp/opening-statement';
 import { SUGGESTED_QUESTIONS_LIMIT } from '@/constants/suggested-questions';
+import type { OpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
 
 interface ConversationBoxProps {
   conversation: Conversation | undefined;
@@ -32,6 +33,7 @@ interface ConversationBoxProps {
   onSuggestionClick?: (text: string) => void;
   /** Optional workflow-configured opening guide to show for empty conversations */
   openingGuide?: OpeningGuideConfig;
+  openingGuideBrand?: OpeningGuideBrand;
   suggestions?: string[];
   suggestionsTitle?: string;
   showDefaultSuggestions?: boolean;
@@ -51,6 +53,7 @@ const ConversationBox: React.FC<ConversationBoxProps> = ({
   isLoading = false,
   onSuggestionClick,
   openingGuide,
+  openingGuideBrand,
   suggestions,
   suggestionsTitle,
   showDefaultSuggestions = false,
@@ -313,14 +316,15 @@ const ConversationBox: React.FC<ConversationBoxProps> = ({
                   <div ref={bottomRef} />
                 </div>
               ) : (
-                <div className="mx-auto w-full min-w-0 max-w-6xl space-y-6 pt-4">
-                  <ChatOpeningMessage content={normalizedOpeningGuide.message} />
-                  <ChatHomeView
-                    className="h-auto justify-start px-0 py-0"
-                    title=""
+                <div className="mx-auto flex h-full w-full min-w-0 max-w-6xl flex-col items-center justify-center overflow-hidden px-4 py-8">
+                  <ChatOpeningMessage
+                    content={normalizedOpeningGuide.message}
+                    title={openingGuideBrand?.title}
+                    iconType={openingGuideBrand?.iconType}
+                    icon={openingGuideBrand?.icon}
+                    iconBackground={openingGuideBrand?.iconBackground}
+                    iconSrc={openingGuideBrand?.iconSrc}
                     suggestions={normalizedSuggestions}
-                    suggestionsTitle={suggestionsTitle}
-                    showDefaultSuggestions={showDefaultSuggestions}
                     onSuggestionClick={onSuggestionClick}
                   />
                   <div ref={bottomRef} />

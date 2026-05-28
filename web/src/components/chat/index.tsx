@@ -17,6 +17,7 @@ import { type ModelSelectorValue } from '../common/model-selector/model-selector
 import { AIChatShell, type AIChatModelValue } from '@/components/chat/variants/aichat/aichat-chat';
 import type { AIChatUploadScope } from '@/components/chat/variants/aichat/input-area';
 import type { AIChatController } from '@/components/chat/controllers/aichat-controller';
+import type { OpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
 
 interface SingleTestVariantProps {
   mode: 'singleTest';
@@ -46,6 +47,7 @@ interface SingleTestVariantProps {
   isStopping?: boolean;
   placeholder?: string;
   openingGuide?: OpeningGuideConfig;
+  openingGuideBrand?: OpeningGuideBrand;
   suggestions?: string[];
   toolbarForm?: {
     variables: InputVar[];
@@ -76,6 +78,7 @@ interface SingleChatVariantProps {
   inputDisabled?: boolean;
   placeholder?: string;
   openingGuide?: OpeningGuideConfig;
+  openingGuideBrand?: OpeningGuideBrand;
   suggestions?: string[];
   toolbarForm?: {
     variables: InputVar[];
@@ -161,6 +164,7 @@ const SingleTestChat: React.FC<SingleTestVariantProps> = ({
   isStopping,
   placeholder,
   openingGuide,
+  openingGuideBrand,
   suggestions,
   toolbarForm,
   showWorkflowNodeDetail,
@@ -251,6 +255,7 @@ const SingleTestChat: React.FC<SingleTestVariantProps> = ({
             allowWorkflowDetailExpand={allowWorkflowDetailExpand}
             defaultWorkflowDetailOpen={defaultWorkflowDetailOpen}
             openingGuide={openingGuide}
+            openingGuideBrand={openingGuideBrand}
             suggestions={suggestions}
             onSuggestionClick={handleSuggestionClick}
             renderMessageAddon={renderMessageAddon}
@@ -291,6 +296,7 @@ const SingleChatWrapper: React.FC<SingleChatVariantProps> = ({
   inputDisabled,
   placeholder,
   openingGuide,
+  openingGuideBrand,
   suggestions,
   toolbarForm,
   showWorkflowNodeDetail,
@@ -313,6 +319,7 @@ const SingleChatWrapper: React.FC<SingleChatVariantProps> = ({
       inputDisabled={inputDisabled}
       placeholder={placeholder}
       openingGuide={openingGuide}
+      openingGuideBrand={openingGuideBrand}
       suggestions={suggestions}
       toolbarForm={toolbarForm}
       showWorkflowNodeDetail={showWorkflowNodeDetail}
