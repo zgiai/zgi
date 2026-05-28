@@ -63,15 +63,6 @@ export function getOpeningGuide(
 ): OpeningGuideConfig | undefined {
   if (!features) return undefined;
 
-  const enabled =
-    typeof features.opening_statement_enabled === 'boolean'
-      ? features.opening_statement_enabled
-      : true;
-
-  if (!enabled) {
-    return undefined;
-  }
-
   const slogan =
     typeof features.opening_slogan === 'string'
       ? clampOpeningSlogan(features.opening_slogan)
@@ -90,6 +81,15 @@ export function getOpeningGuide(
           message: message.trim() ? message : undefined,
         }
       : undefined;
+  }
+
+  const enabled =
+    typeof features.opening_statement_enabled === 'boolean'
+      ? features.opening_statement_enabled
+      : true;
+
+  if (!enabled) {
+    return undefined;
   }
 
   const type = resolveOpeningStatementType(features);

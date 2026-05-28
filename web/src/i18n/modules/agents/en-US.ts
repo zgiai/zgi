@@ -452,6 +452,7 @@ const messages = {
         previewDesc: 'The preview uses the same layout as the debug chat and web app empty state.',
         previewEmptySlogan: 'No slogan content yet.',
         previewEmptyMessage: 'No default message content yet.',
+        notConfigured: 'Not configured',
       },
       suggestedQuestions: {
         label: 'Suggested Questions',

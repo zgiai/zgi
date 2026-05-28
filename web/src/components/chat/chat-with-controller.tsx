@@ -148,11 +148,6 @@ const ChatWithController: React.FC<ChatWithControllerProps> = ({
   );
   const isLoadingDetail = useStore(controller.store, s => s.isLoadingDetail);
 
-  useEffect(() => {
-    if (!mobileDrawerOpen) return;
-    setMobileDrawerOpen(false);
-  }, [activeId, mobileDrawerOpen]);
-
   // Get active conversation from chat store for message rendering
   const conv = useChatStore(state => (activeId ? state.conversations[activeId] : undefined));
 
@@ -376,7 +371,7 @@ const ChatWithController: React.FC<ChatWithControllerProps> = ({
                 controller={controller}
                 className="border-0 h-full w-full"
                 backgroundImage={isWebappSurface ? WEBAPP_CHAT_SIDEBAR_BG_IMAGE : undefined}
-                onCreateWhileDraft={() => setMobileDrawerOpen(false)}
+                onActionComplete={() => setMobileDrawerOpen(false)}
               />
             </div>
           </div>
