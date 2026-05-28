@@ -490,10 +490,6 @@ export default function FeaturesPanel({
   const suggestedQuestions = normalizeSuggestedQuestionsForEditor(form.suggested_questions ?? []);
   const configuredSuggestedQuestionCount = dedupeSuggestedQuestions(suggestedQuestions).length;
   const openingEditorValue = getOpeningGuideEditorValue(form);
-  const hasOpeningContent =
-    Boolean(openingEditorValue.title.trim()) ||
-    Boolean(openingEditorValue.message.trim()) ||
-    configuredSuggestedQuestionCount > 0;
   const openingSummaryParts = [
     openingEditorValue.title.trim() ? t('workflow.features.openingStatement.types.slogan') : null,
     openingEditorValue.message.trim() ? t('workflow.features.openingStatement.types.message') : null,
@@ -607,32 +603,18 @@ export default function FeaturesPanel({
           <div className={TWO_ACTION_ITEM_ROW_CLASS}>
             <div className={ITEM_TEXT_CLASS}>
               <Label className={ITEM_LABEL_CLASS}>
-                {t('workflow.features.openingStatement.enableLabel')}
+                {t('workflow.features.openingStatement.label')}
               </Label>
               <p className={ITEM_DESC_CLASS}>
-                {t('workflow.features.openingStatement.enableDesc')}
+                {t('workflow.features.openingStatement.desc')}
               </p>
               <p className={ITEM_DESC_CLASS}>
                 {openingSummaryParts.length > 0
                   ? openingSummaryParts.join(' / ')
-                  : t('workflow.features.openingStatement.previewEmptySlogan')}
+                  : t('workflow.features.openingStatement.notConfigured')}
               </p>
-              {form.opening_statement_enabled && !hasOpeningContent ? (
-                <p className={ITEM_DESC_CLASS}>
-                  {t('workflow.features.openingStatement.previewEmptyMessage')}
-                </p>
-              ) : null}
             </div>
             <div className={ITEM_CONTROL_COLUMN_CLASS}>
-              <Switch
-                checked={Boolean(form.opening_statement_enabled)}
-                onCheckedChange={value =>
-                  setForm(prev => ({
-                    ...prev,
-                    opening_statement_enabled: value,
-                  }))
-                }
-              />
               <Tooltip disableHoverableContent>
                 <TooltipTrigger asChild>
                   <Button
@@ -761,6 +743,7 @@ export default function FeaturesPanel({
             opening_guide_version: 2,
             opening_slogan: clampOpeningSlogan(value.title),
             opening_statement: value.message,
+            opening_statement_enabled: true,
             suggested_questions: normalizeSuggestedQuestionsForEditor(value.suggestedQuestions),
           }))
         }

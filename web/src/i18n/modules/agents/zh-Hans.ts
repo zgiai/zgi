@@ -432,6 +432,7 @@ const messages: AgentsMessages = {
         previewDesc: '预览使用与调试聊天和 WebApp 空态一致的渲染样式。',
         previewEmptySlogan: '暂未填写首屏标语。',
         previewEmptyMessage: '暂未填写默认消息内容。',
+        notConfigured: '暂未配置',
       },
       suggestedQuestions: {
         label: '推荐问题',
