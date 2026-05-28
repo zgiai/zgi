@@ -8,6 +8,7 @@ export interface TextareaProps extends React.TextareaHTMLAttributes<HTMLTextArea
 
 const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
   ({ className, showCharacterCount, characterCountClassName, maxLength, value, defaultValue, ...props }, ref) => {
+    const hasCharacterCount = showCharacterCount && typeof maxLength === 'number';
     const countValue = value ?? defaultValue ?? '';
     const count = Array.from(String(countValue)).length;
     const textarea = (
@@ -22,7 +23,7 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
           'focus-visible:outline-none focus-visible:border-primary/70',
           'aria-invalid:border-destructive',
           'disabled:cursor-not-allowed disabled:opacity-50 disabled:bg-muted/50',
-          showCharacterCount && 'pb-7',
+          hasCharacterCount && 'pb-7',
           className
         )}
         ref={ref}
@@ -33,7 +34,7 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
       />
     );
 
-    if (!showCharacterCount || !maxLength) return textarea;
+    if (!hasCharacterCount) return textarea;
 
     return (
       <div className="relative w-full">
