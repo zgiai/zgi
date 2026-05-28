@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQueries, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { createAgentDraftTransport, useAIChatController } from '@/components/chat';
 import {
@@ -16,11 +16,12 @@ import { useAgent, useAgentConfig, usePublishAgent } from '@/hooks/agent/use-age
 import { useAIChatSkills } from '@/hooks/aichat/use-aichat-skills';
 import { useDatasets } from '@/hooks/dataset/use-datasets';
 import { useMediaQuery } from '@/hooks/use-media-query';
-import { AGENT_KEYS } from '@/hooks/query-keys';
+import { AGENT_KEYS, DATASET_KEYS } from '@/hooks/query-keys';
 import { useLocale } from '@/hooks/use-locale';
 import { useAutoProfile } from '@/hooks/use-profile';
 import { useT } from '@/i18n';
 import agentService from '@/services/agent.service';
+import { datasetService } from '@/services';
 import { getTemplateAwareCharacterCount } from '@/components/workflow/common/workflow-value-editor/utils/value-transform';
 import type {
   AgentMemorySlotConfig,
@@ -106,17 +107,27 @@ export function useAgentRuntimePageModel(agentId: string) {
       }),
     [allSkills]
   );
-  const { pages: selectedDatasetPages, isLoading: isSelectedDatasetsLoading } = useDatasets(
-    { ids: knowledgeDatasetIds, limit: Math.max(knowledgeDatasetIds.length, 1) },
-    { enabled: knowledgeDatasetIds.length > 0 }
-  );
+  const selectedDatasetQueries = useQueries({
+    queries: knowledgeDatasetIds.map(datasetId => ({
+      queryKey: DATASET_KEYS.detail(datasetId),
+      queryFn: () => datasetService.getDataset(datasetId),
+      enabled: Boolean(datasetId),
+      staleTime: 5 * 60 * 1000,
+      retry: false,
+    })),
+  });
   const { pages: knowledgeDialogPages, isLoading: isKnowledgeDialogDatasetsLoading } = useDatasets(
     { keyword: knowledgeSearch.trim(), limit: 50 },
     { enabled: knowledgeDialogOpen }
   );
   const selectedKnowledgeDatasets = useMemo(() => {
     const byID = new Map<string, Dataset>();
-    selectedDatasetPages.flat().forEach(dataset => byID.set(dataset.id, dataset));
+    selectedDatasetQueries.forEach(query => {
+      const dataset = query.data?.data;
+      if (dataset?.id) {
+        byID.set(dataset.id, dataset);
+      }
+    });
     knowledgeDialogPages.flat().forEach(dataset => {
       if (knowledgeDatasetIds.includes(dataset.id)) {
         byID.set(dataset.id, dataset);
@@ -125,7 +136,8 @@ export function useAgentRuntimePageModel(agentId: string) {
     return knowledgeDatasetIds
       .map(id => byID.get(id))
       .filter((dataset): dataset is Dataset => Boolean(dataset));
-  }, [knowledgeDatasetIds, knowledgeDialogPages, selectedDatasetPages]);
+  }, [knowledgeDatasetIds, knowledgeDialogPages, selectedDatasetQueries]);
+  const isSelectedDatasetsLoading = selectedDatasetQueries.some(query => query.isLoading);
   const knowledgeDialogDatasets = useMemo(() => {
     const byID = new Map<string, Dataset>();
     selectedKnowledgeDatasets.forEach(dataset => byID.set(dataset.id, dataset));

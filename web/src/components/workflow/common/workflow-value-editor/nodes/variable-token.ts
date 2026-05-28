@@ -74,21 +74,30 @@ const VariableToken = TiptapNode.create<{
       ? `{{#${node.attrs.sourceId}.${node.attrs.key}#}}`
       : `{{#${node.attrs.sourceId}#}}`;
 
-    const title = (node.attrs.title as string) || (node.attrs.sourceId as string) || '';
+    const sourceId = (node.attrs.sourceId as string) || '';
+    const syntax = (node.attrs.syntax as string) || '';
+    const title = (node.attrs.title as string) || sourceId || '';
     const displayKey =
       (node.attrs.label as string) ||
       (node.attrs.key as string) ||
-      (node.attrs.sourceId === 'context' ? 'context' : '');
+      (sourceId === 'context' ? 'context' : '');
 
     // Adopt Badge secondary style classes for consistent visuals
     const badgeBase =
       'max-w-full inline-flex items-center justify-center rounded-[4px] border px-2 py-0.5 text-xs font-medium w-fit whitespace-nowrap shrink-0 [&>svg]:size-3 gap-1 [&>svg]:pointer-events-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive transition-[color,box-shadow] overflow-hidden';
     const badgeSecondary = 'border-border bg-background text-secondary-foreground';
 
-    const children: Array<string | Array<string | Record<string, string> | string[]>> = [
-      ['span', { class: 'truncate', title }, title],
-    ];
-    if (displayKey) {
+    const children: Array<string | Array<string | Record<string, string> | string[]>> =
+      syntax === 'zgi' && sourceId === 'knowledge'
+        ? [
+            [
+              'span',
+              { class: 'truncate', title: displayKey ? `${title}(${displayKey})` : title },
+              displayKey ? `【${title}(${displayKey})】` : `【${title}】`,
+            ],
+          ]
+        : [['span', { class: 'truncate', title }, title]];
+    if (!(syntax === 'zgi' && sourceId === 'knowledge') && displayKey) {
       children.push(['span', { class: 'text-xs text-highlight' }, `(${displayKey})`]);
     }
 
