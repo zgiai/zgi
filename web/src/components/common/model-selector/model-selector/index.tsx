@@ -592,7 +592,7 @@ export function ModelSelector({
           </SelectValue>
         </SelectTrigger>
         <SelectContent
-          className="h-[400px] min-w-[300px] px-0"
+          className="h-[min(400px,var(--radix-select-content-available-height,calc(100dvh-16px)))] min-w-[300px] px-0"
           onCloseAutoFocus={e => e.preventDefault()}
           onFocusCapture={e => {
             const el = scrollRef.current;

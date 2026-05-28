@@ -32,6 +32,7 @@ interface InputProps extends React.ComponentProps<'input'>, VariantProps<typeof 
   error?: boolean;
   errorText?: React.ReactNode;
   root?: boolean;
+  containerClassName?: string;
   showCharacterCount?: boolean;
   characterCountClassName?: string;
 }
@@ -47,6 +48,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
       error,
       errorText,
       root,
+      containerClassName,
       showCharacterCount,
       characterCountClassName,
       maxLength,
@@ -57,6 +59,9 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
     ref
   ) => {
     const isError = error || !!errorText;
+    const hasCharacterCount = showCharacterCount && typeof maxLength === 'number';
+    const showInputCharacterCount = hasCharacterCount && !rightIcon;
+    const needsAdornmentLayer = leftIcon || rightIcon || showInputCharacterCount;
     const countValue = value ?? defaultValue ?? '';
     const count = Array.from(String(countValue)).length;
 
@@ -67,10 +72,10 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
         data-slot="input"
         className={cn(
           inputVariants({ variant, error: isError, className: !root ? className : undefined }),
-          (leftIcon || rightIcon) && 'w-full',
+          needsAdornmentLayer && 'w-full',
           leftIcon && 'pl-10',
           rightIcon && 'pr-10',
-          showCharacterCount && maxLength && 'w-full pr-16'
+          showInputCharacterCount && 'pr-16'
         )}
         maxLength={maxLength}
         value={value}
@@ -84,8 +89,8 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
       />
     );
 
-    const withIcons =
-      leftIcon || rightIcon ? (
+    const inputContent =
+      needsAdornmentLayer ? (
         <div className="relative flex items-center w-full">
           {leftIcon && (
             <div className="absolute left-3 flex items-center justify-center inset-y-0 text-muted-foreground pointer-events-none">
@@ -98,7 +103,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
               {React.cloneElement(rightIcon as React.ReactElement, { className: 'size-4' })}
             </div>
           )}
-          {showCharacterCount && maxLength && !rightIcon && (
+          {showInputCharacterCount && (
             <span
               className={cn(
                 'pointer-events-none absolute bottom-1.5 right-3 rounded bg-background/80 px-1 text-[11px] text-muted-foreground',
@@ -111,25 +116,12 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
           )}
         </div>
       ) : (
-        <div className="relative flex w-full items-center">
-          {inputNode}
-          {showCharacterCount && maxLength && (
-            <span
-              className={cn(
-                'pointer-events-none absolute bottom-1.5 right-3 rounded bg-background/80 px-1 text-[11px] text-muted-foreground',
-                count > maxLength && 'text-destructive',
-                characterCountClassName
-              )}
-            >
-              {count}/{maxLength}
-            </span>
-          )}
-        </div>
+        inputNode
       );
 
     return (
-      <div className={cn('flex flex-col gap-1.5', root && className)}>
-        {withIcons}
+      <div className={cn('flex flex-col gap-1.5', containerClassName, root && className)}>
+        {inputContent}
         {errorText && (
           <p className="text-xs font-medium text-destructive animate-in fade-in slide-in-from-top-1 duration-200">
             {errorText}
