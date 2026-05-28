@@ -257,7 +257,25 @@ func (r *Repository) ListBatches(ctx context.Context, agentID string) ([]Batch, 
 		Where("agent_id = ?", agentID).
 		Order("created_at DESC").
 		Find(&batches).Error
-	return batches, err
+	if err != nil || len(batches) == 0 {
+		return batches, err
+	}
+
+	batchIDs := make([]string, 0, len(batches))
+	for _, batch := range batches {
+		batchIDs = append(batchIDs, batch.ID)
+	}
+	counts, err := r.CountBatchItemResults(ctx, agentID, batchIDs)
+	if err != nil {
+		return nil, err
+	}
+	for i := range batches {
+		count := counts[batches[i].ID]
+		batches[i].PassedCount = count.Passed
+		batches[i].FailedCount = count.Failed
+		batches[i].ReviewCount = count.Review
+	}
+	return batches, nil
 }
 
 func (r *Repository) CreateBatchItems(ctx context.Context, items []BatchItem) error {
@@ -265,6 +283,51 @@ func (r *Repository) CreateBatchItems(ctx context.Context, items []BatchItem) er
 		return nil
 	}
 	return r.db.WithContext(ctx).Create(&items).Error
+}
+
+type BatchItemResultCount struct {
+	Passed int
+	Failed int
+	Review int
+}
+
+func (r *Repository) CountBatchItemResults(ctx context.Context, agentID string, batchIDs []string) (map[string]BatchItemResultCount, error) {
+	counts := make(map[string]BatchItemResultCount, len(batchIDs))
+	if len(batchIDs) == 0 {
+		return counts, nil
+	}
+
+	var rows []struct {
+		BatchID string `gorm:"column:batch_id"`
+		Status  string `gorm:"column:status"`
+		Count   int    `gorm:"column:count"`
+	}
+	if err := r.db.WithContext(ctx).
+		Model(&BatchItem{}).
+		Select("batch_id, status, COUNT(*) AS count").
+		Where("agent_id = ? AND batch_id IN ? AND status IN ?", agentID, batchIDs, []string{
+			string(BatchItemStatusPassed),
+			string(BatchItemStatusFailed),
+			string(BatchItemStatusReview),
+		}).
+		Group("batch_id, status").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	for _, row := range rows {
+		count := counts[row.BatchID]
+		switch row.Status {
+		case string(BatchItemStatusPassed):
+			count.Passed = row.Count
+		case string(BatchItemStatusFailed):
+			count.Failed = row.Count
+		case string(BatchItemStatusReview):
+			count.Review = row.Count
+		}
+		counts[row.BatchID] = count
+	}
+	return counts, nil
 }
 
 func (r *Repository) ListBatchItems(ctx context.Context, agentID string, batchID string) ([]BatchItem, error) {

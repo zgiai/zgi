@@ -110,6 +110,32 @@ func TestRecoverStaleRunningBatchesStopsBatchAndFailsUnfinishedItems(t *testing.
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestListBatchesAggregatesFinishedItemCounts(t *testing.T) {
+	db, mock, cleanup := newWorkflowTestMockDB(t)
+	defer cleanup()
+	service := NewService(NewRepository(db))
+	now := testNow()
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "workflow_test_batches" WHERE agent_id = $1 ORDER BY created_at DESC`)).
+		WithArgs("agent-1").
+		WillReturnRows(batchRows().
+			AddRow("batch-1", "agent-1", "Batch", BatchStatusRunning, 4, 0, 0, 0, "judge", "", "", "draft", nil, "current_draft", "", now, now))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT batch_id, status, COUNT(*) AS count FROM "workflow_test_batch_items" WHERE agent_id = $1 AND batch_id IN ($2) AND status IN ($3,$4,$5) GROUP BY batch_id, status`)).
+		WithArgs("agent-1", "batch-1", string(BatchItemStatusPassed), string(BatchItemStatusFailed), string(BatchItemStatusReview)).
+		WillReturnRows(sqlmock.NewRows([]string{"batch_id", "status", "count"}).
+			AddRow("batch-1", string(BatchItemStatusPassed), 2).
+			AddRow("batch-1", string(BatchItemStatusFailed), 1))
+
+	batches, err := service.ListBatches(context.Background(), "agent-1")
+
+	require.NoError(t, err)
+	require.Len(t, batches, 1)
+	require.Equal(t, 2, batches[0].PassedCount)
+	require.Equal(t, 1, batches[0].FailedCount)
+	require.Equal(t, 0, batches[0].ReviewCount)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func batchRows() *sqlmock.Rows {
 	return sqlmock.NewRows([]string{
 		"id",
