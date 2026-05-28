@@ -229,6 +229,8 @@ const (
 	envTaskQueueRetention = "TASK_QUEUE_RETENTION"
 	// envTaskQueueEnvPrefix sets the environment prefix used to isolate task queue keys. Default: empty.
 	envTaskQueueEnvPrefix = "TASK_QUEUE_ENV_PREFIX"
+	// envWorkflowTestTaskBackend selects how workflow test AI tasks are executed. Values: local, asynq. Default: local.
+	envWorkflowTestTaskBackend = "WORKFLOW_TEST_TASK_BACKEND"
 
 	// Vector store backend selection.
 	// envVectorStore selects the vector store backend. Default: weaviate.

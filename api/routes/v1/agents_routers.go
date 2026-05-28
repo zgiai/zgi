@@ -23,7 +23,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService interfaces.AccountService, tenantService interfaces.WorkspaceManagementService, resourcePermissionService interfaces.ResourcePermissionService, enterpriseService interfaces.OrganizationService, quotaService interfaces.QuotaService, fileService interfaces.FileService, contentExtractor runtimeservice.ContentExtractionService, llmClient llmclient.LLMClient, toolEngine *tools.ToolEngine, toolManager *tools.ToolManager, memoryService *memorymodule.Service, graphFlowService *graphflow.Service, promptResolver promptservice.PromptService, engineFactory *graph_engine.EngineFactory, taskManager *queue.TaskManager, taskRegistry workflowtest.TaskHandlerRegistry) {
+func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService interfaces.AccountService, tenantService interfaces.WorkspaceManagementService, resourcePermissionService interfaces.ResourcePermissionService, enterpriseService interfaces.OrganizationService, quotaService interfaces.QuotaService, fileService interfaces.FileService, contentExtractor runtimeservice.ContentExtractionService, llmClient llmclient.LLMClient, toolEngine *tools.ToolEngine, toolManager *tools.ToolManager, memoryService *memorymodule.Service, graphFlowService *graphflow.Service, promptResolver promptservice.PromptService, engineFactory *graph_engine.EngineFactory, taskManager *queue.TaskManager, taskRegistry workflowtest.TaskHandlerRegistry, workflowTestService *workflowtest.Service, workflowTestTaskBackend string) {
 	repo := app.NewAgentsRepository(db)
 
 	// Initialize workflow service for agents with all required dependencies
@@ -68,12 +68,14 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	service := app.NewAgentsService(repo, accountService, tenantService, workflowService, chatRuntimeService, agentMemoryService, resourcePermissionService, enterpriseService, quotaService, fileService, llmClient, defaultModelResolver, db)
 	appHandler := app.NewAgentsHandler(service, tenantService, accountService, enterpriseService, db, chatRuntimeService)
 	appHandler.SetFileService(fileService)
-	workflowTestService := workflowtest.NewService(workflowtest.NewRepository(db))
+	if workflowTestService == nil {
+		workflowTestService = workflowtest.NewService(workflowtest.NewRepository(db))
+	}
 	if defaultModelResolver != nil {
 		workflowTestService.SetDefaultModelResolver(defaultModelResolver)
 	}
-	workflowTestHandler := workflowtest.NewHandler(workflowTestService, workflowService, enterpriseService, llmClient, taskManager)
-	if taskRegistry != nil && taskManager != nil {
+	workflowTestHandler := workflowtest.NewHandler(workflowTestService, workflowService, enterpriseService, llmClient, taskManager, workflowTestTaskBackend)
+	if workflowtest.NormalizeTaskBackend(workflowTestTaskBackend) == workflowtest.WorkflowTestTaskBackendAsynq && taskRegistry != nil && taskManager != nil {
 		if client, ok := llmClient.(llmclient.LLMClient); ok {
 			taskType := taskManager.GetTaskTypeWithPrefix(workflowtest.WorkflowTestGenerationTaskType)
 			handler := workflowtest.NewGenerationTaskHandler(workflowTestService, client)
@@ -158,6 +160,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	workflowTests.GET("/scenarios/recognition-tasks", workflowTestHandler.GetLatestScenarioRecognitionTask)
 	workflowTests.GET("/scenarios/recognition-tasks/active", workflowTestHandler.GetActiveScenarioRecognitionTask)
 	workflowTests.GET("/scenarios/recognition-tasks/:task_id", workflowTestHandler.GetScenarioRecognitionTask)
+	workflowTests.POST("/scenarios/recognition-tasks/:task_id/cancel", workflowTestHandler.CancelScenarioRecognitionTask)
 	workflowTests.GET("/cases", workflowTestHandler.ListCases)
 	workflowTests.POST("/cases", workflowTestHandler.CreateCase)
 	workflowTests.DELETE("/cases", workflowTestHandler.DeleteCases)

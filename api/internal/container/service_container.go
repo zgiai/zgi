@@ -16,6 +16,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
 	workflowruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/runtime"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
+	workflowtest "github.com/zgiai/zgi/api/internal/modules/app/workflowtest"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	automationdefinition "github.com/zgiai/zgi/api/internal/modules/automation/service/definition"
 	datalibrarymodule "github.com/zgiai/zgi/api/internal/modules/datalibrary"
@@ -219,6 +220,7 @@ type ServiceContainer struct {
 
 	// Workflow engine factory
 	workflowEngineFactory *graph_engine.EngineFactory
+	workflowTestService   *workflowtest.Service
 
 	// Workflow Diagnoser
 	workflowDiagnoser *diagnosis.Diagnoser
@@ -269,6 +271,13 @@ func (c *ServiceContainer) GetTaskHandlerRegistry() *TaskHandlerRegistrar {
 		c.taskHandlerRegistry = NewTaskHandlerRegistrar()
 	}
 	return c.taskHandlerRegistry
+}
+
+func (c *ServiceContainer) GetWorkflowTestService() *workflowtest.Service {
+	if c.workflowTestService == nil {
+		c.workflowTestService = workflowtest.NewService(workflowtest.NewRepository(c.db))
+	}
+	return c.workflowTestService
 }
 
 func (c *ServiceContainer) GetTenantService() interfaces.WorkspaceManagementService {

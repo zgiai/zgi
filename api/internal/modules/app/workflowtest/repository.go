@@ -474,6 +474,19 @@ func (r *Repository) GetLatestGenerationTask(ctx context.Context, agentID string
 	return &task, nil
 }
 
+func (r *Repository) ListQueuedGenerationTasks(ctx context.Context, limit int) ([]GenerationTask, error) {
+	if limit <= 0 {
+		limit = 1
+	}
+	var tasks []GenerationTask
+	err := r.db.WithContext(ctx).
+		Where("status = ?", GenerationTaskStatusQueued).
+		Order("created_at ASC").
+		Limit(limit).
+		Find(&tasks).Error
+	return tasks, err
+}
+
 func (r *Repository) UpdateGenerationTaskStatus(ctx context.Context, taskID, status string, updates map[string]interface{}) error {
 	values := map[string]interface{}{}
 	for key, value := range updates {
@@ -488,7 +501,7 @@ func (r *Repository) UpdateGenerationTaskStatus(ctx context.Context, taskID, sta
 
 func (r *Repository) RecoverStaleRunningGenerationTasks(ctx context.Context, staleBefore time.Time, reason string, completedAt time.Time) (int64, error) {
 	result := r.db.WithContext(ctx).Model(&GenerationTask{}).
-		Where("status IN ? AND updated_at < ?", []string{GenerationTaskStatusRunning, GenerationTaskStatusCanceling}, staleBefore).
+		Where("status IN ? AND updated_at < ?", []string{GenerationTaskStatusQueued, GenerationTaskStatusRunning, GenerationTaskStatusCanceling}, staleBefore).
 		Updates(map[string]interface{}{
 			"status":       GenerationTaskStatusFailed,
 			"error":        reason,
@@ -522,20 +535,38 @@ func (r *Repository) IncrementGenerationTaskCreatedCount(ctx context.Context, ta
 }
 
 func (r *Repository) CancelGenerationTask(ctx context.Context, agentID, taskID string, now time.Time) (bool, error) {
-	result := r.db.WithContext(ctx).Model(&GenerationTask{}).
-		Where("agent_id = ? AND id = ? AND status IN ?", agentID, taskID, []string{
-			GenerationTaskStatusQueued,
-			GenerationTaskStatusRunning,
-		}).
-		Updates(map[string]interface{}{
-			"status":              GenerationTaskStatusCanceling,
-			"cancel_requested_at": now,
-			"updated_at":          now,
-		})
-	if result.Error != nil {
-		return false, result.Error
-	}
-	return result.RowsAffected > 0, nil
+	var changed bool
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&GenerationTask{}).
+			Where("agent_id = ? AND id = ? AND status = ?", agentID, taskID, GenerationTaskStatusQueued).
+			Updates(map[string]interface{}{
+				"status":              GenerationTaskStatusCanceled,
+				"cancel_requested_at": now,
+				"completed_at":        now,
+				"error":               "",
+				"updated_at":          now,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected > 0 {
+			changed = true
+			return nil
+		}
+		result = tx.Model(&GenerationTask{}).
+			Where("agent_id = ? AND id = ? AND status = ?", agentID, taskID, GenerationTaskStatusRunning).
+			Updates(map[string]interface{}{
+				"status":              GenerationTaskStatusCanceling,
+				"cancel_requested_at": now,
+				"updated_at":          now,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		changed = result.RowsAffected > 0
+		return nil
+	})
+	return changed, err
 }
 
 func activeScenarioRecognitionStatuses() []string {
@@ -596,6 +627,19 @@ func (r *Repository) GetLatestScenarioRecognitionTask(ctx context.Context, agent
 	return &task, nil
 }
 
+func (r *Repository) ListQueuedScenarioRecognitionTasks(ctx context.Context, limit int) ([]ScenarioRecognitionTask, error) {
+	if limit <= 0 {
+		limit = 1
+	}
+	var tasks []ScenarioRecognitionTask
+	err := r.db.WithContext(ctx).
+		Where("status = ?", GenerationTaskStatusQueued).
+		Order("created_at ASC").
+		Limit(limit).
+		Find(&tasks).Error
+	return tasks, err
+}
+
 func (r *Repository) UpdateScenarioRecognitionTaskStatus(ctx context.Context, taskID, status string, updates map[string]interface{}) error {
 	values := map[string]interface{}{}
 	for key, value := range updates {
@@ -610,7 +654,7 @@ func (r *Repository) UpdateScenarioRecognitionTaskStatus(ctx context.Context, ta
 
 func (r *Repository) RecoverStaleRunningScenarioRecognitionTasks(ctx context.Context, staleBefore time.Time, reason string, completedAt time.Time) (int64, error) {
 	result := r.db.WithContext(ctx).Model(&ScenarioRecognitionTask{}).
-		Where("status IN ? AND updated_at < ?", []string{GenerationTaskStatusRunning, GenerationTaskStatusCanceling}, staleBefore).
+		Where("status IN ? AND updated_at < ?", []string{GenerationTaskStatusQueued, GenerationTaskStatusRunning, GenerationTaskStatusCanceling}, staleBefore).
 		Updates(map[string]interface{}{
 			"status":       GenerationTaskStatusFailed,
 			"error":        reason,
@@ -635,4 +679,39 @@ func (r *Repository) MarkScenarioRecognitionTaskRunning(ctx context.Context, tas
 		return false, result.Error
 	}
 	return result.RowsAffected > 0, nil
+}
+
+func (r *Repository) CancelScenarioRecognitionTask(ctx context.Context, agentID, taskID string, now time.Time) (bool, error) {
+	var changed bool
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&ScenarioRecognitionTask{}).
+			Where("agent_id = ? AND id = ? AND status = ?", agentID, taskID, GenerationTaskStatusQueued).
+			Updates(map[string]interface{}{
+				"status":              GenerationTaskStatusCanceled,
+				"cancel_requested_at": now,
+				"completed_at":        now,
+				"error":               "",
+				"updated_at":          now,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected > 0 {
+			changed = true
+			return nil
+		}
+		result = tx.Model(&ScenarioRecognitionTask{}).
+			Where("agent_id = ? AND id = ? AND status = ?", agentID, taskID, GenerationTaskStatusRunning).
+			Updates(map[string]interface{}{
+				"status":              GenerationTaskStatusCanceling,
+				"cancel_requested_at": now,
+				"updated_at":          now,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		changed = result.RowsAffected > 0
+		return nil
+	})
+	return changed, err
 }

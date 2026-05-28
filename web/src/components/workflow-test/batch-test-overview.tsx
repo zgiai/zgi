@@ -51,6 +51,8 @@ import { ScenarioDialog } from './scenario-dialog';
 import { RecognizeScenariosDialog } from './recognize-scenarios-dialog';
 import {
   useCancelWorkflowTestBatch,
+  useCancelWorkflowTestGenerationTask,
+  useCancelWorkflowTestScenarioRecognitionTask,
   useDeleteWorkflowTestCases,
   useExecuteWorkflowTestBatch,
   useLatestWorkflowTestScenarioRecognitionTask,
@@ -198,6 +200,8 @@ export function BatchTestOverview({
   const { data: workflowDraft } = useWorkflowDraft(agentId);
   const executeBatch = useExecuteWorkflowTestBatch(agentId);
   const cancelBatch = useCancelWorkflowTestBatch(agentId);
+  const cancelGenerationTask = useCancelWorkflowTestGenerationTask(agentId);
+  const cancelScenarioRecognitionTask = useCancelWorkflowTestScenarioRecognitionTask(agentId);
   const retestBatch = useRetestWorkflowTestBatch(agentId);
   const updateCase = useUpdateWorkflowTestCase(agentId);
   const deleteCases = useDeleteWorkflowTestCases(agentId);
@@ -218,6 +222,11 @@ export function BatchTestOverview({
     generationTask?.status === 'queued' ||
     generationTask?.status === 'running' ||
     generationTask?.status === 'canceling';
+  const canCancelScenarioRecognition =
+    scenarioRecognitionTask?.id &&
+    (scenarioRecognitionTask.status === 'queued' || scenarioRecognitionTask.status === 'running');
+  const canCancelGeneration =
+    generationTask?.id && (generationTask.status === 'queued' || generationTask.status === 'running');
   const isGenerationPendingLocally = pendingGenerationCount !== null && !isGenerationActive;
   const displayedGenerationStatus = isGenerationPendingLocally ? 'running' : generationTask?.status;
   const isGenerationCompleted =
@@ -226,6 +235,7 @@ export function BatchTestOverview({
     view === 'case-library' &&
     (isGenerationActive ||
       isGenerationCompleted ||
+      displayedGenerationStatus === 'canceled' ||
       displayedGenerationStatus === 'failed' ||
       pendingGenerationCount !== null);
   const generationBannerRequested = isGenerationPendingLocally
@@ -242,7 +252,7 @@ export function BatchTestOverview({
           title: 'text-red-700',
           description: 'text-red-700',
         }
-      : isGenerationCompleted
+      : isGenerationCompleted || displayedGenerationStatus === 'canceled'
         ? {
             wrapper: 'border-emerald-200 bg-emerald-50',
             icon: 'bg-white text-emerald-600',
@@ -503,6 +513,18 @@ export function BatchTestOverview({
                         : t('actions.rerecognizeScenarios')}
                     </Button>
                   ) : null}
+                  {canCancelScenarioRecognition ? (
+                    <Button
+                      variant="outline"
+                      disabled={cancelScenarioRecognitionTask.isPending}
+                      onClick={() =>
+                        cancelScenarioRecognitionTask.mutate(scenarioRecognitionTask.id)
+                      }
+                    >
+                      <Ban className="mr-2 size-4" />
+                      {t('actions.cancelRecognition')}
+                    </Button>
+                  ) : null}
                   <Button variant="outline" onClick={() => setScenarioDialogOpen(true)}>
                     <SquarePen className="mr-2 size-4" />
                     {t('actions.editScenarios')}
@@ -538,13 +560,43 @@ export function BatchTestOverview({
                         ? t('actions.recognizingScenarios')
                         : t('actions.recognizeScenarios')}
                     </Button>
+                    {canCancelScenarioRecognition ? (
+                      <Button
+                        className="mt-3"
+                        variant="outline"
+                        disabled={cancelScenarioRecognitionTask.isPending}
+                        onClick={() =>
+                          cancelScenarioRecognitionTask.mutate(scenarioRecognitionTask.id)
+                        }
+                      >
+                        <Ban className="mr-2 size-4" />
+                        {t('actions.cancelRecognition')}
+                      </Button>
+                    ) : null}
                   </div>
                 ) : (
                   <>
                     {isScenarioRecognitionActive ? (
-                      <p className="mb-4 text-sm font-medium text-blue-600">
-                        {t('scenarios.recognizingDescription')}
-                      </p>
+                      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                        <p className="text-sm font-medium text-blue-600">
+                          {scenarioRecognitionTask?.status === 'canceling'
+                            ? t('scenarios.cancelingDescription')
+                            : t('scenarios.recognizingDescription')}
+                        </p>
+                        {canCancelScenarioRecognition ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={cancelScenarioRecognitionTask.isPending}
+                            onClick={() =>
+                              cancelScenarioRecognitionTask.mutate(scenarioRecognitionTask.id)
+                            }
+                          >
+                            <Ban className="mr-2 size-4" />
+                            {t('actions.cancelRecognition')}
+                          </Button>
+                        ) : null}
+                      </div>
                     ) : null}
                     <div className="scrollbar-thin flex gap-4 overflow-x-auto pb-2">
                       {sceneCards.map(scene => (
@@ -601,9 +653,15 @@ export function BatchTestOverview({
                     >
                       <WandSparkles className="size-4" />
                     </div>
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div className={`text-sm font-semibold ${generationBannerTone.title}`}>
-                        {displayedGenerationStatus === 'failed'
+                        {displayedGenerationStatus === 'canceling'
+                          ? t('cases.generationCancelingTitle')
+                          : displayedGenerationStatus === 'canceled'
+                            ? t('cases.generationCanceledTitle', {
+                                count: generationBannerCreated,
+                              })
+                            : displayedGenerationStatus === 'failed'
                           ? t('cases.generationFailedTitle', {
                               count: generationBannerRequested,
                             })
@@ -616,7 +674,13 @@ export function BatchTestOverview({
                               })}
                       </div>
                       <div className={`mt-1 text-sm ${generationBannerTone.description}`}>
-                        {displayedGenerationStatus === 'failed'
+                        {displayedGenerationStatus === 'canceling'
+                          ? t('cases.generationCancelingDescription')
+                          : displayedGenerationStatus === 'canceled'
+                            ? t('cases.generationCanceledDescription', {
+                                created: generationBannerCreated,
+                              })
+                            : displayedGenerationStatus === 'failed'
                           ? t('cases.generationFailedDescription', {
                               created: generationBannerCreated,
                               error: generationTask?.error || commonT('none'),
@@ -626,6 +690,17 @@ export function BatchTestOverview({
                             : t('cases.generatingTaskDescription')}
                       </div>
                     </div>
+                    {canCancelGeneration ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={cancelGenerationTask.isPending}
+                        onClick={() => cancelGenerationTask.mutate(generationTask.id)}
+                      >
+                        <Ban className="mr-2 size-4" />
+                        {t('actions.cancelGeneration')}
+                      </Button>
+                    ) : null}
                   </div>
                 ) : null}
                 <div className="sticky top-0 z-10 grid grid-cols-1 gap-3 border-y border-slate-200 bg-white p-4 md:grid-cols-4">

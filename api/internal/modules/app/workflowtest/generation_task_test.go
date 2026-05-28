@@ -23,6 +23,14 @@ type fakeCaseGenerator struct {
 	result   *GenerateCasesResult
 }
 
+type fakeTaskCanceler struct {
+	taskIDs []string
+}
+
+func (c *fakeTaskCanceler) Cancel(taskID string) {
+	c.taskIDs = append(c.taskIDs, taskID)
+}
+
 func (g *fakeCaseGenerator) GenerateCases(ctx context.Context, req GenerateCasesRequest) (*GenerateCasesResult, error) {
 	g.requests = append(g.requests, req)
 	if g.result != nil {
@@ -270,18 +278,20 @@ func TestCancelGenerationTaskReturnsCurrentTask(t *testing.T) {
 	db, mock, cleanup := newWorkflowTestMockDB(t)
 	defer cleanup()
 	service := NewService(NewRepository(db))
+	canceler := &fakeTaskCanceler{}
+	service.SetTaskCanceler(canceler)
 	ctx := context.Background()
 	now := time.Date(2026, 5, 25, 15, 0, 0, 0, time.UTC)
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta(`UPDATE "workflow_test_generation_tasks" SET "cancel_requested_at"=$1,"status"=$2,"updated_at"=$3 WHERE agent_id = $4 AND id = $5 AND status IN ($6,$7)`)).
-		WithArgs(sqlmock.AnyArg(), GenerationTaskStatusCanceling, sqlmock.AnyArg(), "agent-1", "task-1", GenerationTaskStatusQueued, GenerationTaskStatusRunning).
+	mock.ExpectExec(regexp.QuoteMeta(`UPDATE "workflow_test_generation_tasks" SET "cancel_requested_at"=$1,"completed_at"=$2,"error"=$3,"status"=$4,"updated_at"=$5 WHERE agent_id = $6 AND id = $7 AND status = $8`)).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "", GenerationTaskStatusCanceled, sqlmock.AnyArg(), "agent-1", "task-1", GenerationTaskStatusQueued).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "workflow_test_generation_tasks" WHERE agent_id = $1 AND id = $2 ORDER BY "workflow_test_generation_tasks"."id" LIMIT $3`)).
 		WithArgs("agent-1", "task-1", 1).
 		WillReturnRows(generationTaskRows().AddRow(
-			"task-1", "agent-1", "workspace-1", "account-1", GenerationTaskStatusCanceling, 1, 0,
-			`["scenario-1"]`, `["core"]`, "mixed", "", "", "", "", "", now, now, nil, now, now,
+			"task-1", "agent-1", "workspace-1", "account-1", GenerationTaskStatusCanceled, 1, 0,
+			`["scenario-1"]`, `["core"]`, "mixed", "", "", "", "", "", now, now, now, now, now,
 		))
 
 	task, err := service.CancelGenerationTask(ctx, "agent-1", "task-1")
@@ -289,8 +299,29 @@ func TestCancelGenerationTaskReturnsCurrentTask(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, task)
 	require.Equal(t, "task-1", task.ID)
-	require.Equal(t, GenerationTaskStatusCanceling, task.Status)
+	require.Equal(t, GenerationTaskStatusCanceled, task.Status)
 	require.NotNil(t, task.CancelRequestedAt)
+	require.Equal(t, []string{"task-1"}, canceler.taskIDs)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestRepositoryCancelGenerationTaskCompletesQueuedTaskImmediately(t *testing.T) {
+	db, mock, cleanup := newWorkflowTestMockDB(t)
+	defer cleanup()
+	repo := NewRepository(db)
+	ctx := context.Background()
+	now := time.Date(2026, 5, 28, 10, 0, 0, 0, time.UTC)
+
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta(`UPDATE "workflow_test_generation_tasks" SET "cancel_requested_at"=$1,"completed_at"=$2,"error"=$3,"status"=$4,"updated_at"=$5 WHERE agent_id = $6 AND id = $7 AND status = $8`)).
+		WithArgs(now, now, "", GenerationTaskStatusCanceled, now, "agent-1", "task-queued", GenerationTaskStatusQueued).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	changed, err := repo.CancelGenerationTask(ctx, "agent-1", "task-queued", now)
+
+	require.NoError(t, err)
+	require.True(t, changed)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -673,8 +704,8 @@ func TestRepositoryRecoverStaleRunningGenerationTasksMarksOldActiveTasksFailed(t
 	staleBefore := time.Date(2026, 5, 25, 18, 0, 0, 0, time.UTC)
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta(`UPDATE "workflow_test_generation_tasks" SET "completed_at"=$1,"error"=$2,"status"=$3,"updated_at"=$4 WHERE status IN ($5,$6) AND updated_at < $7`)).
-		WithArgs(sqlmock.AnyArg(), "stale failure", GenerationTaskStatusFailed, sqlmock.AnyArg(), GenerationTaskStatusRunning, GenerationTaskStatusCanceling, staleBefore).
+	mock.ExpectExec(regexp.QuoteMeta(`UPDATE "workflow_test_generation_tasks" SET "completed_at"=$1,"error"=$2,"status"=$3,"updated_at"=$4 WHERE status IN ($5,$6,$7) AND updated_at < $8`)).
+		WithArgs(sqlmock.AnyArg(), "stale failure", GenerationTaskStatusFailed, sqlmock.AnyArg(), GenerationTaskStatusQueued, GenerationTaskStatusRunning, GenerationTaskStatusCanceling, staleBefore).
 		WillReturnResult(sqlmock.NewResult(0, 2))
 	mock.ExpectCommit()
 
@@ -742,26 +773,48 @@ func TestRepositoryCreateAndGetActiveGenerationTaskScansJSONLists(t *testing.T) 
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestRepositoryCancelGenerationTaskChangesQueuedAndRunningToCanceling(t *testing.T) {
+func TestRepositoryCancelGenerationTaskChangesRunningToCanceling(t *testing.T) {
 	db, mock, cleanup := newWorkflowTestMockDB(t)
 	defer cleanup()
 	repo := NewRepository(db)
 	ctx := context.Background()
 	now := time.Date(2026, 5, 25, 12, 0, 0, 0, time.UTC)
 
-	for _, status := range []string{GenerationTaskStatusQueued, GenerationTaskStatusRunning} {
-		taskID := "task-" + status
-		mock.ExpectBegin()
-		mock.ExpectExec(regexp.QuoteMeta(`UPDATE "workflow_test_generation_tasks" SET "cancel_requested_at"=$1,"status"=$2,"updated_at"=$3 WHERE agent_id = $4 AND id = $5 AND status IN ($6,$7)`)).
-			WithArgs(now, GenerationTaskStatusCanceling, now, "agent-1", taskID, GenerationTaskStatusQueued, GenerationTaskStatusRunning).
-			WillReturnResult(sqlmock.NewResult(0, 1))
-		mock.ExpectCommit()
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta(`UPDATE "workflow_test_generation_tasks" SET "cancel_requested_at"=$1,"completed_at"=$2,"error"=$3,"status"=$4,"updated_at"=$5 WHERE agent_id = $6 AND id = $7 AND status = $8`)).
+		WithArgs(now, now, "", GenerationTaskStatusCanceled, now, "agent-1", "task-running", GenerationTaskStatusQueued).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(regexp.QuoteMeta(`UPDATE "workflow_test_generation_tasks" SET "cancel_requested_at"=$1,"status"=$2,"updated_at"=$3 WHERE agent_id = $4 AND id = $5 AND status = $6`)).
+		WithArgs(now, GenerationTaskStatusCanceling, now, "agent-1", "task-running", GenerationTaskStatusRunning).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
 
-		changed, err := repo.CancelGenerationTask(ctx, "agent-1", taskID, now)
+	changed, err := repo.CancelGenerationTask(ctx, "agent-1", "task-running", now)
 
-		require.NoError(t, err)
-		require.True(t, changed)
-	}
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestRepositoryListQueuedGenerationTasks(t *testing.T) {
+	db, mock, cleanup := newWorkflowTestMockDB(t)
+	defer cleanup()
+	repo := NewRepository(db)
+	ctx := context.Background()
+	now := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "workflow_test_generation_tasks" WHERE status = $1 ORDER BY created_at ASC LIMIT $2`)).
+		WithArgs(GenerationTaskStatusQueued, localWorkerClaimLimit).
+		WillReturnRows(generationTaskRows().AddRow(
+			"task-1", "agent-1", "workspace-1", "account-1", GenerationTaskStatusQueued, 1, 0,
+			`["scenario-1"]`, `["core"]`, "mixed", "", "", "", "", "", nil, nil, nil, now, now,
+		))
+
+	tasks, err := repo.ListQueuedGenerationTasks(ctx, localWorkerClaimLimit)
+
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+	require.Equal(t, "task-1", tasks[0].ID)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

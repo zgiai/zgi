@@ -926,6 +926,8 @@ const messages = {
         recognizeScenarios: 'Recognize Business Scenarios',
         rerecognizeScenarios: 'Recognize Again',
         recognizingScenarios: 'Recognizing...',
+        cancelRecognition: 'Stop Recognition',
+        cancelGeneration: 'Stop Generation',
         editScenarios: 'Edit Scenarios',
         createBatch: 'New Test',
       },
@@ -941,6 +943,7 @@ const messages = {
           'Recognize business scenarios from the current workflow first, then review test question coverage.',
         recognizingDescription:
           'Recognizing business scenarios from the current workflow. Please wait.',
+        cancelingDescription: 'Stopping business scenario recognition. Please wait.',
       },
       cases: {
         title: 'Test Question List',
@@ -968,6 +971,10 @@ const messages = {
         generationCompletedTitle: 'Generated {count} test questions',
         generationCompletedDescription:
           'Generated questions have been added to the list. Review or edit them as needed.',
+        generationCancelingTitle: 'Stopping test question generation...',
+        generationCancelingDescription: 'Generation will stop after the current request finishes.',
+        generationCanceledTitle: 'Test question generation stopped',
+        generationCanceledDescription: '{created} questions were created. You can generate again later.',
         generationFailedBanner:
           'Failed to generate {requested} test questions. {created} were created. Error: {error}',
         generationFailedTitle: 'Failed to generate {count} test questions',
@@ -1302,6 +1309,8 @@ const messages = {
       scenariosSaveFailed: 'Failed to save business scenarios',
       scenariosRecognized: 'Recognized {count} business scenarios',
       scenariosRecognitionStarted: 'Recognizing business scenarios',
+      scenariosRecognitionCancelRequested: 'Business scenario recognition stop requested',
+      scenariosRecognitionCancelFailed: 'Failed to stop business scenario recognition',
       scenariosRecognizeFailed: 'Failed to recognize business scenarios',
       caseCreated: 'Test question added',
       caseCreateFailed: 'Failed to add test question',
@@ -1313,6 +1322,8 @@ const messages = {
       casesGenerated: 'Generated {count} test questions',
       casesGenerateFailed: 'Failed to generate test questions',
       casesGenerationStarted: 'Generating {count} test questions',
+      casesGenerationCancelRequested: 'Test question generation stop requested',
+      casesGenerationCancelFailed: 'Failed to stop test question generation',
       casesGenerationCompleted: 'Generated {count} test questions',
       batchCreated: 'Test batch created',
       batchCreateFailed: 'Failed to create test batch',

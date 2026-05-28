@@ -5,7 +5,9 @@ import (
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/container"
 	"github.com/zgiai/zgi/api/internal/infra/platform"
+	workflowtest "github.com/zgiai/zgi/api/internal/modules/app/workflowtest"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
 	workspacerepo "github.com/zgiai/zgi/api/internal/modules/workspace/repository"
 	"github.com/zgiai/zgi/api/internal/util"
@@ -36,6 +38,8 @@ var taskRuntimeModule = fx.Module("taskruntime",
 	fx.Provide(
 		provideTaskManager,
 		provideTaskHandlerRegistry,
+		provideWorkflowTestService,
+		provideLLMClient,
 	),
 )
 
@@ -95,6 +99,14 @@ func provideTaskManager(serviceContainer *container.ServiceContainer) *queue.Tas
 
 func provideTaskHandlerRegistry(serviceContainer *container.ServiceContainer) *container.TaskHandlerRegistrar {
 	return serviceContainer.GetTaskHandlerRegistry()
+}
+
+func provideWorkflowTestService(serviceContainer *container.ServiceContainer) *workflowtest.Service {
+	return serviceContainer.GetWorkflowTestService()
+}
+
+func provideLLMClient(serviceContainer *container.ServiceContainer) llmclient.LLMClient {
+	return serviceContainer.GetLLMClient()
 }
 
 func provideScheduler(serviceContainer *container.ServiceContainer) *pkgscheduler.Scheduler {

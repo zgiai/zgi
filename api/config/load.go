@@ -431,10 +431,11 @@ func loadTaskQueueConfig(cfg *Config, source *envSource) error {
 	}
 
 	cfg.TaskQueue = TaskQueueConfig{
-		RedisDB:     redisDB,
-		Concurrency: concurrency,
-		Retention:   retention,
-		EnvPrefix:   source.string("", envTaskQueueEnvPrefix),
+		RedisDB:                 redisDB,
+		Concurrency:             concurrency,
+		Retention:               retention,
+		EnvPrefix:               source.string("", envTaskQueueEnvPrefix),
+		WorkflowTestTaskBackend: source.string("local", envWorkflowTestTaskBackend),
 	}
 	return nil
 }

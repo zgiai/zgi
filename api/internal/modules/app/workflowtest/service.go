@@ -32,10 +32,15 @@ type Service struct {
 	summarizer              Summarizer
 	workflowContextProvider WorkflowContextProvider
 	defaultModelResolver    llmdefaultservice.DefaultModelResolver
+	taskCanceler            TaskCanceler
 }
 
 func NewService(repo *Repository) *Service {
 	return &Service{repo: repo}
+}
+
+type TaskCanceler interface {
+	Cancel(taskID string)
 }
 
 func (s *Service) SetRunner(runner Runner) {
@@ -52,6 +57,10 @@ func (s *Service) SetSummarizer(summarizer Summarizer) {
 
 func (s *Service) SetWorkflowContextProvider(provider WorkflowContextProvider) {
 	s.workflowContextProvider = provider
+}
+
+func (s *Service) SetTaskCanceler(canceler TaskCanceler) {
+	s.taskCanceler = canceler
 }
 
 func (s *Service) SetDefaultModelResolver(resolver llmdefaultservice.DefaultModelResolver) {
@@ -654,6 +663,9 @@ func (s *Service) CancelGenerationTask(ctx context.Context, agentID, taskID stri
 	if _, err := s.repo.CancelGenerationTask(ctx, agentID, taskID, time.Now()); err != nil {
 		return nil, err
 	}
+	if s.taskCanceler != nil {
+		s.taskCanceler.Cancel(taskID)
+	}
 	return s.GetGenerationTask(ctx, agentID, taskID)
 }
 
@@ -1144,6 +1156,16 @@ func (s *Service) GetScenarioRecognitionTask(ctx context.Context, agentID, taskI
 	return s.repo.GetScenarioRecognitionTask(ctx, agentID, taskID)
 }
 
+func (s *Service) CancelScenarioRecognitionTask(ctx context.Context, agentID, taskID string) (*ScenarioRecognitionTask, error) {
+	if _, err := s.repo.CancelScenarioRecognitionTask(ctx, agentID, taskID, time.Now()); err != nil {
+		return nil, err
+	}
+	if s.taskCanceler != nil {
+		s.taskCanceler.Cancel(taskID)
+	}
+	return s.GetScenarioRecognitionTask(ctx, agentID, taskID)
+}
+
 func (s *Service) RunScenarioRecognitionTask(ctx context.Context, taskID string, recognizer ScenarioRecognizer) error {
 	task, err := s.repo.GetScenarioRecognitionTaskByID(ctx, taskID)
 	if err != nil {
@@ -1189,7 +1211,32 @@ func (s *Service) RunScenarioRecognitionTask(ctx context.Context, taskID string,
 		return nil
 	}
 
+	checkScenarioRecognitionCanceled := func(ctx context.Context) error {
+		current, err := s.repo.GetScenarioRecognitionTaskByID(ctx, task.ID)
+		if err != nil {
+			return err
+		}
+		if current.Status == GenerationTaskStatusCanceling {
+			if err := s.finishScenarioRecognitionTask(ctx, task.ID, GenerationTaskStatusCanceled, "", 0, 0); err != nil {
+				return err
+			}
+			return errGenerationTaskCanceled
+		}
+		return nil
+	}
+	if err := checkScenarioRecognitionCanceled(ctx); err != nil {
+		if errors.Is(err, errGenerationTaskCanceled) {
+			return nil
+		}
+		return err
+	}
 	result, err := s.recognizeScenarios(ctx, task.AgentID, scenarioRecognitionTaskRequest(task), task.WorkflowContextSnapshot, recognizer)
+	if cancelErr := checkScenarioRecognitionCanceled(ctx); cancelErr != nil {
+		if errors.Is(cancelErr, errGenerationTaskCanceled) {
+			return nil
+		}
+		return cancelErr
+	}
 	if err != nil {
 		reason := scenarioRecognitionTaskFailureReason(err)
 		if finishErr := s.finishScenarioRecognitionTask(ctx, task.ID, GenerationTaskStatusFailed, reason, 0, 0); finishErr != nil {
