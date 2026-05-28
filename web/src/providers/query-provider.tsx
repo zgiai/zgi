@@ -1,8 +1,6 @@
 'use client';
 
 import { QueryClientProvider } from '@tanstack/react-query';
-// Comment out DevTools to avoid client-side only errors
-// import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import type { PropsWithChildren } from 'react';
 import { useEffect } from 'react';
 import { useIsInitialized, useIsAuthenticated } from '@/store/auth-store';
@@ -31,8 +29,6 @@ export function QueryProvider({ children }: PropsWithChildren) {
   return (
     <QueryClientProvider client={queryClient}>
       {children}
-      {/* Temporarily disable DevTools to avoid issues */}
-      {/* <ReactQueryDevtools initialIsOpen={false} /> */}
     </QueryClientProvider>
   );
 }
