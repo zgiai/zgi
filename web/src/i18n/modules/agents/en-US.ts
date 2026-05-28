@@ -406,6 +406,7 @@ const messages = {
       uploadDesc:
         'Allow users to upload files in conversations, AI can analyze and process file content.',
       configure: 'Configure',
+      uploadConfigure: 'Configure file upload',
       allowedTypes: 'Allowed File Types',
       typeLabels: {
         image: 'Image',
@@ -448,7 +449,7 @@ const messages = {
           'Assistant-style Markdown message shown before users send the first prompt.',
         messagePlaceholder: 'Enter the opening message shown before users send the first prompt.',
         previewLabel: 'Rendered Preview',
-        previewDesc: 'The preview updates to match the currently selected guide mode.',
+        previewDesc: 'The preview uses the same layout as the debug chat and web app empty state.',
         previewEmptySlogan: 'No slogan content yet.',
         previewEmptyMessage: 'No default message content yet.',
       },

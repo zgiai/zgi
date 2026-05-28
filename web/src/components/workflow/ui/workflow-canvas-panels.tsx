@@ -18,6 +18,10 @@ import { isWorkflowDebugPanelActive } from '../hooks/use-debug-focus-mode';
 interface WorkflowCanvasPanelsProps {
   agentType: string;
   agentId: string;
+  agentName?: string;
+  agentIconType?: string;
+  agentIcon?: string;
+  agentIconUrl?: string;
   isReadOnly: boolean;
   draggingNodeType: string | null;
   temporarilyHidden: boolean;
@@ -41,6 +45,10 @@ const DeferredPanel: React.FC<{ children: () => React.ReactNode; delay?: number 
 export function WorkflowCanvasPanels({
   agentType,
   agentId,
+  agentName,
+  agentIconType,
+  agentIcon,
+  agentIconUrl,
   isReadOnly,
   draggingNodeType,
   temporarilyHidden,
@@ -85,6 +93,10 @@ export function WorkflowCanvasPanels({
           temporarilyHidden={temporarilyHidden}
           onClose={() => setActivePanel(null)}
           agentId={agentId}
+          agentName={agentName}
+          agentIconType={agentIconType}
+          agentIcon={agentIcon}
+          agentIconUrl={agentIconUrl}
         />
       )}
 
@@ -107,6 +119,10 @@ export function WorkflowCanvasPanels({
           open={activePanel === 'features'}
           temporarilyHidden={temporarilyHidden}
           onClose={() => setActivePanel(null)}
+          agentName={agentName}
+          agentIconType={agentIconType}
+          agentIcon={agentIcon}
+          agentIconUrl={agentIconUrl}
         />
       )}
 

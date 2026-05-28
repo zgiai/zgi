@@ -79,12 +79,17 @@ import WorkflowRunsDropdown from '../workflow-runs-dropdown';
 import { useActivePanel } from '../../hooks/use-active-panel';
 import type { WorkflowRunNodeListItem } from '../workflow-run-nodes-list';
 import { generateClientId } from '@/utils/client-id';
+import { buildOpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
 
 interface WorkflowChatPanelProps {
   open: boolean;
   temporarilyHidden?: boolean;
   onClose: () => void;
   agentId: string;
+  agentName?: string;
+  agentIconType?: string;
+  agentIcon?: string;
+  agentIconUrl?: string;
 }
 
 function ApprovalWaitingState({
@@ -127,6 +132,10 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
   temporarilyHidden = false,
   onClose,
   agentId,
+  agentName,
+  agentIconType,
+  agentIcon,
+  agentIconUrl,
 }) => {
   const t = useT();
   const workflowChatPrecheck = useWorkflowChatDraftPrecheck(agentId);
@@ -142,6 +151,16 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
     maxWidth: 620,
     maxViewportRatio: 0.52,
   });
+  const openingGuideBrand = useMemo(
+    () =>
+      buildOpeningGuideBrand({
+        title: agentName,
+        iconType: agentIconType,
+        icon: agentIcon,
+        iconUrl: agentIconUrl,
+      }),
+    [agentIcon, agentIconType, agentIconUrl, agentName]
+  );
   const [precheckWarnings, setPrecheckWarnings] = useState<WorkflowPrecheckWarning[]>([]);
   const chatConv = useChatStore.use.getConversation()(convId);
   const initSingle = useChatStore.use.initSingle();
@@ -2042,6 +2061,7 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
               features={features}
               enableUpload={features?.file_upload?.enabled ?? true}
               openingGuide={openingGuide}
+              openingGuideBrand={openingGuideBrand}
               suggestions={suggestedQuestions}
               inputDisabled={undefined}
               showWorkflowRunHeader

@@ -389,6 +389,7 @@ const messages: AgentsMessages = {
       uploadLabel: '文件上传',
       uploadDesc: '允许用户在对话中上传文件，AI可以分析和处理文件内容。',
       configure: '配置',
+      uploadConfigure: '配置文件上传',
       allowedTypes: '允许的文件类型',
       typeLabels: {
         image: '图片',
@@ -428,7 +429,7 @@ const messages: AgentsMessages = {
         messageEditorDesc: '以模型消息视角展示的 Markdown 引导内容。',
         messagePlaceholder: '输入用户发送首条消息前要展示的引导消息。',
         previewLabel: '渲染预览',
-        previewDesc: '右侧预览会根据当前选择的引导形态实时切换。',
+        previewDesc: '预览使用与调试聊天和 WebApp 空态一致的渲染样式。',
         previewEmptySlogan: '暂未填写首屏标语。',
         previewEmptyMessage: '暂未填写默认消息内容。',
       },
