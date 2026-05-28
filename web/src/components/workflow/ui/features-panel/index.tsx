@@ -2,155 +2,42 @@
 
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { Panel } from '@xyflow/react';
-import {
-  DndContext,
-  KeyboardSensor,
-  PointerSensor,
-  closestCenter,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-} from '@dnd-kit/core';
-import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
-import {
-  SortableContext,
-  arrayMove,
-  sortableKeyboardCoordinates,
-  useSortable,
-  verticalListSortingStrategy,
-} from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
 import { usePanelStackItem } from '../../hooks';
 import { useT } from '@/i18n';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Slider } from '@/components/ui/slider';
 import { Input } from '@/components/ui/input';
 import { useWorkflowStore } from '../../store';
 import type { WorkflowFeatures } from '../../store/type';
-import {
-  GripVertical,
-  Pencil,
-  Plus,
-  Settings,
-  Settings2,
-  Sparkles,
-  Trash2,
-  X,
-} from 'lucide-react';
+import { Settings2, SlidersHorizontal, X } from 'lucide-react';
 import FileUploadSettingsDialog from './file-upload-dialog';
-import OpeningStatementDialog from './opening-statement-dialog';
-import { clampOpeningSlogan } from '@/utils/webapp/opening-statement';
+import OpeningStatementDialog, {
+  type OpeningStatementDialogValue,
+} from './opening-statement-dialog';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  clampOpeningSlogan,
+  getOpeningGuideEditorValue,
+} from '@/utils/webapp/opening-statement';
 import { getRightPanelMotionClassName, getRightPanelMotionStyle } from '../right-panel-motion';
 import { useWorkflowEditor } from '../../hooks/use-workflow-editor';
 import { useGenerateWorkflowSuggestedQuestions } from '@/hooks/workflow/use-workflow';
 import { useLocale } from '@/hooks/use-locale';
 import { toast } from 'sonner';
-import type { SuggestedQuestionCandidate } from '@/services/workflow.service';
 import { SUGGESTED_QUESTIONS_LIMIT } from '@/constants/suggested-questions';
 import { buildOpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
-import { cn } from '@/lib/utils';
 
 const ITEM_ROW_CLASS =
   'flex items-center justify-between rounded-lg border border-border/70 bg-background px-3 py-3 gap-3 transition-colors hover:bg-muted/20';
+const TWO_ACTION_ITEM_ROW_CLASS =
+  'flex items-start justify-between rounded-lg border border-border/70 bg-background px-3 py-3 gap-3 transition-colors hover:bg-muted/20';
 const ITEM_TEXT_CLASS = 'min-w-0 grow space-y-1';
 const ITEM_LABEL_CLASS = 'truncate';
 const ITEM_DESC_CLASS = 'text-xs text-muted-foreground line-clamp-3 overflow-ellipsis';
-const ITEM_CONTROL_COLUMN_CLASS = 'flex shrink-0 flex-col items-end gap-1.5';
+const ITEM_CONTROL_COLUMN_CLASS = 'flex shrink-0 flex-col items-center gap-2';
 const SECTION_CARD_CLASS = 'rounded-xl border border-border/70 bg-card p-3.5';
-const SUGGESTED_QUESTION_ID_PREFIX = 'suggested-question-';
-
-interface SortableSuggestedQuestionRowProps {
-  id: string;
-  index: number;
-  question: string;
-  placeholder: string;
-  dragLabel: string;
-  removeLabel: string;
-  dragDisabled: boolean;
-  onChange: (index: number, value: string) => void;
-  onRemove: (index: number) => void;
-}
-
-const SortableSuggestedQuestionRow: React.FC<SortableSuggestedQuestionRowProps> = React.memo(
-  ({
-    id,
-    index,
-    question,
-    placeholder,
-    dragLabel,
-    removeLabel,
-    dragDisabled,
-    onChange,
-    onRemove,
-  }) => {
-    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-      id,
-      disabled: dragDisabled,
-    });
-    const style: React.CSSProperties = {
-      transform: CSS.Transform.toString(transform),
-      transition,
-    };
-
-    return (
-      <div
-        ref={setNodeRef}
-        style={style}
-        className={cn(
-          'flex items-center gap-1.5 rounded-lg border border-border/60 bg-background px-1.5 py-1 shadow-sm transition-colors hover:border-border',
-          isDragging && 'relative z-10 opacity-80 shadow-md'
-        )}
-      >
-        <Button
-          type="button"
-          variant="ghost"
-          isIcon
-          size="xs"
-          disabled={dragDisabled}
-          className={cn(
-            'h-7 w-7 shrink-0 cursor-grab text-muted-foreground hover:text-foreground',
-            isDragging && 'cursor-grabbing'
-          )}
-          aria-label={dragLabel}
-          {...attributes}
-          {...listeners}
-        >
-          <GripVertical className="h-3.5 w-3.5" />
-        </Button>
-        <Input
-          value={question}
-          className="h-8 min-w-0 flex-1 border-0 bg-transparent px-2 text-xs shadow-none focus-visible:ring-0"
-          placeholder={placeholder}
-          onChange={event => onChange(index, event.target.value)}
-        />
-        <Button
-          type="button"
-          variant="ghost"
-          isIcon
-          size="xs"
-          className="h-7 w-7 shrink-0"
-          aria-label={removeLabel}
-          onClick={() => onRemove(index)}
-        >
-          <Trash2 className="h-3.5 w-3.5 text-destructive" />
-        </Button>
-      </div>
-    );
-  }
-);
-SortableSuggestedQuestionRow.displayName = 'SortableSuggestedQuestionRow';
 
 function dedupeSuggestedQuestions(questions: string[]): string[] {
   const seen = new Set<string>();
@@ -172,19 +59,10 @@ function normalizeSuggestedQuestionsForEditor(questions: string[] = []): string[
     .slice(0, SUGGESTED_QUESTIONS_LIMIT);
 }
 
-function mergeGeneratedSuggestedQuestions(existing: string[], selected: string[]): string[] {
-  const selectedQuestions = dedupeSuggestedQuestions(selected);
-  const selectedKeys = new Set(selectedQuestions.map(question => question.toLowerCase()));
-  const remainingExistingQuestions = dedupeSuggestedQuestions(existing).filter(
-    question => !selectedKeys.has(question.toLowerCase())
-  );
-
-  return [...selectedQuestions, ...remainingExistingQuestions].slice(0, SUGGESTED_QUESTIONS_LIMIT);
-}
-
 type FeaturesForm = Pick<
   WorkflowFeatures,
   | 'opening_statement_type'
+  | 'opening_guide_version'
   | 'opening_slogan'
   | 'opening_statement'
   | 'opening_statement_enabled'
@@ -237,6 +115,7 @@ export default function FeaturesPanel({
 
   const [form, setForm] = useState<FeaturesForm>({
     opening_statement_type: storeWorkflowData?.features?.opening_statement_type ?? 'slogan',
+    opening_guide_version: storeWorkflowData?.features?.opening_guide_version,
     opening_slogan: storeWorkflowData?.features?.opening_slogan ?? '',
     opening_statement: storeWorkflowData?.features?.opening_statement ?? '',
     opening_statement_enabled: storeWorkflowData?.features?.opening_statement_enabled ?? false,
@@ -255,12 +134,6 @@ export default function FeaturesPanel({
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [openingDialogOpen, setOpeningDialogOpen] = useState(false);
   const generateSuggestedQuestions = useGenerateWorkflowSuggestedQuestions();
-  const [generatedQuestions, setGeneratedQuestions] = useState<SuggestedQuestionCandidate[]>([]);
-  const [generatedWarnings, setGeneratedWarnings] = useState<string[]>([]);
-  const [selectedGeneratedQuestionIndexes, setSelectedGeneratedQuestionIndexes] = useState<
-    Set<number>
-  >(new Set());
-  const [suggestedQuestionsDialogOpen, setSuggestedQuestionsDialogOpen] = useState(false);
 
   const [shake, setShake] = useState(false);
   useEffect(() => {
@@ -282,6 +155,7 @@ export default function FeaturesPanel({
   const buildFormFromStore = useCallback((): FeaturesForm => {
     return {
       opening_statement_type: storeWorkflowData?.features?.opening_statement_type ?? 'slogan',
+      opening_guide_version: storeWorkflowData?.features?.opening_guide_version,
       opening_slogan: storeWorkflowData?.features?.opening_slogan ?? '',
       opening_statement: storeWorkflowData?.features?.opening_statement ?? '',
       opening_statement_enabled: storeWorkflowData?.features?.opening_statement_enabled ?? false,
@@ -308,7 +182,8 @@ export default function FeaturesPanel({
       return;
     }
     if (hydratedRef.current) return;
-    setForm(buildFormFromStore());
+    const nextForm = buildFormFromStore();
+    setForm(nextForm);
     hydratedRef.current = true;
   }, [open, buildFormFromStore]);
 
@@ -418,67 +293,8 @@ export default function FeaturesPanel({
     []
   );
 
-  const addSuggestedQuestion = useCallback(() => {
-    setForm(prev => {
-      const nextQuestions = normalizeSuggestedQuestionsForEditor(prev.suggested_questions ?? []);
-      if (nextQuestions.length >= SUGGESTED_QUESTIONS_LIMIT) return prev;
-      return {
-        ...prev,
-        suggested_questions: [...nextQuestions, ''],
-      };
-    });
-  }, []);
-
-  const updateSuggestedQuestion = useCallback((index: number, value: string) => {
-    setForm(prev => {
-      const nextQuestions = normalizeSuggestedQuestionsForEditor(prev.suggested_questions ?? []);
-      if (index < 0 || index >= nextQuestions.length) return prev;
-      nextQuestions[index] = value;
-      return {
-        ...prev,
-        suggested_questions: nextQuestions,
-      };
-    });
-  }, []);
-
-  const removeSuggestedQuestion = useCallback((index: number) => {
-    setForm(prev => {
-      const nextQuestions = normalizeSuggestedQuestionsForEditor(prev.suggested_questions ?? []);
-      if (index < 0 || index >= nextQuestions.length) return prev;
-      return {
-        ...prev,
-        suggested_questions: nextQuestions.filter((_, i) => i !== index),
-      };
-    });
-  }, []);
-
-  const handleSuggestedQuestionDragEnd = useCallback((event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-
-    const activeIndex = Number(String(active.id).replace(SUGGESTED_QUESTION_ID_PREFIX, ''));
-    const overIndex = Number(String(over.id).replace(SUGGESTED_QUESTION_ID_PREFIX, ''));
-    if (!Number.isInteger(activeIndex) || !Number.isInteger(overIndex)) return;
-
-    setForm(prev => {
-      const questions = normalizeSuggestedQuestionsForEditor(prev.suggested_questions ?? []);
-      if (
-        activeIndex < 0 ||
-        activeIndex >= questions.length ||
-        overIndex < 0 ||
-        overIndex >= questions.length
-      ) {
-        return prev;
-      }
-      return {
-        ...prev,
-        suggested_questions: arrayMove(questions, activeIndex, overIndex),
-      };
-    });
-  }, []);
-
-  const handleGenerateSuggestedQuestions = useCallback(async () => {
-    if (!storeWorkflowData) return;
+  const handleGenerateSuggestedQuestions = useCallback(async (value: OpeningStatementDialogValue) => {
+    if (!storeWorkflowData) return undefined;
     try {
       const result = await generateSuggestedQuestions.mutateAsync({
         agentId,
@@ -489,56 +305,28 @@ export default function FeaturesPanel({
           features: {
             ...storeWorkflowData.features,
             ...form,
+            opening_slogan: value.title,
+            opening_statement: value.message,
+            suggested_questions: value.suggestedQuestions,
           },
-          existing_questions: dedupeSuggestedQuestions(form.suggested_questions ?? []),
+          existing_questions: dedupeSuggestedQuestions(value.suggestedQuestions),
         },
       });
 
       if (!result.questions?.length) {
         toast.warning(t('workflow.features.suggestedQuestions.generateEmpty'));
-        return;
+        return undefined;
       }
 
-      setGeneratedQuestions(result.questions);
-      setGeneratedWarnings(result.warnings ?? []);
-      setSelectedGeneratedQuestionIndexes(new Set(result.questions.map((_, index) => index)));
-      setSuggestedQuestionsDialogOpen(true);
+      return {
+        questions: result.questions.map(question => question.text),
+        warnings: result.warnings ?? [],
+      };
     } catch {
       // The mutation hook owns the user-facing error toast.
+      return undefined;
     }
   }, [agentId, form, generateSuggestedQuestions, locale, storeWorkflowData, t]);
-
-  const toggleGeneratedQuestion = useCallback((index: number, checked: boolean) => {
-    setSelectedGeneratedQuestionIndexes(prev => {
-      const next = new Set(prev);
-      if (checked) {
-        next.add(index);
-      } else {
-        next.delete(index);
-      }
-      return next;
-    });
-  }, []);
-
-  const applyGeneratedQuestions = useCallback(() => {
-    const selectedQuestions = generatedQuestions
-      .filter((_, index) => selectedGeneratedQuestionIndexes.has(index))
-      .map(item => item.text);
-    if (selectedQuestions.length === 0) return;
-
-    setForm(prev => {
-      const nextQuestions = mergeGeneratedSuggestedQuestions(
-        prev.suggested_questions ?? [],
-        selectedQuestions
-      );
-      return {
-        ...prev,
-        suggested_questions: nextQuestions,
-      };
-    });
-    toast.success(t('workflow.features.suggestedQuestions.applied'));
-    setSuggestedQuestionsDialogOpen(false);
-  }, [generatedQuestions, selectedGeneratedQuestionIndexes, t]);
 
   // Instant-apply model, no explicit save
 
@@ -596,6 +384,12 @@ export default function FeaturesPanel({
     const sOpeningType = storeF.opening_statement_type === 'message' ? 'message' : 'slogan';
     if (fOpeningType !== sOpeningType) {
       partial.opening_statement_type = fOpeningType;
+    }
+
+    const fOpeningGuideVersion = form.opening_guide_version === 2 ? 2 : undefined;
+    const sOpeningGuideVersion = storeF.opening_guide_version === 2 ? 2 : undefined;
+    if (fOpeningGuideVersion !== sOpeningGuideVersion) {
+      partial.opening_guide_version = fOpeningGuideVersion;
     }
 
     const fOpeningSlogan = normalizeOpeningSlogan(form.opening_slogan);
@@ -690,26 +484,21 @@ export default function FeaturesPanel({
       }),
     [agentIcon, agentIconType, agentIconUrl, agentName]
   );
-  const suggestedQuestionDragSensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: {
-        distance: 4,
-      },
-    }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    })
-  );
 
   if (!open) return null;
 
-  const hasOpeningContent =
-    form.opening_statement_type === 'slogan'
-      ? Boolean(form.opening_slogan.trim())
-      : Boolean(form.opening_statement.trim());
   const suggestedQuestions = normalizeSuggestedQuestionsForEditor(form.suggested_questions ?? []);
   const configuredSuggestedQuestionCount = dedupeSuggestedQuestions(suggestedQuestions).length;
-  const canAddSuggestedQuestion = suggestedQuestions.length < SUGGESTED_QUESTIONS_LIMIT;
+  const openingEditorValue = getOpeningGuideEditorValue(form);
+  const hasOpeningContent =
+    Boolean(openingEditorValue.title.trim()) ||
+    Boolean(openingEditorValue.message.trim()) ||
+    configuredSuggestedQuestionCount > 0;
+  const openingSummaryParts = [
+    openingEditorValue.title.trim() ? t('workflow.features.openingStatement.types.slogan') : null,
+    openingEditorValue.message.trim() ? t('workflow.features.openingStatement.types.message') : null,
+    configuredSuggestedQuestionCount > 0 ? t('workflow.features.suggestedQuestions.label') : null,
+  ].filter(Boolean);
 
   return (
     <Panel
@@ -733,7 +522,7 @@ export default function FeaturesPanel({
           </div>
         </div>
         <div className="flex-1 min-h-0 overflow-auto p-4 space-y-3">
-          <div className={ITEM_ROW_CLASS}>
+          <div className={TWO_ACTION_ITEM_ROW_CLASS}>
             <div className={ITEM_TEXT_CLASS}>
               <Label className={ITEM_LABEL_CLASS}>{t('workflow.features.uploadLabel')}</Label>
               <p className={ITEM_DESC_CLASS}>{t('workflow.features.uploadDesc')}</p>
@@ -743,14 +532,24 @@ export default function FeaturesPanel({
                 checked={form.file_upload?.enabled ?? false}
                 onCheckedChange={v => handleToggle('file_upload', v)}
               />
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setUploadDialogOpen(true)}
-                disabled={!form.file_upload?.enabled}
-              >
-                <Settings size={16} />
-              </Button>
+              <Tooltip disableHoverableContent>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    isIcon
+                    size="sm"
+                    interactive="subtle"
+                    onClick={() => setUploadDialogOpen(true)}
+                    disabled={!form.file_upload?.enabled}
+                    aria-label={t('workflow.features.uploadConfigure')}
+                  >
+                    <SlidersHorizontal size={18} strokeWidth={2.2} />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top" align="center">
+                  {t('workflow.features.uploadConfigure')}
+                </TooltipContent>
+              </Tooltip>
             </div>
           </div>
 
@@ -805,136 +604,61 @@ export default function FeaturesPanel({
             ) : null}
           </div>
 
+          <div className={TWO_ACTION_ITEM_ROW_CLASS}>
+            <div className={ITEM_TEXT_CLASS}>
+              <Label className={ITEM_LABEL_CLASS}>
+                {t('workflow.features.openingStatement.enableLabel')}
+              </Label>
+              <p className={ITEM_DESC_CLASS}>
+                {t('workflow.features.openingStatement.enableDesc')}
+              </p>
+              <p className={ITEM_DESC_CLASS}>
+                {openingSummaryParts.length > 0
+                  ? openingSummaryParts.join(' / ')
+                  : t('workflow.features.openingStatement.previewEmptySlogan')}
+              </p>
+              {form.opening_statement_enabled && !hasOpeningContent ? (
+                <p className={ITEM_DESC_CLASS}>
+                  {t('workflow.features.openingStatement.previewEmptyMessage')}
+                </p>
+              ) : null}
+            </div>
+            <div className={ITEM_CONTROL_COLUMN_CLASS}>
+              <Switch
+                checked={Boolean(form.opening_statement_enabled)}
+                onCheckedChange={value =>
+                  setForm(prev => ({
+                    ...prev,
+                    opening_statement_enabled: value,
+                  }))
+                }
+              />
+              <Tooltip disableHoverableContent>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    isIcon
+                    size="sm"
+                    interactive="subtle"
+                    onClick={() => setOpeningDialogOpen(true)}
+                    aria-label={t('workflow.features.openingStatement.dialogTitle')}
+                  >
+                    <SlidersHorizontal size={18} strokeWidth={2.2} />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top" align="center">
+                  {t('workflow.features.openingStatement.dialogTitle')}
+                </TooltipContent>
+              </Tooltip>
+            </div>
+          </div>
+
           <div className={SECTION_CARD_CLASS}>
             <div className="space-y-3">
               <div>
                 <Label className={ITEM_LABEL_CLASS}>
                   {t('workflow.features.webappWorkflowConfig.title')}
                 </Label>
-              </div>
-
-              <div className={ITEM_ROW_CLASS}>
-                <div className={ITEM_TEXT_CLASS}>
-                  <Label className={ITEM_LABEL_CLASS}>
-                    {t('workflow.features.openingStatement.enableLabel')}
-                  </Label>
-                  <p className={ITEM_DESC_CLASS}>
-                    {t('workflow.features.openingStatement.enableDesc')}
-                  </p>
-                  <p className={ITEM_DESC_CLASS}>
-                    {form.opening_statement_type === 'slogan'
-                      ? t('workflow.features.openingStatement.types.slogan')
-                      : t('workflow.features.openingStatement.types.message')}
-                  </p>
-                  {form.opening_statement_enabled && !hasOpeningContent ? (
-                    <p className={ITEM_DESC_CLASS}>
-                      {form.opening_statement_type === 'slogan'
-                        ? t('workflow.features.openingStatement.previewEmptySlogan')
-                        : t('workflow.features.openingStatement.previewEmptyMessage')}
-                    </p>
-                  ) : null}
-                </div>
-                <div className={ITEM_CONTROL_COLUMN_CLASS}>
-                  <Switch
-                    checked={Boolean(form.opening_statement_enabled)}
-                    onCheckedChange={value =>
-                      setForm(prev => ({
-                        ...prev,
-                        opening_statement_enabled: value,
-                      }))
-                    }
-                  />
-                  <Button
-                    variant="ghost"
-                    isIcon
-                    size="sm"
-                    onClick={() => setOpeningDialogOpen(true)}
-                    aria-label={t('workflow.features.openingStatement.dialogTitle')}
-                  >
-                    <Pencil className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-
-              <div className="space-y-3 rounded-lg border border-border/70 bg-muted/20 p-3">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0 flex-1 space-y-1">
-                    <div className="flex items-center gap-2">
-                      <Label className={ITEM_LABEL_CLASS}>
-                        {t('workflow.features.suggestedQuestions.label')}
-                      </Label>
-                      <span className="shrink-0 rounded-md bg-background px-1.5 py-0.5 text-[11px] leading-4 text-muted-foreground ring-1 ring-border/60">
-                        {t('workflow.features.suggestedQuestions.count', {
-                          count: configuredSuggestedQuestionCount,
-                          max: SUGGESTED_QUESTIONS_LIMIT,
-                        })}
-                      </span>
-                    </div>
-                    <p className={ITEM_DESC_CLASS}>
-                      {t('workflow.features.suggestedQuestions.desc')}
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-1.5">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="xs"
-                      className="bg-background"
-                      loading={generateSuggestedQuestions.isPending}
-                      onClick={handleGenerateSuggestedQuestions}
-                    >
-                      <Sparkles className="h-3.5 w-3.5" />
-                      {t('workflow.features.suggestedQuestions.generate')}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="xs"
-                      disabled={!canAddSuggestedQuestion}
-                      onClick={addSuggestedQuestion}
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                      {t('workflow.features.suggestedQuestions.add')}
-                    </Button>
-                  </div>
-                </div>
-
-                {suggestedQuestions.length === 0 ? (
-                  <p className="rounded-md bg-muted/30 px-2.5 py-2 text-xs leading-5 text-muted-foreground">
-                    {t('workflow.features.suggestedQuestions.empty')}
-                  </p>
-                ) : (
-                  <DndContext
-                    sensors={suggestedQuestionDragSensors}
-                    collisionDetection={closestCenter}
-                    modifiers={[restrictToVerticalAxis]}
-                    onDragEnd={handleSuggestedQuestionDragEnd}
-                  >
-                    <SortableContext
-                      items={suggestedQuestions.map(
-                        (_, index) => `${SUGGESTED_QUESTION_ID_PREFIX}${index}`
-                      )}
-                      strategy={verticalListSortingStrategy}
-                    >
-                      <div className="space-y-1.5">
-                        {suggestedQuestions.map((question, index) => (
-                          <SortableSuggestedQuestionRow
-                            key={`${SUGGESTED_QUESTION_ID_PREFIX}${index}`}
-                            id={`${SUGGESTED_QUESTION_ID_PREFIX}${index}`}
-                            index={index}
-                            question={question}
-                            placeholder={t('workflow.features.suggestedQuestions.placeholder')}
-                            dragLabel={t('workflow.features.suggestedQuestions.label')}
-                            removeLabel={t('workflow.features.suggestedQuestions.remove')}
-                            dragDisabled={suggestedQuestions.length <= 1}
-                            onChange={updateSuggestedQuestion}
-                            onRemove={removeSuggestedQuestion}
-                          />
-                        ))}
-                      </div>
-                    </SortableContext>
-                  </DndContext>
-                )}
               </div>
 
               <div className={ITEM_ROW_CLASS}>
@@ -1027,77 +751,23 @@ export default function FeaturesPanel({
         open={openingDialogOpen}
         onOpenChange={setOpeningDialogOpen}
         value={{
-          type: form.opening_statement_type,
-          slogan: form.opening_slogan ?? '',
-          message: form.opening_statement ?? '',
+          ...openingEditorValue,
+          suggestedQuestions,
         }}
         onSave={value =>
           setForm(prev => ({
             ...prev,
-            opening_statement_type: value.type,
-            opening_slogan: clampOpeningSlogan(value.slogan),
+            opening_statement_type: value.message.trim() ? 'message' : 'slogan',
+            opening_guide_version: 2,
+            opening_slogan: clampOpeningSlogan(value.title),
             opening_statement: value.message,
+            suggested_questions: normalizeSuggestedQuestionsForEditor(value.suggestedQuestions),
           }))
         }
+        onGenerateSuggestedQuestions={handleGenerateSuggestedQuestions}
+        generatingSuggestedQuestions={generateSuggestedQuestions.isPending}
         previewBrand={openingGuidePreviewBrand}
-        suggestedQuestions={dedupeSuggestedQuestions(suggestedQuestions)}
       />
-      <Dialog open={suggestedQuestionsDialogOpen} onOpenChange={setSuggestedQuestionsDialogOpen}>
-        <DialogContent size="lg">
-          <DialogHeader>
-            <DialogTitle>{t('workflow.features.suggestedQuestions.previewTitle')}</DialogTitle>
-            <DialogDescription>
-              {t('workflow.features.suggestedQuestions.previewDesc')}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogBody className="space-y-3">
-            {generatedWarnings.length > 0 ? (
-              <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
-                {generatedWarnings.map((warning, index) => (
-                  <div key={index}>{warning}</div>
-                ))}
-              </div>
-            ) : null}
-            <div className="space-y-2">
-              {generatedQuestions.map((question, index) => (
-                <label
-                  key={`${question.text}-${index}`}
-                  className="flex cursor-pointer items-start gap-3 rounded-md border border-muted-foreground p-3 hover:bg-muted/30"
-                >
-                  <Checkbox
-                    checked={selectedGeneratedQuestionIndexes.has(index)}
-                    onCheckedChange={checked => toggleGeneratedQuestion(index, checked === true)}
-                  />
-                  <span className="min-w-0 flex-1 space-y-1">
-                    <span className="block text-sm font-medium leading-5">{question.text}</span>
-                    {question.reason ? (
-                      <span className="block text-xs leading-5 text-muted-foreground">
-                        {question.reason}
-                      </span>
-                    ) : null}
-                  </span>
-                </label>
-              ))}
-            </div>
-          </DialogBody>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => setSuggestedQuestionsDialogOpen(false)}
-            >
-              {tCommon('cancel')}
-            </Button>
-            <Button
-              type="button"
-              disabled={selectedGeneratedQuestionIndexes.size === 0}
-              onClick={applyGeneratedQuestions}
-            >
-              {t('workflow.features.suggestedQuestions.applyGenerated')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </Panel>
   );
 }

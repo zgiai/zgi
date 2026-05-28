@@ -15,6 +15,7 @@ export interface WebAppWorkflowConfigFeature {
 
 export interface WebAppFeatures {
   opening_statement_type?: 'slogan' | 'message';
+  opening_guide_version?: 2;
   opening_slogan?: string;
   opening_statement: string;
   opening_statement_enabled?: boolean;

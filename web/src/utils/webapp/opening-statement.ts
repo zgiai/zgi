@@ -1,16 +1,25 @@
 export type OpeningStatementType = 'slogan' | 'message';
+export type OpeningGuideMode = 'legacy' | 'combined';
 
 interface OpeningStatementLike {
   opening_statement_type?: OpeningStatementType | null;
+  opening_guide_version?: 2 | null;
   opening_slogan?: string | null;
   opening_statement?: string | null;
   opening_statement_enabled?: boolean | null;
+  suggested_questions?: string[] | null;
 }
 
 export interface OpeningGuideConfig {
-  type: OpeningStatementType;
-  slogan?: string;
+  mode: OpeningGuideMode;
+  legacyType?: OpeningStatementType;
+  title?: string;
   message?: string;
+}
+
+export interface OpeningGuideEditorValue {
+  title: string;
+  message: string;
 }
 
 export const OPENING_SLOGAN_MAX_LENGTH = 150;
@@ -63,29 +72,80 @@ export function getOpeningGuide(
     return undefined;
   }
 
-  const type = resolveOpeningStatementType(features);
   const slogan =
     typeof features.opening_slogan === 'string'
       ? clampOpeningSlogan(features.opening_slogan)
       : '';
   const message =
     typeof features.opening_statement === 'string' ? features.opening_statement : '';
+  const hasSuggestedQuestions =
+    Array.isArray(features.suggested_questions) &&
+    features.suggested_questions.some(question => question.trim().length > 0);
+
+  if (features.opening_guide_version === 2) {
+    return slogan.trim() || message.trim() || hasSuggestedQuestions
+      ? {
+          mode: 'combined',
+          title: slogan.trim() ? slogan : undefined,
+          message: message.trim() ? message : undefined,
+        }
+      : undefined;
+  }
+
+  const type = resolveOpeningStatementType(features);
 
   if (type === 'slogan') {
     return slogan.trim()
       ? {
-          type,
-          slogan,
+          mode: 'legacy',
+          legacyType: type,
+          title: slogan,
         }
       : undefined;
   }
 
   return message.trim()
     ? {
-        type,
+        mode: 'legacy',
+        legacyType: type,
         message,
       }
     : undefined;
+}
+
+export function getOpeningGuideEditorValue(
+  features?: OpeningStatementLike | null
+): OpeningGuideEditorValue {
+  if (!features) {
+    return {
+      title: '',
+      message: '',
+    };
+  }
+
+  if (features.opening_guide_version === 2) {
+    return {
+      title:
+        typeof features.opening_slogan === 'string'
+          ? clampOpeningSlogan(features.opening_slogan)
+          : '',
+      message:
+        typeof features.opening_statement === 'string' ? features.opening_statement : '',
+    };
+  }
+
+  const type = resolveOpeningStatementType(features);
+
+  return {
+    title:
+      type === 'slogan' && typeof features.opening_slogan === 'string'
+        ? clampOpeningSlogan(features.opening_slogan)
+        : '',
+    message:
+      type === 'message' && typeof features.opening_statement === 'string'
+        ? features.opening_statement
+        : '',
+  };
 }
 
 /**
@@ -96,5 +156,5 @@ export function getEnabledOpeningStatement(
   features?: OpeningStatementLike | null
 ): string | undefined {
   const guide = getOpeningGuide(features);
-  return guide?.type === 'message' ? guide.message : undefined;
+  return guide?.message;
 }

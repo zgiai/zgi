@@ -138,14 +138,18 @@ function coerceFeatures(raw: unknown): WorkflowData['features'] {
             : typeof obj.opening_statement === 'string' && obj.opening_statement.trim().length > 0
               ? 'message'
               : 'slogan',
+    opening_guide_version: obj.opening_guide_version === 2 ? 2 : undefined,
     opening_slogan: typeof obj.opening_slogan === 'string' ? obj.opening_slogan : '',
     opening_statement: typeof obj.opening_statement === 'string' ? obj.opening_statement : '',
     opening_statement_enabled:
       typeof obj.opening_statement_enabled === 'boolean'
         ? obj.opening_statement_enabled
-        : typeof obj.opening_statement === 'string'
-          ? obj.opening_statement.trim().length > 0
-          : false,
+        : (typeof obj.opening_slogan === 'string' && obj.opening_slogan.trim().length > 0) ||
+          (typeof obj.opening_statement === 'string' && obj.opening_statement.trim().length > 0) ||
+          (Array.isArray(obj.suggested_questions) &&
+            obj.suggested_questions.some(
+              question => typeof question === 'string' && question.trim().length > 0
+            )),
     suggested_questions: Array.isArray(obj.suggested_questions)
       ? ((obj.suggested_questions as unknown[]).filter(x => typeof x === 'string') as string[])
       : [],
@@ -218,17 +222,22 @@ export function normalizeToWorkflowData(data: WorkflowData | WorkflowDraftData):
           ? 'message'
           : draftData.features?.opening_statement_type === 'slogan'
             ? 'slogan'
-            : Boolean(draftData.features?.opening_slogan?.trim())
+            : draftData.features?.opening_slogan?.trim()
               ? 'slogan'
-              : Boolean(draftData.features?.opening_statement?.trim())
+              : draftData.features?.opening_statement?.trim()
                 ? 'message'
                 : 'slogan',
+      opening_guide_version: draftData.features?.opening_guide_version === 2 ? 2 : undefined,
       opening_slogan: draftData.features?.opening_slogan || '',
       opening_statement: draftData.features?.opening_statement || '',
       opening_statement_enabled:
         typeof draftData.features?.opening_statement_enabled === 'boolean'
           ? draftData.features.opening_statement_enabled
-          : Boolean(draftData.features?.opening_statement?.trim()),
+          : Boolean(
+              draftData.features?.opening_slogan?.trim() ||
+                draftData.features?.opening_statement?.trim() ||
+                draftData.features?.suggested_questions?.some(question => question.trim().length > 0)
+            ),
       suggested_questions: draftData.features?.suggested_questions || [],
       suggested_questions_after_answer: {
         enabled: draftData.features?.suggested_questions_after_answer?.enabled || false,

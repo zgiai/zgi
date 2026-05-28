@@ -412,7 +412,7 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
               </Tooltip>
 
               {agentType === AgentType.CONVERSATIONAL_AGENT && (
-                <Tooltip>
+                <Tooltip disableHoverableContent>
                   <TooltipTrigger asChild>
                     <Button
                       onClick={openFeaturesPanel}
@@ -425,7 +425,9 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
                       <Settings2 size={18} />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>{t('workflow.features.title')}</TooltipContent>
+                  <TooltipContent side="top" align="center">
+                    {t('workflow.features.title')}
+                  </TooltipContent>
                 </Tooltip>
               )}
               {agentType !== AgentType.CONVERSATIONAL_AGENT && (
