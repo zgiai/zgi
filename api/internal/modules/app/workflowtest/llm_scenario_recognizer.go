@@ -33,7 +33,7 @@ func (r *LLMScenarioRecognizer) RecognizeScenarios(ctx context.Context, req Scen
 	maxTokens := 3200
 	chatReq := &adapter.ChatRequest{
 		Messages: []adapter.Message{
-			{Role: "system", Content: "你是工作流自动化批量测试的业务场景识别助手。请只做轻量归类，不要把近义场景自动合并。"},
+			{Role: "system", Content: "你是工作流自动化批量测试的业务场景识别助手。请根据工作流结构、节点说明、系统提示词、已有场景和已有测试问题，识别用户真实会触发的业务场景。业务场景是用户意图，不是节点名、分支名、工具名或技术路径。"},
 			{Role: "user", Content: buildScenarioRecognitionPrompt(req)},
 		},
 		Temperature:    &temperature,
@@ -117,11 +117,12 @@ func defaultScenarioRecognitionPrompt() string {
 
 要求：
 1. 业务场景不是节点名或分支名，而是用户意图，例如投诉升级、订单查询、售后退款。
-2. 合并语义重复的场景，保留清晰、可测试的名称。
-3. 每个场景输出名称、判断说明和适合生成测试问题的覆盖角度。
-4. 优先覆盖高频、关键、异常和兜底场景。
-5. 已有场景名称完全相同则复用，不要新建同名场景。
-6. 如果提供了测试问题，请把能明确归类的问题分配到 assignments；无法明确归类的问题可以不分配。`
+2. 不要把节点名、分支名、工具名直接作为场景名。
+3. 合并语义重复的场景，保留清晰、可测试的名称。
+4. 每个场景输出名称、判断说明和适合生成测试问题的覆盖角度。
+5. 优先覆盖高频、关键、异常和兜底场景。
+6. 已有场景名称完全相同或语义高度一致则复用，不要重复创建。
+7. 如果提供了测试问题，请把能明确归类的问题分配到 assignments；无法明确归类的问题可以不分配，不要强行归类。`
 }
 
 func truncateForScenarioRecognition(value string) string {

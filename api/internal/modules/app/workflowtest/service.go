@@ -18,6 +18,11 @@ const batchStaleFailureMessage = "测试执行长时间无进展，系统已自�
 
 var batchItemExecutionTimeout = 10 * time.Minute
 
+const (
+	generationPromptExistingCasesMaxTotal       = 30
+	generationPromptExistingCasesMaxPerScenario = 5
+)
+
 var ErrJudgeModelNotConfigured = errors.New("judge model is not configured")
 
 type Service struct {
@@ -857,6 +862,26 @@ func (s *Service) generateCasesForScenarios(ctx context.Context, agentID string,
 	generateReq.Count = req.Count
 	generateReq.ScenarioID = ""
 	generateReq.ScenarioIDs = scenarioIDs
+	generateReq.WorkflowContext = s.resolveWorkflowRecognitionContext(ctx, agentID)
+	scenarios, err := s.ListScenarios(ctx, agentID)
+	if err != nil {
+		return nil, err
+	}
+	scenarioByID := make(map[string]Scenario, len(scenarios))
+	for _, scenario := range scenarios {
+		scenarioByID[scenario.ID] = scenario
+	}
+	generateReq.Scenarios = make([]Scenario, 0, len(scenarioIDs))
+	for _, scenarioID := range scenarioIDs {
+		if scenario, ok := scenarioByID[scenarioID]; ok {
+			generateReq.Scenarios = append(generateReq.Scenarios, scenario)
+		}
+	}
+	existingCases, err := s.ListCases(ctx, agentID, "")
+	if err != nil {
+		return nil, err
+	}
+	generateReq.ExistingCases = selectExistingCasesForGenerationPrompt(existingCases, scenarioIDs)
 	generated, err := generator.GenerateCases(ctx, generateReq)
 	if err != nil {
 		return nil, err
@@ -870,6 +895,11 @@ func (s *Service) generateCasesForScenarios(ctx context.Context, agentID string,
 	}
 	for index, item := range normalized {
 		scenarioID := scenarioIDs[index%len(scenarioIDs)]
+		if itemScenarioID := strings.TrimSpace(item.ScenarioID); itemScenarioID != "" {
+			if _, ok := scenarioByID[itemScenarioID]; ok {
+				scenarioID = itemScenarioID
+			}
+		}
 		created, err := s.CreateCase(ctx, agentID, CreateCaseRequest{
 			Content:        item.Content,
 			ExpectedResult: item.ExpectedResult,
@@ -890,6 +920,62 @@ func (s *Service) generateCasesForScenarios(ctx context.Context, agentID string,
 		}
 	}
 	return &GenerateCasesResult{Cases: generatedCases, Items: items}, nil
+}
+
+func selectExistingCasesForGenerationPrompt(cases []Case, scenarioIDs []string) []Case {
+	if len(cases) == 0 || len(scenarioIDs) == 0 {
+		return nil
+	}
+
+	selectedScenarioSet := make(map[string]struct{}, len(scenarioIDs))
+	orderedScenarioIDs := make([]string, 0, len(scenarioIDs))
+	for _, scenarioID := range scenarioIDs {
+		scenarioID = strings.TrimSpace(scenarioID)
+		if scenarioID == "" {
+			continue
+		}
+		if _, exists := selectedScenarioSet[scenarioID]; exists {
+			continue
+		}
+		selectedScenarioSet[scenarioID] = struct{}{}
+		orderedScenarioIDs = append(orderedScenarioIDs, scenarioID)
+	}
+	if len(orderedScenarioIDs) == 0 {
+		return nil
+	}
+
+	grouped := make(map[string][]Case, len(orderedScenarioIDs))
+	for _, testCase := range cases {
+		if testCase.ScenarioID == nil {
+			continue
+		}
+		scenarioID := strings.TrimSpace(*testCase.ScenarioID)
+		if _, ok := selectedScenarioSet[scenarioID]; !ok {
+			continue
+		}
+		if len(grouped[scenarioID]) >= generationPromptExistingCasesMaxPerScenario {
+			continue
+		}
+		grouped[scenarioID] = append(grouped[scenarioID], testCase)
+	}
+
+	selected := make([]Case, 0, minInt(len(cases), generationPromptExistingCasesMaxTotal))
+	for _, scenarioID := range orderedScenarioIDs {
+		for _, testCase := range grouped[scenarioID] {
+			if len(selected) >= generationPromptExistingCasesMaxTotal {
+				return selected
+			}
+			selected = append(selected, testCase)
+		}
+	}
+	return selected
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func normalizeGenerateScenarioIDs(req GenerateCasesRequest) []string {

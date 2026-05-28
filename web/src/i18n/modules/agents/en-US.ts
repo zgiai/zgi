@@ -1094,7 +1094,7 @@ const messages = {
         submit: 'Save',
       },
       recognizeScenarios: {
-        title: 'Recognize Business Scenarios?',
+        title: 'Recognize Business Scenarios',
         description:
           'The system will incrementally recognize business scenarios from the current workflow. Newly recognized scenarios will be appended to the list. Existing scenarios and test questions will be kept and will not be deleted or overwritten.',
         modelLabel: 'Recognition Model',
@@ -1102,7 +1102,7 @@ const messages = {
         promptLabel: 'Recognition Prompt',
         promptPlaceholder: 'Enter the recognition prompt',
         promptDefault:
-          'Recognize the real business scenarios that users may trigger based on the current agent workflow structure, node descriptions, and system prompts.\n\nRequirements:\n1. Business scenarios are user intents, not node names or branch names, such as complaint escalation, order inquiry, and after-sales refund.\n2. Merge semantically duplicate scenarios and keep clear, testable names.\n3. For each scenario, output the name, judgment description, and coverage angle suitable for generating test questions.\n4. Prioritize high-frequency, critical, abnormal, and fallback scenarios.',
+          'Recognize the real business scenarios that users may trigger based on the current agent workflow structure, node descriptions, and system prompts.\n\nRequirements:\n1. Business scenarios are user intents, not node names, branch names, or tool names, such as complaint escalation, order inquiry, and after-sales refund.\n2. Do not use node names, branch names, or tool names directly as scenario names.\n3. Merge semantically duplicate scenarios and keep clear, testable names.\n4. For each scenario, output the name, judgment description, and coverage angle suitable for generating test questions.\n5. Prioritize high-frequency, critical, abnormal, and fallback scenarios.\n6. Reuse existing scenarios when the name is identical or semantically close. Do not create duplicates.',
         submit: 'Start Recognition',
         submitting: 'Recognizing...',
       },
@@ -1143,7 +1143,7 @@ const messages = {
         promptLabel: 'Generation Prompt Template',
         promptPlaceholder: 'Enter the generation prompt template',
         promptDefault:
-          'Generate candidate test questions for the question library based on the current agent workflow, recognized business scenarios, and existing test questions.\n\nRequirements:\n1. Use the current UI language for all questions and expected results.\n2. Make each question sound like a real user request, not a test script or feature checklist.\n3. Cover the selected business scenarios evenly across high-frequency, critical, abnormal, boundary, and fallback cases. Avoid duplicate wording.\n4. Match the selected question types: core questions cover the main path, extension questions cover nearby expressions, and fuzzy questions cover incomplete or conversational input.\n5. For multi-turn conversations, generate natural turns with clear context progression.\n6. Add an expected result for each question that is specific enough to verify. Do not write only "answer correctly".\n7. Keep each question concise when possible.\n8. Return a JSON object in this format: \'{\'"cases":[\'{\'"content":"Question content","expected_result":"Expected result","question_type":"core"\'}\']\'}\'',
+          'Generate candidate test questions for the question library based on the current agent workflow, recognized business scenarios, and existing test questions.\n\nRequirements:\n1. Use the current UI language for all questions and expected results.\n2. Generate test inputs, not demo questions, feature checklists, or standard answers.\n3. Make each question sound like a real user request, not a test script or feature checklist.\n4. User input must not contain internal system terms such as "test case", "node", "branch", "workflow", "path", "scenario ID", or "scoring criteria".\n5. Do not output an expected workflow path.\n6. Cover the selected business scenarios evenly across high-frequency, critical, abnormal, boundary, and fallback cases. Avoid duplicate wording.\n7. Match the selected question types: core questions cover the main path, extension questions cover nearby expressions, and fuzzy questions cover missing information, ambiguous intent, abnormal input, or fallback needs.\n8. Add an expected result for each question that describes how the agent should handle it. Do not write only "answer correctly", "handle properly", or "complete the task".\n9. Keep each question concise when possible.\n10. Return a JSON object in this format: \'{\'"cases":[\'{\'"scenario_id":"Scenario ID","content":"Question content","expected_result":"Expected result","question_type":"core"\'}\']\'}\'',
         contextLabel: 'Business Context',
         contextPlaceholder:
           'Describe the agent purpose, key business scenarios, and expected user inputs.',
