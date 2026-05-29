@@ -1,4 +1,4 @@
-package service
+package skillloop
 
 import (
 	"context"
@@ -12,16 +12,16 @@ import (
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
-func (s *service) runSkillPlanningStream(
+func (r *Runner) runSkillPlanningStream(
 	ctx context.Context,
 	prepared *PreparedChat,
 	planningReq *adapter.ChatRequest,
 	round int,
-	onEvent func(StreamEvent) error,
+	onEvent func(Event) error,
 ) (planningResult, bool, error) {
 	streamReq := cloneChatRequest(planningReq)
 	streamReq.Stream = true
-	stream, fallbackProgressStreamed, err := s.openSkillPlanningStream(ctx, prepared, streamReq, onEvent)
+	stream, fallbackProgressStreamed, err := r.openSkillPlanningStream(ctx, prepared, streamReq, onEvent)
 	if err != nil {
 		logger.WarnContext(ctx, "aichat skill planning stream unavailable, falling back to non-stream planning",
 			"message_id", prepared.Message.ID.String(),
@@ -42,14 +42,14 @@ func (s *service) runSkillPlanningStream(
 	naturalProgressStreamed := false
 	toolPlanningProgressStreamed := false
 	var speculativeAnswer strings.Builder
-	fallbackTimer := time.NewTimer(skillPlanningFallbackProgressDelay)
+	fallbackTimer := time.NewTimer(r.fallbackDelay())
 	defer fallbackTimer.Stop()
 
 	for {
 		select {
 		case <-fallbackTimer.C:
 			if !answerStreamed && !naturalProgressStreamed && !toolPlanningProgressStreamed && !fallbackProgressStreamed {
-				fallbackProgressStreamed = s.emitPlanningFallbackProgress(ctx, prepared, onEvent)
+				fallbackProgressStreamed = r.emitPlanningFallbackProgress(ctx, prepared, onEvent)
 			}
 			continue
 		case response, ok := <-stream:
@@ -75,10 +75,10 @@ func (s *service) runSkillPlanningStream(
 				if text := streamChoiceText(choice); text != "" {
 					contentBuilder.WriteString(text)
 					if sawToolCall {
-						s.emitAgentProgress(ctx, prepared, text, onEvent)
+						r.emitAgentProgress(ctx, prepared, text, onEvent)
 						naturalProgressStreamed = true
 					} else {
-						s.emitAnswerChunk(ctx, prepared, text, onEvent)
+						r.emitAnswerChunk(ctx, prepared, text, onEvent)
 						speculativeAnswer.WriteString(text)
 						answerStreamed = true
 					}
@@ -87,10 +87,10 @@ func (s *service) runSkillPlanningStream(
 					if !sawToolCall {
 						sawToolCall = true
 						if speculative := speculativeAnswer.String(); speculative != "" {
-							s.emitAnswerRetract(ctx, prepared, speculative, onEvent)
+							r.emitAnswerRetract(ctx, prepared, speculative, onEvent)
 						}
 						if progress := strings.TrimSpace(contentBuilder.String()); progress != "" {
-							s.emitAgentProgress(ctx, prepared, progress, onEvent)
+							r.emitAgentProgress(ctx, prepared, progress, onEvent)
 							naturalProgressStreamed = true
 						}
 					}
@@ -98,10 +98,10 @@ func (s *service) runSkillPlanningStream(
 					if state == nil {
 						continue
 					}
-					if (!toolPlanningProgressStreamed || isStreamingBusinessToolCall(state)) && (!naturalProgressStreamed || isStreamingBusinessToolCall(state)) && s.emitStreamingToolPlanningProgress(ctx, prepared, state, onEvent) {
+					if (!toolPlanningProgressStreamed || isStreamingBusinessToolCall(state)) && (!naturalProgressStreamed || isStreamingBusinessToolCall(state)) && r.emitStreamingToolPlanningProgress(ctx, prepared, state, onEvent) {
 						toolPlanningProgressStreamed = true
 					}
-					s.emitStreamingIntermediateAnswerDelta(ctx, prepared, round, state, onEvent)
+					r.emitStreamingIntermediateAnswerDelta(ctx, prepared, round, state, onEvent)
 				}
 			}
 		}
@@ -143,26 +143,26 @@ type skillPlanningStreamOpenResult struct {
 	err    error
 }
 
-func (s *service) openSkillPlanningStream(
+func (r *Runner) openSkillPlanningStream(
 	ctx context.Context,
 	prepared *PreparedChat,
 	streamReq *adapter.ChatRequest,
-	onEvent func(StreamEvent) error,
+	onEvent func(Event) error,
 ) (<-chan adapter.StreamResponse, bool, error) {
 	resultCh := make(chan skillPlanningStreamOpenResult, 1)
 	go func() {
-		stream, err := s.llmClient.AppChatStream(ctx, newBillingAppContext(prepared), streamReq)
+		stream, err := r.LLMClient.AppChatStream(ctx, r.AppContext, streamReq)
 		resultCh <- skillPlanningStreamOpenResult{stream: stream, err: err}
 	}()
 
-	timer := time.NewTimer(skillPlanningFallbackProgressDelay)
+	timer := time.NewTimer(r.fallbackDelay())
 	defer timer.Stop()
 
 	select {
 	case result := <-resultCh:
 		return result.stream, false, result.err
 	case <-timer.C:
-		fallbackProgressStreamed := s.emitPlanningFallbackProgress(ctx, prepared, onEvent)
+		fallbackProgressStreamed := r.emitPlanningFallbackProgress(ctx, prepared, onEvent)
 		select {
 		case result := <-resultCh:
 			return result.stream, fallbackProgressStreamed, result.err
@@ -241,12 +241,12 @@ func isStreamingBusinessToolCall(state *streamingToolCallState) bool {
 	return state != nil && strings.EqualFold(strings.TrimSpace(state.call.Function.Name), skills.MetaToolCallSkillTool)
 }
 
-func (s *service) emitStreamingIntermediateAnswerDelta(
+func (r *Runner) emitStreamingIntermediateAnswerDelta(
 	ctx context.Context,
 	prepared *PreparedChat,
 	round int,
 	state *streamingToolCallState,
-	onEvent func(StreamEvent) error,
+	onEvent func(Event) error,
 ) {
 	if state == nil || !strings.EqualFold(strings.TrimSpace(state.call.Function.Name), skills.MetaToolIntermediateAnswer) {
 		return
@@ -265,14 +265,14 @@ func (s *service) emitStreamingIntermediateAnswerDelta(
 		Status:  "running",
 	}
 	answerID := streamingIntermediateAnswerID(prepared, round, state.call)
-	s.emitPreparedEvent(ctx, prepared, streamEventIntermediateAnswer, intermediateAnswerPayload(prepared, trace, answerID, delta, 0, false, "streaming"), onEvent)
+	r.emitEvent(EventIntermediateAnswer, intermediateAnswerPayload(prepared, trace, answerID, delta, 0, false, "streaming"))
 }
 
-func (s *service) emitStreamingToolPlanningProgress(
+func (r *Runner) emitStreamingToolPlanningProgress(
 	ctx context.Context,
 	prepared *PreparedChat,
 	state *streamingToolCallState,
-	onEvent func(StreamEvent) error,
+	onEvent func(Event) error,
 ) bool {
 	if state == nil {
 		return false
@@ -342,14 +342,14 @@ func (s *service) emitStreamingToolPlanningProgress(
 	state.emittedPlanningProgress = true
 	state.emittedPlanningSkillID = skillID
 	state.emittedPlanningToolName = toolName
-	s.emitPreparedEvent(ctx, prepared, streamEventAgentProgress, payload, onEvent)
+	r.emitEvent(EventAgentProgress, payload)
 	return true
 }
 
-func (s *service) emitPlanningFallbackProgress(
+func (r *Runner) emitPlanningFallbackProgress(
 	ctx context.Context,
 	prepared *PreparedChat,
-	onEvent func(StreamEvent) error,
+	onEvent func(Event) error,
 ) bool {
 	payload := map[string]interface{}{
 		"conversation_id": prepared.Conversation.ID.String(),
@@ -357,7 +357,7 @@ func (s *service) emitPlanningFallbackProgress(
 		"phase":           "planning",
 		"created_at":      time.Now().Unix(),
 	}
-	s.emitPreparedEvent(ctx, prepared, streamEventAgentProgress, payload, onEvent)
+	r.emitEvent(EventAgentProgress, payload)
 	return true
 }
 

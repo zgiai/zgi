@@ -1,0 +1,269 @@
+package skillloop
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+	"unicode/utf16"
+
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
+	"github.com/zgiai/zgi/api/pkg/logger"
+)
+
+const (
+	defaultMaxSkillPlanningRounds            = 50
+	defaultMaxSkillStepsPerTurn              = 160
+	defaultMaxBusinessToolCallsPerSkill      = 20
+	defaultMaxRecoverableSkillFailures       = 20
+	defaultMaxConsecutiveRecoverableFailures = 5
+	intermediateAnswerChunkRunes             = 180
+	streamedIntermediateAnswerArg            = "_aichat_streamed_answer"
+)
+
+type skillStepResult struct {
+	trace       skills.SkillTrace
+	toolMessage adapter.Message
+	usedSkill   bool
+	usedTool    bool
+	recoverable bool
+	fatalErr    error
+}
+
+type planningResult struct {
+	message          adapter.Message
+	usage            *adapter.Usage
+	answerStreamed   bool
+	progressStreamed bool
+}
+
+type streamingToolCallState struct {
+	call                    adapter.ToolCall
+	emittedContent          string
+	emittedPlanningProgress bool
+	emittedPlanningSkillID  string
+	emittedPlanningToolName string
+}
+
+func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usage, error) {
+	prepared := req.Prepared
+	resolved := req.Resolved
+	if r == nil || r.SkillRuntime == nil {
+		return "", nil, fmt.Errorf("%w: skill runtime is not configured", ErrInvalidInput)
+	}
+	if r.LLMClient == nil {
+		return "", nil, fmt.Errorf("llm client is not configured")
+	}
+	if prepared == nil || prepared.LLMRequest == nil {
+		return "", nil, fmt.Errorf("%w: prepared chat is invalid", ErrInvalidInput)
+	}
+	if resolved == nil || len(resolved.Skills) == 0 {
+		return "", nil, fmt.Errorf("%w: no skills available for configured skill ids", ErrInvalidInput)
+	}
+
+	messages := append([]adapter.Message{}, prepared.LLMRequest.Messages...)
+	metadataMessage, metadataStats := skills.SkillMetadataSystemMessageWithBudget(
+		resolved.PromptMetadata(),
+		skills.DefaultSkillMetadataPromptBudgetChars,
+	)
+	messages = append(messages, metadataMessage)
+	messages = append(messages, agenticSkillLoopSystemMessage())
+	traces := []skills.SkillTrace{metadataExposedTrace(resolved.SkillIDs(), metadataStats)}
+	r.recordTrace(traces, traces[0])
+	logger.DebugContext(ctx, "aichat skill metadata exposed",
+		"conversation_id", prepared.Conversation.ID.String(),
+		"message_id", prepared.Message.ID.String(),
+		"skill_ids", resolved.SkillIDs(),
+		"skill_mode", prepared.parts.SkillMode,
+	)
+
+	stepCount := 0
+	toolCallCount := 0
+	recoverableFailureCount := 0
+	consecutiveRecoverableFailures := 0
+	skillToolCallCounts := map[string]int{}
+	skillUsed := false
+	loadedSkills := map[string]struct{}{}
+	maxSkillSteps := maxSkillStepsForTurn(resolved)
+	var answerBuilder strings.Builder
+	var usage *adapter.Usage
+
+	for round := 0; round < defaultMaxSkillPlanningRounds; round++ {
+		planningReq := cloneChatRequest(prepared.LLMRequest)
+		planningReq.Messages = messages
+		planningReq.Stream = false
+		planningReq.Tools = skills.MetaToolsForSkillState(resolved, loadedSkills)
+		planningReq.ToolChoice = "auto"
+
+		planningResult, err := r.runSkillPlanning(ctx, prepared, planningReq, round, req.OnChunk)
+		if err != nil {
+			return answerBuilder.String(), usage, err
+		}
+		usage = mergeUsage(usage, planningResult.usage)
+		planningMessage := planningResult.message
+		toolCalls := normalizeToolCalls(planningMessage.ToolCalls)
+		text := assistantMessageText(planningMessage)
+		if text != "" && len(toolCalls) > 0 && !planningResult.progressStreamed {
+			r.emitAgentProgress(ctx, prepared, text, nil)
+		}
+		if len(toolCalls) == 0 && prepared.parts.SkillMode == "required" && !skillUsed {
+			return answerBuilder.String(), usage, fmt.Errorf("%w: required skill was not used", ErrInvalidInput)
+		}
+		if text != "" && len(toolCalls) == 0 {
+			answerBuilder.WriteString(text)
+			if !planningResult.answerStreamed {
+				r.emitAnswerChunk(ctx, prepared, text, nil)
+			}
+		}
+		if len(toolCalls) == 0 {
+			logger.DebugContext(ctx, "aichat skill planning completed",
+				"conversation_id", prepared.Conversation.ID.String(),
+				"message_id", prepared.Message.ID.String(),
+				"skill_step_count", stepCount,
+				"tool_call_count", toolCallCount,
+			)
+			return answerBuilder.String(), usage, nil
+		}
+		if stepCount+len(toolCalls) > maxSkillSteps {
+			logger.WarnContext(ctx, "aichat skill step limit exceeded",
+				"conversation_id", prepared.Conversation.ID.String(),
+				"message_id", prepared.Message.ID.String(),
+				"current_step_count", stepCount,
+				"requested_tool_calls", len(toolCalls),
+				"max_steps", maxSkillSteps,
+			)
+			return answerBuilder.String(), usage, fmt.Errorf("%w: too many skill steps", ErrInvalidInput)
+		}
+		logger.DebugContext(ctx, "aichat skill planning requested tool calls",
+			"conversation_id", prepared.Conversation.ID.String(),
+			"message_id", prepared.Message.ID.String(),
+			"tool_call_count", len(toolCalls),
+			"step_count", stepCount,
+		)
+
+		planningMessage.Role = "assistant"
+		planningMessage.ToolCalls = toolCalls
+		messages = append(messages, planningMessage)
+
+		for _, call := range toolCalls {
+			stepCount++
+			result := r.handleProgressiveSkillCall(ctx, prepared, resolved, call, req.ExecutionContext, toolCallCount, skillToolCallCounts, loadedSkills, nil)
+			traces = append(traces, result.trace)
+			r.recordTrace(traces, result.trace)
+			r.logSkillTrace(ctx, prepared, result.trace)
+			if result.recoverable {
+				r.emitSkillError(ctx, prepared, result.trace)
+				recoverableFailureCount++
+				consecutiveRecoverableFailures++
+				if recoverableFailureCount > defaultMaxRecoverableSkillFailures ||
+					consecutiveRecoverableFailures > defaultMaxConsecutiveRecoverableFailures {
+					err := fmt.Errorf("%w: too many failed skill calls", ErrInvalidInput)
+					trace := failedSkillTrace(result.trace.Kind, result.trace.ToolName, err)
+					trace.SkillID = result.trace.SkillID
+					trace.Arguments = result.trace.Arguments
+					r.emitSkillError(ctx, prepared, trace)
+					return answerBuilder.String(), usage, err
+				}
+			} else {
+				consecutiveRecoverableFailures = 0
+			}
+			if result.fatalErr != nil {
+				if !result.recoverable {
+					r.emitSkillError(ctx, prepared, result.trace)
+				}
+				return answerBuilder.String(), usage, result.fatalErr
+			}
+			if result.usedSkill {
+				skillUsed = true
+			}
+			if result.usedTool {
+				toolCallCount++
+				incrementSkillToolCallCount(skillToolCallCounts, result.trace.SkillID)
+			}
+			messages = append(messages, result.toolMessage)
+		}
+	}
+
+	return answerBuilder.String(), usage, fmt.Errorf("%w: too many skill planning rounds", ErrInvalidInput)
+}
+
+func (r *Runner) runSkillPlanning(ctx context.Context, prepared *PreparedChat, planningReq *adapter.ChatRequest, round int, onChunk func(string) error) (planningResult, error) {
+	if shouldStreamSkillPlanning(prepared) {
+		result, ok, err := r.runSkillPlanningStream(ctx, prepared, planningReq, round, nil)
+		if err != nil {
+			return planningResult{}, err
+		}
+		if ok {
+			return result, nil
+		}
+	}
+
+	planningReq.Stream = false
+	planningResp, err := r.LLMClient.AppChat(ctx, r.AppContext, planningReq)
+	if err != nil {
+		return planningResult{}, err
+	}
+	return planningResult{message: firstPlanningMessage(planningResp), usage: planningRespUsage(planningResp)}, nil
+}
+
+func (r *Runner) emitAnswerChunk(ctx context.Context, prepared *PreparedChat, text string, _ func(Event) error) {
+	if text == "" {
+		return
+	}
+	r.emitEvent(EventMessage, map[string]interface{}{
+		"conversation_id": prepared.Conversation.ID.String(),
+		"message_id":      prepared.Message.ID.String(),
+		"answer":          text,
+	})
+}
+
+func (r *Runner) emitAnswerRetract(ctx context.Context, prepared *PreparedChat, text string, _ func(Event) error) {
+	if text == "" {
+		return
+	}
+	r.emitEvent(EventMessageRetract, map[string]interface{}{
+		"conversation_id": prepared.Conversation.ID.String(),
+		"message_id":      prepared.Message.ID.String(),
+		"content":         text,
+		"length":          utf16CodeUnitLength(text),
+		"created_at":      time.Now().Unix(),
+	})
+}
+
+func utf16CodeUnitLength(text string) int {
+	return len(utf16.Encode([]rune(text)))
+}
+
+func (r *Runner) emitAgentProgress(ctx context.Context, prepared *PreparedChat, text string, _ func(Event) error) {
+	content := strings.TrimSpace(text)
+	if content == "" {
+		return
+	}
+	r.emitEvent(EventAgentProgress, map[string]interface{}{
+		"conversation_id": prepared.Conversation.ID.String(),
+		"message_id":      prepared.Message.ID.String(),
+		"content":         content,
+		"created_at":      time.Now().Unix(),
+	})
+}
+
+func agenticSkillLoopSystemMessage() adapter.Message {
+	return adapter.Message{Role: "system", Content: strings.Join([]string{
+		"When using skills or tools, briefly explain your next action to the user before calling a skill/tool.",
+		"After each skill/tool result, summarize what happened. If a tool call fails, explain the likely cause, fix the arguments, and retry when possible.",
+		"Do not claim that you saved, remembered, updated, deleted, sent, created, changed, or completed any external action unless the corresponding skill/tool call succeeded in this turn.",
+		"Progress text sent together with tool calls is transient status text. Keep it short and do not place substantial user deliverables there.",
+		"If the current turn newly creates or substantially rewrites a user-facing deliverable before later tool/skill calls, call submit_intermediate_answer for that new deliverable before continuing.",
+		"Examples of new deliverables that should use submit_intermediate_answer when followed by more tool/skill calls: novel outlines, long-form drafts, plans, tables, code sketches, analysis sections, or generated content the user asked for.",
+		"Do not call submit_intermediate_answer merely to repeat content that was already visible in an earlier assistant answer. For requests like exporting, saving, converting, or generating a file from existing content, pass the existing content directly to the file/tool call.",
+		"Do not skip submit_intermediate_answer by postponing or summarizing a new deliverable if the user explicitly asked for it as an intermediate phase.",
+		"When no more tool or skill calls are needed, send a natural user-facing reply that is complete and self-contained. If you did not call submit_intermediate_answer for a new requested deliverable, that reply MUST include the deliverable in full, not a compressed summary.",
+		"Do not label the user-facing reply with protocol wording such as Final Answer, final result, or their Chinese equivalents unless the user explicitly asks for that wording.",
+		"When reusing existing conversation content, refer to it explicitly, for example as the previous outline or the current branch's draft; do not duplicate the full text unless the user asks to see it again.",
+	}, "\n")}
+}
+
+func AgenticSkillLoopSystemMessage() adapter.Message {
+	return agenticSkillLoopSystemMessage()
+}

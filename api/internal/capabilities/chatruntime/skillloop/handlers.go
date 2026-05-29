@@ -1,4 +1,4 @@
-package service
+package skillloop
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
-func (s *service) handleProgressiveSkillCall(
+func (r *Runner) handleProgressiveSkillCall(
 	ctx context.Context,
 	prepared *PreparedChat,
 	resolved *skills.ResolvedSkills,
@@ -19,7 +19,7 @@ func (s *service) handleProgressiveSkillCall(
 	currentToolCalls int,
 	skillToolCallCounts map[string]int,
 	loadedSkills map[string]struct{},
-	onEvent func(StreamEvent) error,
+	onEvent func(Event) error,
 ) skillStepResult {
 	args, err := skills.ParseArguments(call.Function.Arguments)
 	if err != nil {
@@ -28,14 +28,14 @@ func (s *service) handleProgressiveSkillCall(
 	}
 	switch call.Function.Name {
 	case skills.MetaToolLoadSkill:
-		return s.handleLoadSkillCall(ctx, prepared, resolved, call.ID, args, loadedSkills, onEvent)
+		return r.handleLoadSkillCall(ctx, prepared, resolved, call.ID, args, loadedSkills, onEvent)
 	case skills.MetaToolReadSkillReference:
 		if _, ok := loadedSkills[normalizedSkillArg(args, "skill_id")]; !ok {
 			trace := blockedSkillGuardrailTrace(stringArg(args, "skill_id"), "", "skill must be loaded before reading references")
 			trace.SkillID = stringArg(args, "skill_id")
 			return successfulSkillStep(trace, skills.ToolResultMessage(call.ID, guardrailPayload(trace)), false, false)
 		}
-		return s.handleReadReferenceCall(ctx, prepared, resolved, call.ID, args, onEvent)
+		return r.handleReadReferenceCall(ctx, prepared, resolved, call.ID, args, onEvent)
 	case skills.MetaToolCallSkillTool:
 		skillID := normalizedSkillArg(args, "skill_id")
 		toolName := stringArg(args, "tool_name")
@@ -58,9 +58,9 @@ func (s *service) handleProgressiveSkillCall(
 			trace := skillToolLimitExceededTrace(skillID, toolName, toolArgs, err)
 			return fatalSkillStep(trace, skills.ToolResultMessage(call.ID, errorPayload(err)), err)
 		}
-		return s.handleCallSkillTool(ctx, prepared, resolved, call.ID, args, execCtx, onEvent)
+		return r.handleCallSkillTool(ctx, prepared, resolved, call.ID, args, execCtx, onEvent)
 	case skills.MetaToolIntermediateAnswer:
-		return s.handleIntermediateAnswerCall(ctx, prepared, call.ID, args, onEvent)
+		return r.handleIntermediateAnswerCall(ctx, prepared, call.ID, args, onEvent)
 	default:
 		err := fmt.Errorf("%w: unsupported skill meta tool %s", ErrInvalidInput, call.Function.Name)
 		trace := failedSkillTrace("meta_tool", call.Function.Name, err)
@@ -68,12 +68,12 @@ func (s *service) handleProgressiveSkillCall(
 	}
 }
 
-func (s *service) handleIntermediateAnswerCall(
+func (r *Runner) handleIntermediateAnswerCall(
 	ctx context.Context,
 	prepared *PreparedChat,
 	callID string,
 	args map[string]interface{},
-	onEvent func(StreamEvent) error,
+	onEvent func(Event) error,
 ) skillStepResult {
 	content := strings.TrimSpace(stringArg(args, "content"))
 	if content == "" {
@@ -96,26 +96,26 @@ func (s *service) handleIntermediateAnswerCall(
 		if answerID == "" {
 			answerID = callID
 		}
-		s.emitPreparedEvent(ctx, prepared, streamEventIntermediateAnswer, intermediateAnswerPayload(prepared, trace, answerID, "", 0, true, "success"), onEvent)
+		r.emitEvent(EventIntermediateAnswer, intermediateAnswerPayload(prepared, trace, answerID, "", 0, true, "success"))
 	} else {
-		s.emitIntermediateAnswer(ctx, prepared, callID, trace, onEvent)
+		r.emitIntermediateAnswer(ctx, prepared, callID, trace, onEvent)
 	}
 	return successfulSkillStep(trace, skills.ToolResultMessage(callID, map[string]interface{}{
 		"status": "recorded",
 		"instruction": strings.Join([]string{
 			"The intermediate answer is visible to the user and saved in the run trace.",
-			"Continue with any remaining tool calls.",
+			"Continue with any remaining tool callr.",
 			"Your eventual user-facing reply must still be complete and self-contained; do not say see above.",
 		}, " "),
 	}), false, false)
 }
 
-func (s *service) emitIntermediateAnswer(
+func (r *Runner) emitIntermediateAnswer(
 	ctx context.Context,
 	prepared *PreparedChat,
 	answerID string,
 	trace skills.SkillTrace,
-	onEvent func(StreamEvent) error,
+	onEvent func(Event) error,
 ) {
 	chunks := splitIntermediateAnswerContent(trace.Message, intermediateAnswerChunkRunes)
 	if len(chunks) == 0 {
@@ -127,7 +127,7 @@ func (s *service) emitIntermediateAnswer(
 		if done {
 			status = "success"
 		}
-		s.emitPreparedEvent(ctx, prepared, streamEventIntermediateAnswer, intermediateAnswerPayload(prepared, trace, answerID, chunk, index, done, status), onEvent)
+		r.emitEvent(EventIntermediateAnswer, intermediateAnswerPayload(prepared, trace, answerID, chunk, index, done, status))
 	}
 }
 
@@ -168,18 +168,18 @@ func splitIntermediateAnswerContent(content string, chunkRunes int) []string {
 	return chunks
 }
 
-func (s *service) handleLoadSkillCall(
+func (r *Runner) handleLoadSkillCall(
 	ctx context.Context,
 	prepared *PreparedChat,
 	resolved *skills.ResolvedSkills,
 	callID string,
 	args map[string]interface{},
 	loadedSkills map[string]struct{},
-	onEvent func(StreamEvent) error,
+	onEvent func(Event) error,
 ) skillStepResult {
 	skillID := stringArg(args, "skill_id")
-	s.emitPreparedEvent(ctx, prepared, streamEventSkillLoadStart, skillLoadPayload(prepared, skillID), onEvent)
-	doc, trace, err := s.skillRuntime.LoadSkill(ctx, resolved, skillID)
+	r.emitEvent(EventSkillLoadStart, skillLoadPayload(prepared, skillID))
+	doc, trace, err := r.SkillRuntime.LoadSkill(ctx, resolved, skillID)
 	if err != nil {
 		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "choose an enabled skill_id from the exposed metadata and retry")), false, false)
 	}
@@ -189,21 +189,21 @@ func (s *service) handleLoadSkillCall(
 		"message_id", prepared.Message.ID.String(),
 		"skill_id", doc.Metadata.ID,
 	)
-	s.emitPreparedEvent(ctx, prepared, streamEventSkillLoadEnd, skillLoadEndPayload(prepared, trace), onEvent)
+	r.emitEvent(EventSkillLoadEnd, skillLoadEndPayload(prepared, trace))
 	return successfulSkillStep(trace, skills.ToolResultMessage(callID, skillDocumentPayload(doc)), true, false)
 }
 
-func (s *service) handleReadReferenceCall(
+func (r *Runner) handleReadReferenceCall(
 	ctx context.Context,
 	prepared *PreparedChat,
 	resolved *skills.ResolvedSkills,
 	callID string,
 	args map[string]interface{},
-	onEvent func(StreamEvent) error,
+	onEvent func(Event) error,
 ) skillStepResult {
 	skillID := stringArg(args, "skill_id")
 	path := stringArg(args, "path")
-	content, trace, err := s.skillRuntime.ReadReference(ctx, resolved, skillID, path)
+	content, trace, err := r.SkillRuntime.ReadReference(ctx, resolved, skillID, path)
 	if err != nil {
 		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "use a reference path listed in the loaded SKILL.md and retry")), true, false)
 	}
@@ -214,7 +214,7 @@ func (s *service) handleReadReferenceCall(
 		"path", path,
 		"duration_ms", trace.DurationMS,
 	)
-	s.emitPreparedEvent(ctx, prepared, streamEventSkillReferenceRead, skillReferenceReadPayload(prepared, trace, path), onEvent)
+	r.emitEvent(EventSkillReferenceRead, skillReferenceReadPayload(prepared, trace, path))
 	return successfulSkillStep(trace, skills.ToolResultMessage(callID, map[string]interface{}{
 		"skill_id": skillID,
 		"path":     path,
@@ -222,21 +222,21 @@ func (s *service) handleReadReferenceCall(
 	}), true, false)
 }
 
-func (s *service) handleCallSkillTool(
+func (r *Runner) handleCallSkillTool(
 	ctx context.Context,
 	prepared *PreparedChat,
 	resolved *skills.ResolvedSkills,
 	callID string,
 	args map[string]interface{},
 	execCtx skills.ExecutionContext,
-	onEvent func(StreamEvent) error,
+	onEvent func(Event) error,
 ) skillStepResult {
 	skillID := stringArg(args, "skill_id")
 	toolName := stringArg(args, "tool_name")
 	toolArgs := mapArg(args, "arguments")
 	argumentSummary := summarizeSkillToolArguments(skillID, toolName, toolArgs)
-	s.emitPreparedEvent(ctx, prepared, streamEventSkillCallStart, skillCallStartPayload(prepared, skillID, toolName, argumentSummary), onEvent)
-	invocation, err := s.skillRuntime.CallSkillTool(ctx, resolved, skillID, toolName, toolArgs, execCtx, callID)
+	r.emitEvent(EventSkillCallStart, skillCallStartPayload(prepared, skillID, toolName, argumentSummary))
+	invocation, err := r.SkillRuntime.CallSkillTool(ctx, resolved, skillID, toolName, toolArgs, execCtx, callID)
 	if invocation == nil {
 		if err == nil {
 			err = fmt.Errorf("%w: skill tool returned no invocation result", ErrInvalidInput)
@@ -258,10 +258,10 @@ func (s *service) handleCallSkillTool(
 		"tool_name", invocation.Trace.ToolName,
 		"duration_ms", invocation.Trace.DurationMS,
 	)
-	s.emitPreparedEvent(ctx, prepared, streamEventSkillCallEnd, skillCallEndPayload(prepared, invocation.Trace), onEvent)
+	r.emitEvent(EventSkillCallEnd, skillCallEndPayload(prepared, invocation.Trace))
 	for _, artifact := range skillArtifactsFromToolMessages(prepared, invocation.Trace, invocation.Messages) {
-		s.persistGeneratedArtifactBestEffort(ctx, prepared, artifact)
-		s.emitPreparedEvent(ctx, prepared, streamEventSkillArtifactCreated, artifact, onEvent)
+		r.recordArtifact(artifact)
+		r.emitEvent(EventSkillArtifactCreated, artifact)
 	}
 	return successfulSkillStep(invocation.Trace, invocation.ToolMessage, true, true)
 }
