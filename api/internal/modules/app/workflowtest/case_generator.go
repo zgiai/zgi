@@ -89,6 +89,8 @@ func normalizeGeneratedQuestionType(value string) string {
 		return CaseTypeExtension
 	case CaseTypeFuzzy, "模糊问题":
 		return CaseTypeFuzzy
+	case CaseTypeManual, "人工介入":
+		return CaseTypeManual
 	default:
 		return CaseTypeCore
 	}

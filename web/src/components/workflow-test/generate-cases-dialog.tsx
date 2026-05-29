@@ -23,6 +23,7 @@ import { useDefaultModelByUseCase } from '@/hooks/model/use-default-model-by-use
 import { useCurrentUser } from '@/store/auth-store';
 import { getLastSelectedAiModel, saveLastSelectedAiModel } from '@/utils/ui-local';
 import { useT } from '@/i18n';
+import { DEFAULT_QUESTION_TYPES, QUESTION_TYPE_OPTIONS } from './question-type';
 
 interface GenerateCasesDialogProps {
   agentId: string;
@@ -36,11 +37,6 @@ interface GenerateCasesDialogProps {
 const MIN_GENERATED_CASE_COUNT = 1;
 const MAX_GENERATED_CASE_COUNT = 50;
 const COUNT_PRESETS = [10, 20, MAX_GENERATED_CASE_COUNT];
-const QUESTION_TYPES = [
-  { value: 'core', labelKey: 'core' as const },
-  { value: 'extension', labelKey: 'extension' as const },
-  { value: 'fuzzy', labelKey: 'fuzzy' as const },
-];
 const TURN_STRATEGIES = [
   { value: 'mixed' as const, labelKey: 'turnStrategyMixed' as const },
   { value: 'single' as const, labelKey: 'turnStrategySingle' as const },
@@ -63,7 +59,7 @@ export function GenerateCasesDialog({
   const { value: defaultModel } = useDefaultModelByUseCase('text-chat');
   const [count, setCount] = React.useState(20);
   const [scenarioIds, setScenarioIds] = React.useState<string[]>([]);
-  const [questionTypes, setQuestionTypes] = React.useState<string[]>(['core', 'extension', 'fuzzy']);
+  const [questionTypes, setQuestionTypes] = React.useState<string[]>(DEFAULT_QUESTION_TYPES);
   const [turnStrategy, setTurnStrategy] = React.useState<'mixed' | 'single' | 'multi'>('mixed');
   const [model, setModel] = React.useState<ModelSelectorValue | null>(null);
   const [prompt, setPrompt] = React.useState('');
@@ -86,7 +82,7 @@ export function GenerateCasesDialog({
     if (open) return;
     setCount(20);
     setScenarioIds([]);
-    setQuestionTypes(['core', 'extension', 'fuzzy']);
+    setQuestionTypes(DEFAULT_QUESTION_TYPES);
     setTurnStrategy('mixed');
     setPrompt('');
     setContext('');
@@ -212,7 +208,7 @@ export function GenerateCasesDialog({
             <Label>{t('questionTypeLabel')}</Label>
             <p className="text-sm text-slate-500">{t('questionTypeDescription')}</p>
             <div className="flex flex-wrap gap-2">
-              {QUESTION_TYPES.map(item => {
+              {QUESTION_TYPE_OPTIONS.map(item => {
                 const checked = questionTypes.includes(item.value);
                 return (
                   <label

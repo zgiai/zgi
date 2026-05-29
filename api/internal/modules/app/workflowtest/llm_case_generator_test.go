@@ -8,12 +8,13 @@ import (
 )
 
 func TestParseGeneratedCasesAcceptsJSONCodeFence(t *testing.T) {
-	result, err := parseGeneratedCases("```json\n{\"cases\":[{\"content\":\"企业版支持哪些能力？\",\"question_type\":\"核心问题\"},{\"content\":\"如何接入 CRM？\",\"question_type\":\"扩展问法\"}]}\n```")
+	result, err := parseGeneratedCases("```json\n{\"cases\":[{\"content\":\"企业版支持哪些能力？\",\"question_type\":\"核心问题\"},{\"content\":\"如何接入 CRM？\",\"question_type\":\"扩展问法\"},{\"content\":\"我要投诉并找人工处理\",\"question_type\":\"人工介入\"}]}\n```")
 
 	require.NoError(t, err)
-	require.Len(t, result.Cases, 2)
+	require.Len(t, result.Cases, 3)
 	require.Equal(t, CaseTypeCore, result.Cases[0].QuestionType)
 	require.Equal(t, CaseTypeExtension, result.Cases[1].QuestionType)
+	require.Equal(t, CaseTypeManual, result.Cases[2].QuestionType)
 }
 
 func TestParseGeneratedCasesKeepsScenarioID(t *testing.T) {
@@ -30,7 +31,7 @@ func TestBuildGenerateCasesPromptIncludesWorkflowScenariosAndExistingCases(t *te
 	prompt := buildGenerateCasesPrompt(GenerateCasesRequest{
 		Count:           2,
 		ScenarioIDs:     []string{"scenario-1", "scenario-2"},
-		QuestionTypes:   []string{CaseTypeCore, CaseTypeFuzzy},
+		QuestionTypes:   []string{CaseTypeCore, CaseTypeFuzzy, CaseTypeManual},
 		TurnStrategy:    "mixed",
 		Prompt:          "重点覆盖缺失信息和兜底",
 		Context:         "面向电商客服",
@@ -51,6 +52,8 @@ func TestBuildGenerateCasesPromptIncludesWorkflowScenariosAndExistingCases(t *te
 	require.Contains(t, prompt, "scenario_id")
 	require.Contains(t, prompt, "不要预测或输出预期工作流路径")
 	require.Contains(t, prompt, "重点覆盖缺失信息和兜底")
+	require.Contains(t, prompt, "manual")
+	require.Contains(t, prompt, "人工介入")
 }
 
 func TestSelectExistingCasesForGenerationPromptFiltersAndLimits(t *testing.T) {

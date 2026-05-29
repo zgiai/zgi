@@ -16,6 +16,7 @@ const (
 	CaseTypeCore      = "core"
 	CaseTypeExtension = "extension"
 	CaseTypeFuzzy     = "fuzzy"
+	CaseTypeManual    = "manual"
 
 	BatchStatusQueued    = "queued"
 	BatchStatusRunning   = "running"

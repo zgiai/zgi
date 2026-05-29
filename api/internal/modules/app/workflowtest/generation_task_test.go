@@ -199,7 +199,7 @@ func TestCreateGenerationTaskSnapshotsNormalizedRequest(t *testing.T) {
 			2,
 			0,
 			`["scenario-1","scenario-2"]`,
-			`["core","extension","fuzzy"]`,
+			`["core","extension","fuzzy","manual"]`,
 			"mixed",
 			"custom prompt",
 			"business context",
@@ -219,7 +219,7 @@ func TestCreateGenerationTaskSnapshotsNormalizedRequest(t *testing.T) {
 		Count:         2,
 		ScenarioID:    " scenario-2 ",
 		ScenarioIDs:   []string{" scenario-1 ", "scenario-1", "scenario-2"},
-		QuestionTypes: []string{" core ", "invalid", "extension", "core", " fuzzy "},
+		QuestionTypes: []string{" core ", "invalid", "extension", "core", " fuzzy ", "manual"},
 		TurnStrategy:  "   ",
 		Prompt:        " custom prompt ",
 		Context:       " business context ",
@@ -229,7 +229,7 @@ func TestCreateGenerationTaskSnapshotsNormalizedRequest(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, task)
 	require.Equal(t, JSONList{"scenario-1", "scenario-2"}, task.ScenarioIDs)
-	require.Equal(t, JSONList{"core", "extension", "fuzzy"}, task.QuestionTypes)
+	require.Equal(t, JSONList{"core", "extension", "fuzzy", "manual"}, task.QuestionTypes)
 	require.Equal(t, "mixed", task.TurnStrategy)
 	require.Equal(t, "custom prompt", task.Prompt)
 	require.Equal(t, "business context", task.Context)

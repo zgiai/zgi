@@ -69,7 +69,7 @@ import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { workflowTestService } from '@/services/workflow-test.service';
 import type { WorkflowNode } from '@/components/workflow/store';
-import { formatQuestionTypeLabel } from './question-type';
+import { QUESTION_TYPE_OPTIONS, formatQuestionTypeLabel } from './question-type';
 
 interface BatchTestOverviewProps {
   agentId: string;
@@ -728,9 +728,11 @@ export function BatchTestOverview({
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">{t('cases.typeAll')}</SelectItem>
-                      <SelectItem value="core">{typeT('core')}</SelectItem>
-                      <SelectItem value="extension">{typeT('extension')}</SelectItem>
-                      <SelectItem value="fuzzy">{typeT('fuzzy')}</SelectItem>
+                      {QUESTION_TYPE_OPTIONS.map(item => (
+                        <SelectItem key={item.value} value={item.value}>
+                          {typeT(item.labelKey)}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                   <Select value={caseStatusFilter} onValueChange={setCaseStatusFilter}>

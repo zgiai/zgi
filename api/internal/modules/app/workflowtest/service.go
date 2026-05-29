@@ -136,7 +136,10 @@ func normalizeQuestionType(questionType string) (string, error) {
 	if questionType == "" {
 		return CaseTypeCore, nil
 	}
-	if questionType != CaseTypeCore && questionType != CaseTypeExtension && questionType != CaseTypeFuzzy {
+	if questionType != CaseTypeCore &&
+		questionType != CaseTypeExtension &&
+		questionType != CaseTypeFuzzy &&
+		questionType != CaseTypeManual {
 		return "", fmt.Errorf("invalid question type")
 	}
 	return questionType, nil
@@ -610,7 +613,7 @@ func (s *Service) CreateGenerationTask(ctx context.Context, agentID, workspaceID
 	}
 	questionTypes := normalizeQuestionTypes(req.QuestionTypes)
 	if len(questionTypes) == 0 {
-		questionTypes = []string{CaseTypeCore, CaseTypeExtension, CaseTypeFuzzy}
+		questionTypes = []string{CaseTypeCore, CaseTypeExtension, CaseTypeFuzzy, CaseTypeManual}
 	}
 	now := time.Now()
 	task := &GenerationTask{

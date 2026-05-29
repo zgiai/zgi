@@ -84,7 +84,7 @@ func buildGenerateCasesPrompt(req GenerateCasesRequest) string {
 	}
 	questionTypes := strings.Join(normalizeQuestionTypes(req.QuestionTypes), ", ")
 	if questionTypes == "" {
-		questionTypes = "core, extension, fuzzy"
+		questionTypes = "core, extension, fuzzy, manual"
 	}
 	scenarioID := strings.TrimSpace(req.ScenarioID)
 	if scenarioID == "" && len(req.ScenarioIDs) > 0 {
@@ -139,8 +139,8 @@ func buildGenerateCasesPrompt(req GenerateCasesRequest) string {
 5. 每条问题都必须可执行，并同时给出明确预期结果，用于后续自动判题。
 6. 预期结果应描述智能体应该如何处理，例如识别什么意图、是否需要追问、应返回什么、不能编造什么、是否应兜底或转人工。
 7. 预期结果不要只写“正确回答”“妥善处理”“完成任务”等空泛描述。
-8. question_type 只能是 %s 三者之一。
-9. core 覆盖核心高频主流程；extension 覆盖同一或相近意图的不同表达；fuzzy 覆盖信息缺失、表达模糊、异常、投诉、越权、无法处理或需要兜底的输入。
+8. question_type 只能是 %s 之一。
+9. core 覆盖核心高频主流程；extension 覆盖同一或相近意图的不同表达；fuzzy 覆盖信息缺失、表达模糊、异常或兜底输入；manual 覆盖需要人工介入、人工确认、投诉升级或线下处理的输入。
 10. 如果生成数量大于目标业务场景数量，优先保证每个目标业务场景至少 1 条问题；剩余数量在场景和问题类型之间尽量分散。
 11. 避免与已有测试问题重复；允许少量有新测试价值的语义变体，但不能只是简单换词。
 12. 输出 JSON 对象，格式为：{"cases":[{"scenario_id":"场景ID","content":"问题内容","expected_result":"预期结果","question_type":"core"}]}
@@ -173,7 +173,7 @@ func normalizeQuestionTypes(values []string) []string {
 	for _, value := range values {
 		questionType := strings.TrimSpace(value)
 		switch questionType {
-		case CaseTypeCore, CaseTypeExtension, CaseTypeFuzzy:
+		case CaseTypeCore, CaseTypeExtension, CaseTypeFuzzy, CaseTypeManual:
 			if _, ok := seen[questionType]; ok {
 				continue
 			}
