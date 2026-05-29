@@ -1,7 +1,9 @@
 package agents
 
 import (
+	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/zgiai/zgi/api/internal/dto"
@@ -79,5 +81,31 @@ func TestAgentMemorySnapshotSlotsDoNotPersistVolatileIDs(t *testing.T) {
 	}
 	if slots[0].MaxChars != 2000 {
 		t.Fatalf("snapshot max chars = %d, want 2000", slots[0].MaxChars)
+	}
+}
+
+func TestApplyAgentConfigRequestToDraftDoesNotPersistDraftMemorySlots(t *testing.T) {
+	cfg := &AgentsConfig{}
+	applied, err := applyAgentConfigRequestToDraft(cfg, dto.AgentConfigRequest{
+		AgentMemoryEnabled: true,
+	})
+	if err != nil {
+		t.Fatalf("applyAgentConfigRequestToDraft() error = %v", err)
+	}
+	if !applied.AgentMemoryEnabled {
+		t.Fatal("applied AgentMemoryEnabled = false, want true")
+	}
+	if cfg.AgentMode == nil {
+		t.Fatal("AgentMode = nil, want serialized runtime mode")
+	}
+	if strings.Contains(*cfg.AgentMode, "agent_memory_slots") {
+		t.Fatalf("AgentMode = %s, should not persist draft memory slots", *cfg.AgentMode)
+	}
+	var mode dto.AgentRuntimeModeConfig
+	if err := json.Unmarshal([]byte(*cfg.AgentMode), &mode); err != nil {
+		t.Fatalf("unmarshal AgentMode error = %v", err)
+	}
+	if !mode.AgentMemoryEnabled {
+		t.Fatal("mode AgentMemoryEnabled = false, want true")
 	}
 }
