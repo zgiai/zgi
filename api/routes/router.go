@@ -51,7 +51,19 @@ func RegisterRoutes(r *gin.Engine, serviceContainer *container.ServiceContainer,
 	v1Group := r.Group("/console/api")
 	v1.RegisterRoutes(r, v1Group, serviceContainer, workflowEngineFactory)
 
-	external.RegisterExternalRoutes(r, serviceContainer, workflowEngineFactory)
+	external.RegisterExternalRoutes(r, external.ExternalRouteDeps{
+		DB:                    serviceContainer.GetDB(),
+		AccountService:        serviceContainer.GetAccountService(),
+		FileService:           serviceContainer.GetFileService(),
+		ContentExtractor:      serviceContainer.GetContentExtractor(),
+		QuotaService:          serviceContainer.GetQuotaService(),
+		OrganizationService:   serviceContainer.GetOrganizationService(),
+		LLMClient:             serviceContainer.GetLLMClient(),
+		ToolEngine:            serviceContainer.GetToolEngine(),
+		GraphFlowService:      serviceContainer.GetGraphFlowService(),
+		PromptResolver:        serviceContainer.GetPromptService(),
+		WorkflowEngineFactory: workflowEngineFactory,
+	})
 
 	registerConsoleInternalRoutes(r, serviceContainer.GetDB())
 
