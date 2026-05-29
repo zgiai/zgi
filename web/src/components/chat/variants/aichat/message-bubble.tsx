@@ -518,10 +518,12 @@ export function AIChatMessageBubble({
           ) : null}
 
           {answer ? (
-            <div className="prose prose-sm min-w-0 max-w-full overflow-x-hidden dark:prose-invert sm:pr-4 md:pr-6 lg:pr-8 xl:pr-9">
+            <div className="prose prose-sm min-w-0 max-w-full dark:prose-invert sm:pr-4 md:pr-6 lg:pr-8 xl:pr-9">
               <MarkdownViewer
-                className="md-viewer min-w-0 max-w-full overflow-x-hidden break-words"
+                className="md-viewer min-w-0 max-w-full break-words"
                 content={displayAnswer}
+                isStreaming={isStreaming}
+                renderIdentity={message.id}
               />
               {shouldHideAssistantToolbar ? null : (
                 <AssistantMessageToolbar

@@ -4,6 +4,7 @@ import { Loader2 } from 'lucide-react';
 import type { Ref, UIEvent } from 'react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
+import { cn } from '@/lib/utils';
 import type { ChatBranchNavigation } from '@/components/chat/utils/message-tree';
 import type { AIChatConversation, AIChatMessage } from '@/services/types/aichat';
 import type { AIChatStreamingMessageState } from '@/components/chat/controllers/aichat';
@@ -33,6 +34,7 @@ interface AIChatMessageListProps {
   onEditCancel: () => void;
   onEditSubmit: (message: AIChatMessage) => void;
   showAssistantModelMeta?: boolean;
+  layout?: 'full' | 'embedded';
 }
 
 function isReplaceableRootStatus(status: AIChatMessage['status']): boolean {
@@ -88,14 +90,23 @@ export function AIChatMessageList({
   onEditCancel,
   onEditSubmit,
   showAssistantModelMeta = true,
+  layout = 'full',
 }: AIChatMessageListProps) {
   return (
     <ScrollArea
       className="min-h-0 flex-1"
       viewportRef={scrollViewportRef}
-      viewportProps={{ onScroll }}
+      viewportProps={{
+        onScroll,
+        className: '[&>div]:!block [&>div]:!w-full [&>div]:!min-w-0',
+      }}
     >
-      <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col px-4 pb-4 pt-20 sm:px-6 lg:px-8">
+      <div
+        className={cn(
+          'mx-auto flex min-h-full w-full min-w-0 flex-col px-4 pb-4 pt-20 sm:px-6 lg:px-8',
+          layout === 'embedded' ? 'max-w-full' : 'max-w-5xl'
+        )}
+      >
         {isLoadingMessages ? (
           <div className="space-y-6">
             {Array.from({ length: 3 }).map((_, index) => (
