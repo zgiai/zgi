@@ -34,6 +34,10 @@ function normalizeSkillInvocation(invocation: AIChatSkillInvocation): AIChatSkil
   };
 }
 
+function isVisibleSkillInvocation(invocation: AIChatSkillInvocation): boolean {
+  return invocation.kind !== 'metadata_exposed' && invocation.kind !== 'memory_planner';
+}
+
 export function hasRunningMessageState(
   streamingByMessageId: Record<string, AIChatStreamingMessageState>,
   conversationId: string
@@ -104,7 +108,7 @@ export function mergeSelectedMessagesWithStreamingState(
 
 export function timelineFromAIChatMessage(message: AIChatMessage): AIChatAgenticTimelineItem[] {
   const invocations = (message.metadata?.skill_invocations ?? [])
-    .filter(invocation => invocation.kind !== 'metadata_exposed')
+    .filter(isVisibleSkillInvocation)
     .map(normalizeSkillInvocation);
 
   return invocations.map((invocation, index) => {
