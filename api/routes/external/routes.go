@@ -12,7 +12,7 @@ func RegisterExternalRoutes(r *gin.Engine, serviceContainer *container.ServiceCo
 	externalV1 := r.Group("/api")
 	{
 		// Public APIs that don't require authentication
-		RegisterPublicRoutes(externalV1, serviceContainer)
+		RegisterPublicRoutes(externalV1)
 
 		// APIs that require API key authentication
 		RegisterAPIKeyRoutes(externalV1, serviceContainer.GetDB(), serviceContainer.GetAccountService(), serviceContainer.GetFileService(), serviceContainer.GetContentExtractor(), serviceContainer.GetQuotaService(), serviceContainer.GetOrganizationService(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), workflowEngineFactory)
