@@ -163,7 +163,24 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	})
 
 	// ---------- Workflow ----------
-	RegisterWorkflowRoutes(v1, accountService, tenantService, serviceContainer.GetFileService(), db, serviceContainer.GetContentExtractor(), serviceContainer.GetQuotaService(), serviceContainer.GetOrganizationService(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), automationDefinitionService, serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetScheduler(), workflowEngineFactory, serviceContainer)
+	RegisterWorkflowRoutes(v1, WorkflowRouteDeps{
+		DB:                          db,
+		AccountService:              accountService,
+		FileService:                 serviceContainer.GetFileService(),
+		ContentExtractor:            serviceContainer.GetContentExtractor(),
+		QuotaService:                serviceContainer.GetQuotaService(),
+		OrganizationService:         serviceContainer.GetOrganizationService(),
+		LLMClient:                   serviceContainer.GetLLMClient(),
+		ToolEngine:                  serviceContainer.GetToolEngine(),
+		GraphFlowService:            serviceContainer.GetGraphFlowService(),
+		PromptResolver:              serviceContainer.GetPromptService(),
+		AutomationDefinitionService: automationDefinitionService,
+		TaskManager:                 serviceContainer.GetTaskManager(),
+		TaskRegistry:                serviceContainer.GetTaskHandlerRegistry(),
+		Scheduler:                   serviceContainer.GetScheduler(),
+		EngineFactory:               workflowEngineFactory,
+		AutomationRunnerSetter:      serviceContainer,
+	})
 
 	// ---------- Agent ----------
 	resourcePermissionService := serviceContainer.GetResourcePermissionService()
