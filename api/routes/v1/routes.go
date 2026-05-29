@@ -213,6 +213,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		ContentExtractor:           serviceContainer.GetContentExtractor(),
 		WorkspacePermissionService: serviceContainer.GetOrganizationService(),
 		MemoryService:              serviceContainer.GetMemoryService(),
+		AgentMemoryService:         serviceContainer.GetAgentMemoryService(),
 		SkillRuntime:               skills.NewRuntime(serviceContainer.GetToolEngine(), serviceContainer.GetToolManager()),
 		AccountService:             accountService,
 	})

@@ -943,7 +943,7 @@ func skillRuntimeParameters(scope Scope, config RunConfig) map[string]interface{
 	}
 	if config.AgentMemoryEnabled {
 		params["agent_memory_enabled"] = true
-		params["agent_memory_slots"] = normalizeAgentMemorySlots(config.AgentMemorySlots)
+		params["agent_memory_slots"] = enabledAgentMemorySlots(config.AgentMemorySlots)
 		if userScope := strings.TrimSpace(config.AgentMemoryUserScope); userScope != "" {
 			params["user_scope"] = userScope
 		}
@@ -1107,6 +1107,9 @@ func (s *service) persistSkillTracesBestEffort(ctx context.Context, prepared *Pr
 	}
 	metadata := mergeSkillTraceMetadata(prepared.Message.Metadata, traces)
 	prepared.Message.Metadata = metadata
+	if s == nil || s.repos == nil || s.repos.Message == nil {
+		return
+	}
 	_ = s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata)
 }
 

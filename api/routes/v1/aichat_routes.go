@@ -2,6 +2,7 @@ package v1
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	"github.com/zgiai/zgi/api/internal/modules/aichat"
 	aichatservice "github.com/zgiai/zgi/api/internal/modules/aichat/service"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
@@ -23,6 +24,7 @@ type AIChatRouteDeps struct {
 	ContentExtractor           aichatservice.ContentExtractionService
 	WorkspacePermissionService aichatservice.WorkspacePermissionService
 	MemoryService              *memorymodule.Service
+	AgentMemoryService         *agentmemory.Service
 	SkillRuntime               *skills.Runtime
 	AccountService             interfaces.AccountService
 }
@@ -49,6 +51,9 @@ func RegisterAIChatRoutes(router *gin.RouterGroup, deps AIChatRouteDeps) {
 	if deps.MemoryService == nil {
 		panic("aichat routes require memory service")
 	}
+	if deps.AgentMemoryService == nil {
+		panic("aichat routes require agent memory service")
+	}
 	if deps.SkillRuntime == nil {
 		panic("aichat routes require skill runtime")
 	}
@@ -64,6 +69,7 @@ func RegisterAIChatRoutes(router *gin.RouterGroup, deps AIChatRouteDeps) {
 		deps.ContentExtractor,
 		deps.WorkspacePermissionService,
 		deps.MemoryService,
+		deps.AgentMemoryService,
 		deps.SkillRuntime,
 	)
 	group := router.Group("")
