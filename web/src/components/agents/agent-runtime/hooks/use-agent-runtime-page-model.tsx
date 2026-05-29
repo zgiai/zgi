@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQueries, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { createAgentDraftTransport, useAIChatController } from '@/components/chat';
 import {
@@ -16,23 +16,74 @@ import { useAgent, useAgentConfig, usePublishAgent } from '@/hooks/agent/use-age
 import { useAIChatSkills } from '@/hooks/aichat/use-aichat-skills';
 import { useDatasets } from '@/hooks/dataset/use-datasets';
 import { useMediaQuery } from '@/hooks/use-media-query';
-import { AGENT_KEYS } from '@/hooks/query-keys';
+import { AGENT_KEYS, DATASET_KEYS } from '@/hooks/query-keys';
 import { useLocale } from '@/hooks/use-locale';
 import { useAutoProfile } from '@/hooks/use-profile';
 import { useT } from '@/i18n';
 import agentService from '@/services/agent.service';
+import { datasetService } from '@/services';
+import { getTemplateAwareCharacterCount } from '@/components/workflow/common/workflow-value-editor/utils/value-transform';
 import type {
   AgentMemorySlotConfig,
   AgentRuntimeConfig,
   UpdateAgentRuntimeConfigRequest,
 } from '@/services/types/agent';
 import type { AIChatSkillMetadata } from '@/services/types/aichat';
+import type { Dataset } from '@/services/types/dataset';
 import { getErrorMessage } from '@/utils/error-notifications';
 import type { AgentConfigSection, AgentPublishedVersionListItem } from '../types';
 import { toModelParams, validateAgentMemorySlots } from '../utils';
 import { useAgentRuntimeDraftPersistence } from '../use-agent-runtime-draft-persistence';
 import { useAgentRuntimeLeaveGuard } from '../use-agent-runtime-leave-guard';
 import { AgentHomeBrand, getAgentRuntimeSaveText, type VersionPreviewBackup } from './page-model-utils';
+import { AGENT_SYSTEM_PROMPT_MAX_LENGTH } from '../prompt-limits';
+
+type AgentKnowledgeDataset = Dataset & { load_error?: boolean };
+
+function createAgentKnowledgeDatasetFallback(
+  id: string,
+  name: string,
+  description: string,
+  loadError: boolean
+): AgentKnowledgeDataset {
+  return {
+    id,
+    name,
+    description,
+    provider: '',
+    data_source_type: '',
+    indexing_technique: '',
+    word_count: 0,
+    created_by: '',
+    created_at: '',
+    updated_by: null,
+    updated_at: '',
+    embedding_model: '',
+    embedding_model_provider: '',
+    embedding_available: false,
+    retrieval_config: {
+      search_method: 'semantic_search',
+      reranking_enable: false,
+      top_k: 0,
+      score_threshold_enabled: false,
+      score_threshold: 0,
+    },
+    tags: null,
+    icon: '',
+    icon_type: 'text',
+    icon_background: '',
+    app_count: 0,
+    document_count: 0,
+    available_document_count: 0,
+    available_segment_count: 0,
+    collection_binding_id: null,
+    owner: null,
+    owner_account: null,
+    is_editor: false,
+    can_edit: false,
+    load_error: loadError,
+  };
+}
 
 export function useAgentRuntimePageModel(agentId: string) {
   const queryClient = useQueryClient();
@@ -42,7 +93,6 @@ export function useAgentRuntimePageModel(agentId: string) {
   const { data: profile } = useAutoProfile({ staleTime: 1_800_000 });
   const { data: configResponse, isLoading: isConfigLoading } = useAgentConfig(agentId);
   const { data: allSkills = [], isLoading: isSkillsLoading } = useAIChatSkills();
-  const { pages: datasetPages, isLoading: isDatasetsLoading } = useDatasets({ limit: 100 });
   const publishAgent = usePublishAgent();
   const config = configResponse?.data;
   const agentDetail = agent?.data;
@@ -68,10 +118,13 @@ export function useAgentRuntimePageModel(agentId: string) {
   const [suggestedQuestions, setSuggestedQuestions] = useState<string[]>([]);
   const [knowledgeDatasetIds, setKnowledgeDatasetIds] = useState<string[]>([]);
   const [skillDialogOpen, setSkillDialogOpen] = useState(false);
+  const [knowledgeDialogOpen, setKnowledgeDialogOpen] = useState(false);
   const [promptOptimizerOpen, setPromptOptimizerOpen] = useState(false);
   const [memoryValuesOpen, setMemoryValuesOpen] = useState(false);
   const [skillSearch, setSkillSearch] = useState('');
   const [showSelectedSkillsOnly, setShowSelectedSkillsOnly] = useState(false);
+  const [knowledgeSearch, setKnowledgeSearch] = useState('');
+  const [showSelectedKnowledgeOnly, setShowSelectedKnowledgeOnly] = useState(false);
   const [isGeneratingSuggestions, setIsGeneratingSuggestions] = useState(false);
   const [publishedVersionsOpen, setPublishedVersionsOpen] = useState(false);
   const [previewSheetOpen, setPreviewSheetOpen] = useState(false);
@@ -101,7 +154,65 @@ export function useAgentRuntimePageModel(agentId: string) {
       }),
     [allSkills]
   );
-  const availableDatasets = useMemo(() => datasetPages.flat(), [datasetPages]);
+  const selectedDatasetQueries = useQueries({
+    queries: knowledgeDatasetIds.map(datasetId => ({
+      queryKey: DATASET_KEYS.detail(datasetId),
+      queryFn: () => datasetService.getDataset(datasetId),
+      enabled: Boolean(datasetId),
+      staleTime: 5 * 60 * 1000,
+      retry: false,
+    })),
+  });
+  const { pages: knowledgeDialogPages, isLoading: isKnowledgeDialogDatasetsLoading } = useDatasets(
+    { keyword: knowledgeSearch.trim(), limit: 50 },
+    { enabled: knowledgeDialogOpen }
+  );
+  const selectedKnowledgeDatasets = useMemo(() => {
+    const byID = new Map<string, AgentKnowledgeDataset>();
+    selectedDatasetQueries.forEach(query => {
+      const dataset = query.data?.data;
+      if (dataset?.id) {
+        byID.set(dataset.id, dataset);
+      }
+    });
+    knowledgeDialogPages.flat().forEach(dataset => {
+      if (knowledgeDatasetIds.includes(dataset.id)) {
+        byID.set(dataset.id, dataset);
+      }
+    });
+    return knowledgeDatasetIds.map((id, index) => {
+      const dataset = byID.get(id);
+      if (dataset) return dataset;
+      const query = selectedDatasetQueries[index];
+      const hasLoadError = Boolean(query?.isError);
+      return createAgentKnowledgeDatasetFallback(
+        id,
+        hasLoadError ? t('knowledge.loadFailedName') : id,
+        hasLoadError ? t('knowledge.loadFailedDescription') : '',
+        hasLoadError
+      );
+    });
+  }, [knowledgeDatasetIds, knowledgeDialogPages, selectedDatasetQueries, t]);
+  const isSelectedDatasetsLoading = selectedDatasetQueries.some(query => query.isLoading);
+  const knowledgeDialogDatasets = useMemo(() => {
+    const byID = new Map<string, Dataset>();
+    selectedKnowledgeDatasets.forEach(dataset => byID.set(dataset.id, dataset));
+    knowledgeDialogPages.flat().forEach(dataset => byID.set(dataset.id, dataset));
+    return Array.from(byID.values())
+      .filter(dataset => !showSelectedKnowledgeOnly || knowledgeDatasetIds.includes(dataset.id))
+      .sort((left, right) => {
+        const leftChecked = knowledgeDatasetIds.includes(left.id);
+        const rightChecked = knowledgeDatasetIds.includes(right.id);
+        if (leftChecked !== rightChecked) return leftChecked ? -1 : 1;
+        return left.name.localeCompare(right.name, locale);
+      });
+  }, [
+    knowledgeDatasetIds,
+    knowledgeDialogPages,
+    locale,
+    selectedKnowledgeDatasets,
+    showSelectedKnowledgeOnly,
+  ]);
   const selectableSkillIds = useMemo(
     () => new Set(selectableSkills.map(skill => skill.skill_id)),
     [selectableSkills]
@@ -144,6 +255,11 @@ export function useAgentRuntimePageModel(agentId: string) {
   );
   const hasAgentMemorySlotErrors =
     agentMemoryEnabled && agentMemorySlotValidationErrors.some(Boolean);
+  const systemPromptEffectiveLength = useMemo(
+    () => getTemplateAwareCharacterCount(systemPrompt, { templateBlocksEnabled: true }),
+    [systemPrompt]
+  );
+  const isSystemPromptTooLong = systemPromptEffectiveLength > AGENT_SYSTEM_PROMPT_MAX_LENGTH;
 
   const modelSelectorValue = useMemo(
     () => ({
@@ -311,7 +427,7 @@ export function useAgentRuntimePageModel(agentId: string) {
   } = useAgentRuntimeDraftPersistence({
     currentPayload,
     enabled: !isVersionPreviewing,
-    canSave: () => !hasAgentMemorySlotErrors,
+    canSave: () => !hasAgentMemorySlotErrors && !isSystemPromptTooLong,
     savePayload: saveRuntimePayload,
     onSaveCommitted: result => {
       setAgentMemorySlots(result.savedPayload.agent_memory_slots ?? []);
@@ -524,30 +640,48 @@ export function useAgentRuntimePageModel(agentId: string) {
       toast.error(t('toasts.fixMemorySlotsBeforeSave'));
       return;
     }
+    if (isSystemPromptTooLong) {
+      toast.error(
+        t('toasts.systemPromptTooLongBeforeSave', { limit: AGENT_SYSTEM_PROMPT_MAX_LENGTH })
+      );
+      return;
+    }
     const saved = await saveNow({ silent: false, force: true });
     if (saved) {
       toast.success(t('toasts.saveSuccess'));
     }
-  }, [hasAgentMemorySlotErrors, saveNow, t]);
+  }, [hasAgentMemorySlotErrors, isSystemPromptTooLong, saveNow, t]);
 
   const handlePublish = useCallback(async () => {
     if (hasAgentMemorySlotErrors) {
       toast.error(t('toasts.fixMemorySlotsBeforePublish'));
       return;
     }
+    if (isSystemPromptTooLong) {
+      toast.error(
+        t('toasts.systemPromptTooLongBeforePublish', { limit: AGENT_SYSTEM_PROMPT_MAX_LENGTH })
+      );
+      return;
+    }
     const saved = await saveNow({ silent: true, force: true });
     if (saved) {
       publishAgent.mutate({ agentId });
     }
-  }, [agentId, hasAgentMemorySlotErrors, publishAgent, saveNow, t]);
+  }, [agentId, hasAgentMemorySlotErrors, isSystemPromptTooLong, publishAgent, saveNow, t]);
 
   const handleSaveBeforeLeave = useCallback(() => {
     if (hasAgentMemorySlotErrors) {
       toast.error(t('toasts.fixMemorySlotsBeforeSave'));
       return Promise.resolve(false);
     }
+    if (isSystemPromptTooLong) {
+      toast.error(
+        t('toasts.systemPromptTooLongBeforeSave', { limit: AGENT_SYSTEM_PROMPT_MAX_LENGTH })
+      );
+      return Promise.resolve(false);
+    }
     return saveNow({ silent: false, force: true });
-  }, [hasAgentMemorySlotErrors, saveNow, t]);
+  }, [hasAgentMemorySlotErrors, isSystemPromptTooLong, saveNow, t]);
 
   const leaveGuardNode = useAgentRuntimeLeaveGuard({
     enabled: !isVersionPreviewing,
@@ -601,6 +735,8 @@ export function useAgentRuntimePageModel(agentId: string) {
     },
     prompt: {
       systemPrompt,
+      selectedKnowledgeDatasets,
+      selectedSkills,
       onChangeSystemPrompt: setSystemPrompt,
       onOpenOptimizer: () => setPromptOptimizerOpen(true),
     },
@@ -615,8 +751,8 @@ export function useAgentRuntimePageModel(agentId: string) {
       selectableSkillsCount: selectableSkills.length,
       isSkillsLoading,
       isSkillConfigLoading: false,
-      isDatasetsLoading,
-      availableDatasets,
+      isDatasetsLoading: isSelectedDatasetsLoading,
+      selectedKnowledgeDatasets,
       selectedKnowledgeDatasetIds: knowledgeDatasetIds,
       suggestedQuestions,
       isGeneratingSuggestions,
@@ -633,6 +769,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       onChangeHomeTitle: setHomeTitle,
       onChangeInputPlaceholder: setInputPlaceholder,
       onOpenSkillDialog: () => setSkillDialogOpen(true),
+      onOpenKnowledgeDialog: () => setKnowledgeDialogOpen(true),
       onToggleSkill: handleToggleSkill,
       onToggleKnowledgeDataset: handleToggleKnowledgeDataset,
       onGenerateSuggestedQuestions: () => void handleGenerateSuggestedQuestions(),
@@ -683,6 +820,18 @@ export function useAgentRuntimePageModel(agentId: string) {
         onChangeSkillSearch: setSkillSearch,
         onChangeShowSelectedSkillsOnly: setShowSelectedSkillsOnly,
         onToggleSkill: handleToggleSkill,
+      },
+      knowledge: {
+        open: knowledgeDialogOpen,
+        datasets: knowledgeDialogDatasets,
+        selectedDatasetIds: knowledgeDatasetIds,
+        search: knowledgeSearch,
+        showSelectedOnly: showSelectedKnowledgeOnly,
+        isLoading: isKnowledgeDialogDatasetsLoading || isSelectedDatasetsLoading,
+        onOpenChange: setKnowledgeDialogOpen,
+        onChangeSearch: setKnowledgeSearch,
+        onChangeShowSelectedOnly: setShowSelectedKnowledgeOnly,
+        onToggleDataset: handleToggleKnowledgeDataset,
       },
       memoryValues: {
         agentId,

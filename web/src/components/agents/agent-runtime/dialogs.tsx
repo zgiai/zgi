@@ -1,6 +1,7 @@
 'use client';
 
 import { PromptOptimizerDialog } from '@/components/prompts/prompt-optimizer-dialog';
+import { AgentRuntimeKnowledgeDialog } from './knowledge-dialog';
 import { AgentRuntimeMemoryValuesDialog } from './memory-values-dialog';
 import { AgentRuntimeSkillDialog } from './skill-dialog';
 import type { AgentRuntimePageModel } from './hooks/use-agent-runtime-page-model';
@@ -14,6 +15,7 @@ export function AgentRuntimeDialogs({ model }: AgentRuntimeDialogsProps) {
     <>
       <PromptOptimizerDialog {...model.dialogs.promptOptimizer} />
       <AgentRuntimeSkillDialog {...model.dialogs.skill} />
+      <AgentRuntimeKnowledgeDialog {...model.dialogs.knowledge} />
       <AgentRuntimeMemoryValuesDialog {...model.dialogs.memoryValues} />
     </>
   );

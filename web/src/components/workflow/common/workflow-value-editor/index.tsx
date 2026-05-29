@@ -18,9 +18,9 @@ import type { StructuredTypeField } from '@/components/workflow/types/input-var'
 // tiptap
 import { EditorContent, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
-import Placeholder from '@tiptap/extension-placeholder';
 import { Extension, type Editor as TiptapEditor } from '@tiptap/core';
-import { Plugin, PluginKey } from '@tiptap/pm/state';
+import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state';
+import { Decoration, DecorationSet } from '@tiptap/pm/view';
 
 // Custom extension to fix backspace behavior near atom nodes
 // When cursor is right after an atom node, default backspace may fail to delete previous character
@@ -96,6 +96,10 @@ const FixAtomBackspace = Extension.create({
 });
 import { valueToDoc, docToValue } from './utils/value-transform';
 import VariableToken from './nodes/variable-token';
+import TemplateSlot, { findTemplateSlotRangeAround } from './nodes/template-slot';
+import TemplateSlotPlaceholder, {
+  findTemplateSlotPlaceholderAround,
+} from './nodes/template-slot-placeholder';
 import VariableSuggestPanel from './variable-suggest-panel';
 import { useT } from '@/i18n';
 
@@ -106,8 +110,70 @@ const SUGGEST_PM_PLUGIN_KEY = new PluginKey(SUGGEST_PLUGIN_KEY);
 
 // Token pattern utils are now imported from ./utils/value-transform
 
+const EMPTY_BLOCK_PLACEHOLDER_KEY = new PluginKey('wf-empty-block-placeholder');
+
+const EmptyBlockPlaceholder = Extension.create<{
+  emptyBlockPlaceholder: string;
+}>({
+  name: 'emptyBlockPlaceholder',
+
+  addOptions() {
+    return {
+      emptyBlockPlaceholder: '',
+    };
+  },
+
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        key: EMPTY_BLOCK_PLACEHOLDER_KEY,
+        props: {
+          decorations: state => {
+            const decorations: Decoration[] = [];
+            const { doc, selection } = state;
+
+            if (selection.empty) {
+              const { $from } = selection;
+              const placeholder = this.options.emptyBlockPlaceholder;
+              if (
+                placeholder &&
+                $from.parent.type.name === 'paragraph' &&
+                $from.parent.content.size === 0
+              ) {
+                decorations.push(
+                  Decoration.widget(
+                    $from.pos,
+                    () => {
+                      const span = document.createElement('span');
+                      span.textContent = placeholder;
+                      span.contentEditable = 'false';
+                      span.className =
+                        'pointer-events-none select-none whitespace-normal break-words text-muted-foreground/70';
+                      return span;
+                    },
+                    {
+                      ignoreSelection: true,
+                      key: `empty-paragraph-placeholder-${$from.pos}-${placeholder}`,
+                      side: 0,
+                    }
+                  )
+                );
+              }
+            }
+
+            return decorations.length > 0
+              ? DecorationSet.create(doc, decorations)
+              : DecorationSet.empty;
+          },
+        },
+      }),
+    ];
+  },
+});
+
 export interface WorkflowValueEditorHandle {
-  insertToken: (sourceId: string, name: string) => void;
+  insertToken: (sourceId: string, name: string, label?: string) => void;
+  replaceValue: (value: string) => void;
   focus: () => void;
   openVariableSelector: () => void;
 }
@@ -119,6 +185,7 @@ export interface WorkflowValueEditorProps {
   onChange: (value: string) => void;
   readOnly?: boolean;
   placeholder?: string;
+  emptyBlockPlaceholder?: string;
   nodeId?: string; // current node id to load upstream variables
   // Whether variable suggestion (slash-trigger) is enabled. Default: true
   suggestEnabled?: boolean;
@@ -126,6 +193,8 @@ export interface WorkflowValueEditorProps {
   slashTriggerEnabled?: boolean;
   // Extra suggest items appended after upstream groups
   extraSuggestItems?: VarOption[];
+  // Extra suggest groups appended after upstream groups.
+  extraSuggestGroups?: Array<{ id: string; title: string; items: VarOption[] }>;
   // Title for extra group
   extraGroupTitle?: string;
   // Notify parent when the TipTap editor gains focus
@@ -135,19 +204,26 @@ export interface WorkflowValueEditorProps {
   // Optional character counter. It is display-only; validation remains with the caller.
   showCharacterCount?: boolean;
   maxLength?: number;
+  characterCount?: number;
+  characterCountWarningThreshold?: number;
   characterCountFormatter?: (count: number, maxLength: number) => React.ReactNode;
+  // Enables ZGI prompt template blocks such as <zgi:slot>, <zgi:knowledge>, and <zgi:skill>.
+  templateBlocksEnabled?: boolean;
 }
 
 // VariableToken node and value transform functions are imported from local modules to keep this file focused on editor wiring.
 
 // Upstream variable option
-interface VarOption {
+export interface VarOption {
   sourceId: string;
   sourceTitle: string;
   key: string;
   type: WorkflowVariable['type'];
   description?: string;
   hasChildren?: boolean;
+  label?: string;
+  showType?: boolean;
+  invalid?: boolean;
 }
 
 const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueEditorProps>(
@@ -159,16 +235,21 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
       onChange,
       readOnly = false,
       placeholder = `Enter '/' to insert variable`,
+      emptyBlockPlaceholder,
       nodeId,
       suggestEnabled = true,
       slashTriggerEnabled = true,
       extraSuggestItems,
+      extraSuggestGroups,
       extraGroupTitle,
       onFocus,
       portalRoot,
       showCharacterCount = false,
       maxLength,
+      characterCount: characterCountOverride,
+      characterCountWarningThreshold,
       characterCountFormatter,
+      templateBlocksEnabled = false,
     },
     ref
   ) => {
@@ -180,9 +261,16 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
     const graphVersion = useWorkflowStore.use.graphVersion();
     const t = useT();
     const shouldShowCharacterCount = showCharacterCount && typeof maxLength === 'number';
-    const characterCount = shouldShowCharacterCount ? Array.from(value || '').length : 0;
+    const characterCount = shouldShowCharacterCount
+      ? characterCountOverride ?? Array.from(value || '').length
+      : 0;
     const isCharacterCountExceeded =
       shouldShowCharacterCount && characterCount > (maxLength as number);
+    const isCharacterCountWarning =
+      shouldShowCharacterCount &&
+      !isCharacterCountExceeded &&
+      typeof characterCountWarningThreshold === 'number' &&
+      characterCount > characterCountWarningThreshold;
 
     // Helper to resolve description from descriptionKey
     const resolveDescription = useCallback(
@@ -255,6 +343,8 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
       description?: string;
       hasChildren?: boolean;
       displayKey?: string;
+      label?: string;
+      showType?: boolean;
     }
 
     const [suggestState, setSuggestState] = useState<{
@@ -333,11 +423,12 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
     }, []);
 
     const groups = useMemo(() => {
+      void graphVersion;
       const list: Array<{ id: string; title: string; items: VarOption[] }> = [];
       // Delay expensive group and variable flattening until the editor is actually interacted with.
-      if (!nodeId || (!isFocused && !suggestState)) return list;
+      if (!isFocused && !suggestState) return list;
 
-      const upstreams: UpstreamExportItem[] = getUpstreamVariables(nodeId) || [];
+      const upstreams: UpstreamExportItem[] = nodeId ? getUpstreamVariables(nodeId) || [] : [];
 
       // Build a dedicated sys group from upstream variables (deduped by key)
       const sysSeen = new Set<string>();
@@ -392,7 +483,13 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
         };
       });
 
-      if (Array.isArray(extraSuggestItems) && extraSuggestItems.length > 0) {
+      if (Array.isArray(extraSuggestGroups) && extraSuggestGroups.length > 0) {
+        extraSuggestGroups.forEach(group => {
+          if (group.items.length > 0) {
+            list.push(group);
+          }
+        });
+      } else if (Array.isArray(extraSuggestItems) && extraSuggestItems.length > 0) {
         list.push({
           id: '__extra__',
           title: extraGroupTitle || '上下文',
@@ -412,6 +509,7 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
       getUpstreamVariables,
       nodeId,
       extraSuggestItems,
+      extraSuggestGroups,
       extraGroupTitle,
       flattenVariable,
       resolveDescription,
@@ -428,6 +526,7 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
 
     // Map sourceId to sourceTitle for quick lookup when rendering tokens
     const idToTitle = useMemo(() => {
+      void graphVersion;
       const state = useWorkflowStore.getState();
       // In history mode, compute titles from snapshot nodes
       let baseMap: Map<string, string>;
@@ -456,14 +555,48 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
           }
         });
       }
+      if (Array.isArray(extraSuggestGroups)) {
+        extraSuggestGroups.forEach(group => {
+          group.items.forEach(item => {
+            if (item.sourceId && item.sourceTitle) {
+              baseMap.set(item.sourceId, item.sourceTitle);
+            }
+          });
+        });
+      }
       return baseMap;
-    }, [extraSuggestItems, graphVersion, t]);
+    }, [extraSuggestItems, extraSuggestGroups, graphVersion, t]);
 
     // Keep latest title mapping in a ref to avoid re-registering Suggestion plugin on title updates
     const idToTitleRef = useRef<Map<string, string>>(idToTitle);
     useEffect(() => {
       idToTitleRef.current = idToTitle;
     }, [idToTitle]);
+
+    const extraTokenLabels = useMemo(() => {
+      const map = new Map<string, { label: string; title: string; invalid?: boolean }>();
+      if (Array.isArray(extraSuggestItems)) {
+        for (const item of extraSuggestItems) {
+          map.set(`${item.sourceId}\0${item.key}`, {
+            label: item.label || item.key || item.sourceTitle,
+            title: item.sourceTitle || item.sourceId,
+            invalid: item.invalid,
+          });
+        }
+      }
+      if (Array.isArray(extraSuggestGroups)) {
+        for (const group of extraSuggestGroups) {
+          for (const item of group.items) {
+            map.set(`${item.sourceId}\0${item.key}`, {
+              label: item.label || item.key || item.sourceTitle,
+              title: item.sourceTitle || item.sourceId,
+              invalid: item.invalid,
+            });
+          }
+        }
+      }
+      return map;
+    }, [extraSuggestItems, extraSuggestGroups]);
 
     // Labels for suggestion panel - stored in ref to avoid re-registering plugin on t change
     const suggestLabelsRef = useRef({ empty: '' });
@@ -511,25 +644,91 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
 
     const editorRef = useRef<TiptapEditor | null>(null);
 
+    const buildVariableTokenAttrs = useCallback(
+      (item: {
+        sourceId: string;
+        key: string;
+        label?: string;
+        displayKey?: string;
+      }) => ({
+        sourceId: item.sourceId,
+        key: item.key,
+        title: idToTitleRef.current.get(item.sourceId) || item.sourceId,
+        label: item.label || item.displayKey || item.key,
+        syntax:
+          templateBlocksEnabled && (item.sourceId === 'knowledge' || item.sourceId === 'skill')
+            ? 'zgi'
+            : '',
+      }),
+      [templateBlocksEnabled]
+    );
+
+    const insertVariableToken = useCallback(
+      (
+        item: {
+          sourceId: string;
+          key: string;
+          label?: string;
+          displayKey?: string;
+        },
+        replaceRange?: { from: number; to: number }
+      ) => {
+        const currentEditor = editorRef.current;
+        if (!currentEditor || !item.sourceId) return;
+
+        const { state, view } = currentEditor;
+        const tokenType = state.schema.nodes.variableToken;
+        if (!tokenType) return;
+
+        const selection = state.selection;
+        const from = replaceRange?.from ?? selection.from;
+        const to = replaceRange?.to ?? selection.to;
+        const tokenNode = tokenType.create(buildVariableTokenAttrs(item));
+        const placeholderRange =
+          findTemplateSlotPlaceholderAround(state.doc, from) ||
+          findTemplateSlotPlaceholderAround(state.doc, to);
+        const slotRange =
+          findTemplateSlotRangeAround(state.doc, from) ||
+          findTemplateSlotRangeAround(state.doc, to);
+
+        let tr = state.tr;
+        let insertPos = from;
+
+        if (placeholderRange) {
+          tr = tr.delete(placeholderRange.from, placeholderRange.to);
+          insertPos = tr.mapping.map(placeholderRange.from);
+        } else if (slotRange) {
+          const slotMarkType = state.schema.marks.templateSlot;
+          tr = tr.removeMark(slotRange.from, slotRange.to, slotMarkType);
+          const mappedFrom = tr.mapping.map(from);
+          const mappedTo = tr.mapping.map(to);
+          if (mappedFrom !== mappedTo) {
+            tr = tr.delete(mappedFrom, mappedTo);
+          }
+          insertPos = tr.mapping.map(mappedFrom);
+        } else {
+          if (from !== to) {
+            tr = tr.delete(from, to);
+          }
+          insertPos = tr.mapping.map(from);
+        }
+
+        tr = tr.insert(insertPos, tokenNode);
+        tr = tr.setSelection(
+          TextSelection.create(tr.doc, Math.min(insertPos + tokenNode.nodeSize, tr.doc.content.size))
+        );
+        tr = tr.setStoredMarks([]);
+        view.dispatch(tr.scrollIntoView());
+        view.focus();
+      },
+      [buildVariableTokenAttrs]
+    );
+
     const buildSuggestCommand = useCallback((replaceRange?: { from: number; to: number }) => {
       return (item: SuggestItem) => {
-        if (!item.sourceId || !editorRef.current) return;
-        const chain = editorRef.current.chain().focus();
-        if (replaceRange) {
-          chain.deleteRange(replaceRange);
-        }
-        chain
-          .insertContent({
-            type: 'variableToken',
-            attrs: {
-              sourceId: item.sourceId,
-              key: item.key,
-              title: idToTitleRef.current.get(item.sourceId) || item.sourceId,
-            },
-          })
-          .run();
+        insertVariableToken(item, replaceRange);
       };
-    }, []);
+    }, [insertVariableToken]);
 
     const openManualSuggest = useCallback(() => {
       if (!suggestEnabled || !editorRef.current) return;
@@ -561,6 +760,8 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
       return [
         FixAtomBackspace,
         VariableToken,
+        TemplateSlotPlaceholder,
+        TemplateSlot,
         // Custom variable trigger extension that allows detection anywhere (e.g. 123/|)
         Extension.create({
           name: 'variable-trigger',
@@ -596,14 +797,15 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
                         '\n'
                       );
 
-                      const match = textBefore.match(/\/([^\s/]*)$/);
+                      const match = textBefore.match(/(^|\s)\/([^\s/]*)$/);
                       if (match) {
-                        const query = match[1];
+                        const prefix = match[1] ?? '';
+                        const query = match[2] ?? '';
                         const start = $from.pos - query.length - 1;
                         const end = $from.pos;
 
                         const charAtStart = doc.textBetween(start, start + 1);
-                        if (charAtStart !== '/') {
+                        if (charAtStart !== '/' || (prefix && !/\s/.test(prefix))) {
                           if (suggestStateRef.current?.open) handlersRef.current?.closeSuggest();
                           return;
                         }
@@ -750,13 +952,22 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
           blockquote: false,
           code: false,
         }),
-        Placeholder.configure({ placeholder }),
+        EmptyBlockPlaceholder.configure({
+          emptyBlockPlaceholder: emptyBlockPlaceholder || placeholder,
+        }),
       ];
-    }, [buildSuggestCommand, placeholder, portalRoot, slashTriggerEnabled, suggestEnabled]);
+    }, [
+      buildSuggestCommand,
+      emptyBlockPlaceholder,
+      placeholder,
+      portalRoot,
+      slashTriggerEnabled,
+      suggestionEnabled,
+    ]);
 
     const editor = useEditor({
       extensions,
-      content: valueToDoc(value),
+      content: valueToDoc(value, { templateBlocksEnabled }),
       editable: !readOnly,
       editorProps: {
         attributes: {
@@ -820,18 +1031,49 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
             }
           });
         }
+        if (Array.isArray(extraSuggestGroups)) {
+          extraSuggestGroups.forEach(group => {
+            group.items.forEach(item => {
+              if (item.sourceId) {
+                allowedSpecial.add(item.sourceId);
+              }
+            });
+          });
+        }
         const upstreamSet = nodeId ? new Set<string>(getAncestors(nodeId) || []) : null;
         const updates: Array<{ pos: number; attrs: Record<string, unknown> }> = [];
         doc.descendants((node, pos) => {
           if (node.type === varType) {
             const sid = String((node.attrs as { sourceId?: string }).sourceId || '');
-            const desiredTitle = idToTitleRef.current.get(sid) || sid;
+            const key = String((node.attrs as { key?: string }).key || '');
+            const extraLabel = extraTokenLabels.get(`${sid}\0${key}`);
+            const desiredTitle = extraLabel?.title || idToTitleRef.current.get(sid) || sid;
+            const desiredLabel = extraLabel?.label || '';
             const currentTitle = String((node.attrs as { title?: string }).title || '');
+            const currentLabel = String((node.attrs as { label?: string }).label || '');
+            const isExtraSource = Boolean(
+              (Array.isArray(extraSuggestItems) &&
+                extraSuggestItems.some(item => item.sourceId === sid)) ||
+                (Array.isArray(extraSuggestGroups) &&
+                  extraSuggestGroups.some(group =>
+                    group.items.some(item => item.sourceId === sid)
+                  ))
+            );
             const shouldMarkInvalid = Boolean(
-              sid && !allowedSpecial.has(sid) && upstreamSet ? !upstreamSet.has(sid) : false
+              sid &&
+                (isExtraSource
+                  ? !extraLabel || extraLabel.invalid
+                  : !allowedSpecial.has(sid) && upstreamSet
+                    ? !upstreamSet.has(sid)
+                    : false)
             );
             if (desiredTitle && desiredTitle !== currentTitle) {
-              updates.push({ pos, attrs: { ...node.attrs, title: desiredTitle } });
+              updates.push({
+                pos,
+                attrs: { ...node.attrs, title: desiredTitle, label: desiredLabel },
+              });
+            } else if (desiredLabel !== currentLabel) {
+              updates.push({ pos, attrs: { ...node.attrs, label: desiredLabel } });
             }
             if (shouldMarkInvalid !== Boolean((node.attrs as { invalid?: boolean }).invalid)) {
               updates.push({ pos, attrs: { ...node.attrs, invalid: shouldMarkInvalid } });
@@ -849,7 +1091,7 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
       } catch (e) {
         console.error('Error updating token titles:', e);
       }
-    }, [editor, extraSuggestItems, nodeId, getAncestors]);
+    }, [editor, extraSuggestItems, extraSuggestGroups, extraTokenLabels, nodeId, getAncestors]);
 
     // Compute UI groups for the suggestion panel based on current path and query
     const enrichedGroups = useMemo(() => {
@@ -883,13 +1125,15 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
           }
           const items = g.items
             .filter(i => {
-              if (i.key.includes('.')) return false;
+              if (g.id !== '__extra__' && i.key.includes('.')) return false;
               if (!lowQ) return true;
               return (
-                i.key.toLowerCase().includes(lowQ) || i.sourceTitle.toLowerCase().includes(lowQ)
+                i.key.toLowerCase().includes(lowQ) ||
+                i.sourceTitle.toLowerCase().includes(lowQ) ||
+                (i.label ?? '').toLowerCase().includes(lowQ)
               );
             })
-            .map(i => ({ ...i, displayKey: i.key || i.sourceTitle, type: String(i.type) }));
+            .map(i => ({ ...i, displayKey: i.label || i.key || i.sourceTitle, type: String(i.type) }));
           return { title: g.title, items };
         })
         .filter(g => (g.items?.length ?? 0) > 0);
@@ -917,10 +1161,12 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
         if (isRecentlyTyped) return;
 
         lastEmittedValueRef.current = value;
-        editor.commands.setContent(valueToDoc(value), { emitUpdate: false });
+        editor.commands.setContent(valueToDoc(value, { templateBlocksEnabled }), {
+          emitUpdate: false,
+        });
         updateTokenTitles();
       }
-    }, [value, editor, updateTokenTitles]);
+    }, [value, editor, updateTokenTitles, templateBlocksEnabled]);
 
     // Keep token titles in sync with node changes
     useEffect(() => {
@@ -932,16 +1178,23 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
     useImperativeHandle(
       ref,
       () => ({
-        insertToken: (sourceId: string, name: string) => {
+        insertToken: (sourceId: string, name: string, label?: string) => {
           if (readOnly) return;
-          editor
-            ?.chain()
-            .focus()
-            .insertContent({
-              type: 'variableToken',
-              attrs: { sourceId, key: name, title: idToTitle.get(sourceId) || sourceId },
-            })
-            .run();
+          insertVariableToken({
+            sourceId,
+            key: name,
+            label: label || name,
+          });
+        },
+        replaceValue: (nextValue: string) => {
+          if (readOnly || !editor) return;
+          lastEmittedValueRef.current = nextValue;
+          lastSeenPropRef.current = nextValue;
+          editor.commands.setContent(valueToDoc(nextValue, { templateBlocksEnabled }), {
+            emitUpdate: false,
+          });
+          updateTokenTitles();
+          onChange(nextValue);
         },
         focus: () => {
           editor?.view?.focus();
@@ -950,43 +1203,55 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
           openManualSuggest();
         },
       }),
-      [editor, idToTitle, openManualSuggest]
+      [
+        editor,
+        insertVariableToken,
+        onChange,
+        openManualSuggest,
+        readOnly,
+        templateBlocksEnabled,
+        updateTokenTitles,
+      ]
     );
 
     return (
       <div className={cn('space-y-0.5', className)}>
-        <div
-          ref={wrapperRef}
-          className={cn(
-            'relative w-full min-w-0 overflow-x-hidden overflow-y-auto rounded-sm border bg-background px-2.5 py-1.5 text-sm ring-offset-background focus-within:outline-none flex flex-col',
-            readOnly ? 'cursor-default' : 'cursor-text',
-            shouldShowCharacterCount && 'pb-6',
-            editorClassName,
-            isCharacterCountExceeded &&
-              'border-destructive/70 focus-within:border-destructive focus-within:ring-1 focus-within:ring-destructive/20'
-          )}
-          onClick={() => {
-            if (!readOnly) {
-              editor?.view?.focus();
-            }
-          }}
-          onBlur={() => {
-            const root = wrapperRef.current;
-            setTimeout(() => {
-              const next = document.activeElement as HTMLElement | null;
-              const suggest = document.querySelector('div[data-wf-suggest="open"]');
-              const inSuggest = !!(suggest && next && suggest.contains(next));
-              if (!inSuggest && root && (!next || !root.contains(next))) {
-                closeSuggest();
+        <div className="relative h-full min-h-0">
+          <div
+            ref={wrapperRef}
+            className={cn(
+              'relative w-full min-w-0 overflow-x-hidden overflow-y-auto rounded-sm border bg-background px-2.5 py-1.5 text-sm ring-offset-background focus-within:outline-none flex flex-col',
+              readOnly ? 'cursor-default' : 'cursor-text',
+              shouldShowCharacterCount && 'pb-6',
+              editorClassName,
+              isCharacterCountExceeded &&
+                'border-destructive/70 focus-within:border-destructive focus-within:ring-1 focus-within:ring-destructive/20'
+            )}
+            onClick={() => {
+              if (!readOnly) {
+                editor?.view?.focus();
               }
-            }, 100);
-          }}
-        >
-          <EditorContent editor={editor} className="min-h-[1.5em] min-w-0" />
+            }}
+            onBlur={() => {
+              const root = wrapperRef.current;
+              setTimeout(() => {
+                const next = document.activeElement as HTMLElement | null;
+                const suggest = document.querySelector('div[data-wf-suggest="open"]');
+                const inSuggest = !!(suggest && next && suggest.contains(next));
+                if (!inSuggest && root && (!next || !root.contains(next))) {
+                  closeSuggest();
+                }
+              }, 100);
+            }}
+          >
+            <EditorContent editor={editor} className="min-h-[1.5em] min-w-0" />
+          </div>
+
           {shouldShowCharacterCount ? (
             <div
               className={cn(
                 'pointer-events-none absolute bottom-1.5 right-2.5 rounded-sm bg-background/90 px-1 text-[11px] leading-4 text-muted-foreground shadow-sm',
+                isCharacterCountWarning && 'text-amber-600',
                 isCharacterCountExceeded && 'text-destructive'
               )}
             >

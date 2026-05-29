@@ -21,6 +21,7 @@ import (
 var (
 	errAgentWebAppOffline      = errors.New("web app is offline")
 	errAgentWebAppNotPublished = errors.New("agent web app has no published version")
+	errAgentPromptTooLong      = errors.New("agent system prompt is too long")
 )
 
 func (s *agentsService) GetAgentConfig(ctx context.Context, agentID, accountID string) (*dto.AgentConfigResponse, error) {
@@ -72,6 +73,9 @@ func (s *agentsService) PublishAgent(ctx context.Context, agentID, accountID str
 		return nil, err
 	}
 	snapshot := agentConfigSnapshot(ag.ID.String(), cfg)
+	if err := validateAgentSystemPromptSource(stringFromSnapshot(snapshot, "system_prompt")); err != nil {
+		return nil, err
+	}
 	currentMemorySlots, err := s.loadAgentMemorySlotsForDraft(ctx, ag.ID)
 	if err != nil {
 		return nil, fmt.Errorf("load agent memory slots for publish: %w", err)
@@ -472,6 +476,9 @@ func applyAgentConfigRequestToDraft(cfg *AgentsConfig, req dto.AgentConfigReques
 		return dto.AgentConfigRequest{}, fmt.Errorf("agent config is required")
 	}
 	runtimeCfg := normalizeAgentConfigRequest(req)
+	if err := validateAgentSystemPromptSource(runtimeCfg.SystemPrompt); err != nil {
+		return dto.AgentConfigRequest{}, err
+	}
 	cfg.PrePrompt = stringPtr(runtimeCfg.SystemPrompt)
 	cfg.ModelProvider = nullableStringPtr(runtimeCfg.ModelProvider)
 	cfg.ModelVersionID = nullableStringPtr(runtimeCfg.Model)

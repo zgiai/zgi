@@ -69,3 +69,31 @@ func TestBuildPromptOptimizerUserPromptUsesInterfaceLanguageForDeepOptimization(
 		t.Fatalf("deep optimizer prompt should not prefer original prompt language, got:\n%s", prompt)
 	}
 }
+
+func TestNormalizePromptOptimizerInputRemovesZGISlotWrappers(t *testing.T) {
+	raw := `你叫<zgi:slot name="agent_name" placeholder="智能体名称">小雪</zgi:slot>，请使用<zgi:knowledge id="ds-1">产品知识库</zgi:knowledge>。`
+	got := normalizePromptOptimizerInput(raw)
+
+	if strings.Contains(got, "<zgi:slot") {
+		t.Fatalf("expected slot wrapper to be removed, got:\n%s", got)
+	}
+	if !strings.Contains(got, "你叫小雪") {
+		t.Fatalf("expected slot value to be preserved as plain text, got:\n%s", got)
+	}
+	if !strings.Contains(got, `<zgi:knowledge id="ds-1">产品知识库</zgi:knowledge>`) {
+		t.Fatalf("expected knowledge variable to be preserved, got:\n%s", got)
+	}
+}
+
+func TestDetectPromptOptimizerVariablesIncludesZGICapabilityBlocks(t *testing.T) {
+	raw := `当问题相关时使用<zgi:knowledge id="ds-1">产品知识库</zgi:knowledge>，计算时使用<zgi:skill id="calculator">计算器</zgi:skill>。`
+	variables := detectPromptOptimizerVariables(raw)
+	joined := strings.Join(variables, "\n")
+
+	if !strings.Contains(joined, `<zgi:knowledge id="ds-1">产品知识库</zgi:knowledge>`) {
+		t.Fatalf("expected knowledge variable to be detected, got %#v", variables)
+	}
+	if !strings.Contains(joined, `<zgi:skill id="calculator">计算器</zgi:skill>`) {
+		t.Fatalf("expected skill variable to be detected, got %#v", variables)
+	}
+}

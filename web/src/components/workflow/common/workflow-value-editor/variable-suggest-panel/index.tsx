@@ -12,6 +12,7 @@ export interface VarOption {
   sourceTitle: string;
   key: string;
   type: string;
+  showType?: boolean;
   /** Pre-resolved description text for tooltip (caller should translate if needed) */
   description?: string;
   hasChildren?: boolean;
@@ -181,9 +182,11 @@ export default function VariableSuggestPanel(props: VariableSuggestPanelProps) {
                         }}
                       >
                         <span className="font-medium truncate">{it.displayKey || it.key}</span>
-                        <span className="ml-auto text-[10px] uppercase text-muted-foreground shrink-0 tabular-nums">
-                          {it.type}
-                        </span>
+                        {it.showType === false ? null : (
+                          <span className="ml-auto text-[10px] uppercase text-muted-foreground shrink-0 tabular-nums">
+                            {it.type}
+                          </span>
+                        )}
                       </div>
 
                       {/* Right: Expand Area (if has children) */}

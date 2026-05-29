@@ -27,6 +27,7 @@ import type {
   PromptOptimizerVariant,
 } from '@/services/types/prompt';
 import { extractPromptVariables } from './prompt-optimizer-template';
+import { stripZGISlotBlocksForPromptOptimization } from '@/components/workflow/common/workflow-value-editor/utils/value-transform';
 import { getPromptRuntimeErrorMessage } from './prompt-runtime-errors';
 import { useWorkspaceStore } from '@/store/workspace-store';
 import { useLocale } from '@/hooks/use-locale';
@@ -88,7 +89,7 @@ export function PromptOptimizerDialog({
 
   useEffect(() => {
     if (!open) return;
-    setSourcePrompt(initialPrompt ?? '');
+    setSourcePrompt(stripZGISlotBlocksForPromptOptimization(initialPrompt ?? ''));
     setGoal(initialGoal ?? 'general');
     setPreserveVariables(initialPreserveVariables ?? true);
     setSelectedModel(initialModel ?? null);
@@ -384,14 +385,18 @@ export function PromptOptimizerDialog({
                     onCheckedChange={checked => handlePreserveVariablesChange(Boolean(checked))}
                   />
                 </div>
-                <div className="rounded-lg bg-muted/30 p-3 space-y-2">
+                <div className="min-w-0 rounded-lg bg-muted/30 p-3 space-y-2">
                   <div className="text-xs font-medium text-muted-foreground">
                     {t('optimizer.detectedVariablesLabel')}
                   </div>
                   {visibleVariables.length > 0 ? (
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex min-w-0 max-w-full flex-wrap gap-2">
                       {visibleVariables.map(variable => (
-                        <Badge key={variable} variant="outline">
+                        <Badge
+                          key={variable}
+                          variant="outline"
+                          className="max-w-full whitespace-normal break-all text-left leading-5"
+                        >
                           {variable}
                         </Badge>
                       ))}

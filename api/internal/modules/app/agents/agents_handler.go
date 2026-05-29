@@ -352,7 +352,7 @@ func (h *AgentsHandler) UpdateAgentConfig(c *gin.Context) {
 	ctx := agentRuntimeRequestContext(c, accountID)
 	result, err := h.appService.UpdateAgentConfig(ctx, c.Param("agent_id"), accountID, req)
 	if err != nil {
-		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
+		h.failRuntime(c, err)
 		return
 	}
 	response.Success(c, result)
@@ -465,7 +465,7 @@ func (h *AgentsHandler) PublishAgent(c *gin.Context) {
 	}
 	result, err := h.appService.PublishAgent(ctx, c.Param("agent_id"), accountID, req)
 	if err != nil {
-		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
+		h.failRuntime(c, err)
 		return
 	}
 	response.Success(c, result)
@@ -535,26 +535,15 @@ func (h *AgentsHandler) ChatAgent(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	cfg := draft.Config
-	runConfig := runtimeservice.RunConfig{
-		SystemPrompt:             cfg.SystemPrompt,
-		SystemPromptVersion:      "agent.draft",
-		ModelProvider:            cfg.ModelProvider,
-		Model:                    cfg.Model,
-		ModelParameters:          cfg.ModelParameters,
-		EnabledSkillIDs:          cfg.EnabledSkillIDs,
-		KnowledgeDatasetIDs:      cfg.KnowledgeDatasetIDs,
-		KnowledgeRetrievalConfig: cfg.KnowledgeRetrievalConfig,
-		UseMemory:                false,
-		AgentMemoryEnabled:       cfg.AgentMemoryEnabled,
-		AgentMemorySlots:         agentMemoryRuntimeSlots(cfg.AgentMemorySlots),
-		AgentMemoryUserScope:     "account",
-		BillingAppID:             agentID.String(),
-		BillingAppType:           runtimemodel.ConversationCallerAgent,
+	scope := runtimeservice.Scope{OrganizationID: organizationID, AccountID: accountID, WorkspaceID: &agentWorkspaceID}
+	runConfig, err := h.agentRunConfig(ctx, scope, agentID.String(), "agent.draft", draft.Config, "account")
+	if err != nil {
+		h.failRuntime(c, err)
+		return
 	}
 	prepared, err := h.chatRuntimeService.PrepareConfiguredChat(
 		ctx,
-		runtimeservice.Scope{OrganizationID: organizationID, AccountID: accountID, WorkspaceID: &agentWorkspaceID},
+		scope,
 		runtimeservice.Caller{Type: runtimemodel.ConversationCallerAgent, ID: &agentID, Source: runtimemodel.ConversationSourceConsole},
 		runConfig,
 		req,
@@ -836,25 +825,15 @@ func (h *AgentsHandler) ChatWebAppAgent(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	runConfig := runtimeservice.RunConfig{
-		SystemPrompt:             published.Config.SystemPrompt,
-		SystemPromptVersion:      "agent.published." + published.Version,
-		ModelProvider:            published.Config.ModelProvider,
-		Model:                    published.Config.Model,
-		ModelParameters:          published.Config.ModelParameters,
-		EnabledSkillIDs:          published.Config.EnabledSkillIDs,
-		KnowledgeDatasetIDs:      published.Config.KnowledgeDatasetIDs,
-		KnowledgeRetrievalConfig: published.Config.KnowledgeRetrievalConfig,
-		UseMemory:                false,
-		AgentMemoryEnabled:       published.Config.AgentMemoryEnabled,
-		AgentMemorySlots:         agentMemoryRuntimeSlots(published.Config.AgentMemorySlots),
-		AgentMemoryUserScope:     webAppAgentMemoryUserScope(c),
-		BillingAppID:             published.AgentID,
-		BillingAppType:           runtimemodel.ConversationCallerAgent,
+	scope := runtimeservice.Scope{OrganizationID: organizationID, AccountID: accountID, WorkspaceID: &workspaceID, SkipAccessCheck: true}
+	runConfig, err := h.agentRunConfig(c.Request.Context(), scope, published.AgentID, "agent.published."+published.Version, published.Config, webAppAgentMemoryUserScope(c))
+	if err != nil {
+		h.failRuntime(c, err)
+		return
 	}
 	prepared, err := h.chatRuntimeService.PrepareConfiguredChat(
 		c.Request.Context(),
-		runtimeservice.Scope{OrganizationID: organizationID, AccountID: accountID, WorkspaceID: &workspaceID, SkipAccessCheck: true},
+		scope,
 		runtimeservice.Caller{
 			Type:           runtimemodel.ConversationCallerAgent,
 			ID:             &agentID,
