@@ -86,11 +86,12 @@ func (s *service) runNativeAgentMemoryPreflight(
 	prepared *PreparedChat,
 	onEvent func(StreamEvent) error,
 ) (*adapter.Usage, error) {
+	timeline := newProcessTimelineRecorder(ctx, persistCtx, s, prepared, onEvent)
 	state, skipStatus := agentMemoryPreflightState(prepared, s.agentMemoryService, s.llmClient != nil)
 	if skipStatus != "" {
 		if prepared != nil && prepared.parts != nil && prepared.parts.AgentMemoryEnabled {
 			trace := agentmemoryruntime.PlannerTrace(agentmemoryruntime.Decision{Action: "none", Reason: skipStatus}, skipStatus, nil)
-			s.recordNativeAgentMemoryTrace(ctx, persistCtx, prepared, []skills.SkillTrace{}, trace)
+			s.recordNativeAgentMemoryTrace(timeline, []skills.SkillTrace{}, trace)
 			s.updateAgentMemoryRuntimeMetadataBestEffort(persistCtx, prepared, map[string]interface{}{
 				"planner_status": skipStatus,
 				"planner_action": "none",
@@ -117,15 +118,12 @@ func (s *service) runNativeAgentMemoryPreflight(
 		AppContext:        newBillingAppContext(prepared),
 		UseJSONMode:       shouldUseAgentMemoryPlannerJSONMode(prepared),
 		OnToolCallStart: func(toolName string, arguments map[string]interface{}) {
-			s.emitPreparedEvent(ctx, prepared, streamEventSkillCallStart, skillCallStartPayload(prepared, skills.SkillAgentMemory, toolName, arguments), onEvent)
-		},
-		OnToolCallEnd: func(trace skills.SkillTrace) {
-			s.emitPreparedEvent(ctx, prepared, streamEventSkillCallEnd, skillCallEndPayload(prepared, trace), onEvent)
+			timeline.RecordInvocationStart(skills.SkillAgentMemory, toolName, arguments)
 		},
 	})
 	traces := []skills.SkillTrace{}
 	for _, trace := range result.Traces {
-		traces = s.recordNativeAgentMemoryTrace(ctx, persistCtx, prepared, traces, trace)
+		traces = s.recordNativeAgentMemoryTrace(timeline, traces, trace)
 	}
 	if len(result.MetadataUpdates) > 0 {
 		s.updateAgentMemoryRuntimeMetadataBestEffort(persistCtx, prepared, result.MetadataUpdates)
@@ -194,13 +192,27 @@ func agentMemoryMutationMetadata(prepared *PreparedChat) agentmemory.MutationMet
 	return meta
 }
 
-func (s *service) recordNativeAgentMemoryTrace(ctx context.Context, persistCtx context.Context, prepared *PreparedChat, traces []skills.SkillTrace, trace skills.SkillTrace) []skills.SkillTrace {
+func (s *service) recordNativeAgentMemoryTrace(timeline *processTimelineRecorder, traces []skills.SkillTrace, trace skills.SkillTrace) []skills.SkillTrace {
 	if strings.TrimSpace(trace.Status) == "" {
 		trace.Status = "success_none"
 	}
+	if trace.Kind == "agent_memory" {
+		trace.Kind = "memory_planner"
+		trace.ToolName = "plan_agent_memory"
+	}
 	traces = append(traces, trace)
-	s.persistSkillTracesBestEffort(persistCtx, prepared, traces)
-	s.logSkillTrace(ctx, prepared, trace)
+	if timeline == nil {
+		return traces
+	}
+	if trace.Kind == "tool_call" {
+		if trace.Status == "success" {
+			timeline.RecordInvocationEnd(trace)
+		} else {
+			timeline.RecordInvocationError(trace)
+		}
+		return traces
+	}
+	timeline.RecordTrace(traces, trace)
 	return traces
 }
 

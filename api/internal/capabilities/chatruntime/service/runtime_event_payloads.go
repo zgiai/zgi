@@ -28,6 +28,7 @@ func skillCallEndPayload(prepared *PreparedChat, trace skills.SkillTrace) map[st
 	payload := map[string]interface{}{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
+		"kind":            trace.Kind,
 		"skill_id":        trace.SkillID,
 		"tool_name":       trace.ToolName,
 		"duration_ms":     trace.DurationMS,
@@ -151,6 +152,7 @@ func skillCallErrorPayload(prepared *PreparedChat, trace skills.SkillTrace) map[
 	return map[string]interface{}{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
+		"kind":            trace.Kind,
 		"skill_id":        trace.SkillID,
 		"tool_name":       trace.ToolName,
 		"duration_ms":     trace.DurationMS,

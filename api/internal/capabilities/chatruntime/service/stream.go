@@ -550,9 +550,7 @@ func messageEndPayload(prepared *PreparedChat, metadata map[string]interface{}) 
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
 		"status":          completedStatusFromMetadata(metadata),
-		"metadata": map[string]interface{}{
-			"usage": metadata["usage"],
-		},
+		"metadata":        copyStringAnyMap(metadata),
 	}
 }
 

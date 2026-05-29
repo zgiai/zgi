@@ -44,17 +44,17 @@ func (s *service) runPreparedSkillStream(
 		return "", nil, fmt.Errorf("%w: no skills available for configured skill ids", ErrInvalidInput)
 	}
 
+	timeline := newProcessTimelineRecorder(ctx, persistCtx, s, prepared, onEvent)
 	runner := &skillloop.Runner{
 		LLMClient:    s.llmClient,
 		SkillRuntime: s.skillRuntime,
 		AppContext:   newBillingAppContext(prepared),
 		OnEvent: func(event skillloop.Event) error {
-			s.emitPreparedEvent(ctx, prepared, event.Type, event.Payload, onEvent)
+			timeline.RecordEvent(event.Type, event.Payload)
 			return nil
 		},
 		OnTrace: func(traces []skills.SkillTrace, trace skills.SkillTrace) {
-			s.persistSkillTracesBestEffort(persistCtx, prepared, traces)
-			s.logSkillTrace(ctx, prepared, trace)
+			timeline.RecordTrace(traces, trace)
 		},
 		OnArtifact: func(artifact map[string]interface{}) {
 			s.persistGeneratedArtifactBestEffort(ctx, prepared, artifact)
