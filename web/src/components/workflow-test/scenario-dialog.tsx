@@ -73,7 +73,9 @@ export function ScenarioDialog({ agentId, scenarios, open, onOpenChange }: Scena
     setItems(prev => prev.filter(item => item.clientId !== clientId));
   };
 
-  const canSubmit = items.some(item => item.name.trim()) && !saveScenarios.isPending;
+  const hasNamedScenario = items.some(item => item.name.trim());
+  const hasClearedAllScenarios = scenarios.length > 0 && items.length === 0;
+  const canSubmit = (hasNamedScenario || hasClearedAllScenarios) && !saveScenarios.isPending;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
