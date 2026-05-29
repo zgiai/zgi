@@ -1,19 +1,18 @@
-package service
+package agentmemoryruntime
 
 import (
 	"context"
 	"strconv"
 	"strings"
 
-	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 )
 
-func (s *service) appendAgentMemoryContext(ctx context.Context, scope Scope, parts *chatRequestParts, systemPrompt string) (string, map[string]interface{}, error) {
-	if parts == nil || !parts.AgentMemoryEnabled || len(enabledAgentMemorySlots(parts.AgentMemorySlots)) == 0 {
-		return systemPrompt, nil, nil
+func BuildContext(ctx context.Context, req ContextRequest) (ContextResult, error) {
+	if !req.Enabled || len(enabledSlots(req.Slots)) == 0 {
+		return ContextResult{SystemPrompt: req.SystemPrompt}, nil
 	}
-	slots := enabledAgentMemorySlots(parts.AgentMemorySlots)
+	slots := enabledSlots(req.Slots)
 	metadata := map[string]interface{}{
 		"agent_memory": map[string]interface{}{
 			"enabled":        true,
@@ -22,22 +21,17 @@ func (s *service) appendAgentMemoryContext(ctx context.Context, scope Scope, par
 			"context_status": "skipped_scope",
 		},
 	}
-	state := &AgentMemoryRuntimeState{
+	state := &State{
 		Enabled:       true,
-		UserScope:     strings.TrimSpace(parts.AgentMemoryUserScope),
+		AgentID:       req.AgentID,
+		UserScope:     strings.TrimSpace(req.UserScope),
 		EnabledSlots:  slots,
 		ContextStatus: "skipped_scope",
 	}
-	parts.AgentMemoryRuntimeState = state
-	if s.agentMemoryService == nil || scope.WorkspaceID == nil || *scope.WorkspaceID == uuid.Nil {
-		return systemPrompt, metadata, nil
+	if req.MemoryService == nil || req.WorkspaceID == zeroUUID || req.AgentID == zeroUUID {
+		return ContextResult{SystemPrompt: req.SystemPrompt, Metadata: metadata, State: state}, nil
 	}
-	agentID, err := uuid.Parse(strings.TrimSpace(parts.AgentMemoryAgentID))
-	if err != nil || agentID == uuid.Nil {
-		return systemPrompt, metadata, nil
-	}
-	state.AgentID = agentID
-	values, err := s.agentMemoryService.ReadUserMemory(ctx, *scope.WorkspaceID, agentID, agentMemoryRuntimeSlots(slots), parts.AgentMemoryUserScope, scope.AccountID)
+	values, err := req.MemoryService.ReadUserMemory(ctx, req.WorkspaceID, req.AgentID, RuntimeSlots(slots), req.UserScope, req.UserID)
 	if err != nil {
 		state.ContextStatus = "error"
 		state.ContextError = err.Error()
@@ -48,11 +42,11 @@ func (s *service) appendAgentMemoryContext(ctx context.Context, scope Scope, par
 			"context_status": "error",
 			"context_error":  err.Error(),
 		}
-		return systemPrompt, metadata, nil
+		return ContextResult{SystemPrompt: req.SystemPrompt, Metadata: metadata, State: state}, nil
 	}
 	state.SavedValues = append([]agentmemory.SlotValueResponse(nil), values...)
 	state.ContextStatus = "success"
-	rendered, injectedCount := renderAgentMemoryContext(values, agentMemoryContextBudgetChars)
+	rendered, injectedCount := RenderContext(values, req.Budget)
 	metadata["agent_memory"] = map[string]interface{}{
 		"enabled":        true,
 		"available":      injectedCount > 0,
@@ -61,13 +55,13 @@ func (s *service) appendAgentMemoryContext(ctx context.Context, scope Scope, par
 		"context_status": "success",
 	}
 	if strings.TrimSpace(rendered) == "" {
-		return systemPrompt, metadata, nil
+		return ContextResult{SystemPrompt: req.SystemPrompt, Metadata: metadata, State: state}, nil
 	}
-	return strings.TrimSpace(systemPrompt) + "\n\n" + rendered, metadata, nil
+	return ContextResult{SystemPrompt: strings.TrimSpace(req.SystemPrompt) + "\n\n" + rendered, Metadata: metadata, State: state}, nil
 }
 
-func appendAgentMemoryPolicy(systemPrompt string, parts *chatRequestParts) string {
-	rendered := renderAgentMemoryPolicy(parts)
+func AppendPolicy(systemPrompt string, enabled bool, slots []Slot) string {
+	rendered := RenderPolicy(enabled, slots)
 	if rendered == "" {
 		return systemPrompt
 	}
@@ -78,11 +72,11 @@ func appendAgentMemoryPolicy(systemPrompt string, parts *chatRequestParts) strin
 	return base + "\n\n" + rendered
 }
 
-func renderAgentMemoryPolicy(parts *chatRequestParts) string {
-	if parts == nil || !parts.AgentMemoryEnabled {
+func RenderPolicy(enabled bool, slots []Slot) string {
+	if !enabled {
 		return ""
 	}
-	slots := enabledAgentMemorySlots(parts.AgentMemorySlots)
+	slots = enabledSlots(slots)
 	if len(slots) == 0 {
 		return ""
 	}
@@ -123,16 +117,7 @@ func renderAgentMemoryPolicy(parts *chatRequestParts) string {
 	return b.String()
 }
 
-func containsAny(value string, needles []string) bool {
-	for _, needle := range needles {
-		if strings.Contains(value, strings.ToLower(needle)) {
-			return true
-		}
-	}
-	return false
-}
-
-func renderAgentMemoryContext(values []agentmemory.SlotValueResponse, budget int) (string, int) {
+func RenderContext(values []agentmemory.SlotValueResponse, budget int) (string, int) {
 	if budget <= 0 || len(values) == 0 {
 		return "", 0
 	}
@@ -148,15 +133,15 @@ func renderAgentMemoryContext(values []agentmemory.SlotValueResponse, budget int
 		if content == "" || key == "" {
 			continue
 		}
-		entryLabel := agentMemoryContextEntryLabel(key)
-		entry := "- " + entryLabel + ":\n" + indentAgentMemoryContent(content) + "\n"
+		entryLabel := contextEntryLabel(key)
+		entry := "- " + entryLabel + ":\n" + indentContent(content) + "\n"
 		if b.Len()+len(entry) > budget {
 			if count == 0 {
 				prefix := "- " + entryLabel + ":\n"
 				remaining := budget - b.Len() - len(prefix)
 				if remaining > 0 {
 					b.WriteString(prefix)
-					b.WriteString(indentAgentMemoryContent(truncateString(content, remaining)))
+					b.WriteString(indentContent(truncateString(content, remaining)))
 					count++
 				}
 			}
@@ -171,13 +156,24 @@ func renderAgentMemoryContext(values []agentmemory.SlotValueResponse, budget int
 	return strings.TrimSpace(b.String()), count
 }
 
-func agentMemoryContextEntryLabel(key string) string {
+func enabledSlots(input []Slot) []Slot {
+	out := make([]Slot, 0, len(input))
+	for _, slot := range input {
+		if slot.Enabled {
+			out = append(out, slot)
+		}
+	}
+	return out
+}
+
+func contextEntryLabel(key string) string {
 	if strings.EqualFold(strings.TrimSpace(key), "standing_instructions") {
 		return "standing_instructions (binding interaction rules; follow every turn)"
 	}
 	return key
 }
-func indentAgentMemoryContent(content string) string {
+
+func indentContent(content string) string {
 	lines := strings.Split(strings.TrimSpace(content), "\n")
 	for i, line := range lines {
 		lines[i] = "  " + strings.TrimSpace(line)
@@ -197,32 +193,4 @@ func truncateString(value string, maxChars int) string {
 		return string(runes[:maxChars])
 	}
 	return string(runes[:maxChars-3]) + "..."
-}
-func agentMemoryRuntimeSlots(input []AgentMemorySlotConfig) []agentmemory.RuntimeSlot {
-	slots := enabledAgentMemorySlots(input)
-	out := make([]agentmemory.RuntimeSlot, 0, len(slots))
-	for _, slot := range slots {
-		out = append(out, agentmemory.RuntimeSlot{
-			Key:         slot.Key,
-			Description: slot.Description,
-			MaxChars:    slot.MaxChars,
-			Enabled:     slot.Enabled,
-			SortOrder:   slot.SortOrder,
-		})
-	}
-	return out
-}
-
-func enabledAgentMemorySlots(input []AgentMemorySlotConfig) []AgentMemorySlotConfig {
-	normalized := normalizeAgentMemorySlots(input)
-	if len(normalized) == 0 {
-		return nil
-	}
-	out := make([]AgentMemorySlotConfig, 0, len(normalized))
-	for _, slot := range normalized {
-		if slot.Enabled {
-			out = append(out, slot)
-		}
-	}
-	return out
 }

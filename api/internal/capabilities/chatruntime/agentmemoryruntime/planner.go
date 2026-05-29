@@ -1,4 +1,4 @@
-package service
+package agentmemoryruntime
 
 import (
 	"encoding/json"
@@ -9,19 +9,19 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
-func nativeAgentMemoryDecisionStateMessage(state *AgentMemoryRuntimeState, latestUserMessage string) adapter.Message {
-	return nativeAgentMemoryDecisionStateMessageWithHistory(state, latestUserMessage, nil)
+func DecisionStateMessage(state *State, latestUserMessage string) adapter.Message {
+	return DecisionStateMessageWithHistory(state, latestUserMessage, nil)
 }
 
-func nativeAgentMemoryPlannerMessages(state *AgentMemoryRuntimeState, latestUserMessage string, sourceMessages []adapter.Message) []adapter.Message {
+func PlannerMessages(state *State, latestUserMessage string, sourceMessages []adapter.Message) []adapter.Message {
 	return []adapter.Message{
-		nativeAgentMemoryDecisionStateMessageWithHistory(state, latestUserMessage, sourceMessages),
+		DecisionStateMessageWithHistory(state, latestUserMessage, sourceMessages),
 		{Role: "user", Content: "Return exactly one Agent memory decision JSON object for the structured payload. Do not answer the user."},
 	}
 }
 
-func nativeAgentMemoryDecisionStateMessageWithHistory(state *AgentMemoryRuntimeState, latestUserMessage string, sourceMessages []adapter.Message) adapter.Message {
-	slots := []AgentMemorySlotConfig{}
+func DecisionStateMessageWithHistory(state *State, latestUserMessage string, sourceMessages []adapter.Message) adapter.Message {
+	slots := []Slot{}
 	values := []agentmemory.SlotValueResponse{}
 	if state != nil {
 		slots = state.EnabledSlots
@@ -37,9 +37,9 @@ func nativeAgentMemoryDecisionStateMessageWithHistory(state *AgentMemoryRuntimeS
 	}
 	payload := map[string]interface{}{
 		"latest_user_message": strings.TrimSpace(latestUserMessage),
-		"recent_messages":     nativeAgentMemoryRecentMessagePayload(sourceMessages),
-		"enabled_slots":       nativeAgentMemorySlotPayload(slots),
-		"saved_memory":        nativeAgentMemorySavedValuePayload(values),
+		"recent_messages":     recentMessagePayload(sourceMessages),
+		"enabled_slots":       SlotPayload(slots),
+		"saved_memory":        SavedValuePayload(values),
 	}
 	rawPayload, _ := json.Marshal(payload)
 	lines := []string{
@@ -66,7 +66,7 @@ func nativeAgentMemoryDecisionStateMessageWithHistory(state *AgentMemoryRuntimeS
 	return adapter.Message{Role: "system", Content: strings.Join(lines, "\n")}
 }
 
-func nativeAgentMemoryRecentMessagePayload(messages []adapter.Message) []map[string]interface{} {
+func recentMessagePayload(messages []adapter.Message) []map[string]interface{} {
 	const maxRecentPlannerMessages = 8
 	out := make([]map[string]interface{}, 0, maxRecentPlannerMessages)
 	start := 0
@@ -78,7 +78,7 @@ func nativeAgentMemoryRecentMessagePayload(messages []adapter.Message) []map[str
 		if role != "user" && role != "assistant" {
 			continue
 		}
-		content := truncateNativeAgentMemoryRunes(messageTextForAgentMemoryPlanner(message.Content), 1200)
+		content := TruncateRunes(messageText(message.Content), 1200)
 		if content == "" {
 			continue
 		}
@@ -90,7 +90,7 @@ func nativeAgentMemoryRecentMessagePayload(messages []adapter.Message) []map[str
 	return out
 }
 
-func messageTextForAgentMemoryPlanner(content interface{}) string {
+func messageText(content interface{}) string {
 	switch typed := content.(type) {
 	case string:
 		return strings.TrimSpace(typed)
@@ -117,7 +117,7 @@ func messageTextForAgentMemoryPlanner(content interface{}) string {
 	}
 }
 
-func nativeAgentMemorySlotPayload(slots []AgentMemorySlotConfig) []map[string]interface{} {
+func SlotPayload(slots []Slot) []map[string]interface{} {
 	out := make([]map[string]interface{}, 0, len(slots))
 	for _, slot := range slots {
 		out = append(out, map[string]interface{}{
@@ -129,7 +129,7 @@ func nativeAgentMemorySlotPayload(slots []AgentMemorySlotConfig) []map[string]in
 	return out
 }
 
-func nativeAgentMemorySavedValuePayload(values []agentmemory.SlotValueResponse) []map[string]interface{} {
+func SavedValuePayload(values []agentmemory.SlotValueResponse) []map[string]interface{} {
 	out := make([]map[string]interface{}, 0, len(values))
 	for _, value := range values {
 		content := strings.TrimSpace(value.Content)
@@ -145,7 +145,7 @@ func nativeAgentMemorySavedValuePayload(values []agentmemory.SlotValueResponse) 
 	return out
 }
 
-func nativeAgentMemoryDecisionMessage(slots []AgentMemorySlotConfig) adapter.Message {
+func DecisionMessage(slots []Slot) adapter.Message {
 	slotLines := make([]string, 0, len(slots))
 	for _, slot := range slots {
 		description := strings.TrimSpace(slot.Description)
@@ -166,7 +166,7 @@ func nativeAgentMemoryDecisionMessage(slots []AgentMemorySlotConfig) adapter.Mes
 		"Slot routing guidance:",
 		"- profile: the user's own name, preferred name, job, team role, or stable identity. Never store assistant persona or what the user calls the assistant here.",
 		"- preferences: answer language, style, examples, length, formatting, tone, and output format preferences.",
-		"- standing_instructions: durable procedures, collaboration rules, assistant persona, how the user addresses the assistant, how the assistant must address the user, and ongoing interaction rules. Chinese examples such as \"以后你是...\", \"我叫你...\", \"你要叫我...\", \"叫我主人\", or \"以后每次...\" should be update/standing_instructions when that key is enabled.",
+		"- standing_instructions: durable procedures, collaboration rules, assistant persona, how the user addresses the assistant, how the assistant must address the user, and ongoing interaction rules.",
 		"- project_context: ongoing projects, goals, workstreams, background, and long-running responsibilities.",
 		"Use exactly one of the enabled keys below. Do not invent keys.",
 		"Enabled memory slots:",
@@ -175,14 +175,14 @@ func nativeAgentMemoryDecisionMessage(slots []AgentMemorySlotConfig) adapter.Mes
 	return adapter.Message{Role: "system", Content: strings.Join(lines, "\n")}
 }
 
-func nativeAgentMemoryDecisionRetryMessage(err error) adapter.Message {
+func DecisionRetryMessage(err error) adapter.Message {
 	return adapter.Message{Role: "system", Content: "Return a valid Agent memory decision JSON object only. Previous decision was invalid: " + err.Error()}
 }
 
-func parseNativeAgentMemoryDecision(raw string) (nativeAgentMemoryDecision, error) {
+func ParseDecision(raw string) (Decision, error) {
 	raw = strings.TrimSpace(stripJSONCodeFence(raw))
 	if raw == "" {
-		return nativeAgentMemoryDecision{}, fmt.Errorf("empty decision")
+		return Decision{}, fmt.Errorf("empty decision")
 	}
 	if start := strings.Index(raw, "{"); start > 0 {
 		raw = raw[start:]
@@ -191,21 +191,21 @@ func parseNativeAgentMemoryDecision(raw string) (nativeAgentMemoryDecision, erro
 		raw = raw[:end+1]
 	}
 	var wrapper struct {
-		Action     string                      `json:"action"`
-		Key        string                      `json:"key"`
-		Content    string                      `json:"content"`
-		Confidence *float64                    `json:"confidence"`
-		Reason     string                      `json:"reason"`
-		Decisions  []nativeAgentMemoryDecision `json:"decisions"`
+		Action     string     `json:"action"`
+		Key        string     `json:"key"`
+		Content    string     `json:"content"`
+		Confidence *float64   `json:"confidence"`
+		Reason     string     `json:"reason"`
+		Decisions  []Decision `json:"decisions"`
 	}
 	if err := json.Unmarshal([]byte(raw), &wrapper); err != nil {
-		return nativeAgentMemoryDecision{}, fmt.Errorf("parse decision json: %w", err)
+		return Decision{}, fmt.Errorf("parse decision json: %w", err)
 	}
-	var decision nativeAgentMemoryDecision
+	var decision Decision
 	if len(wrapper.Decisions) > 0 {
 		decision = wrapper.Decisions[0]
 	} else {
-		decision = nativeAgentMemoryDecision{
+		decision = Decision{
 			Action:     wrapper.Action,
 			Key:        wrapper.Key,
 			Content:    wrapper.Content,
@@ -223,16 +223,16 @@ func parseNativeAgentMemoryDecision(raw string) (nativeAgentMemoryDecision, erro
 		return decision, nil
 	case "update", "clear":
 	default:
-		return nativeAgentMemoryDecision{}, fmt.Errorf("unsupported action %q", decision.Action)
+		return Decision{}, fmt.Errorf("unsupported action %q", decision.Action)
 	}
-	if decision.Confidence != nil && *decision.Confidence > 0 && *decision.Confidence < minAgentMemoryDecisionConfidence {
-		return nativeAgentMemoryDecision{Action: "none", Reason: "decision confidence below threshold"}, nil
+	if decision.Confidence != nil && *decision.Confidence > 0 && *decision.Confidence < minDecisionConfidence {
+		return Decision{Action: "none", Reason: "decision confidence below threshold"}, nil
 	}
 	if decision.Key == "" {
-		return nativeAgentMemoryDecision{}, fmt.Errorf("key is required for %s", decision.Action)
+		return Decision{}, fmt.Errorf("key is required for %s", decision.Action)
 	}
 	if decision.Action == "update" && decision.Content == "" {
-		return nativeAgentMemoryDecision{}, fmt.Errorf("content is required for update")
+		return Decision{}, fmt.Errorf("content is required for update")
 	}
 	return decision, nil
 }
@@ -249,19 +249,19 @@ func stripJSONCodeFence(raw string) string {
 	return strings.TrimSpace(raw)
 }
 
-func decisionNoop(decision nativeAgentMemoryDecision) bool {
+func DecisionNoop(decision Decision) bool {
 	return strings.TrimSpace(decision.Action) == "" || strings.EqualFold(decision.Action, "none")
 }
 
-func nativeAgentMemoryDecisionToolCall(decision nativeAgentMemoryDecision) (adapter.ToolCall, error) {
+func DecisionToolCall(decision Decision) (adapter.ToolCall, error) {
 	args := map[string]interface{}{"key": decision.Key}
 	toolName := ""
 	switch strings.ToLower(strings.TrimSpace(decision.Action)) {
 	case "update":
-		toolName = agentMemoryToolUpdate
+		toolName = ToolUpdate
 		args["content"] = decision.Content
 	case "clear":
-		toolName = agentMemoryToolClear
+		toolName = ToolClear
 	default:
 		return adapter.ToolCall{}, fmt.Errorf("unsupported decision action %q", decision.Action)
 	}
@@ -279,23 +279,21 @@ func nativeAgentMemoryDecisionToolCall(decision nativeAgentMemoryDecision) (adap
 	}, nil
 }
 
-func nativeAgentMemorySuccessNote(decision nativeAgentMemoryDecision, result map[string]interface{}) adapter.Message {
+func SuccessNote(decision Decision, result map[string]interface{}) adapter.Message {
 	action := strings.ToLower(strings.TrimSpace(decision.Action))
 	key := strings.TrimSpace(decision.Key)
 	if resultKey, ok := result["key"].(string); ok && strings.TrimSpace(resultKey) != "" {
 		key = strings.TrimSpace(resultKey)
 	}
-	verb := "updated"
+	verb := "update"
 	if action == "clear" {
 		verb = "clear"
-	} else {
-		verb = "update"
 	}
 	content := fmt.Sprintf("Internal Agent memory note: Agent memory %s succeeded for key %q. The final answer may briefly confirm this memory change if relevant. Do not mention tools, planner, or internal memory process.", verb, key)
 	return adapter.Message{Role: "system", Content: content}
 }
 
-func nativeAgentMemoryGuardNote(status string) adapter.Message {
+func GuardNote(status string) adapter.Message {
 	status = strings.TrimSpace(status)
 	if status == "" {
 		status = "none"
@@ -304,7 +302,7 @@ func nativeAgentMemoryGuardNote(status string) adapter.Message {
 	return adapter.Message{Role: "system", Content: content}
 }
 
-func nativeAgentMemoryPlannerSuccessStatus(decision nativeAgentMemoryDecision) string {
+func PlannerSuccessStatus(decision Decision) string {
 	switch strings.ToLower(strings.TrimSpace(decision.Action)) {
 	case "update":
 		return "success_update"
@@ -315,10 +313,6 @@ func nativeAgentMemoryPlannerSuccessStatus(decision nativeAgentMemoryDecision) s
 	}
 }
 
-func shouldUseAgentMemoryPlannerJSONMode(_ *PreparedChat) bool {
-	return false
-}
-
-func shouldRunNativeAgentMemoryDecision(query string) bool {
+func ShouldRunDecision(query string) bool {
 	return strings.TrimSpace(query) != ""
 }

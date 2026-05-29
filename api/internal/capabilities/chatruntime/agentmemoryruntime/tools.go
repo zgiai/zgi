@@ -1,4 +1,4 @@
-package service
+package agentmemoryruntime
 
 import (
 	"fmt"
@@ -7,7 +7,7 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
-func nativeAgentMemoryTools(slots []AgentMemorySlotConfig) []adapter.Tool {
+func Tools(slots []Slot) []adapter.Tool {
 	keys := make([]interface{}, 0, len(slots))
 	descriptions := make([]string, 0, len(slots))
 	for _, slot := range slots {
@@ -27,7 +27,7 @@ func nativeAgentMemoryTools(slots []AgentMemorySlotConfig) []adapter.Tool {
 		{
 			Type: "function",
 			Function: adapter.Function{
-				Name: agentMemoryToolUpdate,
+				Name: ToolUpdate,
 				Description: strings.Join([]string{
 					"Update one enabled Agent memory slot for the current user.",
 					"Use this only for stable profile facts, durable response preferences, standing collaboration rules, assistant persona/addressing rules, or ongoing project context from the latest user message.",
@@ -51,7 +51,7 @@ func nativeAgentMemoryTools(slots []AgentMemorySlotConfig) []adapter.Tool {
 		{
 			Type: "function",
 			Function: adapter.Function{
-				Name: agentMemoryToolClear,
+				Name: ToolClear,
 				Description: strings.Join([]string{
 					"Clear one enabled Agent memory slot for the current user.",
 					"Use only when the latest user message explicitly asks to forget, delete, remove, or clear saved Agent memory.",
@@ -70,11 +70,11 @@ func nativeAgentMemoryTools(slots []AgentMemorySlotConfig) []adapter.Tool {
 	}
 }
 
-func nativeAgentMemoryToolCalls(calls []adapter.ToolCall) []adapter.ToolCall {
+func ToolCalls(calls []adapter.ToolCall) []adapter.ToolCall {
 	out := make([]adapter.ToolCall, 0, len(calls))
 	for _, call := range calls {
 		switch strings.TrimSpace(call.Function.Name) {
-		case agentMemoryToolUpdate, agentMemoryToolClear:
+		case ToolUpdate, ToolClear:
 			out = append(out, call)
 		}
 	}

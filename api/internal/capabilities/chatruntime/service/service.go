@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/agentmemoryruntime"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
@@ -92,44 +93,11 @@ type RunConfig struct {
 	BillingAppType           string
 }
 
-type AgentMemorySlotConfig struct {
-	Key         string `json:"key"`
-	Description string `json:"description"`
-	MaxChars    int    `json:"max_chars"`
-	Enabled     bool   `json:"enabled"`
-	SortOrder   int    `json:"sort_order"`
-}
-
-type AgentMemoryRuntimeState struct {
-	Enabled       bool
-	AgentID       uuid.UUID
-	UserScope     string
-	EnabledSlots  []AgentMemorySlotConfig
-	SavedValues   []agentmemory.SlotValueResponse
-	ContextStatus string
-	ContextError  string
-}
-
-type AgentMemoryPlannerDecision struct {
-	Action     string   `json:"action"`
-	Key        string   `json:"key,omitempty"`
-	Content    string   `json:"content,omitempty"`
-	Confidence *float64 `json:"confidence,omitempty"`
-	Reason     string   `json:"reason,omitempty"`
-}
-
-type AgentMemoryPlannerResult struct {
-	Status   string
-	Decision AgentMemoryPlannerDecision
-	Error    error
-}
-
-type AgentMemoryMutationResult struct {
-	Status string
-	Key    string
-	Result map[string]interface{}
-	Error  error
-}
+type AgentMemorySlotConfig = agentmemoryruntime.Slot
+type AgentMemoryRuntimeState = agentmemoryruntime.State
+type AgentMemoryPlannerDecision = agentmemoryruntime.Decision
+type AgentMemoryPlannerResult = agentmemoryruntime.PlannerResult
+type AgentMemoryMutationResult = agentmemoryruntime.MutationResult
 
 type Service interface {
 	CreateConversation(ctx context.Context, scope Scope, title string) (*runtimemodel.Conversation, error)
