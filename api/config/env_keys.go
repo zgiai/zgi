@@ -190,6 +190,13 @@ const (
 	// envPluginMaxPackageSize overrides the plugin package size returned by the system feature API. Default: 0.
 	envPluginMaxPackageSize = "PLUGIN_MAX_PACKAGE_SIZE"
 
+	// LLM policy prompt injection. Disabled by default for open-source deployments.
+	envLLMPolicyPromptEnabled = "LLM_POLICY_PROMPT_ENABLED"
+	// envLLMPolicyPromptFile points to a local file containing the policy prompt.
+	envLLMPolicyPromptFile = "LLM_POLICY_PROMPT_FILE"
+	// envLLMPolicyPromptText carries the policy prompt directly and takes precedence over the file.
+	envLLMPolicyPromptText = "LLM_POLICY_PROMPT_TEXT"
+
 	// Public access and signup flow.
 	// envPublicDeploymentEnabled creates a personal organization when public signup activates an account. Default: false.
 	envPublicDeploymentEnabled = "PUBLIC_DEPLOYMENT_ENABLED"

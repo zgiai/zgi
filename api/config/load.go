@@ -98,6 +98,7 @@ func loadExecutionAndSecurityConfig(cfg *Config, source *envSource) error {
 		requiredConfigLoader("workflow file extraction", loadWorkflowFileExtractionConfig),
 		requiredConfigLoader("answer node streaming", loadAnswerNodeStreamingConfig),
 		requiredConfigLoader("encryption", loadEncryptionConfig),
+		requiredConfigLoader("llm policy prompt", loadLLMPolicyPromptConfig),
 
 		optionalConfigLoader("auth", loadAuthConfig),
 		optionalConfigLoader("opentelemetry", loadOpenTelemetryConfig),
