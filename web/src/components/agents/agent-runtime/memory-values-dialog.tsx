@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -19,12 +19,22 @@ import { useT } from '@/i18n';
 import agentService from '@/services/agent.service';
 import type { AgentMemoryValue } from '@/services/types/agent';
 import { getErrorMessage } from '@/utils/error-notifications';
+import { formatDate } from '@/utils/format';
 
 interface AgentRuntimeMemoryValuesDialogProps {
   agentId: string;
   open: boolean;
   defaultUserId?: string;
   onOpenChange: (open: boolean) => void;
+}
+
+function formatMemoryValueUpdatedAt(value: AgentMemoryValue): string {
+  const source = value.updated_at_unix ?? value.updated_at_iso ?? value.updated_at;
+  if (source === undefined || source === null || source === '') {
+    return value.updated_at_display || '-';
+  }
+  const formatted = formatDate(source, 'YYYY-MM-DD HH:mm:ss');
+  return formatted === 'Invalid Date' ? value.updated_at_display || '-' : formatted;
 }
 
 export function AgentRuntimeMemoryValuesDialog({
@@ -40,13 +50,24 @@ export function AgentRuntimeMemoryValuesDialog({
   const [savingKey, setSavingKey] = useState('');
   const [clearingKey, setClearingKey] = useState('');
   const [pendingClearKey, setPendingClearKey] = useState('');
+  const isLoadingRef = useRef(false);
+  const loadedDialogKeyRef = useRef('');
+  const tRef = useRef(t);
 
   const valuesByKey = useMemo(() => new Map(values.map(value => [value.key, value])), [values]);
+
+  useEffect(() => {
+    tRef.current = t;
+  }, [t]);
 
   const loadValues = useCallback(async () => {
     if (!defaultUserId) {
       return;
     }
+    if (isLoadingRef.current) {
+      return;
+    }
+    isLoadingRef.current = true;
     setIsLoading(true);
     try {
       const response = await agentService.getAgentMemoryValues(agentId);
@@ -54,16 +75,23 @@ export function AgentRuntimeMemoryValuesDialog({
       setValues(nextValues);
       setDrafts(Object.fromEntries(nextValues.map(value => [value.key, value.content ?? ''])));
     } catch (error) {
-      toast.error(getErrorMessage(error) || t('memoryValues.loadFailed'));
+      toast.error(getErrorMessage(error) || tRef.current('memoryValues.loadFailed'));
     } finally {
+      isLoadingRef.current = false;
       setIsLoading(false);
     }
-  }, [agentId, defaultUserId, t]);
+  }, [agentId, defaultUserId]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      loadedDialogKeyRef.current = '';
+      return;
+    }
+    const dialogKey = `${agentId}:${defaultUserId ?? ''}`;
+    if (loadedDialogKeyRef.current === dialogKey) return;
+    loadedDialogKeyRef.current = dialogKey;
     void loadValues();
-  }, [loadValues, open]);
+  }, [agentId, defaultUserId, loadValues, open]);
 
   const saveValue = async (key: string) => {
     const value = valuesByKey.get(key);
@@ -144,7 +172,7 @@ export function AgentRuntimeMemoryValuesDialog({
                           </div>
                           <div className="mt-1 text-xs text-muted-foreground">
                             {t('memoryValues.updatedAt', {
-                              time: value.updated_at_display || value.updated_at_iso || '-',
+                              time: formatMemoryValueUpdatedAt(value),
                             })}
                           </div>
                         </div>

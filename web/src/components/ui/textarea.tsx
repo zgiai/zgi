@@ -23,7 +23,7 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
           'focus-visible:outline-none focus-visible:border-primary/70',
           'aria-invalid:border-destructive',
           'disabled:cursor-not-allowed disabled:opacity-50 disabled:bg-muted/50',
-          hasCharacterCount && 'pb-7',
+          hasCharacterCount && 'pb-8',
           className
         )}
         ref={ref}
@@ -41,7 +41,7 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
         {textarea}
         <span
           className={cn(
-            'pointer-events-none absolute bottom-2 right-3 rounded bg-background/80 px-1 text-[11px] text-muted-foreground',
+            'pointer-events-none absolute bottom-2 right-2 rounded bg-background/90 px-1 text-[11px] leading-none text-muted-foreground',
             count > maxLength && 'text-destructive',
             characterCountClassName
           )}

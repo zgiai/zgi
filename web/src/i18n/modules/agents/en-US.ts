@@ -1603,6 +1603,8 @@ const messages = {
         'Define memory types the Agent can read and update for each user. The model manages content within these stable keys.',
       emptySlots: 'No memory items configured yet.',
       addSlot: 'Add memory item',
+      addCustomSlot: 'Custom item',
+      applyTemplate: 'Apply template',
       addDialogTitle: 'Add memory item',
       addDialogDescription:
         'Create a stable key the model can use to manage one type of memory.',
@@ -1621,6 +1623,58 @@ const messages = {
       slotDescriptionPlaceholder: 'Describe what this memory item stores',
       maxChars: 'Maximum characters',
       maxCharsHelp: 'Limit the content length for this memory item.',
+      templateDialogTitle: 'Memory templates',
+      templateDialogDescription:
+        'Apply a built-in slot set, or add individual slots from a template.',
+      templateMerge: 'Merge template',
+      templateReplace: 'Replace current items',
+      templateApplied: 'Memory template applied',
+      templateReplaceApplied: 'Memory template replaced current items',
+      templateSlotAdded: 'Memory item added',
+      templateAddSlot: 'Add',
+      templateSlotExists: 'Added',
+      templateTooMany: 'An Agent can have up to 5 memory items. Remove one first.',
+      templateSlotCount: '{count} items',
+      templateReplaceConfirmTitle: 'Replace memory items?',
+      templateReplaceConfirmDescription:
+        'This replaces the current memory item configuration with the selected template. Existing memory values for removed keys may no longer be used.',
+      templateReplaceConfirmAction: 'Replace',
+      templateReplaceConfirmCancel: 'Cancel',
+      templates: {
+        general_assistant: {
+          name: 'General assistant',
+          description:
+            'For general assistants: remember profile, answer preferences, standing rules, and ongoing project context.',
+        },
+        project_collaboration: {
+          name: 'Project collaboration',
+          description:
+            'For project collaboration: remember project context, long-term workflow, and delivery preferences.',
+        },
+        support_operations: {
+          name: 'Support operations',
+          description:
+            'For support and operations: remember customer background, communication preferences, business context, and standing rules.',
+        },
+      },
+      templateSlots: {
+        profile:
+          'Store stable facts about the user only: user name, how the user wants to be addressed, job role, team role. Do not store agent name, assistant persona, roleplay style, what the user calls the agent, contact details, accounts, IDs, passwords, or temporary states.',
+        preferences:
+          'Store durable answer preferences: language, example stack, length, layout, explanation depth, tone, and style. Do not store one-off formatting requests, temporary moods, current task content, or a durable identity the agent should play.',
+        standing_instructions:
+          'Store long-term interaction rules, collaboration workflows, task procedures, how to address the user, what the user calls the agent, or agent persona instructions, such as conclusion first, risk review, or roleplay as a specific assistant. Do not store project facts or one-off task steps.',
+        project_context:
+          'Store ongoing project, goals, key background, workflow, and durable constraints. Update only when the user describes project or goal changes; do not infer from role changes.',
+        delivery_preferences:
+          'Store durable delivery preferences: output structure, review depth, file format, acceptance criteria. Do not store one-off formatting requests for a single task.',
+        customer_profile:
+          'Store stable customer identity, account background, product usage, contract or relationship status. Never store passwords, payment data, IDs, or one-off ticket details.',
+        communication_preferences:
+          'Store durable customer communication preferences: tone, channel, escalation wording, response cadence. Do not store temporary emotions or one-off service handling.',
+        business_context:
+          'Store long-term business process background, support scope, policy rules, and operational constraints tied to this customer/user. Do not store general product knowledge or temporary conclusions.',
+      },
       deleteConfirmTitle: 'Delete memory item?',
       deleteConfirmDescription:
         'After this Agent is published, memory stored under this item will be cleared automatically. Please proceed carefully.',
