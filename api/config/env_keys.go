@@ -330,6 +330,11 @@ const (
 	envWorkflowHeartbeatInterval = "WORKFLOW_HEARTBEAT_INTERVAL"
 	// envWorkflowCleanupTimeout sets the workflow cleanup timeout in seconds. Default: 30.
 	envWorkflowCleanupTimeout = "WORKFLOW_CLEANUP_TIMEOUT"
+	// envWorkflowImageInputURLMode controls URLs passed to LLM vision for workflow image inputs.
+	// Accepted values: zgi_proxy | public_storage_url. Default: zgi_proxy.
+	envWorkflowImageInputURLMode = "WORKFLOW_IMAGE_INPUT_URL_MODE"
+	// envWorkflowImageInputPublicBaseURL sets the optional public storage/CDN base URL for workflow image inputs.
+	envWorkflowImageInputPublicBaseURL = "WORKFLOW_IMAGE_INPUT_PUBLIC_BASE_URL"
 
 	// Workflow file extraction behavior.
 	// envWorkflowFileExtractionEnabled controls whether workflow file extraction is enabled. Default: true.

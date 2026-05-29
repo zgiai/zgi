@@ -186,6 +186,18 @@ export const AUTH_API_URL: string = readPublicEnvRaw('NEXT_PUBLIC_AUTH_API_URL')
  */
 export const UPLOAD_API_URL: string = readPublicEnvRaw('NEXT_PUBLIC_UPLOAD_API_URL') || '';
 
+function parsePublicEnvList(value: string | undefined): string[] {
+  if (!value) return [];
+  return value
+    .split(',')
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+export const FILE_PREVIEW_ALLOWED_ORIGINS: string[] = parsePublicEnvList(
+  readPublicEnvRaw('NEXT_PUBLIC_FILE_PREVIEW_ALLOWED_ORIGINS')
+);
+
 /**
  * Market API base URL (for marketplace plugins, uses separate endpoint)
  */
