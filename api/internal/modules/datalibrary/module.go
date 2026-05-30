@@ -9,6 +9,8 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/datalibrary/service"
 	"github.com/zgiai/zgi/api/internal/modules/datalibrary/worker"
 	fileRepository "github.com/zgiai/zgi/api/internal/modules/file_process/repository"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	"github.com/zgiai/zgi/api/pkg/storage"
 	"gorm.io/gorm"
 )
@@ -34,6 +36,7 @@ type Module struct {
 	ParseArtifactConfirmationService   service.ParseArtifactConfirmationService
 	ParseArtifactChunkTransformService service.ParseArtifactChunkTransformService
 	DocumentChunkGenerationService     service.DocumentChunkGenerationService
+	DocumentChunkEmbeddingService      service.DocumentChunkEmbeddingService
 	ProcessingExecutorRegistry         *service.ProcessingExecutorRegistry
 	VectorArtifactService              service.VectorArtifactService
 	ExtractionArtifactService          service.ExtractionArtifactService
@@ -41,6 +44,7 @@ type Module struct {
 	KnowledgeBaseRefService            service.KnowledgeBaseAssetRefService
 	DatabaseRefService                 service.DatabaseAssetRefService
 	FileProcessRunner                  *worker.FileProcessRunner
+	GenerateCurrentResultRunner        *worker.GenerateCurrentResultRunner
 	DocumentAssetHandler               *handler.DocumentAssetHandler
 	VectorArtifactHandler              *handler.VectorArtifactHandler
 	ExtractionArtifactHandler          *handler.ExtractionArtifactHandler
@@ -58,6 +62,16 @@ func NewModuleWithStorage(db *gorm.DB, artifactStorage storage.Storage) *Module 
 }
 
 func NewModuleWithStorageAndContentParse(db *gorm.DB, artifactStorage storage.Storage, contentParseService contracts.ContentParseService) *Module {
+	return NewModuleWithRuntime(db, artifactStorage, contentParseService, nil, nil)
+}
+
+func NewModuleWithRuntime(
+	db *gorm.DB,
+	artifactStorage storage.Storage,
+	contentParseService contracts.ContentParseService,
+	llmClient llmclient.LLMClient,
+	defaultModelSvc llmdefaultservice.DefaultModelService,
+) *Module {
 	documentAssetRepo := repository.NewDocumentAssetRepository(db)
 	reuseEventRepo := repository.NewReuseEventRepository(db)
 	processingRequestRepo := repository.NewProcessingRequestRepository(db)
@@ -78,8 +92,9 @@ func NewModuleWithStorageAndContentParse(db *gorm.DB, artifactStorage storage.St
 	parsePreviewService := service.NewParsePreviewService(documentAssetRepo, contentParseArtifactRepo, parseArtifactPersistenceService, parseConfirmationItemRepo)
 	parseConfirmationService := service.NewParseConfirmationService(documentAssetRepo, parseConfirmationItemRepo)
 	parseArtifactConfirmationService := service.NewParseArtifactConfirmationService(documentAssetRepo, contentParseArtifactRepo, parseArtifactPersistenceService, parseConfirmationItemRepo)
-	parseArtifactChunkTransformService := service.NewParseArtifactChunkTransformService(artifactStorage, nil, nil, nil)
+	parseArtifactChunkTransformService := service.NewParseArtifactChunkTransformService(artifactStorage, nil, defaultModelSvc, llmClient)
 	documentChunkGenerationService := service.NewDocumentChunkGenerationService(documentAssetRepo, documentChunkRepo)
+	documentChunkEmbeddingService := service.NewDocumentChunkEmbeddingService(documentAssetRepo, documentChunkEmbeddingRepo, llmClient, defaultModelSvc)
 	processingExecutorRegistry := service.NewDefaultProcessingExecutorRegistry()
 	vectorArtifactService := service.NewVectorArtifactService(vectorArtifactRepo)
 	extractionArtifactService := service.NewExtractionArtifactService(extractionArtifactRepo)
@@ -95,6 +110,17 @@ func NewModuleWithStorageAndContentParse(db *gorm.DB, artifactStorage storage.St
 		State:               fileAssetProcessingStateService,
 		ArtifactPersistence: parseArtifactPersistenceService,
 		Quality:             parseArtifactQualityService,
+		ProcessingService:   processingRequestService,
+	})
+	generateCurrentResultRunner := worker.NewGenerateCurrentResultRunner(worker.GenerateCurrentResultRunnerDeps{
+		ProcessingRequests:  processingRequestRepo,
+		Assets:              documentAssetRepo,
+		Artifacts:           contentParseArtifactRepo,
+		State:               fileAssetProcessingStateService,
+		ArtifactPersistence: parseArtifactPersistenceService,
+		Transform:           parseArtifactChunkTransformService,
+		ChunkGeneration:     documentChunkGenerationService,
+		Embedding:           documentChunkEmbeddingService,
 		ProcessingService:   processingRequestService,
 	})
 
@@ -119,6 +145,7 @@ func NewModuleWithStorageAndContentParse(db *gorm.DB, artifactStorage storage.St
 		ParseArtifactConfirmationService:   parseArtifactConfirmationService,
 		ParseArtifactChunkTransformService: parseArtifactChunkTransformService,
 		DocumentChunkGenerationService:     documentChunkGenerationService,
+		DocumentChunkEmbeddingService:      documentChunkEmbeddingService,
 		ProcessingExecutorRegistry:         processingExecutorRegistry,
 		VectorArtifactService:              vectorArtifactService,
 		ExtractionArtifactService:          extractionArtifactService,
@@ -126,6 +153,7 @@ func NewModuleWithStorageAndContentParse(db *gorm.DB, artifactStorage storage.St
 		KnowledgeBaseRefService:            knowledgeBaseRefService,
 		DatabaseRefService:                 databaseRefService,
 		FileProcessRunner:                  fileProcessRunner,
+		GenerateCurrentResultRunner:        generateCurrentResultRunner,
 		DocumentAssetHandler:               handler.NewDocumentAssetHandler(documentAssetService, fileAssetSyncService, processingRequestService, knowledgeBaseRefService, databaseRefService),
 		VectorArtifactHandler:              handler.NewVectorArtifactHandler(vectorArtifactService, documentAssetService),
 		ExtractionArtifactHandler:          handler.NewExtractionArtifactHandler(extractionArtifactService, documentAssetService),

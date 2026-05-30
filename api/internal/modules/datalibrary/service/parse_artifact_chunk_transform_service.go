@@ -15,6 +15,7 @@ import (
 
 type ParseArtifactChunkTransformService interface {
 	Transform(ctx context.Context, input ParseArtifactChunkTransformInput) ([]dto.TransformedChunk, error)
+	TransformAuto(ctx context.Context, input ParseArtifactAutoChunkTransformInput) (*ParseArtifactChunkTransformResult, error)
 }
 
 type ParseArtifactChunkTransformInput struct {
@@ -22,6 +23,19 @@ type ParseArtifactChunkTransformInput struct {
 	IndexType      datasetindexing.IndexType
 	Artifact       *contracts.ParseArtifact
 	ProcessOptions *datasetindexing.ProcessOptions
+}
+
+type ParseArtifactAutoChunkTransformInput struct {
+	TenantID string
+	Artifact *contracts.ParseArtifact
+	FileName string
+}
+
+type ParseArtifactChunkTransformResult struct {
+	Chunks         []dto.TransformedChunk
+	IndexType      datasetindexing.IndexType
+	ProcessOptions *datasetindexing.ProcessOptions
+	Routing        map[string]any
 }
 
 type parseArtifactChunkTransformService struct {
@@ -67,6 +81,65 @@ func (s *parseArtifactChunkTransformService) Transform(ctx context.Context, inpu
 		options = &datasetindexing.ProcessOptions{}
 	}
 	return processor.Transform(ctx, extractOutput, options)
+}
+
+func (s *parseArtifactChunkTransformService) TransformAuto(ctx context.Context, input ParseArtifactAutoChunkTransformInput) (*ParseArtifactChunkTransformResult, error) {
+	if input.Artifact == nil {
+		return nil, ErrParseArtifactRequired
+	}
+	extractOutput := parseArtifactToExtractOutput(input.Artifact)
+	fileName := input.FileName
+	if fileName == "" {
+		fileName = input.Artifact.FileName
+	}
+
+	indexType := datasetindexing.ParagraphIndex
+	options := &datasetindexing.ProcessOptions{Mode: "automatic"}
+	routing := map[string]any{
+		"version":         "v1",
+		"matched":         false,
+		"fallback_reason": "default paragraph automatic chunking",
+	}
+
+	router := datasetindexing.NewRuntimeRouter(ctx, s.llmClient, s.defaultModelSvc, input.TenantID)
+	decision, err := router.Route(datasetindexing.RouterInput{
+		DataSourceType:  "upload_file",
+		DocExt:          fileName,
+		ExtractedOutput: extractOutput,
+	})
+	if err != nil {
+		routing["route_error"] = err.Error()
+	} else if decision != nil {
+		routing["matched"] = decision.Matched
+		routing["route_name"] = decision.RouteName
+		routing["reason"] = decision.Reason
+		for key, value := range decision.RouteMeta {
+			routing[key] = value
+		}
+		if decision.Matched {
+			indexType = datasetindexing.IndexType(decision.TargetDocForm)
+			options = &datasetindexing.ProcessOptions{
+				Mode:        decision.TargetMode,
+				ProcessRule: decision.TargetRules,
+			}
+		}
+	}
+
+	chunks, err := s.Transform(ctx, ParseArtifactChunkTransformInput{
+		TenantID:       input.TenantID,
+		IndexType:      indexType,
+		Artifact:       input.Artifact,
+		ProcessOptions: options,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &ParseArtifactChunkTransformResult{
+		Chunks:         chunks,
+		IndexType:      indexType,
+		ProcessOptions: options,
+		Routing:        routing,
+	}, nil
 }
 
 func parseArtifactToExtractOutput(artifact *contracts.ParseArtifact) *dto.ExtractOutput {

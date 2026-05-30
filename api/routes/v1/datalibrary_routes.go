@@ -52,5 +52,10 @@ func RegisterDataLibraryRoutes(v1 *gin.RouterGroup, deps DataLibraryRouteDeps) {
 	deps.DataLibraryModule.ExtractionArtifactHandler.RegisterRoutes(group)
 	deps.DataLibraryModule.ProcessingExecutorHandler.RegisterRoutes(group)
 
+	dispatcher := datalibraryworker.NewFileProcessTaskDispatcher(deps.TaskManager)
+	if deps.DataLibraryModule.FileProcessRunner != nil {
+		deps.DataLibraryModule.FileProcessRunner.SetGenerateCurrentResultEnqueuer(dispatcher)
+	}
 	datalibraryworker.RegisterFileProcessTaskHandler(deps.TaskRegistry, deps.DataLibraryModule.FileProcessRunner, deps.TaskManager)
+	datalibraryworker.RegisterGenerateCurrentResultTaskHandler(deps.TaskRegistry, deps.DataLibraryModule.GenerateCurrentResultRunner, deps.TaskManager)
 }

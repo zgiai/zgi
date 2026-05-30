@@ -30,6 +30,7 @@ type DocumentChunkEmbeddingRepository interface {
 	FindByChunkModel(ctx context.Context, chunkID uuid.UUID, provider string, embeddingModel string) (*model.DocumentChunkEmbedding, error)
 	List(ctx context.Context, filter DocumentChunkEmbeddingListFilter) ([]*model.DocumentChunkEmbedding, int64, error)
 	CountReadyByAssetGeneration(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64) (int64, error)
+	DeleteByAssetGeneration(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64) error
 }
 
 type documentChunkEmbeddingRepository struct {
@@ -176,4 +177,15 @@ func (r *documentChunkEmbeddingRepository) CountReadyByAssetGeneration(ctx conte
 		Where("deleted_at IS NULL").
 		Count(&count).Error
 	return count, err
+}
+
+func (r *documentChunkEmbeddingRepository) DeleteByAssetGeneration(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64) error {
+	if organizationID == "" || assetID == uuid.Nil || generationNo <= 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).
+		Where("organization_id = ?", organizationID).
+		Where("asset_id = ?", assetID).
+		Where("generation_no = ?", generationNo).
+		Delete(&model.DocumentChunkEmbedding{}).Error
 }

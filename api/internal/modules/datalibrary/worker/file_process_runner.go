@@ -27,6 +27,9 @@ type FileProcessRunner struct {
 	artifactPersistence datalibraryservice.ParseArtifactPersistenceService
 	quality             datalibraryservice.ParseArtifactQualityService
 	processingService   datalibraryservice.ProcessingRequestService
+	taskEnqueuer        interface {
+		EnqueueGenerateCurrentResult(ctx context.Context, processingRequestID uuid.UUID) error
+	}
 }
 
 type FileProcessRunnerDeps struct {
@@ -39,6 +42,9 @@ type FileProcessRunnerDeps struct {
 	ArtifactPersistence datalibraryservice.ParseArtifactPersistenceService
 	Quality             datalibraryservice.ParseArtifactQualityService
 	ProcessingService   datalibraryservice.ProcessingRequestService
+	TaskEnqueuer        interface {
+		EnqueueGenerateCurrentResult(ctx context.Context, processingRequestID uuid.UUID) error
+	}
 }
 
 func NewFileProcessRunner(deps FileProcessRunnerDeps) *FileProcessRunner {
@@ -52,7 +58,17 @@ func NewFileProcessRunner(deps FileProcessRunnerDeps) *FileProcessRunner {
 		artifactPersistence: deps.ArtifactPersistence,
 		quality:             deps.Quality,
 		processingService:   deps.ProcessingService,
+		taskEnqueuer:        deps.TaskEnqueuer,
 	}
+}
+
+func (r *FileProcessRunner) SetGenerateCurrentResultEnqueuer(enqueuer interface {
+	EnqueueGenerateCurrentResult(ctx context.Context, processingRequestID uuid.UUID) error
+}) {
+	if r == nil {
+		return
+	}
+	r.taskEnqueuer = enqueuer
 }
 
 func (r *FileProcessRunner) Run(ctx context.Context, processingRequestID uuid.UUID) error {
@@ -161,6 +177,11 @@ func (r *FileProcessRunner) Run(ctx context.Context, processingRequestID uuid.UU
 		}); err != nil {
 			return r.failRequest(ctx, request, asset, "mark_generating_failed", err)
 		}
+		if shouldQueueGenerateAfterParse(request.TargetLevel) {
+			if _, err := r.queueGenerateCurrentResultRequest(ctx, request, asset, runID, generationNo); err != nil {
+				return r.failRequest(ctx, request, asset, "generate_enqueue_failed", err)
+			}
+		}
 	}
 
 	_, err = r.processingService.CompleteRequest(ctx, request.OrganizationID, started.ID, map[string]any{
@@ -171,6 +192,38 @@ func (r *FileProcessRunner) Run(ctx context.Context, processingRequestID uuid.UU
 		"generation_no":              generationNo,
 	})
 	return err
+}
+
+func (r *FileProcessRunner) queueGenerateCurrentResultRequest(ctx context.Context, request *model.ProcessingRequest, asset *model.DocumentAsset, runID uuid.UUID, generationNo int64) (*datalibraryservice.ProcessingRequestView, error) {
+	planned, err := r.processingService.CreatePlannedRequest(ctx, datalibraryservice.ProcessingRequest{
+		OrganizationID: request.OrganizationID,
+		WorkspaceID:    request.WorkspaceID,
+		AssetID:        request.AssetID,
+		TargetLevel:    model.DocumentProcessingLevelVectorize,
+		RequestedBy:    request.RequestedBy,
+		Force:          request.Force,
+		RequestMetadata: map[string]any{
+			"source":            "file_process_worker",
+			"mode":              "generate_current_result",
+			"processing_run_id": runID.String(),
+			"generation_no":     generationNo,
+			"parse_request_id":  request.ID.String(),
+			"source_file_id":    asset.SourceFileID,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	queued, err := r.processingService.QueueRequest(ctx, request.OrganizationID, planned.ID)
+	if err != nil {
+		return nil, err
+	}
+	if r.taskEnqueuer != nil {
+		if err := r.taskEnqueuer.EnqueueGenerateCurrentResult(ctx, planned.ID); err != nil {
+			return nil, err
+		}
+	}
+	return queued, nil
 }
 
 func (r *FileProcessRunner) loadSourceFile(ctx context.Context, asset *model.DocumentAsset) (*filemodel.UploadFile, []byte, error) {
@@ -240,4 +293,13 @@ func nextProductStatusAfterParse(pendingCount int64) string {
 		return model.DocumentAssetProductStatusConfirming
 	}
 	return model.DocumentAssetProductStatusGenerating
+}
+
+func shouldQueueGenerateAfterParse(targetLevel string) bool {
+	switch targetLevel {
+	case model.DocumentProcessingLevelVectorize, model.DocumentProcessingLevelFull:
+		return true
+	default:
+		return false
+	}
 }

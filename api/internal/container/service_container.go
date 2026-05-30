@@ -696,7 +696,14 @@ func (c *ServiceContainer) GetSQLBase() sql_base.SQLBase {
 
 func (c *ServiceContainer) GetDataLibraryModule() *datalibrarymodule.Module {
 	if c.dataLibraryModule == nil {
-		c.dataLibraryModule = datalibrarymodule.NewModule(c.db)
+		contentParseModule := contentparsecap.NewModule()
+		c.dataLibraryModule = datalibrarymodule.NewModuleWithRuntime(
+			c.db,
+			storage.GetStorage(),
+			contentParseModule.Service,
+			c.GetLLMClient(),
+			c.GetDefaultModelService(),
+		)
 	}
 	return c.dataLibraryModule
 }

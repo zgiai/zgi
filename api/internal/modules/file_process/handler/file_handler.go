@@ -56,6 +56,7 @@ type FileAssetProcessingServices struct {
 
 type FileProcessingTaskEnqueuer interface {
 	EnqueueFileProcess(ctx context.Context, processingRequestID uuid.UUID) error
+	EnqueueGenerateCurrentResult(ctx context.Context, processingRequestID uuid.UUID) error
 }
 
 const (
@@ -972,6 +973,11 @@ func (h *FileHandler) queueGenerateAfterConfirmRequest(ctx context.Context, asse
 	queued, err := h.processingService.QueueRequest(ctx, organizationID, planned.ID)
 	if err != nil {
 		return nil, err
+	}
+	if h.taskEnqueuer != nil {
+		if err := h.taskEnqueuer.EnqueueGenerateCurrentResult(ctx, planned.ID); err != nil {
+			return nil, err
+		}
 	}
 	return &queuedFileProcessingRequest{
 		Asset:             asset,
