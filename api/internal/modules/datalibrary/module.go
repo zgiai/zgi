@@ -37,6 +37,7 @@ type Module struct {
 	ParseArtifactChunkTransformService service.ParseArtifactChunkTransformService
 	DocumentChunkGenerationService     service.DocumentChunkGenerationService
 	DocumentChunkEmbeddingService      service.DocumentChunkEmbeddingService
+	FileAssetDetailService             service.FileAssetDetailService
 	ProcessingExecutorRegistry         *service.ProcessingExecutorRegistry
 	VectorArtifactService              service.VectorArtifactService
 	ExtractionArtifactService          service.ExtractionArtifactService
@@ -95,6 +96,7 @@ func NewModuleWithRuntime(
 	parseArtifactChunkTransformService := service.NewParseArtifactChunkTransformService(artifactStorage, nil, defaultModelSvc, llmClient)
 	documentChunkGenerationService := service.NewDocumentChunkGenerationService(documentAssetRepo, documentChunkRepo)
 	documentChunkEmbeddingService := service.NewDocumentChunkEmbeddingService(documentAssetRepo, documentChunkEmbeddingRepo, llmClient, defaultModelSvc)
+	fileAssetDetailService := service.NewFileAssetDetailService(documentAssetRepo, processingRequestRepo, parseConfirmationItemRepo, documentChunkRepo, documentChunkEmbeddingRepo)
 	processingExecutorRegistry := service.NewDefaultProcessingExecutorRegistry()
 	vectorArtifactService := service.NewVectorArtifactService(vectorArtifactRepo)
 	extractionArtifactService := service.NewExtractionArtifactService(extractionArtifactRepo)
@@ -146,6 +148,7 @@ func NewModuleWithRuntime(
 		ParseArtifactChunkTransformService: parseArtifactChunkTransformService,
 		DocumentChunkGenerationService:     documentChunkGenerationService,
 		DocumentChunkEmbeddingService:      documentChunkEmbeddingService,
+		FileAssetDetailService:             fileAssetDetailService,
 		ProcessingExecutorRegistry:         processingExecutorRegistry,
 		VectorArtifactService:              vectorArtifactService,
 		ExtractionArtifactService:          extractionArtifactService,

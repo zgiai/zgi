@@ -41,6 +41,7 @@ type FileHandler struct {
 	parsePreviewService              datalibraryservice.ParsePreviewService
 	parseConfirmationService         datalibraryservice.ParseConfirmationService
 	parseArtifactConfirmationService datalibraryservice.ParseArtifactConfirmationService
+	fileAssetDetailService           datalibraryservice.FileAssetDetailService
 	taskEnqueuer                     FileProcessingTaskEnqueuer
 	validator                        *validator.Validate
 }
@@ -51,6 +52,7 @@ type FileAssetProcessingServices struct {
 	ParsePreviewService              datalibraryservice.ParsePreviewService
 	ParseConfirmationService         datalibraryservice.ParseConfirmationService
 	ParseArtifactConfirmationService datalibraryservice.ParseArtifactConfirmationService
+	FileAssetDetailService           datalibraryservice.FileAssetDetailService
 	TaskEnqueuer                     FileProcessingTaskEnqueuer
 }
 
@@ -100,6 +102,22 @@ type queuedFileProcessingRequest struct {
 	GenerationNo      int64
 }
 
+type fileDetailResponse struct {
+	File          *dto.UploadFile                              `json:"file"`
+	Asset         *datalibrarymodel.DocumentAsset              `json:"asset,omitempty"`
+	Processing    *fileDetailProcessingView                    `json:"processing,omitempty"`
+	ArtifactState *datalibraryservice.FileAssetArtifactState   `json:"artifact_state,omitempty"`
+	Error         *datalibraryservice.FileAssetProcessingError `json:"error,omitempty"`
+}
+
+type fileDetailProcessingView struct {
+	LatestRequest            *datalibraryservice.ProcessingRequestView `json:"latest_request,omitempty"`
+	Summary                  datalibraryservice.ProcessingSummaryView  `json:"summary"`
+	PendingConfirmationCount int64                                     `json:"pending_confirmation_count"`
+	ChunkCount               int64                                     `json:"chunk_count"`
+	EmbeddingCount           int64                                     `json:"embedding_count"`
+}
+
 // NewFileHandler creates a new file handler instance
 func NewFileHandler(
 	fileService interfaces.FileService,
@@ -114,6 +132,7 @@ func NewFileHandler(
 	var parsePreviewService datalibraryservice.ParsePreviewService
 	var parseConfirmationService datalibraryservice.ParseConfirmationService
 	var parseArtifactConfirmationService datalibraryservice.ParseArtifactConfirmationService
+	var fileAssetDetailService datalibraryservice.FileAssetDetailService
 	var taskEnqueuer FileProcessingTaskEnqueuer
 	if len(assetProcessingServices) > 0 {
 		assetStateService = assetProcessingServices[0].StateService
@@ -121,6 +140,7 @@ func NewFileHandler(
 		parsePreviewService = assetProcessingServices[0].ParsePreviewService
 		parseConfirmationService = assetProcessingServices[0].ParseConfirmationService
 		parseArtifactConfirmationService = assetProcessingServices[0].ParseArtifactConfirmationService
+		fileAssetDetailService = assetProcessingServices[0].FileAssetDetailService
 		taskEnqueuer = assetProcessingServices[0].TaskEnqueuer
 	}
 	return &FileHandler{
@@ -134,6 +154,7 @@ func NewFileHandler(
 		parsePreviewService:              parsePreviewService,
 		parseConfirmationService:         parseConfirmationService,
 		parseArtifactConfirmationService: parseArtifactConfirmationService,
+		fileAssetDetailService:           fileAssetDetailService,
 		taskEnqueuer:                     taskEnqueuer,
 		validator:                        validator.New(),
 	}
@@ -518,6 +539,53 @@ func (h *FileHandler) CreateProcessingRequest(c *gin.Context) {
 		"mode":                 mode,
 		"request_queue_status": result.ProcessingRequest.Status,
 	})
+}
+
+// GetFileDetail returns file metadata with the current file asset processing state.
+// GET /files/:file_id/detail
+func (h *FileHandler) GetFileDetail(c *gin.Context) {
+	organizationID, uploadFile, ok := h.authorizeDocumentFile(c)
+	if !ok {
+		return
+	}
+	if h.fileAssetDetailService == nil {
+		response.Success(c, fileDetailResponse{File: uploadFile})
+		return
+	}
+	detail, err := h.fileAssetDetailService.GetCurrentFileAssetDetail(c.Request.Context(), datalibraryservice.FileAssetDetailInput{
+		OrganizationID: organizationID,
+		SourceFileID:   uploadFile.ID,
+	})
+	if err != nil {
+		h.handleFileAssetDetailError(c, err)
+		return
+	}
+	response.Success(c, fileDetailResponse{
+		File:          uploadFile,
+		Asset:         detail.Asset,
+		ArtifactState: &detail.ArtifactState,
+		Error:         detail.Error,
+		Processing: &fileDetailProcessingView{
+			LatestRequest:            detail.LatestProcessing,
+			Summary:                  detail.ProcessingSummary,
+			PendingConfirmationCount: detail.PendingConfirmationCount,
+			ChunkCount:               detail.ChunkCount,
+			EmbeddingCount:           detail.EmbeddingCount,
+		},
+	})
+}
+
+func (h *FileHandler) handleFileAssetDetailError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, datalibraryservice.ErrDocumentAssetNotFound):
+		h.businessError(c, response.ErrNotFound)
+	case errors.Is(err, datalibraryservice.ErrOrganizationIDRequired),
+		errors.Is(err, datalibraryservice.ErrSourceFileIDRequired):
+		h.businessError(c, response.ErrInvalidParams)
+	default:
+		logger.WarnContext(c.Request.Context(), "failed to get file asset detail", err)
+		h.businessError(c, response.ErrSystemError)
+	}
 }
 
 // GetFileParsePreview returns the current parsed elements with confirmation overlay.

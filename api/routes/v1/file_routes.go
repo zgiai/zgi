@@ -62,6 +62,7 @@ func registerFileRoutesLegacy(v1 *gin.RouterGroup, deps FileRouteDeps) {
 			ParsePreviewService:              deps.DataLibraryModule.ParsePreviewService,
 			ParseConfirmationService:         deps.DataLibraryModule.ParseConfirmationService,
 			ParseArtifactConfirmationService: deps.DataLibraryModule.ParseArtifactConfirmationService,
+			FileAssetDetailService:           deps.DataLibraryModule.FileAssetDetailService,
 			TaskEnqueuer:                     datalibraryworker.NewFileProcessTaskDispatcher(deps.TaskManager),
 		},
 	)
@@ -85,6 +86,8 @@ func registerFileRoutesLegacy(v1 *gin.RouterGroup, deps FileRouteDeps) {
 		files.GET("/metadata", fileHandler.GetFilesMetadata)
 
 		files.POST("/:file_id/processing-requests", fileHandler.CreateProcessingRequest)
+
+		files.GET("/:file_id/detail", fileHandler.GetFileDetail)
 
 		files.GET("/:file_id/parse-preview", fileHandler.GetFileParsePreview)
 
