@@ -37,6 +37,9 @@ func TestHealthEndpoint(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), `"network_policy_enforced":false`) {
 		t.Fatalf("expected network enforcement flag in health, got %s", rr.Body.String())
 	}
+	if !strings.Contains(rr.Body.String(), `"shutdown_timeout_secs":10`) {
+		t.Fatalf("expected shutdown timeout in health, got %s", rr.Body.String())
+	}
 }
 
 func TestRunEndpoint(t *testing.T) {

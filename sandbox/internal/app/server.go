@@ -132,6 +132,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		"version":                 "session-v2",
 		"worker_id":               s.config.WorkerID,
 		"environment":             s.config.Environment,
+		"shutdown_timeout_secs":   s.config.ShutdownTimeoutSeconds,
 		"runtime_backend":         s.policy.RuntimeBackend(),
 		"network_policy_enforced": s.policy.NetworkPolicyEnforced(),
 	})

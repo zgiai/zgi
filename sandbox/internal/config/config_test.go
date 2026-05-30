@@ -2,6 +2,26 @@ package config
 
 import "testing"
 
+func TestFromEnvReadsShutdownTimeout(t *testing.T) {
+	t.Setenv("ZGI_SANDBOX_SHUTDOWN_TIMEOUT_SECONDS", "17")
+
+	cfg := FromEnv()
+
+	if cfg.ShutdownTimeoutSeconds != 17 {
+		t.Fatalf("expected shutdown timeout 17, got %d", cfg.ShutdownTimeoutSeconds)
+	}
+}
+
+func TestFromEnvDefaultsShutdownTimeout(t *testing.T) {
+	t.Setenv("ZGI_SANDBOX_SHUTDOWN_TIMEOUT_SECONDS", "")
+
+	cfg := FromEnv()
+
+	if cfg.ShutdownTimeoutSeconds != 10 {
+		t.Fatalf("expected default shutdown timeout 10, got %d", cfg.ShutdownTimeoutSeconds)
+	}
+}
+
 func TestValidateStartupRejectsPreviewBackendInProduction(t *testing.T) {
 	cfg := Config{
 		Environment:    "production",

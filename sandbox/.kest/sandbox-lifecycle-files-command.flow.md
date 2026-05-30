@@ -15,6 +15,7 @@ GET {{base_url}}/health
 status == 200
 runtime_backend == "preview-process"
 network_policy_enforced == false
+shutdown_timeout_secs == 10
 ```
 
 ```step

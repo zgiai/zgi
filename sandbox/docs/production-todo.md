@@ -29,6 +29,7 @@ Already available:
 - API skill-script E2E runner
 - Path escape, zip slip, symlink, dangerous env, stdin, timeout, and output guardrails
 - Process group cleanup for preview command timeouts
+- Configurable graceful shutdown for service drain on SIGTERM/SIGINT
 - Optional Linux secure backend with namespace-based isolation
 
 The service is useful for validation and controlled internal environments. It

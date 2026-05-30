@@ -8,31 +8,32 @@ import (
 )
 
 type Config struct {
-	Port           string
-	APIKey         string
-	MaxWorkers     int
-	TimeoutSeconds int
-	OutputLimitKB  int
-	MaxActive      int
-	QueueTimeoutMS int
-	SessionTTL     int
-	InteractiveTTL int
-	CommandTimeout int
-	MaxFileSizeKB  int
-	DatabaseURL    string
-	DataDir        string
-	CacheTTL       int
-	RedisAddr      string
-	RedisPassword  string
-	RedisDB        int
-	WorkerID       string
-	AdvertiseURL   string
-	PublicBaseURL  string
-	Environment    string
-	RuntimeBackend string
-	SecureRootFS   string
-	BwrapBinary    string
-	ProxyTimeout   int
+	Port                   string
+	APIKey                 string
+	MaxWorkers             int
+	TimeoutSeconds         int
+	OutputLimitKB          int
+	MaxActive              int
+	QueueTimeoutMS         int
+	ShutdownTimeoutSeconds int
+	SessionTTL             int
+	InteractiveTTL         int
+	CommandTimeout         int
+	MaxFileSizeKB          int
+	DatabaseURL            string
+	DataDir                string
+	CacheTTL               int
+	RedisAddr              string
+	RedisPassword          string
+	RedisDB                int
+	WorkerID               string
+	AdvertiseURL           string
+	PublicBaseURL          string
+	Environment            string
+	RuntimeBackend         string
+	SecureRootFS           string
+	BwrapBinary            string
+	ProxyTimeout           int
 }
 
 func FromEnv() Config {
@@ -41,31 +42,32 @@ func FromEnv() Config {
 	advertiseURL := getEnv("ZGI_SANDBOX_ADVERTISE_URL", fmt.Sprintf("http://127.0.0.1:%s", port))
 
 	return Config{
-		Port:           port,
-		APIKey:         getEnv("ZGI_SANDBOX_API_KEY", ""),
-		MaxWorkers:     getEnvInt("ZGI_SANDBOX_LITE_MAX_WORKERS", 4),
-		TimeoutSeconds: getEnvInt("ZGI_SANDBOX_LITE_WORKER_TIMEOUT", 5),
-		OutputLimitKB:  getEnvInt("ZGI_SANDBOX_OUTPUT_LIMIT_KB", 1024),
-		MaxActive:      getEnvInt("ZGI_SANDBOX_MAX_ACTIVE", 6),
-		QueueTimeoutMS: getEnvInt("ZGI_SANDBOX_QUEUE_TIMEOUT_MS", 5000),
-		SessionTTL:     getEnvInt("ZGI_SANDBOX_SESSION_TTL_SECONDS", 1800),
-		InteractiveTTL: getEnvInt("ZGI_SANDBOX_INTERACTIVE_TTL_SECONDS", 3600),
-		CommandTimeout: getEnvInt("ZGI_SANDBOX_COMMAND_TIMEOUT_SECONDS", 30),
-		MaxFileSizeKB:  getEnvInt("ZGI_SANDBOX_MAX_FILE_SIZE_KB", 256),
-		DatabaseURL:    getEnv("ZGI_SANDBOX_DATABASE_URL", "postgres://postgres@127.0.0.1:5432/postgres?sslmode=disable"),
-		DataDir:        getEnv("ZGI_SANDBOX_DATA_DIR", ".zgi-sandbox-data"),
-		CacheTTL:       getEnvInt("ZGI_SANDBOX_CACHE_TTL_SECONDS", 30),
-		RedisAddr:      getEnv("ZGI_SANDBOX_REDIS_ADDR", ""),
-		RedisPassword:  getEnv("ZGI_SANDBOX_REDIS_PASSWORD", ""),
-		RedisDB:        getEnvIntAllowZero("ZGI_SANDBOX_REDIS_DB", 0),
-		WorkerID:       workerID,
-		AdvertiseURL:   advertiseURL,
-		PublicBaseURL:  getEnv("ZGI_SANDBOX_PUBLIC_BASE_URL", advertiseURL),
-		Environment:    getEnv("ZGI_SANDBOX_ENV", "local"),
-		RuntimeBackend: getEnv("ZGI_SANDBOX_RUNTIME_BACKEND", "preview"),
-		SecureRootFS:   getEnv("ZGI_SANDBOX_SECURE_ROOTFS", ""),
-		BwrapBinary:    getEnv("ZGI_SANDBOX_BWRAP_BINARY", "bwrap"),
-		ProxyTimeout:   getEnvInt("ZGI_SANDBOX_PROXY_TIMEOUT_SECONDS", 20),
+		Port:                   port,
+		APIKey:                 getEnv("ZGI_SANDBOX_API_KEY", ""),
+		MaxWorkers:             getEnvInt("ZGI_SANDBOX_LITE_MAX_WORKERS", 4),
+		TimeoutSeconds:         getEnvInt("ZGI_SANDBOX_LITE_WORKER_TIMEOUT", 5),
+		OutputLimitKB:          getEnvInt("ZGI_SANDBOX_OUTPUT_LIMIT_KB", 1024),
+		MaxActive:              getEnvInt("ZGI_SANDBOX_MAX_ACTIVE", 6),
+		QueueTimeoutMS:         getEnvInt("ZGI_SANDBOX_QUEUE_TIMEOUT_MS", 5000),
+		ShutdownTimeoutSeconds: getEnvInt("ZGI_SANDBOX_SHUTDOWN_TIMEOUT_SECONDS", 10),
+		SessionTTL:             getEnvInt("ZGI_SANDBOX_SESSION_TTL_SECONDS", 1800),
+		InteractiveTTL:         getEnvInt("ZGI_SANDBOX_INTERACTIVE_TTL_SECONDS", 3600),
+		CommandTimeout:         getEnvInt("ZGI_SANDBOX_COMMAND_TIMEOUT_SECONDS", 30),
+		MaxFileSizeKB:          getEnvInt("ZGI_SANDBOX_MAX_FILE_SIZE_KB", 256),
+		DatabaseURL:            getEnv("ZGI_SANDBOX_DATABASE_URL", "postgres://postgres@127.0.0.1:5432/postgres?sslmode=disable"),
+		DataDir:                getEnv("ZGI_SANDBOX_DATA_DIR", ".zgi-sandbox-data"),
+		CacheTTL:               getEnvInt("ZGI_SANDBOX_CACHE_TTL_SECONDS", 30),
+		RedisAddr:              getEnv("ZGI_SANDBOX_REDIS_ADDR", ""),
+		RedisPassword:          getEnv("ZGI_SANDBOX_REDIS_PASSWORD", ""),
+		RedisDB:                getEnvIntAllowZero("ZGI_SANDBOX_REDIS_DB", 0),
+		WorkerID:               workerID,
+		AdvertiseURL:           advertiseURL,
+		PublicBaseURL:          getEnv("ZGI_SANDBOX_PUBLIC_BASE_URL", advertiseURL),
+		Environment:            getEnv("ZGI_SANDBOX_ENV", "local"),
+		RuntimeBackend:         getEnv("ZGI_SANDBOX_RUNTIME_BACKEND", "preview"),
+		SecureRootFS:           getEnv("ZGI_SANDBOX_SECURE_ROOTFS", ""),
+		BwrapBinary:            getEnv("ZGI_SANDBOX_BWRAP_BINARY", "bwrap"),
+		ProxyTimeout:           getEnvInt("ZGI_SANDBOX_PROXY_TIMEOUT_SECONDS", 20),
 	}
 }
 
