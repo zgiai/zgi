@@ -90,6 +90,7 @@ interface AIChatShellProps {
   enableUpload?: boolean;
   uploadScope?: AIChatUploadScope;
   showFileLibraryPicker?: boolean;
+  allowWorkspaceSwitch?: boolean;
   homeBrand?: React.ReactNode;
   homeTitle?: string;
   homeDescription?: string;
@@ -139,6 +140,7 @@ export function AIChatShell({
   enableUpload = true,
   uploadScope,
   showFileLibraryPicker = true,
+  allowWorkspaceSwitch = false,
   homeBrand,
   homeTitle,
   homeDescription,
@@ -738,6 +740,7 @@ export function AIChatShell({
           enableUpload={enableUpload}
           uploadScope={uploadScope}
           showFileLibraryPicker={showFileLibraryPicker}
+          allowWorkspaceSwitch={allowWorkspaceSwitch}
           inputPlaceholder={inputPlaceholder}
           surface={surface}
         />

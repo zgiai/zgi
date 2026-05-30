@@ -211,6 +211,9 @@ func (h *AgentsHandler) webAppAgentRuntimeContext(c *gin.Context) (agentRuntimeC
 		h.failWebAppRuntime(c, err)
 		return agentRuntimeContext{}, false
 	}
+	if !requireAuthenticatedWebAppAgentWhenMemoryEnabled(c, published) {
+		return agentRuntimeContext{}, false
+	}
 	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))
 	if err != nil {
 		response.Fail(c, response.ErrUnauthorized)

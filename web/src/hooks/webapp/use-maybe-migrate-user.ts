@@ -5,6 +5,9 @@ import { useT } from '@/i18n';
 import { WebAppService } from '@/services/webapp.service';
 import { getWebAppToken, WEBAPP_TOKEN_KEY } from '@/lib/http';
 import { sessionManager } from '@/lib/auth/session-manager';
+import { useAuthStore } from '@/store/auth-store';
+
+export const WEBAPP_USER_MIGRATED_EVENT = 'zgi:webapp-user-migrated';
 
 /**
  * Auto-migrate guest (webapp) conversations into the logged-in account.
@@ -16,6 +19,9 @@ import { sessionManager } from '@/lib/auth/session-manager';
 export function useMaybeMigrateUser(): void {
   const hasRunRef = useRef<boolean>(false);
   const t = useT('agents');
+  const isAuthenticated = useAuthStore.use.isAuthenticated();
+  const isAuthLoading = useAuthStore.use.isLoading();
+  const isAuthInitialized = useAuthStore.use.isInitialized();
 
   const migrateMutation = useMutation({
     mutationFn: async (localToken: string) => {
@@ -29,6 +35,7 @@ export function useMaybeMigrateUser(): void {
       } catch {
         // ignore removal errors
       }
+      window.dispatchEvent(new CustomEvent(WEBAPP_USER_MIGRATED_EVENT));
       toast.success(t('workflow.webappMigrateSuccess'));
     },
     onError: (err: unknown) => {
@@ -40,6 +47,7 @@ export function useMaybeMigrateUser(): void {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     if (hasRunRef.current) return;
+    if (!isAuthInitialized || isAuthLoading || !isAuthenticated) return;
 
     const localToken = getWebAppToken();
     const shouldMigrate = Boolean(localToken && sessionManager.hasSession());
@@ -47,6 +55,5 @@ export function useMaybeMigrateUser(): void {
 
     hasRunRef.current = true;
     migrateMutation.mutate(localToken as string);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isAuthInitialized, isAuthLoading, isAuthenticated, migrateMutation]);
 }

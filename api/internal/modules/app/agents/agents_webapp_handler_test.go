@@ -87,6 +87,7 @@ func TestPublicAgentWebAppConfig_DoesNotExposeRuntimeSecrets(t *testing.T) {
 			InputPlaceholder:    "Ask",
 			SuggestedQuestions:  []string{"Q1"},
 			FileUpload:          true,
+			AgentMemoryEnabled:  true,
 		},
 	})
 
@@ -98,6 +99,46 @@ func TestPublicAgentWebAppConfig_DoesNotExposeRuntimeSecrets(t *testing.T) {
 	require.NotContains(t, string(encoded), "secret-dataset")
 	require.Contains(t, string(encoded), "Home")
 	require.Contains(t, string(encoded), "file_upload_enabled")
+	require.Contains(t, string(encoded), "agent_memory_enabled")
+}
+
+func TestRequireAuthenticatedWebAppAgentWhenMemoryEnabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	published := &dto.AgentWebAppRuntimeConfigResponse{
+		Config: dto.AgentConfigResponse{AgentMemoryEnabled: true},
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/webapps/webapp-1/chat", nil)
+
+	require.False(t, requireAuthenticatedWebAppAgentWhenMemoryEnabled(c, published))
+	require.Equal(t, http.StatusUnauthorized, w.Code)
+
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/webapps/webapp-1/chat", nil)
+	c.Set("is_authenticated", true)
+
+	require.True(t, requireAuthenticatedWebAppAgentWhenMemoryEnabled(c, published))
+}
+
+func TestRequireAuthenticatedWebAppAgentFileAccess(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/webapps/webapp-1/files/upload", nil)
+
+	require.False(t, requireAuthenticatedWebAppAgentFileAccess(c))
+	require.Equal(t, http.StatusUnauthorized, w.Code)
+
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/webapps/webapp-1/files/upload", nil)
+	c.Set("is_authenticated", true)
+
+	require.True(t, requireAuthenticatedWebAppAgentFileAccess(c))
 }
 
 func TestAgentsHandler_GetWebAppRuntimeConfig_MapsNotPublishedError(t *testing.T) {
