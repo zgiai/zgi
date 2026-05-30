@@ -260,7 +260,7 @@ export function getAIChatUserMemoryMutationTitle(
       return pickLocalizedText(
         {
           en_US: 'Cleared memory',
-          zh_Hans: '宸叉竻绌鸿蹇?',
+          zh_Hans: '已清空记忆',
         },
         locale,
         'Cleared memory'
@@ -269,7 +269,7 @@ export function getAIChatUserMemoryMutationTitle(
       return pickLocalizedText(
         {
           en_US: 'Updated memory',
-          zh_Hans: '宸叉洿鏂拌蹇?',
+          zh_Hans: '已更新记忆',
         },
         locale,
         'Updated memory'
