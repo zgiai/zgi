@@ -122,6 +122,7 @@ interface AIChatVariantProps {
   enableUpload?: boolean;
   uploadScope?: AIChatUploadScope;
   showFileLibraryPicker?: boolean;
+  allowWorkspaceSwitch?: boolean;
   homeBrand?: React.ReactNode;
   homeTitle?: string;
   homeDescription?: string;

@@ -324,6 +324,7 @@ type AgentPublicWebAppConfigResponse struct {
 	InputPlaceholder   string   `json:"input_placeholder"`
 	SuggestedQuestions []string `json:"suggested_questions"`
 	FileUpload         bool     `json:"file_upload_enabled"`
+	AgentMemoryEnabled bool     `json:"agent_memory_enabled"`
 	Version            string   `json:"version"`
 	VersionUUID        string   `json:"version_uuid"`
 }

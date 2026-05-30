@@ -141,6 +141,7 @@ interface AIChatInputAreaProps {
   enableUpload?: boolean;
   uploadScope?: AIChatUploadScope;
   showFileLibraryPicker?: boolean;
+  allowWorkspaceSwitch?: boolean;
   inputPlaceholder?: string;
   surface?: 'aichat' | 'agent-draft' | 'agent-webapp';
 }
@@ -172,6 +173,7 @@ export function AIChatInputArea({
   enableUpload = true,
   uploadScope = { type: 'console' },
   showFileLibraryPicker = true,
+  allowWorkspaceSwitch = false,
   inputPlaceholder,
   surface = 'aichat',
 }: AIChatInputAreaProps) {
@@ -700,6 +702,7 @@ export function AIChatInputArea({
               onConfirm={handleSystemFilesConfirm}
               maxCount={remainingSlots}
               acceptExt={canUseImage ? allSelectableExtensions : allowedExtensions}
+              allowWorkspaceSwitch={allowWorkspaceSwitch}
             />
           ) : null}
         </div>

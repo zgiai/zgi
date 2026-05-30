@@ -111,9 +111,18 @@ const messages: WebappMessages = {
     title: 'WebApp 尚未发布',
     description: '请先发布这个智能体，再打开它的 WebApp。',
   },
+  header: {
+    guestMode: '访客模式：登录后可保存对话并使用更多能力。',
+    guestModeShort: '访客',
+    login: '登录',
+    loginHint: '登录后可保存对话并使用更多能力',
+    signedIn: '已登录',
+  },
   agentChat: {
     fallbackTitle: '智能体',
     defaultHomeTitle: 'title',
+    memoryLoginRequiredTitle: '请登录后使用此智能体',
+    memoryLoginRequiredDescription: '该智能体已开启记忆功能，请登录后使用。',
   },
   billing: {
     precheckWarnings: {
