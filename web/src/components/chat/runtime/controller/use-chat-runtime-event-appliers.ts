@@ -11,6 +11,7 @@ import type {
   AIChatMessageEndEventData,
   AIChatMessageRetractEventData,
   AIChatMessageStartEventData,
+  AIChatMemoryMutationEventData,
   AIChatSkillArtifactCreatedEventData,
   AIChatSkillCallEndEventData,
   AIChatSkillCallErrorEventData,
@@ -34,6 +35,7 @@ import {
   applyIntermediateAnswerState,
   applyMessageChunkState,
   applyMessageEndState,
+  applyMemoryMutationState,
   applyMessageRetractState,
   applyMessageStartState,
   applySkillArtifactCreatedState,
@@ -250,6 +252,14 @@ export function useChatRuntimeEventAppliers({
     [setControllerState]
   );
 
+  const applyMemoryMutation = useCallback(
+    (payload: AIChatMemoryMutationEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id || !payload.action) return;
+      setControllerState(current => applyMemoryMutationState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
   const applyMessageEnd = useCallback(
     (payload: AIChatMessageEndEventData, _eventId?: string | null) => {
       if (!payload.conversation_id || !payload.message_id) return;
@@ -330,6 +340,7 @@ export function useChatRuntimeEventAppliers({
       applySkillCallEnd,
       applySkillCallError,
       applySkillArtifactCreated,
+      applyMemoryMutation,
       applyAgentProgress,
       applyIntermediateAnswer,
       applyMessageEnd,
@@ -341,6 +352,7 @@ export function useChatRuntimeEventAppliers({
       applyFileParseError,
       applyFileParseStart,
       applyIntermediateAnswer,
+      applyMemoryMutation,
       applyMessageChunk,
       applyMessageEnd,
       applyMessageRetract,

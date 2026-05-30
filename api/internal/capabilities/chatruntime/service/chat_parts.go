@@ -61,13 +61,17 @@ func applyRunConfigToParts(config RunConfig, parts *chatRequestParts) {
 	parts.AgentMemoryUserScope = strings.TrimSpace(config.AgentMemoryUserScope)
 	parts.AgentMemoryAgentID = strings.TrimSpace(config.BillingAppID)
 	parts.BillingSource = strings.TrimSpace(config.BillingAppType)
-	if !runConfigAllowsUserMemory(config) {
+	if runConfigDisablesUserMemory(config) {
 		parts.UseMemory = false
 	}
 }
 
 func runConfigAllowsUserMemory(config RunConfig) bool {
 	return config.UseMemory && !strings.EqualFold(strings.TrimSpace(config.BillingAppType), runtimemodel.ConversationCallerAgent)
+}
+
+func runConfigDisablesUserMemory(config RunConfig) bool {
+	return strings.EqualFold(strings.TrimSpace(config.BillingAppType), runtimemodel.ConversationCallerAgent)
 }
 
 func normalizeAgentMemorySlots(input []AgentMemorySlotConfig) []AgentMemorySlotConfig {

@@ -788,7 +788,6 @@ func (c *ServiceContainer) GetToolManager() *tools.ToolManager {
 
 		// Register builtin tool providers
 		c.toolManager.RegisterBuiltinProviders(getBuiltinToolProviders())
-		_ = c.toolManager.RegisterProvider(memory.NewProvider(c.GetMemoryService()))
 		_ = c.toolManager.RegisterProvider(knowledge_tools.NewProvider(c.GetKnowledgeRetrievalService()))
 
 		logger.Info("ToolManager initialized with builtin providers")

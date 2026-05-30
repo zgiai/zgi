@@ -16,9 +16,9 @@ import { cn } from '@/lib/utils';
 import type { AIChatSkillInvocation } from '@/services/types/aichat';
 import type { AIChatAgenticTimelineItem } from '@/components/chat/controllers/aichat';
 import {
-  getAIChatAgentMemoryEventTitle,
   getAIChatSkillResultDisplay,
   getAIChatSkillToolDisplayName,
+  getAIChatUserMemoryMutationTitle,
   getFallbackAIChatSkillDisplayInfo,
   type AIChatSkillDisplayInfo,
   type AIChatSkillDisplayMap,
@@ -54,6 +54,7 @@ interface AIChatAgenticTimelineProps {
   timeline: AIChatAgenticTimelineItem[];
   skillDisplayById: AIChatSkillDisplayMap;
   defaultOpen?: boolean;
+  showMemoryKey?: boolean;
 }
 
 interface SkillTimelineViewModel {
@@ -63,6 +64,8 @@ interface SkillTimelineViewModel {
   skill: AIChatSkillDisplayInfo;
   tone: TimelineTone;
 }
+
+type MemoryTimelineItem = Extract<AIChatAgenticTimelineItem, { type: 'memory_event' }>;
 
 function getInvocationTone(invocation: AIChatSkillInvocation): TimelineTone {
   if (invocation.status === 'loading' || invocation.status === 'running') return 'running';
@@ -114,9 +117,6 @@ function buildSkillTitle(
   locale: string,
   t: WebappTranslator
 ): string {
-  const agentMemoryTitle = getAIChatAgentMemoryEventTitle(invocation, tone, locale);
-  if (agentMemoryTitle) return agentMemoryTitle;
-
   const toolName =
     getAIChatSkillToolDisplayName(invocation.skill_id, invocation.tool_name, locale) ||
     invocation.path ||
@@ -230,6 +230,88 @@ function SkillTimelineRow({
   );
 }
 
+function memoryEventContent(item: MemoryTimelineItem): string {
+  return (item.event.content ?? item.event.content_preview ?? '').trim();
+}
+
+function memoryEventTitle(item: MemoryTimelineItem, locale: string, showMemoryKey: boolean): string {
+  return getAIChatUserMemoryMutationTitle(item.event.action, locale, {
+    content: item.event.content_preview || item.event.content,
+    entryId: item.event.entry_id ?? (showMemoryKey ? item.event.key : undefined),
+  });
+}
+
+function MemoryTimelineRow({
+  item,
+  showMemoryKey,
+}: {
+  item: MemoryTimelineItem;
+  showMemoryKey: boolean;
+}) {
+  const { locale } = useLocale();
+  const [isOpen, setIsOpen] = useState(false);
+  const content = memoryEventContent(item);
+  const canExpand = Boolean(
+    content ||
+      (showMemoryKey && item.event.key) ||
+      item.event.category ||
+      item.event.memory_type
+  );
+
+  return (
+    <div className="rounded-md border border-emerald-500/20 bg-emerald-500/5 text-xs text-foreground">
+      <button
+        type="button"
+        className="flex min-h-8 w-full min-w-0 items-center gap-2 px-2.5 py-1.5 text-left"
+        onClick={() => canExpand && setIsOpen(open => !open)}
+        aria-expanded={isOpen}
+      >
+        <span className="flex size-5 shrink-0 items-center justify-center rounded-full border border-emerald-500/30 bg-background text-emerald-600">
+          <CheckCircle2 className="size-3.5" />
+        </span>
+        <span className="min-w-0 flex-1 truncate">
+          {memoryEventTitle(item, locale, showMemoryKey)}
+        </span>
+        {showMemoryKey && item.event.key ? (
+          <span className="max-w-32 shrink-0 truncate rounded border border-emerald-500/20 bg-background/70 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+            {item.event.key}
+          </span>
+        ) : null}
+        {canExpand ? (
+          <ChevronDown
+            className={cn('size-3.5 shrink-0 text-muted-foreground transition-transform', {
+              'rotate-180': isOpen,
+            })}
+          />
+        ) : null}
+      </button>
+      {isOpen ? (
+        <div className="space-y-2 border-t border-emerald-500/15 bg-background/70 px-2.5 py-2">
+          {content ? (
+            <div className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md border bg-background p-2 leading-relaxed text-foreground/85">
+              {content}
+            </div>
+          ) : null}
+          {item.event.category || item.event.memory_type ? (
+            <div className="flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
+              {item.event.category ? (
+                <span className="rounded border bg-background/80 px-1.5 py-0.5">
+                  {item.event.category}
+                </span>
+              ) : null}
+              {item.event.memory_type ? (
+                <span className="rounded border bg-background/80 px-1.5 py-0.5">
+                  {item.event.memory_type}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function isProgressTextItem(
   item: AIChatAgenticTimelineItem | SkillTimelineViewModel
 ): item is Extract<AIChatAgenticTimelineItem, { type: 'progress_text' }> {
@@ -240,6 +322,12 @@ function isIntermediateAnswerItem(
   item: AIChatAgenticTimelineItem | SkillTimelineViewModel
 ): item is Extract<AIChatAgenticTimelineItem, { type: 'intermediate_answer' }> {
   return 'type' in item && item.type === 'intermediate_answer';
+}
+
+function isMemoryEventItem(
+  item: AIChatAgenticTimelineItem | SkillTimelineViewModel
+): item is Extract<AIChatAgenticTimelineItem, { type: 'memory_event' }> {
+  return 'type' in item && item.type === 'memory_event';
 }
 
 function isTransientProgressItem(
@@ -307,6 +395,7 @@ export function AIChatAgenticTimeline({
   timeline,
   skillDisplayById,
   defaultOpen = true,
+  showMemoryKey = true,
 }: AIChatAgenticTimelineProps) {
   const t = useT('webapp');
   const { locale } = useLocale();
@@ -317,6 +406,7 @@ export function AIChatAgenticTimeline({
       timeline.map(item => {
         if (item.type === 'progress_text') return item;
         if (item.type === 'intermediate_answer') return item;
+        if (item.type === 'memory_event') return item;
 
         const skillId = item.invocation.skill_id || t('consoleChat.skills.trace.unknownSkill');
         const skill =
@@ -407,6 +497,8 @@ export function AIChatAgenticTimeline({
                   />
                 </div>
               </div>
+            ) : isMemoryEventItem(item) ? (
+              <MemoryTimelineRow key={item.id} item={item} showMemoryKey={showMemoryKey} />
             ) : (
               <SkillTimelineRow key={item.item.id} event={item} />
             )

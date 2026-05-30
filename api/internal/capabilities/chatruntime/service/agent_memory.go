@@ -86,12 +86,9 @@ func (s *service) runNativeAgentMemoryPreflight(
 	prepared *PreparedChat,
 	onEvent func(StreamEvent) error,
 ) (*adapter.Usage, error) {
-	timeline := newProcessTimelineRecorder(ctx, persistCtx, s, prepared, onEvent)
 	state, skipStatus := agentMemoryPreflightState(prepared, s.agentMemoryService, s.llmClient != nil)
 	if skipStatus != "" {
 		if prepared != nil && prepared.parts != nil && prepared.parts.AgentMemoryEnabled {
-			trace := agentmemoryruntime.PlannerTrace(agentmemoryruntime.Decision{Action: "none", Reason: skipStatus}, skipStatus, nil)
-			s.recordNativeAgentMemoryTrace(timeline, []skills.SkillTrace{}, trace)
 			s.updateAgentMemoryRuntimeMetadataBestEffort(persistCtx, prepared, map[string]interface{}{
 				"planner_status": skipStatus,
 				"planner_action": "none",
@@ -120,14 +117,10 @@ func (s *service) runNativeAgentMemoryPreflight(
 		LLMClient:         s.llmClient,
 		AppContext:        newBillingAppContext(prepared),
 		UseJSONMode:       shouldUseAgentMemoryPlannerJSONMode(prepared),
-		OnToolCallStart: func(toolName string, arguments map[string]interface{}) {
-			timeline.RecordInvocationStart(skills.SkillAgentMemory, toolName, arguments)
+		OnToolCallEnd: func(trace skills.SkillTrace) {
+			s.emitAgentMemoryMutationEvent(ctx, prepared, trace, onEvent)
 		},
 	})
-	traces := []skills.SkillTrace{}
-	for _, trace := range result.Traces {
-		traces = s.recordNativeAgentMemoryTrace(timeline, traces, trace)
-	}
 	if len(result.MetadataUpdates) > 0 {
 		s.updateAgentMemoryRuntimeMetadataBestEffort(persistCtx, prepared, result.MetadataUpdates)
 	}
@@ -135,6 +128,41 @@ func (s *service) runNativeAgentMemoryPreflight(
 		prepared.LLMRequest.Messages = result.Messages
 	}
 	return result.Usage, nil
+}
+
+func (s *service) emitAgentMemoryMutationEvent(ctx context.Context, prepared *PreparedChat, trace skills.SkillTrace, onEvent func(StreamEvent) error) {
+	if trace.Status != "success" || prepared == nil || prepared.Conversation == nil || prepared.Message == nil {
+		return
+	}
+	eventType, action := agentMemoryMutationEventType(trace)
+	if eventType == "" {
+		return
+	}
+	payload := map[string]interface{}{
+		"conversation_id": prepared.Conversation.ID.String(),
+		"message_id":      prepared.Message.ID.String(),
+		"memory_scope":    "agent",
+		"action":          action,
+		"key":             trace.Result["key"],
+		"status":          trace.Status,
+	}
+	if content, ok := trace.Result["content"].(string); ok && strings.TrimSpace(content) != "" {
+		content = strings.TrimSpace(content)
+		payload["content"] = content
+		payload["content_preview"] = truncateString(content, 160)
+	}
+	s.emitPreparedEvent(ctx, prepared, eventType, payload, onEvent)
+}
+
+func agentMemoryMutationEventType(trace skills.SkillTrace) (string, string) {
+	switch strings.TrimSpace(trace.ToolName) {
+	case agentMemoryToolUpdate:
+		return streamEventMemoryUpdate, "update"
+	case agentMemoryToolClear:
+		return streamEventMemoryClear, "clear"
+	default:
+		return "", ""
+	}
 }
 
 func shouldRunNativeAgentMemoryPreflight(prepared *PreparedChat, memoryService AgentMemoryContextService, llmConfigured bool) bool {
@@ -193,30 +221,6 @@ func agentMemoryMutationMetadata(prepared *PreparedChat) agentmemory.MutationMet
 		meta.SourceMessageID = &id
 	}
 	return meta
-}
-
-func (s *service) recordNativeAgentMemoryTrace(timeline *processTimelineRecorder, traces []skills.SkillTrace, trace skills.SkillTrace) []skills.SkillTrace {
-	if strings.TrimSpace(trace.Status) == "" {
-		trace.Status = "success_none"
-	}
-	if trace.Kind == "agent_memory" {
-		trace.Kind = "memory_planner"
-		trace.ToolName = "plan_agent_memory"
-	}
-	traces = append(traces, trace)
-	if timeline == nil {
-		return traces
-	}
-	if trace.Kind == "tool_call" {
-		if trace.Status == "success" {
-			timeline.RecordInvocationEnd(trace)
-		} else {
-			timeline.RecordInvocationError(trace)
-		}
-		return traces
-	}
-	timeline.RecordTrace(traces, trace)
-	return traces
 }
 
 func (s *service) updateAgentMemoryRuntimeMetadataBestEffort(ctx context.Context, prepared *PreparedChat, updates map[string]interface{}) {

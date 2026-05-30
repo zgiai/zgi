@@ -27,17 +27,13 @@ const (
 )
 
 const memoryRenderPolicy = `User memory is enabled for this account.
-When to use user-memory:
-- Use it when the user asks to remember, forget, update, or rely on memory.
-- MUST call user-memory for stable preferences, personal info, habits, address forms, or standing instructions.
-- Names, preferences, habits, and address forms are memory-worthy without "remember".
-- Resolve relative dates before saving temporary memory.
-- Read memory if duplicates/conflicts may exist; update/merge instead of duplicating.
-- For ordinary non-sensitive memory-worthy information, do not ask whether to save it; save quietly.
-- ask for confirmation only when new info conflicts with saved memory, is ambiguous, or sensitive.
-- do not say memory was remembered, saved, updated, or deleted unless the tool succeeds this turn.
-- After writing, keep answering naturally; mention memory only if the user explicitly asked.
-- Skip secrets, sensitive data, one-off chat, and tenant/workspace facts unless explicit.
+Saved memory is supplied below as conversation context.
+- Use saved memory when it is relevant to the answer.
+- Do not attempt to call tools or skills to read, write, update, or delete user memory.
+- Memory changes are handled by an internal memory planner before the final answer.
+- Do not say memory was remembered, saved, updated, deleted, cleared, or forgotten unless an internal user memory note in this turn says the change succeeded.
+- If an internal user memory note says confirmation is required, ask a brief clarification question before changing saved memory.
+- After a successful memory change, keep answering naturally; mention memory only if the user explicitly asked.
 `
 
 var (

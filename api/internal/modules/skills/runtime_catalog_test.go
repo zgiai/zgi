@@ -45,6 +45,19 @@ func TestAgentMemorySystemSkillIsNotLoadable(t *testing.T) {
 	}
 }
 
+func TestUserMemorySystemSkillIsNotLoadable(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	_, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillUserMemory})
+	if !errors.Is(err, ErrSkillNotFound) {
+		t.Fatalf("ResolveEnabledSkills(user-memory) error = %v, want ErrSkillNotFound", err)
+	}
+	for _, toolName := range []string{"read_user_memory", "add_user_memory", "update_user_memory", "delete_user_memory", "list_temporary_memories"} {
+		if got := ExpectedSkillToolArguments(SkillUserMemory, toolName); got != nil {
+			t.Fatalf("ExpectedSkillToolArguments(user-memory/%s) = %#v, want nil", toolName, got)
+		}
+	}
+}
+
 func TestCustomSkillCannotDeclareTools(t *testing.T) {
 	root := t.TempDir()
 	content := `---
@@ -133,7 +146,6 @@ func TestSystemToolSkillsExposeArgumentContracts(t *testing.T) {
 		SkillFileGenerator,
 		SkillInternalKnowledge,
 		SkillTime,
-		SkillUserMemory,
 	}
 	resolved, err := runtime.ResolveEnabledSkills(context.Background(), skillIDs)
 	if err != nil {
@@ -158,9 +170,6 @@ func TestExpectedSkillToolArgumentsForBuiltInRequiredTools(t *testing.T) {
 		{SkillInternalKnowledge, "retrieve_knowledge", []string{"query", "dataset_ids"}},
 		{SkillAgentKnowledge, "retrieve_agent_knowledge", []string{"query"}},
 		{SkillTime, "date_calculate", []string{"operation"}},
-		{SkillUserMemory, "add_user_memory", []string{"content"}},
-		{SkillUserMemory, "update_user_memory", []string{"entry_id"}},
-		{SkillUserMemory, "delete_user_memory", []string{"entry_id"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.skillID+"/"+tt.toolName, func(t *testing.T) {
@@ -193,7 +202,6 @@ func TestMetaToolArgumentsExposeAllLoadedSystemToolContracts(t *testing.T) {
 		SkillFileGenerator,
 		SkillInternalKnowledge,
 		SkillTime,
-		SkillUserMemory,
 	}
 	resolved, err := runtime.ResolveEnabledSkills(context.Background(), skillIDs)
 	if err != nil {
@@ -224,10 +232,10 @@ func TestMetaToolArgumentsExposeAllLoadedSystemToolContracts(t *testing.T) {
 		t.Fatalf("arguments.oneOf should not be used when optional-only contracts are loaded: %#v", arguments)
 	}
 	anyOf, ok := arguments["anyOf"].([]interface{})
-	if !ok || len(anyOf) < 10 {
+	if !ok || len(anyOf) < 7 {
 		t.Fatalf("arguments.anyOf = %#v, want built-in tool schemas", arguments["anyOf"])
 	}
-	for _, required := range []string{"content", "query", "operation", "entry_id"} {
+	for _, required := range []string{"content", "query", "operation"} {
 		if findSchemaWithRequired(anyOf, required) == nil {
 			t.Fatalf("schema requiring %s not found in %#v", required, anyOf)
 		}

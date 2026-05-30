@@ -16,6 +16,7 @@ import type {
   AIChatMessageEndEventData,
   AIChatMessageRetractEventData,
   AIChatMessageStartEventData,
+  AIChatMemoryMutationEventData,
   AIChatIntermediateAnswerEventData,
   AIChatRegenerateMessageRequest,
   AIChatSkillCallEndEventData,
@@ -90,6 +91,7 @@ export interface AIChatStreamCallbacks {
     payload: AIChatSkillArtifactCreatedEventData,
     eventId?: string | null
   ) => void;
+  onMemoryMutation: (payload: AIChatMemoryMutationEventData, eventId?: string | null) => void;
   onMessageChunk: (payload: AIChatMessageChunkEventData, eventId?: string | null) => void;
   onMessageRetract: (payload: AIChatMessageRetractEventData, eventId?: string | null) => void;
   onMessageEnd: (payload: AIChatMessageEndEventData, eventId?: string | null) => void;
@@ -183,6 +185,12 @@ export function dispatchAIChatStreamEvent(
         (data ?? {}) as AIChatSkillArtifactCreatedEventData,
         eventId
       );
+      break;
+    case 'memory_create':
+    case 'memory_update':
+    case 'memory_delete':
+    case 'memory_clear':
+      callbacks.onMemoryMutation((data ?? {}) as AIChatMemoryMutationEventData, eventId);
       break;
     case 'message':
       callbacks.onMessageChunk((data ?? {}) as AIChatMessageChunkEventData, eventId);

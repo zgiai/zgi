@@ -36,8 +36,8 @@ interface UseChatRuntimeMessageActionsArgs {
   streamingMessageRef: MutableRefObject<{ conversationId: string; messageId: string } | null>;
   setControllerState: AIChatSetControllerState;
   markSelectionTarget: (conversationId: string | null) => number;
-  refreshAccountMemoryAfterToolCall: (
-    payload: Parameters<ChatRuntimeEventAppliers['applySkillCallEnd']>[0]
+  refreshAccountMemoryAfterMemoryMutation: (
+    payload: Parameters<ChatRuntimeEventAppliers['applyMemoryMutation']>[0]
   ) => void;
   eventAppliers: ChatRuntimeEventAppliers;
 }
@@ -51,7 +51,7 @@ export function useChatRuntimeMessageActions({
   streamingMessageRef,
   setControllerState,
   markSelectionTarget,
-  refreshAccountMemoryAfterToolCall,
+  refreshAccountMemoryAfterMemoryMutation,
   eventAppliers,
 }: UseChatRuntimeMessageActionsArgs) {
   const {
@@ -68,6 +68,7 @@ export function useChatRuntimeMessageActions({
     applySkillCallEnd,
     applySkillCallError,
     applySkillArtifactCreated,
+    applyMemoryMutation,
     applyAgentProgress,
     applyIntermediateAnswer,
     applyMessageEnd,
@@ -261,7 +262,6 @@ export function useChatRuntimeMessageActions({
             onSkillCallEnd: (payload, eventId) => {
               if (abortController.signal.aborted) return;
               applySkillCallEnd(payload, eventId);
-              refreshAccountMemoryAfterToolCall(payload);
             },
             onSkillCallError: (payload, eventId) => {
               if (abortController.signal.aborted) return;
@@ -270,6 +270,11 @@ export function useChatRuntimeMessageActions({
             onSkillArtifactCreated: (payload, eventId) => {
               if (abortController.signal.aborted) return;
               applySkillArtifactCreated(payload, eventId);
+            },
+            onMemoryMutation: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              applyMemoryMutation(payload, eventId);
+              refreshAccountMemoryAfterMemoryMutation(payload);
             },
             onMessageChunk: (payload, eventId) => {
               if (abortController.signal.aborted) return;
@@ -366,6 +371,7 @@ export function useChatRuntimeMessageActions({
       applyMessageRetract,
       applyMessageEnd,
       applyMessageStart,
+      applyMemoryMutation,
       applySkillCallEnd,
       applySkillCallError,
       applySkillCallStart,
@@ -377,7 +383,7 @@ export function useChatRuntimeMessageActions({
       markSelectionTarget,
       pendingStreamAbortRef,
       requireModel,
-      refreshAccountMemoryAfterToolCall,
+      refreshAccountMemoryAfterMemoryMutation,
       setControllerState,
       stateRef,
       streamAbortByConversationRef,
@@ -566,7 +572,6 @@ export function useChatRuntimeMessageActions({
             onSkillCallEnd: (payload, eventId) => {
               if (abortController.signal.aborted) return;
               applySkillCallEnd(payload, eventId);
-              refreshAccountMemoryAfterToolCall(payload);
             },
             onSkillCallError: (payload, eventId) => {
               if (abortController.signal.aborted) return;
@@ -575,6 +580,11 @@ export function useChatRuntimeMessageActions({
             onSkillArtifactCreated: (payload, eventId) => {
               if (abortController.signal.aborted) return;
               applySkillArtifactCreated(payload, eventId);
+            },
+            onMemoryMutation: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              applyMemoryMutation(payload, eventId);
+              refreshAccountMemoryAfterMemoryMutation(payload);
             },
             onMessageChunk: (payload, eventId) => {
               if (abortController.signal.aborted) return;
@@ -655,12 +665,13 @@ export function useChatRuntimeMessageActions({
       applySkillCallError,
       applySkillCallStart,
       applySkillArtifactCreated,
+      applyMemoryMutation,
       applySkillLoadEnd,
       applySkillLoadStart,
       applySkillReferenceRead,
       applyStreamError,
       markSelectionTarget,
-      refreshAccountMemoryAfterToolCall,
+      refreshAccountMemoryAfterMemoryMutation,
       setControllerState,
       stateRef,
       streamAbortByConversationRef,

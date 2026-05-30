@@ -4,106 +4,106 @@ import (
 	"context"
 	"strings"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/memoryplanner"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
 func RunPreflight(ctx context.Context, req PreflightRequest) PreflightResult {
-	result := PreflightResult{MetadataUpdates: map[string]interface{}{}}
-	if !ShouldRunDecision(req.LatestUserMessage) {
-		trace := PlannerTrace(Decision{Action: "none", Reason: "empty latest user message"}, "skipped_empty_query", nil)
-		result.Traces = append(result.Traces, trace)
-		result.MetadataUpdates["planner_status"] = "skipped_empty_query"
-		result.MetadataUpdates["planner_action"] = "none"
-		result.Messages = appendMessages(req.LLMRequest.Messages, GuardNote("skipped_empty_query"))
-		return result
+	domain := agentMemoryPlannerDomain{req: req}
+	common := memoryplanner.Run(ctx, memoryplanner.Request{
+		LatestUserMessage: req.LatestUserMessage,
+		LLMRequest:        req.LLMRequest,
+		LLMClient:         req.LLMClient,
+		AppContext:        req.AppContext,
+		UseJSONMode:       req.UseJSONMode,
+		MaxPlanningRounds: maxPlanningRounds,
+		MaxRetries:        maxPlanningRetries,
+	}, domain)
+	return PreflightResult{
+		Usage:           common.Usage,
+		Messages:        common.Messages,
+		Traces:          common.Traces,
+		MetadataUpdates: common.MetadataUpdates,
 	}
+}
 
-	baseMessages := append([]adapter.Message{}, req.LLMRequest.Messages...)
-	messages := PlannerMessages(req.State, req.LatestUserMessage, baseMessages)
-	retries := 0
+type agentMemoryPlannerDomain struct {
+	req PreflightRequest
+}
 
-	for round := 0; round < maxPlanningRounds; round++ {
-		_ = round
-		planningReq := cloneChatRequest(req.LLMRequest)
-		planningReq.Messages = messages
-		planningReq.Stream = false
-		planningReq.Tools = nil
-		planningReq.ToolChoice = nil
-		temperature := 0.0
-		planningReq.Temperature = &temperature
-		if req.UseJSONMode {
-			planningReq.ResponseFormat = &adapter.ResponseFormat{Type: "json_object"}
-		} else {
-			planningReq.ResponseFormat = nil
-		}
-		maxTokens := 700
-		planningReq.MaxTokens = &maxTokens
+func (d agentMemoryPlannerDomain) PlannerMessages(baseMessages []adapter.Message) []adapter.Message {
+	return PlannerMessages(d.req.State, d.req.LatestUserMessage, baseMessages)
+}
 
-		resp, err := req.LLMClient.AppChat(ctx, req.AppContext, planningReq)
-		if err != nil {
-			trace := PlannerTrace(Decision{Action: "none", Reason: "planner llm error"}, "error_llm", err)
-			result.Traces = append(result.Traces, trace)
-			result.MetadataUpdates["planner_status"] = "error_llm"
-			result.MetadataUpdates["planner_action"] = "none"
-			result.Messages = appendMessages(baseMessages, GuardNote("error_llm"))
-			return result
-		}
-		result.Usage = mergeUsage(result.Usage, responseUsage(resp))
-		message := firstResponseMessage(resp)
-		decision, err := ParseDecision(messageTextFromResponse(message))
-		if err != nil {
-			retries++
-			trace := PlannerTrace(Decision{Action: "none", Reason: "planner returned invalid JSON"}, "error_parse", err)
-			result.Traces = append(result.Traces, trace)
-			if retries > maxPlanningRetries {
-				result.MetadataUpdates["planner_status"] = "error_parse"
-				result.MetadataUpdates["planner_action"] = "none"
-				result.Messages = appendMessages(baseMessages, GuardNote("error_parse"))
-				break
-			}
-			messages = append(messages, DecisionRetryMessage(err))
-			continue
-		}
-		if DecisionNoop(decision) {
-			result.Traces = append(result.Traces, PlannerTrace(decision, "success_none", nil))
-			result.MetadataUpdates["planner_status"] = "success_none"
-			result.MetadataUpdates["planner_action"] = "none"
-			result.Messages = appendMessages(baseMessages, GuardNote("success_none"))
-			break
-		}
-		plannerStatus := PlannerSuccessStatus(decision)
-		result.Traces = append(result.Traces, PlannerTrace(decision, plannerStatus, nil))
-		result.MetadataUpdates["planner_status"] = plannerStatus
-		result.MetadataUpdates["planner_action"] = decision.Action
-		result.MetadataUpdates["planner_key"] = decision.Key
+func (d agentMemoryPlannerDomain) ParseDecision(raw string) (interface{}, error) {
+	return ParseDecision(raw)
+}
 
-		mutationResult, trace, err := ApplyDecision(ctx, MutationRequest{
-			MemoryService:    req.MemoryService,
-			WorkspaceID:      req.WorkspaceID,
-			AgentID:          req.AgentID,
-			UserID:           req.UserID,
-			UserScope:        req.UserScope,
-			Slots:            req.State.EnabledSlots,
-			MutationMetadata: req.MutationMetadata,
-			OnToolCallStart:  req.OnToolCallStart,
-			OnToolCallEnd:    req.OnToolCallEnd,
-		}, decision)
-		result.Traces = append(result.Traces, trace)
-		if err != nil {
-			result.MetadataUpdates["mutation_status"] = trace.Status
-			result.MetadataUpdates["mutation_key"] = decision.Key
-			result.Messages = appendMessages(baseMessages, GuardNote(trace.Status))
-			break
-		}
-		finalMessages := append([]adapter.Message{}, baseMessages...)
-		finalMessages = append(finalMessages, SuccessNote(decision, mutationResult))
-		result.Messages = finalMessages
-		result.MetadataUpdates["mutation_status"] = "success"
-		result.MetadataUpdates["mutation_key"] = StringResultValue(mutationResult, "key")
-		break
+func (d agentMemoryPlannerDomain) IsNoop(decision interface{}) bool {
+	typed, ok := decision.(Decision)
+	return !ok || DecisionNoop(typed)
+}
+
+func (d agentMemoryPlannerDomain) NoopStatus(decision interface{}) string {
+	return "success_none"
+}
+
+func (d agentMemoryPlannerDomain) PlannerSuccessStatus(decision interface{}) string {
+	typed, ok := decision.(Decision)
+	if !ok {
+		return "success_none"
 	}
-	return result
+	return PlannerSuccessStatus(typed)
+}
+
+func (d agentMemoryPlannerDomain) PlannerTrace(decision interface{}, status string, err error) skills.SkillTrace {
+	typed, _ := decision.(Decision)
+	return PlannerTrace(typed, status, err)
+}
+
+func (d agentMemoryPlannerDomain) ApplyDecision(ctx context.Context, decision interface{}) (map[string]interface{}, skills.SkillTrace, error) {
+	typed, _ := decision.(Decision)
+	return ApplyDecision(ctx, MutationRequest{
+		MemoryService:    d.req.MemoryService,
+		WorkspaceID:      d.req.WorkspaceID,
+		AgentID:          d.req.AgentID,
+		UserID:           d.req.UserID,
+		UserScope:        d.req.UserScope,
+		Slots:            d.req.State.EnabledSlots,
+		MutationMetadata: d.req.MutationMetadata,
+		OnToolCallStart:  d.req.OnToolCallStart,
+		OnToolCallEnd:    d.req.OnToolCallEnd,
+	}, typed)
+}
+
+func (d agentMemoryPlannerDomain) SuccessNote(decision interface{}, result map[string]interface{}) adapter.Message {
+	typed, _ := decision.(Decision)
+	return SuccessNote(typed, result)
+}
+
+func (d agentMemoryPlannerDomain) GuardNote(status string) adapter.Message {
+	return GuardNote(status)
+}
+
+func (d agentMemoryPlannerDomain) MetadataUpdates(decision interface{}, plannerStatus string, result map[string]interface{}, mutationStatus string) map[string]interface{} {
+	typed, _ := decision.(Decision)
+	updates := map[string]interface{}{"planner_status": plannerStatus}
+	if DecisionNoop(typed) {
+		updates["planner_action"] = "none"
+	} else {
+		updates["planner_action"] = typed.Action
+		updates["planner_key"] = typed.Key
+	}
+	if strings.TrimSpace(mutationStatus) != "" {
+		updates["mutation_status"] = mutationStatus
+	}
+	if resultKey := StringResultValue(result, "key"); resultKey != "" {
+		updates["mutation_key"] = resultKey
+	} else if strings.TrimSpace(typed.Key) != "" && strings.TrimSpace(mutationStatus) != "" {
+		updates["mutation_key"] = typed.Key
+	}
+	return updates
 }
 
 func appendMessages(messages []adapter.Message, next adapter.Message) []adapter.Message {
@@ -143,17 +143,7 @@ func responseUsage(resp *adapter.ChatResponse) *adapter.Usage {
 }
 
 func mergeUsage(current *adapter.Usage, next *adapter.Usage) *adapter.Usage {
-	if next == nil {
-		return current
-	}
-	if current == nil {
-		copy := *next
-		return &copy
-	}
-	current.PromptTokens += next.PromptTokens
-	current.CompletionTokens += next.CompletionTokens
-	current.TotalTokens += next.TotalTokens
-	return current
+	return memoryplanner.MergeUsage(current, next)
 }
 
 func firstResponseMessage(resp *adapter.ChatResponse) adapter.Message {

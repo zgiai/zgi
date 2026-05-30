@@ -79,6 +79,26 @@ func TestRunConfigAllowsUserMemoryRejectsAgent(t *testing.T) {
 	}
 }
 
+func TestApplyRunConfigToPartsPreservesAIChatUseMemoryRequest(t *testing.T) {
+	parts := &chatRequestParts{UseMemory: true}
+
+	applyRunConfigToParts(RunConfig{BillingAppType: runtimemodel.MessageBillingReasonSourceAIChat}, parts)
+
+	if !parts.UseMemory {
+		t.Fatal("applyRunConfigToParts() cleared AIChat request use memory")
+	}
+}
+
+func TestApplyRunConfigToPartsDisablesAccountMemoryForAgentCaller(t *testing.T) {
+	parts := &chatRequestParts{UseMemory: true}
+
+	applyRunConfigToParts(RunConfig{BillingAppType: runtimemodel.ConversationCallerAgent}, parts)
+
+	if parts.UseMemory {
+		t.Fatal("applyRunConfigToParts() left account memory enabled for agent caller")
+	}
+}
+
 func TestVisibleSkillMetadataHidesRuntimeManagedSkills(t *testing.T) {
 	metadata := []skills.SkillDiscoveryMetadata{
 		{ID: skills.SkillInternalKnowledge},
@@ -258,6 +278,55 @@ func TestProcessTimelineRecorderSkipsInternalDiagnosticTrace(t *testing.T) {
 
 	if invocations := prepared.Message.Metadata["skill_invocations"]; invocations != nil {
 		t.Fatalf("skill_invocations = %#v, want no persisted planner invocation", invocations)
+	}
+}
+
+func TestEmitAgentMemoryMutationEventUsesIndependentMemoryEvent(t *testing.T) {
+	prepared := preparedTimelineTestChat()
+	var got *StreamEvent
+	(&service{}).emitAgentMemoryMutationEvent(context.Background(), prepared, skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillAgentMemory,
+		ToolName: agentMemoryToolUpdate,
+		Status:   "success",
+		Result:   map[string]interface{}{"key": "profile", "content": "Call the user Captain."},
+	}, func(event StreamEvent) error {
+		got = &event
+		return nil
+	})
+	if got == nil {
+		t.Fatal("memory mutation event was not emitted")
+	}
+	if got.EventType != streamEventMemoryUpdate {
+		t.Fatalf("event type = %q, want %q", got.EventType, streamEventMemoryUpdate)
+	}
+	if got.Payload["memory_scope"] != "agent" || got.Payload["action"] != "update" || got.Payload["key"] != "profile" || got.Payload["content"] != "Call the user Captain." {
+		t.Fatalf("payload = %#v, want agent memory update payload with full content", got.Payload)
+	}
+}
+
+func TestEmitUserMemoryMutationEventUsesIndependentMemoryEvent(t *testing.T) {
+	prepared := preparedTimelineTestChat()
+	var got *StreamEvent
+	(&service{}).emitUserMemoryMutationEvent(context.Background(), prepared, skills.SkillTrace{
+		Kind:   "user_memory",
+		Status: "success",
+	}, map[string]interface{}{
+		"action":   "update",
+		"entry_id": "entry-1",
+		"content":  "Call the user Captain.",
+	}, func(event StreamEvent) error {
+		got = &event
+		return nil
+	})
+	if got == nil {
+		t.Fatal("memory mutation event was not emitted")
+	}
+	if got.EventType != streamEventMemoryUpdate {
+		t.Fatalf("event type = %q, want %q", got.EventType, streamEventMemoryUpdate)
+	}
+	if got.Payload["memory_scope"] != "account" || got.Payload["action"] != "update" || got.Payload["entry_id"] != "entry-1" {
+		t.Fatalf("payload = %#v, want account memory update payload", got.Payload)
 	}
 }
 

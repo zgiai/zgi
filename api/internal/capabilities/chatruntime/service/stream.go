@@ -42,7 +42,17 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
 		return nil, newFinalizedStreamError(err)
 	}
-	preflightUsage, err := s.runNativeAgentMemoryPreflight(runCtx, persistCtx, prepared, eventCallback)
+	userMemoryUsage, err := s.runUserMemoryPreflight(runCtx, persistCtx, prepared, eventCallback)
+	if err != nil {
+		if s.isStoppedContext(runCtx, prepared.Message.ID) {
+			_ = s.persistStoppedAnswer(persistCtx, prepared, "", userMemoryUsage)
+			return nil, ErrMessageStopped
+		}
+		s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
+		return nil, newFinalizedStreamError(err)
+	}
+	agentMemoryUsage, err := s.runNativeAgentMemoryPreflight(runCtx, persistCtx, prepared, eventCallback)
+	preflightUsage := mergeUsage(userMemoryUsage, agentMemoryUsage)
 	if err != nil {
 		if s.isStoppedContext(runCtx, prepared.Message.ID) {
 			_ = s.persistStoppedAnswer(persistCtx, prepared, "", preflightUsage)

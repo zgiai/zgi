@@ -14,6 +14,7 @@ import type {
   AIChatMessageMetadata,
   AIChatMessageRetractEventData,
   AIChatMessageStartEventData,
+  AIChatMemoryMutationEventData,
   AIChatSkillCallEndEventData,
   AIChatSkillCallErrorEventData,
   AIChatSkillCallStartEventData,
@@ -226,6 +227,30 @@ function removeTransientProgressItems(
   timeline: AIChatAgenticTimelineItem[] | undefined
 ): AIChatAgenticTimelineItem[] {
   return (timeline ?? []).filter(item => !isTransientProgressItem(item));
+}
+
+function upsertMemoryTimelineItem(
+  timeline: AIChatAgenticTimelineItem[] | undefined,
+  payload: AIChatMemoryMutationEventData,
+  eventId: string | null | undefined
+): AIChatAgenticTimelineItem[] {
+  const baseTimeline = removeTransientProgressItems(timeline);
+  const itemId =
+    eventId ??
+    `memory-${payload.action}-${payload.entry_id ?? 'entry'}-${payload.created_at ?? Date.now()}`;
+  if (baseTimeline.some(item => 'event_id' in item && item.event_id === eventId && eventId)) {
+    return baseTimeline;
+  }
+  return [
+    ...baseTimeline,
+    {
+      id: itemId,
+      type: 'memory_event',
+      event: payload,
+      created_at: payload.created_at,
+      event_id: eventId ?? null,
+    },
+  ];
 }
 
 function upsertSkillTimelineItem(
@@ -670,6 +695,31 @@ function normalizeSkillArtifactFile(
     transfer_method: file?.transfer_method ?? payload.transfer_method ?? 'tool_file',
     file_type: file?.file_type ?? payload.file_type,
     created_at: file?.created_at ?? payload.created_at ?? Math.floor(Date.now() / 1000),
+  };
+}
+
+export function applyMemoryMutationState(
+  current: AIChatControllerState,
+  payload: AIChatMemoryMutationEventData,
+  eventId?: string | null
+): AIChatControllerState {
+  if (!payload.conversation_id || !payload.message_id) {
+    return current;
+  }
+  const previousStreaming = current.streamingByMessageId[payload.message_id];
+  if (!previousStreaming) {
+    return current;
+  }
+  return {
+    ...current,
+    streamingByMessageId: {
+      ...current.streamingByMessageId,
+      [payload.message_id]: {
+        ...previousStreaming,
+        timeline: upsertMemoryTimelineItem(previousStreaming.timeline, payload, eventId),
+        last_event_id: eventId ?? previousStreaming.last_event_id,
+      },
+    },
   };
 }
 

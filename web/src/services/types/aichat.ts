@@ -30,6 +30,8 @@ export type AIChatSkillInvocationKind =
   | 'intermediate_answer'
   | 'memory_planner';
 
+export type AIChatMemoryMutationAction = 'create' | 'update' | 'delete' | 'clear';
+
 export interface AIChatConversationMetadata {
   [key: string]: unknown;
 }
@@ -453,6 +455,21 @@ export interface AIChatIntermediateAnswerEventData {
   created_at?: number;
 }
 
+export interface AIChatMemoryMutationEventData {
+  conversation_id: string;
+  message_id: string;
+  memory_scope?: 'account' | 'agent';
+  action: AIChatMemoryMutationAction;
+  entry_id?: string;
+  key?: string;
+  category?: string;
+  memory_type?: string;
+  status?: AIChatSkillActivityStatus;
+  content?: string;
+  content_preview?: string;
+  created_at?: number;
+}
+
 export interface AIChatFileParseStartEventData {
   conversation_id: string;
   message_id: string;
@@ -510,6 +527,10 @@ export type AIChatSseEventName =
   | 'skill_call_end'
   | 'skill_call_error'
   | 'skill_artifact_created'
+  | 'memory_create'
+  | 'memory_update'
+  | 'memory_delete'
+  | 'memory_clear'
   | 'file_parse_start'
   | 'file_parse_end'
   | 'file_parse_error'
