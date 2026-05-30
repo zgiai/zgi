@@ -385,7 +385,32 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
           <Alert variant="destructive">
             <AlertCircle className="h-4 w-4" />
             <AlertTitle>{t('detail.processingError')}</AlertTitle>
-            <AlertDescription>{detail.error?.message || file.last_error_message}</AlertDescription>
+            <AlertDescription>
+              <div>{detail.error?.message || file.last_error_message}</div>
+              {status === 'parse_failed' ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {canReparse ? (
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      className="gap-2"
+                      onClick={() => setReparseConfirmOpen(true)}
+                    >
+                      <RefreshCw className="h-4 w-4" />
+                      {t('detail.reparse.action')}
+                    </Button>
+                  ) : null}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled
+                    title={t('detail.failure.storeOnlyUnavailable')}
+                  >
+                    {t('detail.failure.storeOnly')}
+                  </Button>
+                </div>
+              ) : null}
+            </AlertDescription>
           </Alert>
         </div>
       ) : null}

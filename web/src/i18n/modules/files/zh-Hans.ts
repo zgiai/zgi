@@ -242,6 +242,10 @@ const messages: FilesMessages = {
         failed: '重新解析请求提交失败',
       },
     },
+    failure: {
+      storeOnly: '转为仅存储',
+      storeOnlyUnavailable: '该操作需要后端状态转换接口，当前阶段尚未开放。',
+    },
     views: {
       storedOnly: {
         title: '仅存储',

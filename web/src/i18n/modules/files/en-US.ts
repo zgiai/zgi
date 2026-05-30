@@ -248,6 +248,10 @@ const messages = {
         failed: 'Failed to submit reparse request',
       },
     },
+    failure: {
+      storeOnly: 'Mark as Stored Only',
+      storeOnlyUnavailable: 'This requires a backend status transition API and is not available yet.',
+    },
     views: {
       storedOnly: {
         title: 'Stored only',
