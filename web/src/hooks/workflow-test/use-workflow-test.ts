@@ -226,9 +226,9 @@ export function useUpdateWorkflowTestCase(agentId: string, options?: { silent?: 
     mutationFn: ({ caseId, data }: { caseId: string; data: UpdateWorkflowTestCaseRequest }) =>
       workflowTestService.updateCase(agentId, caseId, data),
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: WORKFLOW_TEST_KEYS.all });
       if (!options?.silent) {
         toast.success(t('caseUpdated'));
-        queryClient.invalidateQueries({ queryKey: WORKFLOW_TEST_KEYS.all });
       }
     },
     onError: error => {

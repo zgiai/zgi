@@ -7,6 +7,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
@@ -23,6 +24,7 @@ import {
   useWorkflowTestScenarios,
 } from '@/hooks/workflow-test/use-workflow-test';
 import { useT } from '@/i18n';
+import { cn } from '@/lib/utils';
 import { getErrorMessage } from '@/utils/error-notifications';
 import { formatWorkflowElapsedMs } from '@/utils/format';
 import type { WorkflowTestBatch, WorkflowTestBatchItem } from '@/services/types/workflow-test';
@@ -36,7 +38,6 @@ interface BatchResultDetailProps {
 type BatchStatusKey = 'queued' | 'running' | 'completed' | 'stopped' | 'canceled';
 type BatchItemStatusKey = 'pending' | 'running' | 'passed' | 'failed' | 'review' | 'canceled';
 type SummaryKey = 'running' | 'allPassed' | 'hasIssues';
-type WorkflowVersionLabelKey = 'currentDraft' | 'latestPublished' | 'specificPublished';
 
 function itemStatusLabel(status: string, t: (key: BatchItemStatusKey) => string, none: string) {
   const map: Record<string, string> = {
@@ -67,23 +68,6 @@ function batchStatusLabel(status: string, t: (key: BatchStatusKey) => string, no
     canceled: t('canceled'),
   };
   return map[status] || status || none;
-}
-
-function workflowVersionLabel(
-  label: string,
-  mode: string,
-  t: (key: WorkflowVersionLabelKey) => string,
-  none: string
-) {
-  const value = label || mode;
-  const map: Record<string, WorkflowVersionLabelKey> = {
-    current_draft: 'currentDraft',
-    draft: 'currentDraft',
-    latest_published: 'latestPublished',
-    specific_published: 'specificPublished',
-  };
-  const key = map[value];
-  return key ? t(key) : value || none;
 }
 
 function stringifyOutput(outputs: Record<string, unknown>, none: string) {
@@ -150,7 +134,6 @@ export function BatchResultDetail({ agentId, batchId, agentName }: BatchResultDe
   const batchStatusT = useT('agents.workflowTest.batchStatus');
   const summaryT = useT('agents.workflowTest.detail.summary');
   const itemStatusT = useT('agents.workflowTest.detail.itemStatus');
-  const workflowVersionT = useT('agents.workflowTest.detail.workflowVersion');
   const {
     data: batchesData,
     isLoading: batchesLoading,
@@ -165,6 +148,7 @@ export function BatchResultDetail({ agentId, batchId, agentName }: BatchResultDe
   } = useWorkflowTestBatchItems(agentId, batchId);
   const { data: scenariosData } = useWorkflowTestScenarios(agentId);
   const retestBatch = useRetestWorkflowTestBatch(agentId);
+  const [retestConfirmOpen, setRetestConfirmOpen] = React.useState(false);
   const batches = batchesData?.data?.items ?? [];
   const batch = batches.find(item => item.id === batchId);
   const items = itemsData?.data?.items ?? [];
@@ -181,6 +165,22 @@ export function BatchResultDetail({ agentId, batchId, agentName }: BatchResultDe
     },
     [commonT, scenarioNameById]
   );
+  const buildRetestName = React.useCallback(
+    (batchName: string) => {
+      const baseName = batchName.replace(/\s+重新测试\d*$/, '');
+      const escapedBaseName = baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const retestPattern = new RegExp(`^${escapedBaseName}\\s+重新测试(\\d+)?$`);
+      const maxIndex = batches.reduce((max, existingBatch) => {
+        const match = existingBatch.name.match(retestPattern);
+        if (!match) return max;
+        return Math.max(max, Number(match[1] || 1));
+      }, 1);
+
+      return commonT('retestName', { name: baseName, index: maxIndex + 1 });
+    },
+    [batches, commonT]
+  );
+  const executionErrorCount = items.filter(item => item.error).length;
 
   if (isLoading) {
     return (
@@ -259,29 +259,13 @@ export function BatchResultDetail({ agentId, batchId, agentName }: BatchResultDe
                     </div>
                   </div>
                 </div>
-                <div className="mt-4 text-sm text-slate-600">
-                  <span className="text-slate-500">{t('workflowVersionLabel')}</span>
-                  <span className="font-medium text-slate-950">
-                    {workflowVersionLabel(
-                      batch.workflow_version_label,
-                      batch.workflow_version_mode,
-                      workflowVersionT,
-                      commonT('none')
-                    )}
-                  </span>
-                </div>
               </div>
               <Button
                 variant="outline"
                 disabled={
                   batch.status === 'queued' || batch.status === 'running' || retestBatch.isPending
                 }
-                onClick={() =>
-                  retestBatch.mutate({
-                    batchId: batch.id,
-                    data: { name: commonT('retestName', { name: batch.name }) },
-                  })
-                }
+                onClick={() => setRetestConfirmOpen(true)}
               >
                 {commonT('retest')}
               </Button>
@@ -302,12 +286,21 @@ export function BatchResultDetail({ agentId, batchId, agentName }: BatchResultDe
                   </span>
                 </div>
               </div>
-              <div className="rounded-lg bg-slate-50 p-4">
+              <div
+                className={cn(
+                  'rounded-lg border p-4',
+                  executionErrorCount > 0
+                    ? 'border-amber-200 bg-amber-50 text-amber-900'
+                    : 'border-slate-200 bg-slate-50 text-slate-700'
+                )}
+              >
                 <div className="text-slate-500">{t('executionErrors')}</div>
                 <div className="mt-2 text-lg font-semibold text-slate-950">
-                  {items.filter(item => item.error).length}
+                  {executionErrorCount}
                 </div>
-                <div className="mt-1 text-xs text-slate-500">{commonT('none')}</div>
+                <div className="mt-1 text-xs text-slate-500">
+                  {executionErrorCount > 0 ? t('executionErrorsDescription') : commonT('none')}
+                </div>
               </div>
             </div>
 
@@ -324,6 +317,26 @@ export function BatchResultDetail({ agentId, batchId, agentName }: BatchResultDe
             </div>
           </CardContent>
         </Card>
+        <ConfirmDialog
+          open={retestConfirmOpen}
+          onOpenChange={open => {
+            if (!open && !retestBatch.isPending) setRetestConfirmOpen(false);
+          }}
+          title={t('retestConfirmTitle')}
+          description={t('retestConfirmDescription')}
+          confirmText={commonT('retest')}
+          cancelText={commonT('cancel')}
+          loading={retestBatch.isPending}
+          onConfirm={() =>
+            retestBatch.mutate(
+              {
+                batchId: batch.id,
+                data: { name: buildRetestName(batch.name) },
+              },
+              { onSuccess: () => setRetestConfirmOpen(false) }
+            )
+          }
+        />
 
         <Card className="rounded-2xl">
           <CardHeader>

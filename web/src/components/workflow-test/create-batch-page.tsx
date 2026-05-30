@@ -177,8 +177,6 @@ export function CreateBatchPage({ agentId, agentName, agentDescription }: Create
           <p className="mt-3 max-w-3xl text-sm text-slate-600">{t('description')}</p>
           <div className="mt-4 flex items-center gap-2 text-sm text-slate-500">
             <Badge variant="outline">{commonT('chatWorkflow')}</Badge>
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            <span>{commonT('currentDraftSnapshot')}</span>
             {agentDescription ? <span className="truncate text-slate-400">{agentDescription}</span> : null}
           </div>
         </section>

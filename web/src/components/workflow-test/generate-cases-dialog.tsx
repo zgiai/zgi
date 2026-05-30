@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -15,7 +16,7 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Badge } from '@/components/ui/badge';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ModelSelector } from '@/components/common/model-selector';
 import type { ModelSelectorValue } from '@/components/common/model-selector';
 import { useCreateWorkflowTestGenerationTask } from '@/hooks/workflow-test/use-workflow-test';
@@ -63,7 +64,6 @@ export function GenerateCasesDialog({
   const [turnStrategy, setTurnStrategy] = React.useState<'mixed' | 'single' | 'multi'>('mixed');
   const [model, setModel] = React.useState<ModelSelectorValue | null>(null);
   const [prompt, setPrompt] = React.useState('');
-  const [context, setContext] = React.useState('');
   const scenarioSelectionTouchedRef = React.useRef(false);
 
   React.useEffect(() => {
@@ -85,7 +85,6 @@ export function GenerateCasesDialog({
     setQuestionTypes(DEFAULT_QUESTION_TYPES);
     setTurnStrategy('mixed');
     setPrompt('');
-    setContext('');
     scenarioSelectionTouchedRef.current = false;
   }, [open]);
 
@@ -133,7 +132,11 @@ export function GenerateCasesDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent size="lg" className="w-[calc(100vw-32px)] max-w-[800px] rounded-2xl">
+      <DialogContent
+        size="lg"
+        className="w-[calc(100vw-32px)] max-w-[800px] rounded-2xl"
+        onInteractOutside={event => event.preventDefault()}
+      >
         <DialogHeader>
           <DialogTitle>{t('title')}</DialogTitle>
           <DialogDescription>{t('description')}</DialogDescription>
@@ -227,7 +230,25 @@ export function GenerateCasesDialog({
           </section>
 
           <section className="space-y-3">
-            <Label>{t('turnStrategyLabel')}</Label>
+            <div className="flex items-center gap-2">
+              <Label>{t('turnStrategyLabel')}</Label>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    className="inline-flex size-5 items-center justify-center rounded-full text-slate-400 transition-colors hover:text-slate-700"
+                    aria-label={t('turnStrategyHelpLabel')}
+                  >
+                    <Info className="size-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="top" align="start" className="max-w-sm space-y-1 text-sm leading-6">
+                  <p>{t('turnStrategyHelpMixed')}</p>
+                  <p>{t('turnStrategyHelpSingle')}</p>
+                  <p>{t('turnStrategyHelpMulti')}</p>
+                </TooltipContent>
+              </Tooltip>
+            </div>
             <div className="grid grid-cols-3 gap-3">
               {TURN_STRATEGIES.map(item => (
                 <Button
@@ -272,27 +293,6 @@ export function GenerateCasesDialog({
             />
           </section>
 
-          <section className="space-y-3">
-            <Label htmlFor="workflow-test-generate-context">{t('contextLabel')}</Label>
-            <Textarea
-              id="workflow-test-generate-context"
-              value={context}
-              onChange={event => setContext(event.target.value)}
-              placeholder={t('contextPlaceholder')}
-              className="min-h-24 resize-none"
-            />
-          </section>
-
-          <div className="flex flex-wrap gap-2">
-            {scenarioIds.length > 0 ? (
-              <Badge variant="outline">{t('selectedScenarioCount', { count: scenarioIds.length })}</Badge>
-            ) : null}
-            {questionTypes.length > 0 ? (
-              <Badge variant="outline">
-                {t('selectedQuestionTypeCount', { count: questionTypes.length })}
-              </Badge>
-            ) : null}
-          </div>
         </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
@@ -308,7 +308,6 @@ export function GenerateCasesDialog({
                 question_types: questionTypes,
                 turn_strategy: turnStrategy,
                 prompt,
-                context,
                 model: {
                   provider: model.provider,
                   name: model.model,

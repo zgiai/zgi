@@ -903,10 +903,9 @@ const messages = {
       loading: 'Loading...',
       none: '-',
       chatWorkflow: 'Chatflow',
-      currentDraftSnapshot: 'Version: current draft',
       attachmentsIncluded: 'Includes file / image input',
       retest: 'Retest',
-      retestName: '{name} Retest',
+      retestName: '{name} Retest {index}',
       cancelTest: 'Cancel test',
     },
     overview: {
@@ -982,6 +981,10 @@ const messages = {
         generationFailedTitle: 'Failed to generate {count} test questions',
         generationFailedDescription: '{created} were created. Error: {error}',
         clearSelection: 'Clear Selection',
+        turnCount: '{count} turns',
+        expandTurns: 'Expand',
+        collapseTurns: 'Collapse',
+        turnTitle: 'Turn {index}:',
         deleteConfirmTitle: 'Delete test question?',
         deleteConfirmDescription:
           'The question will be removed from the library. Existing historical test batches are not affected.',
@@ -996,7 +999,10 @@ const messages = {
         empty: 'No test batches yet.',
         filteredEmpty: 'No test batches match the filters.',
         createdAt: 'Created at',
-        retestName: '{name} Retest',
+        retestName: '{name} Retest {index}',
+        retestConfirmTitle: 'Confirm retest?',
+        retestConfirmDescription:
+          'The system will create and run a new test batch from this batch snapshot. The original result will be kept.',
         activeTitle: 'A batch is currently running: {name}',
         activeProgress: '{done} / {total} executed',
       },
@@ -1146,17 +1152,19 @@ const messages = {
         turnStrategyMixed: 'Single + Multi-turn',
         turnStrategySingle: 'Single-turn',
         turnStrategyMulti: 'Multi-turn',
-        selectedScenarioCount: 'Selected {count} business scenarios',
-        selectedQuestionTypeCount: 'Selected {count} question types',
+        turnStrategyHelpLabel: 'Conversation turn strategy help',
+        turnStrategyHelpMixed:
+          'Single + multi-turn: generate both single-turn and multi-turn conversation cases.',
+        turnStrategyHelpSingle:
+          'Single-turn: generate one-question, one-response test cases only.',
+        turnStrategyHelpMulti:
+          'Multi-turn: generate test cases with follow-up questions and carried context only.',
         modelLabel: 'Generation Model',
         modelPlaceholder: 'Select generation model',
         promptLabel: 'Generation Prompt Template',
         promptPlaceholder: 'Enter the generation prompt template',
         promptDefault:
           'Generate candidate test questions for the question library based on the current agent workflow, recognized business scenarios, and existing test questions.\n\nRequirements:\n1. Use the current UI language for all questions and expected results.\n2. Generate test inputs, not demo questions, feature checklists, or standard answers.\n3. Make each question sound like a real user request, not a test script or feature checklist.\n4. User input must not contain internal system terms such as "test case", "node", "branch", "workflow", "path", "scenario ID", or "scoring criteria".\n5. Do not output an expected workflow path.\n6. Cover the selected business scenarios evenly across high-frequency, critical, abnormal, boundary, and fallback cases. Avoid duplicate wording.\n7. Match the selected question types: core questions cover the main path, extension questions cover nearby expressions, fuzzy questions cover missing information, ambiguous intent, abnormal input, or fallback needs, and human intervention questions cover requests that require human handoff, manual confirmation, escalation, or offline handling.\n8. Add an expected result for each question that describes how the agent should handle it. Do not write only "answer correctly", "handle properly", or "complete the task".\n9. Keep each question concise when possible.\n10. Return a JSON object in this format: \'{\'"cases":[\'{\'"scenario_id":"Scenario ID","content":"Question content","expected_result":"Expected result","question_type":"core"\'}\']\'}\'',
-        contextLabel: 'Business Context',
-        contextPlaceholder:
-          'Describe the agent purpose, key business scenarios, and expected user inputs.',
         submit: 'Generate Questions',
         submitting: 'Generating...',
         startedBanner: 'Generating {count} test questions. Please wait.',
@@ -1218,6 +1226,8 @@ const messages = {
       failed: 'Failed {count}',
       review: 'Needs Review {count}',
       executionErrors: 'Execution Errors',
+      executionErrorsDescription:
+        'Execution errors belong to the test pipeline. Review the error details first.',
       aiSummary: 'AI Summary:',
       itemListTitle: 'Single-question Result List',
       itemListDescription:
@@ -1242,6 +1252,8 @@ const messages = {
       passConclusion: 'Pass Conclusion',
       passedReasonFallback: 'This test passed.',
       conversationContent: 'Conversation',
+      userQuestion: 'User Question',
+      agentReply: 'Agent Reply',
       systemReply: 'System Reply',
       rawData: 'Raw Data',
       rawOutput: 'Raw Output',
@@ -1258,12 +1270,9 @@ const messages = {
       suggestionLabel: 'Improvement Suggestion',
       errorInfo: 'Execution Error',
       workflowRunId: 'Run ID',
-      workflowVersionLabel: 'Test Version: ',
-      workflowVersion: {
-        currentDraft: 'Current Draft',
-        latestPublished: 'Latest Published Version',
-        specificPublished: 'Specific Published Version',
-      },
+      retestConfirmTitle: 'Confirm retest?',
+      retestConfirmDescription:
+        'The system will create and run a new test batch from this batch snapshot. The original result will be kept.',
       table: {
         questionContent: 'Question',
         scenario: 'Scenario',

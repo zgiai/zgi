@@ -338,9 +338,8 @@ function fallbackExecutionStepMeta(nodeId: string): WorkflowDraftNodeMeta {
   return { id: nodeId, title: nodeId, type: '' };
 }
 
-function buildTurnTitle(role: string, index: number) {
-  const roleLabel = role || 'user';
-  return `第 ${index + 1} 轮 · ${roleLabel}`;
+function buildTurnTitle(index: number) {
+  return `第 ${index + 1} 轮`;
 }
 
 interface TurnResultSnapshot {
@@ -687,19 +686,19 @@ export function BatchResultItemDetailPage({
                       <div key={`${turn.workflowRunId || 'turn'}-${turn.turnIndex}`} className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
                         <div className="flex items-center justify-between gap-3">
                           <div className="text-base font-medium text-slate-950">
-                            {buildTurnTitle(turnSnapshot?.role || 'user', index)}
+                            {buildTurnTitle(index)}
                           </div>
                           <Badge variant="outline">{turn.workflowRunId || `第 ${turn.turnIndex} 轮`}</Badge>
                         </div>
                         <div className="mt-3 space-y-3">
                           <div className="rounded-xl border border-slate-200 bg-white p-4">
-                            <div className="mb-2 text-xs font-medium text-slate-500">{t('questionSnapshot')}</div>
+                            <div className="mb-2 text-xs font-medium text-slate-500">{t('userQuestion')}</div>
                             <div className="whitespace-pre-wrap text-sm text-slate-800">
                               {turn.content || turnSnapshot?.content || commonT('none')}
                             </div>
                           </div>
                           <div className="rounded-xl border border-slate-200 bg-white p-4">
-                            <div className="mb-2 text-xs font-medium text-slate-500">{t('systemReply')}</div>
+                            <div className="mb-2 text-xs font-medium text-slate-500">{t('agentReply')}</div>
                             <div className="whitespace-pre-wrap text-sm text-slate-800">
                               {turn.answer || commonT('none')}
                             </div>
