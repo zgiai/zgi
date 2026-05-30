@@ -13,6 +13,8 @@ GET {{base_url}}/health
 
 [Asserts]
 status == 200
+runtime_backend == "preview-process"
+network_policy_enforced == false
 ```
 
 ```step

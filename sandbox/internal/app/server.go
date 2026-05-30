@@ -42,6 +42,10 @@ type Server struct {
 }
 
 func NewServer(cfg config.Config) (*Server, error) {
+	if err := cfg.ValidateStartup(); err != nil {
+		return nil, err
+	}
+
 	store, err := storage.Open(cfg)
 	if err != nil {
 		return nil, err
@@ -127,6 +131,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		"service":                 "zgi-sandbox",
 		"version":                 "session-v2",
 		"worker_id":               s.config.WorkerID,
+		"environment":             s.config.Environment,
 		"runtime_backend":         s.policy.RuntimeBackend(),
 		"network_policy_enforced": s.policy.NetworkPolicyEnforced(),
 	})

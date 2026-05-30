@@ -381,23 +381,11 @@ func (s *Service) networkPolicyAllowsEgress(policyName string) bool {
 }
 
 func (s *Service) runtimeBackendEnforcesNetworkPolicy() bool {
-	switch s.normalizedRuntimeBackend() {
-	case "linux-secure":
-		return true
-	default:
-		return false
-	}
+	return s.config.NetworkPolicyEnforced()
 }
 
 func (s *Service) normalizedRuntimeBackend() string {
-	switch strings.ToLower(strings.TrimSpace(s.config.RuntimeBackend)) {
-	case "", "preview", "process", "preview-process":
-		return "preview-process"
-	case "linux-secure":
-		return "linux-secure"
-	default:
-		return strings.ToLower(strings.TrimSpace(s.config.RuntimeBackend))
-	}
+	return s.config.RuntimeBackendName()
 }
 
 func defaultString(value string, fallback string) string {

@@ -1,8 +1,10 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"strings"
 )
 
 type Config struct {
@@ -25,6 +27,7 @@ type Config struct {
 	WorkerID       string
 	AdvertiseURL   string
 	PublicBaseURL  string
+	Environment    string
 	RuntimeBackend string
 	SecureRootFS   string
 	BwrapBinary    string
@@ -56,11 +59,43 @@ func FromEnv() Config {
 		WorkerID:       workerID,
 		AdvertiseURL:   advertiseURL,
 		PublicBaseURL:  getEnv("ZGI_SANDBOX_PUBLIC_BASE_URL", advertiseURL),
+		Environment:    getEnv("ZGI_SANDBOX_ENV", "local"),
 		RuntimeBackend: getEnv("ZGI_SANDBOX_RUNTIME_BACKEND", "preview"),
 		SecureRootFS:   getEnv("ZGI_SANDBOX_SECURE_ROOTFS", ""),
 		BwrapBinary:    getEnv("ZGI_SANDBOX_BWRAP_BINARY", "bwrap"),
 		ProxyTimeout:   getEnvInt("ZGI_SANDBOX_PROXY_TIMEOUT_SECONDS", 20),
 	}
+}
+
+func (c Config) ValidateStartup() error {
+	if c.IsProduction() && !c.NetworkPolicyEnforced() {
+		return errors.New("production sandbox deployments require a runtime backend that enforces network policy")
+	}
+	return nil
+}
+
+func (c Config) IsProduction() bool {
+	switch strings.ToLower(strings.TrimSpace(c.Environment)) {
+	case "production", "prod":
+		return true
+	default:
+		return false
+	}
+}
+
+func (c Config) RuntimeBackendName() string {
+	switch strings.ToLower(strings.TrimSpace(c.RuntimeBackend)) {
+	case "", "preview", "process", "preview-process":
+		return "preview-process"
+	case "linux-secure":
+		return "linux-secure"
+	default:
+		return strings.ToLower(strings.TrimSpace(c.RuntimeBackend))
+	}
+}
+
+func (c Config) NetworkPolicyEnforced() bool {
+	return c.RuntimeBackendName() == "linux-secure"
 }
 
 func getEnv(key string, fallback string) string {

@@ -30,6 +30,9 @@ func TestHealthEndpoint(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), `"runtime_backend":"preview-process"`) {
 		t.Fatalf("expected normalized runtime backend in health, got %s", rr.Body.String())
 	}
+	if !strings.Contains(rr.Body.String(), `"environment":"local"`) {
+		t.Fatalf("expected environment in health, got %s", rr.Body.String())
+	}
 	if !strings.Contains(rr.Body.String(), `"network_policy_enforced":false`) {
 		t.Fatalf("expected network enforcement flag in health, got %s", rr.Body.String())
 	}
@@ -78,6 +81,16 @@ func TestRunEndpointRejectsPreviewNetworkRequest(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "does not enforce network policy") {
 		t.Fatalf("expected network enforcement error, got %s", rr.Body.String())
+	}
+}
+
+func TestServerRejectsProductionPreviewBackend(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.Environment = "production"
+	cfg.RuntimeBackend = "preview"
+
+	if _, err := NewServer(cfg); err == nil {
+		t.Fatal("expected production preview backend to be rejected")
 	}
 }
 
@@ -238,6 +251,7 @@ func testConfig(t *testing.T) config.Config {
 	cfg.WorkerID = "test-worker"
 	cfg.AdvertiseURL = "http://127.0.0.1:2660"
 	cfg.PublicBaseURL = cfg.AdvertiseURL
+	cfg.Environment = "local"
 	cfg.RedisAddr = ""
 	cfg.RuntimeBackend = "preview"
 	return cfg
