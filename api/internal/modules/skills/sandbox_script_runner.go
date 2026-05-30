@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -110,7 +111,8 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 		return &ToolInvocationResult{Trace: trace}, err
 	}
 
-	messages, content, err := skillScriptMessages(command)
+	artifacts, artifactErr := r.collectArtifacts(ctx, sandboxID)
+	messages, content, err := skillScriptMessages(command, artifacts, artifactErr)
 	trace.DurationMS = time.Since(start).Milliseconds()
 	if command.ExitCode != 0 {
 		err = fmt.Errorf("skill script exited with code %d: %s", command.ExitCode, strings.TrimSpace(command.Error))
@@ -184,6 +186,51 @@ func (r *SandboxScriptRunner) deleteSandbox(ctx context.Context, sandboxID strin
 	return r.doJSON(ctx, http.MethodDelete, "/v1/sandboxes/"+sandboxID, nil, nil)
 }
 
+func (r *SandboxScriptRunner) collectArtifacts(ctx context.Context, sandboxID string) ([]skillScriptArtifact, error) {
+	var tree struct {
+		Items []sandboxFileInfo `json:"items"`
+	}
+	path := "/v1/files/tree?sandbox_id=" + url.QueryEscape(sandboxID)
+	if err := r.doJSON(ctx, http.MethodGet, path, nil, &tree); err != nil {
+		return nil, err
+	}
+
+	artifacts := make([]skillScriptArtifact, 0)
+	for _, item := range tree.Items {
+		if item.IsDirectory || !strings.HasPrefix(filepath.ToSlash(item.Path), "artifacts/") {
+			continue
+		}
+		if len(artifacts) >= 10 {
+			break
+		}
+		artifact := skillScriptArtifact{
+			Path: item.Path,
+			Name: filepath.Base(item.Path),
+			Size: item.Size,
+		}
+		if item.Size <= 32*1024 {
+			content, err := r.downloadArtifact(ctx, sandboxID, item.Path)
+			if err != nil {
+				artifact.Error = err.Error()
+			} else {
+				artifact.Content = content.Content
+				artifact.Encoding = content.Encoding
+			}
+		}
+		artifacts = append(artifacts, artifact)
+	}
+	return artifacts, nil
+}
+
+func (r *SandboxScriptRunner) downloadArtifact(ctx context.Context, sandboxID string, path string) (*sandboxFileContent, error) {
+	var content sandboxFileContent
+	endpoint := "/v1/files/download?sandbox_id=" + url.QueryEscape(sandboxID) + "&path=" + url.QueryEscape(path) + "&encoding=base64"
+	if err := r.doJSON(ctx, http.MethodGet, endpoint, nil, &content); err != nil {
+		return nil, err
+	}
+	return &content, nil
+}
+
 func (r *SandboxScriptRunner) doJSON(ctx context.Context, method string, path string, payload interface{}, out interface{}) error {
 	var body io.Reader
 	if payload != nil {
@@ -244,6 +291,27 @@ type sandboxCommandResult struct {
 	Command    string   `json:"command"`
 	Args       []string `json:"args"`
 	Backend    string   `json:"backend"`
+}
+
+type sandboxFileInfo struct {
+	Path        string `json:"path"`
+	Size        int64  `json:"size"`
+	IsDirectory bool   `json:"is_directory"`
+}
+
+type sandboxFileContent struct {
+	Path     string `json:"path"`
+	Content  string `json:"content"`
+	Encoding string `json:"encoding"`
+}
+
+type skillScriptArtifact struct {
+	Path     string `json:"path"`
+	Name     string `json:"name"`
+	Size     int64  `json:"size"`
+	Content  string `json:"content,omitempty"`
+	Encoding string `json:"encoding,omitempty"`
+	Error    string `json:"error,omitempty"`
 }
 
 func zipSkillDirectoryBase64(root string) (string, error) {
@@ -315,7 +383,7 @@ func skillScriptEnv(execCtx ExecutionContext) map[string]string {
 	return env
 }
 
-func skillScriptMessages(command *sandboxCommandResult) ([]tools.ToolInvokeMessage, string, error) {
+func skillScriptMessages(command *sandboxCommandResult, artifacts []skillScriptArtifact, artifactErr error) ([]tools.ToolInvokeMessage, string, error) {
 	if command == nil {
 		return nil, "", fmt.Errorf("sandbox command result is empty")
 	}
@@ -340,6 +408,36 @@ func skillScriptMessages(command *sandboxCommandResult) ([]tools.ToolInvokeMessa
 		messages = append(messages, tools.ToolInvokeMessage{
 			Type: tools.ToolInvokeMessageTypeLog,
 			Text: "skill script output was truncated",
+		})
+	}
+	if len(artifacts) > 0 {
+		items := make([]map[string]interface{}, 0, len(artifacts))
+		for _, artifact := range artifacts {
+			item := map[string]interface{}{
+				"path": artifact.Path,
+				"name": artifact.Name,
+				"size": artifact.Size,
+			}
+			if artifact.Encoding != "" {
+				item["encoding"] = artifact.Encoding
+			}
+			if artifact.Content != "" {
+				item["content"] = artifact.Content
+			}
+			if artifact.Error != "" {
+				item["error"] = artifact.Error
+			}
+			items = append(items, item)
+		}
+		messages = append(messages, tools.ToolInvokeMessage{
+			Type: tools.ToolInvokeMessageTypeJSON,
+			Data: map[string]interface{}{"artifacts": items},
+		})
+	}
+	if artifactErr != nil {
+		messages = append(messages, tools.ToolInvokeMessage{
+			Type: tools.ToolInvokeMessageTypeLog,
+			Text: "failed to collect skill script artifacts: " + artifactErr.Error(),
 		})
 	}
 	contentBytes, err := json.Marshal(messages)

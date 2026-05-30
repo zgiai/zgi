@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
 
 func TestRuntimeLoadsCustomScriptSkillWhenRunnerConfigured(t *testing.T) {
@@ -77,6 +79,21 @@ func TestSandboxScriptRunnerRunsSkillPackage(t *testing.T) {
 				"truncated":   false,
 				"command":     "python3",
 			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/files/tree":
+			writeSandboxEnvelope(t, w, map[string]interface{}{
+				"items": []map[string]interface{}{
+					{"path": "artifacts/report.txt", "size": 8, "is_directory": false},
+				},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/files/download":
+			if r.URL.Query().Get("path") != "artifacts/report.txt" || r.URL.Query().Get("encoding") != "base64" {
+				t.Fatalf("unexpected download query: %s", r.URL.RawQuery)
+			}
+			writeSandboxEnvelope(t, w, map[string]interface{}{
+				"path":     "artifacts/report.txt",
+				"content":  "cmVwb3J0Cg==",
+				"encoding": "base64",
+			})
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/sandboxes/sbx_test":
 			deleted = true
 			writeSandboxEnvelope(t, w, map[string]interface{}{"deleted": true})
@@ -97,6 +114,9 @@ func TestSandboxScriptRunnerRunsSkillPackage(t *testing.T) {
 	}
 	if result == nil || result.Trace.Status != "success" || len(result.Messages) == 0 {
 		t.Fatalf("unexpected invocation result: %+v", result)
+	}
+	if !messagesContainArtifacts(result.Messages) {
+		t.Fatalf("expected artifact message, got %+v", result.Messages)
 	}
 	if !deleted {
 		t.Fatal("expected sandbox to be deleted")
@@ -122,6 +142,9 @@ func TestSandboxScriptRunnerRealSandboxE2E(t *testing.T) {
 	if len(result.Messages) == 0 || result.Messages[0].Data["echo"] != "hello" {
 		t.Fatalf("unexpected real sandbox result: %+v", result.Messages)
 	}
+	if !messagesContainArtifacts(result.Messages) {
+		t.Fatalf("expected real sandbox artifact message, got %+v", result.Messages)
+	}
 }
 
 func writeTestScriptSkill(t *testing.T) string {
@@ -139,10 +162,22 @@ Use the script to process structured input.
 	if err := os.MkdirAll(filepath.Join(root, "scripts"), 0o755); err != nil {
 		t.Fatalf("mkdir scripts: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "scripts", "run.py"), []byte("import json, sys\nargs = json.loads(sys.stdin.read() or '{}')\nprint(json.dumps({'echo': args.get('input', '')}))\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "scripts", "run.py"), []byte("import json, os, sys\nargs = json.loads(sys.stdin.read() or '{}')\nos.makedirs('artifacts', exist_ok=True)\nopen('artifacts/report.txt', 'w').write('report\\n')\nprint(json.dumps({'echo': args.get('input', '')}))\n"), 0o644); err != nil {
 		t.Fatalf("write script: %v", err)
 	}
 	return root
+}
+
+func messagesContainArtifacts(messages []tools.ToolInvokeMessage) bool {
+	for _, message := range messages {
+		if artifacts, ok := message.Data["artifacts"].([]map[string]interface{}); ok && len(artifacts) > 0 {
+			return true
+		}
+		if raw, ok := message.Data["artifacts"].([]interface{}); ok && len(raw) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func decodeJSON(t *testing.T, r *http.Request, out interface{}) {
