@@ -25,6 +25,7 @@ var (
 
 type ParseArtifactPersistenceService interface {
 	PersistAssetParseArtifact(ctx context.Context, input PersistAssetParseArtifactInput) (*PersistAssetParseArtifactResult, error)
+	UpdateAssetParseArtifact(ctx context.Context, input UpdateAssetParseArtifactInput) (*UpdateAssetParseArtifactResult, error)
 	LoadParseArtifact(ctx context.Context, storageKey string) (*contracts.ParseArtifact, error)
 }
 
@@ -41,6 +42,22 @@ type PersistAssetParseArtifactInput struct {
 }
 
 type PersistAssetParseArtifactResult struct {
+	Asset              *model.DocumentAsset
+	Artifact           *contentparsemodel.Artifact
+	ArtifactStorageKey string
+}
+
+type UpdateAssetParseArtifactInput struct {
+	OrganizationID  string
+	AssetID         uuid.UUID
+	ProcessingRunID uuid.UUID
+	GenerationNo    int64
+	ArtifactID      uuid.UUID
+	Artifact        *contracts.ParseArtifact
+	SummaryPatch    map[string]any
+}
+
+type UpdateAssetParseArtifactResult struct {
 	Asset              *model.DocumentAsset
 	Artifact           *contentparsemodel.Artifact
 	ArtifactStorageKey string
@@ -126,6 +143,70 @@ func (s *parseArtifactPersistenceService) PersistAssetParseArtifact(ctx context.
 	}, nil
 }
 
+func (s *parseArtifactPersistenceService) UpdateAssetParseArtifact(ctx context.Context, input UpdateAssetParseArtifactInput) (*UpdateAssetParseArtifactResult, error) {
+	if input.OrganizationID == "" {
+		return nil, ErrOrganizationIDRequired
+	}
+	if input.AssetID == uuid.Nil || input.ArtifactID == uuid.Nil {
+		return nil, ErrAssetIDRequired
+	}
+	if input.ProcessingRunID == uuid.Nil || input.GenerationNo <= 0 {
+		return nil, ErrProcessingRunMismatch
+	}
+	if input.Artifact == nil {
+		return nil, ErrParseArtifactRequired
+	}
+	if s.storage == nil {
+		return nil, ErrArtifactStorageRequired
+	}
+	asset, err := s.assets.GetAssetByID(ctx, input.AssetID)
+	if err != nil {
+		return nil, err
+	}
+	if asset == nil || asset.OrganizationID != input.OrganizationID {
+		return nil, ErrDocumentAssetNotFound
+	}
+	if asset.ProcessingRunID == nil ||
+		*asset.ProcessingRunID != input.ProcessingRunID ||
+		asset.GenerationNo != input.GenerationNo ||
+		asset.ParseArtifactID == nil ||
+		*asset.ParseArtifactID != input.ArtifactID {
+		return nil, ErrProcessingRunMismatch
+	}
+	item, err := s.artifacts.GetByID(ctx, input.ArtifactID)
+	if err != nil {
+		return nil, err
+	}
+	if item == nil {
+		return nil, ErrParsePreviewNotReady
+	}
+
+	input.Artifact.ArtifactID = item.ID.String()
+	storageKey := parseArtifactConfirmedStorageKey(input.OrganizationID, input.AssetID, input.GenerationNo, input.ProcessingRunID, item.ID)
+	payload, err := json.Marshal(input.Artifact)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.storage.Save(storageKey, payload); err != nil {
+		return nil, err
+	}
+	summary := cloneAnyMap(item.SummaryJSON)
+	for key, value := range input.SummaryPatch {
+		summary[key] = value
+	}
+	if err := s.artifacts.UpdateStorageKeyAndSummary(ctx, item.ID, storageKey, summary); err != nil {
+		return nil, err
+	}
+	item.ArtifactStorageKey = storageKey
+	item.SummaryJSON = summary
+
+	return &UpdateAssetParseArtifactResult{
+		Asset:              asset,
+		Artifact:           item,
+		ArtifactStorageKey: storageKey,
+	}, nil
+}
+
 func (s *parseArtifactPersistenceService) LoadParseArtifact(ctx context.Context, storageKey string) (*contracts.ParseArtifact, error) {
 	key := strings.TrimSpace(storageKey)
 	if key == "" {
@@ -188,6 +269,17 @@ func (s *parseArtifactPersistenceService) buildArtifactRecord(input PersistAsset
 func parseArtifactStorageKey(organizationID string, assetID uuid.UUID, generationNo int64, processingRunID uuid.UUID, artifactID uuid.UUID) string {
 	return fmt.Sprintf(
 		"data_library/parse_artifacts/%s/%s/%d/%s/%s.json",
+		strings.TrimSpace(organizationID),
+		assetID.String(),
+		generationNo,
+		processingRunID.String(),
+		artifactID.String(),
+	)
+}
+
+func parseArtifactConfirmedStorageKey(organizationID string, assetID uuid.UUID, generationNo int64, processingRunID uuid.UUID, artifactID uuid.UUID) string {
+	return fmt.Sprintf(
+		"data_library/parse_artifacts/%s/%s/%d/%s/%s-confirmed.json",
 		strings.TrimSpace(organizationID),
 		assetID.String(),
 		generationNo,

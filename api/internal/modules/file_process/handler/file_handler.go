@@ -31,25 +31,27 @@ import (
 
 // FileHandler handles file-related HTTP requests
 type FileHandler struct {
-	fileService              interfaces.FileService
-	fileFolderService        service.FileFolderService
-	accountService           interfaces.AccountService
-	tenantService            interfaces.WorkspaceManagementService
-	enterpriseService        interfaces.OrganizationService
-	assetStateService        datalibraryservice.FileAssetProcessingStateService
-	processingService        datalibraryservice.ProcessingRequestService
-	parsePreviewService      datalibraryservice.ParsePreviewService
-	parseConfirmationService datalibraryservice.ParseConfirmationService
-	taskEnqueuer             FileProcessingTaskEnqueuer
-	validator                *validator.Validate
+	fileService                      interfaces.FileService
+	fileFolderService                service.FileFolderService
+	accountService                   interfaces.AccountService
+	tenantService                    interfaces.WorkspaceManagementService
+	enterpriseService                interfaces.OrganizationService
+	assetStateService                datalibraryservice.FileAssetProcessingStateService
+	processingService                datalibraryservice.ProcessingRequestService
+	parsePreviewService              datalibraryservice.ParsePreviewService
+	parseConfirmationService         datalibraryservice.ParseConfirmationService
+	parseArtifactConfirmationService datalibraryservice.ParseArtifactConfirmationService
+	taskEnqueuer                     FileProcessingTaskEnqueuer
+	validator                        *validator.Validate
 }
 
 type FileAssetProcessingServices struct {
-	StateService             datalibraryservice.FileAssetProcessingStateService
-	ProcessingService        datalibraryservice.ProcessingRequestService
-	ParsePreviewService      datalibraryservice.ParsePreviewService
-	ParseConfirmationService datalibraryservice.ParseConfirmationService
-	TaskEnqueuer             FileProcessingTaskEnqueuer
+	StateService                     datalibraryservice.FileAssetProcessingStateService
+	ProcessingService                datalibraryservice.ProcessingRequestService
+	ParsePreviewService              datalibraryservice.ParsePreviewService
+	ParseConfirmationService         datalibraryservice.ParseConfirmationService
+	ParseArtifactConfirmationService datalibraryservice.ParseArtifactConfirmationService
+	TaskEnqueuer                     FileProcessingTaskEnqueuer
 }
 
 type FileProcessingTaskEnqueuer interface {
@@ -110,26 +112,29 @@ func NewFileHandler(
 	var processingService datalibraryservice.ProcessingRequestService
 	var parsePreviewService datalibraryservice.ParsePreviewService
 	var parseConfirmationService datalibraryservice.ParseConfirmationService
+	var parseArtifactConfirmationService datalibraryservice.ParseArtifactConfirmationService
 	var taskEnqueuer FileProcessingTaskEnqueuer
 	if len(assetProcessingServices) > 0 {
 		assetStateService = assetProcessingServices[0].StateService
 		processingService = assetProcessingServices[0].ProcessingService
 		parsePreviewService = assetProcessingServices[0].ParsePreviewService
 		parseConfirmationService = assetProcessingServices[0].ParseConfirmationService
+		parseArtifactConfirmationService = assetProcessingServices[0].ParseArtifactConfirmationService
 		taskEnqueuer = assetProcessingServices[0].TaskEnqueuer
 	}
 	return &FileHandler{
-		fileService:              fileService,
-		fileFolderService:        fileFolderService,
-		accountService:           accountService,
-		tenantService:            tenantService,
-		enterpriseService:        enterpriseService,
-		assetStateService:        assetStateService,
-		processingService:        processingService,
-		parsePreviewService:      parsePreviewService,
-		parseConfirmationService: parseConfirmationService,
-		taskEnqueuer:             taskEnqueuer,
-		validator:                validator.New(),
+		fileService:                      fileService,
+		fileFolderService:                fileFolderService,
+		accountService:                   accountService,
+		tenantService:                    tenantService,
+		enterpriseService:                enterpriseService,
+		assetStateService:                assetStateService,
+		processingService:                processingService,
+		parsePreviewService:              parsePreviewService,
+		parseConfirmationService:         parseConfirmationService,
+		parseArtifactConfirmationService: parseArtifactConfirmationService,
+		taskEnqueuer:                     taskEnqueuer,
+		validator:                        validator.New(),
 	}
 }
 
@@ -696,7 +701,8 @@ func (h *FileHandler) BatchIgnoreParseConfirmationItems(c *gin.Context) {
 func (h *FileHandler) handleFileParseConfirmationError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, datalibraryservice.ErrDocumentAssetNotFound),
-		errors.Is(err, datalibraryservice.ErrParseConfirmationItemNotFound):
+		errors.Is(err, datalibraryservice.ErrParseConfirmationItemNotFound),
+		errors.Is(err, datalibraryservice.ErrParseConfirmationPatchTargetNotFound):
 		h.businessError(c, response.ErrNotFound)
 	case errors.Is(err, datalibraryservice.ErrOrganizationIDRequired),
 		errors.Is(err, datalibraryservice.ErrSourceFileIDRequired),
@@ -715,7 +721,38 @@ func (h *FileHandler) queueGenerateAfterConfirmationIfNeeded(ctx context.Context
 	if !shouldGenerate {
 		return nil, nil
 	}
-	return h.queueGenerateAfterConfirmRequest(ctx, asset, uploadFileID, organizationID, accountID, datalibrarymodel.DocumentProcessingLevelVectorize, false)
+	if h.parseArtifactConfirmationService != nil {
+		applied, err := h.parseArtifactConfirmationService.ApplyResolvedConfirmations(ctx, datalibraryservice.ApplyResolvedConfirmationsInput{
+			OrganizationID: organizationID,
+			SourceFileID:   uploadFileID,
+			UpdatedBy:      accountID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if applied != nil && applied.Asset != nil {
+			asset = applied.Asset
+		}
+	}
+	queued, err := h.queueGenerateAfterConfirmRequest(ctx, asset, uploadFileID, organizationID, accountID, datalibrarymodel.DocumentProcessingLevelVectorize, false)
+	if err != nil {
+		return nil, err
+	}
+	if h.assetStateService != nil && asset != nil && asset.ProcessingRunID != nil {
+		generating, err := h.assetStateService.MarkGenerating(ctx, datalibraryservice.RunStateInput{
+			OrganizationID:     organizationID,
+			AssetID:            asset.ID,
+			ProcessingRunID:    *asset.ProcessingRunID,
+			GenerationNo:       asset.GenerationNo,
+			ProcessingProgress: 50,
+			ParseArtifactID:    asset.ParseArtifactID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		queued.Asset = generating
+	}
+	return queued, nil
 }
 
 func (h *FileHandler) authorizeDocumentFile(c *gin.Context) (string, *dto.UploadFile, bool) {

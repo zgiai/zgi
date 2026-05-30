@@ -142,6 +142,15 @@ func (r *parseArtifactPersistenceArtifactRepo) GetBySignature(ctx context.Contex
 	return nil, nil
 }
 
+func (r *parseArtifactPersistenceArtifactRepo) UpdateStorageKeyAndSummary(ctx context.Context, id uuid.UUID, storageKey string, summary map[string]any) error {
+	if r.created == nil || r.created.ID != id {
+		return nil
+	}
+	r.created.ArtifactStorageKey = storageKey
+	r.created.SummaryJSON = summary
+	return nil
+}
+
 func (r *parseArtifactPersistenceArtifactRepo) Upsert(ctx context.Context, item *contentparsemodel.Artifact) error {
 	r.created = item
 	return nil

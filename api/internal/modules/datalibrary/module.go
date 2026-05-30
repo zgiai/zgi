@@ -14,34 +14,35 @@ import (
 )
 
 type Module struct {
-	DocumentAssetRepo               repository.DocumentAssetRepository
-	ReuseEventRepo                  repository.ReuseEventRepository
-	ProcessingRequestRepo           repository.ProcessingRequestRepository
-	ParseConfirmationItemRepo       repository.ParseConfirmationItemRepository
-	DocumentChunkRepo               repository.DocumentChunkRepository
-	DocumentChunkEmbeddingRepo      repository.DocumentChunkEmbeddingRepository
-	VectorArtifactRepo              repository.VectorArtifactRepository
-	ExtractionArtifactRepo          repository.ExtractionArtifactRepository
-	KnowledgeBaseAssetRefRepo       repository.KnowledgeBaseAssetRefRepository
-	DatabaseAssetRefRepo            repository.DatabaseAssetRefRepository
-	DocumentAssetService            service.DocumentAssetService
-	ProcessingRequestService        service.ProcessingRequestService
-	FileAssetProcessingStateService service.FileAssetProcessingStateService
-	ParseArtifactPersistenceService service.ParseArtifactPersistenceService
-	ParseArtifactQualityService     service.ParseArtifactQualityService
-	ParsePreviewService             service.ParsePreviewService
-	ParseConfirmationService        service.ParseConfirmationService
-	ProcessingExecutorRegistry      *service.ProcessingExecutorRegistry
-	VectorArtifactService           service.VectorArtifactService
-	ExtractionArtifactService       service.ExtractionArtifactService
-	FileAssetSyncService            service.FileAssetSyncService
-	KnowledgeBaseRefService         service.KnowledgeBaseAssetRefService
-	DatabaseRefService              service.DatabaseAssetRefService
-	FileProcessRunner               *worker.FileProcessRunner
-	DocumentAssetHandler            *handler.DocumentAssetHandler
-	VectorArtifactHandler           *handler.VectorArtifactHandler
-	ExtractionArtifactHandler       *handler.ExtractionArtifactHandler
-	ProcessingExecutorHandler       *handler.ProcessingExecutorHandler
+	DocumentAssetRepo                repository.DocumentAssetRepository
+	ReuseEventRepo                   repository.ReuseEventRepository
+	ProcessingRequestRepo            repository.ProcessingRequestRepository
+	ParseConfirmationItemRepo        repository.ParseConfirmationItemRepository
+	DocumentChunkRepo                repository.DocumentChunkRepository
+	DocumentChunkEmbeddingRepo       repository.DocumentChunkEmbeddingRepository
+	VectorArtifactRepo               repository.VectorArtifactRepository
+	ExtractionArtifactRepo           repository.ExtractionArtifactRepository
+	KnowledgeBaseAssetRefRepo        repository.KnowledgeBaseAssetRefRepository
+	DatabaseAssetRefRepo             repository.DatabaseAssetRefRepository
+	DocumentAssetService             service.DocumentAssetService
+	ProcessingRequestService         service.ProcessingRequestService
+	FileAssetProcessingStateService  service.FileAssetProcessingStateService
+	ParseArtifactPersistenceService  service.ParseArtifactPersistenceService
+	ParseArtifactQualityService      service.ParseArtifactQualityService
+	ParsePreviewService              service.ParsePreviewService
+	ParseConfirmationService         service.ParseConfirmationService
+	ParseArtifactConfirmationService service.ParseArtifactConfirmationService
+	ProcessingExecutorRegistry       *service.ProcessingExecutorRegistry
+	VectorArtifactService            service.VectorArtifactService
+	ExtractionArtifactService        service.ExtractionArtifactService
+	FileAssetSyncService             service.FileAssetSyncService
+	KnowledgeBaseRefService          service.KnowledgeBaseAssetRefService
+	DatabaseRefService               service.DatabaseAssetRefService
+	FileProcessRunner                *worker.FileProcessRunner
+	DocumentAssetHandler             *handler.DocumentAssetHandler
+	VectorArtifactHandler            *handler.VectorArtifactHandler
+	ExtractionArtifactHandler        *handler.ExtractionArtifactHandler
+	ProcessingExecutorHandler        *handler.ProcessingExecutorHandler
 }
 
 func NewModule(db *gorm.DB) *Module {
@@ -74,6 +75,7 @@ func NewModuleWithStorageAndContentParse(db *gorm.DB, artifactStorage storage.St
 	parseArtifactQualityService := service.NewParseArtifactQualityService(parseConfirmationItemRepo)
 	parsePreviewService := service.NewParsePreviewService(documentAssetRepo, contentParseArtifactRepo, parseArtifactPersistenceService, parseConfirmationItemRepo)
 	parseConfirmationService := service.NewParseConfirmationService(documentAssetRepo, parseConfirmationItemRepo)
+	parseArtifactConfirmationService := service.NewParseArtifactConfirmationService(documentAssetRepo, contentParseArtifactRepo, parseArtifactPersistenceService, parseConfirmationItemRepo)
 	processingExecutorRegistry := service.NewDefaultProcessingExecutorRegistry()
 	vectorArtifactService := service.NewVectorArtifactService(vectorArtifactRepo)
 	extractionArtifactService := service.NewExtractionArtifactService(extractionArtifactRepo)
@@ -93,33 +95,34 @@ func NewModuleWithStorageAndContentParse(db *gorm.DB, artifactStorage storage.St
 	})
 
 	return &Module{
-		DocumentAssetRepo:               documentAssetRepo,
-		ReuseEventRepo:                  reuseEventRepo,
-		ProcessingRequestRepo:           processingRequestRepo,
-		ParseConfirmationItemRepo:       parseConfirmationItemRepo,
-		DocumentChunkRepo:               documentChunkRepo,
-		DocumentChunkEmbeddingRepo:      documentChunkEmbeddingRepo,
-		VectorArtifactRepo:              vectorArtifactRepo,
-		ExtractionArtifactRepo:          extractionArtifactRepo,
-		KnowledgeBaseAssetRefRepo:       knowledgeBaseAssetRefRepo,
-		DatabaseAssetRefRepo:            databaseAssetRefRepo,
-		DocumentAssetService:            documentAssetService,
-		ProcessingRequestService:        processingRequestService,
-		FileAssetProcessingStateService: fileAssetProcessingStateService,
-		ParseArtifactPersistenceService: parseArtifactPersistenceService,
-		ParseArtifactQualityService:     parseArtifactQualityService,
-		ParsePreviewService:             parsePreviewService,
-		ParseConfirmationService:        parseConfirmationService,
-		ProcessingExecutorRegistry:      processingExecutorRegistry,
-		VectorArtifactService:           vectorArtifactService,
-		ExtractionArtifactService:       extractionArtifactService,
-		FileAssetSyncService:            fileAssetSyncService,
-		KnowledgeBaseRefService:         knowledgeBaseRefService,
-		DatabaseRefService:              databaseRefService,
-		FileProcessRunner:               fileProcessRunner,
-		DocumentAssetHandler:            handler.NewDocumentAssetHandler(documentAssetService, fileAssetSyncService, processingRequestService, knowledgeBaseRefService, databaseRefService),
-		VectorArtifactHandler:           handler.NewVectorArtifactHandler(vectorArtifactService, documentAssetService),
-		ExtractionArtifactHandler:       handler.NewExtractionArtifactHandler(extractionArtifactService, documentAssetService),
-		ProcessingExecutorHandler:       handler.NewProcessingExecutorHandler(processingExecutorRegistry, processingRequestService),
+		DocumentAssetRepo:                documentAssetRepo,
+		ReuseEventRepo:                   reuseEventRepo,
+		ProcessingRequestRepo:            processingRequestRepo,
+		ParseConfirmationItemRepo:        parseConfirmationItemRepo,
+		DocumentChunkRepo:                documentChunkRepo,
+		DocumentChunkEmbeddingRepo:       documentChunkEmbeddingRepo,
+		VectorArtifactRepo:               vectorArtifactRepo,
+		ExtractionArtifactRepo:           extractionArtifactRepo,
+		KnowledgeBaseAssetRefRepo:        knowledgeBaseAssetRefRepo,
+		DatabaseAssetRefRepo:             databaseAssetRefRepo,
+		DocumentAssetService:             documentAssetService,
+		ProcessingRequestService:         processingRequestService,
+		FileAssetProcessingStateService:  fileAssetProcessingStateService,
+		ParseArtifactPersistenceService:  parseArtifactPersistenceService,
+		ParseArtifactQualityService:      parseArtifactQualityService,
+		ParsePreviewService:              parsePreviewService,
+		ParseConfirmationService:         parseConfirmationService,
+		ParseArtifactConfirmationService: parseArtifactConfirmationService,
+		ProcessingExecutorRegistry:       processingExecutorRegistry,
+		VectorArtifactService:            vectorArtifactService,
+		ExtractionArtifactService:        extractionArtifactService,
+		FileAssetSyncService:             fileAssetSyncService,
+		KnowledgeBaseRefService:          knowledgeBaseRefService,
+		DatabaseRefService:               databaseRefService,
+		FileProcessRunner:                fileProcessRunner,
+		DocumentAssetHandler:             handler.NewDocumentAssetHandler(documentAssetService, fileAssetSyncService, processingRequestService, knowledgeBaseRefService, databaseRefService),
+		VectorArtifactHandler:            handler.NewVectorArtifactHandler(vectorArtifactService, documentAssetService),
+		ExtractionArtifactHandler:        handler.NewExtractionArtifactHandler(extractionArtifactService, documentAssetService),
+		ProcessingExecutorHandler:        handler.NewProcessingExecutorHandler(processingExecutorRegistry, processingRequestService),
 	}
 }

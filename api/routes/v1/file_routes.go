@@ -57,11 +57,12 @@ func registerFileRoutesLegacy(v1 *gin.RouterGroup, deps FileRouteDeps) {
 		deps.WorkspaceManagementService,
 		deps.OrganizationService,
 		fileProcessHandler.FileAssetProcessingServices{
-			StateService:             deps.DataLibraryModule.FileAssetProcessingStateService,
-			ProcessingService:        deps.DataLibraryModule.ProcessingRequestService,
-			ParsePreviewService:      deps.DataLibraryModule.ParsePreviewService,
-			ParseConfirmationService: deps.DataLibraryModule.ParseConfirmationService,
-			TaskEnqueuer:             datalibraryworker.NewFileProcessTaskDispatcher(deps.TaskManager),
+			StateService:                     deps.DataLibraryModule.FileAssetProcessingStateService,
+			ProcessingService:                deps.DataLibraryModule.ProcessingRequestService,
+			ParsePreviewService:              deps.DataLibraryModule.ParsePreviewService,
+			ParseConfirmationService:         deps.DataLibraryModule.ParseConfirmationService,
+			ParseArtifactConfirmationService: deps.DataLibraryModule.ParseArtifactConfirmationService,
+			TaskEnqueuer:                     datalibraryworker.NewFileProcessTaskDispatcher(deps.TaskManager),
 		},
 	)
 	fileResourceHandler := fileProcessHandler.NewFileResourceHandler(fileFolderService, fileService, deps.AccountService, deps.OrganizationService, fileFavoriteService)
