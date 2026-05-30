@@ -116,9 +116,19 @@ const messages = {
     title: 'This web app has not been published',
     description: 'Publish this agent before opening its web app.',
   },
+  header: {
+    guestMode: 'Guest mode: sign in to save conversations and unlock more capabilities.',
+    guestModeShort: 'Guest',
+    login: 'Sign in',
+    loginHint: 'Sign in to save conversations and use more capabilities',
+    signedIn: 'Signed in',
+  },
   agentChat: {
     fallbackTitle: 'Agent',
     defaultHomeTitle: 'title',
+    memoryLoginRequiredTitle: 'Sign in to use this agent',
+    memoryLoginRequiredDescription:
+      'This agent has memory enabled. Please sign in before using it.',
   },
   billing: {
     precheckWarnings: {

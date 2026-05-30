@@ -676,6 +676,9 @@ func (h *AgentsHandler) GetWebAppUploadConfig(c *gin.Context) {
 		h.failWebAppRuntime(c, err)
 		return
 	}
+	if !requireAuthenticatedWebAppAgentFileAccess(c) {
+		return
+	}
 	if !published.Config.FileUpload {
 		response.Fail(c, response.ErrPermissionDenied)
 		return
@@ -691,6 +694,9 @@ func (h *AgentsHandler) UploadWebAppFile(c *gin.Context) {
 	published, err := h.appService.GetPublishedAgentWebAppConfig(c.Request.Context(), c.Param("web_app_id"))
 	if err != nil {
 		h.failWebAppRuntime(c, err)
+		return
+	}
+	if !requireAuthenticatedWebAppAgentFileAccess(c) {
 		return
 	}
 	if !published.Config.FileUpload {
@@ -779,9 +785,26 @@ func publicAgentWebAppConfig(result *dto.AgentWebAppRuntimeConfigResponse) dto.A
 		InputPlaceholder:   result.Config.InputPlaceholder,
 		SuggestedQuestions: result.Config.SuggestedQuestions,
 		FileUpload:         result.Config.FileUpload,
+		AgentMemoryEnabled: result.Config.AgentMemoryEnabled,
 		Version:            result.Version,
 		VersionUUID:        result.VersionUUID,
 	}
+}
+
+func requireAuthenticatedWebAppAgentWhenMemoryEnabled(c *gin.Context, published *dto.AgentWebAppRuntimeConfigResponse) bool {
+	if published != nil && published.Config.AgentMemoryEnabled && !c.GetBool("is_authenticated") {
+		response.Fail(c, response.ErrUnauthorized)
+		return false
+	}
+	return true
+}
+
+func requireAuthenticatedWebAppAgentFileAccess(c *gin.Context) bool {
+	if !c.GetBool("is_authenticated") {
+		response.Fail(c, response.ErrUnauthorized)
+		return false
+	}
+	return true
 }
 
 func (h *AgentsHandler) ChatWebAppAgent(c *gin.Context) {
@@ -793,6 +816,9 @@ func (h *AgentsHandler) ChatWebAppAgent(c *gin.Context) {
 	published, err := h.appService.GetPublishedAgentWebAppConfig(c.Request.Context(), webAppID)
 	if err != nil {
 		h.failWebAppRuntime(c, err)
+		return
+	}
+	if !requireAuthenticatedWebAppAgentWhenMemoryEnabled(c, published) {
 		return
 	}
 	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))

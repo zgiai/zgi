@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	chatruntimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
 	"github.com/zgiai/zgi/api/pkg/database"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -26,19 +27,23 @@ type UserMigrationService interface {
 
 // MigrationResult represents the result of a user migration operation
 type MigrationResult struct {
-	ConversationsMigrated   int    `json:"conversations_migrated"`
-	MessagesMigrated        int    `json:"messages_migrated"`
-	WorkflowRunLogsMigrated int    `json:"workflow_run_logs_migrated"`
-	NodeRuntimeLogsMigrated int    `json:"node_runtime_logs_migrated"`
-	AuthenticatedAccountID  string `json:"authenticated_account_id"`
+	ConversationsMigrated            int    `json:"conversations_migrated"`
+	MessagesMigrated                 int    `json:"messages_migrated"`
+	WorkflowRunLogsMigrated          int    `json:"workflow_run_logs_migrated"`
+	NodeRuntimeLogsMigrated          int    `json:"node_runtime_logs_migrated"`
+	ChatRuntimeConversationsMigrated int    `json:"chat_runtime_conversations_migrated"`
+	ChatRuntimeMessagesMigrated      int    `json:"chat_runtime_messages_migrated"`
+	AuthenticatedAccountID           string `json:"authenticated_account_id"`
 }
 
 // MigrationStatistics represents statistics about data to be migrated
 type MigrationStatistics struct {
-	ConversationsCount   int
-	MessagesCount        int
-	WorkflowRunLogsCount int
-	NodeRuntimeLogsCount int
+	ConversationsCount            int
+	MessagesCount                 int
+	WorkflowRunLogsCount          int
+	NodeRuntimeLogsCount          int
+	ChatRuntimeConversationsCount int
+	ChatRuntimeMessagesCount      int
 }
 
 // userMigrationService implements UserMigrationService
@@ -140,6 +145,27 @@ func (s *userMigrationService) GetMigrationStatistics(ctx context.Context, virtu
 	}
 	stats.NodeRuntimeLogsCount = int(nodeRuntimeLogsCount)
 
+	var chatRuntimeConversationsCount int64
+	if err := s.db.WithContext(ctx).
+		Model(&chatruntimemodel.Conversation{}).
+		Where("account_id = ? AND source = ? AND deleted_at IS NULL", virtualUUID, chatruntimemodel.ConversationSourceWebApp).
+		Count(&chatRuntimeConversationsCount).Error; err != nil {
+		logger.Error("Failed to count chat runtime conversations for migration statistics", err)
+		return nil, fmt.Errorf("failed to count chat runtime conversations: %w", err)
+	}
+	stats.ChatRuntimeConversationsCount = int(chatRuntimeConversationsCount)
+
+	var chatRuntimeMessagesCount int64
+	if err := s.db.WithContext(ctx).
+		Table("chat_runtime_messages AS m").
+		Joins("JOIN chat_runtime_conversations AS c ON c.id = m.conversation_id").
+		Where("c.account_id = ? AND c.source = ? AND c.deleted_at IS NULL AND m.deleted_at IS NULL", virtualUUID, chatruntimemodel.ConversationSourceWebApp).
+		Count(&chatRuntimeMessagesCount).Error; err != nil {
+		logger.Error("Failed to count chat runtime messages for migration statistics", err)
+		return nil, fmt.Errorf("failed to count chat runtime messages: %w", err)
+	}
+	stats.ChatRuntimeMessagesCount = int(chatRuntimeMessagesCount)
+
 	return stats, nil
 }
 
@@ -167,15 +193,18 @@ func (s *userMigrationService) MigrateUserData(ctx context.Context, virtualAccou
 	// Idempotency: If there's no data to migrate, return success with zero counts
 	// This handles the case where migration was already completed or the virtual user has no data
 	if stats.ConversationsCount == 0 && stats.MessagesCount == 0 &&
-		stats.WorkflowRunLogsCount == 0 && stats.NodeRuntimeLogsCount == 0 {
+		stats.WorkflowRunLogsCount == 0 && stats.NodeRuntimeLogsCount == 0 &&
+		stats.ChatRuntimeConversationsCount == 0 && stats.ChatRuntimeMessagesCount == 0 {
 		logger.Info("No data to migrate for virtual user (already migrated or no data exists)",
 			"virtual_account_id", virtualAccountID)
 		return &MigrationResult{
-			ConversationsMigrated:   0,
-			MessagesMigrated:        0,
-			WorkflowRunLogsMigrated: 0,
-			NodeRuntimeLogsMigrated: 0,
-			AuthenticatedAccountID:  authenticatedAccountID,
+			ConversationsMigrated:            0,
+			MessagesMigrated:                 0,
+			WorkflowRunLogsMigrated:          0,
+			NodeRuntimeLogsMigrated:          0,
+			ChatRuntimeConversationsMigrated: 0,
+			ChatRuntimeMessagesMigrated:      0,
+			AuthenticatedAccountID:           authenticatedAccountID,
 		}, nil
 	}
 
@@ -252,6 +281,19 @@ func (s *userMigrationService) MigrateUserData(ctx context.Context, virtualAccou
 	result.NodeRuntimeLogsMigrated = int(nodeRuntimeLogsMigrated)
 	logger.Debug("Migrated node runtime logs in transaction", "count", nodeRuntimeLogsMigrated)
 
+	chatRuntimeConversationsMigrated, err := s.migrateChatRuntimeConversations(ctx, tx, virtualAccountID, authenticatedAccountID)
+	if err != nil {
+		tx.Rollback()
+		logger.Error(fmt.Sprintf("Failed to migrate chat runtime conversations (virtual: %s, authenticated: %s), rolling back transaction",
+			virtualAccountID, authenticatedAccountID), err)
+		return nil, fmt.Errorf("failed to migrate chat runtime conversations: %w", err)
+	}
+	result.ChatRuntimeConversationsMigrated = int(chatRuntimeConversationsMigrated)
+	result.ChatRuntimeMessagesMigrated = stats.ChatRuntimeMessagesCount
+	logger.Debug("Migrated chat runtime conversations in transaction",
+		"conversations", chatRuntimeConversationsMigrated,
+		"messages", stats.ChatRuntimeMessagesCount)
+
 	// Commit transaction - all migrations succeeded
 	if err := tx.Commit().Error; err != nil {
 		logger.Error(fmt.Sprintf("Failed to commit migration transaction (virtual: %s, authenticated: %s)",
@@ -269,6 +311,8 @@ func (s *userMigrationService) MigrateUserData(ctx context.Context, virtualAccou
 		"messages_migrated", result.MessagesMigrated,
 		"workflow_runs_migrated", result.WorkflowRunLogsMigrated,
 		"node_logs_migrated", result.NodeRuntimeLogsMigrated,
+		"chat_runtime_conversations_migrated", result.ChatRuntimeConversationsMigrated,
+		"chat_runtime_messages_migrated", result.ChatRuntimeMessagesMigrated,
 		"duration_ms", elapsedTime.Milliseconds(),
 	)
 
@@ -341,6 +385,66 @@ func (s *userMigrationService) migrateNodeRuntimeLogs(ctx context.Context, tx *g
 	}
 
 	return result.RowsAffected, nil
+}
+
+func (s *userMigrationService) migrateChatRuntimeConversations(ctx context.Context, tx *gorm.DB, virtualAccountID, authenticatedAccountID string) (int64, error) {
+	virtualUUID, _ := uuid.Parse(virtualAccountID)
+	authenticatedUUID, _ := uuid.Parse(authenticatedAccountID)
+
+	if _, err := s.stopActiveChatRuntimeMessagesForMigration(ctx, tx, virtualUUID); err != nil {
+		return 0, err
+	}
+
+	result := tx.WithContext(ctx).
+		Model(&chatruntimemodel.Conversation{}).
+		Where("account_id = ? AND source = ? AND deleted_at IS NULL", virtualUUID, chatruntimemodel.ConversationSourceWebApp).
+		Updates(map[string]interface{}{
+			"account_id": authenticatedUUID,
+			"updated_at": time.Now(),
+		})
+
+	if result.Error != nil {
+		return 0, fmt.Errorf("failed to migrate chat runtime conversations: %w", result.Error)
+	}
+
+	return result.RowsAffected, nil
+}
+
+func (s *userMigrationService) stopActiveChatRuntimeMessagesForMigration(ctx context.Context, tx *gorm.DB, virtualAccountID uuid.UUID) (int64, error) {
+	now := time.Now()
+	activeStatuses := []string{
+		chatruntimemodel.MessageStatusPending,
+		chatruntimemodel.MessageStatusStreaming,
+	}
+
+	messageResult := tx.WithContext(ctx).Exec(`
+		UPDATE chat_runtime_messages AS m
+		SET status = ?, error = NULL, updated_at = ?
+		FROM chat_runtime_conversations AS c
+		WHERE c.id = m.conversation_id
+			AND c.account_id = ?
+			AND c.source = ?
+			AND c.deleted_at IS NULL
+			AND m.deleted_at IS NULL
+			AND m.status IN ?
+	`, chatruntimemodel.MessageStatusStopped, now, virtualAccountID, chatruntimemodel.ConversationSourceWebApp, activeStatuses)
+	if messageResult.Error != nil {
+		return 0, fmt.Errorf("failed to stop active chat runtime messages before migration: %w", messageResult.Error)
+	}
+
+	conversationResult := tx.WithContext(ctx).
+		Model(&chatruntimemodel.Conversation{}).
+		Where("account_id = ? AND source = ? AND deleted_at IS NULL AND runtime_status = ?", virtualAccountID, chatruntimemodel.ConversationSourceWebApp, chatruntimemodel.ConversationRuntimeStatusStreaming).
+		UpdateColumns(map[string]interface{}{
+			"runtime_status":    chatruntimemodel.ConversationRuntimeStatusIdle,
+			"active_message_id": nil,
+			"updated_at":        now,
+		})
+	if conversationResult.Error != nil {
+		return 0, fmt.Errorf("failed to clear active chat runtime conversations before migration: %w", conversationResult.Error)
+	}
+
+	return messageResult.RowsAffected, nil
 }
 
 // NewUserMigrationServiceFromDB creates a new UserMigrationService with database connection

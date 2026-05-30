@@ -42,6 +42,10 @@ func (m *mockWorkflowFileService) GetFile(ctx context.Context, fileID string) (s
 	return "", nil
 }
 
+func (m *mockWorkflowFileService) ExtractFileWithSetting(ctx context.Context, fileID string, _ interfaces.FileExtractionSetting) (string, error) {
+	return m.GetFile(ctx, fileID)
+}
+
 func (m *mockWorkflowFileService) GetSupportedFileTypes() []string {
 	return nil
 }

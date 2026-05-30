@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import type { MutableRefObject } from 'react';
 import type {
   AIChatAgentProgressEventData,
@@ -325,26 +325,48 @@ export function useChatRuntimeEventAppliers({
     ]
   );
 
-  return {
-    applyMessageStart,
-    applyMessageChunk,
-    applyMessageRetract,
-    applyFileParseStart,
-    applyFileParseEnd,
-    applyFileParseError,
-    applySkillCallStart,
-    applySkillLoadStart,
-    applySkillLoadEnd,
-    applySkillReferenceRead,
-    applySkillCallEnd,
-    applySkillCallError,
-    applySkillArtifactCreated,
-    applyMemoryMutation,
-    applyAgentProgress,
-    applyIntermediateAnswer,
-    applyMessageEnd,
-    applyStreamError,
-  };
+  return useMemo(
+    () => ({
+      applyMessageStart,
+      applyMessageChunk,
+      applyMessageRetract,
+      applyFileParseStart,
+      applyFileParseEnd,
+      applyFileParseError,
+      applySkillCallStart,
+      applySkillLoadStart,
+      applySkillLoadEnd,
+      applySkillReferenceRead,
+      applySkillCallEnd,
+      applySkillCallError,
+      applySkillArtifactCreated,
+      applyMemoryMutation,
+      applyAgentProgress,
+      applyIntermediateAnswer,
+      applyMessageEnd,
+      applyStreamError,
+    }),
+    [
+      applyAgentProgress,
+      applyFileParseEnd,
+      applyFileParseError,
+      applyFileParseStart,
+      applyIntermediateAnswer,
+      applyMemoryMutation,
+      applyMessageChunk,
+      applyMessageEnd,
+      applyMessageRetract,
+      applyMessageStart,
+      applySkillArtifactCreated,
+      applySkillCallEnd,
+      applySkillCallError,
+      applySkillCallStart,
+      applySkillLoadEnd,
+      applySkillLoadStart,
+      applySkillReferenceRead,
+      applyStreamError,
+    ]
+  );
 }
 
 export type ChatRuntimeEventAppliers = ReturnType<typeof useChatRuntimeEventAppliers>;

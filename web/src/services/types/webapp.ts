@@ -93,6 +93,7 @@ export interface WebAppWorkflowConfig {
   features: WebAppFeatures;
   config: WebAppWorkflowMeta;
   agent_config?: {
+    agent_memory_enabled?: boolean;
     file_upload_enabled?: boolean;
     home_title?: string;
     input_placeholder?: string;

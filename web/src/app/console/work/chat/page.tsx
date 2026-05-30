@@ -1,6 +1,6 @@
 'use client';
 
-import React, { Suspense, useCallback, useEffect, useState } from 'react';
+import React, { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Chat, { useAIChatController } from '@/components/chat';
 import type { AIChatModelValue } from '@/components/chat';
@@ -22,6 +22,8 @@ function ChatPageContent() {
   const conversationIdParam = searchParams.get('convId');
   const controller = useAIChatController();
   const { init, activeConversationId } = controller;
+  const initRef = useRef(init);
+  const lastInitializedConversationIdRef = useRef<string | null | undefined>(undefined);
 
   const [modelSelectorValue, setModelSelectorValue] = useState<AIChatModelValue>(() => {
     if (!user?.id) return { provider: '', model: '', params: {} };
@@ -75,8 +77,14 @@ function ChatPageContent() {
   );
 
   useEffect(() => {
-    init(conversationIdParam);
-  }, [init, conversationIdParam]);
+    initRef.current = init;
+  }, [init]);
+
+  useEffect(() => {
+    if (lastInitializedConversationIdRef.current === conversationIdParam) return;
+    lastInitializedConversationIdRef.current = conversationIdParam;
+    initRef.current(conversationIdParam);
+  }, [conversationIdParam]);
 
   useEffect(() => {
     const params = new URLSearchParams(searchParams.toString());
