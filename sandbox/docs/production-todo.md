@@ -37,6 +37,7 @@ Already available:
 - Observer event retention by age and maximum row count
 - Metrics endpoint for worker active sandbox count, runner pressure, and execution observer counters
 - Readiness probe for dependency checks
+- Startup log emits effective non-secret configuration
 - Worker-scoped active sandbox limit accounting
 - Optional Linux secure backend with namespace-based isolation
 
@@ -510,7 +511,7 @@ managed environments.
 - Provide safe defaults for local development.
 - Provide strict defaults for production examples.
 - Add config validation at startup.
-- Print effective non-secret config on startup.
+- Added startup logging for effective non-secret config.
 
 ### K2. Deployment
 

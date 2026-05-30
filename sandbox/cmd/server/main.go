@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"net"
@@ -23,6 +24,8 @@ func main() {
 }
 
 func run(parent context.Context, cfg config.Config, logger *log.Logger) error {
+	logStartupConfig(logger, cfg)
+
 	server, err := app.NewServer(cfg)
 	if err != nil {
 		return err
@@ -37,6 +40,18 @@ func run(parent context.Context, cfg config.Config, logger *log.Logger) error {
 		Handler: server.Handler(),
 	}
 	return serve(parent, httpServer, listener, time.Duration(cfg.ShutdownTimeoutSeconds)*time.Second, logger)
+}
+
+func logStartupConfig(logger *log.Logger, cfg config.Config) {
+	if logger == nil {
+		return
+	}
+	payload, err := json.Marshal(cfg.PublicSnapshot())
+	if err != nil {
+		logger.Printf("zgi-sandbox effective config unavailable: %v", err)
+		return
+	}
+	logger.Printf("zgi-sandbox effective config: %s", payload)
 }
 
 func serve(parent context.Context, server *http.Server, listener net.Listener, shutdownTimeout time.Duration, logger *log.Logger) error {

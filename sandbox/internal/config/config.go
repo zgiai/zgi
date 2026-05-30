@@ -106,6 +106,38 @@ func (c Config) NetworkPolicyEnforced() bool {
 	return c.RuntimeBackendName() == "linux-secure"
 }
 
+func (c Config) PublicSnapshot() map[string]any {
+	return map[string]any{
+		"port":                     c.Port,
+		"max_workers":              c.MaxWorkers,
+		"timeout_seconds":          c.TimeoutSeconds,
+		"output_limit_kb":          c.OutputLimitKB,
+		"max_active":               c.MaxActive,
+		"queue_timeout_ms":         c.QueueTimeoutMS,
+		"shutdown_timeout_seconds": c.ShutdownTimeoutSeconds,
+		"session_ttl_seconds":      c.SessionTTL,
+		"interactive_ttl_seconds":  c.InteractiveTTL,
+		"command_timeout_seconds":  c.CommandTimeout,
+		"max_file_size_kb":         c.MaxFileSizeKB,
+		"observer_retention_days":  c.ObserverRetentionDays,
+		"observer_max_events":      c.ObserverMaxEvents,
+		"database_configured":      c.DatabaseURL != "",
+		"data_dir":                 c.DataDir,
+		"cache_ttl_seconds":        c.CacheTTL,
+		"redis_configured":         c.RedisAddr != "",
+		"redis_db":                 c.RedisDB,
+		"worker_id":                c.WorkerID,
+		"advertise_url":            c.AdvertiseURL,
+		"public_base_url":          c.PublicBaseURL,
+		"environment":              c.Environment,
+		"runtime_backend":          c.RuntimeBackendName(),
+		"secure_rootfs_configured": c.SecureRootFS != "",
+		"bwrap_binary":             c.BwrapBinary,
+		"proxy_timeout_seconds":    c.ProxyTimeout,
+		"network_policy_enforced":  c.NetworkPolicyEnforced(),
+	}
+}
+
 func getEnv(key string, fallback string) string {
 	value := os.Getenv(key)
 	if value == "" {
