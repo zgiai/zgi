@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, type ComponentType } from 'react';
+import { useEffect, useMemo, useState, type ComponentType } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   AlertCircle,
@@ -24,6 +24,7 @@ import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { FilePreviewDialog } from '@/components/files/file-preview-dialog';
 import { FileOriginalPreviewPanel } from '@/components/files/detail/file-original-preview-panel';
+import { FileParseReviewPanel } from '@/components/files/detail/file-parse-review-panel';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type { FileAssetProductStatus, FileAssetVectorStatus, FileItem } from '@/services/types/file';
@@ -131,6 +132,7 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   const canDownload = hasPermission('file.download');
   const { downloadFile, isDownloading } = useDownloadFile();
   const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
+  const [activeTab, setActiveTab] = useState('overview');
   const { data, isLoading, isFetching, error, refetch } = useFileDetail(fileId, {
     pollProcessingStatus: true,
   });
@@ -147,6 +149,7 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   const chunkCount = processing?.chunk_count ?? file?.chunk_count ?? artifactState?.chunk_count ?? 0;
   const embeddingCount = processing?.embedding_count ?? file?.embedding_count ?? 0;
   const hasPreview = file ? isOriginalPreviewSupported(file.extension, file.mime_type) : false;
+  const parseReviewEnabled = status !== 'stored_only' && status !== 'parsing';
 
   const statusLabel = useMemo(() => {
     switch (status as FileAssetProductStatus | string) {
@@ -233,6 +236,12 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
     await downloadFile(file.id, file.name);
   };
   const CurrentViewIcon = currentView.icon;
+
+  useEffect(() => {
+    if (status === 'confirming') {
+      setActiveTab('parse-review');
+    }
+  }, [status]);
 
   if (isLoading) return <FileDetailLoading />;
 
@@ -345,11 +354,11 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
       ) : null}
 
       <div className="p-4 sm:p-6">
-        <Tabs defaultValue="overview" className="min-w-0">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="min-w-0">
           <TabsList className="flex h-auto w-full justify-start overflow-x-auto rounded-md sm:inline-flex sm:w-auto">
             <TabsTrigger value="overview">{t('detail.tabs.overview')}</TabsTrigger>
             <TabsTrigger value="original">{t('detail.tabs.originalPreview')}</TabsTrigger>
-            <TabsTrigger value="parse-review" disabled>
+            <TabsTrigger value="parse-review" disabled={!parseReviewEnabled}>
               {t('detail.tabs.parseReview')}
             </TabsTrigger>
             <TabsTrigger value="chunks" disabled>
@@ -458,6 +467,10 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
               onDownload={canDownload ? () => void handleDownload() : undefined}
               isDownloading={isDownloading}
             />
+          </TabsContent>
+
+          <TabsContent value="parse-review" className="mt-4">
+            <FileParseReviewPanel fileId={file.id} enabled={parseReviewEnabled} />
           </TabsContent>
         </Tabs>
       </div>
