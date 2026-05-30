@@ -162,11 +162,11 @@ func (s *Service) RunCode(ctx context.Context, req CodeRequest) (runner.Result, 
 		return runner.Result{}, err
 	}
 
-	s.observer.Record("exec.code", req.SandboxID, "sandbox code executed", map[string]any{
+	s.observer.Record("exec.code", req.SandboxID, "sandbox code executed", observer.MetadataWithContext(ctx, map[string]any{
 		"language":  req.Language,
 		"profile":   limits.Profile,
 		"exit_code": result.ExitCode,
-	})
+	}))
 	return result, nil
 }
 
@@ -229,11 +229,11 @@ func (s *Service) RunCommand(ctx context.Context, req CommandRequest) (runner.Co
 		return runner.CommandResult{}, err
 	}
 
-	s.observer.Record("exec.command", req.SandboxID, "sandbox command executed", map[string]any{
+	s.observer.Record("exec.command", req.SandboxID, "sandbox command executed", observer.MetadataWithContext(ctx, map[string]any{
 		"command":   req.Command,
 		"profile":   limits.Profile,
 		"exit_code": result.ExitCode,
-	})
+	}))
 	return result, nil
 }
 

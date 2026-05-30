@@ -3,7 +3,9 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -87,7 +89,7 @@ func NewServer(cfg config.Config) (*Server, error) {
 }
 
 func (s *Server) Handler() http.Handler {
-	return s.mux
+	return s.withRequestID(s.mux)
 }
 
 func (s *Server) registerRoutes() {
@@ -147,6 +149,54 @@ func (s *Server) handleBlueprint(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handlePolicies(w http.ResponseWriter, _ *http.Request) {
 	writeEnvelope(w, http.StatusOK, s.policy.Snapshot())
+}
+
+func (s *Server) withRequestID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestID := requestIDFromHeaders(r)
+		if requestID == "" {
+			requestID = generateRequestID()
+		}
+		w.Header().Set("X-Request-ID", requestID)
+		next.ServeHTTP(w, r.WithContext(observer.ContextWithRequestID(r.Context(), requestID)))
+	})
+}
+
+func requestIDFromHeaders(r *http.Request) string {
+	for _, header := range []string{"X-Request-ID", "X-Correlation-ID"} {
+		value := sanitizeRequestID(r.Header.Get(header))
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func sanitizeRequestID(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	var builder strings.Builder
+	builder.Grow(min(len(value), 128))
+	for _, char := range value {
+		if builder.Len() >= 128 {
+			break
+		}
+		if char < 33 || char > 126 {
+			continue
+		}
+		builder.WriteRune(char)
+	}
+	return builder.String()
+}
+
+func generateRequestID() string {
+	var buf [12]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return "req_local"
+	}
+	return "req_" + hex.EncodeToString(buf[:])
 }
 
 func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {

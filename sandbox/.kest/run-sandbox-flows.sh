@@ -2,7 +2,14 @@
 set -euo pipefail
 
 SANDBOX_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PORT="${ZGI_SANDBOX_KEST_PORT:-2663}"
+PORT="${ZGI_SANDBOX_KEST_PORT:-$(python3 - <<'PY'
+import socket
+
+with socket.socket() as s:
+    s.bind(("127.0.0.1", 0))
+    print(s.getsockname()[1])
+PY
+)}"
 START_LOCAL_SANDBOX=1
 if [[ -n "${ZGI_SANDBOX_KEST_BASE_URL:-}" ]]; then
   BASE_URL="${ZGI_SANDBOX_KEST_BASE_URL}"
@@ -34,6 +41,7 @@ if [[ "${START_LOCAL_SANDBOX}" = "1" ]]; then
   env \
     ZGI_SANDBOX_SERVER_PORT="${PORT}" \
     ZGI_SANDBOX_DATA_DIR="${DATA_DIR}/data" \
+    ZGI_SANDBOX_WORKER_ID="zgi-sandbox-kest-${PORT}" \
     go run cmd/server/main.go >"${SERVER_LOG}" 2>&1 &
   SERVER_PID="$!"
 fi

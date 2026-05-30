@@ -88,6 +88,39 @@ func TestCodeCommandAndFileFlow(t *testing.T) {
 	}
 }
 
+func TestExecutionEventsIncludeRequestID(t *testing.T) {
+	recorder := observer.NewRecorder(100)
+	policyService := policy.NewService(config.FromEnv())
+	manager, err := lifecycle.NewManager(recorder, policyService)
+	if err != nil {
+		t.Fatalf("expected lifecycle manager, got %v", err)
+	}
+	service := NewService(manager, runner.NewService(2, 3*time.Second, 4096), recorder, policyService)
+
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	ctx := observer.ContextWithRequestID(context.Background(), "req_exec_test")
+	if _, err := service.RunCommand(ctx, CommandRequest{
+		SandboxID: box.ID,
+		Command:   "pwd",
+	}); err != nil {
+		t.Fatalf("expected command run, got %v", err)
+	}
+
+	events := recorder.Query(observer.Query{SandboxID: box.ID, Type: "exec.command", Limit: 1})
+	if len(events) != 1 {
+		t.Fatalf("expected command event, got %d", len(events))
+	}
+	if events[0].Metadata["request_id"] != "req_exec_test" {
+		t.Fatalf("expected request ID metadata, got %#v", events[0].Metadata)
+	}
+}
+
 func TestUploadArchiveExtractsZipWithStripRoot(t *testing.T) {
 	service, manager := newTestExecutorService(t)
 	box, err := manager.Create(lifecycle.CreateRequest{

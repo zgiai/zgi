@@ -31,6 +31,8 @@ Already available:
 - Process group cleanup for preview command timeouts
 - Structured cancellation errors for request-canceled execution paths
 - Configurable graceful shutdown for service drain on SIGTERM/SIGINT
+- Request correlation IDs for HTTP responses and execution observer events
+- Worker-scoped active sandbox limit accounting
 - Optional Linux secure backend with namespace-based isolation
 
 The service is useful for validation and controlled internal environments. It

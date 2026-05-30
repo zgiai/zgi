@@ -71,3 +71,38 @@ func TestCreateRenewDeleteSandbox(t *testing.T) {
 		t.Fatalf("expected delete, got %v", err)
 	}
 }
+
+func TestActiveSandboxLimitIsScopedToWorker(t *testing.T) {
+	cfg := config.FromEnv()
+	cfg.MaxActive = 1
+	cfg.DataDir = t.TempDir()
+	store := newMemoryStore()
+	cache := newNoopCache()
+	recorder := observer.NewRecorder(100)
+
+	workerOneCfg := cfg
+	workerOneCfg.WorkerID = "worker-one"
+	workerOnePolicy := policy.NewService(workerOneCfg)
+	workerOne, err := NewManagerWithConfig(recorder, workerOnePolicy, workerOneCfg, store, cache)
+	if err != nil {
+		t.Fatalf("expected worker one manager, got %v", err)
+	}
+
+	workerTwoCfg := cfg
+	workerTwoCfg.WorkerID = "worker-two"
+	workerTwoPolicy := policy.NewService(workerTwoCfg)
+	workerTwo, err := NewManagerWithConfig(recorder, workerTwoPolicy, workerTwoCfg, store, cache)
+	if err != nil {
+		t.Fatalf("expected worker two manager, got %v", err)
+	}
+
+	if _, err := workerOne.Create(CreateRequest{RuntimeProfile: string(sandbox.RuntimeSession)}); err != nil {
+		t.Fatalf("expected worker one sandbox, got %v", err)
+	}
+	if _, err := workerTwo.Create(CreateRequest{RuntimeProfile: string(sandbox.RuntimeSession)}); err != nil {
+		t.Fatalf("expected worker two sandbox despite worker one limit, got %v", err)
+	}
+	if _, err := workerOne.Create(CreateRequest{RuntimeProfile: string(sandbox.RuntimeSession)}); err == nil {
+		t.Fatal("expected worker one to hit its own active sandbox limit")
+	}
+}

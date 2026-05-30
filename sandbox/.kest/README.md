@@ -18,8 +18,13 @@ From the repository root:
 make test-sandbox-kest
 ```
 
-The runner starts a temporary local sandbox server on port `2663`, generates the
+The runner starts a temporary local sandbox server, generates the
 archive inputs needed by the flows, runs Kest, then stops the server.
+
+By default, the runner chooses a random local port and a unique worker ID so the
+flows do not attach to a stale sandbox process or share active-sandbox capacity
+with another local worker. Set `ZGI_SANDBOX_KEST_PORT` when a fixed port is
+required.
 
 To target an already running sandbox instead of starting a local one:
 

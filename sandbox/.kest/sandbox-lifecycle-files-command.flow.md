@@ -175,6 +175,7 @@ data.exit_code == 0
 
 POST {{base_url}}/v1/exec/command
 Content-Type: application/json
+X-Request-ID: req_kest_command
 
 {
   "sandbox_id": "{{sandbox_id}}",
@@ -217,6 +218,7 @@ GET {{base_url}}/v1/observer/events?sandbox_id={{sandbox_id}}&limit=20
 [Asserts]
 status == 200
 code == 0
+data.events.0.metadata.request_id == "req_kest_command"
 ```
 
 ```step

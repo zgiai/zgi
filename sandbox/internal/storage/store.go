@@ -194,12 +194,12 @@ func (s *Store) ListSandboxes() ([]sandbox.Sandbox, error) {
 	return items, rows.Err()
 }
 
-func (s *Store) CountActive(now time.Time) (int, error) {
+func (s *Store) CountActive(workerID string, now time.Time) (int, error) {
 	row := s.db.QueryRow(`
 		SELECT COUNT(1)
 		FROM sandboxes
-		WHERE status = $1 AND expires_at > $2
-	`, string(sandbox.StatusActive), now.UTC())
+		WHERE status = $1 AND expires_at > $2 AND worker_id = $3
+	`, string(sandbox.StatusActive), now.UTC(), workerID)
 
 	var count int
 	if err := row.Scan(&count); err != nil {

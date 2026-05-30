@@ -22,11 +22,15 @@ func TestHealthEndpoint(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req.Header.Set("X-Request-ID", "req_health")
 	rr := httptest.NewRecorder()
 	server.Handler().ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if rr.Header().Get("X-Request-ID") != "req_health" {
+		t.Fatalf("expected request ID response header, got %q", rr.Header().Get("X-Request-ID"))
 	}
 	if !strings.Contains(rr.Body.String(), `"runtime_backend":"preview-process"`) {
 		t.Fatalf("expected normalized runtime backend in health, got %s", rr.Body.String())
@@ -39,6 +43,38 @@ func TestHealthEndpoint(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), `"shutdown_timeout_secs":10`) {
 		t.Fatalf("expected shutdown timeout in health, got %s", rr.Body.String())
+	}
+}
+
+func TestRequestIDMiddlewareGeneratesRequestID(t *testing.T) {
+	server, err := NewServer(testConfig(t))
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+
+	requestID := rr.Header().Get("X-Request-ID")
+	if !strings.HasPrefix(requestID, "req_") {
+		t.Fatalf("expected generated request ID header, got %q", requestID)
+	}
+}
+
+func TestRequestIDMiddlewareSanitizesRequestID(t *testing.T) {
+	server, err := NewServer(testConfig(t))
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req.Header.Set("X-Request-ID", " req_bad\nvalue\t ")
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+
+	if rr.Header().Get("X-Request-ID") != "req_badvalue" {
+		t.Fatalf("expected sanitized request ID, got %q", rr.Header().Get("X-Request-ID"))
 	}
 }
 

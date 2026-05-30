@@ -41,7 +41,7 @@ type Store interface {
 	SaveSandbox(sandbox.Sandbox) error
 	GetSandbox(string) (*sandbox.Sandbox, error)
 	ListSandboxes() ([]sandbox.Sandbox, error)
-	CountActive(time.Time) (int, error)
+	CountActive(string, time.Time) (int, error)
 	SaveEndpoint(sandbox.Endpoint) error
 	GetEndpoint(string, string) (*sandbox.Endpoint, error)
 }
@@ -97,7 +97,7 @@ func NewManagerWithConfig(recorder *observer.Recorder, policyService *policy.Ser
 }
 
 func (m *Manager) Create(req CreateRequest) (*sandbox.Sandbox, error) {
-	activeCount, err := m.store.CountActive(time.Now().UTC())
+	activeCount, err := m.store.CountActive(m.workerID, time.Now().UTC())
 	if err != nil {
 		return nil, err
 	}
@@ -464,12 +464,12 @@ func (s *memoryStore) ListSandboxes() ([]sandbox.Sandbox, error) {
 	return items, nil
 }
 
-func (s *memoryStore) CountActive(now time.Time) (int, error) {
+func (s *memoryStore) CountActive(workerID string, now time.Time) (int, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	count := 0
 	for _, item := range s.sandboxes {
-		if item.Status == sandbox.StatusActive && item.ExpiresAt.After(now) {
+		if item.Status == sandbox.StatusActive && item.ExpiresAt.After(now) && item.WorkerID == workerID {
 			count++
 		}
 	}
