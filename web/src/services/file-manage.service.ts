@@ -21,6 +21,19 @@ import type {
   CreateTextFileRequest,
   CreateTextFileResponse,
   FileOriginalPreviewUrlResponse,
+  CreateFileProcessingRequest,
+  CreateFileProcessingResponse,
+  FileDetailResponse,
+  FileParsePreviewResponse,
+  FileParseConfirmationListResponse,
+  ResolveFileParseConfirmationRequest,
+  ResolveFileParseConfirmationResponse,
+  BatchIgnoreFileParseConfirmationsRequest,
+  BatchIgnoreFileParseConfirmationsResponse,
+  ListFileChunksRequest,
+  ListFileChunksResponse,
+  UpdateFileChunkRequest,
+  UpdateFileChunkResponse,
 } from './types/file';
 import { BaseService } from '@/lib/http/services';
 
@@ -93,6 +106,70 @@ class FileManageService extends BaseService {
     return this.request('get', `/console/api/files/${fileId}/preview-url`);
   }
 
+  async getFileDetail(fileId: string): Promise<ApiResponseData<FileDetailResponse>> {
+    return this.request('get', `/console/api/files/${fileId}/detail`);
+  }
+
+  async createProcessingRequest(
+    fileId: string,
+    data: CreateFileProcessingRequest
+  ): Promise<ApiResponseData<CreateFileProcessingResponse>> {
+    return this.request('post', `/console/api/files/${fileId}/processing-requests`, data);
+  }
+
+  async getParsePreview(fileId: string): Promise<ApiResponseData<FileParsePreviewResponse>> {
+    return this.request('get', `/console/api/files/${fileId}/parse-preview`);
+  }
+
+  async getParseConfirmationItems(
+    fileId: string,
+    params?: { status?: string; limit?: number; offset?: number }
+  ): Promise<ApiResponseData<FileParseConfirmationListResponse>> {
+    return this.request('get', `/console/api/files/${fileId}/parse-confirmation-items`, undefined, {
+      params,
+    });
+  }
+
+  async resolveParseConfirmationItem(
+    fileId: string,
+    itemId: string,
+    data: ResolveFileParseConfirmationRequest
+  ): Promise<ApiResponseData<ResolveFileParseConfirmationResponse>> {
+    return this.request(
+      'post',
+      `/console/api/files/${fileId}/parse-confirmation-items/${itemId}/resolve`,
+      data
+    );
+  }
+
+  async batchIgnoreParseConfirmationItems(
+    fileId: string,
+    data: BatchIgnoreFileParseConfirmationsRequest = {}
+  ): Promise<ApiResponseData<BatchIgnoreFileParseConfirmationsResponse>> {
+    return this.request(
+      'post',
+      `/console/api/files/${fileId}/parse-confirmation-items/batch-ignore`,
+      data
+    );
+  }
+
+  async getFileChunks(
+    fileId: string,
+    params?: ListFileChunksRequest
+  ): Promise<ApiResponseData<ListFileChunksResponse>> {
+    return this.request('get', `/console/api/files/${fileId}/chunks`, undefined, {
+      params,
+    });
+  }
+
+  async updateFileChunk(
+    fileId: string,
+    chunkId: string,
+    data: UpdateFileChunkRequest
+  ): Promise<ApiResponseData<UpdateFileChunkResponse>> {
+    return this.request('patch', `/console/api/files/${fileId}/chunks/${chunkId}`, data);
+  }
+
   async getFilesMetadata(fileIds: string[]): Promise<ApiResponseData<FileMetadataResponse>> {
     const params = fileIds.map(id => `file_ids=${encodeURIComponent(id)}`).join('&');
     return this.request('get', `/console/api/files/metadata?${params}`);
@@ -145,6 +222,9 @@ class FileManageService extends BaseService {
     }
     if (data.workspace_id) {
       formData.append('workspace_id', data.workspace_id);
+    }
+    if (data.processing_mode) {
+      formData.append('processing_mode', data.processing_mode);
     }
 
     return this.request('post', '/console/api/files/upload', formData, {
