@@ -226,6 +226,12 @@ const messages: FilesMessages = {
         updateFailed: '切片更新失败',
       },
     },
+    index: {
+      title: '索引信息',
+      description: '文件加入知识库之前已经生成的文件级切片和 embedding 资产。',
+      notReadyTitle: '索引信息尚未就绪',
+      notReadyDescription: '切片和 embedding 生成开始后，才会展示索引元数据。',
+    },
     views: {
       storedOnly: {
         title: '仅存储',

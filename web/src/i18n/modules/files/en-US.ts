@@ -231,6 +231,12 @@ const messages = {
         updateFailed: 'Failed to update chunk',
       },
     },
+    index: {
+      title: 'Index Information',
+      description: 'File-level chunk and embedding assets generated before adding to a knowledge base.',
+      notReadyTitle: 'Index information is not ready',
+      notReadyDescription: 'Index metadata becomes available after chunking and embedding generation starts.',
+    },
     views: {
       storedOnly: {
         title: 'Stored only',
