@@ -22,7 +22,7 @@ func TestCreateRenewDeleteSandbox(t *testing.T) {
 	box, err := manager.Create(CreateRequest{
 		RuntimeProfile: string(sandbox.RuntimeSession),
 		TTLSeconds:     60,
-		TenantID:       " tenant-test ",
+		OrganizationID: " organization-test ",
 		WorkspaceID:    "workspace-test",
 		AppID:          "app-test",
 		WorkflowRunID:  "run-test",
@@ -41,7 +41,7 @@ func TestCreateRenewDeleteSandbox(t *testing.T) {
 	if box.EffectiveLimits.MaxActiveSandboxes != 1 {
 		t.Fatalf("expected max active limit on sandbox, got %+v", box.EffectiveLimits)
 	}
-	if box.TenantID != "tenant-test" || box.WorkspaceID != "workspace-test" || box.AppID != "app-test" || box.WorkflowRunID != "run-test" || box.UserID != "user-test" {
+	if box.OrganizationID != "organization-test" || box.WorkspaceID != "workspace-test" || box.AppID != "app-test" || box.WorkflowRunID != "run-test" || box.UserID != "user-test" {
 		t.Fatalf("expected normalized ownership fields, got %+v", box)
 	}
 
@@ -52,7 +52,7 @@ func TestCreateRenewDeleteSandbox(t *testing.T) {
 	if _, ok := events[0].Metadata["limit_decisions"]; !ok {
 		t.Fatalf("expected limit decisions in observer metadata, got %+v", events[0].Metadata)
 	}
-	if events[0].Metadata["tenant_id"] != "tenant-test" || events[0].Metadata["workspace_id"] != "workspace-test" || events[0].Metadata["workflow_run_id"] != "run-test" {
+	if events[0].Metadata["organization_id"] != "organization-test" || events[0].Metadata["workspace_id"] != "workspace-test" || events[0].Metadata["workflow_run_id"] != "run-test" {
 		t.Fatalf("expected ownership metadata in created event, got %+v", events[0].Metadata)
 	}
 
@@ -72,7 +72,7 @@ func TestCreateRenewDeleteSandbox(t *testing.T) {
 		t.Fatalf("expected ttl to be updated, got %d", renewed.TTLSeconds)
 	}
 	renewEvents := recorder.Query(observer.Query{SandboxID: box.ID, Type: "sandbox.renewed", Limit: 1})
-	if len(renewEvents) != 1 || renewEvents[0].Metadata["tenant_id"] != "tenant-test" {
+	if len(renewEvents) != 1 || renewEvents[0].Metadata["organization_id"] != "organization-test" {
 		t.Fatalf("expected ownership metadata in renewed event, got %+v", renewEvents)
 	}
 
@@ -86,7 +86,7 @@ func TestCreateRenewDeleteSandbox(t *testing.T) {
 		t.Fatalf("expected delete, got %v", err)
 	}
 	deleteEvents := recorder.Query(observer.Query{SandboxID: box.ID, Type: "sandbox.deleted", Limit: 1})
-	if len(deleteEvents) != 1 || deleteEvents[0].Metadata["tenant_id"] != "tenant-test" {
+	if len(deleteEvents) != 1 || deleteEvents[0].Metadata["organization_id"] != "organization-test" {
 		t.Fatalf("expected ownership metadata in deleted event, got %+v", deleteEvents)
 	}
 }
@@ -99,9 +99,9 @@ func TestCreateRejectsInvalidOwnershipFields(t *testing.T) {
 
 	if _, err := manager.Create(CreateRequest{
 		RuntimeProfile: string(sandbox.RuntimeSession),
-		TenantID:       "tenant ok",
+		OrganizationID: "organization ok",
 	}); err == nil {
-		t.Fatal("expected invalid tenant ID to be rejected")
+		t.Fatal("expected invalid organization ID to be rejected")
 	}
 	if _, err := manager.Create(CreateRequest{
 		RuntimeProfile: string(sandbox.RuntimeSession),
@@ -146,10 +146,10 @@ func TestActiveSandboxLimitIsScopedToWorker(t *testing.T) {
 	}
 }
 
-func TestTenantActiveSandboxLimitSpansWorkers(t *testing.T) {
+func TestOrganizationActiveSandboxLimitSpansWorkers(t *testing.T) {
 	cfg := config.FromEnv()
 	cfg.MaxActive = 10
-	cfg.MaxActivePerTenant = 2
+	cfg.MaxActivePerOrganization = 2
 	cfg.DataDir = t.TempDir()
 	store := newMemoryStore()
 	cache := newNoopCache()
@@ -169,19 +169,19 @@ func TestTenantActiveSandboxLimitSpansWorkers(t *testing.T) {
 		t.Fatalf("expected worker two manager, got %v", err)
 	}
 
-	if _, err := workerOne.Create(CreateRequest{RuntimeProfile: string(sandbox.RuntimeSession), TenantID: "tenant-one"}); err != nil {
-		t.Fatalf("expected first tenant sandbox, got %v", err)
+	if _, err := workerOne.Create(CreateRequest{RuntimeProfile: string(sandbox.RuntimeSession), OrganizationID: "organization-one"}); err != nil {
+		t.Fatalf("expected first organization sandbox, got %v", err)
 	}
-	if _, err := workerTwo.Create(CreateRequest{RuntimeProfile: string(sandbox.RuntimeSession), TenantID: "tenant-one"}); err != nil {
-		t.Fatalf("expected second tenant sandbox across worker, got %v", err)
+	if _, err := workerTwo.Create(CreateRequest{RuntimeProfile: string(sandbox.RuntimeSession), OrganizationID: "organization-one"}); err != nil {
+		t.Fatalf("expected second organization sandbox across worker, got %v", err)
 	}
-	if _, err := workerOne.Create(CreateRequest{RuntimeProfile: string(sandbox.RuntimeSession), TenantID: "tenant-one"}); err == nil {
-		t.Fatal("expected tenant active sandbox limit")
+	if _, err := workerOne.Create(CreateRequest{RuntimeProfile: string(sandbox.RuntimeSession), OrganizationID: "organization-one"}); err == nil {
+		t.Fatal("expected organization active sandbox limit")
 	}
-	if _, err := workerOne.Create(CreateRequest{RuntimeProfile: string(sandbox.RuntimeSession), TenantID: "tenant-two"}); err != nil {
-		t.Fatalf("expected different tenant to have its own quota, got %v", err)
+	if _, err := workerOne.Create(CreateRequest{RuntimeProfile: string(sandbox.RuntimeSession), OrganizationID: "organization-two"}); err != nil {
+		t.Fatalf("expected different organization to have its own quota, got %v", err)
 	}
 	if _, err := workerOne.Create(CreateRequest{RuntimeProfile: string(sandbox.RuntimeSession)}); err != nil {
-		t.Fatalf("expected empty tenant to bypass tenant quota, got %v", err)
+		t.Fatalf("expected empty organization to bypass organization quota, got %v", err)
 	}
 }

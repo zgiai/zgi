@@ -42,7 +42,7 @@ if [[ "${START_LOCAL_SANDBOX}" = "1" ]]; then
     ZGI_SANDBOX_SERVER_PORT="${PORT}" \
     ZGI_SANDBOX_DATA_DIR="${DATA_DIR}/data" \
     ZGI_SANDBOX_WORKER_ID="zgi-sandbox-kest-${PORT}" \
-    ZGI_SANDBOX_MAX_ACTIVE_PER_TENANT="2" \
+    ZGI_SANDBOX_MAX_ACTIVE_PER_ORGANIZATION="2" \
     go run cmd/server/main.go >"${SERVER_LOG}" 2>&1 &
   SERVER_PID="$!"
 fi

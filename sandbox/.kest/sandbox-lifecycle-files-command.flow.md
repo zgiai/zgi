@@ -71,7 +71,7 @@ Content-Type: application/json
 {
   "runtime_profile": "session",
   "ttl_seconds": 120,
-  "tenant_id": "tenant_kest",
+  "organization_id": "organization_kest",
   "workspace_id": "workspace_kest",
   "app_id": "app_kest",
   "workflow_run_id": "workflow_run_kest",
@@ -91,7 +91,7 @@ data.effective_limits.runtime_backend == "preview-process"
 data.effective_limits.max_archive_files == 256
 data.effective_limits.max_active_sandboxes == 6
 data.effective_limits.queue_timeout_ms == 5000
-data.tenant_id == "tenant_kest"
+data.organization_id == "organization_kest"
 data.workspace_id == "workspace_kest"
 data.app_id == "app_kest"
 data.workflow_run_id == "workflow_run_kest"
@@ -108,7 +108,7 @@ GET {{base_url}}/v1/sandboxes/{{sandbox_id}}
 status == 200
 code == 0
 data.status == "active"
-data.tenant_id == "tenant_kest"
+data.organization_id == "organization_kest"
 data.workspace_id == "workspace_kest"
 data.workflow_run_id == "workflow_run_kest"
 ```
@@ -174,6 +174,21 @@ GET {{base_url}}/v1/files/download?sandbox_id={{sandbox_id}}&path=notes/hello.tx
 status == 200
 code == 0
 data.content == "aGVsbG8ga2VzdAo="
+```
+
+```step
+@id observer-file-download-event
+@name Observer file download event
+
+GET {{base_url}}/v1/observer/events?sandbox_id={{sandbox_id}}&type=files.download&limit=1
+
+[Asserts]
+status == 200
+code == 0
+data.events.0.metadata.path == "notes/hello.txt"
+data.events.0.metadata.organization_id == "organization_kest"
+data.events.0.metadata.workspace_id == "workspace_kest"
+data.events.0.metadata.workflow_run_id == "workflow_run_kest"
 ```
 
 ```step
@@ -246,7 +261,7 @@ GET {{base_url}}/v1/observer/events?sandbox_id={{sandbox_id}}&limit=20
 status == 200
 code == 0
 data.events.0.metadata.request_id == "req_kest_command"
-data.events.0.metadata.tenant_id == "tenant_kest"
+data.events.0.metadata.organization_id == "organization_kest"
 data.events.0.metadata.workspace_id == "workspace_kest"
 data.events.0.metadata.workflow_run_id == "workflow_run_kest"
 ```
@@ -255,12 +270,12 @@ data.events.0.metadata.workflow_run_id == "workflow_run_kest"
 @id observer-events-scope-filter
 @name Observer events scope filter
 
-GET {{base_url}}/v1/observer/events?tenant_id=tenant_kest&workspace_id=workspace_kest&workflow_run_id=workflow_run_kest&limit=5
+GET {{base_url}}/v1/observer/events?organization_id=organization_kest&workspace_id=workspace_kest&workflow_run_id=workflow_run_kest&limit=5
 
 [Asserts]
 status == 200
 code == 0
-data.events.0.metadata.tenant_id == "tenant_kest"
+data.events.0.metadata.organization_id == "organization_kest"
 data.events.0.metadata.workspace_id == "workspace_kest"
 data.events.0.metadata.workflow_run_id == "workflow_run_kest"
 ```
@@ -320,6 +335,21 @@ DELETE {{base_url}}/v1/files?sandbox_id={{sandbox_id}}&path=notes/hello.txt
 status == 200
 code == 0
 data.deleted == true
+```
+
+```step
+@id observer-file-delete-event
+@name Observer file delete event
+
+GET {{base_url}}/v1/observer/events?sandbox_id={{sandbox_id}}&type=files.delete&limit=1
+
+[Asserts]
+status == 200
+code == 0
+data.events.0.metadata.path == "notes/hello.txt"
+data.events.0.metadata.organization_id == "organization_kest"
+data.events.0.metadata.workspace_id == "workspace_kest"
+data.events.0.metadata.workflow_run_id == "workflow_run_kest"
 ```
 
 ```step

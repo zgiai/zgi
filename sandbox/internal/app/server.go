@@ -690,15 +690,15 @@ func (s *Server) handleObserverEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	events := s.observer.Query(observer.Query{
-		SandboxID:     r.URL.Query().Get("sandbox_id"),
-		Type:          r.URL.Query().Get("type"),
-		TenantID:      r.URL.Query().Get("tenant_id"),
-		WorkspaceID:   r.URL.Query().Get("workspace_id"),
-		AppID:         r.URL.Query().Get("app_id"),
-		WorkflowRunID: r.URL.Query().Get("workflow_run_id"),
-		UserID:        r.URL.Query().Get("user_id"),
-		Limit:         limit + 1,
-		Before:        before,
+		SandboxID:      r.URL.Query().Get("sandbox_id"),
+		Type:           r.URL.Query().Get("type"),
+		OrganizationID: r.URL.Query().Get("organization_id"),
+		WorkspaceID:    r.URL.Query().Get("workspace_id"),
+		AppID:          r.URL.Query().Get("app_id"),
+		WorkflowRunID:  r.URL.Query().Get("workflow_run_id"),
+		UserID:         r.URL.Query().Get("user_id"),
+		Limit:          limit + 1,
+		Before:         before,
 	})
 	hasMore := len(events) > limit
 	if hasMore {

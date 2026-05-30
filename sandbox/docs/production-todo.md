@@ -34,20 +34,20 @@ Already available:
 - Request correlation IDs for HTTP responses and execution observer events
 - Structured observer events for successful and failed execution paths
 - Observer event pagination with bounded default and maximum page sizes
-- Observer event filters for tenant, workspace, app, workflow run, and user scope
+- Observer event filters for organization, workspace, app, workflow run, and user scope
 - Observer event retention by age and maximum row count
 - Metrics endpoint for worker active sandbox count, runner pressure, and execution observer counters
 - Readiness probe for dependency checks
 - Startup log emits effective non-secret configuration
 - Worker-scoped active sandbox limit accounting
-- Optional tenant-scoped active sandbox limit accounting
-- Sandbox ownership fields for tenant, workspace, app, workflow run, and user context
-- Ownership context persisted with sandbox records and propagated to lifecycle, endpoint, expiration, and execution observer events
+- Optional organization-scoped active sandbox limit accounting
+- Sandbox ownership fields for organization, workspace, app, workflow run, and user context
+- Ownership context persisted with sandbox records and propagated to lifecycle, endpoint, expiration, execution, file, archive, and artifact manifest observer events
 - Optional Linux secure backend with namespace-based isolation
 
 The service is useful for validation and controlled internal environments. It
 should not be described as fully production-ready until the runtime isolation,
-resource governance, network enforcement, and tenant quota items below are
+resource governance, network enforcement, and organization quota items below are
 implemented and verified.
 
 ## 3. Delivery Principles
@@ -304,8 +304,8 @@ Goal: enforce hard resource boundaries for every execution path.
 
 - Max concurrent executions per service.
 - Max concurrent executions per profile.
-- Max concurrent executions per tenant.
-- Max queued jobs per tenant.
+- Max concurrent executions per organization.
+- Max queued jobs per organization.
 - Queue wait timeout.
 - Cancellation propagation.
 - Graceful shutdown drain behavior.
@@ -374,12 +374,12 @@ and security review.
 ### H1. Event Model
 
 - Added cursor-style observer pagination on `GET /v1/observer/events` with a default page size, maximum page size, `has_more`, and `next_cursor`.
-- Added observer event filters for tenant, workspace, app, workflow run, and user scope.
+- Added observer event filters for organization, workspace, app, workflow run, and user scope.
 - Added observer event retention with `ZGI_SANDBOX_OBSERVER_RETENTION_DAYS` and `ZGI_SANDBOX_OBSERVER_MAX_EVENTS`.
 - Standardize observer event fields:
   - event ID
   - sandbox ID
-  - tenant ID
+  - organization ID
   - workspace ID
   - workflow run ID
   - skill ID
@@ -426,14 +426,14 @@ and security review.
 - Sensitive data is not recorded.
 - Metrics endpoint reports expected counters.
 
-## 12. Milestone I: Multi-Tenant Controls
+## 12. Milestone I: Multi-Organization Controls
 
-Goal: bind sandbox usage to ZGI tenants, workspaces, apps, workflows, and users.
+Goal: bind sandbox usage to ZGI organizations, workspaces, apps, workflows, and users.
 
 ### I1. Ownership Model
 
 - Add ownership fields to sandbox create requests:
-  - tenant ID
+  - organization ID
   - workspace ID
   - app ID
   - workflow run ID
@@ -447,24 +447,25 @@ Goal: bind sandbox usage to ZGI tenants, workspaces, apps, workflows, and users.
 
 ### I2. Quotas
 
-- Added optional max active sandboxes per tenant with `ZGI_SANDBOX_MAX_ACTIVE_PER_TENANT`.
-- Max executions per minute per tenant.
-- Max artifact bytes per tenant.
-- Max workspace bytes per tenant.
-- Max network requests per tenant.
-- Max dependency profiles per tenant.
+- Added optional max active sandboxes per organization with `ZGI_SANDBOX_MAX_ACTIVE_PER_ORGANIZATION`.
+- Max executions per minute per organization.
+- Max artifact bytes per organization.
+- Max workspace bytes per organization.
+- Max network requests per organization.
+- Max dependency profiles per organization.
 
 ### I3. Audit
 
 - Record create, renew, execute, upload, download, delete, and policy-deny events.
 - Keep raw file contents out of audit logs.
+- File, archive, and artifact manifest observer events include ownership context.
 - Include hashes for uploaded archives and artifacts.
 - Add operator search by sandbox ID, workflow run ID, and request ID.
 
 ### I4. Tests
 
-- Tenant quota success and failure.
-- Cross-tenant sandbox access rejection.
+- Organization quota success and failure.
+- Cross-organization sandbox access rejection.
 - Audit event completeness.
 - Ownership metadata propagation.
 
@@ -576,7 +577,7 @@ Goal: make production readiness measurable.
 - Runtime backend mode is visible in `/health`.
 - Network policy is enforced by the selected backend.
 - Resource limits are enforced and tested.
-- Tenant quota is enforced and tested.
+- Organization quota is enforced and tested.
 - Audit events exist for execution and file operations.
 - Operator docs list all required environment variables.
 
@@ -591,7 +592,7 @@ Goal: make production readiness measurable.
 7. Resource limit policy surface and structured errors.
 8. Queue and cancellation model.
 9. Observer event normalization and correlation IDs.
-10. Tenant ownership fields and quota checks.
+10. Organization ownership fields and quota checks.
 11. Dependency profile records and version pinning.
 12. Template runtime API.
 13. Workflow session sandbox integration.
@@ -613,7 +614,7 @@ Each PR should include:
 - Preview process execution is rejected in production mode.
 - Network access is denied by default and enforced below the HTTP layer.
 - CPU, memory, disk, process, file, timeout, and output limits are enforced.
-- Tenant ownership and quotas are enforced.
+- Organization ownership and quotas are enforced.
 - Execution events are auditable and correlation-friendly.
 - Skill package execution has manifest validation and artifact limits.
 - Short-code execution is stateless by default.

@@ -72,21 +72,21 @@ func TestNormalizeCreateReturnsEffectiveLimitsAndStructuredLimitError(t *testing
 	cfg.MaxFileSizeKB = 128
 	service := NewService(cfg)
 
-	decision, err := service.NormalizeCreate("session", 60, false, "", "stdlib", 1, "tenant-1", 1)
+	decision, err := service.NormalizeCreate("session", 60, false, "", "stdlib", 1, "organization-1", 1)
 	if err != nil {
 		t.Fatalf("expected normalize create, got %v", err)
 	}
 	if decision.EffectiveLimits.MaxActiveSandboxes != 2 {
 		t.Fatalf("expected max active limit in decision, got %+v", decision.EffectiveLimits)
 	}
-	if decision.EffectiveLimits.MaxActiveSandboxesPerTenant != 0 {
-		t.Fatalf("expected tenant active limit to default to disabled, got %+v", decision.EffectiveLimits)
+	if decision.EffectiveLimits.MaxActiveSandboxesPerOrganization != 0 {
+		t.Fatalf("expected organization active limit to default to disabled, got %+v", decision.EffectiveLimits)
 	}
 	if decision.EffectiveLimits.MaxFileSizeBytes != 128*1024 {
 		t.Fatalf("expected max file size bytes in decision, got %+v", decision.EffectiveLimits)
 	}
 
-	_, err = service.NormalizeCreate("session", 60, false, "", "stdlib", 2, "tenant-1", 1)
+	_, err = service.NormalizeCreate("session", 60, false, "", "stdlib", 2, "organization-1", 1)
 	limitErr, ok := err.(*LimitError)
 	if !ok {
 		t.Fatalf("expected LimitError, got %T %v", err, err)
@@ -96,34 +96,34 @@ func TestNormalizeCreateReturnsEffectiveLimitsAndStructuredLimitError(t *testing
 	}
 }
 
-func TestNormalizeCreateRejectsTenantActiveLimit(t *testing.T) {
+func TestNormalizeCreateRejectsOrganizationActiveLimit(t *testing.T) {
 	cfg := config.FromEnv()
 	cfg.MaxActive = 10
-	cfg.MaxActivePerTenant = 2
+	cfg.MaxActivePerOrganization = 2
 	service := NewService(cfg)
 
-	decision, err := service.NormalizeCreate("session", 60, false, "", "stdlib", 2, "tenant-1", 1)
+	decision, err := service.NormalizeCreate("session", 60, false, "", "stdlib", 2, "organization-1", 1)
 	if err != nil {
-		t.Fatalf("expected tenant create below limit, got %v", err)
+		t.Fatalf("expected organization create below limit, got %v", err)
 	}
-	if decision.EffectiveLimits.MaxActiveSandboxesPerTenant != 2 {
-		t.Fatalf("expected tenant limit in decision, got %+v", decision.EffectiveLimits)
+	if decision.EffectiveLimits.MaxActiveSandboxesPerOrganization != 2 {
+		t.Fatalf("expected organization limit in decision, got %+v", decision.EffectiveLimits)
 	}
 
-	_, err = service.NormalizeCreate("session", 60, false, "", "stdlib", 2, "tenant-1", 2)
+	_, err = service.NormalizeCreate("session", 60, false, "", "stdlib", 2, "organization-1", 2)
 	limitErr, ok := err.(*LimitError)
 	if !ok {
 		t.Fatalf("expected LimitError, got %T %v", err, err)
 	}
-	if limitErr.Code != "tenant_active_sandbox_limit_exceeded" || limitErr.Limit != "max_active_sandboxes_per_tenant" {
-		t.Fatalf("unexpected tenant limit error: %+v", limitErr)
+	if limitErr.Code != "organization_active_sandbox_limit_exceeded" || limitErr.Limit != "max_active_sandboxes_per_organization" {
+		t.Fatalf("unexpected organization limit error: %+v", limitErr)
 	}
-	if limitErr.Details["tenant_id"] != "tenant-1" {
-		t.Fatalf("expected tenant id in details, got %+v", limitErr.Details)
+	if limitErr.Details["organization_id"] != "organization-1" {
+		t.Fatalf("expected organization id in details, got %+v", limitErr.Details)
 	}
 
 	if _, err := service.NormalizeCreate("session", 60, false, "", "stdlib", 2, "", 2); err != nil {
-		t.Fatalf("expected empty tenant to bypass tenant quota, got %v", err)
+		t.Fatalf("expected empty organization to bypass organization quota, got %v", err)
 	}
 }
 

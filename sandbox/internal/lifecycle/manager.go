@@ -24,7 +24,7 @@ type CreateRequest struct {
 	RuntimeProfile    string            `json:"runtime_profile"`
 	TTLSeconds        int               `json:"ttl_seconds"`
 	Metadata          map[string]string `json:"metadata"`
-	TenantID          string            `json:"tenant_id"`
+	OrganizationID    string            `json:"organization_id"`
 	WorkspaceID       string            `json:"workspace_id"`
 	AppID             string            `json:"app_id"`
 	WorkflowRunID     string            `json:"workflow_run_id"`
@@ -47,7 +47,7 @@ type Store interface {
 	GetSandbox(string) (*sandbox.Sandbox, error)
 	ListSandboxes() ([]sandbox.Sandbox, error)
 	CountActive(string, time.Time) (int, error)
-	CountActiveByTenant(string, time.Time) (int, error)
+	CountActiveByOrganization(string, time.Time) (int, error)
 	SaveEndpoint(sandbox.Endpoint) error
 	GetEndpoint(string, string) (*sandbox.Endpoint, error)
 }
@@ -113,9 +113,9 @@ func (m *Manager) Create(req CreateRequest) (*sandbox.Sandbox, error) {
 	if err != nil {
 		return nil, err
 	}
-	tenantActiveCount := 0
-	if ownership.TenantID != "" {
-		tenantActiveCount, err = m.store.CountActiveByTenant(ownership.TenantID, now)
+	organizationActiveCount := 0
+	if ownership.OrganizationID != "" {
+		organizationActiveCount, err = m.store.CountActiveByOrganization(ownership.OrganizationID, now)
 		if err != nil {
 			return nil, err
 		}
@@ -128,8 +128,8 @@ func (m *Manager) Create(req CreateRequest) (*sandbox.Sandbox, error) {
 		req.NetworkPolicy,
 		req.DependencyProfile,
 		activeCount,
-		ownership.TenantID,
-		tenantActiveCount,
+		ownership.OrganizationID,
+		organizationActiveCount,
 	)
 	if err != nil {
 		return nil, err
@@ -150,7 +150,7 @@ func (m *Manager) Create(req CreateRequest) (*sandbox.Sandbox, error) {
 		ExpiresAt:         now.Add(decision.TTL),
 		RootPath:          root,
 		Metadata:          cloneMetadata(req.Metadata),
-		TenantID:          ownership.TenantID,
+		OrganizationID:    ownership.OrganizationID,
 		WorkspaceID:       ownership.WorkspaceID,
 		AppID:             ownership.AppID,
 		WorkflowRunID:     ownership.WorkflowRunID,
@@ -177,14 +177,14 @@ func (m *Manager) Create(req CreateRequest) (*sandbox.Sandbox, error) {
 		"dependency_profile": item.DependencyProfile,
 		"worker_id":          item.WorkerID,
 		"limit_decisions": map[string]any{
-			"ttl_seconds":                     item.TTLSeconds,
-			"max_active_sandboxes":            decision.EffectiveLimits.MaxActiveSandboxes,
-			"max_active_sandboxes_per_tenant": decision.EffectiveLimits.MaxActiveSandboxesPerTenant,
-			"max_file_size_bytes":             decision.EffectiveLimits.MaxFileSizeBytes,
-			"max_archive_files":               decision.EffectiveLimits.MaxArchiveFiles,
-			"max_archive_total_bytes":         decision.EffectiveLimits.MaxArchiveTotalBytes,
-			"network_policy_enforced":         decision.EffectiveLimits.NetworkPolicyEnforced,
-			"workspace_bytes_enforced":        decision.EffectiveLimits.WorkspaceByteLimitEnforced,
+			"ttl_seconds":                           item.TTLSeconds,
+			"max_active_sandboxes":                  decision.EffectiveLimits.MaxActiveSandboxes,
+			"max_active_sandboxes_per_organization": decision.EffectiveLimits.MaxActiveSandboxesPerOrganization,
+			"max_file_size_bytes":                   decision.EffectiveLimits.MaxFileSizeBytes,
+			"max_archive_files":                     decision.EffectiveLimits.MaxArchiveFiles,
+			"max_archive_total_bytes":               decision.EffectiveLimits.MaxArchiveTotalBytes,
+			"network_policy_enforced":               decision.EffectiveLimits.NetworkPolicyEnforced,
+			"workspace_bytes_enforced":              decision.EffectiveLimits.WorkspaceByteLimitEnforced,
 		},
 	}
 	addOwnershipMetadata(metadata, item)
@@ -195,15 +195,15 @@ func (m *Manager) Create(req CreateRequest) (*sandbox.Sandbox, error) {
 }
 
 type ownershipFields struct {
-	TenantID      string
-	WorkspaceID   string
-	AppID         string
-	WorkflowRunID string
-	UserID        string
+	OrganizationID string
+	WorkspaceID    string
+	AppID          string
+	WorkflowRunID  string
+	UserID         string
 }
 
 func normalizeOwnership(req CreateRequest) (ownershipFields, error) {
-	tenantID, err := normalizeOwnershipValue("tenant_id", req.TenantID)
+	organizationID, err := normalizeOwnershipValue("organization_id", req.OrganizationID)
 	if err != nil {
 		return ownershipFields{}, err
 	}
@@ -224,11 +224,11 @@ func normalizeOwnership(req CreateRequest) (ownershipFields, error) {
 		return ownershipFields{}, err
 	}
 	return ownershipFields{
-		TenantID:      tenantID,
-		WorkspaceID:   workspaceID,
-		AppID:         appID,
-		WorkflowRunID: workflowRunID,
-		UserID:        userID,
+		OrganizationID: organizationID,
+		WorkspaceID:    workspaceID,
+		AppID:          appID,
+		WorkflowRunID:  workflowRunID,
+		UserID:         userID,
 	}, nil
 }
 
@@ -260,8 +260,8 @@ func isOwnershipChar(char rune) bool {
 }
 
 func addOwnershipMetadata(metadata map[string]any, item sandbox.Sandbox) {
-	if item.TenantID != "" {
-		metadata["tenant_id"] = item.TenantID
+	if item.OrganizationID != "" {
+		metadata["organization_id"] = item.OrganizationID
 	}
 	if item.WorkspaceID != "" {
 		metadata["workspace_id"] = item.WorkspaceID
@@ -601,12 +601,12 @@ func (s *memoryStore) CountActive(workerID string, now time.Time) (int, error) {
 	return count, nil
 }
 
-func (s *memoryStore) CountActiveByTenant(tenantID string, now time.Time) (int, error) {
+func (s *memoryStore) CountActiveByOrganization(organizationID string, now time.Time) (int, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	count := 0
 	for _, item := range s.sandboxes {
-		if item.Status == sandbox.StatusActive && item.ExpiresAt.After(now) && item.TenantID == tenantID {
+		if item.Status == sandbox.StatusActive && item.ExpiresAt.After(now) && item.OrganizationID == organizationID {
 			count++
 		}
 	}

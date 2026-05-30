@@ -28,8 +28,8 @@ func TestPostgresStorePersistsSandboxAndEvents(t *testing.T) {
 		UpdatedAt:         time.Now().UTC(),
 		ExpiresAt:         time.Now().UTC().Add(5 * time.Minute),
 		RootPath:          "/tmp/sbx_store_test",
-		Metadata:          map[string]string{"tenant_id": "tenant-1"},
-		TenantID:          "tenant-1",
+		Metadata:          map[string]string{"organization_id": "organization-1"},
+		OrganizationID:    "organization-1",
 		WorkspaceID:       "workspace-1",
 		AppID:             "app-1",
 		WorkflowRunID:     "run-1",
@@ -53,15 +53,15 @@ func TestPostgresStorePersistsSandboxAndEvents(t *testing.T) {
 	if loaded.WorkerID != box.WorkerID {
 		t.Fatalf("expected worker id %q, got %q", box.WorkerID, loaded.WorkerID)
 	}
-	if loaded.TenantID != box.TenantID || loaded.WorkspaceID != box.WorkspaceID || loaded.AppID != box.AppID || loaded.WorkflowRunID != box.WorkflowRunID || loaded.UserID != box.UserID {
+	if loaded.OrganizationID != box.OrganizationID || loaded.WorkspaceID != box.WorkspaceID || loaded.AppID != box.AppID || loaded.WorkflowRunID != box.WorkflowRunID || loaded.UserID != box.UserID {
 		t.Fatalf("expected ownership fields to round trip, got %+v", loaded)
 	}
-	tenantCount, err := store.CountActiveByTenant(box.TenantID, time.Now().UTC())
+	organizationCount, err := store.CountActiveByOrganization(box.OrganizationID, time.Now().UTC())
 	if err != nil {
-		t.Fatalf("count tenant active sandboxes: %v", err)
+		t.Fatalf("count organization active sandboxes: %v", err)
 	}
-	if tenantCount != 1 {
-		t.Fatalf("expected one active sandbox for tenant, got %d", tenantCount)
+	if organizationCount != 1 {
+		t.Fatalf("expected one active sandbox for organization, got %d", organizationCount)
 	}
 
 	event := observer.Event{
@@ -72,7 +72,7 @@ func TestPostgresStorePersistsSandboxAndEvents(t *testing.T) {
 		CreatedAt: time.Now().UTC().Add(2 * time.Second),
 		Metadata: map[string]any{
 			"worker_id":       "worker-a",
-			"tenant_id":       "tenant-1",
+			"organization_id": "organization-1",
 			"workspace_id":    "workspace-1",
 			"app_id":          "app-1",
 			"workflow_run_id": "run-1",
@@ -90,7 +90,7 @@ func TestPostgresStorePersistsSandboxAndEvents(t *testing.T) {
 		CreatedAt: event.CreatedAt.Add(-500 * time.Millisecond),
 		Metadata: map[string]any{
 			"worker_id":       "worker-a",
-			"tenant_id":       "tenant-2",
+			"organization_id": "organization-2",
 			"workspace_id":    "workspace-2",
 			"app_id":          "app-2",
 			"workflow_run_id": "run-2",
@@ -127,13 +127,13 @@ func TestPostgresStorePersistsSandboxAndEvents(t *testing.T) {
 	}
 
 	scopedEvents, err := store.QueryEvents(observer.Query{
-		SandboxID:     box.ID,
-		TenantID:      "tenant-1",
-		WorkspaceID:   "workspace-1",
-		AppID:         "app-1",
-		WorkflowRunID: "run-1",
-		UserID:        "user-1",
-		Limit:         10,
+		SandboxID:      box.ID,
+		OrganizationID: "organization-1",
+		WorkspaceID:    "workspace-1",
+		AppID:          "app-1",
+		WorkflowRunID:  "run-1",
+		UserID:         "user-1",
+		Limit:          10,
 	})
 	if err != nil {
 		t.Fatalf("query scoped events: %v", err)

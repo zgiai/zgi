@@ -74,7 +74,7 @@ func (s *Store) prepare(ctx context.Context) error {
 			expires_at TIMESTAMPTZ NOT NULL,
 			root_path TEXT NOT NULL,
 			metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
-			tenant_id TEXT NOT NULL DEFAULT '',
+			organization_id TEXT NOT NULL DEFAULT '',
 			workspace_id TEXT NOT NULL DEFAULT '',
 			app_id TEXT NOT NULL DEFAULT '',
 			workflow_run_id TEXT NOT NULL DEFAULT '',
@@ -87,13 +87,13 @@ func (s *Store) prepare(ctx context.Context) error {
 			worker_id TEXT NOT NULL,
 			worker_addr TEXT NOT NULL
 		);`,
-		`ALTER TABLE sandboxes ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT '';`,
+		`ALTER TABLE sandboxes ADD COLUMN IF NOT EXISTS organization_id TEXT NOT NULL DEFAULT '';`,
 		`ALTER TABLE sandboxes ADD COLUMN IF NOT EXISTS workspace_id TEXT NOT NULL DEFAULT '';`,
 		`ALTER TABLE sandboxes ADD COLUMN IF NOT EXISTS app_id TEXT NOT NULL DEFAULT '';`,
 		`ALTER TABLE sandboxes ADD COLUMN IF NOT EXISTS workflow_run_id TEXT NOT NULL DEFAULT '';`,
 		`ALTER TABLE sandboxes ADD COLUMN IF NOT EXISTS user_id TEXT NOT NULL DEFAULT '';`,
 		`CREATE INDEX IF NOT EXISTS idx_sandboxes_status_expires ON sandboxes(status, expires_at);`,
-		`CREATE INDEX IF NOT EXISTS idx_sandboxes_ownership ON sandboxes(tenant_id, workspace_id, workflow_run_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_sandboxes_ownership ON sandboxes(organization_id, workspace_id, workflow_run_id);`,
 		`CREATE TABLE IF NOT EXISTS sandbox_endpoints (
 			sandbox_id TEXT NOT NULL,
 			port TEXT NOT NULL,
@@ -116,7 +116,7 @@ func (s *Store) prepare(ctx context.Context) error {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_observer_events_scope ON observer_events(sandbox_id, type, created_at DESC);`,
 		`CREATE INDEX IF NOT EXISTS idx_observer_events_created_at ON observer_events(created_at DESC);`,
-		`CREATE INDEX IF NOT EXISTS idx_observer_events_ownership ON observer_events ((metadata_json->>'tenant_id'), (metadata_json->>'workspace_id'), (metadata_json->>'workflow_run_id'), created_at DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_observer_events_ownership ON observer_events ((metadata_json->>'organization_id'), (metadata_json->>'workspace_id'), (metadata_json->>'workflow_run_id'), created_at DESC);`,
 	}
 
 	for _, statement := range statements {
@@ -136,7 +136,7 @@ func (s *Store) SaveSandbox(box sandbox.Sandbox) error {
 	_, err = s.db.Exec(`
 		INSERT INTO sandboxes (
 			id, runtime_profile, status, created_at, updated_at, expires_at, root_path,
-			metadata_json, tenant_id, workspace_id, app_id, workflow_run_id, user_id,
+			metadata_json, organization_id, workspace_id, app_id, workflow_run_id, user_id,
 			network_enabled, network_policy, dependency_profile, workspace_binding,
 			ttl_seconds, worker_id, worker_addr
 		) VALUES (
@@ -152,7 +152,7 @@ func (s *Store) SaveSandbox(box sandbox.Sandbox) error {
 			expires_at = EXCLUDED.expires_at,
 			root_path = EXCLUDED.root_path,
 			metadata_json = EXCLUDED.metadata_json,
-			tenant_id = EXCLUDED.tenant_id,
+			organization_id = EXCLUDED.organization_id,
 			workspace_id = EXCLUDED.workspace_id,
 			app_id = EXCLUDED.app_id,
 			workflow_run_id = EXCLUDED.workflow_run_id,
@@ -173,7 +173,7 @@ func (s *Store) SaveSandbox(box sandbox.Sandbox) error {
 		box.ExpiresAt.UTC(),
 		box.RootPath,
 		string(metadata),
-		box.TenantID,
+		box.OrganizationID,
 		box.WorkspaceID,
 		box.AppID,
 		box.WorkflowRunID,
@@ -192,7 +192,7 @@ func (s *Store) SaveSandbox(box sandbox.Sandbox) error {
 func (s *Store) GetSandbox(id string) (*sandbox.Sandbox, error) {
 	row := s.db.QueryRow(`
 		SELECT id, runtime_profile, status, created_at, updated_at, expires_at, root_path,
-		       metadata_json, tenant_id, workspace_id, app_id, workflow_run_id, user_id,
+		       metadata_json, organization_id, workspace_id, app_id, workflow_run_id, user_id,
 		       network_enabled, network_policy, dependency_profile, workspace_binding,
 		       ttl_seconds, worker_id, worker_addr
 		FROM sandboxes
@@ -209,7 +209,7 @@ func (s *Store) GetSandbox(id string) (*sandbox.Sandbox, error) {
 func (s *Store) ListSandboxes() ([]sandbox.Sandbox, error) {
 	rows, err := s.db.Query(`
 		SELECT id, runtime_profile, status, created_at, updated_at, expires_at, root_path,
-		       metadata_json, tenant_id, workspace_id, app_id, workflow_run_id, user_id,
+		       metadata_json, organization_id, workspace_id, app_id, workflow_run_id, user_id,
 		       network_enabled, network_policy, dependency_profile, workspace_binding,
 		       ttl_seconds, worker_id, worker_addr
 		FROM sandboxes
@@ -245,12 +245,12 @@ func (s *Store) CountActive(workerID string, now time.Time) (int, error) {
 	return count, nil
 }
 
-func (s *Store) CountActiveByTenant(tenantID string, now time.Time) (int, error) {
+func (s *Store) CountActiveByOrganization(organizationID string, now time.Time) (int, error) {
 	row := s.db.QueryRow(`
 		SELECT COUNT(1)
 		FROM sandboxes
-		WHERE status = $1 AND expires_at > $2 AND tenant_id = $3
-	`, string(sandbox.StatusActive), now.UTC(), tenantID)
+		WHERE status = $1 AND expires_at > $2 AND organization_id = $3
+	`, string(sandbox.StatusActive), now.UTC(), organizationID)
 
 	var count int
 	if err := row.Scan(&count); err != nil {
@@ -368,7 +368,7 @@ func (s *Store) QueryEvents(query observer.Query) ([]observer.Event, error) {
 		WHERE ($1 = '' OR sandbox_id = $2)
 		  AND ($3 = '' OR type = $4)
 		  AND ($5::timestamptz IS NULL OR created_at < $5)
-		  AND ($6 = '' OR metadata_json->>'tenant_id' = $7)
+		  AND ($6 = '' OR metadata_json->>'organization_id' = $7)
 		  AND ($8 = '' OR metadata_json->>'workspace_id' = $9)
 		  AND ($10 = '' OR metadata_json->>'app_id' = $11)
 		  AND ($12 = '' OR metadata_json->>'workflow_run_id' = $13)
@@ -383,7 +383,7 @@ func (s *Store) QueryEvents(query observer.Query) ([]observer.Event, error) {
 		query.SandboxID, query.SandboxID,
 		query.Type, query.Type,
 		before,
-		query.TenantID, query.TenantID,
+		query.OrganizationID, query.OrganizationID,
 		query.WorkspaceID, query.WorkspaceID,
 		query.AppID, query.AppID,
 		query.WorkflowRunID, query.WorkflowRunID,
@@ -451,7 +451,7 @@ func scanSandbox(scanner rowScanner) (*sandbox.Sandbox, error) {
 		&box.ExpiresAt,
 		&box.RootPath,
 		&metadataJSON,
-		&box.TenantID,
+		&box.OrganizationID,
 		&box.WorkspaceID,
 		&box.AppID,
 		&box.WorkflowRunID,

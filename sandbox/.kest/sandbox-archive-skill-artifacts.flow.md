@@ -15,6 +15,9 @@ Content-Type: application/json
 {
   "runtime_profile": "session",
   "ttl_seconds": 120,
+  "organization_id": "organization_archive_kest",
+  "workspace_id": "workspace_archive_kest",
+  "workflow_run_id": "workflow_run_archive_kest",
   "dependency_profile": "stdlib",
   "network_enabled": false,
   "network_policy": "deny-by-default"
@@ -96,6 +99,21 @@ data.file_count == 3
 ```
 
 ```step
+@id observer-archive-upload-event
+@name Observer archive upload event
+
+GET {{base_url}}/v1/observer/events?sandbox_id={{sandbox_id}}&type=files.upload_archive&limit=1
+
+[Asserts]
+status == 200
+code == 0
+data.events.0.metadata.path == "."
+data.events.0.metadata.organization_id == "organization_archive_kest"
+data.events.0.metadata.workspace_id == "workspace_archive_kest"
+data.events.0.metadata.workflow_run_id == "workflow_run_archive_kest"
+```
+
+```step
 @id run-script
 @name Run uploaded script
 
@@ -159,6 +177,21 @@ data.path == "artifacts"
 data.file_count == 1
 data.total_size == 14
 data.truncated == false
+```
+
+```step
+@id observer-artifact-manifest-event
+@name Observer artifact manifest event
+
+GET {{base_url}}/v1/observer/events?sandbox_id={{sandbox_id}}&type=files.manifest&limit=1
+
+[Asserts]
+status == 200
+code == 0
+data.events.0.metadata.path == "artifacts"
+data.events.0.metadata.organization_id == "organization_archive_kest"
+data.events.0.metadata.workspace_id == "workspace_archive_kest"
+data.events.0.metadata.workflow_run_id == "workflow_run_archive_kest"
 ```
 
 ```step

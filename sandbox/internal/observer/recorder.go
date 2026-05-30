@@ -21,15 +21,15 @@ type Recorder struct {
 }
 
 type Query struct {
-	SandboxID     string
-	Type          string
-	TenantID      string
-	WorkspaceID   string
-	AppID         string
-	WorkflowRunID string
-	UserID        string
-	Limit         int
-	Before        time.Time
+	SandboxID      string
+	Type           string
+	OrganizationID string
+	WorkspaceID    string
+	AppID          string
+	WorkflowRunID  string
+	UserID         string
+	Limit          int
+	Before         time.Time
 }
 
 type Metrics struct {
@@ -190,7 +190,7 @@ func (s *memoryStore) QueryEvents(query Query) ([]Event, error) {
 		if query.Type != "" && event.Type != query.Type {
 			continue
 		}
-		if query.TenantID != "" && metadataString(event.Metadata, "tenant_id") != query.TenantID {
+		if query.OrganizationID != "" && metadataString(event.Metadata, "organization_id") != query.OrganizationID {
 			continue
 		}
 		if query.WorkspaceID != "" && metadataString(event.Metadata, "workspace_id") != query.WorkspaceID {

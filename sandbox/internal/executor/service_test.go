@@ -31,7 +31,7 @@ func TestCodeCommandAndFileFlow(t *testing.T) {
 
 	box, err := manager.Create(lifecycle.CreateRequest{
 		RuntimeProfile: string(sandbox.RuntimeSession),
-		TenantID:       "tenant-exec",
+		OrganizationID: "organization-exec",
 		WorkspaceID:    "workspace-exec",
 		WorkflowRunID:  "run-exec",
 	})
@@ -102,7 +102,7 @@ func TestExecutionEventsIncludeRequestID(t *testing.T) {
 
 	box, err := manager.Create(lifecycle.CreateRequest{
 		RuntimeProfile: string(sandbox.RuntimeSession),
-		TenantID:       "tenant-exec",
+		OrganizationID: "organization-exec",
 		WorkspaceID:    "workspace-exec",
 		WorkflowRunID:  "run-exec",
 	})
@@ -128,7 +128,7 @@ func TestExecutionEventsIncludeRequestID(t *testing.T) {
 	if events[0].Metadata["status"] != "success" {
 		t.Fatalf("expected success status, got %#v", events[0].Metadata)
 	}
-	if events[0].Metadata["tenant_id"] != "tenant-exec" || events[0].Metadata["workspace_id"] != "workspace-exec" || events[0].Metadata["workflow_run_id"] != "run-exec" {
+	if events[0].Metadata["organization_id"] != "organization-exec" || events[0].Metadata["workspace_id"] != "workspace-exec" || events[0].Metadata["workflow_run_id"] != "run-exec" {
 		t.Fatalf("expected ownership metadata, got %#v", events[0].Metadata)
 	}
 }
@@ -144,7 +144,7 @@ func TestExecutionFailureEventsAvoidSensitivePayloads(t *testing.T) {
 
 	box, err := manager.Create(lifecycle.CreateRequest{
 		RuntimeProfile: string(sandbox.RuntimeSession),
-		TenantID:       "tenant-failed",
+		OrganizationID: "organization-failed",
 		WorkspaceID:    "workspace-failed",
 		WorkflowRunID:  "run-failed",
 	})
@@ -176,7 +176,7 @@ func TestExecutionFailureEventsAvoidSensitivePayloads(t *testing.T) {
 	if metadata["status"] != "failure" || metadata["error_type"] != "validation_error" {
 		t.Fatalf("expected structured failure metadata, got %#v", metadata)
 	}
-	if metadata["tenant_id"] != "tenant-failed" || metadata["workspace_id"] != "workspace-failed" || metadata["workflow_run_id"] != "run-failed" {
+	if metadata["organization_id"] != "organization-failed" || metadata["workspace_id"] != "workspace-failed" || metadata["workflow_run_id"] != "run-failed" {
 		t.Fatalf("expected ownership metadata, got %#v", metadata)
 	}
 	if _, ok := metadata["env"]; ok {
@@ -190,10 +190,63 @@ func TestExecutionFailureEventsAvoidSensitivePayloads(t *testing.T) {
 	}
 }
 
+func TestFileEventsIncludeOwnershipMetadata(t *testing.T) {
+	recorder := observer.NewRecorder(100)
+	policyService := policy.NewService(config.FromEnv())
+	manager, err := lifecycle.NewManager(recorder, policyService)
+	if err != nil {
+		t.Fatalf("expected lifecycle manager, got %v", err)
+	}
+	service := NewService(manager, runner.NewService(2, 3*time.Second, 4096), recorder, policyService)
+
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+		OrganizationID: "organization-files",
+		WorkspaceID:    "workspace-files",
+		AppID:          "app-files",
+		WorkflowRunID:  "run-files",
+		UserID:         "user-files",
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	if _, err := service.UploadFile(FileWriteRequest{
+		SandboxID: box.ID,
+		Path:      "notes/hello.txt",
+		Content:   "hello",
+	}); err != nil {
+		t.Fatalf("expected upload, got %v", err)
+	}
+	if _, err := service.DownloadFile(box.ID, "notes/hello.txt", "utf-8"); err != nil {
+		t.Fatalf("expected download, got %v", err)
+	}
+	if _, err := service.BuildFileManifest(box.ID, "notes"); err != nil {
+		t.Fatalf("expected manifest, got %v", err)
+	}
+	if err := service.DeleteFile(box.ID, "notes/hello.txt"); err != nil {
+		t.Fatalf("expected delete, got %v", err)
+	}
+
+	for _, eventType := range []string{"files.upload", "files.download", "files.manifest", "files.delete"} {
+		events := recorder.Query(observer.Query{SandboxID: box.ID, Type: eventType, Limit: 1})
+		if len(events) != 1 {
+			t.Fatalf("expected %s event, got %d", eventType, len(events))
+		}
+		metadata := events[0].Metadata
+		if metadata["organization_id"] != "organization-files" || metadata["workspace_id"] != "workspace-files" || metadata["app_id"] != "app-files" || metadata["workflow_run_id"] != "run-files" || metadata["user_id"] != "user-files" {
+			t.Fatalf("expected ownership metadata on %s, got %#v", eventType, metadata)
+		}
+	}
+}
+
 func TestUploadArchiveExtractsZipWithStripRoot(t *testing.T) {
 	service, manager := newTestExecutorService(t)
 	box, err := manager.Create(lifecycle.CreateRequest{
 		RuntimeProfile: string(sandbox.RuntimeSession),
+		OrganizationID: "organization-archive",
+		WorkspaceID:    "workspace-archive",
+		WorkflowRunID:  "run-archive",
 	})
 	if err != nil {
 		t.Fatalf("expected sandbox create, got %v", err)
@@ -223,6 +276,14 @@ func TestUploadArchiveExtractsZipWithStripRoot(t *testing.T) {
 	}
 	if downloaded.Content != "# Weather" {
 		t.Fatalf("unexpected skill content: %q", downloaded.Content)
+	}
+
+	events := service.observer.Query(observer.Query{SandboxID: box.ID, Type: "files.upload_archive", Limit: 1})
+	if len(events) != 1 {
+		t.Fatalf("expected archive upload event, got %d", len(events))
+	}
+	if events[0].Metadata["organization_id"] != "organization-archive" || events[0].Metadata["workspace_id"] != "workspace-archive" || events[0].Metadata["workflow_run_id"] != "run-archive" {
+		t.Fatalf("expected ownership metadata on archive event, got %#v", events[0].Metadata)
 	}
 }
 

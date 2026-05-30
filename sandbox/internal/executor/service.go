@@ -319,8 +319,8 @@ func addOwnershipMetadata(metadata map[string]any, box *sandbox.Sandbox) {
 	if box == nil {
 		return
 	}
-	if box.TenantID != "" {
-		metadata["tenant_id"] = box.TenantID
+	if box.OrganizationID != "" {
+		metadata["organization_id"] = box.OrganizationID
 	}
 	if box.WorkspaceID != "" {
 		metadata["workspace_id"] = box.WorkspaceID
@@ -364,7 +364,9 @@ func (s *Service) UploadFile(req FileWriteRequest) (*FileInfo, error) {
 
 	info, err := s.StatFile(req.SandboxID, req.Path)
 	if err == nil {
-		s.observer.Record("files.upload", req.SandboxID, "file uploaded", map[string]any{"path": req.Path, "size": info.Size})
+		metadata := map[string]any{"path": req.Path, "size": info.Size}
+		addOwnershipMetadata(metadata, box)
+		s.observer.Record("files.upload", req.SandboxID, "file uploaded", metadata)
 	}
 	return info, err
 }
@@ -476,11 +478,13 @@ func (s *Service) UploadArchive(req ArchiveUploadRequest) (*ArchiveUploadResult,
 		files = append(files, *info)
 	}
 
-	s.observer.Record("files.upload_archive", req.SandboxID, "archive uploaded", map[string]any{
+	metadata := map[string]any{
 		"path":       req.Path,
 		"file_count": len(files),
 		"total_size": totalSize,
-	})
+	}
+	addOwnershipMetadata(metadata, box)
+	s.observer.Record("files.upload_archive", req.SandboxID, "archive uploaded", metadata)
 	return &ArchiveUploadResult{
 		SandboxID:     req.SandboxID,
 		Path:          req.Path,
@@ -512,7 +516,9 @@ func (s *Service) DownloadFile(sandboxID string, relativePath string, encoding s
 		content = []byte(base64.StdEncoding.EncodeToString(content))
 	}
 
-	s.observer.Record("files.download", sandboxID, "file downloaded", map[string]any{"path": relativePath})
+	metadata := map[string]any{"path": relativePath}
+	addOwnershipMetadata(metadata, box)
+	s.observer.Record("files.download", sandboxID, "file downloaded", metadata)
 	return &FileContent{
 		SandboxID: sandboxID,
 		Path:      relativePath,
@@ -565,7 +571,9 @@ func (s *Service) DeleteFile(sandboxID string, relativePath string) error {
 		return err
 	}
 
-	s.observer.Record("files.delete", sandboxID, "file deleted", map[string]any{"path": relativePath})
+	metadata := map[string]any{"path": relativePath}
+	addOwnershipMetadata(metadata, box)
+	s.observer.Record("files.delete", sandboxID, "file deleted", metadata)
 	return nil
 }
 
@@ -633,12 +641,14 @@ func (s *Service) BuildFileManifest(sandboxID string, relativePath string) (*Fil
 		return nil, err
 	}
 
-	s.observer.Record("files.manifest", sandboxID, "file manifest generated", map[string]any{
+	metadata := map[string]any{
 		"path":       relativePath,
 		"file_count": len(items),
 		"total_size": totalSize,
 		"truncated":  truncated,
-	})
+	}
+	addOwnershipMetadata(metadata, box)
+	s.observer.Record("files.manifest", sandboxID, "file manifest generated", metadata)
 	return &FileManifest{
 		SandboxID: sandboxID,
 		Path:      relativePath,

@@ -15,102 +15,91 @@ GET {{base_url}}/v1/policies
 status == 200
 code == 0
 data.limits.max_active_sandboxes == 6
-data.limits.max_active_sandboxes_per_tenant == 2
+data.limits.max_active_sandboxes_per_organization == 2
 data.limits.max_archive_files == 256
 data.limits.queue_timeout_ms == 5000
 data.limits.workspace_byte_limit_enforced == false
 ```
 
 ```step
-@id create-tenant-quota-sandbox-1
-@name Create tenant quota sandbox 1
+@id create-organization-quota-sandbox-1
+@name Create organization quota sandbox 1
 
 POST {{base_url}}/v1/sandboxes
 Content-Type: application/json
 
-{"runtime_profile":"session","ttl_seconds":60,"tenant_id":"tenant_quota"}
+{"runtime_profile":"session","ttl_seconds":60,"organization_id":"organization_quota"}
 
 [Captures]
-tenant_quota_sandbox_id_1 = data.id
+organization_quota_sandbox_id_1 = data.id
 
 [Asserts]
 status == 200
 code == 0
-data.effective_limits.max_active_sandboxes_per_tenant == 2
+data.effective_limits.max_active_sandboxes_per_organization == 2
 ```
 
 ```step
-@id create-tenant-quota-sandbox-2
-@name Create tenant quota sandbox 2
+@id create-organization-quota-sandbox-2
+@name Create organization quota sandbox 2
 
 POST {{base_url}}/v1/sandboxes
 Content-Type: application/json
 
-{"runtime_profile":"session","ttl_seconds":60,"tenant_id":"tenant_quota"}
+{"runtime_profile":"session","ttl_seconds":60,"organization_id":"organization_quota"}
 
 [Captures]
-tenant_quota_sandbox_id_2 = data.id
+organization_quota_sandbox_id_2 = data.id
 
 [Asserts]
 status == 200
 code == 0
-data.effective_limits.max_active_sandboxes_per_tenant == 2
+data.effective_limits.max_active_sandboxes_per_organization == 2
 ```
 
 ```step
-@id reject-tenant-active-sandbox-limit
-@name Reject tenant active sandbox limit
+@id reject-organization-active-sandbox-limit
+@name Reject organization active sandbox limit
 
 POST {{base_url}}/v1/sandboxes
 Content-Type: application/json
 
-{"runtime_profile":"session","ttl_seconds":60,"tenant_id":"tenant_quota"}
+{"runtime_profile":"session","ttl_seconds":60,"organization_id":"organization_quota"}
 
 [Asserts]
 status == 429
 code == -429
 data.error_type == "limit_exceeded"
-data.code == "tenant_active_sandbox_limit_exceeded"
-data.limit == "max_active_sandboxes_per_tenant"
+data.code == "organization_active_sandbox_limit_exceeded"
+data.limit == "max_active_sandboxes_per_organization"
 data.maximum == 2
 data.actual == 3
-data.tenant_id == "tenant_quota"
+data.organization_id == "organization_quota"
 ```
 
 ```step
-@id create-other-tenant-after-quota
-@name Create other tenant after quota
+@id create-other-organization-after-quota
+@name Create other organization after quota
 
 POST {{base_url}}/v1/sandboxes
 Content-Type: application/json
 
-{"runtime_profile":"session","ttl_seconds":60,"tenant_id":"tenant_other"}
+{"runtime_profile":"session","ttl_seconds":60,"organization_id":"organization_other"}
 
 [Captures]
-tenant_other_sandbox_id = data.id
+organization_other_sandbox_id = data.id
 
 [Asserts]
 status == 200
 code == 0
-data.tenant_id == "tenant_other"
+data.organization_id == "organization_other"
 ```
 
 ```step
-@id delete-tenant-quota-sandbox-1
-@name Delete tenant quota sandbox 1
+@id delete-organization-quota-sandbox-1
+@name Delete organization quota sandbox 1
 
-DELETE {{base_url}}/v1/sandboxes/{{tenant_quota_sandbox_id_1}}
-
-[Asserts]
-status == 200
-code == 0
-```
-
-```step
-@id delete-tenant-quota-sandbox-2
-@name Delete tenant quota sandbox 2
-
-DELETE {{base_url}}/v1/sandboxes/{{tenant_quota_sandbox_id_2}}
+DELETE {{base_url}}/v1/sandboxes/{{organization_quota_sandbox_id_1}}
 
 [Asserts]
 status == 200
@@ -118,10 +107,21 @@ code == 0
 ```
 
 ```step
-@id delete-other-tenant-sandbox
-@name Delete other tenant sandbox
+@id delete-organization-quota-sandbox-2
+@name Delete organization quota sandbox 2
 
-DELETE {{base_url}}/v1/sandboxes/{{tenant_other_sandbox_id}}
+DELETE {{base_url}}/v1/sandboxes/{{organization_quota_sandbox_id_2}}
+
+[Asserts]
+status == 200
+code == 0
+```
+
+```step
+@id delete-other-organization-sandbox
+@name Delete other organization sandbox
+
+DELETE {{base_url}}/v1/sandboxes/{{organization_other_sandbox_id}}
 
 [Asserts]
 status == 200

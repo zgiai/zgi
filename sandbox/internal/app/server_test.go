@@ -210,7 +210,7 @@ func TestSandboxListEndpoint(t *testing.T) {
 		t.Fatalf("expected server, got %v", err)
 	}
 
-	createReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","ttl_seconds":60,"tenant_id":"tenant-api","workspace_id":"workspace-api","app_id":"app-api","workflow_run_id":"run-api","user_id":"user-api"}`))
+	createReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","ttl_seconds":60,"organization_id":"organization-api","workspace_id":"workspace-api","app_id":"app-api","workflow_run_id":"run-api","user_id":"user-api"}`))
 	createReq.Header.Set("Content-Type", "application/json")
 	createRes := httptest.NewRecorder()
 	server.Handler().ServeHTTP(createRes, createReq)
@@ -222,7 +222,7 @@ func TestSandboxListEndpoint(t *testing.T) {
 		t.Fatalf("expected sandbox create response to include effective limits, got %s", createRes.Body.String())
 	}
 	for _, expected := range []string{
-		`"tenant_id":"tenant-api"`,
+		`"organization_id":"organization-api"`,
 		`"workspace_id":"workspace-api"`,
 		`"app_id":"app-api"`,
 		`"workflow_run_id":"run-api"`,
@@ -240,7 +240,7 @@ func TestSandboxListEndpoint(t *testing.T) {
 	if listRes.Code != http.StatusOK {
 		t.Fatalf("expected sandbox list to return 200, got %d", listRes.Code)
 	}
-	if !strings.Contains(listRes.Body.String(), `"tenant_id":"tenant-api"`) {
+	if !strings.Contains(listRes.Body.String(), `"organization_id":"organization-api"`) {
 		t.Fatalf("expected sandbox list to include ownership fields, got %s", listRes.Body.String())
 	}
 }
@@ -251,7 +251,7 @@ func TestSandboxCreateRejectsInvalidOwnershipField(t *testing.T) {
 		t.Fatalf("expected server, got %v", err)
 	}
 
-	createReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","tenant_id":"tenant api"}`))
+	createReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","organization_id":"organization api"}`))
 	createReq.Header.Set("Content-Type", "application/json")
 	createRes := httptest.NewRecorder()
 	server.Handler().ServeHTTP(createRes, createReq)
@@ -259,7 +259,7 @@ func TestSandboxCreateRejectsInvalidOwnershipField(t *testing.T) {
 	if createRes.Code != http.StatusBadRequest {
 		t.Fatalf("expected invalid ownership field to return 400, got %d body=%s", createRes.Code, createRes.Body.String())
 	}
-	if !strings.Contains(createRes.Body.String(), "tenant_id contains invalid characters") {
+	if !strings.Contains(createRes.Body.String(), "organization_id contains invalid characters") {
 		t.Fatalf("expected ownership validation error, got %s", createRes.Body.String())
 	}
 }
@@ -295,47 +295,47 @@ func TestSandboxCreateReturnsStructuredLimitError(t *testing.T) {
 	}
 }
 
-func TestSandboxCreateReturnsStructuredTenantLimitError(t *testing.T) {
+func TestSandboxCreateReturnsStructuredOrganizationLimitError(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.MaxActive = 10
-	cfg.MaxActivePerTenant = 1
+	cfg.MaxActivePerOrganization = 1
 	server, err := NewServer(cfg)
 	if err != nil {
 		t.Fatalf("expected server, got %v", err)
 	}
 
-	firstReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","ttl_seconds":60,"tenant_id":"tenant-api"}`))
+	firstReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","ttl_seconds":60,"organization_id":"organization-api"}`))
 	firstReq.Header.Set("Content-Type", "application/json")
 	firstRes := httptest.NewRecorder()
 	server.Handler().ServeHTTP(firstRes, firstReq)
 	if firstRes.Code != http.StatusOK {
-		t.Fatalf("expected first tenant sandbox create to return 200, got %d body=%s", firstRes.Code, firstRes.Body.String())
+		t.Fatalf("expected first organization sandbox create to return 200, got %d body=%s", firstRes.Code, firstRes.Body.String())
 	}
 
-	secondReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","ttl_seconds":60,"tenant_id":"tenant-api"}`))
+	secondReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","ttl_seconds":60,"organization_id":"organization-api"}`))
 	secondReq.Header.Set("Content-Type", "application/json")
 	secondRes := httptest.NewRecorder()
 	server.Handler().ServeHTTP(secondRes, secondReq)
 	if secondRes.Code != http.StatusTooManyRequests {
-		t.Fatalf("expected second tenant sandbox create to return 429, got %d body=%s", secondRes.Code, secondRes.Body.String())
+		t.Fatalf("expected second organization sandbox create to return 429, got %d body=%s", secondRes.Code, secondRes.Body.String())
 	}
 	for _, expected := range []string{
 		`"error_type":"limit_exceeded"`,
-		`"code":"tenant_active_sandbox_limit_exceeded"`,
-		`"limit":"max_active_sandboxes_per_tenant"`,
-		`"tenant_id":"tenant-api"`,
+		`"code":"organization_active_sandbox_limit_exceeded"`,
+		`"limit":"max_active_sandboxes_per_organization"`,
+		`"organization_id":"organization-api"`,
 	} {
 		if !strings.Contains(secondRes.Body.String(), expected) {
-			t.Fatalf("expected tenant limit response to include %s, got %s", expected, secondRes.Body.String())
+			t.Fatalf("expected organization limit response to include %s, got %s", expected, secondRes.Body.String())
 		}
 	}
 
-	thirdReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","ttl_seconds":60,"tenant_id":"tenant-other"}`))
+	thirdReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","ttl_seconds":60,"organization_id":"organization-other"}`))
 	thirdReq.Header.Set("Content-Type", "application/json")
 	thirdRes := httptest.NewRecorder()
 	server.Handler().ServeHTTP(thirdRes, thirdReq)
 	if thirdRes.Code != http.StatusOK {
-		t.Fatalf("expected other tenant sandbox create to return 200, got %d body=%s", thirdRes.Code, thirdRes.Body.String())
+		t.Fatalf("expected other organization sandbox create to return 200, got %d body=%s", thirdRes.Code, thirdRes.Body.String())
 	}
 }
 
@@ -589,21 +589,21 @@ func TestObserverEventsEndpointFiltersByOwnershipScope(t *testing.T) {
 	}
 
 	server.observer.Record("exec.command", "sbx_scope_one", "match", map[string]any{
-		"tenant_id":       "tenant-one",
+		"organization_id": "organization-one",
 		"workspace_id":    "workspace-one",
 		"app_id":          "app-one",
 		"workflow_run_id": "run-one",
 		"user_id":         "user-one",
 	})
 	server.observer.Record("exec.command", "sbx_scope_two", "miss", map[string]any{
-		"tenant_id":       "tenant-two",
+		"organization_id": "organization-two",
 		"workspace_id":    "workspace-two",
 		"app_id":          "app-two",
 		"workflow_run_id": "run-two",
 		"user_id":         "user-two",
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/observer/events?tenant_id=tenant-one&workspace_id=workspace-one&app_id=app-one&workflow_run_id=run-one&user_id=user-one&limit=10", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/observer/events?organization_id=organization-one&workspace_id=workspace-one&app_id=app-one&workflow_run_id=run-one&user_id=user-one&limit=10", nil)
 	rr := httptest.NewRecorder()
 	server.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
