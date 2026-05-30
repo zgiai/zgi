@@ -177,6 +177,26 @@ data.path == "artifacts"
 data.file_count == 1
 data.total_size == 14
 data.truncated == false
+data.items.0.path == "artifacts/report.txt"
+data.items.0.encoding == "reference"
+data.items.0.sha256 == "f75ac2f18894770338198150a44a45a467596d3f9f151ed9982ed084072487a8"
+data.items.0.content_type == "text/plain; charset=utf-8"
+```
+
+```step
+@id reject-artifact-manifest-byte-limit
+@name Reject artifact manifest byte limit
+
+GET {{base_url}}/v1/files/manifest?sandbox_id={{sandbox_id}}&path=artifacts&max_total_bytes=8
+
+[Asserts]
+status == 429
+code == -429
+data.error_type == "limit_exceeded"
+data.code == "artifact_manifest_total_bytes_exceeded"
+data.limit == "max_artifact_manifest_total_bytes"
+data.maximum == 8
+data.actual == 14
 ```
 
 ```step

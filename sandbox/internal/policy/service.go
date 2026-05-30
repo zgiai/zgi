@@ -335,6 +335,8 @@ func (s *Service) EffectiveLimits() sandbox.ResourceLimits {
 		MaxFileSizeBytes:                  maxFileSizeBytes,
 		MaxArchiveFiles:                   256,
 		MaxArchiveTotalBytes:              maxFileSizeBytes * 256,
+		MaxArtifactManifestFiles:          100,
+		MaxArtifactManifestTotalBytes:     maxFileSizeBytes * 256,
 		SessionTTLSecs:                    s.config.SessionTTL,
 		SessionTTLSeconds:                 s.config.SessionTTL,
 		InteractiveTTLSecs:                s.config.InteractiveTTL,

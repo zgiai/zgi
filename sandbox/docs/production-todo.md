@@ -43,6 +43,7 @@ Already available:
 - Optional organization-scoped active sandbox limit accounting
 - Sandbox ownership fields for organization, workspace, app, workflow run, and user context
 - Ownership context persisted with sandbox records and propagated to lifecycle, endpoint, expiration, execution, file, archive, and artifact manifest observer events
+- Artifact manifests include content type, reference encoding, SHA-256 hashes, timestamps, and enforce file count and total byte limits
 - Optional Linux secure backend with namespace-based isolation
 
 The service is useful for validation and controlled internal environments. It
@@ -168,16 +169,16 @@ ergonomic for workflow and agent use cases.
 
 ### C2. Artifact Manifest
 
-- Generate an artifact manifest after each run.
-- Include:
+- Added artifact manifest generation for sandbox artifact paths.
+- Added manifest fields:
   - path
   - size
   - content type
-  - encoding
-  - hash
-  - created time
+  - reference encoding
+  - SHA-256 hash
+  - modified time
   - truncated flag
-- Enforce artifact count and total bytes before returning results.
+- Added artifact count and total byte enforcement before returning manifest results.
 - Return large artifacts by reference rather than embedding content.
 
 ### C3. Interpreter Sessions

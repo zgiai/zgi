@@ -626,7 +626,13 @@ func (s *Server) handleFileManifest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	manifest, err := s.executor.BuildFileManifest(r.URL.Query().Get("sandbox_id"), r.URL.Query().Get("path"))
+	options, err := parseFileManifestOptions(r)
+	if err != nil {
+		writeKnownError(w, err)
+		return
+	}
+
+	manifest, err := s.executor.BuildFileManifestWithOptions(r.URL.Query().Get("sandbox_id"), r.URL.Query().Get("path"), options)
 	if err != nil {
 		writeKnownError(w, err)
 		return
@@ -930,6 +936,24 @@ func writeKnownError(w http.ResponseWriter, err error) {
 		status = http.StatusBadRequest
 	}
 	writeEnvelopeWithMessage(w, status, code, err.Error(), data)
+}
+
+func parseFileManifestOptions(r *http.Request) (executor.FileManifestOptions, error) {
+	var options executor.FileManifestOptions
+	var err error
+	if raw := strings.TrimSpace(r.URL.Query().Get("max_files")); raw != "" {
+		options.MaxFiles, err = strconv.Atoi(raw)
+		if err != nil || options.MaxFiles <= 0 {
+			return options, fmt.Errorf("max_files must be a positive integer")
+		}
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("max_total_bytes")); raw != "" {
+		options.MaxTotalBytes, err = strconv.ParseInt(raw, 10, 64)
+		if err != nil || options.MaxTotalBytes <= 0 {
+			return options, fmt.Errorf("max_total_bytes must be a positive integer")
+		}
+	}
+	return options, nil
 }
 
 func splitPath(path string) []string {

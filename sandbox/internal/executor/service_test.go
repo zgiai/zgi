@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -666,8 +667,58 @@ func TestBuildFileManifestReturnsHashesAndContentTypes(t *testing.T) {
 	if item.SHA256 == "" {
 		t.Fatal("expected sha256")
 	}
+	if item.Encoding != "reference" {
+		t.Fatalf("expected reference encoding, got %s", item.Encoding)
+	}
 	if !strings.HasPrefix(item.ContentType, "text/plain") {
 		t.Fatalf("expected text content type, got %s", item.ContentType)
+	}
+}
+
+func TestBuildFileManifestEnforcesArtifactLimits(t *testing.T) {
+	service, manager := newTestExecutorService(t)
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+	for _, item := range []struct {
+		path    string
+		content string
+	}{
+		{path: "artifacts/one.txt", content: "one"},
+		{path: "artifacts/two.txt", content: "two"},
+	} {
+		if _, err := service.UploadFile(FileWriteRequest{
+			SandboxID: box.ID,
+			Path:      item.path,
+			Content:   item.content,
+		}); err != nil {
+			t.Fatalf("upload %s: %v", item.path, err)
+		}
+	}
+
+	_, err = service.BuildFileManifestWithOptions(box.ID, "artifacts", FileManifestOptions{MaxFiles: 1})
+	var limitErr *policy.LimitError
+	if !errors.As(err, &limitErr) {
+		t.Fatalf("expected file count limit error, got %T %v", err, err)
+	}
+	if limitErr.Code != "artifact_manifest_file_count_exceeded" || limitErr.Limit != "max_artifact_manifest_files" {
+		t.Fatalf("unexpected file count limit error: %+v", limitErr)
+	}
+
+	_, err = service.BuildFileManifestWithOptions(box.ID, "artifacts", FileManifestOptions{MaxTotalBytes: 4})
+	if !errors.As(err, &limitErr) {
+		t.Fatalf("expected total byte limit error, got %T %v", err, err)
+	}
+	if limitErr.Code != "artifact_manifest_total_bytes_exceeded" || limitErr.Limit != "max_artifact_manifest_total_bytes" {
+		t.Fatalf("unexpected byte limit error: %+v", limitErr)
+	}
+
+	maxFiles, maxTotalBytes := service.normalizeManifestLimits(FileManifestOptions{MaxFiles: 1000, MaxTotalBytes: 1 << 40})
+	if maxFiles != 100 || maxTotalBytes != 64*1024*1024 {
+		t.Fatalf("expected request options not to raise manifest limits, got maxFiles=%d maxTotalBytes=%d", maxFiles, maxTotalBytes)
 	}
 }
 

@@ -59,6 +59,8 @@ type ResourceLimits struct {
 	MaxFileSizeBytes                  int64  `json:"max_file_size_bytes"`
 	MaxArchiveFiles                   int    `json:"max_archive_files"`
 	MaxArchiveTotalBytes              int64  `json:"max_archive_total_bytes"`
+	MaxArtifactManifestFiles          int    `json:"max_artifact_manifest_files"`
+	MaxArtifactManifestTotalBytes     int64  `json:"max_artifact_manifest_total_bytes"`
 	SessionTTLSecs                    int    `json:"session_ttl_secs"`
 	SessionTTLSeconds                 int    `json:"session_ttl_seconds"`
 	InteractiveTTLSecs                int    `json:"interactive_ttl_secs"`

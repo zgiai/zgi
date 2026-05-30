@@ -264,6 +264,53 @@ func TestSandboxCreateRejectsInvalidOwnershipField(t *testing.T) {
 	}
 }
 
+func TestFileManifestEndpointEnforcesArtifactLimits(t *testing.T) {
+	server, err := NewServer(testConfig(t))
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	createReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","ttl_seconds":60}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	createRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(createRes, createReq)
+	if createRes.Code != http.StatusOK {
+		t.Fatalf("expected sandbox create to return 200, got %d body=%s", createRes.Code, createRes.Body.String())
+	}
+	var createPayload struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(createRes.Body.Bytes(), &createPayload); err != nil {
+		t.Fatalf("expected create payload, got %v", err)
+	}
+
+	uploadReq := httptest.NewRequest(http.MethodPost, "/v1/files/upload", strings.NewReader(fmt.Sprintf(`{"sandbox_id":%q,"path":"artifacts/report.txt","content":"hello manifest"}`, createPayload.Data.ID)))
+	uploadReq.Header.Set("Content-Type", "application/json")
+	uploadRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(uploadRes, uploadReq)
+	if uploadRes.Code != http.StatusOK {
+		t.Fatalf("expected upload to return 200, got %d body=%s", uploadRes.Code, uploadRes.Body.String())
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/files/manifest?sandbox_id="+url.QueryEscape(createPayload.Data.ID)+"&path=artifacts&max_total_bytes=4", nil)
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected artifact byte limit to return 429, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	for _, expected := range []string{
+		`"error_type":"limit_exceeded"`,
+		`"code":"artifact_manifest_total_bytes_exceeded"`,
+		`"limit":"max_artifact_manifest_total_bytes"`,
+	} {
+		if !strings.Contains(rr.Body.String(), expected) {
+			t.Fatalf("expected response to include %s, got %s", expected, rr.Body.String())
+		}
+	}
+}
+
 func TestSandboxCreateReturnsStructuredLimitError(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.MaxActive = 1

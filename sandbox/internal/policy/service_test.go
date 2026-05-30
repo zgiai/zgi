@@ -85,6 +85,9 @@ func TestNormalizeCreateReturnsEffectiveLimitsAndStructuredLimitError(t *testing
 	if decision.EffectiveLimits.MaxFileSizeBytes != 128*1024 {
 		t.Fatalf("expected max file size bytes in decision, got %+v", decision.EffectiveLimits)
 	}
+	if decision.EffectiveLimits.MaxArtifactManifestFiles != 100 || decision.EffectiveLimits.MaxArtifactManifestTotalBytes != 128*1024*256 {
+		t.Fatalf("expected artifact manifest limits in decision, got %+v", decision.EffectiveLimits)
+	}
 
 	_, err = service.NormalizeCreate("session", 60, false, "", "stdlib", 2, "organization-1", 1)
 	limitErr, ok := err.(*LimitError)

@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"io/fs"
 	"net/http"
@@ -124,9 +125,15 @@ type FileManifest struct {
 type FileManifestItem struct {
 	Path        string    `json:"path"`
 	Size        int64     `json:"size"`
+	Encoding    string    `json:"encoding"`
 	SHA256      string    `json:"sha256"`
 	ContentType string    `json:"content_type"`
 	ModifiedAt  time.Time `json:"modified_at"`
+}
+
+type FileManifestOptions struct {
+	MaxFiles      int
+	MaxTotalBytes int64
 }
 
 func NewService(manager *lifecycle.Manager, runnerService *runner.Service, recorder *observer.Recorder, policyService *policy.Service) *Service {
@@ -594,6 +601,10 @@ func (s *Service) ListFiles(sandboxID string) ([]FileInfo, error) {
 }
 
 func (s *Service) BuildFileManifest(sandboxID string, relativePath string) (*FileManifest, error) {
+	return s.BuildFileManifestWithOptions(sandboxID, relativePath, FileManifestOptions{})
+}
+
+func (s *Service) BuildFileManifestWithOptions(sandboxID string, relativePath string, options FileManifestOptions) (*FileManifest, error) {
 	box, err := s.lifecycle.GetActive(sandboxID)
 	if err != nil {
 		return nil, err
@@ -607,9 +618,9 @@ func (s *Service) BuildFileManifest(sandboxID string, relativePath string) (*Fil
 		return nil, err
 	}
 
+	maxFiles, maxTotalBytes := s.normalizeManifestLimits(options)
 	items := make([]FileManifestItem, 0)
 	var totalSize int64
-	truncated := false
 	err = filepath.WalkDir(target, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -624,9 +635,23 @@ func (s *Service) BuildFileManifest(sandboxID string, relativePath string) (*Fil
 		if info.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("manifest path contains symlink: %s", path)
 		}
-		if len(items) >= 100 {
-			truncated = true
-			return filepath.SkipAll
+		if len(items)+1 > maxFiles {
+			return &policy.LimitError{
+				Code:    "artifact_manifest_file_count_exceeded",
+				Limit:   "max_artifact_manifest_files",
+				Maximum: maxFiles,
+				Actual:  len(items) + 1,
+				Details: map[string]any{"path": relativePath},
+			}
+		}
+		if totalSize+info.Size() > maxTotalBytes {
+			return &policy.LimitError{
+				Code:    "artifact_manifest_total_bytes_exceeded",
+				Limit:   "max_artifact_manifest_total_bytes",
+				Maximum: limitMaximumInt(maxTotalBytes),
+				Actual:  limitMaximumInt(totalSize + info.Size()),
+				Details: map[string]any{"path": relativePath},
+			}
 		}
 
 		item, err := fileManifestItem(box.RootPath, path, info)
@@ -645,7 +670,7 @@ func (s *Service) BuildFileManifest(sandboxID string, relativePath string) (*Fil
 		"path":       relativePath,
 		"file_count": len(items),
 		"total_size": totalSize,
-		"truncated":  truncated,
+		"truncated":  false,
 	}
 	addOwnershipMetadata(metadata, box)
 	s.observer.Record("files.manifest", sandboxID, "file manifest generated", metadata)
@@ -655,8 +680,35 @@ func (s *Service) BuildFileManifest(sandboxID string, relativePath string) (*Fil
 		Items:     items,
 		FileCount: len(items),
 		TotalSize: totalSize,
-		Truncated: truncated,
+		Truncated: false,
 	}, nil
+}
+
+func (s *Service) normalizeManifestLimits(options FileManifestOptions) (int, int64) {
+	effectiveLimits := s.policy.EffectiveLimits()
+	maxFiles := effectiveLimits.MaxArtifactManifestFiles
+	if maxFiles <= 0 {
+		maxFiles = 100
+	}
+	if options.MaxFiles > 0 && options.MaxFiles < maxFiles {
+		maxFiles = options.MaxFiles
+	}
+
+	maxTotalBytes := effectiveLimits.MaxArtifactManifestTotalBytes
+	if maxTotalBytes <= 0 {
+		maxTotalBytes = 64 * 1024 * 1024
+	}
+	if options.MaxTotalBytes > 0 && options.MaxTotalBytes < maxTotalBytes {
+		maxTotalBytes = options.MaxTotalBytes
+	}
+	return maxFiles, maxTotalBytes
+}
+
+func limitMaximumInt(value int64) int {
+	if value > int64(^uint(0)>>1) {
+		return int(^uint(0) >> 1)
+	}
+	return int(value)
 }
 
 func resolveSandboxPath(root string, relativePath string) (string, error) {
@@ -823,27 +875,45 @@ func ListDirectory(root string) ([]FileInfo, error) {
 }
 
 func fileManifestItem(root string, path string, info fs.FileInfo) (FileManifestItem, error) {
-	content, err := os.ReadFile(path)
+	file, err := os.Open(path)
 	if err != nil {
 		return FileManifestItem{}, err
 	}
-	sum := sha256.Sum256(content)
-	rel := strings.TrimPrefix(path, root+string(filepath.Separator))
-	contentType := "application/octet-stream"
-	if len(content) > 0 {
-		sample := content
-		if len(sample) > 512 {
-			sample = sample[:512]
-		}
-		contentType = http.DetectContentType(sample)
+	defer file.Close()
+
+	contentType, sum, err := detectContentTypeAndHash(file, sha256.New())
+	if err != nil {
+		return FileManifestItem{}, err
 	}
+	rel := strings.TrimPrefix(path, root+string(filepath.Separator))
 	return FileManifestItem{
 		Path:        filepath.ToSlash(rel),
 		Size:        info.Size(),
-		SHA256:      hex.EncodeToString(sum[:]),
+		Encoding:    "reference",
+		SHA256:      hex.EncodeToString(sum),
 		ContentType: contentType,
 		ModifiedAt:  info.ModTime().UTC(),
 	}, nil
+}
+
+func detectContentTypeAndHash(reader io.Reader, hasher hash.Hash) (string, []byte, error) {
+	header := make([]byte, 512)
+	n, err := io.ReadFull(reader, header)
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+		return "", nil, err
+	}
+	header = header[:n]
+	contentType := "application/octet-stream"
+	if len(header) > 0 {
+		contentType = http.DetectContentType(header)
+	}
+	if _, err := hasher.Write(header); err != nil {
+		return "", nil, err
+	}
+	if _, err := io.Copy(hasher, reader); err != nil {
+		return "", nil, err
+	}
+	return contentType, hasher.Sum(nil), nil
 }
 
 func normalizeCommandEnv(env map[string]string) (map[string]string, error) {
