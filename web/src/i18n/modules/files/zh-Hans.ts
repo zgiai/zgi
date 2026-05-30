@@ -210,6 +210,20 @@ const messages: FilesMessages = {
     selectFolder: '选择文件夹',
     defaultFolder: '默认文件夹',
     sourceType: '来源类型',
+    processingMode: '处理方式',
+    processingModes: {
+      processNow: {
+        title: '上传并解析',
+        desc: '上传后立即解析、切片并建立索引。',
+      },
+      storeOnly: {
+        title: '仅存储',
+        desc: '先保存原始文件，之后可在文件详情中再解析。',
+      },
+    },
+    processingHintTitle: '文档解析后才会进入可检索状态',
+    processingHintDescription:
+      '图片、图标、临时文件和暂不支持的格式会按仅存储处理，不进入文档处理链路。',
     uploadFiles: '上传文件',
     confirmUpload: '确认上传',
   },

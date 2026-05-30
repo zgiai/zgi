@@ -12,6 +12,7 @@ import {
   type ManualFileUploadRef,
 } from './manual-file-upload';
 import type { UploadedFile } from '@/services/types/dataset';
+import type { FileUploadProcessingMode } from '@/services/types/file';
 
 export interface FileUploadProps
   extends Omit<AutoFileUploadProps, 'autoUpload'>,
@@ -19,6 +20,7 @@ export interface FileUploadProps
   autoUpload?: boolean;
   folderId?: string;
   workspaceId?: string;
+  processingMode?: FileUploadProcessingMode;
   showSystemSelect?: boolean;
   isTemporary?: boolean;
   allowWorkspaceSwitch?: boolean;

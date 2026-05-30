@@ -35,6 +35,7 @@ import {
   getUploadedFileKeys,
   hasAnyFileKey,
 } from './file-dedup';
+import type { FileUploadProcessingMode } from '@/services/types/file';
 
 const FileSelectorDialog = dynamic(() => import('@/components/files/file-selector-dialog'), {
   ssr: false,
@@ -69,6 +70,8 @@ export interface AutoFileUploadProps {
   folderId?: string;
   /** Workspace id */
   workspaceId?: string;
+  /** File asset processing mode for uploaded documents */
+  processingMode?: FileUploadProcessingMode;
   /** Whether to show the system file selector button */
   showSystemSelect?: boolean;
   /** Whether to mark files as temporary */
@@ -127,6 +130,7 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
       controlled = false,
       folderId,
       workspaceId,
+      processingMode,
       showSystemSelect = false,
       isTemporary = false,
       allowWorkspaceSwitch = false,
@@ -381,6 +385,7 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
           folder_id: folderId,
           workspace_id: workspaceId,
           is_temporary: isTemporary,
+          processing_mode: processingMode,
           onProgress: p =>
             setItems(prev => {
               const next = prev.map(it => (it.id === item.id ? { ...it, progress: p } : it));
@@ -437,7 +442,7 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
             return next;
           });
         });
-    }, [folderId, isTemporary, workspaceId]);
+    }, [folderId, isTemporary, processingMode, workspaceId]);
 
     const enqueueFiles = useCallback(
       async (files: FileList | File[]) => {

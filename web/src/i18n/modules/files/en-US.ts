@@ -221,6 +221,20 @@ const messages = {
     selectFolder: 'Select Folder',
     defaultFolder: 'Default Folder',
     sourceType: 'Source Type',
+    processingMode: 'Processing Mode',
+    processingModes: {
+      processNow: {
+        title: 'Upload and parse',
+        desc: 'Parse, chunk, and index the document immediately after upload.',
+      },
+      storeOnly: {
+        title: 'Store only',
+        desc: 'Save the original file first. You can parse it later from file details.',
+      },
+    },
+    processingHintTitle: 'Document files become searchable after parsing',
+    processingHintDescription:
+      'Images, icons, temporary files, and unsupported formats are stored without document processing.',
     uploadFiles: 'Upload Files',
     confirmUpload: 'Confirm Upload',
   },

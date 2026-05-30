@@ -606,10 +606,13 @@ const FileManagementContent = ({
   const [createTextFileDialogOpen, setCreateTextFileDialogOpen] = useState(false);
   const [selectedFolderId, setSelectedFolderId] = useState<string>('');
   const [selectedUploadWorkspaceId, setSelectedUploadWorkspaceId] = useState<string>('');
+  const [selectedUploadProcessingMode, setSelectedUploadProcessingMode] =
+    useState<UploadConfig['processingMode']>('process_now');
 
   const handleUploadConfirm = useCallback((config: UploadConfig) => {
     setAddDialogOpen(false);
     setSelectedUploadWorkspaceId(config.workspaceId);
+    setSelectedUploadProcessingMode(config.processingMode);
 
     if (config.mode === 'text') {
       setSelectedFolderId(config.folderId);
@@ -634,6 +637,7 @@ const FileManagementContent = ({
       setCreateTextFileDialogOpen(false);
       setSelectedFolderId('');
       setSelectedUploadWorkspaceId('');
+      setSelectedUploadProcessingMode('process_now');
       // Refresh file list after creating text file
       if (selectionMode) {
         goToPage(1);
@@ -645,6 +649,7 @@ const FileManagementContent = ({
   const handleFileUploadComplete = useCallback(() => {
     setSelectedFolderId('');
     setSelectedUploadWorkspaceId('');
+    setSelectedUploadProcessingMode('process_now');
     reload();
     goToPage(1);
   }, [goToPage, reload]);
@@ -1094,6 +1099,7 @@ const FileManagementContent = ({
         onOpenChange={setCreateLocalFileDialogOpen}
         folderId={selectedFolderId}
         workspaceId={selectedUploadWorkspaceId || workspaceId}
+        processingMode={selectedUploadProcessingMode}
         acceptExt={acceptExt}
         onUploadComplete={handleFileUploadComplete}
       />
