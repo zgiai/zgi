@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -236,6 +237,54 @@ func TestRunCommandRejectsSymlinkWorkingSubpath(t *testing.T) {
 		WorkingSubpath: "linked-workdir",
 	}); err == nil {
 		t.Fatal("expected command working_subpath symlink to be rejected")
+	}
+}
+
+func TestRunCommandSupportsStdinEnvAndOutputLimits(t *testing.T) {
+	service, manager := newTestExecutorService(t)
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	result, err := service.RunCommand(context.Background(), CommandRequest{
+		SandboxID:     box.ID,
+		Command:       "python3",
+		Args:          []string{"-c", "import os,sys; data=sys.stdin.read(); print(os.environ['ZGI_TEST_TOKEN'] + ':' + data); print('x'*64)"},
+		Stdin:         "payload",
+		Env:           map[string]string{"ZGI_TEST_TOKEN": "ok"},
+		Profile:       "code-short",
+		StdoutLimitKB: 1,
+	})
+	if err != nil {
+		t.Fatalf("expected command run, got %v", err)
+	}
+	if result.ExitCode != 0 {
+		t.Fatalf("expected zero exit code, got %d stderr=%q", result.ExitCode, result.Error)
+	}
+	if !strings.Contains(result.Stdout, "ok:payload") {
+		t.Fatalf("expected stdin/env in stdout, got %q", result.Stdout)
+	}
+}
+
+func TestRunCommandRejectsDangerousEnv(t *testing.T) {
+	service, manager := newTestExecutorService(t)
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	if _, err := service.RunCommand(context.Background(), CommandRequest{
+		SandboxID: box.ID,
+		Command:   "python3",
+		Args:      []string{"-c", "print('nope')"},
+		Env:       map[string]string{"LD_PRELOAD": "x"},
+	}); err == nil {
+		t.Fatal("expected dangerous env to be rejected")
 	}
 }
 

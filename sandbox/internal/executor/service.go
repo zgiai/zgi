@@ -36,11 +36,17 @@ type CodeRequest struct {
 }
 
 type CommandRequest struct {
-	SandboxID      string   `json:"sandbox_id"`
-	Command        string   `json:"command"`
-	Args           []string `json:"args"`
-	TimeoutSeconds int      `json:"timeout_seconds"`
-	WorkingSubpath string   `json:"working_subpath"`
+	SandboxID      string            `json:"sandbox_id"`
+	Command        string            `json:"command"`
+	Args           []string          `json:"args"`
+	Stdin          string            `json:"stdin"`
+	Env            map[string]string `json:"env"`
+	Profile        string            `json:"profile"`
+	TimeoutSeconds int               `json:"timeout_seconds"`
+	TimeoutMS      int               `json:"timeout_ms"`
+	StdoutLimitKB  int               `json:"stdout_limit_kb"`
+	StderrLimitKB  int               `json:"stderr_limit_kb"`
+	WorkingSubpath string            `json:"working_subpath"`
 }
 
 type FileWriteRequest struct {
@@ -131,14 +137,36 @@ func (s *Service) RunCommand(ctx context.Context, req CommandRequest) (runner.Co
 		}
 	}
 
-	timeout := s.policy.NormalizeCommandTimeout(req.TimeoutSeconds)
-	result, err := s.runner.ExecuteCommand(ctx, workDir, req.Command, req.Args, timeout)
+	limits, err := s.policy.NormalizeCommandLimits(req.Profile, req.TimeoutSeconds, req.TimeoutMS, req.StdoutLimitKB, req.StderrLimitKB)
+	if err != nil {
+		return runner.CommandResult{}, err
+	}
+	if len(req.Stdin) > limits.MaxStdinBytes {
+		return runner.CommandResult{}, fmt.Errorf("stdin exceeds max size of %d bytes", limits.MaxStdinBytes)
+	}
+	env, err := normalizeCommandEnv(req.Env)
+	if err != nil {
+		return runner.CommandResult{}, err
+	}
+
+	result, err := s.runner.ExecuteCommandSpec(ctx, runner.CommandSpec{
+		WorkDir:        workDir,
+		Command:        req.Command,
+		Args:           req.Args,
+		Stdin:          req.Stdin,
+		Env:            env,
+		Timeout:        limits.Timeout,
+		StdoutLimit:    limits.StdoutLimitBytes,
+		StderrLimit:    limits.StderrLimitBytes,
+		AllowShellForm: true,
+	})
 	if err != nil {
 		return runner.CommandResult{}, err
 	}
 
 	s.observer.Record("exec.command", req.SandboxID, "sandbox command executed", map[string]any{
 		"command":   req.Command,
+		"profile":   limits.Profile,
 		"exit_code": result.ExitCode,
 	})
 	return result, nil
@@ -516,6 +544,60 @@ func ListDirectory(root string) ([]FileInfo, error) {
 		return nil
 	})
 	return entries, err
+}
+
+func normalizeCommandEnv(env map[string]string) (map[string]string, error) {
+	if len(env) == 0 {
+		return nil, nil
+	}
+	if len(env) > 32 {
+		return nil, errors.New("env exceeds max entry count of 32")
+	}
+
+	normalized := make(map[string]string, len(env))
+	for key, value := range env {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			return nil, errors.New("env key is required")
+		}
+		if len(key) > 64 {
+			return nil, fmt.Errorf("env key exceeds max length: %s", key)
+		}
+		if len(value) > 4096 {
+			return nil, fmt.Errorf("env value for %s exceeds max length of 4096 bytes", key)
+		}
+		if !validEnvKey(key) {
+			return nil, fmt.Errorf("invalid env key: %s", key)
+		}
+		if dangerousEnvKey(key) {
+			return nil, fmt.Errorf("env key is not allowed: %s", key)
+		}
+		normalized[key] = value
+	}
+	return normalized, nil
+}
+
+func validEnvKey(key string) bool {
+	for i, char := range key {
+		if char >= 'A' && char <= 'Z' || char >= 'a' && char <= 'z' || char == '_' {
+			continue
+		}
+		if i > 0 && char >= '0' && char <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func dangerousEnvKey(key string) bool {
+	upper := strings.ToUpper(key)
+	switch upper {
+	case "PATH", "HOME", "IFS", "SHELLOPTS", "BASH_ENV", "ENV", "PYTHONPATH", "NODE_OPTIONS":
+		return true
+	default:
+		return strings.HasPrefix(upper, "LD_") || strings.HasPrefix(upper, "DYLD_")
+	}
 }
 
 type archiveLimits struct {

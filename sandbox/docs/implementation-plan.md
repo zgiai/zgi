@@ -139,6 +139,12 @@ V2 should add lifecycle APIs:
 - `GET /v1/files/info`
 - `DELETE /v1/files`
 
+Command execution includes bounded `stdin`, restricted `env`, `timeout_ms`, and per-request stdout/stderr caps. The first supported command profiles are:
+
+- `code-short`
+- `skill-python`
+- `skill-node`
+
 ## 5. Configuration Naming
 
 Recommended configuration keys:

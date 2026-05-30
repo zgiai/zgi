@@ -49,6 +49,18 @@ type CommandResult struct {
 	Backend    string   `json:"backend,omitempty"`
 }
 
+type CommandSpec struct {
+	WorkDir        string
+	Command        string
+	Args           []string
+	Stdin          string
+	Env            map[string]string
+	Timeout        time.Duration
+	StdoutLimit    int
+	StderrLimit    int
+	AllowShellForm bool
+}
+
 type Options struct {
 	MaxWorkers int
 	Timeout    time.Duration
@@ -65,7 +77,7 @@ type runtimeSpec struct {
 type backend interface {
 	Name() string
 	Run(context.Context, Request, string, bool, time.Duration, int) (Result, error)
-	ExecuteCommand(context.Context, string, string, []string, time.Duration, int) (CommandResult, error)
+	ExecuteCommand(context.Context, CommandSpec) (CommandResult, error)
 }
 
 func NewService(maxWorkers int, timeout time.Duration, outputCap int) *Service {
@@ -145,10 +157,22 @@ func (s *Service) run(parent context.Context, req Request, workDir string, ephem
 }
 
 func (s *Service) ExecuteCommand(parent context.Context, workDir string, command string, args []string, timeout time.Duration) (CommandResult, error) {
-	if strings.TrimSpace(command) == "" {
+	return s.ExecuteCommandSpec(parent, CommandSpec{
+		WorkDir:        workDir,
+		Command:        command,
+		Args:           args,
+		Timeout:        timeout,
+		StdoutLimit:    s.outputCap,
+		StderrLimit:    s.outputCap,
+		AllowShellForm: true,
+	})
+}
+
+func (s *Service) ExecuteCommandSpec(parent context.Context, spec CommandSpec) (CommandResult, error) {
+	if strings.TrimSpace(spec.Command) == "" {
 		return CommandResult{}, errors.New("command is required")
 	}
-	if workDir == "" {
+	if spec.WorkDir == "" {
 		return CommandResult{}, errors.New("working directory is required")
 	}
 
@@ -159,11 +183,17 @@ func (s *Service) ExecuteCommand(parent context.Context, workDir string, command
 		return CommandResult{}, parent.Err()
 	}
 
-	if timeout <= 0 {
-		timeout = s.timeout
+	if spec.Timeout <= 0 {
+		spec.Timeout = s.timeout
+	}
+	if spec.StdoutLimit <= 0 {
+		spec.StdoutLimit = s.outputCap
+	}
+	if spec.StderrLimit <= 0 {
+		spec.StderrLimit = s.outputCap
 	}
 
-	result, err := s.backend.ExecuteCommand(parent, workDir, command, args, timeout, s.outputCap)
+	result, err := s.backend.ExecuteCommand(parent, spec)
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -269,4 +299,26 @@ func (b *cappedBuffer) AppendLine(message string) {
 
 func (b *cappedBuffer) Bytes() []byte {
 	return bytes.Clone(b.buf)
+}
+
+func safeBaseEnv(values []string) []string {
+	safe := make([]string, 0, len(values))
+	for _, item := range values {
+		key, _, ok := strings.Cut(item, "=")
+		if !ok || unsafeBaseEnvKey(key) {
+			continue
+		}
+		safe = append(safe, item)
+	}
+	return safe
+}
+
+func unsafeBaseEnvKey(key string) bool {
+	upper := strings.ToUpper(key)
+	switch upper {
+	case "IFS", "SHELLOPTS", "BASH_ENV", "ENV", "PYTHONPATH", "NODE_OPTIONS":
+		return true
+	default:
+		return strings.HasPrefix(upper, "LD_") || strings.HasPrefix(upper, "DYLD_")
+	}
 }

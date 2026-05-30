@@ -282,6 +282,31 @@ Recommended endpoints:
 - `GET /v1/files/info`
 - `DELETE /v1/files`
 
+`POST /v1/exec/command` supports bounded script-style execution:
+
+```json
+{
+  "sandbox_id": "sbx_xxx",
+  "command": "python3",
+  "args": ["scripts/run.py"],
+  "stdin": "{\"input\":\"hello\"}",
+  "env": {
+    "ZGI_SKILL_RUN_ID": "run_xxx"
+  },
+  "profile": "skill-python",
+  "timeout_ms": 30000,
+  "stdout_limit_kb": 1024,
+  "stderr_limit_kb": 1024,
+  "working_subpath": "."
+}
+```
+
+Command profiles are intentionally separate from sandbox lifecycle profiles:
+
+- `code-short`: short, stateless code paths with low output and stdin limits
+- `skill-python`: Python skill script execution with larger bounded IO
+- `skill-node`: Node.js skill script execution with larger bounded IO
+
 ## 7. Security Design
 
 ### 7.1 Default Policies

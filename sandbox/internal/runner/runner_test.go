@@ -37,3 +37,22 @@ func TestRunUnsupportedLanguage(t *testing.T) {
 		t.Fatal("expected an error for unsupported language")
 	}
 }
+
+func TestSafeBaseEnvDropsDangerousKeys(t *testing.T) {
+	env := safeBaseEnv([]string{
+		"PATH=/usr/bin",
+		"LD_PRELOAD=x",
+		"DYLD_INSERT_LIBRARIES=x",
+		"NODE_OPTIONS=--require x",
+		"ZGI_OK=1",
+	})
+
+	for _, item := range env {
+		if item == "LD_PRELOAD=x" || item == "DYLD_INSERT_LIBRARIES=x" || item == "NODE_OPTIONS=--require x" {
+			t.Fatalf("expected dangerous env to be dropped, got %v", env)
+		}
+	}
+	if len(env) != 2 {
+		t.Fatalf("expected safe env entries only, got %v", env)
+	}
+}
