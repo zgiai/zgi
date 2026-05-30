@@ -210,6 +210,27 @@ const messages = {
         batchIgnoreFailed: 'Failed to ignore review items',
       },
     },
+    chunks: {
+      title: 'Content Chunks',
+      notReadyTitle: 'Chunks are not ready',
+      notReadyDescription: 'Chunks become available after parsing, review, and vector generation finish.',
+      loadErrorTitle: 'Failed to load chunks',
+      loadErrorDescription: 'The chunk result may not be ready yet.',
+      total: '{count} chunks',
+      generationNo: 'Generation {value}',
+      emptyTitle: 'No chunks',
+      emptyDescription: 'No chunk result is available for this file.',
+      chunkTitle: 'Chunk {position}',
+      parent: 'Parent',
+      leaf: 'Leaf',
+      enabled: 'Enabled',
+      disabled: 'Disabled',
+      save: 'Save',
+      toasts: {
+        updated: 'Chunk updated',
+        updateFailed: 'Failed to update chunk',
+      },
+    },
     views: {
       storedOnly: {
         title: 'Stored only',

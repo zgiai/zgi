@@ -205,6 +205,27 @@ const messages: FilesMessages = {
         batchIgnoreFailed: '批量忽略失败',
       },
     },
+    chunks: {
+      title: '内容切片',
+      notReadyTitle: '切片尚未就绪',
+      notReadyDescription: '解析、确认和向量生成完成后，才可以查看切片。',
+      loadErrorTitle: '切片加载失败',
+      loadErrorDescription: '当前文件的切片结果可能尚未就绪。',
+      total: '{count} 个切片',
+      generationNo: '生成批次 {value}',
+      emptyTitle: '暂无切片',
+      emptyDescription: '当前文件还没有可用的切片结果。',
+      chunkTitle: '切片 {position}',
+      parent: '父切片',
+      leaf: '叶子切片',
+      enabled: '启用',
+      disabled: '停用',
+      save: '保存',
+      toasts: {
+        updated: '切片已更新',
+        updateFailed: '切片更新失败',
+      },
+    },
     views: {
       storedOnly: {
         title: '仅存储',

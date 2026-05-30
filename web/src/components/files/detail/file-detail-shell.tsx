@@ -25,6 +25,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { FilePreviewDialog } from '@/components/files/file-preview-dialog';
 import { FileOriginalPreviewPanel } from '@/components/files/detail/file-original-preview-panel';
 import { FileParseReviewPanel } from '@/components/files/detail/file-parse-review-panel';
+import { FileChunksPanel } from '@/components/files/detail/file-chunks-panel';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type { FileAssetProductStatus, FileAssetVectorStatus, FileItem } from '@/services/types/file';
@@ -150,6 +151,7 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   const embeddingCount = processing?.embedding_count ?? file?.embedding_count ?? 0;
   const hasPreview = file ? isOriginalPreviewSupported(file.extension, file.mime_type) : false;
   const parseReviewEnabled = status !== 'stored_only' && status !== 'parsing';
+  const chunksEnabled = status === 'ready';
 
   const statusLabel = useMemo(() => {
     switch (status as FileAssetProductStatus | string) {
@@ -240,6 +242,10 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   useEffect(() => {
     if (status === 'confirming') {
       setActiveTab('parse-review');
+      return;
+    }
+    if (status === 'ready') {
+      setActiveTab('chunks');
     }
   }, [status]);
 
@@ -361,7 +367,7 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
             <TabsTrigger value="parse-review" disabled={!parseReviewEnabled}>
               {t('detail.tabs.parseReview')}
             </TabsTrigger>
-            <TabsTrigger value="chunks" disabled>
+            <TabsTrigger value="chunks" disabled={!chunksEnabled}>
               {t('detail.tabs.chunks')}
             </TabsTrigger>
             <TabsTrigger value="index" disabled>
@@ -471,6 +477,10 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
 
           <TabsContent value="parse-review" className="mt-4">
             <FileParseReviewPanel fileId={file.id} enabled={parseReviewEnabled} />
+          </TabsContent>
+
+          <TabsContent value="chunks" className="mt-4">
+            <FileChunksPanel fileId={file.id} enabled={chunksEnabled} />
           </TabsContent>
         </Tabs>
       </div>
