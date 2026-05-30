@@ -40,6 +40,7 @@ type DocumentChunkRepository interface {
 	GetByID(ctx context.Context, id uuid.UUID) (*model.DocumentChunk, error)
 	List(ctx context.Context, filter DocumentChunkListFilter) ([]*model.DocumentChunk, int64, error)
 	CountByAssetGeneration(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64) (int64, error)
+	DeleteByAssetGeneration(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64) error
 	Update(ctx context.Context, id uuid.UUID, patch DocumentChunkPatch) (*model.DocumentChunk, error)
 }
 
@@ -132,6 +133,17 @@ func (r *documentChunkRepository) CountByAssetGeneration(ctx context.Context, or
 		Where("deleted_at IS NULL").
 		Count(&count).Error
 	return count, err
+}
+
+func (r *documentChunkRepository) DeleteByAssetGeneration(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64) error {
+	if organizationID == "" || assetID == uuid.Nil || generationNo <= 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).
+		Where("organization_id = ?", organizationID).
+		Where("asset_id = ?", assetID).
+		Where("generation_no = ?", generationNo).
+		Delete(&model.DocumentChunk{}).Error
 }
 
 func (r *documentChunkRepository) Update(ctx context.Context, id uuid.UUID, patch DocumentChunkPatch) (*model.DocumentChunk, error) {

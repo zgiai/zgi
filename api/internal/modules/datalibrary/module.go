@@ -33,6 +33,7 @@ type Module struct {
 	ParseConfirmationService           service.ParseConfirmationService
 	ParseArtifactConfirmationService   service.ParseArtifactConfirmationService
 	ParseArtifactChunkTransformService service.ParseArtifactChunkTransformService
+	DocumentChunkGenerationService     service.DocumentChunkGenerationService
 	ProcessingExecutorRegistry         *service.ProcessingExecutorRegistry
 	VectorArtifactService              service.VectorArtifactService
 	ExtractionArtifactService          service.ExtractionArtifactService
@@ -78,6 +79,7 @@ func NewModuleWithStorageAndContentParse(db *gorm.DB, artifactStorage storage.St
 	parseConfirmationService := service.NewParseConfirmationService(documentAssetRepo, parseConfirmationItemRepo)
 	parseArtifactConfirmationService := service.NewParseArtifactConfirmationService(documentAssetRepo, contentParseArtifactRepo, parseArtifactPersistenceService, parseConfirmationItemRepo)
 	parseArtifactChunkTransformService := service.NewParseArtifactChunkTransformService(artifactStorage, nil, nil, nil)
+	documentChunkGenerationService := service.NewDocumentChunkGenerationService(documentAssetRepo, documentChunkRepo)
 	processingExecutorRegistry := service.NewDefaultProcessingExecutorRegistry()
 	vectorArtifactService := service.NewVectorArtifactService(vectorArtifactRepo)
 	extractionArtifactService := service.NewExtractionArtifactService(extractionArtifactRepo)
@@ -116,6 +118,7 @@ func NewModuleWithStorageAndContentParse(db *gorm.DB, artifactStorage storage.St
 		ParseConfirmationService:           parseConfirmationService,
 		ParseArtifactConfirmationService:   parseArtifactConfirmationService,
 		ParseArtifactChunkTransformService: parseArtifactChunkTransformService,
+		DocumentChunkGenerationService:     documentChunkGenerationService,
 		ProcessingExecutorRegistry:         processingExecutorRegistry,
 		VectorArtifactService:              vectorArtifactService,
 		ExtractionArtifactService:          extractionArtifactService,
