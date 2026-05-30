@@ -242,10 +242,14 @@ export function GenerateCasesDialog({
                     <Info className="size-4" />
                   </button>
                 </TooltipTrigger>
-                <TooltipContent side="top" align="start" className="max-w-sm space-y-1 text-sm leading-6">
-                  <p>{t('turnStrategyHelpMixed')}</p>
-                  <p>{t('turnStrategyHelpSingle')}</p>
-                  <p>{t('turnStrategyHelpMulti')}</p>
+                <TooltipContent
+                  side="top"
+                  align="start"
+                  className="max-w-[calc(100vw-48px)] space-y-1 text-sm leading-6"
+                >
+                  <p className="whitespace-nowrap">{t('turnStrategyHelpMixed')}</p>
+                  <p className="whitespace-nowrap">{t('turnStrategyHelpSingle')}</p>
+                  <p className="whitespace-nowrap">{t('turnStrategyHelpMulti')}</p>
                 </TooltipContent>
               </Tooltip>
             </div>
