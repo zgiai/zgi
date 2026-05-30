@@ -122,6 +122,58 @@ func TestFileAssetProcessingStateServiceRejectsStaleRun(t *testing.T) {
 	}
 }
 
+func TestFileAssetProcessingStateServiceReparseBeginsNewGeneration(t *testing.T) {
+	assetID := uuid.New()
+	oldRunID := uuid.New()
+	parseArtifactID := uuid.New()
+	assetRepo := &fileAssetStateAssetRepo{
+		asset: &model.DocumentAsset{
+			ID:              assetID,
+			OrganizationID:  "org-1",
+			SourceFileID:    "file-1",
+			ProductStatus:   model.DocumentAssetProductStatusReady,
+			VectorStatus:    model.DocumentAssetVectorStatusReady,
+			ProcessingRunID: &oldRunID,
+			GenerationNo:    7,
+			ParseArtifactID: &parseArtifactID,
+			ChunkCount:      12,
+		},
+	}
+	requestRepo := &fileAssetStateProcessingRequestRepo{}
+	svc := NewFileAssetProcessingStateService(assetRepo, requestRepo)
+
+	result, err := svc.BeginProcessingRequest(context.Background(), BeginProcessingRequestInput{
+		OrganizationID: "org-1",
+		AssetID:        assetID,
+		TargetLevel:    model.DocumentProcessingLevelVectorize,
+		RequestedBy:    "user-1",
+		Force:          true,
+		IncrementRun:   true,
+		Metadata: map[string]any{
+			"mode": "reparse",
+		},
+	})
+	if err != nil {
+		t.Fatalf("BeginProcessingRequest: %v", err)
+	}
+	if result.GenerationNo != 8 {
+		t.Fatalf("generation=%d want 8", result.GenerationNo)
+	}
+	if result.ProcessingRunID == oldRunID || result.Asset.ProcessingRunID == nil || *result.Asset.ProcessingRunID != result.ProcessingRunID {
+		t.Fatalf("processing run not replaced: result=%+v", result)
+	}
+	if result.Asset.ProductStatus != model.DocumentAssetProductStatusParsing ||
+		result.Asset.ProcessingStage == nil ||
+		*result.Asset.ProcessingStage != model.DocumentAssetProcessingStageParse ||
+		result.Asset.VectorStatus != model.DocumentAssetVectorStatusNone ||
+		result.Asset.ProcessingProgress != 5 {
+		t.Fatalf("asset not moved into parsing state: %+v", result.Asset)
+	}
+	if result.Asset.ParseArtifactID == nil || *result.Asset.ParseArtifactID != parseArtifactID || result.Asset.ChunkCount != 12 {
+		t.Fatalf("reparse should preserve old result pointers until new generation succeeds: %+v", result.Asset)
+	}
+}
+
 type fileAssetStateAssetRepo struct {
 	asset *model.DocumentAsset
 }

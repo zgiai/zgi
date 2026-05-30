@@ -250,12 +250,12 @@ func (r *FileProcessRunner) failRequest(ctx context.Context, request *model.Proc
 			"executor_key": FileProcessExecutorKey,
 		})
 	}
-	if asset != nil && asset.ProcessingRunID != nil {
+	if request != nil && asset != nil && asset.ProcessingRunID != nil && *asset.ProcessingRunID == request.ID {
 		_, _ = r.state.MarkFailed(ctx, datalibraryservice.FailedStateInput{
 			RunStateInput: datalibraryservice.RunStateInput{
 				OrganizationID:     asset.OrganizationID,
 				AssetID:            asset.ID,
-				ProcessingRunID:    *asset.ProcessingRunID,
+				ProcessingRunID:    request.ID,
 				GenerationNo:       asset.GenerationNo,
 				ProcessingProgress: asset.ProcessingProgress,
 			},

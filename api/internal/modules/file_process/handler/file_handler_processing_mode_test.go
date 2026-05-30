@@ -78,6 +78,16 @@ func TestValidateFileProcessingRequestState(t *testing.T) {
 			mode:   FileProcessingRequestModeReparse,
 		},
 		{
+			name:   "reparse from failed",
+			status: datalibrarymodel.DocumentAssetProductStatusParseFailed,
+			mode:   FileProcessingRequestModeReparse,
+		},
+		{
+			name:   "reparse from confirming",
+			status: datalibrarymodel.DocumentAssetProductStatusConfirming,
+			mode:   FileProcessingRequestModeReparse,
+		},
+		{
 			name:   "generate after confirm from confirming",
 			status: datalibrarymodel.DocumentAssetProductStatusConfirming,
 			mode:   FileProcessingRequestModeGenerateAfterConfirm,
@@ -89,9 +99,21 @@ func TestValidateFileProcessingRequestState(t *testing.T) {
 			wantErr: errFileProcessingRequestAlreadyActive,
 		},
 		{
+			name:    "reject reparse while generating without force",
+			status:  datalibrarymodel.DocumentAssetProductStatusGenerating,
+			mode:    FileProcessingRequestModeReparse,
+			wantErr: errFileProcessingRequestAlreadyActive,
+		},
+		{
 			name:   "allow duplicate parsing with force",
 			status: datalibrarymodel.DocumentAssetProductStatusParsing,
 			mode:   FileProcessingRequestModeParseNow,
+			force:  true,
+		},
+		{
+			name:   "allow reparse while generating with force",
+			status: datalibrarymodel.DocumentAssetProductStatusGenerating,
+			mode:   FileProcessingRequestModeReparse,
 			force:  true,
 		},
 		{

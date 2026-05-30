@@ -190,13 +190,17 @@ func (r *GenerateCurrentResultRunner) failRequest(ctx context.Context, request *
 			"executor_key": GenerateCurrentResultExecutorKey,
 		})
 	}
-	if asset != nil && asset.ProcessingRunID != nil {
+	if runID, generationNo, ok := strictGenerationRequestRun(request); ok &&
+		asset != nil &&
+		asset.ProcessingRunID != nil &&
+		*asset.ProcessingRunID == runID &&
+		asset.GenerationNo == generationNo {
 		_, _ = r.state.MarkFailed(ctx, datalibraryservice.FailedStateInput{
 			RunStateInput: datalibraryservice.RunStateInput{
 				OrganizationID:     asset.OrganizationID,
 				AssetID:            asset.ID,
-				ProcessingRunID:    *asset.ProcessingRunID,
-				GenerationNo:       asset.GenerationNo,
+				ProcessingRunID:    runID,
+				GenerationNo:       generationNo,
 				ProcessingStage:    model.DocumentAssetProcessingStageVectorize,
 				ProcessingProgress: asset.ProcessingProgress,
 				ParseArtifactID:    asset.ParseArtifactID,
@@ -206,6 +210,22 @@ func (r *GenerateCurrentResultRunner) failRequest(ctx context.Context, request *
 		})
 	}
 	return cause
+}
+
+func strictGenerationRequestRun(request *model.ProcessingRequest) (uuid.UUID, int64, bool) {
+	if request == nil {
+		return uuid.Nil, 0, false
+	}
+	runIDValue := requestMetadataString(request.RequestMetadata, "processing_run_id")
+	runID, err := uuid.Parse(runIDValue)
+	if err != nil || runID == uuid.Nil {
+		return uuid.Nil, 0, false
+	}
+	generationNo := requestMetadataInt64(request.RequestMetadata, "generation_no")
+	if generationNo <= 0 {
+		return uuid.Nil, 0, false
+	}
+	return runID, generationNo, true
 }
 
 func generationRequestRun(request *model.ProcessingRequest, asset *model.DocumentAsset) (uuid.UUID, int64, error) {
