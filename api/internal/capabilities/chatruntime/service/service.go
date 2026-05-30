@@ -14,7 +14,6 @@ import (
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/llm/tokenestimate"
-	"github.com/zgiai/zgi/api/internal/modules/memory"
 	"github.com/zgiai/zgi/api/internal/modules/shared/titlegen"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	redisutil "github.com/zgiai/zgi/api/pkg/redis"
@@ -311,8 +310,4 @@ type chatRequestParts struct {
 	AgentMemoryAgentID           string
 	AgentMemoryRuntimeState      *AgentMemoryRuntimeState
 	BillingSource                string
-}
-
-func userMemorySkillID() string {
-	return memory.SkillID
 }

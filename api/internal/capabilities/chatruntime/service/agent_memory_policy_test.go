@@ -260,8 +260,12 @@ func TestRunNativeAgentMemoryPreflightUpdateAddsSuccessNote(t *testing.T) {
 		response: agentMemoryPlannerResponse(`{"action":"update","key":"preferences","content":"Use Mermaid syntax directly for future chart requests.","confidence":0.91,"reason":"durable output preference"}`),
 	}
 	svc := &service{agentMemoryService: fakeMemory, llmClient: fakeLLM}
+	events := []StreamEvent{}
 
-	_, err := svc.runNativeAgentMemoryPreflight(context.Background(), context.Background(), prepared, nil)
+	_, err := svc.runNativeAgentMemoryPreflight(context.Background(), context.Background(), prepared, func(event StreamEvent) error {
+		events = append(events, event)
+		return nil
+	})
 	if err != nil {
 		t.Fatalf("runNativeAgentMemoryPreflight() error = %v", err)
 	}
@@ -278,13 +282,18 @@ func TestRunNativeAgentMemoryPreflightUpdateAddsSuccessNote(t *testing.T) {
 	if agentMemory["planner_status"] != "success_update" || agentMemory["mutation_status"] != "success" || agentMemory["mutation_key"] != "preferences" {
 		t.Fatalf("agent memory metadata = %#v, want success_update/success/preferences", agentMemory)
 	}
-	invocations, ok := prepared.Message.Metadata["skill_invocations"].([]interface{})
-	if !ok || len(invocations) != 1 {
-		t.Fatalf("skill invocations = %#v, want one mutation invocation", prepared.Message.Metadata["skill_invocations"])
+	if invocations := prepared.Message.Metadata["skill_invocations"]; invocations != nil {
+		t.Fatalf("skill invocations = %#v, want no legacy agent-memory invocation", invocations)
 	}
-	invocation, ok := invocations[0].(map[string]interface{})
-	if !ok || invocation["kind"] != "tool_call" || invocation["tool_name"] != "update_agent_memory" {
-		t.Fatalf("invocation = %#v, want update_agent_memory tool_call", invocation)
+	if len(events) != 1 {
+		t.Fatalf("events = %#v, want one memory mutation event", events)
+	}
+	if events[0].EventType != streamEventMemoryUpdate || events[0].Payload["memory_scope"] != "agent" || events[0].Payload["action"] != "update" {
+		t.Fatalf("event = %#v, want agent memory_update event", events[0])
+	}
+	content, _ := events[0].Payload["content"].(string)
+	if events[0].Payload["key"] != "preferences" || !strings.Contains(content, "Mermaid") {
+		t.Fatalf("event payload = %#v, want preferences Mermaid content", events[0].Payload)
 	}
 	if len(fakeLLM.requests) != 1 {
 		t.Fatalf("planner requests = %d, want 1", len(fakeLLM.requests))

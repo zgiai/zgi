@@ -12,7 +12,6 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/shared/titlegen"
-	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/prompt"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/gorm"
@@ -445,15 +444,6 @@ func (s *service) applySkillConfig(ctx context.Context, scope Scope, caller Call
 		}
 	}
 	parts.SkillIDs, parts.ToolSkillIDs = filterSkillsForModel(enabled, catalog, parts)
-	if parts.UseMemory {
-		memoryEnabled, err := s.isUserMemoryEnabled(ctx, scope.AccountID)
-		if err != nil {
-			return err
-		}
-		if memoryEnabled {
-			appendUserMemorySkill(ctx, parts, catalog)
-		}
-	}
 	if len(parts.SkillIDs) == 0 {
 		parts.SkillMode = skillModeDisabled
 		return nil
@@ -537,34 +527,6 @@ func mergeUserMemoryMetadata(metadata map[string]interface{}, memoryMetadata map
 		metadata[key] = value
 	}
 	return metadata
-}
-
-func appendUserMemorySkill(ctx context.Context, parts *chatRequestParts, catalog []skills.SkillDiscoveryMetadata) {
-	_ = ctx
-	if parts == nil {
-		return
-	}
-	id := userMemorySkillID()
-	for _, item := range catalog {
-		if strings.EqualFold(strings.TrimSpace(item.ID), id) && item.Status != skills.SkillStatusInvalid {
-			parts.SkillIDs = appendUniqueSkillID(parts.SkillIDs, id)
-			parts.ToolSkillIDs = appendUniqueSkillID(parts.ToolSkillIDs, id)
-			return
-		}
-	}
-}
-
-func appendUniqueSkillID(values []string, id string) []string {
-	normalized := strings.ToLower(strings.TrimSpace(id))
-	if normalized == "" {
-		return values
-	}
-	for _, value := range values {
-		if strings.EqualFold(strings.TrimSpace(value), normalized) {
-			return values
-		}
-	}
-	return append(values, normalized)
 }
 
 func newLLMChatRequest(parts *chatRequestParts, messages []adapter.Message) *adapter.ChatRequest {
