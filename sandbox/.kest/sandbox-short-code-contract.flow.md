@@ -6,6 +6,72 @@
 ```
 
 ```step
+@id stateless-create-marker
+@name Stateless short code creates temporary marker
+
+POST {{base_url}}/v1/exec/code
+Content-Type: application/json
+
+{
+  "language": "python3",
+  "profile": "code-short",
+  "strict_result_json": true,
+  "timeout_ms": 5000,
+  "code": "import json, pathlib\npathlib.Path('marker.txt').write_text('temporary')\nprint(json.dumps({'created': True}))",
+  "enable_network": false
+}
+
+[Asserts]
+status == 200
+code == 0
+data.exit_code == 0
+data.result_json.created == true
+```
+
+```step
+@id stateless-clean-workspace
+@name Stateless short code gets a clean workspace
+
+POST {{base_url}}/v1/exec/code
+Content-Type: application/json
+
+{
+  "language": "python3",
+  "profile": "code-short",
+  "strict_result_json": true,
+  "timeout_ms": 5000,
+  "code": "import json, pathlib\nprint(json.dumps({'exists': pathlib.Path('marker.txt').exists()}))",
+  "enable_network": false
+}
+
+[Asserts]
+status == 200
+code == 0
+data.exit_code == 0
+data.result_json.exists == false
+```
+
+```step
+@id stateless-network-rejection
+@name Reject network in stateless short code
+
+POST {{base_url}}/v1/exec/code
+Content-Type: application/json
+
+{
+  "language": "python3",
+  "profile": "code-short",
+  "timeout_ms": 5000,
+  "code": "print('nope')",
+  "enable_network": true
+}
+
+[Asserts]
+status == 400
+code == -400
+```
+
+```step
 @id create-sandbox
 @name Create sandbox
 

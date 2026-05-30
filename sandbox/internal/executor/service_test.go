@@ -301,6 +301,54 @@ func TestRunCodeSupportsInputJSONAndStructuredResult(t *testing.T) {
 	}
 }
 
+func TestRunCodeWithoutSandboxUsesStatelessWorkspace(t *testing.T) {
+	service, _ := newTestExecutorService(t)
+
+	first, err := service.RunCode(context.Background(), CodeRequest{
+		Language:         "python3",
+		Code:             "import json, pathlib\npathlib.Path('marker.txt').write_text('leftover')\nprint(json.dumps({'created': True}))",
+		Profile:          "code-short",
+		StrictResultJSON: true,
+	})
+	if err != nil {
+		t.Fatalf("expected first stateless code run, got %v", err)
+	}
+	if first.ExitCode != 0 {
+		t.Fatalf("expected first run to succeed, got exit=%d stderr=%q", first.ExitCode, first.Error)
+	}
+
+	second, err := service.RunCode(context.Background(), CodeRequest{
+		Language:         "python3",
+		Code:             "import json, pathlib\nprint(json.dumps({'exists': pathlib.Path('marker.txt').exists()}))",
+		Profile:          "code-short",
+		StrictResultJSON: true,
+	})
+	if err != nil {
+		t.Fatalf("expected second stateless code run, got %v", err)
+	}
+	data, ok := second.ResultJSON.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected result_json object, got %#v", second.ResultJSON)
+	}
+	if data["exists"] != false {
+		t.Fatalf("expected stateless workspace cleanup between runs, got %#v", data)
+	}
+}
+
+func TestRunCodeWithoutSandboxRejectsNetwork(t *testing.T) {
+	service, _ := newTestExecutorService(t)
+
+	_, err := service.RunCode(context.Background(), CodeRequest{
+		Language:      "python3",
+		Code:          "print('nope')",
+		Profile:       "code-short",
+		EnableNetwork: true,
+	})
+	if err == nil {
+		t.Fatal("expected stateless network request to be rejected")
+	}
+}
+
 func TestRunCodeStrictResultJSONRejectsPlainText(t *testing.T) {
 	service, manager := newTestExecutorService(t)
 	box, err := manager.Create(lifecycle.CreateRequest{

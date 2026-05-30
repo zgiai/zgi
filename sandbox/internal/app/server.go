@@ -562,6 +562,9 @@ func (s *Server) handleInteractiveProxy(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) proxyOwnedBodyRequest(w http.ResponseWriter, r *http.Request, sandboxID string, body []byte) bool {
+	if sandboxID == "" {
+		return false
+	}
 	box, err := s.lifecycle.Get(sandboxID)
 	if err != nil {
 		writeKnownError(w, err)

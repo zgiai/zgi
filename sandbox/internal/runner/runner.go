@@ -132,6 +132,10 @@ func (s *Service) Run(parent context.Context, req Request) (Result, error) {
 	return s.run(parent, req, "", true, s.timeout, s.outputCap, s.outputCap)
 }
 
+func (s *Service) RunWithLimits(parent context.Context, req Request, timeout time.Duration, stdoutLimit int, stderrLimit int) (Result, error) {
+	return s.run(parent, req, "", true, timeout, stdoutLimit, stderrLimit)
+}
+
 func (s *Service) RunInDir(parent context.Context, req Request, workDir string) (Result, error) {
 	return s.run(parent, req, workDir, false, s.timeout, s.outputCap, s.outputCap)
 }

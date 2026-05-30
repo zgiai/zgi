@@ -106,14 +106,6 @@ func NewService(manager *lifecycle.Manager, runnerService *runner.Service, recor
 }
 
 func (s *Service) RunCode(ctx context.Context, req CodeRequest) (runner.Result, error) {
-	box, err := s.lifecycle.GetActive(req.SandboxID)
-	if err != nil {
-		return runner.Result{}, err
-	}
-	if err := s.policy.ValidateCodeExecution(*box, req.EnableNetwork); err != nil {
-		return runner.Result{}, err
-	}
-
 	limits, err := s.policy.NormalizeCommandLimits(defaultString(req.Profile, "code-short"), req.TimeoutSeconds, req.TimeoutMS, req.StdoutLimitKB, req.StderrLimitKB)
 	if err != nil {
 		return runner.Result{}, err
@@ -122,13 +114,15 @@ func (s *Service) RunCode(ctx context.Context, req CodeRequest) (runner.Result, 
 		return runner.Result{}, fmt.Errorf("input_json exceeds max size of %d bytes", limits.MaxStdinBytes)
 	}
 
-	result, err := s.runner.RunInDirWithLimits(ctx, runner.Request{
+	runReq := runner.Request{
 		Language:      req.Language,
 		Code:          req.Code,
 		Preload:       req.Preload,
 		Stdin:         string(req.InputJSON),
 		EnableNetwork: req.EnableNetwork,
-	}, box.RootPath, limits.Timeout, limits.StdoutLimitBytes, limits.StderrLimitBytes)
+	}
+
+	result, err := s.runCodeWithScope(ctx, req, runReq, limits)
 	if err != nil {
 		return runner.Result{}, err
 	}
@@ -142,6 +136,24 @@ func (s *Service) RunCode(ctx context.Context, req CodeRequest) (runner.Result, 
 		"exit_code": result.ExitCode,
 	})
 	return result, nil
+}
+
+func (s *Service) runCodeWithScope(ctx context.Context, req CodeRequest, runReq runner.Request, limits policy.CommandLimits) (runner.Result, error) {
+	if strings.TrimSpace(req.SandboxID) == "" {
+		if req.EnableNetwork {
+			return runner.Result{}, errors.New("network access is disabled for stateless code execution")
+		}
+		return s.runner.RunWithLimits(ctx, runReq, limits.Timeout, limits.StdoutLimitBytes, limits.StderrLimitBytes)
+	}
+
+	box, err := s.lifecycle.GetActive(req.SandboxID)
+	if err != nil {
+		return runner.Result{}, err
+	}
+	if err := s.policy.ValidateCodeExecution(*box, req.EnableNetwork); err != nil {
+		return runner.Result{}, err
+	}
+	return s.runner.RunInDirWithLimits(ctx, runReq, box.RootPath, limits.Timeout, limits.StdoutLimitBytes, limits.StderrLimitBytes)
 }
 
 func (s *Service) RunCommand(ctx context.Context, req CommandRequest) (runner.CommandResult, error) {
