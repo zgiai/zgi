@@ -25,6 +25,7 @@ type ParseConfirmationItemResolvePatch struct {
 	FinalContent   *string
 	UpdatedBy      string
 	ResolvedAt     *time.Time
+	AllowedFrom    []string
 }
 
 type ParseConfirmationItemRepository interface {
@@ -146,6 +147,9 @@ func (r *parseConfirmationItemRepository) Resolve(ctx context.Context, id uuid.U
 		Where("deleted_at IS NULL")
 	if patch.OrganizationID != "" {
 		query = query.Where("organization_id = ?", patch.OrganizationID)
+	}
+	if len(patch.AllowedFrom) > 0 {
+		query = query.Where("status IN ?", patch.AllowedFrom)
 	}
 	result := query.Updates(updates)
 	if result.Error != nil {

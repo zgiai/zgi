@@ -13,6 +13,8 @@ type Module struct {
 	ReuseEventRepo             repository.ReuseEventRepository
 	ProcessingRequestRepo      repository.ProcessingRequestRepository
 	ParseConfirmationItemRepo  repository.ParseConfirmationItemRepository
+	DocumentChunkRepo          repository.DocumentChunkRepository
+	DocumentChunkEmbeddingRepo repository.DocumentChunkEmbeddingRepository
 	VectorArtifactRepo         repository.VectorArtifactRepository
 	ExtractionArtifactRepo     repository.ExtractionArtifactRepository
 	KnowledgeBaseAssetRefRepo  repository.KnowledgeBaseAssetRefRepository
@@ -36,6 +38,8 @@ func NewModule(db *gorm.DB) *Module {
 	reuseEventRepo := repository.NewReuseEventRepository(db)
 	processingRequestRepo := repository.NewProcessingRequestRepository(db)
 	parseConfirmationItemRepo := repository.NewParseConfirmationItemRepository(db)
+	documentChunkRepo := repository.NewDocumentChunkRepository(db)
+	documentChunkEmbeddingRepo := repository.NewDocumentChunkEmbeddingRepository(db)
 	vectorArtifactRepo := repository.NewVectorArtifactRepository(db)
 	extractionArtifactRepo := repository.NewExtractionArtifactRepository(db)
 	knowledgeBaseAssetRefRepo := repository.NewKnowledgeBaseAssetRefRepository(db)
@@ -55,6 +59,8 @@ func NewModule(db *gorm.DB) *Module {
 		ReuseEventRepo:             reuseEventRepo,
 		ProcessingRequestRepo:      processingRequestRepo,
 		ParseConfirmationItemRepo:  parseConfirmationItemRepo,
+		DocumentChunkRepo:          documentChunkRepo,
+		DocumentChunkEmbeddingRepo: documentChunkEmbeddingRepo,
 		VectorArtifactRepo:         vectorArtifactRepo,
 		ExtractionArtifactRepo:     extractionArtifactRepo,
 		KnowledgeBaseAssetRefRepo:  knowledgeBaseAssetRefRepo,
