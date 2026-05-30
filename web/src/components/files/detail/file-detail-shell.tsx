@@ -21,7 +21,9 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Progress } from '@/components/ui/progress';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { FilePreviewDialog } from '@/components/files/file-preview-dialog';
+import { FileOriginalPreviewPanel } from '@/components/files/detail/file-original-preview-panel';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type { FileAssetProductStatus, FileAssetVectorStatus, FileItem } from '@/services/types/file';
@@ -342,77 +344,122 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
         </div>
       ) : null}
 
-      <div className="grid gap-4 p-4 sm:p-6 xl:grid-cols-[minmax(0,1fr)_360px]">
-        <div className="min-w-0 space-y-4">
-          <section className="rounded-md border border-border bg-background p-4">
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <h2 className="text-base font-semibold text-foreground">{t('detail.basicInfo')}</h2>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <DetailField label={t('detail.fileId')} value={file.id} />
-              <DetailField label={t('detail.assetId')} value={detail.asset?.id || file.asset_id} />
-              <DetailField label={t('detail.storageType')} value={file.storage_type} />
-              <DetailField label={t('detail.workspaceId')} value={file.workspace_id} />
-              <DetailField label={t('detail.createdBy')} value={file.created_by} />
-              <DetailField label={t('detail.generationNo')} value={summary?.generation_no} />
-            </div>
-          </section>
+      <div className="p-4 sm:p-6">
+        <Tabs defaultValue="overview" className="min-w-0">
+          <TabsList className="flex h-auto w-full justify-start overflow-x-auto rounded-md sm:inline-flex sm:w-auto">
+            <TabsTrigger value="overview">{t('detail.tabs.overview')}</TabsTrigger>
+            <TabsTrigger value="original">{t('detail.tabs.originalPreview')}</TabsTrigger>
+            <TabsTrigger value="parse-review" disabled>
+              {t('detail.tabs.parseReview')}
+            </TabsTrigger>
+            <TabsTrigger value="chunks" disabled>
+              {t('detail.tabs.chunks')}
+            </TabsTrigger>
+            <TabsTrigger value="index" disabled>
+              {t('detail.tabs.index')}
+            </TabsTrigger>
+          </TabsList>
 
-          <section className="rounded-md border border-border bg-background p-4">
-            <h2 className="text-base font-semibold text-foreground">{t('detail.nextViews')}</h2>
-            <div className="mt-4 flex gap-3 rounded-md border border-dashed border-border bg-muted/30 p-4">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-background text-muted-foreground">
-                <CurrentViewIcon
-                  className={cn('h-5 w-5', currentView.spinning && 'animate-spin')}
-                />
+          <TabsContent value="overview" className="mt-4">
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+              <div className="min-w-0 space-y-4">
+                <section className="rounded-md border border-border bg-background p-4">
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <h2 className="text-base font-semibold text-foreground">
+                      {t('detail.basicInfo')}
+                    </h2>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    <DetailField label={t('detail.fileId')} value={file.id} />
+                    <DetailField
+                      label={t('detail.assetId')}
+                      value={detail.asset?.id || file.asset_id}
+                    />
+                    <DetailField label={t('detail.storageType')} value={file.storage_type} />
+                    <DetailField label={t('detail.workspaceId')} value={file.workspace_id} />
+                    <DetailField label={t('detail.createdBy')} value={file.created_by} />
+                    <DetailField label={t('detail.generationNo')} value={summary?.generation_no} />
+                  </div>
+                </section>
+
+                <section className="rounded-md border border-border bg-background p-4">
+                  <h2 className="text-base font-semibold text-foreground">
+                    {t('detail.nextViews')}
+                  </h2>
+                  <div className="mt-4 flex gap-3 rounded-md border border-dashed border-border bg-muted/30 p-4">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-background text-muted-foreground">
+                      <CurrentViewIcon
+                        className={cn('h-5 w-5', currentView.spinning && 'animate-spin')}
+                      />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-foreground">
+                        {currentView.title}
+                      </div>
+                      <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                        {currentView.description}
+                      </p>
+                    </div>
+                  </div>
+                </section>
               </div>
-              <div className="min-w-0">
-                <div className="text-sm font-medium text-foreground">{currentView.title}</div>
-                <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                  {currentView.description}
-                </p>
-              </div>
-            </div>
-          </section>
-        </div>
 
-        <aside className="space-y-4">
-          <section className="rounded-md border border-border bg-background p-4">
-            <h2 className="text-base font-semibold text-foreground">
-              {t('detail.processingSummary')}
-            </h2>
-            <div className="mt-4 grid gap-3">
-              <DetailStat
-                label={t('detail.pendingConfirmationCount')}
-                value={pendingCount}
-                icon={AlertCircle}
-              />
-              <DetailStat label={t('detail.chunkCount')} value={chunkCount} icon={FileIcon} />
-              <DetailStat
-                label={t('detail.embeddingCount')}
-                value={embeddingCount}
-                icon={HardDrive}
-              />
-              <DetailStat
-                label={t('detail.createdDate')}
-                value={formatDate(file.created_at, 'YYYY-MM-DD')}
-                icon={CalendarDays}
-              />
-            </div>
-          </section>
+              <aside className="space-y-4">
+                <section className="rounded-md border border-border bg-background p-4">
+                  <h2 className="text-base font-semibold text-foreground">
+                    {t('detail.processingSummary')}
+                  </h2>
+                  <div className="mt-4 grid gap-3">
+                    <DetailStat
+                      label={t('detail.pendingConfirmationCount')}
+                      value={pendingCount}
+                      icon={AlertCircle}
+                    />
+                    <DetailStat label={t('detail.chunkCount')} value={chunkCount} icon={FileIcon} />
+                    <DetailStat
+                      label={t('detail.embeddingCount')}
+                      value={embeddingCount}
+                      icon={HardDrive}
+                    />
+                    <DetailStat
+                      label={t('detail.createdDate')}
+                      value={formatDate(file.created_at, 'YYYY-MM-DD')}
+                      icon={CalendarDays}
+                    />
+                  </div>
+                </section>
 
-          <section className="rounded-md border border-border bg-background p-4">
-            <h2 className="text-base font-semibold text-foreground">{t('detail.indexInfo')}</h2>
-            <div className="mt-4 grid gap-3">
-              <DetailField label={t('detail.embeddingProvider')} value={artifactState?.embedding_provider} />
-              <DetailField label={t('detail.embeddingModel')} value={artifactState?.embedding_model} />
-              <DetailField
-                label={t('detail.embeddingDimension')}
-                value={artifactState?.embedding_dimension}
-              />
+                <section className="rounded-md border border-border bg-background p-4">
+                  <h2 className="text-base font-semibold text-foreground">
+                    {t('detail.indexInfo')}
+                  </h2>
+                  <div className="mt-4 grid gap-3">
+                    <DetailField
+                      label={t('detail.embeddingProvider')}
+                      value={artifactState?.embedding_provider}
+                    />
+                    <DetailField
+                      label={t('detail.embeddingModel')}
+                      value={artifactState?.embedding_model}
+                    />
+                    <DetailField
+                      label={t('detail.embeddingDimension')}
+                      value={artifactState?.embedding_dimension}
+                    />
+                  </div>
+                </section>
+              </aside>
             </div>
-          </section>
-        </aside>
+          </TabsContent>
+
+          <TabsContent value="original" className="mt-4">
+            <FileOriginalPreviewPanel
+              file={file}
+              onDownload={canDownload ? () => void handleDownload() : undefined}
+              isDownloading={isDownloading}
+            />
+          </TabsContent>
+        </Tabs>
       </div>
 
       <FilePreviewDialog

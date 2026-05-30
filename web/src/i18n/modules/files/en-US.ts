@@ -170,6 +170,13 @@ const messages = {
       ready: 'Vector ready',
       failed: 'Vector failed',
     },
+    tabs: {
+      overview: 'Overview',
+      originalPreview: 'Original File',
+      parseReview: 'Parse Review',
+      chunks: 'Chunks',
+      index: 'Index',
+    },
     views: {
       storedOnly: {
         title: 'Stored only',

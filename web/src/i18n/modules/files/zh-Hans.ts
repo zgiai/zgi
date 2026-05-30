@@ -165,6 +165,13 @@ const messages: FilesMessages = {
       ready: '向量已就绪',
       failed: '向量失败',
     },
+    tabs: {
+      overview: '概览',
+      originalPreview: '原文件',
+      parseReview: '解析确认',
+      chunks: '内容切片',
+      index: '索引信息',
+    },
     views: {
       storedOnly: {
         title: '仅存储',
