@@ -220,6 +220,10 @@ func (m *Manager) List() []sandbox.Sandbox {
 	return filtered
 }
 
+func (m *Manager) ActiveCount() (int, error) {
+	return m.store.CountActive(m.workerID, time.Now().UTC())
+}
+
 func (m *Manager) Delete(id string) error {
 	item, err := m.store.GetSandbox(id)
 	if err != nil {

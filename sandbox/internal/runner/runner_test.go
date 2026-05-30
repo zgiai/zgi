@@ -78,6 +78,58 @@ func TestRunReturnsQueueTimeoutWhenWorkersAreBusy(t *testing.T) {
 	}
 }
 
+func TestMetricsReportsQueuedExecutions(t *testing.T) {
+	service := NewServiceWithOptions(Options{
+		MaxWorkers:   1,
+		Timeout:      2 * time.Second,
+		QueueTimeout: time.Second,
+		OutputCap:    4096,
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := service.Run(context.Background(), Request{
+			Language: "python3",
+			Code:     "import time; time.sleep(0.3)",
+		})
+		done <- err
+	}()
+	waitForBusyWorker(t, service)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	queuedDone := make(chan error, 1)
+	go func() {
+		_, err := service.Run(ctx, Request{
+			Language: "python3",
+			Code:     "print('queued')",
+		})
+		queuedDone <- err
+	}()
+	waitForQueuedExecution(t, service)
+
+	metrics := service.Metrics()
+	if metrics.MaxWorkers != 1 {
+		t.Fatalf("expected one max worker, got %d", metrics.MaxWorkers)
+	}
+	if metrics.ActiveWorkers != 1 {
+		t.Fatalf("expected one active worker, got %d", metrics.ActiveWorkers)
+	}
+	if metrics.QueuedExecutions != 1 {
+		t.Fatalf("expected one queued execution, got %d", metrics.QueuedExecutions)
+	}
+
+	cancel()
+	if err := <-queuedDone; err == nil {
+		t.Fatal("expected queued execution to be canceled")
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("expected first run to complete, got %v", err)
+	}
+	if queued := service.Metrics().QueuedExecutions; queued != 0 {
+		t.Fatalf("expected queued executions to return to zero, got %d", queued)
+	}
+}
+
 func TestCommandReturnsQueueTimeoutWhenWorkersAreBusy(t *testing.T) {
 	service := NewServiceWithOptions(Options{
 		MaxWorkers:   1,
@@ -217,6 +269,19 @@ func waitForBusyWorker(t *testing.T, service *Service) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("expected worker to become busy")
+}
+
+func waitForQueuedExecution(t *testing.T, service *Service) {
+	t.Helper()
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if service.Metrics().QueuedExecutions > 0 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("expected execution to become queued")
 }
 
 func waitForChildPID(t *testing.T, path string) int {

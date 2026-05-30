@@ -173,10 +173,13 @@ func (s *Service) RunCode(ctx context.Context, req CodeRequest) (runner.Result, 
 	}
 
 	s.observer.Record("exec.code", req.SandboxID, "sandbox code executed", observer.MetadataWithContext(ctx, map[string]any{
-		"language":  req.Language,
-		"profile":   limits.Profile,
-		"exit_code": result.ExitCode,
-		"status":    "success",
+		"language":    req.Language,
+		"profile":     limits.Profile,
+		"exit_code":   result.ExitCode,
+		"duration_ms": result.DurationMS,
+		"truncated":   result.Truncated,
+		"backend":     result.Backend,
+		"status":      "success",
 	}))
 	return result, nil
 }
@@ -252,10 +255,13 @@ func (s *Service) RunCommand(ctx context.Context, req CommandRequest) (runner.Co
 	}
 
 	s.observer.Record("exec.command", req.SandboxID, "sandbox command executed", observer.MetadataWithContext(ctx, map[string]any{
-		"command":   req.Command,
-		"profile":   limits.Profile,
-		"exit_code": result.ExitCode,
-		"status":    "success",
+		"command":     req.Command,
+		"profile":     limits.Profile,
+		"exit_code":   result.ExitCode,
+		"duration_ms": result.DurationMS,
+		"truncated":   result.Truncated,
+		"backend":     result.Backend,
+		"status":      "success",
 	}))
 	return result, nil
 }
@@ -264,6 +270,14 @@ func (s *Service) recordExecutionFailure(ctx context.Context, eventType string, 
 	eventMetadata := map[string]any{
 		"status":     "failure",
 		"error_type": classifyExecutionError(err),
+	}
+	var detailsErr interface {
+		ResponseDetails() map[string]any
+	}
+	if errors.As(err, &detailsErr) {
+		for key, value := range detailsErr.ResponseDetails() {
+			eventMetadata[key] = value
+		}
 	}
 	for key, value := range metadata {
 		eventMetadata[key] = value

@@ -102,6 +102,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("/assets/", static)
 	s.mux.HandleFunc("/", s.handleIndex)
 	s.mux.HandleFunc("/health", s.handleHealth)
+	s.mux.HandleFunc("/v1/metrics", s.handleMetrics)
 	s.mux.HandleFunc("/api/blueprint", s.handleBlueprint)
 	s.mux.HandleFunc("/v1/policies", s.handlePolicies)
 	s.mux.HandleFunc("/v1/sandbox/run", s.handleRun)
@@ -149,6 +150,30 @@ func (s *Server) handleBlueprint(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handlePolicies(w http.ResponseWriter, _ *http.Request) {
 	writeEnvelope(w, http.StatusOK, s.policy.Snapshot())
+}
+
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authorized(r) {
+		writeEnvelopeWithMessage(w, http.StatusUnauthorized, -401, "unauthorized", nil)
+		return
+	}
+
+	activeSandboxes, err := s.lifecycle.ActiveCount()
+	if err != nil {
+		writeKnownError(w, err)
+		return
+	}
+
+	writeEnvelope(w, http.StatusOK, map[string]any{
+		"worker_id":        s.config.WorkerID,
+		"active_sandboxes": activeSandboxes,
+		"runner":           s.runner.Metrics(),
+		"observer":         s.observer.Metrics(1000),
+	})
 }
 
 func (s *Server) withRequestID(next http.Handler) http.Handler {

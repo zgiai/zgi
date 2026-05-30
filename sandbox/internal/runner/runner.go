@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/zgiai/zgi-sandbox/internal/config"
@@ -16,6 +17,7 @@ import (
 
 type Service struct {
 	semaphore    chan struct{}
+	queued       atomic.Int64
 	timeout      time.Duration
 	queueTimeout time.Duration
 	outputCap    int
@@ -71,6 +73,16 @@ type Options struct {
 	QueueTimeout time.Duration
 	OutputCap    int
 	Backend      backend
+}
+
+type Metrics struct {
+	MaxWorkers       int    `json:"max_workers"`
+	ActiveWorkers    int    `json:"active_workers"`
+	QueuedExecutions int64  `json:"queued_executions"`
+	TimeoutMS        int64  `json:"timeout_ms"`
+	QueueTimeoutMS   int64  `json:"queue_timeout_ms"`
+	OutputCapBytes   int    `json:"output_cap_bytes"`
+	Backend          string `json:"backend"`
 }
 
 type QueueTimeoutError struct {
@@ -283,7 +295,28 @@ func (s *Service) ExecuteCommandSpec(parent context.Context, spec CommandSpec) (
 	return result, nil
 }
 
+func (s *Service) Metrics() Metrics {
+	return Metrics{
+		MaxWorkers:       cap(s.semaphore),
+		ActiveWorkers:    len(s.semaphore),
+		QueuedExecutions: s.queued.Load(),
+		TimeoutMS:        s.timeout.Milliseconds(),
+		QueueTimeoutMS:   s.queueTimeout.Milliseconds(),
+		OutputCapBytes:   s.outputCap,
+		Backend:          s.backend.Name(),
+	}
+}
+
 func (s *Service) acquire(parent context.Context) (func(), error) {
+	select {
+	case s.semaphore <- struct{}{}:
+		return func() { <-s.semaphore }, nil
+	default:
+	}
+
+	s.queued.Add(1)
+	defer s.queued.Add(-1)
+
 	timer := time.NewTimer(s.queueTimeout)
 	defer timer.Stop()
 

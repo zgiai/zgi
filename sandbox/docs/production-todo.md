@@ -33,6 +33,7 @@ Already available:
 - Configurable graceful shutdown for service drain on SIGTERM/SIGINT
 - Request correlation IDs for HTTP responses and execution observer events
 - Structured observer events for successful and failed execution paths
+- Metrics endpoint for worker active sandbox count, runner pressure, and execution observer counters
 - Worker-scoped active sandbox limit accounting
 - Optional Linux secure backend with namespace-based isolation
 
@@ -383,6 +384,11 @@ and security review.
 
 ### H2. Metrics
 
+- Added `GET /v1/metrics` with:
+  - current worker active sandbox count
+  - runner max, active, and queued execution gauges
+  - runner backend and configured execution limits
+  - observer-derived execution success, failure, timeout, cancellation, output truncation, backend error, and duration counters
 - Export metrics for:
   - active sandboxes
   - queued executions

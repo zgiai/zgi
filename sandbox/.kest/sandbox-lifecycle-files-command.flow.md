@@ -222,6 +222,21 @@ data.events.0.metadata.request_id == "req_kest_command"
 ```
 
 ```step
+@id metrics
+@name Metrics endpoint
+
+GET {{base_url}}/v1/metrics
+
+[Asserts]
+status == 200
+code == 0
+data.active_sandboxes == 1
+data.runner.max_workers == 4
+data.runner.active_workers == 0
+data.runner.queued_executions == 0
+```
+
+```step
 @id delete-file
 @name Delete uploaded file
 

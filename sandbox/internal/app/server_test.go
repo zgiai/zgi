@@ -262,6 +262,92 @@ func TestDependencyEndpoint(t *testing.T) {
 	}
 }
 
+func TestMetricsEndpointReportsSandboxRunnerAndObserverCounters(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.MaxWorkers = 2
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	createReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","ttl_seconds":60}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	createRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(createRes, createReq)
+	if createRes.Code != http.StatusOK {
+		t.Fatalf("expected sandbox create to return 200, got %d body=%s", createRes.Code, createRes.Body.String())
+	}
+
+	var createPayload struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(createRes.Body.Bytes(), &createPayload); err != nil {
+		t.Fatalf("expected create payload, got %v", err)
+	}
+
+	execReq := httptest.NewRequest(http.MethodPost, "/v1/exec/code", strings.NewReader(fmt.Sprintf(`{"sandbox_id":%q,"language":"python3","code":"print('metrics-ok')"}`, createPayload.Data.ID)))
+	execReq.Header.Set("Content-Type", "application/json")
+	execRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(execRes, execReq)
+	if execRes.Code != http.StatusOK {
+		t.Fatalf("expected code execution to return 200, got %d body=%s", execRes.Code, execRes.Body.String())
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/metrics", nil)
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected metrics to return 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var payload struct {
+		Data struct {
+			WorkerID        string `json:"worker_id"`
+			ActiveSandboxes int    `json:"active_sandboxes"`
+			Runner          struct {
+				MaxWorkers       int   `json:"max_workers"`
+				ActiveWorkers    int   `json:"active_workers"`
+				QueuedExecutions int64 `json:"queued_executions"`
+			} `json:"runner"`
+			Observer struct {
+				ExecutionSuccessCount      int     `json:"execution_success_count"`
+				ExecutionFailureCount      int     `json:"execution_failure_count"`
+				ExecutionDurationCount     int     `json:"execution_duration_count"`
+				ExecutionDurationAverageMS float64 `json:"execution_duration_average_ms"`
+			} `json:"observer"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("expected metrics payload, got %v", err)
+	}
+	if payload.Data.WorkerID != "test-worker" {
+		t.Fatalf("expected worker id test-worker, got %q", payload.Data.WorkerID)
+	}
+	if payload.Data.ActiveSandboxes != 1 {
+		t.Fatalf("expected one active sandbox, got %d", payload.Data.ActiveSandboxes)
+	}
+	if payload.Data.Runner.MaxWorkers != 2 {
+		t.Fatalf("expected two max workers, got %d", payload.Data.Runner.MaxWorkers)
+	}
+	if payload.Data.Runner.ActiveWorkers != 0 {
+		t.Fatalf("expected no active workers after request, got %d", payload.Data.Runner.ActiveWorkers)
+	}
+	if payload.Data.Runner.QueuedExecutions != 0 {
+		t.Fatalf("expected no queued executions after request, got %d", payload.Data.Runner.QueuedExecutions)
+	}
+	if payload.Data.Observer.ExecutionSuccessCount != 1 {
+		t.Fatalf("expected one execution success, got %d", payload.Data.Observer.ExecutionSuccessCount)
+	}
+	if payload.Data.Observer.ExecutionFailureCount != 0 {
+		t.Fatalf("expected no execution failures, got %d", payload.Data.Observer.ExecutionFailureCount)
+	}
+	if payload.Data.Observer.ExecutionDurationCount != 1 {
+		t.Fatalf("expected one duration sample, got %d", payload.Data.Observer.ExecutionDurationCount)
+	}
+}
+
 func TestSandboxPersistenceAcrossServerInstances(t *testing.T) {
 	cfg := testConfig(t)
 
