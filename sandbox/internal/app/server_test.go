@@ -79,6 +79,25 @@ func TestSandboxListEndpoint(t *testing.T) {
 	}
 }
 
+func TestUploadFileRejectsOversizedRequestBody(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.MaxFileSizeKB = 1
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	body := `{"sandbox_id":"sbx_missing","path":"too-large.txt","content":"` + strings.Repeat("x", 80*1024) + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/files/upload", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestDependencyEndpoint(t *testing.T) {
 	server, err := NewServer(testConfig(t))
 	if err != nil {
