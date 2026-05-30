@@ -77,6 +77,8 @@ func registerFileRoutesLegacy(v1 *gin.RouterGroup, deps FileRouteDeps) {
 
 		files.GET("/metadata", fileHandler.GetFilesMetadata)
 
+		files.POST("/:file_id/processing-requests", fileHandler.CreateProcessingRequest)
+
 		files.GET("/:file_id/preview", fileHandler.GetFilePreview)
 
 		files.GET("/:file_id/preview-url", fileHandler.GetFileOriginalPreviewURL)

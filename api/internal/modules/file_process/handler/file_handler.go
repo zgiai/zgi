@@ -49,10 +49,33 @@ type FileAssetProcessingServices struct {
 const (
 	UploadProcessingModeStoreOnly  = "store_only"
 	UploadProcessingModeProcessNow = "process_now"
+
+	FileProcessingRequestModeParseNow             = "parse_now"
+	FileProcessingRequestModeReparse              = "reparse"
+	FileProcessingRequestModeGenerateAfterConfirm = "generate_after_confirm"
+)
+
+var (
+	errInvalidFileProcessingRequestMode   = errors.New("file processing request mode is invalid")
+	errFileProcessingRequestStateInvalid  = errors.New("file processing request state is invalid")
+	errFileProcessingRequestAlreadyActive = errors.New("file processing request is already active")
 )
 
 type fileServiceWithUploadOptions interface {
 	UploadFileWithOptions(ctx context.Context, filename string, content []byte, mimeType string, userID, organizationID string, userRole model.CreatedByRole, source *interfaces.FileSource, workspaceID *string, isTemporary bool, isIcon bool, options service.UploadFileOptions) (*dto.UploadFile, error)
+}
+
+type fileProcessingRequest struct {
+	TargetLevel string `json:"target_level"`
+	Mode        string `json:"mode"`
+	Force       bool   `json:"force"`
+}
+
+type queuedFileProcessingRequest struct {
+	Asset             *datalibrarymodel.DocumentAsset
+	ProcessingRequest *datalibraryservice.ProcessingRequestView
+	ProcessingRunID   *uuid.UUID
+	GenerationNo      int64
 }
 
 // NewFileHandler creates a new file handler instance
@@ -103,6 +126,75 @@ func normalizeUploadProcessingMode(raw string) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+func normalizeFileProcessingRequestMode(raw string) (string, bool) {
+	mode := strings.TrimSpace(raw)
+	if mode == "" {
+		return FileProcessingRequestModeParseNow, true
+	}
+	switch mode {
+	case FileProcessingRequestModeParseNow,
+		FileProcessingRequestModeReparse,
+		FileProcessingRequestModeGenerateAfterConfirm:
+		return mode, true
+	default:
+		return "", false
+	}
+}
+
+func normalizeFileProcessingTargetLevel(raw string) string {
+	targetLevel := strings.TrimSpace(raw)
+	if targetLevel == "" {
+		return datalibrarymodel.DocumentProcessingLevelVectorize
+	}
+	return targetLevel
+}
+
+func validateFileProcessingRequestState(asset *datalibrarymodel.DocumentAsset, mode string, force bool) error {
+	if asset == nil {
+		return datalibraryservice.ErrDocumentAssetNotFound
+	}
+	switch asset.ProductStatus {
+	case datalibrarymodel.DocumentAssetProductStatusParsing,
+		datalibrarymodel.DocumentAssetProductStatusGenerating:
+		if !force {
+			return errFileProcessingRequestAlreadyActive
+		}
+	}
+
+	switch mode {
+	case FileProcessingRequestModeParseNow:
+		switch asset.ProductStatus {
+		case datalibrarymodel.DocumentAssetProductStatusStoredOnly,
+			datalibrarymodel.DocumentAssetProductStatusParseFailed:
+			return nil
+		case datalibrarymodel.DocumentAssetProductStatusParsing,
+			datalibrarymodel.DocumentAssetProductStatusGenerating:
+			if force {
+				return nil
+			}
+		}
+	case FileProcessingRequestModeReparse:
+		switch asset.ProductStatus {
+		case datalibrarymodel.DocumentAssetProductStatusReady,
+			datalibrarymodel.DocumentAssetProductStatusParseFailed,
+			datalibrarymodel.DocumentAssetProductStatusConfirming:
+			return nil
+		case datalibrarymodel.DocumentAssetProductStatusParsing,
+			datalibrarymodel.DocumentAssetProductStatusGenerating:
+			if force {
+				return nil
+			}
+		}
+	case FileProcessingRequestModeGenerateAfterConfirm:
+		if asset.ProductStatus == datalibrarymodel.DocumentAssetProductStatusConfirming {
+			return nil
+		}
+	default:
+		return errInvalidFileProcessingRequestMode
+	}
+	return errFileProcessingRequestStateInvalid
 }
 
 // GetUploadConfig gets file upload configuration
@@ -331,6 +423,97 @@ func (h *FileHandler) UploadFile(c *gin.Context) {
 	response.Success(c, fileResponse)
 }
 
+// CreateProcessingRequest starts parsing, reparsing, or post-confirm generation for a file asset.
+// POST /files/:file_id/processing-requests
+func (h *FileHandler) CreateProcessingRequest(c *gin.Context) {
+	if h.assetStateService == nil || h.processingService == nil {
+		h.businessErrorWithMessage(c, response.ErrSystemError, "file asset processing service is not available")
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		h.businessError(c, response.ErrUnauthorized)
+		return
+	}
+	organizationID := util.GetOrganizationID(c)
+	if organizationID == "" {
+		h.businessError(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	fileID := c.Param("file_id")
+	if fileID == "" {
+		h.businessError(c, response.ErrFileIdRequired)
+		return
+	}
+	uploadFile, ok := h.getAuthorizedFileForDownload(c, fileID)
+	if !ok {
+		return
+	}
+	if uploadFile.IsTemporary || !model.IsDocumentExtension(strings.TrimPrefix(strings.ToLower(uploadFile.Extension), ".")) {
+		h.businessError(c, response.ErrUnsupportedFileType)
+		return
+	}
+
+	var req fileProcessingRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.businessError(c, response.ErrInvalidParams)
+		return
+	}
+	mode, ok := normalizeFileProcessingRequestMode(req.Mode)
+	if !ok {
+		h.businessError(c, response.ErrInvalidParams)
+		return
+	}
+	targetLevel := normalizeFileProcessingTargetLevel(req.TargetLevel)
+
+	result, err := h.createQueuedFileProcessingRequest(c.Request.Context(), uploadFile, organizationID, accountID, targetLevel, mode, req.Force)
+	if err != nil {
+		h.handleFileProcessingRequestError(c, err)
+		return
+	}
+
+	response.Success(c, gin.H{
+		"asset":                result.Asset,
+		"processing_request":   result.ProcessingRequest,
+		"processing_run_id":    uuidPointerString(result.ProcessingRunID),
+		"generation_no":        result.GenerationNo,
+		"file_id":              uploadFile.ID,
+		"target_level":         targetLevel,
+		"mode":                 mode,
+		"request_queue_status": result.ProcessingRequest.Status,
+	})
+}
+
+func (h *FileHandler) handleFileProcessingRequestError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, errInvalidFileProcessingRequestMode),
+		errors.Is(err, errFileProcessingRequestStateInvalid),
+		errors.Is(err, datalibraryservice.ErrProcessingLevelRequired),
+		errors.Is(err, datalibraryservice.ErrProcessingLevelInvalid),
+		errors.Is(err, datalibraryservice.ErrProcessingRequestTransitionInvalid):
+		h.businessErrorWithMessage(c, response.ErrInvalidParams, err.Error())
+	case errors.Is(err, errFileProcessingRequestAlreadyActive):
+		h.businessErrorWithMessage(c, response.ErrInvalidParams, err.Error())
+	case errors.Is(err, datalibraryservice.ErrDocumentAssetNotFound),
+		errors.Is(err, datalibraryservice.ErrProcessingRequestNotFound):
+		h.businessError(c, response.ErrNotFound)
+	case errors.Is(err, datalibraryservice.ErrOrganizationIDRequired):
+		h.businessError(c, response.ErrUnauthorized)
+	default:
+		logger.WarnContext(c.Request.Context(), "failed to create file processing request", err)
+		h.businessError(c, response.ErrSystemError)
+	}
+}
+
+func uuidPointerString(id *uuid.UUID) string {
+	if id == nil {
+		return ""
+	}
+	return id.String()
+}
+
 func (h *FileHandler) uploadFile(ctx context.Context, filename string, content []byte, mimeType string, accountID string, organizationID string, source *interfaces.FileSource, teamTenantID *string, isTemporary bool, isIcon bool, useAssetProcessing bool) (*dto.UploadFile, error) {
 	if uploadSvc, ok := h.fileService.(fileServiceWithUploadOptions); ok {
 		return uploadSvc.UploadFileWithOptions(
@@ -386,28 +569,101 @@ func (h *FileHandler) attachAssetProcessing(ctx context.Context, uploadFile *dto
 		return asset, nil
 	}
 
-	result, err := h.assetStateService.BeginProcessingRequest(ctx, datalibraryservice.BeginProcessingRequestInput{
+	result, err := h.beginAndQueueRunProcessingRequest(ctx, asset, uploadFile.ID, organizationID, accountID, datalibrarymodel.DocumentProcessingLevelVectorize, FileProcessingRequestModeParseNow, false)
+	if err != nil {
+		return nil, err
+	}
+	return result.Asset, nil
+}
+
+func (h *FileHandler) createQueuedFileProcessingRequest(ctx context.Context, uploadFile *dto.UploadFile, organizationID string, accountID string, targetLevel string, mode string, force bool) (*queuedFileProcessingRequest, error) {
+	asset, _, err := h.assetStateService.CreateOrReuseStoredAsset(ctx, datalibraryservice.FileAssetCreateInput{
 		OrganizationID: organizationID,
 		WorkspaceID:    uploadFile.WorkspaceID,
+		Title:          uploadFile.Name,
+		SourceFileID:   uploadFile.ID,
+		ContentHash:    uploadFile.Hash,
+		CreatedBy:      accountID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := validateFileProcessingRequestState(asset, mode, force); err != nil {
+		return nil, err
+	}
+
+	switch mode {
+	case FileProcessingRequestModeParseNow, FileProcessingRequestModeReparse:
+		return h.beginAndQueueRunProcessingRequest(ctx, asset, uploadFile.ID, organizationID, accountID, targetLevel, mode, force)
+	case FileProcessingRequestModeGenerateAfterConfirm:
+		return h.queueGenerateAfterConfirmRequest(ctx, asset, uploadFile.ID, organizationID, accountID, targetLevel, force)
+	default:
+		return nil, errInvalidFileProcessingRequestMode
+	}
+}
+
+func (h *FileHandler) beginAndQueueRunProcessingRequest(ctx context.Context, asset *datalibrarymodel.DocumentAsset, uploadFileID string, organizationID string, accountID string, targetLevel string, mode string, force bool) (*queuedFileProcessingRequest, error) {
+	result, err := h.assetStateService.BeginProcessingRequest(ctx, datalibraryservice.BeginProcessingRequestInput{
+		OrganizationID: organizationID,
+		WorkspaceID:    asset.WorkspaceID,
 		AssetID:        asset.ID,
-		TargetLevel:    datalibrarymodel.DocumentProcessingLevelVectorize,
+		TargetLevel:    targetLevel,
 		RequestedBy:    accountID,
+		Force:          force,
 		IncrementRun:   true,
 		Metadata: map[string]any{
-			"source":          "file_upload",
-			"processing_mode": processingMode,
-			"upload_file_id":  uploadFile.ID,
+			"source":         "file_processing_request",
+			"mode":           mode,
+			"upload_file_id": uploadFileID,
 		},
 	})
 	if err != nil {
 		return nil, err
 	}
-	if h.processingService != nil {
-		if _, err := h.processingService.QueueRequest(ctx, organizationID, result.ProcessingRequest.ID); err != nil {
-			return nil, err
-		}
+	queued, err := h.processingService.QueueRequest(ctx, organizationID, result.ProcessingRequest.ID)
+	if err != nil {
+		return nil, err
 	}
-	return result.Asset, nil
+	return &queuedFileProcessingRequest{
+		Asset:             result.Asset,
+		ProcessingRequest: queued,
+		ProcessingRunID:   &result.ProcessingRunID,
+		GenerationNo:      result.GenerationNo,
+	}, nil
+}
+
+func (h *FileHandler) queueGenerateAfterConfirmRequest(ctx context.Context, asset *datalibrarymodel.DocumentAsset, uploadFileID string, organizationID string, accountID string, targetLevel string, force bool) (*queuedFileProcessingRequest, error) {
+	if asset.ProcessingRunID == nil || asset.GenerationNo == 0 {
+		return nil, errFileProcessingRequestStateInvalid
+	}
+	planned, err := h.processingService.CreatePlannedRequest(ctx, datalibraryservice.ProcessingRequest{
+		OrganizationID: organizationID,
+		WorkspaceID:    asset.WorkspaceID,
+		AssetID:        asset.ID,
+		TargetLevel:    targetLevel,
+		RequestedBy:    accountID,
+		Force:          force,
+		RequestMetadata: map[string]any{
+			"source":            "file_processing_request",
+			"mode":              FileProcessingRequestModeGenerateAfterConfirm,
+			"upload_file_id":    uploadFileID,
+			"processing_run_id": asset.ProcessingRunID.String(),
+			"generation_no":     asset.GenerationNo,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	queued, err := h.processingService.QueueRequest(ctx, organizationID, planned.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &queuedFileProcessingRequest{
+		Asset:             asset,
+		ProcessingRequest: queued,
+		ProcessingRunID:   asset.ProcessingRunID,
+		GenerationNo:      asset.GenerationNo,
+	}, nil
 }
 
 // GetFilePreview gets file preview content
