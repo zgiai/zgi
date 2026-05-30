@@ -176,7 +176,7 @@ func (s *Service) DependencyCatalog(language string) map[string]any {
 	}
 }
 
-func (s *Service) NormalizeCreate(profile string, ttlSeconds int, networkEnabled bool, networkPolicy string, dependencyProfile string, activeCount int) (CreateDecision, error) {
+func (s *Service) NormalizeCreate(profile string, ttlSeconds int, networkEnabled bool, networkPolicy string, dependencyProfile string, activeCount int, tenantID string, tenantActiveCount int) (CreateDecision, error) {
 	if s.config.MaxActive > 0 && activeCount >= s.config.MaxActive {
 		return CreateDecision{}, &LimitError{
 			Code:    "active_sandbox_limit_exceeded",
@@ -184,6 +184,18 @@ func (s *Service) NormalizeCreate(profile string, ttlSeconds int, networkEnabled
 			Maximum: s.config.MaxActive,
 			Actual:  activeCount + 1,
 			Details: map[string]any{"active_sandboxes": activeCount},
+		}
+	}
+	if tenantID != "" && s.config.MaxActivePerTenant > 0 && tenantActiveCount >= s.config.MaxActivePerTenant {
+		return CreateDecision{}, &LimitError{
+			Code:    "tenant_active_sandbox_limit_exceeded",
+			Limit:   "max_active_sandboxes_per_tenant",
+			Maximum: s.config.MaxActivePerTenant,
+			Actual:  tenantActiveCount + 1,
+			Details: map[string]any{
+				"tenant_id":        tenantID,
+				"active_sandboxes": tenantActiveCount,
+			},
 		}
 	}
 
@@ -307,29 +319,30 @@ func (s *Service) EffectiveLimits() sandbox.ResourceLimits {
 		maxFileSizeKB = 256
 	}
 	return sandbox.ResourceLimits{
-		RuntimeBackend:             s.normalizedRuntimeBackend(),
-		NetworkPolicyEnforced:      s.runtimeBackendEnforcesNetworkPolicy(),
-		MaxWorkers:                 s.config.MaxWorkers,
-		MaxActiveSandboxes:         s.config.MaxActive,
-		QueueTimeoutMS:             s.config.QueueTimeoutMS,
-		DefaultTimeoutSeconds:      s.config.TimeoutSeconds,
-		DefaultExecutionTimeoutMS:  int64(s.config.TimeoutSeconds) * 1000,
-		OutputLimitKB:              s.config.OutputLimitKB,
-		MaxCommandTimeoutMS:        int64(s.config.CommandTimeout) * 1000,
-		MaxCommandTimeoutSeconds:   s.config.CommandTimeout,
-		OutputLimitBytes:           s.config.OutputLimitKB * 1024,
-		MaxFileSizeKB:              maxFileSizeKB,
-		MaxFileSizeBytes:           maxFileSizeBytes,
-		MaxArchiveFiles:            256,
-		MaxArchiveTotalBytes:       maxFileSizeBytes * 256,
-		SessionTTLSecs:             s.config.SessionTTL,
-		SessionTTLSeconds:          s.config.SessionTTL,
-		InteractiveTTLSecs:         s.config.InteractiveTTL,
-		InteractiveTTLSeconds:      s.config.InteractiveTTL,
-		MaxCompatTTLSecs:           300,
-		MaxCompatTTLSeconds:        300,
-		DependencyUpdatesLocked:    true,
-		WorkspaceByteLimitEnforced: false,
+		RuntimeBackend:              s.normalizedRuntimeBackend(),
+		NetworkPolicyEnforced:       s.runtimeBackendEnforcesNetworkPolicy(),
+		MaxWorkers:                  s.config.MaxWorkers,
+		MaxActiveSandboxes:          s.config.MaxActive,
+		MaxActiveSandboxesPerTenant: s.config.MaxActivePerTenant,
+		QueueTimeoutMS:              s.config.QueueTimeoutMS,
+		DefaultTimeoutSeconds:       s.config.TimeoutSeconds,
+		DefaultExecutionTimeoutMS:   int64(s.config.TimeoutSeconds) * 1000,
+		OutputLimitKB:               s.config.OutputLimitKB,
+		MaxCommandTimeoutMS:         int64(s.config.CommandTimeout) * 1000,
+		MaxCommandTimeoutSeconds:    s.config.CommandTimeout,
+		OutputLimitBytes:            s.config.OutputLimitKB * 1024,
+		MaxFileSizeKB:               maxFileSizeKB,
+		MaxFileSizeBytes:            maxFileSizeBytes,
+		MaxArchiveFiles:             256,
+		MaxArchiveTotalBytes:        maxFileSizeBytes * 256,
+		SessionTTLSecs:              s.config.SessionTTL,
+		SessionTTLSeconds:           s.config.SessionTTL,
+		InteractiveTTLSecs:          s.config.InteractiveTTL,
+		InteractiveTTLSeconds:       s.config.InteractiveTTL,
+		MaxCompatTTLSecs:            300,
+		MaxCompatTTLSeconds:         300,
+		DependencyUpdatesLocked:     true,
+		WorkspaceByteLimitEnforced:  false,
 	}
 }
 

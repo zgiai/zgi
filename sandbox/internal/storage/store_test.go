@@ -56,6 +56,13 @@ func TestPostgresStorePersistsSandboxAndEvents(t *testing.T) {
 	if loaded.TenantID != box.TenantID || loaded.WorkspaceID != box.WorkspaceID || loaded.AppID != box.AppID || loaded.WorkflowRunID != box.WorkflowRunID || loaded.UserID != box.UserID {
 		t.Fatalf("expected ownership fields to round trip, got %+v", loaded)
 	}
+	tenantCount, err := store.CountActiveByTenant(box.TenantID, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("count tenant active sandboxes: %v", err)
+	}
+	if tenantCount != 1 {
+		t.Fatalf("expected one active sandbox for tenant, got %d", tenantCount)
+	}
 
 	event := observer.Event{
 		ID:        "evt_store_test",

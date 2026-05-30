@@ -14,6 +14,7 @@ type Config struct {
 	TimeoutSeconds         int
 	OutputLimitKB          int
 	MaxActive              int
+	MaxActivePerTenant     int
 	QueueTimeoutMS         int
 	ShutdownTimeoutSeconds int
 	SessionTTL             int
@@ -50,6 +51,7 @@ func FromEnv() Config {
 		TimeoutSeconds:         getEnvInt("ZGI_SANDBOX_LITE_WORKER_TIMEOUT", 5),
 		OutputLimitKB:          getEnvInt("ZGI_SANDBOX_OUTPUT_LIMIT_KB", 1024),
 		MaxActive:              getEnvInt("ZGI_SANDBOX_MAX_ACTIVE", 6),
+		MaxActivePerTenant:     getEnvIntAllowZero("ZGI_SANDBOX_MAX_ACTIVE_PER_TENANT", 0),
 		QueueTimeoutMS:         getEnvInt("ZGI_SANDBOX_QUEUE_TIMEOUT_MS", 5000),
 		ShutdownTimeoutSeconds: getEnvInt("ZGI_SANDBOX_SHUTDOWN_TIMEOUT_SECONDS", 10),
 		SessionTTL:             getEnvInt("ZGI_SANDBOX_SESSION_TTL_SECONDS", 1800),
@@ -113,6 +115,7 @@ func (c Config) PublicSnapshot() map[string]any {
 		"timeout_seconds":          c.TimeoutSeconds,
 		"output_limit_kb":          c.OutputLimitKB,
 		"max_active":               c.MaxActive,
+		"max_active_per_tenant":    c.MaxActivePerTenant,
 		"queue_timeout_ms":         c.QueueTimeoutMS,
 		"shutdown_timeout_seconds": c.ShutdownTimeoutSeconds,
 		"session_ttl_seconds":      c.SessionTTL,

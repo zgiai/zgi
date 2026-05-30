@@ -145,3 +145,43 @@ func TestActiveSandboxLimitIsScopedToWorker(t *testing.T) {
 		t.Fatal("expected worker one to hit its own active sandbox limit")
 	}
 }
+
+func TestTenantActiveSandboxLimitSpansWorkers(t *testing.T) {
+	cfg := config.FromEnv()
+	cfg.MaxActive = 10
+	cfg.MaxActivePerTenant = 2
+	cfg.DataDir = t.TempDir()
+	store := newMemoryStore()
+	cache := newNoopCache()
+	recorder := observer.NewRecorder(100)
+
+	workerOneCfg := cfg
+	workerOneCfg.WorkerID = "worker-one"
+	workerOne, err := NewManagerWithConfig(recorder, policy.NewService(workerOneCfg), workerOneCfg, store, cache)
+	if err != nil {
+		t.Fatalf("expected worker one manager, got %v", err)
+	}
+
+	workerTwoCfg := cfg
+	workerTwoCfg.WorkerID = "worker-two"
+	workerTwo, err := NewManagerWithConfig(recorder, policy.NewService(workerTwoCfg), workerTwoCfg, store, cache)
+	if err != nil {
+		t.Fatalf("expected worker two manager, got %v", err)
+	}
+
+	if _, err := workerOne.Create(CreateRequest{RuntimeProfile: string(sandbox.RuntimeSession), TenantID: "tenant-one"}); err != nil {
+		t.Fatalf("expected first tenant sandbox, got %v", err)
+	}
+	if _, err := workerTwo.Create(CreateRequest{RuntimeProfile: string(sandbox.RuntimeSession), TenantID: "tenant-one"}); err != nil {
+		t.Fatalf("expected second tenant sandbox across worker, got %v", err)
+	}
+	if _, err := workerOne.Create(CreateRequest{RuntimeProfile: string(sandbox.RuntimeSession), TenantID: "tenant-one"}); err == nil {
+		t.Fatal("expected tenant active sandbox limit")
+	}
+	if _, err := workerOne.Create(CreateRequest{RuntimeProfile: string(sandbox.RuntimeSession), TenantID: "tenant-two"}); err != nil {
+		t.Fatalf("expected different tenant to have its own quota, got %v", err)
+	}
+	if _, err := workerOne.Create(CreateRequest{RuntimeProfile: string(sandbox.RuntimeSession)}); err != nil {
+		t.Fatalf("expected empty tenant to bypass tenant quota, got %v", err)
+	}
+}

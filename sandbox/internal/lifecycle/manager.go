@@ -47,6 +47,7 @@ type Store interface {
 	GetSandbox(string) (*sandbox.Sandbox, error)
 	ListSandboxes() ([]sandbox.Sandbox, error)
 	CountActive(string, time.Time) (int, error)
+	CountActiveByTenant(string, time.Time) (int, error)
 	SaveEndpoint(sandbox.Endpoint) error
 	GetEndpoint(string, string) (*sandbox.Endpoint, error)
 }
@@ -107,9 +108,17 @@ func (m *Manager) Create(req CreateRequest) (*sandbox.Sandbox, error) {
 		return nil, err
 	}
 
-	activeCount, err := m.store.CountActive(m.workerID, time.Now().UTC())
+	now := time.Now().UTC()
+	activeCount, err := m.store.CountActive(m.workerID, now)
 	if err != nil {
 		return nil, err
+	}
+	tenantActiveCount := 0
+	if ownership.TenantID != "" {
+		tenantActiveCount, err = m.store.CountActiveByTenant(ownership.TenantID, now)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	decision, err := m.policy.NormalizeCreate(
@@ -119,6 +128,8 @@ func (m *Manager) Create(req CreateRequest) (*sandbox.Sandbox, error) {
 		req.NetworkPolicy,
 		req.DependencyProfile,
 		activeCount,
+		ownership.TenantID,
+		tenantActiveCount,
 	)
 	if err != nil {
 		return nil, err
@@ -130,7 +141,6 @@ func (m *Manager) Create(req CreateRequest) (*sandbox.Sandbox, error) {
 		return nil, err
 	}
 
-	now := time.Now().UTC()
 	item := sandbox.Sandbox{
 		ID:                id,
 		RuntimeProfile:    decision.RuntimeProfile,
@@ -167,13 +177,14 @@ func (m *Manager) Create(req CreateRequest) (*sandbox.Sandbox, error) {
 		"dependency_profile": item.DependencyProfile,
 		"worker_id":          item.WorkerID,
 		"limit_decisions": map[string]any{
-			"ttl_seconds":              item.TTLSeconds,
-			"max_active_sandboxes":     decision.EffectiveLimits.MaxActiveSandboxes,
-			"max_file_size_bytes":      decision.EffectiveLimits.MaxFileSizeBytes,
-			"max_archive_files":        decision.EffectiveLimits.MaxArchiveFiles,
-			"max_archive_total_bytes":  decision.EffectiveLimits.MaxArchiveTotalBytes,
-			"network_policy_enforced":  decision.EffectiveLimits.NetworkPolicyEnforced,
-			"workspace_bytes_enforced": decision.EffectiveLimits.WorkspaceByteLimitEnforced,
+			"ttl_seconds":                     item.TTLSeconds,
+			"max_active_sandboxes":            decision.EffectiveLimits.MaxActiveSandboxes,
+			"max_active_sandboxes_per_tenant": decision.EffectiveLimits.MaxActiveSandboxesPerTenant,
+			"max_file_size_bytes":             decision.EffectiveLimits.MaxFileSizeBytes,
+			"max_archive_files":               decision.EffectiveLimits.MaxArchiveFiles,
+			"max_archive_total_bytes":         decision.EffectiveLimits.MaxArchiveTotalBytes,
+			"network_policy_enforced":         decision.EffectiveLimits.NetworkPolicyEnforced,
+			"workspace_bytes_enforced":        decision.EffectiveLimits.WorkspaceByteLimitEnforced,
 		},
 	}
 	addOwnershipMetadata(metadata, item)
@@ -584,6 +595,18 @@ func (s *memoryStore) CountActive(workerID string, now time.Time) (int, error) {
 	count := 0
 	for _, item := range s.sandboxes {
 		if item.Status == sandbox.StatusActive && item.ExpiresAt.After(now) && item.WorkerID == workerID {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func (s *memoryStore) CountActiveByTenant(tenantID string, now time.Time) (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, item := range s.sandboxes {
+		if item.Status == sandbox.StatusActive && item.ExpiresAt.After(now) && item.TenantID == tenantID {
 			count++
 		}
 	}

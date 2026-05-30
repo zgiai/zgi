@@ -245,6 +245,20 @@ func (s *Store) CountActive(workerID string, now time.Time) (int, error) {
 	return count, nil
 }
 
+func (s *Store) CountActiveByTenant(tenantID string, now time.Time) (int, error) {
+	row := s.db.QueryRow(`
+		SELECT COUNT(1)
+		FROM sandboxes
+		WHERE status = $1 AND expires_at > $2 AND tenant_id = $3
+	`, string(sandbox.StatusActive), now.UTC(), tenantID)
+
+	var count int
+	if err := row.Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 func (s *Store) SaveEndpoint(endpoint sandbox.Endpoint) error {
 	now := endpoint.UpdatedAt
 	if now.IsZero() {

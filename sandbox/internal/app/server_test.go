@@ -295,6 +295,50 @@ func TestSandboxCreateReturnsStructuredLimitError(t *testing.T) {
 	}
 }
 
+func TestSandboxCreateReturnsStructuredTenantLimitError(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.MaxActive = 10
+	cfg.MaxActivePerTenant = 1
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	firstReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","ttl_seconds":60,"tenant_id":"tenant-api"}`))
+	firstReq.Header.Set("Content-Type", "application/json")
+	firstRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(firstRes, firstReq)
+	if firstRes.Code != http.StatusOK {
+		t.Fatalf("expected first tenant sandbox create to return 200, got %d body=%s", firstRes.Code, firstRes.Body.String())
+	}
+
+	secondReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","ttl_seconds":60,"tenant_id":"tenant-api"}`))
+	secondReq.Header.Set("Content-Type", "application/json")
+	secondRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(secondRes, secondReq)
+	if secondRes.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected second tenant sandbox create to return 429, got %d body=%s", secondRes.Code, secondRes.Body.String())
+	}
+	for _, expected := range []string{
+		`"error_type":"limit_exceeded"`,
+		`"code":"tenant_active_sandbox_limit_exceeded"`,
+		`"limit":"max_active_sandboxes_per_tenant"`,
+		`"tenant_id":"tenant-api"`,
+	} {
+		if !strings.Contains(secondRes.Body.String(), expected) {
+			t.Fatalf("expected tenant limit response to include %s, got %s", expected, secondRes.Body.String())
+		}
+	}
+
+	thirdReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","ttl_seconds":60,"tenant_id":"tenant-other"}`))
+	thirdReq.Header.Set("Content-Type", "application/json")
+	thirdRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(thirdRes, thirdReq)
+	if thirdRes.Code != http.StatusOK {
+		t.Fatalf("expected other tenant sandbox create to return 200, got %d body=%s", thirdRes.Code, thirdRes.Body.String())
+	}
+}
+
 func TestWriteKnownErrorMapsQueueTimeout(t *testing.T) {
 	rr := httptest.NewRecorder()
 

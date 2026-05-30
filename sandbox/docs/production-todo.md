@@ -40,6 +40,7 @@ Already available:
 - Readiness probe for dependency checks
 - Startup log emits effective non-secret configuration
 - Worker-scoped active sandbox limit accounting
+- Optional tenant-scoped active sandbox limit accounting
 - Sandbox ownership fields for tenant, workspace, app, workflow run, and user context
 - Ownership context persisted with sandbox records and propagated to lifecycle, endpoint, expiration, and execution observer events
 - Optional Linux secure backend with namespace-based isolation
@@ -446,7 +447,7 @@ Goal: bind sandbox usage to ZGI tenants, workspaces, apps, workflows, and users.
 
 ### I2. Quotas
 
-- Max active sandboxes per tenant.
+- Added optional max active sandboxes per tenant with `ZGI_SANDBOX_MAX_ACTIVE_PER_TENANT`.
 - Max executions per minute per tenant.
 - Max artifact bytes per tenant.
 - Max workspace bytes per tenant.
