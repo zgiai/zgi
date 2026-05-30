@@ -54,14 +54,25 @@ func TestPostgresStorePersistsSandboxAndEvents(t *testing.T) {
 		SandboxID: box.ID,
 		Type:      "sandbox.created",
 		Message:   "created",
-		CreatedAt: time.Now().UTC(),
+		CreatedAt: time.Now().UTC().Add(2 * time.Second),
 		Metadata:  map[string]any{"worker_id": "worker-a"},
 	}
 	if err := store.AppendEvent(event); err != nil {
 		t.Fatalf("append event: %v", err)
 	}
+	olderEvent := observer.Event{
+		ID:        "evt_store_test_older",
+		SandboxID: box.ID,
+		Type:      "sandbox.created",
+		Message:   "older",
+		CreatedAt: event.CreatedAt.Add(-time.Second),
+		Metadata:  map[string]any{"worker_id": "worker-a"},
+	}
+	if err := store.AppendEvent(olderEvent); err != nil {
+		t.Fatalf("append older event: %v", err)
+	}
 
-	events, err := store.QueryEvents(observer.Query{SandboxID: box.ID, Limit: 10})
+	events, err := store.QueryEvents(observer.Query{SandboxID: box.ID, Limit: 1})
 	if err != nil {
 		t.Fatalf("query events: %v", err)
 	}
@@ -70,5 +81,19 @@ func TestPostgresStorePersistsSandboxAndEvents(t *testing.T) {
 	}
 	if events[0].Type != "sandbox.created" {
 		t.Fatalf("unexpected event type: %s", events[0].Type)
+	}
+	if events[0].Message != "created" {
+		t.Fatalf("expected newest event first, got %q", events[0].Message)
+	}
+
+	olderEvents, err := store.QueryEvents(observer.Query{SandboxID: box.ID, Before: event.CreatedAt, Limit: 10})
+	if err != nil {
+		t.Fatalf("query older events: %v", err)
+	}
+	if len(olderEvents) != 1 {
+		t.Fatalf("expected one older event, got %d", len(olderEvents))
+	}
+	if olderEvents[0].Message != "older" {
+		t.Fatalf("expected older event, got %q", olderEvents[0].Message)
 	}
 }

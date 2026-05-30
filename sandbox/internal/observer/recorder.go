@@ -24,6 +24,7 @@ type Query struct {
 	SandboxID string
 	Type      string
 	Limit     int
+	Before    time.Time
 }
 
 type Metrics struct {
@@ -182,6 +183,9 @@ func (s *memoryStore) QueryEvents(query Query) ([]Event, error) {
 			continue
 		}
 		if query.Type != "" && event.Type != query.Type {
+			continue
+		}
+		if !query.Before.IsZero() && !event.CreatedAt.Before(query.Before) {
 			continue
 		}
 		events = append(events, event)

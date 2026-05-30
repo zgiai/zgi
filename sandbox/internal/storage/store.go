@@ -290,11 +290,16 @@ func (s *Store) QueryEvents(query observer.Query) ([]observer.Event, error) {
 		FROM observer_events
 		WHERE ($1 = '' OR sandbox_id = $2)
 		  AND ($3 = '' OR type = $4)
+		  AND ($5::timestamptz IS NULL OR created_at < $5)
 		ORDER BY created_at DESC
 	`
-	args := []any{query.SandboxID, query.SandboxID, query.Type, query.Type}
+	var before any
+	if !query.Before.IsZero() {
+		before = query.Before.UTC()
+	}
+	args := []any{query.SandboxID, query.SandboxID, query.Type, query.Type, before}
 	if query.Limit > 0 {
-		statement += ` LIMIT $5`
+		statement += ` LIMIT $6`
 		args = append(args, query.Limit)
 	}
 

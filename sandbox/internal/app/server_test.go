@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zgiai/zgi-sandbox/internal/config"
 	"github.com/zgiai/zgi-sandbox/internal/runner"
@@ -345,6 +346,97 @@ func TestMetricsEndpointReportsSandboxRunnerAndObserverCounters(t *testing.T) {
 	}
 	if payload.Data.Observer.ExecutionDurationCount != 1 {
 		t.Fatalf("expected one duration sample, got %d", payload.Data.Observer.ExecutionDurationCount)
+	}
+}
+
+func TestObserverEventsEndpointPaginatesWithCursor(t *testing.T) {
+	server, err := NewServer(testConfig(t))
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	server.observer.Record("sandbox.test", "sbx_page", "first", nil)
+	time.Sleep(2 * time.Millisecond)
+	server.observer.Record("sandbox.test", "sbx_page", "second", nil)
+	time.Sleep(2 * time.Millisecond)
+	server.observer.Record("sandbox.test", "sbx_page", "third", nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/observer/events?sandbox_id=sbx_page&limit=2", nil)
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected first page to return 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var firstPage struct {
+		Data struct {
+			Events []struct {
+				Message string `json:"message"`
+			} `json:"events"`
+			Limit      int    `json:"limit"`
+			HasMore    bool   `json:"has_more"`
+			NextCursor string `json:"next_cursor"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &firstPage); err != nil {
+		t.Fatalf("expected first page payload, got %v", err)
+	}
+	if firstPage.Data.Limit != 2 {
+		t.Fatalf("expected limit 2, got %d", firstPage.Data.Limit)
+	}
+	if len(firstPage.Data.Events) != 2 {
+		t.Fatalf("expected two first page events, got %d", len(firstPage.Data.Events))
+	}
+	if !firstPage.Data.HasMore {
+		t.Fatal("expected first page to have more events")
+	}
+	if firstPage.Data.NextCursor == "" {
+		t.Fatal("expected next cursor")
+	}
+	if firstPage.Data.Events[0].Message != "third" {
+		t.Fatalf("expected newest event first, got %q", firstPage.Data.Events[0].Message)
+	}
+
+	nextReq := httptest.NewRequest(http.MethodGet, "/v1/observer/events?sandbox_id=sbx_page&limit=2&before="+url.QueryEscape(firstPage.Data.NextCursor), nil)
+	nextRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(nextRes, nextReq)
+	if nextRes.Code != http.StatusOK {
+		t.Fatalf("expected second page to return 200, got %d body=%s", nextRes.Code, nextRes.Body.String())
+	}
+
+	var secondPage struct {
+		Data struct {
+			Events []struct {
+				Message string `json:"message"`
+			} `json:"events"`
+			HasMore bool `json:"has_more"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(nextRes.Body.Bytes(), &secondPage); err != nil {
+		t.Fatalf("expected second page payload, got %v", err)
+	}
+	if len(secondPage.Data.Events) != 1 {
+		t.Fatalf("expected one second page event, got %d", len(secondPage.Data.Events))
+	}
+	if secondPage.Data.HasMore {
+		t.Fatal("expected second page to be terminal")
+	}
+	if secondPage.Data.Events[0].Message != "first" {
+		t.Fatalf("expected oldest remaining event, got %q", secondPage.Data.Events[0].Message)
+	}
+}
+
+func TestObserverEventsEndpointRejectsNonGet(t *testing.T) {
+	server, err := NewServer(testConfig(t))
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/observer/events", nil)
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected method not allowed, got %d body=%s", rr.Code, rr.Body.String())
 	}
 }
 

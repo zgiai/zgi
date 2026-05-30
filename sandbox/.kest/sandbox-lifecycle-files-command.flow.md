@@ -222,6 +222,34 @@ data.events.0.metadata.request_id == "req_kest_command"
 ```
 
 ```step
+@id observer-events-page-one
+@name Observer events first page
+
+GET {{base_url}}/v1/observer/events?sandbox_id={{sandbox_id}}&limit=1
+
+[Captures]
+observer_next_cursor = data.next_cursor
+
+[Asserts]
+status == 200
+code == 0
+data.limit == 1
+data.has_more == true
+```
+
+```step
+@id observer-events-page-two
+@name Observer events next page
+
+GET {{base_url}}/v1/observer/events?sandbox_id={{sandbox_id}}&limit=1&before={{observer_next_cursor}}
+
+[Asserts]
+status == 200
+code == 0
+data.limit == 1
+```
+
+```step
 @id metrics
 @name Metrics endpoint
 

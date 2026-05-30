@@ -33,6 +33,7 @@ Already available:
 - Configurable graceful shutdown for service drain on SIGTERM/SIGINT
 - Request correlation IDs for HTTP responses and execution observer events
 - Structured observer events for successful and failed execution paths
+- Observer event pagination with bounded default and maximum page sizes
 - Metrics endpoint for worker active sandbox count, runner pressure, and execution observer counters
 - Worker-scoped active sandbox limit accounting
 - Optional Linux secure backend with namespace-based isolation
@@ -365,6 +366,7 @@ and security review.
 
 ### H1. Event Model
 
+- Added cursor-style observer pagination on `GET /v1/observer/events` with a default page size, maximum page size, `has_more`, and `next_cursor`.
 - Standardize observer event fields:
   - event ID
   - sandbox ID

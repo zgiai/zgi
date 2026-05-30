@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/zgiai/zgi-sandbox/internal/cache"
 	"github.com/zgiai/zgi-sandbox/internal/catalog"
@@ -617,25 +618,56 @@ func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleObserverEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	if !s.authorized(r) {
 		writeEnvelopeWithMessage(w, http.StatusUnauthorized, -401, "unauthorized", nil)
 		return
 	}
 
-	limit := 0
+	limit := 100
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err == nil && parsed > 0 {
 			limit = parsed
 		}
 	}
+	if limit > 500 {
+		limit = 500
+	}
+
+	var before time.Time
+	if raw := strings.TrimSpace(r.URL.Query().Get("before")); raw != "" {
+		parsed, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "invalid before cursor", nil)
+			return
+		}
+		before = parsed
+	}
+
+	events := s.observer.Query(observer.Query{
+		SandboxID: r.URL.Query().Get("sandbox_id"),
+		Type:      r.URL.Query().Get("type"),
+		Limit:     limit + 1,
+		Before:    before,
+	})
+	hasMore := len(events) > limit
+	if hasMore {
+		events = events[:limit]
+	}
+	nextCursor := ""
+	if hasMore && len(events) > 0 {
+		nextCursor = events[len(events)-1].CreatedAt.UTC().Format(time.RFC3339Nano)
+	}
 
 	writeEnvelope(w, http.StatusOK, map[string]any{
-		"events": s.observer.Query(observer.Query{
-			SandboxID: r.URL.Query().Get("sandbox_id"),
-			Type:      r.URL.Query().Get("type"),
-			Limit:     limit,
-		}),
+		"events":      events,
+		"limit":       limit,
+		"has_more":    hasMore,
+		"next_cursor": nextCursor,
 	})
 }
 
