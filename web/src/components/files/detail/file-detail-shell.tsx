@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Progress } from '@/components/ui/progress';
@@ -32,6 +33,7 @@ import { cn } from '@/lib/utils';
 import type { FileAssetProductStatus, FileAssetVectorStatus, FileItem } from '@/services/types/file';
 import { useDownloadFile } from '@/hooks/use-files';
 import { useFileDetail } from '@/hooks/file/use-file-detail';
+import { useCreateFileProcessingRequest } from '@/hooks/file/use-file-processing-request';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { formatDate, formatFileSize } from '@/utils/format';
 import { isOriginalPreviewSupported } from '@/utils/file-helpers';
@@ -135,9 +137,11 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   const { downloadFile, isDownloading } = useDownloadFile();
   const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
   const [activeTab, setActiveTab] = useState('overview');
+  const [reparseConfirmOpen, setReparseConfirmOpen] = useState(false);
   const { data, isLoading, isFetching, error, refetch } = useFileDetail(fileId, {
     pollProcessingStatus: true,
   });
+  const createProcessingRequest = useCreateFileProcessingRequest(fileId);
 
   const detail = data?.data;
   const file = detail?.file;
@@ -154,6 +158,9 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   const parseReviewEnabled = status !== 'stored_only' && status !== 'parsing';
   const chunksEnabled = status === 'ready';
   const indexEnabled = status === 'ready' || status === 'generating' || embeddingCount > 0;
+  const canRequestProcessing =
+    hasPermission('file.manage') || hasPermission('file.upload_create') || canDownload;
+  const canReparse = canRequestProcessing && (status === 'ready' || status === 'parse_failed');
 
   const statusLabel = useMemo(() => {
     switch (status as FileAssetProductStatus | string) {
@@ -239,6 +246,13 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
     if (!file) return;
     await downloadFile(file.id, file.name);
   };
+  const handleReparse = () => {
+    void createProcessingRequest.mutateAsync({
+      mode: 'reparse',
+      target_level: 'vectorize',
+      force: false,
+    });
+  };
   const CurrentViewIcon = currentView.icon;
 
   useEffect(() => {
@@ -309,6 +323,21 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
                   <Download className="h-4 w-4" />
                 )}
                 {t('actions.downloadFile')}
+              </Button>
+            ) : null}
+            {canReparse ? (
+              <Button
+                variant="destructive"
+                className="gap-2"
+                onClick={() => setReparseConfirmOpen(true)}
+                disabled={createProcessingRequest.isPending}
+              >
+                {createProcessingRequest.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4" />
+                )}
+                {t('detail.reparse.action')}
               </Button>
             ) : null}
           </div>
@@ -506,6 +535,17 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
           void handleDownload();
         }}
         isDownloading={isDownloading}
+      />
+      <ConfirmDialog
+        open={reparseConfirmOpen}
+        onOpenChange={setReparseConfirmOpen}
+        title={t('detail.reparse.confirmTitle')}
+        description={t('detail.reparse.confirmDescription')}
+        confirmText={t('detail.reparse.confirm')}
+        cancelText={common('cancel')}
+        onConfirm={handleReparse}
+        loading={createProcessingRequest.isPending}
+        variant="warning"
       />
     </div>
   );

@@ -237,6 +237,17 @@ const messages = {
       notReadyTitle: 'Index information is not ready',
       notReadyDescription: 'Index metadata becomes available after chunking and embedding generation starts.',
     },
+    reparse: {
+      action: 'Reparse',
+      confirmTitle: 'Reparse this file?',
+      confirmDescription:
+        'The current searchable asset will be unavailable while the file is parsing, reviewing, and indexing again.',
+      confirm: 'Reparse',
+      toasts: {
+        started: 'Reparse request submitted',
+        failed: 'Failed to submit reparse request',
+      },
+    },
     views: {
       storedOnly: {
         title: 'Stored only',

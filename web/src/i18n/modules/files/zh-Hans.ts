@@ -232,6 +232,16 @@ const messages: FilesMessages = {
       notReadyTitle: '索引信息尚未就绪',
       notReadyDescription: '切片和 embedding 生成开始后，才会展示索引元数据。',
     },
+    reparse: {
+      action: '重新解析',
+      confirmTitle: '重新解析这个文件？',
+      confirmDescription: '重新解析期间，当前可检索资产会不可用，文件会重新经历解析、确认和索引流程。',
+      confirm: '重新解析',
+      toasts: {
+        started: '已提交重新解析请求',
+        failed: '重新解析请求提交失败',
+      },
+    },
     views: {
       storedOnly: {
         title: '仅存储',
