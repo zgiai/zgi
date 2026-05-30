@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/zgiai/zgi/api/internal/dto"
+	datalibraryservice "github.com/zgiai/zgi/api/internal/modules/datalibrary/service"
 	"github.com/zgiai/zgi/api/internal/modules/file_process/model"
 	"github.com/zgiai/zgi/api/internal/modules/file_process/service"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
@@ -27,6 +28,7 @@ type FileResourceHandler struct {
 	accountService      interfaces.AccountService
 	enterpriseService   interfaces.OrganizationService
 	fileFavoriteService service.FileFavoriteService
+	assetSummaryService datalibraryservice.FileAssetSummaryService
 }
 
 // NewFileResourceHandler creates a new FileResourceHandler instance
@@ -36,13 +38,19 @@ func NewFileResourceHandler(
 	accountService interfaces.AccountService,
 	enterpriseService interfaces.OrganizationService,
 	fileFavoriteService service.FileFavoriteService,
+	assetSummaryServices ...datalibraryservice.FileAssetSummaryService,
 ) *FileResourceHandler {
+	var assetSummaryService datalibraryservice.FileAssetSummaryService
+	if len(assetSummaryServices) > 0 {
+		assetSummaryService = assetSummaryServices[0]
+	}
 	return &FileResourceHandler{
 		fileFolderService:   fileFolderService,
 		fileService:         fileService,
 		accountService:      accountService,
 		fileFavoriteService: fileFavoriteService,
 		enterpriseService:   enterpriseService,
+		assetSummaryService: assetSummaryService,
 	}
 }
 
@@ -569,6 +577,24 @@ func (h *FileResourceHandler) GetFilesInFolder(c *gin.Context) {
 		}
 	}
 
+	assetSummaries := map[string]datalibraryservice.FileAssetSummaryView{}
+	if h.assetSummaryService != nil {
+		assetSummaries, err = h.assetSummaryService.ListCurrentFileAssetSummaries(c.Request.Context(), datalibraryservice.FileAssetSummaryListInput{
+			OrganizationID: organizationID,
+			SourceFileIDs:  fileIDs,
+		})
+		if err != nil {
+			logger.ErrorContext(c.Request.Context(), "failed to batch get file asset processing summaries",
+				err,
+				zap.String("account_id", accountID),
+				zap.String("tenant_id", organizationID),
+				zap.Int("file_count", len(fileIDs)),
+			)
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+	}
+
 	fileResponses := make([]dto.UploadFile, len(files))
 	for i, file := range files {
 		// Convert model to DTO
@@ -599,6 +625,10 @@ func (h *FileResourceHandler) GetFilesInFolder(c *gin.Context) {
 			fileResponse.RelatedDatasetCount = relatedDatasetCount
 			// Set the generic related count field, currently equal to dataset count
 			fileResponse.RelatedCount = relatedDatasetCount
+		}
+
+		if summary, exists := assetSummaries[file.ID]; exists {
+			applyFileAssetSummaryToUploadFile(&fileResponse, summary)
 		}
 
 		fileResponses[i] = fileResponse
@@ -990,6 +1020,29 @@ func (h *FileResourceHandler) ListAllFiles(c *gin.Context) {
 		Total:   total,
 		Page:    req.Page,
 	})
+}
+
+func applyFileAssetSummaryToUploadFile(file *dto.UploadFile, summary datalibraryservice.FileAssetSummaryView) {
+	if file == nil {
+		return
+	}
+	file.AssetID = summary.AssetID.String()
+	file.ProcessingStatus = summary.ProductStatus
+	file.ProcessingStage = summary.ProcessingStage
+	file.ProcessingProgress = summary.ProcessingProgress
+	if summary.ActiveProcessingRequestID != nil {
+		file.ProcessingRequestID = summary.ActiveProcessingRequestID.String()
+	}
+	if summary.ProcessingRunID != nil {
+		file.ProcessingRunID = summary.ProcessingRunID.String()
+	}
+	file.GenerationNo = summary.GenerationNo
+	file.PendingConfirmCount = summary.PendingConfirmationCount
+	file.ChunkCount = summary.ChunkCount
+	file.EmbeddingCount = summary.EmbeddingCount
+	file.VectorStatus = summary.VectorStatus
+	file.LastErrorCode = summary.LastErrorCode
+	file.LastErrorMessage = summary.LastErrorMessage
 }
 
 // ListRecentFiles handles GET /file-folders/recent-files

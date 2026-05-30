@@ -252,6 +252,19 @@ type UploadFile struct {
 	IsTemporary         bool          `json:"is_temporary"`
 	RelatedDatasetCount int           `json:"related_dataset_count"`
 	RelatedCount        int           `json:"related_count"`
+	AssetID             string        `json:"asset_id,omitempty"`
+	ProcessingStatus    string        `json:"processing_status,omitempty"`
+	ProcessingStage     string        `json:"processing_stage,omitempty"`
+	ProcessingProgress  int           `json:"processing_progress,omitempty"`
+	ProcessingRequestID string        `json:"processing_request_id,omitempty"`
+	ProcessingRunID     string        `json:"processing_run_id,omitempty"`
+	GenerationNo        int64         `json:"generation_no,omitempty"`
+	PendingConfirmCount int64         `json:"pending_confirmation_count,omitempty"`
+	ChunkCount          int64         `json:"chunk_count,omitempty"`
+	EmbeddingCount      int64         `json:"embedding_count,omitempty"`
+	VectorStatus        string        `json:"vector_status,omitempty"`
+	LastErrorCode       string        `json:"last_error_code,omitempty"`
+	LastErrorMessage    string        `json:"last_error_message,omitempty"`
 
 	// Favorite field
 	IsFavorite bool `json:"is_favorite"`
