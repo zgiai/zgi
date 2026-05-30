@@ -794,38 +794,6 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 			),
 			Example: map[string]interface{}{"query": "Summarize the configured product FAQ."},
 		},
-		SkillAgentMemory + "/read_agent_memory": {
-			SkillID:     SkillAgentMemory,
-			ToolName:    "read_agent_memory",
-			Description: "Read fixed memory slots configured by the current Agent for the current user.",
-			Schema:      objectSchema(map[string]interface{}{}, nil),
-			Example:     map[string]interface{}{},
-		},
-		SkillAgentMemory + "/update_agent_memory": {
-			SkillID:     SkillAgentMemory,
-			ToolName:    "update_agent_memory",
-			Description: "Update one fixed memory key configured by the current Agent.",
-			Schema: objectSchema(
-				map[string]interface{}{
-					"key":     stringValueSchema("Existing memory key returned by read_agent_memory."),
-					"content": stringValueSchema("Concise content to store in the configured memory key."),
-				},
-				[]string{"key", "content"},
-			),
-			Example: map[string]interface{}{"key": "profile", "content": "The user prefers short answers."},
-		},
-		SkillAgentMemory + "/clear_agent_memory": {
-			SkillID:     SkillAgentMemory,
-			ToolName:    "clear_agent_memory",
-			Description: "Clear one fixed memory key configured by the current Agent.",
-			Schema: objectSchema(
-				map[string]interface{}{
-					"key": stringValueSchema("Existing memory key returned by read_agent_memory."),
-				},
-				[]string{"key"},
-			),
-			Example: map[string]interface{}{"key": "profile"},
-		},
 		SkillTime + "/current_time": {
 			SkillID:     SkillTime,
 			ToolName:    "current_time",

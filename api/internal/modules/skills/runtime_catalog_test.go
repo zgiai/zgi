@@ -2,6 +2,7 @@ package skills
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -28,6 +29,19 @@ func TestKnowledgeSystemSkillsExposeExpectedTools(t *testing.T) {
 	}
 	if got := toolNames(agent.Tools); !sameStrings(got, []string{"retrieve_agent_knowledge"}) {
 		t.Fatalf("agent knowledge tools = %v", got)
+	}
+}
+
+func TestAgentMemorySystemSkillIsNotLoadable(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	_, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillAgentMemory})
+	if !errors.Is(err, ErrSkillNotFound) {
+		t.Fatalf("ResolveEnabledSkills(agent-memory) error = %v, want ErrSkillNotFound", err)
+	}
+	for _, toolName := range []string{"read_agent_memory", "update_agent_memory", "clear_agent_memory"} {
+		if got := ExpectedSkillToolArguments(SkillAgentMemory, toolName); got != nil {
+			t.Fatalf("ExpectedSkillToolArguments(agent-memory/%s) = %#v, want nil", toolName, got)
+		}
 	}
 }
 
