@@ -1,29 +1,33 @@
-# 隐私政策占位文件
+# Privacy Policy Placeholder
 
-这是开源仓库随附的默认占位文件，不构成任何隐私政策、法律文件或合规承诺。
+This is the default placeholder file included with the open-source repository.
+It is not a privacy policy, legal document, or compliance commitment.
 
-正式部署前，请将本文件替换为您自己的隐私政策，或通过环境变量配置远程 Markdown 文件：
+Before production deployment, replace this file with your own privacy policy, or
+configure a remote Markdown document through environment variables:
 
 - `LEGAL_PRIVACY_MD_URL`
 - `LEGAL_DOCS_BASE_URL`
 
-## 建议包含的内容
+## Recommended Content
 
-您的正式隐私政策通常应至少说明以下事项：
+Your production privacy policy should usually cover at least:
 
-- 数据控制者或服务提供方信息
-- 收集的个人信息类型和收集场景
-- 账号、组织、工作区、对话、文件、知识库和日志等数据的处理方式
-- 使用 Cookie、设备信息、访问日志和分析工具的情况
-- 使用第三方模型、插件、存储、支付、通知或安全服务时的数据共享方式
-- 数据保存期限、删除机制、备份策略和安全措施
-- 用户查询、更正、删除、导出、撤回授权和注销账号的方式
-- 未成年人个人信息处理规则
-- 跨境传输、合规依据和适用法律要求
-- 隐私政策更新方式和联系渠道
+- Data controller or service provider information
+- Types of personal information collected and collection scenarios
+- How account, organization, workspace, conversation, file, knowledge base, and log data is processed
+- Use of cookies, device information, access logs, and analytics tools
+- Data sharing when third-party models, plugins, storage, payment, notification, or security services are used
+- Data retention periods, deletion mechanisms, backup strategy, and security measures
+- How users can access, correct, delete, export, revoke consent, or close accounts
+- Rules for processing minors' personal information
+- Cross-border transfers, compliance basis, and applicable legal requirements
+- Privacy policy update process and contact channels
 
-## 部署方确认
+## Deployment Owner Confirmation
 
-使用 ZGI 的部署方应根据自身业务、所在司法辖区、面向用户、实际启用的功能和第三方服务依赖，准备并发布正式隐私政策。
+Deployment owners should prepare and publish a production privacy policy based
+on their business, jurisdiction, users, enabled features, and third-party
+service dependencies.
 
-请勿在生产环境中直接使用本占位文件。
+Do not use this placeholder file directly in production.

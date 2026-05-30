@@ -1,28 +1,32 @@
-# 服务条款占位文件
+# Terms of Service Placeholder
 
-这是开源仓库随附的默认占位文件，不构成任何法律文件、服务承诺或正式协议。
+This is the default placeholder file included with the open-source repository.
+It is not a legal document, service commitment, or formal agreement.
 
-正式部署前，请将本文件替换为您自己的服务条款，或通过环境变量配置远程 Markdown 文件：
+Before production deployment, replace this file with your own terms of service,
+or configure a remote Markdown document through environment variables:
 
 - `LEGAL_TERMS_MD_URL`
 - `LEGAL_DOCS_BASE_URL`
 
-## 建议包含的内容
+## Recommended Content
 
-您的正式服务条款通常应至少说明以下事项：
+Your production terms of service should usually cover at least:
 
-- 服务提供方、产品名称和适用范围
-- 用户账号、注册、认证和账号安全要求
-- 可接受使用规则和禁止行为
-- 第三方模型、插件、工具或外部服务的责任边界
-- 用户内容、输入、输出和知识产权归属
-- 付费、退款、订阅、额度或配额规则
-- 服务变更、中止、终止和数据处理方式
-- 免责声明、责任限制、争议解决和适用法律
-- 投诉、申诉、安全问题和其他联系渠道
+- Service provider, product name, and scope of use
+- User accounts, registration, authentication, and account security
+- Acceptable use rules and prohibited behavior
+- Responsibility boundaries for third-party models, plugins, tools, or services
+- User content, inputs, outputs, and intellectual property ownership
+- Billing, refunds, subscriptions, credits, or quota rules
+- Service changes, suspension, termination, and data handling
+- Disclaimers, limitation of liability, dispute resolution, and governing law
+- Complaint, appeal, security, and contact channels
 
-## 部署方确认
+## Deployment Owner Confirmation
 
-使用 ZGI 的部署方应根据自身业务、所在司法辖区、面向用户、数据处理方式和第三方服务依赖，准备并发布正式服务条款。
+Deployment owners should prepare and publish production terms of service based
+on their business, jurisdiction, target users, data handling practices, and
+third-party service dependencies.
 
-请勿在生产环境中直接使用本占位文件。
+Do not use this placeholder file directly in production.
