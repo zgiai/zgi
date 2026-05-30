@@ -21,6 +21,7 @@ const messages = {
     fileName: 'File Name',
     fileType: 'File Type',
     fileSize: 'File Size',
+    processingStatus: 'Processing Status',
     relatedStatus: 'Related Status',
     uploadDate: 'Upload Date',
     lastModified: 'Last Modified',
@@ -30,6 +31,9 @@ const messages = {
     totalItems: 'Total {total} items',
     relatedCount: 'Related {count} items',
     notRelated: 'Not Related',
+    pendingCount: '{count} pending',
+    chunkCount: '{count} chunks',
+    embeddingCount: '{count} vectors',
   },
 
   // File statuses
@@ -40,6 +44,15 @@ const messages = {
     processing: 'Processing',
     error: 'Error',
     archived: 'Archived',
+  },
+
+  processingStatus: {
+    stored_only: 'Stored only',
+    parsing: 'Parsing',
+    confirming: 'Needs review',
+    generating: 'Indexing',
+    parse_failed: 'Failed',
+    ready: 'Ready',
   },
 
   // Actions
@@ -117,6 +130,10 @@ const messages = {
     byName: 'By Name',
     byType: 'By Type',
     byDate: 'By Date',
+  },
+
+  filter: {
+    allProcessingStatuses: 'All statuses',
   },
 
   // Messages

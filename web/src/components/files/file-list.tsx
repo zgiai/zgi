@@ -17,6 +17,7 @@ import {
   HardDrive,
   Link2,
   MoveRight,
+  Activity,
 } from 'lucide-react';
 import { useT } from '@/i18n';
 import { toast } from 'sonner';
@@ -50,6 +51,89 @@ import { FilePreviewDialog } from './file-preview-dialog';
 import { isOriginalPreviewSupported } from '@/utils/file-helpers';
 import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { WorkspaceAssetMoveDialog } from '@/components/common/workspace-asset-move-dialog';
+
+function getProcessingStatus(file: FileItem): string {
+  return file.processing_status || 'stored_only';
+}
+
+function getProcessingBadgeVariant(status: string) {
+  switch (status) {
+    case 'ready':
+      return 'success' as const;
+    case 'parsing':
+    case 'confirming':
+    case 'generating':
+      return 'info' as const;
+    case 'parse_failed':
+      return 'destructive' as const;
+    case 'stored_only':
+    default:
+      return 'subtle' as const;
+  }
+}
+
+function isProcessingActive(status: string) {
+  return status === 'parsing' || status === 'confirming' || status === 'generating';
+}
+
+function FileProcessingStatus({ file, compact = false }: { file: FileItem; compact?: boolean }) {
+  const { files: t } = useT();
+  const status = getProcessingStatus(file);
+  const progress = file.processing_progress ?? 0;
+  const pendingCount = file.pending_confirmation_count ?? 0;
+  const chunkCount = file.chunk_count ?? 0;
+  const embeddingCount = file.embedding_count ?? 0;
+  const statusLabel = (() => {
+    switch (status) {
+      case 'parsing':
+        return t('processingStatus.parsing');
+      case 'confirming':
+        return t('processingStatus.confirming');
+      case 'generating':
+        return t('processingStatus.generating');
+      case 'parse_failed':
+        return t('processingStatus.parse_failed');
+      case 'ready':
+        return t('processingStatus.ready');
+      case 'stored_only':
+      default:
+        return t('processingStatus.stored_only');
+    }
+  })();
+
+  return (
+    <div className="min-w-0 space-y-1.5">
+      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+        <Badge
+          variant={getProcessingBadgeVariant(status)}
+          className={cn(compact ? 'px-2 py-0 text-[10px]' : 'px-2 py-0.5 text-[11px]')}
+        >
+          {statusLabel}
+        </Badge>
+        {isProcessingActive(status) ? (
+          <span className="text-[11px] font-medium text-muted-foreground">{progress}%</span>
+        ) : null}
+      </div>
+      {!compact ? (
+        <div className="flex min-w-0 flex-wrap gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
+          {pendingCount > 0 ? (
+            <span>{t('fileList.pendingCount', { count: pendingCount })}</span>
+          ) : null}
+          {chunkCount > 0 ? <span>{t('fileList.chunkCount', { count: chunkCount })}</span> : null}
+          {embeddingCount > 0 ? (
+            <span>{t('fileList.embeddingCount', { count: embeddingCount })}</span>
+          ) : null}
+          {file.last_error_message ? (
+            <span className="max-w-[220px] truncate text-destructive">
+              {file.last_error_message}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export interface FileListProps {
   files: FileItem[];
   maxCount?: number;
@@ -407,6 +491,7 @@ function FileListBase({
                                 {t('fileList.relatedCount', { count: file.related_count })}
                               </Badge>
                             ) : null}
+                            <FileProcessingStatus file={file} compact />
                           </div>
                         </div>
                       </div>
@@ -458,6 +543,15 @@ function FileListBase({
                         </div>
                         <div className="mt-1 text-sm font-medium text-foreground">
                           {formatDate(new Date(file.created_at).getTime() - 8 * 60 * 60 * 1000)}
+                        </div>
+                      </div>
+                      <div className="col-span-2 rounded-xl bg-muted/50 px-3 py-2">
+                        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                          <Activity className="h-3 w-3" />
+                          <span>{t('fileList.processingStatus')}</span>
+                        </div>
+                        <div className="mt-1">
+                          <FileProcessingStatus file={file} />
                         </div>
                       </div>
                       <div className="col-span-2 rounded-xl bg-muted/50 px-3 py-2">
@@ -562,6 +656,7 @@ function FileListBase({
             <TableHead>{t('fileList.fileName')}</TableHead>
             <TableHead>{t('fileList.fileType')}</TableHead>
             <TableHead>{t('fileList.fileSize')}</TableHead>
+            <TableHead>{t('fileList.processingStatus')}</TableHead>
             <TableHead>{t('fileList.relatedStatus')}</TableHead>
             <TableHead>{t('fileList.uploadDate')}</TableHead>
             {hasAnyAction && (
@@ -600,6 +695,10 @@ function FileListBase({
                 <TableCell className="text-sm">
                   <div className="h-6 w-16 bg-muted animate-pulse rounded-full" />
                 </TableCell>
+                {/* Processing status */}
+                <TableCell className="text-sm">
+                  <div className="h-6 w-24 bg-muted animate-pulse rounded-full" />
+                </TableCell>
                 {/* Upload date */}
                 <TableCell className="text-sm text-muted-foreground">
                   <div className="h-4 w-24 bg-muted animate-pulse rounded" />
@@ -614,7 +713,7 @@ function FileListBase({
             ))
           ) : files.length === 0 ? (
             <TableRow className="hover:bg-transparent">
-              <TableCell colSpan={hasAnyAction ? 7 : 6} className="border-0 p-0 whitespace-normal">
+              <TableCell colSpan={hasAnyAction ? 8 : 7} className="border-0 p-0 whitespace-normal">
                 <div className="flex min-h-[360px] items-center justify-center px-6 py-10">
                   <div className="mx-auto flex w-full max-w-[560px] flex-col items-center rounded-lg border border-dashed border-border/80 bg-bg-canvas/40 px-8 py-8 text-center">
                     <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-md bg-background text-muted-foreground ring-1 ring-border/80">
@@ -663,6 +762,9 @@ function FileListBase({
                 </TableCell>
                 <TableCell className="text-sm">{file.extension}</TableCell>
                 <TableCell className="text-sm">{formatFileSize(file.size)}</TableCell>
+                <TableCell className="text-sm">
+                  <FileProcessingStatus file={file} />
+                </TableCell>
                 <TableCell className="text-sm">
                   {file.related_count > 0 ? (
                     <RelatedResourcesPopover fileId={file.id} relatedCount={file.related_count}>

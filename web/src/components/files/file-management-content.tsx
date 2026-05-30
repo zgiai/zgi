@@ -30,6 +30,13 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Pagination } from '@/components/ui/pagination';
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
   Dialog,
   DialogBody,
   DialogContent,
@@ -64,8 +71,7 @@ import { filterLowercaseExtensions } from '@/utils/file-helpers';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useAuthStore } from '@/store/auth-store';
 import { useWorkspaceStore } from '@/store/workspace-store';
-import type { FileFolder } from '@/services/types/file';
-import type { FileItem } from '@/services/types/file';
+import type { FileAssetProductStatus, FileFolder, FileItem } from '@/services/types/file';
 import { cn } from '@/lib/utils';
 import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { useJoinedWorkspaces } from '@/hooks/workspace/use-joined-workspaces';
@@ -92,6 +98,18 @@ export interface FileManagementContentProps {
 }
 
 const SYSTEM_FILE_CATEGORIES = new Set(['all', 'uploaded', 'default']);
+
+type FileProcessingStatusFilter = 'all' | FileAssetProductStatus;
+
+const FILE_PROCESSING_STATUS_FILTERS: FileProcessingStatusFilter[] = [
+  'all',
+  'stored_only',
+  'parsing',
+  'confirming',
+  'generating',
+  'parse_failed',
+  'ready',
+];
 
 const waitForMinimumRefreshDuration = () =>
   new Promise<void>(resolve => {
@@ -406,6 +424,8 @@ const FileManagementContent = ({
   allowWorkspaceSwitch = false,
 }: FileManagementContentProps): React.ReactNode => {
   const [searchValue, setSearchValue] = useState('');
+  const [processingStatusFilter, setProcessingStatusFilter] =
+    useState<FileProcessingStatusFilter>('all');
   const [activeCategory, setActiveCategory] = useState('all');
   const [activeFolderDepth, setActiveFolderDepth] = useState(0);
   const [createFolderInitialParentId, setCreateFolderInitialParentId] = useState('');
@@ -472,6 +492,12 @@ const FileManagementContent = ({
       workspaceId: workspaceId,
     });
 
+  const displayedFiles =
+    processingStatusFilter === 'all'
+      ? files
+      : files.filter(file => (file.processing_status || 'stored_only') === processingStatusFilter);
+  const displayedTotal = processingStatusFilter === 'all' ? total : displayedFiles.length;
+
   const prevPropRef = useRef<string[]>(selectedFileIds);
   const prevInternalRef = useRef<string[]>(selectedFiles);
 
@@ -496,11 +522,11 @@ const FileManagementContent = ({
         !prevInternalRef.current.every((id, idx) => selectedFiles[idx] === id);
 
       if (internalChanged) {
-        onSelectionChange(selectedFiles, files);
+        onSelectionChange(selectedFiles, displayedFiles);
         prevInternalRef.current = selectedFiles;
       }
     }
-  }, [selectionMode, selectedFiles, onSelectionChange, files]);
+  }, [selectionMode, selectedFiles, onSelectionChange, displayedFiles]);
 
   const isRefreshPending = isRefreshing || isFetching;
 
@@ -837,13 +863,13 @@ const FileManagementContent = ({
   ) : (
     <>
       <FileList
-        files={files}
-        total={total}
+        files={displayedFiles}
+        total={displayedTotal}
         selectedFiles={selectedFiles}
         onSelectionChange={ids => {
           handleSelectionChange(ids);
-          onSelectionChange?.(ids, files);
-          onFilesChange?.(files.filter(file => ids.includes(file.id)));
+          onSelectionChange?.(ids, displayedFiles);
+          onFilesChange?.(displayedFiles.filter(file => ids.includes(file.id)));
         }}
         maxCount={maxCount}
         isLoading={isLoading}
@@ -1040,7 +1066,7 @@ const FileManagementContent = ({
                 </div>
               </div>
 
-              <div className="mt-4 flex items-center gap-3">
+              <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-center">
                 <div className="relative w-full max-w-xl">
                   <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
@@ -1050,11 +1076,33 @@ const FileManagementContent = ({
                     className="h-9 rounded-md bg-background pl-9 shadow-none"
                   />
                 </div>
-                {searchValue.trim() ? (
+                <Select
+                  value={processingStatusFilter}
+                  onValueChange={value =>
+                    setProcessingStatusFilter(value as FileProcessingStatusFilter)
+                  }
+                >
+                  <SelectTrigger className="h-9 w-full rounded-md bg-background shadow-none lg:w-[180px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {FILE_PROCESSING_STATUS_FILTERS.map(status => (
+                      <SelectItem key={status} value={status}>
+                        {status === 'all'
+                          ? t('files.filter.allProcessingStatuses')
+                          : t(`files.processingStatus.${status}`)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {searchValue.trim() || processingStatusFilter !== 'all' ? (
                   <Button
                     variant="ghost"
                     className="h-9 rounded-md px-3 text-muted-foreground"
-                    onClick={() => setSearchValue('')}
+                    onClick={() => {
+                      setSearchValue('');
+                      setProcessingStatusFilter('all');
+                    }}
                   >
                     {t('common.clear')}
                   </Button>

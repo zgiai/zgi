@@ -22,6 +22,7 @@ const messages: FilesMessages = {
     fileName: '文件名称',
     fileType: '文件类型',
     fileSize: '文件大小',
+    processingStatus: '处理状态',
     relatedStatus: '关联状态',
     uploadDate: '上传日期',
     lastModified: '更新时间',
@@ -31,6 +32,9 @@ const messages: FilesMessages = {
     totalItems: '共{total}项',
     relatedCount: '已关联{count}条',
     notRelated: '未关联',
+    pendingCount: '{count} 项待确认',
+    chunkCount: '{count} 个切片',
+    embeddingCount: '{count} 个向量',
   },
 
   // File statuses
@@ -41,6 +45,15 @@ const messages: FilesMessages = {
     processing: '处理中',
     error: '错误',
     archived: '已归档',
+  },
+
+  processingStatus: {
+    stored_only: '仅存储',
+    parsing: '解析中',
+    confirming: '待确认',
+    generating: '索引中',
+    parse_failed: '失败',
+    ready: '已就绪',
   },
 
   // Actions
@@ -112,6 +125,10 @@ const messages: FilesMessages = {
     byName: '按名称',
     byType: '按类型',
     byDate: '按日期',
+  },
+
+  filter: {
+    allProcessingStatuses: '全部状态',
   },
 
   // Messages
