@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -57,7 +58,7 @@ func (b *processBackend) Run(parent context.Context, req Request, workDir string
 	cmd.Stderr = stderr
 
 	started := time.Now()
-	err = cmd.Run()
+	err = runProcessGroup(runCtx, cmd)
 	duration := time.Since(started).Milliseconds()
 
 	exitCode := 0
@@ -111,7 +112,7 @@ func (b *processBackend) ExecuteCommand(parent context.Context, spec CommandSpec
 	cmd.Stderr = stderr
 
 	started := time.Now()
-	err := cmd.Run()
+	err := runProcessGroup(runCtx, cmd)
 	duration := time.Since(started).Milliseconds()
 
 	exitCode := 0
@@ -137,4 +138,37 @@ func (b *processBackend) ExecuteCommand(parent context.Context, spec CommandSpec
 		Command:    spec.Command,
 		Args:       spec.Args,
 	}, nil
+}
+
+func runProcessGroup(ctx context.Context, cmd *exec.Cmd) error {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		killProcessGroup(cmd)
+		<-done
+		return ctx.Err()
+	}
+}
+
+func killProcessGroup(cmd *exec.Cmd) {
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	pid := cmd.Process.Pid
+	if pid <= 0 {
+		return
+	}
+	_ = syscall.Kill(-pid, syscall.SIGKILL)
+	_ = cmd.Process.Kill()
 }

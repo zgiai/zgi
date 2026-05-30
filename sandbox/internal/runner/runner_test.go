@@ -2,6 +2,11 @@ package runner
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -55,4 +60,50 @@ func TestSafeBaseEnvDropsDangerousKeys(t *testing.T) {
 	if len(env) != 2 {
 		t.Fatalf("expected safe env entries only, got %v", env)
 	}
+}
+
+func TestCommandTimeoutKillsShellChildren(t *testing.T) {
+	service := NewService(1, 2*time.Second, 4096)
+	workDir := t.TempDir()
+	pidFile := filepath.Join(workDir, "child.pid")
+
+	result, err := service.ExecuteCommandSpec(context.Background(), CommandSpec{
+		WorkDir:        workDir,
+		Command:        "sleep 20 & echo $! > child.pid; wait",
+		Timeout:        100 * time.Millisecond,
+		StdoutLimit:    4096,
+		StderrLimit:    4096,
+		AllowShellForm: true,
+	})
+	if err != nil {
+		t.Fatalf("expected timeout result, got error: %v", err)
+	}
+	if result.ExitCode != 124 {
+		t.Fatalf("expected timeout exit code 124, got %d stderr=%q", result.ExitCode, result.Error)
+	}
+
+	rawPID, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatalf("read child pid: %v", err)
+	}
+	childPID, err := strconv.Atoi(strings.TrimSpace(string(rawPID)))
+	if err != nil {
+		t.Fatalf("parse child pid: %v", err)
+	}
+
+	for i := 0; i < 20; i++ {
+		if !processExists(childPID) {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("expected child process %d to be killed with the shell process group", childPID)
+}
+
+func processExists(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	err := syscall.Kill(pid, 0)
+	return err == nil || err == syscall.EPERM
 }
