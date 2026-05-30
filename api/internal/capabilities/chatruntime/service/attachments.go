@@ -454,16 +454,13 @@ func formatAttachmentSections(files []attachmentFile, contentFor func(attachment
 			builder.WriteString("\n\n")
 		}
 		builder.WriteString("File: ")
-		if strings.TrimSpace(file.Name) != "" {
-			builder.WriteString(strings.TrimSpace(file.Name))
-		} else {
-			builder.WriteString(file.ID)
-		}
-		if strings.TrimSpace(file.Extension) != "" {
-			builder.WriteString(" .")
-			builder.WriteString(strings.TrimPrefix(strings.TrimSpace(file.Extension), "."))
-		}
+		builder.WriteString(attachmentDisplayName(file))
 		builder.WriteString("\n")
+		if strings.TrimSpace(file.ID) != "" {
+			builder.WriteString("File ID: ")
+			builder.WriteString(strings.TrimSpace(file.ID))
+			builder.WriteString("\n")
+		}
 		if content != "" {
 			builder.WriteString(content)
 		} else {
@@ -471,6 +468,27 @@ func formatAttachmentSections(files []attachmentFile, contentFor func(attachment
 		}
 	}
 	return builder.String()
+}
+
+func attachmentDisplayName(file attachmentFile) string {
+	name := strings.TrimSpace(file.Name)
+	extension := strings.TrimPrefix(strings.TrimSpace(file.Extension), ".")
+	if name == "" {
+		if strings.TrimSpace(file.ID) != "" {
+			return strings.TrimSpace(file.ID)
+		}
+		if extension != "" {
+			return "unnamed." + extension
+		}
+		return "unnamed"
+	}
+	if extension == "" {
+		return name
+	}
+	if strings.HasSuffix(strings.ToLower(name), "."+strings.ToLower(extension)) {
+		return name
+	}
+	return name + "." + extension
 }
 
 func (f attachmentFile) isImage() bool {

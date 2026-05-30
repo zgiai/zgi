@@ -99,6 +99,9 @@ func (s *service) runNativeAgentMemoryPreflight(
 		}
 		return nil, nil
 	}
+	if state == nil {
+		return nil, nil
+	}
 
 	workspaceID := uuid.Nil
 	if prepared.Scope.WorkspaceID != nil {
@@ -135,16 +138,16 @@ func (s *service) runNativeAgentMemoryPreflight(
 }
 
 func shouldRunNativeAgentMemoryPreflight(prepared *PreparedChat, memoryService AgentMemoryContextService, llmConfigured bool) bool {
-	_, skipStatus := agentMemoryPreflightState(prepared, memoryService, llmConfigured)
-	return skipStatus == ""
+	state, skipStatus := agentMemoryPreflightState(prepared, memoryService, llmConfigured)
+	return state != nil && skipStatus == ""
 }
 
 func agentMemoryPreflightState(prepared *PreparedChat, memoryService AgentMemoryContextService, llmConfigured bool) (*AgentMemoryRuntimeState, string) {
 	if prepared == nil || prepared.parts == nil || prepared.LLMRequest == nil {
-		return nil, ""
+		return nil, "skipped_scope"
 	}
 	if !prepared.parts.AgentMemoryEnabled {
-		return nil, ""
+		return nil, "skipped_scope"
 	}
 	slots := enabledAgentMemorySlots(prepared.parts.AgentMemorySlots)
 	if len(slots) == 0 {

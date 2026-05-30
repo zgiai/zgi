@@ -345,6 +345,28 @@ func TestRunNativeAgentMemoryPreflightPlannerErrorIsTraceableAndNonBlocking(t *t
 	}
 }
 
+func TestRunNativeAgentMemoryPreflightSkipsWhenMemoryDisabled(t *testing.T) {
+	prepared := preparedAgentMemoryPlannerChat("hello")
+	prepared.parts.AgentMemoryEnabled = false
+	prepared.parts.AgentMemoryRuntimeState = nil
+	fakeMemory := &fakeAgentMemoryContextService{}
+	fakeLLM := &fakeAgentMemoryPlannerLLM{
+		response: agentMemoryPlannerResponse(`{"action":"none","confidence":0.9,"reason":"unused"}`),
+	}
+	svc := &service{agentMemoryService: fakeMemory, llmClient: fakeLLM}
+
+	_, err := svc.runNativeAgentMemoryPreflight(context.Background(), context.Background(), prepared, nil)
+	if err != nil {
+		t.Fatalf("runNativeAgentMemoryPreflight() error = %v", err)
+	}
+	if len(fakeLLM.requests) != 0 {
+		t.Fatalf("planner requests = %d, want 0", len(fakeLLM.requests))
+	}
+	if shouldRunNativeAgentMemoryPreflight(prepared, fakeMemory, true) {
+		t.Fatal("shouldRunNativeAgentMemoryPreflight() = true for disabled memory, want false")
+	}
+}
+
 func TestRunConfigHasAgentMemoryRequiresEnabledSlot(t *testing.T) {
 	if runConfigHasAgentMemory(&RunConfig{
 		AgentMemoryEnabled: true,
