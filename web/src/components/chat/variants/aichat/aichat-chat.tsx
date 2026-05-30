@@ -694,6 +694,7 @@ export function AIChatShell({
           onEditSubmit={handleEditSubmit}
           showAssistantModelMeta={showAssistantModelMeta}
           layout={isEmbedded ? 'embedded' : 'full'}
+          showMemoryKey={surface !== 'agent-webapp'}
         />
 
         <AIChatHomeView

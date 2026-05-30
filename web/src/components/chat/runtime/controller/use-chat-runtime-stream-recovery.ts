@@ -3,7 +3,7 @@ import type { MutableRefObject } from 'react';
 import type {
   AIChatConversation,
   AIChatMessage,
-  AIChatSkillCallEndEventData,
+  AIChatMemoryMutationEventData,
 } from '@/services/types/aichat';
 import type {
   AIChatControllerStore,
@@ -34,7 +34,7 @@ interface UseChatRuntimeStreamRecoveryArgs {
   clearRecoveryRetry: (conversationId: string) => void;
   closeRecoveryConnection: (conversationId: string) => void;
   setControllerState: AIChatSetControllerState;
-  refreshAccountMemoryAfterToolCall: (payload: AIChatSkillCallEndEventData) => void;
+  refreshAccountMemoryAfterMemoryMutation: (payload: AIChatMemoryMutationEventData) => void;
   eventAppliers: ChatRuntimeEventAppliers;
 }
 
@@ -48,7 +48,7 @@ export function useChatRuntimeStreamRecovery({
   clearRecoveryRetry,
   closeRecoveryConnection,
   setControllerState,
-  refreshAccountMemoryAfterToolCall,
+  refreshAccountMemoryAfterMemoryMutation,
   eventAppliers,
 }: UseChatRuntimeStreamRecoveryArgs) {
   return useCallback(
@@ -253,7 +253,6 @@ export function useChatRuntimeStreamRecovery({
               onSkillCallEnd: (payload, eventId) => {
                 if (abortController.signal.aborted) return;
                 eventAppliers.applySkillCallEnd(payload, eventId);
-                refreshAccountMemoryAfterToolCall(payload);
               },
               onSkillCallError: (payload, eventId) => {
                 if (abortController.signal.aborted) return;
@@ -262,6 +261,11 @@ export function useChatRuntimeStreamRecovery({
               onSkillArtifactCreated: (payload, eventId) => {
                 if (abortController.signal.aborted) return;
                 eventAppliers.applySkillArtifactCreated(payload, eventId);
+              },
+              onMemoryMutation: (payload, eventId) => {
+                if (abortController.signal.aborted) return;
+                eventAppliers.applyMemoryMutation(payload, eventId);
+                refreshAccountMemoryAfterMemoryMutation(payload);
               },
               onMessageChunk: (payload, eventId) => {
                 if (abortController.signal.aborted) return;
@@ -323,7 +327,7 @@ export function useChatRuntimeStreamRecovery({
       recoveryAbortByConversationRef,
       recoveryModeByConversationRef,
       recoveryRetryTimeoutsRef,
-      refreshAccountMemoryAfterToolCall,
+      refreshAccountMemoryAfterMemoryMutation,
       setControllerState,
       setRecoveryMode,
       stateRef,

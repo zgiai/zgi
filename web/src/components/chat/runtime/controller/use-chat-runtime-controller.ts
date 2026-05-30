@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type {
+  AIChatMemoryMutationEventData,
   AIChatMessageStartEventData,
-  AIChatSkillCallEndEventData,
 } from '@/services/types/aichat';
 import {
   createAIChatControllerStore,
@@ -20,10 +20,6 @@ import {
 import { isDraftAIChatConversationId } from '@/components/chat/utils/aichat-message';
 import type { ChatMessageTopology } from '@/components/chat/utils/message-tree';
 import { useAIChatStreamRuntime } from '@/components/chat/controllers/aichat/stream-runtime';
-import {
-  USER_MEMORY_MUTATION_TOOLS,
-  USER_MEMORY_SKILL_ID,
-} from '@/components/chat/runtime/controller/chat-runtime-controller-utils';
 import { useChatRuntimeEventAppliers } from '@/components/chat/runtime/controller/use-chat-runtime-event-appliers';
 import { useChatRuntimeRefreshers } from '@/components/chat/runtime/controller/use-chat-runtime-refreshers';
 import { useChatRuntimeBranchActions } from '@/components/chat/runtime/controller/use-chat-runtime-branch-actions';
@@ -93,14 +89,8 @@ export function useChatRuntimeController(options?: {
     setRecoveryMode,
   } = useAIChatStreamRuntime(setControllerState);
 
-  const refreshAccountMemoryAfterToolCall = useCallback(
-    (payload: AIChatSkillCallEndEventData) => {
-      if (
-        payload.skill_id !== USER_MEMORY_SKILL_ID ||
-        !USER_MEMORY_MUTATION_TOOLS.has(payload.tool_name)
-      ) {
-        return;
-      }
+  const refreshAccountMemoryAfterMemoryMutation = useCallback(
+    (_payload: AIChatMemoryMutationEventData) => {
       void queryClient.invalidateQueries({ queryKey: MEMORY_KEYS.me() });
     },
     [queryClient]
@@ -188,7 +178,7 @@ export function useChatRuntimeController(options?: {
     clearRecoveryRetry,
     closeRecoveryConnection,
     setControllerState,
-    refreshAccountMemoryAfterToolCall,
+    refreshAccountMemoryAfterMemoryMutation,
     eventAppliers,
   });
   const { init, select, startNew, stop, remove, rename, loadOlderMessages } =
@@ -220,7 +210,7 @@ export function useChatRuntimeController(options?: {
     streamingMessageRef,
     setControllerState,
     markSelectionTarget,
-    refreshAccountMemoryAfterToolCall,
+    refreshAccountMemoryAfterMemoryMutation,
     eventAppliers,
   });
 

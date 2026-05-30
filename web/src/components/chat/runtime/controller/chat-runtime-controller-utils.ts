@@ -13,12 +13,6 @@ export function isAbortError(error: unknown): boolean {
 
 export const AICHAT_RECOVERY_RETRY_DELAYS = [800, 1600, 3200] as const;
 export const AICHAT_STREAM_EVENTS_EXPIRED = 'stream events expired';
-export const USER_MEMORY_SKILL_ID = 'user-memory';
-export const USER_MEMORY_MUTATION_TOOLS = new Set([
-  'add_user_memory',
-  'update_user_memory',
-  'delete_user_memory',
-]);
 
 export function createClientDraftId(prefix: string): string {
   return generateClientId(prefix);
