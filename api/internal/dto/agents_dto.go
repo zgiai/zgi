@@ -154,7 +154,7 @@ type AgentRuntimeModeConfig struct {
 	EnabledSkillIDs          []string                `json:"enabled_skill_ids"`
 	UseMemory                bool                    `json:"use_memory"`
 	AgentMemoryEnabled       bool                    `json:"agent_memory_enabled"`
-	AgentMemorySlots         []AgentMemorySlotConfig `json:"agent_memory_slots"`
+	AgentMemorySlots         []AgentMemorySlotConfig `json:"agent_memory_slots,omitempty"`
 	FileUploadEnabled        bool                    `json:"file_upload_enabled"`
 	HomeTitle                string                  `json:"home_title"`
 	InputPlaceholder         string                  `json:"input_placeholder"`
@@ -193,8 +193,8 @@ type AgentMemoryValuesResponse struct {
 }
 
 type UpdateAgentMemoryValueRequest struct {
-	UserScope string `json:"user_scope" binding:"required"`
-	UserID    string `json:"user_id" binding:"required"`
+	UserScope string `json:"user_scope,omitempty"`
+	UserID    string `json:"user_id,omitempty"`
 	Key       string `json:"key" binding:"required"`
 	Content   string `json:"content"`
 }

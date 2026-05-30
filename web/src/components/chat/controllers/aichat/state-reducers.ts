@@ -139,6 +139,18 @@ function upsertSkillInvocation(
   invocations: AIChatSkillInvocation[],
   incoming: AIChatSkillInvocation
 ): AIChatSkillInvocation[] {
+  if (incoming.runtime_id) {
+    const index = invocations.findIndex(invocation => invocation.runtime_id === incoming.runtime_id);
+    if (index >= 0) {
+      const next = invocations.slice();
+      next[index] = {
+        ...next[index],
+        ...incoming,
+      };
+      return next;
+    }
+  }
+
   if (incoming.kind === 'intermediate_answer' && incoming.answer_id) {
     const index = invocations.findIndex(
       invocation =>
@@ -191,12 +203,19 @@ function upsertSkillInvocation(
 }
 
 function getSkillInvocationIdentity(invocation: AIChatSkillInvocation): string {
+  if (invocation.runtime_id) {
+    return invocation.runtime_id;
+  }
   return [
     invocation.kind ?? 'tool_call',
     invocation.skill_id ?? '',
     invocation.tool_name ?? '',
     invocation.path ?? '',
   ].join(':');
+}
+
+function isVisibleSkillInvocation(invocation: AIChatSkillInvocation): boolean {
+  return invocation.kind !== 'metadata_exposed' && invocation.kind !== 'memory_planner';
 }
 
 function isTransientProgressItem(item: AIChatAgenticTimelineItem): boolean {
@@ -306,6 +325,9 @@ function updateSkillInvocationMetadata(
   eventId: string | null | undefined,
   invocation: AIChatSkillInvocation
 ): AIChatControllerState {
+  if (!isVisibleSkillInvocation(invocation)) {
+    return current;
+  }
   const messages = current.messagesByConversation[conversationId] ?? [];
   const now = Math.floor(Date.now() / 1000);
   const nextMessages = messages.map(message => {
@@ -325,7 +347,12 @@ function updateSkillInvocationMetadata(
         has_trace: true,
         skill_invocations: skillInvocations,
         selected_skill_ids: Array.from(
-          new Set(skillInvocations.map(item => item.skill_id).filter(Boolean))
+          new Set(
+            skillInvocations
+              .filter(isVisibleSkillInvocation)
+              .map(item => item.skill_id)
+              .filter(Boolean)
+          )
         ),
         loaded_skill_ids: Array.from(
           new Set(
@@ -335,10 +362,15 @@ function updateSkillInvocationMetadata(
               .filter(Boolean)
           )
         ),
-        skill_step_count: skillInvocations.filter(item => item.kind !== 'metadata_exposed').length,
-        skill_call_count: skillInvocations.length,
+        skill_step_count: skillInvocations.filter(isVisibleSkillInvocation).length,
+        skill_call_count: skillInvocations.filter(isVisibleSkillInvocation).length,
         skill_names: Array.from(
-          new Set(skillInvocations.map(item => item.skill_id).filter(Boolean))
+          new Set(
+            skillInvocations
+              .filter(isVisibleSkillInvocation)
+              .map(item => item.skill_id)
+              .filter(Boolean)
+          )
         ),
         tool_call_count: skillInvocations.filter(item => item.kind === 'tool_call').length,
         tool_names: Array.from(
@@ -925,7 +957,8 @@ export function applySkillCallStartState(
     payload.message_id,
     eventId,
     {
-      kind: 'tool_call',
+      kind: payload.kind ?? 'tool_call',
+      runtime_id: payload.runtime_id,
       skill_id: payload.skill_id,
       tool_name: payload.tool_name,
       status: 'running',
@@ -946,10 +979,11 @@ export function applySkillCallEndState(
     payload.message_id,
     eventId,
     {
-      kind: 'tool_call',
+      kind: payload.kind ?? 'tool_call',
+      runtime_id: payload.runtime_id,
       skill_id: payload.skill_id,
       tool_name: payload.tool_name,
-      status: 'success',
+      status: payload.status ?? 'success',
       duration_ms: payload.duration_ms,
       message: payload.message,
       result: payload.result,
@@ -969,7 +1003,8 @@ export function applySkillCallErrorState(
     payload.message_id,
     eventId,
     {
-      kind: payload.tool_name ? 'tool_call' : 'skill_load',
+      kind: payload.kind ?? (payload.tool_name ? 'tool_call' : 'skill_load'),
+      runtime_id: payload.runtime_id,
       skill_id: payload.skill_id,
       tool_name: payload.tool_name ?? '',
       status: 'error',

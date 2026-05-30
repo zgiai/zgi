@@ -693,6 +693,7 @@ export function AIChatShell({
           onEditCancel={handleEditCancel}
           onEditSubmit={handleEditSubmit}
           showAssistantModelMeta={showAssistantModelMeta}
+          layout={isEmbedded ? 'embedded' : 'full'}
         />
 
         <AIChatHomeView

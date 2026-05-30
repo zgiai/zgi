@@ -27,7 +27,8 @@ export type AIChatSkillInvocationKind =
   | 'skill_load'
   | 'reference_read'
   | 'tool_call'
-  | 'intermediate_answer';
+  | 'intermediate_answer'
+  | 'memory_planner';
 
 export interface AIChatConversationMetadata {
   [key: string]: unknown;
@@ -128,6 +129,7 @@ export interface AIChatExistingSkill {
 
 export interface AIChatSkillInvocation {
   kind?: AIChatSkillInvocationKind;
+  runtime_id?: string;
   answer_id?: string;
   skill_id: string;
   tool_name?: string;
@@ -368,6 +370,8 @@ export interface AIChatSkillReferenceReadEventData {
 export interface AIChatSkillCallStartEventData {
   conversation_id: string;
   message_id: string;
+  kind?: AIChatSkillInvocationKind;
+  runtime_id?: string;
   skill_id: string;
   tool_name: string;
   arguments?: Record<string, unknown>;
@@ -378,10 +382,12 @@ export interface AIChatSkillCallStartEventData {
 export interface AIChatSkillCallEndEventData {
   conversation_id: string;
   message_id: string;
+  kind?: AIChatSkillInvocationKind;
+  runtime_id?: string;
   skill_id: string;
   tool_name: string;
   duration_ms?: number;
-  status: 'success';
+  status?: AIChatSkillActivityStatus;
   message?: string;
   result?: Record<string, unknown> | null;
   created_at?: number;
@@ -390,6 +396,8 @@ export interface AIChatSkillCallEndEventData {
 export interface AIChatSkillCallErrorEventData {
   conversation_id: string;
   message_id: string;
+  kind?: AIChatSkillInvocationKind;
+  runtime_id?: string;
   skill_id: string;
   tool_name?: string;
   duration_ms?: number;

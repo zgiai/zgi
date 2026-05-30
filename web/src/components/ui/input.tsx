@@ -75,7 +75,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
           needsAdornmentLayer && 'w-full',
           leftIcon && 'pl-10',
           rightIcon && 'pr-10',
-          showInputCharacterCount && 'pr-16'
+          showInputCharacterCount && 'pr-12'
         )}
         maxLength={maxLength}
         value={value}
@@ -106,7 +106,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
           {showInputCharacterCount && (
             <span
               className={cn(
-                'pointer-events-none absolute bottom-1.5 right-3 rounded bg-background/80 px-1 text-[11px] text-muted-foreground',
+                'pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded bg-background/80 px-1 text-[11px] leading-none text-muted-foreground',
                 count > maxLength && 'text-destructive',
                 characterCountClassName
               )}

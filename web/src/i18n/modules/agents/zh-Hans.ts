@@ -1516,6 +1516,56 @@ const messages: AgentsMessages = {
       description: '开启后，调试和 WebApp 聊天可以上传文档或图片。',
     },
     memory: {
+      addCustomSlot: '自定义条目',
+      applyTemplate: '应用模板',
+      templateDialogTitle: '记忆模板',
+      templateDialogDescription: '应用一组内置记忆槽位，或从模板里单独添加需要的条目。',
+      templateMerge: '合并应用',
+      templateReplace: '替换当前条目',
+      templateApplied: '记忆模板已应用',
+      templateReplaceApplied: '已用模板替换当前记忆条目',
+      templateSlotAdded: '记忆条目已添加',
+      templateAddSlot: '添加',
+      templateSlotExists: '已添加',
+      templateTooMany: '单个智能体最多配置 5 条记忆，请先删除部分条目。',
+      templateSlotCount: '{count} 条',
+      templateReplaceConfirmTitle: '替换记忆条目？',
+      templateReplaceConfirmDescription:
+        '这会用所选模板替换当前记忆条目配置。被移除 Key 下已有的记忆值可能不再被使用。',
+      templateReplaceConfirmAction: '替换',
+      templateReplaceConfirmCancel: '取消',
+      templates: {
+        general_assistant: {
+          name: '通用助手',
+          description: '适合通用助手，记录用户身份、回答偏好、长期协作规则和持续项目背景。',
+        },
+        project_collaboration: {
+          name: '项目协作',
+          description: '适合项目协作，记录项目背景、长期流程和交付偏好，减少跨轮重复说明。',
+        },
+        support_operations: {
+          name: '客服运营',
+          description: '适合客服/运营场景，记录客户背景、沟通偏好、业务上下文和长期处理规则。',
+        },
+      },
+      templateSlots: {
+        profile:
+          '保存用户本人长期稳定的姓名、用户希望被如何称呼、职业角色、团队角色等。不要保存智能体名称、人设、角色扮演风格、用户对智能体的称呼、联系方式、账号、证件号、密码或临时状态。',
+        preferences:
+          '保存用户长期偏好的回答语言、示例技术栈、长短、排版、解释深度、语气风格等。不要保存一次性格式要求、临时心情、当前任务内容或需要智能体长期扮演的身份。',
+        standing_instructions:
+          '保存用户希望长期遵守的互动规则、协作流程、任务处理规则、称呼用户的方式、用户给智能体的称呼或智能体人设，例如先给结论、先列风险、以某种助手身份互动等。不要保存具体项目事实或一次性任务步骤。',
+        project_context:
+          '保存用户持续推进的项目、目标、关键背景、工作流和长期约束。仅在用户明确描述项目或目标时更新；不要从职业身份变化推断项目变化。',
+        delivery_preferences:
+          '保存用户对交付物的长期偏好，例如输出结构、评审深度、文件格式、验收口径等。不要保存单次任务的临时格式要求。',
+        customer_profile:
+          '保存客户长期稳定的身份、账号背景、产品使用情况、合同/关系状态等。不要保存密码、支付信息、证件号或一次性工单细节。',
+        communication_preferences:
+          '保存客户长期偏好的语气、沟通渠道、升级措辞、响应节奏等。不要保存临时情绪、一次性投诉内容或单次服务处理细节。',
+        business_context:
+          '保存长期业务流程背景、支持范围、政策规则和运营约束。仅保存与该客户/用户长期相关的规则；不要保存通用产品知识或临时处理结论。',
+      },
       agentTitle: '记忆',
       agentDescription:
         '定义智能体可为每个用户读取和更新的记忆类型，模型会在这些稳定 Key 内自我管理内容。',

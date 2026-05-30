@@ -100,6 +100,10 @@ const SYSTEM_SKILL_TOOL_LABELS: Record<string, Record<string, Record<string, str
     },
   },
   [AGENT_MEMORY_SKILL_ID]: {
+    plan_agent_memory: {
+      en_US: 'Plan agent memory',
+      zh_Hans: '判断智能体记忆',
+    },
     read_agent_memory: {
       en_US: 'Read agent memory',
       zh_Hans: '读取智能体记忆',

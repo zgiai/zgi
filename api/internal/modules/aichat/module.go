@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	"github.com/zgiai/zgi/api/internal/modules/aichat/handler"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
@@ -22,7 +23,7 @@ type Module struct {
 }
 
 func NewModule(db *gorm.DB, llmClient llmclient.LLMClient, defaultModelSvc llmdefaultservice.DefaultModelService) *Module {
-	return NewModuleWithDependencies(db, llmClient, defaultModelSvc, nil, nil, nil, nil)
+	return NewModuleWithDependencies(db, llmClient, defaultModelSvc, nil, nil, nil, nil, nil)
 }
 
 func NewModuleWithDependencies(
@@ -33,6 +34,7 @@ func NewModuleWithDependencies(
 	contentExtractor service.ContentExtractionService,
 	workspacePerms service.WorkspacePermissionService,
 	memoryService *memorymodule.Service,
+	agentMemoryService *agentmemory.Service,
 	skillRuntimes ...*skills.Runtime,
 ) *Module {
 	repos := repository.NewRepositories(db)
@@ -59,6 +61,7 @@ func NewModuleWithDependencies(
 		workspacePerms,
 		skillRuntime,
 		memoryService,
+		agentMemoryService,
 	)
 	if _, err := svc.CleanupStaleActiveMessages(context.Background()); err != nil {
 		logger.Warn("failed to cleanup stale aichat messages", err)

@@ -40,7 +40,7 @@ const TIMELINE_DEBUG_LABEL_KEYS = {
 } as const;
 
 const assistantMarkdownClassName =
-  'prose prose-sm max-w-none dark:prose-invert sm:pr-4 md:pr-6 lg:pr-8 xl:pr-9';
+  'prose prose-sm min-w-0 max-w-full dark:prose-invert sm:pr-4 md:pr-6 lg:pr-8 xl:pr-9';
 
 const TRANSIENT_PROGRESS_TEXT_KEYS = [
   'consoleChat.skills.agentic.thinking',
@@ -336,7 +336,7 @@ export function AIChatAgenticTimeline({
   if (events.length === 0) return null;
 
   return (
-    <Collapsible open={isOpen} onOpenChange={setIsOpen} className="mb-3 max-w-3xl">
+    <Collapsible open={isOpen} onOpenChange={setIsOpen} className="mb-3 w-full min-w-0 max-w-full">
       <div className="mb-2 flex items-center gap-2">
         <Button
           type="button"
@@ -380,6 +380,7 @@ export function AIChatAgenticTimeline({
                   <MarkdownViewer
                     className="md-viewer break-words"
                     content={buildProgressText(item, skillDisplayById, locale, t)}
+                    renderIdentity={item.id}
                   />
                 </div>
               )
@@ -394,7 +395,12 @@ export function AIChatAgenticTimeline({
                   </div>
                 ) : null}
                 <div className={assistantMarkdownClassName}>
-                  <MarkdownViewer className="md-viewer break-words" content={item.content} />
+                  <MarkdownViewer
+                    className="md-viewer break-words"
+                    content={item.content}
+                    isStreaming={item.status === 'streaming'}
+                    renderIdentity={item.answer_id || item.id}
+                  />
                 </div>
               </div>
             ) : (

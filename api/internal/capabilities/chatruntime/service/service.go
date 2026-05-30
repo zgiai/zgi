@@ -6,9 +6,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/agentmemoryruntime"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
+	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/llm/tokenestimate"
@@ -50,7 +52,8 @@ const (
 	skillModeAuto     = "auto"
 	skillModeRequired = "required"
 
-	userMemoryContextBudgetChars = 4000
+	userMemoryContextBudgetChars  = 4000
+	agentMemoryContextBudgetChars = 4000
 )
 
 var defaultSystemSkillIDs = []string{
@@ -90,13 +93,11 @@ type RunConfig struct {
 	BillingAppType           string
 }
 
-type AgentMemorySlotConfig struct {
-	Key         string `json:"key"`
-	Description string `json:"description"`
-	MaxChars    int    `json:"max_chars"`
-	Enabled     bool   `json:"enabled"`
-	SortOrder   int    `json:"sort_order"`
-}
+type AgentMemorySlotConfig = agentmemoryruntime.Slot
+type AgentMemoryRuntimeState = agentmemoryruntime.State
+type AgentMemoryPlannerDecision = agentmemoryruntime.Decision
+type AgentMemoryPlannerResult = agentmemoryruntime.PlannerResult
+type AgentMemoryMutationResult = agentmemoryruntime.MutationResult
 
 type Service interface {
 	CreateConversation(ctx context.Context, scope Scope, title string) (*runtimemodel.Conversation, error)
@@ -138,6 +139,12 @@ type UserMemoryService interface {
 	RenderContext(ctx context.Context, accountID uuid.UUID, budget int) (string, error)
 }
 
+type AgentMemoryContextService interface {
+	ReadUserMemory(ctx context.Context, workspaceID, agentID uuid.UUID, slots []agentmemory.RuntimeSlot, userScope string, userID uuid.UUID) ([]agentmemory.SlotValueResponse, error)
+	UpdateValue(ctx context.Context, workspaceID, agentID uuid.UUID, slots []agentmemory.RuntimeSlot, userScope string, userID uuid.UUID, req agentmemory.UpdateValueRequest, meta agentmemory.MutationMetadata) (*agentmemory.SlotValueResponse, error)
+	ClearValue(ctx context.Context, workspaceID, agentID uuid.UUID, slots []agentmemory.RuntimeSlot, userScope string, userID uuid.UUID, key string, meta agentmemory.MutationMetadata) (*agentmemory.SlotValueResponse, error)
+}
+
 type service struct {
 	repos              *repository.Repositories
 	llmClient          llmclient.LLMClient
@@ -151,6 +158,7 @@ type service struct {
 	workspacePerms     WorkspacePermissionService
 	skillRuntime       *skills.Runtime
 	memoryService      UserMemoryService
+	agentMemoryService AgentMemoryContextService
 	customSkillStorage customSkillStorage
 }
 
@@ -193,7 +201,12 @@ func NewServiceWithSkillRuntime(
 	workspacePerms WorkspacePermissionService,
 	skillRuntime *skills.Runtime,
 	memoryService UserMemoryService,
+	agentMemoryServices ...AgentMemoryContextService,
 ) Service {
+	var agentMemoryService AgentMemoryContextService
+	if len(agentMemoryServices) > 0 {
+		agentMemoryService = agentMemoryServices[0]
+	}
 	return &service{
 		repos:              repos,
 		llmClient:          llmClient,
@@ -207,6 +220,7 @@ func NewServiceWithSkillRuntime(
 		workspacePerms:     workspacePerms,
 		skillRuntime:       skillRuntime,
 		memoryService:      memoryService,
+		agentMemoryService: agentMemoryService,
 		customSkillStorage: newFilesystemCustomSkillStorage(customSkillStorageRoot),
 	}
 }
@@ -294,6 +308,8 @@ type chatRequestParts struct {
 	AgentMemoryEnabled           bool
 	AgentMemorySlots             []AgentMemorySlotConfig
 	AgentMemoryUserScope         string
+	AgentMemoryAgentID           string
+	AgentMemoryRuntimeState      *AgentMemoryRuntimeState
 	BillingSource                string
 }
 

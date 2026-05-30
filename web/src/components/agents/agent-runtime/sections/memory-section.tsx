@@ -1,7 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Sparkles, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
@@ -18,9 +20,17 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useT } from '@/i18n';
 import type { AgentMemorySlotConfig } from '@/services/types/agent';
+import {
+  addAgentMemoryTemplateSlot,
+  applyAgentMemoryTemplate,
+  createAgentMemoryTemplates,
+  type AgentMemoryTemplate,
+} from '../memory-templates';
 import { RuntimeSection } from '../runtime-section';
 import type { AgentConfigSection } from '../types';
 import type { AgentMemorySlotValidationError } from '../utils';
+
+const MAX_AGENT_MEMORY_SLOTS = 5;
 
 interface AgentRuntimeMemorySectionProps {
   open: boolean;
@@ -43,15 +53,20 @@ export function AgentRuntimeMemorySection({
 }: AgentRuntimeMemorySectionProps) {
   const t = useT('agents.agentRuntime');
   const [pendingRemoveMemoryIndex, setPendingRemoveMemoryIndex] = useState<number | null>(null);
+  const [pendingReplaceTemplate, setPendingReplaceTemplate] = useState<AgentMemoryTemplate | null>(
+    null
+  );
   const [memoryItemDialogOpen, setMemoryItemDialogOpen] = useState(false);
+  const [memoryTemplateDialogOpen, setMemoryTemplateDialogOpen] = useState(false);
   const [newMemoryKey, setNewMemoryKey] = useState('');
   const [newMemoryDescription, setNewMemoryDescription] = useState('');
+  const memoryTemplates = createAgentMemoryTemplates(key => t(key as Parameters<typeof t>[0]));
 
   const usedAgentMemorySlotKeys = new Set(
     agentMemorySlots.map(slot => slot.key.trim().toLowerCase()).filter(Boolean)
   );
   const nextAgentMemorySlotKey = (() => {
-    for (let index = agentMemorySlots.length + 1; index <= 5; index += 1) {
+    for (let index = agentMemorySlots.length + 1; index <= MAX_AGENT_MEMORY_SLOTS; index += 1) {
       const candidate = `memory_${index}`;
       if (!usedAgentMemorySlotKeys.has(candidate)) return candidate;
     }
@@ -67,9 +82,10 @@ export function AgentRuntimeMemorySection({
   })() as AgentMemorySlotValidationError;
 
   const addAgentMemorySlot = () => {
-    if (agentMemorySlots.length >= 5) return;
+    if (agentMemorySlots.length >= MAX_AGENT_MEMORY_SLOTS) return;
     const key = newMemoryKey.trim().toLowerCase();
     if (!key) return;
+    onChangeAgentMemoryEnabled(true);
     onChangeAgentMemorySlots([
       ...agentMemorySlots,
       {
@@ -98,6 +114,39 @@ export function AgentRuntimeMemorySection({
     if (!error) return '';
     return t(`memory.validation.${error}`);
   };
+  const openCustomMemoryDialog = () => {
+    setNewMemoryKey(nextAgentMemorySlotKey);
+    setNewMemoryDescription('');
+    setMemoryItemDialogOpen(true);
+  };
+  const applyTemplate = (template: AgentMemoryTemplate, mode: 'merge' | 'replace') => {
+    const result = applyAgentMemoryTemplate(agentMemorySlots, template, mode);
+    if (!result.ok) {
+      toast.error(t('memory.templateTooMany'));
+      return;
+    }
+    onChangeAgentMemoryEnabled(true);
+    onChangeAgentMemorySlots(result.slots);
+    setMemoryTemplateDialogOpen(false);
+    setPendingReplaceTemplate(null);
+    toast.success(
+      mode === 'replace' ? t('memory.templateReplaceApplied') : t('memory.templateApplied')
+    );
+  };
+  const addTemplateSlot = (template: AgentMemoryTemplate, slotKey: string) => {
+    const slot = template.slots.find(item => item.key === slotKey);
+    if (!slot) return;
+    const result = addAgentMemoryTemplateSlot(agentMemorySlots, slot);
+    if (!result.ok) {
+      toast.error(t('memory.templateTooMany'));
+      return;
+    }
+    onChangeAgentMemoryEnabled(true);
+    onChangeAgentMemorySlots(result.slots);
+    toast.success(t('memory.templateSlotAdded'));
+  };
+  const missingTemplateSlotCount = (template: AgentMemoryTemplate) =>
+    template.slots.filter(slot => !usedAgentMemorySlotKeys.has(slot.key)).length;
 
   return (
     <>
@@ -116,6 +165,22 @@ export function AgentRuntimeMemorySection({
             removeAgentMemorySlot(pendingRemoveMemoryIndex);
           }
           setPendingRemoveMemoryIndex(null);
+        }}
+      />
+      <ConfirmDialog
+        open={Boolean(pendingReplaceTemplate)}
+        onOpenChange={dialogOpen => {
+          if (!dialogOpen) setPendingReplaceTemplate(null);
+        }}
+        title={t('memory.templateReplaceConfirmTitle')}
+        description={t('memory.templateReplaceConfirmDescription')}
+        confirmText={t('memory.templateReplaceConfirmAction')}
+        cancelText={t('memory.templateReplaceConfirmCancel')}
+        variant="warning"
+        onConfirm={() => {
+          if (pendingReplaceTemplate) {
+            applyTemplate(pendingReplaceTemplate, 'replace');
+          }
         }}
       />
       <Dialog open={memoryItemDialogOpen} onOpenChange={setMemoryItemDialogOpen}>
@@ -152,11 +217,96 @@ export function AgentRuntimeMemorySection({
             </Button>
             <Button
               onClick={addAgentMemorySlot}
-              disabled={Boolean(newMemoryKeyError) || agentMemorySlots.length >= 5}
+              disabled={Boolean(newMemoryKeyError) || agentMemorySlots.length >= MAX_AGENT_MEMORY_SLOTS}
             >
               {t('memory.addDialogConfirm')}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={memoryTemplateDialogOpen} onOpenChange={setMemoryTemplateDialogOpen}>
+        <DialogContent size="lg">
+          <DialogHeader>
+            <DialogTitle>{t('memory.templateDialogTitle')}</DialogTitle>
+            <DialogDescription>{t('memory.templateDialogDescription')}</DialogDescription>
+          </DialogHeader>
+          <DialogBody className="space-y-3">
+            {memoryTemplates.map(template => {
+              const missingCount = missingTemplateSlotCount(template);
+              const mergeWouldExceed =
+                agentMemorySlots.length + missingCount > MAX_AGENT_MEMORY_SLOTS;
+              return (
+                <div key={template.id} className="space-y-3 rounded-md border p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 text-sm font-semibold">
+                        <Sparkles className="size-4 text-primary" />
+                        <span>{template.name}</span>
+                      </div>
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        {template.description}
+                      </div>
+                    </div>
+                    <Badge variant="secondary">
+                      {t('memory.templateSlotCount', { count: template.slots.length })}
+                    </Badge>
+                  </div>
+                  <div className="space-y-2">
+                    {template.slots.map(slot => {
+                      const alreadyAdded = usedAgentMemorySlotKeys.has(slot.key);
+                      const addDisabled =
+                        alreadyAdded || agentMemorySlots.length >= MAX_AGENT_MEMORY_SLOTS;
+                      return (
+                        <div
+                          key={`${template.id}-${slot.key}`}
+                          className="flex items-center justify-between gap-3 rounded-md border bg-muted/20 px-3 py-2"
+                        >
+                          <div className="min-w-0">
+                            <div className="font-mono text-xs font-semibold">{slot.key}</div>
+                            <div className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
+                              {slot.description}
+                            </div>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="xs"
+                            disabled={addDisabled}
+                            onClick={() => addTemplateSlot(template, slot.key)}
+                          >
+                            <Plus className="size-3" />
+                            {alreadyAdded ? t('memory.templateSlotExists') : t('memory.templateAddSlot')}
+                          </Button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {mergeWouldExceed && (
+                    <div className="text-xs text-destructive">{t('memory.templateTooMany')}</div>
+                  )}
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setPendingReplaceTemplate(template)}
+                    >
+                      {t('memory.templateReplace')}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={mergeWouldExceed}
+                      onClick={() => applyTemplate(template, 'merge')}
+                    >
+                      <Sparkles className="size-4" />
+                      {t('memory.templateMerge')}
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </DialogBody>
         </DialogContent>
       </Dialog>
 
@@ -177,9 +327,41 @@ export function AgentRuntimeMemorySection({
             </div>
             {agentMemoryEnabled && (
               <div className="space-y-2">
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setMemoryTemplateDialogOpen(true)}
+                  >
+                    <Sparkles className="size-4" />
+                    {t('memory.applyTemplate')}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={openCustomMemoryDialog}
+                    disabled={agentMemorySlots.length >= MAX_AGENT_MEMORY_SLOTS}
+                  >
+                    <Plus className="size-4" />
+                    {agentMemorySlots.length >= MAX_AGENT_MEMORY_SLOTS
+                      ? t('memory.maxItemsReached')
+                      : t('memory.addCustomSlot')}
+                  </Button>
+                </div>
                 {agentMemorySlots.length === 0 ? (
-                  <div className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
-                    {t('memory.emptySlots')}
+                  <div className="space-y-3 rounded-md border border-dashed p-3">
+                    <div className="text-xs text-muted-foreground">{t('memory.emptySlots')}</div>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setMemoryTemplateDialogOpen(true)}
+                    >
+                      <Sparkles className="size-4" />
+                      {t('memory.applyTemplate')}
+                    </Button>
                   </div>
                 ) : (
                   agentMemorySlots.map((slot, index) => {
@@ -245,20 +427,6 @@ export function AgentRuntimeMemorySection({
                     );
                   })
                 )}
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setNewMemoryKey(nextAgentMemorySlotKey);
-                    setNewMemoryDescription('');
-                    setMemoryItemDialogOpen(true);
-                  }}
-                  disabled={agentMemorySlots.length >= 5}
-                >
-                  <Plus className="size-4" />
-                  {agentMemorySlots.length >= 5 ? t('memory.maxItemsReached') : t('memory.addSlot')}
-                </Button>
               </div>
             )}
           </div>

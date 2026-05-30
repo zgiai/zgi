@@ -1,4 +1,4 @@
-package service
+package skillloop
 
 import (
 	"context"
@@ -28,6 +28,7 @@ func skillCallEndPayload(prepared *PreparedChat, trace skills.SkillTrace) map[st
 	payload := map[string]interface{}{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
+		"kind":            trace.Kind,
 		"skill_id":        trace.SkillID,
 		"tool_name":       trace.ToolName,
 		"duration_ms":     trace.DurationMS,
@@ -151,6 +152,7 @@ func skillCallErrorPayload(prepared *PreparedChat, trace skills.SkillTrace) map[
 	return map[string]interface{}{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
+		"kind":            trace.Kind,
 		"skill_id":        trace.SkillID,
 		"tool_name":       trace.ToolName,
 		"duration_ms":     trace.DurationMS,
@@ -207,11 +209,11 @@ func intermediateAnswerPayload(prepared *PreparedChat, trace skills.SkillTrace, 
 	}
 }
 
-func (s *service) emitSkillError(ctx context.Context, prepared *PreparedChat, trace skills.SkillTrace, onEvent func(StreamEvent) error) {
-	s.emitPreparedEvent(ctx, prepared, streamEventSkillCallError, skillCallErrorPayload(prepared, trace), onEvent)
+func (r *Runner) emitSkillError(ctx context.Context, prepared *PreparedChat, trace skills.SkillTrace) {
+	r.emitEvent(EventSkillCallError, skillCallErrorPayload(prepared, trace))
 }
 
-func (s *service) logSkillTrace(ctx context.Context, prepared *PreparedChat, trace skills.SkillTrace) {
+func (r *Runner) logSkillTrace(ctx context.Context, prepared *PreparedChat, trace skills.SkillTrace) {
 	if prepared == nil || prepared.Conversation == nil || prepared.Message == nil {
 		return
 	}
