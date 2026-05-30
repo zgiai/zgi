@@ -29,6 +29,52 @@ code == 0
 ```
 
 ```step
+@id upload-valid-skill-manifest
+@name Upload archive with valid skill manifest
+
+POST {{base_url}}/v1/files/upload-archive
+Content-Type: application/json
+
+{
+  "sandbox_id": "{{sandbox_id}}",
+  "path": "validated",
+  "archive_base64": "{{valid_skill_manifest_archive_base64}}",
+  "format": "zip",
+  "strip_root": false,
+  "validate_skill_manifest": true
+}
+
+[Asserts]
+status == 200
+code == 0
+data.file_count == 4
+data.skill_manifest.entrypoint == "scripts/run.py"
+data.skill_manifest.language == "python3"
+data.skill_manifest.result_mode == "mixed"
+```
+
+```step
+@id reject-invalid-skill-manifest
+@name Reject archive with invalid skill manifest
+
+POST {{base_url}}/v1/files/upload-archive
+Content-Type: application/json
+
+{
+  "sandbox_id": "{{sandbox_id}}",
+  "path": "invalid",
+  "archive_base64": "{{invalid_skill_manifest_archive_base64}}",
+  "format": "zip",
+  "strip_root": false,
+  "validate_skill_manifest": true
+}
+
+[Asserts]
+status == 400
+code == -400
+```
+
+```step
 @id upload-archive
 @name Upload skill archive
 

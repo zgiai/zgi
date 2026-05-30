@@ -86,6 +86,33 @@ values = {
         ("references/schema.md", "Input JSON contains input.\n"),
         ("scripts/run.py", "import json, os, sys\nargs = json.loads(sys.stdin.read() or '{}')\nos.makedirs('artifacts', exist_ok=True)\nopen('artifacts/report.txt', 'w').write('kest artifact\\n')\nprint(json.dumps({'echo': args.get('input', ''), 'ok': True}))\n"),
     ]),
+    "valid_skill_manifest_archive_base64": zip_b64([
+        ("SKILL.md", "---\nname: manifest-skill\ndescription: Manifest skill\nruntime_type: prompt\n---\n"),
+        ("scripts/run.py", "print('ok')\n"),
+        ("references/schema.md", "schema\n"),
+        ("skill.manifest.json", json.dumps({
+            "entrypoint": "scripts/run.py",
+            "language": "python3",
+            "timeout_ms": 30000,
+            "allowed_artifact_paths": ["artifacts"],
+            "max_artifact_count": 10,
+            "max_artifact_bytes": 32768,
+            "result_mode": "mixed",
+        })),
+    ]),
+    "invalid_skill_manifest_archive_base64": zip_b64([
+        ("SKILL.md", "---\nname: invalid-manifest-skill\ndescription: Invalid manifest skill\nruntime_type: prompt\n---\n"),
+        ("scripts/run.py", "print('ok')\n"),
+        ("skill.manifest.json", json.dumps({
+            "entrypoint": "scripts/missing.py",
+            "language": "python3",
+            "timeout_ms": 30000,
+            "allowed_artifact_paths": ["artifacts"],
+            "max_artifact_count": 10,
+            "max_artifact_bytes": 32768,
+            "result_mode": "mixed",
+        })),
+    ]),
     "strip_root_archive_base64": zip_b64([
         ("weather/SKILL.md", "# Weather\n"),
         ("weather/references/schema.md", "schema\n"),
@@ -102,6 +129,8 @@ with open(out, "w", encoding="utf-8") as f:
 PY
 
 skill_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["skill_archive_base64"])' "${ARCHIVE_VARS}")"
+valid_skill_manifest_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["valid_skill_manifest_archive_base64"])' "${ARCHIVE_VARS}")"
+invalid_skill_manifest_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["invalid_skill_manifest_archive_base64"])' "${ARCHIVE_VARS}")"
 strip_root_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["strip_root_archive_base64"])' "${ARCHIVE_VARS}")"
 zip_slip_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["zip_slip_archive_base64"])' "${ARCHIVE_VARS}")"
 symlink_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["symlink_archive_base64"])' "${ARCHIVE_VARS}")"
@@ -119,6 +148,8 @@ cd "${SANDBOX_DIR}"
 "${KEST_BIN}" run .kest/sandbox-archive-skill-artifacts.flow.md \
   --var base_url="${BASE_URL}" \
   --var skill_archive_base64="${skill_archive_base64}" \
+  --var valid_skill_manifest_archive_base64="${valid_skill_manifest_archive_base64}" \
+  --var invalid_skill_manifest_archive_base64="${invalid_skill_manifest_archive_base64}" \
   --fail-fast
 
 "${KEST_BIN}" run .kest/sandbox-archive-strip-root.flow.md \

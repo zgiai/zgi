@@ -68,19 +68,31 @@ type FileWriteRequest struct {
 }
 
 type ArchiveUploadRequest struct {
-	SandboxID     string `json:"sandbox_id"`
-	Path          string `json:"path"`
-	ArchiveBase64 string `json:"archive_base64"`
-	Format        string `json:"format"`
-	StripRoot     bool   `json:"strip_root"`
+	SandboxID             string `json:"sandbox_id"`
+	Path                  string `json:"path"`
+	ArchiveBase64         string `json:"archive_base64"`
+	Format                string `json:"format"`
+	StripRoot             bool   `json:"strip_root"`
+	ValidateSkillManifest bool   `json:"validate_skill_manifest"`
 }
 
 type ArchiveUploadResult struct {
-	SandboxID string     `json:"sandbox_id"`
-	Path      string     `json:"path"`
-	Files     []FileInfo `json:"files"`
-	FileCount int        `json:"file_count"`
-	TotalSize int64      `json:"total_size"`
+	SandboxID     string                  `json:"sandbox_id"`
+	Path          string                  `json:"path"`
+	Files         []FileInfo              `json:"files"`
+	FileCount     int                     `json:"file_count"`
+	TotalSize     int64                   `json:"total_size"`
+	SkillManifest *SkillExecutionManifest `json:"skill_manifest,omitempty"`
+}
+
+type SkillExecutionManifest struct {
+	Entrypoint           string   `json:"entrypoint"`
+	Language             string   `json:"language"`
+	TimeoutMS            int      `json:"timeout_ms"`
+	AllowedArtifactPaths []string `json:"allowed_artifact_paths"`
+	MaxArtifactCount     int      `json:"max_artifact_count"`
+	MaxArtifactBytes     int64    `json:"max_artifact_bytes"`
+	ResultMode           string   `json:"result_mode"`
 }
 
 type FileInfo struct {
@@ -294,6 +306,13 @@ func (s *Service) UploadArchive(req ArchiveUploadRequest) (*ArchiveUploadResult,
 	if err != nil {
 		return nil, err
 	}
+	var skillManifest *SkillExecutionManifest
+	if req.ValidateSkillManifest {
+		skillManifest, err = validateSkillExecutionManifest(entries, s.policy.MaxFileSizeBytes()*256)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	limit := archiveLimits{
 		maxFiles:     256,
@@ -364,11 +383,12 @@ func (s *Service) UploadArchive(req ArchiveUploadRequest) (*ArchiveUploadResult,
 		"total_size": totalSize,
 	})
 	return &ArchiveUploadResult{
-		SandboxID: req.SandboxID,
-		Path:      req.Path,
-		Files:     files,
-		FileCount: len(files),
-		TotalSize: totalSize,
+		SandboxID:     req.SandboxID,
+		Path:          req.Path,
+		Files:         files,
+		FileCount:     len(files),
+		TotalSize:     totalSize,
+		SkillManifest: skillManifest,
 	}, nil
 }
 
@@ -807,6 +827,110 @@ func normalizeArchiveEntries(files []*zip.File, stripRoot bool) ([]archiveEntry,
 		entries = append(entries, archiveEntry{name: clean, file: file})
 	}
 	return entries, nil
+}
+
+func validateSkillExecutionManifest(entries []archiveEntry, maxArtifactBytes int64) (*SkillExecutionManifest, error) {
+	names := make(map[string]archiveEntry, len(entries))
+	for _, entry := range entries {
+		names[filepath.ToSlash(entry.name)] = entry
+	}
+
+	manifestEntry, ok := names["skill.manifest.json"]
+	if !ok {
+		return nil, errors.New("skill.manifest.json is required when validate_skill_manifest is true")
+	}
+	if manifestEntry.file.UncompressedSize64 > 64*1024 {
+		return nil, errors.New("skill.manifest.json exceeds max size of 65536 bytes")
+	}
+	content, err := readZipFile(manifestEntry.file, 64*1024)
+	if err != nil {
+		return nil, err
+	}
+
+	var manifest SkillExecutionManifest
+	if err := json.Unmarshal(content, &manifest); err != nil {
+		return nil, fmt.Errorf("invalid skill.manifest.json: %w", err)
+	}
+	if err := validateSkillManifestFields(&manifest, names, maxArtifactBytes); err != nil {
+		return nil, err
+	}
+	return &manifest, nil
+}
+
+func validateSkillManifestFields(manifest *SkillExecutionManifest, names map[string]archiveEntry, maxArtifactBytes int64) error {
+	manifest.Entrypoint = filepath.ToSlash(strings.TrimSpace(manifest.Entrypoint))
+	if manifest.Entrypoint == "" {
+		return errors.New("skill manifest entrypoint is required")
+	}
+	if unsafeArchivePath(manifest.Entrypoint) {
+		return fmt.Errorf("skill manifest entrypoint escapes package root: %s", manifest.Entrypoint)
+	}
+	if _, ok := names[manifest.Entrypoint]; !ok {
+		return fmt.Errorf("skill manifest entrypoint is missing from package: %s", manifest.Entrypoint)
+	}
+
+	manifest.Language = normalizeSkillLanguage(manifest.Language)
+	if manifest.Language == "" {
+		return errors.New("skill manifest language must be python3 or nodejs")
+	}
+	if manifest.TimeoutMS <= 0 || manifest.TimeoutMS > 300000 {
+		return errors.New("skill manifest timeout_ms must be between 1 and 300000")
+	}
+	if manifest.MaxArtifactCount <= 0 || manifest.MaxArtifactCount > 100 {
+		return errors.New("skill manifest max_artifact_count must be between 1 and 100")
+	}
+	if manifest.MaxArtifactBytes <= 0 || manifest.MaxArtifactBytes > maxArtifactBytes {
+		return fmt.Errorf("skill manifest max_artifact_bytes must be between 1 and %d", maxArtifactBytes)
+	}
+
+	if len(manifest.AllowedArtifactPaths) == 0 {
+		return errors.New("skill manifest allowed_artifact_paths is required")
+	}
+	for i, rawPath := range manifest.AllowedArtifactPaths {
+		path := filepath.ToSlash(strings.TrimSpace(rawPath))
+		if path == "" {
+			return errors.New("skill manifest allowed_artifact_paths contains an empty path")
+		}
+		if unsafeArchivePath(path) {
+			return fmt.Errorf("skill manifest allowed artifact path escapes package root: %s", path)
+		}
+		if path != "artifacts" && !strings.HasPrefix(path, "artifacts/") {
+			return fmt.Errorf("skill manifest allowed artifact path must be under artifacts: %s", path)
+		}
+		manifest.AllowedArtifactPaths[i] = path
+	}
+
+	manifest.ResultMode = strings.TrimSpace(manifest.ResultMode)
+	switch manifest.ResultMode {
+	case "stdout_json", "stdout_text", "artifacts", "mixed":
+		return nil
+	default:
+		return errors.New("skill manifest result_mode must be stdout_json, stdout_text, artifacts, or mixed")
+	}
+}
+
+func normalizeSkillLanguage(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "python", "python3":
+		return "python3"
+	case "node", "nodejs", "javascript":
+		return "nodejs"
+	default:
+		return ""
+	}
+}
+
+func unsafeArchivePath(path string) bool {
+	path = filepath.ToSlash(strings.TrimSpace(path))
+	if path == "" || strings.HasPrefix(path, "/") || filepath.IsAbs(path) {
+		return true
+	}
+	for _, part := range strings.Split(path, "/") {
+		if part == ".." {
+			return true
+		}
+	}
+	return filepath.Clean(path) == "."
 }
 
 func commonArchiveRoot(files []*zip.File) string {

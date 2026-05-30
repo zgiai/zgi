@@ -124,6 +124,66 @@ func TestUploadArchiveExtractsZipWithStripRoot(t *testing.T) {
 	}
 }
 
+func TestUploadArchiveValidatesSkillManifest(t *testing.T) {
+	service, manager := newTestExecutorService(t)
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	result, err := service.UploadArchive(ArchiveUploadRequest{
+		SandboxID: box.ID,
+		Path:      ".",
+		ArchiveBase64: zipBase64(t, map[string]string{
+			"SKILL.md":             "# Skill",
+			"scripts/run.py":       "print('ok')",
+			"references/schema.md": "schema",
+			"skill.manifest.json":  validSkillManifestJSON("scripts/run.py"),
+		}),
+		Format:                "zip",
+		ValidateSkillManifest: true,
+	})
+	if err != nil {
+		t.Fatalf("expected archive upload with valid skill manifest, got %v", err)
+	}
+	if result.SkillManifest == nil {
+		t.Fatal("expected skill manifest in upload result")
+	}
+	if result.SkillManifest.Entrypoint != "scripts/run.py" || result.SkillManifest.Language != "python3" {
+		t.Fatalf("unexpected skill manifest: %+v", result.SkillManifest)
+	}
+}
+
+func TestUploadArchiveRejectsInvalidSkillManifest(t *testing.T) {
+	service, manager := newTestExecutorService(t)
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	_, err = service.UploadArchive(ArchiveUploadRequest{
+		SandboxID: box.ID,
+		Path:      ".",
+		ArchiveBase64: zipBase64(t, map[string]string{
+			"SKILL.md":            "# Skill",
+			"scripts/run.py":      "print('ok')",
+			"skill.manifest.json": validSkillManifestJSON("scripts/missing.py"),
+		}),
+		Format:                "zip",
+		ValidateSkillManifest: true,
+	})
+	if err == nil {
+		t.Fatal("expected invalid skill manifest to be rejected")
+	}
+	if !strings.Contains(err.Error(), "entrypoint is missing") {
+		t.Fatalf("expected entrypoint error, got %v", err)
+	}
+}
+
 func TestUploadArchiveRejectsZipSlip(t *testing.T) {
 	service, manager := newTestExecutorService(t)
 	box, err := manager.Create(lifecycle.CreateRequest{
@@ -553,4 +613,16 @@ func zipBase64WithSymlink(t *testing.T) string {
 		t.Fatalf("close zip: %v", err)
 	}
 	return base64.StdEncoding.EncodeToString(buffer.Bytes())
+}
+
+func validSkillManifestJSON(entrypoint string) string {
+	return `{
+  "entrypoint": "` + entrypoint + `",
+  "language": "python3",
+  "timeout_ms": 30000,
+  "allowed_artifact_paths": ["artifacts"],
+  "max_artifact_count": 10,
+  "max_artifact_bytes": 32768,
+  "result_mode": "mixed"
+}`
 }
