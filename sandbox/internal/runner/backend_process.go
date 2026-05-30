@@ -22,7 +22,7 @@ func (b *processBackend) Name() string {
 	return "preview-process"
 }
 
-func (b *processBackend) Run(parent context.Context, req Request, workDir string, ephemeral bool, timeout time.Duration, outputCap int) (Result, error) {
+func (b *processBackend) Run(parent context.Context, req Request, workDir string, ephemeral bool, timeout time.Duration, stdoutLimit int, stderrLimit int) (Result, error) {
 	spec, err := languageSpec(req.Language)
 	if err != nil {
 		return Result{}, err
@@ -51,9 +51,12 @@ func (b *processBackend) Run(parent context.Context, req Request, workDir string
 
 	cmd := exec.CommandContext(runCtx, spec.binary, spec.args(scriptPath)...)
 	cmd.Dir = root
+	if req.Stdin != "" {
+		cmd.Stdin = strings.NewReader(req.Stdin)
+	}
 
-	stdout := newCappedBuffer(outputCap)
-	stderr := newCappedBuffer(outputCap)
+	stdout := newCappedBuffer(stdoutLimit)
+	stderr := newCappedBuffer(stderrLimit)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 

@@ -25,17 +25,20 @@ type Request struct {
 	Language      string `json:"language"`
 	Code          string `json:"code"`
 	Preload       string `json:"preload"`
+	Stdin         string `json:"stdin,omitempty"`
 	EnableNetwork bool   `json:"enable_network"`
 }
 
 type Result struct {
-	Stdout           string `json:"stdout"`
-	Error            string `json:"error"`
-	ExitCode         int    `json:"exit_code"`
-	DurationMS       int64  `json:"duration_ms"`
-	NetworkRequested bool   `json:"network_requested"`
-	Truncated        bool   `json:"truncated"`
-	Backend          string `json:"backend,omitempty"`
+	Stdout           string   `json:"stdout"`
+	Error            string   `json:"error"`
+	ExitCode         int      `json:"exit_code"`
+	DurationMS       int64    `json:"duration_ms"`
+	NetworkRequested bool     `json:"network_requested"`
+	Truncated        bool     `json:"truncated"`
+	Backend          string   `json:"backend,omitempty"`
+	ResultJSON       any      `json:"result_json,omitempty"`
+	Warnings         []string `json:"warnings,omitempty"`
 }
 
 type CommandResult struct {
@@ -76,7 +79,7 @@ type runtimeSpec struct {
 
 type backend interface {
 	Name() string
-	Run(context.Context, Request, string, bool, time.Duration, int) (Result, error)
+	Run(context.Context, Request, string, bool, time.Duration, int, int) (Result, error)
 	ExecuteCommand(context.Context, CommandSpec) (CommandResult, error)
 }
 
@@ -126,14 +129,18 @@ func NewServiceFromConfig(cfg config.Config) (*Service, error) {
 }
 
 func (s *Service) Run(parent context.Context, req Request) (Result, error) {
-	return s.run(parent, req, "", true)
+	return s.run(parent, req, "", true, s.timeout, s.outputCap, s.outputCap)
 }
 
 func (s *Service) RunInDir(parent context.Context, req Request, workDir string) (Result, error) {
-	return s.run(parent, req, workDir, false)
+	return s.run(parent, req, workDir, false, s.timeout, s.outputCap, s.outputCap)
 }
 
-func (s *Service) run(parent context.Context, req Request, workDir string, ephemeral bool) (Result, error) {
+func (s *Service) RunInDirWithLimits(parent context.Context, req Request, workDir string, timeout time.Duration, stdoutLimit int, stderrLimit int) (Result, error) {
+	return s.run(parent, req, workDir, false, timeout, stdoutLimit, stderrLimit)
+}
+
+func (s *Service) run(parent context.Context, req Request, workDir string, ephemeral bool, timeout time.Duration, stdoutLimit int, stderrLimit int) (Result, error) {
 	if strings.TrimSpace(req.Code) == "" {
 		return Result{}, errors.New("code is required")
 	}
@@ -148,7 +155,17 @@ func (s *Service) run(parent context.Context, req Request, workDir string, ephem
 		return Result{}, parent.Err()
 	}
 
-	result, err := s.backend.Run(parent, req, workDir, ephemeral, s.timeout, s.outputCap)
+	if timeout <= 0 {
+		timeout = s.timeout
+	}
+	if stdoutLimit <= 0 {
+		stdoutLimit = s.outputCap
+	}
+	if stderrLimit <= 0 {
+		stderrLimit = s.outputCap
+	}
+
+	result, err := s.backend.Run(parent, req, workDir, ephemeral, timeout, stdoutLimit, stderrLimit)
 	if err != nil {
 		return Result{}, err
 	}

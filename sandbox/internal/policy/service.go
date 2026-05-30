@@ -74,9 +74,9 @@ func NewService(cfg config.Config) *Service {
 			"code-short": {
 				Profile:          "code-short",
 				Timeout:          5 * time.Second,
-				StdoutLimitBytes: 256 * 1024,
-				StderrLimitBytes: 256 * 1024,
-				MaxStdinBytes:    256 * 1024,
+				StdoutLimitBytes: 64 * 1024,
+				StderrLimitBytes: 64 * 1024,
+				MaxStdinBytes:    64 * 1024,
 			},
 			"skill-python": {
 				Profile:          "skill-python",

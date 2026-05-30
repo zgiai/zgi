@@ -269,6 +269,83 @@ func TestRunCommandSupportsStdinEnvAndOutputLimits(t *testing.T) {
 	}
 }
 
+func TestRunCodeSupportsInputJSONAndStructuredResult(t *testing.T) {
+	service, manager := newTestExecutorService(t)
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	result, err := service.RunCode(context.Background(), CodeRequest{
+		SandboxID:        box.ID,
+		Language:         "python3",
+		Code:             "import json,sys\npayload=json.loads(sys.stdin.read())\nprint(json.dumps({'echo': payload['input'], 'ok': True}))",
+		InputJSON:        []byte(`{"input":"hello"}`),
+		Profile:          "code-short",
+		StrictResultJSON: true,
+	})
+	if err != nil {
+		t.Fatalf("expected code run, got %v", err)
+	}
+	if result.ExitCode != 0 {
+		t.Fatalf("expected zero exit code, got %d stderr=%q", result.ExitCode, result.Error)
+	}
+	data, ok := result.ResultJSON.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected result_json object, got %#v", result.ResultJSON)
+	}
+	if data["echo"] != "hello" || data["ok"] != true {
+		t.Fatalf("unexpected result_json: %#v", data)
+	}
+}
+
+func TestRunCodeStrictResultJSONRejectsPlainText(t *testing.T) {
+	service, manager := newTestExecutorService(t)
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	_, err = service.RunCode(context.Background(), CodeRequest{
+		SandboxID:        box.ID,
+		Language:         "python3",
+		Code:             "print('plain text')",
+		Profile:          "code-short",
+		StrictResultJSON: true,
+	})
+	if err == nil {
+		t.Fatal("expected strict result JSON failure")
+	}
+	if !strings.Contains(err.Error(), "strict_result_json") {
+		t.Fatalf("expected strict_result_json error, got %v", err)
+	}
+}
+
+func TestRunCodeRejectsOversizedInputJSON(t *testing.T) {
+	service, manager := newTestExecutorService(t)
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	_, err = service.RunCode(context.Background(), CodeRequest{
+		SandboxID: box.ID,
+		Language:  "python3",
+		Code:      "print('nope')",
+		Profile:   "code-short",
+		InputJSON: []byte(strings.Repeat("x", 64*1024+1)),
+	})
+	if err == nil {
+		t.Fatal("expected oversized input_json to be rejected")
+	}
+}
+
 func TestRunCommandRejectsDangerousEnv(t *testing.T) {
 	service, manager := newTestExecutorService(t)
 	box, err := manager.Create(lifecycle.CreateRequest{

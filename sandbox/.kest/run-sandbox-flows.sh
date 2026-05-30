@@ -112,6 +112,10 @@ cd "${SANDBOX_DIR}"
   --var base_url="${BASE_URL}" \
   --fail-fast
 
+"${KEST_BIN}" run .kest/sandbox-short-code-contract.flow.md \
+  --var base_url="${BASE_URL}" \
+  --fail-fast
+
 "${KEST_BIN}" run .kest/sandbox-archive-skill-artifacts.flow.md \
   --var base_url="${BASE_URL}" \
   --var skill_archive_base64="${skill_archive_base64}" \

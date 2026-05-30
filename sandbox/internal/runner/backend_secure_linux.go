@@ -49,7 +49,7 @@ func (b *linuxSecureBackend) Name() string {
 	return "linux-secure"
 }
 
-func (b *linuxSecureBackend) Run(parent context.Context, req Request, workDir string, ephemeral bool, timeout time.Duration, outputCap int) (Result, error) {
+func (b *linuxSecureBackend) Run(parent context.Context, req Request, workDir string, ephemeral bool, timeout time.Duration, stdoutLimit int, stderrLimit int) (Result, error) {
 	spec, err := languageSpec(req.Language)
 	if err != nil {
 		return Result{}, err
@@ -77,7 +77,7 @@ func (b *linuxSecureBackend) Run(parent context.Context, req Request, workDir st
 	defer os.Remove(hostScriptPath)
 
 	containerPath := containerScriptPath(root, scriptName)
-	return b.exec(runCtx, root, spec.binary, spec.args(containerPath), req.EnableNetwork, outputCap, outputCap, "", nil)
+	return b.exec(runCtx, root, spec.binary, spec.args(containerPath), req.EnableNetwork, stdoutLimit, stderrLimit, req.Stdin, nil)
 }
 
 func (b *linuxSecureBackend) ExecuteCommand(parent context.Context, spec CommandSpec) (CommandResult, error) {

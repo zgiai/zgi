@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -28,11 +29,18 @@ type Service struct {
 }
 
 type CodeRequest struct {
-	SandboxID     string `json:"sandbox_id"`
-	Language      string `json:"language"`
-	Code          string `json:"code"`
-	Preload       string `json:"preload"`
-	EnableNetwork bool   `json:"enable_network"`
+	SandboxID        string          `json:"sandbox_id"`
+	Language         string          `json:"language"`
+	Code             string          `json:"code"`
+	Preload          string          `json:"preload"`
+	InputJSON        json.RawMessage `json:"input_json,omitempty"`
+	Profile          string          `json:"profile,omitempty"`
+	TimeoutSeconds   int             `json:"timeout_seconds,omitempty"`
+	TimeoutMS        int             `json:"timeout_ms,omitempty"`
+	StdoutLimitKB    int             `json:"stdout_limit_kb,omitempty"`
+	StderrLimitKB    int             `json:"stderr_limit_kb,omitempty"`
+	StrictResultJSON bool            `json:"strict_result_json,omitempty"`
+	EnableNetwork    bool            `json:"enable_network"`
 }
 
 type CommandRequest struct {
@@ -106,18 +114,31 @@ func (s *Service) RunCode(ctx context.Context, req CodeRequest) (runner.Result, 
 		return runner.Result{}, err
 	}
 
-	result, err := s.runner.RunInDir(ctx, runner.Request{
+	limits, err := s.policy.NormalizeCommandLimits(defaultString(req.Profile, "code-short"), req.TimeoutSeconds, req.TimeoutMS, req.StdoutLimitKB, req.StderrLimitKB)
+	if err != nil {
+		return runner.Result{}, err
+	}
+	if len(req.InputJSON) > limits.MaxStdinBytes {
+		return runner.Result{}, fmt.Errorf("input_json exceeds max size of %d bytes", limits.MaxStdinBytes)
+	}
+
+	result, err := s.runner.RunInDirWithLimits(ctx, runner.Request{
 		Language:      req.Language,
 		Code:          req.Code,
 		Preload:       req.Preload,
+		Stdin:         string(req.InputJSON),
 		EnableNetwork: req.EnableNetwork,
-	}, box.RootPath)
+	}, box.RootPath, limits.Timeout, limits.StdoutLimitBytes, limits.StderrLimitBytes)
 	if err != nil {
+		return runner.Result{}, err
+	}
+	if err := attachResultJSON(&result, req.StrictResultJSON); err != nil {
 		return runner.Result{}, err
 	}
 
 	s.observer.Record("exec.code", req.SandboxID, "sandbox code executed", map[string]any{
 		"language":  req.Language,
+		"profile":   limits.Profile,
 		"exit_code": result.ExitCode,
 	})
 	return result, nil
@@ -519,6 +540,36 @@ func normalizeEncoding(encoding string) string {
 		return "base64"
 	}
 	return "utf-8"
+}
+
+func attachResultJSON(result *runner.Result, strict bool) error {
+	if result == nil || result.ExitCode != 0 {
+		return nil
+	}
+	raw := strings.TrimSpace(result.Stdout)
+	if raw == "" {
+		if strict {
+			return errors.New("strict_result_json requires stdout to contain JSON")
+		}
+		return nil
+	}
+
+	var decoded any
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		if strict {
+			return fmt.Errorf("strict_result_json failed to parse stdout JSON: %w", err)
+		}
+		return nil
+	}
+	result.ResultJSON = decoded
+	return nil
+}
+
+func defaultString(value string, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
 }
 
 func ListDirectory(root string) ([]FileInfo, error) {
