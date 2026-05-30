@@ -16,6 +16,8 @@ status == 200
 code == 0
 data.limits.runtime_backend == "preview-process"
 data.limits.network_policy_enforced == false
+data.limits.max_archive_files == 256
+data.limits.workspace_byte_limit_enforced == false
 ```
 
 ```step

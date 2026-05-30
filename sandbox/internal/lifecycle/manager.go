@@ -137,6 +137,7 @@ func (m *Manager) Create(req CreateRequest) (*sandbox.Sandbox, error) {
 		TTLSeconds:        int(decision.TTL.Seconds()),
 		WorkerID:          m.workerID,
 		WorkerAddr:        m.workerAddr,
+		EffectiveLimits:   &decision.EffectiveLimits,
 	}
 
 	if err := m.store.SaveSandbox(item); err != nil {
@@ -150,6 +151,15 @@ func (m *Manager) Create(req CreateRequest) (*sandbox.Sandbox, error) {
 		"network_policy":     item.NetworkPolicy,
 		"dependency_profile": item.DependencyProfile,
 		"worker_id":          item.WorkerID,
+		"limit_decisions": map[string]any{
+			"ttl_seconds":              item.TTLSeconds,
+			"max_active_sandboxes":     decision.EffectiveLimits.MaxActiveSandboxes,
+			"max_file_size_bytes":      decision.EffectiveLimits.MaxFileSizeBytes,
+			"max_archive_files":        decision.EffectiveLimits.MaxArchiveFiles,
+			"max_archive_total_bytes":  decision.EffectiveLimits.MaxArchiveTotalBytes,
+			"network_policy_enforced":  decision.EffectiveLimits.NetworkPolicyEnforced,
+			"workspace_bytes_enforced": decision.EffectiveLimits.WorkspaceByteLimitEnforced,
+		},
 	})
 
 	copyItem := item
@@ -165,6 +175,7 @@ func (m *Manager) Get(id string) (*sandbox.Sandbox, error) {
 		} else if updated {
 			_ = m.cache.Set(context.Background(), *item, m.cacheTTL(*item))
 		}
+		m.attachEffectiveLimits(item)
 		return item, nil
 	}
 
@@ -179,6 +190,7 @@ func (m *Manager) Get(id string) (*sandbox.Sandbox, error) {
 	}
 
 	_ = m.cache.Set(context.Background(), *item, m.cacheTTL(*item))
+	m.attachEffectiveLimits(item)
 	return item, nil
 }
 
@@ -195,6 +207,7 @@ func (m *Manager) List() []sandbox.Sandbox {
 	filtered := make([]sandbox.Sandbox, 0, len(items))
 	for _, item := range items {
 		if expired, _, err := m.expireIfNeeded(item); err == nil && !expired {
+			m.attachEffectiveLimits(&item)
 			_ = m.cache.Set(context.Background(), item, m.cacheTTL(item))
 			filtered = append(filtered, item)
 		}
@@ -374,6 +387,14 @@ func (m *Manager) expireIfNeeded(item sandbox.Sandbox) (bool, bool, error) {
 		return true, true, nil
 	}
 	return false, false, nil
+}
+
+func (m *Manager) attachEffectiveLimits(item *sandbox.Sandbox) {
+	if item == nil {
+		return
+	}
+	limits := m.policy.EffectiveLimits()
+	item.EffectiveLimits = &limits
 }
 
 func (m *Manager) endpointURL(id string, port string) string {

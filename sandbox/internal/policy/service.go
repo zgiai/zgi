@@ -23,6 +23,7 @@ type CreateDecision struct {
 	NetworkEnabled    bool
 	NetworkPolicy     string
 	DependencyProfile string
+	EffectiveLimits   sandbox.ResourceLimits
 }
 
 type CommandLimits struct {
@@ -38,6 +39,38 @@ type Service struct {
 	dependencyProfiles []DependencyProfile
 	networkProfiles    []map[string]any
 	commandProfiles    map[string]CommandLimits
+}
+
+type LimitError struct {
+	Code    string         `json:"code"`
+	Limit   string         `json:"limit"`
+	Maximum int            `json:"maximum"`
+	Actual  int            `json:"actual"`
+	Details map[string]any `json:"details,omitempty"`
+}
+
+func (e *LimitError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return fmt.Sprintf("%s exceeded: %s maximum is %d, actual is %d", e.Code, e.Limit, e.Maximum, e.Actual)
+}
+
+func (e *LimitError) ResponseDetails() map[string]any {
+	if e == nil {
+		return nil
+	}
+	details := map[string]any{
+		"error_type": "limit_exceeded",
+		"code":       e.Code,
+		"limit":      e.Limit,
+		"maximum":    e.Maximum,
+		"actual":     e.Actual,
+	}
+	for key, value := range e.Details {
+		details[key] = value
+	}
+	return details
 }
 
 func NewService(cfg config.Config) *Service {
@@ -122,20 +155,7 @@ func (s *Service) Snapshot() map[string]any {
 		"command_profiles":    s.commandProfileSnapshot(),
 		"dependency_policy":   map[string]any{"mode": "managed-profiles", "supports_user_update": false},
 		"dependency_profiles": s.dependencyProfiles,
-		"limits": map[string]any{
-			"max_workers":               s.config.MaxWorkers,
-			"default_timeout":           s.config.TimeoutSeconds,
-			"output_limit_kb":           s.config.OutputLimitKB,
-			"session_ttl_secs":          s.config.SessionTTL,
-			"interactive_ttl_secs":      s.config.InteractiveTTL,
-			"max_active_sandboxes":      s.config.MaxActive,
-			"max_command_timeout_secs":  s.config.CommandTimeout,
-			"max_file_size_kb":          s.config.MaxFileSizeKB,
-			"max_compat_ttl_secs":       300,
-			"network_policy_enforced":   s.runtimeBackendEnforcesNetworkPolicy(),
-			"runtime_backend":           s.normalizedRuntimeBackend(),
-			"dependency_updates_locked": true,
-		},
+		"limits":              s.EffectiveLimits(),
 	}
 }
 
@@ -158,7 +178,13 @@ func (s *Service) DependencyCatalog(language string) map[string]any {
 
 func (s *Service) NormalizeCreate(profile string, ttlSeconds int, networkEnabled bool, networkPolicy string, dependencyProfile string, activeCount int) (CreateDecision, error) {
 	if s.config.MaxActive > 0 && activeCount >= s.config.MaxActive {
-		return CreateDecision{}, fmt.Errorf("active sandbox limit reached: %d", s.config.MaxActive)
+		return CreateDecision{}, &LimitError{
+			Code:    "active_sandbox_limit_exceeded",
+			Limit:   "max_active_sandboxes",
+			Maximum: s.config.MaxActive,
+			Actual:  activeCount + 1,
+			Details: map[string]any{"active_sandboxes": activeCount},
+		}
 	}
 
 	runtimeProfile, err := s.normalizeProfile(profile)
@@ -189,6 +215,7 @@ func (s *Service) NormalizeCreate(profile string, ttlSeconds int, networkEnabled
 		NetworkEnabled:    networkEnabled,
 		NetworkPolicy:     policyName,
 		DependencyProfile: dependencyName,
+		EffectiveLimits:   s.EffectiveLimits(),
 	}, nil
 }
 
@@ -267,7 +294,42 @@ func (s *Service) NormalizeCommandLimits(profile string, timeoutSeconds int, tim
 }
 
 func (s *Service) MaxFileSizeBytes() int64 {
+	if s.config.MaxFileSizeKB <= 0 {
+		return 256 * 1024
+	}
 	return int64(s.config.MaxFileSizeKB) * 1024
+}
+
+func (s *Service) EffectiveLimits() sandbox.ResourceLimits {
+	maxFileSizeBytes := s.MaxFileSizeBytes()
+	maxFileSizeKB := s.config.MaxFileSizeKB
+	if maxFileSizeKB <= 0 {
+		maxFileSizeKB = 256
+	}
+	return sandbox.ResourceLimits{
+		RuntimeBackend:             s.normalizedRuntimeBackend(),
+		NetworkPolicyEnforced:      s.runtimeBackendEnforcesNetworkPolicy(),
+		MaxWorkers:                 s.config.MaxWorkers,
+		MaxActiveSandboxes:         s.config.MaxActive,
+		DefaultTimeoutSeconds:      s.config.TimeoutSeconds,
+		DefaultExecutionTimeoutMS:  int64(s.config.TimeoutSeconds) * 1000,
+		OutputLimitKB:              s.config.OutputLimitKB,
+		MaxCommandTimeoutMS:        int64(s.config.CommandTimeout) * 1000,
+		MaxCommandTimeoutSeconds:   s.config.CommandTimeout,
+		OutputLimitBytes:           s.config.OutputLimitKB * 1024,
+		MaxFileSizeKB:              maxFileSizeKB,
+		MaxFileSizeBytes:           maxFileSizeBytes,
+		MaxArchiveFiles:            256,
+		MaxArchiveTotalBytes:       maxFileSizeBytes * 256,
+		SessionTTLSecs:             s.config.SessionTTL,
+		SessionTTLSeconds:          s.config.SessionTTL,
+		InteractiveTTLSecs:         s.config.InteractiveTTL,
+		InteractiveTTLSeconds:      s.config.InteractiveTTL,
+		MaxCompatTTLSecs:           300,
+		MaxCompatTTLSeconds:        300,
+		DependencyUpdatesLocked:    true,
+		WorkspaceByteLimitEnforced: false,
+	}
 }
 
 func (s *Service) RuntimeBackend() string {

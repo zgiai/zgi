@@ -13,7 +13,8 @@ func TestCreateRenewDeleteSandbox(t *testing.T) {
 	cfg := config.FromEnv()
 	cfg.MaxActive = 1
 	policyService := policy.NewService(cfg)
-	manager, err := NewManager(observer.NewRecorder(100), policyService)
+	recorder := observer.NewRecorder(100)
+	manager, err := NewManager(recorder, policyService)
 	if err != nil {
 		t.Fatalf("expected manager, got %v", err)
 	}
@@ -29,10 +30,27 @@ func TestCreateRenewDeleteSandbox(t *testing.T) {
 	if box.RuntimeProfile != sandbox.RuntimeSession {
 		t.Fatalf("unexpected runtime profile: %s", box.RuntimeProfile)
 	}
+	if box.EffectiveLimits == nil {
+		t.Fatal("expected effective limits on created sandbox")
+	}
+	if box.EffectiveLimits.MaxActiveSandboxes != 1 {
+		t.Fatalf("expected max active limit on sandbox, got %+v", box.EffectiveLimits)
+	}
+
+	events := recorder.Query(observer.Query{SandboxID: box.ID, Type: "sandbox.created", Limit: 1})
+	if len(events) != 1 {
+		t.Fatalf("expected sandbox.created observer event, got %d", len(events))
+	}
+	if _, ok := events[0].Metadata["limit_decisions"]; !ok {
+		t.Fatalf("expected limit decisions in observer metadata, got %+v", events[0].Metadata)
+	}
 
 	items := manager.List()
 	if len(items) == 0 {
 		t.Fatal("expected listed sandboxes after creation")
+	}
+	if items[0].EffectiveLimits == nil {
+		t.Fatal("expected effective limits on listed sandbox")
 	}
 
 	renewed, err := manager.Renew(box.ID, 120)

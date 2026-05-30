@@ -108,6 +108,9 @@ func TestSandboxListEndpoint(t *testing.T) {
 	if createRes.Code != http.StatusOK {
 		t.Fatalf("expected sandbox create to return 200, got %d", createRes.Code)
 	}
+	if !strings.Contains(createRes.Body.String(), `"effective_limits"`) {
+		t.Fatalf("expected sandbox create response to include effective limits, got %s", createRes.Body.String())
+	}
 
 	listReq := httptest.NewRequest(http.MethodGet, "/v1/sandboxes", nil)
 	listRes := httptest.NewRecorder()
@@ -115,6 +118,37 @@ func TestSandboxListEndpoint(t *testing.T) {
 
 	if listRes.Code != http.StatusOK {
 		t.Fatalf("expected sandbox list to return 200, got %d", listRes.Code)
+	}
+}
+
+func TestSandboxCreateReturnsStructuredLimitError(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.MaxActive = 1
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	firstReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","ttl_seconds":60}`))
+	firstReq.Header.Set("Content-Type", "application/json")
+	firstRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(firstRes, firstReq)
+	if firstRes.Code != http.StatusOK {
+		t.Fatalf("expected first sandbox create to return 200, got %d body=%s", firstRes.Code, firstRes.Body.String())
+	}
+
+	secondReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","ttl_seconds":60}`))
+	secondReq.Header.Set("Content-Type", "application/json")
+	secondRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(secondRes, secondReq)
+	if secondRes.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected second sandbox create to return 429, got %d body=%s", secondRes.Code, secondRes.Body.String())
+	}
+	if !strings.Contains(secondRes.Body.String(), `"error_type":"limit_exceeded"`) {
+		t.Fatalf("expected structured limit error, got %s", secondRes.Body.String())
+	}
+	if !strings.Contains(secondRes.Body.String(), `"limit":"max_active_sandboxes"`) {
+		t.Fatalf("expected max active limit details, got %s", secondRes.Body.String())
 	}
 }
 

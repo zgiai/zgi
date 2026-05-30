@@ -48,9 +48,9 @@ func TestNetworkPolicySurfaceReportsBackendEnforcement(t *testing.T) {
 		t.Fatal("expected preview backend to report network policy as not runtime-enforced")
 	}
 	previewSnapshot := preview.Snapshot()
-	previewLimits := previewSnapshot["limits"].(map[string]any)
-	if previewLimits["network_policy_enforced"] != false {
-		t.Fatalf("expected preview snapshot to report network_policy_enforced=false, got %#v", previewLimits["network_policy_enforced"])
+	previewLimits := previewSnapshot["limits"].(sandbox.ResourceLimits)
+	if previewLimits.NetworkPolicyEnforced {
+		t.Fatalf("expected preview snapshot to report network_policy_enforced=false, got %#v", previewLimits.NetworkPolicyEnforced)
 	}
 
 	secureCfg := config.FromEnv()
@@ -60,9 +60,36 @@ func TestNetworkPolicySurfaceReportsBackendEnforcement(t *testing.T) {
 		t.Fatal("expected linux-secure backend to report runtime network enforcement")
 	}
 	secureSnapshot := secure.Snapshot()
-	secureLimits := secureSnapshot["limits"].(map[string]any)
-	if secureLimits["network_policy_enforced"] != true {
-		t.Fatalf("expected secure snapshot to report network_policy_enforced=true, got %#v", secureLimits["network_policy_enforced"])
+	secureLimits := secureSnapshot["limits"].(sandbox.ResourceLimits)
+	if !secureLimits.NetworkPolicyEnforced {
+		t.Fatalf("expected secure snapshot to report network_policy_enforced=true, got %#v", secureLimits.NetworkPolicyEnforced)
+	}
+}
+
+func TestNormalizeCreateReturnsEffectiveLimitsAndStructuredLimitError(t *testing.T) {
+	cfg := config.FromEnv()
+	cfg.MaxActive = 2
+	cfg.MaxFileSizeKB = 128
+	service := NewService(cfg)
+
+	decision, err := service.NormalizeCreate("session", 60, false, "", "stdlib", 1)
+	if err != nil {
+		t.Fatalf("expected normalize create, got %v", err)
+	}
+	if decision.EffectiveLimits.MaxActiveSandboxes != 2 {
+		t.Fatalf("expected max active limit in decision, got %+v", decision.EffectiveLimits)
+	}
+	if decision.EffectiveLimits.MaxFileSizeBytes != 128*1024 {
+		t.Fatalf("expected max file size bytes in decision, got %+v", decision.EffectiveLimits)
+	}
+
+	_, err = service.NormalizeCreate("session", 60, false, "", "stdlib", 2)
+	limitErr, ok := err.(*LimitError)
+	if !ok {
+		t.Fatalf("expected LimitError, got %T %v", err, err)
+	}
+	if limitErr.Code != "active_sandbox_limit_exceeded" || limitErr.Limit != "max_active_sandboxes" {
+		t.Fatalf("unexpected limit error: %+v", limitErr)
 	}
 }
 

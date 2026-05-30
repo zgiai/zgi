@@ -210,7 +210,7 @@ func (s *Server) handleSandboxes(w http.ResponseWriter, r *http.Request) {
 
 		box, err := s.lifecycle.Create(req)
 		if err != nil {
-			writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, err.Error(), nil)
+			writeKnownError(w, err)
 			return
 		}
 		writeEnvelope(w, http.StatusOK, box)
@@ -741,7 +741,14 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 
 func writeKnownError(w http.ResponseWriter, err error) {
 	status := http.StatusBadRequest
+	code := -400
+	var data any
+	var limitErr *policy.LimitError
 	switch {
+	case errors.As(err, &limitErr):
+		status = http.StatusTooManyRequests
+		code = -429
+		data = limitErr.ResponseDetails()
 	case errors.Is(err, strconv.ErrSyntax):
 		status = http.StatusBadRequest
 	case strings.Contains(err.Error(), "not found"):
@@ -751,7 +758,7 @@ func writeKnownError(w http.ResponseWriter, err error) {
 	default:
 		status = http.StatusBadRequest
 	}
-	writeEnvelopeWithMessage(w, status, -400, err.Error(), nil)
+	writeEnvelopeWithMessage(w, status, code, err.Error(), data)
 }
 
 func splitPath(path string) []string {

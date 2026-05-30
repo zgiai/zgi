@@ -34,6 +34,32 @@ type Sandbox struct {
 	TTLSeconds        int               `json:"ttl_seconds"`
 	WorkerID          string            `json:"worker_id,omitempty"`
 	WorkerAddr        string            `json:"worker_addr,omitempty"`
+	EffectiveLimits   *ResourceLimits   `json:"effective_limits,omitempty"`
+}
+
+type ResourceLimits struct {
+	RuntimeBackend             string `json:"runtime_backend"`
+	NetworkPolicyEnforced      bool   `json:"network_policy_enforced"`
+	MaxWorkers                 int    `json:"max_workers"`
+	MaxActiveSandboxes         int    `json:"max_active_sandboxes"`
+	DefaultTimeoutSeconds      int    `json:"default_timeout"`
+	DefaultExecutionTimeoutMS  int64  `json:"default_execution_timeout_ms"`
+	OutputLimitKB              int    `json:"output_limit_kb"`
+	MaxCommandTimeoutMS        int64  `json:"max_command_timeout_ms"`
+	MaxCommandTimeoutSeconds   int    `json:"max_command_timeout_secs"`
+	OutputLimitBytes           int    `json:"output_limit_bytes"`
+	MaxFileSizeKB              int    `json:"max_file_size_kb"`
+	MaxFileSizeBytes           int64  `json:"max_file_size_bytes"`
+	MaxArchiveFiles            int    `json:"max_archive_files"`
+	MaxArchiveTotalBytes       int64  `json:"max_archive_total_bytes"`
+	SessionTTLSecs             int    `json:"session_ttl_secs"`
+	SessionTTLSeconds          int    `json:"session_ttl_seconds"`
+	InteractiveTTLSecs         int    `json:"interactive_ttl_secs"`
+	InteractiveTTLSeconds      int    `json:"interactive_ttl_seconds"`
+	MaxCompatTTLSecs           int    `json:"max_compat_ttl_secs"`
+	MaxCompatTTLSeconds        int    `json:"max_compat_ttl_seconds"`
+	DependencyUpdatesLocked    bool   `json:"dependency_updates_locked"`
+	WorkspaceByteLimitEnforced bool   `json:"workspace_byte_limit_enforced"`
 }
 
 type Endpoint struct {

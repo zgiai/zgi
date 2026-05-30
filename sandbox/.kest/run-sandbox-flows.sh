@@ -162,3 +162,11 @@ cd "${SANDBOX_DIR}"
   --var zip_slip_archive_base64="${zip_slip_archive_base64}" \
   --var symlink_archive_base64="${symlink_archive_base64}" \
   --fail-fast
+
+if [[ "${START_LOCAL_SANDBOX}" = "1" ]]; then
+  "${KEST_BIN}" run .kest/sandbox-resource-limits.flow.md \
+    --var base_url="${BASE_URL}" \
+    --fail-fast
+else
+  echo "Skipping resource limit saturation flow against external sandbox: ${BASE_URL}"
+fi
