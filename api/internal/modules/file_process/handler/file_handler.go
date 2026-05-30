@@ -42,6 +42,7 @@ type FileHandler struct {
 	parseConfirmationService         datalibraryservice.ParseConfirmationService
 	parseArtifactConfirmationService datalibraryservice.ParseArtifactConfirmationService
 	fileAssetDetailService           datalibraryservice.FileAssetDetailService
+	fileAssetChunkService            datalibraryservice.FileAssetChunkService
 	taskEnqueuer                     FileProcessingTaskEnqueuer
 	validator                        *validator.Validate
 }
@@ -53,6 +54,7 @@ type FileAssetProcessingServices struct {
 	ParseConfirmationService         datalibraryservice.ParseConfirmationService
 	ParseArtifactConfirmationService datalibraryservice.ParseArtifactConfirmationService
 	FileAssetDetailService           datalibraryservice.FileAssetDetailService
+	FileAssetChunkService            datalibraryservice.FileAssetChunkService
 	TaskEnqueuer                     FileProcessingTaskEnqueuer
 }
 
@@ -95,6 +97,17 @@ type parseConfirmationBatchIgnoreRequest struct {
 	ItemIDs []string `json:"item_ids"`
 }
 
+type fileChunkListQuery struct {
+	Page          int      `form:"page"`
+	Limit         int      `form:"limit"`
+	Search        string   `form:"search"`
+	Status        string   `form:"status"`
+	ChunkType     []string `form:"chunk_type"`
+	Enabled       *bool    `form:"enabled"`
+	ParentChunkID string   `form:"parent_chunk_id"`
+	IncludeTree   bool     `form:"include_tree"`
+}
+
 type queuedFileProcessingRequest struct {
 	Asset             *datalibrarymodel.DocumentAsset
 	ProcessingRequest *datalibraryservice.ProcessingRequestView
@@ -133,6 +146,7 @@ func NewFileHandler(
 	var parseConfirmationService datalibraryservice.ParseConfirmationService
 	var parseArtifactConfirmationService datalibraryservice.ParseArtifactConfirmationService
 	var fileAssetDetailService datalibraryservice.FileAssetDetailService
+	var fileAssetChunkService datalibraryservice.FileAssetChunkService
 	var taskEnqueuer FileProcessingTaskEnqueuer
 	if len(assetProcessingServices) > 0 {
 		assetStateService = assetProcessingServices[0].StateService
@@ -141,6 +155,7 @@ func NewFileHandler(
 		parseConfirmationService = assetProcessingServices[0].ParseConfirmationService
 		parseArtifactConfirmationService = assetProcessingServices[0].ParseArtifactConfirmationService
 		fileAssetDetailService = assetProcessingServices[0].FileAssetDetailService
+		fileAssetChunkService = assetProcessingServices[0].FileAssetChunkService
 		taskEnqueuer = assetProcessingServices[0].TaskEnqueuer
 	}
 	return &FileHandler{
@@ -155,6 +170,7 @@ func NewFileHandler(
 		parseConfirmationService:         parseConfirmationService,
 		parseArtifactConfirmationService: parseArtifactConfirmationService,
 		fileAssetDetailService:           fileAssetDetailService,
+		fileAssetChunkService:            fileAssetChunkService,
 		taskEnqueuer:                     taskEnqueuer,
 		validator:                        validator.New(),
 	}
@@ -586,6 +602,91 @@ func (h *FileHandler) handleFileAssetDetailError(c *gin.Context, err error) {
 		logger.WarnContext(c.Request.Context(), "failed to get file asset detail", err)
 		h.businessError(c, response.ErrSystemError)
 	}
+}
+
+// ListFileChunks returns current generation chunks for a file asset.
+// GET /files/:file_id/chunks
+func (h *FileHandler) ListFileChunks(c *gin.Context) {
+	if h.fileAssetChunkService == nil {
+		h.businessErrorWithMessage(c, response.ErrSystemError, "file asset chunk service is not available")
+		return
+	}
+	organizationID, uploadFile, ok := h.authorizeDocumentFile(c)
+	if !ok {
+		return
+	}
+	var query fileChunkListQuery
+	if err := c.ShouldBindQuery(&query); err != nil {
+		h.businessError(c, response.ErrInvalidParams)
+		return
+	}
+	limit := query.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	page := query.Page
+	if page <= 0 {
+		page = 1
+	}
+	parentChunkID, err := parseOptionalChunkParentID(query.ParentChunkID)
+	if err != nil {
+		h.businessError(c, response.ErrInvalidParams)
+		return
+	}
+	result, err := h.fileAssetChunkService.ListCurrentFileChunks(c.Request.Context(), datalibraryservice.FileAssetChunkListInput{
+		OrganizationID: organizationID,
+		SourceFileID:   uploadFile.ID,
+		Search:         query.Search,
+		Status:         query.Status,
+		ChunkTypes:     query.ChunkType,
+		Enabled:        query.Enabled,
+		ParentChunkID:  parentChunkID,
+		IncludeTree:    query.IncludeTree,
+		Limit:          limit,
+		Offset:         (page - 1) * limit,
+	})
+	if err != nil {
+		h.handleFileAssetChunkError(c, err)
+		return
+	}
+	response.Success(c, gin.H{
+		"asset":         result.Asset,
+		"items":         result.Items,
+		"tree":          result.Tree,
+		"total":         result.Total,
+		"limit":         result.Limit,
+		"page":          page,
+		"has_more":      int64(page*limit) < result.Total,
+		"generation_no": result.GenerationNo,
+	})
+}
+
+func (h *FileHandler) handleFileAssetChunkError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, datalibraryservice.ErrDocumentAssetNotFound):
+		h.businessError(c, response.ErrNotFound)
+	case errors.Is(err, datalibraryservice.ErrOrganizationIDRequired),
+		errors.Is(err, datalibraryservice.ErrSourceFileIDRequired):
+		h.businessError(c, response.ErrInvalidParams)
+	default:
+		logger.WarnContext(c.Request.Context(), "failed to list file asset chunks", err)
+		h.businessError(c, response.ErrSystemError)
+	}
+}
+
+func parseOptionalChunkParentID(raw string) (*uuid.UUID, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	id, err := uuid.Parse(raw)
+	if err != nil || id == uuid.Nil {
+		if err != nil {
+			return nil, err
+		}
+		return nil, errors.New("parent_chunk_id is nil")
+	}
+	return &id, nil
 }
 
 // GetFileParsePreview returns the current parsed elements with confirmation overlay.
