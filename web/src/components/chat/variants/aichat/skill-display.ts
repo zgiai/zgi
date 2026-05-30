@@ -57,15 +57,15 @@ const SYSTEM_SKILL_DISPLAY: Record<string, {
   [AGENT_MEMORY_SKILL_ID]: {
     label: {
       en_US: 'Agent Memory',
-      zh_Hans: '智能体固定记忆',
+      zh_Hans: '智能体记忆',
     },
     description: {
-      en_US: 'Agent-scoped fixed-slot memory.',
-      zh_Hans: '当前智能体的固定槽位记忆。',
+      en_US: 'Agent-scoped long-term memory.',
+      zh_Hans: '当前智能体为每个用户维护的长期记忆。',
     },
     whenToUse: {
-      en_US: 'Read or update configured memory slots for the current Agent.',
-      zh_Hans: '读取或更新当前智能体已配置的记忆槽位。',
+      en_US: 'Update or clear configured memory items for the current Agent.',
+      zh_Hans: '更新或清空当前智能体已配置的记忆项。',
     },
     tags: {
       en_US: ['system', 'memory', 'agent'],
@@ -148,16 +148,78 @@ const USER_MEMORY_TOOL_RESULT_TEXT: Record<string, Record<string, string>> = {
 
 const AGENT_MEMORY_TOOL_RESULT_TEXT: Record<string, Record<string, string>> = {
   update_agent_memory: {
-    en_US: 'Updated {key}: {content}',
-    zh_Hans: '已更新 {key}：{content}',
+    en_US: '{key}: {content}',
+    zh_Hans: '{key}：{content}',
   },
   clear_agent_memory: {
-    en_US: 'Cleared {key}',
-    zh_Hans: '已清空 {key}',
+    en_US: '{key}',
+    zh_Hans: '{key}',
   },
   read_agent_memory: {
     en_US: 'Read {count} agent memory slots',
     zh_Hans: '已读取 {count} 个智能体记忆槽位',
+  },
+};
+
+const AGENT_MEMORY_EVENT_TITLE_TEXT: Record<
+  string,
+  Record<'running' | 'success' | 'error', Record<string, string>>
+> = {
+  update_agent_memory: {
+    running: {
+      en_US: 'Updating agent memory',
+      zh_Hans: '正在更新智能体记忆',
+    },
+    success: {
+      en_US: 'Updated agent memory',
+      zh_Hans: '已更新智能体记忆',
+    },
+    error: {
+      en_US: 'Agent memory update failed',
+      zh_Hans: '智能体记忆更新失败',
+    },
+  },
+  clear_agent_memory: {
+    running: {
+      en_US: 'Clearing agent memory',
+      zh_Hans: '正在清空智能体记忆',
+    },
+    success: {
+      en_US: 'Cleared agent memory',
+      zh_Hans: '已清空智能体记忆',
+    },
+    error: {
+      en_US: 'Agent memory clear failed',
+      zh_Hans: '智能体记忆清空失败',
+    },
+  },
+  read_agent_memory: {
+    running: {
+      en_US: 'Reading agent memory',
+      zh_Hans: '正在读取智能体记忆',
+    },
+    success: {
+      en_US: 'Read agent memory',
+      zh_Hans: '已读取智能体记忆',
+    },
+    error: {
+      en_US: 'Agent memory read failed',
+      zh_Hans: '智能体记忆读取失败',
+    },
+  },
+  plan_agent_memory: {
+    running: {
+      en_US: 'Checking agent memory',
+      zh_Hans: '正在判断智能体记忆',
+    },
+    success: {
+      en_US: 'Checked agent memory',
+      zh_Hans: '已判断智能体记忆',
+    },
+    error: {
+      en_US: 'Agent memory check failed',
+      zh_Hans: '智能体记忆判断失败',
+    },
   },
 };
 
@@ -289,10 +351,23 @@ function numberFromRecord(source: Record<string, unknown>, keys: string[]): numb
   return null;
 }
 
-function compactMemoryContent(content: string): string {
+function compactMemoryContent(content: string, maxLength = 120): string {
   const normalized = content.replace(/\s+/g, ' ').trim();
-  if (normalized.length <= 120) return normalized;
-  return `${normalized.slice(0, 117)}...`;
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, Math.max(0, maxLength - 3))}...`;
+}
+
+export function getAIChatAgentMemoryEventTitle(
+  invocation: AIChatSkillInvocation,
+  tone: 'running' | 'success' | 'error',
+  locale: Locale | string
+): string | null {
+  if (invocation.skill_id !== AGENT_MEMORY_SKILL_ID) return null;
+  const toolName = invocation.tool_name?.trim();
+  if (!toolName) return null;
+  const titleByTone = AGENT_MEMORY_EVENT_TITLE_TEXT[toolName];
+  if (!titleByTone) return null;
+  return pickLocalizedText(titleByTone[tone], locale, toolName);
 }
 
 function formatMemoryToolResult(
@@ -334,7 +409,8 @@ export function getAIChatSkillResultDisplay(
   if (invocation.skill_id === AGENT_MEMORY_SKILL_ID) {
     const key = stringFromRecord(result, ['key']) || stringFromRecord(args, ['key']);
     const content = compactMemoryContent(
-      stringFromRecord(result, ['content']) || stringFromRecord(args, ['content'])
+      stringFromRecord(result, ['content']) || stringFromRecord(args, ['content']),
+      80
     );
     switch (toolName) {
       case 'update_agent_memory':

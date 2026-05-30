@@ -9,9 +9,6 @@ import (
 )
 
 const (
-	SkillID    = "agent-memory"
-	ProviderID = "agent-memory"
-
 	UserScopeAccount = "account"
 	UserScopeEndUser = "end_user"
 

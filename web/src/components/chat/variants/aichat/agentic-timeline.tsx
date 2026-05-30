@@ -16,6 +16,7 @@ import { cn } from '@/lib/utils';
 import type { AIChatSkillInvocation } from '@/services/types/aichat';
 import type { AIChatAgenticTimelineItem } from '@/components/chat/controllers/aichat';
 import {
+  getAIChatAgentMemoryEventTitle,
   getAIChatSkillResultDisplay,
   getAIChatSkillToolDisplayName,
   getFallbackAIChatSkillDisplayInfo,
@@ -113,6 +114,9 @@ function buildSkillTitle(
   locale: string,
   t: WebappTranslator
 ): string {
+  const agentMemoryTitle = getAIChatAgentMemoryEventTitle(invocation, tone, locale);
+  if (agentMemoryTitle) return agentMemoryTitle;
+
   const toolName =
     getAIChatSkillToolDisplayName(invocation.skill_id, invocation.tool_name, locale) ||
     invocation.path ||
