@@ -22,6 +22,7 @@ import (
 	"github.com/zgiai/zgi-sandbox/internal/observer"
 	"github.com/zgiai/zgi-sandbox/internal/policy"
 	"github.com/zgiai/zgi-sandbox/internal/runner"
+	"github.com/zgiai/zgi-sandbox/internal/sandbox"
 )
 
 type Service struct {
@@ -162,17 +163,19 @@ func (s *Service) RunCode(ctx context.Context, req CodeRequest) (runner.Result, 
 		EnableNetwork: req.EnableNetwork,
 	}
 
-	result, err := s.runCodeWithScope(ctx, req, runReq, limits)
+	result, box, err := s.runCodeWithScope(ctx, req, runReq, limits)
 	if err != nil {
+		addOwnershipMetadata(baseMetadata, box)
 		s.recordExecutionFailure(ctx, "exec.code.failed", req.SandboxID, "sandbox code execution failed", baseMetadata, err)
 		return runner.Result{}, err
 	}
 	if err := attachResultJSON(&result, req.StrictResultJSON); err != nil {
+		addOwnershipMetadata(baseMetadata, box)
 		s.recordExecutionFailure(ctx, "exec.code.failed", req.SandboxID, "sandbox code execution failed", baseMetadata, err)
 		return runner.Result{}, err
 	}
 
-	s.observer.Record("exec.code", req.SandboxID, "sandbox code executed", observer.MetadataWithContext(ctx, map[string]any{
+	metadata := map[string]any{
 		"language":    req.Language,
 		"profile":     limits.Profile,
 		"exit_code":   result.ExitCode,
@@ -180,26 +183,30 @@ func (s *Service) RunCode(ctx context.Context, req CodeRequest) (runner.Result, 
 		"truncated":   result.Truncated,
 		"backend":     result.Backend,
 		"status":      "success",
-	}))
+	}
+	addOwnershipMetadata(metadata, box)
+	s.observer.Record("exec.code", req.SandboxID, "sandbox code executed", observer.MetadataWithContext(ctx, metadata))
 	return result, nil
 }
 
-func (s *Service) runCodeWithScope(ctx context.Context, req CodeRequest, runReq runner.Request, limits policy.CommandLimits) (runner.Result, error) {
+func (s *Service) runCodeWithScope(ctx context.Context, req CodeRequest, runReq runner.Request, limits policy.CommandLimits) (runner.Result, *sandbox.Sandbox, error) {
 	if strings.TrimSpace(req.SandboxID) == "" {
 		if req.EnableNetwork {
-			return runner.Result{}, errors.New("network access is disabled for stateless code execution")
+			return runner.Result{}, nil, errors.New("network access is disabled for stateless code execution")
 		}
-		return s.runner.RunWithLimits(ctx, runReq, limits.Timeout, limits.StdoutLimitBytes, limits.StderrLimitBytes)
+		result, err := s.runner.RunWithLimits(ctx, runReq, limits.Timeout, limits.StdoutLimitBytes, limits.StderrLimitBytes)
+		return result, nil, err
 	}
 
 	box, err := s.lifecycle.GetActive(req.SandboxID)
 	if err != nil {
-		return runner.Result{}, err
+		return runner.Result{}, nil, err
 	}
 	if err := s.policy.ValidateCodeExecution(*box, req.EnableNetwork); err != nil {
-		return runner.Result{}, err
+		return runner.Result{}, box, err
 	}
-	return s.runner.RunInDirWithLimits(ctx, runReq, box.RootPath, limits.Timeout, limits.StdoutLimitBytes, limits.StderrLimitBytes)
+	result, err := s.runner.RunInDirWithLimits(ctx, runReq, box.RootPath, limits.Timeout, limits.StdoutLimitBytes, limits.StderrLimitBytes)
+	return result, box, err
 }
 
 func (s *Service) RunCommand(ctx context.Context, req CommandRequest) (runner.CommandResult, error) {
@@ -212,6 +219,7 @@ func (s *Service) RunCommand(ctx context.Context, req CommandRequest) (runner.Co
 		s.recordExecutionFailure(ctx, "exec.command.failed", req.SandboxID, "sandbox command execution failed", baseMetadata, err)
 		return runner.CommandResult{}, err
 	}
+	addOwnershipMetadata(baseMetadata, box)
 
 	workDir := box.RootPath
 	if req.WorkingSubpath != "" {
@@ -254,7 +262,7 @@ func (s *Service) RunCommand(ctx context.Context, req CommandRequest) (runner.Co
 		return runner.CommandResult{}, err
 	}
 
-	s.observer.Record("exec.command", req.SandboxID, "sandbox command executed", observer.MetadataWithContext(ctx, map[string]any{
+	metadata := map[string]any{
 		"command":     req.Command,
 		"profile":     limits.Profile,
 		"exit_code":   result.ExitCode,
@@ -262,7 +270,9 @@ func (s *Service) RunCommand(ctx context.Context, req CommandRequest) (runner.Co
 		"truncated":   result.Truncated,
 		"backend":     result.Backend,
 		"status":      "success",
-	}))
+	}
+	addOwnershipMetadata(metadata, box)
+	s.observer.Record("exec.command", req.SandboxID, "sandbox command executed", observer.MetadataWithContext(ctx, metadata))
 	return result, nil
 }
 
@@ -302,6 +312,27 @@ func classifyExecutionError(err error) string {
 		return "validation_error"
 	default:
 		return "execution_error"
+	}
+}
+
+func addOwnershipMetadata(metadata map[string]any, box *sandbox.Sandbox) {
+	if box == nil {
+		return
+	}
+	if box.TenantID != "" {
+		metadata["tenant_id"] = box.TenantID
+	}
+	if box.WorkspaceID != "" {
+		metadata["workspace_id"] = box.WorkspaceID
+	}
+	if box.AppID != "" {
+		metadata["app_id"] = box.AppID
+	}
+	if box.WorkflowRunID != "" {
+		metadata["workflow_run_id"] = box.WorkflowRunID
+	}
+	if box.UserID != "" {
+		metadata["user_id"] = box.UserID
 	}
 }
 

@@ -24,6 +24,11 @@ type CreateRequest struct {
 	RuntimeProfile    string            `json:"runtime_profile"`
 	TTLSeconds        int               `json:"ttl_seconds"`
 	Metadata          map[string]string `json:"metadata"`
+	TenantID          string            `json:"tenant_id"`
+	WorkspaceID       string            `json:"workspace_id"`
+	AppID             string            `json:"app_id"`
+	WorkflowRunID     string            `json:"workflow_run_id"`
+	UserID            string            `json:"user_id"`
 	NetworkEnabled    bool              `json:"network_enabled"`
 	NetworkPolicy     string            `json:"network_policy"`
 	DependencyProfile string            `json:"dependency_profile"`
@@ -97,6 +102,11 @@ func NewManagerWithConfig(recorder *observer.Recorder, policyService *policy.Ser
 }
 
 func (m *Manager) Create(req CreateRequest) (*sandbox.Sandbox, error) {
+	ownership, err := normalizeOwnership(req)
+	if err != nil {
+		return nil, err
+	}
+
 	activeCount, err := m.store.CountActive(m.workerID, time.Now().UTC())
 	if err != nil {
 		return nil, err
@@ -130,6 +140,11 @@ func (m *Manager) Create(req CreateRequest) (*sandbox.Sandbox, error) {
 		ExpiresAt:         now.Add(decision.TTL),
 		RootPath:          root,
 		Metadata:          cloneMetadata(req.Metadata),
+		TenantID:          ownership.TenantID,
+		WorkspaceID:       ownership.WorkspaceID,
+		AppID:             ownership.AppID,
+		WorkflowRunID:     ownership.WorkflowRunID,
+		UserID:            ownership.UserID,
 		NetworkEnabled:    decision.NetworkEnabled,
 		NetworkPolicy:     decision.NetworkPolicy,
 		DependencyProfile: decision.DependencyProfile,
@@ -145,7 +160,7 @@ func (m *Manager) Create(req CreateRequest) (*sandbox.Sandbox, error) {
 	}
 	_ = m.cache.Set(context.Background(), item, m.cacheTTL(item))
 
-	m.observer.Record("sandbox.created", item.ID, "sandbox created", map[string]any{
+	metadata := map[string]any{
 		"runtime_profile":    item.RuntimeProfile,
 		"ttl_seconds":        item.TTLSeconds,
 		"network_policy":     item.NetworkPolicy,
@@ -160,10 +175,95 @@ func (m *Manager) Create(req CreateRequest) (*sandbox.Sandbox, error) {
 			"network_policy_enforced":  decision.EffectiveLimits.NetworkPolicyEnforced,
 			"workspace_bytes_enforced": decision.EffectiveLimits.WorkspaceByteLimitEnforced,
 		},
-	})
+	}
+	addOwnershipMetadata(metadata, item)
+	m.observer.Record("sandbox.created", item.ID, "sandbox created", metadata)
 
 	copyItem := item
 	return &copyItem, nil
+}
+
+type ownershipFields struct {
+	TenantID      string
+	WorkspaceID   string
+	AppID         string
+	WorkflowRunID string
+	UserID        string
+}
+
+func normalizeOwnership(req CreateRequest) (ownershipFields, error) {
+	tenantID, err := normalizeOwnershipValue("tenant_id", req.TenantID)
+	if err != nil {
+		return ownershipFields{}, err
+	}
+	workspaceID, err := normalizeOwnershipValue("workspace_id", req.WorkspaceID)
+	if err != nil {
+		return ownershipFields{}, err
+	}
+	appID, err := normalizeOwnershipValue("app_id", req.AppID)
+	if err != nil {
+		return ownershipFields{}, err
+	}
+	workflowRunID, err := normalizeOwnershipValue("workflow_run_id", req.WorkflowRunID)
+	if err != nil {
+		return ownershipFields{}, err
+	}
+	userID, err := normalizeOwnershipValue("user_id", req.UserID)
+	if err != nil {
+		return ownershipFields{}, err
+	}
+	return ownershipFields{
+		TenantID:      tenantID,
+		WorkspaceID:   workspaceID,
+		AppID:         appID,
+		WorkflowRunID: workflowRunID,
+		UserID:        userID,
+	}, nil
+}
+
+func normalizeOwnershipValue(field string, value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", nil
+	}
+	if len(value) > 128 {
+		return "", fmt.Errorf("%s exceeds max length of 128", field)
+	}
+	for _, char := range value {
+		if !isOwnershipChar(char) {
+			return "", fmt.Errorf("%s contains invalid characters", field)
+		}
+	}
+	return value, nil
+}
+
+func isOwnershipChar(char rune) bool {
+	return char >= 'a' && char <= 'z' ||
+		char >= 'A' && char <= 'Z' ||
+		char >= '0' && char <= '9' ||
+		char == '_' ||
+		char == '-' ||
+		char == '.' ||
+		char == ':' ||
+		char == '@'
+}
+
+func addOwnershipMetadata(metadata map[string]any, item sandbox.Sandbox) {
+	if item.TenantID != "" {
+		metadata["tenant_id"] = item.TenantID
+	}
+	if item.WorkspaceID != "" {
+		metadata["workspace_id"] = item.WorkspaceID
+	}
+	if item.AppID != "" {
+		metadata["app_id"] = item.AppID
+	}
+	if item.WorkflowRunID != "" {
+		metadata["workflow_run_id"] = item.WorkflowRunID
+	}
+	if item.UserID != "" {
+		metadata["user_id"] = item.UserID
+	}
 }
 
 func (m *Manager) Get(id string) (*sandbox.Sandbox, error) {
@@ -237,9 +337,11 @@ func (m *Manager) Delete(id string) error {
 	}
 	_ = m.cache.Delete(context.Background(), id)
 	_ = os.RemoveAll(item.RootPath)
-	m.observer.Record("sandbox.deleted", id, "sandbox deleted", map[string]any{
+	metadata := map[string]any{
 		"worker_id": item.WorkerID,
-	})
+	}
+	addOwnershipMetadata(metadata, *item)
+	m.observer.Record("sandbox.deleted", id, "sandbox deleted", metadata)
 	return nil
 }
 
@@ -266,9 +368,11 @@ func (m *Manager) Renew(id string, ttlSeconds int) (*sandbox.Sandbox, error) {
 	}
 	_ = m.cache.Set(context.Background(), *item, m.cacheTTL(*item))
 
-	m.observer.Record("sandbox.renewed", id, "sandbox renewed", map[string]any{
+	metadata := map[string]any{
 		"ttl_seconds": item.TTLSeconds,
-	})
+	}
+	addOwnershipMetadata(metadata, *item)
+	m.observer.Record("sandbox.renewed", id, "sandbox renewed", metadata)
 
 	copyItem := *item
 	return &copyItem, nil
@@ -308,12 +412,14 @@ func (m *Manager) RegisterEndpoint(id string, port string, req RegisterEndpointR
 		return nil, err
 	}
 
-	m.observer.Record("sandbox.endpoint.registered", id, "sandbox endpoint registered", map[string]any{
+	metadata := map[string]any{
 		"port":        port,
 		"target_host": endpoint.TargetHost,
 		"target_port": endpoint.TargetPort,
 		"scheme":      endpoint.Scheme,
-	})
+	}
+	addOwnershipMetadata(metadata, *item)
+	m.observer.Record("sandbox.endpoint.registered", id, "sandbox endpoint registered", metadata)
 
 	return &endpoint, nil
 }
@@ -354,12 +460,14 @@ func (m *Manager) resolveEndpoint(id string, port string, record bool) (*sandbox
 
 	endpoint.URL = m.endpointURL(id, port)
 	if record {
-		m.observer.Record("sandbox.endpoint.resolved", id, "sandbox endpoint resolved", map[string]any{
+		metadata := map[string]any{
 			"port":        port,
 			"url":         endpoint.URL,
 			"target_host": endpoint.TargetHost,
 			"target_port": endpoint.TargetPort,
-		})
+		}
+		addOwnershipMetadata(metadata, *item)
+		m.observer.Record("sandbox.endpoint.resolved", id, "sandbox endpoint resolved", metadata)
 	}
 
 	return endpoint, nil
@@ -387,7 +495,9 @@ func (m *Manager) expireIfNeeded(item sandbox.Sandbox) (bool, bool, error) {
 			return true, false, err
 		}
 		_ = m.cache.Delete(context.Background(), item.ID)
-		m.observer.Record("sandbox.expired", item.ID, "sandbox expired", nil)
+		metadata := map[string]any{}
+		addOwnershipMetadata(metadata, item)
+		m.observer.Record("sandbox.expired", item.ID, "sandbox expired", metadata)
 		return true, true, nil
 	}
 	return false, false, nil

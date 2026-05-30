@@ -27,6 +27,11 @@ type Sandbox struct {
 	ExpiresAt         time.Time         `json:"expires_at"`
 	RootPath          string            `json:"root_path"`
 	Metadata          map[string]string `json:"metadata,omitempty"`
+	TenantID          string            `json:"tenant_id,omitempty"`
+	WorkspaceID       string            `json:"workspace_id,omitempty"`
+	AppID             string            `json:"app_id,omitempty"`
+	WorkflowRunID     string            `json:"workflow_run_id,omitempty"`
+	UserID            string            `json:"user_id,omitempty"`
 	NetworkEnabled    bool              `json:"network_enabled"`
 	NetworkPolicy     string            `json:"network_policy"`
 	DependencyProfile string            `json:"dependency_profile"`

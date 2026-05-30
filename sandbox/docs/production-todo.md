@@ -39,6 +39,8 @@ Already available:
 - Readiness probe for dependency checks
 - Startup log emits effective non-secret configuration
 - Worker-scoped active sandbox limit accounting
+- Sandbox ownership fields for tenant, workspace, app, workflow run, and user context
+- Ownership context persisted with sandbox records and propagated to lifecycle, endpoint, expiration, and execution observer events
 - Optional Linux secure backend with namespace-based isolation
 
 The service is useful for validation and controlled internal environments. It
@@ -434,8 +436,11 @@ Goal: bind sandbox usage to ZGI tenants, workspaces, apps, workflows, and users.
   - workflow run ID
   - user ID
 - Validate ownership at API boundaries.
-- Store ownership fields in sandbox metadata.
+- Store ownership fields in sandbox records.
 - Include ownership fields in observer events.
+- Keep ownership fields optional for existing callers.
+- Use short identifier-safe values only.
+- Propagate ownership context to lifecycle, endpoint, expiration, and execution events.
 
 ### I2. Quotas
 

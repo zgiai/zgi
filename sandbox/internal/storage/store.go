@@ -74,6 +74,11 @@ func (s *Store) prepare(ctx context.Context) error {
 			expires_at TIMESTAMPTZ NOT NULL,
 			root_path TEXT NOT NULL,
 			metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+			tenant_id TEXT NOT NULL DEFAULT '',
+			workspace_id TEXT NOT NULL DEFAULT '',
+			app_id TEXT NOT NULL DEFAULT '',
+			workflow_run_id TEXT NOT NULL DEFAULT '',
+			user_id TEXT NOT NULL DEFAULT '',
 			network_enabled BOOLEAN NOT NULL,
 			network_policy TEXT NOT NULL,
 			dependency_profile TEXT NOT NULL,
@@ -82,7 +87,13 @@ func (s *Store) prepare(ctx context.Context) error {
 			worker_id TEXT NOT NULL,
 			worker_addr TEXT NOT NULL
 		);`,
+		`ALTER TABLE sandboxes ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT '';`,
+		`ALTER TABLE sandboxes ADD COLUMN IF NOT EXISTS workspace_id TEXT NOT NULL DEFAULT '';`,
+		`ALTER TABLE sandboxes ADD COLUMN IF NOT EXISTS app_id TEXT NOT NULL DEFAULT '';`,
+		`ALTER TABLE sandboxes ADD COLUMN IF NOT EXISTS workflow_run_id TEXT NOT NULL DEFAULT '';`,
+		`ALTER TABLE sandboxes ADD COLUMN IF NOT EXISTS user_id TEXT NOT NULL DEFAULT '';`,
 		`CREATE INDEX IF NOT EXISTS idx_sandboxes_status_expires ON sandboxes(status, expires_at);`,
+		`CREATE INDEX IF NOT EXISTS idx_sandboxes_ownership ON sandboxes(tenant_id, workspace_id, workflow_run_id);`,
 		`CREATE TABLE IF NOT EXISTS sandbox_endpoints (
 			sandbox_id TEXT NOT NULL,
 			port TEXT NOT NULL,
@@ -124,12 +135,14 @@ func (s *Store) SaveSandbox(box sandbox.Sandbox) error {
 	_, err = s.db.Exec(`
 		INSERT INTO sandboxes (
 			id, runtime_profile, status, created_at, updated_at, expires_at, root_path,
-			metadata_json, network_enabled, network_policy, dependency_profile, workspace_binding,
+			metadata_json, tenant_id, workspace_id, app_id, workflow_run_id, user_id,
+			network_enabled, network_policy, dependency_profile, workspace_binding,
 			ttl_seconds, worker_id, worker_addr
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7,
-			$8::jsonb, $9, $10, $11, $12,
-			$13, $14, $15
+			$8::jsonb, $9, $10, $11, $12, $13,
+			$14, $15, $16, $17,
+			$18, $19, $20
 		)
 		ON CONFLICT(id) DO UPDATE SET
 			runtime_profile = EXCLUDED.runtime_profile,
@@ -138,6 +151,11 @@ func (s *Store) SaveSandbox(box sandbox.Sandbox) error {
 			expires_at = EXCLUDED.expires_at,
 			root_path = EXCLUDED.root_path,
 			metadata_json = EXCLUDED.metadata_json,
+			tenant_id = EXCLUDED.tenant_id,
+			workspace_id = EXCLUDED.workspace_id,
+			app_id = EXCLUDED.app_id,
+			workflow_run_id = EXCLUDED.workflow_run_id,
+			user_id = EXCLUDED.user_id,
 			network_enabled = EXCLUDED.network_enabled,
 			network_policy = EXCLUDED.network_policy,
 			dependency_profile = EXCLUDED.dependency_profile,
@@ -154,6 +172,11 @@ func (s *Store) SaveSandbox(box sandbox.Sandbox) error {
 		box.ExpiresAt.UTC(),
 		box.RootPath,
 		string(metadata),
+		box.TenantID,
+		box.WorkspaceID,
+		box.AppID,
+		box.WorkflowRunID,
+		box.UserID,
 		box.NetworkEnabled,
 		box.NetworkPolicy,
 		box.DependencyProfile,
@@ -168,7 +191,8 @@ func (s *Store) SaveSandbox(box sandbox.Sandbox) error {
 func (s *Store) GetSandbox(id string) (*sandbox.Sandbox, error) {
 	row := s.db.QueryRow(`
 		SELECT id, runtime_profile, status, created_at, updated_at, expires_at, root_path,
-		       metadata_json, network_enabled, network_policy, dependency_profile, workspace_binding,
+		       metadata_json, tenant_id, workspace_id, app_id, workflow_run_id, user_id,
+		       network_enabled, network_policy, dependency_profile, workspace_binding,
 		       ttl_seconds, worker_id, worker_addr
 		FROM sandboxes
 		WHERE id = $1
@@ -184,7 +208,8 @@ func (s *Store) GetSandbox(id string) (*sandbox.Sandbox, error) {
 func (s *Store) ListSandboxes() ([]sandbox.Sandbox, error) {
 	rows, err := s.db.Query(`
 		SELECT id, runtime_profile, status, created_at, updated_at, expires_at, root_path,
-		       metadata_json, network_enabled, network_policy, dependency_profile, workspace_binding,
+		       metadata_json, tenant_id, workspace_id, app_id, workflow_run_id, user_id,
+		       network_enabled, network_policy, dependency_profile, workspace_binding,
 		       ttl_seconds, worker_id, worker_addr
 		FROM sandboxes
 		ORDER BY created_at DESC
@@ -397,6 +422,11 @@ func scanSandbox(scanner rowScanner) (*sandbox.Sandbox, error) {
 		&box.ExpiresAt,
 		&box.RootPath,
 		&metadataJSON,
+		&box.TenantID,
+		&box.WorkspaceID,
+		&box.AppID,
+		&box.WorkflowRunID,
+		&box.UserID,
 		&box.NetworkEnabled,
 		&box.NetworkPolicy,
 		&box.DependencyProfile,

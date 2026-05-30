@@ -29,6 +29,11 @@ func TestPostgresStorePersistsSandboxAndEvents(t *testing.T) {
 		ExpiresAt:         time.Now().UTC().Add(5 * time.Minute),
 		RootPath:          "/tmp/sbx_store_test",
 		Metadata:          map[string]string{"tenant_id": "tenant-1"},
+		TenantID:          "tenant-1",
+		WorkspaceID:       "workspace-1",
+		AppID:             "app-1",
+		WorkflowRunID:     "run-1",
+		UserID:            "user-1",
 		NetworkEnabled:    true,
 		NetworkPolicy:     "workflow-safe",
 		DependencyProfile: "stdlib",
@@ -47,6 +52,9 @@ func TestPostgresStorePersistsSandboxAndEvents(t *testing.T) {
 	}
 	if loaded.WorkerID != box.WorkerID {
 		t.Fatalf("expected worker id %q, got %q", box.WorkerID, loaded.WorkerID)
+	}
+	if loaded.TenantID != box.TenantID || loaded.WorkspaceID != box.WorkspaceID || loaded.AppID != box.AppID || loaded.WorkflowRunID != box.WorkflowRunID || loaded.UserID != box.UserID {
+		t.Fatalf("expected ownership fields to round trip, got %+v", loaded)
 	}
 
 	event := observer.Event{

@@ -210,7 +210,7 @@ func TestSandboxListEndpoint(t *testing.T) {
 		t.Fatalf("expected server, got %v", err)
 	}
 
-	createReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","ttl_seconds":60}`))
+	createReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","ttl_seconds":60,"tenant_id":"tenant-api","workspace_id":"workspace-api","app_id":"app-api","workflow_run_id":"run-api","user_id":"user-api"}`))
 	createReq.Header.Set("Content-Type", "application/json")
 	createRes := httptest.NewRecorder()
 	server.Handler().ServeHTTP(createRes, createReq)
@@ -221,6 +221,17 @@ func TestSandboxListEndpoint(t *testing.T) {
 	if !strings.Contains(createRes.Body.String(), `"effective_limits"`) {
 		t.Fatalf("expected sandbox create response to include effective limits, got %s", createRes.Body.String())
 	}
+	for _, expected := range []string{
+		`"tenant_id":"tenant-api"`,
+		`"workspace_id":"workspace-api"`,
+		`"app_id":"app-api"`,
+		`"workflow_run_id":"run-api"`,
+		`"user_id":"user-api"`,
+	} {
+		if !strings.Contains(createRes.Body.String(), expected) {
+			t.Fatalf("expected create response to include %s, got %s", expected, createRes.Body.String())
+		}
+	}
 
 	listReq := httptest.NewRequest(http.MethodGet, "/v1/sandboxes", nil)
 	listRes := httptest.NewRecorder()
@@ -228,6 +239,28 @@ func TestSandboxListEndpoint(t *testing.T) {
 
 	if listRes.Code != http.StatusOK {
 		t.Fatalf("expected sandbox list to return 200, got %d", listRes.Code)
+	}
+	if !strings.Contains(listRes.Body.String(), `"tenant_id":"tenant-api"`) {
+		t.Fatalf("expected sandbox list to include ownership fields, got %s", listRes.Body.String())
+	}
+}
+
+func TestSandboxCreateRejectsInvalidOwnershipField(t *testing.T) {
+	server, err := NewServer(testConfig(t))
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	createReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","tenant_id":"tenant api"}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	createRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(createRes, createReq)
+
+	if createRes.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid ownership field to return 400, got %d body=%s", createRes.Code, createRes.Body.String())
+	}
+	if !strings.Contains(createRes.Body.String(), "tenant_id contains invalid characters") {
+		t.Fatalf("expected ownership validation error, got %s", createRes.Body.String())
 	}
 }
 

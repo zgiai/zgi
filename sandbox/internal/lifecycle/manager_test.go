@@ -22,6 +22,11 @@ func TestCreateRenewDeleteSandbox(t *testing.T) {
 	box, err := manager.Create(CreateRequest{
 		RuntimeProfile: string(sandbox.RuntimeSession),
 		TTLSeconds:     60,
+		TenantID:       " tenant-test ",
+		WorkspaceID:    "workspace-test",
+		AppID:          "app-test",
+		WorkflowRunID:  "run-test",
+		UserID:         "user-test",
 	})
 	if err != nil {
 		t.Fatalf("expected sandbox creation, got %v", err)
@@ -36,6 +41,9 @@ func TestCreateRenewDeleteSandbox(t *testing.T) {
 	if box.EffectiveLimits.MaxActiveSandboxes != 1 {
 		t.Fatalf("expected max active limit on sandbox, got %+v", box.EffectiveLimits)
 	}
+	if box.TenantID != "tenant-test" || box.WorkspaceID != "workspace-test" || box.AppID != "app-test" || box.WorkflowRunID != "run-test" || box.UserID != "user-test" {
+		t.Fatalf("expected normalized ownership fields, got %+v", box)
+	}
 
 	events := recorder.Query(observer.Query{SandboxID: box.ID, Type: "sandbox.created", Limit: 1})
 	if len(events) != 1 {
@@ -43,6 +51,9 @@ func TestCreateRenewDeleteSandbox(t *testing.T) {
 	}
 	if _, ok := events[0].Metadata["limit_decisions"]; !ok {
 		t.Fatalf("expected limit decisions in observer metadata, got %+v", events[0].Metadata)
+	}
+	if events[0].Metadata["tenant_id"] != "tenant-test" || events[0].Metadata["workspace_id"] != "workspace-test" || events[0].Metadata["workflow_run_id"] != "run-test" {
+		t.Fatalf("expected ownership metadata in created event, got %+v", events[0].Metadata)
 	}
 
 	items := manager.List()
@@ -60,6 +71,10 @@ func TestCreateRenewDeleteSandbox(t *testing.T) {
 	if renewed.TTLSeconds != 120 {
 		t.Fatalf("expected ttl to be updated, got %d", renewed.TTLSeconds)
 	}
+	renewEvents := recorder.Query(observer.Query{SandboxID: box.ID, Type: "sandbox.renewed", Limit: 1})
+	if len(renewEvents) != 1 || renewEvents[0].Metadata["tenant_id"] != "tenant-test" {
+		t.Fatalf("expected ownership metadata in renewed event, got %+v", renewEvents)
+	}
 
 	if _, err := manager.Create(CreateRequest{
 		RuntimeProfile: string(sandbox.RuntimeSession),
@@ -69,6 +84,30 @@ func TestCreateRenewDeleteSandbox(t *testing.T) {
 
 	if err := manager.Delete(box.ID); err != nil {
 		t.Fatalf("expected delete, got %v", err)
+	}
+	deleteEvents := recorder.Query(observer.Query{SandboxID: box.ID, Type: "sandbox.deleted", Limit: 1})
+	if len(deleteEvents) != 1 || deleteEvents[0].Metadata["tenant_id"] != "tenant-test" {
+		t.Fatalf("expected ownership metadata in deleted event, got %+v", deleteEvents)
+	}
+}
+
+func TestCreateRejectsInvalidOwnershipFields(t *testing.T) {
+	manager, err := NewManager(observer.NewRecorder(100), policy.NewService(config.FromEnv()))
+	if err != nil {
+		t.Fatalf("expected manager, got %v", err)
+	}
+
+	if _, err := manager.Create(CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+		TenantID:       "tenant ok",
+	}); err == nil {
+		t.Fatal("expected invalid tenant ID to be rejected")
+	}
+	if _, err := manager.Create(CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+		WorkspaceID:    string(make([]byte, 129)),
+	}); err == nil {
+		t.Fatal("expected oversized workspace ID to be rejected")
 	}
 }
 

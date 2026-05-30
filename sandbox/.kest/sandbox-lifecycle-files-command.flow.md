@@ -71,6 +71,11 @@ Content-Type: application/json
 {
   "runtime_profile": "session",
   "ttl_seconds": 120,
+  "tenant_id": "tenant_kest",
+  "workspace_id": "workspace_kest",
+  "app_id": "app_kest",
+  "workflow_run_id": "workflow_run_kest",
+  "user_id": "user_kest",
   "dependency_profile": "stdlib",
   "network_enabled": false,
   "network_policy": "deny-by-default"
@@ -86,6 +91,11 @@ data.effective_limits.runtime_backend == "preview-process"
 data.effective_limits.max_archive_files == 256
 data.effective_limits.max_active_sandboxes == 6
 data.effective_limits.queue_timeout_ms == 5000
+data.tenant_id == "tenant_kest"
+data.workspace_id == "workspace_kest"
+data.app_id == "app_kest"
+data.workflow_run_id == "workflow_run_kest"
+data.user_id == "user_kest"
 ```
 
 ```step
@@ -98,6 +108,9 @@ GET {{base_url}}/v1/sandboxes/{{sandbox_id}}
 status == 200
 code == 0
 data.status == "active"
+data.tenant_id == "tenant_kest"
+data.workspace_id == "workspace_kest"
+data.workflow_run_id == "workflow_run_kest"
 ```
 
 ```step
@@ -233,6 +246,9 @@ GET {{base_url}}/v1/observer/events?sandbox_id={{sandbox_id}}&limit=20
 status == 200
 code == 0
 data.events.0.metadata.request_id == "req_kest_command"
+data.events.0.metadata.tenant_id == "tenant_kest"
+data.events.0.metadata.workspace_id == "workspace_kest"
+data.events.0.metadata.workflow_run_id == "workflow_run_kest"
 ```
 
 ```step

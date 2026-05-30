@@ -31,6 +31,9 @@ func TestCodeCommandAndFileFlow(t *testing.T) {
 
 	box, err := manager.Create(lifecycle.CreateRequest{
 		RuntimeProfile: string(sandbox.RuntimeSession),
+		TenantID:       "tenant-exec",
+		WorkspaceID:    "workspace-exec",
+		WorkflowRunID:  "run-exec",
 	})
 	if err != nil {
 		t.Fatalf("expected sandbox create, got %v", err)
@@ -99,6 +102,9 @@ func TestExecutionEventsIncludeRequestID(t *testing.T) {
 
 	box, err := manager.Create(lifecycle.CreateRequest{
 		RuntimeProfile: string(sandbox.RuntimeSession),
+		TenantID:       "tenant-exec",
+		WorkspaceID:    "workspace-exec",
+		WorkflowRunID:  "run-exec",
 	})
 	if err != nil {
 		t.Fatalf("expected sandbox create, got %v", err)
@@ -122,6 +128,9 @@ func TestExecutionEventsIncludeRequestID(t *testing.T) {
 	if events[0].Metadata["status"] != "success" {
 		t.Fatalf("expected success status, got %#v", events[0].Metadata)
 	}
+	if events[0].Metadata["tenant_id"] != "tenant-exec" || events[0].Metadata["workspace_id"] != "workspace-exec" || events[0].Metadata["workflow_run_id"] != "run-exec" {
+		t.Fatalf("expected ownership metadata, got %#v", events[0].Metadata)
+	}
 }
 
 func TestExecutionFailureEventsAvoidSensitivePayloads(t *testing.T) {
@@ -135,6 +144,9 @@ func TestExecutionFailureEventsAvoidSensitivePayloads(t *testing.T) {
 
 	box, err := manager.Create(lifecycle.CreateRequest{
 		RuntimeProfile: string(sandbox.RuntimeSession),
+		TenantID:       "tenant-failed",
+		WorkspaceID:    "workspace-failed",
+		WorkflowRunID:  "run-failed",
 	})
 	if err != nil {
 		t.Fatalf("expected sandbox create, got %v", err)
@@ -163,6 +175,9 @@ func TestExecutionFailureEventsAvoidSensitivePayloads(t *testing.T) {
 	}
 	if metadata["status"] != "failure" || metadata["error_type"] != "validation_error" {
 		t.Fatalf("expected structured failure metadata, got %#v", metadata)
+	}
+	if metadata["tenant_id"] != "tenant-failed" || metadata["workspace_id"] != "workspace-failed" || metadata["workflow_run_id"] != "run-failed" {
+		t.Fatalf("expected ownership metadata, got %#v", metadata)
 	}
 	if _, ok := metadata["env"]; ok {
 		t.Fatalf("expected env to be omitted, got %#v", metadata)
