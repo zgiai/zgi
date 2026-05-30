@@ -165,6 +165,32 @@ const messages: FilesMessages = {
       ready: '向量已就绪',
       failed: '向量失败',
     },
+    views: {
+      storedOnly: {
+        title: '仅存储',
+        description: '原文件已保存。后续可以发起解析，生成切片和向量。',
+      },
+      processing: {
+        title: '解析中',
+        description: '系统正在提取文档内容，页面会每 2 秒自动刷新。',
+      },
+      confirming: {
+        title: '需要解析确认',
+        description: '请先确认解析元素，然后再生成切片和向量。',
+      },
+      generating: {
+        title: '正在生成切片和向量',
+        description: '系统正在切块并写入 embedding，页面会每 2 秒自动刷新。',
+      },
+      ready: {
+        title: '可检索资产已就绪',
+        description: '切片和向量已经生成，接下来可以查看或编辑叶子切片。',
+      },
+      failed: {
+        title: '处理失败',
+        description: '请查看错误信息，后续重试入口接入后可重新处理。',
+      },
+    },
   },
 
   // Messages

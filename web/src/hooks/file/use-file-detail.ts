@@ -9,17 +9,25 @@ export const FILE_DETAIL_QUERY_KEY = 'file-detail';
 
 export const getFileDetailKey = (fileId: string) => [FILE_DETAIL_QUERY_KEY, fileId];
 
+const POLLING_STATUSES = new Set(['parsing', 'generating']);
+
+function getDetailProcessingStatus(detail?: FileDetailResponse): string {
+  return (
+    detail?.processing?.summary.product_status || detail?.file.processing_status || 'stored_only'
+  );
+}
+
 export function useFileDetail(
   fileId: string,
   options: {
     enabled?: boolean;
-    refetchInterval?: number | false;
+    pollProcessingStatus?: boolean;
     refetchOnWindowFocus?: boolean;
   } = {}
 ) {
   const {
     enabled = true,
-    refetchInterval = false,
+    pollProcessingStatus = false,
     refetchOnWindowFocus = false,
   } = options;
 
@@ -27,7 +35,12 @@ export function useFileDetail(
     queryKey: getFileDetailKey(fileId),
     queryFn: () => fileManageService.getFileDetail(fileId),
     enabled: enabled && Boolean(fileId),
-    refetchInterval,
+    refetchInterval: query => {
+      if (!pollProcessingStatus) return false;
+
+      const status = getDetailProcessingStatus(query.state.data?.data);
+      return POLLING_STATUSES.has(status) ? 2000 : false;
+    },
     refetchOnWindowFocus,
     retry: false,
   });

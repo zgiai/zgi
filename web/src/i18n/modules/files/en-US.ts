@@ -170,6 +170,32 @@ const messages = {
       ready: 'Vector ready',
       failed: 'Vector failed',
     },
+    views: {
+      storedOnly: {
+        title: 'Stored only',
+        description: 'The original file is saved. Start parsing later to produce chunks and vectors.',
+      },
+      processing: {
+        title: 'Parsing in progress',
+        description: 'The system is extracting document content. This page refreshes every 2 seconds.',
+      },
+      confirming: {
+        title: 'Parse review required',
+        description: 'Review parse elements before generating chunks and vectors.',
+      },
+      generating: {
+        title: 'Generating chunks and vectors',
+        description: 'The system is chunking content and writing embeddings. This page refreshes every 2 seconds.',
+      },
+      ready: {
+        title: 'Searchable asset ready',
+        description: 'Chunks and vectors are ready. You can inspect or edit leaf chunks next.',
+      },
+      failed: {
+        title: 'Processing failed',
+        description: 'Review the error message and retry after the retry action is available.',
+      },
+    },
   },
 
   // Messages

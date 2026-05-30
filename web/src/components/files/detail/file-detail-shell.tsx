@@ -6,12 +6,15 @@ import {
   AlertCircle,
   ArrowLeft,
   CalendarDays,
+  CheckCircle2,
+  ClipboardCheck,
   Download,
   Eye,
   FileIcon,
   HardDrive,
   Loader2,
   RefreshCw,
+  ScissorsLineDashed,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -20,6 +23,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Progress } from '@/components/ui/progress';
 import { FilePreviewDialog } from '@/components/files/file-preview-dialog';
 import { useT } from '@/i18n';
+import { cn } from '@/lib/utils';
 import type { FileAssetProductStatus, FileAssetVectorStatus, FileItem } from '@/services/types/file';
 import { useDownloadFile } from '@/hooks/use-files';
 import { useFileDetail } from '@/hooks/file/use-file-detail';
@@ -125,7 +129,9 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   const canDownload = hasPermission('file.download');
   const { downloadFile, isDownloading } = useDownloadFile();
   const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
-  const { data, isLoading, isFetching, error, refetch } = useFileDetail(fileId);
+  const { data, isLoading, isFetching, error, refetch } = useFileDetail(fileId, {
+    pollProcessingStatus: true,
+  });
 
   const detail = data?.data;
   const file = detail?.file;
@@ -172,10 +178,59 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
     }
   }, [t, vectorStatus]);
 
+  const currentView = useMemo(() => {
+    switch (status as FileAssetProductStatus | string) {
+      case 'parsing':
+        return {
+          title: t('detail.views.processing.title'),
+          description: t('detail.views.processing.description'),
+          icon: Loader2,
+          spinning: true,
+        };
+      case 'confirming':
+        return {
+          title: t('detail.views.confirming.title'),
+          description: t('detail.views.confirming.description'),
+          icon: ClipboardCheck,
+          spinning: false,
+        };
+      case 'generating':
+        return {
+          title: t('detail.views.generating.title'),
+          description: t('detail.views.generating.description'),
+          icon: Loader2,
+          spinning: true,
+        };
+      case 'ready':
+        return {
+          title: t('detail.views.ready.title'),
+          description: t('detail.views.ready.description'),
+          icon: CheckCircle2,
+          spinning: false,
+        };
+      case 'parse_failed':
+        return {
+          title: t('detail.views.failed.title'),
+          description: t('detail.views.failed.description'),
+          icon: AlertCircle,
+          spinning: false,
+        };
+      case 'stored_only':
+      default:
+        return {
+          title: t('detail.views.storedOnly.title'),
+          description: t('detail.views.storedOnly.description'),
+          icon: ScissorsLineDashed,
+          spinning: false,
+        };
+    }
+  }, [status, t]);
+
   const handleDownload = async () => {
     if (!file) return;
     await downloadFile(file.id, file.name);
   };
+  const CurrentViewIcon = currentView.icon;
 
   if (isLoading) return <FileDetailLoading />;
 
@@ -305,9 +360,19 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
 
           <section className="rounded-md border border-border bg-background p-4">
             <h2 className="text-base font-semibold text-foreground">{t('detail.nextViews')}</h2>
-            <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              {t('detail.nextViewsDescription')}
-            </p>
+            <div className="mt-4 flex gap-3 rounded-md border border-dashed border-border bg-muted/30 p-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-background text-muted-foreground">
+                <CurrentViewIcon
+                  className={cn('h-5 w-5', currentView.spinning && 'animate-spin')}
+                />
+              </div>
+              <div className="min-w-0">
+                <div className="text-sm font-medium text-foreground">{currentView.title}</div>
+                <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                  {currentView.description}
+                </p>
+              </div>
+            </div>
           </section>
         </div>
 
