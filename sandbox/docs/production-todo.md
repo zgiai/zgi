@@ -32,6 +32,7 @@ Already available:
 - Structured cancellation errors for request-canceled execution paths
 - Configurable graceful shutdown for service drain on SIGTERM/SIGINT
 - Request correlation IDs for HTTP responses and execution observer events
+- Structured observer events for successful and failed execution paths
 - Worker-scoped active sandbox limit accounting
 - Optional Linux secure backend with namespace-based isolation
 

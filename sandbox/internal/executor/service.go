@@ -138,12 +138,20 @@ func NewService(manager *lifecycle.Manager, runnerService *runner.Service, recor
 }
 
 func (s *Service) RunCode(ctx context.Context, req CodeRequest) (runner.Result, error) {
-	limits, err := s.policy.NormalizeCommandLimits(defaultString(req.Profile, "code-short"), req.TimeoutSeconds, req.TimeoutMS, req.StdoutLimitKB, req.StderrLimitKB)
+	requestedProfile := defaultString(req.Profile, "code-short")
+	baseMetadata := map[string]any{
+		"language": req.Language,
+		"profile":  requestedProfile,
+	}
+	limits, err := s.policy.NormalizeCommandLimits(requestedProfile, req.TimeoutSeconds, req.TimeoutMS, req.StdoutLimitKB, req.StderrLimitKB)
 	if err != nil {
+		s.recordExecutionFailure(ctx, "exec.code.failed", req.SandboxID, "sandbox code execution failed", baseMetadata, err)
 		return runner.Result{}, err
 	}
 	if len(req.InputJSON) > limits.MaxStdinBytes {
-		return runner.Result{}, fmt.Errorf("input_json exceeds max size of %d bytes", limits.MaxStdinBytes)
+		err := fmt.Errorf("input_json exceeds max size of %d bytes", limits.MaxStdinBytes)
+		s.recordExecutionFailure(ctx, "exec.code.failed", req.SandboxID, "sandbox code execution failed", baseMetadata, err)
+		return runner.Result{}, err
 	}
 
 	runReq := runner.Request{
@@ -156,9 +164,11 @@ func (s *Service) RunCode(ctx context.Context, req CodeRequest) (runner.Result, 
 
 	result, err := s.runCodeWithScope(ctx, req, runReq, limits)
 	if err != nil {
+		s.recordExecutionFailure(ctx, "exec.code.failed", req.SandboxID, "sandbox code execution failed", baseMetadata, err)
 		return runner.Result{}, err
 	}
 	if err := attachResultJSON(&result, req.StrictResultJSON); err != nil {
+		s.recordExecutionFailure(ctx, "exec.code.failed", req.SandboxID, "sandbox code execution failed", baseMetadata, err)
 		return runner.Result{}, err
 	}
 
@@ -166,6 +176,7 @@ func (s *Service) RunCode(ctx context.Context, req CodeRequest) (runner.Result, 
 		"language":  req.Language,
 		"profile":   limits.Profile,
 		"exit_code": result.ExitCode,
+		"status":    "success",
 	}))
 	return result, nil
 }
@@ -189,8 +200,13 @@ func (s *Service) runCodeWithScope(ctx context.Context, req CodeRequest, runReq 
 }
 
 func (s *Service) RunCommand(ctx context.Context, req CommandRequest) (runner.CommandResult, error) {
+	baseMetadata := map[string]any{
+		"command": req.Command,
+		"profile": defaultString(req.Profile, "code-short"),
+	}
 	box, err := s.lifecycle.GetActive(req.SandboxID)
 	if err != nil {
+		s.recordExecutionFailure(ctx, "exec.command.failed", req.SandboxID, "sandbox command execution failed", baseMetadata, err)
 		return runner.CommandResult{}, err
 	}
 
@@ -198,19 +214,24 @@ func (s *Service) RunCommand(ctx context.Context, req CommandRequest) (runner.Co
 	if req.WorkingSubpath != "" {
 		workDir, err = resolveExistingSandboxPath(box.RootPath, req.WorkingSubpath)
 		if err != nil {
+			s.recordExecutionFailure(ctx, "exec.command.failed", req.SandboxID, "sandbox command execution failed", baseMetadata, err)
 			return runner.CommandResult{}, err
 		}
 	}
 
 	limits, err := s.policy.NormalizeCommandLimits(req.Profile, req.TimeoutSeconds, req.TimeoutMS, req.StdoutLimitKB, req.StderrLimitKB)
 	if err != nil {
+		s.recordExecutionFailure(ctx, "exec.command.failed", req.SandboxID, "sandbox command execution failed", baseMetadata, err)
 		return runner.CommandResult{}, err
 	}
 	if len(req.Stdin) > limits.MaxStdinBytes {
-		return runner.CommandResult{}, fmt.Errorf("stdin exceeds max size of %d bytes", limits.MaxStdinBytes)
+		err := fmt.Errorf("stdin exceeds max size of %d bytes", limits.MaxStdinBytes)
+		s.recordExecutionFailure(ctx, "exec.command.failed", req.SandboxID, "sandbox command execution failed", baseMetadata, err)
+		return runner.CommandResult{}, err
 	}
 	env, err := normalizeCommandEnv(req.Env)
 	if err != nil {
+		s.recordExecutionFailure(ctx, "exec.command.failed", req.SandboxID, "sandbox command execution failed", baseMetadata, err)
 		return runner.CommandResult{}, err
 	}
 
@@ -226,6 +247,7 @@ func (s *Service) RunCommand(ctx context.Context, req CommandRequest) (runner.Co
 		AllowShellForm: true,
 	})
 	if err != nil {
+		s.recordExecutionFailure(ctx, "exec.command.failed", req.SandboxID, "sandbox command execution failed", baseMetadata, err)
 		return runner.CommandResult{}, err
 	}
 
@@ -233,8 +255,40 @@ func (s *Service) RunCommand(ctx context.Context, req CommandRequest) (runner.Co
 		"command":   req.Command,
 		"profile":   limits.Profile,
 		"exit_code": result.ExitCode,
+		"status":    "success",
 	}))
 	return result, nil
+}
+
+func (s *Service) recordExecutionFailure(ctx context.Context, eventType string, sandboxID string, message string, metadata map[string]any, err error) {
+	eventMetadata := map[string]any{
+		"status":     "failure",
+		"error_type": classifyExecutionError(err),
+	}
+	for key, value := range metadata {
+		eventMetadata[key] = value
+	}
+	s.observer.Record(eventType, sandboxID, message, observer.MetadataWithContext(ctx, eventMetadata))
+}
+
+func classifyExecutionError(err error) string {
+	var cancelErr *runner.CancellationError
+	var queueErr *runner.QueueTimeoutError
+	var limitErr *policy.LimitError
+	switch {
+	case errors.As(err, &cancelErr):
+		return "execution_canceled"
+	case errors.As(err, &queueErr), errors.As(err, &limitErr):
+		return "limit_exceeded"
+	case strings.Contains(err.Error(), "network access"):
+		return "network_policy_rejected"
+	case strings.Contains(err.Error(), "not found"):
+		return "not_found"
+	case strings.Contains(err.Error(), "unsupported"), strings.Contains(err.Error(), "unknown"), strings.Contains(err.Error(), "invalid"), strings.Contains(err.Error(), "exceeds"), strings.Contains(err.Error(), "dangerous"), strings.Contains(err.Error(), "not allowed"):
+		return "validation_error"
+	default:
+		return "execution_error"
+	}
 }
 
 func (s *Service) UploadFile(req FileWriteRequest) (*FileInfo, error) {

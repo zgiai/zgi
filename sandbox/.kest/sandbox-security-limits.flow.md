@@ -200,6 +200,7 @@ code == -400
 
 POST {{base_url}}/v1/exec/code
 Content-Type: application/json
+X-Request-ID: req_kest_rejected_network
 
 {
   "sandbox_id": "{{sandbox_id}}",
@@ -211,6 +212,21 @@ Content-Type: application/json
 [Asserts]
 status == 400
 code == -400
+```
+
+```step
+@id observer-failed-execution
+@name Observer records failed execution without payloads
+
+GET {{base_url}}/v1/observer/events?sandbox_id={{sandbox_id}}&type=exec.code.failed&limit=1
+
+[Asserts]
+status == 200
+code == 0
+data.events.0.type == "exec.code.failed"
+data.events.0.metadata.status == "failure"
+data.events.0.metadata.error_type == "network_policy_rejected"
+data.events.0.metadata.request_id == "req_kest_rejected_network"
 ```
 
 ```step

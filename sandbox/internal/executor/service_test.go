@@ -119,6 +119,60 @@ func TestExecutionEventsIncludeRequestID(t *testing.T) {
 	if events[0].Metadata["request_id"] != "req_exec_test" {
 		t.Fatalf("expected request ID metadata, got %#v", events[0].Metadata)
 	}
+	if events[0].Metadata["status"] != "success" {
+		t.Fatalf("expected success status, got %#v", events[0].Metadata)
+	}
+}
+
+func TestExecutionFailureEventsAvoidSensitivePayloads(t *testing.T) {
+	recorder := observer.NewRecorder(100)
+	policyService := policy.NewService(config.FromEnv())
+	manager, err := lifecycle.NewManager(recorder, policyService)
+	if err != nil {
+		t.Fatalf("expected lifecycle manager, got %v", err)
+	}
+	service := NewService(manager, runner.NewService(2, 3*time.Second, 4096), recorder, policyService)
+
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	ctx := observer.ContextWithRequestID(context.Background(), "req_failed_test")
+	_, err = service.RunCommand(ctx, CommandRequest{
+		SandboxID: box.ID,
+		Command:   "python3",
+		Args:      []string{"-c", "print('secret')"},
+		Env:       map[string]string{"LD_PRELOAD": "secret"},
+		Stdin:     "secret-stdin",
+		Profile:   "code-short",
+	})
+	if err == nil {
+		t.Fatal("expected command failure")
+	}
+
+	events := recorder.Query(observer.Query{SandboxID: box.ID, Type: "exec.command.failed", Limit: 1})
+	if len(events) != 1 {
+		t.Fatalf("expected command failure event, got %d", len(events))
+	}
+	metadata := events[0].Metadata
+	if metadata["request_id"] != "req_failed_test" {
+		t.Fatalf("expected request ID metadata, got %#v", metadata)
+	}
+	if metadata["status"] != "failure" || metadata["error_type"] != "validation_error" {
+		t.Fatalf("expected structured failure metadata, got %#v", metadata)
+	}
+	if _, ok := metadata["env"]; ok {
+		t.Fatalf("expected env to be omitted, got %#v", metadata)
+	}
+	if _, ok := metadata["stdin"]; ok {
+		t.Fatalf("expected stdin to be omitted, got %#v", metadata)
+	}
+	if _, ok := metadata["args"]; ok {
+		t.Fatalf("expected args to be omitted, got %#v", metadata)
+	}
 }
 
 func TestUploadArchiveExtractsZipWithStripRoot(t *testing.T) {
