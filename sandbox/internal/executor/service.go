@@ -125,7 +125,7 @@ func (s *Service) RunCommand(ctx context.Context, req CommandRequest) (runner.Co
 
 	workDir := box.RootPath
 	if req.WorkingSubpath != "" {
-		workDir, err = resolveSandboxPath(box.RootPath, req.WorkingSubpath)
+		workDir, err = resolveExistingSandboxPath(box.RootPath, req.WorkingSubpath)
 		if err != nil {
 			return runner.CommandResult{}, err
 		}
@@ -150,7 +150,7 @@ func (s *Service) UploadFile(req FileWriteRequest) (*FileInfo, error) {
 		return nil, err
 	}
 
-	target, err := resolveSandboxPath(box.RootPath, req.Path)
+	target, err := resolveWritableSandboxPath(box.RootPath, req.Path)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +195,7 @@ func (s *Service) UploadArchive(req ArchiveUploadRequest) (*ArchiveUploadResult,
 	if err != nil {
 		return nil, err
 	}
-	if _, err := resolveSandboxPath(box.RootPath, req.Path); err != nil {
+	if _, err := resolveWritableSandboxPath(box.RootPath, req.Path); err != nil {
 		return nil, err
 	}
 
@@ -243,7 +243,7 @@ func (s *Service) UploadArchive(req ArchiveUploadRequest) (*ArchiveUploadResult,
 		}
 
 		relativePath := filepath.ToSlash(filepath.Join(req.Path, entry.name))
-		target, err := resolveSandboxPath(box.RootPath, relativePath)
+		target, err := resolveWritableSandboxPath(box.RootPath, relativePath)
 		if err != nil {
 			rollbackWrittenFiles(written)
 			return nil, err
@@ -297,7 +297,7 @@ func (s *Service) DownloadFile(sandboxID string, relativePath string, encoding s
 		return nil, err
 	}
 
-	target, err := resolveSandboxPath(box.RootPath, relativePath)
+	target, err := resolveExistingSandboxPath(box.RootPath, relativePath)
 	if err != nil {
 		return nil, err
 	}
@@ -327,7 +327,7 @@ func (s *Service) StatFile(sandboxID string, relativePath string) (*FileInfo, er
 		return nil, err
 	}
 
-	target, err := resolveSandboxPath(box.RootPath, relativePath)
+	target, err := resolveExistingSandboxPath(box.RootPath, relativePath)
 	if err != nil {
 		return nil, err
 	}
@@ -352,8 +352,11 @@ func (s *Service) DeleteFile(sandboxID string, relativePath string) error {
 	if err != nil {
 		return err
 	}
+	if filepath.Clean("/"+relativePath) == "/" {
+		return errors.New("cannot delete sandbox root")
+	}
 
-	target, err := resolveSandboxPath(box.RootPath, relativePath)
+	target, err := resolveExistingSandboxPath(box.RootPath, relativePath)
 	if err != nil {
 		return err
 	}
@@ -387,16 +390,91 @@ func resolveSandboxPath(root string, relativePath string) (string, error) {
 		return "", errors.New("path is required")
 	}
 
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
 	clean := filepath.Clean("/" + relativePath)
 	target := filepath.Join(root, clean)
 	rel, err := filepath.Rel(root, target)
 	if err != nil {
 		return "", err
 	}
-	if strings.HasPrefix(rel, "..") {
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", errors.New("path escapes sandbox root")
 	}
 	return target, nil
+}
+
+func resolveExistingSandboxPath(root string, relativePath string) (string, error) {
+	target, err := resolveSandboxPath(root, relativePath)
+	if err != nil {
+		return "", err
+	}
+	if err := rejectSymlinkPath(root, target, false); err != nil {
+		return "", err
+	}
+	return target, nil
+}
+
+func resolveWritableSandboxPath(root string, relativePath string) (string, error) {
+	target, err := resolveSandboxPath(root, relativePath)
+	if err != nil {
+		return "", err
+	}
+	if err := rejectSymlinkPath(root, target, true); err != nil {
+		return "", err
+	}
+	return target, nil
+}
+
+func rejectSymlinkPath(root string, target string, allowMissingTail bool) error {
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return err
+	}
+	target, err = filepath.Abs(target)
+	if err != nil {
+		return err
+	}
+
+	rootInfo, err := os.Lstat(root)
+	if err != nil {
+		return err
+	}
+	if rootInfo.Mode()&os.ModeSymlink != 0 {
+		return errors.New("sandbox root is a symlink")
+	}
+
+	rel, err := filepath.Rel(root, target)
+	if err != nil {
+		return err
+	}
+	if rel == "." {
+		return nil
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return errors.New("path escapes sandbox root")
+	}
+
+	current := root
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		if part == "" || part == "." {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err != nil {
+			if os.IsNotExist(err) && allowMissingTail {
+				return nil
+			}
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("path contains symlink: %s", current)
+		}
+	}
+	return nil
 }
 
 func decodeContent(content string, encoding string) ([]byte, error) {

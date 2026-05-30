@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/base64"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -172,6 +174,85 @@ func TestUploadArchiveRejectsSymlinkAndRollsBack(t *testing.T) {
 	}
 	if downloaded.Content != "previous" {
 		t.Fatalf("expected existing file to be restored, got %q", downloaded.Content)
+	}
+}
+
+func TestFileOperationsRejectSymlinkPaths(t *testing.T) {
+	service, manager := newTestExecutorService(t)
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	outsideDir := t.TempDir()
+	outsideFile := filepath.Join(outsideDir, "outside.txt")
+	if err := os.WriteFile(outsideFile, []byte("outside"), 0o644); err != nil {
+		t.Fatalf("seed outside file: %v", err)
+	}
+	if err := os.Symlink(outsideFile, filepath.Join(box.RootPath, "link.txt")); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+
+	if _, err := service.DownloadFile(box.ID, "link.txt", "utf-8"); err == nil {
+		t.Fatal("expected download through symlink to be rejected")
+	}
+	if _, err := service.UploadFile(FileWriteRequest{
+		SandboxID: box.ID,
+		Path:      "link.txt",
+		Content:   "changed",
+	}); err == nil {
+		t.Fatal("expected upload through symlink to be rejected")
+	}
+	content, err := os.ReadFile(outsideFile)
+	if err != nil {
+		t.Fatalf("read outside file: %v", err)
+	}
+	if string(content) != "outside" {
+		t.Fatalf("expected outside file to remain unchanged, got %q", content)
+	}
+
+	if _, err := service.StatFile(box.ID, "link.txt"); err == nil {
+		t.Fatal("expected stat through symlink to be rejected")
+	}
+}
+
+func TestRunCommandRejectsSymlinkWorkingSubpath(t *testing.T) {
+	service, manager := newTestExecutorService(t)
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	if err := os.Symlink(t.TempDir(), filepath.Join(box.RootPath, "linked-workdir")); err != nil {
+		t.Fatalf("create symlink workdir: %v", err)
+	}
+	if _, err := service.RunCommand(context.Background(), CommandRequest{
+		SandboxID:      box.ID,
+		Command:        "pwd",
+		WorkingSubpath: "linked-workdir",
+	}); err == nil {
+		t.Fatal("expected command working_subpath symlink to be rejected")
+	}
+}
+
+func TestDeleteFileRejectsSandboxRoot(t *testing.T) {
+	service, manager := newTestExecutorService(t)
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	if err := service.DeleteFile(box.ID, "."); err == nil {
+		t.Fatal("expected sandbox root delete to be rejected")
+	}
+	if _, err := os.Stat(box.RootPath); err != nil {
+		t.Fatalf("expected sandbox root to remain, got %v", err)
 	}
 }
 

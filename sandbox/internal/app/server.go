@@ -149,8 +149,9 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req runner.Request
+	r.Body = http.MaxBytesReader(w, r.Body, s.maxExecutionRequestBytes())
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "invalid request payload", nil)
+		writeDecodeError(w, err)
 		return
 	}
 
@@ -190,8 +191,9 @@ func (s *Server) handleSandboxes(w http.ResponseWriter, r *http.Request) {
 		writeEnvelope(w, http.StatusOK, map[string]any{"items": s.lifecycle.List()})
 	case http.MethodPost:
 		var req lifecycle.CreateRequest
+		r.Body = http.MaxBytesReader(w, r.Body, s.maxSmallJSONRequestBytes())
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "invalid request payload", nil)
+			writeDecodeError(w, err)
 			return
 		}
 
@@ -249,6 +251,7 @@ func (s *Server) handleSandboxByID(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			TTLSeconds int `json:"ttl_seconds"`
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, s.maxSmallJSONRequestBytes())
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		box, err := s.lifecycle.Renew(id, req.TTLSeconds)
 		if err != nil {
@@ -269,8 +272,9 @@ func (s *Server) handleSandboxByID(w http.ResponseWriter, r *http.Request) {
 		}
 
 		var req lifecycle.RegisterEndpointRequest
+		r.Body = http.MaxBytesReader(w, r.Body, s.maxSmallJSONRequestBytes())
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
-			writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "invalid request payload", nil)
+			writeDecodeError(w, err)
 			return
 		}
 
@@ -295,9 +299,8 @@ func (s *Server) handleExecCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := io.ReadAll(r.Body)
+	body, err := s.readLimitedBody(w, r, s.maxExecutionRequestBytes())
 	if err != nil {
-		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "failed to read request body", nil)
 		return
 	}
 
@@ -328,9 +331,8 @@ func (s *Server) handleExecCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := io.ReadAll(r.Body)
+	body, err := s.readLimitedBody(w, r, s.maxExecutionRequestBytes())
 	if err != nil {
-		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "failed to read request body", nil)
 		return
 	}
 
@@ -361,9 +363,8 @@ func (s *Server) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := io.ReadAll(r.Body)
+	body, err := s.readLimitedBody(w, r, s.maxFileUploadRequestBytes())
 	if err != nil {
-		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "failed to read request body", nil)
 		return
 	}
 
@@ -394,9 +395,8 @@ func (s *Server) handleUploadArchive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := io.ReadAll(r.Body)
+	body, err := s.readLimitedBody(w, r, s.maxArchiveUploadRequestBytes())
 	if err != nil {
-		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "failed to read request body", nil)
 		return
 	}
 
@@ -628,6 +628,62 @@ func (s *Server) authorized(r *http.Request) bool {
 	}
 
 	return r.Header.Get("X-API-Key") == s.config.APIKey
+}
+
+func (s *Server) readLimitedBody(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, error) {
+	if limit <= 0 {
+		limit = 1 << 20
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
+	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			writeEnvelopeWithMessage(w, http.StatusRequestEntityTooLarge, -413, "request body too large", nil)
+			return nil, err
+		}
+		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "failed to read request body", nil)
+		return nil, err
+	}
+	return body, nil
+}
+
+func (s *Server) maxExecutionRequestBytes() int64 {
+	return maxInt64(4*1024*1024, s.maxFileSizeBytes()*2+64*1024)
+}
+
+func (s *Server) maxSmallJSONRequestBytes() int64 {
+	return 1 << 20
+}
+
+func (s *Server) maxFileUploadRequestBytes() int64 {
+	return s.maxFileSizeBytes()*2 + 64*1024
+}
+
+func (s *Server) maxArchiveUploadRequestBytes() int64 {
+	return s.maxFileSizeBytes()*256*2 + 64*1024
+}
+
+func (s *Server) maxFileSizeBytes() int64 {
+	if s.config.MaxFileSizeKB <= 0 {
+		return 256 * 1024
+	}
+	return int64(s.config.MaxFileSizeKB) * 1024
+}
+
+func maxInt64(left int64, right int64) int64 {
+	if left > right {
+		return left
+	}
+	return right
+}
+
+func writeDecodeError(w http.ResponseWriter, err error) {
+	var maxBytesErr *http.MaxBytesError
+	if errors.As(err, &maxBytesErr) {
+		writeEnvelopeWithMessage(w, http.StatusRequestEntityTooLarge, -413, "request body too large", nil)
+		return
+	}
+	writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "invalid request payload", nil)
 }
 
 func writeEnvelope(w http.ResponseWriter, status int, data any) {
