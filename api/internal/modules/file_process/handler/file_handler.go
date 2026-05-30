@@ -31,23 +31,25 @@ import (
 
 // FileHandler handles file-related HTTP requests
 type FileHandler struct {
-	fileService         interfaces.FileService
-	fileFolderService   service.FileFolderService
-	accountService      interfaces.AccountService
-	tenantService       interfaces.WorkspaceManagementService
-	enterpriseService   interfaces.OrganizationService
-	assetStateService   datalibraryservice.FileAssetProcessingStateService
-	processingService   datalibraryservice.ProcessingRequestService
-	parsePreviewService datalibraryservice.ParsePreviewService
-	taskEnqueuer        FileProcessingTaskEnqueuer
-	validator           *validator.Validate
+	fileService              interfaces.FileService
+	fileFolderService        service.FileFolderService
+	accountService           interfaces.AccountService
+	tenantService            interfaces.WorkspaceManagementService
+	enterpriseService        interfaces.OrganizationService
+	assetStateService        datalibraryservice.FileAssetProcessingStateService
+	processingService        datalibraryservice.ProcessingRequestService
+	parsePreviewService      datalibraryservice.ParsePreviewService
+	parseConfirmationService datalibraryservice.ParseConfirmationService
+	taskEnqueuer             FileProcessingTaskEnqueuer
+	validator                *validator.Validate
 }
 
 type FileAssetProcessingServices struct {
-	StateService        datalibraryservice.FileAssetProcessingStateService
-	ProcessingService   datalibraryservice.ProcessingRequestService
-	ParsePreviewService datalibraryservice.ParsePreviewService
-	TaskEnqueuer        FileProcessingTaskEnqueuer
+	StateService             datalibraryservice.FileAssetProcessingStateService
+	ProcessingService        datalibraryservice.ProcessingRequestService
+	ParsePreviewService      datalibraryservice.ParsePreviewService
+	ParseConfirmationService datalibraryservice.ParseConfirmationService
+	TaskEnqueuer             FileProcessingTaskEnqueuer
 }
 
 type FileProcessingTaskEnqueuer interface {
@@ -79,6 +81,15 @@ type fileProcessingRequest struct {
 	Force       bool   `json:"force"`
 }
 
+type parseConfirmationResolveRequest struct {
+	Action       string  `json:"action"`
+	FinalContent *string `json:"final_content"`
+}
+
+type parseConfirmationBatchIgnoreRequest struct {
+	ItemIDs []string `json:"item_ids"`
+}
+
 type queuedFileProcessingRequest struct {
 	Asset             *datalibrarymodel.DocumentAsset
 	ProcessingRequest *datalibraryservice.ProcessingRequestView
@@ -98,24 +109,27 @@ func NewFileHandler(
 	var assetStateService datalibraryservice.FileAssetProcessingStateService
 	var processingService datalibraryservice.ProcessingRequestService
 	var parsePreviewService datalibraryservice.ParsePreviewService
+	var parseConfirmationService datalibraryservice.ParseConfirmationService
 	var taskEnqueuer FileProcessingTaskEnqueuer
 	if len(assetProcessingServices) > 0 {
 		assetStateService = assetProcessingServices[0].StateService
 		processingService = assetProcessingServices[0].ProcessingService
 		parsePreviewService = assetProcessingServices[0].ParsePreviewService
+		parseConfirmationService = assetProcessingServices[0].ParseConfirmationService
 		taskEnqueuer = assetProcessingServices[0].TaskEnqueuer
 	}
 	return &FileHandler{
-		fileService:         fileService,
-		fileFolderService:   fileFolderService,
-		accountService:      accountService,
-		tenantService:       tenantService,
-		enterpriseService:   enterpriseService,
-		assetStateService:   assetStateService,
-		processingService:   processingService,
-		parsePreviewService: parsePreviewService,
-		taskEnqueuer:        taskEnqueuer,
-		validator:           validator.New(),
+		fileService:              fileService,
+		fileFolderService:        fileFolderService,
+		accountService:           accountService,
+		tenantService:            tenantService,
+		enterpriseService:        enterpriseService,
+		assetStateService:        assetStateService,
+		processingService:        processingService,
+		parsePreviewService:      parsePreviewService,
+		parseConfirmationService: parseConfirmationService,
+		taskEnqueuer:             taskEnqueuer,
+		validator:                validator.New(),
 	}
 }
 
@@ -549,6 +563,200 @@ func (h *FileHandler) handleFileParsePreviewError(c *gin.Context, err error) {
 		logger.WarnContext(c.Request.Context(), "failed to get file parse preview", err)
 		h.businessError(c, response.ErrSystemError)
 	}
+}
+
+// ListParseConfirmationItems returns current confirmation items for a parsed file.
+// GET /files/:file_id/parse-confirmation-items
+func (h *FileHandler) ListParseConfirmationItems(c *gin.Context) {
+	if h.parseConfirmationService == nil {
+		h.businessErrorWithMessage(c, response.ErrSystemError, "file parse confirmation service is not available")
+		return
+	}
+	organizationID, uploadFile, ok := h.authorizeDocumentFile(c)
+	if !ok {
+		return
+	}
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	result, err := h.parseConfirmationService.ListCurrentConfirmationItems(c.Request.Context(), datalibraryservice.ParseConfirmationListInput{
+		OrganizationID: organizationID,
+		SourceFileID:   uploadFile.ID,
+		Status:         c.Query("status"),
+		Limit:          limit,
+		Offset:         offset,
+	})
+	if err != nil {
+		h.handleFileParseConfirmationError(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+// ResolveParseConfirmationItem applies keep/edit/ignore to one pending confirmation item.
+// POST /files/:file_id/parse-confirmation-items/:item_id/resolve
+func (h *FileHandler) ResolveParseConfirmationItem(c *gin.Context) {
+	if h.parseConfirmationService == nil {
+		h.businessErrorWithMessage(c, response.ErrSystemError, "file parse confirmation service is not available")
+		return
+	}
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		h.businessError(c, response.ErrUnauthorized)
+		return
+	}
+	organizationID, uploadFile, ok := h.authorizeDocumentFile(c)
+	if !ok {
+		return
+	}
+	itemID, err := uuid.Parse(c.Param("item_id"))
+	if err != nil || itemID == uuid.Nil {
+		h.businessError(c, response.ErrInvalidParams)
+		return
+	}
+	var req parseConfirmationResolveRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.businessError(c, response.ErrInvalidParams)
+		return
+	}
+	result, err := h.parseConfirmationService.ResolveCurrentConfirmationItem(c.Request.Context(), datalibraryservice.ParseConfirmationResolveInput{
+		OrganizationID: organizationID,
+		SourceFileID:   uploadFile.ID,
+		ItemID:         itemID,
+		Action:         strings.TrimSpace(req.Action),
+		FinalContent:   req.FinalContent,
+		UpdatedBy:      accountID,
+	})
+	if err != nil {
+		h.handleFileParseConfirmationError(c, err)
+		return
+	}
+	generationRequest, err := h.queueGenerateAfterConfirmationIfNeeded(c.Request.Context(), result.Asset, uploadFile.ID, organizationID, accountID, result.ShouldGenerate)
+	if err != nil {
+		h.handleFileParseConfirmationError(c, err)
+		return
+	}
+	response.Success(c, gin.H{
+		"item":               result.Item,
+		"pending_count":      result.PendingCount,
+		"should_generate":    result.ShouldGenerate,
+		"generation_request": generationRequest,
+	})
+}
+
+// BatchIgnoreParseConfirmationItems ignores selected pending confirmation items, or all pending items when item_ids is empty.
+// POST /files/:file_id/parse-confirmation-items/batch-ignore
+func (h *FileHandler) BatchIgnoreParseConfirmationItems(c *gin.Context) {
+	if h.parseConfirmationService == nil {
+		h.businessErrorWithMessage(c, response.ErrSystemError, "file parse confirmation service is not available")
+		return
+	}
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		h.businessError(c, response.ErrUnauthorized)
+		return
+	}
+	organizationID, uploadFile, ok := h.authorizeDocumentFile(c)
+	if !ok {
+		return
+	}
+	var req parseConfirmationBatchIgnoreRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.businessError(c, response.ErrInvalidParams)
+		return
+	}
+	itemIDs, err := parseUUIDList(req.ItemIDs)
+	if err != nil {
+		h.businessError(c, response.ErrInvalidParams)
+		return
+	}
+	result, err := h.parseConfirmationService.BatchIgnoreCurrentConfirmationItems(c.Request.Context(), datalibraryservice.ParseConfirmationBatchIgnoreInput{
+		OrganizationID: organizationID,
+		SourceFileID:   uploadFile.ID,
+		ItemIDs:        itemIDs,
+		UpdatedBy:      accountID,
+	})
+	if err != nil {
+		h.handleFileParseConfirmationError(c, err)
+		return
+	}
+	generationRequest, err := h.queueGenerateAfterConfirmationIfNeeded(c.Request.Context(), result.Asset, uploadFile.ID, organizationID, accountID, result.ShouldGenerate)
+	if err != nil {
+		h.handleFileParseConfirmationError(c, err)
+		return
+	}
+	response.Success(c, gin.H{
+		"items":              result.Items,
+		"resolved_count":     len(result.Items),
+		"pending_count":      result.PendingCount,
+		"should_generate":    result.ShouldGenerate,
+		"generation_request": generationRequest,
+	})
+}
+
+func (h *FileHandler) handleFileParseConfirmationError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, datalibraryservice.ErrDocumentAssetNotFound),
+		errors.Is(err, datalibraryservice.ErrParseConfirmationItemNotFound):
+		h.businessError(c, response.ErrNotFound)
+	case errors.Is(err, datalibraryservice.ErrOrganizationIDRequired),
+		errors.Is(err, datalibraryservice.ErrSourceFileIDRequired),
+		errors.Is(err, datalibraryservice.ErrProcessingRunMismatch),
+		errors.Is(err, datalibraryservice.ErrParseConfirmationStateInvalid),
+		errors.Is(err, datalibraryservice.ErrParseConfirmationActionInvalid),
+		errors.Is(err, datalibraryservice.ErrParseConfirmationFinalContentRequired):
+		h.businessErrorWithMessage(c, response.ErrInvalidParams, err.Error())
+	default:
+		logger.WarnContext(c.Request.Context(), "failed to update file parse confirmation", err)
+		h.businessError(c, response.ErrSystemError)
+	}
+}
+
+func (h *FileHandler) queueGenerateAfterConfirmationIfNeeded(ctx context.Context, asset *datalibrarymodel.DocumentAsset, uploadFileID string, organizationID string, accountID string, shouldGenerate bool) (*queuedFileProcessingRequest, error) {
+	if !shouldGenerate {
+		return nil, nil
+	}
+	return h.queueGenerateAfterConfirmRequest(ctx, asset, uploadFileID, organizationID, accountID, datalibrarymodel.DocumentProcessingLevelVectorize, false)
+}
+
+func (h *FileHandler) authorizeDocumentFile(c *gin.Context) (string, *dto.UploadFile, bool) {
+	organizationID := util.GetOrganizationID(c)
+	if organizationID == "" {
+		h.businessError(c, response.ErrInvalidTenantId)
+		return "", nil, false
+	}
+	fileID := c.Param("file_id")
+	if fileID == "" {
+		h.businessError(c, response.ErrFileIdRequired)
+		return "", nil, false
+	}
+	uploadFile, ok := h.getAuthorizedFileForDownload(c, fileID)
+	if !ok {
+		return "", nil, false
+	}
+	if uploadFile.IsTemporary || !model.IsDocumentExtension(strings.TrimPrefix(strings.ToLower(uploadFile.Extension), ".")) {
+		h.businessError(c, response.ErrUnsupportedFileType)
+		return "", nil, false
+	}
+	return organizationID, uploadFile, true
+}
+
+func parseUUIDList(raw []string) ([]uuid.UUID, error) {
+	ids := make([]uuid.UUID, 0, len(raw))
+	for _, value := range raw {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		id, err := uuid.Parse(value)
+		if err != nil || id == uuid.Nil {
+			if err != nil {
+				return nil, err
+			}
+			return nil, errors.New("uuid is nil")
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
 
 func (h *FileHandler) handleFileProcessingRequestError(c *gin.Context, err error) {

@@ -20,12 +20,15 @@ type ParseConfirmationItemListFilter struct {
 }
 
 type ParseConfirmationItemResolvePatch struct {
-	OrganizationID string
-	Status         string
-	FinalContent   *string
-	UpdatedBy      string
-	ResolvedAt     *time.Time
-	AllowedFrom    []string
+	OrganizationID  string
+	AssetID         uuid.UUID
+	ProcessingRunID uuid.UUID
+	GenerationNo    *int64
+	Status          string
+	FinalContent    *string
+	UpdatedBy       string
+	ResolvedAt      *time.Time
+	AllowedFrom     []string
 }
 
 type ParseConfirmationItemRepository interface {
@@ -148,6 +151,15 @@ func (r *parseConfirmationItemRepository) Resolve(ctx context.Context, id uuid.U
 	if patch.OrganizationID != "" {
 		query = query.Where("organization_id = ?", patch.OrganizationID)
 	}
+	if patch.AssetID != uuid.Nil {
+		query = query.Where("asset_id = ?", patch.AssetID)
+	}
+	if patch.ProcessingRunID != uuid.Nil {
+		query = query.Where("processing_run_id = ?", patch.ProcessingRunID)
+	}
+	if patch.GenerationNo != nil {
+		query = query.Where("generation_no = ?", *patch.GenerationNo)
+	}
 	if len(patch.AllowedFrom) > 0 {
 		query = query.Where("status IN ?", patch.AllowedFrom)
 	}
@@ -156,7 +168,7 @@ func (r *parseConfirmationItemRepository) Resolve(ctx context.Context, id uuid.U
 		return nil, result.Error
 	}
 	if result.RowsAffected == 0 {
-		return r.GetByID(ctx, id)
+		return nil, nil
 	}
 	return r.GetByID(ctx, id)
 }
