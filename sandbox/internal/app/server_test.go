@@ -169,6 +169,25 @@ func TestWriteKnownErrorMapsQueueTimeout(t *testing.T) {
 	}
 }
 
+func TestWriteKnownErrorMapsCancellation(t *testing.T) {
+	rr := httptest.NewRecorder()
+
+	writeKnownError(rr, &runner.CancellationError{Phase: "execution"})
+
+	if rr.Code != 499 {
+		t.Fatalf("expected 499, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"code":-499`) {
+		t.Fatalf("expected cancellation code, got %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"error_type":"execution_canceled"`) {
+		t.Fatalf("expected cancellation details, got %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"phase":"execution"`) {
+		t.Fatalf("expected cancellation phase, got %s", rr.Body.String())
+	}
+}
+
 func TestUploadFileRejectsOversizedRequestBody(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.MaxFileSizeKB = 1

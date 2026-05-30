@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -122,6 +123,89 @@ func TestCommandReturnsQueueTimeoutWhenWorkersAreBusy(t *testing.T) {
 	}
 }
 
+func TestRunReturnsCancellationWhenQueuedContextIsCanceled(t *testing.T) {
+	service := NewServiceWithOptions(Options{
+		MaxWorkers:   1,
+		Timeout:      2 * time.Second,
+		QueueTimeout: time.Second,
+		OutputCap:    4096,
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := service.Run(context.Background(), Request{
+			Language: "python3",
+			Code:     "import time; time.sleep(0.3)",
+		})
+		done <- err
+	}()
+	waitForBusyWorker(t, service)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := service.Run(ctx, Request{
+		Language: "python3",
+		Code:     "print('queued')",
+	})
+	if err == nil {
+		t.Fatal("expected cancellation error")
+	}
+	var cancelErr *CancellationError
+	if !errors.As(err, &cancelErr) {
+		t.Fatalf("expected CancellationError, got %T %v", err, err)
+	}
+	if cancelErr.Phase != "queue" {
+		t.Fatalf("expected queue phase, got %q", cancelErr.Phase)
+	}
+
+	if err := <-done; err != nil {
+		t.Fatalf("expected first run to complete, got %v", err)
+	}
+}
+
+func TestCommandCancellationKillsShellChildren(t *testing.T) {
+	service := NewService(1, 2*time.Second, 4096)
+	workDir := t.TempDir()
+	pidFile := filepath.Join(workDir, "child.pid")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := service.ExecuteCommandSpec(ctx, CommandSpec{
+			WorkDir:        workDir,
+			Command:        "sleep 20 & echo $! > child.pid; wait",
+			Timeout:        time.Second,
+			StdoutLimit:    4096,
+			StderrLimit:    4096,
+			AllowShellForm: true,
+		})
+		done <- err
+	}()
+
+	childPID := waitForChildPID(t, pidFile)
+	cancel()
+
+	err := <-done
+	if err == nil {
+		t.Fatal("expected cancellation error")
+	}
+	var cancelErr *CancellationError
+	if !errors.As(err, &cancelErr) {
+		t.Fatalf("expected CancellationError, got %T %v", err, err)
+	}
+	if cancelErr.Phase != "execution" {
+		t.Fatalf("expected execution phase, got %q", cancelErr.Phase)
+	}
+
+	for i := 0; i < 20; i++ {
+		if !processExists(childPID) {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("expected child process %d to be killed with the shell process group", childPID)
+}
+
 func waitForBusyWorker(t *testing.T, service *Service) {
 	t.Helper()
 
@@ -133,6 +217,25 @@ func waitForBusyWorker(t *testing.T, service *Service) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("expected worker to become busy")
+}
+
+func waitForChildPID(t *testing.T, path string) int {
+	t.Helper()
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		rawPID, err := os.ReadFile(path)
+		if err == nil {
+			childPID, err := strconv.Atoi(strings.TrimSpace(string(rawPID)))
+			if err != nil {
+				t.Fatalf("parse child pid: %v", err)
+			}
+			return childPID
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("expected child pid file %s", path)
+	return 0
 }
 
 func TestSafeBaseEnvDropsDangerousKeys(t *testing.T) {

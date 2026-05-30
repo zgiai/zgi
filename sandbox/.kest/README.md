@@ -46,3 +46,7 @@ Kest also prints debug blocks for expected non-2xx responses in rejection tests.
 That is useful while debugging, but noisy for security flows where `400` is the
 passing result. A quieter mode for expected failure assertions would improve the
 test experience.
+
+Request cancellation is covered by Go tests rather than Kest flows because the
+current CLI flow runner does not provide a first-class way to open an HTTP
+request and abort the client connection while the server is still executing it.

@@ -77,6 +77,10 @@ type QueueTimeoutError struct {
 	TimeoutMS int64 `json:"timeout_ms"`
 }
 
+type CancellationError struct {
+	Phase string `json:"phase"`
+}
+
 func (e *QueueTimeoutError) Error() string {
 	if e == nil {
 		return ""
@@ -93,6 +97,35 @@ func (e *QueueTimeoutError) ResponseDetails() map[string]any {
 		"code":       "execution_queue_timeout",
 		"limit":      "queue_timeout_ms",
 		"maximum":    e.TimeoutMS,
+	}
+}
+
+func (e *CancellationError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if e.Phase == "" {
+		return "execution canceled"
+	}
+	return fmt.Sprintf("execution canceled during %s", e.Phase)
+}
+
+func (e *CancellationError) Unwrap() error {
+	return context.Canceled
+}
+
+func (e *CancellationError) ResponseDetails() map[string]any {
+	if e == nil {
+		return nil
+	}
+	phase := e.Phase
+	if phase == "" {
+		phase = "execution"
+	}
+	return map[string]any{
+		"error_type": "execution_canceled",
+		"code":       "request_canceled",
+		"phase":      phase,
 	}
 }
 
@@ -200,7 +233,7 @@ func (s *Service) run(parent context.Context, req Request, workDir string, ephem
 
 	result, err := s.backend.Run(parent, req, workDir, ephemeral, timeout, stdoutLimit, stderrLimit)
 	if err != nil {
-		return Result{}, err
+		return Result{}, normalizeCancellation(err, "execution")
 	}
 	result.Backend = s.backend.Name()
 	return result, nil
@@ -244,7 +277,7 @@ func (s *Service) ExecuteCommandSpec(parent context.Context, spec CommandSpec) (
 
 	result, err := s.backend.ExecuteCommand(parent, spec)
 	if err != nil {
-		return CommandResult{}, err
+		return CommandResult{}, normalizeCancellation(err, "execution")
 	}
 	result.Backend = s.backend.Name()
 	return result, nil
@@ -260,8 +293,15 @@ func (s *Service) acquire(parent context.Context) (func(), error) {
 	case <-timer.C:
 		return nil, &QueueTimeoutError{TimeoutMS: s.queueTimeout.Milliseconds()}
 	case <-parent.Done():
-		return nil, parent.Err()
+		return nil, normalizeCancellation(parent.Err(), "queue")
 	}
+}
+
+func normalizeCancellation(err error, phase string) error {
+	if errors.Is(err, context.Canceled) {
+		return &CancellationError{Phase: phase}
+	}
+	return err
 }
 
 func languageSpec(language string) (runtimeSpec, error) {

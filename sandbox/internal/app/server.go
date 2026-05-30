@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -28,6 +29,8 @@ import (
 
 //go:embed web/*
 var webFS embed.FS
+
+const statusClientClosedRequest = 499
 
 type Server struct {
 	config    config.Config
@@ -169,7 +172,7 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 
 	result, err := s.runner.Run(r.Context(), req)
 	if err != nil {
-		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, err.Error(), nil)
+		writeKnownError(w, err)
 		return
 	}
 
@@ -746,6 +749,7 @@ func writeKnownError(w http.ResponseWriter, err error) {
 	var data any
 	var limitErr *policy.LimitError
 	var queueErr *runner.QueueTimeoutError
+	var cancelErr *runner.CancellationError
 	switch {
 	case errors.As(err, &limitErr):
 		status = http.StatusTooManyRequests
@@ -755,6 +759,14 @@ func writeKnownError(w http.ResponseWriter, err error) {
 		status = http.StatusTooManyRequests
 		code = -429
 		data = queueErr.ResponseDetails()
+	case errors.As(err, &cancelErr):
+		status = statusClientClosedRequest
+		code = -499
+		data = cancelErr.ResponseDetails()
+	case errors.Is(err, context.Canceled):
+		status = statusClientClosedRequest
+		code = -499
+		data = (&runner.CancellationError{Phase: "request"}).ResponseDetails()
 	case errors.Is(err, strconv.ErrSyntax):
 		status = http.StatusBadRequest
 	case strings.Contains(err.Error(), "not found"):
