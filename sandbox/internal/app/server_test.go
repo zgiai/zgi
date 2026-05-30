@@ -27,6 +27,12 @@ func TestHealthEndpoint(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
+	if !strings.Contains(rr.Body.String(), `"runtime_backend":"preview-process"`) {
+		t.Fatalf("expected normalized runtime backend in health, got %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"network_policy_enforced":false`) {
+		t.Fatalf("expected network enforcement flag in health, got %s", rr.Body.String())
+	}
 }
 
 func TestRunEndpoint(t *testing.T) {
@@ -52,6 +58,26 @@ func TestRunEndpoint(t *testing.T) {
 
 	if payload["message"] != "success" {
 		t.Fatalf("expected success message, got %#v", payload["message"])
+	}
+}
+
+func TestRunEndpointRejectsPreviewNetworkRequest(t *testing.T) {
+	server, err := NewServer(testConfig(t))
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/sandbox/run", strings.NewReader(`{"language":"python3","code":"print('blocked')","enable_network":true}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "does not enforce network policy") {
+		t.Fatalf("expected network enforcement error, got %s", rr.Body.String())
 	}
 }
 

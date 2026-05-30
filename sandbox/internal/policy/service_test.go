@@ -11,6 +11,7 @@ import (
 func TestNormalizeCreateClampsTTLAndRejectsDeniedNetwork(t *testing.T) {
 	cfg := config.FromEnv()
 	cfg.SessionTTL = 120
+	cfg.RuntimeBackend = "linux-secure"
 	service := NewService(cfg)
 
 	decision, err := service.NormalizeCreate("session", 999, false, "", "stdlib", 0)
@@ -23,6 +24,45 @@ func TestNormalizeCreateClampsTTLAndRejectsDeniedNetwork(t *testing.T) {
 
 	if _, err := service.NormalizeCreate("session", 60, true, "deny-by-default", "stdlib", 0); err == nil {
 		t.Fatal("expected denied network policy to reject outbound access")
+	}
+}
+
+func TestNormalizeCreateRejectsNetworkWhenBackendCannotEnforcePolicy(t *testing.T) {
+	cfg := config.FromEnv()
+	cfg.RuntimeBackend = "preview"
+	service := NewService(cfg)
+
+	if _, err := service.NormalizeCreate("session", 60, true, "workflow-safe", "stdlib", 0); err == nil {
+		t.Fatal("expected preview backend to reject network-enabled sandbox")
+	}
+}
+
+func TestNetworkPolicySurfaceReportsBackendEnforcement(t *testing.T) {
+	previewCfg := config.FromEnv()
+	previewCfg.RuntimeBackend = "preview"
+	preview := NewService(previewCfg)
+	if preview.RuntimeBackend() != "preview-process" {
+		t.Fatalf("expected normalized preview backend, got %s", preview.RuntimeBackend())
+	}
+	if preview.NetworkPolicyEnforced() {
+		t.Fatal("expected preview backend to report network policy as not runtime-enforced")
+	}
+	previewSnapshot := preview.Snapshot()
+	previewLimits := previewSnapshot["limits"].(map[string]any)
+	if previewLimits["network_policy_enforced"] != false {
+		t.Fatalf("expected preview snapshot to report network_policy_enforced=false, got %#v", previewLimits["network_policy_enforced"])
+	}
+
+	secureCfg := config.FromEnv()
+	secureCfg.RuntimeBackend = "linux-secure"
+	secure := NewService(secureCfg)
+	if !secure.NetworkPolicyEnforced() {
+		t.Fatal("expected linux-secure backend to report runtime network enforcement")
+	}
+	secureSnapshot := secure.Snapshot()
+	secureLimits := secureSnapshot["limits"].(map[string]any)
+	if secureLimits["network_policy_enforced"] != true {
+		t.Fatalf("expected secure snapshot to report network_policy_enforced=true, got %#v", secureLimits["network_policy_enforced"])
 	}
 }
 

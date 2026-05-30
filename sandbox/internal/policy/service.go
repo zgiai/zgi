@@ -132,7 +132,8 @@ func (s *Service) Snapshot() map[string]any {
 			"max_command_timeout_secs":  s.config.CommandTimeout,
 			"max_file_size_kb":          s.config.MaxFileSizeKB,
 			"max_compat_ttl_secs":       300,
-			"network_policy_enforced":   true,
+			"network_policy_enforced":   s.runtimeBackendEnforcesNetworkPolicy(),
+			"runtime_backend":           s.normalizedRuntimeBackend(),
 			"dependency_updates_locked": true,
 		},
 	}
@@ -177,6 +178,9 @@ func (s *Service) NormalizeCreate(profile string, ttlSeconds int, networkEnabled
 
 	if networkEnabled && !s.networkPolicyAllowsEgress(policyName) {
 		return CreateDecision{}, errors.New("the selected network policy does not allow outbound network access")
+	}
+	if networkEnabled && !s.runtimeBackendEnforcesNetworkPolicy() {
+		return CreateDecision{}, fmt.Errorf("runtime backend %q does not enforce network policy", s.normalizedRuntimeBackend())
 	}
 
 	return CreateDecision{
@@ -264,6 +268,14 @@ func (s *Service) NormalizeCommandLimits(profile string, timeoutSeconds int, tim
 
 func (s *Service) MaxFileSizeBytes() int64 {
 	return int64(s.config.MaxFileSizeKB) * 1024
+}
+
+func (s *Service) RuntimeBackend() string {
+	return s.normalizedRuntimeBackend()
+}
+
+func (s *Service) NetworkPolicyEnforced() bool {
+	return s.runtimeBackendEnforcesNetworkPolicy()
 }
 
 func (s *Service) commandProfileSnapshot() []map[string]any {
@@ -365,6 +377,26 @@ func (s *Service) networkPolicyAllowsEgress(policyName string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func (s *Service) runtimeBackendEnforcesNetworkPolicy() bool {
+	switch s.normalizedRuntimeBackend() {
+	case "linux-secure":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Service) normalizedRuntimeBackend() string {
+	switch strings.ToLower(strings.TrimSpace(s.config.RuntimeBackend)) {
+	case "", "preview", "process", "preview-process":
+		return "preview-process"
+	case "linux-secure":
+		return "linux-secure"
+	default:
+		return strings.ToLower(strings.TrimSpace(s.config.RuntimeBackend))
 	}
 }
 

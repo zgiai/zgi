@@ -6,6 +6,57 @@
 ```
 
 ```step
+@id policy-surface
+@name Inspect preview network enforcement surface
+
+GET {{base_url}}/v1/policies
+
+[Asserts]
+status == 200
+code == 0
+data.limits.runtime_backend == "preview-process"
+data.limits.network_policy_enforced == false
+```
+
+```step
+@id reject-preview-network-sandbox
+@name Reject network-enabled sandbox on preview backend
+
+POST {{base_url}}/v1/sandboxes
+Content-Type: application/json
+
+{
+  "runtime_profile": "session",
+  "ttl_seconds": 120,
+  "dependency_profile": "stdlib",
+  "network_enabled": true,
+  "network_policy": "workflow-safe"
+}
+
+[Asserts]
+status == 400
+code == -400
+```
+
+```step
+@id reject-preview-network-run
+@name Reject stateless network run on preview backend
+
+POST {{base_url}}/v1/sandbox/run
+Content-Type: application/json
+
+{
+  "language": "python3",
+  "code": "print('blocked')",
+  "enable_network": true
+}
+
+[Asserts]
+status == 400
+code == -400
+```
+
+```step
 @id create-sandbox
 @name Create sandbox
 

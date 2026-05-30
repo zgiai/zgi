@@ -123,11 +123,12 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status":          "ok",
-		"service":         "zgi-sandbox",
-		"version":         "session-v2",
-		"worker_id":       s.config.WorkerID,
-		"runtime_backend": s.config.RuntimeBackend,
+		"status":                  "ok",
+		"service":                 "zgi-sandbox",
+		"version":                 "session-v2",
+		"worker_id":               s.config.WorkerID,
+		"runtime_backend":         s.policy.RuntimeBackend(),
+		"network_policy_enforced": s.policy.NetworkPolicyEnforced(),
 	})
 }
 
@@ -153,6 +154,10 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, s.maxExecutionRequestBytes())
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeDecodeError(w, err)
+		return
+	}
+	if req.EnableNetwork && !s.policy.NetworkPolicyEnforced() {
+		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, fmt.Sprintf("runtime backend %q does not enforce network policy", s.policy.RuntimeBackend()), nil)
 		return
 	}
 
