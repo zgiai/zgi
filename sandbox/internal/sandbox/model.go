@@ -42,6 +42,7 @@ type ResourceLimits struct {
 	NetworkPolicyEnforced      bool   `json:"network_policy_enforced"`
 	MaxWorkers                 int    `json:"max_workers"`
 	MaxActiveSandboxes         int    `json:"max_active_sandboxes"`
+	QueueTimeoutMS             int    `json:"queue_timeout_ms"`
 	DefaultTimeoutSeconds      int    `json:"default_timeout"`
 	DefaultExecutionTimeoutMS  int64  `json:"default_execution_timeout_ms"`
 	OutputLimitKB              int    `json:"output_limit_kb"`

@@ -43,6 +43,98 @@ func TestRunUnsupportedLanguage(t *testing.T) {
 	}
 }
 
+func TestRunReturnsQueueTimeoutWhenWorkersAreBusy(t *testing.T) {
+	service := NewServiceWithOptions(Options{
+		MaxWorkers:   1,
+		Timeout:      2 * time.Second,
+		QueueTimeout: 50 * time.Millisecond,
+		OutputCap:    4096,
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := service.Run(context.Background(), Request{
+			Language: "python3",
+			Code:     "import time; time.sleep(0.3)",
+		})
+		done <- err
+	}()
+	waitForBusyWorker(t, service)
+
+	_, err := service.Run(context.Background(), Request{
+		Language: "python3",
+		Code:     "print('queued')",
+	})
+	if err == nil {
+		t.Fatal("expected queue timeout")
+	}
+	if _, ok := err.(*QueueTimeoutError); !ok {
+		t.Fatalf("expected QueueTimeoutError, got %T %v", err, err)
+	}
+
+	if err := <-done; err != nil {
+		t.Fatalf("expected first run to complete, got %v", err)
+	}
+}
+
+func TestCommandReturnsQueueTimeoutWhenWorkersAreBusy(t *testing.T) {
+	service := NewServiceWithOptions(Options{
+		MaxWorkers:   1,
+		Timeout:      2 * time.Second,
+		QueueTimeout: 50 * time.Millisecond,
+		OutputCap:    4096,
+	})
+	workDir := t.TempDir()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := service.ExecuteCommandSpec(context.Background(), CommandSpec{
+			WorkDir:        workDir,
+			Command:        "python3",
+			Args:           []string{"-c", "import time; time.sleep(0.3)"},
+			Timeout:        time.Second,
+			StdoutLimit:    4096,
+			StderrLimit:    4096,
+			AllowShellForm: false,
+		})
+		done <- err
+	}()
+	waitForBusyWorker(t, service)
+
+	_, err := service.ExecuteCommandSpec(context.Background(), CommandSpec{
+		WorkDir:        workDir,
+		Command:        "python3",
+		Args:           []string{"-c", "print('queued')"},
+		Timeout:        time.Second,
+		StdoutLimit:    4096,
+		StderrLimit:    4096,
+		AllowShellForm: false,
+	})
+	if err == nil {
+		t.Fatal("expected queue timeout")
+	}
+	if _, ok := err.(*QueueTimeoutError); !ok {
+		t.Fatalf("expected QueueTimeoutError, got %T %v", err, err)
+	}
+
+	if err := <-done; err != nil {
+		t.Fatalf("expected first command to complete, got %v", err)
+	}
+}
+
+func waitForBusyWorker(t *testing.T, service *Service) {
+	t.Helper()
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if len(service.semaphore) > 0 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("expected worker to become busy")
+}
+
 func TestSafeBaseEnvDropsDangerousKeys(t *testing.T) {
 	env := safeBaseEnv([]string{
 		"PATH=/usr/bin",

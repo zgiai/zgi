@@ -744,11 +744,16 @@ func writeKnownError(w http.ResponseWriter, err error) {
 	code := -400
 	var data any
 	var limitErr *policy.LimitError
+	var queueErr *runner.QueueTimeoutError
 	switch {
 	case errors.As(err, &limitErr):
 		status = http.StatusTooManyRequests
 		code = -429
 		data = limitErr.ResponseDetails()
+	case errors.As(err, &queueErr):
+		status = http.StatusTooManyRequests
+		code = -429
+		data = queueErr.ResponseDetails()
 	case errors.Is(err, strconv.ErrSyntax):
 		status = http.StatusBadRequest
 	case strings.Contains(err.Error(), "not found"):

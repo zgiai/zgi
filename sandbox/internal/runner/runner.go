@@ -15,10 +15,11 @@ import (
 )
 
 type Service struct {
-	semaphore chan struct{}
-	timeout   time.Duration
-	outputCap int
-	backend   backend
+	semaphore    chan struct{}
+	timeout      time.Duration
+	queueTimeout time.Duration
+	outputCap    int
+	backend      backend
 }
 
 type Request struct {
@@ -65,10 +66,34 @@ type CommandSpec struct {
 }
 
 type Options struct {
-	MaxWorkers int
-	Timeout    time.Duration
-	OutputCap  int
-	Backend    backend
+	MaxWorkers   int
+	Timeout      time.Duration
+	QueueTimeout time.Duration
+	OutputCap    int
+	Backend      backend
+}
+
+type QueueTimeoutError struct {
+	TimeoutMS int64 `json:"timeout_ms"`
+}
+
+func (e *QueueTimeoutError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return fmt.Sprintf("execution queue wait timed out after %d ms", e.TimeoutMS)
+}
+
+func (e *QueueTimeoutError) ResponseDetails() map[string]any {
+	if e == nil {
+		return nil
+	}
+	return map[string]any{
+		"error_type": "limit_exceeded",
+		"code":       "execution_queue_timeout",
+		"limit":      "queue_timeout_ms",
+		"maximum":    e.TimeoutMS,
+	}
 }
 
 type runtimeSpec struct {
@@ -102,15 +127,19 @@ func NewServiceWithOptions(options Options) *Service {
 	if options.Timeout <= 0 {
 		options.Timeout = 5 * time.Second
 	}
+	if options.QueueTimeout <= 0 {
+		options.QueueTimeout = 5 * time.Second
+	}
 	if options.Backend == nil {
 		options.Backend = newProcessBackend()
 	}
 
 	return &Service{
-		semaphore: make(chan struct{}, options.MaxWorkers),
-		timeout:   options.Timeout,
-		outputCap: options.OutputCap,
-		backend:   options.Backend,
+		semaphore:    make(chan struct{}, options.MaxWorkers),
+		timeout:      options.Timeout,
+		queueTimeout: options.QueueTimeout,
+		outputCap:    options.OutputCap,
+		backend:      options.Backend,
 	}
 }
 
@@ -121,10 +150,11 @@ func NewServiceFromConfig(cfg config.Config) (*Service, error) {
 	}
 
 	return NewServiceWithOptions(Options{
-		MaxWorkers: cfg.MaxWorkers,
-		Timeout:    time.Duration(cfg.TimeoutSeconds) * time.Second,
-		OutputCap:  cfg.OutputLimitKB * 1024,
-		Backend:    backend,
+		MaxWorkers:   cfg.MaxWorkers,
+		Timeout:      time.Duration(cfg.TimeoutSeconds) * time.Second,
+		QueueTimeout: time.Duration(cfg.QueueTimeoutMS) * time.Millisecond,
+		OutputCap:    cfg.OutputLimitKB * 1024,
+		Backend:      backend,
 	}), nil
 }
 
@@ -152,12 +182,11 @@ func (s *Service) run(parent context.Context, req Request, workDir string, ephem
 		return Result{}, err
 	}
 
-	select {
-	case s.semaphore <- struct{}{}:
-		defer func() { <-s.semaphore }()
-	case <-parent.Done():
-		return Result{}, parent.Err()
+	release, err := s.acquire(parent)
+	if err != nil {
+		return Result{}, err
 	}
+	defer release()
 
 	if timeout <= 0 {
 		timeout = s.timeout
@@ -197,12 +226,11 @@ func (s *Service) ExecuteCommandSpec(parent context.Context, spec CommandSpec) (
 		return CommandResult{}, errors.New("working directory is required")
 	}
 
-	select {
-	case s.semaphore <- struct{}{}:
-		defer func() { <-s.semaphore }()
-	case <-parent.Done():
-		return CommandResult{}, parent.Err()
+	release, err := s.acquire(parent)
+	if err != nil {
+		return CommandResult{}, err
 	}
+	defer release()
 
 	if spec.Timeout <= 0 {
 		spec.Timeout = s.timeout
@@ -220,6 +248,20 @@ func (s *Service) ExecuteCommandSpec(parent context.Context, spec CommandSpec) (
 	}
 	result.Backend = s.backend.Name()
 	return result, nil
+}
+
+func (s *Service) acquire(parent context.Context) (func(), error) {
+	timer := time.NewTimer(s.queueTimeout)
+	defer timer.Stop()
+
+	select {
+	case s.semaphore <- struct{}{}:
+		return func() { <-s.semaphore }, nil
+	case <-timer.C:
+		return nil, &QueueTimeoutError{TimeoutMS: s.queueTimeout.Milliseconds()}
+	case <-parent.Done():
+		return nil, parent.Err()
+	}
 }
 
 func languageSpec(language string) (runtimeSpec, error) {

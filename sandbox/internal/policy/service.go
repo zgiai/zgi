@@ -311,6 +311,7 @@ func (s *Service) EffectiveLimits() sandbox.ResourceLimits {
 		NetworkPolicyEnforced:      s.runtimeBackendEnforcesNetworkPolicy(),
 		MaxWorkers:                 s.config.MaxWorkers,
 		MaxActiveSandboxes:         s.config.MaxActive,
+		QueueTimeoutMS:             s.config.QueueTimeoutMS,
 		DefaultTimeoutSeconds:      s.config.TimeoutSeconds,
 		DefaultExecutionTimeoutMS:  int64(s.config.TimeoutSeconds) * 1000,
 		OutputLimitKB:              s.config.OutputLimitKB,

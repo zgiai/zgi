@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/zgiai/zgi-sandbox/internal/config"
+	"github.com/zgiai/zgi-sandbox/internal/runner"
 	"github.com/zgiai/zgi-sandbox/internal/testutil"
 )
 
@@ -149,6 +150,19 @@ func TestSandboxCreateReturnsStructuredLimitError(t *testing.T) {
 	}
 	if !strings.Contains(secondRes.Body.String(), `"limit":"max_active_sandboxes"`) {
 		t.Fatalf("expected max active limit details, got %s", secondRes.Body.String())
+	}
+}
+
+func TestWriteKnownErrorMapsQueueTimeout(t *testing.T) {
+	rr := httptest.NewRecorder()
+
+	writeKnownError(rr, &runner.QueueTimeoutError{TimeoutMS: 50})
+
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"code":"execution_queue_timeout"`) {
+		t.Fatalf("expected queue timeout details, got %s", rr.Body.String())
 	}
 }
 

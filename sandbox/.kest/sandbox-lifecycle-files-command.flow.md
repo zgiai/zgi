@@ -30,6 +30,7 @@ data.limits.runtime_backend == "preview-process"
 data.limits.network_policy_enforced == false
 data.limits.max_archive_files == 256
 data.limits.max_active_sandboxes == 6
+data.limits.queue_timeout_ms == 5000
 data.limits.output_limit_kb == 1024
 data.limits.max_file_size_kb == 256
 ```
@@ -69,6 +70,7 @@ code == 0
 data.effective_limits.runtime_backend == "preview-process"
 data.effective_limits.max_archive_files == 256
 data.effective_limits.max_active_sandboxes == 6
+data.effective_limits.queue_timeout_ms == 5000
 ```
 
 ```step

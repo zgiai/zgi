@@ -16,6 +16,7 @@ status == 200
 code == 0
 data.limits.max_active_sandboxes == 6
 data.limits.max_archive_files == 256
+data.limits.queue_timeout_ms == 5000
 data.limits.workspace_byte_limit_enforced == false
 ```
 

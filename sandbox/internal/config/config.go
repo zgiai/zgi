@@ -14,6 +14,7 @@ type Config struct {
 	TimeoutSeconds int
 	OutputLimitKB  int
 	MaxActive      int
+	QueueTimeoutMS int
 	SessionTTL     int
 	InteractiveTTL int
 	CommandTimeout int
@@ -46,6 +47,7 @@ func FromEnv() Config {
 		TimeoutSeconds: getEnvInt("ZGI_SANDBOX_LITE_WORKER_TIMEOUT", 5),
 		OutputLimitKB:  getEnvInt("ZGI_SANDBOX_OUTPUT_LIMIT_KB", 1024),
 		MaxActive:      getEnvInt("ZGI_SANDBOX_MAX_ACTIVE", 6),
+		QueueTimeoutMS: getEnvInt("ZGI_SANDBOX_QUEUE_TIMEOUT_MS", 5000),
 		SessionTTL:     getEnvInt("ZGI_SANDBOX_SESSION_TTL_SECONDS", 1800),
 		InteractiveTTL: getEnvInt("ZGI_SANDBOX_INTERACTIVE_TTL_SECONDS", 3600),
 		CommandTimeout: getEnvInt("ZGI_SANDBOX_COMMAND_TIMEOUT_SECONDS", 30),
