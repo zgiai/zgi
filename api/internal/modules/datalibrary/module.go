@@ -9,28 +9,29 @@ import (
 )
 
 type Module struct {
-	DocumentAssetRepo          repository.DocumentAssetRepository
-	ReuseEventRepo             repository.ReuseEventRepository
-	ProcessingRequestRepo      repository.ProcessingRequestRepository
-	ParseConfirmationItemRepo  repository.ParseConfirmationItemRepository
-	DocumentChunkRepo          repository.DocumentChunkRepository
-	DocumentChunkEmbeddingRepo repository.DocumentChunkEmbeddingRepository
-	VectorArtifactRepo         repository.VectorArtifactRepository
-	ExtractionArtifactRepo     repository.ExtractionArtifactRepository
-	KnowledgeBaseAssetRefRepo  repository.KnowledgeBaseAssetRefRepository
-	DatabaseAssetRefRepo       repository.DatabaseAssetRefRepository
-	DocumentAssetService       service.DocumentAssetService
-	ProcessingRequestService   service.ProcessingRequestService
-	ProcessingExecutorRegistry *service.ProcessingExecutorRegistry
-	VectorArtifactService      service.VectorArtifactService
-	ExtractionArtifactService  service.ExtractionArtifactService
-	FileAssetSyncService       service.FileAssetSyncService
-	KnowledgeBaseRefService    service.KnowledgeBaseAssetRefService
-	DatabaseRefService         service.DatabaseAssetRefService
-	DocumentAssetHandler       *handler.DocumentAssetHandler
-	VectorArtifactHandler      *handler.VectorArtifactHandler
-	ExtractionArtifactHandler  *handler.ExtractionArtifactHandler
-	ProcessingExecutorHandler  *handler.ProcessingExecutorHandler
+	DocumentAssetRepo               repository.DocumentAssetRepository
+	ReuseEventRepo                  repository.ReuseEventRepository
+	ProcessingRequestRepo           repository.ProcessingRequestRepository
+	ParseConfirmationItemRepo       repository.ParseConfirmationItemRepository
+	DocumentChunkRepo               repository.DocumentChunkRepository
+	DocumentChunkEmbeddingRepo      repository.DocumentChunkEmbeddingRepository
+	VectorArtifactRepo              repository.VectorArtifactRepository
+	ExtractionArtifactRepo          repository.ExtractionArtifactRepository
+	KnowledgeBaseAssetRefRepo       repository.KnowledgeBaseAssetRefRepository
+	DatabaseAssetRefRepo            repository.DatabaseAssetRefRepository
+	DocumentAssetService            service.DocumentAssetService
+	ProcessingRequestService        service.ProcessingRequestService
+	FileAssetProcessingStateService service.FileAssetProcessingStateService
+	ProcessingExecutorRegistry      *service.ProcessingExecutorRegistry
+	VectorArtifactService           service.VectorArtifactService
+	ExtractionArtifactService       service.ExtractionArtifactService
+	FileAssetSyncService            service.FileAssetSyncService
+	KnowledgeBaseRefService         service.KnowledgeBaseAssetRefService
+	DatabaseRefService              service.DatabaseAssetRefService
+	DocumentAssetHandler            *handler.DocumentAssetHandler
+	VectorArtifactHandler           *handler.VectorArtifactHandler
+	ExtractionArtifactHandler       *handler.ExtractionArtifactHandler
+	ProcessingExecutorHandler       *handler.ProcessingExecutorHandler
 }
 
 func NewModule(db *gorm.DB) *Module {
@@ -47,6 +48,7 @@ func NewModule(db *gorm.DB) *Module {
 	fileRepo := fileRepository.NewFileRepository(db)
 	documentAssetService := service.NewDocumentAssetServiceWithDownstreamRefs(documentAssetRepo, reuseEventRepo, processingRequestRepo, vectorArtifactRepo, knowledgeBaseAssetRefRepo, databaseAssetRefRepo, extractionArtifactRepo)
 	processingRequestService := service.NewProcessingRequestService(processingRequestRepo)
+	fileAssetProcessingStateService := service.NewFileAssetProcessingStateService(documentAssetRepo, processingRequestRepo)
 	processingExecutorRegistry := service.NewDefaultProcessingExecutorRegistry()
 	vectorArtifactService := service.NewVectorArtifactService(vectorArtifactRepo)
 	extractionArtifactService := service.NewExtractionArtifactService(extractionArtifactRepo)
@@ -55,27 +57,28 @@ func NewModule(db *gorm.DB) *Module {
 	databaseRefService := service.NewDatabaseAssetRefService(databaseAssetRefRepo, reuseEventRepo)
 
 	return &Module{
-		DocumentAssetRepo:          documentAssetRepo,
-		ReuseEventRepo:             reuseEventRepo,
-		ProcessingRequestRepo:      processingRequestRepo,
-		ParseConfirmationItemRepo:  parseConfirmationItemRepo,
-		DocumentChunkRepo:          documentChunkRepo,
-		DocumentChunkEmbeddingRepo: documentChunkEmbeddingRepo,
-		VectorArtifactRepo:         vectorArtifactRepo,
-		ExtractionArtifactRepo:     extractionArtifactRepo,
-		KnowledgeBaseAssetRefRepo:  knowledgeBaseAssetRefRepo,
-		DatabaseAssetRefRepo:       databaseAssetRefRepo,
-		DocumentAssetService:       documentAssetService,
-		ProcessingRequestService:   processingRequestService,
-		ProcessingExecutorRegistry: processingExecutorRegistry,
-		VectorArtifactService:      vectorArtifactService,
-		ExtractionArtifactService:  extractionArtifactService,
-		FileAssetSyncService:       fileAssetSyncService,
-		KnowledgeBaseRefService:    knowledgeBaseRefService,
-		DatabaseRefService:         databaseRefService,
-		DocumentAssetHandler:       handler.NewDocumentAssetHandler(documentAssetService, fileAssetSyncService, processingRequestService, knowledgeBaseRefService, databaseRefService),
-		VectorArtifactHandler:      handler.NewVectorArtifactHandler(vectorArtifactService, documentAssetService),
-		ExtractionArtifactHandler:  handler.NewExtractionArtifactHandler(extractionArtifactService, documentAssetService),
-		ProcessingExecutorHandler:  handler.NewProcessingExecutorHandler(processingExecutorRegistry, processingRequestService),
+		DocumentAssetRepo:               documentAssetRepo,
+		ReuseEventRepo:                  reuseEventRepo,
+		ProcessingRequestRepo:           processingRequestRepo,
+		ParseConfirmationItemRepo:       parseConfirmationItemRepo,
+		DocumentChunkRepo:               documentChunkRepo,
+		DocumentChunkEmbeddingRepo:      documentChunkEmbeddingRepo,
+		VectorArtifactRepo:              vectorArtifactRepo,
+		ExtractionArtifactRepo:          extractionArtifactRepo,
+		KnowledgeBaseAssetRefRepo:       knowledgeBaseAssetRefRepo,
+		DatabaseAssetRefRepo:            databaseAssetRefRepo,
+		DocumentAssetService:            documentAssetService,
+		ProcessingRequestService:        processingRequestService,
+		FileAssetProcessingStateService: fileAssetProcessingStateService,
+		ProcessingExecutorRegistry:      processingExecutorRegistry,
+		VectorArtifactService:           vectorArtifactService,
+		ExtractionArtifactService:       extractionArtifactService,
+		FileAssetSyncService:            fileAssetSyncService,
+		KnowledgeBaseRefService:         knowledgeBaseRefService,
+		DatabaseRefService:              databaseRefService,
+		DocumentAssetHandler:            handler.NewDocumentAssetHandler(documentAssetService, fileAssetSyncService, processingRequestService, knowledgeBaseRefService, databaseRefService),
+		VectorArtifactHandler:           handler.NewVectorArtifactHandler(vectorArtifactService, documentAssetService),
+		ExtractionArtifactHandler:       handler.NewExtractionArtifactHandler(extractionArtifactService, documentAssetService),
+		ProcessingExecutorHandler:       handler.NewProcessingExecutorHandler(processingExecutorRegistry, processingRequestService),
 	}
 }
