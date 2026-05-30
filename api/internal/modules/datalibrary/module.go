@@ -1,10 +1,12 @@
 package datalibrary
 
 import (
+	contentParseRepository "github.com/zgiai/zgi/api/internal/modules/contentparse/repository"
 	"github.com/zgiai/zgi/api/internal/modules/datalibrary/handler"
 	"github.com/zgiai/zgi/api/internal/modules/datalibrary/repository"
 	"github.com/zgiai/zgi/api/internal/modules/datalibrary/service"
 	fileRepository "github.com/zgiai/zgi/api/internal/modules/file_process/repository"
+	"github.com/zgiai/zgi/api/pkg/storage"
 	"gorm.io/gorm"
 )
 
@@ -22,6 +24,7 @@ type Module struct {
 	DocumentAssetService            service.DocumentAssetService
 	ProcessingRequestService        service.ProcessingRequestService
 	FileAssetProcessingStateService service.FileAssetProcessingStateService
+	ParseArtifactPersistenceService service.ParseArtifactPersistenceService
 	ProcessingExecutorRegistry      *service.ProcessingExecutorRegistry
 	VectorArtifactService           service.VectorArtifactService
 	ExtractionArtifactService       service.ExtractionArtifactService
@@ -35,6 +38,10 @@ type Module struct {
 }
 
 func NewModule(db *gorm.DB) *Module {
+	return NewModuleWithStorage(db, storage.GetStorage())
+}
+
+func NewModuleWithStorage(db *gorm.DB, artifactStorage storage.Storage) *Module {
 	documentAssetRepo := repository.NewDocumentAssetRepository(db)
 	reuseEventRepo := repository.NewReuseEventRepository(db)
 	processingRequestRepo := repository.NewProcessingRequestRepository(db)
@@ -45,10 +52,12 @@ func NewModule(db *gorm.DB) *Module {
 	extractionArtifactRepo := repository.NewExtractionArtifactRepository(db)
 	knowledgeBaseAssetRefRepo := repository.NewKnowledgeBaseAssetRefRepository(db)
 	databaseAssetRefRepo := repository.NewDatabaseAssetRefRepository(db)
+	contentParseArtifactRepo := contentParseRepository.NewArtifactRepository(db)
 	fileRepo := fileRepository.NewFileRepository(db)
 	documentAssetService := service.NewDocumentAssetServiceWithDownstreamRefs(documentAssetRepo, reuseEventRepo, processingRequestRepo, vectorArtifactRepo, knowledgeBaseAssetRefRepo, databaseAssetRefRepo, extractionArtifactRepo)
 	processingRequestService := service.NewProcessingRequestService(processingRequestRepo)
 	fileAssetProcessingStateService := service.NewFileAssetProcessingStateService(documentAssetRepo, processingRequestRepo)
+	parseArtifactPersistenceService := service.NewParseArtifactPersistenceService(documentAssetRepo, contentParseArtifactRepo, artifactStorage)
 	processingExecutorRegistry := service.NewDefaultProcessingExecutorRegistry()
 	vectorArtifactService := service.NewVectorArtifactService(vectorArtifactRepo)
 	extractionArtifactService := service.NewExtractionArtifactService(extractionArtifactRepo)
@@ -70,6 +79,7 @@ func NewModule(db *gorm.DB) *Module {
 		DocumentAssetService:            documentAssetService,
 		ProcessingRequestService:        processingRequestService,
 		FileAssetProcessingStateService: fileAssetProcessingStateService,
+		ParseArtifactPersistenceService: parseArtifactPersistenceService,
 		ProcessingExecutorRegistry:      processingExecutorRegistry,
 		VectorArtifactService:           vectorArtifactService,
 		ExtractionArtifactService:       extractionArtifactService,
