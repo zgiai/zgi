@@ -15,7 +15,6 @@ import (
 	memorymodule "github.com/zgiai/zgi/api/internal/modules/memory"
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
-	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"github.com/zgiai/zgi/api/middleware"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -58,7 +57,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 		fileService,
 		contentExtractor,
 		enterpriseService,
-		skills.NewRuntime(toolEngine, toolManager),
+		newSkillRuntimeWithSandbox(toolEngine, toolManager),
 		memoryService,
 		agentMemoryService,
 	)

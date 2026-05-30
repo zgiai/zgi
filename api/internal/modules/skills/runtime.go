@@ -33,9 +33,15 @@ const (
 var ErrSkillNotFound = errors.New("skill not found")
 
 type Runtime struct {
-	engine     *tools.ToolEngine
-	manager    *tools.ToolManager
-	catalogDir string
+	engine       *tools.ToolEngine
+	manager      *tools.ToolManager
+	catalogDir   string
+	scriptRunner SkillScriptRunner
+}
+
+type SkillScriptRunner interface {
+	RunSkillScript(ctx context.Context, doc SkillDocument, arguments map[string]interface{}, execCtx ExecutionContext, callID string) (*ToolInvocationResult, error)
+	Configured() bool
 }
 
 type skillLocation struct {
@@ -70,6 +76,17 @@ func NewRuntimeWithCatalog(engine *tools.ToolEngine, manager *tools.ToolManager,
 		manager:    manager,
 		catalogDir: strings.TrimSpace(catalogDir),
 	}
+}
+
+func (r *Runtime) WithScriptRunner(scriptRunner SkillScriptRunner) *Runtime {
+	if r != nil && scriptRunner != nil && scriptRunner.Configured() {
+		r.scriptRunner = scriptRunner
+	}
+	return r
+}
+
+func (r *Runtime) ScriptsSupported() bool {
+	return r != nil && r.scriptRunner != nil && r.scriptRunner.Configured()
 }
 
 func (r *Runtime) ResolveEnabledSkills(ctx context.Context, skillIDs []string) (*ResolvedSkills, error) {
@@ -259,6 +276,15 @@ func LoadCustomSkillDocument(root string) (SkillDocument, error) {
 	return doc, nil
 }
 
+func (r *Runtime) LoadCustomSkillDocument(root string) (SkillDocument, error) {
+	doc, err := LoadCustomSkillDocument(root)
+	if err != nil {
+		return SkillDocument{}, err
+	}
+	r.applyScriptSupport(&doc)
+	return doc, nil
+}
+
 func (r *Runtime) LoadSkill(ctx context.Context, resolved *ResolvedSkills, skillID string) (*SkillDocument, SkillTrace, error) {
 	_ = ctx
 	start := time.Now()
@@ -327,12 +353,21 @@ func (r *Runtime) CallSkillTool(
 	execCtx ExecutionContext,
 	callID string,
 ) (*ToolInvocationResult, error) {
-	if r == nil || r.engine == nil {
-		return nil, fmt.Errorf("tool engine is not configured")
+	if r == nil {
+		return nil, fmt.Errorf("skill runtime is not configured")
 	}
 	doc, ok := resolved.Get(skillID)
 	if !ok {
 		return nil, fmt.Errorf("skill %s is not enabled", normalizeSkillID(skillID))
+	}
+	if strings.TrimSpace(toolName) == SkillScriptToolRun {
+		if !doc.Metadata.ScriptsSupported || r.scriptRunner == nil {
+			return nil, fmt.Errorf("skill %s scripts are not supported", doc.Metadata.ID)
+		}
+		return r.scriptRunner.RunSkillScript(ctx, *doc, arguments, execCtx, callID)
+	}
+	if r.engine == nil {
+		return nil, fmt.Errorf("tool engine is not configured")
 	}
 	toolDef, ok := findSkillTool(*doc, toolName)
 	if !ok {
@@ -1001,6 +1036,7 @@ func (r *Runtime) loadSkillDocumentFromLocation(location skillLocation) (SkillDo
 		return SkillDocument{}, fmt.Errorf("failed to parse skill %s: %w", id, err)
 	}
 	doc := buildSkillDocument(id, root, source, frontmatter, body)
+	r.applyScriptSupport(&doc)
 	if source == SkillSourceCustom {
 		if err := validateCustomSkillDocument(doc); err != nil {
 			return SkillDocument{}, err
@@ -1018,6 +1054,7 @@ func buildSkillDocument(id string, root string, source string, frontmatter Skill
 	if normalizeSkillSource(source) == SkillSourceCustom && whenToUse == "" {
 		whenToUse = strings.TrimSpace(frontmatter.Description)
 	}
+	scriptPresent := hasScripts(root)
 	return SkillDocument{
 		Metadata: SkillMetadata{
 			ID:               normalizeSkillID(id),
@@ -1029,9 +1066,9 @@ func buildSkillDocument(id string, root string, source string, frontmatter Skill
 			Tools:            append([]string{}, frontmatter.Tools...),
 			RuntimeType:      normalizeSkillRuntimeType(frontmatter.RuntimeType, frontmatter.Tools),
 			MaxCallsPerTurn:  normalizePositive(frontmatter.MaxCallsPerTurn, defaultMaxCallsPerTurn),
-			TimeoutSeconds:   normalizePositive(frontmatter.TimeoutSeconds, defaultTimeoutSeconds),
+			TimeoutSeconds:   normalizeSkillTimeout(frontmatter.TimeoutSeconds, scriptPresent),
 			References:       listReferences(root, source),
-			HasScripts:       hasScripts(root),
+			HasScripts:       scriptPresent,
 			ScriptsSupported: false,
 			RootPath:         root,
 			SupportedCallers: normalizeSkillCallers(id, source, frontmatter.SupportedCallers),
@@ -1042,6 +1079,14 @@ func buildSkillDocument(id string, root string, source string, frontmatter Skill
 	}
 }
 
+func (r *Runtime) applyScriptSupport(doc *SkillDocument) {
+	if r == nil || doc == nil || !doc.Metadata.HasScripts || !r.ScriptsSupported() {
+		return
+	}
+	doc.Metadata.ScriptsSupported = true
+	ensureScriptTool(doc)
+}
+
 func normalizeToolInvokeFrom(value tools.ToolInvokeFrom) tools.ToolInvokeFrom {
 	switch value {
 	case tools.ToolInvokeFromAgent:
@@ -1049,6 +1094,16 @@ func normalizeToolInvokeFrom(value tools.ToolInvokeFrom) tools.ToolInvokeFrom {
 	default:
 		return tools.ToolInvokeFromAIChat
 	}
+}
+
+func normalizeSkillTimeout(value int, hasScriptFiles bool) int {
+	if value > 0 {
+		return value
+	}
+	if hasScriptFiles {
+		return defaultSkillScriptTimeoutSeconds
+	}
+	return defaultTimeoutSeconds
 }
 
 func normalizeSkillCallers(id string, source string, callers []string) []string {
@@ -1170,7 +1225,7 @@ func validateCustomSkillDocument(doc SkillDocument) error {
 	if doc.Metadata.RuntimeType != SkillRuntimeTypePrompt {
 		return fmt.Errorf("custom skill %s must use prompt runtime_type", doc.Metadata.ID)
 	}
-	if len(doc.Metadata.Tools) > 0 || len(doc.Tools) > 0 {
+	if len(doc.Metadata.Tools) > 0 || hasNonScriptTools(doc.Tools) {
 		return fmt.Errorf("custom skill %s must not declare tools", doc.Metadata.ID)
 	}
 	if err := validateSkillDocument(doc); err != nil {
@@ -1223,6 +1278,35 @@ func findSkillTool(doc SkillDocument, toolName string) (SkillToolDefinition, boo
 		}
 	}
 	return SkillToolDefinition{}, false
+}
+
+func hasNonScriptTools(tools []SkillToolDefinition) bool {
+	for _, tool := range tools {
+		if strings.TrimSpace(tool.Name) != SkillScriptToolRun {
+			return true
+		}
+	}
+	return false
+}
+
+func ensureScriptTool(doc *SkillDocument) {
+	if doc == nil {
+		return
+	}
+	for _, tool := range doc.Tools {
+		if strings.TrimSpace(tool.Name) == SkillScriptToolRun {
+			return
+		}
+	}
+	doc.Tools = append(doc.Tools, scriptToolDefinition())
+}
+
+func scriptToolDefinition() SkillToolDefinition {
+	return SkillToolDefinition{
+		Name:         SkillScriptToolRun,
+		ProviderType: tools.ToolProviderTypeBuiltin,
+		ProviderID:   "skill-script",
+	}
 }
 
 func (r *Runtime) validateSkillTools(ctx context.Context, doc SkillDocument) error {

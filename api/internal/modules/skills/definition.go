@@ -25,6 +25,8 @@ const (
 	SkillRuntimeTypePrompt = "prompt"
 	SkillRuntimeTypeHybrid = "hybrid"
 
+	SkillScriptToolRun = "run_script"
+
 	SkillCallerAIChat = "aichat"
 	SkillCallerAgent  = "agent"
 

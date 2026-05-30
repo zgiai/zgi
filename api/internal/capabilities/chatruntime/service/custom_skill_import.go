@@ -72,7 +72,7 @@ func (s *service) PreviewImportCustomSkill(ctx context.Context, scope Scope, fil
 		return nil, err
 	}
 	result := skillImportPreviewFromStored(preview)
-	doc, err := skills.LoadCustomSkillDocument(preview.Root)
+	doc, err := s.skillRuntime.LoadCustomSkillDocument(preview.Root)
 	if err != nil {
 		_ = s.customSkillStorage.DeleteSkill(ctx, preview.Root)
 		result.ImportID = ""
@@ -129,7 +129,7 @@ func (s *service) confirmCustomSkillImport(ctx context.Context, scope Scope, imp
 	if err != nil {
 		return nil, err
 	}
-	doc, err := skills.LoadCustomSkillDocument(preview.Root)
+	doc, err := s.skillRuntime.LoadCustomSkillDocument(preview.Root)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidInput, err)
 	}
@@ -456,7 +456,7 @@ func customSkillManifest(doc skills.SkillDocument, extracted *extractedSkillPack
 		"files":             []string{},
 		"references":        references,
 		"has_scripts":       doc.Metadata.HasScripts,
-		"scripts_supported": false,
+		"scripts_supported": doc.Metadata.ScriptsSupported,
 		"imported_at":       time.Now().Unix(),
 	}
 	if extracted != nil {

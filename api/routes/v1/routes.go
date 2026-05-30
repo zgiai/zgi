@@ -7,7 +7,6 @@ import (
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/container"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
-	"github.com/zgiai/zgi/api/internal/modules/skills"
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
 	workspace_service "github.com/zgiai/zgi/api/internal/modules/workspace/service"
 	"github.com/zgiai/zgi/api/pkg/database"
@@ -214,7 +213,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		WorkspacePermissionService: serviceContainer.GetOrganizationService(),
 		MemoryService:              serviceContainer.GetMemoryService(),
 		AgentMemoryService:         serviceContainer.GetAgentMemoryService(),
-		SkillRuntime:               skills.NewRuntime(serviceContainer.GetToolEngine(), serviceContainer.GetToolManager()),
+		SkillRuntime:               newSkillRuntimeWithSandbox(serviceContainer.GetToolEngine(), serviceContainer.GetToolManager()),
 		AccountService:             accountService,
 	})
 
