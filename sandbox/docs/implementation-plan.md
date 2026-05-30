@@ -8,6 +8,8 @@ The goal is to ensure that future code, documentation, configuration, image name
 
 The engineering quality rules that support this goal are defined in [engineering-standards.md](./engineering-standards.md).
 
+The detailed production hardening backlog is tracked in [production-todo.md](./production-todo.md).
+
 ## 2. Brand and Naming Rules
 
 ### 2.1 Service Identity
