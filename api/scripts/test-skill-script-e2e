@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+API_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_DIR="$(cd "${API_DIR}/.." && pwd)"
+SANDBOX_DIR="${REPO_DIR}/sandbox"
+PORT="${ZGI_SANDBOX_E2E_PORT:-2664}"
+START_LOCAL_SANDBOX=1
+
+if [[ -n "${ZGI_SANDBOX_E2E_ENDPOINT:-}" ]]; then
+  SANDBOX_ENDPOINT="${ZGI_SANDBOX_E2E_ENDPOINT%/}"
+  START_LOCAL_SANDBOX=0
+else
+  SANDBOX_ENDPOINT="http://127.0.0.1:${PORT}"
+  if curl -fsS "${SANDBOX_ENDPOINT}/health" >/dev/null 2>&1; then
+    START_LOCAL_SANDBOX=0
+  fi
+fi
+
+DATA_DIR="$(mktemp -d /tmp/zgi-api-skill-script-e2e.XXXXXX)"
+SERVER_LOG="${DATA_DIR}/sandbox.log"
+
+cleanup() {
+  if [[ "${START_LOCAL_SANDBOX}" = "1" && -n "${SERVER_PID:-}" ]] && kill -0 "${SERVER_PID}" 2>/dev/null; then
+    kill "${SERVER_PID}" 2>/dev/null || true
+    wait "${SERVER_PID}" 2>/dev/null || true
+  fi
+  rm -rf "${DATA_DIR}"
+}
+trap cleanup EXIT
+
+if ! command -v go >/dev/null 2>&1; then
+  echo "go binary not found." >&2
+  exit 127
+fi
+
+if [[ "${START_LOCAL_SANDBOX}" = "1" ]]; then
+  cd "${SANDBOX_DIR}"
+  env \
+    ZGI_SANDBOX_SERVER_PORT="${PORT}" \
+    ZGI_SANDBOX_API_KEY="${ZGI_SANDBOX_E2E_API_KEY:-}" \
+    ZGI_SANDBOX_ADVERTISE_URL="${SANDBOX_ENDPOINT}" \
+    ZGI_SANDBOX_PUBLIC_BASE_URL="${SANDBOX_ENDPOINT}" \
+    ZGI_SANDBOX_DATA_DIR="${DATA_DIR}/sandbox-data" \
+    go run cmd/server/main.go >"${SERVER_LOG}" 2>&1 &
+  SERVER_PID="$!"
+fi
+
+for _ in {1..80}; do
+  if curl -fsS "${SANDBOX_ENDPOINT}/health" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.25
+done
+
+if ! curl -fsS "${SANDBOX_ENDPOINT}/health" >/dev/null 2>&1; then
+  if [[ "${START_LOCAL_SANDBOX}" = "1" ]]; then
+    cat "${SERVER_LOG}" >&2 || true
+  fi
+  echo "sandbox did not become ready at ${SANDBOX_ENDPOINT}" >&2
+  exit 1
+fi
+
+cd "${API_DIR}"
+ZGI_SANDBOX_E2E_ENDPOINT="${SANDBOX_ENDPOINT}" \
+ZGI_SANDBOX_E2E_API_KEY="${ZGI_SANDBOX_E2E_API_KEY:-}" \
+  go test ./internal/modules/skills -run TestSandboxScriptRunnerRealSandboxE2E -count=1 -v

@@ -1,4 +1,4 @@
-.PHONY: all build run test clean swagger migrate seed seed-prod seed-list generate air docker-up docker-down docker-logs
+.PHONY: all build run test test-skill-script-e2e clean swagger migrate seed seed-prod seed-list generate air docker-up docker-down docker-logs
 
 # Build executable
 build:
@@ -15,6 +15,9 @@ air:
 # Run tests
 test:
 	go test -v ./...
+
+test-skill-script-e2e:
+	./scripts/test-skill-script-e2e
 
 # Generate swagger documentation
 swagger:

@@ -130,7 +130,10 @@ func TestSandboxScriptRunnerRealSandboxE2E(t *testing.T) {
 		t.Skip("set ZGI_SANDBOX_E2E_ENDPOINT to run real sandbox E2E")
 	}
 	root := writeTestScriptSkill(t)
-	runtime := NewRuntimeWithCatalog(nil, nil, "").WithScriptRunner(NewSandboxScriptRunner(SandboxScriptRunnerConfig{Endpoint: endpoint}))
+	runtime := NewRuntimeWithCatalog(nil, nil, "").WithScriptRunner(NewSandboxScriptRunner(SandboxScriptRunnerConfig{
+		Endpoint: endpoint,
+		APIKey:   strings.TrimSpace(os.Getenv("ZGI_SANDBOX_E2E_API_KEY")),
+	}))
 	doc, err := runtime.LoadCustomSkillDocument(root)
 	if err != nil {
 		t.Fatalf("load custom skill: %v", err)

@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help bootstrap setup status env-check env-sync install-hooks check-open-source test-sandbox-kest dev-api dev-web dev-docker docker-up docker-down docker-logs
+.PHONY: help bootstrap setup status env-check env-sync install-hooks check-open-source test-sandbox-kest test-api-skill-script-e2e dev-api dev-web dev-docker docker-up docker-down docker-logs
 
 help:
 	@echo "Available commands:"
@@ -12,6 +12,7 @@ help:
 	@echo "  make install-hooks Install repository Git hooks"
 	@echo "  make check-open-source Run open-source hygiene checks"
 	@echo "  make test-sandbox-kest Run sandbox Kest black-box flows"
+	@echo "  make test-api-skill-script-e2e Run API skill-script sandbox E2E"
 	@echo "  make docker-up   Build and start the full local docker stack"
 	@echo "  make dev-docker  Alias of docker-up for local development"
 	@echo "                    Tip: ./dev/start-docker --core starts only nginx/api/web/postgres/redis"
@@ -44,6 +45,9 @@ check-open-source:
 
 test-sandbox-kest:
 	@$(MAKE) -C sandbox kest
+
+test-api-skill-script-e2e:
+	@$(MAKE) -C api test-skill-script-e2e
 
 dev-api:
 	@./dev/start-api
