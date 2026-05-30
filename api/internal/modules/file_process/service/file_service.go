@@ -43,6 +43,10 @@ type fileService struct {
 	extractGroup      singleflight.Group
 }
 
+type UploadFileOptions struct {
+	StartLegacyContentExtraction bool
+}
+
 // NewFileService creates file service instance
 func NewFileService(
 	fileRepo repository.FileRepository,
@@ -97,6 +101,12 @@ func (s *fileService) GetUploadConfig() *interfaces.FileUploadConfigResponse {
 
 // UploadFile upload file
 func (s *fileService) UploadFile(ctx context.Context, filename string, content []byte, mimeType string, userID, organizationID string, userRole model.CreatedByRole, source *interfaces.FileSource, workspaceID *string, isTemporary bool, isIcon bool) (*dto.UploadFile, error) {
+	return s.UploadFileWithOptions(ctx, filename, content, mimeType, userID, organizationID, userRole, source, workspaceID, isTemporary, isIcon, UploadFileOptions{
+		StartLegacyContentExtraction: true,
+	})
+}
+
+func (s *fileService) UploadFileWithOptions(ctx context.Context, filename string, content []byte, mimeType string, userID, organizationID string, userRole model.CreatedByRole, source *interfaces.FileSource, workspaceID *string, isTemporary bool, isIcon bool, options UploadFileOptions) (*dto.UploadFile, error) {
 	// If isIcon is true, resize the image to max 200x200
 	if isIcon {
 		processedContent, err := image.ProcessIconImage(content)
@@ -280,8 +290,10 @@ func (s *fileService) UploadFile(ctx context.Context, filename string, content [
 		return nil, err
 	}
 
-	// Start asynchronous file parsing
-	go s.ParseFileContent(context.Background(), localUploadFile.ID)
+	if options.StartLegacyContentExtraction {
+		// Start asynchronous file parsing
+		go s.ParseFileContent(context.Background(), localUploadFile.ID)
+	}
 
 	return s.convertToInterfaceUploadFile(localUploadFile), nil
 }

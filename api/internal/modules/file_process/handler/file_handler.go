@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/url"
@@ -13,6 +14,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/zgiai/zgi/api/config"
+	datalibrarymodel "github.com/zgiai/zgi/api/internal/modules/datalibrary/model"
+	datalibraryservice "github.com/zgiai/zgi/api/internal/modules/datalibrary/service"
 	"github.com/zgiai/zgi/api/internal/modules/file_process/service"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
@@ -33,7 +36,23 @@ type FileHandler struct {
 	accountService    interfaces.AccountService
 	tenantService     interfaces.WorkspaceManagementService
 	enterpriseService interfaces.OrganizationService
+	assetStateService datalibraryservice.FileAssetProcessingStateService
+	processingService datalibraryservice.ProcessingRequestService
 	validator         *validator.Validate
+}
+
+type FileAssetProcessingServices struct {
+	StateService      datalibraryservice.FileAssetProcessingStateService
+	ProcessingService datalibraryservice.ProcessingRequestService
+}
+
+const (
+	UploadProcessingModeStoreOnly  = "store_only"
+	UploadProcessingModeProcessNow = "process_now"
+)
+
+type fileServiceWithUploadOptions interface {
+	UploadFileWithOptions(ctx context.Context, filename string, content []byte, mimeType string, userID, organizationID string, userRole model.CreatedByRole, source *interfaces.FileSource, workspaceID *string, isTemporary bool, isIcon bool, options service.UploadFileOptions) (*dto.UploadFile, error)
 }
 
 // NewFileHandler creates a new file handler instance
@@ -43,13 +62,22 @@ func NewFileHandler(
 	accountService interfaces.AccountService,
 	tenantService interfaces.WorkspaceManagementService,
 	enterpriseService interfaces.OrganizationService,
+	assetProcessingServices ...FileAssetProcessingServices,
 ) *FileHandler {
+	var assetStateService datalibraryservice.FileAssetProcessingStateService
+	var processingService datalibraryservice.ProcessingRequestService
+	if len(assetProcessingServices) > 0 {
+		assetStateService = assetProcessingServices[0].StateService
+		processingService = assetProcessingServices[0].ProcessingService
+	}
 	return &FileHandler{
 		fileService:       fileService,
 		fileFolderService: fileFolderService,
 		accountService:    accountService,
 		tenantService:     tenantService,
 		enterpriseService: enterpriseService,
+		assetStateService: assetStateService,
+		processingService: processingService,
 		validator:         validator.New(),
 	}
 }
@@ -62,6 +90,19 @@ func (h *FileHandler) businessError(c *gin.Context, errorCode response.ErrorCode
 // businessErrorWithMessage is a helper function for business errors with custom message
 func (h *FileHandler) businessErrorWithMessage(c *gin.Context, errorCode response.ErrorCode, message string) {
 	response.FailWithMessage(c, errorCode, message)
+}
+
+func normalizeUploadProcessingMode(raw string) (string, bool) {
+	mode := strings.TrimSpace(raw)
+	if mode == "" {
+		return UploadProcessingModeProcessNow, true
+	}
+	switch mode {
+	case UploadProcessingModeStoreOnly, UploadProcessingModeProcessNow:
+		return mode, true
+	default:
+		return "", false
+	}
 }
 
 // GetUploadConfig gets file upload configuration
@@ -93,6 +134,12 @@ func (h *FileHandler) UploadFile(c *gin.Context) {
 
 	// Get is_icon parameter for icon uploads (will resize to 200x200)
 	isIcon := c.PostForm("is_icon") == "true"
+
+	processingMode, ok := normalizeUploadProcessingMode(c.PostForm("processing_mode"))
+	if !ok {
+		h.businessError(c, response.ErrInvalidParam)
+		return
+	}
 
 	// Get team_tenant_id parameter and validate permission if provided
 	teamTenantIDStr := c.PostForm("team_tenant_id")
@@ -174,6 +221,8 @@ func (h *FileHandler) UploadFile(c *gin.Context) {
 		h.businessError(c, response.ErrFilenameRequired)
 		return
 	}
+	fileExtension := strings.TrimPrefix(strings.ToLower(filepath.Ext(header.Filename)), ".")
+	shouldUseAssetProcessing := !isTemporary && !isIcon && model.IsDocumentExtension(fileExtension) && h.assetStateService != nil
 
 	// Get folder_id parameter
 	folderID := c.PostForm("folder_id")
@@ -221,20 +270,7 @@ func (h *FileHandler) UploadFile(c *gin.Context) {
 		mimeType = "application/octet-stream"
 	}
 
-	// Call service layer to upload file
-	uploadFile, err := h.fileService.UploadFile(
-		c.Request.Context(),
-		header.Filename,
-		content,
-		mimeType,
-		accountID,
-		organizationID,
-		model.CreatedByRoleAccount,
-		source,
-		teamTenantID,
-		isTemporary,
-		isIcon,
-	)
+	uploadFile, err := h.uploadFile(c.Request.Context(), header.Filename, content, mimeType, accountID, organizationID, source, teamTenantID, isTemporary, isIcon, shouldUseAssetProcessing)
 
 	if err != nil {
 		switch err {
@@ -271,9 +307,107 @@ func (h *FileHandler) UploadFile(c *gin.Context) {
 		}
 	}
 
+	asset, err := h.attachAssetProcessing(c.Request.Context(), uploadFile, organizationID, accountID, processingMode, shouldUseAssetProcessing)
+	if err != nil {
+		logger.WarnContext(c.Request.Context(), "failed to attach file asset processing", "file_id", uploadFile.ID, "processing_mode", processingMode, err)
+		h.businessError(c, response.ErrSystemError)
+		return
+	}
+
 	// Build response
 	fileResponse := dto.NewFileUploadResponse(uploadFile)
+	fileResponse.ProcessingMode = processingMode
+	if asset != nil {
+		fileResponse.AssetID = asset.ID.String()
+		fileResponse.ProcessingStatus = asset.ProductStatus
+		fileResponse.GenerationNo = asset.GenerationNo
+		if asset.ActiveProcessingRequestID != nil {
+			fileResponse.ProcessingRequestID = asset.ActiveProcessingRequestID.String()
+		}
+		if asset.ProcessingRunID != nil {
+			fileResponse.ProcessingRunID = asset.ProcessingRunID.String()
+		}
+	}
 	response.Success(c, fileResponse)
+}
+
+func (h *FileHandler) uploadFile(ctx context.Context, filename string, content []byte, mimeType string, accountID string, organizationID string, source *interfaces.FileSource, teamTenantID *string, isTemporary bool, isIcon bool, useAssetProcessing bool) (*dto.UploadFile, error) {
+	if uploadSvc, ok := h.fileService.(fileServiceWithUploadOptions); ok {
+		return uploadSvc.UploadFileWithOptions(
+			ctx,
+			filename,
+			content,
+			mimeType,
+			accountID,
+			organizationID,
+			model.CreatedByRoleAccount,
+			source,
+			teamTenantID,
+			isTemporary,
+			isIcon,
+			service.UploadFileOptions{
+				StartLegacyContentExtraction: !useAssetProcessing,
+			},
+		)
+	}
+
+	return h.fileService.UploadFile(
+		ctx,
+		filename,
+		content,
+		mimeType,
+		accountID,
+		organizationID,
+		model.CreatedByRoleAccount,
+		source,
+		teamTenantID,
+		isTemporary,
+		isIcon,
+	)
+}
+
+func (h *FileHandler) attachAssetProcessing(ctx context.Context, uploadFile *dto.UploadFile, organizationID string, accountID string, processingMode string, useAssetProcessing bool) (*datalibrarymodel.DocumentAsset, error) {
+	if !useAssetProcessing || h.assetStateService == nil {
+		return nil, nil
+	}
+
+	asset, _, err := h.assetStateService.CreateOrReuseStoredAsset(ctx, datalibraryservice.FileAssetCreateInput{
+		OrganizationID: organizationID,
+		WorkspaceID:    uploadFile.WorkspaceID,
+		Title:          uploadFile.Name,
+		SourceFileID:   uploadFile.ID,
+		ContentHash:    uploadFile.Hash,
+		CreatedBy:      accountID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if processingMode != UploadProcessingModeProcessNow {
+		return asset, nil
+	}
+
+	result, err := h.assetStateService.BeginProcessingRequest(ctx, datalibraryservice.BeginProcessingRequestInput{
+		OrganizationID: organizationID,
+		WorkspaceID:    uploadFile.WorkspaceID,
+		AssetID:        asset.ID,
+		TargetLevel:    datalibrarymodel.DocumentProcessingLevelVectorize,
+		RequestedBy:    accountID,
+		IncrementRun:   true,
+		Metadata: map[string]any{
+			"source":          "file_upload",
+			"processing_mode": processingMode,
+			"upload_file_id":  uploadFile.ID,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if h.processingService != nil {
+		if _, err := h.processingService.QueueRequest(ctx, organizationID, result.ProcessingRequest.ID); err != nil {
+			return nil, err
+		}
+	}
+	return result.Asset, nil
 }
 
 // GetFilePreview gets file preview content

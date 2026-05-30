@@ -145,17 +145,23 @@ type CreateTextFileRequest struct {
 }
 
 type FileUploadResponse struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	Size         int64     `json:"size"`
-	Extension    string    `json:"extension"`
-	MimeType     string    `json:"mime_type"`
-	CreatedBy    string    `json:"created_by"`
-	CreatedAt    time.Time `json:"created_at"`
-	Hash         string    `json:"hash,omitempty"`
-	SourceURL    string    `json:"source_url,omitempty"`
-	TeamTenantID *string   `json:"team_tenant_id,omitempty"`
-	WorkspaceID  *string   `json:"workspace_id,omitempty"`
+	ID                  string    `json:"id"`
+	Name                string    `json:"name"`
+	Size                int64     `json:"size"`
+	Extension           string    `json:"extension"`
+	MimeType            string    `json:"mime_type"`
+	CreatedBy           string    `json:"created_by"`
+	CreatedAt           time.Time `json:"created_at"`
+	Hash                string    `json:"hash,omitempty"`
+	SourceURL           string    `json:"source_url,omitempty"`
+	TeamTenantID        *string   `json:"team_tenant_id,omitempty"`
+	WorkspaceID         *string   `json:"workspace_id,omitempty"`
+	AssetID             string    `json:"asset_id,omitempty"`
+	ProcessingMode      string    `json:"processing_mode,omitempty"`
+	ProcessingStatus    string    `json:"processing_status,omitempty"`
+	ProcessingRequestID string    `json:"processing_request_id,omitempty"`
+	ProcessingRunID     string    `json:"processing_run_id,omitempty"`
+	GenerationNo        int64     `json:"generation_no,omitempty"`
 }
 
 type FileUploadConfigResponse struct {

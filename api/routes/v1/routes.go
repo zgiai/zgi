@@ -89,6 +89,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		QuotaService:               serviceContainer.GetQuotaService(),
 		LLMClient:                  serviceContainer.GetLLMClient(),
 		DefaultModelService:        serviceContainer.GetDefaultModelService(),
+		DataLibraryModule:          serviceContainer.GetDataLibraryModule(),
 		Scheduler:                  serviceContainer.GetScheduler(),
 		ScheduledFileService:       serviceContainer.GetFileService(),
 	})

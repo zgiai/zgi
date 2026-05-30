@@ -6,6 +6,7 @@ import (
 
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
 	toolfilescheduler "github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file/scheduler"
+	datalibrarymodule "github.com/zgiai/zgi/api/internal/modules/datalibrary"
 	dataset_repo "github.com/zgiai/zgi/api/internal/modules/dataset/repository"
 	fileProcessHandler "github.com/zgiai/zgi/api/internal/modules/file_process/handler"
 	fileProcessRepo "github.com/zgiai/zgi/api/internal/modules/file_process/repository"
@@ -29,6 +30,7 @@ type FileRouteDeps struct {
 	QuotaService               interfaces.QuotaService
 	LLMClient                  llmclient.LLMClient
 	DefaultModelService        llmdefaultservice.DefaultModelService
+	DataLibraryModule          *datalibrarymodule.Module
 	Scheduler                  *pkgscheduler.Scheduler
 	ScheduledFileService       interfaces.FileService
 }
@@ -45,7 +47,17 @@ func registerFileRoutesLegacy(v1 *gin.RouterGroup, deps FileRouteDeps) {
 	fileFolderService := fileProcessService.NewFileResourceService(fileFolderRepo, fileRepo, documentRepo, datasetRepo, deps.AccountService)
 	fileFavoriteService := fileProcessService.NewFileFavoriteService(fileFavoriteRepo, fileRepo)
 
-	fileHandler := fileProcessHandler.NewFileHandler(fileService, fileFolderService, deps.AccountService, deps.WorkspaceManagementService, deps.OrganizationService)
+	fileHandler := fileProcessHandler.NewFileHandler(
+		fileService,
+		fileFolderService,
+		deps.AccountService,
+		deps.WorkspaceManagementService,
+		deps.OrganizationService,
+		fileProcessHandler.FileAssetProcessingServices{
+			StateService:      deps.DataLibraryModule.FileAssetProcessingStateService,
+			ProcessingService: deps.DataLibraryModule.ProcessingRequestService,
+		},
+	)
 	fileResourceHandler := fileProcessHandler.NewFileResourceHandler(fileFolderService, fileService, deps.AccountService, deps.OrganizationService, fileFavoriteService)
 	fileFavoriteHandler := fileProcessHandler.NewFileFavoriteHandler(fileFavoriteService, fileService, deps.AccountService)
 
@@ -187,6 +199,9 @@ func validateFileRouteDeps(deps FileRouteDeps) {
 	}
 	if deps.DefaultModelService == nil {
 		panic("file routes require default model service")
+	}
+	if deps.DataLibraryModule == nil {
+		panic("file routes require data library module")
 	}
 	if deps.Scheduler == nil {
 		panic("file routes require scheduler")
