@@ -55,11 +55,12 @@ func (s *llmGatewayServiceImpl) chatCompletionInternal(
 	if err := s.validateRequest(req); err != nil {
 		return nil, err
 	}
+	effectiveReq := s.policyPrompt.injectChatRequest(req)
 	logger.DebugContext(ctx, "llm gateway timing", "step", "validate_request", "latency_ms", time.Since(t1).Milliseconds())
 
 	// 2. Check model authorization
 	t2 := time.Now()
-	if err := s.checkModelAuthorization(apiKey, appCtx, req.Model); err != nil {
+	if err := s.checkModelAuthorization(apiKey, appCtx, effectiveReq.Model); err != nil {
 		return nil, err
 	}
 	logger.DebugContext(ctx, "llm gateway timing", "step", "check_model_authorization", "latency_ms", time.Since(t2).Milliseconds())
@@ -67,9 +68,9 @@ func (s *llmGatewayServiceImpl) chatCompletionInternal(
 	// 3. Estimate tokens
 	t3 := time.Now()
 	promptTokens, completionTokens, _ := s.tokenEstimator.EstimateTotalTokens(
-		req.Messages,
-		req.MaxTokens,
-		req.Model,
+		effectiveReq.Messages,
+		effectiveReq.MaxTokens,
+		effectiveReq.Model,
 	)
 	logger.DebugContext(ctx, "llm gateway timing", "step", "estimate_tokens", "latency_ms", time.Since(t3).Milliseconds())
 
@@ -91,7 +92,7 @@ func (s *llmGatewayServiceImpl) chatCompletionInternal(
 	// Tag the request category so the router can apply capability-aware matching.
 	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, "chat")
 
-	providerSelections, err := s.selectProvidersWithChannelRouter(ctx, shadowOrganizationID, req.Provider, req.Model, 3)
+	providerSelections, err := s.selectProvidersWithChannelRouter(ctx, shadowOrganizationID, effectiveReq.Provider, effectiveReq.Model, 3)
 	if err != nil {
 		return nil, fmt.Errorf("failed to select provider: %w", err)
 	}
@@ -99,7 +100,7 @@ func (s *llmGatewayServiceImpl) chatCompletionInternal(
 	logger.DebugContext(ctx, "llm gateway timing", "step", "select_providers", "latency_ms", time.Since(t4b).Milliseconds(), "provider_count", len(providerSelections))
 
 	if len(providerSelections) == 0 {
-		return nil, NewNoProviderAvailableError(req.Model, organizationID.String())
+		return nil, NewNoProviderAvailableError(effectiveReq.Model, organizationID.String())
 	}
 
 	// 5. Try each provider selection with failover
@@ -107,7 +108,7 @@ func (s *llmGatewayServiceImpl) chatCompletionInternal(
 	var lastErr error
 
 	for attemptIdx, providerSelection := range providerSelections {
-		response, err := s.tryChatCompletion(ctx, apiKey, appCtx, req, providerSelection, promptTokens, completionTokens,
+		response, err := s.tryChatCompletion(ctx, apiKey, appCtx, effectiveReq, req, providerSelection, promptTokens, completionTokens,
 			organizationID, shadowOrganizationID, shadowOwnerID, requestID, startTime, attemptIdx)
 		if err == nil {
 			logger.DebugContext(ctx, "llm gateway timing", "step", "try_completion", "latency_ms", time.Since(t5).Milliseconds())
@@ -146,6 +147,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletion(
 	apiKey *apikeymodel.TenantAPIKey,
 	appCtx *AppContext,
 	req *adapter.ChatRequest,
+	traceReq *adapter.ChatRequest,
 	providerSelection *ProviderSelection,
 	promptTokens, completionTokens int,
 	organizationID uuid.UUID,
@@ -224,10 +226,10 @@ func (s *llmGatewayServiceImpl) tryChatCompletion(
 
 	if callErr != nil {
 		if settleErr := s.handleProviderError(ctx, billingCtx, providerSelection, channelID, responseTime, attemptIdx, callErr); settleErr != nil {
-			s.traceChatCompletion(ctx, req, response, startTime, time.Now(), billingCtx, settleErr)
+			s.traceChatCompletion(ctx, traceReq, response, startTime, time.Now(), billingCtx, settleErr)
 			return nil, settleErr
 		}
-		s.traceChatCompletion(ctx, req, response, startTime, time.Now(), billingCtx, callErr)
+		s.traceChatCompletion(ctx, traceReq, response, startTime, time.Now(), billingCtx, callErr)
 		return nil, callErr
 	}
 
@@ -240,7 +242,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletion(
 
 	// Trace to OpenTelemetry after billing has final usage and cost details.
 	endTime := time.Now()
-	s.traceChatCompletion(ctx, req, response, startTime, endTime, billingCtx, nil)
+	s.traceChatCompletion(ctx, traceReq, response, startTime, endTime, billingCtx, nil)
 
 	return response, nil
 }
@@ -284,17 +286,18 @@ func (s *llmGatewayServiceImpl) chatCompletionStreamInternal(
 	if err := s.validateRequest(req); err != nil {
 		return nil, err
 	}
+	effectiveReq := s.policyPrompt.injectChatRequest(req)
 
 	// 2. Check model authorization
-	if err := s.checkModelAuthorization(apiKey, appCtx, req.Model); err != nil {
+	if err := s.checkModelAuthorization(apiKey, appCtx, effectiveReq.Model); err != nil {
 		return nil, err
 	}
 
 	// 3. Estimate tokens
 	promptTokens, completionTokens, _ := s.tokenEstimator.EstimateTotalTokens(
-		req.Messages,
-		req.MaxTokens,
-		req.Model,
+		effectiveReq.Messages,
+		effectiveReq.MaxTokens,
+		effectiveReq.Model,
 	)
 
 	// 4. Select providers
@@ -312,7 +315,7 @@ func (s *llmGatewayServiceImpl) chatCompletionStreamInternal(
 	// Tag the request category so the router can apply capability-aware matching.
 	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, "chat")
 
-	providerSelections, err := s.selectProvidersWithChannelRouter(ctx, shadowOrganizationID, req.Provider, req.Model, 3)
+	providerSelections, err := s.selectProvidersWithChannelRouter(ctx, shadowOrganizationID, effectiveReq.Provider, effectiveReq.Model, 3)
 	if err != nil {
 		sentryHelper.CaptureLLMError(err, "unknown", req.Model, organizationID.String(), map[string]interface{}{
 			"shadow_tenant_id": shadowOrganizationID.String(),
@@ -332,7 +335,7 @@ func (s *llmGatewayServiceImpl) chatCompletionStreamInternal(
 	// 5. Try each provider selection with failover
 	var lastErr error
 	for attemptIdx, providerSelection := range providerSelections {
-		outputChan, err := s.tryChatCompletionStream(ctx, apiKey, appCtx, req, providerSelection, promptTokens, completionTokens, shadowOrganizationID, shadowOwnerID, organizationID, requestID, startTime, attemptIdx)
+		outputChan, err := s.tryChatCompletionStream(ctx, apiKey, appCtx, effectiveReq, req, providerSelection, promptTokens, completionTokens, shadowOrganizationID, shadowOwnerID, organizationID, requestID, startTime, attemptIdx)
 		if err == nil {
 			return outputChan, nil
 		}
@@ -364,6 +367,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletionStream(
 	apiKey *apikeymodel.TenantAPIKey,
 	appCtx *AppContext,
 	req *adapter.ChatRequest,
+	traceReq *adapter.ChatRequest,
 	providerSelection *ProviderSelection,
 	promptTokens, completionTokens int,
 	shadowOrganizationID uuid.UUID,
@@ -452,7 +456,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletionStream(
 	outputChan := make(chan adapter.StreamResponse)
 	// Preserve trace values while allowing billing and tracing to finish after request cancellation.
 	billingBgCtx := context.WithoutCancel(ctx)
-	go s.handleStreamBilling(billingBgCtx, streamChan, outputChan, billingCtx, req, &providerSelection.Model, startTime, channelID)
+	go s.handleStreamBilling(billingBgCtx, streamChan, outputChan, billingCtx, traceReq, &providerSelection.Model, startTime, channelID)
 
 	return outputChan, nil
 }

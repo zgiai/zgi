@@ -47,6 +47,7 @@ type Config struct {
 	GraphFlow              GraphFlowConfig
 	ContentParse           ContentParseConfig
 	LLM                    LLMConfig
+	LLMPolicyPrompt        LLMPolicyPromptConfig
 	Automation             AutomationConfig
 	Tooling                ToolingConfig
 
@@ -136,6 +137,12 @@ type ConsoleConfig struct {
 	GRPCAddr       string `json:"grpc_addr"`
 	InternalAPIKey string `json:"-"`
 	WebURL         string `json:"web_url"`
+}
+
+type LLMPolicyPromptConfig struct {
+	Enabled bool   `json:"enabled"`
+	File    string `json:"file,omitempty"`
+	Prompt  string `json:"-"`
 }
 
 type FeatureConfig struct {
