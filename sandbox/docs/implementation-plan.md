@@ -134,6 +134,7 @@ V2 should add lifecycle APIs:
 - `POST /v1/exec/code`
 - `POST /v1/exec/command`
 - `POST /v1/files/upload`
+- `POST /v1/files/upload-archive`
 - `GET /v1/files/download`
 - `GET /v1/files/info`
 - `DELETE /v1/files`

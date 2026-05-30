@@ -1,10 +1,13 @@
 package executor
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -45,6 +48,22 @@ type FileWriteRequest struct {
 	Path      string `json:"path"`
 	Content   string `json:"content"`
 	Encoding  string `json:"encoding"`
+}
+
+type ArchiveUploadRequest struct {
+	SandboxID     string `json:"sandbox_id"`
+	Path          string `json:"path"`
+	ArchiveBase64 string `json:"archive_base64"`
+	Format        string `json:"format"`
+	StripRoot     bool   `json:"strip_root"`
+}
+
+type ArchiveUploadResult struct {
+	SandboxID string     `json:"sandbox_id"`
+	Path      string     `json:"path"`
+	Files     []FileInfo `json:"files"`
+	FileCount int        `json:"file_count"`
+	TotalSize int64      `json:"total_size"`
 }
 
 type FileInfo struct {
@@ -156,6 +175,120 @@ func (s *Service) UploadFile(req FileWriteRequest) (*FileInfo, error) {
 		s.observer.Record("files.upload", req.SandboxID, "file uploaded", map[string]any{"path": req.Path, "size": info.Size})
 	}
 	return info, err
+}
+
+func (s *Service) UploadArchive(req ArchiveUploadRequest) (*ArchiveUploadResult, error) {
+	if strings.TrimSpace(req.SandboxID) == "" {
+		return nil, errors.New("sandbox_id is required")
+	}
+	if strings.TrimSpace(req.Path) == "" {
+		req.Path = "."
+	}
+	if strings.TrimSpace(req.ArchiveBase64) == "" {
+		return nil, errors.New("archive_base64 is required")
+	}
+	if !strings.EqualFold(strings.TrimSpace(req.Format), "zip") {
+		return nil, errors.New("unsupported archive format")
+	}
+
+	box, err := s.lifecycle.GetActive(req.SandboxID)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := resolveSandboxPath(box.RootPath, req.Path); err != nil {
+		return nil, err
+	}
+
+	archiveBytes, err := base64.StdEncoding.DecodeString(req.ArchiveBase64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid archive_base64: %w", err)
+	}
+
+	reader, err := zip.NewReader(bytes.NewReader(archiveBytes), int64(len(archiveBytes)))
+	if err != nil {
+		return nil, fmt.Errorf("invalid zip archive: %w", err)
+	}
+
+	entries, err := normalizeArchiveEntries(reader.File, req.StripRoot)
+	if err != nil {
+		return nil, err
+	}
+
+	limit := archiveLimits{
+		maxFiles:     256,
+		maxFileSize:  s.policy.MaxFileSizeBytes(),
+		maxTotalSize: s.policy.MaxFileSizeBytes() * 256,
+	}
+
+	written := make([]fileSnapshot, 0, len(entries))
+	files := make([]FileInfo, 0, len(entries))
+	var totalSize int64
+	for _, entry := range entries {
+		if len(files) >= limit.maxFiles {
+			rollbackWrittenFiles(written)
+			return nil, fmt.Errorf("archive exceeds max file count of %d", limit.maxFiles)
+		}
+		if entry.file.FileInfo().Mode()&os.ModeSymlink != 0 {
+			rollbackWrittenFiles(written)
+			return nil, fmt.Errorf("archive contains symlink: %s", entry.name)
+		}
+		if entry.file.UncompressedSize64 > uint64(limit.maxFileSize) {
+			rollbackWrittenFiles(written)
+			return nil, fmt.Errorf("file %s exceeds max size of %d bytes", entry.name, limit.maxFileSize)
+		}
+		totalSize += int64(entry.file.UncompressedSize64)
+		if totalSize > limit.maxTotalSize {
+			rollbackWrittenFiles(written)
+			return nil, fmt.Errorf("archive exceeds max total size of %d bytes", limit.maxTotalSize)
+		}
+
+		relativePath := filepath.ToSlash(filepath.Join(req.Path, entry.name))
+		target, err := resolveSandboxPath(box.RootPath, relativePath)
+		if err != nil {
+			rollbackWrittenFiles(written)
+			return nil, err
+		}
+		snapshot, err := snapshotExistingFile(target)
+		if err != nil {
+			rollbackWrittenFiles(written)
+			return nil, err
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			rollbackWrittenFiles(written)
+			return nil, err
+		}
+
+		content, err := readZipFile(entry.file, limit.maxFileSize)
+		if err != nil {
+			rollbackWrittenFiles(written)
+			return nil, err
+		}
+		if err := os.WriteFile(target, content, 0o644); err != nil {
+			rollbackWrittenFiles(written)
+			return nil, err
+		}
+		written = append(written, snapshot)
+
+		info, err := s.StatFile(req.SandboxID, relativePath)
+		if err != nil {
+			rollbackWrittenFiles(written)
+			return nil, err
+		}
+		files = append(files, *info)
+	}
+
+	s.observer.Record("files.upload_archive", req.SandboxID, "archive uploaded", map[string]any{
+		"path":       req.Path,
+		"file_count": len(files),
+		"total_size": totalSize,
+	})
+	return &ArchiveUploadResult{
+		SandboxID: req.SandboxID,
+		Path:      req.Path,
+		Files:     files,
+		FileCount: len(files),
+		TotalSize: totalSize,
+	}, nil
 }
 
 func (s *Service) DownloadFile(sandboxID string, relativePath string, encoding string) (*FileContent, error) {
@@ -305,4 +438,140 @@ func ListDirectory(root string) ([]FileInfo, error) {
 		return nil
 	})
 	return entries, err
+}
+
+type archiveLimits struct {
+	maxFiles     int
+	maxFileSize  int64
+	maxTotalSize int64
+}
+
+type archiveEntry struct {
+	name string
+	file *zip.File
+}
+
+func normalizeArchiveEntries(files []*zip.File, stripRoot bool) ([]archiveEntry, error) {
+	root := commonArchiveRoot(files)
+	entries := make([]archiveEntry, 0, len(files))
+	for _, file := range files {
+		name := strings.TrimSpace(filepath.ToSlash(file.Name))
+		if name == "" {
+			continue
+		}
+		if strings.HasPrefix(name, "/") || strings.Contains(name, "\x00") {
+			return nil, fmt.Errorf("invalid archive path: %s", file.Name)
+		}
+		if stripRoot && root != "" {
+			name = strings.TrimPrefix(name, root+"/")
+		}
+		name = strings.TrimPrefix(name, "./")
+		if name == "" || strings.HasSuffix(name, "/") || file.FileInfo().IsDir() {
+			continue
+		}
+		clean := filepath.ToSlash(filepath.Clean(name))
+		if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+			return nil, fmt.Errorf("archive path escapes target root: %s", file.Name)
+		}
+		entries = append(entries, archiveEntry{name: clean, file: file})
+	}
+	return entries, nil
+}
+
+func commonArchiveRoot(files []*zip.File) string {
+	root := ""
+	for _, file := range files {
+		name := strings.Trim(filepath.ToSlash(file.Name), "/")
+		if name == "" {
+			continue
+		}
+		if file.FileInfo().IsDir() && !strings.Contains(name, "/") {
+			continue
+		}
+		parts := strings.Split(name, "/")
+		if len(parts) < 2 {
+			return ""
+		}
+		if root == "" {
+			root = parts[0]
+			continue
+		}
+		if root != parts[0] {
+			return ""
+		}
+	}
+	return root
+}
+
+func readZipFile(file *zip.File, maxSize int64) ([]byte, error) {
+	reader, err := file.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+
+	content := make([]byte, 0)
+	buffer := make([]byte, 32*1024)
+	var total int64
+	for {
+		n, readErr := reader.Read(buffer)
+		if n > 0 {
+			total += int64(n)
+			if total > maxSize {
+				return nil, fmt.Errorf("file %s exceeds max size of %d bytes", file.Name, maxSize)
+			}
+			content = append(content, buffer[:n]...)
+		}
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+		if readErr != nil {
+			return nil, readErr
+		}
+	}
+	return content, nil
+}
+
+type fileSnapshot struct {
+	path    string
+	exists  bool
+	content []byte
+	mode    os.FileMode
+}
+
+func snapshotExistingFile(path string) (fileSnapshot, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fileSnapshot{path: path}, nil
+		}
+		return fileSnapshot{}, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fileSnapshot{}, fmt.Errorf("target path is a symlink: %s", path)
+	}
+	if info.IsDir() {
+		return fileSnapshot{}, fmt.Errorf("target path is a directory: %s", path)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return fileSnapshot{}, err
+	}
+	return fileSnapshot{
+		path:    path,
+		exists:  true,
+		content: content,
+		mode:    info.Mode().Perm(),
+	}, nil
+}
+
+func rollbackWrittenFiles(files []fileSnapshot) {
+	for i := len(files) - 1; i >= 0; i-- {
+		file := files[i]
+		if file.exists {
+			_ = os.WriteFile(file.path, file.content, file.mode)
+			continue
+		}
+		_ = os.Remove(file.path)
+	}
 }
