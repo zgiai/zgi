@@ -1,0 +1,230 @@
+# Sandbox Lifecycle, Files, and Commands
+
+```flow
+@flow id=sandbox-lifecycle-files-command
+@name Sandbox lifecycle, file I/O, code, and command execution
+```
+
+```step
+@id health
+@name Health check
+
+GET {{base_url}}/health
+
+[Asserts]
+status == 200
+```
+
+```step
+@id policies
+@name Policy catalog
+
+GET {{base_url}}/v1/policies
+
+[Asserts]
+status == 200
+code == 0
+```
+
+```step
+@id dependency-catalog
+@name Dependency catalog
+
+GET {{base_url}}/v1/sandbox/dependencies?language=python3
+
+[Asserts]
+status == 200
+code == 0
+```
+
+```step
+@id create-sandbox
+@name Create session sandbox
+
+POST {{base_url}}/v1/sandboxes
+Content-Type: application/json
+
+{
+  "runtime_profile": "session",
+  "ttl_seconds": 120,
+  "dependency_profile": "stdlib",
+  "network_enabled": false,
+  "network_policy": "deny-by-default"
+}
+
+[Captures]
+sandbox_id = data.id
+
+[Asserts]
+status == 200
+code == 0
+```
+
+```step
+@id get-sandbox
+@name Get sandbox
+
+GET {{base_url}}/v1/sandboxes/{{sandbox_id}}
+
+[Asserts]
+status == 200
+code == 0
+data.status == "active"
+```
+
+```step
+@id renew-sandbox
+@name Renew sandbox
+
+POST {{base_url}}/v1/sandboxes/{{sandbox_id}}/renew-expiration
+Content-Type: application/json
+
+{
+  "ttl_seconds": 180
+}
+
+[Asserts]
+status == 200
+code == 0
+data.status == "active"
+```
+
+```step
+@id upload-file
+@name Upload base64 file
+
+POST {{base_url}}/v1/files/upload
+Content-Type: application/json
+
+{
+  "sandbox_id": "{{sandbox_id}}",
+  "path": "notes/hello.txt",
+  "content": "aGVsbG8ga2VzdAo=",
+  "encoding": "base64"
+}
+
+[Asserts]
+status == 200
+code == 0
+data.path == "notes/hello.txt"
+data.size == 11
+```
+
+```step
+@id file-info
+@name File info
+
+GET {{base_url}}/v1/files/info?sandbox_id={{sandbox_id}}&path=notes/hello.txt
+
+[Asserts]
+status == 200
+code == 0
+data.path == "notes/hello.txt"
+data.size == 11
+```
+
+```step
+@id download-file
+@name Download base64 file
+
+GET {{base_url}}/v1/files/download?sandbox_id={{sandbox_id}}&path=notes/hello.txt&encoding=base64
+
+[Asserts]
+status == 200
+code == 0
+data.content == "aGVsbG8ga2VzdAo="
+```
+
+```step
+@id execute-code
+@name Execute short Python code
+
+POST {{base_url}}/v1/exec/code
+Content-Type: application/json
+
+{
+  "sandbox_id": "{{sandbox_id}}",
+  "language": "python3",
+  "code": "print('code-ok')",
+  "enable_network": false
+}
+
+[Asserts]
+status == 200
+code == 0
+data.exit_code == 0
+```
+
+```step
+@id execute-command
+@name Execute command with stdin and env
+
+POST {{base_url}}/v1/exec/command
+Content-Type: application/json
+
+{
+  "sandbox_id": "{{sandbox_id}}",
+  "command": "python3",
+  "args": ["-c", "import os,sys; print(os.environ['ZGI_TEST_TOKEN'] + ':' + sys.stdin.read())"],
+  "stdin": "payload",
+  "env": {
+    "ZGI_TEST_TOKEN": "ok"
+  },
+  "profile": "code-short",
+  "timeout_ms": 5000,
+  "stdout_limit_kb": 64,
+  "stderr_limit_kb": 64,
+  "working_subpath": "."
+}
+
+[Asserts]
+status == 200
+code == 0
+data.exit_code == 0
+```
+
+```step
+@id list-files
+@name List files
+
+GET {{base_url}}/v1/files/tree?sandbox_id={{sandbox_id}}
+
+[Asserts]
+status == 200
+code == 0
+```
+
+```step
+@id observer-events
+@name Observer events
+
+GET {{base_url}}/v1/observer/events?sandbox_id={{sandbox_id}}&limit=20
+
+[Asserts]
+status == 200
+code == 0
+```
+
+```step
+@id delete-file
+@name Delete uploaded file
+
+DELETE {{base_url}}/v1/files?sandbox_id={{sandbox_id}}&path=notes/hello.txt
+
+[Asserts]
+status == 200
+code == 0
+data.deleted == true
+```
+
+```step
+@id delete-sandbox
+@name Delete sandbox
+
+DELETE {{base_url}}/v1/sandboxes/{{sandbox_id}}
+
+[Asserts]
+status == 200
+code == 0
+data.deleted == true
+```

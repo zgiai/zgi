@@ -1,6 +1,6 @@
 SHELL := /bin/sh
 
-.PHONY: fmt test build check run test-linux-secure
+.PHONY: fmt test build check run kest test-linux-secure
 .PHONY: docker-up docker-down docker-logs
 
 fmt:
@@ -16,6 +16,9 @@ check: fmt test build
 
 run:
 	go run ./cmd/server
+
+kest:
+	.kest/run-sandbox-flows.sh
 
 test-linux-secure:
 	./scripts/test_linux_secure_container.sh
