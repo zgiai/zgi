@@ -26,6 +26,7 @@ var (
 
 type DocumentChunkEmbeddingService interface {
 	GenerateEmbeddings(ctx context.Context, input GenerateDocumentChunkEmbeddingsInput) (*GenerateDocumentChunkEmbeddingsResult, error)
+	GenerateChunkEmbedding(ctx context.Context, input GenerateDocumentChunkEmbeddingInput) (*model.DocumentChunkEmbedding, error)
 }
 
 type GenerateDocumentChunkEmbeddingsInput struct {
@@ -45,6 +46,17 @@ type GenerateDocumentChunkEmbeddingsResult struct {
 	EmbeddingProvider  string                          `json:"embedding_provider"`
 	EmbeddingModel     string                          `json:"embedding_model"`
 	EmbeddingDimension int                             `json:"embedding_dimension"`
+}
+
+type GenerateDocumentChunkEmbeddingInput struct {
+	OrganizationID    string
+	AssetID           uuid.UUID
+	ProcessingRunID   uuid.UUID
+	GenerationNo      int64
+	EmbeddingProvider string
+	EmbeddingModel    string
+	RequestedBy       string
+	Chunk             *model.DocumentChunk
 }
 
 type DocumentChunkEmbeddingServiceOption func(*documentChunkEmbeddingService)
@@ -87,6 +99,33 @@ func WithDocumentChunkEmbeddingFactory(factory DocumentChunkEmbeddingFactory) Do
 }
 
 func (s *documentChunkEmbeddingService) GenerateEmbeddings(ctx context.Context, input GenerateDocumentChunkEmbeddingsInput) (*GenerateDocumentChunkEmbeddingsResult, error) {
+	return s.generateEmbeddings(ctx, input, true)
+}
+
+func (s *documentChunkEmbeddingService) GenerateChunkEmbedding(ctx context.Context, input GenerateDocumentChunkEmbeddingInput) (*model.DocumentChunkEmbedding, error) {
+	if input.Chunk == nil {
+		return nil, ErrDocumentChunkEmbeddingsRequired
+	}
+	result, err := s.generateEmbeddings(ctx, GenerateDocumentChunkEmbeddingsInput{
+		OrganizationID:    input.OrganizationID,
+		AssetID:           input.AssetID,
+		ProcessingRunID:   input.ProcessingRunID,
+		GenerationNo:      input.GenerationNo,
+		EmbeddingProvider: input.EmbeddingProvider,
+		EmbeddingModel:    input.EmbeddingModel,
+		RequestedBy:       input.RequestedBy,
+		Chunks:            []*model.DocumentChunk{input.Chunk},
+	}, false)
+	if err != nil {
+		return nil, err
+	}
+	if len(result.Embeddings) == 0 {
+		return nil, ErrDocumentChunkEmbeddingsRequired
+	}
+	return result.Embeddings[0], nil
+}
+
+func (s *documentChunkEmbeddingService) generateEmbeddings(ctx context.Context, input GenerateDocumentChunkEmbeddingsInput, clearExisting bool) (*GenerateDocumentChunkEmbeddingsResult, error) {
 	if input.OrganizationID == "" {
 		return nil, ErrOrganizationIDRequired
 	}
@@ -137,8 +176,10 @@ func (s *documentChunkEmbeddingService) GenerateEmbeddings(ctx context.Context, 
 		return nil, fmt.Errorf("embedding result count mismatch: got %d, want %d", len(vectors), len(leafChunks))
 	}
 
-	if err := s.embeddings.DeleteByAssetGeneration(ctx, input.OrganizationID, input.AssetID, input.GenerationNo); err != nil {
-		return nil, err
+	if clearExisting {
+		if err := s.embeddings.DeleteByAssetGeneration(ctx, input.OrganizationID, input.AssetID, input.GenerationNo); err != nil {
+			return nil, err
+		}
 	}
 
 	items := make([]*model.DocumentChunkEmbedding, 0, len(leafChunks))

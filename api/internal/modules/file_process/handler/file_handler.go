@@ -43,6 +43,7 @@ type FileHandler struct {
 	parseArtifactConfirmationService datalibraryservice.ParseArtifactConfirmationService
 	fileAssetDetailService           datalibraryservice.FileAssetDetailService
 	fileAssetChunkService            datalibraryservice.FileAssetChunkService
+	fileAssetChunkEditService        datalibraryservice.FileAssetChunkEditService
 	taskEnqueuer                     FileProcessingTaskEnqueuer
 	validator                        *validator.Validate
 }
@@ -55,6 +56,7 @@ type FileAssetProcessingServices struct {
 	ParseArtifactConfirmationService datalibraryservice.ParseArtifactConfirmationService
 	FileAssetDetailService           datalibraryservice.FileAssetDetailService
 	FileAssetChunkService            datalibraryservice.FileAssetChunkService
+	FileAssetChunkEditService        datalibraryservice.FileAssetChunkEditService
 	TaskEnqueuer                     FileProcessingTaskEnqueuer
 }
 
@@ -108,6 +110,11 @@ type fileChunkListQuery struct {
 	IncludeTree   bool     `form:"include_tree"`
 }
 
+type fileChunkUpdateRequest struct {
+	Content *string `json:"content"`
+	Enabled *bool   `json:"enabled"`
+}
+
 type queuedFileProcessingRequest struct {
 	Asset             *datalibrarymodel.DocumentAsset
 	ProcessingRequest *datalibraryservice.ProcessingRequestView
@@ -147,6 +154,7 @@ func NewFileHandler(
 	var parseArtifactConfirmationService datalibraryservice.ParseArtifactConfirmationService
 	var fileAssetDetailService datalibraryservice.FileAssetDetailService
 	var fileAssetChunkService datalibraryservice.FileAssetChunkService
+	var fileAssetChunkEditService datalibraryservice.FileAssetChunkEditService
 	var taskEnqueuer FileProcessingTaskEnqueuer
 	if len(assetProcessingServices) > 0 {
 		assetStateService = assetProcessingServices[0].StateService
@@ -156,6 +164,7 @@ func NewFileHandler(
 		parseArtifactConfirmationService = assetProcessingServices[0].ParseArtifactConfirmationService
 		fileAssetDetailService = assetProcessingServices[0].FileAssetDetailService
 		fileAssetChunkService = assetProcessingServices[0].FileAssetChunkService
+		fileAssetChunkEditService = assetProcessingServices[0].FileAssetChunkEditService
 		taskEnqueuer = assetProcessingServices[0].TaskEnqueuer
 	}
 	return &FileHandler{
@@ -171,6 +180,7 @@ func NewFileHandler(
 		parseArtifactConfirmationService: parseArtifactConfirmationService,
 		fileAssetDetailService:           fileAssetDetailService,
 		fileAssetChunkService:            fileAssetChunkService,
+		fileAssetChunkEditService:        fileAssetChunkEditService,
 		taskEnqueuer:                     taskEnqueuer,
 		validator:                        validator.New(),
 	}
@@ -670,6 +680,68 @@ func (h *FileHandler) handleFileAssetChunkError(c *gin.Context, err error) {
 		h.businessError(c, response.ErrInvalidParams)
 	default:
 		logger.WarnContext(c.Request.Context(), "failed to list file asset chunks", err)
+		h.businessError(c, response.ErrSystemError)
+	}
+}
+
+// UpdateFileChunk edits or enables/disables one current generation leaf chunk.
+// PATCH /files/:file_id/chunks/:chunk_id
+func (h *FileHandler) UpdateFileChunk(c *gin.Context) {
+	if h.fileAssetChunkEditService == nil {
+		h.businessErrorWithMessage(c, response.ErrSystemError, "file asset chunk edit service is not available")
+		return
+	}
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		h.businessError(c, response.ErrUnauthorized)
+		return
+	}
+	organizationID, uploadFile, ok := h.authorizeDocumentFile(c)
+	if !ok {
+		return
+	}
+	chunkID, err := uuid.Parse(c.Param("chunk_id"))
+	if err != nil || chunkID == uuid.Nil {
+		h.businessError(c, response.ErrInvalidParams)
+		return
+	}
+	var req fileChunkUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.businessError(c, response.ErrInvalidParams)
+		return
+	}
+	if req.Content == nil && req.Enabled == nil {
+		h.businessError(c, response.ErrInvalidParams)
+		return
+	}
+	result, err := h.fileAssetChunkEditService.UpdateCurrentFileChunk(c.Request.Context(), datalibraryservice.FileAssetChunkEditInput{
+		OrganizationID: organizationID,
+		SourceFileID:   uploadFile.ID,
+		ChunkID:        chunkID,
+		Content:        req.Content,
+		Enabled:        req.Enabled,
+		UpdatedBy:      accountID,
+	})
+	if err != nil {
+		h.handleFileAssetChunkEditError(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *FileHandler) handleFileAssetChunkEditError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, datalibraryservice.ErrDocumentAssetNotFound):
+		h.businessError(c, response.ErrNotFound)
+	case errors.Is(err, datalibraryservice.ErrOrganizationIDRequired),
+		errors.Is(err, datalibraryservice.ErrSourceFileIDRequired),
+		errors.Is(err, datalibraryservice.ErrAssetIDRequired),
+		errors.Is(err, datalibraryservice.ErrProcessingRunMismatch),
+		errors.Is(err, datalibraryservice.ErrFileChunkEditNotAllowed),
+		errors.Is(err, datalibraryservice.ErrDocumentChunkEmbeddingsRequired):
+		h.businessErrorWithMessage(c, response.ErrInvalidParams, err.Error())
+	default:
+		logger.WarnContext(c.Request.Context(), "failed to update file asset chunk", err)
 		h.businessError(c, response.ErrSystemError)
 	}
 }
