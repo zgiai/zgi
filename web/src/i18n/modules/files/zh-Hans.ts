@@ -65,6 +65,7 @@ const messages: FilesMessages = {
     move: '移动',
     share: '分享',
     preview: '预览',
+    viewDetails: '查看详情',
     more: '更多',
     downloadFile: '下载文件',
     addToFavorites: '加入收藏',
@@ -129,6 +130,41 @@ const messages: FilesMessages = {
 
   filter: {
     allProcessingStatuses: '全部状态',
+  },
+
+  detail: {
+    backToFiles: '返回文件列表',
+    previewOriginal: '预览原文件',
+    processing: '处理进度',
+    createdAt: '上传于 {time}',
+    loadErrorTitle: '文件详情加载失败',
+    loadErrorDescription: '文件可能已被删除，或当前账号没有访问权限。',
+    processingError: '处理失败',
+    basicInfo: '基础信息',
+    fileId: '文件 ID',
+    assetId: '资产 ID',
+    storageType: '存储类型',
+    workspaceId: '工作空间 ID',
+    createdBy: '创建人',
+    generationNo: '生成批次',
+    nextViews: '详情视图',
+    nextViewsDescription:
+      '原文件预览、解析确认、内容切片、索引信息和重试操作会在后续阶段一前端任务中挂载到这里。',
+    processingSummary: '处理汇总',
+    pendingConfirmationCount: '待确认项',
+    chunkCount: '切片数',
+    embeddingCount: '向量数',
+    createdDate: '上传日期',
+    indexInfo: '索引信息',
+    embeddingProvider: 'Embedding Provider',
+    embeddingModel: 'Embedding Model',
+    embeddingDimension: 'Embedding 维度',
+    vectorStatus: {
+      none: '向量未就绪',
+      indexing: '向量索引中',
+      ready: '向量已就绪',
+      failed: '向量失败',
+    },
   },
 
   // Messages

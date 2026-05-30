@@ -64,6 +64,7 @@ const messages = {
     move: 'Move',
     share: 'Share',
     preview: 'Preview',
+    viewDetails: 'View Details',
     more: 'More',
     downloadFile: 'Download File',
     addToFavorites: 'Add to Favorites',
@@ -134,6 +135,41 @@ const messages = {
 
   filter: {
     allProcessingStatuses: 'All statuses',
+  },
+
+  detail: {
+    backToFiles: 'Back to Files',
+    previewOriginal: 'Preview Original',
+    processing: 'Processing',
+    createdAt: 'Uploaded {time}',
+    loadErrorTitle: 'Failed to load file details',
+    loadErrorDescription: 'The file may have been removed or you may not have access.',
+    processingError: 'Processing failed',
+    basicInfo: 'Basic Information',
+    fileId: 'File ID',
+    assetId: 'Asset ID',
+    storageType: 'Storage Type',
+    workspaceId: 'Workspace ID',
+    createdBy: 'Created By',
+    generationNo: 'Generation',
+    nextViews: 'Detail Views',
+    nextViewsDescription:
+      'Original preview, parse review, content chunks, index information, and retry actions will be mounted here in the following phase-one frontend tasks.',
+    processingSummary: 'Processing Summary',
+    pendingConfirmationCount: 'Pending Reviews',
+    chunkCount: 'Chunks',
+    embeddingCount: 'Vectors',
+    createdDate: 'Upload Date',
+    indexInfo: 'Index Information',
+    embeddingProvider: 'Embedding Provider',
+    embeddingModel: 'Embedding Model',
+    embeddingDimension: 'Embedding Dimension',
+    vectorStatus: {
+      none: 'Vector not ready',
+      indexing: 'Vector indexing',
+      ready: 'Vector ready',
+      failed: 'Vector failed',
+    },
   },
 
   // Messages

@@ -18,7 +18,9 @@ import {
   Link2,
   MoveRight,
   Activity,
+  Info,
 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { useT } from '@/i18n';
 import { toast } from 'sonner';
 import {
@@ -221,6 +223,7 @@ function FileListBase({
   mobileEmptyDescription,
 }: FileListProps) {
   const { files: t, common } = useT();
+  const router = useRouter();
   const isMobile = useIsMobile();
   const { downloadFile, isDownloading } = useDownloadFile();
   const { deleteFiles, isDeleting } = useDeleteFiles();
@@ -234,7 +237,8 @@ function FileListBase({
   const canManage = hasPermission('file.manage');
   const canUpload = hasPermission('file.upload_create');
   const canMoveAssets = ['owner', 'admin'].includes(currentOrganization?.organization_role ?? '');
-  const hasAnyAction = canDownload || canManage || canMoveAssets;
+  const canViewDetail = !selectionMode;
+  const hasAnyAction = canViewDetail || canDownload || canManage || canMoveAssets;
   const emptyDescription = mobileEmptyDescription
     ? mobileEmptyDescription
     : canUpload
@@ -297,6 +301,10 @@ function FileListBase({
 
   const handlePreview = (file: FileItem) => {
     setPreviewFile(file);
+  };
+
+  const handleOpenDetail = (file: FileItem) => {
+    router.push(`/console/files/${file.id}`);
   };
 
   const handleCardKeyDown = (event: KeyboardEvent<HTMLDivElement>, file: FileItem) => {
@@ -497,6 +505,21 @@ function FileListBase({
                       </div>
 
                       <div className="flex shrink-0 items-center gap-2">
+                        {canViewDetail ? (
+                          <Button
+                            isIcon
+                            type="button"
+                            variant="ghost"
+                            className="h-8 w-8 rounded-lg"
+                            onClick={e => {
+                              e.stopPropagation();
+                              handleOpenDetail(file);
+                            }}
+                            aria-label={t('actions.viewDetails')}
+                          >
+                            <Info className="h-4 w-4" />
+                          </Button>
+                        ) : null}
                         {canDownload &&
                         isOriginalPreviewSupported(file.extension, file.mime_type) ? (
                           <Button
@@ -795,6 +818,17 @@ function FileListBase({
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
+                        {canViewDetail ? (
+                          <DropdownMenuItem
+                            onClick={e => {
+                              e.stopPropagation();
+                              handleOpenDetail(file);
+                            }}
+                          >
+                            <Info className="h-4 w-4 mr-2" />
+                            {t('actions.viewDetails')}
+                          </DropdownMenuItem>
+                        ) : null}
                         {canDownload && (
                           <>
                             {isOriginalPreviewSupported(file.extension, file.mime_type) ? (
