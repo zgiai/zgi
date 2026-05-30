@@ -31,21 +31,23 @@ import (
 
 // FileHandler handles file-related HTTP requests
 type FileHandler struct {
-	fileService       interfaces.FileService
-	fileFolderService service.FileFolderService
-	accountService    interfaces.AccountService
-	tenantService     interfaces.WorkspaceManagementService
-	enterpriseService interfaces.OrganizationService
-	assetStateService datalibraryservice.FileAssetProcessingStateService
-	processingService datalibraryservice.ProcessingRequestService
-	taskEnqueuer      FileProcessingTaskEnqueuer
-	validator         *validator.Validate
+	fileService         interfaces.FileService
+	fileFolderService   service.FileFolderService
+	accountService      interfaces.AccountService
+	tenantService       interfaces.WorkspaceManagementService
+	enterpriseService   interfaces.OrganizationService
+	assetStateService   datalibraryservice.FileAssetProcessingStateService
+	processingService   datalibraryservice.ProcessingRequestService
+	parsePreviewService datalibraryservice.ParsePreviewService
+	taskEnqueuer        FileProcessingTaskEnqueuer
+	validator           *validator.Validate
 }
 
 type FileAssetProcessingServices struct {
-	StateService      datalibraryservice.FileAssetProcessingStateService
-	ProcessingService datalibraryservice.ProcessingRequestService
-	TaskEnqueuer      FileProcessingTaskEnqueuer
+	StateService        datalibraryservice.FileAssetProcessingStateService
+	ProcessingService   datalibraryservice.ProcessingRequestService
+	ParsePreviewService datalibraryservice.ParsePreviewService
+	TaskEnqueuer        FileProcessingTaskEnqueuer
 }
 
 type FileProcessingTaskEnqueuer interface {
@@ -95,22 +97,25 @@ func NewFileHandler(
 ) *FileHandler {
 	var assetStateService datalibraryservice.FileAssetProcessingStateService
 	var processingService datalibraryservice.ProcessingRequestService
+	var parsePreviewService datalibraryservice.ParsePreviewService
 	var taskEnqueuer FileProcessingTaskEnqueuer
 	if len(assetProcessingServices) > 0 {
 		assetStateService = assetProcessingServices[0].StateService
 		processingService = assetProcessingServices[0].ProcessingService
+		parsePreviewService = assetProcessingServices[0].ParsePreviewService
 		taskEnqueuer = assetProcessingServices[0].TaskEnqueuer
 	}
 	return &FileHandler{
-		fileService:       fileService,
-		fileFolderService: fileFolderService,
-		accountService:    accountService,
-		tenantService:     tenantService,
-		enterpriseService: enterpriseService,
-		assetStateService: assetStateService,
-		processingService: processingService,
-		taskEnqueuer:      taskEnqueuer,
-		validator:         validator.New(),
+		fileService:         fileService,
+		fileFolderService:   fileFolderService,
+		accountService:      accountService,
+		tenantService:       tenantService,
+		enterpriseService:   enterpriseService,
+		assetStateService:   assetStateService,
+		processingService:   processingService,
+		parsePreviewService: parsePreviewService,
+		taskEnqueuer:        taskEnqueuer,
+		validator:           validator.New(),
 	}
 }
 
@@ -493,6 +498,57 @@ func (h *FileHandler) CreateProcessingRequest(c *gin.Context) {
 		"mode":                 mode,
 		"request_queue_status": result.ProcessingRequest.Status,
 	})
+}
+
+// GetFileParsePreview returns the current parsed elements with confirmation overlay.
+// GET /files/:file_id/parse-preview
+func (h *FileHandler) GetFileParsePreview(c *gin.Context) {
+	if h.parsePreviewService == nil {
+		h.businessErrorWithMessage(c, response.ErrSystemError, "file parse preview service is not available")
+		return
+	}
+	organizationID := util.GetOrganizationID(c)
+	if organizationID == "" {
+		h.businessError(c, response.ErrInvalidTenantId)
+		return
+	}
+	fileID := c.Param("file_id")
+	if fileID == "" {
+		h.businessError(c, response.ErrFileIdRequired)
+		return
+	}
+	uploadFile, ok := h.getAuthorizedFileForDownload(c, fileID)
+	if !ok {
+		return
+	}
+	if uploadFile.IsTemporary || !model.IsDocumentExtension(strings.TrimPrefix(strings.ToLower(uploadFile.Extension), ".")) {
+		h.businessError(c, response.ErrUnsupportedFileType)
+		return
+	}
+
+	preview, err := h.parsePreviewService.GetParsePreview(c.Request.Context(), datalibraryservice.ParsePreviewInput{
+		OrganizationID: organizationID,
+		SourceFileID:   uploadFile.ID,
+	})
+	if err != nil {
+		h.handleFileParsePreviewError(c, err)
+		return
+	}
+	response.Success(c, preview)
+}
+
+func (h *FileHandler) handleFileParsePreviewError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, datalibraryservice.ErrDocumentAssetNotFound),
+		errors.Is(err, datalibraryservice.ErrParsePreviewNotReady):
+		h.businessError(c, response.ErrNotFound)
+	case errors.Is(err, datalibraryservice.ErrOrganizationIDRequired),
+		errors.Is(err, datalibraryservice.ErrSourceFileIDRequired):
+		h.businessError(c, response.ErrInvalidParams)
+	default:
+		logger.WarnContext(c.Request.Context(), "failed to get file parse preview", err)
+		h.businessError(c, response.ErrSystemError)
+	}
 }
 
 func (h *FileHandler) handleFileProcessingRequestError(c *gin.Context, err error) {

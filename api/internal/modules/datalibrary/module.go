@@ -29,6 +29,7 @@ type Module struct {
 	FileAssetProcessingStateService service.FileAssetProcessingStateService
 	ParseArtifactPersistenceService service.ParseArtifactPersistenceService
 	ParseArtifactQualityService     service.ParseArtifactQualityService
+	ParsePreviewService             service.ParsePreviewService
 	ProcessingExecutorRegistry      *service.ProcessingExecutorRegistry
 	VectorArtifactService           service.VectorArtifactService
 	ExtractionArtifactService       service.ExtractionArtifactService
@@ -70,6 +71,7 @@ func NewModuleWithStorageAndContentParse(db *gorm.DB, artifactStorage storage.St
 	fileAssetProcessingStateService := service.NewFileAssetProcessingStateService(documentAssetRepo, processingRequestRepo)
 	parseArtifactPersistenceService := service.NewParseArtifactPersistenceService(documentAssetRepo, contentParseArtifactRepo, artifactStorage)
 	parseArtifactQualityService := service.NewParseArtifactQualityService(parseConfirmationItemRepo)
+	parsePreviewService := service.NewParsePreviewService(documentAssetRepo, contentParseArtifactRepo, parseArtifactPersistenceService, parseConfirmationItemRepo)
 	processingExecutorRegistry := service.NewDefaultProcessingExecutorRegistry()
 	vectorArtifactService := service.NewVectorArtifactService(vectorArtifactRepo)
 	extractionArtifactService := service.NewExtractionArtifactService(extractionArtifactRepo)
@@ -104,6 +106,7 @@ func NewModuleWithStorageAndContentParse(db *gorm.DB, artifactStorage storage.St
 		FileAssetProcessingStateService: fileAssetProcessingStateService,
 		ParseArtifactPersistenceService: parseArtifactPersistenceService,
 		ParseArtifactQualityService:     parseArtifactQualityService,
+		ParsePreviewService:             parsePreviewService,
 		ProcessingExecutorRegistry:      processingExecutorRegistry,
 		VectorArtifactService:           vectorArtifactService,
 		ExtractionArtifactService:       extractionArtifactService,

@@ -57,9 +57,10 @@ func registerFileRoutesLegacy(v1 *gin.RouterGroup, deps FileRouteDeps) {
 		deps.WorkspaceManagementService,
 		deps.OrganizationService,
 		fileProcessHandler.FileAssetProcessingServices{
-			StateService:      deps.DataLibraryModule.FileAssetProcessingStateService,
-			ProcessingService: deps.DataLibraryModule.ProcessingRequestService,
-			TaskEnqueuer:      datalibraryworker.NewFileProcessTaskDispatcher(deps.TaskManager),
+			StateService:        deps.DataLibraryModule.FileAssetProcessingStateService,
+			ProcessingService:   deps.DataLibraryModule.ProcessingRequestService,
+			ParsePreviewService: deps.DataLibraryModule.ParsePreviewService,
+			TaskEnqueuer:        datalibraryworker.NewFileProcessTaskDispatcher(deps.TaskManager),
 		},
 	)
 	fileResourceHandler := fileProcessHandler.NewFileResourceHandler(fileFolderService, fileService, deps.AccountService, deps.OrganizationService, fileFavoriteService)
@@ -82,6 +83,8 @@ func registerFileRoutesLegacy(v1 *gin.RouterGroup, deps FileRouteDeps) {
 		files.GET("/metadata", fileHandler.GetFilesMetadata)
 
 		files.POST("/:file_id/processing-requests", fileHandler.CreateProcessingRequest)
+
+		files.GET("/:file_id/parse-preview", fileHandler.GetFileParsePreview)
 
 		files.GET("/:file_id/preview", fileHandler.GetFilePreview)
 
