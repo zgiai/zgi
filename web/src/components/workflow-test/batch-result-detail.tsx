@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { ArrowLeft, RefreshCcw, WandSparkles } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, RefreshCcw, WandSparkles } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -218,6 +218,9 @@ export function BatchResultDetail({ agentId, batchId, agentName }: BatchResultDe
     );
   }
 
+  const finishedCount =
+    batch.passed_count + batch.failed_count + batch.review_count + executionErrorCount;
+
   return (
     <div className="min-h-full bg-slate-50 px-8 py-8">
       <div className="mx-auto flex max-w-[1600px] flex-col gap-6">
@@ -234,14 +237,14 @@ export function BatchResultDetail({ agentId, batchId, agentName }: BatchResultDe
               </Link>
             </Button>
             <div className="flex items-start justify-between gap-4">
-              <div>
+              <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-3">
                   <h1 className="text-2xl font-semibold text-slate-950">{batch.name}</h1>
                   <Badge className="bg-blue-50 text-blue-700">
                     {batchStatusLabel(batch.status, batchStatusT, commonT('none'))}
                   </Badge>
                 </div>
-                <div className="mt-4 grid grid-cols-3 gap-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm">
+                <div className="mt-4 grid max-w-[760px] grid-cols-3 gap-12 rounded-xl border border-slate-200 bg-slate-50 px-5 py-4 text-sm">
                   <div>
                     <div className="text-slate-500">{t('createdAt')}</div>
                     <div className="mt-1 font-semibold text-slate-950">
@@ -262,17 +265,19 @@ export function BatchResultDetail({ agentId, batchId, agentName }: BatchResultDe
               </div>
               <Button
                 variant="outline"
+                className="text-blue-600 hover:text-blue-700"
                 disabled={
                   batch.status === 'queued' || batch.status === 'running' || retestBatch.isPending
                 }
                 onClick={() => setRetestConfirmOpen(true)}
               >
+                <RefreshCcw className="mr-2 size-4" />
                 {commonT('retest')}
               </Button>
             </div>
 
-            <div className="mt-5 grid grid-cols-[minmax(0,1fr)_280px] gap-4 rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-700">
-              <div>
+            <div className="mt-5 grid grid-cols-2 rounded-xl border border-slate-200 bg-white px-5 py-6 text-sm text-slate-700">
+              <div className="pr-8">
                 <div className="text-slate-500">{t('businessResult')}</div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <span className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-sm font-medium text-emerald-700">
@@ -286,21 +291,35 @@ export function BatchResultDetail({ agentId, batchId, agentName }: BatchResultDe
                   </span>
                 </div>
               </div>
-              <div
-                className={cn(
-                  'rounded-lg border p-4',
-                  executionErrorCount > 0
-                    ? 'border-amber-200 bg-amber-50 text-amber-900'
-                    : 'border-slate-200 bg-slate-50 text-slate-700'
-                )}
-              >
-                <div className="text-slate-500">{t('executionErrors')}</div>
-                <div className="mt-2 text-lg font-semibold text-slate-950">
-                  {executionErrorCount}
+              <div className="border-l border-slate-200 pl-8">
+                <div className="text-slate-500">{t('executionStatus')}</div>
+                <div className="mt-3">
+                  <span
+                    className={cn(
+                      'inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-medium',
+                      executionErrorCount > 0
+                        ? 'bg-red-50 text-red-700'
+                        : 'bg-emerald-50 text-emerald-700'
+                    )}
+                  >
+                    {executionErrorCount === 0 ? <CheckCircle2 className="size-4" /> : null}
+                    {executionErrorCount > 0
+                      ? t('executionStatusWithErrors', {
+                          done: finishedCount,
+                          total: batch.case_count,
+                          count: executionErrorCount,
+                        })
+                      : t('executionStatusNormal', {
+                          done: finishedCount,
+                          total: batch.case_count,
+                        })}
+                  </span>
                 </div>
-                <div className="mt-1 text-xs text-slate-500">
-                  {executionErrorCount > 0 ? t('executionErrorsDescription') : commonT('none')}
-                </div>
+                {executionErrorCount > 0 ? (
+                  <div className="mt-2 text-xs text-red-600">
+                    {t('executionErrorsDescription')}
+                  </div>
+                ) : null}
               </div>
             </div>
 
@@ -323,10 +342,17 @@ export function BatchResultDetail({ agentId, batchId, agentName }: BatchResultDe
             if (!open && !retestBatch.isPending) setRetestConfirmOpen(false);
           }}
           title={t('retestConfirmTitle')}
-          description={t('retestConfirmDescription')}
-          confirmText={commonT('retest')}
+          description={t('retestConfirmDescription', {
+            name: batch.name,
+            count: batch.case_count,
+          })}
+          confirmText={t('retestConfirmButton')}
           cancelText={commonT('cancel')}
           loading={retestBatch.isPending}
+          contentClassName="max-w-2xl rounded-2xl"
+          footerClassName="justify-end bg-white px-8 py-6"
+          cancelClassName="border border-slate-200 bg-white hover:bg-slate-50"
+          confirmClassName="bg-slate-950 text-white hover:bg-slate-800"
           onConfirm={() =>
             retestBatch.mutate(
               {

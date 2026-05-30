@@ -1002,7 +1002,8 @@ const messages = {
         retestName: '{name} Retest {index}',
         retestConfirmTitle: 'Confirm retest?',
         retestConfirmDescription:
-          'The system will create and run a new test batch from this batch snapshot. The original result will be kept.',
+          'The system will rerun the {count} test questions currently shown in "{name}" and create a new test batch. Current historical results will not be overwritten.',
+        retestConfirmButton: 'Confirm Retest',
         activeTitle: 'A batch is currently running: {name}',
         activeProgress: '{done} / {total} executed',
       },
@@ -1225,7 +1226,9 @@ const messages = {
       passed: 'Passed {count}',
       failed: 'Failed {count}',
       review: 'Needs Review {count}',
-      executionErrors: 'Execution Errors',
+      executionStatus: 'Execution Status',
+      executionStatusNormal: '{done} / {total} executed, no execution errors',
+      executionStatusWithErrors: '{done} / {total} executed, {count} execution errors',
       executionErrorsDescription:
         'Execution errors belong to the test pipeline. Review the error details first.',
       aiSummary: 'AI Summary:',
@@ -1272,7 +1275,8 @@ const messages = {
       workflowRunId: 'Run ID',
       retestConfirmTitle: 'Confirm retest?',
       retestConfirmDescription:
-        'The system will create and run a new test batch from this batch snapshot. The original result will be kept.',
+        'The system will rerun the {count} test questions currently shown in "{name}" and create a new test batch. Current historical results will not be overwritten.',
+      retestConfirmButton: 'Confirm Retest',
       table: {
         questionContent: 'Question',
         scenario: 'Scenario',

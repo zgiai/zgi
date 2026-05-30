@@ -1284,10 +1284,21 @@ export function BatchTestOverview({
           if (!open && !retestBatch.isPending) setRetestingBatch(null);
         }}
         title={t('batches.retestConfirmTitle')}
-        description={t('batches.retestConfirmDescription')}
-        confirmText={commonT('retest')}
+        description={
+          retestingBatch
+            ? t('batches.retestConfirmDescription', {
+                name: retestingBatch.name,
+                count: retestingBatch.case_count,
+              })
+            : ''
+        }
+        confirmText={t('batches.retestConfirmButton')}
         cancelText={commonT('cancel')}
         loading={retestBatch.isPending}
+        contentClassName="max-w-2xl rounded-2xl"
+        footerClassName="justify-end bg-white px-8 py-6"
+        cancelClassName="border border-slate-200 bg-white hover:bg-slate-50"
+        confirmClassName="bg-slate-950 text-white hover:bg-slate-800"
         onConfirm={confirmRetestBatch}
       />
     </div>

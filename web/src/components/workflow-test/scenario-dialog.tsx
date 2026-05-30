@@ -79,7 +79,11 @@ export function ScenarioDialog({ agentId, scenarios, open, onOpenChange }: Scena
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent size="xl" className="max-h-[88vh] max-w-[960px] overflow-hidden rounded-2xl">
+      <DialogContent
+        size="xl"
+        className="max-h-[88vh] max-w-[960px] overflow-hidden rounded-2xl"
+        onInteractOutside={event => event.preventDefault()}
+      >
         <DialogHeader>
           <DialogTitle>{t('title')}</DialogTitle>
           <DialogDescription>{t('description')}</DialogDescription>

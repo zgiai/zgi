@@ -139,7 +139,7 @@ export function CaseDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent size="lg">
+        <DialogContent size="lg" onInteractOutside={event => event.preventDefault()}>
           <DialogHeader>
             <DialogTitle>{title}</DialogTitle>
             <DialogDescription>{t('description')}</DialogDescription>

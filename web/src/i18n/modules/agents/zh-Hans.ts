@@ -965,7 +965,8 @@ const messages: AgentsMessages = {
         retestName: '{name} 重新测试{index}',
         retestConfirmTitle: '确认重新测试？',
         retestConfirmDescription:
-          '系统会基于当前批次的问题快照创建新的测试批次并开始执行，原测试结果会保留。',
+          '系统将复用「{name}」当前展示的 {count} 条测试问题重新执行，并生成新的测试批次；当前历史结果不会被覆盖。',
+        retestConfirmButton: '确认重新测试',
         activeTitle: '当前有批次正在执行：{name}',
         activeProgress: '已执行 {done} / {total}',
       },
@@ -1176,7 +1177,9 @@ const messages: AgentsMessages = {
       passed: '通过 {count}',
       failed: '不通过 {count}',
       review: '需复核 {count}',
-      executionErrors: '执行异常',
+      executionStatus: '执行情况',
+      executionStatusNormal: '已执行 {done} / {total}，暂无执行异常',
+      executionStatusWithErrors: '已执行 {done} / {total}，执行异常 {count}',
       executionErrorsDescription: '执行异常属于测试链路问题，请优先查看错误详情。',
       aiSummary: 'AI 总结：',
       itemListTitle: '单问题结果列表',
@@ -1220,7 +1223,8 @@ const messages: AgentsMessages = {
       workflowRunId: '运行 ID',
       retestConfirmTitle: '确认重新测试？',
       retestConfirmDescription:
-        '系统会基于当前批次的问题快照创建新的测试批次并开始执行，原测试结果会保留。',
+        '系统将复用「{name}」当前展示的 {count} 条测试问题重新执行，并生成新的测试批次；当前历史结果不会被覆盖。',
+      retestConfirmButton: '确认重新测试',
       table: {
         questionContent: '问题内容',
         scenario: '业务场景',

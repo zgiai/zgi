@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Loader2 } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 export interface ConfirmDialogProps {
   /** Element to trigger the dialog (button, menu item, etc.) */
@@ -37,6 +38,10 @@ export interface ConfirmDialogProps {
   onCancel?: () => void;
   /** Variant of the dialog (optional) */
   variant?: 'default' | 'warning';
+  contentClassName?: string;
+  footerClassName?: string;
+  cancelClassName?: string;
+  confirmClassName?: string;
 }
 
 export function ConfirmDialog({
@@ -51,6 +56,10 @@ export function ConfirmDialog({
   onOpenChange: onOpenChangeProp,
   variant = 'default',
   onCancel,
+  contentClassName,
+  footerClassName,
+  cancelClassName,
+  confirmClassName,
 }: ConfirmDialogProps) {
   const [openInternal, setOpenInternal] = useState(false);
   const open = openProp !== undefined ? openProp : openInternal;
@@ -65,7 +74,7 @@ export function ConfirmDialog({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       {trigger && <DialogTrigger asChild>{trigger}</DialogTrigger>}
-      <DialogContent size="sm" className="p-0 overflow-hidden">
+      <DialogContent size="sm" className={cn('p-0 overflow-hidden', contentClassName)}>
         <DialogHeader>
           <DialogTitle className="text-xl font-bold tracking-tight">{title}</DialogTitle>
         </DialogHeader>
@@ -78,11 +87,11 @@ export function ConfirmDialog({
           </DialogBody>
         )}
 
-        <DialogFooter className="bg-muted/50 px-6 pb-6 pt-4 border-t gap-3">
+        <DialogFooter className={cn('bg-muted/50 px-6 pb-6 pt-4 border-t gap-3', footerClassName)}>
           <Button
             variant="ghost"
             size="xl"
-            className="px-6 font-semibold"
+            className={cn('px-6 font-semibold', cancelClassName)}
             onClick={() => {
               onCancel?.();
               setOpen(false);
@@ -95,7 +104,7 @@ export function ConfirmDialog({
             onClick={handleConfirm}
             disabled={loading}
             size="xl"
-            className="px-6 font-semibold"
+            className={cn('px-6 font-semibold', confirmClassName)}
           >
             {loading && <Loader2 className="animate-spin h-4 w-4 mr-2" />}
             {confirmText}
