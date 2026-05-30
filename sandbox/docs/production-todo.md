@@ -36,6 +36,7 @@ Already available:
 - Observer event pagination with bounded default and maximum page sizes
 - Observer event retention by age and maximum row count
 - Metrics endpoint for worker active sandbox count, runner pressure, and execution observer counters
+- Readiness probe for dependency checks
 - Worker-scoped active sandbox limit accounting
 - Optional Linux secure backend with namespace-based isolation
 
@@ -522,7 +523,7 @@ managed environments.
 ### K3. Diagnostics
 
 - Add `/health` for liveness.
-- Add `/ready` for dependency readiness.
+- Added `/ready` for dependency readiness.
 - Add `/v1/policies` for effective policy.
 - Add operator runbook for common failures:
   - dependency profile missing

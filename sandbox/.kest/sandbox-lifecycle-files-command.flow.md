@@ -19,6 +19,20 @@ shutdown_timeout_secs == 10
 ```
 
 ```step
+@id readiness
+@name Readiness check
+
+GET {{base_url}}/ready
+
+[Asserts]
+status == 200
+service == "zgi-sandbox"
+ready == true
+checks.postgres == "ok"
+checks.runtime == "ok"
+```
+
+```step
 @id policies
 @name Policy catalog
 

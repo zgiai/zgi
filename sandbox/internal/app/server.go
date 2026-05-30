@@ -103,6 +103,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("/assets/", static)
 	s.mux.HandleFunc("/", s.handleIndex)
 	s.mux.HandleFunc("/health", s.handleHealth)
+	s.mux.HandleFunc("/ready", s.handleReady)
 	s.mux.HandleFunc("/v1/metrics", s.handleMetrics)
 	s.mux.HandleFunc("/api/blueprint", s.handleBlueprint)
 	s.mux.HandleFunc("/v1/policies", s.handlePolicies)
@@ -142,6 +143,42 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		"shutdown_timeout_secs":   s.config.ShutdownTimeoutSeconds,
 		"runtime_backend":         s.policy.RuntimeBackend(),
 		"network_policy_enforced": s.policy.NetworkPolicyEnforced(),
+	})
+}
+
+func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	checks := map[string]string{
+		"postgres": "ok",
+		"runtime":  "ok",
+	}
+	status := "ready"
+	httpStatus := http.StatusOK
+
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	if err := s.store.Ping(ctx); err != nil {
+		status = "not_ready"
+		httpStatus = http.StatusServiceUnavailable
+		checks["postgres"] = "error"
+	}
+	if s.runner == nil {
+		status = "not_ready"
+		httpStatus = http.StatusServiceUnavailable
+		checks["runtime"] = "error"
+	}
+
+	writeJSON(w, httpStatus, map[string]any{
+		"status":      status,
+		"ready":       httpStatus == http.StatusOK,
+		"service":     "zgi-sandbox",
+		"worker_id":   s.config.WorkerID,
+		"environment": s.config.Environment,
+		"checks":      checks,
 	})
 }
 

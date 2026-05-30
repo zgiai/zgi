@@ -47,6 +47,75 @@ func TestHealthEndpoint(t *testing.T) {
 	}
 }
 
+func TestReadyEndpoint(t *testing.T) {
+	server, err := NewServer(testConfig(t))
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"status":"ready"`) {
+		t.Fatalf("expected ready status, got %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"ready":true`) {
+		t.Fatalf("expected ready flag, got %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"postgres":"ok"`) {
+		t.Fatalf("expected postgres check, got %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"runtime":"ok"`) {
+		t.Fatalf("expected runtime check, got %s", rr.Body.String())
+	}
+}
+
+func TestReadyEndpointReportsStoreFailure(t *testing.T) {
+	server, err := NewServer(testConfig(t))
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+	if err := server.store.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"status":"not_ready"`) {
+		t.Fatalf("expected not ready status, got %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"ready":false`) {
+		t.Fatalf("expected not ready flag, got %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"postgres":"error"`) {
+		t.Fatalf("expected postgres error check, got %s", rr.Body.String())
+	}
+}
+
+func TestReadyEndpointRejectsNonGet(t *testing.T) {
+	server, err := NewServer(testConfig(t))
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/ready", nil)
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestRequestIDMiddlewareGeneratesRequestID(t *testing.T) {
 	server, err := NewServer(testConfig(t))
 	if err != nil {

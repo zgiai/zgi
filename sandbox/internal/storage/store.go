@@ -59,6 +59,10 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+func (s *Store) Ping(ctx context.Context) error {
+	return s.db.PingContext(ctx)
+}
+
 func (s *Store) prepare(ctx context.Context) error {
 	statements := []string{
 		`CREATE TABLE IF NOT EXISTS sandboxes (
