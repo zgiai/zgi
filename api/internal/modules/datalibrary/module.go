@@ -12,6 +12,7 @@ type Module struct {
 	DocumentAssetRepo          repository.DocumentAssetRepository
 	ReuseEventRepo             repository.ReuseEventRepository
 	ProcessingRequestRepo      repository.ProcessingRequestRepository
+	ParseConfirmationItemRepo  repository.ParseConfirmationItemRepository
 	VectorArtifactRepo         repository.VectorArtifactRepository
 	ExtractionArtifactRepo     repository.ExtractionArtifactRepository
 	KnowledgeBaseAssetRefRepo  repository.KnowledgeBaseAssetRefRepository
@@ -34,6 +35,7 @@ func NewModule(db *gorm.DB) *Module {
 	documentAssetRepo := repository.NewDocumentAssetRepository(db)
 	reuseEventRepo := repository.NewReuseEventRepository(db)
 	processingRequestRepo := repository.NewProcessingRequestRepository(db)
+	parseConfirmationItemRepo := repository.NewParseConfirmationItemRepository(db)
 	vectorArtifactRepo := repository.NewVectorArtifactRepository(db)
 	extractionArtifactRepo := repository.NewExtractionArtifactRepository(db)
 	knowledgeBaseAssetRefRepo := repository.NewKnowledgeBaseAssetRefRepository(db)
@@ -52,6 +54,7 @@ func NewModule(db *gorm.DB) *Module {
 		DocumentAssetRepo:          documentAssetRepo,
 		ReuseEventRepo:             reuseEventRepo,
 		ProcessingRequestRepo:      processingRequestRepo,
+		ParseConfirmationItemRepo:  parseConfirmationItemRepo,
 		VectorArtifactRepo:         vectorArtifactRepo,
 		ExtractionArtifactRepo:     extractionArtifactRepo,
 		KnowledgeBaseAssetRefRepo:  knowledgeBaseAssetRefRepo,
