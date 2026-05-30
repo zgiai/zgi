@@ -262,6 +262,8 @@ data.active_sandboxes == 1
 data.runner.max_workers == 4
 data.runner.active_workers == 0
 data.runner.queued_executions == 0
+data.observer_retention.retention_days == 7
+data.observer_retention.max_events == 10000
 ```
 
 ```step

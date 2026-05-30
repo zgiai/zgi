@@ -16,7 +16,9 @@ import (
 )
 
 type Store struct {
-	db *sql.DB
+	db                    *sql.DB
+	observerRetentionDays int
+	observerMaxEvents     int
 }
 
 func Open(cfg config.Config) (*Store, error) {
@@ -41,7 +43,11 @@ func Open(cfg config.Config) (*Store, error) {
 		return nil, fmt.Errorf("ping postgres store: %w", err)
 	}
 
-	store := &Store{db: db}
+	store := &Store{
+		db:                    db,
+		observerRetentionDays: cfg.ObserverRetentionDays,
+		observerMaxEvents:     cfg.ObserverMaxEvents,
+	}
 	if err := store.prepare(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -94,6 +100,7 @@ func (s *Store) prepare(ctx context.Context) error {
 			metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_observer_events_scope ON observer_events(sandbox_id, type, created_at DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_observer_events_created_at ON observer_events(created_at DESC);`,
 	}
 
 	for _, statement := range statements {
@@ -281,7 +288,33 @@ func (s *Store) AppendEvent(event observer.Event) error {
 		INSERT INTO observer_events (id, sandbox_id, type, message, created_at, metadata_json)
 		VALUES ($1, $2, $3, $4, $5, $6::jsonb)
 	`, event.ID, event.SandboxID, event.Type, event.Message, event.CreatedAt.UTC(), string(metadata))
-	return err
+	if err != nil {
+		return err
+	}
+	return s.PruneObserverEvents()
+}
+
+func (s *Store) PruneObserverEvents() error {
+	if s.observerRetentionDays > 0 {
+		cutoff := time.Now().UTC().Add(-time.Duration(s.observerRetentionDays) * 24 * time.Hour)
+		if _, err := s.db.Exec(`DELETE FROM observer_events WHERE created_at < $1`, cutoff); err != nil {
+			return err
+		}
+	}
+
+	if s.observerMaxEvents > 0 {
+		_, err := s.db.Exec(`
+			DELETE FROM observer_events
+			WHERE id IN (
+				SELECT id
+				FROM observer_events
+				ORDER BY created_at DESC, id DESC
+				OFFSET $1
+			)
+		`, s.observerMaxEvents)
+		return err
+	}
+	return nil
 }
 
 func (s *Store) QueryEvents(query observer.Query) ([]observer.Event, error) {

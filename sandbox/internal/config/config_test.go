@@ -22,6 +22,20 @@ func TestFromEnvDefaultsShutdownTimeout(t *testing.T) {
 	}
 }
 
+func TestFromEnvReadsObserverRetention(t *testing.T) {
+	t.Setenv("ZGI_SANDBOX_OBSERVER_RETENTION_DAYS", "3")
+	t.Setenv("ZGI_SANDBOX_OBSERVER_MAX_EVENTS", "250")
+
+	cfg := FromEnv()
+
+	if cfg.ObserverRetentionDays != 3 {
+		t.Fatalf("expected observer retention 3 days, got %d", cfg.ObserverRetentionDays)
+	}
+	if cfg.ObserverMaxEvents != 250 {
+		t.Fatalf("expected observer max events 250, got %d", cfg.ObserverMaxEvents)
+	}
+}
+
 func TestValidateStartupRejectsPreviewBackendInProduction(t *testing.T) {
 	cfg := Config{
 		Environment:    "production",

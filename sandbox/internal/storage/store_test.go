@@ -97,3 +97,69 @@ func TestPostgresStorePersistsSandboxAndEvents(t *testing.T) {
 		t.Fatalf("expected older event, got %q", olderEvents[0].Message)
 	}
 }
+
+func TestPostgresStorePrunesObserverEventsByAgeAndCount(t *testing.T) {
+	cfg := config.FromEnv()
+	cfg.DatabaseURL = testutil.CreateTestPostgresDSN(t)
+	cfg.ObserverRetentionDays = 1
+	cfg.ObserverMaxEvents = 2
+
+	store, err := Open(cfg)
+	if err != nil {
+		t.Fatalf("open postgres store: %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now().UTC()
+	events := []observer.Event{
+		{
+			ID:        "evt_retention_old",
+			SandboxID: "sbx_retention",
+			Type:      "sandbox.test",
+			Message:   "old",
+			CreatedAt: now.Add(-48 * time.Hour),
+			Metadata:  map[string]any{},
+		},
+		{
+			ID:        "evt_retention_first",
+			SandboxID: "sbx_retention",
+			Type:      "sandbox.test",
+			Message:   "first",
+			CreatedAt: now.Add(time.Second),
+			Metadata:  map[string]any{},
+		},
+		{
+			ID:        "evt_retention_second",
+			SandboxID: "sbx_retention",
+			Type:      "sandbox.test",
+			Message:   "second",
+			CreatedAt: now.Add(2 * time.Second),
+			Metadata:  map[string]any{},
+		},
+		{
+			ID:        "evt_retention_third",
+			SandboxID: "sbx_retention",
+			Type:      "sandbox.test",
+			Message:   "third",
+			CreatedAt: now.Add(3 * time.Second),
+			Metadata:  map[string]any{},
+		},
+	}
+
+	for _, event := range events {
+		if err := store.AppendEvent(event); err != nil {
+			t.Fatalf("append event %s: %v", event.ID, err)
+		}
+	}
+
+	kept, err := store.QueryEvents(observer.Query{SandboxID: "sbx_retention", Limit: 10})
+	if err != nil {
+		t.Fatalf("query retained events: %v", err)
+	}
+	if len(kept) != 2 {
+		t.Fatalf("expected two retained events, got %d", len(kept))
+	}
+	if kept[0].Message != "third" || kept[1].Message != "second" {
+		t.Fatalf("expected newest two events to be retained, got %#v", kept)
+	}
+}

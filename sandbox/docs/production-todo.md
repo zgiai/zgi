@@ -34,6 +34,7 @@ Already available:
 - Request correlation IDs for HTTP responses and execution observer events
 - Structured observer events for successful and failed execution paths
 - Observer event pagination with bounded default and maximum page sizes
+- Observer event retention by age and maximum row count
 - Metrics endpoint for worker active sandbox count, runner pressure, and execution observer counters
 - Worker-scoped active sandbox limit accounting
 - Optional Linux secure backend with namespace-based isolation
@@ -367,6 +368,7 @@ and security review.
 ### H1. Event Model
 
 - Added cursor-style observer pagination on `GET /v1/observer/events` with a default page size, maximum page size, `has_more`, and `next_cursor`.
+- Added observer event retention with `ZGI_SANDBOX_OBSERVER_RETENTION_DAYS` and `ZGI_SANDBOX_OBSERVER_MAX_EVENTS`.
 - Standardize observer event fields:
   - event ID
   - sandbox ID

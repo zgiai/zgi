@@ -318,6 +318,10 @@ func TestMetricsEndpointReportsSandboxRunnerAndObserverCounters(t *testing.T) {
 				ExecutionDurationCount     int     `json:"execution_duration_count"`
 				ExecutionDurationAverageMS float64 `json:"execution_duration_average_ms"`
 			} `json:"observer"`
+			ObserverRetention struct {
+				RetentionDays int `json:"retention_days"`
+				MaxEvents     int `json:"max_events"`
+			} `json:"observer_retention"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
@@ -346,6 +350,12 @@ func TestMetricsEndpointReportsSandboxRunnerAndObserverCounters(t *testing.T) {
 	}
 	if payload.Data.Observer.ExecutionDurationCount != 1 {
 		t.Fatalf("expected one duration sample, got %d", payload.Data.Observer.ExecutionDurationCount)
+	}
+	if payload.Data.ObserverRetention.RetentionDays != 7 {
+		t.Fatalf("expected default observer retention 7 days, got %d", payload.Data.ObserverRetention.RetentionDays)
+	}
+	if payload.Data.ObserverRetention.MaxEvents != 10000 {
+		t.Fatalf("expected default observer max events 10000, got %d", payload.Data.ObserverRetention.MaxEvents)
 	}
 }
 

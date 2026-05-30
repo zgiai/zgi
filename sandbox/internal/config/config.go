@@ -20,6 +20,8 @@ type Config struct {
 	InteractiveTTL         int
 	CommandTimeout         int
 	MaxFileSizeKB          int
+	ObserverRetentionDays  int
+	ObserverMaxEvents      int
 	DatabaseURL            string
 	DataDir                string
 	CacheTTL               int
@@ -54,6 +56,8 @@ func FromEnv() Config {
 		InteractiveTTL:         getEnvInt("ZGI_SANDBOX_INTERACTIVE_TTL_SECONDS", 3600),
 		CommandTimeout:         getEnvInt("ZGI_SANDBOX_COMMAND_TIMEOUT_SECONDS", 30),
 		MaxFileSizeKB:          getEnvInt("ZGI_SANDBOX_MAX_FILE_SIZE_KB", 256),
+		ObserverRetentionDays:  getEnvInt("ZGI_SANDBOX_OBSERVER_RETENTION_DAYS", 7),
+		ObserverMaxEvents:      getEnvInt("ZGI_SANDBOX_OBSERVER_MAX_EVENTS", 10000),
 		DatabaseURL:            getEnv("ZGI_SANDBOX_DATABASE_URL", "postgres://postgres@127.0.0.1:5432/postgres?sslmode=disable"),
 		DataDir:                getEnv("ZGI_SANDBOX_DATA_DIR", ".zgi-sandbox-data"),
 		CacheTTL:               getEnvInt("ZGI_SANDBOX_CACHE_TTL_SECONDS", 30),

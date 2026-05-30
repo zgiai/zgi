@@ -174,6 +174,10 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		"active_sandboxes": activeSandboxes,
 		"runner":           s.runner.Metrics(),
 		"observer":         s.observer.Metrics(1000),
+		"observer_retention": map[string]any{
+			"retention_days": s.config.ObserverRetentionDays,
+			"max_events":     s.config.ObserverMaxEvents,
+		},
 	})
 }
 
