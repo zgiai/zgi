@@ -7,6 +7,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
 	toolfilescheduler "github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file/scheduler"
 	datalibrarymodule "github.com/zgiai/zgi/api/internal/modules/datalibrary"
+	datalibraryworker "github.com/zgiai/zgi/api/internal/modules/datalibrary/worker"
 	dataset_repo "github.com/zgiai/zgi/api/internal/modules/dataset/repository"
 	fileProcessHandler "github.com/zgiai/zgi/api/internal/modules/file_process/handler"
 	fileProcessRepo "github.com/zgiai/zgi/api/internal/modules/file_process/repository"
@@ -17,6 +18,7 @@ import (
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	jwtMiddleware "github.com/zgiai/zgi/api/middleware"
 	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/queue"
 	pkgscheduler "github.com/zgiai/zgi/api/pkg/scheduler"
 	"github.com/zgiai/zgi/api/pkg/storage"
 )
@@ -31,6 +33,7 @@ type FileRouteDeps struct {
 	LLMClient                  llmclient.LLMClient
 	DefaultModelService        llmdefaultservice.DefaultModelService
 	DataLibraryModule          *datalibrarymodule.Module
+	TaskManager                *queue.TaskManager
 	Scheduler                  *pkgscheduler.Scheduler
 	ScheduledFileService       interfaces.FileService
 }
@@ -56,6 +59,7 @@ func registerFileRoutesLegacy(v1 *gin.RouterGroup, deps FileRouteDeps) {
 		fileProcessHandler.FileAssetProcessingServices{
 			StateService:      deps.DataLibraryModule.FileAssetProcessingStateService,
 			ProcessingService: deps.DataLibraryModule.ProcessingRequestService,
+			TaskEnqueuer:      datalibraryworker.NewFileProcessTaskDispatcher(deps.TaskManager),
 		},
 	)
 	fileResourceHandler := fileProcessHandler.NewFileResourceHandler(fileFolderService, fileService, deps.AccountService, deps.OrganizationService, fileFavoriteService)
@@ -204,6 +208,9 @@ func validateFileRouteDeps(deps FileRouteDeps) {
 	}
 	if deps.DataLibraryModule == nil {
 		panic("file routes require data library module")
+	}
+	if deps.TaskManager == nil {
+		panic("file routes require task manager")
 	}
 	if deps.Scheduler == nil {
 		panic("file routes require scheduler")

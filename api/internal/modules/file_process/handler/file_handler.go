@@ -38,12 +38,18 @@ type FileHandler struct {
 	enterpriseService interfaces.OrganizationService
 	assetStateService datalibraryservice.FileAssetProcessingStateService
 	processingService datalibraryservice.ProcessingRequestService
+	taskEnqueuer      FileProcessingTaskEnqueuer
 	validator         *validator.Validate
 }
 
 type FileAssetProcessingServices struct {
 	StateService      datalibraryservice.FileAssetProcessingStateService
 	ProcessingService datalibraryservice.ProcessingRequestService
+	TaskEnqueuer      FileProcessingTaskEnqueuer
+}
+
+type FileProcessingTaskEnqueuer interface {
+	EnqueueFileProcess(ctx context.Context, processingRequestID uuid.UUID) error
 }
 
 const (
@@ -89,9 +95,11 @@ func NewFileHandler(
 ) *FileHandler {
 	var assetStateService datalibraryservice.FileAssetProcessingStateService
 	var processingService datalibraryservice.ProcessingRequestService
+	var taskEnqueuer FileProcessingTaskEnqueuer
 	if len(assetProcessingServices) > 0 {
 		assetStateService = assetProcessingServices[0].StateService
 		processingService = assetProcessingServices[0].ProcessingService
+		taskEnqueuer = assetProcessingServices[0].TaskEnqueuer
 	}
 	return &FileHandler{
 		fileService:       fileService,
@@ -101,6 +109,7 @@ func NewFileHandler(
 		enterpriseService: enterpriseService,
 		assetStateService: assetStateService,
 		processingService: processingService,
+		taskEnqueuer:      taskEnqueuer,
 		validator:         validator.New(),
 	}
 }
@@ -623,6 +632,11 @@ func (h *FileHandler) beginAndQueueRunProcessingRequest(ctx context.Context, ass
 	queued, err := h.processingService.QueueRequest(ctx, organizationID, result.ProcessingRequest.ID)
 	if err != nil {
 		return nil, err
+	}
+	if h.taskEnqueuer != nil {
+		if err := h.taskEnqueuer.EnqueueFileProcess(ctx, result.ProcessingRequest.ID); err != nil {
+			return nil, err
+		}
 	}
 	return &queuedFileProcessingRequest{
 		Asset:             result.Asset,
