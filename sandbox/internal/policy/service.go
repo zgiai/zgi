@@ -25,10 +25,19 @@ type CreateDecision struct {
 	DependencyProfile string
 }
 
+type CommandLimits struct {
+	Profile          string        `json:"profile"`
+	Timeout          time.Duration `json:"-"`
+	StdoutLimitBytes int           `json:"stdout_limit_bytes"`
+	StderrLimitBytes int           `json:"stderr_limit_bytes"`
+	MaxStdinBytes    int           `json:"max_stdin_bytes"`
+}
+
 type Service struct {
 	config             config.Config
 	dependencyProfiles []DependencyProfile
 	networkProfiles    []map[string]any
+	commandProfiles    map[string]CommandLimits
 }
 
 func NewService(cfg config.Config) *Service {
@@ -61,6 +70,29 @@ func NewService(cfg config.Config) *Service {
 			{"name": "workflow-safe", "default": false, "network_enabled": true},
 			{"name": "interactive-preview", "default": false, "network_enabled": true},
 		},
+		commandProfiles: map[string]CommandLimits{
+			"code-short": {
+				Profile:          "code-short",
+				Timeout:          5 * time.Second,
+				StdoutLimitBytes: 256 * 1024,
+				StderrLimitBytes: 256 * 1024,
+				MaxStdinBytes:    256 * 1024,
+			},
+			"skill-python": {
+				Profile:          "skill-python",
+				Timeout:          30 * time.Second,
+				StdoutLimitBytes: 1024 * 1024,
+				StderrLimitBytes: 1024 * 1024,
+				MaxStdinBytes:    1024 * 1024,
+			},
+			"skill-node": {
+				Profile:          "skill-node",
+				Timeout:          30 * time.Second,
+				StdoutLimitBytes: 1024 * 1024,
+				StderrLimitBytes: 1024 * 1024,
+				MaxStdinBytes:    1024 * 1024,
+			},
+		},
 	}
 }
 
@@ -87,6 +119,7 @@ func (s *Service) Snapshot() map[string]any {
 			},
 		},
 		"network_profiles":    s.networkProfiles,
+		"command_profiles":    s.commandProfileSnapshot(),
 		"dependency_policy":   map[string]any{"mode": "managed-profiles", "supports_user_update": false},
 		"dependency_profiles": s.dependencyProfiles,
 		"limits": map[string]any{
@@ -182,8 +215,75 @@ func (s *Service) NormalizeCommandTimeout(timeoutSeconds int) time.Duration {
 	return time.Duration(timeoutSeconds) * time.Second
 }
 
+func (s *Service) NormalizeCommandLimits(profile string, timeoutSeconds int, timeoutMS int, stdoutLimitKB int, stderrLimitKB int) (CommandLimits, error) {
+	name := strings.TrimSpace(profile)
+	if name == "" {
+		name = "skill-python"
+	}
+	limits, ok := s.commandProfiles[name]
+	if !ok {
+		return CommandLimits{}, fmt.Errorf("unsupported command profile: %s", name)
+	}
+
+	if timeoutMS > 0 {
+		limits.Timeout = time.Duration(timeoutMS) * time.Millisecond
+	} else if timeoutSeconds > 0 {
+		limits.Timeout = time.Duration(timeoutSeconds) * time.Second
+	}
+	maxTimeout := time.Duration(s.config.CommandTimeout) * time.Second
+	if maxTimeout > 0 && limits.Timeout > maxTimeout {
+		limits.Timeout = maxTimeout
+	}
+	if limits.Timeout <= 0 {
+		limits.Timeout = 5 * time.Second
+	}
+
+	if stdoutLimitKB > 0 {
+		limits.StdoutLimitBytes = stdoutLimitKB * 1024
+	}
+	if stderrLimitKB > 0 {
+		limits.StderrLimitBytes = stderrLimitKB * 1024
+	}
+	maxOutputBytes := s.config.OutputLimitKB * 1024
+	if maxOutputBytes > 0 {
+		if limits.StdoutLimitBytes > maxOutputBytes {
+			limits.StdoutLimitBytes = maxOutputBytes
+		}
+		if limits.StderrLimitBytes > maxOutputBytes {
+			limits.StderrLimitBytes = maxOutputBytes
+		}
+	}
+	if limits.StdoutLimitBytes <= 0 {
+		limits.StdoutLimitBytes = 64 * 1024
+	}
+	if limits.StderrLimitBytes <= 0 {
+		limits.StderrLimitBytes = 64 * 1024
+	}
+	return limits, nil
+}
+
 func (s *Service) MaxFileSizeBytes() int64 {
 	return int64(s.config.MaxFileSizeKB) * 1024
+}
+
+func (s *Service) commandProfileSnapshot() []map[string]any {
+	names := []string{"code-short", "skill-python", "skill-node"}
+	items := make([]map[string]any, 0, len(names))
+	for _, name := range names {
+		profile, ok := s.commandProfiles[name]
+		if !ok {
+			continue
+		}
+		items = append(items, map[string]any{
+			"name":               profile.Profile,
+			"default_timeout_ms": profile.Timeout.Milliseconds(),
+			"stdout_limit_bytes": profile.StdoutLimitBytes,
+			"stderr_limit_bytes": profile.StderrLimitBytes,
+			"max_stdin_bytes":    profile.MaxStdinBytes,
+			"network":            "inherits sandbox policy",
+		})
+	}
+	return items
 }
 
 func (s *Service) normalizeProfile(profile string) (sandbox.RuntimeProfile, error) {

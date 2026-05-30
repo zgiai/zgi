@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -83,20 +84,29 @@ func (b *processBackend) Run(parent context.Context, req Request, workDir string
 	}, nil
 }
 
-func (b *processBackend) ExecuteCommand(parent context.Context, workDir string, command string, args []string, timeout time.Duration, outputCap int) (CommandResult, error) {
-	runCtx, cancel := context.WithTimeout(parent, timeout)
+func (b *processBackend) ExecuteCommand(parent context.Context, spec CommandSpec) (CommandResult, error) {
+	runCtx, cancel := context.WithTimeout(parent, spec.Timeout)
 	defer cancel()
 
 	var cmd *exec.Cmd
-	if len(args) > 0 {
-		cmd = exec.CommandContext(runCtx, command, args...)
+	if len(spec.Args) > 0 {
+		cmd = exec.CommandContext(runCtx, spec.Command, spec.Args...)
+	} else if spec.AllowShellForm {
+		cmd = exec.CommandContext(runCtx, "/bin/sh", "-lc", spec.Command)
 	} else {
-		cmd = exec.CommandContext(runCtx, "/bin/sh", "-lc", command)
+		cmd = exec.CommandContext(runCtx, spec.Command)
 	}
-	cmd.Dir = workDir
+	cmd.Dir = spec.WorkDir
+	if spec.Stdin != "" {
+		cmd.Stdin = strings.NewReader(spec.Stdin)
+	}
+	cmd.Env = safeBaseEnv(os.Environ())
+	for key, value := range spec.Env {
+		cmd.Env = append(cmd.Env, key+"="+value)
+	}
 
-	stdout := newCappedBuffer(outputCap)
-	stderr := newCappedBuffer(outputCap)
+	stdout := newCappedBuffer(spec.StdoutLimit)
+	stderr := newCappedBuffer(spec.StderrLimit)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 
@@ -124,7 +134,7 @@ func (b *processBackend) ExecuteCommand(parent context.Context, workDir string, 
 		ExitCode:   exitCode,
 		DurationMS: duration,
 		Truncated:  stdout.Truncated() || stderr.Truncated(),
-		Command:    command,
-		Args:       args,
+		Command:    spec.Command,
+		Args:       spec.Args,
 	}, nil
 }

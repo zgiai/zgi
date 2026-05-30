@@ -77,24 +77,24 @@ func (b *linuxSecureBackend) Run(parent context.Context, req Request, workDir st
 	defer os.Remove(hostScriptPath)
 
 	containerPath := containerScriptPath(root, scriptName)
-	return b.exec(runCtx, root, spec.binary, spec.args(containerPath), req.EnableNetwork, outputCap)
+	return b.exec(runCtx, root, spec.binary, spec.args(containerPath), req.EnableNetwork, outputCap, outputCap, "", nil)
 }
 
-func (b *linuxSecureBackend) ExecuteCommand(parent context.Context, workDir string, command string, args []string, timeout time.Duration, outputCap int) (CommandResult, error) {
-	runCtx, cancel := context.WithTimeout(parent, timeout)
+func (b *linuxSecureBackend) ExecuteCommand(parent context.Context, spec CommandSpec) (CommandResult, error) {
+	runCtx, cancel := context.WithTimeout(parent, spec.Timeout)
 	defer cancel()
 
 	commandArgs := []string{}
-	if len(args) > 0 {
-		commandArgs = append(commandArgs, command)
-		commandArgs = append(commandArgs, args...)
-	} else if b.allowShell {
-		commandArgs = []string{"/bin/sh", "-lc", command}
+	if len(spec.Args) > 0 {
+		commandArgs = append(commandArgs, spec.Command)
+		commandArgs = append(commandArgs, spec.Args...)
+	} else if b.allowShell && spec.AllowShellForm {
+		commandArgs = []string{"/bin/sh", "-lc", spec.Command}
 	} else {
-		commandArgs = []string{command}
+		commandArgs = []string{spec.Command}
 	}
 
-	result, err := b.exec(runCtx, workDir, commandArgs[0], commandArgs[1:], false, outputCap)
+	result, err := b.exec(runCtx, spec.WorkDir, commandArgs[0], commandArgs[1:], false, spec.StdoutLimit, spec.StderrLimit, spec.Stdin, spec.Env)
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -104,12 +104,12 @@ func (b *linuxSecureBackend) ExecuteCommand(parent context.Context, workDir stri
 		ExitCode:   result.ExitCode,
 		DurationMS: result.DurationMS,
 		Truncated:  result.Truncated,
-		Command:    command,
-		Args:       args,
+		Command:    spec.Command,
+		Args:       spec.Args,
 	}, nil
 }
 
-func (b *linuxSecureBackend) exec(ctx context.Context, workDir string, binary string, args []string, enableNetwork bool, outputCap int) (Result, error) {
+func (b *linuxSecureBackend) exec(ctx context.Context, workDir string, binary string, args []string, enableNetwork bool, stdoutLimit int, stderrLimit int, stdin string, env map[string]string) (Result, error) {
 	bwrapArgs := []string{
 		"--die-with-parent",
 		"--new-session",
@@ -131,6 +131,9 @@ func (b *linuxSecureBackend) exec(ctx context.Context, workDir string, binary st
 		"--unshare-uts",
 		"--unshare-cgroup",
 	}
+	for key, value := range env {
+		bwrapArgs = append(bwrapArgs, "--setenv", key, value)
+	}
 	if !enableNetwork {
 		bwrapArgs = append(bwrapArgs, "--unshare-net")
 	}
@@ -138,8 +141,11 @@ func (b *linuxSecureBackend) exec(ctx context.Context, workDir string, binary st
 	bwrapArgs = append(bwrapArgs, args...)
 
 	cmd := exec.CommandContext(ctx, b.bwrapBin, bwrapArgs...)
-	stdout := newCappedBuffer(outputCap)
-	stderr := newCappedBuffer(outputCap)
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
+	stdout := newCappedBuffer(stdoutLimit)
+	stderr := newCappedBuffer(stderrLimit)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 
