@@ -2,7 +2,7 @@
 
 These flows are black-box checks for the sandbox HTTP API. They cover lifecycle,
 file I/O, short-code structured results, command execution, archive upload,
-skill-script style execution, and security rejection paths.
+skill-script style execution, artifact manifests, and security rejection paths.
 
 Run the full local suite from the sandbox directory:
 

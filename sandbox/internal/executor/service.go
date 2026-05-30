@@ -4,12 +4,15 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -94,6 +97,23 @@ type FileContent struct {
 	Path      string `json:"path"`
 	Content   string `json:"content"`
 	Encoding  string `json:"encoding"`
+}
+
+type FileManifest struct {
+	SandboxID string             `json:"sandbox_id"`
+	Path      string             `json:"path"`
+	Items     []FileManifestItem `json:"items"`
+	FileCount int                `json:"file_count"`
+	TotalSize int64              `json:"total_size"`
+	Truncated bool               `json:"truncated"`
+}
+
+type FileManifestItem struct {
+	Path        string    `json:"path"`
+	Size        int64     `json:"size"`
+	SHA256      string    `json:"sha256"`
+	ContentType string    `json:"content_type"`
+	ModifiedAt  time.Time `json:"modified_at"`
 }
 
 func NewService(manager *lifecycle.Manager, runnerService *runner.Service, recorder *observer.Recorder, policyService *policy.Service) *Service {
@@ -446,6 +466,70 @@ func (s *Service) ListFiles(sandboxID string) ([]FileInfo, error) {
 	return entries, nil
 }
 
+func (s *Service) BuildFileManifest(sandboxID string, relativePath string) (*FileManifest, error) {
+	box, err := s.lifecycle.GetActive(sandboxID)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(relativePath) == "" {
+		relativePath = "artifacts"
+	}
+
+	target, err := resolveExistingSandboxPath(box.RootPath, relativePath)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]FileManifestItem, 0)
+	var totalSize int64
+	truncated := false
+	err = filepath.WalkDir(target, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if path == target || d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("manifest path contains symlink: %s", path)
+		}
+		if len(items) >= 100 {
+			truncated = true
+			return filepath.SkipAll
+		}
+
+		item, err := fileManifestItem(box.RootPath, path, info)
+		if err != nil {
+			return err
+		}
+		items = append(items, item)
+		totalSize += item.Size
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	s.observer.Record("files.manifest", sandboxID, "file manifest generated", map[string]any{
+		"path":       relativePath,
+		"file_count": len(items),
+		"total_size": totalSize,
+		"truncated":  truncated,
+	})
+	return &FileManifest{
+		SandboxID: sandboxID,
+		Path:      relativePath,
+		Items:     items,
+		FileCount: len(items),
+		TotalSize: totalSize,
+		Truncated: truncated,
+	}, nil
+}
+
 func resolveSandboxPath(root string, relativePath string) (string, error) {
 	if strings.TrimSpace(relativePath) == "" {
 		return "", errors.New("path is required")
@@ -607,6 +691,30 @@ func ListDirectory(root string) ([]FileInfo, error) {
 		return nil
 	})
 	return entries, err
+}
+
+func fileManifestItem(root string, path string, info fs.FileInfo) (FileManifestItem, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return FileManifestItem{}, err
+	}
+	sum := sha256.Sum256(content)
+	rel := strings.TrimPrefix(path, root+string(filepath.Separator))
+	contentType := "application/octet-stream"
+	if len(content) > 0 {
+		sample := content
+		if len(sample) > 512 {
+			sample = sample[:512]
+		}
+		contentType = http.DetectContentType(sample)
+	}
+	return FileManifestItem{
+		Path:        filepath.ToSlash(rel),
+		Size:        info.Size(),
+		SHA256:      hex.EncodeToString(sum[:]),
+		ContentType: contentType,
+		ModifiedAt:  info.ModTime().UTC(),
+	}, nil
 }
 
 func normalizeCommandEnv(env map[string]string) (map[string]string, error) {

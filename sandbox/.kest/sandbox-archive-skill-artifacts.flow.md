@@ -101,6 +101,21 @@ data.content == "a2VzdCBhcnRpZmFjdAo="
 ```
 
 ```step
+@id artifact-manifest
+@name Generate artifact manifest
+
+GET {{base_url}}/v1/files/manifest?sandbox_id={{sandbox_id}}&path=artifacts
+
+[Asserts]
+status == 200
+code == 0
+data.path == "artifacts"
+data.file_count == 1
+data.total_size == 14
+data.truncated == false
+```
+
+```step
 @id delete-sandbox
 @name Delete sandbox
 

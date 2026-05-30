@@ -107,6 +107,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/files/download", s.handleDownloadFile)
 	s.mux.HandleFunc("/v1/files/info", s.handleFileInfo)
 	s.mux.HandleFunc("/v1/files/tree", s.handleFileTree)
+	s.mux.HandleFunc("/v1/files/manifest", s.handleFileManifest)
 	s.mux.HandleFunc("/v1/files", s.handleDeleteFile)
 	s.mux.HandleFunc("/v1/observer/events", s.handleObserverEvents)
 	s.mux.HandleFunc("/_zgi/ports/", s.handleInteractiveProxy)
@@ -479,6 +480,27 @@ func (s *Server) handleFileTree(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeEnvelope(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (s *Server) handleFileManifest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authorized(r) {
+		writeEnvelopeWithMessage(w, http.StatusUnauthorized, -401, "unauthorized", nil)
+		return
+	}
+	if s.proxyOwnedRequest(w, r, r.URL.Query().Get("sandbox_id")) {
+		return
+	}
+
+	manifest, err := s.executor.BuildFileManifest(r.URL.Query().Get("sandbox_id"), r.URL.Query().Get("path"))
+	if err != nil {
+		writeKnownError(w, err)
+		return
+	}
+	writeEnvelope(w, http.StatusOK, manifest)
 }
 
 func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request) {

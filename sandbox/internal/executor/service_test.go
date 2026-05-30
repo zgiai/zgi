@@ -413,6 +413,41 @@ func TestRunCommandRejectsDangerousEnv(t *testing.T) {
 	}
 }
 
+func TestBuildFileManifestReturnsHashesAndContentTypes(t *testing.T) {
+	service, manager := newTestExecutorService(t)
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+	if _, err := service.UploadFile(FileWriteRequest{
+		SandboxID: box.ID,
+		Path:      "artifacts/report.txt",
+		Content:   "hello manifest\n",
+	}); err != nil {
+		t.Fatalf("upload artifact: %v", err)
+	}
+
+	manifest, err := service.BuildFileManifest(box.ID, "artifacts")
+	if err != nil {
+		t.Fatalf("build manifest: %v", err)
+	}
+	if manifest.FileCount != 1 || manifest.TotalSize != int64(len("hello manifest\n")) {
+		t.Fatalf("unexpected manifest totals: %+v", manifest)
+	}
+	item := manifest.Items[0]
+	if item.Path != "artifacts/report.txt" {
+		t.Fatalf("unexpected manifest path: %s", item.Path)
+	}
+	if item.SHA256 == "" {
+		t.Fatal("expected sha256")
+	}
+	if !strings.HasPrefix(item.ContentType, "text/plain") {
+		t.Fatalf("expected text content type, got %s", item.ContentType)
+	}
+}
+
 func TestDeleteFileRejectsSandboxRoot(t *testing.T) {
 	service, manager := newTestExecutorService(t)
 	box, err := manager.Create(lifecycle.CreateRequest{
