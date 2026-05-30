@@ -149,6 +149,7 @@ function DatasetCard({ dataset, onDeleted, pageIndex, currentFolderId }: Dataset
       )}
       {/* Delete confirmation dialog outside dropdown */}
       <ConfirmDialog
+        variant="danger"
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
         title={t('deleteConfirmTitle', { name: dataset.name })}

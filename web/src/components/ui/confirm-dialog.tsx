@@ -37,7 +37,7 @@ export interface ConfirmDialogProps {
   /** Optional cancel handler */
   onCancel?: () => void;
   /** Variant of the dialog (optional) */
-  variant?: 'default' | 'warning';
+  variant?: 'default' | 'warning' | 'danger';
   contentClassName?: string;
   footerClassName?: string;
   cancelClassName?: string;
@@ -64,6 +64,7 @@ export function ConfirmDialog({
   const [openInternal, setOpenInternal] = useState(false);
   const open = openProp !== undefined ? openProp : openInternal;
   const setOpen = onOpenChangeProp !== undefined ? onOpenChangeProp : setOpenInternal;
+  const isDanger = variant === 'danger';
 
   // Handle confirm action then close dialog
   const handleConfirm = () => {
@@ -74,7 +75,10 @@ export function ConfirmDialog({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       {trigger && <DialogTrigger asChild>{trigger}</DialogTrigger>}
-      <DialogContent size="sm" className={cn('p-0 overflow-hidden', contentClassName)}>
+      <DialogContent
+        size="sm"
+        className={cn('p-0 overflow-hidden', isDanger && 'max-w-md rounded-2xl', contentClassName)}
+      >
         <DialogHeader>
           <DialogTitle className="text-xl font-bold tracking-tight">{title}</DialogTitle>
         </DialogHeader>
@@ -87,11 +91,21 @@ export function ConfirmDialog({
           </DialogBody>
         )}
 
-        <DialogFooter className={cn('bg-muted/50 px-6 pb-6 pt-4 border-t gap-3', footerClassName)}>
+        <DialogFooter
+          className={cn(
+            'bg-muted/50 px-6 pb-6 pt-4 border-t gap-3',
+            isDanger && 'justify-end border-t-0 bg-white px-6 py-5',
+            footerClassName
+          )}
+        >
           <Button
-            variant="ghost"
+            variant={isDanger ? 'outline' : 'ghost'}
             size="xl"
-            className={cn('px-6 font-semibold', cancelClassName)}
+            className={cn(
+              'px-6 font-semibold',
+              isDanger && 'rounded-xl border-slate-200 bg-white hover:bg-slate-50',
+              cancelClassName
+            )}
             onClick={() => {
               onCancel?.();
               setOpen(false);
@@ -100,11 +114,16 @@ export function ConfirmDialog({
             {cancelText}
           </Button>
           <Button
-            variant={variant === 'warning' ? 'destructive' : 'default'}
+            variant={variant === 'warning' ? 'destructive' : isDanger ? 'outline' : 'default'}
             onClick={handleConfirm}
             disabled={loading}
             size="xl"
-            className={cn('px-6 font-semibold', confirmClassName)}
+            className={cn(
+              'px-6 font-semibold',
+              isDanger &&
+                'rounded-xl border-red-200 bg-red-50 text-red-600 hover:border-red-200 hover:bg-red-100 hover:text-red-700',
+              confirmClassName
+            )}
           >
             {loading && <Loader2 className="animate-spin h-4 w-4 mr-2" />}
             {confirmText}

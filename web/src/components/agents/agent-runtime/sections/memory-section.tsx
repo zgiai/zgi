@@ -159,7 +159,7 @@ export function AgentRuntimeMemorySection({
         description={t('memory.deleteConfirmDescription')}
         confirmText={t('memory.deleteConfirmAction')}
         cancelText={t('memory.deleteConfirmCancel')}
-        variant="warning"
+        variant="danger"
         onConfirm={() => {
           if (pendingRemoveMemoryIndex !== null) {
             removeAgentMemorySlot(pendingRemoveMemoryIndex);

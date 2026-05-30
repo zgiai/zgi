@@ -231,7 +231,7 @@ function AgentCard({ agent, onDeleted, pageIndex }: AgentCardProps) {
       />
       {/* Delete confirmation dialog outside dropdown */}
       <ConfirmDialog
-        variant="warning"
+        variant="danger"
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
         title={t('deleteConfirmTitle', { name: agent.name })}

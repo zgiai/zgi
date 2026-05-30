@@ -157,7 +157,7 @@ const ConversationHistoryList: React.FC<ConversationHistoryListProps> = ({
             </div>
             <div onClick={e => e.stopPropagation()}>
               <ConfirmDialog
-                variant="warning"
+                variant="danger"
                 title={t('webapp.chat.deleteTitle')}
                 description={t('webapp.chat.deleteDescription', {
                   conversationTitle: displayTitle,

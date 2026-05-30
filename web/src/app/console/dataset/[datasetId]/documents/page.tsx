@@ -495,7 +495,7 @@ export default function DatasetDocumentsPage() {
 
       {/* Delete confirmation dialog */}
       <ConfirmDialog
-        variant="warning"
+        variant="danger"
         open={deleteDialogOpen}
         onOpenChange={setDeleteDialogOpen}
         title={t('datasets.messages.confirmDelete', { name: documentToDelete?.name || '' })}
@@ -542,7 +542,7 @@ export default function DatasetDocumentsPage() {
 
       {/* Batch delete confirmation dialog */}
       <ConfirmDialog
-        variant="warning"
+        variant="danger"
         open={batchDeleteDialogOpen}
         onOpenChange={setBatchDeleteDialogOpen}
         title={t('datasets.messages.batchDeleteDocuments', { count: selectedIds.length })}

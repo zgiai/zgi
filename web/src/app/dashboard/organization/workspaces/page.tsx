@@ -421,7 +421,7 @@ function WorkspaceManagementPageContent() {
         cancelText={t('deleteConfirm.cancel')}
         loading={isDeleting}
         onConfirm={handleDeleteWorkspace}
-        variant="warning"
+        variant="danger"
       />
 
       <WorkspaceDialog

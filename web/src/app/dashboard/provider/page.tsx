@@ -601,7 +601,7 @@ export default function ProviderPage() {
       />
 
       <ConfirmDialog
-        variant="warning"
+        variant="danger"
         open={!!deletingProvider}
         onOpenChange={(open: boolean) => !open && setDeletingProvider(undefined)}
         title={t('custom.delete.title')}

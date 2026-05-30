@@ -950,8 +950,8 @@ const messages: AgentsMessages = {
         expandTurns: '展开',
         collapseTurns: '收起',
         turnTitle: '第 {index} 轮：',
-        deleteConfirmTitle: '删除测试问题？',
-        deleteConfirmDescription: '删除后该问题将不再出现在问题库，已生成的历史测试批次不受影响。',
+        deleteConfirmTitle: '确认删除该测试问题？',
+        deleteConfirmDescription: '删除后该问题将从当前测试问题库中移除。',
         batchDeleteConfirmTitle: '批量删除测试问题？',
         batchDeleteConfirmDescription:
           '将删除已选择的 {count} 个测试问题，已生成的历史测试批次不受影响。',

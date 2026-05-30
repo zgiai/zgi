@@ -1258,6 +1258,7 @@ export function BatchTestOverview({
         onGenerationCreateFailed={() => setPendingGenerationCount(null)}
       />
       <ConfirmDialog
+        variant="danger"
         open={deletingCaseIds.length > 0}
         onOpenChange={open => {
           if (!open && !deleteCases.isPending) setDeletingCaseIds([]);
@@ -1275,7 +1276,6 @@ export function BatchTestOverview({
         confirmText={commonT('delete')}
         cancelText={commonT('cancel')}
         loading={deleteCases.isPending}
-        variant="warning"
         onConfirm={confirmDeleteCases}
       />
       <ConfirmDialog

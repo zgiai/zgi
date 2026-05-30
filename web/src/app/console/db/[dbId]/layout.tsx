@@ -360,7 +360,7 @@ export default function DbLayout({ children, params }: LayoutProps) {
 
       {/* Delete Table Confirmation Dialog */}
       <ConfirmDialog
-        variant="warning"
+        variant="danger"
         open={Boolean(deleteTarget)}
         onOpenChange={open => {
           if (!open) setDeleteTarget(null);

@@ -1060,7 +1060,7 @@ export function AIChatSkillSettingsSection() {
       )}
 
       <ConfirmDialog
-        variant="warning"
+        variant="danger"
         open={Boolean(skillToDelete)}
         onOpenChange={open => {
           if (!open) setSkillToDelete(null);

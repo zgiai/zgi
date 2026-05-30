@@ -985,9 +985,9 @@ const messages = {
         expandTurns: 'Expand',
         collapseTurns: 'Collapse',
         turnTitle: 'Turn {index}:',
-        deleteConfirmTitle: 'Delete test question?',
+        deleteConfirmTitle: 'Delete this test question?',
         deleteConfirmDescription:
-          'The question will be removed from the library. Existing historical test batches are not affected.',
+          'This question will be removed from the current test question library.',
         batchDeleteConfirmTitle: 'Delete selected test questions?',
         batchDeleteConfirmDescription:
           'This will delete {count} selected test questions. Existing historical test batches are not affected.',

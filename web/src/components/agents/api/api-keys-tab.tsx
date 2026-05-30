@@ -377,7 +377,7 @@ export default function ApiKeysTab({ agentId }: ApiKeysTabProps) {
       </Dialog>
 
       <ConfirmDialog
-        variant="warning"
+        variant="danger"
         title={t('agents.apiKeys.deleteConfirm.title')}
         description={t('agents.apiKeys.deleteConfirm.description')}
         confirmText={t('common.delete')}

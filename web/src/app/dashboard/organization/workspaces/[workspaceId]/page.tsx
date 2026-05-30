@@ -595,7 +595,7 @@ export default function WorkspaceDetailPage() {
         cancelText={t('detail.removeConfirm.cancel')}
         loading={isRemovingMember}
         onConfirm={handleRemoveMember}
-        variant="warning"
+        variant="danger"
       />
 
       <AddWorkspaceMemberModal

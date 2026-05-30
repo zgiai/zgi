@@ -790,6 +790,7 @@ export default function ContactsPage() {
 
       {/* Remove Member Confirmation Dialog */}
       <ConfirmDialog
+        variant="danger"
         open={deleteConfirmOpen}
         onOpenChange={setDeleteConfirmOpen}
         title={isOrgRootSelected ? t('removeOrganizationConfirm.title') : t('removeConfirm.title')}
@@ -810,7 +811,6 @@ export default function ContactsPage() {
         }
         loading={isOrgRootSelected ? isRemovingFromOrg : isRemoving}
         onConfirm={handleConfirmRemove}
-        variant="warning"
       />
 
       {/* Edit Member Dialog */}
@@ -881,7 +881,7 @@ export default function ContactsPage() {
         cancelText={t('deleteDepartment.cancel')}
         loading={isDeleting}
         onConfirm={handleConfirmDeleteDepartment}
-        variant="warning"
+        variant="danger"
       />
 
       <ConfirmDialog

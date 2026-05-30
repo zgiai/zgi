@@ -101,7 +101,7 @@ export const SecondaryChunks = React.memo(function SecondaryChunks({
         confirmText={t('actions.delete')}
         cancelText={t('cancel')}
         onConfirm={handleConfirmDelete}
-        variant="warning"
+        variant="danger"
       />
     </div>
   );
