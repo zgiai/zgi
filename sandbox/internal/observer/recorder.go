@@ -21,10 +21,15 @@ type Recorder struct {
 }
 
 type Query struct {
-	SandboxID string
-	Type      string
-	Limit     int
-	Before    time.Time
+	SandboxID     string
+	Type          string
+	TenantID      string
+	WorkspaceID   string
+	AppID         string
+	WorkflowRunID string
+	UserID        string
+	Limit         int
+	Before        time.Time
 }
 
 type Metrics struct {
@@ -183,6 +188,21 @@ func (s *memoryStore) QueryEvents(query Query) ([]Event, error) {
 			continue
 		}
 		if query.Type != "" && event.Type != query.Type {
+			continue
+		}
+		if query.TenantID != "" && metadataString(event.Metadata, "tenant_id") != query.TenantID {
+			continue
+		}
+		if query.WorkspaceID != "" && metadataString(event.Metadata, "workspace_id") != query.WorkspaceID {
+			continue
+		}
+		if query.AppID != "" && metadataString(event.Metadata, "app_id") != query.AppID {
+			continue
+		}
+		if query.WorkflowRunID != "" && metadataString(event.Metadata, "workflow_run_id") != query.WorkflowRunID {
+			continue
+		}
+		if query.UserID != "" && metadataString(event.Metadata, "user_id") != query.UserID {
 			continue
 		}
 		if !query.Before.IsZero() && !event.CreatedAt.Before(query.Before) {

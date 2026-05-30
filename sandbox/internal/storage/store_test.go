@@ -63,10 +63,35 @@ func TestPostgresStorePersistsSandboxAndEvents(t *testing.T) {
 		Type:      "sandbox.created",
 		Message:   "created",
 		CreatedAt: time.Now().UTC().Add(2 * time.Second),
-		Metadata:  map[string]any{"worker_id": "worker-a"},
+		Metadata: map[string]any{
+			"worker_id":       "worker-a",
+			"tenant_id":       "tenant-1",
+			"workspace_id":    "workspace-1",
+			"app_id":          "app-1",
+			"workflow_run_id": "run-1",
+			"user_id":         "user-1",
+		},
 	}
 	if err := store.AppendEvent(event); err != nil {
 		t.Fatalf("append event: %v", err)
+	}
+	otherEvent := observer.Event{
+		ID:        "evt_store_test_other_scope",
+		SandboxID: box.ID,
+		Type:      "sandbox.created",
+		Message:   "other scope",
+		CreatedAt: event.CreatedAt.Add(-500 * time.Millisecond),
+		Metadata: map[string]any{
+			"worker_id":       "worker-a",
+			"tenant_id":       "tenant-2",
+			"workspace_id":    "workspace-2",
+			"app_id":          "app-2",
+			"workflow_run_id": "run-2",
+			"user_id":         "user-2",
+		},
+	}
+	if err := store.AppendEvent(otherEvent); err != nil {
+		t.Fatalf("append other scoped event: %v", err)
 	}
 	olderEvent := observer.Event{
 		ID:        "evt_store_test_older",
@@ -94,7 +119,26 @@ func TestPostgresStorePersistsSandboxAndEvents(t *testing.T) {
 		t.Fatalf("expected newest event first, got %q", events[0].Message)
 	}
 
-	olderEvents, err := store.QueryEvents(observer.Query{SandboxID: box.ID, Before: event.CreatedAt, Limit: 10})
+	scopedEvents, err := store.QueryEvents(observer.Query{
+		SandboxID:     box.ID,
+		TenantID:      "tenant-1",
+		WorkspaceID:   "workspace-1",
+		AppID:         "app-1",
+		WorkflowRunID: "run-1",
+		UserID:        "user-1",
+		Limit:         10,
+	})
+	if err != nil {
+		t.Fatalf("query scoped events: %v", err)
+	}
+	if len(scopedEvents) != 1 {
+		t.Fatalf("expected one scoped event, got %d", len(scopedEvents))
+	}
+	if scopedEvents[0].Message != "created" {
+		t.Fatalf("expected scoped event, got %q", scopedEvents[0].Message)
+	}
+
+	olderEvents, err := store.QueryEvents(observer.Query{SandboxID: box.ID, Before: otherEvent.CreatedAt, Limit: 10})
 	if err != nil {
 		t.Fatalf("query older events: %v", err)
 	}

@@ -538,6 +538,52 @@ func TestObserverEventsEndpointPaginatesWithCursor(t *testing.T) {
 	}
 }
 
+func TestObserverEventsEndpointFiltersByOwnershipScope(t *testing.T) {
+	server, err := NewServer(testConfig(t))
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	server.observer.Record("exec.command", "sbx_scope_one", "match", map[string]any{
+		"tenant_id":       "tenant-one",
+		"workspace_id":    "workspace-one",
+		"app_id":          "app-one",
+		"workflow_run_id": "run-one",
+		"user_id":         "user-one",
+	})
+	server.observer.Record("exec.command", "sbx_scope_two", "miss", map[string]any{
+		"tenant_id":       "tenant-two",
+		"workspace_id":    "workspace-two",
+		"app_id":          "app-two",
+		"workflow_run_id": "run-two",
+		"user_id":         "user-two",
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/observer/events?tenant_id=tenant-one&workspace_id=workspace-one&app_id=app-one&workflow_run_id=run-one&user_id=user-one&limit=10", nil)
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected scope filter to return 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var payload struct {
+		Data struct {
+			Events []struct {
+				Message string `json:"message"`
+			} `json:"events"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("expected observer payload, got %v", err)
+	}
+	if len(payload.Data.Events) != 1 {
+		t.Fatalf("expected one scoped event, got %d", len(payload.Data.Events))
+	}
+	if payload.Data.Events[0].Message != "match" {
+		t.Fatalf("expected matching event, got %q", payload.Data.Events[0].Message)
+	}
+}
+
 func TestObserverEventsEndpointRejectsNonGet(t *testing.T) {
 	server, err := NewServer(testConfig(t))
 	if err != nil {

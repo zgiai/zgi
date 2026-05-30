@@ -116,6 +116,7 @@ func (s *Store) prepare(ctx context.Context) error {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_observer_events_scope ON observer_events(sandbox_id, type, created_at DESC);`,
 		`CREATE INDEX IF NOT EXISTS idx_observer_events_created_at ON observer_events(created_at DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_observer_events_ownership ON observer_events ((metadata_json->>'tenant_id'), (metadata_json->>'workspace_id'), (metadata_json->>'workflow_run_id'), created_at DESC);`,
 	}
 
 	for _, statement := range statements {
@@ -353,15 +354,29 @@ func (s *Store) QueryEvents(query observer.Query) ([]observer.Event, error) {
 		WHERE ($1 = '' OR sandbox_id = $2)
 		  AND ($3 = '' OR type = $4)
 		  AND ($5::timestamptz IS NULL OR created_at < $5)
+		  AND ($6 = '' OR metadata_json->>'tenant_id' = $7)
+		  AND ($8 = '' OR metadata_json->>'workspace_id' = $9)
+		  AND ($10 = '' OR metadata_json->>'app_id' = $11)
+		  AND ($12 = '' OR metadata_json->>'workflow_run_id' = $13)
+		  AND ($14 = '' OR metadata_json->>'user_id' = $15)
 		ORDER BY created_at DESC
 	`
 	var before any
 	if !query.Before.IsZero() {
 		before = query.Before.UTC()
 	}
-	args := []any{query.SandboxID, query.SandboxID, query.Type, query.Type, before}
+	args := []any{
+		query.SandboxID, query.SandboxID,
+		query.Type, query.Type,
+		before,
+		query.TenantID, query.TenantID,
+		query.WorkspaceID, query.WorkspaceID,
+		query.AppID, query.AppID,
+		query.WorkflowRunID, query.WorkflowRunID,
+		query.UserID, query.UserID,
+	}
 	if query.Limit > 0 {
-		statement += ` LIMIT $6`
+		statement += ` LIMIT $16`
 		args = append(args, query.Limit)
 	}
 

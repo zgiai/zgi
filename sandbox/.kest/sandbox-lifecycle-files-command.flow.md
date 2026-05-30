@@ -252,6 +252,20 @@ data.events.0.metadata.workflow_run_id == "workflow_run_kest"
 ```
 
 ```step
+@id observer-events-scope-filter
+@name Observer events scope filter
+
+GET {{base_url}}/v1/observer/events?tenant_id=tenant_kest&workspace_id=workspace_kest&workflow_run_id=workflow_run_kest&limit=5
+
+[Asserts]
+status == 200
+code == 0
+data.events.0.metadata.tenant_id == "tenant_kest"
+data.events.0.metadata.workspace_id == "workspace_kest"
+data.events.0.metadata.workflow_run_id == "workflow_run_kest"
+```
+
+```step
 @id observer-events-page-one
 @name Observer events first page
 
