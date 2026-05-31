@@ -126,13 +126,14 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 		Arguments: summarizeArguments(arguments),
 	}
 
-	dependencyProfile, err := skillDependencyProfile(doc.Metadata.RootPath)
+	manifest, err := prepareSkillScriptManifest(doc.Metadata.RootPath, docTimeoutSeconds(doc))
 	if err != nil {
 		trace.Status = "error"
 		trace.Error = err.Error()
 		trace.DurationMS = time.Since(start).Milliseconds()
 		return &ToolInvocationResult{Trace: trace}, err
 	}
+	dependencyProfile := manifest.Manifest.DependencyProfile
 
 	sandboxID, err := r.createSandbox(ctx, execCtx, dependencyProfile)
 	if err != nil {
@@ -141,7 +142,7 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 	}
 	defer func() { _ = r.deleteSandbox(context.WithoutCancel(ctx), sandboxID, execCtx) }()
 
-	archiveBase64, err := zipSkillDirectoryBase64(doc.Metadata.RootPath)
+	archiveBase64, err := zipSkillDirectoryBase64(doc.Metadata.RootPath, manifest.Raw)
 	if err != nil {
 		trace.Status = "error"
 		trace.Error = err.Error()
@@ -160,17 +161,14 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 		trace.DurationMS = time.Since(start).Milliseconds()
 		return &ToolInvocationResult{Trace: trace}, fmt.Errorf("failed to encode skill script arguments: %w", err)
 	}
-	timeout := docTimeoutSeconds(doc)
-	if timeout <= 0 {
-		timeout = defaultSkillScriptTimeoutSeconds
-	}
+	timeout := skillScriptTimeoutSeconds(manifest.Manifest.TimeoutMS)
 	command, err := r.runCommand(ctx, sandboxID, string(stdin), timeout, execCtx)
 	if err != nil {
 		recordSkillScriptError(&trace, start, err)
 		return &ToolInvocationResult{Trace: trace}, err
 	}
 
-	artifacts, artifactErr := r.collectArtifacts(ctx, sandboxID, execCtx)
+	artifacts, artifactErr := r.collectArtifacts(ctx, sandboxID, execCtx, manifest.Manifest)
 	messages, content, err := skillScriptMessages(command, artifacts, artifactErr)
 	trace.DurationMS = time.Since(start).Milliseconds()
 	if command.ExitCode != 0 {
@@ -216,11 +214,12 @@ func (r *SandboxScriptRunner) createSandbox(ctx context.Context, execCtx Executi
 
 func (r *SandboxScriptRunner) uploadArchive(ctx context.Context, sandboxID string, archiveBase64 string, execCtx ExecutionContext) error {
 	payload := map[string]interface{}{
-		"sandbox_id":     sandboxID,
-		"path":           ".",
-		"archive_base64": archiveBase64,
-		"format":         "zip",
-		"strip_root":     false,
+		"sandbox_id":              sandboxID,
+		"path":                    ".",
+		"archive_base64":          archiveBase64,
+		"format":                  "zip",
+		"strip_root":              false,
+		"validate_skill_manifest": true,
 	}
 	if organizationID := strings.TrimSpace(execCtx.OrganizationID); organizationID != "" {
 		payload["organization_id"] = organizationID
@@ -260,7 +259,7 @@ func (r *SandboxScriptRunner) deleteSandbox(ctx context.Context, sandboxID strin
 	return r.doJSON(ctx, http.MethodDelete, path, nil, nil, r.timeouts.Cleanup)
 }
 
-func (r *SandboxScriptRunner) collectArtifacts(ctx context.Context, sandboxID string, execCtx ExecutionContext) ([]skillScriptArtifact, error) {
+func (r *SandboxScriptRunner) collectArtifacts(ctx context.Context, sandboxID string, execCtx ExecutionContext, manifest skillScriptManifest) ([]skillScriptArtifact, error) {
 	var tree struct {
 		Items []sandboxFileInfo `json:"items"`
 	}
@@ -271,10 +270,10 @@ func (r *SandboxScriptRunner) collectArtifacts(ctx context.Context, sandboxID st
 
 	artifacts := make([]skillScriptArtifact, 0)
 	for _, item := range tree.Items {
-		if item.IsDirectory || !strings.HasPrefix(filepath.ToSlash(item.Path), "artifacts/") {
+		if item.IsDirectory || !skillManifestAllowsArtifactPath(manifest, item.Path) {
 			continue
 		}
-		if len(artifacts) >= 10 {
+		if len(artifacts) >= manifest.MaxArtifactCount {
 			break
 		}
 		artifact := skillScriptArtifact{
@@ -282,7 +281,7 @@ func (r *SandboxScriptRunner) collectArtifacts(ctx context.Context, sandboxID st
 			Name: filepath.Base(item.Path),
 			Size: item.Size,
 		}
-		if item.Size <= 32*1024 {
+		if item.Size <= manifest.MaxArtifactBytes && item.Size <= 32*1024 {
 			content, err := r.downloadArtifact(ctx, sandboxID, item.Path, execCtx)
 			if err != nil {
 				artifact.Error = err.Error()
@@ -481,7 +480,7 @@ type skillScriptArtifact struct {
 	Error    string `json:"error,omitempty"`
 }
 
-func zipSkillDirectoryBase64(root string) (string, error) {
+func zipSkillDirectoryBase64(root string, manifestRaw []byte) (string, error) {
 	var buffer bytes.Buffer
 	writer := zip.NewWriter(&buffer)
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
@@ -502,6 +501,9 @@ func zipSkillDirectoryBase64(root string) (string, error) {
 		if err != nil {
 			return err
 		}
+		if filepath.ToSlash(rel) == "skill.manifest.json" && len(manifestRaw) > 0 {
+			return nil
+		}
 		header, err := zip.FileInfoHeader(info)
 		if err != nil {
 			return err
@@ -514,6 +516,9 @@ func zipSkillDirectoryBase64(root string) (string, error) {
 		}
 		return copyFileIntoZip(path, fileWriter)
 	})
+	if err == nil && len(manifestRaw) > 0 {
+		err = addSkillManifestToZip(writer, manifestRaw)
+	}
 	if closeErr := writer.Close(); err == nil {
 		err = closeErr
 	}
@@ -524,27 +529,141 @@ func zipSkillDirectoryBase64(root string) (string, error) {
 }
 
 type skillScriptManifest struct {
-	DependencyProfile string `json:"dependency_profile"`
+	Entrypoint           string   `json:"entrypoint"`
+	Language             string   `json:"language"`
+	DependencyProfile    string   `json:"dependency_profile"`
+	TimeoutMS            int      `json:"timeout_ms"`
+	AllowedArtifactPaths []string `json:"allowed_artifact_paths"`
+	MaxArtifactCount     int      `json:"max_artifact_count"`
+	MaxArtifactBytes     int64    `json:"max_artifact_bytes"`
+	ResultMode           string   `json:"result_mode"`
 }
 
-func skillDependencyProfile(root string) (string, error) {
+type preparedSkillScriptManifest struct {
+	Manifest skillScriptManifest
+	Raw      []byte
+}
+
+func prepareSkillScriptManifest(root string, fallbackTimeoutSeconds int) (preparedSkillScriptManifest, error) {
+	manifest, err := loadSkillScriptManifest(root)
+	if err != nil {
+		return preparedSkillScriptManifest{}, err
+	}
+	if err := normalizeSkillScriptManifest(root, fallbackTimeoutSeconds, &manifest); err != nil {
+		return preparedSkillScriptManifest{}, err
+	}
+	raw, err := json.Marshal(manifest)
+	if err != nil {
+		return preparedSkillScriptManifest{}, err
+	}
+	return preparedSkillScriptManifest{Manifest: manifest, Raw: raw}, nil
+}
+
+func loadSkillScriptManifest(root string) (skillScriptManifest, error) {
 	manifestPath := filepath.Join(root, "skill.manifest.json")
-	content, err := os.ReadFile(manifestPath)
+	info, err := os.Lstat(manifestPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return defaultSkillDependencyProfile, nil
+			return skillScriptManifest{}, nil
 		}
-		return "", fmt.Errorf("failed to read skill manifest: %w", err)
+		return skillScriptManifest{}, fmt.Errorf("failed to inspect skill manifest: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return skillScriptManifest{}, fmt.Errorf("skill.manifest.json must not be a symlink")
+	}
+	if info.IsDir() {
+		return skillScriptManifest{}, fmt.Errorf("skill.manifest.json must be a file")
+	}
+	if info.Size() > 64*1024 {
+		return skillScriptManifest{}, fmt.Errorf("skill.manifest.json exceeds max size of 65536 bytes")
+	}
+	content, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return skillScriptManifest{}, fmt.Errorf("failed to read skill manifest: %w", err)
 	}
 	var manifest skillScriptManifest
 	if err := json.Unmarshal(content, &manifest); err != nil {
-		return "", fmt.Errorf("invalid skill.manifest.json: %w", err)
+		return skillScriptManifest{}, fmt.Errorf("invalid skill.manifest.json: %w", err)
 	}
-	profile := strings.TrimSpace(manifest.DependencyProfile)
-	if profile == "" {
-		return defaultSkillDependencyProfile, nil
+	return manifest, nil
+}
+
+func normalizeSkillScriptManifest(root string, fallbackTimeoutSeconds int, manifest *skillScriptManifest) error {
+	if manifest == nil {
+		return fmt.Errorf("skill manifest is empty")
 	}
-	return profile, nil
+	manifest.Entrypoint = filepath.ToSlash(strings.TrimSpace(manifest.Entrypoint))
+	if manifest.Entrypoint == "" {
+		manifest.Entrypoint = "scripts/run.py"
+	}
+	if manifest.Entrypoint != "scripts/run.py" {
+		return fmt.Errorf("skill manifest entrypoint must be scripts/run.py for API run_script: %s", manifest.Entrypoint)
+	}
+	if unsafeSkillManifestPath(manifest.Entrypoint) {
+		return fmt.Errorf("skill manifest entrypoint escapes package root: %s", manifest.Entrypoint)
+	}
+	info, err := os.Stat(filepath.Join(root, filepath.FromSlash(manifest.Entrypoint)))
+	if err != nil || info.IsDir() {
+		return fmt.Errorf("skill manifest entrypoint is missing from package: %s", manifest.Entrypoint)
+	}
+
+	manifest.Language = normalizeSkillScriptLanguage(manifest.Language)
+	if manifest.Language == "" {
+		manifest.Language = "python3"
+	}
+	if manifest.Language != "python3" {
+		return fmt.Errorf("skill manifest language must be python3 for API run_script: %s", manifest.Language)
+	}
+
+	manifest.DependencyProfile = strings.TrimSpace(manifest.DependencyProfile)
+	if manifest.DependencyProfile == "" {
+		manifest.DependencyProfile = defaultSkillDependencyProfile
+	}
+	if manifest.TimeoutMS <= 0 {
+		timeoutSeconds := fallbackTimeoutSeconds
+		if timeoutSeconds <= 0 {
+			timeoutSeconds = defaultSkillScriptTimeoutSeconds
+		}
+		manifest.TimeoutMS = timeoutSeconds * 1000
+	}
+	if manifest.TimeoutMS <= 0 || manifest.TimeoutMS > 300000 {
+		return fmt.Errorf("skill manifest timeout_ms must be between 1 and 300000")
+	}
+	if len(manifest.AllowedArtifactPaths) == 0 {
+		manifest.AllowedArtifactPaths = []string{"artifacts"}
+	}
+	for i, raw := range manifest.AllowedArtifactPaths {
+		path := filepath.ToSlash(strings.TrimSpace(raw))
+		if path == "" {
+			return fmt.Errorf("skill manifest allowed_artifact_paths contains an empty path")
+		}
+		if unsafeSkillManifestPath(path) || (path != "artifacts" && !strings.HasPrefix(path, "artifacts/")) {
+			return fmt.Errorf("skill manifest allowed artifact path must be under artifacts: %s", path)
+		}
+		manifest.AllowedArtifactPaths[i] = path
+	}
+	if manifest.MaxArtifactCount <= 0 {
+		manifest.MaxArtifactCount = 10
+	}
+	if manifest.MaxArtifactCount > 10 {
+		return fmt.Errorf("skill manifest max_artifact_count must be between 1 and 10")
+	}
+	if manifest.MaxArtifactBytes <= 0 {
+		manifest.MaxArtifactBytes = 32 * 1024
+	}
+	if manifest.MaxArtifactBytes > 32*1024 {
+		return fmt.Errorf("skill manifest max_artifact_bytes must be between 1 and 32768")
+	}
+	manifest.ResultMode = strings.TrimSpace(manifest.ResultMode)
+	if manifest.ResultMode == "" {
+		manifest.ResultMode = "mixed"
+	}
+	switch manifest.ResultMode {
+	case "stdout_json", "stdout_text", "artifacts", "mixed":
+		return nil
+	default:
+		return fmt.Errorf("skill manifest result_mode must be stdout_json, stdout_text, artifacts, or mixed")
+	}
 }
 
 func copyFileIntoZip(path string, writer io.Writer) error {
@@ -555,6 +674,60 @@ func copyFileIntoZip(path string, writer io.Writer) error {
 	defer file.Close()
 	_, err = io.Copy(writer, file)
 	return err
+}
+
+func addSkillManifestToZip(writer *zip.Writer, manifestRaw []byte) error {
+	header := &zip.FileHeader{
+		Name:   "skill.manifest.json",
+		Method: zip.Deflate,
+	}
+	header.SetMode(0o644)
+	fileWriter, err := writer.CreateHeader(header)
+	if err != nil {
+		return err
+	}
+	_, err = fileWriter.Write(manifestRaw)
+	return err
+}
+
+func normalizeSkillScriptLanguage(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "":
+		return ""
+	case "python", "python3":
+		return "python3"
+	default:
+		return strings.ToLower(strings.TrimSpace(value))
+	}
+}
+
+func unsafeSkillManifestPath(value string) bool {
+	clean := filepath.ToSlash(filepath.Clean(strings.TrimSpace(value)))
+	return clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || strings.HasPrefix(clean, "/")
+}
+
+func skillScriptTimeoutSeconds(timeoutMS int) int {
+	if timeoutMS <= 0 {
+		return defaultSkillScriptTimeoutSeconds
+	}
+	return (timeoutMS + 999) / 1000
+}
+
+func skillManifestAllowsArtifactPath(manifest skillScriptManifest, value string) bool {
+	path := filepath.ToSlash(strings.TrimSpace(value))
+	if path == "" {
+		return false
+	}
+	for _, allowed := range manifest.AllowedArtifactPaths {
+		allowed = strings.TrimSuffix(filepath.ToSlash(strings.TrimSpace(allowed)), "/")
+		if allowed == "" {
+			continue
+		}
+		if path == allowed || strings.HasPrefix(path, allowed+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func skillScriptEnv(execCtx ExecutionContext) map[string]string {
