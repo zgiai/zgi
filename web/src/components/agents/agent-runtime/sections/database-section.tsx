@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { AlertCircle, Database, Plus, Table2, Trash2 } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
@@ -274,7 +275,11 @@ function DatabaseBindingCard({
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
-                  <span className="text-xs text-muted-foreground">{t('database.writeLabel')}</span>
+                  <Badge variant="subtle">
+                    {writableSet.has(tableID)
+                      ? t('database.writeEnabled')
+                      : t('database.readOnly')}
+                  </Badge>
                   <Switch
                     checked={writableSet.has(tableID)}
                     disabled={!canEditWritable}

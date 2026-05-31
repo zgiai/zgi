@@ -1488,6 +1488,7 @@ const messages = {
         noKnowledge: 'No linked knowledge base',
         database: 'Database',
         noDatabase: 'No bound database',
+        databaseSummary: 'Database summary',
         databaseTablesCount: '{count} bound table(s)',
         table: 'Data table',
         noTable: 'No bound data table',
@@ -1668,6 +1669,7 @@ const messages = {
       writePermissionRequired:
         'Write authorization can only be edited by users with database AI query and data edit permissions.',
       writeEnabled: 'Writable',
+      readOnly: 'Read-only',
       writeLabel: 'Write',
       selectAllDatabaseTables: 'Select all tables',
       clearSelectedDatabaseTables: 'Clear selected tables',
