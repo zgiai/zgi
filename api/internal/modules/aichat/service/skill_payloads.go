@@ -59,7 +59,13 @@ func skillArtifactsFromToolMessages(prepared *PreparedChat, trace skills.SkillTr
 }
 
 func summarizeSkillToolResult(skillID string, toolName string, messages []tools.ToolInvokeMessage) map[string]interface{} {
-	if strings.TrimSpace(skillID) != "user-memory" {
+	switch strings.TrimSpace(skillID) {
+	case "user-memory":
+	case "agent-knowledge":
+		return compactKnowledgeRetrieveResult(firstJSONToolPayload(messages))
+	case "internal-knowledge":
+		return compactInternalKnowledgeResult(toolName, firstJSONToolPayload(messages))
+	default:
 		return nil
 	}
 	payload := firstJSONToolPayload(messages)
@@ -72,6 +78,24 @@ func summarizeSkillToolResult(skillID string, toolName string, messages []tools.
 		return map[string]interface{}{
 			"entries_count": len(interfaceSlice(payload["entries"])),
 		}
+	default:
+		return nil
+	}
+}
+
+func compactKnowledgeRetrieveResult(payload map[string]interface{}) map[string]interface{} {
+	if len(payload) == 0 {
+		return nil
+	}
+	return compactMemoryFields(payload, "query", "status", "result_count", "top_score", "source_summary", "warnings")
+}
+
+func compactInternalKnowledgeResult(toolName string, payload map[string]interface{}) map[string]interface{} {
+	switch strings.TrimSpace(toolName) {
+	case "list_accessible_knowledge_bases":
+		return compactMemoryFields(payload, "query", "status", "result_count", "fallback_used", "limit", "warnings")
+	case "retrieve_knowledge":
+		return compactKnowledgeRetrieveResult(payload)
 	default:
 		return nil
 	}
