@@ -63,6 +63,10 @@ cleanup() {
     kill "${QUEUE_TIMEOUT_SERVER_PID}" 2>/dev/null || true
     wait "${QUEUE_TIMEOUT_SERVER_PID}" 2>/dev/null || true
   fi
+  if [[ -n "${SHUTDOWN_DRAIN_SERVER_PID:-}" ]] && kill -0 "${SHUTDOWN_DRAIN_SERVER_PID}" 2>/dev/null; then
+    kill "${SHUTDOWN_DRAIN_SERVER_PID}" 2>/dev/null || true
+    wait "${SHUTDOWN_DRAIN_SERVER_PID}" 2>/dev/null || true
+  fi
   rm -rf "${DATA_DIR}" "${ARCHIVE_VARS}"
 }
 trap cleanup EXIT
@@ -820,4 +824,78 @@ PY
   write_kest_config "${CONCURRENT_BASE_URL}"
 else
   echo "Skipping resource limit saturation flow against external sandbox: ${BASE_URL}"
+fi
+
+if [[ "${START_LOCAL_SANDBOX}" = "1" ]]; then
+  SHUTDOWN_DRAIN_PORT="$(python3 - <<'PY'
+import socket
+
+with socket.socket() as s:
+    s.bind(("127.0.0.1", 0))
+    print(s.getsockname()[1])
+PY
+)"
+  SHUTDOWN_DRAIN_BASE_URL="http://127.0.0.1:${SHUTDOWN_DRAIN_PORT}"
+  SHUTDOWN_DRAIN_SERVER_LOG="${DATA_DIR}/sandbox-shutdown-drain.log"
+  SHUTDOWN_DRAIN_BINARY="${DATA_DIR}/zgi-sandbox-server"
+  go build -o "${SHUTDOWN_DRAIN_BINARY}" ./cmd/server
+  env \
+    ZGI_SANDBOX_SERVER_PORT="${SHUTDOWN_DRAIN_PORT}" \
+    ZGI_SANDBOX_DATA_DIR="${DATA_DIR}/shutdown-drain-data" \
+    ZGI_SANDBOX_WORKER_ID="zgi-sandbox-shutdown-drain-kest-${SHUTDOWN_DRAIN_PORT}" \
+    "${SHUTDOWN_DRAIN_BINARY}" >"${SHUTDOWN_DRAIN_SERVER_LOG}" 2>&1 &
+  SHUTDOWN_DRAIN_SERVER_PID="$!"
+
+  for _ in {1..80}; do
+    if curl -fsS "${SHUTDOWN_DRAIN_BASE_URL}/health" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.25
+  done
+  if ! curl -fsS "${SHUTDOWN_DRAIN_BASE_URL}/health" >/dev/null 2>&1; then
+    cat "${SHUTDOWN_DRAIN_SERVER_LOG}" >&2
+    echo "shutdown-drain sandbox did not become ready at ${SHUTDOWN_DRAIN_BASE_URL}" >&2
+    exit 1
+  fi
+
+  SHUTDOWN_DRAIN_SANDBOX_ID="$(curl -fsS \
+    -H "Content-Type: application/json" \
+    -d '{"runtime_profile":"session","ttl_seconds":60,"dependency_profile":"stdlib","network_enabled":false,"network_policy":"deny-by-default"}' \
+    "${SHUTDOWN_DRAIN_BASE_URL}/v1/sandboxes" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])')"
+  SHUTDOWN_DRAIN_RESPONSE="${DATA_DIR}/shutdown-drain-response.json"
+  curl -fsS \
+    -H "Content-Type: application/json" \
+    -H "X-Request-ID: req_kest_shutdown_drain" \
+    -d "{\"sandbox_id\":\"${SHUTDOWN_DRAIN_SANDBOX_ID}\",\"command\":\"python3\",\"args\":[\"-c\",\"import time; time.sleep(0.5); print('shutdown-drain-ok')\"],\"profile\":\"code-short\",\"timeout_ms\":5000}" \
+    "${SHUTDOWN_DRAIN_BASE_URL}/v1/exec/command" >"${SHUTDOWN_DRAIN_RESPONSE}" &
+  SHUTDOWN_DRAIN_CURL_PID="$!"
+
+  for _ in {1..80}; do
+    active_workers="$(curl -fsS "${SHUTDOWN_DRAIN_BASE_URL}/v1/metrics" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["runner"]["active_workers"])')"
+    if [[ "${active_workers}" != "0" ]]; then
+      break
+    fi
+    sleep 0.025
+  done
+  if [[ "$(curl -fsS "${SHUTDOWN_DRAIN_BASE_URL}/v1/metrics" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["runner"]["active_workers"])')" = "0" ]]; then
+    echo "shutdown-drain command did not occupy a worker" >&2
+    exit 1
+  fi
+
+  kill -TERM "${SHUTDOWN_DRAIN_SERVER_PID}"
+  wait "${SHUTDOWN_DRAIN_CURL_PID}"
+  python3 - "${SHUTDOWN_DRAIN_RESPONSE}" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as f:
+    payload = json.load(f)
+data = payload["data"]
+if payload["code"] != 0 or data["exit_code"] != 0 or data["stdout"] != "shutdown-drain-ok\n":
+    raise SystemExit(f"unexpected shutdown drain response: {payload}")
+PY
+  wait "${SHUTDOWN_DRAIN_SERVER_PID}"
+  SHUTDOWN_DRAIN_SERVER_PID=""
+else
+  echo "Skipping shutdown drain flow against external sandbox: ${BASE_URL}"
 fi
