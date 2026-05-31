@@ -852,6 +852,10 @@ const messages = {
       email: 'Email',
       workspaces: 'Joined Workspaces',
       allWorkspaces: 'All Workspaces',
+      unassignedWorkspace: 'No workspace assigned',
+      unassignedWorkspaceHint:
+        'This member is in the organization but has not joined any workspace, so they cannot use the workbench yet.',
+      assignWorkspace: 'Assign workspace',
       status: 'Status',
       actions: 'Actions',
       active: 'Active',
@@ -1035,6 +1039,10 @@ const messages = {
       disband: 'Disband',
       people: ' people',
       noWorkspaces: 'No workspaces',
+      assignMemberBannerTitle: 'Assign a workspace for {member}',
+      assignMemberBannerDescription:
+        'Choose a target workspace. The detail page will open the add-member dialog and search by this member email.',
+      assignMemberBackToContacts: 'Back to Contacts',
       loadError: 'Failed to load workspaces',
       deleteSuccess: 'Workspace disbanded successfully',
       deleteError: 'Failed to disband workspace',
@@ -1111,6 +1119,9 @@ const messages = {
         roleOwner: 'Workspace Owner',
         roleAdmin: 'Admin',
         roleMember: 'Member',
+        assignMemberBannerTitle: 'Adding {member} to this workspace',
+        assignMemberBannerDescription:
+          'The add-member dialog is prefilled with this email. Select the member and workspace role to finish assignment.',
         addMemberModal: {
           title: 'Add Member',
           titleWithWorkspace: 'Add Member to {workspaceName}',
