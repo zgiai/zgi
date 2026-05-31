@@ -349,4 +349,7 @@ export const ENABLE_AGENT_API_PAGE: boolean =
 export const ENABLE_AGENT_BATCH_TEST_PAGE: boolean =
   readPublicEnvRaw('NEXT_PUBLIC_ENABLE_AGENT_BATCH_TEST_PAGE') === 'true';
 
+export const ENABLE_AGENT_RUNTIME_LOGS_PAGE: boolean =
+  readPublicEnvRaw('NEXT_PUBLIC_ENABLE_AGENT_RUNTIME_LOGS_PAGE') === 'true';
+
 // Add more env variables here as needed, always use this file for env access

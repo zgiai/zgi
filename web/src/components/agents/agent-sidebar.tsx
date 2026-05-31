@@ -8,6 +8,7 @@ import { useT } from '@/i18n';
 import {
   ENABLE_AGENT_API_PAGE,
   ENABLE_AGENT_BATCH_TEST_PAGE,
+  ENABLE_AGENT_RUNTIME_LOGS_PAGE,
   ICON_BG,
   ICON_TEXT,
 } from '@/lib/config';
@@ -30,7 +31,7 @@ interface AgentSidebarProps {
  * AgentSidebar — collapsible agent-specific sidebar.
  * - Shows agent summary (icon, name, desc) on top; collapsed shows only icon (smaller size)
  * - First nav item is always Edit and links to /workflow
- * - Feature-gated Agent API Key and batch test pages stay hidden until enabled
+ * - Feature-gated unfinished Agent pages stay hidden until enabled
  * - Collapsed state persisted to localStorage
  */
 export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
@@ -61,7 +62,7 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
       { title: t('agents.actions.edit'), href: editHref, icon: PanelsTopLeft },
     ];
 
-    if (agentData?.is_published) {
+    if (ENABLE_AGENT_RUNTIME_LOGS_PAGE && agentData?.is_published) {
       items.push({
         title: t('agents.workflow.webappLogs'),
         href: `/console/agents/${agentId}/logs`,
