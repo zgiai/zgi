@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, type KeyboardEvent } from 'react';
+import { useMemo, useState } from 'react';
 import { Wrench } from 'lucide-react';
 import { getAIChatSkillDisplayInfo } from '@/components/chat/variants/aichat/skill-display';
 import { AIChatSkillIcon } from '@/components/chat/variants/aichat/skill-icon';
@@ -113,18 +113,6 @@ export function AIChatSkillPreferenceDialog({
     onOpenChange(false);
   };
 
-  const handleCardKeyDown = (
-    event: KeyboardEvent<HTMLDivElement>,
-    skillId: string,
-    checked: boolean
-  ) => {
-    if (event.key !== 'Enter' && event.key !== ' ') return;
-    event.preventDefault();
-    if (!isSaving) {
-      onToggleSkill(skillId, !checked);
-    }
-  };
-
   return (
     <>
       <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -180,22 +168,13 @@ export function AIChatSkillPreferenceDialog({
                 const display = getAIChatSkillDisplayInfo(skill, locale);
                 const checked = selectedSet.has(skill.skill_id);
                 return (
-                  <div
+                  <article
                     key={skill.skill_id}
-                    role="button"
-                    tabIndex={isSaving ? -1 : 0}
-                    aria-pressed={checked}
                     className={cn(
-                      'flex min-h-36 cursor-pointer flex-col rounded-md border bg-card p-3.5 text-left shadow-sm transition-colors hover:border-primary/30 hover:bg-muted/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                      'flex min-h-36 flex-col rounded-md border bg-card p-3.5 text-left shadow-sm transition-colors hover:border-primary/30 hover:bg-muted/20',
                       checked ? 'border-primary bg-primary/5 shadow-primary/10' : 'border-border',
                       isSaving ? 'cursor-not-allowed opacity-70' : ''
                     )}
-                    onClick={() => {
-                      if (!isSaving) {
-                        onToggleSkill(skill.skill_id, !checked);
-                      }
-                    }}
-                    onKeyDown={event => handleCardKeyDown(event, skill.skill_id, checked)}
                   >
                     <div className="flex items-start gap-3">
                       <span className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-background text-muted-foreground">
@@ -215,7 +194,6 @@ export function AIChatSkillPreferenceDialog({
                             checked={checked}
                             disabled={isSaving}
                             aria-label={display.label}
-                            onClick={event => event.stopPropagation()}
                             onCheckedChange={nextChecked =>
                               onToggleSkill(skill.skill_id, nextChecked)
                             }
@@ -243,7 +221,7 @@ export function AIChatSkillPreferenceDialog({
                     <p className="mt-2.5 line-clamp-3 text-sm leading-5 text-muted-foreground">
                       {display.description || skill.description}
                     </p>
-                  </div>
+                  </article>
                 );
               })}
             </div>

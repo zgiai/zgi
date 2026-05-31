@@ -118,7 +118,6 @@ type KnowledgeContextBlock struct {
 	Position int     `json:"position"`
 	Source   string  `json:"source,omitempty"`
 	Score    float64 `json:"score,omitempty"`
-	Content  string  `json:"content"`
 }
 
 // KnowledgeRetrieveResponse is returned to builtin tools and skill callers.
@@ -737,7 +736,6 @@ func knowledgeResourcesAndContext(records []scoredKnowledgeRecord, separator str
 				Position: resource.Position,
 				Source:   knowledgeSourceLabel(resource),
 				Score:    resource.Score,
-				Content:  content,
 			}
 			remaining := maxChars - len(strings.Join(contextParts, separator))
 			if len(contextParts) > 0 {
@@ -746,8 +744,7 @@ func knowledgeResourcesAndContext(records []scoredKnowledgeRecord, separator str
 			if remaining <= 0 {
 				continue
 			}
-			contextBlockText, includedContent := knowledgeContextBlockText(block, resource.MatchType, remaining)
-			block.Content = includedContent
+			contextBlockText := knowledgeContextBlockText(block, resource.MatchType, content, remaining)
 			contextParts = append(contextParts, contextBlockText)
 			contextBlocks = append(contextBlocks, block)
 		}
@@ -801,7 +798,7 @@ func knowledgeSourceLabel(resource KnowledgeRetrieverResource) string {
 	return strings.Join(parts, " / ")
 }
 
-func knowledgeContextBlockText(block KnowledgeContextBlock, matchType string, maxChars int) (string, string) {
+func knowledgeContextBlockText(block KnowledgeContextBlock, matchType string, content string, maxChars int) string {
 	headerParts := []string{
 		"[" + strconv.Itoa(block.Position) + "] Source: " + block.Source,
 	}
@@ -813,17 +810,16 @@ func knowledgeContextBlockText(block KnowledgeContextBlock, matchType string, ma
 	}
 	header := strings.Join(headerParts, "; ") + "\n"
 	if maxChars <= 0 {
-		return "", ""
+		return ""
 	}
 	if len(header) >= maxChars {
-		return header[:maxChars], ""
+		return header[:maxChars]
 	}
-	content := block.Content
 	available := maxChars - len(header)
 	if len(content) > available {
 		content = content[:available]
 	}
-	return header + content, content
+	return header + content
 }
 
 func normalizeKnowledgeLimit(value int, defaultValue int, maxValue int) int {

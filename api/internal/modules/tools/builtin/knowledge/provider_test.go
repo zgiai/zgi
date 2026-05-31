@@ -68,7 +68,6 @@ func (f *fakeRetrievalService) RetrieveAgentKnowledge(ctx context.Context, req d
 			Position: 1,
 			Source:   "Policies / Refund Policy",
 			Score:    0.86,
-			Content:  "agent context",
 		}},
 		Resources: []dataset_service.KnowledgeRetrieverResource{{
 			Position:     1,
@@ -232,8 +231,12 @@ func TestRetrieveAgentKnowledgeIgnoresDatasetIDs(t *testing.T) {
 	if _, ok := messages[0].Data["source_summary"]; !ok {
 		t.Fatalf("source_summary missing from message: %#v", messages[0].Data)
 	}
-	if _, ok := messages[0].Data["context_blocks"]; !ok {
+	contextBlocks, ok := messages[0].Data["context_blocks"].([]dataset_service.KnowledgeContextBlock)
+	if !ok {
 		t.Fatalf("context_blocks missing from message: %#v", messages[0].Data)
+	}
+	if len(contextBlocks) != 1 || contextBlocks[0].Source != "Policies / Refund Policy" {
+		t.Fatalf("context_blocks = %#v, want source summary block", contextBlocks)
 	}
 }
 
