@@ -267,6 +267,82 @@ func TestSandboxCreateRejectsInvalidOwnershipField(t *testing.T) {
 	}
 }
 
+func TestSandboxOperationsRejectCrossOrganizationAccess(t *testing.T) {
+	server, err := NewServer(testConfig(t))
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	createReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","ttl_seconds":60,"organization_id":"organization-one"}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	createRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(createRes, createReq)
+	if createRes.Code != http.StatusOK {
+		t.Fatalf("expected sandbox create to return 200, got %d body=%s", createRes.Code, createRes.Body.String())
+	}
+	var createBody struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(createRes.Body.Bytes(), &createBody); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	if createBody.Data.ID == "" {
+		t.Fatalf("expected sandbox id, got %s", createRes.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/v1/sandboxes/"+createBody.Data.ID+"?organization_id=organization-two", nil)
+	getRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(getRes, getReq)
+	assertCrossOrganizationAccessDenied(t, getRes)
+
+	codeReq := httptest.NewRequest(http.MethodPost, "/v1/exec/code", strings.NewReader(fmt.Sprintf(`{"sandbox_id":%q,"organization_id":"organization-two","language":"python3","code":"print('blocked')"}`, createBody.Data.ID)))
+	codeReq.Header.Set("Content-Type", "application/json")
+	codeRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(codeRes, codeReq)
+	assertCrossOrganizationAccessDenied(t, codeRes)
+
+	fileReq := httptest.NewRequest(http.MethodGet, "/v1/files/tree?sandbox_id="+url.QueryEscape(createBody.Data.ID), nil)
+	fileReq.Header.Set("X-ZGI-Organization-ID", "organization-two")
+	fileRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(fileRes, fileReq)
+	assertCrossOrganizationAccessDenied(t, fileRes)
+
+	listOtherReq := httptest.NewRequest(http.MethodGet, "/v1/sandboxes?organization_id=organization-two", nil)
+	listOtherRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(listOtherRes, listOtherReq)
+	if listOtherRes.Code != http.StatusOK {
+		t.Fatalf("expected cross organization sandbox list to return 200, got %d body=%s", listOtherRes.Code, listOtherRes.Body.String())
+	}
+	if strings.Contains(listOtherRes.Body.String(), createBody.Data.ID) {
+		t.Fatalf("expected cross organization sandbox list to hide sandbox, got %s", listOtherRes.Body.String())
+	}
+
+	allowedReq := httptest.NewRequest(http.MethodGet, "/v1/sandboxes/"+createBody.Data.ID+"?organization_id=organization-one", nil)
+	allowedRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(allowedRes, allowedReq)
+	if allowedRes.Code != http.StatusOK {
+		t.Fatalf("expected matching organization access to return 200, got %d body=%s", allowedRes.Code, allowedRes.Body.String())
+	}
+}
+
+func assertCrossOrganizationAccessDenied(t *testing.T, rr *httptest.ResponseRecorder) {
+	t.Helper()
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected cross organization access to return 403, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	for _, expected := range []string{
+		`"code":"cross_organization_sandbox_access_denied"`,
+		`"organization_id":"organization-two"`,
+		"sandbox does not belong to organization",
+	} {
+		if !strings.Contains(rr.Body.String(), expected) {
+			t.Fatalf("expected cross organization response to include %s, got %s", expected, rr.Body.String())
+		}
+	}
+}
+
 func TestTemplateEndpointRendersAndRejectsUnsafeHelpers(t *testing.T) {
 	server, err := NewServer(testConfig(t))
 	if err != nil {

@@ -322,7 +322,17 @@ func (s *Server) handleSandboxes(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		writeEnvelope(w, http.StatusOK, map[string]any{"items": s.lifecycle.List()})
+		items := s.lifecycle.List()
+		if organizationID := requestOrganizationID(r, ""); organizationID != "" {
+			filtered := make([]sandbox.Sandbox, 0, len(items))
+			for _, item := range items {
+				if item.OrganizationID == organizationID {
+					filtered = append(filtered, item)
+				}
+			}
+			items = filtered
+		}
+		writeEnvelope(w, http.StatusOK, map[string]any{"items": items})
 	case http.MethodPost:
 		var req lifecycle.CreateRequest
 		r.Body = http.MaxBytesReader(w, r.Body, s.maxSmallJSONRequestBytes())
@@ -359,14 +369,17 @@ func (s *Server) handleSandboxByID(w http.ResponseWriter, r *http.Request) {
 	if len(parts) == 1 {
 		switch r.Method {
 		case http.MethodGet:
-			box, err := s.lifecycle.Get(id)
-			if err != nil {
-				writeKnownError(w, err)
+			box, ok := s.authorizeSandboxOrganization(w, id, requestOrganizationID(r, ""))
+			if !ok {
 				return
 			}
 			writeEnvelope(w, http.StatusOK, box)
 		case http.MethodDelete:
-			if s.proxyOwnedRequest(w, r, id) {
+			box, ok := s.authorizeSandboxOrganization(w, id, requestOrganizationID(r, ""))
+			if !ok {
+				return
+			}
+			if s.proxyOwnedBoxRequest(w, r, box) {
 				return
 			}
 			if err := s.lifecycle.Delete(id); err != nil {
@@ -387,6 +400,9 @@ func (s *Server) handleSandboxByID(w http.ResponseWriter, r *http.Request) {
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, s.maxSmallJSONRequestBytes())
 		_ = json.NewDecoder(r.Body).Decode(&req)
+		if _, ok := s.authorizeSandboxOrganization(w, id, requestOrganizationID(r, "")); !ok {
+			return
+		}
 		box, err := s.lifecycle.Renew(id, req.TTLSeconds)
 		if err != nil {
 			writeKnownError(w, err)
@@ -394,11 +410,18 @@ func (s *Server) handleSandboxByID(w http.ResponseWriter, r *http.Request) {
 		}
 		writeEnvelope(w, http.StatusOK, box)
 	case len(parts) == 2 && parts[1] == "executions" && r.Method == http.MethodGet:
-		if s.proxyOwnedRequest(w, r, id) {
+		box, ok := s.authorizeSandboxOrganization(w, id, requestOrganizationID(r, ""))
+		if !ok {
+			return
+		}
+		if s.proxyOwnedBoxRequest(w, r, box) {
 			return
 		}
 		s.writeSandboxExecutionHistory(w, r, id)
 	case len(parts) == 3 && parts[1] == "endpoints" && r.Method == http.MethodGet:
+		if _, ok := s.authorizeSandboxOrganization(w, id, requestOrganizationID(r, "")); !ok {
+			return
+		}
 		endpoint, err := s.lifecycle.ResolveEndpoint(id, parts[2])
 		if err != nil {
 			writeKnownError(w, err)
@@ -406,7 +429,11 @@ func (s *Server) handleSandboxByID(w http.ResponseWriter, r *http.Request) {
 		}
 		writeEnvelope(w, http.StatusOK, endpoint)
 	case len(parts) == 3 && parts[1] == "endpoints" && r.Method == http.MethodPost:
-		if s.proxyOwnedRequest(w, r, id) {
+		box, ok := s.authorizeSandboxOrganization(w, id, requestOrganizationID(r, ""))
+		if !ok {
+			return
+		}
+		if s.proxyOwnedBoxRequest(w, r, box) {
 			return
 		}
 
@@ -448,7 +475,11 @@ func (s *Server) handleExecCode(w http.ResponseWriter, r *http.Request) {
 		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "invalid request payload", nil)
 		return
 	}
-	if s.proxyOwnedBodyRequest(w, r, req.SandboxID, body) {
+	box, ok := s.authorizeSandboxOrganization(w, req.SandboxID, requestOrganizationID(r, req.OrganizationID))
+	if !ok {
+		return
+	}
+	if s.proxyOwnedBoxBodyRequest(w, r, box, body) {
 		return
 	}
 
@@ -480,7 +511,11 @@ func (s *Server) handleExecCommand(w http.ResponseWriter, r *http.Request) {
 		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "invalid request payload", nil)
 		return
 	}
-	if s.proxyOwnedBodyRequest(w, r, req.SandboxID, body) {
+	box, ok := s.authorizeSandboxOrganization(w, req.SandboxID, requestOrganizationID(r, req.OrganizationID))
+	if !ok {
+		return
+	}
+	if s.proxyOwnedBoxBodyRequest(w, r, box, body) {
 		return
 	}
 
@@ -541,7 +576,11 @@ func (s *Server) handleExecSkill(w http.ResponseWriter, r *http.Request) {
 		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "invalid request payload", nil)
 		return
 	}
-	if s.proxyOwnedBodyRequest(w, r, req.SandboxID, body) {
+	box, ok := s.authorizeSandboxOrganization(w, req.SandboxID, requestOrganizationID(r, req.OrganizationID))
+	if !ok {
+		return
+	}
+	if s.proxyOwnedBoxBodyRequest(w, r, box, body) {
 		return
 	}
 
@@ -573,7 +612,11 @@ func (s *Server) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "invalid request payload", nil)
 		return
 	}
-	if s.proxyOwnedBodyRequest(w, r, req.SandboxID, body) {
+	box, ok := s.authorizeSandboxOrganization(w, req.SandboxID, requestOrganizationID(r, req.OrganizationID))
+	if !ok {
+		return
+	}
+	if s.proxyOwnedBoxBodyRequest(w, r, box, body) {
 		return
 	}
 
@@ -605,7 +648,11 @@ func (s *Server) handleUploadArchive(w http.ResponseWriter, r *http.Request) {
 		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "invalid request payload", nil)
 		return
 	}
-	if s.proxyOwnedBodyRequest(w, r, req.SandboxID, body) {
+	box, ok := s.authorizeSandboxOrganization(w, req.SandboxID, requestOrganizationID(r, req.OrganizationID))
+	if !ok {
+		return
+	}
+	if s.proxyOwnedBoxBodyRequest(w, r, box, body) {
 		return
 	}
 
@@ -626,7 +673,11 @@ func (s *Server) handleDownloadFile(w http.ResponseWriter, r *http.Request) {
 		writeEnvelopeWithMessage(w, http.StatusUnauthorized, -401, "unauthorized", nil)
 		return
 	}
-	if s.proxyOwnedRequest(w, r, r.URL.Query().Get("sandbox_id")) {
+	box, ok := s.authorizeSandboxOrganization(w, r.URL.Query().Get("sandbox_id"), requestOrganizationID(r, ""))
+	if !ok {
+		return
+	}
+	if s.proxyOwnedBoxRequest(w, r, box) {
 		return
 	}
 
@@ -647,7 +698,11 @@ func (s *Server) handleFileInfo(w http.ResponseWriter, r *http.Request) {
 		writeEnvelopeWithMessage(w, http.StatusUnauthorized, -401, "unauthorized", nil)
 		return
 	}
-	if s.proxyOwnedRequest(w, r, r.URL.Query().Get("sandbox_id")) {
+	box, ok := s.authorizeSandboxOrganization(w, r.URL.Query().Get("sandbox_id"), requestOrganizationID(r, ""))
+	if !ok {
+		return
+	}
+	if s.proxyOwnedBoxRequest(w, r, box) {
 		return
 	}
 
@@ -668,7 +723,11 @@ func (s *Server) handleFileTree(w http.ResponseWriter, r *http.Request) {
 		writeEnvelopeWithMessage(w, http.StatusUnauthorized, -401, "unauthorized", nil)
 		return
 	}
-	if s.proxyOwnedRequest(w, r, r.URL.Query().Get("sandbox_id")) {
+	box, ok := s.authorizeSandboxOrganization(w, r.URL.Query().Get("sandbox_id"), requestOrganizationID(r, ""))
+	if !ok {
+		return
+	}
+	if s.proxyOwnedBoxRequest(w, r, box) {
 		return
 	}
 
@@ -690,7 +749,11 @@ func (s *Server) handleFileManifest(w http.ResponseWriter, r *http.Request) {
 		writeEnvelopeWithMessage(w, http.StatusUnauthorized, -401, "unauthorized", nil)
 		return
 	}
-	if s.proxyOwnedRequest(w, r, r.URL.Query().Get("sandbox_id")) {
+	box, ok := s.authorizeSandboxOrganization(w, r.URL.Query().Get("sandbox_id"), requestOrganizationID(r, ""))
+	if !ok {
+		return
+	}
+	if s.proxyOwnedBoxRequest(w, r, box) {
 		return
 	}
 
@@ -717,7 +780,11 @@ func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request) {
 		writeEnvelopeWithMessage(w, http.StatusUnauthorized, -401, "unauthorized", nil)
 		return
 	}
-	if s.proxyOwnedRequest(w, r, r.URL.Query().Get("sandbox_id")) {
+	box, ok := s.authorizeSandboxOrganization(w, r.URL.Query().Get("sandbox_id"), requestOrganizationID(r, ""))
+	if !ok {
+		return
+	}
+	if s.proxyOwnedBoxRequest(w, r, box) {
 		return
 	}
 
@@ -853,16 +920,8 @@ func (s *Server) handleInteractiveProxy(w http.ResponseWriter, r *http.Request) 
 	s.proxyToTarget(w, r, target, remainder)
 }
 
-func (s *Server) proxyOwnedBodyRequest(w http.ResponseWriter, r *http.Request, sandboxID string, body []byte) bool {
-	if sandboxID == "" {
-		return false
-	}
-	box, err := s.lifecycle.Get(sandboxID)
-	if err != nil {
-		writeKnownError(w, err)
-		return true
-	}
-	if !s.shouldProxy(*box) {
+func (s *Server) proxyOwnedBoxBodyRequest(w http.ResponseWriter, r *http.Request, box *sandbox.Sandbox, body []byte) bool {
+	if box == nil || !s.shouldProxy(*box) {
 		return false
 	}
 
@@ -871,21 +930,53 @@ func (s *Server) proxyOwnedBodyRequest(w http.ResponseWriter, r *http.Request, s
 	return true
 }
 
-func (s *Server) proxyOwnedRequest(w http.ResponseWriter, r *http.Request, sandboxID string) bool {
-	if sandboxID == "" {
-		return false
-	}
-	box, err := s.lifecycle.Get(sandboxID)
-	if err != nil {
-		writeKnownError(w, err)
-		return true
-	}
-	if !s.shouldProxy(*box) {
+func (s *Server) proxyOwnedBoxRequest(w http.ResponseWriter, r *http.Request, box *sandbox.Sandbox) bool {
+	if box == nil || !s.shouldProxy(*box) {
 		return false
 	}
 
 	s.proxyToWorker(w, r, box.WorkerAddr)
 	return true
+}
+
+func (s *Server) authorizeSandboxOrganization(w http.ResponseWriter, sandboxID string, organizationID string) (*sandbox.Sandbox, bool) {
+	if strings.TrimSpace(sandboxID) == "" {
+		return nil, true
+	}
+
+	box, err := s.lifecycle.Get(sandboxID)
+	if err != nil {
+		writeKnownError(w, err)
+		return nil, false
+	}
+
+	requestedOrganizationID := strings.TrimSpace(organizationID)
+	if requestedOrganizationID == "" || requestedOrganizationID == box.OrganizationID {
+		return box, true
+	}
+
+	writeEnvelopeWithMessage(w, http.StatusForbidden, -403, "sandbox does not belong to organization", map[string]any{
+		"error_type":      "access_denied",
+		"code":            "cross_organization_sandbox_access_denied",
+		"sandbox_id":      sandboxID,
+		"organization_id": requestedOrganizationID,
+	})
+	return nil, false
+}
+
+func requestOrganizationID(r *http.Request, bodyOrganizationID string) string {
+	if value := strings.TrimSpace(bodyOrganizationID); value != "" {
+		return value
+	}
+	if value := strings.TrimSpace(r.URL.Query().Get("organization_id")); value != "" {
+		return value
+	}
+	for _, header := range []string{"X-ZGI-Organization-ID", "X-Organization-ID"} {
+		if value := strings.TrimSpace(r.Header.Get(header)); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (s *Server) shouldProxy(box sandbox.Sandbox) bool {
