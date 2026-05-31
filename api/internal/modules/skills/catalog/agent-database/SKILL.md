@@ -20,20 +20,20 @@ display:
   category: database
   label:
     en_US: Agent Database
-    zh_Hans: Agent Database
+    zh_Hans: 智能体数据库
   description:
     en_US: Uses only database tables bound to the current Agent configuration.
-    zh_Hans: Uses only database tables bound to the current Agent configuration.
+    zh_Hans: 仅使用当前智能体配置中绑定的数据库表。
   when_to_use:
     en_US: Use for Agent answers or actions that need configured database records.
-    zh_Hans: Use for Agent answers or actions that need configured database records.
+    zh_Hans: 当智能体回答或操作需要使用已配置的数据库记录时使用。
   tags:
     en_US:
       - Database
       - Agent
     zh_Hans:
-      - Database
-      - Agent
+      - 数据库
+      - 智能体
 supported_callers:
   - agent
 required_config:

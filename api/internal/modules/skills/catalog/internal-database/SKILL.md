@@ -20,20 +20,20 @@ display:
   category: database
   label:
     en_US: Internal Database
-    zh_Hans: Internal Database
+    zh_Hans: 内部数据库
   description:
     en_US: Finds accessible databases, inspects tables, and performs structured record operations.
-    zh_Hans: Finds accessible databases, inspects tables, and performs structured record operations.
+    zh_Hans: 查找可访问的数据库、查看表结构，并执行结构化记录操作。
   when_to_use:
     en_US: Use when AIChat needs facts or changes from workspace database tables.
-    zh_Hans: Use when AIChat needs facts or changes from workspace database tables.
+    zh_Hans: 当 AIChat 需要从工作区数据库表读取事实或写入变更时使用。
   tags:
     en_US:
       - Database
       - Records
     zh_Hans:
-      - Database
-      - Records
+      - 数据库
+      - 记录
 supported_callers:
   - aichat
 ---

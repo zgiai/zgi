@@ -232,20 +232,20 @@ export function AgentRuntimeDatabaseTableDialog({
                   const checked = selectedTableIDs.has(table.id);
                   const writable = writableTableIDs.has(table.id);
                   return (
-                    <button
+                    <div
                       key={table.id}
-                      type="button"
                       className={cn(
                         'flex w-full items-start gap-3 rounded-md border bg-background p-3 text-left transition-colors hover:border-primary/50 hover:bg-muted/30',
                         checked && 'border-primary bg-primary/5'
                       )}
-                      onClick={() => handleToggleTable(table.id, !checked)}
                     >
                       <Checkbox
                         checked={checked}
                         onCheckedChange={value => handleToggleTable(table.id, value === true)}
-                        onClick={event => event.stopPropagation()}
                         className="mt-0.5"
+                        aria-label={t('database.selectTableForBinding', {
+                          name: tableLabel(table, t('database.unnamedTable')),
+                        })}
                       />
                       <span className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-muted text-primary">
                         <Table2 className="size-4" />
@@ -262,7 +262,6 @@ export function AgentRuntimeDatabaseTableDialog({
                         {checked ? (
                           <span
                             className="mt-2 flex items-center gap-2 text-xs text-muted-foreground"
-                            onClick={event => event.stopPropagation()}
                           >
                             <Switch
                               checked={writable}
@@ -283,7 +282,7 @@ export function AgentRuntimeDatabaseTableDialog({
                           <Check className="size-3.5" />
                         </span>
                       ) : null}
-                    </button>
+                    </div>
                   );
                 })}
               </div>

@@ -1625,6 +1625,8 @@ const messages = {
       selectedTablesCount: '{count} tables',
       searchDatabase: 'Search databases',
       searchTable: 'Search tables',
+      selectDatabaseForBinding: 'Select {name}',
+      selectTableForBinding: 'Select {name}',
       noDatabases: 'No matching database.',
       noTables: 'No matching table.',
       selectDatabaseFirst: 'Select a database to view its tables.',

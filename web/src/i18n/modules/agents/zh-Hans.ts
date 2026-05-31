@@ -1529,6 +1529,8 @@ const messages: AgentsMessages = {
       selectedTablesCount: '{count} 张表',
       searchDatabase: '搜索数据库',
       searchTable: '搜索表',
+      selectDatabaseForBinding: '选择 {name}',
+      selectTableForBinding: '选择 {name}',
       noDatabases: '没有匹配的数据库。',
       noTables: '没有匹配的表。',
       selectDatabaseFirst: '请选择数据库后查看表。',

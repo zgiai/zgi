@@ -149,18 +149,18 @@ function DatabaseOption({
   const t = useT('agents.agentRuntime');
 
   return (
-    <button
-      type="button"
+    <div
       className={cn(
         'flex min-h-24 w-full items-start gap-3 rounded-md border bg-background p-3 text-left transition-colors hover:border-primary/50 hover:bg-muted/30',
         selected && 'border-primary/80 bg-primary/[0.04] shadow-sm'
       )}
-      onClick={() => onSelect(db.id, !selected)}
     >
       <Checkbox
         checked={selected}
         onCheckedChange={value => onSelect(db.id, value === true)}
-        onClick={event => event.stopPropagation()}
+        aria-label={t('database.selectDatabaseForBinding', {
+          name: db.name || db.schema_name || t('database.unnamedDatabase'),
+        })}
         className="mt-1"
       />
       <span className="flex size-9 shrink-0 items-center justify-center rounded-md border bg-muted text-primary">
@@ -181,6 +181,6 @@ function DatabaseOption({
           </Badge>
         ) : null}
       </span>
-    </button>
+    </div>
   );
 }
