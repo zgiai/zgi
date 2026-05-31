@@ -256,7 +256,7 @@ func (s *Service) RunCode(ctx context.Context, req CodeRequest) (runner.Result, 
 			return runner.Result{}, err
 		}
 	}
-	if err := attachResultJSON(&result, req.StrictResultJSON, outputSchema); err != nil {
+	if err := attachResultJSON(&result, req.StrictResultJSON, outputSchema, limits.MaxResultJSONBytes); err != nil {
 		addOwnershipMetadata(baseMetadata, box)
 		s.recordExecutionFailure(ctx, "exec.code.failed", req.SandboxID, "sandbox code execution failed", baseMetadata, err)
 		return runner.Result{}, err
@@ -2021,7 +2021,7 @@ func skillCommandProfile(manifest SkillExecutionManifest) string {
 	}
 }
 
-func attachResultJSON(result *runner.Result, strict bool, schema *outputSchema) error {
+func attachResultJSON(result *runner.Result, strict bool, schema *outputSchema, maxBytes int) error {
 	if result == nil || result.ExitCode != 0 {
 		return nil
 	}
@@ -2030,6 +2030,13 @@ func attachResultJSON(result *runner.Result, strict bool, schema *outputSchema) 
 		if strict || schema != nil {
 			return errors.New("strict_result_json or expected_output_schema requires stdout to contain JSON")
 		}
+		return nil
+	}
+	if maxBytes > 0 && len([]byte(raw)) > maxBytes {
+		if strict || schema != nil {
+			return fmt.Errorf("result_json exceeds max size of %d bytes", maxBytes)
+		}
+		result.Warnings = append(result.Warnings, fmt.Sprintf("result_json omitted because output exceeded max size of %d bytes", maxBytes))
 		return nil
 	}
 

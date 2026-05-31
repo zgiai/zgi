@@ -16,6 +16,7 @@ status == 200
 code == 0
 data.command_profiles.0.name == "code-short"
 data.command_profiles.0.stateless == true
+data.command_profiles.0.max_result_json_bytes == 65536
 ```
 
 ```step
@@ -291,6 +292,30 @@ Content-Type: application/json
   },
   "timeout_ms": 5000,
   "code": "import json\nprint(json.dumps({'echo': 'schema no', 'ok': True, 'extra': 'blocked'}))",
+  "enable_network": false
+}
+
+[Asserts]
+status == 400
+code == -400
+```
+
+```step
+@id result-json-size-rejection
+@name Reject oversized short-code JSON result
+
+POST {{base_url}}/v1/exec/code
+Content-Type: application/json
+
+{
+  "sandbox_id": "{{sandbox_id}}",
+  "language": "python3",
+  "profile": "code-short",
+  "strict_result_json": true,
+  "timeout_ms": 5000,
+  "stdout_limit_kb": 128,
+  "stderr_limit_kb": 64,
+  "code": "import json\nprint(json.dumps({'payload': 'x' * 70000}))",
   "enable_network": false
 }
 

@@ -1930,6 +1930,28 @@ func TestRunCodeStrictResultJSONRejectsPlainText(t *testing.T) {
 	}
 }
 
+func TestRunCodeRejectsOversizedStrictResultJSON(t *testing.T) {
+	service, manager := newTestExecutorService(t)
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	_, err = service.RunCode(context.Background(), CodeRequest{
+		SandboxID:        box.ID,
+		Language:         "python3",
+		Code:             "import json\nprint(json.dumps({'payload': 'x' * 70000}))",
+		Profile:          "code-short",
+		StdoutLimitKB:    128,
+		StrictResultJSON: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "result_json exceeds max size of 65536 bytes") {
+		t.Fatalf("expected result JSON size rejection, got %v", err)
+	}
+}
+
 func TestRunCodeValidatesExpectedOutputSchema(t *testing.T) {
 	service, manager := newTestExecutorService(t)
 	box, err := manager.Create(lifecycle.CreateRequest{

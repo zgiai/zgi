@@ -105,7 +105,7 @@ simple calculations, and deterministic data shaping.
 - Default stdout limit: 64 KiB.
 - Default stderr limit: 64 KiB.
 - Default generated file limit: disabled or temporary-only.
-- Reject outputs that exceed configured JSON result limits.
+- [x] Reject outputs that exceed configured JSON result limits.
 - Reject request bodies over a profile-specific maximum before decoding large payloads.
 
 ### A3. Filesystem Behavior
@@ -121,8 +121,8 @@ simple calculations, and deterministic data shaping.
 - [x] Unit tests for profile normalization.
 - [x] API tests for size, timeout, output, and schema failures.
 - [x] Kest flow for short-code success.
-- Kest flow for short-code timeout.
-- Kest flow for short-code output truncation.
+- [x] Kest flow for short-code timeout.
+- [x] Kest flow for short-code output truncation.
 
 ## 5. Milestone B: Template Runtime
 

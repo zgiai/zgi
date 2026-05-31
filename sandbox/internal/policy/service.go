@@ -40,12 +40,13 @@ type CreateDecision struct {
 }
 
 type CommandLimits struct {
-	Profile          string        `json:"profile"`
-	Timeout          time.Duration `json:"-"`
-	StdoutLimitBytes int           `json:"stdout_limit_bytes"`
-	StderrLimitBytes int           `json:"stderr_limit_bytes"`
-	MaxStdinBytes    int           `json:"max_stdin_bytes"`
-	Stateless        bool          `json:"stateless"`
+	Profile            string        `json:"profile"`
+	Timeout            time.Duration `json:"-"`
+	StdoutLimitBytes   int           `json:"stdout_limit_bytes"`
+	StderrLimitBytes   int           `json:"stderr_limit_bytes"`
+	MaxStdinBytes      int           `json:"max_stdin_bytes"`
+	MaxResultJSONBytes int           `json:"max_result_json_bytes"`
+	Stateless          bool          `json:"stateless"`
 }
 
 type TemplateLimits struct {
@@ -172,26 +173,29 @@ func NewService(cfg config.Config) *Service {
 		},
 		commandProfiles: map[string]CommandLimits{
 			"code-short": {
-				Profile:          "code-short",
-				Timeout:          5 * time.Second,
-				StdoutLimitBytes: 64 * 1024,
-				StderrLimitBytes: 64 * 1024,
-				MaxStdinBytes:    64 * 1024,
-				Stateless:        true,
+				Profile:            "code-short",
+				Timeout:            5 * time.Second,
+				StdoutLimitBytes:   64 * 1024,
+				StderrLimitBytes:   64 * 1024,
+				MaxStdinBytes:      64 * 1024,
+				MaxResultJSONBytes: 64 * 1024,
+				Stateless:          true,
 			},
 			"skill-python": {
-				Profile:          "skill-python",
-				Timeout:          30 * time.Second,
-				StdoutLimitBytes: 1024 * 1024,
-				StderrLimitBytes: 1024 * 1024,
-				MaxStdinBytes:    1024 * 1024,
+				Profile:            "skill-python",
+				Timeout:            30 * time.Second,
+				StdoutLimitBytes:   1024 * 1024,
+				StderrLimitBytes:   1024 * 1024,
+				MaxStdinBytes:      1024 * 1024,
+				MaxResultJSONBytes: 256 * 1024,
 			},
 			"skill-node": {
-				Profile:          "skill-node",
-				Timeout:          30 * time.Second,
-				StdoutLimitBytes: 1024 * 1024,
-				StderrLimitBytes: 1024 * 1024,
-				MaxStdinBytes:    1024 * 1024,
+				Profile:            "skill-node",
+				Timeout:            30 * time.Second,
+				StdoutLimitBytes:   1024 * 1024,
+				StderrLimitBytes:   1024 * 1024,
+				MaxStdinBytes:      1024 * 1024,
+				MaxResultJSONBytes: 256 * 1024,
 			},
 		},
 		templateProfiles: map[string]TemplateLimits{
@@ -423,6 +427,9 @@ func (s *Service) NormalizeCommandLimits(profile string, timeoutSeconds int, tim
 	if limits.StderrLimitBytes <= 0 {
 		limits.StderrLimitBytes = 64 * 1024
 	}
+	if limits.MaxResultJSONBytes <= 0 {
+		limits.MaxResultJSONBytes = 64 * 1024
+	}
 	return limits, nil
 }
 
@@ -561,13 +568,14 @@ func (s *Service) commandProfileSnapshot() []map[string]any {
 			continue
 		}
 		items = append(items, map[string]any{
-			"name":               profile.Profile,
-			"default_timeout_ms": profile.Timeout.Milliseconds(),
-			"stdout_limit_bytes": profile.StdoutLimitBytes,
-			"stderr_limit_bytes": profile.StderrLimitBytes,
-			"max_stdin_bytes":    profile.MaxStdinBytes,
-			"stateless":          profile.Stateless,
-			"network":            "inherits sandbox policy",
+			"name":                  profile.Profile,
+			"default_timeout_ms":    profile.Timeout.Milliseconds(),
+			"stdout_limit_bytes":    profile.StdoutLimitBytes,
+			"stderr_limit_bytes":    profile.StderrLimitBytes,
+			"max_stdin_bytes":       profile.MaxStdinBytes,
+			"max_result_json_bytes": profile.MaxResultJSONBytes,
+			"stateless":             profile.Stateless,
+			"network":               "inherits sandbox policy",
 		})
 	}
 	return items

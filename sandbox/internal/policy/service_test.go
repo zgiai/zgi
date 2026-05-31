@@ -257,6 +257,9 @@ func TestNormalizeCommandLimitsUsesProfileAndClampsRequest(t *testing.T) {
 	if limits.StdoutLimitBytes != 512*1024 || limits.StderrLimitBytes != 512*1024 {
 		t.Fatalf("expected output limits to clamp to config cap, got stdout=%d stderr=%d", limits.StdoutLimitBytes, limits.StderrLimitBytes)
 	}
+	if limits.MaxResultJSONBytes != 256*1024 {
+		t.Fatalf("expected skill result JSON limit, got %d", limits.MaxResultJSONBytes)
+	}
 	if limits.Stateless {
 		t.Fatalf("expected skill-python to be workspace-bound, got %+v", limits)
 	}
@@ -267,6 +270,18 @@ func TestNormalizeCommandLimitsUsesProfileAndClampsRequest(t *testing.T) {
 	}
 	if !shortLimits.Stateless {
 		t.Fatalf("expected code-short to be stateless, got %+v", shortLimits)
+	}
+	if shortLimits.MaxResultJSONBytes != 64*1024 {
+		t.Fatalf("expected code-short result JSON limit, got %d", shortLimits.MaxResultJSONBytes)
+	}
+
+	snapshot := service.Snapshot()
+	profiles, ok := snapshot["command_profiles"].([]map[string]any)
+	if !ok || len(profiles) == 0 {
+		t.Fatalf("expected command profiles in snapshot, got %#v", snapshot["command_profiles"])
+	}
+	if profiles[0]["name"] != "code-short" || profiles[0]["max_result_json_bytes"] != 64*1024 {
+		t.Fatalf("expected code-short result JSON limit in snapshot, got %#v", profiles[0])
 	}
 
 	if _, err := service.NormalizeCommandLimits("unknown", 0, 0, 0, 0); err == nil {
