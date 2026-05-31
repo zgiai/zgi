@@ -21,6 +21,10 @@ KEST_BIN="${KEST_BIN:-kest}"
 DATA_DIR="$(mktemp -d /tmp/zgi-sandbox-kest.XXXXXX)"
 ARCHIVE_VARS="$(mktemp /tmp/zgi-sandbox-kest-vars.XXXXXX)"
 SERVER_LOG="${DATA_DIR}/sandbox.log"
+KEST_HOME="${DATA_DIR}/kest-home"
+KEST_CONFIG_HOME="${DATA_DIR}/kest-config"
+FLOW_ROOT="${DATA_DIR}/flow-root"
+FLOW_DIR="${FLOW_ROOT}/.kest"
 
 cleanup() {
   if [[ "${START_LOCAL_SANDBOX}" = "1" && -n "${SERVER_PID:-}" ]] && kill -0 "${SERVER_PID}" 2>/dev/null; then
@@ -37,6 +41,37 @@ if ! command -v "${KEST_BIN}" >/dev/null 2>&1; then
 fi
 
 cd "${SANDBOX_DIR}"
+mkdir -p "${FLOW_DIR}" "${KEST_HOME}" "${KEST_CONFIG_HOME}"
+for flow in .kest/*.flow.md; do
+  sed 's#{{base_url}}##g' "${flow}" >"${FLOW_DIR}/$(basename "${flow}")"
+done
+cat >"${FLOW_DIR}/config.yaml" <<EOF
+version: 1
+environments:
+  local:
+    base_url: ${BASE_URL}
+active_env: local
+log_enabled: true
+EOF
+cat >"${FLOW_DIR}/flow.config.yaml" <<EOF
+version: 1
+profiles:
+  local:
+    include: [".kest/*.flow.md"]
+    env: local
+    base_url: "${BASE_URL}"
+    strict: true
+    fail_fast: false
+    sync: false
+EOF
+
+run_kest() {
+  (
+    cd "${FLOW_ROOT}"
+    HOME="${KEST_HOME}" XDG_CONFIG_HOME="${KEST_CONFIG_HOME}" "${KEST_BIN}" run "$@"
+  )
+}
+
 if [[ "${START_LOCAL_SANDBOX}" = "1" ]]; then
   env \
     ZGI_SANDBOX_SERVER_PORT="${PORT}" \
@@ -159,16 +194,13 @@ PY
 
 cd "${SANDBOX_DIR}"
 
-"${KEST_BIN}" run .kest/sandbox-lifecycle-files-command.flow.md \
-  --var base_url="${BASE_URL}" \
+run_kest .kest/sandbox-lifecycle-files-command.flow.md \
   --fail-fast
 
-"${KEST_BIN}" run .kest/sandbox-short-code-contract.flow.md \
-  --var base_url="${BASE_URL}" \
+run_kest .kest/sandbox-short-code-contract.flow.md \
   --fail-fast
 
-"${KEST_BIN}" run .kest/sandbox-template-runtime.flow.md \
-  --var base_url="${BASE_URL}" \
+run_kest .kest/sandbox-template-runtime.flow.md \
   --var template_render="${template_render}" \
   --var template_missing="${template_missing}" \
   --var template_unsafe_helper="${template_unsafe_helper}" \
@@ -178,31 +210,26 @@ cd "${SANDBOX_DIR}"
   --var oversized_template_value="${oversized_template_value}" \
   --fail-fast
 
-"${KEST_BIN}" run .kest/sandbox-execution-timeouts.flow.md \
-  --var base_url="${BASE_URL}" \
+run_kest .kest/sandbox-execution-timeouts.flow.md \
   --fail-fast
 
-"${KEST_BIN}" run .kest/sandbox-archive-skill-artifacts.flow.md \
-  --var base_url="${BASE_URL}" \
+run_kest .kest/sandbox-archive-skill-artifacts.flow.md \
   --var skill_archive_base64="${skill_archive_base64}" \
   --var valid_skill_manifest_archive_base64="${valid_skill_manifest_archive_base64}" \
   --var invalid_skill_manifest_archive_base64="${invalid_skill_manifest_archive_base64}" \
   --fail-fast
 
-"${KEST_BIN}" run .kest/sandbox-archive-strip-root.flow.md \
-  --var base_url="${BASE_URL}" \
+run_kest .kest/sandbox-archive-strip-root.flow.md \
   --var strip_root_archive_base64="${strip_root_archive_base64}" \
   --fail-fast
 
-"${KEST_BIN}" run .kest/sandbox-security-limits.flow.md \
-  --var base_url="${BASE_URL}" \
+run_kest .kest/sandbox-security-limits.flow.md \
   --var zip_slip_archive_base64="${zip_slip_archive_base64}" \
   --var symlink_archive_base64="${symlink_archive_base64}" \
   --fail-fast
 
 if [[ "${START_LOCAL_SANDBOX}" = "1" ]]; then
-  "${KEST_BIN}" run .kest/sandbox-resource-limits.flow.md \
-    --var base_url="${BASE_URL}" \
+  run_kest .kest/sandbox-resource-limits.flow.md \
     --fail-fast
 else
   echo "Skipping resource limit saturation flow against external sandbox: ${BASE_URL}"

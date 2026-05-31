@@ -6,6 +6,8 @@ Current checks:
 
 - Repository hygiene checks from `./scripts/check-open-source.sh --worktree`
 - Web TypeScript checks
+- Sandbox Go tests from `cd sandbox && go test ./...`
+- Sandbox Kest black-box flows from `make test-sandbox-kest`
 
 Release workflows:
 

@@ -20,6 +20,8 @@ make test-sandbox-kest
 
 The runner starts a temporary local sandbox server, generates the
 archive inputs needed by the flows, runs Kest, then stops the server.
+It also runs Kest from a temporary flow workspace and generated config so local
+or CI user-level Kest settings cannot change the target base URL.
 
 By default, the runner chooses a random local port and a unique worker ID so the
 flows do not attach to a stale sandbox process or share active-sandbox capacity
