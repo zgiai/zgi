@@ -348,6 +348,165 @@ func TestOrganizationConcurrentExecutionLimit(t *testing.T) {
 	}
 }
 
+func TestProfileConcurrentExecutionLimit(t *testing.T) {
+	recorder := observer.NewRecorder(100)
+	cfg := config.FromEnv()
+	cfg.DataDir = t.TempDir()
+	cfg.MaxConcurrentExecutionsPerProfile = 1
+	policyService := policy.NewService(cfg)
+	manager, err := lifecycle.NewManagerWithConfig(recorder, policyService, cfg, nil, nil)
+	if err != nil {
+		t.Fatalf("expected lifecycle manager, got %v", err)
+	}
+	service := NewService(manager, runner.NewService(2, 3*time.Second, 4096), recorder, policyService)
+
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+		OrganizationID: "organization-profile",
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+	_, err = service.UploadArchive(ArchiveUploadRequest{
+		SandboxID: box.ID,
+		Path:      "skills/profile",
+		ArchiveBase64: zipBase64(t, map[string]string{
+			"SKILL.md":            "# Skill",
+			"scripts/run.py":      "print('skill')",
+			"skill.manifest.json": validSkillManifestJSON("scripts/run.py"),
+		}),
+		Format:                "zip",
+		ValidateSkillManifest: true,
+	})
+	if err != nil {
+		t.Fatalf("upload skill package: %v", err)
+	}
+
+	codeShortDone := make(chan error, 1)
+	go func() {
+		_, err := service.RunCommand(context.Background(), CommandRequest{
+			SandboxID: box.ID,
+			Command:   "python3",
+			Args:      []string{"-c", "import time; time.sleep(0.4)"},
+			Profile:   "code-short",
+			TimeoutMS: 1000,
+		})
+		codeShortDone <- err
+	}()
+	waitForProfileExecutions(t, service, "code-short", 1)
+
+	_, err = service.RunCommand(context.Background(), CommandRequest{
+		SandboxID: box.ID,
+		Command:   "pwd",
+		Profile:   "code-short",
+	})
+	var limitErr *policy.LimitError
+	if !errors.As(err, &limitErr) || limitErr.Code != "profile_concurrent_execution_limit_exceeded" || limitErr.Limit != "max_concurrent_executions_per_profile" {
+		t.Fatalf("expected profile concurrent command limit error, got %v", err)
+	}
+	if limitErr.Details["profile"] != "code-short" {
+		t.Fatalf("expected profile in details, got %+v", limitErr.Details)
+	}
+
+	_, err = service.RunCode(context.Background(), CodeRequest{
+		SandboxID: box.ID,
+		Language:  "python3",
+		Code:      "print('blocked')",
+		Profile:   "code-short",
+	})
+	if !errors.As(err, &limitErr) || limitErr.Code != "profile_concurrent_execution_limit_exceeded" {
+		t.Fatalf("expected profile concurrent code limit error, got %v", err)
+	}
+
+	if _, err := service.RunCommand(context.Background(), CommandRequest{
+		SandboxID: box.ID,
+		Command:   "pwd",
+		Profile:   "skill-python",
+	}); err != nil {
+		t.Fatalf("expected different profile execution to run, got %v", err)
+	}
+
+	if err := <-codeShortDone; err != nil {
+		t.Fatalf("expected code-short command to complete, got %v", err)
+	}
+	waitForProfileExecutions(t, service, "code-short", 0)
+
+	skillProfileDone := make(chan error, 1)
+	go func() {
+		_, err := service.RunCommand(context.Background(), CommandRequest{
+			SandboxID: box.ID,
+			Command:   "python3",
+			Args:      []string{"-c", "import time; time.sleep(0.4)"},
+			Profile:   "skill-python",
+			TimeoutMS: 1000,
+		})
+		skillProfileDone <- err
+	}()
+	waitForProfileExecutions(t, service, "skill-python", 1)
+
+	_, err = service.RunSkill(context.Background(), SkillRunRequest{
+		SandboxID: box.ID,
+		Path:      "skills/profile",
+	})
+	if !errors.As(err, &limitErr) || limitErr.Code != "profile_concurrent_execution_limit_exceeded" {
+		t.Fatalf("expected profile concurrent skill limit error, got %v", err)
+	}
+
+	if err := <-skillProfileDone; err != nil {
+		t.Fatalf("expected skill-python command to complete, got %v", err)
+	}
+	waitForProfileExecutions(t, service, "skill-python", 0)
+
+	events := recorder.Query(observer.Query{SandboxID: box.ID, Type: "exec.command.failed", Limit: 1})
+	if len(events) != 1 {
+		t.Fatalf("expected profile limit failure event, got %d", len(events))
+	}
+	if events[0].Metadata["code"] != "profile_concurrent_execution_limit_exceeded" {
+		t.Fatalf("expected structured profile limit metadata, got %#v", events[0].Metadata)
+	}
+	if events[0].Metadata["profile"] != "code-short" {
+		t.Fatalf("expected profile metadata, got %#v", events[0].Metadata)
+	}
+}
+
+func TestProfileLimitReleasesQueuedOrganizationAdmission(t *testing.T) {
+	cfg := config.FromEnv()
+	cfg.MaxConcurrentExecutionsPerProfile = 1
+	cfg.MaxConcurrentExecutionsPerOrganization = 1
+	cfg.MaxQueuedExecutionsPerOrganization = 2
+	cfg.QueueTimeoutMS = 1000
+	service := &Service{
+		policy:                         policy.NewService(cfg),
+		executionChanged:               make(chan struct{}),
+		activeExecutionsByProfile:      make(map[string]int),
+		activeExecutionsByOrganization: map[string]int{"organization-queued-profile": 1},
+		queuedExecutionsByOrganization: make(map[string]int),
+	}
+	box := &sandbox.Sandbox{OrganizationID: "organization-queued-profile"}
+
+	errCh := make(chan error, 1)
+	go func() {
+		release, err := service.acquireExecutionAdmission(context.Background(), box, "code-short")
+		if release != nil {
+			release()
+		}
+		errCh <- err
+	}()
+	waitForQueuedOrganizationExecutions(t, service, "organization-queued-profile", 1)
+
+	service.executionMu.Lock()
+	service.activeExecutionsByProfile["code-short"] = 1
+	service.notifyExecutionChangedLocked()
+	service.executionMu.Unlock()
+
+	err := <-errCh
+	var limitErr *policy.LimitError
+	if !errors.As(err, &limitErr) || limitErr.Code != "profile_concurrent_execution_limit_exceeded" {
+		t.Fatalf("expected profile limit error, got %v", err)
+	}
+	waitForQueuedOrganizationExecutions(t, service, "organization-queued-profile", 0)
+}
+
 func TestOrganizationQueuedExecutionLimit(t *testing.T) {
 	recorder := observer.NewRecorder(100)
 	cfg := config.FromEnv()
@@ -1650,6 +1809,22 @@ func waitForOrganizationExecutions(t *testing.T, service *Service, organizationI
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("expected %d active executions for organization %q", expected, organizationID)
+}
+
+func waitForProfileExecutions(t *testing.T, service *Service, profile string, expected int) {
+	t.Helper()
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		service.executionMu.Lock()
+		active := service.activeExecutionsByProfile[profile]
+		service.executionMu.Unlock()
+		if active == expected {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("expected %d active executions for profile %q", expected, profile)
 }
 
 func waitForQueuedOrganizationExecutions(t *testing.T, service *Service, organizationID string, expected int) {

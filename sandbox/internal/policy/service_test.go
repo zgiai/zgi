@@ -82,6 +82,9 @@ func TestNormalizeCreateReturnsEffectiveLimitsAndStructuredLimitError(t *testing
 	if decision.EffectiveLimits.MaxActiveSandboxesPerOrganization != 0 {
 		t.Fatalf("expected organization active limit to default to disabled, got %+v", decision.EffectiveLimits)
 	}
+	if decision.EffectiveLimits.MaxConcurrentExecutionsPerProfile != cfg.MaxConcurrentExecutionsPerProfile {
+		t.Fatalf("expected profile concurrent execution limit in decision, got %+v", decision.EffectiveLimits)
+	}
 	if decision.EffectiveLimits.MaxExecutionsPerMinutePerOrganization != cfg.MaxExecutionsPerMinutePerOrganization {
 		t.Fatalf("expected organization execution rate limit in decision, got %+v", decision.EffectiveLimits)
 	}

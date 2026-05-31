@@ -38,6 +38,7 @@ type Service struct {
 
 	executionMu                    sync.Mutex
 	executionChanged               chan struct{}
+	activeExecutionsByProfile      map[string]int
 	activeExecutionsByOrganization map[string]int
 	queuedExecutionsByOrganization map[string]int
 }
@@ -186,6 +187,7 @@ func NewService(manager *lifecycle.Manager, runnerService *runner.Service, recor
 		observer:                       recorder,
 		policy:                         policyService,
 		executionChanged:               make(chan struct{}),
+		activeExecutionsByProfile:      make(map[string]int),
 		activeExecutionsByOrganization: make(map[string]int),
 		queuedExecutionsByOrganization: make(map[string]int),
 	}
@@ -275,7 +277,7 @@ func (s *Service) runCodeWithScope(ctx context.Context, req CodeRequest, runReq 
 	if err := s.enforceOrganizationExecutionRate(box); err != nil {
 		return runner.Result{}, box, err
 	}
-	releaseExecution, err := s.acquireOrganizationExecution(ctx, box)
+	releaseExecution, err := s.acquireExecutionAdmission(ctx, box, limits.Profile)
 	if err != nil {
 		return runner.Result{}, box, err
 	}
@@ -404,6 +406,7 @@ func (s *Service) RunCommand(ctx context.Context, req CommandRequest) (runner.Co
 		s.recordExecutionFailure(ctx, "exec.command.failed", req.SandboxID, "sandbox command execution failed", baseMetadata, err)
 		return runner.CommandResult{}, err
 	}
+	baseMetadata["profile"] = limits.Profile
 	if len(req.Stdin) > limits.MaxStdinBytes {
 		err := fmt.Errorf("stdin exceeds max size of %d bytes", limits.MaxStdinBytes)
 		s.recordExecutionFailure(ctx, "exec.command.failed", req.SandboxID, "sandbox command execution failed", baseMetadata, err)
@@ -418,7 +421,7 @@ func (s *Service) RunCommand(ctx context.Context, req CommandRequest) (runner.Co
 		s.recordExecutionFailure(ctx, "exec.command.failed", req.SandboxID, "sandbox command execution failed", baseMetadata, err)
 		return runner.CommandResult{}, err
 	}
-	releaseExecution, err := s.acquireOrganizationExecution(ctx, box)
+	releaseExecution, err := s.acquireExecutionAdmission(ctx, box, limits.Profile)
 	if err != nil {
 		s.recordExecutionFailure(ctx, "exec.command.failed", req.SandboxID, "sandbox command execution failed", baseMetadata, err)
 		return runner.CommandResult{}, err
@@ -515,11 +518,12 @@ func (s *Service) RunSkill(ctx context.Context, req SkillRunRequest) (SkillRunRe
 	}
 
 	command, args := skillCommand(manifest)
+	profile := skillCommandProfile(manifest)
 	if err := s.enforceOrganizationExecutionRate(box); err != nil {
 		s.recordExecutionFailure(ctx, "exec.skill.failed", req.SandboxID, "skill execution failed", baseMetadata, err)
 		return SkillRunResult{}, err
 	}
-	releaseExecution, err := s.acquireOrganizationExecution(ctx, box)
+	releaseExecution, err := s.acquireExecutionAdmission(ctx, box, profile)
 	if err != nil {
 		s.recordExecutionFailure(ctx, "exec.skill.failed", req.SandboxID, "skill execution failed", baseMetadata, err)
 		return SkillRunResult{}, err
@@ -575,6 +579,7 @@ func (s *Service) RunSkill(ctx context.Context, req SkillRunRequest) (SkillRunRe
 		"path":           req.Path,
 		"entrypoint":     manifest.Entrypoint,
 		"language":       manifest.Language,
+		"profile":        profile,
 		"result_mode":    manifest.ResultMode,
 		"exit_code":      result.ExitCode,
 		"duration_ms":    result.DurationMS,
@@ -617,13 +622,18 @@ func (s *Service) enforceOrganizationExecutionRate(box *sandbox.Sandbox) error {
 	}
 }
 
-func (s *Service) acquireOrganizationExecution(ctx context.Context, box *sandbox.Sandbox) (func(), error) {
-	limit := s.policy.MaxConcurrentExecutionsPerOrganization()
-	if limit <= 0 || box == nil || strings.TrimSpace(box.OrganizationID) == "" {
+func (s *Service) acquireExecutionAdmission(ctx context.Context, box *sandbox.Sandbox, profile string) (func(), error) {
+	profile = strings.TrimSpace(profile)
+	profileLimit := s.policy.MaxConcurrentExecutionsPerProfile()
+	organizationLimit := s.policy.MaxConcurrentExecutionsPerOrganization()
+	if profileLimit <= 0 && (organizationLimit <= 0 || box == nil || strings.TrimSpace(box.OrganizationID) == "") {
 		return func() {}, nil
 	}
 
-	organizationID := box.OrganizationID
+	organizationID := ""
+	if box != nil {
+		organizationID = strings.TrimSpace(box.OrganizationID)
+	}
 	queueLimit := s.policy.MaxQueuedExecutionsPerOrganization()
 	queueTimeout := time.Duration(s.policy.QueueTimeoutMS()) * time.Millisecond
 	if queueTimeout <= 0 {
@@ -644,17 +654,43 @@ func (s *Service) acquireOrganizationExecution(ctx context.Context, box *sandbox
 
 	for {
 		s.executionMu.Lock()
-		active := s.activeExecutionsByOrganization[organizationID]
-		currentQueued := s.queuedExecutionsByOrganization[organizationID]
-		if active < limit && (queued || currentQueued == 0) {
-			s.activeExecutionsByOrganization[organizationID] = active + 1
+		activeProfile := s.activeExecutionsByProfile[profile]
+		if profileLimit > 0 && activeProfile >= profileLimit {
 			if queued {
 				s.releaseQueuedOrganizationExecutionLocked(organizationID)
 				queued = false
 				s.notifyExecutionChangedLocked()
 			}
 			s.executionMu.Unlock()
-			return s.releaseOrganizationExecution(organizationID), nil
+			return nil, &policy.LimitError{
+				Code:    "profile_concurrent_execution_limit_exceeded",
+				Limit:   "max_concurrent_executions_per_profile",
+				Maximum: profileLimit,
+				Actual:  activeProfile + 1,
+				Details: map[string]any{
+					"profile":           profile,
+					"active_executions": activeProfile,
+				},
+			}
+		}
+
+		activeOrganization := s.activeExecutionsByOrganization[organizationID]
+		currentQueued := s.queuedExecutionsByOrganization[organizationID]
+		organizationLimited := organizationLimit > 0 && organizationID != ""
+		if !organizationLimited || (activeOrganization < organizationLimit && (queued || currentQueued == 0)) {
+			if profileLimit > 0 {
+				s.activeExecutionsByProfile[profile] = activeProfile + 1
+			}
+			if organizationLimited {
+				s.activeExecutionsByOrganization[organizationID] = activeOrganization + 1
+			}
+			if queued {
+				s.releaseQueuedOrganizationExecutionLocked(organizationID)
+				queued = false
+				s.notifyExecutionChangedLocked()
+			}
+			s.executionMu.Unlock()
+			return s.releaseExecutionAdmission(profile, organizationID), nil
 		}
 
 		if queueLimit <= 0 {
@@ -662,11 +698,11 @@ func (s *Service) acquireOrganizationExecution(ctx context.Context, box *sandbox
 			return nil, &policy.LimitError{
 				Code:    "organization_concurrent_execution_limit_exceeded",
 				Limit:   "max_concurrent_executions_per_organization",
-				Maximum: limit,
-				Actual:  active + 1,
+				Maximum: organizationLimit,
+				Actual:  activeOrganization + 1,
 				Details: map[string]any{
 					"organization_id":   organizationID,
-					"active_executions": active,
+					"active_executions": activeOrganization,
 				},
 			}
 		}
@@ -713,7 +749,7 @@ func (s *Service) acquireOrganizationExecution(ctx context.Context, box *sandbox
 	}
 }
 
-func (s *Service) releaseOrganizationExecution(organizationID string) func() {
+func (s *Service) releaseExecutionAdmission(profile string, organizationID string) func() {
 	released := false
 	return func() {
 		s.executionMu.Lock()
@@ -722,13 +758,22 @@ func (s *Service) releaseOrganizationExecution(organizationID string) func() {
 			return
 		}
 		released = true
-		next := s.activeExecutionsByOrganization[organizationID] - 1
-		if next <= 0 {
-			delete(s.activeExecutionsByOrganization, organizationID)
-			s.notifyExecutionChangedLocked()
-			return
+		if profile != "" {
+			nextProfile := s.activeExecutionsByProfile[profile] - 1
+			if nextProfile <= 0 {
+				delete(s.activeExecutionsByProfile, profile)
+			} else {
+				s.activeExecutionsByProfile[profile] = nextProfile
+			}
 		}
-		s.activeExecutionsByOrganization[organizationID] = next
+		if organizationID != "" {
+			nextOrganization := s.activeExecutionsByOrganization[organizationID] - 1
+			if nextOrganization <= 0 {
+				delete(s.activeExecutionsByOrganization, organizationID)
+			} else {
+				s.activeExecutionsByOrganization[organizationID] = nextOrganization
+			}
+		}
 		s.notifyExecutionChangedLocked()
 	}
 }
@@ -1734,6 +1779,15 @@ func skillCommand(manifest SkillExecutionManifest) (string, []string) {
 		return "node", []string{manifest.Entrypoint}
 	default:
 		return "python3", []string{manifest.Entrypoint}
+	}
+}
+
+func skillCommandProfile(manifest SkillExecutionManifest) string {
+	switch manifest.Language {
+	case "nodejs":
+		return "skill-node"
+	default:
+		return "skill-python"
 	}
 }
 

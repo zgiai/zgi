@@ -14,6 +14,7 @@ type Config struct {
 	TimeoutSeconds                         int
 	OutputLimitKB                          int
 	MaxActive                              int
+	MaxConcurrentExecutionsPerProfile      int
 	MaxActivePerOrganization               int
 	MaxConcurrentExecutionsPerOrganization int
 	MaxExecutionsPerMinutePerOrganization  int
@@ -56,6 +57,7 @@ func FromEnv() Config {
 		TimeoutSeconds:                         getEnvInt("ZGI_SANDBOX_LITE_WORKER_TIMEOUT", 5),
 		OutputLimitKB:                          getEnvInt("ZGI_SANDBOX_OUTPUT_LIMIT_KB", 1024),
 		MaxActive:                              getEnvInt("ZGI_SANDBOX_MAX_ACTIVE", 6),
+		MaxConcurrentExecutionsPerProfile:      getEnvIntAllowZero("ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS_PER_PROFILE", 0),
 		MaxActivePerOrganization:               getEnvIntAllowZero("ZGI_SANDBOX_MAX_ACTIVE_PER_ORGANIZATION", 0),
 		MaxConcurrentExecutionsPerOrganization: getEnvIntAllowZero("ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS_PER_ORGANIZATION", 0),
 		MaxExecutionsPerMinutePerOrganization:  getEnvIntAllowZero("ZGI_SANDBOX_MAX_EXECUTIONS_PER_MINUTE_PER_ORGANIZATION", 0),
@@ -120,12 +122,13 @@ func (c Config) NetworkPolicyEnforced() bool {
 
 func (c Config) PublicSnapshot() map[string]any {
 	return map[string]any{
-		"port":                        c.Port,
-		"max_workers":                 c.MaxWorkers,
-		"timeout_seconds":             c.TimeoutSeconds,
-		"output_limit_kb":             c.OutputLimitKB,
-		"max_active":                  c.MaxActive,
-		"max_active_per_organization": c.MaxActivePerOrganization,
+		"port":                                  c.Port,
+		"max_workers":                           c.MaxWorkers,
+		"timeout_seconds":                       c.TimeoutSeconds,
+		"output_limit_kb":                       c.OutputLimitKB,
+		"max_active":                            c.MaxActive,
+		"max_concurrent_executions_per_profile": c.MaxConcurrentExecutionsPerProfile,
+		"max_active_per_organization":           c.MaxActivePerOrganization,
 		"max_concurrent_executions_per_organization": c.MaxConcurrentExecutionsPerOrganization,
 		"max_executions_per_minute_per_organization": c.MaxExecutionsPerMinutePerOrganization,
 		"max_queued_executions_per_organization":     c.MaxQueuedExecutionsPerOrganization,

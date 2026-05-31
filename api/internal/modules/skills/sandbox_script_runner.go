@@ -69,7 +69,7 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 		Arguments: summarizeArguments(arguments),
 	}
 
-	sandboxID, err := r.createSandbox(ctx)
+	sandboxID, err := r.createSandbox(ctx, execCtx)
 	if err != nil {
 		trace.Status = "error"
 		trace.Error = err.Error()
@@ -130,17 +130,21 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 	}, nil
 }
 
-func (r *SandboxScriptRunner) createSandbox(ctx context.Context) (string, error) {
+func (r *SandboxScriptRunner) createSandbox(ctx context.Context, execCtx ExecutionContext) (string, error) {
 	var response struct {
 		ID string `json:"id"`
 	}
-	if err := r.doJSON(ctx, http.MethodPost, "/v1/sandboxes", map[string]interface{}{
+	payload := map[string]interface{}{
 		"runtime_profile":    "session",
 		"ttl_seconds":        300,
 		"network_enabled":    false,
 		"network_policy":     "deny-by-default",
 		"dependency_profile": "stdlib",
-	}, &response); err != nil {
+	}
+	if organizationID := strings.TrimSpace(execCtx.OrganizationID); organizationID != "" {
+		payload["organization_id"] = organizationID
+	}
+	if err := r.doJSON(ctx, http.MethodPost, "/v1/sandboxes", payload, &response); err != nil {
 		return "", err
 	}
 	if strings.TrimSpace(response.ID) == "" {
@@ -368,8 +372,8 @@ func copyFileIntoZip(path string, writer io.Writer) error {
 
 func skillScriptEnv(execCtx ExecutionContext) map[string]string {
 	env := map[string]string{}
-	if value := strings.TrimSpace(execCtx.TenantID); value != "" {
-		env["ZGI_TENANT_ID"] = value
+	if value := strings.TrimSpace(execCtx.OrganizationID); value != "" {
+		env["ZGI_ORGANIZATION_ID"] = value
 	}
 	if value := strings.TrimSpace(execCtx.UserID); value != "" {
 		env["ZGI_USER_ID"] = value

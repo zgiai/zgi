@@ -47,6 +47,7 @@ type ResourceLimits struct {
 	NetworkPolicyEnforced                  bool   `json:"network_policy_enforced"`
 	MaxWorkers                             int    `json:"max_workers"`
 	MaxActiveSandboxes                     int    `json:"max_active_sandboxes"`
+	MaxConcurrentExecutionsPerProfile      int    `json:"max_concurrent_executions_per_profile"`
 	MaxActiveSandboxesPerOrganization      int    `json:"max_active_sandboxes_per_organization"`
 	MaxConcurrentExecutionsPerOrganization int    `json:"max_concurrent_executions_per_organization"`
 	MaxExecutionsPerMinutePerOrganization  int    `json:"max_executions_per_minute_per_organization"`

@@ -75,10 +75,6 @@ func (s *service) runPreparedSkillStream(
 }
 
 func (s *service) skillExecutionContext(prepared *PreparedChat) skills.ExecutionContext {
-	tenantID := prepared.Scope.OrganizationID.String()
-	if prepared.Scope.WorkspaceID != nil {
-		tenantID = prepared.Scope.WorkspaceID.String()
-	}
 	appID := prepared.Conversation.ID.String()
 	if strings.TrimSpace(prepared.RunConfig.BillingAppID) != "" {
 		appID = strings.TrimSpace(prepared.RunConfig.BillingAppID)
@@ -88,7 +84,7 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 		invokeFrom = tools.ToolInvokeFromAgent
 	}
 	return skills.ExecutionContext{
-		TenantID:          tenantID,
+		OrganizationID:    prepared.Scope.OrganizationID.String(),
 		UserID:            prepared.Scope.AccountID.String(),
 		ConversationID:    prepared.Conversation.ID.String(),
 		AppID:             appID,

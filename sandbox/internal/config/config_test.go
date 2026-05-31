@@ -56,6 +56,16 @@ func TestFromEnvReadsOrganizationConcurrentExecutionLimit(t *testing.T) {
 	}
 }
 
+func TestFromEnvReadsProfileConcurrentExecutionLimit(t *testing.T) {
+	t.Setenv("ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS_PER_PROFILE", "4")
+
+	cfg := FromEnv()
+
+	if cfg.MaxConcurrentExecutionsPerProfile != 4 {
+		t.Fatalf("expected profile concurrent execution limit 4, got %d", cfg.MaxConcurrentExecutionsPerProfile)
+	}
+}
+
 func TestFromEnvReadsOrganizationQueuedExecutionLimit(t *testing.T) {
 	t.Setenv("ZGI_SANDBOX_MAX_QUEUED_EXECUTIONS_PER_ORGANIZATION", "5")
 

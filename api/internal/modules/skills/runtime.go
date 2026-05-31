@@ -51,7 +51,7 @@ type skillLocation struct {
 }
 
 type ExecutionContext struct {
-	TenantID          string
+	OrganizationID    string
 	UserID            string
 	ConversationID    string
 	AppID             string
@@ -383,7 +383,7 @@ func (r *Runtime) CallSkillTool(
 		ProviderType:      toolDef.ProviderType,
 		ProviderID:        toolDef.ProviderID,
 		ToolName:          toolDef.Name,
-		TenantID:          execCtx.TenantID,
+		TenantID:          execCtx.OrganizationID,
 		UserID:            execCtx.UserID,
 		Parameters:        arguments,
 		ConversationID:    execCtx.ConversationID,

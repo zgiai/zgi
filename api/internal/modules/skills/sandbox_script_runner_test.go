@@ -56,6 +56,11 @@ func TestSandboxScriptRunnerRunsSkillPackage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/sandboxes":
+			var req map[string]interface{}
+			decodeJSON(t, r, &req)
+			if req["organization_id"] != "organization-script" {
+				t.Fatalf("unexpected sandbox create request: %#v", req)
+			}
 			writeSandboxEnvelope(t, w, map[string]interface{}{"id": "sbx_test"})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/files/upload-archive":
 			var req map[string]interface{}
@@ -70,6 +75,13 @@ func TestSandboxScriptRunnerRunsSkillPackage(t *testing.T) {
 			}
 			if !strings.Contains(req["stdin"].(string), "hello") {
 				t.Fatalf("expected stdin arguments, got %#v", req["stdin"])
+			}
+			env, ok := req["env"].(map[string]interface{})
+			if !ok || env["ZGI_ORGANIZATION_ID"] != "organization-script" {
+				t.Fatalf("expected organization env, got %#v", req["env"])
+			}
+			if len(env) != 1 {
+				t.Fatalf("expected only organization env, got %#v", env)
 			}
 			writeSandboxEnvelope(t, w, map[string]interface{}{
 				"stdout":      "{\"result\":\"ok\"}\n",
@@ -108,7 +120,7 @@ func TestSandboxScriptRunnerRunsSkillPackage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load custom skill: %v", err)
 	}
-	result, err := runtime.CallSkillTool(context.Background(), &ResolvedSkills{Skills: []SkillDocument{doc}}, "script-skill", SkillScriptToolRun, map[string]interface{}{"input": "hello"}, ExecutionContext{}, "call_1")
+	result, err := runtime.CallSkillTool(context.Background(), &ResolvedSkills{Skills: []SkillDocument{doc}}, "script-skill", SkillScriptToolRun, map[string]interface{}{"input": "hello"}, ExecutionContext{OrganizationID: "organization-script"}, "call_1")
 	if err != nil {
 		t.Fatalf("run skill script: %v", err)
 	}
