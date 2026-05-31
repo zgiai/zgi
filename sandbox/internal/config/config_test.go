@@ -163,6 +163,16 @@ func TestFromEnvReadsDependencyProfileBuildLimits(t *testing.T) {
 	}
 }
 
+func TestFromEnvReadsDependencyRootFSDir(t *testing.T) {
+	t.Setenv("ZGI_SANDBOX_DEPENDENCY_ROOTFS_DIR", "/srv/zgi-sandbox/profiles")
+
+	cfg := FromEnv()
+
+	if cfg.DependencyRootFSDir != "/srv/zgi-sandbox/profiles" {
+		t.Fatalf("expected dependency rootfs dir, got %s", cfg.DependencyRootFSDir)
+	}
+}
+
 func TestPublicSnapshotOmitsSecrets(t *testing.T) {
 	cfg := Config{
 		Port:                                 "2660",
@@ -174,6 +184,7 @@ func TestPublicSnapshotOmitsSecrets(t *testing.T) {
 		WorkerID:                             "worker-a",
 		RuntimeBackend:                       "preview",
 		SecureRootFS:                         "/srv/rootfs",
+		DependencyRootFSDir:                  "/srv/profiles",
 		BwrapBinary:                          "bwrap",
 		Environment:                          "local",
 		AdvertiseURL:                         "http://127.0.0.1:2660",
@@ -207,6 +218,9 @@ func TestPublicSnapshotOmitsSecrets(t *testing.T) {
 	}
 	if snapshot["secure_rootfs_configured"] != true {
 		t.Fatalf("expected rootfs configured flag, got %#v", snapshot["secure_rootfs_configured"])
+	}
+	if snapshot["dependency_rootfs_configured"] != true {
+		t.Fatalf("expected dependency rootfs configured flag, got %#v", snapshot["dependency_rootfs_configured"])
 	}
 	if snapshot["max_concurrent_executions"] != 3 {
 		t.Fatalf("expected service concurrent execution limit, got %#v", snapshot["max_concurrent_executions"])
@@ -358,6 +372,28 @@ func TestValidateStartupRejectsWorldWritableSecureRootFS(t *testing.T) {
 	}
 }
 
+func TestValidateStartupRejectsInvalidDependencyRootFSDir(t *testing.T) {
+	cfg := validStartupConfig()
+	cfg.RuntimeBackend = "linux-secure"
+	cfg.SecureRootFS = secureRootFSDir(t)
+	cfg.DependencyRootFSDir = filepath.Join(t.TempDir(), "missing-profiles")
+
+	if err := cfg.ValidateStartup(); err == nil || !strings.Contains(err.Error(), "ZGI_SANDBOX_DEPENDENCY_ROOTFS_DIR") {
+		t.Fatalf("expected missing dependency rootfs dir to be rejected, got %v", err)
+	}
+}
+
+func TestValidateStartupAllowsDependencyRootFSDir(t *testing.T) {
+	cfg := validStartupConfig()
+	cfg.RuntimeBackend = "linux-secure"
+	cfg.SecureRootFS = secureRootFSDir(t)
+	cfg.DependencyRootFSDir = secureRootFSDir(t)
+
+	if err := cfg.ValidateStartup(); err != nil {
+		t.Fatalf("expected dependency rootfs dir to be allowed, got %v", err)
+	}
+}
+
 func TestValidateStartupRejectsUnknownEnvironment(t *testing.T) {
 	cfg := validStartupConfig()
 	cfg.Environment = "prod-like"
@@ -441,6 +477,7 @@ func validStartupConfig() Config {
 		Environment:                            "local",
 		RuntimeBackend:                         "preview",
 		SecureRootFS:                           "",
+		DependencyRootFSDir:                    "",
 		BwrapBinary:                            "bwrap",
 		ProxyTimeout:                           20,
 	}

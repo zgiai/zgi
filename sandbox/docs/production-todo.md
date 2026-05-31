@@ -253,6 +253,7 @@ arbitrary runtime installs from untrusted code.
 - [x] Add an administrator-only profile build path.
 - [x] Add package allowlist and denylist controls.
 - [x] Add maximum profile size and build timeout.
+- [x] Add optional dependency-profile rootfs binding for the secure runtime.
 
 ### D4. Tests
 

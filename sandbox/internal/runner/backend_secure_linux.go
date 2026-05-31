@@ -16,9 +16,10 @@ import (
 )
 
 type linuxSecureBackend struct {
-	rootfs     string
-	bwrapBin   string
-	allowShell bool
+	rootfs              string
+	dependencyRootFSDir string
+	bwrapBin            string
+	allowShell          bool
 }
 
 func newLinuxSecureBackend(cfg config.Config) (backend, error) {
@@ -39,9 +40,10 @@ func newLinuxSecureBackend(cfg config.Config) (backend, error) {
 	}
 
 	return &linuxSecureBackend{
-		rootfs:     rootfs,
-		bwrapBin:   bwrapBin,
-		allowShell: true,
+		rootfs:              rootfs,
+		dependencyRootFSDir: strings.TrimSpace(cfg.DependencyRootFSDir),
+		bwrapBin:            bwrapBin,
+		allowShell:          true,
 	}, nil
 }
 
@@ -77,7 +79,7 @@ func (b *linuxSecureBackend) Run(parent context.Context, req Request, workDir st
 	defer os.Remove(hostScriptPath)
 
 	containerPath := containerScriptPath(root, scriptName)
-	return b.exec(runCtx, root, spec.binary, spec.args(containerPath), req.EnableNetwork, stdoutLimit, stderrLimit, req.Stdin, nil)
+	return b.exec(runCtx, root, req.DependencyProfile, spec.binary, spec.args(containerPath), req.EnableNetwork, stdoutLimit, stderrLimit, req.Stdin, nil)
 }
 
 func (b *linuxSecureBackend) ExecuteCommand(parent context.Context, spec CommandSpec) (CommandResult, error) {
@@ -94,7 +96,7 @@ func (b *linuxSecureBackend) ExecuteCommand(parent context.Context, spec Command
 		commandArgs = []string{spec.Command}
 	}
 
-	result, err := b.exec(runCtx, spec.WorkDir, commandArgs[0], commandArgs[1:], false, spec.StdoutLimit, spec.StderrLimit, spec.Stdin, spec.Env)
+	result, err := b.exec(runCtx, spec.WorkDir, spec.DependencyProfile, commandArgs[0], commandArgs[1:], false, spec.StdoutLimit, spec.StderrLimit, spec.Stdin, spec.Env)
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -109,12 +111,20 @@ func (b *linuxSecureBackend) ExecuteCommand(parent context.Context, spec Command
 	}, nil
 }
 
-func (b *linuxSecureBackend) exec(ctx context.Context, workDir string, binary string, args []string, enableNetwork bool, stdoutLimit int, stderrLimit int, stdin string, env map[string]string) (Result, error) {
+func (b *linuxSecureBackend) exec(ctx context.Context, workDir string, dependencyProfile string, binary string, args []string, enableNetwork bool, stdoutLimit int, stderrLimit int, stdin string, env map[string]string) (Result, error) {
+	rootfs, err := rootFSSelector{
+		defaultRootFS:       b.rootfs,
+		dependencyRootFSDir: b.dependencyRootFSDir,
+	}.resolve(dependencyProfile)
+	if err != nil {
+		return Result{}, err
+	}
+
 	bwrapArgs := []string{
 		"--die-with-parent",
 		"--new-session",
 		"--clearenv",
-		"--ro-bind", b.rootfs, "/",
+		"--ro-bind", rootfs, "/",
 		"--proc", "/proc",
 		"--dev", "/dev",
 		"--tmpfs", "/tmp",
@@ -150,7 +160,7 @@ func (b *linuxSecureBackend) exec(ctx context.Context, workDir string, binary st
 	cmd.Stderr = stderr
 
 	started := time.Now()
-	err := cmd.Run()
+	err = cmd.Run()
 	duration := time.Since(started).Milliseconds()
 
 	exitCode := 0
