@@ -1079,6 +1079,84 @@ func TestDependencyEndpoint(t *testing.T) {
 	}
 }
 
+func TestDependencyPrepareScansArchive(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.APIKey = "prepare-test-key"
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"archive_base64": testZipBase64(t, map[string]string{
+			"SKILL.md": "Skill package\n",
+			"skill.manifest.json": `{
+				"entrypoint": "scripts/run.py",
+				"language": "python3",
+				"dependencies": {
+					"python": ["pydantic==2.7.4"]
+				}
+			}`,
+			"requirements.txt": "pandas==2.2.3\n",
+			"scripts/run.py":   "import json\nfrom PIL import Image\n",
+		}),
+		"format":       "zip",
+		"base_runtime": "linux-secure",
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/sandbox/dependencies/prepare", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", "prepare-test-key")
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected dependency prepare to return 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	var body struct {
+		Code int                              `json:"code"`
+		Data executor.DependencyPrepareResult `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Code != 0 || body.Data.Status != "build_required" {
+		t.Fatalf("expected build_required response, got %#v", body)
+	}
+	if body.Data.Fingerprint == "" || !strings.HasPrefix(body.Data.Fingerprint, "sha256:") {
+		t.Fatalf("expected dependency fingerprint, got %#v", body.Data)
+	}
+	if body.Data.Request.BaseRuntime != "linux-secure" || body.Data.Request.Language != "python3" {
+		t.Fatalf("unexpected normalized dependency request: %#v", body.Data.Request)
+	}
+	if !strings.Contains(rr.Body.String(), `"name":"pandas"`) ||
+		!strings.Contains(rr.Body.String(), `"name":"pydantic"`) ||
+		!strings.Contains(rr.Body.String(), `"name":"pillow"`) ||
+		!strings.Contains(rr.Body.String(), `"dependency_request"`) {
+		t.Fatalf("expected scanned dependencies in response, got %s", rr.Body.String())
+	}
+}
+
+func TestDependencyPrepareRequiresAPIKey(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.APIKey = "prepare-test-key"
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/sandbox/dependencies/prepare", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected prepare endpoint to require api key, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestDependencyUpdateRequiresAdminAPIKey(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.APIKey = "admin-test-key"

@@ -61,6 +61,7 @@ Already available:
 - Sandbox ownership fields for organization, workspace, app, workflow run, and user context
 - Ownership context persisted with sandbox records and propagated to lifecycle, endpoint, expiration, execution, file, archive, and artifact manifest observer events
 - Artifact manifests include content type, reference encoding, SHA-256 hashes, timestamps, and enforce operator-configurable file count and total byte limits
+- Dependency preparation endpoint for skill archive scanning and stable build fingerprints
 - Optional Linux secure backend with namespace-based isolation
 
 The service is useful for validation and controlled internal environments. It
@@ -283,6 +284,9 @@ Detailed implementation guidance is tracked in
 - [x] Add API catalog preflight before skill sandbox creation.
 - [x] Add organization-scoped dependency profile references backed by reusable artifacts.
 - [x] Activate reusable runtime artifacts by checksum in the secure runtime.
+- [x] Add skill archive dependency scanning and fingerprint preparation.
+- Add asynchronous build worker that materializes prepared dependency fingerprints.
+- Add API automatic prepare/build/profile-resolution path for skills without an explicit profile.
 - Add Kest skill execution coverage for declared dependency profiles.
 
 ## 8. Milestone E: Network Governance

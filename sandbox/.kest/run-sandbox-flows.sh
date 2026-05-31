@@ -225,6 +225,25 @@ values = {
         ("weather/references/schema.md", "schema\n"),
         ("weather/scripts/run.py", "print('ok')\n"),
     ]),
+    "dependency_prepare_archive_base64": zip_b64([
+        ("SKILL.md", "---\nname: dependency-prepare-skill\ndescription: Dependency prepare skill\nruntime_type: prompt\n---\n"),
+        ("skill.manifest.json", json.dumps({
+            "entrypoint": "scripts/run.py",
+            "language": "python3",
+            "dependencies": {
+                "python": ["pydantic==2.7.4"],
+            },
+        })),
+        ("requirements.txt", "pandas==2.2.3\n-r nested.txt\n# ignored\n"),
+        ("package.json", json.dumps({
+            "dependencies": {
+                "pdf-lib": "1.17.1",
+                "local-only": "file:../local",
+            },
+        })),
+        ("scripts/run.py", "import json\nfrom PIL import Image\nprint(json.dumps({'ok': True}))\n"),
+        ("scripts/run.js", "import tool from '@org/tool/path';\n"),
+    ]),
     "zip_slip_archive_base64": zip_b64([
         ("../escape.txt", "nope"),
     ]),
@@ -240,6 +259,7 @@ valid_skill_manifest_archive_base64="$(python3 -c 'import json,sys; print(json.l
 invalid_skill_manifest_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["invalid_skill_manifest_archive_base64"])' "${ARCHIVE_VARS}")"
 mismatched_skill_manifest_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["mismatched_skill_manifest_archive_base64"])' "${ARCHIVE_VARS}")"
 strip_root_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["strip_root_archive_base64"])' "${ARCHIVE_VARS}")"
+dependency_prepare_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["dependency_prepare_archive_base64"])' "${ARCHIVE_VARS}")"
 zip_slip_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["zip_slip_archive_base64"])' "${ARCHIVE_VARS}")"
 symlink_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["symlink_archive_base64"])' "${ARCHIVE_VARS}")"
 template_render="Hello {{ upper .name }}"
@@ -265,6 +285,10 @@ run_kest .kest/sandbox-ttl-limits.flow.md \
   --fail-fast
 
 run_kest .kest/sandbox-dependency-profile-catalog.flow.md \
+  --fail-fast
+
+run_kest .kest/sandbox-dependency-prepare.flow.md \
+  --var dependency_prepare_archive_base64="${dependency_prepare_archive_base64}" \
   --fail-fast
 
 if [[ "${START_LOCAL_SANDBOX}" = "1" ]]; then

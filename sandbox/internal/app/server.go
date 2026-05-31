@@ -168,6 +168,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/policies", s.handlePolicies)
 	s.mux.HandleFunc("/v1/sandbox/run", s.handleRun)
 	s.mux.HandleFunc("/v1/sandbox/dependencies", s.handleDependencies)
+	s.mux.HandleFunc("/v1/sandbox/dependencies/prepare", s.handleDependencyPrepare)
 	s.mux.HandleFunc("/v1/sandbox/dependencies/update", s.handleDependencyUpdate)
 	s.mux.HandleFunc("/v1/sandboxes", s.handleSandboxes)
 	s.mux.HandleFunc("/v1/sandboxes/", s.handleSandboxByID)
@@ -366,6 +367,34 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDependencies(w http.ResponseWriter, r *http.Request) {
 	writeEnvelope(w, http.StatusOK, s.policy.DependencyCatalogForOrganization(r.URL.Query().Get("language"), requestOrganizationID(r, "")))
+}
+
+func (s *Server) handleDependencyPrepare(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authorized(r) {
+		writeEnvelopeWithMessage(w, http.StatusUnauthorized, -401, "unauthorized", nil)
+		return
+	}
+
+	body, err := s.readLimitedBody(w, r, s.maxArchiveUploadRequestBytes())
+	if err != nil {
+		return
+	}
+	var req executor.DependencyPrepareRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "invalid request payload", nil)
+		return
+	}
+
+	result, err := s.executor.PrepareDependencies(req)
+	if err != nil {
+		writeKnownError(w, err)
+		return
+	}
+	writeEnvelope(w, http.StatusOK, result)
 }
 
 func (s *Server) handleDependencyUpdate(w http.ResponseWriter, r *http.Request) {

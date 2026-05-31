@@ -23,6 +23,8 @@ The current codebase already has the policy and API foundation:
 
 - `GET /v1/sandbox/dependencies` exposes a managed dependency catalog.
 - `POST /v1/sandbox/dependencies/update` is administrator-only.
+- `POST /v1/sandbox/dependencies/prepare` scans a skill archive, normalizes the
+  dependency request, and returns a stable dependency fingerprint.
 - Sandbox creation accepts `dependency_profile`.
 - The policy layer rejects unknown or disabled profiles.
 - Sandbox records persist the selected profile and profile version.
@@ -205,7 +207,33 @@ The catalog response should be the source of truth for the API:
 The API should cache catalog reads briefly but must fail closed for unknown
 profiles.
 
-### 5.3 Runtime Artifact Reuse
+### 5.3 Automatic Dependency Preparation
+
+The dependency preparation endpoint is the first step toward a user-friendly
+managed build flow. It accepts a skill zip archive and produces:
+
+- `status`: `ready` when no external packages are detected, otherwise
+  `build_required`;
+- `fingerprint`: a stable checksum of the normalized dependency request;
+- `dependency_request`: language, base runtime, and package lists grouped by
+  ecosystem;
+- `packages`: detected package details with source paths;
+- `sources`: files that contributed dependency information.
+
+The scanner reads explicit declarations from `skill.manifest.json`,
+`requirements.txt`, and `package.json`, then performs conservative static import
+inference for files under `scripts/`. It does not install packages and does not
+mutate any profile state. Later build workers should use the fingerprint as the
+artifact cache key, build once, store the verified runtime artifact, and publish
+global or organization-scoped profile references to that artifact.
+
+The API should call this endpoint before sandbox creation when a skill has no
+explicit `dependency_profile`. If the response is `ready`, it may continue with
+the default profile. If the response is `build_required`, the API should wait
+for or request the matching verified artifact, then create the sandbox with the
+resolved profile reference.
+
+### 5.4 Runtime Artifact Reuse
 
 Dependency profile artifacts should be stored by checksum and referenced by
 profiles. A single verified artifact may back multiple profile records when the
@@ -389,6 +417,28 @@ Validation:
 - artifact return smoke test;
 - CI or release job that fails when the lockfile and manifest drift.
 
+### PR 6: Automatic Dependency Prepare
+
+Goal: scan uploaded skill archives and derive a reusable dependency build
+request before sandbox creation.
+
+Scope:
+
+- add `POST /v1/sandbox/dependencies/prepare`;
+- reuse archive safety checks for path normalization and zip slip rejection;
+- detect dependencies from `skill.manifest.json`, `requirements.txt`,
+  `package.json`, and `scripts/` static imports;
+- normalize and sort detected packages;
+- return a stable fingerprint for build cache lookup;
+- keep the endpoint side-effect free.
+
+Validation:
+
+- executor tests for manifest, requirements, package.json, and static import
+  scanning;
+- HTTP handler tests for success and API-key enforcement;
+- Kest flow covering the black-box prepare contract.
+
 ## 9. Test Matrix
 
 Required coverage before calling the feature production-ready:
@@ -405,6 +455,8 @@ Required coverage before calling the feature production-ready:
 - user site packages are disabled;
 - profile directories are read-only;
 - output artifacts still respect count and byte limits;
+- dependency preparation returns stable fingerprints for equivalent package
+  requests;
 - Kest flow covers catalog, create, upload archive, execute skill, artifacts,
   and cleanup.
 

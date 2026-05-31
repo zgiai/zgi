@@ -1850,6 +1850,106 @@ func TestUploadArchiveRejectsSymlinkAndRollsBack(t *testing.T) {
 	}
 }
 
+func TestPrepareDependenciesScansSkillArchive(t *testing.T) {
+	policyService := policy.NewService(config.FromEnv())
+	service := NewService(nil, nil, nil, policyService)
+
+	archive := zipBase64(t, map[string]string{
+		"SKILL.md": "Skill package\n",
+		"skill.manifest.json": `{
+			"entrypoint": "scripts/run.py",
+			"language": "python3",
+			"dependencies": {
+				"python": ["pydantic==2.7.4"],
+				"nodejs": ["xlsx@0.18.5"],
+				"system": ["poppler-utils=1.0"]
+			}
+		}`,
+		"requirements.txt": "pandas==2.2.3\n-r nested.txt\n# comment\n",
+		"package.json":     `{"dependencies":{"@scope/pkg":"^1.2.3","file-only":"file:../local","pdf-lib":"1.17.1"}}`,
+		"scripts/run.py":   "import json\nimport numpy as np\nfrom PIL import Image\n",
+		"scripts/run.js":   "const fs = require('fs'); const docx = require('docx'); import lib from '@org/tool/path'; await import('pdfjs-dist');\n",
+	})
+
+	result, err := service.PrepareDependencies(DependencyPrepareRequest{
+		ArchiveBase64: archive,
+		Format:        "zip",
+		BaseRuntime:   "linux-secure",
+	})
+	if err != nil {
+		t.Fatalf("prepare dependencies: %v", err)
+	}
+	if result.Status != "build_required" {
+		t.Fatalf("expected build_required, got %q", result.Status)
+	}
+	if result.Fingerprint == "" || !strings.HasPrefix(result.Fingerprint, "sha256:") {
+		t.Fatalf("expected stable fingerprint, got %q", result.Fingerprint)
+	}
+	if result.Request.Language != "python3" || result.Request.BaseRuntime != "linux-secure" {
+		t.Fatalf("unexpected dependency request: %#v", result.Request)
+	}
+	assertDetectedDependency(t, result.Packages, "python3", "pandas", "==2.2.3")
+	assertDetectedDependency(t, result.Packages, "python3", "pydantic", "==2.7.4")
+	assertDetectedDependency(t, result.Packages, "python3", "numpy", "")
+	assertDetectedDependency(t, result.Packages, "python3", "pillow", "")
+	assertDetectedDependency(t, result.Packages, "nodejs", "@scope/pkg", "^1.2.3")
+	assertDetectedDependency(t, result.Packages, "nodejs", "@org/tool", "")
+	assertDetectedDependency(t, result.Packages, "nodejs", "docx", "")
+	assertDetectedDependency(t, result.Packages, "nodejs", "pdfjs-dist", "")
+	assertDetectedDependency(t, result.Packages, "nodejs", "pdf-lib", "1.17.1")
+	assertDetectedDependency(t, result.Packages, "nodejs", "xlsx", "0.18.5")
+	assertDetectedDependency(t, result.Packages, "system", "poppler-utils=1.0", "")
+	assertMissingDependency(t, result.Packages, "nodejs", "file-only")
+
+	repeated, err := service.PrepareDependencies(DependencyPrepareRequest{
+		ArchiveBase64: archive,
+		Format:        "zip",
+		BaseRuntime:   "linux-secure",
+	})
+	if err != nil {
+		t.Fatalf("prepare repeated dependencies: %v", err)
+	}
+	if repeated.Fingerprint != result.Fingerprint {
+		t.Fatalf("expected stable fingerprint, got %q then %q", result.Fingerprint, repeated.Fingerprint)
+	}
+}
+
+func TestPrepareDependenciesReturnsReadyForStdlibArchive(t *testing.T) {
+	service := NewService(nil, nil, nil, policy.NewService(config.FromEnv()))
+
+	result, err := service.PrepareDependencies(DependencyPrepareRequest{
+		ArchiveBase64: zipBase64(t, map[string]string{
+			"SKILL.md":       "Skill package\n",
+			"scripts/run.py": "import json\nprint(json.dumps({'ok': True}))\n",
+		}),
+		Format: "zip",
+	})
+	if err != nil {
+		t.Fatalf("prepare dependencies: %v", err)
+	}
+	if result.Status != "ready" {
+		t.Fatalf("expected ready status, got %q", result.Status)
+	}
+	if result.PackageCount != 0 {
+		t.Fatalf("expected no detected packages, got %#v", result.Packages)
+	}
+	if result.NextAction != "use_default_dependency_profile" {
+		t.Fatalf("unexpected next action: %q", result.NextAction)
+	}
+}
+
+func TestPrepareDependenciesRejectsSymlinkArchive(t *testing.T) {
+	service := NewService(nil, nil, nil, policy.NewService(config.FromEnv()))
+
+	_, err := service.PrepareDependencies(DependencyPrepareRequest{
+		ArchiveBase64: zipBase64WithSymlink(t),
+		Format:        "zip",
+	})
+	if err == nil || !strings.Contains(err.Error(), "archive contains symlink") {
+		t.Fatalf("expected symlink archive rejection, got %v", err)
+	}
+}
+
 func TestFileOperationsRejectSymlinkPaths(t *testing.T) {
 	service, manager := newTestExecutorService(t)
 	box, err := manager.Create(lifecycle.CreateRequest{
@@ -2706,6 +2806,25 @@ func waitForQueuedOrganizationExecutions(t *testing.T, service *Service, organiz
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("expected %d queued executions for organization %q", expected, organizationID)
+}
+
+func assertDetectedDependency(t *testing.T, items []DetectedDependency, ecosystem string, name string, version string) {
+	t.Helper()
+	for _, item := range items {
+		if item.Ecosystem == ecosystem && item.Name == name && item.Version == version {
+			return
+		}
+	}
+	t.Fatalf("expected dependency %s %s %s in %#v", ecosystem, name, version, items)
+}
+
+func assertMissingDependency(t *testing.T, items []DetectedDependency, ecosystem string, name string) {
+	t.Helper()
+	for _, item := range items {
+		if item.Ecosystem == ecosystem && item.Name == name {
+			t.Fatalf("expected dependency %s %s to be skipped, got %#v", ecosystem, name, items)
+		}
+	}
 }
 
 func zipBase64(t *testing.T, files map[string]string) string {
