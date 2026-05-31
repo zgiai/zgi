@@ -38,6 +38,7 @@ Already available:
 - Execution IDs for code, command, template, and skill execution responses and observer events
 - Sandbox-scoped execution history backed by observer execution events
 - Structured observer events for successful and failed execution paths
+- Structured observer events for API boundary policy denials
 - Observer event pagination with bounded default and maximum page sizes
 - Observer event filters for organization, workspace, app, workflow run, user, and request scope
 - Observer event retention by age and maximum row count
@@ -481,7 +482,7 @@ Goal: bind sandbox usage to ZGI organizations, workspaces, apps, workflows, and 
 
 - Organization quota success and failure.
 - [x] Cross-organization sandbox access rejection.
-- Audit event completeness.
+- [x] Audit event completeness.
 - Ownership metadata propagation.
 
 ## 13. Milestone J: API and Workflow Integration

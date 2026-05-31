@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/zgiai/zgi-sandbox/internal/config"
+	"github.com/zgiai/zgi-sandbox/internal/observer"
 	"github.com/zgiai/zgi-sandbox/internal/runner"
 	"github.com/zgiai/zgi-sandbox/internal/testutil"
 )
@@ -185,6 +186,7 @@ func TestRunEndpointRejectsPreviewNetworkRequest(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/sandbox/run", strings.NewReader(`{"language":"python3","code":"print('blocked')","enable_network":true}`))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Request-ID", "req_policy_network_test")
 
 	rr := httptest.NewRecorder()
 	server.Handler().ServeHTTP(rr, req)
@@ -194,6 +196,17 @@ func TestRunEndpointRejectsPreviewNetworkRequest(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "does not enforce network policy") {
 		t.Fatalf("expected network enforcement error, got %s", rr.Body.String())
+	}
+
+	events := server.observer.Query(observer.Query{Type: "policy.denied", RequestID: "req_policy_network_test", Limit: 1})
+	if len(events) != 1 {
+		t.Fatalf("expected one policy deny event, got %d", len(events))
+	}
+	if events[0].Metadata["code"] != "network_policy_not_enforced" {
+		t.Fatalf("expected network policy deny code, got %+v", events[0].Metadata)
+	}
+	if events[0].Metadata["runtime_backend"] != "preview-process" {
+		t.Fatalf("expected runtime backend metadata, got %+v", events[0].Metadata)
 	}
 }
 
@@ -293,6 +306,7 @@ func TestSandboxOperationsRejectCrossOrganizationAccess(t *testing.T) {
 	}
 
 	getReq := httptest.NewRequest(http.MethodGet, "/v1/sandboxes/"+createBody.Data.ID+"?organization_id=organization-two", nil)
+	getReq.Header.Set("X-Request-ID", "req_cross_organization_get_test")
 	getRes := httptest.NewRecorder()
 	server.Handler().ServeHTTP(getRes, getReq)
 	assertCrossOrganizationAccessDenied(t, getRes)
@@ -324,6 +338,17 @@ func TestSandboxOperationsRejectCrossOrganizationAccess(t *testing.T) {
 	server.Handler().ServeHTTP(allowedRes, allowedReq)
 	if allowedRes.Code != http.StatusOK {
 		t.Fatalf("expected matching organization access to return 200, got %d body=%s", allowedRes.Code, allowedRes.Body.String())
+	}
+
+	events := server.observer.Query(observer.Query{SandboxID: createBody.Data.ID, Type: "policy.denied", RequestID: "req_cross_organization_get_test", Limit: 1})
+	if len(events) != 1 {
+		t.Fatalf("expected one cross organization policy deny event, got %d", len(events))
+	}
+	if events[0].Metadata["code"] != "cross_organization_sandbox_access_denied" {
+		t.Fatalf("expected cross organization policy deny code, got %+v", events[0].Metadata)
+	}
+	if events[0].Metadata["organization_id"] != "organization-one" || events[0].Metadata["requested_organization_id"] != "organization-two" {
+		t.Fatalf("expected owner and requested organization metadata, got %+v", events[0].Metadata)
 	}
 }
 
