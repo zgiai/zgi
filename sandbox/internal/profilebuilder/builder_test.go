@@ -138,3 +138,16 @@ func TestMergeEnvOverridesExistingKeys(t *testing.T) {
 		t.Fatalf("unexpected merged env: %#v", env)
 	}
 }
+
+func TestNodeInstallArgsProduceMaterializedLayout(t *testing.T) {
+	args := strings.Join(nodeInstallArgs(), "\n")
+	for _, expected := range []string{
+		"--frozen-lockfile",
+		"--config.node-linker=hoisted",
+		"--config.prefer-symlinked-executables=false",
+	} {
+		if !strings.Contains(args, expected) {
+			t.Fatalf("expected node install args to include %s, got %v", expected, nodeInstallArgs())
+		}
+	}
+}

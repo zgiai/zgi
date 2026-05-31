@@ -291,7 +291,17 @@ func buildNode(profileDir string) error {
 	if err != nil {
 		return errors.New("pnpm is required to build node profile dependencies")
 	}
-	return run(profileDir, pnpm, "install", "--prod", "--frozen-lockfile")
+	return run(profileDir, pnpm, nodeInstallArgs()...)
+}
+
+func nodeInstallArgs() []string {
+	return []string{
+		"install",
+		"--prod",
+		"--frozen-lockfile",
+		"--config.node-linker=hoisted",
+		"--config.prefer-symlinked-executables=false",
+	}
 }
 
 func verifyPython(profileDir string) error {
