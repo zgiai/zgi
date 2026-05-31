@@ -270,18 +270,41 @@ func skillSupportsCaller(item skills.SkillDiscoveryMetadata, callerType string) 
 
 func validateSkillRequiredConfig(item skills.SkillDiscoveryMetadata, runConfig *RunConfig) error {
 	for _, raw := range item.RequiredConfig {
-		switch strings.ToLower(strings.TrimSpace(raw)) {
-		case skills.SkillRequiredConfigAgentKnowledge:
-			if runConfig == nil || len(normalizedSkillIDs(runConfig.KnowledgeDatasetIDs)) == 0 {
-				return fmt.Errorf("%w: skill %s requires configured knowledge datasets", ErrInvalidInput, item.ID)
-			}
-		case skills.SkillRequiredConfigAgentDatabase:
-			if !runConfigHasDatabaseBindings(runConfig) {
-				return fmt.Errorf("%w: skill %s requires configured database bindings", ErrInvalidInput, item.ID)
-			}
+		required, ok := runtimeCapabilityRequiredConfig(strings.ToLower(strings.TrimSpace(raw)))
+		if !ok {
+			continue
+		}
+		if !required.Configured(runConfig) {
+			return fmt.Errorf("%w: skill %s requires %s", ErrInvalidInput, item.ID, required.Description)
 		}
 	}
 	return nil
+}
+
+type runtimeCapabilityRequirement struct {
+	Description string
+	Configured  func(*RunConfig) bool
+}
+
+func runtimeCapabilityRequiredConfig(required string) (runtimeCapabilityRequirement, bool) {
+	switch required {
+	case skills.SkillRequiredConfigAgentKnowledge:
+		return runtimeCapabilityRequirement{
+			Description: "configured knowledge datasets",
+			Configured: func(runConfig *RunConfig) bool {
+				return runConfigHasKnowledgeDatasets(runConfig)
+			},
+		}, true
+	case skills.SkillRequiredConfigAgentDatabase:
+		return runtimeCapabilityRequirement{
+			Description: "configured database bindings",
+			Configured: func(runConfig *RunConfig) bool {
+				return runConfigHasDatabaseBindings(runConfig)
+			},
+		}, true
+	default:
+		return runtimeCapabilityRequirement{}, false
+	}
 }
 
 func catalogSkillByID(catalog []skills.SkillDiscoveryMetadata) map[string]skills.SkillDiscoveryMetadata {

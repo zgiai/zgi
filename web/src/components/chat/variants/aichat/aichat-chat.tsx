@@ -748,6 +748,7 @@ export function AIChatShell({
           showAssistantModelMeta={showAssistantModelMeta}
           layout={isEmbedded ? 'embedded' : 'full'}
           showMemoryKey={surface !== 'agent-webapp'}
+          showSkillEventDetails={surface !== 'agent-webapp'}
         />
 
         <AIChatHomeView

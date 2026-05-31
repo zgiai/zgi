@@ -68,6 +68,7 @@ interface AIChatMessageBubbleProps {
   onEditSubmit?: (message: AIChatMessage) => void;
   showAssistantModelMeta?: boolean;
   showMemoryKey?: boolean;
+  showSkillEventDetails?: boolean;
 }
 
 function formatAIChatTime(timestamp: number): string {
@@ -292,6 +293,7 @@ export function AIChatMessageBubble({
   onEditSubmit,
   showAssistantModelMeta = true,
   showMemoryKey = true,
+  showSkillEventDetails = true,
 }: AIChatMessageBubbleProps) {
   const t = useT('webapp');
   const tGlobal = useT();
@@ -509,6 +511,7 @@ export function AIChatMessageBubble({
               skillDisplayById={skillDisplayById}
               defaultOpen={shouldOpenTimelineByDefault}
               showMemoryKey={showMemoryKey}
+              showSkillEventDetails={showSkillEventDetails}
             />
           ) : null}
 

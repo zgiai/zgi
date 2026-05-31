@@ -195,6 +195,28 @@ func TestRetrieveAgentKnowledgeWithoutConfiguredDatasetsReturnsNoConfig(t *testi
 	}
 }
 
+func TestRetrieveAgentKnowledgeWithRuntimeDatasetsSkipsLegacyConfigFallback(t *testing.T) {
+	db, mock := newKnowledgeMockDB(t)
+	svc := &KnowledgeRetrievalService{db: db}
+
+	_, err := svc.RetrieveAgentKnowledge(context.Background(), KnowledgeRetrieveRequest{
+		Scope: KnowledgeScope{
+			AppID:          "agent-1",
+			OrganizationID: "org-1",
+			AccountID:      "account-1",
+		},
+		Query:           "refund policy",
+		DatasetIDs:      []string{"runtime-dataset"},
+		RetrievalConfig: map[string]interface{}{"top_k": float64(5)},
+	})
+	if err == nil || !strings.Contains(err.Error(), "knowledge retrieval service is not configured") {
+		t.Fatalf("RetrieveAgentKnowledge() error = %v, want direct retrieval configuration error", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
 func newKnowledgeMockDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock) {
 	t.Helper()
 	sqlDB, mock, err := sqlmock.New()

@@ -95,46 +95,7 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 }
 
 func skillRuntimeParameters(scope Scope, config RunConfig) map[string]interface{} {
-	params := map[string]interface{}{
-		"organization_id": scope.OrganizationID.String(),
-	}
-	if scope.WorkspaceID != nil {
-		params["workspace_id"] = scope.WorkspaceID.String()
-	}
-	if len(config.KnowledgeDatasetIDs) > 0 {
-		params["knowledge_dataset_ids"] = append([]string(nil), config.KnowledgeDatasetIDs...)
-	}
-	if strings.TrimSpace(config.KnowledgeBoundByAccountID) != "" {
-		params["knowledge_bound_by_account_id"] = strings.TrimSpace(config.KnowledgeBoundByAccountID)
-	}
-	if config.KnowledgeBoundAtUnix > 0 {
-		params["knowledge_binding_grant"] = true
-		params["knowledge_bound_at_unix"] = config.KnowledgeBoundAtUnix
-	}
-	if len(config.KnowledgeRetrievalConfig) > 0 {
-		params["knowledge_retrieval_config"] = copyStringAnyMap(config.KnowledgeRetrievalConfig)
-	}
-	if len(config.DatabaseBindings) > 0 {
-		params["database_bindings"] = copyAgentDatabaseBindings(config.DatabaseBindings)
-	}
-	if strings.TrimSpace(config.DatabaseBoundByAccountID) != "" {
-		params["database_bound_by_account_id"] = strings.TrimSpace(config.DatabaseBoundByAccountID)
-	}
-	if config.DatabaseBoundAtUnix > 0 {
-		params["database_binding_grant"] = true
-		params["database_bound_at_unix"] = config.DatabaseBoundAtUnix
-	}
-	if strings.EqualFold(strings.TrimSpace(config.BillingAppType), runtimemodel.ConversationCallerAgent) && strings.TrimSpace(config.BillingAppID) != "" {
-		params["agent_id"] = strings.TrimSpace(config.BillingAppID)
-	}
-	if config.AgentMemoryEnabled {
-		params["agent_memory_enabled"] = true
-		params["agent_memory_slots"] = enabledAgentMemorySlots(config.AgentMemorySlots)
-		if userScope := strings.TrimSpace(config.AgentMemoryUserScope); userScope != "" {
-			params["user_scope"] = userScope
-		}
-	}
-	return params
+	return runtimeCapabilityConfigFromRunConfig(config).RuntimeParameters(scope, config.BillingAppType)
 }
 
 func copyAgentDatabaseBindings(input []AgentDatabaseBinding) []AgentDatabaseBinding {

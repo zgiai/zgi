@@ -2,7 +2,6 @@
 
 import { useMemo, useState } from 'react';
 import { AlertCircle, Database, Plus, Table2, Trash2 } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
@@ -15,7 +14,7 @@ import type { AgentDatabaseBinding } from '@/services/types/agent';
 import type { DbTable } from '@/services/types/db';
 import { AgentRuntimeDatabaseDialog } from '../database-dialog';
 import { AgentRuntimeDatabaseTableDialog } from '../database-table-dialog';
-import { RuntimeSection } from '../runtime-section';
+import { AgentRuntimeResourceCard, AgentRuntimeResourceSection } from '../resource-section';
 import type { AgentConfigSection } from '../types';
 
 interface AgentRuntimeDatabaseSectionProps {
@@ -120,69 +119,37 @@ export function AgentRuntimeDatabaseSection({
   };
 
   return (
-    <RuntimeSection
-      title={t('sections.databases')}
-      section="databases"
-      open={open}
-      onToggle={onToggleSection}
-      action={
-        <div className="flex items-center gap-2">
-          <Badge variant="subtle">{selectedCount}</Badge>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                isIcon
-                className="size-8"
-                aria-label={t('database.add')}
-                onClick={event => {
-                  event.stopPropagation();
-                  setDialogOpen(true);
-                }}
-              >
-                <Plus className="size-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>{t('database.bindTableTooltip')}</TooltipContent>
-          </Tooltip>
+    <>
+      <AgentRuntimeResourceSection
+        title={t('sections.databases')}
+        section="databases"
+        open={open}
+        count={selectedCount}
+        addLabel={t('database.add')}
+        addTooltip={t('database.bindTableTooltip')}
+        helpText={t('database.helpText')}
+        emptyText={t('database.emptySelected')}
+        isLoading={isDbsLoading}
+        onToggleSection={onToggleSection}
+        onAdd={() => setDialogOpen(true)}
+      >
+        <div className="space-y-2">
+          {bindings.map(binding => (
+            <DatabaseBindingCard
+              key={binding.data_source_id}
+              dataSourceID={binding.data_source_id}
+              dataSourceName={dbsByID.get(binding.data_source_id)?.name}
+              tableIDs={binding.table_ids}
+              writableTableIDs={binding.writable_table_ids ?? []}
+              canEditWritable={canEditWritable}
+              onOpenTableDialog={openTableDialog}
+              onRemoveTable={removeTable}
+              onChangeWritableTable={updateWritableForTable}
+              onChangeWritableDatabase={updateWritableForDatabase}
+            />
+          ))}
         </div>
-      }
-    >
-      <div className="space-y-3">
-        <div className="rounded-md border bg-muted/25 p-3 text-xs leading-5 text-muted-foreground">
-          {t('database.helpText')}
-        </div>
-
-        {isDbsLoading ? (
-          <div className="space-y-2">
-            <Skeleton className="h-20 w-full" />
-            <Skeleton className="h-20 w-full" />
-          </div>
-        ) : selectedCount === 0 ? (
-          <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-            {t('database.emptySelected')}
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {bindings.map(binding => (
-              <DatabaseBindingCard
-                key={binding.data_source_id}
-                dataSourceID={binding.data_source_id}
-                dataSourceName={dbsByID.get(binding.data_source_id)?.name}
-                tableIDs={binding.table_ids}
-                writableTableIDs={binding.writable_table_ids ?? []}
-                canEditWritable={canEditWritable}
-                onOpenTableDialog={openTableDialog}
-                onRemoveTable={removeTable}
-                onChangeWritableTable={updateWritableForTable}
-                onChangeWritableDatabase={updateWritableForDatabase}
-              />
-            ))}
-          </div>
-        )}
-      </div>
+      </AgentRuntimeResourceSection>
 
       <AgentRuntimeDatabaseDialog
         open={dialogOpen}
@@ -201,7 +168,7 @@ export function AgentRuntimeDatabaseSection({
         }}
         onConfirm={onChangeBindings}
       />
-    </RuntimeSection>
+    </>
   );
 }
 
@@ -234,18 +201,11 @@ function DatabaseBindingCard({
   const allWritable = tableIDs.length > 0 && tableIDs.every(tableID => writableSet.has(tableID));
 
   return (
-    <div className="rounded-md border bg-background p-3">
-      <div className="mb-2 flex items-start gap-2">
-        <div className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-muted text-primary">
-          {error ? (
-            <AlertCircle className="size-4 text-destructive" />
-          ) : (
-            <Database className="size-4" />
-          )}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium">{databaseLabel}</div>
-        </div>
+    <AgentRuntimeResourceCard
+      icon={error ? <AlertCircle className="size-4" /> : <Database className="size-4" />}
+      title={databaseLabel}
+      error={Boolean(error)}
+      action={
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -262,7 +222,8 @@ function DatabaseBindingCard({
           </TooltipTrigger>
           <TooltipContent>{t('database.addTable')}</TooltipContent>
         </Tooltip>
-      </div>
+      }
+    >
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md bg-muted/25 px-3 py-2 text-xs text-muted-foreground">
         <span>{t('database.selectedTablesCount', { count: tableIDs.length })}</span>
         <span className="flex items-center gap-2">
@@ -339,7 +300,7 @@ function DatabaseBindingCard({
           })}
         </div>
       )}
-    </div>
+    </AgentRuntimeResourceCard>
   );
 }
 
