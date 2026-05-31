@@ -30,6 +30,9 @@ func run(parent context.Context, cfg config.Config, logger *log.Logger) error {
 	if err != nil {
 		return err
 	}
+	workerCtx, stopWorkers := context.WithCancel(parent)
+	defer stopWorkers()
+	server.StartBackgroundWorkers(workerCtx)
 
 	listener, err := net.Listen("tcp", ":"+cfg.Port)
 	if err != nil {

@@ -1318,6 +1318,68 @@ func TestDependencyBuildRunMaterializesReusableProfile(t *testing.T) {
 	}
 }
 
+func TestDependencyBuildWorkerMaterializesQueuedProfile(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.APIKey = "build-test-key"
+	cfg.DependencyRootFSDir = t.TempDir()
+	cfg.DependencyBuildCommand = "python3 " + writeDependencyBuildStubCommand(t)
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"archive_base64": testZipBase64(t, map[string]string{
+			"SKILL.md":         "Skill package\n",
+			"requirements.txt": "pandas==2.2.3\n",
+			"scripts/run.py":   "import pandas as pd\nprint('ok')\n",
+		}),
+		"format":       "zip",
+		"base_runtime": "linux-secure",
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	queueReq := httptest.NewRequest(http.MethodPost, "/v1/sandbox/dependencies/builds", bytes.NewReader(payload))
+	queueReq.Header.Set("Content-Type", "application/json")
+	queueReq.Header.Set("X-API-Key", "build-test-key")
+	queueRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(queueRes, queueReq)
+	if queueRes.Code != http.StatusOK {
+		t.Fatalf("expected dependency build queue to return 200, got %d body=%s", queueRes.Code, queueRes.Body.String())
+	}
+	var queued struct {
+		Data struct {
+			Fingerprint string `json:"fingerprint"`
+			ProfileName string `json:"profile_name"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(queueRes.Body.Bytes(), &queued); err != nil {
+		t.Fatalf("decode queued build: %v", err)
+	}
+
+	if !server.runOneQueuedDependencyBuild(context.Background()) {
+		t.Fatal("expected dependency build worker to process one queued build")
+	}
+	ready, err := server.store.GetDependencyBuildRequest(queued.Data.Fingerprint)
+	if err != nil {
+		t.Fatalf("get ready dependency build: %v", err)
+	}
+	if ready.Status != "ready" || ready.ArtifactChecksum == "" || ready.SizeBytes <= 0 {
+		t.Fatalf("expected worker to materialize ready build, got %+v", ready)
+	}
+	if server.runOneQueuedDependencyBuild(context.Background()) {
+		t.Fatal("expected no queued dependency build after worker drained queue")
+	}
+
+	catalogReq := httptest.NewRequest(http.MethodGet, "/v1/sandbox/dependencies?language=python3", nil)
+	catalogRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(catalogRes, catalogReq)
+	if catalogRes.Code != http.StatusOK || !strings.Contains(catalogRes.Body.String(), `"name":"`+queued.Data.ProfileName+`"`) {
+		t.Fatalf("expected ready dependency profile in catalog, got %d body=%s", catalogRes.Code, catalogRes.Body.String())
+	}
+}
+
 func TestDependencyBuildRunCleansPartialArtifactOnFailure(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.APIKey = "build-test-key"

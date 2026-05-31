@@ -128,6 +128,7 @@ interface AIChatInputAreaProps {
   isLoadingMessages: boolean;
   input: string;
   modelSelectorValue: AIChatModelValue;
+  isModelInitializing?: boolean;
   modelMissing: boolean;
   isSending: boolean;
   isStopping: boolean;
@@ -160,6 +161,7 @@ export function AIChatInputArea({
   isLoadingMessages,
   input,
   modelSelectorValue,
+  isModelInitializing = false,
   modelMissing,
   isSending,
   isStopping,
@@ -230,7 +232,12 @@ export function AIChatInputArea({
     [allSelectableExtensions]
   );
   const uploadedFiles = useMemo(() => getUploadedAIChatFiles(attachments), [attachments]);
-  const canClickSend = Boolean(input.trim()) && !modelMissing && !isUploading && !hasUploadError;
+  const canClickSend =
+    Boolean(input.trim()) &&
+    !modelMissing &&
+    !isModelInitializing &&
+    !isUploading &&
+    !hasUploadError;
 
   const validateFile = useCallback(
     (file: File, kind: AIChatAttachmentUploadKind): string | null => {
@@ -633,7 +640,7 @@ export function AIChatInputArea({
               onKeyDown={event => {
                 if (event.key === 'Enter' && !event.shiftKey) {
                   if (isComposingRef.current || isComposingEnterEvent(event)) return;
-                  if (isSending || isUploading || hasUploadError) return;
+                  if (isSending || isModelInitializing || isUploading || hasUploadError) return;
                   event.preventDefault();
                   handleSend();
                 }
@@ -659,6 +666,7 @@ export function AIChatInputArea({
             />
             <AIChatInputToolbar
               modelSelectorValue={modelSelectorValue}
+              isModelInitializing={isModelInitializing}
               modelMissing={modelMissing}
               modelCapabilityFilter={modelCapabilityFilter}
               hasImageAttachment={hasImageAttachment}

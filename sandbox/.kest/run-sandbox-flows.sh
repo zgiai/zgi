@@ -251,6 +251,18 @@ values = {
         ("scripts/run.py", "import json\nfrom PIL import Image\nprint(json.dumps({'ok': True}))\n"),
         ("scripts/run.js", "import tool from '@org/tool/path';\n"),
     ]),
+    "dependency_worker_archive_base64": zip_b64([
+        ("SKILL.md", "---\nname: dependency-worker-skill\ndescription: Dependency worker skill\nruntime_type: prompt\n---\n"),
+        ("skill.manifest.json", json.dumps({
+            "entrypoint": "scripts/run.py",
+            "language": "python3",
+            "dependencies": {
+                "python": [f"pydantic=={dependency_prepare_pydantic_version}.worker"],
+            },
+        })),
+        ("requirements.txt", "pandas==2.2.3\n"),
+        ("scripts/run.py", "import json\nprint(json.dumps({'ok': True}))\n"),
+    ]),
     "zip_slip_archive_base64": zip_b64([
         ("../escape.txt", "nope"),
     ]),
@@ -267,6 +279,7 @@ invalid_skill_manifest_archive_base64="$(python3 -c 'import json,sys; print(json
 mismatched_skill_manifest_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["mismatched_skill_manifest_archive_base64"])' "${ARCHIVE_VARS}")"
 strip_root_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["strip_root_archive_base64"])' "${ARCHIVE_VARS}")"
 dependency_prepare_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["dependency_prepare_archive_base64"])' "${ARCHIVE_VARS}")"
+dependency_worker_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["dependency_worker_archive_base64"])' "${ARCHIVE_VARS}")"
 zip_slip_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["zip_slip_archive_base64"])' "${ARCHIVE_VARS}")"
 symlink_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["symlink_archive_base64"])' "${ARCHIVE_VARS}")"
 template_render="Hello {{ upper .name }}"
@@ -406,7 +419,7 @@ PY
   write_kest_config "${DEPENDENCY_BUILD_WORKER_BASE_URL}"
   run_kest .kest/sandbox-dependency-build-worker.flow.md \
     --var admin_api_key="${DEPENDENCY_BUILD_WORKER_API_KEY}" \
-    --var dependency_prepare_archive_base64="${dependency_prepare_archive_base64}" \
+    --var dependency_prepare_archive_base64="${dependency_worker_archive_base64}" \
     --var dependency_prepare_pydantic_version="${dependency_prepare_pydantic_version}" \
     --fail-fast
 

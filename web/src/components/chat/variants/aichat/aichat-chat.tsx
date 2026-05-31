@@ -81,6 +81,7 @@ export type { AIChatModelValue } from '@/components/chat/variants/aichat/types';
 interface AIChatShellProps {
   controller: AIChatController;
   modelSelectorValue: AIChatModelValue;
+  isModelInitializing?: boolean;
   onModelChange: (value: ModelSelectorValue) => void;
   variant?: 'full' | 'embedded';
   showModelSelector?: boolean;
@@ -146,6 +147,7 @@ function areSkillIdsEqual(left: string[], right: string[]) {
 export function AIChatShell({
   controller,
   modelSelectorValue,
+  isModelInitializing = false,
   onModelChange,
   variant = 'full',
   showModelSelector = true,
@@ -271,7 +273,7 @@ export function AIChatShell({
     [displayMessageIds, messageTopology]
   );
   const isHome = !activeConversationId && messages.length === 0 && !isSending;
-  const modelMissing = requireModel && !modelSelectorValue.model;
+  const modelMissing = requireModel && !isModelInitializing && !modelSelectorValue.model;
   const {
     bottomRef,
     scrollViewportRef,
@@ -779,6 +781,7 @@ export function AIChatShell({
           isLoadingMessages={isLoadingMessages}
           input={input}
           modelSelectorValue={modelSelectorValue}
+          isModelInitializing={isModelInitializing}
           modelMissing={modelMissing}
           isSending={isSending}
           isStopping={isStopping}
