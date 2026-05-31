@@ -7,6 +7,7 @@ export type AgentConfigSection =
   | 'model'
   | 'skills'
   | 'knowledge'
+  | 'databases'
   | 'files'
   | 'memory';
 

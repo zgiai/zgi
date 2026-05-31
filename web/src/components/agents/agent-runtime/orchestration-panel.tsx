@@ -6,8 +6,9 @@ import { Separator } from '@/components/ui/separator';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type { AIChatSkillMetadata } from '@/services/types/aichat';
-import type { AgentMemorySlotConfig } from '@/services/types/agent';
+import type { AgentDatabaseBinding, AgentMemorySlotConfig } from '@/services/types/agent';
 import type { Dataset } from '@/services/types/dataset';
+import { AgentRuntimeDatabaseSection } from './sections/database-section';
 import { AgentRuntimeExperienceSection } from './sections/experience-section';
 import { AgentRuntimeFileSection } from './sections/file-section';
 import { AgentRuntimeKnowledgeSection } from './sections/knowledge-section';
@@ -31,6 +32,7 @@ interface AgentRuntimeOrchestrationPanelProps {
   isDatasetsLoading: boolean;
   selectedKnowledgeDatasets: Dataset[];
   selectedKnowledgeDatasetIds: string[];
+  databaseBindings: AgentDatabaseBinding[];
   suggestedQuestions: string[];
   isGeneratingSuggestions: boolean;
   systemPrompt: string;
@@ -51,6 +53,7 @@ interface AgentRuntimeOrchestrationPanelProps {
   onOpenKnowledgeDialog: () => void;
   onToggleSkill: (skillId: string, checked: boolean) => void;
   onToggleKnowledgeDataset: (datasetId: string, checked: boolean) => void;
+  onChangeDatabaseBindings: (value: AgentDatabaseBinding[]) => void;
   onGenerateSuggestedQuestions: () => void;
   onChangeSuggestedQuestions: (value: string[]) => void;
   onChangeFileUploadEnabled: (value: boolean) => void;
@@ -72,6 +75,7 @@ export function AgentRuntimeOrchestrationPanel({
   isDatasetsLoading,
   selectedKnowledgeDatasets,
   selectedKnowledgeDatasetIds,
+  databaseBindings,
   suggestedQuestions,
   isGeneratingSuggestions,
   systemPrompt,
@@ -92,6 +96,7 @@ export function AgentRuntimeOrchestrationPanel({
   onOpenKnowledgeDialog,
   onToggleSkill,
   onToggleKnowledgeDataset,
+  onChangeDatabaseBindings,
   onGenerateSuggestedQuestions,
   onChangeSuggestedQuestions,
   onChangeFileUploadEnabled,
@@ -147,6 +152,15 @@ export function AgentRuntimeOrchestrationPanel({
             onToggleSection={onToggleSection}
             onOpenKnowledgeDialog={onOpenKnowledgeDialog}
             onToggleKnowledgeDataset={onToggleKnowledgeDataset}
+          />
+
+          <Separator className="h-px" />
+
+          <AgentRuntimeDatabaseSection
+            open={openSections.databases}
+            bindings={databaseBindings}
+            onToggleSection={onToggleSection}
+            onChangeBindings={onChangeDatabaseBindings}
           />
 
           <Separator className="h-px" />

@@ -189,7 +189,14 @@ export interface AgentRuntimeConfig {
   suggested_questions: string[];
   knowledge_dataset_ids?: string[];
   knowledge_retrieval_config?: Record<string, unknown>;
+  database_bindings?: AgentDatabaseBinding[];
   updated_at: number;
+}
+
+export interface AgentDatabaseBinding {
+  data_source_id: string;
+  table_ids: string[];
+  writable_table_ids?: string[];
 }
 
 export interface AgentMemorySlotConfig {
@@ -240,6 +247,7 @@ export interface UpdateAgentRuntimeConfigRequest {
   suggested_questions: string[];
   knowledge_dataset_ids?: string[];
   knowledge_retrieval_config?: Record<string, unknown>;
+  database_bindings?: AgentDatabaseBinding[];
 }
 
 export interface AgentSuggestedQuestionSkillContext {
