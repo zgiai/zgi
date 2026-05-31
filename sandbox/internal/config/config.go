@@ -52,6 +52,7 @@ type Config struct {
 	Environment                            string
 	RuntimeBackend                         string
 	SecureRootFS                           string
+	DependencyRootFSDir                    string
 	BwrapBinary                            string
 	ProxyTimeout                           int
 }
@@ -103,6 +104,7 @@ func FromEnv() Config {
 		Environment:                            getEnv("ZGI_SANDBOX_ENV", "local"),
 		RuntimeBackend:                         getEnv("ZGI_SANDBOX_RUNTIME_BACKEND", "preview"),
 		SecureRootFS:                           getEnv("ZGI_SANDBOX_SECURE_ROOTFS", ""),
+		DependencyRootFSDir:                    getEnv("ZGI_SANDBOX_DEPENDENCY_ROOTFS_DIR", ""),
 		BwrapBinary:                            getEnv("ZGI_SANDBOX_BWRAP_BINARY", "bwrap"),
 		ProxyTimeout:                           getEnvInt("ZGI_SANDBOX_PROXY_TIMEOUT_SECONDS", 20),
 	}
@@ -165,6 +167,9 @@ func (c Config) ValidateStartup() error {
 	}
 	if c.RuntimeBackendName() == "linux-secure" {
 		if err := validateSecureRootFS(c.SecureRootFS); err != nil {
+			validationErrors = append(validationErrors, err)
+		}
+		if err := validateOptionalDependencyRootFSDir(c.DependencyRootFSDir); err != nil {
 			validationErrors = append(validationErrors, err)
 		}
 		if strings.TrimSpace(c.BwrapBinary) == "" {
@@ -235,25 +240,36 @@ func validateRuntimeBackend(value string) error {
 }
 
 func validateSecureRootFS(value string) error {
+	return validateRootFSDirectory("ZGI_SANDBOX_SECURE_ROOTFS", value, true)
+}
+
+func validateOptionalDependencyRootFSDir(value string) error {
+	return validateRootFSDirectory("ZGI_SANDBOX_DEPENDENCY_ROOTFS_DIR", value, false)
+}
+
+func validateRootFSDirectory(name string, value string, required bool) error {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return errors.New("ZGI_SANDBOX_SECURE_ROOTFS is required when ZGI_SANDBOX_RUNTIME_BACKEND=linux-secure")
+		if required {
+			return fmt.Errorf("%s is required when ZGI_SANDBOX_RUNTIME_BACKEND=linux-secure", name)
+		}
+		return nil
 	}
 	if !filepath.IsAbs(value) {
-		return errors.New("ZGI_SANDBOX_SECURE_ROOTFS must be an absolute path")
+		return fmt.Errorf("%s must be an absolute path", name)
 	}
 	info, err := os.Lstat(value)
 	if err != nil {
-		return fmt.Errorf("ZGI_SANDBOX_SECURE_ROOTFS must reference an existing directory: %w", err)
+		return fmt.Errorf("%s must reference an existing directory: %w", name, err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		return errors.New("ZGI_SANDBOX_SECURE_ROOTFS must not be a symlink")
+		return fmt.Errorf("%s must not be a symlink", name)
 	}
 	if !info.IsDir() {
-		return errors.New("ZGI_SANDBOX_SECURE_ROOTFS must be a directory")
+		return fmt.Errorf("%s must be a directory", name)
 	}
 	if info.Mode().Perm()&0o002 != 0 {
-		return errors.New("ZGI_SANDBOX_SECURE_ROOTFS must not be world-writable")
+		return fmt.Errorf("%s must not be world-writable", name)
 	}
 	return nil
 }
@@ -352,6 +368,7 @@ func (c Config) PublicSnapshot() map[string]any {
 		"environment":                                c.Environment,
 		"runtime_backend":                            c.RuntimeBackendName(),
 		"secure_rootfs_configured":                   c.SecureRootFS != "",
+		"dependency_rootfs_configured":               c.DependencyRootFSDir != "",
 		"bwrap_binary":                               c.BwrapBinary,
 		"proxy_timeout_seconds":                      c.ProxyTimeout,
 		"network_policy_enforced":                    c.NetworkPolicyEnforced(),

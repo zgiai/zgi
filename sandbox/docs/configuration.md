@@ -19,7 +19,9 @@ policy.
 
 The production example uses `ZGI_SANDBOX_RUNTIME_BACKEND=linux-secure`. That
 backend also requires `ZGI_SANDBOX_SECURE_ROOTFS` and
-`ZGI_SANDBOX_BWRAP_BINARY`.
+`ZGI_SANDBOX_BWRAP_BINARY`. When `ZGI_SANDBOX_DEPENDENCY_ROOTFS_DIR` is set,
+the secure runtime resolves dependency profiles from child rootfs directories
+named after each profile.
 
 ## Variables
 
@@ -32,6 +34,7 @@ backend also requires `ZGI_SANDBOX_SECURE_ROOTFS` and
 | `ZGI_SANDBOX_COMMAND_TIMEOUT_SECONDS` | Default command execution timeout. | `15` | Keep bounded for workflow use. |
 | `ZGI_SANDBOX_DATABASE_URL` | PostgreSQL connection URL. | empty in `.env.example`; composed in Docker Compose. | Required for production metadata persistence. |
 | `ZGI_SANDBOX_DATA_DIR` | Local data directory for sandbox files and metadata. | `/var/lib/zgi-sandbox` | Use persistent storage. |
+| `ZGI_SANDBOX_DEPENDENCY_ROOTFS_DIR` | Optional parent directory for dependency-profile-specific secure rootfs directories. | empty | Set when dependency profiles are materialized as separate rootfs directories. |
 | `ZGI_SANDBOX_DEPENDENCY_PROFILE_BUILD_TIMEOUT_SECONDS` | Maximum dependency profile build timeout. | `600` | Tune to the largest managed profile build. |
 | `ZGI_SANDBOX_ENV` | Runtime environment name. | `local` | Use `production` or `prod` for production. |
 | `ZGI_SANDBOX_INTERACTIVE_TTL_SECONDS` | Interactive sandbox TTL. | `3600` | Keep bounded and align with cleanup policy. |
