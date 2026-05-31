@@ -666,6 +666,7 @@ export function AIChatInputArea({
             />
             <AIChatInputToolbar
               modelSelectorValue={modelSelectorValue}
+              isModelInitializing={isModelInitializing}
               modelMissing={modelMissing}
               modelCapabilityFilter={modelCapabilityFilter}
               hasImageAttachment={hasImageAttachment}

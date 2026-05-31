@@ -1,6 +1,6 @@
 'use client';
 
-import React, { Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import React, { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Chat, { useAIChatController } from '@/components/chat';
 import type { AIChatModelValue } from '@/components/chat';
@@ -31,6 +31,10 @@ function ChatPageContent() {
       ? { provider: saved.provider, model: saved.model, params: {} }
       : { provider: '', model: '', params: {} };
   });
+  const [isInitialModelResolved, setIsInitialModelResolved] = useState(() => {
+    if (!user?.id) return false;
+    return Boolean(getLastSelectedAiModel(user.id, 'consoleChat'));
+  });
 
   const shouldInitializeDefaultModel = Boolean(
     user?.id && !getLastSelectedAiModel(user.id, 'consoleChat')
@@ -45,25 +49,40 @@ function ChatPageContent() {
         model: value.model,
         params: value.params,
       });
+      setIsInitialModelResolved(true);
     },
   });
-  const isModelInitializing = Boolean(
-    shouldInitializeDefaultModel &&
-      !modelSelectorValue.model &&
-      defaultModelInitialization.isLoading
-  );
+  const isModelInitializing = !modelSelectorValue.model && !isInitialModelResolved;
 
-  useEffect(() => {
-    if (!user?.id || modelSelectorValue.model) return;
+  useLayoutEffect(() => {
+    if (!user?.id) {
+      setIsInitialModelResolved(false);
+      return;
+    }
+    if (modelSelectorValue.model) {
+      setIsInitialModelResolved(true);
+      return;
+    }
     const saved = getLastSelectedAiModel(user.id, 'consoleChat');
-    if (!saved) return;
+    if (!saved) {
+      if (defaultModelInitialization.isResolved && !defaultModelInitialization.value) {
+        setIsInitialModelResolved(true);
+      }
+      return;
+    }
 
     setModelSelectorValue(previous => ({
       ...previous,
       provider: saved.provider,
       model: saved.model,
     }));
-  }, [modelSelectorValue.model, user?.id]);
+    setIsInitialModelResolved(true);
+  }, [
+    defaultModelInitialization.isResolved,
+    defaultModelInitialization.value,
+    modelSelectorValue.model,
+    user?.id,
+  ]);
 
   const handleModelChange = useCallback(
     (value: ModelSelectorValue) => {
@@ -79,6 +98,7 @@ function ChatPageContent() {
           model: value.model,
         });
       }
+      setIsInitialModelResolved(true);
     },
     [user?.id]
   );
