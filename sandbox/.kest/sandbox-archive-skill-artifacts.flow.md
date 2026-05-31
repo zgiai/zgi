@@ -71,6 +71,9 @@ Content-Type: application/json
   }
 }
 
+[Captures]
+skill_execution_id = data.execution_id
+
 [Asserts]
 status == 200
 code == 0
@@ -94,6 +97,7 @@ GET {{base_url}}/v1/observer/events?sandbox_id={{sandbox_id}}&type=exec.skill&li
 status == 200
 code == 0
 data.events.0.metadata.path == "validated"
+data.events.0.metadata.execution_id == "{{skill_execution_id}}"
 data.events.0.metadata.organization_id == "organization_archive_kest"
 data.events.0.metadata.workspace_id == "workspace_archive_kest"
 data.events.0.metadata.workflow_run_id == "workflow_run_archive_kest"

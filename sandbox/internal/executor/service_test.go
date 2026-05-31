@@ -78,6 +78,9 @@ func TestCodeCommandAndFileFlow(t *testing.T) {
 	if commandResult.ExitCode != 0 {
 		t.Fatalf("expected zero exit code, got %d", commandResult.ExitCode)
 	}
+	if !strings.HasPrefix(commandResult.ExecutionID, "exec_") {
+		t.Fatalf("expected command execution id, got %q", commandResult.ExecutionID)
+	}
 
 	codeResult, err := service.RunCode(context.Background(), CodeRequest{
 		SandboxID: box.ID,
@@ -89,6 +92,9 @@ func TestCodeCommandAndFileFlow(t *testing.T) {
 	}
 	if codeResult.Stdout != "session-ok\n" {
 		t.Fatalf("unexpected stdout: %q stderr=%q exit=%d backend=%q", codeResult.Stdout, codeResult.Error, codeResult.ExitCode, codeResult.Backend)
+	}
+	if !strings.HasPrefix(codeResult.ExecutionID, "exec_") {
+		t.Fatalf("expected code execution id, got %q", codeResult.ExecutionID)
 	}
 }
 
@@ -112,11 +118,15 @@ func TestExecutionEventsIncludeRequestID(t *testing.T) {
 	}
 
 	ctx := observer.ContextWithRequestID(context.Background(), "req_exec_test")
-	if _, err := service.RunCommand(ctx, CommandRequest{
+	result, err := service.RunCommand(ctx, CommandRequest{
 		SandboxID: box.ID,
 		Command:   "pwd",
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("expected command run, got %v", err)
+	}
+	if !strings.HasPrefix(result.ExecutionID, "exec_") {
+		t.Fatalf("expected execution id, got %q", result.ExecutionID)
 	}
 
 	events := recorder.Query(observer.Query{SandboxID: box.ID, Type: "exec.command", Limit: 1})
@@ -125,6 +135,9 @@ func TestExecutionEventsIncludeRequestID(t *testing.T) {
 	}
 	if events[0].Metadata["request_id"] != "req_exec_test" {
 		t.Fatalf("expected request ID metadata, got %#v", events[0].Metadata)
+	}
+	if events[0].Metadata["execution_id"] != result.ExecutionID {
+		t.Fatalf("expected execution ID metadata, got %#v result=%q", events[0].Metadata, result.ExecutionID)
 	}
 	if events[0].Metadata["status"] != "success" {
 		t.Fatalf("expected success status, got %#v", events[0].Metadata)
@@ -174,6 +187,9 @@ func TestExecutionFailureEventsAvoidSensitivePayloads(t *testing.T) {
 	if metadata["request_id"] != "req_failed_test" {
 		t.Fatalf("expected request ID metadata, got %#v", metadata)
 	}
+	if executionID, _ := metadata["execution_id"].(string); !strings.HasPrefix(executionID, "exec_") {
+		t.Fatalf("expected failure execution ID metadata, got %#v", metadata)
+	}
 	if metadata["status"] != "failure" || metadata["error_type"] != "validation_error" {
 		t.Fatalf("expected structured failure metadata, got %#v", metadata)
 	}
@@ -212,10 +228,16 @@ func TestRunTemplateRendersWithBoundedHelpers(t *testing.T) {
 	if result.Content != "Hello ZGI" || result.Truncated {
 		t.Fatalf("unexpected template result: %+v", result)
 	}
+	if !strings.HasPrefix(result.ExecutionID, "exec_") {
+		t.Fatalf("expected template execution id, got %q", result.ExecutionID)
+	}
 
 	events := recorder.Query(observer.Query{Type: "exec.template", Limit: 1})
 	if len(events) != 1 || events[0].Metadata["status"] != "success" {
 		t.Fatalf("expected template success event, got %#v", events)
+	}
+	if events[0].Metadata["execution_id"] != result.ExecutionID {
+		t.Fatalf("expected template execution ID metadata, got %#v result=%q", events[0].Metadata, result.ExecutionID)
 	}
 }
 
@@ -491,6 +513,9 @@ func TestRunSkillUsesManifestPolicyAndReturnsArtifacts(t *testing.T) {
 	if result.Command.ExitCode != 0 || !strings.Contains(result.Command.Stdout, `"echo": "hello"`) && !strings.Contains(result.Command.Stdout, `"echo":"hello"`) {
 		t.Fatalf("unexpected skill command result: %+v", result.Command)
 	}
+	if !strings.HasPrefix(result.ExecutionID, "exec_") || result.Command.ExecutionID != result.ExecutionID {
+		t.Fatalf("expected skill execution id to propagate, got result=%q command=%q", result.ExecutionID, result.Command.ExecutionID)
+	}
 	if result.Manifest.Entrypoint != "scripts/run.py" || result.Manifest.Language != "python3" {
 		t.Fatalf("unexpected manifest: %+v", result.Manifest)
 	}
@@ -504,6 +529,9 @@ func TestRunSkillUsesManifestPolicyAndReturnsArtifacts(t *testing.T) {
 	events := service.observer.Query(observer.Query{SandboxID: box.ID, Type: "exec.skill", Limit: 1})
 	if len(events) != 1 || events[0].Metadata["organization_id"] != "organization-skill" {
 		t.Fatalf("expected skill execution event with ownership metadata, got %#v", events)
+	}
+	if events[0].Metadata["execution_id"] != result.ExecutionID {
+		t.Fatalf("expected skill execution ID metadata, got %#v result=%q", events[0].Metadata, result.ExecutionID)
 	}
 }
 

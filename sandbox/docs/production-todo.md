@@ -35,6 +35,7 @@ Already available:
 - Structured cancellation errors for request-canceled execution paths
 - Configurable graceful shutdown for service drain on SIGTERM/SIGINT
 - Request correlation IDs for HTTP responses and execution observer events
+- Execution IDs for code, command, template, and skill execution responses and observer events
 - Structured observer events for successful and failed execution paths
 - Observer event pagination with bounded default and maximum page sizes
 - Observer event filters for organization, workspace, app, workflow run, user, and request scope
@@ -388,7 +389,7 @@ and security review.
   - workspace ID
   - workflow run ID
   - skill ID
-  - execution ID
+  - Added execution ID for code, command, template, and skill execution events
   - request ID
   - event type
   - status

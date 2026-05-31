@@ -38,6 +38,9 @@ Content-Type: application/json
   "output_limit_kb": 64
 }
 
+[Captures]
+template_execution_id = data.execution_id
+
 [Asserts]
 status == 200
 code == 0

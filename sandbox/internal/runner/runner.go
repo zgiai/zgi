@@ -33,6 +33,7 @@ type Request struct {
 }
 
 type Result struct {
+	ExecutionID      string   `json:"execution_id,omitempty"`
 	Stdout           string   `json:"stdout"`
 	Error            string   `json:"error"`
 	ExitCode         int      `json:"exit_code"`
@@ -45,14 +46,15 @@ type Result struct {
 }
 
 type CommandResult struct {
-	Stdout     string   `json:"stdout"`
-	Error      string   `json:"error"`
-	ExitCode   int      `json:"exit_code"`
-	DurationMS int64    `json:"duration_ms"`
-	Truncated  bool     `json:"truncated"`
-	Command    string   `json:"command"`
-	Args       []string `json:"args,omitempty"`
-	Backend    string   `json:"backend,omitempty"`
+	ExecutionID string   `json:"execution_id,omitempty"`
+	Stdout      string   `json:"stdout"`
+	Error       string   `json:"error"`
+	ExitCode    int      `json:"exit_code"`
+	DurationMS  int64    `json:"duration_ms"`
+	Truncated   bool     `json:"truncated"`
+	Command     string   `json:"command"`
+	Args        []string `json:"args,omitempty"`
+	Backend     string   `json:"backend,omitempty"`
 }
 
 type CommandSpec struct {

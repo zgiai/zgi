@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -74,10 +75,11 @@ type TemplateRequest struct {
 }
 
 type TemplateResult struct {
-	Content    string   `json:"content"`
-	DurationMS int64    `json:"duration_ms"`
-	Truncated  bool     `json:"truncated"`
-	Warnings   []string `json:"warnings,omitempty"`
+	ExecutionID string   `json:"execution_id"`
+	Content     string   `json:"content"`
+	DurationMS  int64    `json:"duration_ms"`
+	Truncated   bool     `json:"truncated"`
+	Warnings    []string `json:"warnings,omitempty"`
 }
 
 type SkillRunRequest struct {
@@ -88,6 +90,7 @@ type SkillRunRequest struct {
 }
 
 type SkillRunResult struct {
+	ExecutionID       string                 `json:"execution_id"`
 	SandboxID         string                 `json:"sandbox_id"`
 	Path              string                 `json:"path"`
 	Manifest          SkillExecutionManifest `json:"manifest"`
@@ -180,10 +183,12 @@ func NewService(manager *lifecycle.Manager, runnerService *runner.Service, recor
 }
 
 func (s *Service) RunCode(ctx context.Context, req CodeRequest) (runner.Result, error) {
+	executionID := newExecutionID()
 	requestedProfile := defaultString(req.Profile, "code-short")
 	baseMetadata := map[string]any{
-		"language": req.Language,
-		"profile":  requestedProfile,
+		"execution_id": executionID,
+		"language":     req.Language,
+		"profile":      requestedProfile,
 	}
 	limits, err := s.policy.NormalizeCommandLimits(requestedProfile, req.TimeoutSeconds, req.TimeoutMS, req.StdoutLimitKB, req.StderrLimitKB)
 	if err != nil {
@@ -215,15 +220,17 @@ func (s *Service) RunCode(ctx context.Context, req CodeRequest) (runner.Result, 
 		s.recordExecutionFailure(ctx, "exec.code.failed", req.SandboxID, "sandbox code execution failed", baseMetadata, err)
 		return runner.Result{}, err
 	}
+	result.ExecutionID = executionID
 
 	metadata := map[string]any{
-		"language":    req.Language,
-		"profile":     limits.Profile,
-		"exit_code":   result.ExitCode,
-		"duration_ms": result.DurationMS,
-		"truncated":   result.Truncated,
-		"backend":     result.Backend,
-		"status":      "success",
+		"execution_id": executionID,
+		"language":     req.Language,
+		"profile":      limits.Profile,
+		"exit_code":    result.ExitCode,
+		"duration_ms":  result.DurationMS,
+		"truncated":    result.Truncated,
+		"backend":      result.Backend,
+		"status":       "success",
 	}
 	addOwnershipMetadata(metadata, box)
 	s.observer.Record("exec.code", req.SandboxID, "sandbox code executed", observer.MetadataWithContext(ctx, metadata))
@@ -251,18 +258,19 @@ func (s *Service) runCodeWithScope(ctx context.Context, req CodeRequest, runReq 
 }
 
 func (s *Service) RunTemplate(ctx context.Context, req TemplateRequest) (TemplateResult, error) {
+	executionID := newExecutionID()
 	limits, err := s.policy.NormalizeTemplateLimits(req.Profile, req.Engine, req.TimeoutMS, req.OutputLimitKB)
 	if err != nil {
-		s.recordTemplateFailure(ctx, req, err)
+		s.recordTemplateFailure(ctx, req, executionID, err)
 		return TemplateResult{}, err
 	}
 	if len([]byte(req.Template)) > limits.MaxTemplateBytes {
 		err := fmt.Errorf("template exceeds max size of %d bytes", limits.MaxTemplateBytes)
-		s.recordTemplateFailure(ctx, req, err)
+		s.recordTemplateFailure(ctx, req, executionID, err)
 		return TemplateResult{}, err
 	}
 	if err := validateTemplateVariables(req.Variables, limits); err != nil {
-		s.recordTemplateFailure(ctx, req, err)
+		s.recordTemplateFailure(ctx, req, executionID, err)
 		return TemplateResult{}, err
 	}
 
@@ -271,11 +279,11 @@ func (s *Service) RunTemplate(ctx context.Context, req TemplateRequest) (Templat
 		Funcs(templateFuncMap()).
 		Parse(req.Template)
 	if err != nil {
-		s.recordTemplateFailure(ctx, req, err)
+		s.recordTemplateFailure(ctx, req, executionID, err)
 		return TemplateResult{}, err
 	}
 	if err := validateTemplateHelpers(parsed.Tree.Root); err != nil {
-		s.recordTemplateFailure(ctx, req, err)
+		s.recordTemplateFailure(ctx, req, executionID, err)
 		return TemplateResult{}, err
 	}
 
@@ -313,36 +321,40 @@ func (s *Service) RunTemplate(ctx context.Context, req TemplateRequest) (Templat
 	select {
 	case rendered := <-resultCh:
 		if rendered.err != nil {
-			s.recordTemplateFailure(ctx, req, rendered.err)
+			s.recordTemplateFailure(ctx, req, executionID, rendered.err)
 			return TemplateResult{}, rendered.err
 		}
 		result := TemplateResult{
-			Content:    rendered.content,
-			DurationMS: time.Since(started).Milliseconds(),
-			Truncated:  rendered.truncated,
+			ExecutionID: executionID,
+			Content:     rendered.content,
+			DurationMS:  time.Since(started).Milliseconds(),
+			Truncated:   rendered.truncated,
 		}
 		if rendered.truncated {
 			result.Warnings = append(result.Warnings, "output truncated")
 		}
 		s.observer.Record("exec.template", "", "template rendered", observer.MetadataWithContext(ctx, map[string]any{
-			"engine":      limits.Engine,
-			"profile":     limits.Profile,
-			"duration_ms": result.DurationMS,
-			"truncated":   result.Truncated,
-			"status":      "success",
+			"execution_id": executionID,
+			"engine":       limits.Engine,
+			"profile":      limits.Profile,
+			"duration_ms":  result.DurationMS,
+			"truncated":    result.Truncated,
+			"status":       "success",
 		}))
 		return result, nil
 	case <-renderCtx.Done():
 		err := fmt.Errorf("template execution timed out after %d ms", limits.Timeout.Milliseconds())
-		s.recordTemplateFailure(ctx, req, err)
+		s.recordTemplateFailure(ctx, req, executionID, err)
 		return TemplateResult{}, err
 	}
 }
 
 func (s *Service) RunCommand(ctx context.Context, req CommandRequest) (runner.CommandResult, error) {
+	executionID := newExecutionID()
 	baseMetadata := map[string]any{
-		"command": req.Command,
-		"profile": defaultString(req.Profile, "code-short"),
+		"execution_id": executionID,
+		"command":      req.Command,
+		"profile":      defaultString(req.Profile, "code-short"),
 	}
 	box, err := s.lifecycle.GetActive(req.SandboxID)
 	if err != nil {
@@ -391,15 +403,17 @@ func (s *Service) RunCommand(ctx context.Context, req CommandRequest) (runner.Co
 		s.recordExecutionFailure(ctx, "exec.command.failed", req.SandboxID, "sandbox command execution failed", baseMetadata, err)
 		return runner.CommandResult{}, err
 	}
+	result.ExecutionID = executionID
 
 	metadata := map[string]any{
-		"command":     req.Command,
-		"profile":     limits.Profile,
-		"exit_code":   result.ExitCode,
-		"duration_ms": result.DurationMS,
-		"truncated":   result.Truncated,
-		"backend":     result.Backend,
-		"status":      "success",
+		"execution_id": executionID,
+		"command":      req.Command,
+		"profile":      limits.Profile,
+		"exit_code":    result.ExitCode,
+		"duration_ms":  result.DurationMS,
+		"truncated":    result.Truncated,
+		"backend":      result.Backend,
+		"status":       "success",
 	}
 	addOwnershipMetadata(metadata, box)
 	s.observer.Record("exec.command", req.SandboxID, "sandbox command executed", observer.MetadataWithContext(ctx, metadata))
@@ -407,6 +421,7 @@ func (s *Service) RunCommand(ctx context.Context, req CommandRequest) (runner.Co
 }
 
 func (s *Service) RunSkill(ctx context.Context, req SkillRunRequest) (SkillRunResult, error) {
+	executionID := newExecutionID()
 	if strings.TrimSpace(req.SandboxID) == "" {
 		return SkillRunResult{}, errors.New("sandbox_id is required")
 	}
@@ -416,10 +431,10 @@ func (s *Service) RunSkill(ctx context.Context, req SkillRunRequest) (SkillRunRe
 
 	box, err := s.lifecycle.GetActive(req.SandboxID)
 	if err != nil {
-		s.recordExecutionFailure(ctx, "exec.skill.failed", req.SandboxID, "skill execution failed", map[string]any{"path": req.Path}, err)
+		s.recordExecutionFailure(ctx, "exec.skill.failed", req.SandboxID, "skill execution failed", map[string]any{"execution_id": executionID, "path": req.Path}, err)
 		return SkillRunResult{}, err
 	}
-	baseMetadata := map[string]any{"path": req.Path}
+	baseMetadata := map[string]any{"execution_id": executionID, "path": req.Path}
 	addOwnershipMetadata(baseMetadata, box)
 
 	packageRoot, err := resolveExistingSandboxPath(box.RootPath, req.Path)
@@ -469,6 +484,7 @@ func (s *Service) RunSkill(ctx context.Context, req SkillRunRequest) (SkillRunRe
 		s.recordExecutionFailure(ctx, "exec.skill.failed", req.SandboxID, "skill execution failed", baseMetadata, err)
 		return SkillRunResult{}, err
 	}
+	result.ExecutionID = executionID
 
 	artifactManifests, err := s.skillArtifactManifests(req.SandboxID, req.Path, manifest)
 	if err != nil {
@@ -477,6 +493,7 @@ func (s *Service) RunSkill(ctx context.Context, req SkillRunRequest) (SkillRunRe
 	}
 
 	runResult := SkillRunResult{
+		ExecutionID:       executionID,
 		SandboxID:         req.SandboxID,
 		Path:              req.Path,
 		Manifest:          manifest,
@@ -491,6 +508,7 @@ func (s *Service) RunSkill(ctx context.Context, req SkillRunRequest) (SkillRunRe
 	}
 
 	metadata := map[string]any{
+		"execution_id":   executionID,
 		"path":           req.Path,
 		"entrypoint":     manifest.Entrypoint,
 		"language":       manifest.Language,
@@ -548,12 +566,13 @@ func classifyExecutionError(err error) string {
 	}
 }
 
-func (s *Service) recordTemplateFailure(ctx context.Context, req TemplateRequest, err error) {
+func (s *Service) recordTemplateFailure(ctx context.Context, req TemplateRequest, executionID string, err error) {
 	metadata := map[string]any{
-		"engine":     defaultString(req.Engine, "go-text"),
-		"profile":    defaultString(req.Profile, "template-short"),
-		"status":     "failure",
-		"error_type": classifyExecutionError(err),
+		"execution_id": executionID,
+		"engine":       defaultString(req.Engine, "go-text"),
+		"profile":      defaultString(req.Profile, "template-short"),
+		"status":       "failure",
+		"error_type":   classifyExecutionError(err),
 	}
 	s.observer.Record("exec.template.failed", "", "template render failed", observer.MetadataWithContext(ctx, metadata))
 }
@@ -1275,6 +1294,14 @@ func defaultString(value string, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func newExecutionID() string {
+	var buf [8]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return "exec_" + time.Now().UTC().Format("20060102150405")
+	}
+	return "exec_" + hex.EncodeToString(buf[:])
 }
 
 func ListDirectory(root string) ([]FileInfo, error) {

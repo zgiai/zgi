@@ -205,6 +205,9 @@ Content-Type: application/json
   "enable_network": false
 }
 
+[Captures]
+code_execution_id = data.execution_id
+
 [Asserts]
 status == 200
 code == 0
@@ -234,6 +237,9 @@ X-Request-ID: req_kest_command
   "working_subpath": "."
 }
 
+[Captures]
+command_execution_id = data.execution_id
+
 [Asserts]
 status == 200
 code == 0
@@ -261,6 +267,7 @@ GET {{base_url}}/v1/observer/events?sandbox_id={{sandbox_id}}&limit=20
 status == 200
 code == 0
 data.events.0.metadata.request_id == "req_kest_command"
+data.events.0.metadata.execution_id == "{{command_execution_id}}"
 data.events.0.metadata.organization_id == "organization_kest"
 data.events.0.metadata.workspace_id == "workspace_kest"
 data.events.0.metadata.workflow_run_id == "workflow_run_kest"
