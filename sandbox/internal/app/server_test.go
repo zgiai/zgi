@@ -694,6 +694,102 @@ func TestDependencyEndpoint(t *testing.T) {
 	}
 }
 
+func TestDependencyUpdateRequiresAdminAPIKey(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.APIKey = "admin-test-key"
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/sandbox/dependencies/update", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected admin endpoint to require api key, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestDependencyUpdateBuildsSelectableProfile(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.APIKey = "admin-test-key"
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	body := `{
+		"name": "office-safe",
+		"version": "2026.05.31",
+		"languages": ["python3"],
+		"packages": [{"name": "data-tools", "version": "managed"}],
+		"base_runtime": "preview-process",
+		"checksum": "sha256:office-safe",
+		"size_bytes": 1024,
+		"description": "Managed document automation profile."
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/sandbox/dependencies/update", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", "admin-test-key")
+	req.Header.Set("X-Request-ID", "req_profile_build")
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected dependency profile build to return 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"status":"ready"`) || !strings.Contains(rr.Body.String(), `"name":"office-safe"`) {
+		t.Fatalf("expected ready dependency profile build, got %s", rr.Body.String())
+	}
+
+	createReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","dependency_profile":"office-safe"}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	createReq.Header.Set("X-API-Key", "admin-test-key")
+	createRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(createRes, createReq)
+	if createRes.Code != http.StatusOK {
+		t.Fatalf("expected built profile to be selectable, got %d body=%s", createRes.Code, createRes.Body.String())
+	}
+	if !strings.Contains(createRes.Body.String(), `"dependency_profile":"office-safe"`) {
+		t.Fatalf("expected created sandbox to use built profile, got %s", createRes.Body.String())
+	}
+
+	events := server.observer.Query(observer.Query{Type: "dependency_profile.build", RequestID: "req_profile_build", Limit: 1})
+	if len(events) != 1 || events[0].Metadata["dependency_profile"] != "office-safe" {
+		t.Fatalf("expected dependency profile build event, got %#v", events)
+	}
+}
+
+func TestDependencyUpdateReportsBuildFailure(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.APIKey = "admin-test-key"
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	body := `{"name":"bad-profile","version":"latest","languages":["python3"],"checksum":"sha256:bad","size_bytes":1024}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/sandbox/dependencies/update", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", "admin-test-key")
+	req.Header.Set("X-Request-ID", "req_profile_build_failed")
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected dependency profile build failure to return 400, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"status":"failed"`) || !strings.Contains(rr.Body.String(), "version must be pinned") {
+		t.Fatalf("expected failed build details, got %s", rr.Body.String())
+	}
+	events := server.observer.Query(observer.Query{Type: "dependency_profile.build.failed", RequestID: "req_profile_build_failed", Limit: 1})
+	if len(events) != 1 || !strings.Contains(fmt.Sprint(events[0].Metadata["error"]), "version must be pinned") {
+		t.Fatalf("expected dependency profile build failure event, got %#v", events)
+	}
+}
+
 func TestCreateSandboxRejectsUnavailableDependencyProfile(t *testing.T) {
 	server, err := NewServer(testConfig(t))
 	if err != nil {

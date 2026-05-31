@@ -51,6 +51,10 @@ cleanup() {
     kill "${DEPENDENCY_PROFILE_LIMIT_SERVER_PID}" 2>/dev/null || true
     wait "${DEPENDENCY_PROFILE_LIMIT_SERVER_PID}" 2>/dev/null || true
   fi
+  if [[ -n "${DEPENDENCY_PROFILE_BUILD_SERVER_PID:-}" ]] && kill -0 "${DEPENDENCY_PROFILE_BUILD_SERVER_PID}" 2>/dev/null; then
+    kill "${DEPENDENCY_PROFILE_BUILD_SERVER_PID}" 2>/dev/null || true
+    wait "${DEPENDENCY_PROFILE_BUILD_SERVER_PID}" 2>/dev/null || true
+  fi
   if [[ -n "${CONCURRENT_SERVER_PID:-}" ]] && kill -0 "${CONCURRENT_SERVER_PID}" 2>/dev/null; then
     kill "${CONCURRENT_SERVER_PID}" 2>/dev/null || true
     wait "${CONCURRENT_SERVER_PID}" 2>/dev/null || true
@@ -69,25 +73,29 @@ mkdir -p "${FLOW_DIR}" "${KEST_HOME}" "${KEST_CONFIG_HOME}"
 for flow in .kest/*.flow.md; do
   sed 's#{{base_url}}##g' "${flow}" >"${FLOW_DIR}/$(basename "${flow}")"
 done
-cat >"${FLOW_DIR}/config.yaml" <<EOF
+write_kest_config() {
+  local base_url="$1"
+  cat >"${FLOW_DIR}/config.yaml" <<EOF
 version: 1
 environments:
   local:
-    base_url: ${BASE_URL}
+    base_url: ${base_url}
 active_env: local
 log_enabled: true
 EOF
-cat >"${FLOW_DIR}/flow.config.yaml" <<EOF
+  cat >"${FLOW_DIR}/flow.config.yaml" <<EOF
 version: 1
 profiles:
   local:
     include: [".kest/*.flow.md"]
     env: local
-    base_url: "${BASE_URL}"
+    base_url: "${base_url}"
     strict: true
     fail_fast: false
     sync: false
 EOF
+}
+write_kest_config "${BASE_URL}"
 
 run_kest() {
   (
@@ -239,6 +247,45 @@ run_kest .kest/sandbox-lifecycle-files-command.flow.md \
 
 run_kest .kest/sandbox-dependency-profile-catalog.flow.md \
   --fail-fast
+
+if [[ "${START_LOCAL_SANDBOX}" = "1" ]]; then
+  DEPENDENCY_PROFILE_BUILD_PORT="$(python3 - <<'PY'
+import socket
+
+with socket.socket() as s:
+    s.bind(("127.0.0.1", 0))
+    print(s.getsockname()[1])
+PY
+)"
+  DEPENDENCY_PROFILE_BUILD_BASE_URL="http://127.0.0.1:${DEPENDENCY_PROFILE_BUILD_PORT}"
+  DEPENDENCY_PROFILE_BUILD_SERVER_LOG="${DATA_DIR}/sandbox-dependency-profile-build.log"
+  DEPENDENCY_PROFILE_BUILD_API_KEY="kest-admin-key"
+  env \
+    ZGI_SANDBOX_SERVER_PORT="${DEPENDENCY_PROFILE_BUILD_PORT}" \
+    ZGI_SANDBOX_DATA_DIR="${DATA_DIR}/dependency-profile-build-data" \
+    ZGI_SANDBOX_WORKER_ID="zgi-sandbox-dependency-profile-build-kest-${DEPENDENCY_PROFILE_BUILD_PORT}" \
+    ZGI_SANDBOX_API_KEY="${DEPENDENCY_PROFILE_BUILD_API_KEY}" \
+    go run cmd/server/main.go >"${DEPENDENCY_PROFILE_BUILD_SERVER_LOG}" 2>&1 &
+  DEPENDENCY_PROFILE_BUILD_SERVER_PID="$!"
+
+  for _ in {1..80}; do
+    if curl -fsS "${DEPENDENCY_PROFILE_BUILD_BASE_URL}/health" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.25
+  done
+  if ! curl -fsS "${DEPENDENCY_PROFILE_BUILD_BASE_URL}/health" >/dev/null 2>&1; then
+    cat "${DEPENDENCY_PROFILE_BUILD_SERVER_LOG}" >&2
+    echo "dependency profile build sandbox did not become ready at ${DEPENDENCY_PROFILE_BUILD_BASE_URL}" >&2
+    exit 1
+  fi
+
+  write_kest_config "${DEPENDENCY_PROFILE_BUILD_BASE_URL}"
+  run_kest .kest/sandbox-dependency-profile-build.flow.md \
+    --var admin_api_key="${DEPENDENCY_PROFILE_BUILD_API_KEY}" \
+    --fail-fast
+  write_kest_config "${BASE_URL}"
+fi
 
 run_kest .kest/sandbox-organization-access-scope.flow.md \
   --fail-fast

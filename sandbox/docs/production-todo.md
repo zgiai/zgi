@@ -239,7 +239,7 @@ arbitrary runtime installs from untrusted code.
 
 ### D2. Build Path
 
-- Build dependency profiles outside request execution.
+- [x] Build dependency profiles outside request execution.
 - Cache completed profiles.
 - [x] Make profile selection explicit in sandbox creation.
 - [x] Reject unknown or disabled profiles.
@@ -250,7 +250,7 @@ arbitrary runtime installs from untrusted code.
 ### D3. Runtime Policy
 
 - [x] Disable arbitrary dependency installation inside normal execution.
-- Add an administrator-only profile build path.
+- [x] Add an administrator-only profile build path.
 - [x] Add package allowlist and denylist controls.
 - [x] Add maximum profile size and build timeout.
 
@@ -258,8 +258,8 @@ arbitrary runtime installs from untrusted code.
 
 - [x] Profile selection tests.
 - [x] Disabled profile rejection.
-- Version pinning tests.
-- Build failure reporting tests.
+- [x] Version pinning tests.
+- [x] Build failure reporting tests.
 - [x] Execution uses expected profile version.
 
 ## 8. Milestone E: Network Governance

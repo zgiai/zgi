@@ -312,11 +312,41 @@ func (s *Server) handleDependencyUpdate(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if !s.authorizedAdmin(r) {
+		writeEnvelopeWithMessage(w, http.StatusUnauthorized, -401, "admin api key required", nil)
+		return
+	}
 
-	writeEnvelopeWithMessage(w, http.StatusOK, 0, "preview mode: dependency updates are disabled", map[string]any{
-		"accepted":           false,
-		"available_profiles": s.policy.DependencyCatalog(r.URL.Query().Get("language")),
-	})
+	body, err := s.readLimitedBody(w, r, s.maxSmallJSONRequestBytes())
+	if err != nil {
+		return
+	}
+	var req policy.DependencyProfileBuildRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "invalid request payload", nil)
+		return
+	}
+
+	result, err := s.policy.BuildDependencyProfile(req)
+	metadata := map[string]any{
+		"build_id": result.BuildID,
+		"status":   result.Status,
+		"accepted": result.Accepted,
+	}
+	if result.Profile != nil {
+		metadata["dependency_profile"] = result.Profile.Name
+		metadata["dependency_profile_version"] = result.Profile.Version
+		metadata["size_bytes"] = result.Profile.SizeBytes
+	}
+	if err != nil {
+		metadata["error"] = err.Error()
+		s.observer.Record("dependency_profile.build.failed", "", "dependency profile build failed", observer.MetadataWithContext(r.Context(), metadata))
+		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "dependency profile build failed", result)
+		return
+	}
+
+	s.observer.Record("dependency_profile.build", "", "dependency profile build completed", observer.MetadataWithContext(r.Context(), metadata))
+	writeEnvelope(w, http.StatusOK, result)
 }
 
 func (s *Server) handleSandboxes(w http.ResponseWriter, r *http.Request) {
@@ -1048,6 +1078,13 @@ func (s *Server) authorized(r *http.Request) bool {
 		return true
 	}
 
+	return r.Header.Get("X-API-Key") == s.config.APIKey
+}
+
+func (s *Server) authorizedAdmin(r *http.Request) bool {
+	if strings.TrimSpace(s.config.APIKey) == "" {
+		return false
+	}
 	return r.Header.Get("X-API-Key") == s.config.APIKey
 }
 

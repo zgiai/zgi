@@ -141,6 +141,56 @@ func TestNormalizeCreateAppliesDependencyProfileBuildLimits(t *testing.T) {
 	}
 }
 
+func TestBuildDependencyProfileRegistersReadyProfile(t *testing.T) {
+	service := NewService(config.FromEnv())
+
+	result, err := service.BuildDependencyProfile(DependencyProfileBuildRequest{
+		Name:        "office-safe",
+		Version:     "2026.05.31",
+		Languages:   []string{"python"},
+		Packages:    []DependencyPackage{{Name: "data-tools", Version: "managed"}},
+		BaseRuntime: "preview-process",
+		Checksum:    "sha256:office-safe",
+		SizeBytes:   1024,
+		Description: "Managed document automation profile.",
+	})
+	if err != nil {
+		t.Fatalf("expected dependency profile build to succeed, got %v", err)
+	}
+	if !result.Accepted || result.Status != "ready" || result.Profile == nil {
+		t.Fatalf("expected ready build result, got %+v", result)
+	}
+	if result.Profile.Name != "office-safe" || result.Profile.Languages[0] != "python3" {
+		t.Fatalf("expected normalized profile, got %+v", result.Profile)
+	}
+
+	decision, err := service.NormalizeCreate("session", 60, false, "", "office-safe", 0, "", 0)
+	if err != nil {
+		t.Fatalf("expected built profile to be selectable, got %v", err)
+	}
+	if decision.DependencyProfile != "office-safe" || decision.DependencyProfileVersion != "2026.05.31" {
+		t.Fatalf("expected built profile in decision, got %+v", decision)
+	}
+}
+
+func TestBuildDependencyProfileReportsValidationFailure(t *testing.T) {
+	service := NewService(config.FromEnv())
+
+	result, err := service.BuildDependencyProfile(DependencyProfileBuildRequest{
+		Name:      "bad-profile",
+		Version:   "latest",
+		Languages: []string{"python3"},
+		Checksum:  "sha256:bad",
+		SizeBytes: 1024,
+	})
+	if err == nil || !strings.Contains(err.Error(), "version must be pinned") {
+		t.Fatalf("expected pinned version error, got %v", err)
+	}
+	if !result.Accepted || result.Status != "failed" || !strings.Contains(result.Error, "version must be pinned") {
+		t.Fatalf("expected failed build result, got %+v", result)
+	}
+}
+
 func TestNetworkPolicySurfaceReportsBackendEnforcement(t *testing.T) {
 	previewCfg := config.FromEnv()
 	previewCfg.RuntimeBackend = "preview"

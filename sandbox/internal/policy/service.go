@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/zgiai/zgi-sandbox/internal/config"
@@ -54,6 +55,25 @@ type DependencyBuildPolicy struct {
 	BuildsAllowedDuringRuntime bool   `json:"builds_allowed_during_runtime"`
 }
 
+type DependencyProfileBuildRequest struct {
+	Name        string              `json:"name"`
+	Version     string              `json:"version"`
+	Languages   []string            `json:"languages"`
+	Packages    []DependencyPackage `json:"packages"`
+	BaseRuntime string              `json:"base_runtime"`
+	Checksum    string              `json:"checksum"`
+	SizeBytes   int64               `json:"size_bytes"`
+	Description string              `json:"description"`
+}
+
+type DependencyProfileBuildResult struct {
+	BuildID  string             `json:"build_id"`
+	Accepted bool               `json:"accepted"`
+	Status   string             `json:"status"`
+	Profile  *DependencyProfile `json:"profile,omitempty"`
+	Error    string             `json:"error,omitempty"`
+}
+
 type NetworkProfile struct {
 	Name                 string   `json:"name"`
 	Default              bool     `json:"default"`
@@ -101,6 +121,7 @@ type TemplateLimits struct {
 }
 
 type Service struct {
+	mu                 sync.RWMutex
 	config             config.Config
 	dependencyProfiles []DependencyProfile
 	packagePolicy      DependencyPackagePolicy
@@ -314,6 +335,10 @@ func NewService(cfg config.Config) *Service {
 }
 
 func (s *Service) Snapshot() map[string]any {
+	s.mu.RLock()
+	dependencyProfiles := append([]DependencyProfile(nil), s.dependencyProfiles...)
+	s.mu.RUnlock()
+
 	return map[string]any{
 		"runtime_profiles": []map[string]any{
 			{
@@ -340,7 +365,7 @@ func (s *Service) Snapshot() map[string]any {
 		"command_profiles":    s.commandProfileSnapshot(),
 		"template_profiles":   s.templateProfileSnapshot(),
 		"dependency_policy":   s.dependencyPolicySnapshot(),
-		"dependency_profiles": s.dependencyProfiles,
+		"dependency_profiles": dependencyProfiles,
 		"limits":              s.EffectiveLimits(),
 	}
 }
@@ -384,8 +409,12 @@ func (s *Service) NormalizeTemplateLimits(profile string, engine string, timeout
 }
 
 func (s *Service) DependencyCatalog(language string) map[string]any {
-	items := make([]DependencyProfile, 0, len(s.dependencyProfiles))
-	for _, profile := range s.dependencyProfiles {
+	s.mu.RLock()
+	profiles := append([]DependencyProfile(nil), s.dependencyProfiles...)
+	s.mu.RUnlock()
+
+	items := make([]DependencyProfile, 0, len(profiles))
+	for _, profile := range profiles {
 		if language == "" || slices.Contains(profile.Languages, normalizeLanguage(language)) {
 			items = append(items, profile)
 		}
@@ -422,6 +451,83 @@ func (s *Service) ValidateDependencyProfileBuildLimits(profile DependencyProfile
 		return errors.New("dependency profile build timeout must be positive")
 	}
 	return nil
+}
+
+func (s *Service) BuildDependencyProfile(req DependencyProfileBuildRequest) (DependencyProfileBuildResult, error) {
+	buildID := dependencyProfileBuildID(req.Name, req.Version)
+	result := DependencyProfileBuildResult{
+		BuildID:  buildID,
+		Accepted: true,
+		Status:   "failed",
+	}
+
+	profile, err := s.normalizeDependencyProfileBuildRequest(req)
+	if err != nil {
+		result.Error = err.Error()
+		return result, err
+	}
+	result.Profile = &profile
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, existing := range s.dependencyProfiles {
+		if existing.Name == profile.Name {
+			err := fmt.Errorf("dependency profile already exists: %s", profile.Name)
+			result.Error = err.Error()
+			return result, err
+		}
+	}
+	s.dependencyProfiles = append(s.dependencyProfiles, profile)
+	result.Status = profile.Status
+	return result, nil
+}
+
+func (s *Service) normalizeDependencyProfileBuildRequest(req DependencyProfileBuildRequest) (DependencyProfile, error) {
+	name := strings.ToLower(strings.TrimSpace(req.Name))
+	if !validDependencyProfileName(name) {
+		return DependencyProfile{}, errors.New("dependency profile name must contain only lowercase letters, numbers, and hyphens")
+	}
+	version := strings.TrimSpace(req.Version)
+	if version == "" || version == "latest" || strings.Contains(version, "*") {
+		return DependencyProfile{}, errors.New("dependency profile version must be pinned")
+	}
+	languages := normalizeDependencyProfileLanguages(req.Languages)
+	if len(languages) == 0 {
+		return DependencyProfile{}, errors.New("dependency profile must include at least one supported language")
+	}
+	baseRuntime := strings.TrimSpace(req.BaseRuntime)
+	if baseRuntime == "" {
+		baseRuntime = s.normalizedRuntimeBackend()
+	}
+	checksum := strings.TrimSpace(req.Checksum)
+	if checksum == "" {
+		return DependencyProfile{}, errors.New("dependency profile checksum is required")
+	}
+	if req.SizeBytes <= 0 {
+		return DependencyProfile{}, errors.New("dependency profile size_bytes must be positive")
+	}
+
+	packages := normalizeDependencyProfilePackages(req.Packages, languages)
+	profile := DependencyProfile{
+		Name:        name,
+		Version:     version,
+		Status:      "ready",
+		Enabled:     true,
+		OwnerScope:  "global",
+		Languages:   languages,
+		Packages:    packages,
+		BaseRuntime: baseRuntime,
+		Checksum:    checksum,
+		SizeBytes:   req.SizeBytes,
+		Description: strings.TrimSpace(req.Description),
+	}
+	if err := s.ValidateDependencyProfilePackages(profile); err != nil {
+		return DependencyProfile{}, err
+	}
+	if err := s.ValidateDependencyProfileBuildLimits(profile); err != nil {
+		return DependencyProfile{}, err
+	}
+	return profile, nil
 }
 
 func (s *Service) ValidateDependencyProfileForLanguage(value string, language string) (DependencyProfile, error) {
@@ -853,7 +959,11 @@ func (s *Service) normalizeDependencyProfile(value string) (DependencyProfile, e
 	if name == "" {
 		name = "stdlib"
 	}
-	for _, profile := range s.dependencyProfiles {
+	s.mu.RLock()
+	profiles := append([]DependencyProfile(nil), s.dependencyProfiles...)
+	s.mu.RUnlock()
+
+	for _, profile := range profiles {
 		if profile.Name == name {
 			if !profile.Enabled || profile.Status != "ready" {
 				return DependencyProfile{}, fmt.Errorf("dependency profile is not enabled: %s", name)
@@ -868,6 +978,68 @@ func (s *Service) normalizeDependencyProfile(value string) (DependencyProfile, e
 		}
 	}
 	return DependencyProfile{}, fmt.Errorf("unsupported dependency profile: %s", name)
+}
+
+func dependencyProfileBuildID(name string, version string) string {
+	name = strings.TrimSpace(name)
+	version = strings.TrimSpace(version)
+	if name == "" {
+		name = "profile"
+	}
+	if version == "" {
+		version = "unknown"
+	}
+	return "build_" + normalizePackageName(name) + "_" + strings.NewReplacer(".", "_", "-", "_", ":", "_", "/", "_").Replace(version)
+}
+
+func validDependencyProfileName(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') || char == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func normalizeDependencyProfileLanguages(values []string) []string {
+	seen := make(map[string]bool)
+	languages := make([]string, 0, len(values))
+	for _, value := range values {
+		language := normalizeLanguage(value)
+		if language == "" || seen[language] {
+			continue
+		}
+		switch language {
+		case "python3", "nodejs":
+			seen[language] = true
+			languages = append(languages, language)
+		}
+	}
+	return languages
+}
+
+func normalizeDependencyProfilePackages(packages []DependencyPackage, languages []string) []DependencyPackage {
+	normalized := make([]DependencyPackage, 0, len(packages))
+	defaultEcosystem := ""
+	if len(languages) == 1 {
+		defaultEcosystem = languages[0]
+	}
+	for _, pkg := range packages {
+		ecosystem := normalizePackageEcosystem(pkg.Ecosystem)
+		if ecosystem == "" {
+			ecosystem = defaultEcosystem
+		}
+		normalized = append(normalized, DependencyPackage{
+			Name:      normalizePackageName(pkg.Name),
+			Version:   strings.TrimSpace(pkg.Version),
+			Ecosystem: ecosystem,
+		})
+	}
+	return normalized
 }
 
 func normalizePackageEcosystem(value string) string {
