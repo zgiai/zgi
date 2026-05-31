@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Check, Search, Table2 } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogBody,
@@ -227,61 +227,75 @@ export function AgentRuntimeDatabaseTableDialog({
                 {t('database.noTables')}
               </div>
             ) : (
-              <div className="space-y-2">
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
                 {filteredTables.map(table => {
                   const checked = selectedTableIDs.has(table.id);
                   const writable = writableTableIDs.has(table.id);
+                  const label = tableLabel(table, t('database.unnamedTable'));
+                  const description = tableDescription(table, t('database.noDescription'));
                   return (
                     <div
                       key={table.id}
                       className={cn(
-                        'flex w-full items-start gap-3 rounded-md border bg-background p-3 text-left transition-colors hover:border-primary/50 hover:bg-muted/30',
+                        'flex min-h-28 w-full cursor-pointer flex-col rounded-lg border bg-background p-4 text-left transition-colors hover:border-primary/50 hover:bg-muted/30',
                         checked && 'border-primary bg-primary/5'
                       )}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => handleToggleTable(table.id, !checked)}
+                      onKeyDown={event => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          handleToggleTable(table.id, !checked);
+                        }
+                      }}
                     >
-                      <Checkbox
-                        checked={checked}
-                        onCheckedChange={value => handleToggleTable(table.id, value === true)}
-                        className="mt-0.5"
-                        aria-label={t('database.selectTableForBinding', {
-                          name: tableLabel(table, t('database.unnamedTable')),
-                        })}
-                      />
-                      <span className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-muted text-primary">
-                        <Table2 className="size-4" />
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-medium">
-                          {tableLabel(table, t('database.unnamedTable'))}
+                      <span className="flex items-start gap-3">
+                        <span className="flex size-10 shrink-0 items-center justify-center rounded-lg border bg-muted text-primary">
+                          <Table2 className="size-5" />
                         </span>
-                        {table.description || table.table_name ? (
-                          <span className="mt-1 block truncate text-xs text-muted-foreground">
-                            {table.description || table.table_name}
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-semibold">{label}</span>
+                          <span className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
+                            {description}
                           </span>
-                        ) : null}
-                        {checked ? (
-                          <span
-                            className="mt-2 flex items-center gap-2 text-xs text-muted-foreground"
-                          >
-                            <Switch
-                              checked={writable}
-                              disabled={!canEditWritable}
-                              onCheckedChange={value =>
-                                handleToggleWritable(table.id, value === true)
-                              }
-                              aria-label={t('database.allowWriteForTable', {
-                                name: tableLabel(table, t('database.unnamedTable')),
-                              })}
-                            />
-                            <span>{t('database.allowWrite')}</span>
-                          </span>
-                        ) : null}
-                      </span>
-                      {checked ? (
-                        <span className="mt-1 flex size-5 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
-                          <Check className="size-3.5" />
+                          {checked ? (
+                            <span
+                              className="mt-3 flex w-fit items-center gap-2 text-xs text-muted-foreground"
+                              onPointerDown={event => event.stopPropagation()}
+                              onMouseDown={event => event.stopPropagation()}
+                              onClick={event => event.stopPropagation()}
+                              onKeyDown={event => event.stopPropagation()}
+                            >
+                              <Badge variant="subtle">
+                                {writable ? t('database.writeEnabled') : t('database.readOnly')}
+                              </Badge>
+                              <Switch
+                                checked={writable}
+                                disabled={!canEditWritable}
+                                onCheckedChange={value =>
+                                  handleToggleWritable(table.id, value === true)
+                                }
+                                aria-label={t('database.allowWriteForTable', {
+                                  name: label,
+                                })}
+                              />
+                              <span>{t('database.allowWrite')}</span>
+                            </span>
+                          ) : null}
                         </span>
-                      ) : null}
+                        <span
+                          className={cn(
+                            'flex size-5 shrink-0 items-center justify-center rounded-full border',
+                            checked
+                              ? 'border-primary bg-primary text-primary-foreground'
+                              : 'bg-background'
+                          )}
+                          aria-label={t('database.selectTableForBinding', { name: label })}
+                        >
+                          {checked ? <Check className="size-3.5" /> : null}
+                        </span>
+                      </span>
                     </div>
                   );
                 })}
@@ -310,6 +324,19 @@ export function AgentRuntimeDatabaseTableDialog({
 
 function tableLabel(table: DbTable, fallback: string) {
   return table.name || table.table_name || fallback;
+}
+
+function tableDescription(table: DbTable, fallback: string) {
+  const description = table.description?.trim();
+  if (!description) return fallback;
+
+  const technicalNames = [table.name, table.table_name, table.id]
+    .map(value => value?.trim())
+    .filter(Boolean);
+  if (technicalNames.includes(description)) return fallback;
+  if (/^zgi_base_tbl_/i.test(description)) return fallback;
+
+  return description;
 }
 
 function normalizeBindings(input: AgentDatabaseBinding[]): AgentDatabaseBinding[] {

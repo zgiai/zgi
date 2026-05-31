@@ -93,11 +93,12 @@ func (t *knowledgeTool) Invoke(ctx context.Context, userID string, params map[st
 	if t.service == nil {
 		return nil, fmt.Errorf("knowledge retrieval service is not configured")
 	}
-	scope, err := t.scope(userID, appID)
+	runtime := knowledgeRuntime{runtime: t.Runtime(), tenantID: t.GetTenantID()}
+	scope, err := runtime.scope(userID, appID)
 	if err != nil {
 		return nil, err
 	}
-	if err := t.authorizeRuntime(); err != nil {
+	if err := runtime.authorize(t.kind); err != nil {
 		return nil, err
 	}
 	switch t.kind {
@@ -124,7 +125,7 @@ func (t *knowledgeTool) Invoke(ctx context.Context, userID string, params map[st
 		if err != nil {
 			return nil, err
 		}
-		applyAgentKnowledgeRuntimeConfig(t.Runtime(), &req)
+		runtime.applyAgentConfig(&req)
 		response, err := t.service.RetrieveAgentKnowledge(ctx, req)
 		if err != nil {
 			return nil, err
@@ -135,87 +136,12 @@ func (t *knowledgeTool) Invoke(ctx context.Context, userID string, params map[st
 	}
 }
 
-func applyAgentKnowledgeRuntimeConfig(runtime *tools.ToolRuntime, req *dataset_service.KnowledgeRetrieveRequest) {
-	if runtime == nil || req == nil || len(runtime.RuntimeParameters) == 0 {
-		return
-	}
-	if datasetIDs := stringListValue(runtime.RuntimeParameters, "knowledge_dataset_ids"); len(datasetIDs) > 0 {
-		req.DatasetIDs = datasetIDs
-	}
-	if config := mapValue(runtime.RuntimeParameters, "knowledge_retrieval_config"); len(config) > 0 {
-		req.RetrievalConfig = config
-	}
-	if boolValue(runtime.RuntimeParameters, "knowledge_binding_grant") {
-		req.AgentBindingGrant = true
-	}
-}
-
 func (t *knowledgeTool) ForkToolRuntime(runtime *tools.ToolRuntime) tools.Tool {
 	return &knowledgeTool{
 		BuiltinTool: t.BuiltinTool.ForkToolRuntime(runtime),
 		service:     t.service,
 		kind:        t.kind,
 	}
-}
-
-func (t *knowledgeTool) scope(userID string, appID *string) (dataset_service.KnowledgeScope, error) {
-	runtime := t.Runtime()
-	tenantID := strings.TrimSpace(t.GetTenantID())
-	if runtime != nil && strings.TrimSpace(runtime.TenantID) != "" {
-		tenantID = strings.TrimSpace(runtime.TenantID)
-	}
-	organizationID := ""
-	workspaceID := ""
-	accountID := strings.TrimSpace(userID)
-	if runtime != nil {
-		organizationID = strings.TrimSpace(stringValue(runtime.RuntimeParameters, "organization_id"))
-		workspaceID = strings.TrimSpace(stringValue(runtime.RuntimeParameters, "workspace_id"))
-		if runtime.InvokeFrom == tools.ToolInvokeFromAgent {
-			if boundBy := strings.TrimSpace(stringValue(runtime.RuntimeParameters, "knowledge_bound_by_account_id")); boundBy != "" {
-				accountID = boundBy
-			}
-		}
-	}
-	if accountID == "" {
-		return dataset_service.KnowledgeScope{}, fmt.Errorf("account_id is required")
-	}
-	if organizationID == "" && workspaceID == "" {
-		if runtime != nil && runtime.InvokeFrom == tools.ToolInvokeFromAIChat {
-			organizationID = tenantID
-		} else {
-			workspaceID = tenantID
-		}
-	}
-	if organizationID == "" && workspaceID == "" {
-		return dataset_service.KnowledgeScope{}, fmt.Errorf("organization_id or workspace_id is required")
-	}
-	scope := dataset_service.KnowledgeScope{
-		WorkspaceID:    workspaceID,
-		OrganizationID: organizationID,
-		AccountID:      accountID,
-	}
-	if appID != nil {
-		scope.AppID = strings.TrimSpace(*appID)
-	}
-	return scope, nil
-}
-
-func (t *knowledgeTool) authorizeRuntime() error {
-	runtime := t.Runtime()
-	if runtime == nil {
-		return nil
-	}
-	switch t.kind {
-	case ToolListAccessibleKnowledge, ToolRetrieveKnowledge:
-		if runtime.InvokeFrom != "" && runtime.InvokeFrom != tools.ToolInvokeFromAIChat {
-			return fmt.Errorf("%s is only available to internal AIChat skills", t.kind)
-		}
-	case ToolRetrieveAgentKnowledge:
-		if runtime.InvokeFrom != "" && runtime.InvokeFrom != tools.ToolInvokeFromAIChat && runtime.InvokeFrom != tools.ToolInvokeFromAgent {
-			return fmt.Errorf("%s is only available to AIChat or Agent skill runtimes", t.kind)
-		}
-	}
-	return nil
 }
 
 func knowledgeRetrieveRequest(scope dataset_service.KnowledgeScope, params map[string]interface{}) (dataset_service.KnowledgeRetrieveRequest, error) {

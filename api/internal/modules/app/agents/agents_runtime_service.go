@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/suggestedquestions"
@@ -1246,34 +1247,28 @@ func databaseBindingGrantNeedsRefresh(previous []dto.AgentDatabaseBinding, previ
 
 func bindingGrantForStringIDs(previous []string, previousActor string, previousAtUnix int64, current []string, actorAccountID string, nowUnix int64) (string, int64) {
 	current = normalizeStringIDs(current)
-	if len(current) == 0 {
-		return "", 0
-	}
 	previous = normalizeStringIDs(previous)
-	previousActor = strings.TrimSpace(previousActor)
-	if stringIDsEqual(previous, current) && previousActor != "" && previousAtUnix > 0 {
-		return previousActor, previousAtUnix
-	}
-	if strings.TrimSpace(actorAccountID) != "" {
-		return strings.TrimSpace(actorAccountID), nowUnix
-	}
-	return previousActor, previousAtUnix
+	grant := runtimeservice.ResolveBoundResourceGrant(
+		runtimeservice.NewBoundResourceGrant(previousActor, previousAtUnix),
+		len(current) > 0,
+		stringIDsEqual(previous, current),
+		actorAccountID,
+		nowUnix,
+	)
+	return grant.BoundByAccountID, grant.BoundAtUnix
 }
 
 func bindingGrantForDatabaseBindings(previous []dto.AgentDatabaseBinding, previousActor string, previousAtUnix int64, current []dto.AgentDatabaseBinding, actorAccountID string, nowUnix int64) (string, int64) {
 	current = normalizeAgentDatabaseBindings(current)
-	if len(current) == 0 {
-		return "", 0
-	}
 	previous = normalizeAgentDatabaseBindings(previous)
-	previousActor = strings.TrimSpace(previousActor)
-	if databaseBindingsEqual(previous, current) && previousActor != "" && previousAtUnix > 0 {
-		return previousActor, previousAtUnix
-	}
-	if strings.TrimSpace(actorAccountID) != "" {
-		return strings.TrimSpace(actorAccountID), nowUnix
-	}
-	return previousActor, previousAtUnix
+	grant := runtimeservice.ResolveBoundResourceGrant(
+		runtimeservice.NewBoundResourceGrant(previousActor, previousAtUnix),
+		len(current) > 0,
+		databaseBindingsEqual(previous, current),
+		actorAccountID,
+		nowUnix,
+	)
+	return grant.BoundByAccountID, grant.BoundAtUnix
 }
 
 func stringIDsEqual(left []string, right []string) bool {

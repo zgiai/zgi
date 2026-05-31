@@ -56,6 +56,7 @@ interface AIChatAgenticTimelineProps {
   skillDisplayById: AIChatSkillDisplayMap;
   defaultOpen?: boolean;
   showMemoryKey?: boolean;
+  showSkillEventDetails?: boolean;
 }
 
 interface SkillTimelineViewModel {
@@ -158,13 +159,42 @@ function buildSkillTitle(
 
 function SkillTimelineRow({
   event,
+  showDetails,
 }: {
   event: SkillTimelineViewModel;
+  showDetails: boolean;
 }) {
   const t = useT('webapp');
   const { locale } = useLocale();
   const [isOpen, setIsOpen] = useState(false);
   const duration = getDurationText(event.item.invocation.duration_ms);
+  const rowContent = (
+    <>
+      <span
+        className={cn(
+          'flex size-5 shrink-0 items-center justify-center rounded-full border bg-background',
+          event.tone === 'error'
+            ? 'border-destructive/40 text-destructive'
+            : 'border-border text-muted-foreground'
+        )}
+      >
+        {getStatusIcon(event.tone)}
+      </span>
+      <AIChatSkillIcon
+        icon={event.skill.icon}
+        className="size-3.5 shrink-0 text-muted-foreground"
+      />
+      <span className="min-w-0 flex-1 truncate text-foreground">{event.title}</span>
+      {duration ? <span className="shrink-0 text-muted-foreground">{duration}</span> : null}
+      {showDetails ? (
+        <ChevronDown
+          className={cn('size-3.5 shrink-0 text-muted-foreground transition-transform', {
+            'rotate-180': isOpen,
+          })}
+        />
+      ) : null}
+    </>
+  );
 
   return (
     <div
@@ -173,35 +203,21 @@ function SkillTimelineRow({
         event.tone === 'error' ? 'border-destructive/30' : 'border-border'
       )}
     >
-      <button
-        type="button"
-        className="flex min-h-8 w-full min-w-0 items-center gap-2 px-2.5 py-1.5 text-left"
-        onClick={() => setIsOpen(open => !open)}
-        aria-expanded={isOpen}
-      >
-        <span
-          className={cn(
-            'flex size-5 shrink-0 items-center justify-center rounded-full border bg-background',
-            event.tone === 'error'
-              ? 'border-destructive/40 text-destructive'
-              : 'border-border text-muted-foreground'
-          )}
+      {showDetails ? (
+        <button
+          type="button"
+          className="flex min-h-8 w-full min-w-0 items-center gap-2 px-2.5 py-1.5 text-left"
+          onClick={() => setIsOpen(open => !open)}
+          aria-expanded={isOpen}
         >
-          {getStatusIcon(event.tone)}
-        </span>
-        <AIChatSkillIcon
-          icon={event.skill.icon}
-          className="size-3.5 shrink-0 text-muted-foreground"
-        />
-        <span className="min-w-0 flex-1 truncate text-foreground">{event.title}</span>
-        {duration ? <span className="shrink-0 text-muted-foreground">{duration}</span> : null}
-        <ChevronDown
-          className={cn('size-3.5 shrink-0 text-muted-foreground transition-transform', {
-            'rotate-180': isOpen,
-          })}
-        />
-      </button>
-      {isOpen ? (
+          {rowContent}
+        </button>
+      ) : (
+        <div className="flex min-h-8 w-full min-w-0 items-center gap-2 px-2.5 py-1.5 text-left">
+          {rowContent}
+        </div>
+      )}
+      {showDetails && isOpen ? (
         <div className="border-t bg-muted/20 px-2.5 py-2">
           {event.detail ? (
             <div className="mb-2 whitespace-pre-wrap break-words text-muted-foreground">
@@ -398,6 +414,7 @@ export function AIChatAgenticTimeline({
   skillDisplayById,
   defaultOpen = true,
   showMemoryKey = true,
+  showSkillEventDetails = true,
 }: AIChatAgenticTimelineProps) {
   const t = useT('webapp');
   const { locale } = useLocale();
@@ -502,7 +519,11 @@ export function AIChatAgenticTimeline({
             ) : isMemoryEventItem(item) ? (
               <MemoryTimelineRow key={item.id} item={item} showMemoryKey={showMemoryKey} />
             ) : (
-              <SkillTimelineRow key={item.item.id} event={item} />
+              <SkillTimelineRow
+                key={item.item.id}
+                event={item}
+                showDetails={showSkillEventDetails}
+              />
             )
           )}
         </div>

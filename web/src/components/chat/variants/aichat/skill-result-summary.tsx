@@ -13,6 +13,19 @@ const KNOWLEDGE_RESULT_KEYS = [
   'source_summary',
 ] as const;
 
+const DATABASE_RESULT_KEYS = [
+  'database_name',
+  'schema_name',
+  'table_name',
+  'databases_count',
+  'tables_count',
+  'columns_count',
+  'records_count',
+  'affected_rows',
+  'total_num',
+  'has_more',
+] as const;
+
 const RESULT_LABEL_KEYS = {
   result: 'consoleChat.skills.trace.result.result',
   status: 'consoleChat.skills.trace.result.status',
@@ -21,6 +34,16 @@ const RESULT_LABEL_KEYS = {
   topScore: 'consoleChat.skills.trace.result.topScore',
   warnings: 'consoleChat.skills.trace.result.warnings',
   sources: 'consoleChat.skills.trace.result.sources',
+  databaseName: 'consoleChat.skills.trace.result.databaseName',
+  schemaName: 'consoleChat.skills.trace.result.schemaName',
+  tableName: 'consoleChat.skills.trace.result.tableName',
+  databasesCount: 'consoleChat.skills.trace.result.databasesCount',
+  tablesCount: 'consoleChat.skills.trace.result.tablesCount',
+  columnsCount: 'consoleChat.skills.trace.result.columnsCount',
+  recordsCount: 'consoleChat.skills.trace.result.recordsCount',
+  affectedRows: 'consoleChat.skills.trace.result.affectedRows',
+  totalNum: 'consoleChat.skills.trace.result.totalNum',
+  hasMore: 'consoleChat.skills.trace.result.hasMore',
 } as const;
 
 const OMITTED_RESULT_KEYS = new Set([
@@ -28,6 +51,14 @@ const OMITTED_RESULT_KEYS = new Set([
   'context_blocks',
   'retriever_resources',
   'graph_executions',
+  'data_source',
+  'data_source_id',
+  'table',
+  'table_id',
+  'physical_table_id',
+  'physical_table_name',
+  'records',
+  'columns',
 ]);
 
 interface ResultSummaryRow {
@@ -115,10 +146,35 @@ function buildKnowledgeRows(result: Record<string, unknown>): ResultSummaryRow[]
   return rows;
 }
 
+function buildDatabaseRows(result: Record<string, unknown>): ResultSummaryRow[] {
+  const rows: ResultSummaryRow[] = [];
+  const push = (key: string, labelKey: keyof typeof RESULT_LABEL_KEYS, value: string | null) => {
+    if (value) rows.push({ key, labelKey, value });
+  };
+
+  push('database_name', 'databaseName', formatScalar(result.database_name));
+  push('schema_name', 'schemaName', formatScalar(result.schema_name));
+  push('table_name', 'tableName', formatScalar(result.table_name));
+  push('databases_count', 'databasesCount', formatScalar(result.databases_count));
+  push('tables_count', 'tablesCount', formatScalar(result.tables_count));
+  push('columns_count', 'columnsCount', formatScalar(result.columns_count));
+  push('records_count', 'recordsCount', formatScalar(result.records_count));
+  push('affected_rows', 'affectedRows', formatScalar(result.affected_rows));
+  push('total_num', 'totalNum', formatScalar(result.total_num));
+  push('has_more', 'hasMore', formatScalar(result.has_more));
+  return rows;
+}
+
 function buildResultRows(result: Record<string, unknown>): ResultSummaryRow[] {
   const hasKnowledgeFields = KNOWLEDGE_RESULT_KEYS.some(key => result[key] !== undefined);
   if (hasKnowledgeFields) {
     const rows = buildKnowledgeRows(result);
+    if (rows.length) return rows;
+  }
+
+  const hasDatabaseFields = DATABASE_RESULT_KEYS.some(key => result[key] !== undefined);
+  if (hasDatabaseFields) {
+    const rows = buildDatabaseRows(result);
     if (rows.length) return rows;
   }
 

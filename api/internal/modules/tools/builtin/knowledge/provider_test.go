@@ -287,6 +287,7 @@ func TestRetrieveAgentKnowledgeUsesBindingActorAccount(t *testing.T) {
 			"knowledge_bound_by_account_id": "binder-1",
 			"knowledge_binding_grant":       true,
 			"knowledge_dataset_ids":         []string{"ds-1"},
+			"knowledge_retrieval_config":    map[string]interface{}{"top_k": float64(8)},
 		},
 	})
 
@@ -304,5 +305,8 @@ func TestRetrieveAgentKnowledgeUsesBindingActorAccount(t *testing.T) {
 	}
 	if !service.lastRequest.AgentBindingGrant {
 		t.Fatalf("AgentBindingGrant = false, want true")
+	}
+	if got := service.lastRequest.RetrievalConfig["top_k"]; got != float64(8) {
+		t.Fatalf("RetrievalConfig[top_k] = %#v, want 8", got)
 	}
 }

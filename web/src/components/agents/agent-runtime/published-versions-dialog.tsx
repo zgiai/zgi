@@ -11,7 +11,6 @@ import {
   PopoverTitle,
   PopoverTrigger,
 } from '@/components/ui/popover';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useT } from '@/i18n';
@@ -73,7 +72,7 @@ export function AgentRuntimeVersionPopover({
           <PopoverTitle>{t('publishedVersions.title')}</PopoverTitle>
           <PopoverDescription>{t('publishedVersions.popoverDescription')}</PopoverDescription>
         </PopoverHeader>
-        <ScrollArea className="max-h-[420px]">
+        <div className="max-h-[min(420px,calc(100vh-180px))] overflow-y-auto">
           <div className="space-y-3 p-4">
             {isLoading ? (
               <>
@@ -126,7 +125,7 @@ export function AgentRuntimeVersionPopover({
               })
             )}
           </div>
-        </ScrollArea>
+        </div>
         <div className="flex items-center justify-between gap-2 border-t p-3">
           <Button
             variant="outline"

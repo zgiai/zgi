@@ -417,15 +417,40 @@ export function usePublishAgent() {
   const queryClient = useQueryClient();
   const t = useT('agents');
 
-  return useMutation<ApiResponseData<PublishAgentResponse>, unknown, { agentId: string }>({
+  return useMutation<
+    ApiResponseData<PublishAgentResponse>,
+    unknown,
+    { agentId: string; silent?: boolean }
+  >({
     mutationFn: ({ agentId }) => agentService.publishAgent(agentId),
-    onSuccess: (_data, { agentId }) => {
+    onSuccess: (data, { agentId, silent }) => {
+      const published = data?.data;
+      queryClient.setQueryData<ApiResponseData<AgentDetail>>(
+        AGENT_KEYS.detail(agentId),
+        previous =>
+          previous?.data
+            ? {
+                ...previous,
+                data: {
+                  ...previous.data,
+                  is_published: true,
+                  web_app_id: published?.web_app_id || previous.data.web_app_id,
+                  web_app_status: previous.data.web_app_status ?? 'active',
+                },
+              }
+            : previous
+      );
       queryClient.invalidateQueries({ queryKey: AGENT_KEYS.detail(agentId) });
       queryClient.invalidateQueries({ queryKey: AGENT_KEYS.lists() });
-      toast.success(t('toasts.publishSuccess'));
+      queryClient.invalidateQueries({ queryKey: [...AGENT_KEYS.all, 'runnable-webapps'] });
+      if (!silent) {
+        toast.success(t('toasts.publishSuccess'));
+      }
     },
-    onError: (error: unknown) => {
-      toast.error(getErrorMessage(error) || t('toasts.publishFailed'));
+    onError: (error: unknown, variables) => {
+      if (!variables?.silent) {
+        toast.error(getErrorMessage(error) || t('toasts.publishFailed'));
+      }
     },
   });
 }

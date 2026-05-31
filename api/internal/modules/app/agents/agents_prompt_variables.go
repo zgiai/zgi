@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/google/uuid"
@@ -14,7 +15,7 @@ import (
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
-var agentPromptVariablePattern = regexp.MustCompile(`(?s)<zgi:(slot|knowledge|skill)\b([^>]*)>(.*?)</zgi:(slot|knowledge|skill)>`)
+var agentPromptVariablePattern = regexp.MustCompile(`(?s)<zgi:(slot|knowledge|skill|database|table)\b([^>]*)>(.*?)</zgi:(slot|knowledge|skill|database|table)>`)
 var agentPromptVariableAttrPattern = regexp.MustCompile(`([a-zA-Z_][\w-]*)="([^"]*)"`)
 
 const (
@@ -26,6 +27,22 @@ type agentPromptDatasetSummary struct {
 	ID          string
 	Name        string
 	Description string
+}
+
+type agentPromptDatabaseSummary struct {
+	ID          string
+	Name        string
+	Description string
+	SchemaName  string
+	Tables      []agentPromptTableSummary
+}
+
+type agentPromptTableSummary struct {
+	ID           string
+	DataSourceID string
+	Name         string
+	Description  string
+	Writable     bool
 }
 
 func (h *AgentsHandler) agentRunConfig(ctx context.Context, scope runtimeservice.Scope, agentID, systemPromptVersion string, cfg dto.AgentConfigResponse, agentMemoryUserScope string) (runtimeservice.RunConfig, error) {
@@ -99,6 +116,7 @@ func (h *AgentsHandler) resolveAgentSystemPrompt(ctx context.Context, scope runt
 
 	datasets := h.agentPromptDatasets(ctx, scope, cfg.KnowledgeDatasetIDs)
 	skillMetadata := h.agentPromptSkills(ctx, scope, cfg.EnabledSkillIDs)
+	databases := h.agentPromptDatabases(ctx, scope, cfg.DatabaseBindings)
 
 	return agentPromptVariablePattern.ReplaceAllStringFunc(source, func(token string) string {
 		matches := agentPromptVariablePattern.FindStringSubmatch(token)
@@ -115,6 +133,10 @@ func (h *AgentsHandler) resolveAgentSystemPrompt(ctx context.Context, scope runt
 			return renderAgentPromptKnowledgeVariable(attrs["id"], datasets)
 		case "skill":
 			return renderAgentPromptSkillVariable(attrs["id"], skillMetadata)
+		case "database":
+			return renderAgentPromptDatabaseVariable(attrs["id"], databases)
+		case "table":
+			return renderAgentPromptTableVariable(attrs["id"], databases)
 		}
 		return agentPromptDisabledCapability(token)
 	})
@@ -193,6 +215,81 @@ func (h *AgentsHandler) agentPromptSkills(ctx context.Context, scope runtimeserv
 	return out
 }
 
+func (h *AgentsHandler) agentPromptDatabases(ctx context.Context, scope runtimeservice.Scope, bindings []dto.AgentDatabaseBinding) map[string]agentPromptDatabaseSummary {
+	boundDataSources, boundTables, writableTables := normalizeAgentPromptDatabaseBindings(bindings)
+	if len(boundDataSources) == 0 || len(boundTables) == 0 || h == nil || h.db == nil {
+		return map[string]agentPromptDatabaseSummary{}
+	}
+
+	var dbRows []agentPromptDatabaseSummary
+	query := h.db.WithContext(ctx).
+		Table("data_sources").
+		Select("id, name, COALESCE(description, '') AS description, COALESCE(schema_name, '') AS schema_name").
+		Where("id IN ?", boundDataSources)
+	if scope.OrganizationID != uuid.Nil {
+		query = query.Where("organization_id = ?", scope.OrganizationID.String())
+	}
+	if scope.WorkspaceID != nil && *scope.WorkspaceID != uuid.Nil {
+		query = query.Where("workspace_id = ?", scope.WorkspaceID.String())
+	}
+	if err := query.Find(&dbRows).Error; err != nil {
+		logger.WarnContext(ctx, "failed to resolve agent prompt database variables", err)
+		return map[string]agentPromptDatabaseSummary{}
+	}
+
+	out := make(map[string]agentPromptDatabaseSummary, len(dbRows))
+	loadedDataSourceIDs := make([]string, 0, len(dbRows))
+	for _, row := range dbRows {
+		row.ID = strings.TrimSpace(row.ID)
+		if row.ID == "" {
+			continue
+		}
+		out[row.ID] = row
+		loadedDataSourceIDs = append(loadedDataSourceIDs, row.ID)
+	}
+	if len(loadedDataSourceIDs) == 0 {
+		return out
+	}
+
+	tableIDs := make([]string, 0, len(boundTables))
+	for tableID := range boundTables {
+		tableIDs = append(tableIDs, tableID)
+	}
+	var tableRows []agentPromptTableSummary
+	tableQuery := h.db.WithContext(ctx).
+		Table("data_source_tables").
+		Select("id, data_source_id, name, COALESCE(description, '') AS description").
+		Where("data_source_id IN ?", loadedDataSourceIDs).
+		Where("id IN ?", tableIDs)
+	if scope.OrganizationID != uuid.Nil {
+		tableQuery = tableQuery.Where("organization_id = ?", scope.OrganizationID.String())
+	}
+	if err := tableQuery.Find(&tableRows).Error; err != nil {
+		logger.WarnContext(ctx, "failed to resolve agent prompt database table variables", err)
+		return out
+	}
+
+	for _, table := range tableRows {
+		table.ID = strings.TrimSpace(table.ID)
+		table.DataSourceID = strings.TrimSpace(table.DataSourceID)
+		if table.ID == "" || table.DataSourceID == "" {
+			continue
+		}
+		table.Writable = writableTables[table.DataSourceID+":"+table.ID]
+		dbSummary, ok := out[table.DataSourceID]
+		if !ok {
+			continue
+		}
+		dbSummary.Tables = append(dbSummary.Tables, table)
+		out[table.DataSourceID] = dbSummary
+	}
+	for id, dbSummary := range out {
+		sortAgentPromptTables(dbSummary.Tables)
+		out[id] = dbSummary
+	}
+	return out
+}
+
 func renderAgentPromptKnowledgeVariable(key string, datasets map[string]agentPromptDatasetSummary) string {
 	id := strings.TrimSpace(key)
 	if id == "" {
@@ -211,6 +308,35 @@ func renderAgentPromptSkillVariable(key string, metadata map[string]skills.Skill
 	return agentPromptDisabledCapability("skill." + key)
 }
 
+func renderAgentPromptDatabaseVariable(key string, databases map[string]agentPromptDatabaseSummary) string {
+	id := strings.TrimSpace(key)
+	if id == "" {
+		return agentPromptDisabledCapability("database")
+	}
+	if item, ok := databases[id]; ok {
+		return renderAgentPromptDatabase(item)
+	}
+	return agentPromptDisabledCapability("database." + id)
+}
+
+func renderAgentPromptTableVariable(key string, databases map[string]agentPromptDatabaseSummary) string {
+	dataSourceID, tableID := splitAgentPromptTableKey(key)
+	if tableID == "" {
+		return agentPromptDisabledCapability("table." + key)
+	}
+	for _, database := range databases {
+		if dataSourceID != "" && database.ID != dataSourceID {
+			continue
+		}
+		for _, table := range database.Tables {
+			if table.ID == tableID {
+				return renderAgentPromptTable(database, table)
+			}
+		}
+	}
+	return agentPromptDisabledCapability("table." + key)
+}
+
 func renderAgentPromptDataset(item agentPromptDatasetSummary) string {
 	name := strings.TrimSpace(item.Name)
 	if name == "" {
@@ -221,6 +347,70 @@ func renderAgentPromptDataset(item agentPromptDatasetSummary) string {
 		return fmt.Sprintf("%s (ID: %s)", name, item.ID)
 	}
 	return fmt.Sprintf("%s (ID: %s): %s", name, item.ID, desc)
+}
+
+func renderAgentPromptDatabase(item agentPromptDatabaseSummary) string {
+	name := strings.TrimSpace(item.Name)
+	if name == "" {
+		name = "Unnamed database"
+	}
+	parts := []string{fmt.Sprintf("Database: %s", name)}
+	if schema := strings.TrimSpace(item.SchemaName); schema != "" {
+		parts = append(parts, "Schema: "+schema)
+	}
+	if desc := strings.TrimSpace(item.Description); desc != "" {
+		parts = append(parts, "Description: "+desc)
+	}
+	if len(item.Tables) > 0 {
+		tableLines := make([]string, 0, len(item.Tables))
+		for _, table := range item.Tables {
+			tableLines = append(tableLines, "- "+renderAgentPromptTableLine(table))
+		}
+		parts = append(parts, "Bound tables:\n"+strings.Join(tableLines, "\n"))
+	}
+	return strings.Join(parts, "\n")
+}
+
+func renderAgentPromptTable(database agentPromptDatabaseSummary, table agentPromptTableSummary) string {
+	dbName := strings.TrimSpace(database.Name)
+	if dbName == "" {
+		dbName = "Unnamed database"
+	}
+	parts := []string{
+		fmt.Sprintf("Data table: %s", renderAgentPromptTableName(table)),
+		"Database: " + dbName,
+	}
+	if schema := strings.TrimSpace(database.SchemaName); schema != "" {
+		parts = append(parts, "Schema: "+schema)
+	}
+	if desc := strings.TrimSpace(table.Description); desc != "" {
+		parts = append(parts, "Description: "+desc)
+	}
+	if table.Writable {
+		parts = append(parts, "Write access: enabled")
+	} else {
+		parts = append(parts, "Write access: disabled")
+	}
+	return strings.Join(parts, "\n")
+}
+
+func renderAgentPromptTableLine(table agentPromptTableSummary) string {
+	line := renderAgentPromptTableName(table)
+	if desc := strings.TrimSpace(table.Description); desc != "" {
+		line += ": " + desc
+	}
+	if table.Writable {
+		line += " (writable)"
+	}
+	return line
+}
+
+func renderAgentPromptTableName(table agentPromptTableSummary) string {
+	name := strings.TrimSpace(table.Name)
+	if name == "" {
+		name = "Unnamed table"
+	}
+	return name
 }
 
 func renderAgentPromptSkill(item skills.SkillDiscoveryMetadata) string {
@@ -272,4 +462,62 @@ func firstNonEmptyAgentPrompt(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func normalizeAgentPromptDatabaseBindings(bindings []dto.AgentDatabaseBinding) ([]string, map[string]string, map[string]bool) {
+	dataSources := make([]string, 0, len(bindings))
+	dataSourceSeen := map[string]struct{}{}
+	tableToDataSource := map[string]string{}
+	writableTables := map[string]bool{}
+	for _, binding := range bindings {
+		dataSourceID := strings.TrimSpace(binding.DataSourceID)
+		if dataSourceID == "" {
+			continue
+		}
+		if _, ok := dataSourceSeen[dataSourceID]; !ok {
+			dataSources = append(dataSources, dataSourceID)
+			dataSourceSeen[dataSourceID] = struct{}{}
+		}
+		tableSet := map[string]struct{}{}
+		for _, rawTableID := range binding.TableIDs {
+			tableID := strings.TrimSpace(rawTableID)
+			if tableID == "" {
+				continue
+			}
+			tableSet[tableID] = struct{}{}
+			tableToDataSource[tableID] = dataSourceID
+		}
+		for _, rawTableID := range binding.WritableTableIDs {
+			tableID := strings.TrimSpace(rawTableID)
+			if _, ok := tableSet[tableID]; ok {
+				writableTables[dataSourceID+":"+tableID] = true
+			}
+		}
+	}
+	return dataSources, tableToDataSource, writableTables
+}
+
+func splitAgentPromptTableKey(key string) (string, string) {
+	trimmed := strings.TrimSpace(key)
+	if trimmed == "" {
+		return "", ""
+	}
+	for _, separator := range []string{":", "/"} {
+		if strings.Contains(trimmed, separator) {
+			parts := strings.SplitN(trimmed, separator, 2)
+			return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+		}
+	}
+	return "", trimmed
+}
+
+func sortAgentPromptTables(tables []agentPromptTableSummary) {
+	sort.SliceStable(tables, func(i, j int) bool {
+		left := strings.ToLower(renderAgentPromptTableName(tables[i]))
+		right := strings.ToLower(renderAgentPromptTableName(tables[j]))
+		if left == right {
+			return tables[i].ID < tables[j].ID
+		}
+		return left < right
+	})
 }

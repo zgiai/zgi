@@ -36,7 +36,11 @@ import type { AgentConfigSection, AgentPublishedVersionListItem } from '../types
 import { toModelParams, validateAgentMemorySlots } from '../utils';
 import { useAgentRuntimeDraftPersistence } from '../use-agent-runtime-draft-persistence';
 import { useAgentRuntimeLeaveGuard } from '../use-agent-runtime-leave-guard';
-import { AgentHomeBrand, getAgentRuntimeSaveText, type VersionPreviewBackup } from './page-model-utils';
+import {
+  AgentHomeBrand,
+  getAgentRuntimeSaveText,
+  type VersionPreviewBackup,
+} from './page-model-utils';
 import { AGENT_SYSTEM_PROMPT_MAX_LENGTH } from '../prompt-limits';
 
 type AgentKnowledgeDataset = Dataset & { load_error?: boolean };
@@ -112,7 +116,9 @@ function normalizeAgentDatabaseBindings(bindings: AgentDatabaseBinding[]): Agent
     .map(([dataSourceId, tables]) => ({
       data_source_id: dataSourceId,
       table_ids: Array.from(tables.readable).sort(),
-      writable_table_ids: Array.from(tables.writable).filter(id => tables.readable.has(id)).sort(),
+      writable_table_ids: Array.from(tables.writable)
+        .filter(id => tables.readable.has(id))
+        .sort(),
     }))
     .sort((left, right) => left.data_source_id.localeCompare(right.data_source_id));
 }
@@ -703,7 +709,11 @@ export function useAgentRuntimePageModel(agentId: string) {
     }
     const saved = await saveNow({ silent: true, force: true });
     if (saved) {
-      publishAgent.mutate({ agentId });
+      try {
+        await publishAgent.mutateAsync({ agentId, silent: false });
+      } catch {
+        // The mutation hook owns user-facing error feedback.
+      }
     }
   }, [agentId, hasAgentMemorySlotErrors, isSystemPromptTooLong, publishAgent, saveNow, t]);
 
@@ -775,6 +785,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       systemPrompt,
       selectedKnowledgeDatasets,
       selectedSkills,
+      databaseBindings,
       onChangeSystemPrompt: setSystemPrompt,
       onOpenOptimizer: () => setPromptOptimizerOpen(true),
     },

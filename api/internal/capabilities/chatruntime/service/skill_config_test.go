@@ -133,6 +133,34 @@ func TestApplyRunConfigToPartsDisablesAccountMemoryForAgentCaller(t *testing.T) 
 	}
 }
 
+func TestSkillRuntimeParametersUseCapabilityConfig(t *testing.T) {
+	organizationID := uuid.New()
+	workspaceID := uuid.New()
+	params := skillRuntimeParameters(Scope{OrganizationID: organizationID, WorkspaceID: &workspaceID}, RunConfig{
+		BillingAppType:            runtimemodel.ConversationCallerAgent,
+		BillingAppID:              "agent-1",
+		KnowledgeDatasetIDs:       []string{"dataset-1"},
+		KnowledgeBoundByAccountID: "knowledge-binder",
+		KnowledgeBoundAtUnix:      123,
+		DatabaseBindings:          []AgentDatabaseBinding{{DataSourceID: "db-1", TableIDs: []string{"table-1"}}},
+		DatabaseBoundByAccountID:  "database-binder",
+		DatabaseBoundAtUnix:       456,
+	})
+
+	if params["organization_id"] != organizationID.String() || params["workspace_id"] != workspaceID.String() {
+		t.Fatalf("scope params = %#v, want organization and workspace ids", params)
+	}
+	if params["agent_id"] != "agent-1" {
+		t.Fatalf("agent_id = %#v, want agent-1", params["agent_id"])
+	}
+	if params["knowledge_binding_grant"] != true || params["knowledge_bound_by_account_id"] != "knowledge-binder" || params["knowledge_bound_at_unix"] != int64(123) {
+		t.Fatalf("knowledge grant params = %#v", params)
+	}
+	if params["database_binding_grant"] != true || params["database_bound_by_account_id"] != "database-binder" || params["database_bound_at_unix"] != int64(456) {
+		t.Fatalf("database grant params = %#v", params)
+	}
+}
+
 func TestVisibleSkillMetadataHidesRuntimeManagedSkills(t *testing.T) {
 	metadata := []skills.SkillDiscoveryMetadata{
 		{ID: skills.SkillInternalKnowledge},

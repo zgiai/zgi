@@ -2,234 +2,55 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
-	"time"
 
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skilltrace"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 func skillCallStartPayload(prepared *PreparedChat, skillID string, toolName string, argumentsSummary map[string]interface{}) map[string]interface{} {
-	return map[string]interface{}{
-		"conversation_id":   prepared.Conversation.ID.String(),
-		"message_id":        prepared.Message.ID.String(),
-		"skill_id":          skillID,
-		"tool_name":         toolName,
-		"arguments":         argumentsSummary,
-		"arguments_summary": argumentsSummary,
-		"created_at":        time.Now().Unix(),
-	}
+	return skilltrace.SkillCallStartPayload(skillTracePayloadIDs(prepared), skillID, toolName, argumentsSummary)
 }
 
 func skillCallEndPayload(prepared *PreparedChat, trace skills.SkillTrace) map[string]interface{} {
-	payload := map[string]interface{}{
-		"conversation_id": prepared.Conversation.ID.String(),
-		"message_id":      prepared.Message.ID.String(),
-		"kind":            trace.Kind,
-		"skill_id":        trace.SkillID,
-		"tool_name":       trace.ToolName,
-		"duration_ms":     trace.DurationMS,
-		"status":          trace.Status,
-		"created_at":      time.Now().Unix(),
-	}
-	if trace.Message != "" {
-		payload["message"] = trace.Message
-	}
-	if len(trace.Result) > 0 {
-		payload["result"] = trace.Result
-	}
-	return payload
+	return skilltrace.SkillCallEndPayload(skillTracePayloadIDs(prepared), trace, true)
 }
 
 func skillArtifactsFromToolMessages(prepared *PreparedChat, trace skills.SkillTrace, messages []tools.ToolInvokeMessage) []map[string]interface{} {
-	artifacts := make([]map[string]interface{}, 0)
-	for _, message := range messages {
-		if message.Type != tools.ToolInvokeMessageTypeFile || len(message.Meta) == 0 {
-			continue
-		}
-		file, ok := message.Meta["file"].(map[string]interface{})
-		if !ok || len(file) == 0 {
-			continue
-		}
-		artifacts = append(artifacts, skillArtifactFromToolFile(prepared, trace, message, file))
-	}
-	return artifacts
+	return skilltrace.SkillArtifactsFromToolMessages(skillTracePayloadIDs(prepared), trace, messages)
 }
 
 func summarizeSkillToolResult(skillID string, toolName string, messages []tools.ToolInvokeMessage) map[string]interface{} {
-	switch strings.TrimSpace(skillID) {
-	case "user-memory":
-	case "agent-knowledge":
-		return compactKnowledgeRetrieveResult(firstJSONToolPayload(messages))
-	case "internal-knowledge":
-		return compactInternalKnowledgeResult(toolName, firstJSONToolPayload(messages))
-	default:
-		return nil
-	}
-	payload := firstJSONToolPayload(messages)
-	switch strings.TrimSpace(toolName) {
-	case "add_user_memory", "update_user_memory":
-		return compactMemoryEntryResult(payload)
-	case "delete_user_memory":
-		return compactMemoryFields(payload, "result", "entry_id")
-	case "read_user_memory", "list_temporary_memories":
-		return map[string]interface{}{
-			"entries_count": len(interfaceSlice(payload["entries"])),
-		}
-	default:
-		return nil
-	}
-}
-
-func compactKnowledgeRetrieveResult(payload map[string]interface{}) map[string]interface{} {
-	if len(payload) == 0 {
-		return nil
-	}
-	return compactMemoryFields(payload, "query", "status", "result_count", "top_score", "source_summary", "warnings")
-}
-
-func compactInternalKnowledgeResult(toolName string, payload map[string]interface{}) map[string]interface{} {
-	switch strings.TrimSpace(toolName) {
-	case "list_accessible_knowledge_bases":
-		return compactMemoryFields(payload, "query", "status", "result_count", "fallback_used", "limit", "warnings")
-	case "retrieve_knowledge":
-		return compactKnowledgeRetrieveResult(payload)
-	default:
-		return nil
-	}
-}
-
-func firstJSONToolPayload(messages []tools.ToolInvokeMessage) map[string]interface{} {
-	for _, message := range messages {
-		if len(message.Data) > 0 {
-			return message.Data
-		}
-		if strings.TrimSpace(message.Text) == "" {
-			continue
-		}
-		var payload map[string]interface{}
-		if err := json.Unmarshal([]byte(message.Text), &payload); err == nil && len(payload) > 0 {
-			return payload
-		}
-	}
-	return map[string]interface{}{}
-}
-
-func compactMemoryEntryResult(payload map[string]interface{}) map[string]interface{} {
-	return compactMemoryFields(payload, "id", "entry_id", "content", "category", "memory_type", "expires_at", "status", "enabled")
-}
-
-func compactMemoryFields(payload map[string]interface{}, keys ...string) map[string]interface{} {
-	if len(payload) == 0 {
-		return nil
-	}
-	result := make(map[string]interface{}, len(keys))
-	for _, key := range keys {
-		if value, ok := payload[key]; ok && value != nil && value != "" {
-			result[key] = value
-		}
-	}
-	return result
-}
-
-func interfaceSlice(value interface{}) []interface{} {
-	switch typed := value.(type) {
-	case []interface{}:
-		return typed
-	default:
-		return nil
-	}
-}
-
-func skillArtifactFromToolFile(prepared *PreparedChat, trace skills.SkillTrace, message tools.ToolInvokeMessage, file map[string]interface{}) map[string]interface{} {
-	url := firstNonEmptyString(file["url"], message.Text)
-	downloadURL := firstNonEmptyString(file["download_url"])
-	if downloadURL == "" {
-		downloadURL = appendDownloadQuery(url)
-	}
-	artifact := map[string]interface{}{
-		"conversation_id": prepared.Conversation.ID.String(),
-		"message_id":      prepared.Message.ID.String(),
-		"artifact_type":   "file",
-		"skill_id":        trace.SkillID,
-		"tool_name":       trace.ToolName,
-		"file_id":         firstNonEmptyString(file["id"], file["related_id"]),
-		"filename":        stringFromAny(file["filename"]),
-		"extension":       stringFromAny(file["extension"]),
-		"mime_type":       stringFromAny(file["mime_type"]),
-		"size":            file["size"],
-		"url":             url,
-		"download_url":    downloadURL,
-		"transfer_method": stringFromAny(file["transfer_method"]),
-		"created_at":      time.Now().Unix(),
-	}
-	if fileType := stringFromAny(file["type"]); fileType != "" {
-		artifact["file_type"] = fileType
-	}
-	return artifact
+	return skilltrace.SummarizeToolResult(skillID, toolName, messages)
 }
 
 func skillCallErrorPayload(prepared *PreparedChat, trace skills.SkillTrace) map[string]interface{} {
-	return map[string]interface{}{
-		"conversation_id": prepared.Conversation.ID.String(),
-		"message_id":      prepared.Message.ID.String(),
-		"kind":            trace.Kind,
-		"skill_id":        trace.SkillID,
-		"tool_name":       trace.ToolName,
-		"duration_ms":     trace.DurationMS,
-		"status":          runtimemodel.MessageStatusError,
-		"message":         trace.Error,
-		"created_at":      time.Now().Unix(),
-	}
+	return skilltrace.SkillCallErrorPayload(skillTracePayloadIDs(prepared), trace, runtimemodel.MessageStatusError, true)
 }
 
 func skillLoadPayload(prepared *PreparedChat, skillID string) map[string]interface{} {
-	return map[string]interface{}{
-		"conversation_id": prepared.Conversation.ID.String(),
-		"message_id":      prepared.Message.ID.String(),
-		"skill_id":        skillID,
-		"created_at":      time.Now().Unix(),
-	}
+	return skilltrace.SkillLoadPayload(skillTracePayloadIDs(prepared), skillID)
 }
 
 func skillLoadEndPayload(prepared *PreparedChat, trace skills.SkillTrace) map[string]interface{} {
-	return map[string]interface{}{
-		"conversation_id": prepared.Conversation.ID.String(),
-		"message_id":      prepared.Message.ID.String(),
-		"skill_id":        trace.SkillID,
-		"duration_ms":     trace.DurationMS,
-		"status":          trace.Status,
-		"created_at":      time.Now().Unix(),
-	}
+	return skilltrace.SkillLoadEndPayload(skillTracePayloadIDs(prepared), trace)
 }
 
 func skillReferenceReadPayload(prepared *PreparedChat, trace skills.SkillTrace, path string) map[string]interface{} {
-	return map[string]interface{}{
-		"conversation_id": prepared.Conversation.ID.String(),
-		"message_id":      prepared.Message.ID.String(),
-		"skill_id":        trace.SkillID,
-		"path":            path,
-		"duration_ms":     trace.DurationMS,
-		"status":          trace.Status,
-		"created_at":      time.Now().Unix(),
-	}
+	return skilltrace.SkillReferenceReadPayload(skillTracePayloadIDs(prepared), trace, path)
 }
 
 func intermediateAnswerPayload(prepared *PreparedChat, trace skills.SkillTrace, answerID string, content string, index int, done bool, status string) map[string]interface{} {
-	return map[string]interface{}{
-		"conversation_id": prepared.Conversation.ID.String(),
-		"message_id":      prepared.Message.ID.String(),
-		"answer_id":       answerID,
-		"title":           trace.Title,
-		"content":         content,
-		"delta":           true,
-		"index":           index,
-		"done":            done,
-		"status":          status,
-		"created_at":      time.Now().Unix(),
+	return skilltrace.IntermediateAnswerPayload(skillTracePayloadIDs(prepared), trace, answerID, content, index, done, status)
+}
+
+func skillTracePayloadIDs(prepared *PreparedChat) skilltrace.PayloadIDs {
+	return skilltrace.PayloadIDs{
+		ConversationID: prepared.Conversation.ID.String(),
+		MessageID:      prepared.Message.ID.String(),
 	}
 }
 

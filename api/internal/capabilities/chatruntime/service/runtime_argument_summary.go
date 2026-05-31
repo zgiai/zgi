@@ -14,6 +14,8 @@ func summarizeSkillToolArguments(skillID string, toolName string, args map[strin
 		return summarizeAllowedArguments(args, []string{"timezone", "format", "operation", "base_date", "target_date", "date", "unit", "amount"})
 	case skills.SkillCalculator:
 		return summarizeCalculatorArguments(toolName, args)
+	case skills.SkillAgentDatabase, skills.SkillInternalDatabase:
+		return summarizeDatabaseArguments(args)
 	default:
 		return summarizeGenericArguments(args)
 	}
@@ -36,6 +38,10 @@ func summarizeCalculatorArguments(toolName string, args map[string]interface{}) 
 		}
 	}
 	return summary
+}
+
+func summarizeDatabaseArguments(args map[string]interface{}) map[string]interface{} {
+	return summarizeAllowedArguments(args, []string{"query", "limit", "offset", "order"})
 }
 
 func summarizeAllowedArguments(args map[string]interface{}, keys []string) map[string]interface{} {

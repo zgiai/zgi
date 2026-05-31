@@ -981,7 +981,8 @@ const messages = {
         generationCancelingTitle: 'Stopping test question generation...',
         generationCancelingDescription: 'Generation will stop after the current request finishes.',
         generationCanceledTitle: 'Test question generation stopped',
-        generationCanceledDescription: '{created} questions were created. You can generate again later.',
+        generationCanceledDescription:
+          '{created} questions were created. You can generate again later.',
         generationFailedBanner:
           'Failed to generate {requested} test questions. {created} were created. Error: {error}',
         generationFailedTitle: 'Failed to generate {count} test questions',
@@ -1163,8 +1164,7 @@ const messages = {
         turnStrategyHelpLabel: 'Conversation turn strategy help',
         turnStrategyHelpMixed:
           'Single + multi-turn: generate both single-turn and multi-turn conversation cases.',
-        turnStrategyHelpSingle:
-          'Single-turn: generate one-question, one-response test cases only.',
+        turnStrategyHelpSingle: 'Single-turn: generate one-question, one-response test cases only.',
         turnStrategyHelpMulti:
           'Multi-turn: generate test cases with follow-up questions and carried context only.',
         modelLabel: 'Generation Model',
@@ -1415,7 +1415,8 @@ const messages = {
       finishVersionPreviewFirst: 'Confirm or cancel version preview first',
       fixMemorySlotsBeforeSave: 'Fix memory item keys before saving.',
       fixMemorySlotsBeforePublish: 'Fix memory item keys before publishing.',
-      systemPromptTooLongBeforeSave: 'Shorten the system prompt to {limit} characters or less before saving.',
+      systemPromptTooLongBeforeSave:
+        'Shorten the system prompt to {limit} characters or less before saving.',
       systemPromptTooLongBeforePublish:
         'Shorten the system prompt to {limit} characters or less before publishing.',
     },
@@ -1439,6 +1440,18 @@ const messages = {
       webAppStatus: 'WebApp status',
       online: 'Online',
       offline: 'Offline',
+      takeOffline: 'Take Offline',
+      bringOnline: 'Bring Online',
+      offlineTitle: 'Take WebApp offline?',
+      onlineTitle: 'Bring WebApp online?',
+      offlineDescription:
+        'Users will not be able to access or run this WebApp until it is brought online again.',
+      onlineDescription: 'Users will be able to access and run this WebApp again.',
+      reasonLabel: 'Offline reason',
+      reasonPlaceholder: 'Optional, used for internal audit records.',
+      reasonCount: '{count}/{max}',
+      reasonTooLong: 'Offline reason cannot exceed 500 characters.',
+      cancel: 'Cancel',
       publishedVersions: 'Published versions',
       versions: 'Versions',
       preview: 'Preview and debug',
@@ -1473,6 +1486,13 @@ const messages = {
         groupTitle: 'Agent capabilities',
         knowledge: 'Knowledge',
         noKnowledge: 'No linked knowledge base',
+        database: 'Database',
+        noDatabase: 'No bound database',
+        databaseSummary: 'Database summary',
+        databaseTablesCount: '{count} bound table(s)',
+        table: 'Data table',
+        noTable: 'No bound data table',
+        writableTable: 'Writable',
         skill: 'Skill',
         noSkill: 'No enabled Skill',
       },
@@ -1649,6 +1669,7 @@ const messages = {
       writePermissionRequired:
         'Write authorization can only be edited by users with database AI query and data edit permissions.',
       writeEnabled: 'Writable',
+      readOnly: 'Read-only',
       writeLabel: 'Write',
       selectAllDatabaseTables: 'Select all tables',
       clearSelectedDatabaseTables: 'Clear selected tables',
@@ -1679,8 +1700,7 @@ const messages = {
       addCustomSlot: 'Custom item',
       applyTemplate: 'Apply template',
       addDialogTitle: 'Add memory item',
-      addDialogDescription:
-        'Create a stable key the model can use to manage one type of memory.',
+      addDialogDescription: 'Create a stable key the model can use to manage one type of memory.',
       addDialogConfirm: 'Add item',
       addDialogCancel: 'Cancel',
       maxItemsReached: 'Up to 5 memory items',
@@ -1691,7 +1711,8 @@ const messages = {
       keyLockedHelp:
         'This key has been saved and cannot be changed. Delete it and create a new item to use another key.',
       descriptionLabel: 'Description',
-      descriptionHelp: 'Tell the model what this memory type should store and when to update it. Up to 200 characters.',
+      descriptionHelp:
+        'Tell the model what this memory type should store and when to update it. Up to 200 characters.',
       slotKeyPlaceholder: 'memory_key',
       slotDescriptionPlaceholder: 'Describe what this memory item stores',
       maxChars: 'Maximum characters',

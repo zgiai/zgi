@@ -218,10 +218,12 @@ export interface VarOption {
   sourceId: string;
   sourceTitle: string;
   key: string;
+  insertKey?: string;
   type: WorkflowVariable['type'];
   description?: string;
   hasChildren?: boolean;
   label?: string;
+  displayKey?: string;
   showType?: boolean;
   invalid?: boolean;
 }
@@ -338,6 +340,7 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
     interface SuggestItem {
       sourceId: string;
       key: string;
+      insertKey?: string;
       sourceTitle?: string;
       type?: string;
       description?: string;
@@ -582,6 +585,13 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
             title: item.sourceTitle || item.sourceId,
             invalid: item.invalid,
           });
+          if (item.insertKey) {
+            map.set(`${item.sourceId}\0${item.insertKey}`, {
+              label: item.label || item.insertKey || item.sourceTitle,
+              title: item.sourceTitle || item.sourceId,
+              invalid: item.invalid,
+            });
+          }
         }
       }
       if (Array.isArray(extraSuggestGroups)) {
@@ -592,6 +602,13 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
               title: item.sourceTitle || item.sourceId,
               invalid: item.invalid,
             });
+            if (item.insertKey) {
+              map.set(`${item.sourceId}\0${item.insertKey}`, {
+                label: item.label || item.insertKey || item.sourceTitle,
+                title: item.sourceTitle || item.sourceId,
+                invalid: item.invalid,
+              });
+            }
           }
         }
       }
@@ -639,8 +656,18 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
     const suggestPath = useMemo(() => {
       if (!suggestState) return [];
       const { path } = suggestState;
-      return path.length > 0 ? [idToTitle.get(path[0]) || path[0], ...path.slice(1)] : [];
-    }, [suggestState, idToTitle]);
+      if (path.length === 0) return [];
+      const resolved = [idToTitle.get(path[0]) || path[0]];
+      let currentKey = '';
+      for (const segment of path.slice(1)) {
+        currentKey = currentKey ? `${currentKey}.${segment}` : segment;
+        const match = groups
+          .find(group => group.id === path[0])
+          ?.items.find(item => item.key === currentKey);
+        resolved.push(match?.label || match?.displayKey || segment);
+      }
+      return resolved;
+    }, [suggestState, idToTitle, groups]);
 
     const editorRef = useRef<TiptapEditor | null>(null);
 
@@ -648,15 +675,20 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
       (item: {
         sourceId: string;
         key: string;
+        insertKey?: string;
         label?: string;
         displayKey?: string;
       }) => ({
         sourceId: item.sourceId,
-        key: item.key,
+        key: item.insertKey || item.key,
         title: idToTitleRef.current.get(item.sourceId) || item.sourceId,
         label: item.label || item.displayKey || item.key,
         syntax:
-          templateBlocksEnabled && (item.sourceId === 'knowledge' || item.sourceId === 'skill')
+          templateBlocksEnabled &&
+          (item.sourceId === 'knowledge' ||
+            item.sourceId === 'skill' ||
+            item.sourceId === 'database' ||
+            item.sourceId === 'table')
             ? 'zgi'
             : '',
       }),
@@ -666,10 +698,11 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
     const insertVariableToken = useCallback(
       (
         item: {
-          sourceId: string;
-          key: string;
-          label?: string;
-          displayKey?: string;
+        sourceId: string;
+        key: string;
+        insertKey?: string;
+        label?: string;
+        displayKey?: string;
         },
         replaceRange?: { from: number; to: number }
       ) => {
@@ -1119,7 +1152,11 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
               })
               .map(i => {
                 const relativeKey = prefix ? i.key.slice(prefix.length) : i.key;
-                return { ...i, displayKey: relativeKey || i.sourceTitle, type: String(i.type) };
+                return {
+                  ...i,
+                  displayKey: i.displayKey || i.label || relativeKey || i.sourceTitle,
+                  type: String(i.type),
+                };
               });
             return { title: g.title, items };
           }
@@ -1133,7 +1170,11 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
                 (i.label ?? '').toLowerCase().includes(lowQ)
               );
             })
-            .map(i => ({ ...i, displayKey: i.label || i.key || i.sourceTitle, type: String(i.type) }));
+            .map(i => ({
+              ...i,
+              displayKey: i.displayKey || i.label || i.key || i.sourceTitle,
+              type: String(i.type),
+            }));
           return { title: g.title, items };
         })
         .filter(g => (g.items?.length ?? 0) > 0);

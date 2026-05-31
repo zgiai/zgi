@@ -1,7 +1,8 @@
 'use client';
 
 import { useMemo, useRef, useState } from 'react';
-import { Database, FileText, Sparkles, WandSparkles, Wrench } from 'lucide-react';
+import { useQueries } from '@tanstack/react-query';
+import { Database, FileText, Sparkles, Table2, WandSparkles, Wrench } from 'lucide-react';
 import WorkflowValueEditor, {
   type VarOption,
   type WorkflowValueEditorHandle,
@@ -15,6 +16,9 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
@@ -27,9 +31,14 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { useLocale } from '@/hooks/use-locale';
+import { DB_KEYS } from '@/hooks/query-keys';
+import { useDbsBasic } from '@/hooks/db/use-dbs';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
+import { dbService } from '@/services';
+import type { AgentDatabaseBinding } from '@/services/types/agent';
 import type { AIChatSkillMetadata } from '@/services/types/aichat';
+import type { DbTable } from '@/services/types/db';
 import type { Dataset } from '@/services/types/dataset';
 import {
   AGENT_SYSTEM_PROMPT_MAX_LENGTH,
@@ -38,12 +47,17 @@ import {
 } from './prompt-limits';
 
 type AgentKnowledgeDataset = Dataset & { load_error?: boolean };
+type PromptCapabilityItem = VarOption & {
+  menuLabel?: string;
+  dataSourceID?: string;
+};
 
 interface AgentRuntimePromptPanelProps {
   systemPrompt: string;
   className?: string;
   selectedKnowledgeDatasets: AgentKnowledgeDataset[];
   selectedSkills: AIChatSkillMetadata[];
+  databaseBindings: AgentDatabaseBinding[];
   onChangeSystemPrompt: (value: string) => void;
   onOpenOptimizer: () => void;
 }
@@ -77,6 +91,7 @@ export function AgentRuntimePromptPanel({
   className,
   selectedKnowledgeDatasets,
   selectedSkills,
+  databaseBindings,
   onChangeSystemPrompt,
   onOpenOptimizer,
 }: AgentRuntimePromptPanelProps) {
@@ -87,6 +102,35 @@ export function AgentRuntimePromptPanel({
   const [selectedTemplateKey, setSelectedTemplateKey] =
     useState<PromptTemplateKey>('knowledgeQa');
   const isPromptEmpty = !systemPrompt.trim();
+  const boundDatabaseIDs = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          databaseBindings
+            .map(binding => binding.data_source_id.trim())
+            .filter(Boolean)
+        )
+      ),
+    [databaseBindings]
+  );
+  const { dbs } = useDbsBasic({}, { enabled: boundDatabaseIDs.length > 0 });
+  const databaseTableQueries = useQueries({
+    queries: boundDatabaseIDs.map(databaseID => ({
+      queryKey: DB_KEYS.tableList(databaseID, {}),
+      queryFn: () => dbService.getDbTables(databaseID),
+      enabled: Boolean(databaseID),
+      staleTime: 3 * 60 * 1000,
+      retry: false,
+    })),
+  });
+  const dbsByID = useMemo(() => new Map(dbs.map(db => [db.id, db])), [dbs]);
+  const tablesByDatabaseID = useMemo(() => {
+    const next = new Map<string, DbTable[]>();
+    boundDatabaseIDs.forEach((databaseID, index) => {
+      next.set(databaseID, databaseTableQueries[index]?.data?.data ?? []);
+    });
+    return next;
+  }, [boundDatabaseIDs, databaseTableQueries]);
 
   const skillDisplays = useMemo(
     () =>
@@ -128,6 +172,100 @@ export function AgentRuntimePromptPanel({
     [selectedKnowledgeDatasets, t]
   );
 
+  const databaseCapabilityItems = useMemo<PromptCapabilityItem[]>(
+    () =>
+      databaseBindings.map(binding => {
+        const database = dbsByID.get(binding.data_source_id);
+        const label = database?.name || t('database.databaseUnavailable');
+        const descriptionParts = [
+          database?.description?.trim(),
+          t('prompt.variables.databaseTablesCount', { count: binding.table_ids.length }),
+        ].filter(Boolean);
+        return {
+          sourceId: 'database',
+          sourceTitle: t('prompt.variables.database'),
+          key: binding.data_source_id,
+          label,
+          type: 'object',
+          showType: false,
+          description: descriptionParts.join(' / ') || label,
+          invalid: !database && dbs.length > 0,
+          dataSourceID: binding.data_source_id,
+          hasChildren: true,
+        };
+      }),
+    [databaseBindings, dbs.length, dbsByID, t]
+  );
+
+  const databaseSummaryCapabilityItems = useMemo<PromptCapabilityItem[]>(
+    () =>
+      databaseCapabilityItems.map(item => ({
+        sourceId: 'database',
+        sourceTitle: t('prompt.variables.database'),
+        key: `${item.key}.__summary`,
+        insertKey: item.key,
+        label: `${item.label || t('database.databaseUnavailable')} / ${t('prompt.variables.databaseSummary')}`,
+        displayKey: t('prompt.variables.databaseSummary'),
+        type: 'object',
+        showType: false,
+        description: item.label || item.key,
+        invalid: item.invalid,
+        dataSourceID: item.key,
+      })),
+    [databaseCapabilityItems, t]
+  );
+
+  const tableCapabilityItems = useMemo<PromptCapabilityItem[]>(
+    () =>
+      databaseBindings.flatMap(binding => {
+        const database = dbsByID.get(binding.data_source_id);
+        const databaseLabel = database?.name || t('database.databaseUnavailable');
+        const tables = tablesByDatabaseID.get(binding.data_source_id) ?? [];
+        const tablesByID = new Map(tables.map(table => [table.id, table]));
+        const writable = new Set(binding.writable_table_ids ?? []);
+        return binding.table_ids.map(tableID => {
+          const table = tablesByID.get(tableID);
+          const tableLabel = table ? table.name || table.table_name : t('database.tableUnavailable');
+          const descriptionParts = [
+            table?.description?.trim(),
+            writable.has(tableID) ? t('prompt.variables.writableTable') : '',
+          ].filter(Boolean);
+          return {
+            sourceId: 'table',
+            sourceTitle: t('prompt.variables.table'),
+            key: `${binding.data_source_id}.${tableID}`,
+            insertKey: `${binding.data_source_id}:${tableID}`,
+            label: tableLabel,
+            menuLabel: tableLabel,
+            type: 'object',
+            showType: false,
+            description: descriptionParts.join(' / ') || databaseLabel,
+            invalid: !table && tables.length > 0,
+            dataSourceID: binding.data_source_id,
+          };
+        });
+      }),
+    [databaseBindings, dbsByID, t, tablesByDatabaseID]
+  );
+
+  const databaseMenuItems = useMemo(
+    () =>
+      databaseCapabilityItems.map(databaseItem => ({
+        database: databaseItem,
+        tables: tableCapabilityItems.filter(item => item.dataSourceID === databaseItem.key),
+      })),
+    [databaseCapabilityItems, tableCapabilityItems]
+  );
+
+  const databaseTreeCapabilityItems = useMemo(
+    () => [
+      ...databaseCapabilityItems,
+      ...databaseSummaryCapabilityItems,
+      ...tableCapabilityItems,
+    ],
+    [databaseCapabilityItems, databaseSummaryCapabilityItems, tableCapabilityItems]
+  );
+
   const capabilityGroups = useMemo(
     () => [
       {
@@ -140,8 +278,13 @@ export function AgentRuntimePromptPanel({
         title: t('prompt.variables.knowledge'),
         items: knowledgeCapabilityItems,
       },
+      {
+        id: 'database',
+        title: t('prompt.variables.database'),
+        items: databaseTreeCapabilityItems,
+      },
     ],
-    [knowledgeCapabilityItems, skillCapabilityItems, t]
+    [databaseTreeCapabilityItems, knowledgeCapabilityItems, skillCapabilityItems, t]
   );
 
   const promptTemplates = useMemo(
@@ -246,6 +389,66 @@ export function AgentRuntimePromptPanel({
                   <Database className="size-4" />
                   <span className="truncate">{dataset.name}</span>
                 </DropdownMenuItem>
+              ))}
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>{t('prompt.variables.database')}</DropdownMenuLabel>
+              {databaseMenuItems.length === 0 ? (
+                <DropdownMenuItem disabled>{t('prompt.variables.noDatabase')}</DropdownMenuItem>
+              ) : null}
+              {databaseMenuItems.map(({ database, tables }) => (
+                <DropdownMenuSub key={database.key}>
+                  <DropdownMenuSubTrigger disabled={database.invalid} className="gap-2">
+                    <Database className="size-4" />
+                    <span className="truncate">{database.label}</span>
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="w-72">
+                    <DropdownMenuItem
+                      disabled={database.invalid}
+                      onSelect={() =>
+                        insertToken(
+                          'database',
+                          database.key,
+                          `${database.label || t('database.databaseUnavailable')} / ${t('prompt.variables.databaseSummary')}`
+                        )
+                      }
+                    >
+                      <Database className="size-4" />
+                      <div className="min-w-0">
+                        <div className="truncate">{t('prompt.variables.databaseSummary')}</div>
+                        <div className="truncate text-xs text-muted-foreground">
+                          {database.label}
+                        </div>
+                      </div>
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    {tables.length === 0 ? (
+                      <DropdownMenuItem disabled>{t('prompt.variables.noTable')}</DropdownMenuItem>
+                    ) : null}
+                    {tables.map(table => (
+                      <DropdownMenuItem
+                        key={table.key}
+                        disabled={table.invalid}
+                        onSelect={() =>
+                          insertToken(
+                            'table',
+                            table.insertKey || table.key,
+                            table.menuLabel || table.key
+                          )
+                        }
+                      >
+                        <Table2 className="size-4" />
+                        <div className="min-w-0">
+                          <div className="truncate">{table.menuLabel || table.label}</div>
+                          {table.description ? (
+                            <div className="truncate text-xs text-muted-foreground">
+                              {table.description}
+                            </div>
+                          ) : null}
+                        </div>
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
