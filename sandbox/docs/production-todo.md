@@ -274,7 +274,7 @@ from internal infrastructure by default.
 
 ### E2. Egress Policy
 
-- Add egress policy records:
+- [x] Add egress policy records:
   - policy name
   - allowed hosts
   - allowed ports

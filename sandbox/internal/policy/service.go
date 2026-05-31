@@ -29,6 +29,18 @@ type DependencyPackage struct {
 	Version string `json:"version"`
 }
 
+type NetworkProfile struct {
+	Name                 string   `json:"name"`
+	Default              bool     `json:"default"`
+	NetworkEnabled       bool     `json:"network_enabled"`
+	AllowedHosts         []string `json:"allowed_hosts"`
+	AllowedPorts         []int    `json:"allowed_ports"`
+	AllowedProtocols     []string `json:"allowed_protocols"`
+	DeniedCIDRRanges     []string `json:"denied_cidr_ranges"`
+	DNSBehavior          string   `json:"dns_behavior"`
+	MaxRequestDurationMS int      `json:"max_request_duration_ms"`
+}
+
 type CreateDecision struct {
 	RuntimeProfile           sandbox.RuntimeProfile
 	TTL                      time.Duration
@@ -66,7 +78,7 @@ type TemplateLimits struct {
 type Service struct {
 	config             config.Config
 	dependencyProfiles []DependencyProfile
-	networkProfiles    []map[string]any
+	networkProfiles    []NetworkProfile
 	commandProfiles    map[string]CommandLimits
 	templateProfiles   map[string]TemplateLimits
 }
@@ -168,10 +180,40 @@ func NewService(cfg config.Config) *Service {
 				Description: "Reserved managed profile that is not available for sandbox creation.",
 			},
 		},
-		networkProfiles: []map[string]any{
-			{"name": "deny-by-default", "default": true, "network_enabled": false},
-			{"name": "workflow-safe", "default": false, "network_enabled": true},
-			{"name": "interactive-preview", "default": false, "network_enabled": true},
+		networkProfiles: []NetworkProfile{
+			{
+				Name:                 "deny-by-default",
+				Default:              true,
+				NetworkEnabled:       false,
+				AllowedHosts:         []string{},
+				AllowedPorts:         []int{},
+				AllowedProtocols:     []string{},
+				DeniedCIDRRanges:     defaultDeniedCIDRRanges(),
+				DNSBehavior:          "disabled",
+				MaxRequestDurationMS: 0,
+			},
+			{
+				Name:                 "workflow-safe",
+				Default:              false,
+				NetworkEnabled:       true,
+				AllowedHosts:         []string{},
+				AllowedPorts:         []int{443},
+				AllowedProtocols:     []string{"https"},
+				DeniedCIDRRanges:     defaultDeniedCIDRRanges(),
+				DNSBehavior:          "resolve-and-check-denied-ranges",
+				MaxRequestDurationMS: 5000,
+			},
+			{
+				Name:                 "interactive-preview",
+				Default:              false,
+				NetworkEnabled:       true,
+				AllowedHosts:         []string{},
+				AllowedPorts:         []int{80, 443},
+				AllowedProtocols:     []string{"http", "https"},
+				DeniedCIDRRanges:     defaultDeniedCIDRRanges(),
+				DNSBehavior:          "resolve-and-check-denied-ranges",
+				MaxRequestDurationMS: 10000,
+			},
 		},
 		commandProfiles: map[string]CommandLimits{
 			"code-short": {
@@ -664,7 +706,7 @@ func (s *Service) normalizeNetworkPolicy(profile sandbox.RuntimeProfile, value s
 	}
 
 	for _, item := range s.networkProfiles {
-		if item["name"] == policyName {
+		if item.Name == policyName {
 			if profile == sandbox.RuntimeSession && policyName == "interactive-preview" {
 				return "", errors.New("interactive-preview network policy is only valid for interactive sandboxes")
 			}
@@ -716,11 +758,28 @@ func (s *Service) maxTTL(profile sandbox.RuntimeProfile) time.Duration {
 }
 
 func (s *Service) networkPolicyAllowsEgress(policyName string) bool {
-	switch policyName {
-	case "workflow-safe", "interactive-preview":
-		return true
-	default:
-		return false
+	for _, item := range s.networkProfiles {
+		if item.Name == policyName {
+			return item.NetworkEnabled
+		}
+	}
+	return false
+}
+
+func defaultDeniedCIDRRanges() []string {
+	return []string{
+		"0.0.0.0/8",
+		"10.0.0.0/8",
+		"100.64.0.0/10",
+		"127.0.0.0/8",
+		"169.254.0.0/16",
+		"172.16.0.0/12",
+		"192.0.0.0/24",
+		"192.168.0.0/16",
+		"198.18.0.0/15",
+		"::1/128",
+		"fc00::/7",
+		"fe80::/10",
 	}
 }
 

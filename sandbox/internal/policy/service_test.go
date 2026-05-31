@@ -79,6 +79,22 @@ func TestNetworkPolicySurfaceReportsBackendEnforcement(t *testing.T) {
 	if previewLimits.NetworkPolicyEnforced {
 		t.Fatalf("expected preview snapshot to report network_policy_enforced=false, got %#v", previewLimits.NetworkPolicyEnforced)
 	}
+	networkProfiles := previewSnapshot["network_profiles"].([]NetworkProfile)
+	if len(networkProfiles) != 3 {
+		t.Fatalf("expected network profiles, got %#v", networkProfiles)
+	}
+	if networkProfiles[0].Name != "deny-by-default" || !networkProfiles[0].Default || networkProfiles[0].NetworkEnabled {
+		t.Fatalf("expected deny-by-default network profile, got %#v", networkProfiles[0])
+	}
+	if len(networkProfiles[0].DeniedCIDRRanges) == 0 || networkProfiles[0].DNSBehavior != "disabled" {
+		t.Fatalf("expected deny-by-default egress policy fields, got %#v", networkProfiles[0])
+	}
+	if networkProfiles[1].Name != "workflow-safe" || !networkProfiles[1].NetworkEnabled || networkProfiles[1].MaxRequestDurationMS != 5000 {
+		t.Fatalf("expected workflow-safe egress policy fields, got %#v", networkProfiles[1])
+	}
+	if len(networkProfiles[1].AllowedProtocols) != 1 || networkProfiles[1].AllowedProtocols[0] != "https" || len(networkProfiles[1].DeniedCIDRRanges) == 0 {
+		t.Fatalf("expected workflow-safe protocol and denied range policy, got %#v", networkProfiles[1])
+	}
 	previewEnforcement := previewSnapshot["network_enforcement"].(map[string]any)
 	if previewEnforcement["runtime_backend"] != "preview-process" || previewEnforcement["network_policy_enforced"] != false || previewEnforcement["network_enabled_requests_rejected"] != true {
 		t.Fatalf("expected preview network enforcement surface, got %#v", previewEnforcement)

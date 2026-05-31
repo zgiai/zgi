@@ -20,6 +20,15 @@ data.network_enforcement.runtime_backend == "preview-process"
 data.network_enforcement.network_policy_enforced == false
 data.network_enforcement.network_enabled_requests_rejected == true
 data.network_enforcement.rejection_code == "network_policy_not_enforced"
+data.network_profiles.0.name == "deny-by-default"
+data.network_profiles.0.network_enabled == false
+data.network_profiles.0.dns_behavior == "disabled"
+data.network_profiles.1.name == "workflow-safe"
+data.network_profiles.1.network_enabled == true
+data.network_profiles.1.allowed_protocols.0 == "https"
+data.network_profiles.1.allowed_ports.0 == 443
+data.network_profiles.1.dns_behavior == "resolve-and-check-denied-ranges"
+data.network_profiles.1.max_request_duration_ms == 5000
 data.limits.max_archive_files == 256
 data.limits.workspace_byte_limit_enforced == false
 ```
