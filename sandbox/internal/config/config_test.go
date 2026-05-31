@@ -144,6 +144,20 @@ func TestFromEnvReadsOrganizationDependencyProfileLimit(t *testing.T) {
 	}
 }
 
+func TestFromEnvReadsDependencyProfileBuildLimits(t *testing.T) {
+	t.Setenv("ZGI_SANDBOX_MAX_DEPENDENCY_PROFILE_SIZE_BYTES", "1048576")
+	t.Setenv("ZGI_SANDBOX_DEPENDENCY_PROFILE_BUILD_TIMEOUT_SECONDS", "120")
+
+	cfg := FromEnv()
+
+	if cfg.MaxDependencyProfileSizeBytes != 1048576 {
+		t.Fatalf("expected dependency profile size limit 1048576, got %d", cfg.MaxDependencyProfileSizeBytes)
+	}
+	if cfg.DependencyProfileBuildTimeoutSeconds != 120 {
+		t.Fatalf("expected dependency profile build timeout 120, got %d", cfg.DependencyProfileBuildTimeoutSeconds)
+	}
+}
+
 func TestPublicSnapshotOmitsSecrets(t *testing.T) {
 	cfg := Config{
 		Port:                                 "2660",
@@ -165,6 +179,8 @@ func TestPublicSnapshotOmitsSecrets(t *testing.T) {
 		MaxArtifactManifestBytes:             4096,
 		MaxArtifactBytesPerOrganization:      8192,
 		MaxDependencyProfilesPerOrganization: 2,
+		MaxDependencyProfileSizeBytes:        1048576,
+		DependencyProfileBuildTimeoutSeconds: 120,
 	}
 
 	snapshot := cfg.PublicSnapshot()
@@ -201,6 +217,12 @@ func TestPublicSnapshotOmitsSecrets(t *testing.T) {
 	}
 	if snapshot["max_dependency_profiles_per_organization"] != 2 {
 		t.Fatalf("expected organization dependency profile limit, got %#v", snapshot["max_dependency_profiles_per_organization"])
+	}
+	if snapshot["max_dependency_profile_size_bytes"] != int64(1048576) {
+		t.Fatalf("expected dependency profile size limit, got %#v", snapshot["max_dependency_profile_size_bytes"])
+	}
+	if snapshot["dependency_profile_build_timeout_seconds"] != 120 {
+		t.Fatalf("expected dependency profile build timeout, got %#v", snapshot["dependency_profile_build_timeout_seconds"])
 	}
 }
 

@@ -73,6 +73,8 @@ type ResourceLimits struct {
 	MaxArtifactManifestBytes                   int64  `json:"max_artifact_manifest_bytes"`
 	MaxArtifactBytesPerOrganization            int64  `json:"max_artifact_bytes_per_organization"`
 	MaxDependencyProfilesPerOrganization       int    `json:"max_dependency_profiles_per_organization"`
+	MaxDependencyProfileSizeBytes              int64  `json:"max_dependency_profile_size_bytes"`
+	DependencyProfileBuildTimeoutSeconds       int    `json:"dependency_profile_build_timeout_seconds"`
 	SessionTTLSecs                             int    `json:"session_ttl_secs"`
 	SessionTTLSeconds                          int    `json:"session_ttl_seconds"`
 	InteractiveTTLSecs                         int    `json:"interactive_ttl_secs"`

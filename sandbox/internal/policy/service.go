@@ -21,6 +21,7 @@ type DependencyProfile struct {
 	Packages    []DependencyPackage `json:"packages"`
 	BaseRuntime string              `json:"base_runtime"`
 	Checksum    string              `json:"checksum"`
+	SizeBytes   int64               `json:"size_bytes"`
 	Description string              `json:"description"`
 }
 
@@ -43,6 +44,14 @@ type DependencyPackagePolicy struct {
 	DefaultAction   string                  `json:"default_action"`
 	AllowedPackages []DependencyPackageRule `json:"allowed_packages"`
 	DeniedPackages  []DependencyPackageRule `json:"denied_packages"`
+}
+
+type DependencyBuildPolicy struct {
+	Mode                       string `json:"mode"`
+	Enforced                   bool   `json:"enforced"`
+	MaxProfileSizeBytes        int64  `json:"max_profile_size_bytes"`
+	BuildTimeoutSeconds        int    `json:"build_timeout_seconds"`
+	BuildsAllowedDuringRuntime bool   `json:"builds_allowed_during_runtime"`
 }
 
 type NetworkProfile struct {
@@ -95,6 +104,7 @@ type Service struct {
 	config             config.Config
 	dependencyProfiles []DependencyProfile
 	packagePolicy      DependencyPackagePolicy
+	buildPolicy        DependencyBuildPolicy
 	networkProfiles    []NetworkProfile
 	commandProfiles    map[string]CommandLimits
 	templateProfiles   map[string]TemplateLimits
@@ -148,6 +158,13 @@ func NewService(cfg config.Config) *Service {
 				{Ecosystem: "*", Name: "latest", Reason: "Unpinned package versions are not reproducible."},
 			},
 		},
+		buildPolicy: DependencyBuildPolicy{
+			Mode:                       "operator-managed",
+			Enforced:                   true,
+			MaxProfileSizeBytes:        cfg.MaxDependencyProfileSizeBytes,
+			BuildTimeoutSeconds:        cfg.DependencyProfileBuildTimeoutSeconds,
+			BuildsAllowedDuringRuntime: false,
+		},
 		dependencyProfiles: []DependencyProfile{
 			{
 				Name:        "stdlib",
@@ -159,6 +176,7 @@ func NewService(cfg config.Config) *Service {
 				Packages:    []DependencyPackage{},
 				BaseRuntime: "preview-process",
 				Checksum:    "profile:stdlib:2026.05.01",
+				SizeBytes:   32 * 1024 * 1024,
 				Description: "Base language runtime with only built-in packages.",
 			},
 			{
@@ -171,6 +189,7 @@ func NewService(cfg config.Config) *Service {
 				Packages:    []DependencyPackage{},
 				BaseRuntime: "preview-process",
 				Checksum:    "profile:workflow-safe:2026.05.01",
+				SizeBytes:   64 * 1024 * 1024,
 				Description: "Managed Python profile for deterministic workflow execution.",
 			},
 			{
@@ -183,6 +202,7 @@ func NewService(cfg config.Config) *Service {
 				Packages:    []DependencyPackage{},
 				BaseRuntime: "preview-process",
 				Checksum:    "profile:node-basic:2026.05.01",
+				SizeBytes:   96 * 1024 * 1024,
 				Description: "Managed Node.js profile for script-style automation tasks.",
 			},
 			{
@@ -195,6 +215,7 @@ func NewService(cfg config.Config) *Service {
 				Packages:    []DependencyPackage{},
 				BaseRuntime: "preview-process",
 				Checksum:    "profile:agent-tools:2026.05.01",
+				SizeBytes:   128 * 1024 * 1024,
 				Description: "Broader operator-managed profile for internal agent tooling.",
 			},
 			{
@@ -207,6 +228,7 @@ func NewService(cfg config.Config) *Service {
 				Packages:    []DependencyPackage{{Name: "data-tools", Version: "managed"}},
 				BaseRuntime: "preview-process",
 				Checksum:    "profile:python-data-preview:2026.05.01",
+				SizeBytes:   256 * 1024 * 1024,
 				Description: "Reserved managed profile that is not available for sandbox creation.",
 			},
 		},
@@ -374,6 +396,7 @@ func (s *Service) DependencyCatalog(language string) map[string]any {
 		"mode":                 "managed-profiles",
 		"supports_user_update": false,
 		"package_policy":       s.packagePolicy,
+		"build_policy":         s.buildPolicy,
 		"profiles":             items,
 		"note":                 "Dynamic dependency installation is intentionally disabled in this preview runtime.",
 	}
@@ -384,7 +407,21 @@ func (s *Service) dependencyPolicySnapshot() map[string]any {
 		"mode":                 "managed-profiles",
 		"supports_user_update": false,
 		"package_policy":       s.packagePolicy,
+		"build_policy":         s.buildPolicy,
 	}
+}
+
+func (s *Service) ValidateDependencyProfileBuildLimits(profile DependencyProfile) error {
+	if !s.buildPolicy.Enforced {
+		return nil
+	}
+	if s.buildPolicy.MaxProfileSizeBytes > 0 && profile.SizeBytes > s.buildPolicy.MaxProfileSizeBytes {
+		return fmt.Errorf("dependency profile %s size %d exceeds max profile size of %d bytes", profile.Name, profile.SizeBytes, s.buildPolicy.MaxProfileSizeBytes)
+	}
+	if s.buildPolicy.BuildTimeoutSeconds <= 0 {
+		return errors.New("dependency profile build timeout must be positive")
+	}
+	return nil
 }
 
 func (s *Service) ValidateDependencyProfileForLanguage(value string, language string) (DependencyProfile, error) {
@@ -634,6 +671,8 @@ func (s *Service) EffectiveLimits() sandbox.ResourceLimits {
 		MaxArtifactManifestBytes:                   maxArtifactManifestBytes,
 		MaxArtifactBytesPerOrganization:            s.config.MaxArtifactBytesPerOrganization,
 		MaxDependencyProfilesPerOrganization:       s.config.MaxDependencyProfilesPerOrganization,
+		MaxDependencyProfileSizeBytes:              s.config.MaxDependencyProfileSizeBytes,
+		DependencyProfileBuildTimeoutSeconds:       s.config.DependencyProfileBuildTimeoutSeconds,
 		SessionTTLSecs:                             s.config.SessionTTL,
 		SessionTTLSeconds:                          s.config.SessionTTL,
 		InteractiveTTLSecs:                         s.config.InteractiveTTL,
@@ -820,6 +859,9 @@ func (s *Service) normalizeDependencyProfile(value string) (DependencyProfile, e
 				return DependencyProfile{}, fmt.Errorf("dependency profile is not enabled: %s", name)
 			}
 			if err := s.ValidateDependencyProfilePackages(profile); err != nil {
+				return DependencyProfile{}, err
+			}
+			if err := s.ValidateDependencyProfileBuildLimits(profile); err != nil {
 				return DependencyProfile{}, err
 			}
 			return profile, nil

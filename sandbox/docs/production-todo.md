@@ -252,7 +252,7 @@ arbitrary runtime installs from untrusted code.
 - [x] Disable arbitrary dependency installation inside normal execution.
 - Add an administrator-only profile build path.
 - [x] Add package allowlist and denylist controls.
-- Add maximum profile size and build timeout.
+- [x] Add maximum profile size and build timeout.
 
 ### D4. Tests
 

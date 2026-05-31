@@ -118,6 +118,29 @@ func TestNormalizeCreateAppliesDependencyPackagePolicy(t *testing.T) {
 	}
 }
 
+func TestNormalizeCreateAppliesDependencyProfileBuildLimits(t *testing.T) {
+	cfg := config.FromEnv()
+	cfg.MaxDependencyProfileSizeBytes = 1024
+	cfg.DependencyProfileBuildTimeoutSeconds = 60
+	service := NewService(cfg)
+	service.dependencyProfiles = append(service.dependencyProfiles, DependencyProfile{
+		Name:        "oversized-profile",
+		Version:     "2026.05.01",
+		Status:      "ready",
+		Enabled:     true,
+		OwnerScope:  "global",
+		Languages:   []string{"python3"},
+		Packages:    []DependencyPackage{},
+		BaseRuntime: "preview-process",
+		Checksum:    "profile:oversized-profile:2026.05.01",
+		SizeBytes:   2048,
+	})
+
+	if _, err := service.NormalizeCreate("session", 60, false, "", "oversized-profile", 0, "", 0); err == nil || !strings.Contains(err.Error(), "exceeds max profile size") {
+		t.Fatalf("expected dependency profile size limit rejection, got %v", err)
+	}
+}
+
 func TestNetworkPolicySurfaceReportsBackendEnforcement(t *testing.T) {
 	previewCfg := config.FromEnv()
 	previewCfg.RuntimeBackend = "preview"
@@ -249,6 +272,12 @@ func TestNormalizeCreateReturnsEffectiveLimitsAndStructuredLimitError(t *testing
 	}
 	if !decision.EffectiveLimits.OrganizationDependencyProfileLimitEnforced {
 		t.Fatalf("expected organization dependency profile limit enforcement in decision, got %+v", decision.EffectiveLimits)
+	}
+	if decision.EffectiveLimits.MaxDependencyProfileSizeBytes != cfg.MaxDependencyProfileSizeBytes {
+		t.Fatalf("expected dependency profile size limit in decision, got %+v", decision.EffectiveLimits)
+	}
+	if decision.EffectiveLimits.DependencyProfileBuildTimeoutSeconds != cfg.DependencyProfileBuildTimeoutSeconds {
+		t.Fatalf("expected dependency profile build timeout in decision, got %+v", decision.EffectiveLimits)
 	}
 
 	_, err = service.NormalizeCreate("session", 60, false, "", "stdlib", 2, "organization-1", 1)

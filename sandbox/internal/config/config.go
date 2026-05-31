@@ -27,6 +27,8 @@ type Config struct {
 	MaxArtifactManifestBytes               int64
 	MaxArtifactBytesPerOrganization        int64
 	MaxDependencyProfilesPerOrganization   int
+	MaxDependencyProfileSizeBytes          int64
+	DependencyProfileBuildTimeoutSeconds   int
 	QueueTimeoutMS                         int
 	ShutdownTimeoutSeconds                 int
 	SessionTTL                             int
@@ -76,6 +78,8 @@ func FromEnv() Config {
 		MaxArtifactManifestBytes:               getEnvInt64AllowZero("ZGI_SANDBOX_MAX_ARTIFACT_MANIFEST_BYTES", 0),
 		MaxArtifactBytesPerOrganization:        getEnvInt64AllowZero("ZGI_SANDBOX_MAX_ARTIFACT_BYTES_PER_ORGANIZATION", 0),
 		MaxDependencyProfilesPerOrganization:   getEnvIntAllowZero("ZGI_SANDBOX_MAX_DEPENDENCY_PROFILES_PER_ORGANIZATION", 0),
+		MaxDependencyProfileSizeBytes:          getEnvInt64("ZGI_SANDBOX_MAX_DEPENDENCY_PROFILE_SIZE_BYTES", 512*1024*1024),
+		DependencyProfileBuildTimeoutSeconds:   getEnvInt("ZGI_SANDBOX_DEPENDENCY_PROFILE_BUILD_TIMEOUT_SECONDS", 600),
 		QueueTimeoutMS:                         getEnvInt("ZGI_SANDBOX_QUEUE_TIMEOUT_MS", 5000),
 		ShutdownTimeoutSeconds:                 getEnvInt("ZGI_SANDBOX_SHUTDOWN_TIMEOUT_SECONDS", 10),
 		SessionTTL:                             getEnvInt("ZGI_SANDBOX_SESSION_TTL_SECONDS", 1800),
@@ -152,6 +156,8 @@ func (c Config) PublicSnapshot() map[string]any {
 		"max_artifact_manifest_bytes":                c.MaxArtifactManifestBytes,
 		"max_artifact_bytes_per_organization":        c.MaxArtifactBytesPerOrganization,
 		"max_dependency_profiles_per_organization":   c.MaxDependencyProfilesPerOrganization,
+		"max_dependency_profile_size_bytes":          c.MaxDependencyProfileSizeBytes,
+		"dependency_profile_build_timeout_seconds":   c.DependencyProfileBuildTimeoutSeconds,
 		"queue_timeout_ms":                           c.QueueTimeoutMS,
 		"shutdown_timeout_seconds":                   c.ShutdownTimeoutSeconds,
 		"session_ttl_seconds":                        c.SessionTTL,
@@ -219,6 +225,26 @@ func getEnvIntAllowZero(key string, fallback int) int {
 		parsed = parsed*10 + int(char-'0')
 	}
 
+	return parsed
+}
+
+func getEnvInt64(key string, fallback int64) int64 {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+
+	var parsed int64
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return fallback
+		}
+		parsed = parsed*10 + int64(char-'0')
+	}
+
+	if parsed <= 0 {
+		return fallback
+	}
 	return parsed
 }
 

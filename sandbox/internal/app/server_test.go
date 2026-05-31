@@ -689,6 +689,9 @@ func TestDependencyEndpoint(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), `"package_policy"`) || !strings.Contains(rr.Body.String(), `"default_action":"deny-unlisted"`) {
 		t.Fatalf("expected dependency package policy in response, got %s", rr.Body.String())
 	}
+	if !strings.Contains(rr.Body.String(), `"build_policy"`) || !strings.Contains(rr.Body.String(), `"build_timeout_seconds":600`) {
+		t.Fatalf("expected dependency build policy in response, got %s", rr.Body.String())
+	}
 }
 
 func TestCreateSandboxRejectsUnavailableDependencyProfile(t *testing.T) {
