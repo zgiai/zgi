@@ -96,6 +96,8 @@ data.workspace_id == "workspace_kest"
 data.app_id == "app_kest"
 data.workflow_run_id == "workflow_run_kest"
 data.user_id == "user_kest"
+data.dependency_profile == "stdlib"
+data.dependency_profile_version == "2026.05.01"
 ```
 
 ```step
@@ -111,6 +113,7 @@ data.status == "active"
 data.organization_id == "organization_kest"
 data.workspace_id == "workspace_kest"
 data.workflow_run_id == "workflow_run_kest"
+data.dependency_profile_version == "2026.05.01"
 ```
 
 ```step

@@ -44,6 +44,12 @@ func TestCreateRenewDeleteSandbox(t *testing.T) {
 	if box.OrganizationID != "organization-test" || box.WorkspaceID != "workspace-test" || box.AppID != "app-test" || box.WorkflowRunID != "run-test" || box.UserID != "user-test" {
 		t.Fatalf("expected normalized ownership fields, got %+v", box)
 	}
+	if box.DependencyProfile != "stdlib" || box.DependencyProfileVersion == "" {
+		t.Fatalf("expected dependency profile version on sandbox, got %+v", box)
+	}
+	if box.Metadata["dependency_profile_version"] != box.DependencyProfileVersion {
+		t.Fatalf("expected dependency profile version in metadata, got %+v", box.Metadata)
+	}
 
 	events := recorder.Query(observer.Query{SandboxID: box.ID, Type: "sandbox.created", Limit: 1})
 	if len(events) != 1 {
@@ -54,6 +60,9 @@ func TestCreateRenewDeleteSandbox(t *testing.T) {
 	}
 	if events[0].Metadata["organization_id"] != "organization-test" || events[0].Metadata["workspace_id"] != "workspace-test" || events[0].Metadata["workflow_run_id"] != "run-test" {
 		t.Fatalf("expected ownership metadata in created event, got %+v", events[0].Metadata)
+	}
+	if events[0].Metadata["dependency_profile_version"] != box.DependencyProfileVersion {
+		t.Fatalf("expected dependency version in created event, got %+v", events[0].Metadata)
 	}
 
 	items := manager.List()

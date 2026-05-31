@@ -482,6 +482,7 @@ func scanSandbox(scanner rowScanner) (*sandbox.Sandbox, error) {
 	if len(metadata) > 0 {
 		box.Metadata = metadata
 	}
+	box.DependencyProfileVersion = metadata["dependency_profile_version"]
 	return &box, nil
 }
 

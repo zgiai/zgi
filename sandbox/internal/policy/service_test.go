@@ -37,6 +37,33 @@ func TestNormalizeCreateRejectsNetworkWhenBackendCannotEnforcePolicy(t *testing.
 	}
 }
 
+func TestNormalizeCreateRecordsDependencyProfileVersionAndRejectsUnavailableProfiles(t *testing.T) {
+	service := NewService(config.FromEnv())
+
+	decision, err := service.NormalizeCreate("session", 60, false, "", "workflow-safe", 0, "", 0)
+	if err != nil {
+		t.Fatalf("expected dependency profile selection, got %v", err)
+	}
+	if decision.DependencyProfile != "workflow-safe" {
+		t.Fatalf("expected workflow-safe dependency profile, got %s", decision.DependencyProfile)
+	}
+	if decision.DependencyProfileVersion == "" {
+		t.Fatal("expected dependency profile version in create decision")
+	}
+
+	if _, err := service.NormalizeCreate("session", 60, false, "", "missing-profile", 0, "", 0); err == nil {
+		t.Fatal("expected unknown dependency profile to be rejected")
+	}
+	if _, err := service.NormalizeCreate("session", 60, false, "", "python-data-preview", 0, "", 0); err == nil {
+		t.Fatal("expected disabled dependency profile to be rejected")
+	}
+	if _, err := service.NormalizeCreate("session", 60, false, "", "python-data-preview", 999, "organization-1", 999); err == nil {
+		t.Fatal("expected disabled dependency profile to be rejected before quota checks")
+	} else if _, ok := err.(*LimitError); ok {
+		t.Fatalf("expected disabled dependency profile error before quota checks, got %v", err)
+	}
+}
+
 func TestNetworkPolicySurfaceReportsBackendEnforcement(t *testing.T) {
 	previewCfg := config.FromEnv()
 	previewCfg.RuntimeBackend = "preview"
