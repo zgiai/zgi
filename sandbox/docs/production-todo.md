@@ -219,6 +219,9 @@ ergonomic for workflow and agent use cases.
 Goal: make dependencies repeatable, controlled, and fast without allowing
 arbitrary runtime installs from untrusted code.
 
+Detailed implementation guidance is tracked in
+[dependency-profile-plan.md](./dependency-profile-plan.md).
+
 ### D1. Profile Model
 
 - [x] Store dependency profiles as versioned records in the policy catalog.
@@ -263,6 +266,16 @@ arbitrary runtime installs from untrusted code.
 - [x] Version pinning tests.
 - [x] Build failure reporting tests.
 - [x] Execution uses expected profile version.
+
+### D5. Remaining Production Work
+
+- Add maintained profile source directories under `sandbox/profiles/`.
+- Add deterministic build scripts for profile artifacts.
+- Verify Python and Node profile environments before activation.
+- Inject profile-specific runtime environment variables.
+- Bind profile directories read-only in the secure runtime.
+- Add API catalog preflight before skill sandbox creation.
+- Add Kest skill execution coverage for declared dependency profiles.
 
 ## 8. Milestone E: Network Governance
 
