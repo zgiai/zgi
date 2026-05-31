@@ -207,11 +207,17 @@ type ETLConfig struct {
 }
 
 type CodeExecConfig struct {
-	Endpoint        string `json:"endpoint"`
-	APIKey          string `json:"-"`
-	MaxNumber       int64  `json:"max_number"`
-	MinNumber       int64  `json:"min_number"`
-	MaxStringLength int    `json:"max_string_length"`
+	Endpoint                     string `json:"endpoint"`
+	APIKey                       string `json:"-"`
+	ConnectTimeoutSeconds        int    `json:"connect_timeout_seconds"`
+	CreateTimeoutSeconds         int    `json:"create_timeout_seconds"`
+	UploadTimeoutSeconds         int    `json:"upload_timeout_seconds"`
+	CommandTimeoutPaddingSeconds int    `json:"command_timeout_padding_seconds"`
+	ArtifactTimeoutSeconds       int    `json:"artifact_timeout_seconds"`
+	CleanupTimeoutSeconds        int    `json:"cleanup_timeout_seconds"`
+	MaxNumber                    int64  `json:"max_number"`
+	MinNumber                    int64  `json:"min_number"`
+	MaxStringLength              int    `json:"max_string_length"`
 }
 
 const (
