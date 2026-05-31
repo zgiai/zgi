@@ -106,7 +106,7 @@ simple calculations, and deterministic data shaping.
 - Default stderr limit: 64 KiB.
 - Default generated file limit: disabled or temporary-only.
 - [x] Reject outputs that exceed configured JSON result limits.
-- Reject request bodies over a profile-specific maximum before decoding large payloads.
+- [x] Reject request bodies over a profile-specific maximum before decoding large payloads.
 
 ### A3. Filesystem Behavior
 

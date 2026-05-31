@@ -210,6 +210,26 @@ func TestRunEndpointRejectsPreviewNetworkRequest(t *testing.T) {
 	}
 }
 
+func TestExecCodeRejectsOversizedShortCodeRequestBeforeFullDecode(t *testing.T) {
+	server, err := NewServer(testConfig(t))
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	body := `{"language":"python3","profile":"code-short","code":"` + strings.Repeat("x", 140*1024) + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/exec/code", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "request body exceeds max size of 131072 bytes") {
+		t.Fatalf("expected profile-specific request limit message, got %s", rr.Body.String())
+	}
+}
+
 func TestServerRejectsProductionPreviewBackend(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.Environment = "production"

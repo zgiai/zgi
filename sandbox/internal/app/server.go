@@ -474,6 +474,20 @@ func (s *Server) handleExecCode(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+	requestProfile, err := codeRequestProfile(body)
+	if err != nil {
+		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "invalid request payload", nil)
+		return
+	}
+	requestLimits, err := s.policy.NormalizeCommandLimits(defaultString(requestProfile, "code-short"), 0, 0, 0, 0)
+	if err != nil {
+		writeKnownError(w, err)
+		return
+	}
+	if requestLimits.MaxRequestBytes > 0 && len(body) > requestLimits.MaxRequestBytes {
+		writeEnvelopeWithMessage(w, http.StatusRequestEntityTooLarge, -413, fmt.Sprintf("request body exceeds max size of %d bytes", requestLimits.MaxRequestBytes), nil)
+		return
+	}
 
 	var req executor.CodeRequest
 	if err := json.Unmarshal(body, &req); err != nil {
@@ -1082,6 +1096,23 @@ func maxInt64(left int64, right int64) int64 {
 		return left
 	}
 	return right
+}
+
+func codeRequestProfile(body []byte) (string, error) {
+	var probe struct {
+		Profile string `json:"profile"`
+	}
+	if err := json.Unmarshal(body, &probe); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(probe.Profile), nil
+}
+
+func defaultString(value string, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
 }
 
 func writeDecodeError(w http.ResponseWriter, err error) {

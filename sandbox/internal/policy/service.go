@@ -45,6 +45,7 @@ type CommandLimits struct {
 	StdoutLimitBytes   int           `json:"stdout_limit_bytes"`
 	StderrLimitBytes   int           `json:"stderr_limit_bytes"`
 	MaxStdinBytes      int           `json:"max_stdin_bytes"`
+	MaxRequestBytes    int           `json:"max_request_bytes"`
 	MaxResultJSONBytes int           `json:"max_result_json_bytes"`
 	Stateless          bool          `json:"stateless"`
 }
@@ -178,6 +179,7 @@ func NewService(cfg config.Config) *Service {
 				StdoutLimitBytes:   64 * 1024,
 				StderrLimitBytes:   64 * 1024,
 				MaxStdinBytes:      64 * 1024,
+				MaxRequestBytes:    128 * 1024,
 				MaxResultJSONBytes: 64 * 1024,
 				Stateless:          true,
 			},
@@ -187,6 +189,7 @@ func NewService(cfg config.Config) *Service {
 				StdoutLimitBytes:   1024 * 1024,
 				StderrLimitBytes:   1024 * 1024,
 				MaxStdinBytes:      1024 * 1024,
+				MaxRequestBytes:    4 * 1024 * 1024,
 				MaxResultJSONBytes: 256 * 1024,
 			},
 			"skill-node": {
@@ -195,6 +198,7 @@ func NewService(cfg config.Config) *Service {
 				StdoutLimitBytes:   1024 * 1024,
 				StderrLimitBytes:   1024 * 1024,
 				MaxStdinBytes:      1024 * 1024,
+				MaxRequestBytes:    4 * 1024 * 1024,
 				MaxResultJSONBytes: 256 * 1024,
 			},
 		},
@@ -430,6 +434,9 @@ func (s *Service) NormalizeCommandLimits(profile string, timeoutSeconds int, tim
 	if limits.MaxResultJSONBytes <= 0 {
 		limits.MaxResultJSONBytes = 64 * 1024
 	}
+	if limits.MaxRequestBytes <= 0 {
+		limits.MaxRequestBytes = 128 * 1024
+	}
 	return limits, nil
 }
 
@@ -573,6 +580,7 @@ func (s *Service) commandProfileSnapshot() []map[string]any {
 			"stdout_limit_bytes":    profile.StdoutLimitBytes,
 			"stderr_limit_bytes":    profile.StderrLimitBytes,
 			"max_stdin_bytes":       profile.MaxStdinBytes,
+			"max_request_bytes":     profile.MaxRequestBytes,
 			"max_result_json_bytes": profile.MaxResultJSONBytes,
 			"stateless":             profile.Stateless,
 			"network":               "inherits sandbox policy",
