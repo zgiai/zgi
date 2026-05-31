@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/zgiai/zgi-sandbox/internal/config"
@@ -192,5 +193,79 @@ func TestOrganizationActiveSandboxLimitSpansWorkers(t *testing.T) {
 	}
 	if _, err := workerOne.Create(CreateRequest{RuntimeProfile: string(sandbox.RuntimeSession)}); err != nil {
 		t.Fatalf("expected empty organization to bypass organization quota, got %v", err)
+	}
+}
+
+func TestOrganizationDependencyProfileLimitSpansWorkers(t *testing.T) {
+	cfg := config.FromEnv()
+	cfg.MaxActive = 10
+	cfg.MaxDependencyProfilesPerOrganization = 1
+	cfg.DataDir = t.TempDir()
+	store := newMemoryStore()
+	cache := newNoopCache()
+	recorder := observer.NewRecorder(100)
+
+	workerOneCfg := cfg
+	workerOneCfg.WorkerID = "worker-one"
+	workerOne, err := NewManagerWithConfig(recorder, policy.NewService(workerOneCfg), workerOneCfg, store, cache)
+	if err != nil {
+		t.Fatalf("expected worker one manager, got %v", err)
+	}
+
+	workerTwoCfg := cfg
+	workerTwoCfg.WorkerID = "worker-two"
+	workerTwo, err := NewManagerWithConfig(recorder, policy.NewService(workerTwoCfg), workerTwoCfg, store, cache)
+	if err != nil {
+		t.Fatalf("expected worker two manager, got %v", err)
+	}
+
+	first, err := workerOne.Create(CreateRequest{
+		RuntimeProfile:    string(sandbox.RuntimeSession),
+		OrganizationID:    "organization-profile-limit",
+		DependencyProfile: "workflow-safe",
+	})
+	if err != nil {
+		t.Fatalf("expected first dependency profile, got %v", err)
+	}
+	if first.EffectiveLimits == nil || first.EffectiveLimits.MaxDependencyProfilesPerOrganization != 1 || !first.EffectiveLimits.OrganizationDependencyProfileLimitEnforced {
+		t.Fatalf("expected dependency profile limit in effective limits, got %+v", first.EffectiveLimits)
+	}
+
+	if _, err := workerTwo.Create(CreateRequest{
+		RuntimeProfile:    string(sandbox.RuntimeSession),
+		OrganizationID:    "organization-profile-limit",
+		DependencyProfile: "workflow-safe",
+	}); err != nil {
+		t.Fatalf("expected reused dependency profile to be allowed, got %v", err)
+	}
+
+	_, err = workerOne.Create(CreateRequest{
+		RuntimeProfile:    string(sandbox.RuntimeSession),
+		OrganizationID:    "organization-profile-limit",
+		DependencyProfile: "node-basic",
+	})
+	var limitErr *policy.LimitError
+	if !errors.As(err, &limitErr) {
+		t.Fatalf("expected dependency profile limit error, got %T %v", err, err)
+	}
+	if limitErr.Code != "organization_dependency_profile_limit_exceeded" || limitErr.Limit != "max_dependency_profiles_per_organization" {
+		t.Fatalf("unexpected dependency profile limit error: %+v", limitErr)
+	}
+	if limitErr.Details["organization_id"] != "organization-profile-limit" || limitErr.Details["dependency_profile"] != "node-basic" {
+		t.Fatalf("expected organization and requested profile in details, got %+v", limitErr.Details)
+	}
+
+	if _, err := workerOne.Create(CreateRequest{
+		RuntimeProfile:    string(sandbox.RuntimeSession),
+		OrganizationID:    "organization-other-profile-limit",
+		DependencyProfile: "node-basic",
+	}); err != nil {
+		t.Fatalf("expected different organization to have its own dependency profile quota, got %v", err)
+	}
+	if _, err := workerOne.Create(CreateRequest{
+		RuntimeProfile:    string(sandbox.RuntimeSession),
+		DependencyProfile: "node-basic",
+	}); err != nil {
+		t.Fatalf("expected empty organization to bypass dependency profile quota, got %v", err)
 	}
 }

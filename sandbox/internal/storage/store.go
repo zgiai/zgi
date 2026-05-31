@@ -254,6 +254,32 @@ func (s *Store) CountActiveByOrganization(organizationID string, now time.Time) 
 	return count, nil
 }
 
+func (s *Store) ListActiveDependencyProfilesByOrganization(organizationID string, now time.Time) ([]string, error) {
+	rows, err := s.db.Query(`
+		SELECT DISTINCT dependency_profile
+		FROM sandboxes
+		WHERE status = $1
+		  AND expires_at > $2
+		  AND organization_id = $3
+		  AND dependency_profile <> ''
+		ORDER BY dependency_profile
+	`, string(sandbox.StatusActive), now.UTC(), organizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]string, 0)
+	for rows.Next() {
+		var profile string
+		if err := rows.Scan(&profile); err != nil {
+			return nil, err
+		}
+		items = append(items, profile)
+	}
+	return items, rows.Err()
+}
+
 func (s *Store) SaveEndpoint(endpoint sandbox.Endpoint) error {
 	now := endpoint.UpdatedAt
 	if now.IsZero() {

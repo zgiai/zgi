@@ -134,26 +134,37 @@ func TestFromEnvReadsArtifactManifestLimits(t *testing.T) {
 	}
 }
 
+func TestFromEnvReadsOrganizationDependencyProfileLimit(t *testing.T) {
+	t.Setenv("ZGI_SANDBOX_MAX_DEPENDENCY_PROFILES_PER_ORGANIZATION", "2")
+
+	cfg := FromEnv()
+
+	if cfg.MaxDependencyProfilesPerOrganization != 2 {
+		t.Fatalf("expected organization dependency profile limit 2, got %d", cfg.MaxDependencyProfilesPerOrganization)
+	}
+}
+
 func TestPublicSnapshotOmitsSecrets(t *testing.T) {
 	cfg := Config{
-		Port:                            "2660",
-		APIKey:                          "secret-api-key",
-		RedisPassword:                   "secret-redis-password",
-		DatabaseURL:                     "postgres://user:secret-db-password@127.0.0.1:5432/postgres",
-		RedisAddr:                       "127.0.0.1:6379",
-		RedisDB:                         2,
-		WorkerID:                        "worker-a",
-		RuntimeBackend:                  "preview",
-		SecureRootFS:                    "/srv/rootfs",
-		BwrapBinary:                     "bwrap",
-		Environment:                     "local",
-		AdvertiseURL:                    "http://127.0.0.1:2660",
-		PublicBaseURL:                   "http://127.0.0.1:2660",
-		ObserverMaxEvents:               100,
-		MaxConcurrentExecutions:         3,
-		MaxArtifactManifestFiles:        12,
-		MaxArtifactManifestBytes:        4096,
-		MaxArtifactBytesPerOrganization: 8192,
+		Port:                                 "2660",
+		APIKey:                               "secret-api-key",
+		RedisPassword:                        "secret-redis-password",
+		DatabaseURL:                          "postgres://user:secret-db-password@127.0.0.1:5432/postgres",
+		RedisAddr:                            "127.0.0.1:6379",
+		RedisDB:                              2,
+		WorkerID:                             "worker-a",
+		RuntimeBackend:                       "preview",
+		SecureRootFS:                         "/srv/rootfs",
+		BwrapBinary:                          "bwrap",
+		Environment:                          "local",
+		AdvertiseURL:                         "http://127.0.0.1:2660",
+		PublicBaseURL:                        "http://127.0.0.1:2660",
+		ObserverMaxEvents:                    100,
+		MaxConcurrentExecutions:              3,
+		MaxArtifactManifestFiles:             12,
+		MaxArtifactManifestBytes:             4096,
+		MaxArtifactBytesPerOrganization:      8192,
+		MaxDependencyProfilesPerOrganization: 2,
 	}
 
 	snapshot := cfg.PublicSnapshot()
@@ -187,6 +198,9 @@ func TestPublicSnapshotOmitsSecrets(t *testing.T) {
 	}
 	if snapshot["max_artifact_bytes_per_organization"] != int64(8192) {
 		t.Fatalf("expected organization artifact byte limit, got %#v", snapshot["max_artifact_bytes_per_organization"])
+	}
+	if snapshot["max_dependency_profiles_per_organization"] != 2 {
+		t.Fatalf("expected organization dependency profile limit, got %#v", snapshot["max_dependency_profiles_per_organization"])
 	}
 }
 
