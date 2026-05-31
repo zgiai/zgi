@@ -28,6 +28,9 @@ type FileAssetSummaryView struct {
 	PendingConfirmationCount  int64      `json:"pending_confirmation_count"`
 	ChunkCount                int64      `json:"chunk_count"`
 	EmbeddingCount            int64      `json:"embedding_count"`
+	EmbeddingProvider         string     `json:"embedding_provider,omitempty"`
+	EmbeddingModel            string     `json:"embedding_model,omitempty"`
+	EmbeddingDimension        *int       `json:"embedding_dimension,omitempty"`
 	VectorStatus              string     `json:"vector_status"`
 	LastErrorCode             string     `json:"last_error_code,omitempty"`
 	LastErrorMessage          string     `json:"last_error_message,omitempty"`
@@ -79,7 +82,14 @@ func (s *fileAssetSummaryService) ListCurrentFileAssetSummaries(ctx context.Cont
 			ProcessingRunID:           asset.ProcessingRunID,
 			GenerationNo:              asset.GenerationNo,
 			ChunkCount:                int64(asset.ChunkCount),
+			EmbeddingDimension:        asset.EmbeddingDimension,
 			VectorStatus:              asset.VectorStatus,
+		}
+		if asset.EmbeddingProvider != nil {
+			view.EmbeddingProvider = *asset.EmbeddingProvider
+		}
+		if asset.EmbeddingModel != nil {
+			view.EmbeddingModel = *asset.EmbeddingModel
 		}
 		if asset.ProcessingStage != nil {
 			view.ProcessingStage = *asset.ProcessingStage

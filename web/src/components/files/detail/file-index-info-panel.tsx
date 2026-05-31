@@ -101,17 +101,17 @@ export function FileIndexInfoPanel({
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <IndexMetric
           label={t('detail.embeddingProvider')}
-          value={artifactState?.embedding_provider}
+          value={processing?.summary.embedding_provider ?? artifactState?.embedding_provider}
           icon={Database}
         />
         <IndexMetric
           label={t('detail.embeddingModel')}
-          value={artifactState?.embedding_model}
+          value={processing?.summary.embedding_model ?? artifactState?.embedding_model}
           icon={Box}
         />
         <IndexMetric
           label={t('detail.embeddingDimension')}
-          value={artifactState?.embedding_dimension}
+          value={processing?.summary.embedding_dimension ?? artifactState?.embedding_dimension}
           icon={Hash}
         />
         <IndexMetric

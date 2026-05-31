@@ -249,14 +249,17 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
 
   const detail = data?.data;
   const file = detail?.file;
+  const asset = detail?.asset;
   const processing = detail?.processing;
   const artifactState = detail?.artifact_state;
   const summary = processing?.summary;
-  const status = getProcessingStatus(file, summary?.product_status);
-  const progress = summary?.processing_progress ?? file?.processing_progress ?? 0;
-  const vectorStatus = artifactState?.vector_status ?? file?.vector_status;
-  const pendingCount = processing?.pending_confirmation_count ?? file?.pending_confirmation_count ?? 0;
-  const chunkCount = processing?.chunk_count ?? file?.chunk_count ?? artifactState?.chunk_count ?? 0;
+  const status = getProcessingStatus(file, summary?.product_status ?? asset?.product_status);
+  const progress = summary?.processing_progress ?? asset?.processing_progress ?? file?.processing_progress ?? 0;
+  const vectorStatus = summary?.vector_status ?? asset?.vector_status ?? artifactState?.vector_status ?? file?.vector_status;
+  const pendingCount =
+    processing?.pending_confirmation_count ?? summary?.pending_confirmation_count ?? file?.pending_confirmation_count ?? 0;
+  const chunkCount =
+    processing?.chunk_count ?? summary?.chunk_count ?? asset?.chunk_count ?? file?.chunk_count ?? artifactState?.chunk_count ?? 0;
   const embeddingCount = processing?.embedding_count ?? file?.embedding_count ?? 0;
   const hasPreview = file ? isOriginalPreviewSupported(file.extension, file.mime_type) : false;
   const parseReviewEnabled = status !== 'stored_only' && status !== 'parsing';

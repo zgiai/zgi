@@ -82,7 +82,7 @@ func (a *Adapter) parseWithRequest(ctx context.Context, engine extractcommon.Eng
 	if supportsInputRef(engine, req.SourceType, req.SourceRef) {
 		return a.parseInputRef(ctx, engine, strings.TrimSpace(req.SourceRef), opts)
 	}
-	if req.SourceType != contracts.ParseSourceTypeBytes {
+	if len(req.Data) == 0 {
 		return nil, fmt.Errorf("hyperparse sdk adapter currently requires byte input for source type %q", req.SourceType)
 	}
 	if req.FileName == "" {

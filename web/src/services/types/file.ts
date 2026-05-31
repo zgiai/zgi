@@ -322,6 +322,12 @@ export interface FileProcessingSummary {
   product_status?: FileAssetProductStatus | string;
   processing_stage?: FileAssetProcessingStage | string;
   processing_progress?: number;
+  pending_confirmation_count?: number;
+  chunk_count?: number;
+  embedding_count?: number;
+  embedding_provider?: string;
+  embedding_model?: string;
+  embedding_dimension?: number;
   vector_status?: FileAssetVectorStatus | string;
   processing_request_id?: string;
   processing_run_id?: string;
@@ -331,13 +337,16 @@ export interface FileProcessingSummary {
 }
 
 export interface FileAssetArtifactState {
+  has_parse_artifact?: boolean;
+  has_chunks?: boolean;
+  has_embeddings?: boolean;
   parse_artifact_id?: string;
   chunk_artifact_set_id?: string;
-  chunk_count: number;
+  chunk_count?: number;
   embedding_provider?: string;
   embedding_model?: string;
   embedding_dimension?: number;
-  vector_status: FileAssetVectorStatus | string;
+  vector_status?: FileAssetVectorStatus | string;
 }
 
 export interface FileAssetProcessingError {

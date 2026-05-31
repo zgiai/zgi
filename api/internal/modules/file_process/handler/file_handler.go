@@ -132,7 +132,7 @@ type fileDetailResponse struct {
 
 type fileDetailProcessingView struct {
 	LatestRequest            *datalibraryservice.ProcessingRequestView `json:"latest_request,omitempty"`
-	Summary                  datalibraryservice.ProcessingSummaryView  `json:"summary"`
+	Summary                  datalibraryservice.FileAssetSummaryView   `json:"summary"`
 	PendingConfirmationCount int64                                     `json:"pending_confirmation_count"`
 	ChunkCount               int64                                     `json:"chunk_count"`
 	EmbeddingCount           int64                                     `json:"embedding_count"`
@@ -593,12 +593,49 @@ func (h *FileHandler) GetFileDetail(c *gin.Context) {
 		Error:         detail.Error,
 		Processing: &fileDetailProcessingView{
 			LatestRequest:            detail.LatestProcessing,
-			Summary:                  detail.ProcessingSummary,
+			Summary:                  buildFileDetailAssetSummary(detail),
 			PendingConfirmationCount: detail.PendingConfirmationCount,
 			ChunkCount:               detail.ChunkCount,
 			EmbeddingCount:           detail.EmbeddingCount,
 		},
 	})
+}
+
+func buildFileDetailAssetSummary(detail *datalibraryservice.FileAssetDetailView) datalibraryservice.FileAssetSummaryView {
+	if detail == nil || detail.Asset == nil {
+		return datalibraryservice.FileAssetSummaryView{}
+	}
+	asset := detail.Asset
+	summary := datalibraryservice.FileAssetSummaryView{
+		AssetID:                   asset.ID,
+		SourceFileID:              asset.SourceFileID,
+		ProductStatus:             asset.ProductStatus,
+		ProcessingProgress:        asset.ProcessingProgress,
+		ActiveProcessingRequestID: asset.ActiveProcessingRequestID,
+		ProcessingRunID:           asset.ProcessingRunID,
+		GenerationNo:              asset.GenerationNo,
+		PendingConfirmationCount:  detail.PendingConfirmationCount,
+		ChunkCount:                detail.ChunkCount,
+		EmbeddingCount:            detail.EmbeddingCount,
+		EmbeddingDimension:        asset.EmbeddingDimension,
+		VectorStatus:              asset.VectorStatus,
+	}
+	if asset.EmbeddingProvider != nil {
+		summary.EmbeddingProvider = *asset.EmbeddingProvider
+	}
+	if asset.EmbeddingModel != nil {
+		summary.EmbeddingModel = *asset.EmbeddingModel
+	}
+	if asset.ProcessingStage != nil {
+		summary.ProcessingStage = *asset.ProcessingStage
+	}
+	if asset.LastErrorCode != nil {
+		summary.LastErrorCode = *asset.LastErrorCode
+	}
+	if asset.LastErrorMessage != nil {
+		summary.LastErrorMessage = *asset.LastErrorMessage
+	}
+	return summary
 }
 
 func (h *FileHandler) handleFileAssetDetailError(c *gin.Context, err error) {

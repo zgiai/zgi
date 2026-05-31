@@ -46,6 +46,29 @@ func TestAdapterParsesPlainTextBytes(t *testing.T) {
 	}
 }
 
+func TestAdapterParsesUploadFileWithLoadedBytes(t *testing.T) {
+	adapter := NewAdapter()
+
+	artifact, err := adapter.Parse(context.Background(), contracts.ParseRequest{
+		SourceType: contracts.ParseSourceTypeUploadFile,
+		SourceRef:  "file-1",
+		FileName:   "sample.txt",
+		Data:       []byte("hello from uploaded file bytes"),
+		Intent:     contracts.ParseIntentDatasetIndex,
+		Profile:    contracts.ParseProfileDatasetIndex,
+		EngineHint: contracts.ParseEngineLocal,
+	})
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if artifact.SourceType != contracts.ParseSourceTypeUploadFile {
+		t.Fatalf("SourceType = %q, want %q", artifact.SourceType, contracts.ParseSourceTypeUploadFile)
+	}
+	if !strings.Contains(artifact.Text, "hello from uploaded file bytes") {
+		t.Fatalf("Text = %q, want uploaded byte content", artifact.Text)
+	}
+}
+
 func TestMapDocumentResultCarriesConfidence(t *testing.T) {
 	result := &extractcommon.DocumentResult{
 		DocID:    "doc-1",

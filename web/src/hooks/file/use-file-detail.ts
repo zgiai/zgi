@@ -13,7 +13,10 @@ const POLLING_STATUSES = new Set(['parsing', 'generating']);
 
 function getDetailProcessingStatus(detail?: FileDetailResponse): string {
   return (
-    detail?.processing?.summary.product_status || detail?.file.processing_status || 'stored_only'
+    detail?.processing?.summary.product_status ||
+    detail?.asset?.product_status ||
+    detail?.file.processing_status ||
+    'stored_only'
   );
 }
 
