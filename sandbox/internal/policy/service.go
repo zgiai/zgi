@@ -473,6 +473,7 @@ func (s *Service) EffectiveLimits() sandbox.ResourceLimits {
 		MaxArtifactManifestFiles:               maxArtifactManifestFiles,
 		MaxArtifactManifestTotalBytes:          maxArtifactManifestBytes,
 		MaxArtifactManifestBytes:               maxArtifactManifestBytes,
+		MaxArtifactBytesPerOrganization:        s.config.MaxArtifactBytesPerOrganization,
 		SessionTTLSecs:                         s.config.SessionTTL,
 		SessionTTLSeconds:                      s.config.SessionTTL,
 		InteractiveTTLSecs:                     s.config.InteractiveTTL,
@@ -483,6 +484,7 @@ func (s *Service) EffectiveLimits() sandbox.ResourceLimits {
 		WorkspaceFileLimitEnforced:             s.config.MaxWorkspaceFiles > 0,
 		WorkspaceByteLimitEnforced:             s.config.MaxWorkspaceBytes > 0,
 		OrganizationWorkspaceByteLimitEnforced: s.config.MaxWorkspaceBytesPerOrganization > 0,
+		OrganizationArtifactByteLimitEnforced:  s.config.MaxArtifactBytesPerOrganization > 0,
 	}
 }
 
@@ -528,6 +530,10 @@ func (s *Service) MaxArtifactManifestBytes() int64 {
 
 func (s *Service) MaxArtifactManifestFiles() int {
 	return s.EffectiveLimits().MaxArtifactManifestFiles
+}
+
+func (s *Service) MaxArtifactBytesPerOrganization() int64 {
+	return s.config.MaxArtifactBytesPerOrganization
 }
 
 func (s *Service) RuntimeBackend() string {

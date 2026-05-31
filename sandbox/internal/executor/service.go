@@ -1546,6 +1546,9 @@ func (s *Service) BuildFileManifestWithOptions(sandboxID string, relativePath st
 	if err != nil {
 		return nil, err
 	}
+	if err := s.enforceOrganizationArtifactByteLimit(box, target, totalSize); err != nil {
+		return nil, err
+	}
 
 	metadata := map[string]any{
 		"path":       relativePath,
@@ -1563,6 +1566,45 @@ func (s *Service) BuildFileManifestWithOptions(sandboxID string, relativePath st
 		TotalSize: totalSize,
 		Truncated: false,
 	}, nil
+}
+
+func (s *Service) enforceOrganizationArtifactByteLimit(box *sandbox.Sandbox, manifestTarget string, manifestTotalSize int64) error {
+	limit := s.policy.MaxArtifactBytesPerOrganization()
+	if limit <= 0 || box == nil || box.OrganizationID == "" {
+		return nil
+	}
+	currentArtifactBytes, err := artifactByteSize(box.RootPath)
+	if err != nil {
+		return err
+	}
+	currentManifestBytes, err := directoryByteSize(manifestTarget)
+	if err != nil {
+		return err
+	}
+	actualSize := currentArtifactBytes - currentManifestBytes + manifestTotalSize
+	for _, item := range s.lifecycle.List() {
+		if item.ID == box.ID || item.OrganizationID != box.OrganizationID {
+			continue
+		}
+		size, err := artifactByteSize(item.RootPath)
+		if err != nil {
+			return err
+		}
+		actualSize += size
+	}
+	if actualSize <= limit {
+		return nil
+	}
+	return &policy.LimitError{
+		Code:    "organization_artifact_byte_limit_exceeded",
+		Limit:   "max_artifact_bytes_per_organization",
+		Maximum: limitMaximumInt(limit),
+		Actual:  limitMaximumInt(actualSize),
+		Details: map[string]any{
+			"organization_id":             box.OrganizationID,
+			"organization_artifact_bytes": actualSize,
+		},
+	}
 }
 
 func (s *Service) normalizeManifestLimits(options FileManifestOptions) (int, int64) {
@@ -1612,6 +1654,65 @@ func workspaceByteSize(root string) (int64, error) {
 		return nil
 	})
 	return total, err
+}
+
+func artifactByteSize(root string) (int64, error) {
+	var total int64
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == root || d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("artifact path contains symlink: %s", path)
+		}
+		if pathHasSegment(root, path, "artifacts") {
+			total += info.Size()
+		}
+		return nil
+	})
+	return total, err
+}
+
+func directoryByteSize(root string) (int64, error) {
+	var total int64
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == root || d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("directory contains symlink: %s", path)
+		}
+		total += info.Size()
+		return nil
+	})
+	return total, err
+}
+
+func pathHasSegment(root string, target string, segment string) bool {
+	rel, err := filepath.Rel(root, target)
+	if err != nil {
+		return false
+	}
+	for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
+		if part == segment {
+			return true
+		}
+	}
+	return false
 }
 
 func workspaceFileCount(root string) (int, error) {
