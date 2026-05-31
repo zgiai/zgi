@@ -121,13 +121,23 @@ const messages: CommonMessages = {
     loading: '加载中...',
     noResults: '没有找到匹配的工作空间',
     noWorkspaces: '没有可用的工作空间',
+    noWorkspacesMember: '您还没有被分配到任何工作空间。',
+    noWorkspacesAdmin: '当前还没有可用或已分配的工作空间。',
   },
 
   workspaceRequired: {
     title: '请选择一个工作空间后继续',
     description:
       '工作台需要在具体工作空间内使用。请先选择工作空间，再开始对话、应用、绘图或定时任务。',
-    noWorkspaces: '您尚未加入任何工作空间，请联系管理员邀请您加入。',
+    noWorkspacesTitle: '暂无可用工作空间',
+    memberNoWorkspacesDescription: '您已加入组织，但尚未被分配到任何工作空间。',
+    adminNoWorkspacesDescription:
+      '工作台需要在具体工作空间内使用。请先创建工作空间或完成成员分配。',
+    memberNoWorkspacesHint: '请联系组织管理员，将您加入至少一个工作空间后再使用工作台。',
+    adminNoWorkspacesHint: '请前往工作空间管理创建工作空间或分配成员，然后返回工作台继续使用。',
+    loadingWorkspaces: '正在加载工作空间...',
+    manageWorkspaces: '管理工作空间',
+    refreshWorkspaces: '刷新工作空间',
   },
 
   assetMove: {

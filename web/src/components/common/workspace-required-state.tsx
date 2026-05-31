@@ -1,7 +1,8 @@
 'use client';
 
 import * as React from 'react';
-import { Check, ChevronsUpDown, Sparkles, Users } from 'lucide-react';
+import Link from 'next/link';
+import { Check, ChevronsUpDown, Loader2, RefreshCw, Settings, Sparkles, Users } from 'lucide-react';
 import { useT } from '@/i18n';
 import { Button } from '@/components/ui/button';
 import {
@@ -17,6 +18,8 @@ import { cn } from '@/lib/utils';
 import { useWorkspaceStore } from '@/store/workspace-store';
 import { useJoinedWorkspaces } from '@/hooks/workspace/use-joined-workspaces';
 import { useUpdateCurrentWorkspace } from '@/hooks/workspace/use-update-current-workspace';
+import { useCurrentUser } from '@/store/auth-store';
+import { canManageOrganizationWorkspaces } from '@/utils/workspace-access';
 import type { Workspace } from '@/store/workspace-store';
 
 interface WorkspaceRequiredStateProps {
@@ -32,12 +35,28 @@ export function WorkspaceRequiredState({
 }: WorkspaceRequiredStateProps) {
   const tCommon = useT('common');
   const tNavigation = useT('navigation');
+  const user = useCurrentUser();
   const workspaces = useWorkspaceStore.use.workspaces();
   const currentWorkspace = useWorkspaceStore.use.currentWorkspace();
   const { mutate: updateWorkspace, isPending } = useUpdateCurrentWorkspace();
   const autoSelectedWorkspaceIdRef = React.useRef<string | null>(null);
 
-  useJoinedWorkspaces({ syncToStore: true });
+  const { isLoading, isFetching, refetch } = useJoinedWorkspaces({ syncToStore: true });
+  const canManageWorkspaces = canManageOrganizationWorkspaces(user);
+  const isLoadingWorkspaces = (isLoading || isFetching) && workspaces.length === 0;
+  const isNoWorkspaceState = !isLoadingWorkspaces && workspaces.length === 0;
+  const resolvedTitle =
+    title ??
+    (isNoWorkspaceState
+      ? tCommon('workspaceRequired.noWorkspacesTitle')
+      : tCommon('workspaceRequired.title'));
+  const resolvedDescription =
+    description ??
+    (isNoWorkspaceState
+      ? canManageWorkspaces
+        ? tCommon('workspaceRequired.adminNoWorkspacesDescription')
+        : tCommon('workspaceRequired.memberNoWorkspacesDescription')
+      : tCommon('workspaceRequired.description'));
 
   React.useEffect(() => {
     if (currentWorkspace || workspaces.length !== 1 || isPending) return;
@@ -82,11 +101,9 @@ export function WorkspaceRequiredState({
             </div>
             <div className="space-y-2">
               <h2 className="text-2xl font-semibold tracking-tight text-foreground">
-                {title ?? tCommon('workspaceRequired.title')}
+                {resolvedTitle}
               </h2>
-              <p className="text-sm leading-6 text-muted-foreground">
-                {description ?? tCommon('workspaceRequired.description')}
-              </p>
+              <p className="text-sm leading-6 text-muted-foreground">{resolvedDescription}</p>
             </div>
           </div>
 
@@ -94,7 +111,12 @@ export function WorkspaceRequiredState({
             <p className="mb-2 text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
               {tNavigation('switchWorkspace')}
             </p>
-            {workspaces.length > 0 ? (
+            {isLoadingWorkspaces ? (
+              <div className="flex min-h-12 items-center gap-3 rounded-xl border border-border/70 bg-background px-3 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" />
+                <span>{tCommon('workspaceRequired.loadingWorkspaces')}</span>
+              </div>
+            ) : workspaces.length > 0 ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
@@ -140,9 +162,35 @@ export function WorkspaceRequiredState({
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : (
-              <p className="text-sm leading-6 text-muted-foreground">
-                {tCommon('workspaceRequired.noWorkspaces')}
-              </p>
+              <div className="space-y-4">
+                <p className="text-sm leading-6 text-muted-foreground">
+                  {canManageWorkspaces
+                    ? tCommon('workspaceRequired.adminNoWorkspacesHint')
+                    : tCommon('workspaceRequired.memberNoWorkspacesHint')}
+                </p>
+                <div className="grid gap-2">
+                  {canManageWorkspaces ? (
+                    <Button asChild className="w-full justify-start">
+                      <Link href="/dashboard/organization/workspaces">
+                        <Settings className="size-4" />
+                        {tCommon('workspaceRequired.manageWorkspaces')}
+                      </Link>
+                    </Button>
+                  ) : null}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full justify-start"
+                    onClick={() => {
+                      void refetch();
+                    }}
+                    disabled={isFetching}
+                  >
+                    <RefreshCw className={cn('size-4', isFetching && 'animate-spin')} />
+                    {tCommon('workspaceRequired.refreshWorkspaces')}
+                  </Button>
+                </div>
+              </div>
             )}
           </div>
         </CardContent>
