@@ -71,6 +71,7 @@ type ResourceLimits struct {
 	MaxArtifactManifestFiles               int    `json:"max_artifact_manifest_files"`
 	MaxArtifactManifestTotalBytes          int64  `json:"max_artifact_manifest_total_bytes"`
 	MaxArtifactManifestBytes               int64  `json:"max_artifact_manifest_bytes"`
+	MaxArtifactBytesPerOrganization        int64  `json:"max_artifact_bytes_per_organization"`
 	SessionTTLSecs                         int    `json:"session_ttl_secs"`
 	SessionTTLSeconds                      int    `json:"session_ttl_seconds"`
 	InteractiveTTLSecs                     int    `json:"interactive_ttl_secs"`
@@ -81,6 +82,7 @@ type ResourceLimits struct {
 	WorkspaceFileLimitEnforced             bool   `json:"workspace_file_limit_enforced"`
 	WorkspaceByteLimitEnforced             bool   `json:"workspace_byte_limit_enforced"`
 	OrganizationWorkspaceByteLimitEnforced bool   `json:"organization_workspace_byte_limit_enforced"`
+	OrganizationArtifactByteLimitEnforced  bool   `json:"organization_artifact_byte_limit_enforced"`
 }
 
 type Endpoint struct {

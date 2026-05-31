@@ -25,6 +25,7 @@ type Config struct {
 	MaxWorkspaceBytesPerOrganization       int64
 	MaxArtifactManifestFiles               int
 	MaxArtifactManifestBytes               int64
+	MaxArtifactBytesPerOrganization        int64
 	QueueTimeoutMS                         int
 	ShutdownTimeoutSeconds                 int
 	SessionTTL                             int
@@ -72,6 +73,7 @@ func FromEnv() Config {
 		MaxWorkspaceBytesPerOrganization:       getEnvInt64AllowZero("ZGI_SANDBOX_MAX_WORKSPACE_BYTES_PER_ORGANIZATION", 0),
 		MaxArtifactManifestFiles:               getEnvIntAllowZero("ZGI_SANDBOX_MAX_ARTIFACT_MANIFEST_FILES", 0),
 		MaxArtifactManifestBytes:               getEnvInt64AllowZero("ZGI_SANDBOX_MAX_ARTIFACT_MANIFEST_BYTES", 0),
+		MaxArtifactBytesPerOrganization:        getEnvInt64AllowZero("ZGI_SANDBOX_MAX_ARTIFACT_BYTES_PER_ORGANIZATION", 0),
 		QueueTimeoutMS:                         getEnvInt("ZGI_SANDBOX_QUEUE_TIMEOUT_MS", 5000),
 		ShutdownTimeoutSeconds:                 getEnvInt("ZGI_SANDBOX_SHUTDOWN_TIMEOUT_SECONDS", 10),
 		SessionTTL:                             getEnvInt("ZGI_SANDBOX_SESSION_TTL_SECONDS", 1800),
@@ -146,6 +148,7 @@ func (c Config) PublicSnapshot() map[string]any {
 		"max_workspace_bytes_per_organization":       c.MaxWorkspaceBytesPerOrganization,
 		"max_artifact_manifest_files":                c.MaxArtifactManifestFiles,
 		"max_artifact_manifest_bytes":                c.MaxArtifactManifestBytes,
+		"max_artifact_bytes_per_organization":        c.MaxArtifactBytesPerOrganization,
 		"queue_timeout_ms":                           c.QueueTimeoutMS,
 		"shutdown_timeout_seconds":                   c.ShutdownTimeoutSeconds,
 		"session_ttl_seconds":                        c.SessionTTL,

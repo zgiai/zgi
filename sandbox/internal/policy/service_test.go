@@ -101,6 +101,7 @@ func TestNormalizeCreateReturnsEffectiveLimitsAndStructuredLimitError(t *testing
 	cfg.MaxWorkspaceBytesPerOrganization = 4096
 	cfg.MaxArtifactManifestFiles = 7
 	cfg.MaxArtifactManifestBytes = 8192
+	cfg.MaxArtifactBytesPerOrganization = 16384
 	service := NewService(cfg)
 
 	decision, err := service.NormalizeCreate("session", 60, false, "", "stdlib", 1, "organization-1", 1)
@@ -145,6 +146,12 @@ func TestNormalizeCreateReturnsEffectiveLimitsAndStructuredLimitError(t *testing
 	}
 	if decision.EffectiveLimits.MaxArtifactManifestFiles != 7 || decision.EffectiveLimits.MaxArtifactManifestTotalBytes != 8192 || decision.EffectiveLimits.MaxArtifactManifestBytes != 8192 {
 		t.Fatalf("expected artifact manifest limits in decision, got %+v", decision.EffectiveLimits)
+	}
+	if decision.EffectiveLimits.MaxArtifactBytesPerOrganization != cfg.MaxArtifactBytesPerOrganization {
+		t.Fatalf("expected organization artifact byte limit in decision, got %+v", decision.EffectiveLimits)
+	}
+	if !decision.EffectiveLimits.OrganizationArtifactByteLimitEnforced {
+		t.Fatalf("expected organization artifact byte limit enforcement in decision, got %+v", decision.EffectiveLimits)
 	}
 
 	_, err = service.NormalizeCreate("session", 60, false, "", "stdlib", 2, "organization-1", 1)

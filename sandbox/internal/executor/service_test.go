@@ -1971,6 +1971,79 @@ func TestBuildFileManifestEnforcesArtifactLimits(t *testing.T) {
 	}
 }
 
+func TestBuildFileManifestEnforcesOrganizationArtifactByteLimit(t *testing.T) {
+	recorder := observer.NewRecorder(100)
+	cfg := config.FromEnv()
+	cfg.DataDir = t.TempDir()
+	cfg.MaxArtifactBytesPerOrganization = 16
+	policyService := policy.NewService(cfg)
+	manager, err := lifecycle.NewManagerWithConfig(recorder, policyService, cfg, nil, nil)
+	if err != nil {
+		t.Fatalf("expected lifecycle manager, got %v", err)
+	}
+	service := NewService(manager, runner.NewService(2, 3*time.Second, 4096), recorder, policyService)
+
+	firstBox, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+		OrganizationID: "organization-artifacts",
+	})
+	if err != nil {
+		t.Fatalf("expected first sandbox create, got %v", err)
+	}
+	secondBox, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+		OrganizationID: "organization-artifacts",
+	})
+	if err != nil {
+		t.Fatalf("expected second sandbox create, got %v", err)
+	}
+	otherBox, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+		OrganizationID: "organization-artifacts-other",
+	})
+	if err != nil {
+		t.Fatalf("expected other sandbox create, got %v", err)
+	}
+
+	if _, err := service.UploadFile(FileWriteRequest{
+		SandboxID: firstBox.ID,
+		Path:      "artifacts/report.txt",
+		Content:   "1234567890",
+	}); err != nil {
+		t.Fatalf("upload first artifact: %v", err)
+	}
+	if _, err := service.BuildFileManifest(firstBox.ID, "artifacts"); err != nil {
+		t.Fatalf("expected first organization artifact manifest below limit, got %v", err)
+	}
+
+	if _, err := service.UploadFile(FileWriteRequest{
+		SandboxID: secondBox.ID,
+		Path:      "artifacts/report.txt",
+		Content:   "1234567890",
+	}); err != nil {
+		t.Fatalf("upload second artifact: %v", err)
+	}
+	_, err = service.BuildFileManifest(secondBox.ID, "artifacts")
+	var limitErr *policy.LimitError
+	if !errors.As(err, &limitErr) || limitErr.Code != "organization_artifact_byte_limit_exceeded" || limitErr.Limit != "max_artifact_bytes_per_organization" {
+		t.Fatalf("expected organization artifact byte limit, got %v", err)
+	}
+	if limitErr.Details["organization_id"] != "organization-artifacts" {
+		t.Fatalf("expected organization id in limit details, got %+v", limitErr.Details)
+	}
+
+	if _, err := service.UploadFile(FileWriteRequest{
+		SandboxID: otherBox.ID,
+		Path:      "artifacts/report.txt",
+		Content:   "1234567890",
+	}); err != nil {
+		t.Fatalf("upload other artifact: %v", err)
+	}
+	if _, err := service.BuildFileManifest(otherBox.ID, "artifacts"); err != nil {
+		t.Fatalf("expected other organization artifact manifest to use separate quota, got %v", err)
+	}
+}
+
 func TestBuildFileManifestUsesConfiguredArtifactLimits(t *testing.T) {
 	recorder := observer.NewRecorder(100)
 	cfg := config.FromEnv()
