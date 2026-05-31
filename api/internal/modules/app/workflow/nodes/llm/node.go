@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	appconfig "github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/modules/app/chat"
 	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
@@ -1854,10 +1855,7 @@ func (n *Node) collectSelectedVisionURLTraceFromFiles(resolvedFiles []*file.File
 			continue
 		}
 
-		transport := "remote_url"
-		if isLocalWorkflowFile(resolvedFile.TransferMethod) || isSignedPreviewURL(fileURL) {
-			transport = "signed_preview_url"
-		}
+		transport := workflowVisionFileTransport(resolvedFile.TransferMethod, fileURL)
 
 		info, err := file.InspectExternalURL(fileURL)
 		if err != nil {
@@ -2170,7 +2168,10 @@ func (n *Node) buildVisionTrace(
 		fileURLPresence = append(fileURLPresence, err == nil && fileURL != "")
 	}
 
-	selectedTransport, selectedHost, selectedScheme, selectedIsPublic := collectSelectedVisionURLTrace(promptMessages)
+	selectedTransport, selectedHost, selectedScheme, selectedIsPublic := n.collectSelectedVisionURLTraceFromFiles(resolvedFiles)
+	if selectedTransport == "" {
+		selectedTransport, selectedHost, selectedScheme, selectedIsPublic = collectSelectedVisionURLTrace(promptMessages)
+	}
 
 	return map[string]any{
 		"vision_enabled":                    n.nodeData.Vision.Enabled,
@@ -4361,12 +4362,31 @@ func (n *Node) enrichFileFromDB(entityFile *entities.File) {
 
 }
 
-// resolveFileURLFromID returns the signed preview URL for a workflow file.
+// resolveFileURLFromID returns the model-facing URL for a workflow file.
 func (n *Node) resolveFileURLFromID(fileID string) (string, error) {
 	if fileID == "" {
 		return "", nil
 	}
 
+	cfg := appconfig.Current()
+	if strings.EqualFold(strings.TrimSpace(cfg.Workflow.ImageInputURLMode), appconfig.WorkflowImageInputURLModePublicStorageURL) {
+		publicURL, ok, err := n.resolveWorkflowImageInputPublicURL(fileID, cfg)
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			logger.DebugContext(n.logContext(context.Background()), "public storage URL generated for workflow image input",
+				zap.String("file_id", fileID),
+				zap.Bool("has_public_url", publicURL != ""),
+			)
+			return publicURL, nil
+		}
+	}
+
+	return n.resolveSignedFileURLFromID(fileID)
+}
+
+func (n *Node) resolveSignedFileURLFromID(fileID string) (string, error) {
 	signedURL, err := file.GetSignedFileURL(fileID)
 	if err != nil {
 		logger.WarnContext(n.logContext(context.Background()), "failed to generate signed file URL for LLM node",
@@ -4381,4 +4401,47 @@ func (n *Node) resolveFileURLFromID(fileID string) (string, error) {
 		zap.Bool("has_signed_url", signedURL != ""),
 	)
 	return signedURL, nil
+}
+
+func (n *Node) resolveWorkflowImageInputPublicURL(fileID string, cfg *appconfig.Config) (string, bool, error) {
+	if n.db == nil {
+		return "", false, fmt.Errorf("%s=%s requires upload_files database access",
+			"WORKFLOW_IMAGE_INPUT_URL_MODE",
+			appconfig.WorkflowImageInputURLModePublicStorageURL,
+		)
+	}
+
+	var result struct {
+		Key         string `gorm:"column:key"`
+		MimeType    string `gorm:"column:mime_type"`
+		Extension   string `gorm:"column:extension"`
+		StorageType string `gorm:"column:storage_type"`
+	}
+	err := n.db.Table("upload_files").
+		Select("key, mime_type, extension, storage_type").
+		Where("id = ?", fileID).
+		First(&result).Error
+	if err != nil {
+		return "", false, fmt.Errorf("failed to load workflow image input file metadata from upload_files: %w", err)
+	}
+
+	if !file.IsWorkflowImageInputFile(result.Extension, result.MimeType) {
+		return "", false, nil
+	}
+
+	publicURL, err := file.BuildWorkflowImageInputPublicStorageURL(cfg, result.StorageType, result.Key)
+	if err != nil {
+		return "", false, err
+	}
+	return publicURL, true, nil
+}
+
+func workflowVisionFileTransport(transferMethod file.FileTransferMethod, fileURL string) string {
+	if isSignedPreviewURL(fileURL) {
+		return "signed_preview_url"
+	}
+	if isLocalWorkflowFile(transferMethod) {
+		return appconfig.WorkflowImageInputURLModePublicStorageURL
+	}
+	return "remote_url"
 }

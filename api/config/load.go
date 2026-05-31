@@ -643,12 +643,18 @@ func loadWorkflowConfig(cfg *Config, source *envSource) error {
 	if err != nil {
 		return err
 	}
+	imageInputURLMode := strings.ToLower(strings.TrimSpace(source.string(WorkflowImageInputURLModeZGIProxy, envWorkflowImageInputURLMode)))
+	if imageInputURLMode == "" {
+		imageInputURLMode = WorkflowImageInputURLModeZGIProxy
+	}
 
 	cfg.Workflow = WorkflowConfig{
-		ExecutionTimeout:  executionTimeout,
-		LLMTimeout:        llmTimeout,
-		HeartbeatInterval: heartbeatInterval,
-		CleanupTimeout:    cleanupTimeout,
+		ExecutionTimeout:        executionTimeout,
+		LLMTimeout:              llmTimeout,
+		HeartbeatInterval:       heartbeatInterval,
+		CleanupTimeout:          cleanupTimeout,
+		ImageInputURLMode:       imageInputURLMode,
+		ImageInputPublicBaseURL: strings.TrimSpace(source.string("", envWorkflowImageInputPublicBaseURL)),
 	}
 	return nil
 }
