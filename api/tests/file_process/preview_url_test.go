@@ -531,6 +531,10 @@ func (s *previewURLFileService) GetFile(context.Context, string) (string, error)
 	return "", nil
 }
 
+func (s *previewURLFileService) ExtractFileWithSetting(context.Context, string, interfaces.FileExtractionSetting) (string, error) {
+	return "", nil
+}
+
 func (s *previewURLFileService) GetSupportedFileTypes() []string {
 	return nil
 }

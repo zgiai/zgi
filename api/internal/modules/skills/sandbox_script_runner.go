@@ -172,6 +172,11 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 	}
 	dependencyProfile := manifest.DependencyProfile
 
+	if err := r.preflightDependencyProfile(ctx, execCtx, manifest.Language, dependencyProfile); err != nil {
+		recordSkillScriptError(&trace, start, err)
+		return &ToolInvocationResult{Trace: trace}, err
+	}
+
 	sandboxID, err := r.createSandbox(ctx, execCtx, dependencyProfile)
 	if err != nil {
 		recordSkillScriptError(&trace, start, err)
@@ -262,6 +267,35 @@ func (r *SandboxScriptRunner) createSandbox(ctx context.Context, execCtx Executi
 		return "", fmt.Errorf("sandbox create response did not include sandbox id")
 	}
 	return response.ID, nil
+}
+
+func (r *SandboxScriptRunner) preflightDependencyProfile(ctx context.Context, execCtx ExecutionContext, language string, dependencyProfile string) error {
+	profile := strings.TrimSpace(dependencyProfile)
+	if profile == "" {
+		profile = defaultSkillDependencyProfile
+	}
+	language = normalizeSkillScriptLanguage(language)
+	if language == "" {
+		language = "python3"
+	}
+
+	var catalog sandboxDependencyCatalog
+	endpoint := "/v1/sandbox/dependencies?language=" + url.QueryEscape(language)
+	endpoint = withOrganizationQuery(endpoint, execCtx)
+	if err := r.doIdempotentJSON(ctx, http.MethodGet, endpoint, nil, &catalog, r.timeouts.Create); err != nil {
+		return fmt.Errorf("skill dependency profile preflight failed: %w", err)
+	}
+
+	for _, item := range catalog.Profiles {
+		if item.Name != profile {
+			continue
+		}
+		if !item.Enabled || item.Status != "ready" {
+			return fmt.Errorf("skill dependency profile preflight failed: dependency profile is not ready: %s", profile)
+		}
+		return nil
+	}
+	return fmt.Errorf("skill dependency profile preflight failed: unsupported dependency profile for %s: %s", language, profile)
 }
 
 func (r *SandboxScriptRunner) uploadArchive(ctx context.Context, sandboxID string, archiveBase64 string, execCtx ExecutionContext, validateSkillManifest bool) error {
@@ -672,6 +706,19 @@ type sandboxSkillRunResult struct {
 	Command           sandboxCommandResult  `json:"command"`
 	ArtifactManifests []sandboxFileManifest `json:"artifact_manifests"`
 	ResultJSON        interface{}           `json:"result_json"`
+}
+
+type sandboxDependencyCatalog struct {
+	Language string                     `json:"language"`
+	Profiles []sandboxDependencyProfile `json:"profiles"`
+}
+
+type sandboxDependencyProfile struct {
+	Name      string   `json:"name"`
+	Version   string   `json:"version"`
+	Status    string   `json:"status"`
+	Enabled   bool     `json:"enabled"`
+	Languages []string `json:"languages"`
 }
 
 type sandboxSkillManifest struct {

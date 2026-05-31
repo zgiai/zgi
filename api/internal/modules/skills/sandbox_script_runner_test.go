@@ -320,6 +320,8 @@ func TestSandboxScriptRunnerUsesManifestDependencyProfile(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/sandbox/dependencies":
+			writeSandboxDependencyCatalog(t, w)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/sandboxes":
 			var req map[string]interface{}
 			decodeJSON(t, r, &req)
@@ -366,6 +368,92 @@ func TestSandboxScriptRunnerUsesManifestDependencyProfile(t *testing.T) {
 	}
 }
 
+func TestSandboxScriptRunnerRejectsUnknownDependencyProfileBeforeCreate(t *testing.T) {
+	root := writeTestScriptSkill(t)
+	if err := os.WriteFile(filepath.Join(root, "skill.manifest.json"), []byte(`{"dependency_profile":"missing-profile"}`), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	createRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/sandbox/dependencies":
+			writeSandboxDependencyCatalog(t, w)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/sandboxes":
+			createRequests++
+			t.Fatalf("sandbox should not be created for an unsupported dependency profile")
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	runtime := NewRuntimeWithCatalog(nil, nil, "").WithScriptRunner(NewSandboxScriptRunner(SandboxScriptRunnerConfig{Endpoint: server.URL}))
+	doc, err := runtime.LoadCustomSkillDocument(root)
+	if err != nil {
+		t.Fatalf("load custom skill: %v", err)
+	}
+	result, err := runtime.CallSkillTool(context.Background(), &ResolvedSkills{Skills: []SkillDocument{doc}}, "script-skill", SkillScriptToolRun, map[string]interface{}{"input": "hello"}, ExecutionContext{}, "call_1")
+	if err == nil || !strings.Contains(err.Error(), "unsupported dependency profile for python3: missing-profile") {
+		t.Fatalf("expected dependency profile preflight rejection, got %v", err)
+	}
+	if result == nil || result.Trace.Status != "error" {
+		t.Fatalf("expected error trace, got %+v", result)
+	}
+	if createRequests != 0 {
+		t.Fatalf("create requests = %d, want 0", createRequests)
+	}
+}
+
+func TestSandboxScriptRunnerRejectsDisabledDependencyProfileBeforeCreate(t *testing.T) {
+	root := writeTestScriptSkill(t)
+	if err := os.WriteFile(filepath.Join(root, "skill.manifest.json"), []byte(`{"dependency_profile":"python-data-preview"}`), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/sandbox/dependencies":
+			writeSandboxDependencyCatalog(t, w)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/sandboxes":
+			t.Fatalf("sandbox should not be created for a disabled dependency profile")
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	runner := NewSandboxScriptRunner(SandboxScriptRunnerConfig{Endpoint: server.URL})
+	_, err := runner.RunSkillScript(context.Background(), scriptSkillDocument(root), map[string]interface{}{"input": "hello"}, ExecutionContext{}, "call_1")
+	if err == nil || !strings.Contains(err.Error(), "dependency profile is not ready: python-data-preview") {
+		t.Fatalf("expected disabled dependency profile rejection, got %v", err)
+	}
+}
+
+func TestSandboxScriptRunnerFailsClosedWhenDependencyCatalogUnavailable(t *testing.T) {
+	root := writeTestScriptSkill(t)
+	catalogRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/sandbox/dependencies":
+			catalogRequests++
+			writeSandboxError(t, w, http.StatusServiceUnavailable, -503, "catalog unavailable")
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/sandboxes":
+			t.Fatalf("sandbox should not be created when dependency catalog is unavailable")
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	runner := NewSandboxScriptRunner(SandboxScriptRunnerConfig{Endpoint: server.URL})
+	_, err := runner.RunSkillScript(context.Background(), scriptSkillDocument(root), map[string]interface{}{"input": "hello"}, ExecutionContext{}, "call_1")
+	if err == nil || !strings.Contains(err.Error(), "skill dependency profile preflight failed") {
+		t.Fatalf("expected fail-closed dependency catalog error, got %v", err)
+	}
+	if catalogRequests != defaultSandboxIdempotentAttempts {
+		t.Fatalf("catalog requests = %d, want %d retry attempts", catalogRequests, defaultSandboxIdempotentAttempts)
+	}
+}
+
 func TestSandboxScriptRunnerAppliesManifestRuntimePolicies(t *testing.T) {
 	root := writeTestScriptSkill(t)
 	manifest := `{
@@ -385,6 +473,8 @@ func TestSandboxScriptRunnerAppliesManifestRuntimePolicies(t *testing.T) {
 	downloaded := []string{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/sandbox/dependencies":
+			writeSandboxDependencyCatalog(t, w)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/sandboxes":
 			var req map[string]interface{}
 			decodeJSON(t, r, &req)
@@ -543,6 +633,8 @@ func TestSandboxScriptRunnerRecordsStructuredSandboxErrorInTrace(t *testing.T) {
 	root := writeTestScriptSkill(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/sandbox/dependencies":
+			writeSandboxDependencyCatalog(t, w)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/sandboxes":
 			writeSandboxOK(t, w, map[string]interface{}{"id": "sbx_test"})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/files/upload-archive":
@@ -1022,6 +1114,8 @@ func newFakeSandboxServer(t *testing.T) *fakeSandboxServer {
 
 func (f *fakeSandboxServer) handle(w http.ResponseWriter, r *http.Request) {
 	switch {
+	case r.Method == http.MethodGet && r.URL.Path == "/v1/sandbox/dependencies":
+		writeSandboxDependencyCatalog(f.t, w)
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/sandboxes":
 		writeSandboxEnvelope(w, http.StatusOK, map[string]interface{}{"id": "sbx_test"})
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/files/upload-archive":
@@ -1171,6 +1265,21 @@ func writeSandboxOK(t *testing.T, w http.ResponseWriter, data interface{}) {
 	if err := json.NewEncoder(w).Encode(map[string]interface{}{"code": 0, "message": "success", "data": data}); err != nil {
 		t.Fatalf("write response: %v", err)
 	}
+}
+
+func writeSandboxDependencyCatalog(t *testing.T, w http.ResponseWriter) {
+	t.Helper()
+	writeSandboxOK(t, w, map[string]interface{}{
+		"language":             "python3",
+		"mode":                 "managed-profiles",
+		"supports_user_update": false,
+		"profiles": []map[string]interface{}{
+			{"name": "stdlib", "version": "2026.05.01", "status": "ready", "enabled": true, "languages": []string{"python3", "nodejs"}},
+			{"name": "workflow-safe", "version": "2026.05.01", "status": "ready", "enabled": true, "languages": []string{"python3"}},
+			{"name": "node-basic", "version": "2026.05.01", "status": "ready", "enabled": true, "languages": []string{"nodejs"}},
+			{"name": "python-data-preview", "version": "2026.05.01", "status": "disabled", "enabled": false, "languages": []string{"python3"}},
+		},
+	})
 }
 
 func writeSandboxError(t *testing.T, w http.ResponseWriter, status int, code int, message string) {
