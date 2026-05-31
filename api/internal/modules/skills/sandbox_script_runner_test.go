@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
@@ -197,6 +198,39 @@ func TestSandboxScriptRunnerUsesManifestDependencyProfile(t *testing.T) {
 	}
 	if _, err := runtime.CallSkillTool(context.Background(), &ResolvedSkills{Skills: []SkillDocument{doc}}, "script-skill", SkillScriptToolRun, map[string]interface{}{"input": "hello"}, ExecutionContext{}, "call_1"); err != nil {
 		t.Fatalf("run skill script: %v", err)
+	}
+}
+
+func TestSandboxScriptRunnerUsesOperationTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(50 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"id":"sbx_test"}}`))
+	}))
+	defer server.Close()
+
+	runner := NewSandboxScriptRunner(SandboxScriptRunnerConfig{
+		Endpoint:      server.URL,
+		CreateTimeout: time.Millisecond,
+	})
+
+	_, err := runner.createSandbox(context.Background(), ExecutionContext{}, defaultSkillDependencyProfile)
+	if err == nil {
+		t.Fatal("expected create sandbox timeout")
+	}
+	if !strings.Contains(err.Error(), "context deadline exceeded") && !strings.Contains(err.Error(), "Client.Timeout exceeded") {
+		t.Fatalf("expected deadline error, got %v", err)
+	}
+}
+
+func TestSandboxScriptRunnerCommandRequestTimeoutIncludesPadding(t *testing.T) {
+	runner := NewSandboxScriptRunner(SandboxScriptRunnerConfig{
+		Endpoint:              "http://sandbox.example",
+		CommandTimeoutPadding: 2 * time.Second,
+	})
+
+	if got := runner.commandRequestTimeout(3); got != 5*time.Second {
+		t.Fatalf("command request timeout = %s, want 5s", got)
 	}
 }
 

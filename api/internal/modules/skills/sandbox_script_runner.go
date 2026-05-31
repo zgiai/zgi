@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -22,15 +23,39 @@ import (
 const defaultSkillScriptTimeoutSeconds = 30
 const defaultSkillDependencyProfile = "stdlib"
 
+const (
+	defaultSandboxConnectTimeout        = 5 * time.Second
+	defaultSandboxCreateTimeout         = 10 * time.Second
+	defaultSandboxUploadTimeout         = 30 * time.Second
+	defaultSandboxCommandTimeoutPadding = 15 * time.Second
+	defaultSandboxArtifactTimeout       = 10 * time.Second
+	defaultSandboxCleanupTimeout        = 5 * time.Second
+)
+
 type SandboxScriptRunnerConfig struct {
-	Endpoint string
-	APIKey   string
+	Endpoint              string
+	APIKey                string
+	ConnectTimeout        time.Duration
+	CreateTimeout         time.Duration
+	UploadTimeout         time.Duration
+	CommandTimeoutPadding time.Duration
+	ArtifactTimeout       time.Duration
+	CleanupTimeout        time.Duration
 }
 
 type SandboxScriptRunner struct {
 	endpoint string
 	apiKey   string
 	client   *http.Client
+	timeouts sandboxScriptRunnerTimeouts
+}
+
+type sandboxScriptRunnerTimeouts struct {
+	Create         time.Duration
+	Upload         time.Duration
+	CommandPadding time.Duration
+	Artifact       time.Duration
+	Cleanup        time.Duration
 }
 
 func NewSandboxScriptRunner(config SandboxScriptRunnerConfig) *SandboxScriptRunner {
@@ -38,10 +63,20 @@ func NewSandboxScriptRunner(config SandboxScriptRunnerConfig) *SandboxScriptRunn
 	if endpoint == "" {
 		return nil
 	}
+	connectTimeout := durationOrDefault(config.ConnectTimeout, defaultSandboxConnectTimeout)
 	return &SandboxScriptRunner{
 		endpoint: endpoint,
 		apiKey:   strings.TrimSpace(config.APIKey),
-		client:   &http.Client{Timeout: 60 * time.Second},
+		client: &http.Client{
+			Transport: sandboxHTTPTransport(connectTimeout),
+		},
+		timeouts: sandboxScriptRunnerTimeouts{
+			Create:         durationOrDefault(config.CreateTimeout, defaultSandboxCreateTimeout),
+			Upload:         durationOrDefault(config.UploadTimeout, defaultSandboxUploadTimeout),
+			CommandPadding: durationOrDefault(config.CommandTimeoutPadding, defaultSandboxCommandTimeoutPadding),
+			Artifact:       durationOrDefault(config.ArtifactTimeout, defaultSandboxArtifactTimeout),
+			Cleanup:        durationOrDefault(config.CleanupTimeout, defaultSandboxCleanupTimeout),
+		},
 	}
 }
 
@@ -156,7 +191,7 @@ func (r *SandboxScriptRunner) createSandbox(ctx context.Context, execCtx Executi
 	if organizationID := strings.TrimSpace(execCtx.OrganizationID); organizationID != "" {
 		payload["organization_id"] = organizationID
 	}
-	if err := r.doJSON(ctx, http.MethodPost, "/v1/sandboxes", payload, &response); err != nil {
+	if err := r.doJSON(ctx, http.MethodPost, "/v1/sandboxes", payload, &response, r.timeouts.Create); err != nil {
 		return "", err
 	}
 	if strings.TrimSpace(response.ID) == "" {
@@ -176,7 +211,7 @@ func (r *SandboxScriptRunner) uploadArchive(ctx context.Context, sandboxID strin
 	if organizationID := strings.TrimSpace(execCtx.OrganizationID); organizationID != "" {
 		payload["organization_id"] = organizationID
 	}
-	return r.doJSON(ctx, http.MethodPost, "/v1/files/upload-archive", payload, nil)
+	return r.doJSON(ctx, http.MethodPost, "/v1/files/upload-archive", payload, nil, r.timeouts.Upload)
 }
 
 func (r *SandboxScriptRunner) runCommand(ctx context.Context, sandboxID string, stdin string, timeoutSeconds int, execCtx ExecutionContext) (*sandboxCommandResult, error) {
@@ -196,7 +231,7 @@ func (r *SandboxScriptRunner) runCommand(ctx context.Context, sandboxID string, 
 	if organizationID := strings.TrimSpace(execCtx.OrganizationID); organizationID != "" {
 		payload["organization_id"] = organizationID
 	}
-	err := r.doJSON(ctx, http.MethodPost, "/v1/exec/command", payload, &response)
+	err := r.doJSON(ctx, http.MethodPost, "/v1/exec/command", payload, &response, r.commandRequestTimeout(timeoutSeconds))
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +243,7 @@ func (r *SandboxScriptRunner) deleteSandbox(ctx context.Context, sandboxID strin
 		return nil
 	}
 	path := withOrganizationQuery("/v1/sandboxes/"+url.PathEscape(sandboxID), execCtx)
-	return r.doJSON(ctx, http.MethodDelete, path, nil, nil)
+	return r.doJSON(ctx, http.MethodDelete, path, nil, nil, r.timeouts.Cleanup)
 }
 
 func (r *SandboxScriptRunner) collectArtifacts(ctx context.Context, sandboxID string, execCtx ExecutionContext) ([]skillScriptArtifact, error) {
@@ -216,7 +251,7 @@ func (r *SandboxScriptRunner) collectArtifacts(ctx context.Context, sandboxID st
 		Items []sandboxFileInfo `json:"items"`
 	}
 	path := withOrganizationQuery("/v1/files/tree?sandbox_id="+url.QueryEscape(sandboxID), execCtx)
-	if err := r.doJSON(ctx, http.MethodGet, path, nil, &tree); err != nil {
+	if err := r.doJSON(ctx, http.MethodGet, path, nil, &tree, r.timeouts.Artifact); err != nil {
 		return nil, err
 	}
 
@@ -251,10 +286,18 @@ func (r *SandboxScriptRunner) downloadArtifact(ctx context.Context, sandboxID st
 	var content sandboxFileContent
 	endpoint := "/v1/files/download?sandbox_id=" + url.QueryEscape(sandboxID) + "&path=" + url.QueryEscape(path) + "&encoding=base64"
 	endpoint = withOrganizationQuery(endpoint, execCtx)
-	if err := r.doJSON(ctx, http.MethodGet, endpoint, nil, &content); err != nil {
+	if err := r.doJSON(ctx, http.MethodGet, endpoint, nil, &content, r.timeouts.Artifact); err != nil {
 		return nil, err
 	}
 	return &content, nil
+}
+
+func (r *SandboxScriptRunner) commandRequestTimeout(timeoutSeconds int) time.Duration {
+	timeout := time.Duration(timeoutSeconds) * time.Second
+	if timeout <= 0 {
+		timeout = defaultSkillScriptTimeoutSeconds * time.Second
+	}
+	return timeout + r.timeouts.CommandPadding
 }
 
 func withOrganizationQuery(path string, execCtx ExecutionContext) string {
@@ -269,7 +312,7 @@ func withOrganizationQuery(path string, execCtx ExecutionContext) string {
 	return path + separator + "organization_id=" + url.QueryEscape(organizationID)
 }
 
-func (r *SandboxScriptRunner) doJSON(ctx context.Context, method string, path string, payload interface{}, out interface{}) error {
+func (r *SandboxScriptRunner) doJSON(ctx context.Context, method string, path string, payload interface{}, out interface{}, timeout time.Duration) error {
 	var body io.Reader
 	if payload != nil {
 		raw, err := json.Marshal(payload)
@@ -277,6 +320,11 @@ func (r *SandboxScriptRunner) doJSON(ctx context.Context, method string, path st
 			return err
 		}
 		body = bytes.NewReader(raw)
+	}
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
 	}
 	req, err := http.NewRequestWithContext(ctx, method, r.endpoint+path, body)
 	if err != nil {
@@ -318,6 +366,23 @@ func (r *SandboxScriptRunner) doJSON(ctx context.Context, method string, path st
 		}
 	}
 	return nil
+}
+
+func durationOrDefault(value time.Duration, fallback time.Duration) time.Duration {
+	if value > 0 {
+		return value
+	}
+	return fallback
+}
+
+func sandboxHTTPTransport(connectTimeout time.Duration) http.RoundTripper {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = (&net.Dialer{
+		Timeout:   connectTimeout,
+		KeepAlive: 30 * time.Second,
+	}).DialContext
+	transport.TLSHandshakeTimeout = durationOrDefault(connectTimeout, defaultSandboxConnectTimeout)
+	return transport
 }
 
 type sandboxCommandResult struct {

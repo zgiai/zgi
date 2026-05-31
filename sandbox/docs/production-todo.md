@@ -498,11 +498,11 @@ business logic to sandbox internals.
 
 - Keep sandbox calls behind a typed adapter in `zgi-api`.
 - Add retries only for safe idempotent operations.
-- Add clear timeout settings:
-  - connect timeout
-  - upload timeout
-  - execution timeout
-  - artifact download timeout
+- [x] Add clear timeout settings:
+  - [x] connect timeout
+  - [x] upload timeout
+  - [x] execution timeout
+  - [x] artifact download timeout
 - Add structured sandbox errors mapped to API-level errors.
 
 ### J2. Workflow Runtime
