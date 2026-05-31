@@ -75,6 +75,10 @@ type ResourceLimits struct {
 	MaxDependencyProfilesPerOrganization       int    `json:"max_dependency_profiles_per_organization"`
 	MaxDependencyProfileSizeBytes              int64  `json:"max_dependency_profile_size_bytes"`
 	DependencyProfileBuildTimeoutSeconds       int    `json:"dependency_profile_build_timeout_seconds"`
+	SecureRuntimeCPUSeconds                    int    `json:"secure_runtime_cpu_seconds"`
+	SecureRuntimeMemoryBytes                   int64  `json:"secure_runtime_memory_bytes"`
+	SecureRuntimeProcessLimit                  int    `json:"secure_runtime_process_limit"`
+	SecureRuntimeOpenFileLimit                 int    `json:"secure_runtime_open_file_limit"`
 	SessionTTLSecs                             int    `json:"session_ttl_secs"`
 	SessionTTLSeconds                          int    `json:"session_ttl_seconds"`
 	InteractiveTTLSecs                         int    `json:"interactive_ttl_secs"`
@@ -87,6 +91,7 @@ type ResourceLimits struct {
 	OrganizationWorkspaceByteLimitEnforced     bool   `json:"organization_workspace_byte_limit_enforced"`
 	OrganizationArtifactByteLimitEnforced      bool   `json:"organization_artifact_byte_limit_enforced"`
 	OrganizationDependencyProfileLimitEnforced bool   `json:"organization_dependency_profile_limit_enforced"`
+	SecureRuntimeResourceLimitsEnforced        bool   `json:"secure_runtime_resource_limits_enforced"`
 }
 
 type Endpoint struct {

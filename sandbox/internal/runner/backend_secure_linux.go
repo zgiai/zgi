@@ -19,6 +19,7 @@ type linuxSecureBackend struct {
 	rootfs              string
 	dependencyRootFSDir string
 	bwrapBin            string
+	limits              secureRuntimeLimits
 	allowShell          bool
 }
 
@@ -43,6 +44,7 @@ func newLinuxSecureBackend(cfg config.Config) (backend, error) {
 		rootfs:              rootfs,
 		dependencyRootFSDir: strings.TrimSpace(cfg.DependencyRootFSDir),
 		bwrapBin:            bwrapBin,
+		limits:              secureRuntimeLimitsFromConfig(cfg),
 		allowShell:          true,
 	}, nil
 }
@@ -141,6 +143,7 @@ func (b *linuxSecureBackend) exec(ctx context.Context, workDir string, dependenc
 		"--unshare-uts",
 		"--unshare-cgroup",
 	}
+	bwrapArgs = append(bwrapArgs, b.limits.bwrapArgs()...)
 	for key, value := range env {
 		bwrapArgs = append(bwrapArgs, "--setenv", key, value)
 	}

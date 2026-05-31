@@ -173,6 +173,28 @@ func TestFromEnvReadsDependencyRootFSDir(t *testing.T) {
 	}
 }
 
+func TestFromEnvReadsSecureRuntimeLimits(t *testing.T) {
+	t.Setenv("ZGI_SANDBOX_SECURE_RUNTIME_CPU_SECONDS", "3")
+	t.Setenv("ZGI_SANDBOX_SECURE_RUNTIME_MEMORY_BYTES", "134217728")
+	t.Setenv("ZGI_SANDBOX_SECURE_RUNTIME_PROCESS_LIMIT", "32")
+	t.Setenv("ZGI_SANDBOX_SECURE_RUNTIME_OPEN_FILE_LIMIT", "64")
+
+	cfg := FromEnv()
+
+	if cfg.SecureRuntimeCPUSeconds != 3 {
+		t.Fatalf("expected secure runtime cpu seconds 3, got %d", cfg.SecureRuntimeCPUSeconds)
+	}
+	if cfg.SecureRuntimeMemoryBytes != 134217728 {
+		t.Fatalf("expected secure runtime memory bytes 134217728, got %d", cfg.SecureRuntimeMemoryBytes)
+	}
+	if cfg.SecureRuntimeProcessLimit != 32 {
+		t.Fatalf("expected secure runtime process limit 32, got %d", cfg.SecureRuntimeProcessLimit)
+	}
+	if cfg.SecureRuntimeOpenFileLimit != 64 {
+		t.Fatalf("expected secure runtime open file limit 64, got %d", cfg.SecureRuntimeOpenFileLimit)
+	}
+}
+
 func TestPublicSnapshotOmitsSecrets(t *testing.T) {
 	cfg := Config{
 		Port:                                 "2660",
@@ -186,6 +208,10 @@ func TestPublicSnapshotOmitsSecrets(t *testing.T) {
 		SecureRootFS:                         "/srv/rootfs",
 		DependencyRootFSDir:                  "/srv/profiles",
 		BwrapBinary:                          "bwrap",
+		SecureRuntimeCPUSeconds:              3,
+		SecureRuntimeMemoryBytes:             134217728,
+		SecureRuntimeProcessLimit:            32,
+		SecureRuntimeOpenFileLimit:           64,
 		Environment:                          "local",
 		AdvertiseURL:                         "http://127.0.0.1:2660",
 		PublicBaseURL:                        "http://127.0.0.1:2660",
@@ -243,6 +269,18 @@ func TestPublicSnapshotOmitsSecrets(t *testing.T) {
 	if snapshot["dependency_profile_build_timeout_seconds"] != 120 {
 		t.Fatalf("expected dependency profile build timeout, got %#v", snapshot["dependency_profile_build_timeout_seconds"])
 	}
+	if snapshot["secure_runtime_cpu_seconds"] != 3 {
+		t.Fatalf("expected secure runtime cpu seconds, got %#v", snapshot["secure_runtime_cpu_seconds"])
+	}
+	if snapshot["secure_runtime_memory_bytes"] != int64(134217728) {
+		t.Fatalf("expected secure runtime memory bytes, got %#v", snapshot["secure_runtime_memory_bytes"])
+	}
+	if snapshot["secure_runtime_process_limit"] != 32 {
+		t.Fatalf("expected secure runtime process limit, got %#v", snapshot["secure_runtime_process_limit"])
+	}
+	if snapshot["secure_runtime_open_file_limit"] != 64 {
+		t.Fatalf("expected secure runtime open file limit, got %#v", snapshot["secure_runtime_open_file_limit"])
+	}
 }
 
 func TestValidateStartupRejectsPreviewBackendInProduction(t *testing.T) {
@@ -274,6 +312,7 @@ func TestValidateStartupRejectsInvalidBounds(t *testing.T) {
 	cfg.MaxWorkers = 0
 	cfg.MaxConcurrentExecutions = -1
 	cfg.MaxWorkspaceBytes = -1
+	cfg.SecureRuntimeCPUSeconds = -1
 	cfg.AdvertiseURL = "localhost:2660"
 
 	err := cfg.ValidateStartup()
@@ -285,11 +324,25 @@ func TestValidateStartupRejectsInvalidBounds(t *testing.T) {
 		"ZGI_SANDBOX_LITE_MAX_WORKERS",
 		"ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS",
 		"ZGI_SANDBOX_MAX_WORKSPACE_BYTES",
+		"ZGI_SANDBOX_SECURE_RUNTIME_CPU_SECONDS",
 		"ZGI_SANDBOX_ADVERTISE_URL",
 	} {
 		if !strings.Contains(err.Error(), expected) {
 			t.Fatalf("expected validation error for %s, got %v", expected, err)
 		}
+	}
+}
+
+func TestValidateStartupRejectsDisabledSecureRuntimeLimitsInProduction(t *testing.T) {
+	cfg := validStartupConfig()
+	cfg.Environment = "production"
+	cfg.RuntimeBackend = "linux-secure"
+	cfg.SecureRootFS = secureRootFSDir(t)
+	cfg.APIKey = "secret"
+	cfg.SecureRuntimeMemoryBytes = 0
+
+	if err := cfg.ValidateStartup(); err == nil || !strings.Contains(err.Error(), "ZGI_SANDBOX_SECURE_RUNTIME_MEMORY_BYTES") {
+		t.Fatalf("expected disabled production secure runtime memory limit to be rejected, got %v", err)
 	}
 }
 
@@ -479,6 +532,10 @@ func validStartupConfig() Config {
 		SecureRootFS:                           "",
 		DependencyRootFSDir:                    "",
 		BwrapBinary:                            "bwrap",
+		SecureRuntimeCPUSeconds:                2,
+		SecureRuntimeMemoryBytes:               256 * 1024 * 1024,
+		SecureRuntimeProcessLimit:              64,
+		SecureRuntimeOpenFileLimit:             128,
 		ProxyTimeout:                           20,
 	}
 }
