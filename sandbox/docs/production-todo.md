@@ -547,7 +547,7 @@ managed environments.
 - Keep Docker Compose path working.
 - Add hardened Linux deployment notes.
 - Add Kubernetes deployment notes after worker/runtime model stabilizes.
-- Add health and readiness probes.
+- [x] Add health and readiness probes.
 - Add graceful shutdown behavior.
 
 ### K3. Diagnostics
@@ -568,7 +568,7 @@ managed environments.
 - [x] Startup config validation tests.
 - Readiness tests.
 - Shutdown drain tests.
-- Docker Compose smoke test.
+- [x] Docker Compose smoke test.
 
 ## 15. Milestone L: Test and Release Gates
 
