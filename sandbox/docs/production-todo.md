@@ -363,7 +363,7 @@ clearly separated for local development.
 
 ### G2. Linux Secure Runtime
 
-- Validate rootfs at startup.
+- [x] Validate rootfs at startup.
 - Run as non-root.
 - Use isolated namespaces.
 - Enforce network policy below the HTTP layer.
