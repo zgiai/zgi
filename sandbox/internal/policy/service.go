@@ -12,18 +12,31 @@ import (
 )
 
 type DependencyProfile struct {
-	Name        string   `json:"name"`
-	Languages   []string `json:"languages"`
-	Description string   `json:"description"`
+	Name        string              `json:"name"`
+	Version     string              `json:"version"`
+	Status      string              `json:"status"`
+	Enabled     bool                `json:"enabled"`
+	OwnerScope  string              `json:"owner_scope"`
+	Languages   []string            `json:"languages"`
+	Packages    []DependencyPackage `json:"packages"`
+	BaseRuntime string              `json:"base_runtime"`
+	Checksum    string              `json:"checksum"`
+	Description string              `json:"description"`
+}
+
+type DependencyPackage struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
 }
 
 type CreateDecision struct {
-	RuntimeProfile    sandbox.RuntimeProfile
-	TTL               time.Duration
-	NetworkEnabled    bool
-	NetworkPolicy     string
-	DependencyProfile string
-	EffectiveLimits   sandbox.ResourceLimits
+	RuntimeProfile           sandbox.RuntimeProfile
+	TTL                      time.Duration
+	NetworkEnabled           bool
+	NetworkPolicy            string
+	DependencyProfile        string
+	DependencyProfileVersion string
+	EffectiveLimits          sandbox.ResourceLimits
 }
 
 type CommandLimits struct {
@@ -92,23 +105,63 @@ func NewService(cfg config.Config) *Service {
 		dependencyProfiles: []DependencyProfile{
 			{
 				Name:        "stdlib",
+				Version:     "2026.05.01",
+				Status:      "ready",
+				Enabled:     true,
+				OwnerScope:  "global",
 				Languages:   []string{"python3", "nodejs"},
+				Packages:    []DependencyPackage{},
+				BaseRuntime: "preview-process",
+				Checksum:    "profile:stdlib:2026.05.01",
 				Description: "Base language runtime with only built-in packages.",
 			},
 			{
 				Name:        "workflow-safe",
+				Version:     "2026.05.01",
+				Status:      "ready",
+				Enabled:     true,
+				OwnerScope:  "global",
 				Languages:   []string{"python3"},
+				Packages:    []DependencyPackage{},
+				BaseRuntime: "preview-process",
+				Checksum:    "profile:workflow-safe:2026.05.01",
 				Description: "Managed Python profile for deterministic workflow execution.",
 			},
 			{
 				Name:        "node-basic",
+				Version:     "2026.05.01",
+				Status:      "ready",
+				Enabled:     true,
+				OwnerScope:  "global",
 				Languages:   []string{"nodejs"},
+				Packages:    []DependencyPackage{},
+				BaseRuntime: "preview-process",
+				Checksum:    "profile:node-basic:2026.05.01",
 				Description: "Managed Node.js profile for script-style automation tasks.",
 			},
 			{
 				Name:        "agent-tools",
+				Version:     "2026.05.01",
+				Status:      "ready",
+				Enabled:     true,
+				OwnerScope:  "global",
 				Languages:   []string{"python3", "nodejs"},
+				Packages:    []DependencyPackage{},
+				BaseRuntime: "preview-process",
+				Checksum:    "profile:agent-tools:2026.05.01",
 				Description: "Broader operator-managed profile for internal agent tooling.",
+			},
+			{
+				Name:        "python-data-preview",
+				Version:     "2026.05.01",
+				Status:      "disabled",
+				Enabled:     false,
+				OwnerScope:  "global",
+				Languages:   []string{"python3"},
+				Packages:    []DependencyPackage{{Name: "data-tools", Version: "managed"}},
+				BaseRuntime: "preview-process",
+				Checksum:    "profile:python-data-preview:2026.05.01",
+				Description: "Reserved managed profile that is not available for sandbox creation.",
 			},
 		},
 		networkProfiles: []map[string]any{
@@ -242,6 +295,28 @@ func (s *Service) DependencyCatalog(language string) map[string]any {
 }
 
 func (s *Service) NormalizeCreate(profile string, ttlSeconds int, networkEnabled bool, networkPolicy string, dependencyProfile string, activeCount int, organizationID string, organizationActiveCount int) (CreateDecision, error) {
+	runtimeProfile, err := s.normalizeProfile(profile)
+	if err != nil {
+		return CreateDecision{}, err
+	}
+
+	policyName, err := s.normalizeNetworkPolicy(runtimeProfile, networkPolicy)
+	if err != nil {
+		return CreateDecision{}, err
+	}
+
+	dependency, err := s.normalizeDependencyProfile(dependencyProfile)
+	if err != nil {
+		return CreateDecision{}, err
+	}
+
+	if networkEnabled && !s.networkPolicyAllowsEgress(policyName) {
+		return CreateDecision{}, errors.New("the selected network policy does not allow outbound network access")
+	}
+	if networkEnabled && !s.runtimeBackendEnforcesNetworkPolicy() {
+		return CreateDecision{}, fmt.Errorf("runtime backend %q does not enforce network policy", s.normalizedRuntimeBackend())
+	}
+
 	if s.config.MaxActive > 0 && activeCount >= s.config.MaxActive {
 		return CreateDecision{}, &LimitError{
 			Code:    "active_sandbox_limit_exceeded",
@@ -264,35 +339,14 @@ func (s *Service) NormalizeCreate(profile string, ttlSeconds int, networkEnabled
 		}
 	}
 
-	runtimeProfile, err := s.normalizeProfile(profile)
-	if err != nil {
-		return CreateDecision{}, err
-	}
-
-	policyName, err := s.normalizeNetworkPolicy(runtimeProfile, networkPolicy)
-	if err != nil {
-		return CreateDecision{}, err
-	}
-
-	dependencyName, err := s.normalizeDependencyProfile(dependencyProfile)
-	if err != nil {
-		return CreateDecision{}, err
-	}
-
-	if networkEnabled && !s.networkPolicyAllowsEgress(policyName) {
-		return CreateDecision{}, errors.New("the selected network policy does not allow outbound network access")
-	}
-	if networkEnabled && !s.runtimeBackendEnforcesNetworkPolicy() {
-		return CreateDecision{}, fmt.Errorf("runtime backend %q does not enforce network policy", s.normalizedRuntimeBackend())
-	}
-
 	return CreateDecision{
-		RuntimeProfile:    runtimeProfile,
-		TTL:               s.normalizeTTL(runtimeProfile, ttlSeconds),
-		NetworkEnabled:    networkEnabled,
-		NetworkPolicy:     policyName,
-		DependencyProfile: dependencyName,
-		EffectiveLimits:   s.EffectiveLimits(),
+		RuntimeProfile:           runtimeProfile,
+		TTL:                      s.normalizeTTL(runtimeProfile, ttlSeconds),
+		NetworkEnabled:           networkEnabled,
+		NetworkPolicy:            policyName,
+		DependencyProfile:        dependency.Name,
+		DependencyProfileVersion: dependency.Version,
+		EffectiveLimits:          s.EffectiveLimits(),
 	}, nil
 }
 
@@ -542,17 +596,20 @@ func (s *Service) normalizeNetworkPolicy(profile sandbox.RuntimeProfile, value s
 	return "", fmt.Errorf("unsupported network policy: %s", policyName)
 }
 
-func (s *Service) normalizeDependencyProfile(value string) (string, error) {
+func (s *Service) normalizeDependencyProfile(value string) (DependencyProfile, error) {
 	name := strings.TrimSpace(value)
 	if name == "" {
-		return "stdlib", nil
+		name = "stdlib"
 	}
 	for _, profile := range s.dependencyProfiles {
 		if profile.Name == name {
-			return name, nil
+			if !profile.Enabled || profile.Status != "ready" {
+				return DependencyProfile{}, fmt.Errorf("dependency profile is not enabled: %s", name)
+			}
+			return profile, nil
 		}
 	}
-	return "", fmt.Errorf("unsupported dependency profile: %s", name)
+	return DependencyProfile{}, fmt.Errorf("unsupported dependency profile: %s", name)
 }
 
 func (s *Service) normalizeTTL(profile sandbox.RuntimeProfile, ttlSeconds int) time.Duration {

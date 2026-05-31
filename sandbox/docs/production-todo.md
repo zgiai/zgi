@@ -217,8 +217,8 @@ arbitrary runtime installs from untrusted code.
 
 ### D1. Profile Model
 
-- Store dependency profiles as versioned records.
-- Track:
+- [x] Store dependency profiles as versioned records in the policy catalog.
+- [x] Track:
   - profile name
   - language
   - package list
@@ -227,7 +227,7 @@ arbitrary runtime installs from untrusted code.
   - checksum
   - enabled flag
   - owner scope
-- Add profile status:
+- [x] Add profile status:
   - `draft`
   - `building`
   - `ready`
@@ -238,9 +238,9 @@ arbitrary runtime installs from untrusted code.
 
 - Build dependency profiles outside request execution.
 - Cache completed profiles.
-- Make profile selection explicit in sandbox creation.
-- Reject unknown or disabled profiles.
-- Record dependency profile version on each sandbox.
+- [x] Make profile selection explicit in sandbox creation.
+- [x] Reject unknown or disabled profiles.
+- [x] Record dependency profile version on each sandbox.
 
 ### D3. Runtime Policy
 
@@ -251,8 +251,8 @@ arbitrary runtime installs from untrusted code.
 
 ### D4. Tests
 
-- Profile selection tests.
-- Disabled profile rejection.
+- [x] Profile selection tests.
+- [x] Disabled profile rejection.
 - Version pinning tests.
 - Build failure reporting tests.
 - Execution uses expected profile version.

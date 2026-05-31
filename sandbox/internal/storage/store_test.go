@@ -21,26 +21,27 @@ func TestPostgresStorePersistsSandboxAndEvents(t *testing.T) {
 	defer store.Close()
 
 	box := sandbox.Sandbox{
-		ID:                "sbx_store_test",
-		RuntimeProfile:    sandbox.RuntimeSession,
-		Status:            sandbox.StatusActive,
-		CreatedAt:         time.Now().UTC(),
-		UpdatedAt:         time.Now().UTC(),
-		ExpiresAt:         time.Now().UTC().Add(5 * time.Minute),
-		RootPath:          "/tmp/sbx_store_test",
-		Metadata:          map[string]string{"organization_id": "organization-1"},
-		OrganizationID:    "organization-1",
-		WorkspaceID:       "workspace-1",
-		AppID:             "app-1",
-		WorkflowRunID:     "run-1",
-		UserID:            "user-1",
-		NetworkEnabled:    true,
-		NetworkPolicy:     "workflow-safe",
-		DependencyProfile: "stdlib",
-		WorkspaceBinding:  "wf_1",
-		TTLSeconds:        300,
-		WorkerID:          "worker-a",
-		WorkerAddr:        "http://127.0.0.1:2660",
+		ID:                       "sbx_store_test",
+		RuntimeProfile:           sandbox.RuntimeSession,
+		Status:                   sandbox.StatusActive,
+		CreatedAt:                time.Now().UTC(),
+		UpdatedAt:                time.Now().UTC(),
+		ExpiresAt:                time.Now().UTC().Add(5 * time.Minute),
+		RootPath:                 "/tmp/sbx_store_test",
+		Metadata:                 map[string]string{"organization_id": "organization-1", "dependency_profile_version": "2026.05.01"},
+		OrganizationID:           "organization-1",
+		WorkspaceID:              "workspace-1",
+		AppID:                    "app-1",
+		WorkflowRunID:            "run-1",
+		UserID:                   "user-1",
+		NetworkEnabled:           true,
+		NetworkPolicy:            "workflow-safe",
+		DependencyProfile:        "stdlib",
+		DependencyProfileVersion: "2026.05.01",
+		WorkspaceBinding:         "wf_1",
+		TTLSeconds:               300,
+		WorkerID:                 "worker-a",
+		WorkerAddr:               "http://127.0.0.1:2660",
 	}
 	if err := store.SaveSandbox(box); err != nil {
 		t.Fatalf("save sandbox: %v", err)
@@ -55,6 +56,9 @@ func TestPostgresStorePersistsSandboxAndEvents(t *testing.T) {
 	}
 	if loaded.OrganizationID != box.OrganizationID || loaded.WorkspaceID != box.WorkspaceID || loaded.AppID != box.AppID || loaded.WorkflowRunID != box.WorkflowRunID || loaded.UserID != box.UserID {
 		t.Fatalf("expected ownership fields to round trip, got %+v", loaded)
+	}
+	if loaded.DependencyProfileVersion != box.DependencyProfileVersion {
+		t.Fatalf("expected dependency profile version to round trip, got %+v", loaded)
 	}
 	organizationCount, err := store.CountActiveByOrganization(box.OrganizationID, time.Now().UTC())
 	if err != nil {

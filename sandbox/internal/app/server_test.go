@@ -540,6 +540,34 @@ func TestDependencyEndpoint(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), "workflow-safe") {
 		t.Fatalf("expected managed dependency profile in response, got %s", rr.Body.String())
 	}
+	if !strings.Contains(rr.Body.String(), `"version":"2026.05.01"`) {
+		t.Fatalf("expected versioned dependency profiles in response, got %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"status":"ready"`) {
+		t.Fatalf("expected dependency profile status in response, got %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"enabled":true`) {
+		t.Fatalf("expected dependency profile enabled flag in response, got %s", rr.Body.String())
+	}
+}
+
+func TestCreateSandboxRejectsUnavailableDependencyProfile(t *testing.T) {
+	server, err := NewServer(testConfig(t))
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","dependency_profile":"python-data-preview"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected disabled dependency profile to return 400, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "dependency profile is not enabled") {
+		t.Fatalf("expected dependency profile rejection message, got %s", rr.Body.String())
+	}
 }
 
 func TestMetricsEndpointReportsSandboxRunnerAndObserverCounters(t *testing.T) {

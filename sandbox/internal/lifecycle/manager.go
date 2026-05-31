@@ -141,28 +141,32 @@ func (m *Manager) Create(req CreateRequest) (*sandbox.Sandbox, error) {
 		return nil, err
 	}
 
+	metadata := cloneMetadata(req.Metadata)
+	metadata["dependency_profile_version"] = decision.DependencyProfileVersion
+
 	item := sandbox.Sandbox{
-		ID:                id,
-		RuntimeProfile:    decision.RuntimeProfile,
-		Status:            sandbox.StatusActive,
-		CreatedAt:         now,
-		UpdatedAt:         now,
-		ExpiresAt:         now.Add(decision.TTL),
-		RootPath:          root,
-		Metadata:          cloneMetadata(req.Metadata),
-		OrganizationID:    ownership.OrganizationID,
-		WorkspaceID:       ownership.WorkspaceID,
-		AppID:             ownership.AppID,
-		WorkflowRunID:     ownership.WorkflowRunID,
-		UserID:            ownership.UserID,
-		NetworkEnabled:    decision.NetworkEnabled,
-		NetworkPolicy:     decision.NetworkPolicy,
-		DependencyProfile: decision.DependencyProfile,
-		WorkspaceBinding:  strings.TrimSpace(req.WorkspaceBinding),
-		TTLSeconds:        int(decision.TTL.Seconds()),
-		WorkerID:          m.workerID,
-		WorkerAddr:        m.workerAddr,
-		EffectiveLimits:   &decision.EffectiveLimits,
+		ID:                       id,
+		RuntimeProfile:           decision.RuntimeProfile,
+		Status:                   sandbox.StatusActive,
+		CreatedAt:                now,
+		UpdatedAt:                now,
+		ExpiresAt:                now.Add(decision.TTL),
+		RootPath:                 root,
+		Metadata:                 metadata,
+		OrganizationID:           ownership.OrganizationID,
+		WorkspaceID:              ownership.WorkspaceID,
+		AppID:                    ownership.AppID,
+		WorkflowRunID:            ownership.WorkflowRunID,
+		UserID:                   ownership.UserID,
+		NetworkEnabled:           decision.NetworkEnabled,
+		NetworkPolicy:            decision.NetworkPolicy,
+		DependencyProfile:        decision.DependencyProfile,
+		DependencyProfileVersion: decision.DependencyProfileVersion,
+		WorkspaceBinding:         strings.TrimSpace(req.WorkspaceBinding),
+		TTLSeconds:               int(decision.TTL.Seconds()),
+		WorkerID:                 m.workerID,
+		WorkerAddr:               m.workerAddr,
+		EffectiveLimits:          &decision.EffectiveLimits,
 	}
 
 	if err := m.store.SaveSandbox(item); err != nil {
@@ -170,12 +174,13 @@ func (m *Manager) Create(req CreateRequest) (*sandbox.Sandbox, error) {
 	}
 	_ = m.cache.Set(context.Background(), item, m.cacheTTL(item))
 
-	metadata := map[string]any{
-		"runtime_profile":    item.RuntimeProfile,
-		"ttl_seconds":        item.TTLSeconds,
-		"network_policy":     item.NetworkPolicy,
-		"dependency_profile": item.DependencyProfile,
-		"worker_id":          item.WorkerID,
+	eventMetadata := map[string]any{
+		"runtime_profile":            item.RuntimeProfile,
+		"ttl_seconds":                item.TTLSeconds,
+		"network_policy":             item.NetworkPolicy,
+		"dependency_profile":         item.DependencyProfile,
+		"dependency_profile_version": item.DependencyProfileVersion,
+		"worker_id":                  item.WorkerID,
 		"limit_decisions": map[string]any{
 			"ttl_seconds":                           item.TTLSeconds,
 			"max_active_sandboxes":                  decision.EffectiveLimits.MaxActiveSandboxes,
@@ -187,8 +192,8 @@ func (m *Manager) Create(req CreateRequest) (*sandbox.Sandbox, error) {
 			"workspace_bytes_enforced":              decision.EffectiveLimits.WorkspaceByteLimitEnforced,
 		},
 	}
-	addOwnershipMetadata(metadata, item)
-	m.observer.Record("sandbox.created", item.ID, "sandbox created", metadata)
+	addOwnershipMetadata(eventMetadata, item)
+	m.observer.Record("sandbox.created", item.ID, "sandbox created", eventMetadata)
 
 	copyItem := item
 	return &copyItem, nil
@@ -528,10 +533,10 @@ func (m *Manager) endpointURL(id string, port string) string {
 }
 
 func cloneMetadata(source map[string]string) map[string]string {
-	if len(source) == 0 {
-		return nil
-	}
 	target := make(map[string]string, len(source))
+	if len(source) == 0 {
+		return target
+	}
 	for key, value := range source {
 		target[key] = value
 	}
