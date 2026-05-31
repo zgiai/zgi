@@ -445,6 +445,85 @@ func TestSandboxScriptRunnerRecordsStructuredSandboxErrorInTrace(t *testing.T) {
 	}
 }
 
+func TestSandboxScriptRunnerRetriesIdempotentSandboxRequests(t *testing.T) {
+	treeCalls := 0
+	downloadCalls := 0
+	deleteCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/files/tree":
+			treeCalls++
+			if treeCalls == 1 {
+				writeSandboxError(t, w, http.StatusServiceUnavailable, -503, "temporary tree failure")
+				return
+			}
+			writeSandboxEnvelope(t, w, map[string]interface{}{
+				"items": []map[string]interface{}{
+					{"path": "artifacts/report.txt", "size": 4, "is_directory": false},
+				},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/files/download":
+			downloadCalls++
+			if downloadCalls == 1 {
+				writeSandboxError(t, w, http.StatusGatewayTimeout, -504, "temporary download failure")
+				return
+			}
+			writeSandboxEnvelope(t, w, map[string]interface{}{
+				"path":     "artifacts/report.txt",
+				"content":  "b2s=",
+				"encoding": "base64",
+			})
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/sandboxes/sbx_test":
+			deleteCalls++
+			if deleteCalls == 1 {
+				writeSandboxError(t, w, http.StatusBadGateway, -502, "temporary delete failure")
+				return
+			}
+			writeSandboxEnvelope(t, w, map[string]interface{}{"deleted": true})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	runner := NewSandboxScriptRunner(SandboxScriptRunnerConfig{Endpoint: server.URL})
+	artifacts, err := runner.collectArtifacts(context.Background(), "sbx_test", ExecutionContext{}, skillScriptManifest{
+		AllowedArtifactPaths: []string{"artifacts"},
+		MaxArtifactCount:     10,
+		MaxArtifactBytes:     32 * 1024,
+	})
+	if err != nil {
+		t.Fatalf("collect artifacts: %v", err)
+	}
+	if len(artifacts) != 1 || artifacts[0].Path != "artifacts/report.txt" || artifacts[0].Content != "b2s=" {
+		t.Fatalf("unexpected artifacts after retry: %+v", artifacts)
+	}
+	if err := runner.deleteSandbox(context.Background(), "sbx_test", ExecutionContext{}); err != nil {
+		t.Fatalf("delete sandbox after retry: %v", err)
+	}
+	if treeCalls != 2 || downloadCalls != 2 || deleteCalls != 2 {
+		t.Fatalf("expected one retry per idempotent request, got tree=%d download=%d delete=%d", treeCalls, downloadCalls, deleteCalls)
+	}
+}
+
+func TestSandboxScriptRunnerDoesNotRetryNonIdempotentUpload(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		writeSandboxError(t, w, http.StatusServiceUnavailable, -503, "temporary upload failure")
+	}))
+	defer server.Close()
+
+	runner := NewSandboxScriptRunner(SandboxScriptRunnerConfig{Endpoint: server.URL})
+	err := runner.uploadArchive(context.Background(), "sbx_test", "archive", ExecutionContext{})
+	if err == nil {
+		t.Fatal("expected upload error")
+	}
+	if calls != 1 {
+		t.Fatalf("expected non-idempotent upload to run once, got %d calls", calls)
+	}
+}
+
 func TestSandboxScriptRunnerRealSandboxE2E(t *testing.T) {
 	endpoint := strings.TrimSpace(os.Getenv("ZGI_SANDBOX_E2E_ENDPOINT"))
 	if endpoint == "" {
@@ -516,6 +595,15 @@ func writeSandboxEnvelope(t *testing.T, w http.ResponseWriter, data interface{})
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]interface{}{"code": 0, "message": "success", "data": data}); err != nil {
 		t.Fatalf("write response: %v", err)
+	}
+}
+
+func writeSandboxError(t *testing.T, w http.ResponseWriter, status int, code int, message string) {
+	t.Helper()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{"code": code, "message": message}); err != nil {
+		t.Fatalf("write error response: %v", err)
 	}
 }
 
