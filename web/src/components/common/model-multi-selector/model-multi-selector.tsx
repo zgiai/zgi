@@ -12,9 +12,11 @@ import type { ModelItem, ModelList } from '@/services/types/model';
 import { Search, X, ChevronDown, Info } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n';
+import { useLocale } from '@/hooks/use-locale';
 import { ProviderIcon } from '@/components/common/provider-icon';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ModelTooltipContent } from '@/components/model/model-tooltip-content';
+import { getModelDisplayName } from '@/utils/model-label';
 
 type ModelSelectionPolicy = 'available' | 'catalog';
 
@@ -94,6 +96,7 @@ function ModelMultiSelectorBase({
   selectionPolicy = 'available',
 }: ModelMultiSelectorProps): JSX.Element {
   const t = useT();
+  const { locale } = useLocale();
 
   const [search, setSearch] = useState('');
 
@@ -491,6 +494,7 @@ function ModelMultiSelectorBase({
                         <ul className={cn('p-2 grid gap-1', COLUMNS_CLASS[columns])}>
                           {group.models.map(m => {
                             const id = m.model;
+                            const modelLabel = getModelDisplayName(m, locale);
                             const checked = selectedSet.has(id);
                             const selectable = isSelectable(m);
                             return (
@@ -511,8 +515,8 @@ function ModelMultiSelectorBase({
                                   disabled={disabled || !selectable}
                                 />
                                 <ProviderIcon provider={m.provider} size={18} />
-                                <span className="text-xs truncate flex-1" title={m.model_name}>
-                                  {m.model_name || id}
+                                <span className="text-xs truncate flex-1" title={modelLabel}>
+                                  {modelLabel}
                                 </span>
                                 <div className="flex items-center gap-1.5 shrink-0">
                                   <Tooltip>

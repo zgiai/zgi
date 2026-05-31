@@ -75,7 +75,7 @@ workflow:
         text: |-
           Run guide
 
-          Ready. Requires: OpenAI gpt-5.5 model. Enter a draft; the loop reviews it up to three times.
+          Ready. Requires: OpenAI GPT-4o model. Enter a draft; the loop reviews it up to three times.
 
           Suggested test input:
           The Start node fields are prefilled. Open Debug and run the defaults directly.
@@ -178,7 +178,7 @@ workflow:
         variables: []
         model:
           provider: openai
-          name: gpt-5.5
+          name: gpt-4o
           mode: chat
           completion_params: {}
         prompt_template:

@@ -74,7 +74,7 @@ workflow:
         text: |-
           Run guide
 
-          Setup required. Requires: OpenAI gpt-5.5 model and notification channel. Confirm the notification channel is available and provide a real owner_email in the input.
+          Setup required. Requires: OpenAI GPT-4o model and notification channel. Confirm the notification channel is available and provide a real owner_email in the input.
 
           Suggested test input:
           The Start node fields are prefilled. Open Debug and run the defaults directly.
@@ -123,7 +123,7 @@ workflow:
         - input
         model:
           provider: openai
-          name: gpt-5.5
+          name: gpt-4o
           mode: chat
           completion_params: {}
         reasoning_mode: prompt

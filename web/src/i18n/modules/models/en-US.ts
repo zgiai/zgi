@@ -124,10 +124,14 @@ const messages = {
       'function-calling': 'Function Calling Model',
     },
     empty: {
+      noModelsTitle: 'Model setup required',
       noResults: 'No models found matching',
       noModels: 'No {type} available',
-      contactAdmin: 'Contact admin for configuration',
+      contactAdmin: 'Contact an admin to enable models for this workspace.',
+      configureDescription: 'Configure at least one available {type} before using this workflow or agent.',
       configure: 'Configure',
+      clearSearch: 'Clear search',
+      refresh: 'Refresh models',
     },
     tooltip: {
       modelId: 'Model ID:',

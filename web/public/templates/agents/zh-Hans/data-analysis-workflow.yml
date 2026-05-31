@@ -74,7 +74,7 @@ workflow:
         text: |-
           运行说明
 
-          可运行。依赖：OpenAI GPT gpt-5.5 模型。输入报告、表格摘要或数据说明。
+          可运行。依赖：OpenAI GPT-4o 模型。输入报告、表格摘要或数据说明。
 
           调试输入：
           打开调试面板后，开始节点字段已经预填，可直接运行。
@@ -126,7 +126,7 @@ workflow:
         variables: []
         model:
           provider: openai
-          name: gpt-5.5
+          name: gpt-4o
           mode: chat
           completion_params: {}
         prompt_template:

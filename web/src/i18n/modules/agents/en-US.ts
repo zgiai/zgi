@@ -828,6 +828,12 @@ const messages = {
     },
     searchPlaceholder: 'Search name or prefix',
     empty: 'No API Keys. Click "Create API Key" in the top right.',
+    emptyTitle: 'No API keys yet',
+    emptyDescription:
+      'Create a scoped key when this agent needs to be called from an external app, integration, or automation. The secret is shown only once after creation.',
+    emptySearchTitle: 'No matching API keys',
+    emptySearchDescription:
+      'No key name or prefix matches the current search. Clear the search to review all keys.',
     columns: {
       name: 'Name',
       key: 'Key',

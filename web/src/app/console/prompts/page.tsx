@@ -98,8 +98,8 @@ export default function PromptsPage() {
     <>
       <div className="p-4 sm:p-6 lg:p-8 space-y-6 flex flex-col h-full overflow-y-auto">
         <Tabs value={activeTab} onValueChange={value => setActiveTab(value as 'library' | 'playground')}>
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
+          <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+            <div className="flex flex-wrap items-center gap-3">
               <h1 className="text-2xl font-semibold">{t('title')}</h1>
               <TabsList>
                 <TabsTrigger value="library">{t('tabs.library')}</TabsTrigger>
@@ -118,19 +118,19 @@ export default function PromptsPage() {
               ) : null}
             </div>
             {activeTab === 'library' ? (
-              <div className="flex flex-col sm:flex-row gap-3">
+              <div className="flex w-full flex-col gap-3 sm:flex-row sm:flex-wrap xl:w-auto xl:justify-end">
                 <Input
                   value={keyword}
                   onChange={e => setKeyword(e.target.value)}
                   placeholder={t('search.placeholder')}
-                  className="w-full sm:w-72"
+                  className="w-full sm:min-w-64 sm:flex-1 xl:w-72 xl:flex-none"
                 />
-                <Button variant="outline" onClick={() => setOptimizerOpen(true)}>
+                <Button variant="outline" className="shrink-0" onClick={() => setOptimizerOpen(true)}>
                   <WandSparkles className="h-4 w-4" />
                   {t('actions.optimizePrompt')}
                 </Button>
                 {canManage ? (
-                  <Button onClick={() => setDialogOpen(true)}>
+                  <Button className="shrink-0" onClick={() => setDialogOpen(true)}>
                     <Plus className="h-4 w-4" />
                     {t('actions.newPrompt')}
                   </Button>
