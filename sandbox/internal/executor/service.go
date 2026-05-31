@@ -46,6 +46,7 @@ type Service struct {
 
 type CodeRequest struct {
 	SandboxID        string          `json:"sandbox_id"`
+	OrganizationID   string          `json:"organization_id,omitempty"`
 	Language         string          `json:"language"`
 	Code             string          `json:"code"`
 	Preload          string          `json:"preload"`
@@ -61,6 +62,7 @@ type CodeRequest struct {
 
 type CommandRequest struct {
 	SandboxID      string            `json:"sandbox_id"`
+	OrganizationID string            `json:"organization_id,omitempty"`
 	Command        string            `json:"command"`
 	Args           []string          `json:"args"`
 	Stdin          string            `json:"stdin"`
@@ -91,10 +93,11 @@ type TemplateResult struct {
 }
 
 type SkillRunRequest struct {
-	SandboxID string          `json:"sandbox_id"`
-	Path      string          `json:"path"`
-	InputJSON json.RawMessage `json:"input_json,omitempty"`
-	Stdin     string          `json:"stdin,omitempty"`
+	SandboxID      string          `json:"sandbox_id"`
+	OrganizationID string          `json:"organization_id,omitempty"`
+	Path           string          `json:"path"`
+	InputJSON      json.RawMessage `json:"input_json,omitempty"`
+	Stdin          string          `json:"stdin,omitempty"`
 }
 
 type SkillRunResult struct {
@@ -108,14 +111,16 @@ type SkillRunResult struct {
 }
 
 type FileWriteRequest struct {
-	SandboxID string `json:"sandbox_id"`
-	Path      string `json:"path"`
-	Content   string `json:"content"`
-	Encoding  string `json:"encoding"`
+	SandboxID      string `json:"sandbox_id"`
+	OrganizationID string `json:"organization_id,omitempty"`
+	Path           string `json:"path"`
+	Content        string `json:"content"`
+	Encoding       string `json:"encoding"`
 }
 
 type ArchiveUploadRequest struct {
 	SandboxID             string `json:"sandbox_id"`
+	OrganizationID        string `json:"organization_id,omitempty"`
 	Path                  string `json:"path"`
 	ArchiveBase64         string `json:"archive_base64"`
 	Format                string `json:"format"`

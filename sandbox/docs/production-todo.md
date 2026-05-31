@@ -480,7 +480,7 @@ Goal: bind sandbox usage to ZGI organizations, workspaces, apps, workflows, and 
 ### I4. Tests
 
 - Organization quota success and failure.
-- Cross-organization sandbox access rejection.
+- [x] Cross-organization sandbox access rejection.
 - Audit event completeness.
 - Ownership metadata propagation.
 
