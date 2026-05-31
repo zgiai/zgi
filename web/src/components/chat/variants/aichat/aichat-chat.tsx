@@ -105,6 +105,8 @@ interface AIChatShellProps {
     startNewConversation: () => void;
     isHome: boolean;
   }) => React.ReactNode;
+  onSelectConversation?: (id: string) => void;
+  onStartNewConversation?: () => void;
   showAssistantModelMeta?: boolean;
   surface?: 'aichat' | 'agent-draft' | 'agent-webapp';
   themeColor?: string;
@@ -118,6 +120,19 @@ const CHAT_THEME_PRIMARY: Record<string, string> = {
   amber: '38 92% 50%',
   slate: '215 20% 45%',
 };
+
+function normalizeSkillIds(skillIds: string[]) {
+  return Array.from(new Set(skillIds.filter(Boolean))).sort();
+}
+
+function areSkillIdsEqual(left: string[], right: string[]) {
+  const normalizedLeft = normalizeSkillIds(left);
+  const normalizedRight = normalizeSkillIds(right);
+  return (
+    normalizedLeft.length === normalizedRight.length &&
+    normalizedLeft.every((skillId, index) => skillId === normalizedRight[index])
+  );
+}
 
 /**
  * @component AIChatShell
@@ -151,6 +166,8 @@ export function AIChatShell({
   embeddedConversationControlsClassName,
   embeddedConversationControlsPortalId,
   renderEmbeddedConversationControls,
+  onSelectConversation,
+  onStartNewConversation,
   showAssistantModelMeta = true,
   surface = 'aichat',
   themeColor,
@@ -219,6 +236,14 @@ export function AIChatShell({
     if (!enableAIChatSkillPreference || !skillPreference) return;
     setDraftSkillPreferenceIds(skillPreference.enabled_skill_ids ?? []);
   }, [enableAIChatSkillPreference, skillPreference]);
+  const savedSkillPreferenceIds = useMemo(
+    () => skillPreference?.enabled_skill_ids ?? [],
+    [skillPreference?.enabled_skill_ids]
+  );
+  const hasSkillPreferenceChanges = useMemo(
+    () => !areSkillIdsEqual(draftSkillPreferenceIds, savedSkillPreferenceIds),
+    [draftSkillPreferenceIds, savedSkillPreferenceIds]
+  );
 
   const messageTopologyKey = useMemo(
     () => buildChatMessageTopologyKey(activeMessages),
@@ -516,16 +541,24 @@ export function AIChatShell({
       setMobileSidebarOpen(false);
       return;
     }
-    controller.startNew();
+    if (onStartNewConversation) {
+      onStartNewConversation();
+    } else {
+      controller.startNew();
+    }
     setMobileSidebarOpen(false);
-  }, [controller, isHome, t]);
+  }, [controller, isHome, onStartNewConversation, t]);
 
   const handleSelectConversation = useCallback(
     (id: string) => {
-      void controller.select(id);
+      if (onSelectConversation) {
+        onSelectConversation(id);
+      } else {
+        void controller.select(id);
+      }
       setMobileSidebarOpen(false);
     },
-    [controller]
+    [controller, onSelectConversation]
   );
 
   const handleDeleteConversation = useCallback(
@@ -549,13 +582,31 @@ export function AIChatShell({
     );
   }, []);
 
+  const handleSkillPreferenceOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open && updateSkillPreference.isPending) return;
+      setDraftSkillPreferenceIds(savedSkillPreferenceIds);
+      setSkillPreferenceOpen(open);
+    },
+    [savedSkillPreferenceIds, updateSkillPreference.isPending]
+  );
+
   const handleSaveSkillPreference = useCallback(() => {
+    const requestedSkillIds = normalizeSkillIds(draftSkillPreferenceIds);
     updateSkillPreference.mutate(
-      { payload: { enabled_skill_ids: draftSkillPreferenceIds } },
+      { payload: { enabled_skill_ids: requestedSkillIds } },
       {
-        onSuccess: () => {
+        onSuccess: response => {
+          const savedSkillIds = normalizeSkillIds(
+            response.data?.enabled_skill_ids ?? requestedSkillIds
+          );
+          setDraftSkillPreferenceIds(savedSkillIds);
           setSkillPreferenceOpen(false);
-          toast.success(t('consoleChat.skillPreferences.saved'));
+          if (areSkillIdsEqual(requestedSkillIds, savedSkillIds)) {
+            toast.success(t('consoleChat.skillPreferences.saved'));
+          } else {
+            toast.warning(t('consoleChat.skillPreferences.savedWithChanges'));
+          }
         },
         onError: error => {
           toast.error(
@@ -650,7 +701,7 @@ export function AIChatShell({
                   variant="ghost"
                   isIcon
                   className="size-8 text-muted-foreground"
-                  onClick={() => setSkillPreferenceOpen(true)}
+                  onClick={() => handleSkillPreferenceOpenChange(true)}
                   title={t('consoleChat.skillPreferences.action')}
                 >
                   <Settings2 className="size-4" />
@@ -776,7 +827,8 @@ export function AIChatShell({
           selectedSkillIds={draftSkillPreferenceIds}
           isLoading={isLoadingSkillPreference}
           isSaving={updateSkillPreference.isPending}
-          onOpenChange={setSkillPreferenceOpen}
+          hasChanges={hasSkillPreferenceChanges}
+          onOpenChange={handleSkillPreferenceOpenChange}
           onToggleSkill={handleToggleSkillPreference}
           onSave={handleSaveSkillPreference}
         />

@@ -130,11 +130,9 @@ export function useUpdateAIChatSkillPreference() {
   return useMutation({
     mutationFn: ({ payload }: UpdateAIChatSkillPreferenceVariables) =>
       aichatService.updateSkillPreference(payload),
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: AICHAT_KEYS.skillPreference() }),
-        queryClient.invalidateQueries({ queryKey: AICHAT_KEYS.skills() }),
-      ]);
+    onSuccess: async response => {
+      queryClient.setQueryData(AICHAT_KEYS.skillPreference(), response.data);
+      await queryClient.invalidateQueries({ queryKey: AICHAT_KEYS.skills() });
     },
   });
 }

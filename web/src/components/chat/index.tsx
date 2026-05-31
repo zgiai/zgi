@@ -137,6 +137,8 @@ interface AIChatVariantProps {
     startNewConversation: () => void;
     isHome: boolean;
   }) => React.ReactNode;
+  onSelectConversation?: (id: string) => void;
+  onStartNewConversation?: () => void;
   showAssistantModelMeta?: boolean;
   surface?: 'aichat' | 'agent-draft' | 'agent-webapp';
   themeColor?: string;
