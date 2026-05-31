@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -72,6 +73,9 @@ func TestSandboxScriptRunnerRunsSkillPackage(t *testing.T) {
 			decodeJSON(t, r, &req)
 			if req["organization_id"] != "organization-script" {
 				t.Fatalf("expected upload organization scope, got %#v", req)
+			}
+			if req["validate_skill_manifest"] != true {
+				t.Fatalf("expected skill manifest validation, got %#v", req)
 			}
 			uploadedArchive, _ = req["archive_base64"].(string)
 			writeSandboxEnvelope(t, w, map[string]interface{}{"file_count": 2})
@@ -154,6 +158,10 @@ func TestSandboxScriptRunnerRunsSkillPackage(t *testing.T) {
 		t.Fatal("expected sandbox to be deleted")
 	}
 	assertArchiveContains(t, uploadedArchive, "scripts/run.py")
+	manifestContent := archiveFileContent(t, uploadedArchive, "skill.manifest.json")
+	if !strings.Contains(manifestContent, `"entrypoint":"scripts/run.py"`) || !strings.Contains(manifestContent, `"dependency_profile":"stdlib"`) {
+		t.Fatalf("expected generated skill manifest, got %s", manifestContent)
+	}
 }
 
 func TestSandboxScriptRunnerUsesManifestDependencyProfile(t *testing.T) {
@@ -172,6 +180,13 @@ func TestSandboxScriptRunnerUsesManifestDependencyProfile(t *testing.T) {
 			}
 			writeSandboxEnvelope(t, w, map[string]interface{}{"id": "sbx_test"})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/files/upload-archive":
+			var req map[string]interface{}
+			decodeJSON(t, r, &req)
+			archive, _ := req["archive_base64"].(string)
+			manifestContent := archiveFileContent(t, archive, "skill.manifest.json")
+			if !strings.Contains(manifestContent, `"dependency_profile":"workflow-safe"`) || !strings.Contains(manifestContent, `"entrypoint":"scripts/run.py"`) {
+				t.Fatalf("expected normalized manifest dependency profile, got %s", manifestContent)
+			}
 			writeSandboxEnvelope(t, w, map[string]interface{}{"file_count": 3})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/exec/command":
 			writeSandboxEnvelope(t, w, map[string]interface{}{
@@ -199,6 +214,110 @@ func TestSandboxScriptRunnerUsesManifestDependencyProfile(t *testing.T) {
 	}
 	if _, err := runtime.CallSkillTool(context.Background(), &ResolvedSkills{Skills: []SkillDocument{doc}}, "script-skill", SkillScriptToolRun, map[string]interface{}{"input": "hello"}, ExecutionContext{}, "call_1"); err != nil {
 		t.Fatalf("run skill script: %v", err)
+	}
+}
+
+func TestSandboxScriptRunnerAppliesManifestRuntimePolicies(t *testing.T) {
+	root := writeTestScriptSkill(t)
+	manifest := `{
+  "entrypoint": "scripts/run.py",
+  "language": "python3",
+  "dependency_profile": "workflow-safe",
+  "timeout_ms": 2500,
+  "allowed_artifact_paths": ["artifacts/public"],
+  "max_artifact_count": 1,
+  "max_artifact_bytes": 4,
+  "result_mode": "mixed"
+}`
+	if err := os.WriteFile(filepath.Join(root, "skill.manifest.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	downloaded := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/sandboxes":
+			var req map[string]interface{}
+			decodeJSON(t, r, &req)
+			if req["dependency_profile"] != "workflow-safe" {
+				t.Fatalf("expected manifest dependency profile, got %#v", req)
+			}
+			writeSandboxEnvelope(t, w, map[string]interface{}{"id": "sbx_test"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/files/upload-archive":
+			writeSandboxEnvelope(t, w, map[string]interface{}{"file_count": 3})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/exec/command":
+			var req map[string]interface{}
+			decodeJSON(t, r, &req)
+			if req["timeout_seconds"] != float64(3) {
+				t.Fatalf("expected rounded manifest timeout, got %#v", req)
+			}
+			writeSandboxEnvelope(t, w, map[string]interface{}{
+				"stdout":      "{\"result\":\"ok\"}\n",
+				"error":       "",
+				"exit_code":   0,
+				"duration_ms": 12,
+				"truncated":   false,
+				"command":     "python3",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/files/tree":
+			writeSandboxEnvelope(t, w, map[string]interface{}{
+				"items": []map[string]interface{}{
+					{"path": "artifacts/private/skip.txt", "size": 4, "is_directory": false},
+					{"path": "artifacts/public/ok.txt", "size": 4, "is_directory": false},
+					{"path": "artifacts/public/ignored-by-count.txt", "size": 4, "is_directory": false},
+				},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/files/download":
+			path := r.URL.Query().Get("path")
+			downloaded = append(downloaded, path)
+			writeSandboxEnvelope(t, w, map[string]interface{}{
+				"path":     path,
+				"content":  "b2s=",
+				"encoding": "base64",
+			})
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/sandboxes/sbx_test":
+			writeSandboxEnvelope(t, w, map[string]interface{}{"deleted": true})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	runtime := NewRuntimeWithCatalog(nil, nil, "").WithScriptRunner(NewSandboxScriptRunner(SandboxScriptRunnerConfig{Endpoint: server.URL}))
+	doc, err := runtime.LoadCustomSkillDocument(root)
+	if err != nil {
+		t.Fatalf("load custom skill: %v", err)
+	}
+	result, err := runtime.CallSkillTool(context.Background(), &ResolvedSkills{Skills: []SkillDocument{doc}}, "script-skill", SkillScriptToolRun, map[string]interface{}{"input": "hello"}, ExecutionContext{}, "call_1")
+	if err != nil {
+		t.Fatalf("run skill script: %v", err)
+	}
+	if !messagesContainArtifacts(result.Messages) {
+		t.Fatalf("expected allowed artifact message, got %+v", result.Messages)
+	}
+	if len(downloaded) != 1 || downloaded[0] != "artifacts/public/ok.txt" {
+		t.Fatalf("expected only allowed artifact within count limit to be downloaded, got %#v", downloaded)
+	}
+}
+
+func TestSandboxScriptRunnerRejectsManifestEntrypointMismatch(t *testing.T) {
+	root := writeTestScriptSkill(t)
+	if err := os.WriteFile(filepath.Join(root, "skill.manifest.json"), []byte(`{"entrypoint":"scripts/other.py","language":"python3"}`), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("sandbox should not be called for invalid local manifest")
+	}))
+	defer server.Close()
+
+	runtime := NewRuntimeWithCatalog(nil, nil, "").WithScriptRunner(NewSandboxScriptRunner(SandboxScriptRunnerConfig{Endpoint: server.URL}))
+	doc, err := runtime.LoadCustomSkillDocument(root)
+	if err != nil {
+		t.Fatalf("load custom skill: %v", err)
+	}
+	_, err = runtime.CallSkillTool(context.Background(), &ResolvedSkills{Skills: []SkillDocument{doc}}, "script-skill", SkillScriptToolRun, map[string]interface{}{"input": "hello"}, ExecutionContext{}, "call_1")
+	if err == nil || !strings.Contains(err.Error(), "entrypoint must be scripts/run.py") {
+		t.Fatalf("expected manifest entrypoint rejection, got %v", err)
 	}
 }
 
@@ -402,6 +521,13 @@ func writeSandboxEnvelope(t *testing.T, w http.ResponseWriter, data interface{})
 
 func assertArchiveContains(t *testing.T, archiveBase64 string, path string) {
 	t.Helper()
+	if archiveFileContent(t, archiveBase64, path) == "" {
+		return
+	}
+}
+
+func archiveFileContent(t *testing.T, archiveBase64 string, path string) string {
+	t.Helper()
 	raw, err := base64.StdEncoding.DecodeString(archiveBase64)
 	if err != nil {
 		t.Fatalf("decode archive: %v", err)
@@ -412,8 +538,18 @@ func assertArchiveContains(t *testing.T, archiveBase64 string, path string) {
 	}
 	for _, file := range reader.File {
 		if file.Name == path {
-			return
+			rc, err := file.Open()
+			if err != nil {
+				t.Fatalf("open archive file %s: %v", path, err)
+			}
+			defer rc.Close()
+			content, err := io.ReadAll(rc)
+			if err != nil {
+				t.Fatalf("read archive file %s: %v", path, err)
+			}
+			return string(content)
 		}
 	}
 	t.Fatalf("expected archive to contain %s", path)
+	return ""
 }

@@ -515,8 +515,8 @@ business logic to sandbox internals.
 
 ### J3. Skill Runtime
 
-- Validate skill package manifests before execution.
-- Apply skill-specific artifact and timeout policies.
+- [x] Validate skill package manifests before execution.
+- [x] Apply skill-specific artifact and timeout policies.
 - Store skill execution traces.
 - Return structured tool messages with artifacts.
 - Add deterministic test fixtures for skill runs.
