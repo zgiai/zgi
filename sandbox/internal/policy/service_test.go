@@ -95,6 +95,9 @@ func TestOrganizationDependencyProfileIsVisibleOnlyToOrganization(t *testing.T) 
 	if decision.DependencyProfile != "team-data" || decision.DependencyProfileVersion != "2026.06.01" {
 		t.Fatalf("unexpected organization profile decision: %+v", decision)
 	}
+	if decision.DependencyArtifactChecksum != "sha256:shared-data-artifact" {
+		t.Fatalf("expected shared artifact checksum in decision, got %+v", decision)
+	}
 	if _, err := service.NormalizeCreate("session", 60, false, "", "team-data", 0, "organization-b", 0); err == nil {
 		t.Fatal("expected other organization to be unable to select organization profile")
 	}

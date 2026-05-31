@@ -147,30 +147,34 @@ func (m *Manager) Create(req CreateRequest) (*sandbox.Sandbox, error) {
 
 	metadata := cloneMetadata(req.Metadata)
 	metadata["dependency_profile_version"] = decision.DependencyProfileVersion
+	if decision.DependencyArtifactChecksum != "" {
+		metadata["dependency_artifact_checksum"] = decision.DependencyArtifactChecksum
+	}
 
 	item := sandbox.Sandbox{
-		ID:                       id,
-		RuntimeProfile:           decision.RuntimeProfile,
-		Status:                   sandbox.StatusActive,
-		CreatedAt:                now,
-		UpdatedAt:                now,
-		ExpiresAt:                now.Add(decision.TTL),
-		RootPath:                 root,
-		Metadata:                 metadata,
-		OrganizationID:           ownership.OrganizationID,
-		WorkspaceID:              ownership.WorkspaceID,
-		AppID:                    ownership.AppID,
-		WorkflowRunID:            ownership.WorkflowRunID,
-		UserID:                   ownership.UserID,
-		NetworkEnabled:           decision.NetworkEnabled,
-		NetworkPolicy:            decision.NetworkPolicy,
-		DependencyProfile:        decision.DependencyProfile,
-		DependencyProfileVersion: decision.DependencyProfileVersion,
-		WorkspaceBinding:         strings.TrimSpace(req.WorkspaceBinding),
-		TTLSeconds:               int(decision.TTL.Seconds()),
-		WorkerID:                 m.workerID,
-		WorkerAddr:               m.workerAddr,
-		EffectiveLimits:          &decision.EffectiveLimits,
+		ID:                         id,
+		RuntimeProfile:             decision.RuntimeProfile,
+		Status:                     sandbox.StatusActive,
+		CreatedAt:                  now,
+		UpdatedAt:                  now,
+		ExpiresAt:                  now.Add(decision.TTL),
+		RootPath:                   root,
+		Metadata:                   metadata,
+		OrganizationID:             ownership.OrganizationID,
+		WorkspaceID:                ownership.WorkspaceID,
+		AppID:                      ownership.AppID,
+		WorkflowRunID:              ownership.WorkflowRunID,
+		UserID:                     ownership.UserID,
+		NetworkEnabled:             decision.NetworkEnabled,
+		NetworkPolicy:              decision.NetworkPolicy,
+		DependencyProfile:          decision.DependencyProfile,
+		DependencyProfileVersion:   decision.DependencyProfileVersion,
+		DependencyArtifactChecksum: decision.DependencyArtifactChecksum,
+		WorkspaceBinding:           strings.TrimSpace(req.WorkspaceBinding),
+		TTLSeconds:                 int(decision.TTL.Seconds()),
+		WorkerID:                   m.workerID,
+		WorkerAddr:                 m.workerAddr,
+		EffectiveLimits:            &decision.EffectiveLimits,
 	}
 
 	if err := m.store.SaveSandbox(item); err != nil {
@@ -198,6 +202,9 @@ func (m *Manager) Create(req CreateRequest) (*sandbox.Sandbox, error) {
 			"network_policy_enforced":                        decision.EffectiveLimits.NetworkPolicyEnforced,
 			"workspace_bytes_enforced":                       decision.EffectiveLimits.WorkspaceByteLimitEnforced,
 		},
+	}
+	if item.DependencyArtifactChecksum != "" {
+		eventMetadata["dependency_artifact_checksum"] = item.DependencyArtifactChecksum
 	}
 	addOwnershipMetadata(eventMetadata, item)
 	m.observer.Record("sandbox.created", item.ID, "sandbox created", eventMetadata)

@@ -108,13 +108,14 @@ type NetworkProfile struct {
 }
 
 type CreateDecision struct {
-	RuntimeProfile           sandbox.RuntimeProfile
-	TTL                      time.Duration
-	NetworkEnabled           bool
-	NetworkPolicy            string
-	DependencyProfile        string
-	DependencyProfileVersion string
-	EffectiveLimits          sandbox.ResourceLimits
+	RuntimeProfile             sandbox.RuntimeProfile
+	TTL                        time.Duration
+	NetworkEnabled             bool
+	NetworkPolicy              string
+	DependencyProfile          string
+	DependencyProfileVersion   string
+	DependencyArtifactChecksum string
+	EffectiveLimits            sandbox.ResourceLimits
 }
 
 type CommandLimits struct {
@@ -870,14 +871,20 @@ func (s *Service) NormalizeCreate(profile string, ttlSeconds int, networkEnabled
 		}
 	}
 
+	artifactChecksum := ""
+	if dependency.ArtifactChecksum != "" && dependency.ArtifactChecksum != dependency.Checksum {
+		artifactChecksum = dependency.ArtifactChecksum
+	}
+
 	return CreateDecision{
-		RuntimeProfile:           runtimeProfile,
-		TTL:                      s.normalizeTTL(runtimeProfile, ttlSeconds),
-		NetworkEnabled:           networkEnabled,
-		NetworkPolicy:            policyName,
-		DependencyProfile:        dependency.Name,
-		DependencyProfileVersion: dependency.Version,
-		EffectiveLimits:          s.EffectiveLimits(),
+		RuntimeProfile:             runtimeProfile,
+		TTL:                        s.normalizeTTL(runtimeProfile, ttlSeconds),
+		NetworkEnabled:             networkEnabled,
+		NetworkPolicy:              policyName,
+		DependencyProfile:          dependency.Name,
+		DependencyProfileVersion:   dependency.Version,
+		DependencyArtifactChecksum: artifactChecksum,
+		EffectiveLimits:            s.EffectiveLimits(),
 	}, nil
 }
 
@@ -1232,6 +1239,9 @@ func (s *Service) normalizeDependencyProfile(value string, organizationID string
 func (s *Service) validateSelectableDependencyProfile(profile DependencyProfile, name string) (DependencyProfile, error) {
 	if !profile.Enabled || profile.Status != "ready" {
 		return DependencyProfile{}, fmt.Errorf("dependency profile is not enabled: %s", name)
+	}
+	if strings.TrimSpace(profile.ArtifactChecksum) == "" {
+		profile.ArtifactChecksum = profile.Checksum
 	}
 	if err := s.ValidateDependencyProfilePackages(profile); err != nil {
 		return DependencyProfile{}, err

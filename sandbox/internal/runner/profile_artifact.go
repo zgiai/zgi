@@ -127,11 +127,11 @@ func defaultString(value string, fallback string) string {
 	return value
 }
 
-func resolveDependencyProfileActivation(defaultRootFS string, dependencyRootFSDir string, dependencyProfile string) (dependencyProfileActivation, error) {
+func resolveDependencyProfileActivation(defaultRootFS string, dependencyRootFSDir string, dependencyProfile string, dependencyArtifactChecksum string) (dependencyProfileActivation, error) {
 	rootfs, err := rootFSSelector{
 		defaultRootFS:       defaultRootFS,
 		dependencyRootFSDir: dependencyRootFSDir,
-	}.resolve(dependencyProfile)
+	}.resolve(dependencyProfile, dependencyArtifactChecksum)
 	if err != nil {
 		return dependencyProfileActivation{}, err
 	}
@@ -155,8 +155,7 @@ func resolveDependencyProfileActivation(defaultRootFS string, dependencyRootFSDi
 		return activation, nil
 	}
 
-	profileDir := filepath.Join(rootfs, strings.TrimPrefix(secureProfileBasePath, "/"), profile)
-	manifest, err := validateBuiltProfileArtifact(profileDir, profile)
+	profileDir, manifest, err := findRuntimeProfileArtifact(rootfs, profile, dependencyArtifactChecksum)
 	if err != nil {
 		return dependencyProfileActivation{}, err
 	}
@@ -166,7 +165,39 @@ func resolveDependencyProfileActivation(defaultRootFS string, dependencyRootFSDi
 	return activation, nil
 }
 
+func findRuntimeProfileArtifact(rootfs string, dependencyProfile string, dependencyArtifactChecksum string) (string, builtProfileManifest, error) {
+	profilesRoot := filepath.Join(rootfs, strings.TrimPrefix(secureProfileBasePath, "/"))
+	preferred := filepath.Join(profilesRoot, dependencyProfile)
+	manifest, err := validateBuiltProfileArtifactForActivation(preferred, dependencyProfile, dependencyArtifactChecksum)
+	if err == nil {
+		return preferred, manifest, nil
+	}
+	if strings.TrimSpace(dependencyArtifactChecksum) == "" {
+		return "", builtProfileManifest{}, err
+	}
+
+	entries, readErr := os.ReadDir(profilesRoot)
+	if readErr != nil {
+		return "", builtProfileManifest{}, readErr
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || !safeDependencyProfileName(entry.Name()) {
+			continue
+		}
+		candidate := filepath.Join(profilesRoot, entry.Name())
+		manifest, err := validateBuiltProfileArtifactForActivation(candidate, dependencyProfile, dependencyArtifactChecksum)
+		if err == nil {
+			return candidate, manifest, nil
+		}
+	}
+	return "", builtProfileManifest{}, fmt.Errorf("dependency profile artifact checksum %q is not available for profile %q", dependencyArtifactChecksum, dependencyProfile)
+}
+
 func validateBuiltProfileArtifact(profileDir string, expectedProfile string) (builtProfileManifest, error) {
+	return validateBuiltProfileArtifactForActivation(profileDir, expectedProfile, "")
+}
+
+func validateBuiltProfileArtifactForActivation(profileDir string, expectedProfile string, expectedChecksum string) (builtProfileManifest, error) {
 	if err := validateProfileDir(profileDir); err != nil {
 		return builtProfileManifest{}, fmt.Errorf("dependency profile artifact is not usable: %w", err)
 	}
@@ -178,7 +209,8 @@ func validateBuiltProfileArtifact(profileDir string, expectedProfile string) (bu
 	if err := json.Unmarshal(raw, &manifest); err != nil {
 		return builtProfileManifest{}, fmt.Errorf("parse dependency profile artifact manifest: %w", err)
 	}
-	if manifest.Name != expectedProfile {
+	expectedChecksum = strings.TrimSpace(expectedChecksum)
+	if manifest.Name != expectedProfile && expectedChecksum == "" {
 		return builtProfileManifest{}, fmt.Errorf("dependency profile artifact name %q does not match selected profile %q", manifest.Name, expectedProfile)
 	}
 	if strings.TrimSpace(manifest.Version) == "" {
@@ -199,6 +231,9 @@ func validateBuiltProfileArtifact(profileDir string, expectedProfile string) (bu
 	}
 	if checksum != manifest.Build.Checksum {
 		return builtProfileManifest{}, fmt.Errorf("dependency profile artifact checksum mismatch: manifest=%s actual=%s", manifest.Build.Checksum, checksum)
+	}
+	if expectedChecksum != "" && checksum != expectedChecksum {
+		return builtProfileManifest{}, fmt.Errorf("dependency profile artifact checksum %q does not match selected artifact %q", checksum, expectedChecksum)
 	}
 	if size != manifest.Build.SizeBytes {
 		return builtProfileManifest{}, fmt.Errorf("dependency profile artifact size mismatch: manifest=%d actual=%d", manifest.Build.SizeBytes, size)

@@ -337,6 +337,7 @@ func (s *Service) runCodeWithScope(ctx context.Context, req CodeRequest, runReq 
 		return runner.Result{}, box, false, err
 	}
 	runReq.DependencyProfile = box.DependencyProfile
+	runReq.DependencyArtifactChecksum = box.DependencyArtifactChecksum
 	if err := s.enforceOrganizationExecutionRate(box); err != nil {
 		return runner.Result{}, box, false, err
 	}
@@ -504,16 +505,17 @@ func (s *Service) RunCommand(ctx context.Context, req CommandRequest) (runner.Co
 	defer releaseExecution()
 
 	result, err := s.runner.ExecuteCommandSpec(ctx, runner.CommandSpec{
-		WorkDir:           workDir,
-		Command:           req.Command,
-		Args:              req.Args,
-		Stdin:             req.Stdin,
-		Env:               env,
-		DependencyProfile: box.DependencyProfile,
-		Timeout:           limits.Timeout,
-		StdoutLimit:       limits.StdoutLimitBytes,
-		StderrLimit:       limits.StderrLimitBytes,
-		AllowShellForm:    true,
+		WorkDir:                    workDir,
+		Command:                    req.Command,
+		Args:                       req.Args,
+		Stdin:                      req.Stdin,
+		Env:                        env,
+		DependencyProfile:          box.DependencyProfile,
+		DependencyArtifactChecksum: box.DependencyArtifactChecksum,
+		Timeout:                    limits.Timeout,
+		StdoutLimit:                limits.StdoutLimitBytes,
+		StderrLimit:                limits.StderrLimitBytes,
+		AllowShellForm:             true,
 	})
 	if err != nil {
 		s.recordExecutionFailure(ctx, "exec.command.failed", req.SandboxID, "sandbox command execution failed", baseMetadata, err)
@@ -613,16 +615,17 @@ func (s *Service) RunSkill(ctx context.Context, req SkillRunRequest) (SkillRunRe
 	}
 	defer releaseExecution()
 	result, err := s.runner.ExecuteCommandSpec(ctx, runner.CommandSpec{
-		WorkDir:           packageRoot,
-		Command:           command,
-		Args:              args,
-		Stdin:             stdin,
-		Env:               env,
-		DependencyProfile: box.DependencyProfile,
-		Timeout:           time.Duration(manifest.TimeoutMS) * time.Millisecond,
-		StdoutLimit:       64 * 1024,
-		StderrLimit:       64 * 1024,
-		AllowShellForm:    false,
+		WorkDir:                    packageRoot,
+		Command:                    command,
+		Args:                       args,
+		Stdin:                      stdin,
+		Env:                        env,
+		DependencyProfile:          box.DependencyProfile,
+		DependencyArtifactChecksum: box.DependencyArtifactChecksum,
+		Timeout:                    time.Duration(manifest.TimeoutMS) * time.Millisecond,
+		StdoutLimit:                64 * 1024,
+		StderrLimit:                64 * 1024,
+		AllowShellForm:             false,
 	})
 	if err != nil {
 		s.recordExecutionFailure(ctx, "exec.skill.failed", req.SandboxID, "skill execution failed", baseMetadata, err)
@@ -1310,6 +1313,9 @@ func addExecutionSandboxMetadata(metadata map[string]any, box *sandbox.Sandbox) 
 	}
 	if box.DependencyProfileVersion != "" {
 		metadata["dependency_profile_version"] = box.DependencyProfileVersion
+	}
+	if box.DependencyArtifactChecksum != "" {
+		metadata["dependency_artifact_checksum"] = box.DependencyArtifactChecksum
 	}
 }
 

@@ -21,7 +21,7 @@ func TestResolveDependencyProfileActivationValidatesBuiltArtifact(t *testing.T) 
 		t.Fatalf("move profile rootfs: %v", err)
 	}
 
-	activation, err := resolveDependencyProfileActivation(defaultRoot, dependencyRoot, "skill-office")
+	activation, err := resolveDependencyProfileActivation(defaultRoot, dependencyRoot, "skill-office", "")
 	if err != nil {
 		t.Fatalf("resolve activation: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestResolveDependencyProfileActivationRejectsMissingArtifact(t *testing.T) 
 		t.Fatalf("create profile rootfs: %v", err)
 	}
 
-	_, err := resolveDependencyProfileActivation(defaultRoot, dependencyRoot, "skill-office")
+	_, err := resolveDependencyProfileActivation(defaultRoot, dependencyRoot, "skill-office", "")
 	if err == nil || !strings.Contains(err.Error(), "artifact") {
 		t.Fatalf("expected missing artifact rejection, got %v", err)
 	}
@@ -58,7 +58,7 @@ func TestResolveDependencyProfileActivationRejectsMissingArtifact(t *testing.T) 
 func TestResolveDependencyProfileActivationKeepsProfileEnvWithoutProfileRootFS(t *testing.T) {
 	defaultRoot := testRootFSDir(t, "default")
 
-	activation, err := resolveDependencyProfileActivation(defaultRoot, "", "skill-office")
+	activation, err := resolveDependencyProfileActivation(defaultRoot, "", "skill-office", "")
 	if err != nil {
 		t.Fatalf("resolve activation: %v", err)
 	}
@@ -70,6 +70,44 @@ func TestResolveDependencyProfileActivationKeepsProfileEnvWithoutProfileRootFS(t
 	}
 	if activation.ProfileEnv["NODE_PATH"] != "/opt/zgi/profiles/skill-office/node_modules" {
 		t.Fatalf("expected profile env to be preserved, got %+v", activation.ProfileEnv)
+	}
+}
+
+func TestResolveDependencyProfileActivationUsesReusableArtifactChecksum(t *testing.T) {
+	defaultRoot := testRootFSDir(t, "default")
+	artifactRoot := testRootFSDir(t, "artifact-root")
+	profileDir := filepath.Join(artifactRoot, "opt", "zgi", "profiles", "skill-office")
+	writeBuiltProfileArtifact(t, profileDir, "skill-office", map[string]string{
+		"venv/bin/python": "python",
+	})
+	manifest, err := validateBuiltProfileArtifact(profileDir, "skill-office")
+	if err != nil {
+		t.Fatalf("validate artifact: %v", err)
+	}
+	dependencyRoot := t.TempDir()
+	artifactKey := dependencyArtifactRuntimeKey(manifest.Build.Checksum)
+	if err := os.Rename(artifactRoot, filepath.Join(dependencyRoot, artifactKey)); err != nil {
+		t.Fatalf("move artifact rootfs: %v", err)
+	}
+
+	activation, err := resolveDependencyProfileActivation(defaultRoot, dependencyRoot, "team-data", manifest.Build.Checksum)
+	if err != nil {
+		t.Fatalf("resolve activation: %v", err)
+	}
+	if activation.RootFS != filepath.Join(dependencyRoot, artifactKey) {
+		t.Fatalf("expected artifact rootfs, got %+v", activation)
+	}
+	if activation.ProfileHostDir != filepath.Join(dependencyRoot, artifactKey, "opt", "zgi", "profiles", "skill-office") {
+		t.Fatalf("expected reusable artifact host dir, got %+v", activation)
+	}
+	if activation.ProfileContainerDir != "/opt/zgi/profiles/team-data" {
+		t.Fatalf("expected selected profile container alias, got %+v", activation)
+	}
+	if activation.ProfileEnv["NODE_PATH"] != "/opt/zgi/profiles/team-data/node_modules" {
+		t.Fatalf("expected selected profile env alias, got %+v", activation.ProfileEnv)
+	}
+	if activation.ProfileChecksum != manifest.Build.Checksum {
+		t.Fatalf("expected artifact checksum, got %+v", activation)
 	}
 }
 

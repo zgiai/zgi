@@ -1,6 +1,8 @@
 package runner
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -21,24 +23,64 @@ func (e ErrUnsafeDependencyProfileName) Error() string {
 	return fmt.Sprintf("dependency profile name is not safe: %s", e.Profile)
 }
 
-func (s rootFSSelector) resolve(dependencyProfile string) (string, error) {
+func (s rootFSSelector) resolve(dependencyProfile string, dependencyArtifactChecksum string) (string, error) {
 	defaultRootFS := strings.TrimSpace(s.defaultRootFS)
 	if defaultRootFS == "" {
 		return "", errors.New("default rootfs is required")
 	}
 	profileDir := strings.TrimSpace(s.dependencyRootFSDir)
-	profile := strings.TrimSpace(dependencyProfile)
-	if profileDir == "" || profile == "" {
+	runtimeKey := dependencyArtifactRuntimeKey(dependencyArtifactChecksum)
+	if runtimeKey == "" {
+		runtimeKey = strings.TrimSpace(dependencyProfile)
+	}
+	if profileDir == "" || runtimeKey == "" {
 		return defaultRootFS, nil
 	}
-	if !safeDependencyProfileName(profile) {
-		return "", fmt.Errorf("dependency profile rootfs selection failed: %w", ErrUnsafeDependencyProfileName{Profile: profile})
+	if !safeDependencyProfileName(runtimeKey) {
+		return "", fmt.Errorf("dependency profile rootfs selection failed: %w", ErrUnsafeDependencyProfileName{Profile: runtimeKey})
 	}
-	root := filepath.Join(profileDir, profile)
+	root := filepath.Join(profileDir, runtimeKey)
 	if err := validateRuntimeRootFS(root); err != nil {
-		return "", fmt.Errorf("dependency profile rootfs %q is not usable: %w", profile, err)
+		return "", fmt.Errorf("dependency profile rootfs %q is not usable: %w", runtimeKey, err)
 	}
 	return root, nil
+}
+
+func dependencyArtifactRuntimeKey(checksum string) string {
+	checksum = strings.ToLower(strings.TrimSpace(checksum))
+	if checksum == "" {
+		return ""
+	}
+	if safeDependencyProfileName(checksum) {
+		return checksum
+	}
+	if strings.HasPrefix(checksum, "sha256:") {
+		value := strings.TrimPrefix(checksum, "sha256:")
+		if isLowerHex(value, 64) {
+			return "sha256-" + value
+		}
+	}
+	if strings.HasPrefix(checksum, "sha256-") {
+		value := strings.TrimPrefix(checksum, "sha256-")
+		if isLowerHex(value, 64) {
+			return "sha256-" + value
+		}
+	}
+	sum := sha256.Sum256([]byte(checksum))
+	return "artifact-" + hex.EncodeToString(sum[:])
+}
+
+func isLowerHex(value string, length int) bool {
+	if len(value) != length {
+		return false
+	}
+	for _, char := range value {
+		if char >= '0' && char <= '9' || char >= 'a' && char <= 'f' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func safeDependencyProfileName(value string) bool {

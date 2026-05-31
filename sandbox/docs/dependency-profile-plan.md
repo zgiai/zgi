@@ -222,6 +222,12 @@ SDKs isolated to the owning organization. Cleanup should remove profile
 references first and delete artifact files only when no profiles reference the
 artifact.
 
+When a profile references a distinct artifact checksum, sandbox creation stores
+that checksum as `dependency_artifact_checksum`. Secure runtime activation uses
+the checksum-derived artifact key to select the rootfs, then mounts the artifact
+under the selected profile name inside the sandbox. Profiles without a distinct
+artifact checksum keep the legacy profile-name rootfs layout.
+
 ## 6. Build Pipeline
 
 ### 6.1 Python

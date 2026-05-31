@@ -282,6 +282,7 @@ Detailed implementation guidance is tracked in
 - [x] Load verified dependency profile artifacts into the startup catalog.
 - [x] Add API catalog preflight before skill sandbox creation.
 - [x] Add organization-scoped dependency profile references backed by reusable artifacts.
+- [x] Activate reusable runtime artifacts by checksum in the secure runtime.
 - Add Kest skill execution coverage for declared dependency profiles.
 
 ## 8. Milestone E: Network Governance

@@ -1271,6 +1271,9 @@ func TestDependencyUpdateCreatesOrganizationProfileReference(t *testing.T) {
 	if createRes.Code != http.StatusOK {
 		t.Fatalf("expected organization profile to be selectable, got %d body=%s", createRes.Code, createRes.Body.String())
 	}
+	if !strings.Contains(createRes.Body.String(), `"dependency_artifact_checksum":"sha256:shared-data-artifact"`) {
+		t.Fatalf("expected sandbox to include dependency artifact checksum, got %s", createRes.Body.String())
+	}
 
 	otherReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","organization_id":"organization-b","dependency_profile":"team-data"}`))
 	otherReq.Header.Set("Content-Type", "application/json")

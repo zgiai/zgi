@@ -81,7 +81,7 @@ func (b *linuxSecureBackend) Run(parent context.Context, req Request, workDir st
 	defer os.Remove(hostScriptPath)
 
 	containerPath := containerScriptPath(root, scriptName)
-	return b.exec(runCtx, root, req.DependencyProfile, spec.binary, spec.args(containerPath), req.EnableNetwork, stdoutLimit, stderrLimit, req.Stdin, nil)
+	return b.exec(runCtx, root, req.DependencyProfile, req.DependencyArtifactChecksum, spec.binary, spec.args(containerPath), req.EnableNetwork, stdoutLimit, stderrLimit, req.Stdin, nil)
 }
 
 func (b *linuxSecureBackend) ExecuteCommand(parent context.Context, spec CommandSpec) (CommandResult, error) {
@@ -98,7 +98,7 @@ func (b *linuxSecureBackend) ExecuteCommand(parent context.Context, spec Command
 		commandArgs = []string{spec.Command}
 	}
 
-	result, err := b.exec(runCtx, spec.WorkDir, spec.DependencyProfile, commandArgs[0], commandArgs[1:], false, spec.StdoutLimit, spec.StderrLimit, spec.Stdin, spec.Env)
+	result, err := b.exec(runCtx, spec.WorkDir, spec.DependencyProfile, spec.DependencyArtifactChecksum, commandArgs[0], commandArgs[1:], false, spec.StdoutLimit, spec.StderrLimit, spec.Stdin, spec.Env)
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -114,8 +114,8 @@ func (b *linuxSecureBackend) ExecuteCommand(parent context.Context, spec Command
 	}, nil
 }
 
-func (b *linuxSecureBackend) exec(ctx context.Context, workDir string, dependencyProfile string, binary string, args []string, enableNetwork bool, stdoutLimit int, stderrLimit int, stdin string, env map[string]string) (Result, error) {
-	activation, err := resolveDependencyProfileActivation(b.rootfs, b.dependencyRootFSDir, dependencyProfile)
+func (b *linuxSecureBackend) exec(ctx context.Context, workDir string, dependencyProfile string, dependencyArtifactChecksum string, binary string, args []string, enableNetwork bool, stdoutLimit int, stderrLimit int, stdin string, env map[string]string) (Result, error) {
+	activation, err := resolveDependencyProfileActivation(b.rootfs, b.dependencyRootFSDir, dependencyProfile, dependencyArtifactChecksum)
 	if err != nil {
 		return Result{}, err
 	}

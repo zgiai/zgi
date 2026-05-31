@@ -83,6 +83,7 @@ func (s *Store) prepare(ctx context.Context) error {
 			network_enabled BOOLEAN NOT NULL,
 			network_policy TEXT NOT NULL,
 			dependency_profile TEXT NOT NULL,
+			dependency_artifact_checksum TEXT NOT NULL DEFAULT '',
 			workspace_binding TEXT NOT NULL DEFAULT '',
 			ttl_seconds INTEGER NOT NULL,
 			worker_id TEXT NOT NULL,
@@ -90,6 +91,7 @@ func (s *Store) prepare(ctx context.Context) error {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_sandboxes_status_expires ON sandboxes(status, expires_at);`,
 		`CREATE INDEX IF NOT EXISTS idx_sandboxes_ownership ON sandboxes(organization_id, workspace_id, workflow_run_id);`,
+		`ALTER TABLE sandboxes ADD COLUMN IF NOT EXISTS dependency_artifact_checksum TEXT NOT NULL DEFAULT '';`,
 		`CREATE TABLE IF NOT EXISTS sandbox_endpoints (
 			sandbox_id TEXT NOT NULL,
 			port TEXT NOT NULL,
@@ -186,13 +188,13 @@ func (s *Store) SaveSandbox(box sandbox.Sandbox) error {
 		INSERT INTO sandboxes (
 			id, runtime_profile, status, created_at, updated_at, expires_at, root_path,
 			metadata_json, organization_id, workspace_id, app_id, workflow_run_id, user_id,
-			network_enabled, network_policy, dependency_profile, workspace_binding,
-			ttl_seconds, worker_id, worker_addr
+			network_enabled, network_policy, dependency_profile, dependency_artifact_checksum,
+			workspace_binding, ttl_seconds, worker_id, worker_addr
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7,
 			$8::jsonb, $9, $10, $11, $12, $13,
 			$14, $15, $16, $17,
-			$18, $19, $20
+			$18, $19, $20, $21
 		)
 		ON CONFLICT(id) DO UPDATE SET
 			runtime_profile = EXCLUDED.runtime_profile,
@@ -209,6 +211,7 @@ func (s *Store) SaveSandbox(box sandbox.Sandbox) error {
 			network_enabled = EXCLUDED.network_enabled,
 			network_policy = EXCLUDED.network_policy,
 			dependency_profile = EXCLUDED.dependency_profile,
+			dependency_artifact_checksum = EXCLUDED.dependency_artifact_checksum,
 			workspace_binding = EXCLUDED.workspace_binding,
 			ttl_seconds = EXCLUDED.ttl_seconds,
 			worker_id = EXCLUDED.worker_id,
@@ -230,6 +233,7 @@ func (s *Store) SaveSandbox(box sandbox.Sandbox) error {
 		box.NetworkEnabled,
 		box.NetworkPolicy,
 		box.DependencyProfile,
+		box.DependencyArtifactChecksum,
 		box.WorkspaceBinding,
 		box.TTLSeconds,
 		box.WorkerID,
@@ -242,7 +246,7 @@ func (s *Store) GetSandbox(id string) (*sandbox.Sandbox, error) {
 	row := s.db.QueryRow(`
 		SELECT id, runtime_profile, status, created_at, updated_at, expires_at, root_path,
 		       metadata_json, organization_id, workspace_id, app_id, workflow_run_id, user_id,
-		       network_enabled, network_policy, dependency_profile, workspace_binding,
+		       network_enabled, network_policy, dependency_profile, dependency_artifact_checksum, workspace_binding,
 		       ttl_seconds, worker_id, worker_addr
 		FROM sandboxes
 		WHERE id = $1
@@ -259,7 +263,7 @@ func (s *Store) ListSandboxes() ([]sandbox.Sandbox, error) {
 	rows, err := s.db.Query(`
 		SELECT id, runtime_profile, status, created_at, updated_at, expires_at, root_path,
 		       metadata_json, organization_id, workspace_id, app_id, workflow_run_id, user_id,
-		       network_enabled, network_policy, dependency_profile, workspace_binding,
+		       network_enabled, network_policy, dependency_profile, dependency_artifact_checksum, workspace_binding,
 		       ttl_seconds, worker_id, worker_addr
 		FROM sandboxes
 		ORDER BY created_at DESC
@@ -725,6 +729,7 @@ func scanSandbox(scanner rowScanner) (*sandbox.Sandbox, error) {
 		&box.NetworkEnabled,
 		&box.NetworkPolicy,
 		&box.DependencyProfile,
+		&box.DependencyArtifactChecksum,
 		&box.WorkspaceBinding,
 		&box.TTLSeconds,
 		&box.WorkerID,

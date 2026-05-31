@@ -161,6 +161,7 @@ code == 0
 data.organization_id == "organization_profile_kest"
 data.dependency_profile == "team-data-{{dependency_profile_name}}"
 data.dependency_profile_version == "2026.06.01"
+data.dependency_artifact_checksum == "sha256:shared-team-data-artifact"
 ```
 
 ```step
