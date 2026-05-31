@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { Building2, ChevronsUpDown, Check, Users } from 'lucide-react';
+import { ChevronsUpDown, Check, Users } from 'lucide-react';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import {
@@ -24,10 +24,10 @@ interface WorkspaceSwitcherProps {
 /**
  * Workspace switcher component for sidebar
  * Displays current workspace selection and allows switching between workspaces
- * Organization View mode = no concrete workspace selected
  */
 export function WorkspaceSwitcher({ isCollapsed }: WorkspaceSwitcherProps) {
   const t = useT('navigation');
+  const tCommon = useT('common');
   const workspaces = useWorkspaceStore.use.workspaces();
   const currentWorkspace = useWorkspaceStore.use.currentWorkspace();
   const isOrganizationMode = useWorkspaceStore.use.isOrganizationMode();
@@ -40,25 +40,12 @@ export function WorkspaceSwitcher({ isCollapsed }: WorkspaceSwitcherProps) {
     updateWorkspace(workspace);
   };
 
-  const handleEnterPersonalSpace = () => {
-    updateWorkspace(null);
-  };
-
   const getWorkspaceDisplayName = (workspace?: Pick<Workspace, 'name'> | null) => {
     if (!workspace?.name) return '';
     return workspace.name === 'Default Workspace' ? t('defaultWorkspace') : workspace.name;
   };
 
-  // Organization View mode label
-  const personalSpaceLabel = t('personalSpace');
-
-  // Display name based on current mode
-  const displayName = isOrganizationMode
-    ? personalSpaceLabel
-    : getWorkspaceDisplayName(currentWorkspace) || t('switchWorkspace');
-
-  // Icon based on current mode (organization view vs workspace)
-  const DisplayIcon = isOrganizationMode ? Building2 : Users;
+  const displayName = getWorkspaceDisplayName(currentWorkspace) || t('switchWorkspace');
 
   return (
     <DropdownMenu>
@@ -84,7 +71,7 @@ export function WorkspaceSwitcher({ isCollapsed }: WorkspaceSwitcherProps) {
               </div>
             ) : (
               <div className="flex h-8 w-8 items-center justify-center rounded-md bg-background text-muted-foreground shrink-0">
-                <DisplayIcon size={16} />
+                <Users size={16} />
               </div>
             )}
             {!isCollapsed && (
@@ -116,40 +103,32 @@ export function WorkspaceSwitcher({ isCollapsed }: WorkspaceSwitcherProps) {
               'min(16rem, calc(var(--radix-dropdown-menu-content-available-height) - 4.5rem))',
           }}
         >
-          {/* Organization View option */}
-          <DropdownMenuItem
-            onClick={handleEnterPersonalSpace}
-            className="flex items-center justify-between cursor-pointer text-xs"
-          >
-            <div className="flex items-center gap-1.5">
-              <div className="flex h-5 w-5 items-center justify-center rounded-md bg-muted">
-                <Building2 className="h-3 w-3 text-muted-foreground" />
-              </div>
-              <span className="truncate text-[11px]">{personalSpaceLabel}</span>
-            </div>
-            {isOrganizationMode && <Check size={14} className="text-primary" />}
-          </DropdownMenuItem>
-          {/* Workspace list */}
-          {workspaces.map(workspace => (
-            <DropdownMenuItem
-              key={workspace.id}
-              onClick={() => handleSelectWorkspace(workspace)}
-              className="flex items-center justify-between cursor-pointer text-xs"
-              title={getWorkspaceDisplayName(workspace)}
-            >
-              <div className="flex items-center gap-1.5 w-0 grow">
-                <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-primary/10">
-                  <Users className="h-3 w-3 text-primary" />
+          {workspaces.length > 0 ? (
+            workspaces.map(workspace => (
+              <DropdownMenuItem
+                key={workspace.id}
+                onClick={() => handleSelectWorkspace(workspace)}
+                className="flex items-center justify-between cursor-pointer text-xs"
+                title={getWorkspaceDisplayName(workspace)}
+              >
+                <div className="flex items-center gap-1.5 w-0 grow">
+                  <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-primary/10">
+                    <Users className="h-3 w-3 text-primary" />
+                  </div>
+                  <span className="truncate text-[11px] break-all text-ellipsis">
+                    {getWorkspaceDisplayName(workspace)}
+                  </span>
                 </div>
-                <span className="truncate text-[11px] break-all text-ellipsis">
-                  {getWorkspaceDisplayName(workspace)}
-                </span>
-              </div>
-              {!isOrganizationMode && currentWorkspace?.id === workspace.id && (
-                <Check size={14} className="text-primary" />
-              )}
+                {!isOrganizationMode && currentWorkspace?.id === workspace.id && (
+                  <Check size={14} className="text-primary" />
+                )}
+              </DropdownMenuItem>
+            ))
+          ) : (
+            <DropdownMenuItem disabled className="text-xs text-muted-foreground">
+              {tCommon('workspaceSelector.noWorkspaces')}
             </DropdownMenuItem>
-          ))}
+          )}
         </div>
       </DropdownMenuContent>
     </DropdownMenu>

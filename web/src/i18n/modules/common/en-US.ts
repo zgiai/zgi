@@ -122,6 +122,14 @@ const messages = {
     noWorkspaces: 'No workspaces available',
   },
 
+  workspaceRequired: {
+    title: 'Select a workspace to continue',
+    description:
+      'The workbench runs inside a specific workspace. Select a workspace before starting chats, apps, image generation, or tasks.',
+    noWorkspaces:
+      'You have not joined any workspaces yet. Contact an administrator for an invitation.',
+  },
+
   assetMove: {
     title: 'Move to Workspace',
     description: 'Select a target workspace and review the move check before confirming.',

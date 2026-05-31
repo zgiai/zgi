@@ -123,6 +123,13 @@ const messages: CommonMessages = {
     noWorkspaces: '没有可用的工作空间',
   },
 
+  workspaceRequired: {
+    title: '请选择一个工作空间后继续',
+    description:
+      '工作台需要在具体工作空间内使用。请先选择工作空间，再开始对话、应用、绘图或定时任务。',
+    noWorkspaces: '您尚未加入任何工作空间，请联系管理员邀请您加入。',
+  },
+
   assetMove: {
     title: '移动到工作空间',
     description: '选择目标工作空间，并在确认前查看移动检查结果。',
