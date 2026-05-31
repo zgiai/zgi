@@ -872,6 +872,7 @@ func (s *Service) EffectiveLimits() sandbox.ResourceLimits {
 		MaxActiveSandboxesPerOrganization:          s.config.MaxActivePerOrganization,
 		MaxConcurrentExecutionsPerOrganization:     s.config.MaxConcurrentExecutionsPerOrganization,
 		MaxExecutionsPerMinutePerOrganization:      s.config.MaxExecutionsPerMinutePerOrganization,
+		MaxNetworkRequestsPerMinutePerOrganization: s.config.MaxNetworkRequestsPerMinutePerOrganization,
 		MaxQueuedExecutionsPerOrganization:         s.config.MaxQueuedExecutionsPerOrganization,
 		MaxWorkspaceFiles:                          s.config.MaxWorkspaceFiles,
 		MaxWorkspaceBytes:                          s.config.MaxWorkspaceBytes,
@@ -916,6 +917,10 @@ func (s *Service) EffectiveLimits() sandbox.ResourceLimits {
 
 func (s *Service) MaxExecutionsPerMinutePerOrganization() int {
 	return s.config.MaxExecutionsPerMinutePerOrganization
+}
+
+func (s *Service) MaxNetworkRequestsPerMinutePerOrganization() int {
+	return s.config.MaxNetworkRequestsPerMinutePerOrganization
 }
 
 func (s *Service) MaxConcurrentExecutions() int {

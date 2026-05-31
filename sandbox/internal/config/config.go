@@ -11,55 +11,56 @@ import (
 )
 
 type Config struct {
-	Port                                   string
-	APIKey                                 string
-	MaxWorkers                             int
-	TimeoutSeconds                         int
-	OutputLimitKB                          int
-	MaxActive                              int
-	MaxConcurrentExecutions                int
-	MaxConcurrentExecutionsPerProfile      int
-	MaxActivePerOrganization               int
-	MaxConcurrentExecutionsPerOrganization int
-	MaxExecutionsPerMinutePerOrganization  int
-	MaxQueuedExecutionsPerOrganization     int
-	MaxWorkspaceFiles                      int
-	MaxWorkspaceBytes                      int64
-	MaxWorkspaceBytesPerOrganization       int64
-	MaxArtifactManifestFiles               int
-	MaxArtifactManifestBytes               int64
-	MaxArtifactBytesPerOrganization        int64
-	MaxDependencyProfilesPerOrganization   int
-	MaxDependencyProfileSizeBytes          int64
-	DependencyProfileBuildTimeoutSeconds   int
-	QueueTimeoutMS                         int
-	ShutdownTimeoutSeconds                 int
-	SessionTTL                             int
-	InteractiveTTL                         int
-	CommandTimeout                         int
-	MaxFileSizeKB                          int
-	ObserverRetentionDays                  int
-	ObserverMaxEvents                      int
-	DatabaseURL                            string
-	DataDir                                string
-	CacheTTL                               int
-	RedisAddr                              string
-	RedisPassword                          string
-	RedisDB                                int
-	WorkerID                               string
-	AdvertiseURL                           string
-	PublicBaseURL                          string
-	Environment                            string
-	RuntimeBackend                         string
-	SecureRootFS                           string
-	DependencyRootFSDir                    string
-	BwrapBinary                            string
-	SecureRuntimeCPUSeconds                int
-	SecureRuntimeMemoryBytes               int64
-	SecureRuntimeProcessLimit              int
-	SecureRuntimeOpenFileLimit             int
-	ProxyTimeout                           int
-	EgressProxyMaxBodyBytes                int64
+	Port                                       string
+	APIKey                                     string
+	MaxWorkers                                 int
+	TimeoutSeconds                             int
+	OutputLimitKB                              int
+	MaxActive                                  int
+	MaxConcurrentExecutions                    int
+	MaxConcurrentExecutionsPerProfile          int
+	MaxActivePerOrganization                   int
+	MaxConcurrentExecutionsPerOrganization     int
+	MaxExecutionsPerMinutePerOrganization      int
+	MaxNetworkRequestsPerMinutePerOrganization int
+	MaxQueuedExecutionsPerOrganization         int
+	MaxWorkspaceFiles                          int
+	MaxWorkspaceBytes                          int64
+	MaxWorkspaceBytesPerOrganization           int64
+	MaxArtifactManifestFiles                   int
+	MaxArtifactManifestBytes                   int64
+	MaxArtifactBytesPerOrganization            int64
+	MaxDependencyProfilesPerOrganization       int
+	MaxDependencyProfileSizeBytes              int64
+	DependencyProfileBuildTimeoutSeconds       int
+	QueueTimeoutMS                             int
+	ShutdownTimeoutSeconds                     int
+	SessionTTL                                 int
+	InteractiveTTL                             int
+	CommandTimeout                             int
+	MaxFileSizeKB                              int
+	ObserverRetentionDays                      int
+	ObserverMaxEvents                          int
+	DatabaseURL                                string
+	DataDir                                    string
+	CacheTTL                                   int
+	RedisAddr                                  string
+	RedisPassword                              string
+	RedisDB                                    int
+	WorkerID                                   string
+	AdvertiseURL                               string
+	PublicBaseURL                              string
+	Environment                                string
+	RuntimeBackend                             string
+	SecureRootFS                               string
+	DependencyRootFSDir                        string
+	BwrapBinary                                string
+	SecureRuntimeCPUSeconds                    int
+	SecureRuntimeMemoryBytes                   int64
+	SecureRuntimeProcessLimit                  int
+	SecureRuntimeOpenFileLimit                 int
+	ProxyTimeout                               int
+	EgressProxyMaxBodyBytes                    int64
 }
 
 func FromEnv() Config {
@@ -79,44 +80,45 @@ func FromEnv() Config {
 		MaxActivePerOrganization:               getEnvIntAllowZero("ZGI_SANDBOX_MAX_ACTIVE_PER_ORGANIZATION", 0),
 		MaxConcurrentExecutionsPerOrganization: getEnvIntAllowZero("ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS_PER_ORGANIZATION", 0),
 		MaxExecutionsPerMinutePerOrganization:  getEnvIntAllowZero("ZGI_SANDBOX_MAX_EXECUTIONS_PER_MINUTE_PER_ORGANIZATION", 0),
-		MaxQueuedExecutionsPerOrganization:     getEnvIntAllowZero("ZGI_SANDBOX_MAX_QUEUED_EXECUTIONS_PER_ORGANIZATION", 0),
-		MaxWorkspaceFiles:                      getEnvIntAllowZero("ZGI_SANDBOX_MAX_WORKSPACE_FILES", 0),
-		MaxWorkspaceBytes:                      getEnvInt64AllowZero("ZGI_SANDBOX_MAX_WORKSPACE_BYTES", 0),
-		MaxWorkspaceBytesPerOrganization:       getEnvInt64AllowZero("ZGI_SANDBOX_MAX_WORKSPACE_BYTES_PER_ORGANIZATION", 0),
-		MaxArtifactManifestFiles:               getEnvIntAllowZero("ZGI_SANDBOX_MAX_ARTIFACT_MANIFEST_FILES", 0),
-		MaxArtifactManifestBytes:               getEnvInt64AllowZero("ZGI_SANDBOX_MAX_ARTIFACT_MANIFEST_BYTES", 0),
-		MaxArtifactBytesPerOrganization:        getEnvInt64AllowZero("ZGI_SANDBOX_MAX_ARTIFACT_BYTES_PER_ORGANIZATION", 0),
-		MaxDependencyProfilesPerOrganization:   getEnvIntAllowZero("ZGI_SANDBOX_MAX_DEPENDENCY_PROFILES_PER_ORGANIZATION", 0),
-		MaxDependencyProfileSizeBytes:          getEnvInt64("ZGI_SANDBOX_MAX_DEPENDENCY_PROFILE_SIZE_BYTES", 512*1024*1024),
-		DependencyProfileBuildTimeoutSeconds:   getEnvInt("ZGI_SANDBOX_DEPENDENCY_PROFILE_BUILD_TIMEOUT_SECONDS", 600),
-		QueueTimeoutMS:                         getEnvInt("ZGI_SANDBOX_QUEUE_TIMEOUT_MS", 5000),
-		ShutdownTimeoutSeconds:                 getEnvInt("ZGI_SANDBOX_SHUTDOWN_TIMEOUT_SECONDS", 10),
-		SessionTTL:                             getEnvInt("ZGI_SANDBOX_SESSION_TTL_SECONDS", 1800),
-		InteractiveTTL:                         getEnvInt("ZGI_SANDBOX_INTERACTIVE_TTL_SECONDS", 3600),
-		CommandTimeout:                         getEnvInt("ZGI_SANDBOX_COMMAND_TIMEOUT_SECONDS", 30),
-		MaxFileSizeKB:                          getEnvInt("ZGI_SANDBOX_MAX_FILE_SIZE_KB", 256),
-		ObserverRetentionDays:                  getEnvInt("ZGI_SANDBOX_OBSERVER_RETENTION_DAYS", 7),
-		ObserverMaxEvents:                      getEnvInt("ZGI_SANDBOX_OBSERVER_MAX_EVENTS", 10000),
-		DatabaseURL:                            getEnv("ZGI_SANDBOX_DATABASE_URL", "postgres://postgres@127.0.0.1:5432/postgres?sslmode=disable"),
-		DataDir:                                getEnv("ZGI_SANDBOX_DATA_DIR", ".zgi-sandbox-data"),
-		CacheTTL:                               getEnvInt("ZGI_SANDBOX_CACHE_TTL_SECONDS", 30),
-		RedisAddr:                              getEnv("ZGI_SANDBOX_REDIS_ADDR", ""),
-		RedisPassword:                          getEnv("ZGI_SANDBOX_REDIS_PASSWORD", ""),
-		RedisDB:                                getEnvIntAllowZero("ZGI_SANDBOX_REDIS_DB", 0),
-		WorkerID:                               workerID,
-		AdvertiseURL:                           advertiseURL,
-		PublicBaseURL:                          getEnv("ZGI_SANDBOX_PUBLIC_BASE_URL", advertiseURL),
-		Environment:                            getEnv("ZGI_SANDBOX_ENV", "local"),
-		RuntimeBackend:                         getEnv("ZGI_SANDBOX_RUNTIME_BACKEND", "preview"),
-		SecureRootFS:                           getEnv("ZGI_SANDBOX_SECURE_ROOTFS", ""),
-		DependencyRootFSDir:                    getEnv("ZGI_SANDBOX_DEPENDENCY_ROOTFS_DIR", ""),
-		BwrapBinary:                            getEnv("ZGI_SANDBOX_BWRAP_BINARY", "bwrap"),
-		SecureRuntimeCPUSeconds:                getEnvIntAllowZero("ZGI_SANDBOX_SECURE_RUNTIME_CPU_SECONDS", 2),
-		SecureRuntimeMemoryBytes:               getEnvInt64AllowZero("ZGI_SANDBOX_SECURE_RUNTIME_MEMORY_BYTES", 256*1024*1024),
-		SecureRuntimeProcessLimit:              getEnvIntAllowZero("ZGI_SANDBOX_SECURE_RUNTIME_PROCESS_LIMIT", 64),
-		SecureRuntimeOpenFileLimit:             getEnvIntAllowZero("ZGI_SANDBOX_SECURE_RUNTIME_OPEN_FILE_LIMIT", 128),
-		ProxyTimeout:                           getEnvInt("ZGI_SANDBOX_PROXY_TIMEOUT_SECONDS", 20),
-		EgressProxyMaxBodyBytes:                getEnvInt64("ZGI_SANDBOX_EGRESS_PROXY_MAX_BODY_BYTES", 1024*1024),
+		MaxNetworkRequestsPerMinutePerOrganization: getEnvIntAllowZero("ZGI_SANDBOX_MAX_NETWORK_REQUESTS_PER_MINUTE_PER_ORGANIZATION", 0),
+		MaxQueuedExecutionsPerOrganization:         getEnvIntAllowZero("ZGI_SANDBOX_MAX_QUEUED_EXECUTIONS_PER_ORGANIZATION", 0),
+		MaxWorkspaceFiles:                          getEnvIntAllowZero("ZGI_SANDBOX_MAX_WORKSPACE_FILES", 0),
+		MaxWorkspaceBytes:                          getEnvInt64AllowZero("ZGI_SANDBOX_MAX_WORKSPACE_BYTES", 0),
+		MaxWorkspaceBytesPerOrganization:           getEnvInt64AllowZero("ZGI_SANDBOX_MAX_WORKSPACE_BYTES_PER_ORGANIZATION", 0),
+		MaxArtifactManifestFiles:                   getEnvIntAllowZero("ZGI_SANDBOX_MAX_ARTIFACT_MANIFEST_FILES", 0),
+		MaxArtifactManifestBytes:                   getEnvInt64AllowZero("ZGI_SANDBOX_MAX_ARTIFACT_MANIFEST_BYTES", 0),
+		MaxArtifactBytesPerOrganization:            getEnvInt64AllowZero("ZGI_SANDBOX_MAX_ARTIFACT_BYTES_PER_ORGANIZATION", 0),
+		MaxDependencyProfilesPerOrganization:       getEnvIntAllowZero("ZGI_SANDBOX_MAX_DEPENDENCY_PROFILES_PER_ORGANIZATION", 0),
+		MaxDependencyProfileSizeBytes:              getEnvInt64("ZGI_SANDBOX_MAX_DEPENDENCY_PROFILE_SIZE_BYTES", 512*1024*1024),
+		DependencyProfileBuildTimeoutSeconds:       getEnvInt("ZGI_SANDBOX_DEPENDENCY_PROFILE_BUILD_TIMEOUT_SECONDS", 600),
+		QueueTimeoutMS:                             getEnvInt("ZGI_SANDBOX_QUEUE_TIMEOUT_MS", 5000),
+		ShutdownTimeoutSeconds:                     getEnvInt("ZGI_SANDBOX_SHUTDOWN_TIMEOUT_SECONDS", 10),
+		SessionTTL:                                 getEnvInt("ZGI_SANDBOX_SESSION_TTL_SECONDS", 1800),
+		InteractiveTTL:                             getEnvInt("ZGI_SANDBOX_INTERACTIVE_TTL_SECONDS", 3600),
+		CommandTimeout:                             getEnvInt("ZGI_SANDBOX_COMMAND_TIMEOUT_SECONDS", 30),
+		MaxFileSizeKB:                              getEnvInt("ZGI_SANDBOX_MAX_FILE_SIZE_KB", 256),
+		ObserverRetentionDays:                      getEnvInt("ZGI_SANDBOX_OBSERVER_RETENTION_DAYS", 7),
+		ObserverMaxEvents:                          getEnvInt("ZGI_SANDBOX_OBSERVER_MAX_EVENTS", 10000),
+		DatabaseURL:                                getEnv("ZGI_SANDBOX_DATABASE_URL", "postgres://postgres@127.0.0.1:5432/postgres?sslmode=disable"),
+		DataDir:                                    getEnv("ZGI_SANDBOX_DATA_DIR", ".zgi-sandbox-data"),
+		CacheTTL:                                   getEnvInt("ZGI_SANDBOX_CACHE_TTL_SECONDS", 30),
+		RedisAddr:                                  getEnv("ZGI_SANDBOX_REDIS_ADDR", ""),
+		RedisPassword:                              getEnv("ZGI_SANDBOX_REDIS_PASSWORD", ""),
+		RedisDB:                                    getEnvIntAllowZero("ZGI_SANDBOX_REDIS_DB", 0),
+		WorkerID:                                   workerID,
+		AdvertiseURL:                               advertiseURL,
+		PublicBaseURL:                              getEnv("ZGI_SANDBOX_PUBLIC_BASE_URL", advertiseURL),
+		Environment:                                getEnv("ZGI_SANDBOX_ENV", "local"),
+		RuntimeBackend:                             getEnv("ZGI_SANDBOX_RUNTIME_BACKEND", "preview"),
+		SecureRootFS:                               getEnv("ZGI_SANDBOX_SECURE_ROOTFS", ""),
+		DependencyRootFSDir:                        getEnv("ZGI_SANDBOX_DEPENDENCY_ROOTFS_DIR", ""),
+		BwrapBinary:                                getEnv("ZGI_SANDBOX_BWRAP_BINARY", "bwrap"),
+		SecureRuntimeCPUSeconds:                    getEnvIntAllowZero("ZGI_SANDBOX_SECURE_RUNTIME_CPU_SECONDS", 2),
+		SecureRuntimeMemoryBytes:                   getEnvInt64AllowZero("ZGI_SANDBOX_SECURE_RUNTIME_MEMORY_BYTES", 256*1024*1024),
+		SecureRuntimeProcessLimit:                  getEnvIntAllowZero("ZGI_SANDBOX_SECURE_RUNTIME_PROCESS_LIMIT", 64),
+		SecureRuntimeOpenFileLimit:                 getEnvIntAllowZero("ZGI_SANDBOX_SECURE_RUNTIME_OPEN_FILE_LIMIT", 128),
+		ProxyTimeout:                               getEnvInt("ZGI_SANDBOX_PROXY_TIMEOUT_SECONDS", 20),
+		EgressProxyMaxBodyBytes:                    getEnvInt64("ZGI_SANDBOX_EGRESS_PROXY_MAX_BODY_BYTES", 1024*1024),
 	}
 }
 
@@ -146,6 +148,7 @@ func (c Config) ValidateStartup() error {
 		requireNonNegativeInt("ZGI_SANDBOX_MAX_ACTIVE_PER_ORGANIZATION", c.MaxActivePerOrganization),
 		requireNonNegativeInt("ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS_PER_ORGANIZATION", c.MaxConcurrentExecutionsPerOrganization),
 		requireNonNegativeInt("ZGI_SANDBOX_MAX_EXECUTIONS_PER_MINUTE_PER_ORGANIZATION", c.MaxExecutionsPerMinutePerOrganization),
+		requireNonNegativeInt("ZGI_SANDBOX_MAX_NETWORK_REQUESTS_PER_MINUTE_PER_ORGANIZATION", c.MaxNetworkRequestsPerMinutePerOrganization),
 		requireNonNegativeInt("ZGI_SANDBOX_MAX_QUEUED_EXECUTIONS_PER_ORGANIZATION", c.MaxQueuedExecutionsPerOrganization),
 		requireNonNegativeInt("ZGI_SANDBOX_MAX_WORKSPACE_FILES", c.MaxWorkspaceFiles),
 		requireNonNegativeInt("ZGI_SANDBOX_MAX_ARTIFACT_MANIFEST_FILES", c.MaxArtifactManifestFiles),
@@ -364,46 +367,47 @@ func (c Config) PublicSnapshot() map[string]any {
 		"max_concurrent_executions":             c.MaxConcurrentExecutions,
 		"max_concurrent_executions_per_profile": c.MaxConcurrentExecutionsPerProfile,
 		"max_active_per_organization":           c.MaxActivePerOrganization,
-		"max_concurrent_executions_per_organization": c.MaxConcurrentExecutionsPerOrganization,
-		"max_executions_per_minute_per_organization": c.MaxExecutionsPerMinutePerOrganization,
-		"max_queued_executions_per_organization":     c.MaxQueuedExecutionsPerOrganization,
-		"max_workspace_files":                        c.MaxWorkspaceFiles,
-		"max_workspace_bytes":                        c.MaxWorkspaceBytes,
-		"max_workspace_bytes_per_organization":       c.MaxWorkspaceBytesPerOrganization,
-		"max_artifact_manifest_files":                c.MaxArtifactManifestFiles,
-		"max_artifact_manifest_bytes":                c.MaxArtifactManifestBytes,
-		"max_artifact_bytes_per_organization":        c.MaxArtifactBytesPerOrganization,
-		"max_dependency_profiles_per_organization":   c.MaxDependencyProfilesPerOrganization,
-		"max_dependency_profile_size_bytes":          c.MaxDependencyProfileSizeBytes,
-		"dependency_profile_build_timeout_seconds":   c.DependencyProfileBuildTimeoutSeconds,
-		"queue_timeout_ms":                           c.QueueTimeoutMS,
-		"shutdown_timeout_seconds":                   c.ShutdownTimeoutSeconds,
-		"session_ttl_seconds":                        c.SessionTTL,
-		"interactive_ttl_seconds":                    c.InteractiveTTL,
-		"command_timeout_seconds":                    c.CommandTimeout,
-		"max_file_size_kb":                           c.MaxFileSizeKB,
-		"observer_retention_days":                    c.ObserverRetentionDays,
-		"observer_max_events":                        c.ObserverMaxEvents,
-		"database_configured":                        c.DatabaseURL != "",
-		"data_dir":                                   c.DataDir,
-		"cache_ttl_seconds":                          c.CacheTTL,
-		"redis_configured":                           c.RedisAddr != "",
-		"redis_db":                                   c.RedisDB,
-		"worker_id":                                  c.WorkerID,
-		"advertise_url":                              c.AdvertiseURL,
-		"public_base_url":                            c.PublicBaseURL,
-		"environment":                                c.Environment,
-		"runtime_backend":                            c.RuntimeBackendName(),
-		"secure_rootfs_configured":                   c.SecureRootFS != "",
-		"dependency_rootfs_configured":               c.DependencyRootFSDir != "",
-		"bwrap_binary":                               c.BwrapBinary,
-		"secure_runtime_cpu_seconds":                 c.SecureRuntimeCPUSeconds,
-		"secure_runtime_memory_bytes":                c.SecureRuntimeMemoryBytes,
-		"secure_runtime_process_limit":               c.SecureRuntimeProcessLimit,
-		"secure_runtime_open_file_limit":             c.SecureRuntimeOpenFileLimit,
-		"proxy_timeout_seconds":                      c.ProxyTimeout,
-		"egress_proxy_max_body_bytes":                c.EgressProxyMaxBodyBytes,
-		"network_policy_enforced":                    c.NetworkPolicyEnforced(),
+		"max_concurrent_executions_per_organization":       c.MaxConcurrentExecutionsPerOrganization,
+		"max_executions_per_minute_per_organization":       c.MaxExecutionsPerMinutePerOrganization,
+		"max_network_requests_per_minute_per_organization": c.MaxNetworkRequestsPerMinutePerOrganization,
+		"max_queued_executions_per_organization":           c.MaxQueuedExecutionsPerOrganization,
+		"max_workspace_files":                              c.MaxWorkspaceFiles,
+		"max_workspace_bytes":                              c.MaxWorkspaceBytes,
+		"max_workspace_bytes_per_organization":             c.MaxWorkspaceBytesPerOrganization,
+		"max_artifact_manifest_files":                      c.MaxArtifactManifestFiles,
+		"max_artifact_manifest_bytes":                      c.MaxArtifactManifestBytes,
+		"max_artifact_bytes_per_organization":              c.MaxArtifactBytesPerOrganization,
+		"max_dependency_profiles_per_organization":         c.MaxDependencyProfilesPerOrganization,
+		"max_dependency_profile_size_bytes":                c.MaxDependencyProfileSizeBytes,
+		"dependency_profile_build_timeout_seconds":         c.DependencyProfileBuildTimeoutSeconds,
+		"queue_timeout_ms":                                 c.QueueTimeoutMS,
+		"shutdown_timeout_seconds":                         c.ShutdownTimeoutSeconds,
+		"session_ttl_seconds":                              c.SessionTTL,
+		"interactive_ttl_seconds":                          c.InteractiveTTL,
+		"command_timeout_seconds":                          c.CommandTimeout,
+		"max_file_size_kb":                                 c.MaxFileSizeKB,
+		"observer_retention_days":                          c.ObserverRetentionDays,
+		"observer_max_events":                              c.ObserverMaxEvents,
+		"database_configured":                              c.DatabaseURL != "",
+		"data_dir":                                         c.DataDir,
+		"cache_ttl_seconds":                                c.CacheTTL,
+		"redis_configured":                                 c.RedisAddr != "",
+		"redis_db":                                         c.RedisDB,
+		"worker_id":                                        c.WorkerID,
+		"advertise_url":                                    c.AdvertiseURL,
+		"public_base_url":                                  c.PublicBaseURL,
+		"environment":                                      c.Environment,
+		"runtime_backend":                                  c.RuntimeBackendName(),
+		"secure_rootfs_configured":                         c.SecureRootFS != "",
+		"dependency_rootfs_configured":                     c.DependencyRootFSDir != "",
+		"bwrap_binary":                                     c.BwrapBinary,
+		"secure_runtime_cpu_seconds":                       c.SecureRuntimeCPUSeconds,
+		"secure_runtime_memory_bytes":                      c.SecureRuntimeMemoryBytes,
+		"secure_runtime_process_limit":                     c.SecureRuntimeProcessLimit,
+		"secure_runtime_open_file_limit":                   c.SecureRuntimeOpenFileLimit,
+		"proxy_timeout_seconds":                            c.ProxyTimeout,
+		"egress_proxy_max_body_bytes":                      c.EgressProxyMaxBodyBytes,
+		"network_policy_enforced":                          c.NetworkPolicyEnforced(),
 	}
 }
 

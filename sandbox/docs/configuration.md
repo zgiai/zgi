@@ -53,6 +53,7 @@ named after each profile.
 | `ZGI_SANDBOX_MAX_DEPENDENCY_PROFILE_SIZE_BYTES` | Maximum managed dependency profile size. | `536870912` | Tune to artifact storage and startup budget. |
 | `ZGI_SANDBOX_MAX_EXECUTIONS_PER_MINUTE_PER_ORGANIZATION` | Optional execution rate limit per organization. | `0` disabled | Set for shared deployments. |
 | `ZGI_SANDBOX_MAX_FILE_SIZE_KB` | Maximum uploaded file size. | `256` | Keep aligned with API upload policy. |
+| `ZGI_SANDBOX_MAX_NETWORK_REQUESTS_PER_MINUTE_PER_ORGANIZATION` | Optional egress proxy request rate limit per organization. | `0` disabled | Set for shared deployments that enable network egress. |
 | `ZGI_SANDBOX_MAX_QUEUED_EXECUTIONS_PER_ORGANIZATION` | Optional queued execution limit per organization. | `0` disabled | Set to prevent queue buildup. |
 | `ZGI_SANDBOX_MAX_WORKSPACE_BYTES` | Optional workspace byte limit per sandbox. | `0` disabled | Set for disk protection. |
 | `ZGI_SANDBOX_MAX_WORKSPACE_BYTES_PER_ORGANIZATION` | Optional workspace byte limit per organization. | `0` disabled | Set for shared deployments. |

@@ -808,15 +808,15 @@ func (s *Server) handleEgressProxy(w http.ResponseWriter, r *http.Request) {
 		writeEnvelopeWithMessage(w, http.StatusForbidden, -403, decision.Reason, decision)
 		return
 	}
+	if err := s.enforceOrganizationNetworkRequestRate(box); err != nil {
+		s.recordEgressProxyFailure(r.Context(), box, decision, err)
+		writeKnownError(w, err)
+		return
+	}
 
 	result, err := s.executeEgressProxy(r.Context(), box, req, decision)
 	if err != nil {
-		metadata := egressDecisionMetadata(decision)
-		addSandboxOwnershipMetadata(metadata, box)
-		metadata["status"] = "failure"
-		metadata["error"] = err.Error()
-		metadata["runtime_backend"] = s.policy.RuntimeBackend()
-		s.observer.Record("network.egress.proxy.failed", box.ID, "network egress proxy failed", observer.MetadataWithContext(r.Context(), metadata))
+		s.recordEgressProxyFailure(r.Context(), box, decision, err)
 		writeKnownError(w, err)
 		return
 	}
@@ -830,6 +830,58 @@ func (s *Server) handleEgressProxy(w http.ResponseWriter, r *http.Request) {
 	metadata["runtime_backend"] = s.policy.RuntimeBackend()
 	s.observer.Record("network.egress.proxy", box.ID, "network egress proxied", observer.MetadataWithContext(r.Context(), metadata))
 	writeEnvelope(w, http.StatusOK, result)
+}
+
+func (s *Server) enforceOrganizationNetworkRequestRate(box *sandbox.Sandbox) error {
+	limit := s.policy.MaxNetworkRequestsPerMinutePerOrganization()
+	if limit <= 0 || box == nil || strings.TrimSpace(box.OrganizationID) == "" {
+		return nil
+	}
+
+	windowStart := time.Now().UTC().Add(-time.Minute)
+	events := s.observer.Query(observer.Query{
+		OrganizationID: box.OrganizationID,
+		Type:           "network.egress.proxy",
+		After:          windowStart,
+		Limit:          limit + 1,
+	})
+	if len(events) < limit {
+		return nil
+	}
+	return &policy.LimitError{
+		Code:    "organization_network_request_rate_limit_exceeded",
+		Limit:   "max_network_requests_per_minute_per_organization",
+		Maximum: limit,
+		Actual:  len(events) + 1,
+		Details: map[string]any{
+			"organization_id":         box.OrganizationID,
+			"window_seconds":          60,
+			"recent_network_requests": len(events),
+		},
+	}
+}
+
+func (s *Server) recordEgressProxyFailure(ctx context.Context, box *sandbox.Sandbox, decision policy.EgressDecision, err error) {
+	if box == nil {
+		return
+	}
+	metadata := egressDecisionMetadata(decision)
+	addSandboxOwnershipMetadata(metadata, box)
+	metadata["status"] = "failure"
+	metadata["error"] = err.Error()
+	metadata["runtime_backend"] = s.policy.RuntimeBackend()
+	var limitErr *policy.LimitError
+	if errors.As(err, &limitErr) {
+		metadata["error_type"] = "limit_exceeded"
+		metadata["code"] = limitErr.Code
+		metadata["limit"] = limitErr.Limit
+		metadata["maximum"] = limitErr.Maximum
+		metadata["actual"] = limitErr.Actual
+		for key, value := range limitErr.Details {
+			metadata[key] = value
+		}
+	}
+	s.observer.Record("network.egress.proxy.failed", box.ID, "network egress proxy failed", observer.MetadataWithContext(ctx, metadata))
 }
 
 func (s *Server) handleUploadFile(w http.ResponseWriter, r *http.Request) {
