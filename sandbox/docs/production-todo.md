@@ -483,7 +483,7 @@ Goal: bind sandbox usage to ZGI organizations, workspaces, apps, workflows, and 
 - Organization quota success and failure.
 - [x] Cross-organization sandbox access rejection.
 - [x] Audit event completeness.
-- Ownership metadata propagation.
+- [x] Ownership metadata propagation.
 
 ## 13. Milestone J: API and Workflow Integration
 

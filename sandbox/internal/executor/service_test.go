@@ -1096,6 +1096,11 @@ func TestRunTemplateRendersWithBoundedHelpers(t *testing.T) {
 		Variables: map[string]any{
 			"name": "zgi",
 		},
+		OrganizationID: "organization-template",
+		WorkspaceID:    "workspace-template",
+		AppID:          "app-template",
+		WorkflowRunID:  "run-template",
+		UserID:         "user-template",
 	})
 	if err != nil {
 		t.Fatalf("expected template render, got %v", err)
@@ -1113,6 +1118,13 @@ func TestRunTemplateRendersWithBoundedHelpers(t *testing.T) {
 	}
 	if events[0].Metadata["execution_id"] != result.ExecutionID {
 		t.Fatalf("expected template execution ID metadata, got %#v result=%q", events[0].Metadata, result.ExecutionID)
+	}
+	if events[0].Metadata["organization_id"] != "organization-template" ||
+		events[0].Metadata["workspace_id"] != "workspace-template" ||
+		events[0].Metadata["app_id"] != "app-template" ||
+		events[0].Metadata["workflow_run_id"] != "run-template" ||
+		events[0].Metadata["user_id"] != "user-template" {
+		t.Fatalf("expected template ownership metadata, got %#v", events[0].Metadata)
 	}
 }
 
@@ -1167,8 +1179,17 @@ func TestRunTemplateRejectsMissingVariablesAndUnknownFunctions(t *testing.T) {
 	}
 	service := NewService(manager, runner.NewService(2, 3*time.Second, 4096), recorder, policyService)
 
-	if _, err := service.RunTemplate(context.Background(), TemplateRequest{Template: "{{ .missing }}"}); err == nil {
+	if _, err := service.RunTemplate(context.Background(), TemplateRequest{
+		Template:       "{{ .missing }}",
+		OrganizationID: "organization-template-failure",
+		WorkspaceID:    "workspace-template-failure",
+		WorkflowRunID:  "run-template-failure",
+	}); err == nil {
 		t.Fatal("expected missing variable to be rejected")
+	}
+	events := recorder.Query(observer.Query{Type: "exec.template.failed", OrganizationID: "organization-template-failure", WorkspaceID: "workspace-template-failure", WorkflowRunID: "run-template-failure", Limit: 1})
+	if len(events) != 1 {
+		t.Fatalf("expected template failure event with ownership metadata, got %#v", events)
 	}
 	if _, err := service.RunTemplate(context.Background(), TemplateRequest{Template: "{{ env \"HOME\" }}"}); err == nil {
 		t.Fatal("expected unknown function to be rejected")

@@ -76,12 +76,17 @@ type CommandRequest struct {
 }
 
 type TemplateRequest struct {
-	Engine        string         `json:"engine"`
-	Template      string         `json:"template"`
-	Variables     map[string]any `json:"variables"`
-	Profile       string         `json:"profile"`
-	TimeoutMS     int            `json:"timeout_ms"`
-	OutputLimitKB int            `json:"output_limit_kb"`
+	Engine         string         `json:"engine"`
+	Template       string         `json:"template"`
+	Variables      map[string]any `json:"variables"`
+	Profile        string         `json:"profile"`
+	TimeoutMS      int            `json:"timeout_ms"`
+	OutputLimitKB  int            `json:"output_limit_kb"`
+	OrganizationID string         `json:"organization_id,omitempty"`
+	WorkspaceID    string         `json:"workspace_id,omitempty"`
+	AppID          string         `json:"app_id,omitempty"`
+	WorkflowRunID  string         `json:"workflow_run_id,omitempty"`
+	UserID         string         `json:"user_id,omitempty"`
 }
 
 type TemplateResult struct {
@@ -368,14 +373,16 @@ func (s *Service) RunTemplate(ctx context.Context, req TemplateRequest) (Templat
 		if rendered.truncated {
 			result.Warnings = append(result.Warnings, "output truncated")
 		}
-		s.observer.Record("exec.template", "", "template rendered", observer.MetadataWithContext(ctx, map[string]any{
+		metadata := map[string]any{
 			"execution_id": executionID,
 			"engine":       limits.Engine,
 			"profile":      limits.Profile,
 			"duration_ms":  result.DurationMS,
 			"truncated":    result.Truncated,
 			"status":       "success",
-		}))
+		}
+		addTemplateOwnershipMetadata(metadata, req)
+		s.observer.Record("exec.template", "", "template rendered", observer.MetadataWithContext(ctx, metadata))
 		return result, nil
 	case <-renderCtx.Done():
 		err := fmt.Errorf("template execution timed out after %d ms", limits.Timeout.Milliseconds())
@@ -960,7 +967,26 @@ func (s *Service) recordTemplateFailure(ctx context.Context, req TemplateRequest
 		"status":       "failure",
 		"error_type":   classifyExecutionError(err),
 	}
+	addTemplateOwnershipMetadata(metadata, req)
 	s.observer.Record("exec.template.failed", "", "template render failed", observer.MetadataWithContext(ctx, metadata))
+}
+
+func addTemplateOwnershipMetadata(metadata map[string]any, req TemplateRequest) {
+	if req.OrganizationID != "" {
+		metadata["organization_id"] = req.OrganizationID
+	}
+	if req.WorkspaceID != "" {
+		metadata["workspace_id"] = req.WorkspaceID
+	}
+	if req.AppID != "" {
+		metadata["app_id"] = req.AppID
+	}
+	if req.WorkflowRunID != "" {
+		metadata["workflow_run_id"] = req.WorkflowRunID
+	}
+	if req.UserID != "" {
+		metadata["user_id"] = req.UserID
+	}
 }
 
 var errTemplateOutputTruncated = errors.New("template output truncated")
