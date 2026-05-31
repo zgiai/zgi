@@ -223,9 +223,9 @@ managed build flow. It accepts a skill zip archive and produces:
 The scanner reads explicit declarations from `skill.manifest.json`,
 `requirements.txt`, and `package.json`, then performs conservative static import
 inference for files under `scripts/`. It does not install packages and does not
-mutate any profile state. Later build workers should use the fingerprint as the
-artifact cache key, build once, store the verified runtime artifact, and publish
-global or organization-scoped profile references to that artifact.
+mutate any profile state. Build workers use the fingerprint as the artifact cache
+key, build once, store the verified runtime artifact, and publish a reusable
+profile reference to that artifact.
 
 The API should call this endpoint before sandbox creation when a skill has no
 explicit `dependency_profile`. If the response is `ready`, it may continue with
@@ -244,9 +244,16 @@ creating duplicate work. A record can be:
 - `failed`: the build failed and the error should be inspected.
 
 `GET /v1/sandbox/dependencies/builds?fingerprint=...` returns the current build
-record. A later worker should update the queued record to `building`, publish a
-verified artifact, create a profile reference to that artifact, and then mark the
-record `ready`.
+record.
+
+`POST /v1/sandbox/dependencies/builds/{fingerprint}/run` is the administrator
+worker entrypoint. The server marks the record `building`, writes a build input
+JSON file, runs the operator-configured `ZGI_SANDBOX_DEPENDENCY_BUILD_COMMAND`,
+validates the generated artifact under `ZGI_SANDBOX_DEPENDENCY_ROOTFS_DIR`,
+registers the generated `auto-*` profile as ready, persists the profile and
+runtime artifact metadata, and marks the build `ready`. If the command fails or
+the artifact does not validate, the record moves to `failed` with a structured
+error.
 
 ### 5.4 Runtime Artifact Reuse
 
@@ -473,6 +480,30 @@ Validation:
 - storage tests for round-tripping build records;
 - app tests for queue and lookup behavior;
 - Kest flow for queue, lookup, and observer event checks.
+
+### PR 8: Dependency Build Worker Materialization
+
+Goal: turn queued dependency fingerprints into reusable profile artifacts through
+an operator-managed builder command.
+
+Scope:
+
+- add `ZGI_SANDBOX_DEPENDENCY_BUILD_COMMAND`;
+- add `POST /v1/sandbox/dependencies/builds/{fingerprint}/run`;
+- pass a deterministic build input file and output directory to the command;
+- validate the emitted profile artifact before trusting it;
+- register a ready global `auto-*` dependency profile backed by the artifact;
+- persist artifact checksum and size on the build record;
+- emit `dependency_build.building`, `dependency_build.ready`, and
+  `dependency_build.failed` observer events.
+
+Validation:
+
+- config tests for builder command configuration;
+- storage tests for build status and artifact metadata transitions;
+- app tests for queue, worker run, ready profile catalog visibility, and sandbox
+  creation with the generated profile;
+- Kest flow for queue, run, lookup, sandbox creation, and observer event checks.
 
 ## 9. Test Matrix
 

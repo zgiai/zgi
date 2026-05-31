@@ -40,7 +40,7 @@ data.packages.3.ecosystem == "python3"
 data.packages.3.name == "pillow"
 data.packages.4.ecosystem == "python3"
 data.packages.4.name == "pydantic"
-data.packages.4.version == "==2.7.4"
+data.packages.4.version == "=={{dependency_prepare_pydantic_version}}"
 ```
 
 ```step

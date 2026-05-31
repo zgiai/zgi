@@ -30,11 +30,33 @@ func (s rootFSSelector) resolve(dependencyProfile string, dependencyArtifactChec
 	}
 	profileDir := strings.TrimSpace(s.dependencyRootFSDir)
 	runtimeKey := dependencyArtifactRuntimeKey(dependencyArtifactChecksum)
+	artifactKey := runtimeKey
 	if runtimeKey == "" {
 		runtimeKey = strings.TrimSpace(dependencyProfile)
 	}
 	if profileDir == "" || runtimeKey == "" {
 		return defaultRootFS, nil
+	}
+	if !safeDependencyProfileName(runtimeKey) {
+		return "", fmt.Errorf("dependency profile rootfs selection failed: %w", ErrUnsafeDependencyProfileName{Profile: runtimeKey})
+	}
+	root := filepath.Join(profileDir, runtimeKey)
+	if err := validateRuntimeRootFS(root); err != nil {
+		if artifactKey != "" {
+			fallback, fallbackErr := s.resolveDependencyProfileRootFS(profileDir, dependencyProfile)
+			if fallbackErr == nil {
+				return fallback, nil
+			}
+		}
+		return "", fmt.Errorf("dependency profile rootfs %q is not usable: %w", runtimeKey, err)
+	}
+	return root, nil
+}
+
+func (s rootFSSelector) resolveDependencyProfileRootFS(profileDir string, dependencyProfile string) (string, error) {
+	runtimeKey := strings.TrimSpace(dependencyProfile)
+	if runtimeKey == "" {
+		return "", errors.New("dependency profile is required")
 	}
 	if !safeDependencyProfileName(runtimeKey) {
 		return "", fmt.Errorf("dependency profile rootfs selection failed: %w", ErrUnsafeDependencyProfileName{Profile: runtimeKey})

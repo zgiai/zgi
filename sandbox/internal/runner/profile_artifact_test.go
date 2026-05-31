@@ -111,6 +111,37 @@ func TestResolveDependencyProfileActivationUsesReusableArtifactChecksum(t *testi
 	}
 }
 
+func TestResolveDependencyProfileActivationFallsBackToProfileRootForArtifactChecksum(t *testing.T) {
+	defaultRoot := testRootFSDir(t, "default")
+	profileRoot := testRootFSDir(t, "profile-root")
+	profileDir := filepath.Join(profileRoot, "opt", "zgi", "profiles", "auto-office")
+	writeBuiltProfileArtifact(t, profileDir, "auto-office", map[string]string{
+		"venv/bin/python": "python",
+	})
+	manifest, err := validateBuiltProfileArtifact(profileDir, "auto-office")
+	if err != nil {
+		t.Fatalf("validate artifact: %v", err)
+	}
+	dependencyRoot := t.TempDir()
+	if err := os.Rename(profileRoot, filepath.Join(dependencyRoot, "auto-office")); err != nil {
+		t.Fatalf("move profile rootfs: %v", err)
+	}
+
+	activation, err := resolveDependencyProfileActivation(defaultRoot, dependencyRoot, "auto-office", manifest.Build.Checksum)
+	if err != nil {
+		t.Fatalf("resolve activation: %v", err)
+	}
+	if activation.RootFS != filepath.Join(dependencyRoot, "auto-office") {
+		t.Fatalf("expected profile fallback rootfs, got %+v", activation)
+	}
+	if activation.ProfileHostDir != filepath.Join(dependencyRoot, "auto-office", "opt", "zgi", "profiles", "auto-office") {
+		t.Fatalf("expected profile fallback host dir, got %+v", activation)
+	}
+	if activation.ProfileChecksum != manifest.Build.Checksum {
+		t.Fatalf("expected artifact checksum, got %+v", activation)
+	}
+}
+
 func TestValidateBuiltProfileArtifactRejectsMismatchedName(t *testing.T) {
 	profileDir := filepath.Join(t.TempDir(), "profile")
 	writeBuiltProfileArtifact(t, profileDir, "other-profile", map[string]string{"data.txt": "ok"})

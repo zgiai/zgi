@@ -33,6 +33,8 @@ type DependencyBuildRequestRecord struct {
 	SourcesJSON           json.RawMessage `json:"sources_json"`
 	WarningsJSON          json.RawMessage `json:"warnings_json"`
 	PackageCount          int             `json:"package_count"`
+	ArtifactChecksum      string          `json:"artifact_checksum,omitempty"`
+	SizeBytes             int64           `json:"size_bytes,omitempty"`
 	Error                 string          `json:"error,omitempty"`
 	CreatedAt             time.Time       `json:"created_at"`
 	UpdatedAt             time.Time       `json:"updated_at"`
@@ -195,10 +197,14 @@ func (s *Store) prepare(ctx context.Context) error {
 			sources_json JSONB NOT NULL DEFAULT '[]'::jsonb,
 			warnings_json JSONB NOT NULL DEFAULT '[]'::jsonb,
 			package_count INTEGER NOT NULL DEFAULT 0,
+			artifact_checksum TEXT NOT NULL DEFAULT '',
+			size_bytes BIGINT NOT NULL DEFAULT 0,
 			error TEXT NOT NULL DEFAULT '',
 			created_at TIMESTAMPTZ NOT NULL,
 			updated_at TIMESTAMPTZ NOT NULL
 		);`,
+		`ALTER TABLE dependency_build_requests ADD COLUMN IF NOT EXISTS artifact_checksum TEXT NOT NULL DEFAULT '';`,
+		`ALTER TABLE dependency_build_requests ADD COLUMN IF NOT EXISTS size_bytes BIGINT NOT NULL DEFAULT 0;`,
 		`CREATE INDEX IF NOT EXISTS idx_dependency_build_requests_status ON dependency_build_requests(status, updated_at DESC);`,
 	}
 
@@ -380,18 +386,18 @@ func (s *Store) UpsertDependencyBuildRequest(record DependencyBuildRequestRecord
 		INSERT INTO dependency_build_requests (
 			fingerprint, build_id, status, organization_id, profile_name,
 			dependency_request_json, packages_json, sources_json, warnings_json,
-			package_count, error, created_at, updated_at
+			package_count, artifact_checksum, size_bytes, error, created_at, updated_at
 		) VALUES (
 			$1, $2, $3, $4, $5,
 			$6::jsonb, $7::jsonb, $8::jsonb, $9::jsonb,
-			$10, $11, $12, $13
+			$10, $11, $12, $13, $14, $15
 		)
 		ON CONFLICT(fingerprint) DO UPDATE SET
 			updated_at = EXCLUDED.updated_at
 		RETURNING
 			build_id, fingerprint, status, organization_id, profile_name,
 			dependency_request_json, packages_json, sources_json, warnings_json,
-			package_count, error, created_at, updated_at
+			package_count, artifact_checksum, size_bytes, error, created_at, updated_at
 	`,
 		record.Fingerprint,
 		record.BuildID,
@@ -403,6 +409,8 @@ func (s *Store) UpsertDependencyBuildRequest(record DependencyBuildRequestRecord
 		string(defaultRawJSON(record.SourcesJSON, `[]`)),
 		string(defaultRawJSON(record.WarningsJSON, `[]`)),
 		record.PackageCount,
+		record.ArtifactChecksum,
+		record.SizeBytes,
 		record.Error,
 		record.CreatedAt,
 		record.UpdatedAt,
@@ -414,10 +422,34 @@ func (s *Store) GetDependencyBuildRequest(fingerprint string) (*DependencyBuildR
 	row := s.db.QueryRow(`
 		SELECT build_id, fingerprint, status, organization_id, profile_name,
 		       dependency_request_json, packages_json, sources_json, warnings_json,
-		       package_count, error, created_at, updated_at
+		       package_count, artifact_checksum, size_bytes, error, created_at, updated_at
 		FROM dependency_build_requests
 		WHERE fingerprint = $1
 	`, fingerprint)
+	record, err := scanDependencyBuildRequest(rowScan{row: row})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errors.New("dependency build request not found")
+		}
+		return nil, err
+	}
+	return record, nil
+}
+
+func (s *Store) UpdateDependencyBuildRequestStatus(fingerprint string, status string, artifactChecksum string, sizeBytes int64, message string) (*DependencyBuildRequestRecord, error) {
+	row := s.db.QueryRow(`
+		UPDATE dependency_build_requests
+		SET status = $2,
+		    artifact_checksum = $3,
+		    size_bytes = $4,
+		    error = $5,
+		    updated_at = $6
+		WHERE fingerprint = $1
+		RETURNING
+			build_id, fingerprint, status, organization_id, profile_name,
+			dependency_request_json, packages_json, sources_json, warnings_json,
+			package_count, artifact_checksum, size_bytes, error, created_at, updated_at
+	`, fingerprint, status, artifactChecksum, sizeBytes, message, time.Now().UTC())
 	record, err := scanDependencyBuildRequest(rowScan{row: row})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -919,6 +951,8 @@ func scanDependencyBuildRequest(scanner rowScanner) (*DependencyBuildRequestReco
 		&record.SourcesJSON,
 		&record.WarningsJSON,
 		&record.PackageCount,
+		&record.ArtifactChecksum,
+		&record.SizeBytes,
 		&record.Error,
 		&record.CreatedAt,
 		&record.UpdatedAt,

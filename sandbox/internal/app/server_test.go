@@ -1229,6 +1229,147 @@ func TestDependencyBuildQueuesPreparedArchive(t *testing.T) {
 	}
 }
 
+func TestDependencyBuildRunMaterializesReusableProfile(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.APIKey = "build-test-key"
+	cfg.DependencyRootFSDir = t.TempDir()
+	cfg.DependencyBuildCommand = "python3 " + writeDependencyBuildStubCommand(t)
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"archive_base64": testZipBase64(t, map[string]string{
+			"SKILL.md":         "Skill package\n",
+			"requirements.txt": "pandas==2.2.3\n",
+			"scripts/run.py":   "import pandas as pd\nprint('ok')\n",
+		}),
+		"format":       "zip",
+		"base_runtime": "linux-secure",
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	queueReq := httptest.NewRequest(http.MethodPost, "/v1/sandbox/dependencies/builds", bytes.NewReader(payload))
+	queueReq.Header.Set("Content-Type", "application/json")
+	queueReq.Header.Set("X-API-Key", "build-test-key")
+	queueRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(queueRes, queueReq)
+	if queueRes.Code != http.StatusOK {
+		t.Fatalf("expected dependency build queue to return 200, got %d body=%s", queueRes.Code, queueRes.Body.String())
+	}
+	var queued struct {
+		Data struct {
+			Fingerprint string `json:"fingerprint"`
+			ProfileName string `json:"profile_name"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(queueRes.Body.Bytes(), &queued); err != nil {
+		t.Fatalf("decode queued build: %v", err)
+	}
+
+	runReq := httptest.NewRequest(http.MethodPost, "/v1/sandbox/dependencies/builds/"+queued.Data.Fingerprint+"/run", nil)
+	runReq.Header.Set("X-API-Key", "build-test-key")
+	runReq.Header.Set("X-Request-ID", "req_dependency_build_run_test")
+	runRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(runRes, runReq)
+	if runRes.Code != http.StatusOK {
+		t.Fatalf("expected dependency build run to return 200, got %d body=%s", runRes.Code, runRes.Body.String())
+	}
+	var ready struct {
+		Data struct {
+			Status           string `json:"status"`
+			ProfileName      string `json:"profile_name"`
+			ArtifactChecksum string `json:"artifact_checksum"`
+			SizeBytes        int64  `json:"size_bytes"`
+			NextAction       string `json:"next_action"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(runRes.Body.Bytes(), &ready); err != nil {
+		t.Fatalf("decode ready build: %v", err)
+	}
+	if ready.Data.Status != "ready" || ready.Data.NextAction != "use_dependency_profile" || ready.Data.ArtifactChecksum == "" || ready.Data.SizeBytes <= 0 {
+		t.Fatalf("expected ready dependency build, got %#v", ready.Data)
+	}
+	if ready.Data.ProfileName != queued.Data.ProfileName {
+		t.Fatalf("expected same profile name, got queued=%s ready=%s", queued.Data.ProfileName, ready.Data.ProfileName)
+	}
+
+	catalogReq := httptest.NewRequest(http.MethodGet, "/v1/sandbox/dependencies?language=python3", nil)
+	catalogRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(catalogRes, catalogReq)
+	if catalogRes.Code != http.StatusOK || !strings.Contains(catalogRes.Body.String(), `"name":"`+queued.Data.ProfileName+`"`) {
+		t.Fatalf("expected ready dependency profile in catalog, got %d body=%s", catalogRes.Code, catalogRes.Body.String())
+	}
+
+	createReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","dependency_profile":"`+queued.Data.ProfileName+`"}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	createReq.Header.Set("X-API-Key", "build-test-key")
+	createRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(createRes, createReq)
+	if createRes.Code != http.StatusOK || !strings.Contains(createRes.Body.String(), `"dependency_artifact_checksum":"`+ready.Data.ArtifactChecksum+`"`) {
+		t.Fatalf("expected sandbox to use ready dependency artifact, got %d body=%s", createRes.Code, createRes.Body.String())
+	}
+
+	events := server.observer.Query(observer.Query{Type: "dependency_build.ready", RequestID: "req_dependency_build_run_test", Limit: 1})
+	if len(events) != 1 || events[0].Metadata["artifact_checksum"] != ready.Data.ArtifactChecksum {
+		t.Fatalf("expected dependency build ready event, got %#v", events)
+	}
+}
+
+func TestDependencyBuildRunCleansPartialArtifactOnFailure(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.APIKey = "build-test-key"
+	cfg.DependencyRootFSDir = t.TempDir()
+	cfg.DependencyBuildCommand = "python3 " + writeFailingDependencyBuildStubCommand(t)
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"archive_base64": testZipBase64(t, map[string]string{
+			"SKILL.md":         "Skill package\n",
+			"requirements.txt": "pandas==2.2.3\n",
+			"scripts/run.py":   "import pandas as pd\nprint('ok')\n",
+		}),
+		"format":       "zip",
+		"base_runtime": "linux-secure",
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	queueReq := httptest.NewRequest(http.MethodPost, "/v1/sandbox/dependencies/builds", bytes.NewReader(payload))
+	queueReq.Header.Set("Content-Type", "application/json")
+	queueReq.Header.Set("X-API-Key", "build-test-key")
+	queueRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(queueRes, queueReq)
+	if queueRes.Code != http.StatusOK {
+		t.Fatalf("expected dependency build queue to return 200, got %d body=%s", queueRes.Code, queueRes.Body.String())
+	}
+	var queued struct {
+		Data struct {
+			Fingerprint string `json:"fingerprint"`
+			ProfileName string `json:"profile_name"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(queueRes.Body.Bytes(), &queued); err != nil {
+		t.Fatalf("decode queued build: %v", err)
+	}
+
+	runReq := httptest.NewRequest(http.MethodPost, "/v1/sandbox/dependencies/builds/"+queued.Data.Fingerprint+"/run", nil)
+	runReq.Header.Set("X-API-Key", "build-test-key")
+	runRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(runRes, runReq)
+	if runRes.Code != http.StatusBadRequest || !strings.Contains(runRes.Body.String(), `"status":"failed"`) {
+		t.Fatalf("expected failed dependency build, got %d body=%s", runRes.Code, runRes.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(cfg.DependencyRootFSDir, queued.Data.ProfileName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected partial dependency artifact cleanup, got err=%v", err)
+	}
+}
+
 func TestDependencyUpdateRequiresAdminAPIKey(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.APIKey = "admin-test-key"
@@ -2116,4 +2257,101 @@ func testZipBase64(t *testing.T, files map[string]string) string {
 		t.Fatalf("close zip: %v", err)
 	}
 	return base64.StdEncoding.EncodeToString(buffer.Bytes())
+}
+
+func writeDependencyBuildStubCommand(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "dependency_build_stub.py")
+	script := `import hashlib
+import json
+import os
+import sys
+from pathlib import Path
+
+input_path = Path(sys.argv[1])
+output_dir = Path(sys.argv[2])
+payload = json.loads(input_path.read_text(encoding="utf-8"))
+profile = payload["profile_name"]
+output_dir.mkdir(parents=True, exist_ok=True)
+
+files = {
+    "venv/bin/python": b"#!/usr/bin/env python3\n",
+    "venv/pyvenv.cfg": b"home = /usr/bin\ninclude-system-site-packages = false\n",
+    "node_modules/.profile-ready": b"ready\n",
+    "bin/profile-ready": b"ready\n",
+    "dependency-request.json": json.dumps(payload["dependency_request"], sort_keys=True).encode("utf-8") + b"\n",
+    "packages.json": json.dumps(payload["packages"], sort_keys=True).encode("utf-8") + b"\n",
+}
+for rel, raw in files.items():
+    target = output_dir / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(raw)
+
+digest = hashlib.sha256()
+size = 0
+for rel in sorted(files):
+    raw = files[rel]
+    digest.update(rel.encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(raw)
+    digest.update(b"\0")
+    size += len(raw)
+checksum = "sha256:" + digest.hexdigest()
+packages = []
+languages = set()
+for item in payload["packages"]:
+    ecosystem = item.get("ecosystem", "")
+    if ecosystem in ("python3", "nodejs"):
+        languages.add(ecosystem)
+    version = item.get("version") or "managed"
+    if version.startswith("=="):
+        version = version[2:]
+    packages.append({
+        "ecosystem": ecosystem,
+        "name": item.get("name", ""),
+        "version": version,
+    })
+if not languages:
+    languages.add(payload["dependency_request"].get("language") or "python3")
+manifest = {
+    "name": profile,
+    "version": "sha256-" + payload["fingerprint"].split(":", 1)[-1][:16],
+    "status": "disabled",
+    "enabled": False,
+    "owner_scope": "global",
+    "languages": sorted(languages),
+    "base_runtime": payload["dependency_request"].get("base_runtime") or "linux-secure",
+    "checksum": payload["fingerprint"],
+    "estimated_size_bytes": size,
+    "description": "Automatically built dependency profile.",
+    "packages": packages,
+    "build": {
+        "checksum": checksum,
+        "size_bytes": size,
+        "verification_passed": True,
+    },
+}
+(output_dir / "manifest.json").write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write dependency build stub: %v", err)
+	}
+	return path
+}
+
+func writeFailingDependencyBuildStubCommand(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "dependency_build_fail_stub.py")
+	script := `import sys
+from pathlib import Path
+
+output_dir = Path(sys.argv[2])
+output_dir.mkdir(parents=True, exist_ok=True)
+(output_dir / "partial.txt").write_text("partial", encoding="utf-8")
+raise SystemExit(2)
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write failing dependency build stub: %v", err)
+	}
+	return path
 }

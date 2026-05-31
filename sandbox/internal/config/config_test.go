@@ -162,6 +162,7 @@ func TestFromEnvReadsOrganizationDependencyProfileLimit(t *testing.T) {
 func TestFromEnvReadsDependencyProfileBuildLimits(t *testing.T) {
 	t.Setenv("ZGI_SANDBOX_MAX_DEPENDENCY_PROFILE_SIZE_BYTES", "1048576")
 	t.Setenv("ZGI_SANDBOX_DEPENDENCY_PROFILE_BUILD_TIMEOUT_SECONDS", "120")
+	t.Setenv("ZGI_SANDBOX_DEPENDENCY_BUILD_COMMAND", "/usr/local/bin/zgi-dependency-builder --mode safe")
 
 	cfg := FromEnv()
 
@@ -170,6 +171,9 @@ func TestFromEnvReadsDependencyProfileBuildLimits(t *testing.T) {
 	}
 	if cfg.DependencyProfileBuildTimeoutSeconds != 120 {
 		t.Fatalf("expected dependency profile build timeout 120, got %d", cfg.DependencyProfileBuildTimeoutSeconds)
+	}
+	if cfg.DependencyBuildCommand != "/usr/local/bin/zgi-dependency-builder --mode safe" {
+		t.Fatalf("expected dependency build command, got %q", cfg.DependencyBuildCommand)
 	}
 }
 
@@ -293,6 +297,9 @@ func TestPublicSnapshotOmitsSecrets(t *testing.T) {
 	}
 	if snapshot["dependency_profile_build_timeout_seconds"] != 120 {
 		t.Fatalf("expected dependency profile build timeout, got %#v", snapshot["dependency_profile_build_timeout_seconds"])
+	}
+	if snapshot["dependency_build_command_configured"] != false {
+		t.Fatalf("expected dependency build command configured flag, got %#v", snapshot["dependency_build_command_configured"])
 	}
 	if snapshot["egress_proxy_max_body_bytes"] != int64(2048) {
 		t.Fatalf("expected egress proxy body limit, got %#v", snapshot["egress_proxy_max_body_bytes"])

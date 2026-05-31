@@ -189,6 +189,13 @@ func TestPostgresStorePersistsSandboxAndEvents(t *testing.T) {
 	if loadedBuildRecord.BuildID != buildRecord.BuildID || string(loadedBuildRecord.PackagesJSON) == "" {
 		t.Fatalf("loaded dependency build request did not match: %+v", loadedBuildRecord)
 	}
+	readyBuildRecord, err := store.UpdateDependencyBuildRequestStatus("sha256:1234", "ready", "sha256:artifact", 2048, "")
+	if err != nil {
+		t.Fatalf("mark dependency build request ready: %v", err)
+	}
+	if readyBuildRecord.Status != "ready" || readyBuildRecord.ArtifactChecksum != "sha256:artifact" || readyBuildRecord.SizeBytes != 2048 {
+		t.Fatalf("dependency build request status did not update: %+v", readyBuildRecord)
+	}
 
 	event := observer.Event{
 		ID:        "evt_store_test",

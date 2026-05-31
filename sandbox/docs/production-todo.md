@@ -287,7 +287,8 @@ Detailed implementation guidance is tracked in
 - [x] Activate reusable runtime artifacts by checksum in the secure runtime.
 - [x] Add skill archive dependency scanning and fingerprint preparation.
 - [x] Add dependency build request queueing and status lookup by fingerprint.
-- Add asynchronous build worker that materializes prepared dependency fingerprints.
+- [x] Add administrator worker entrypoint that materializes prepared dependency fingerprints into reusable artifacts.
+- Add background scheduler or external queue consumer for dependency build workers.
 - Add API automatic prepare/build/profile-resolution path for skills without an explicit profile.
 - Add Kest skill execution coverage for declared dependency profiles.
 

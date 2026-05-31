@@ -415,6 +415,19 @@ func (s *Server) handleDependencyBuilds(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleDependencyBuildByFingerprint(w http.ResponseWriter, r *http.Request) {
+	fingerprint := strings.TrimPrefix(r.URL.Path, "/v1/sandbox/dependencies/builds/")
+	if strings.HasSuffix(fingerprint, "/run") {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !s.authorizedAdmin(r) {
+			writeEnvelopeWithMessage(w, http.StatusUnauthorized, -401, "admin api key required", nil)
+			return
+		}
+		s.handleDependencyBuildRun(w, r, strings.TrimSuffix(fingerprint, "/run"))
+		return
+	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -423,7 +436,6 @@ func (s *Server) handleDependencyBuildByFingerprint(w http.ResponseWriter, r *ht
 		writeEnvelopeWithMessage(w, http.StatusUnauthorized, -401, "unauthorized", nil)
 		return
 	}
-	fingerprint := strings.TrimPrefix(r.URL.Path, "/v1/sandbox/dependencies/builds/")
 	s.handleDependencyBuildGet(w, r, fingerprint)
 }
 
@@ -567,6 +579,8 @@ type dependencyBuildResponse struct {
 	DependencyRequest executor.DependencyRequest    `json:"dependency_request"`
 	Packages          []executor.DetectedDependency `json:"packages"`
 	PackageCount      int                           `json:"package_count"`
+	ArtifactChecksum  string                        `json:"artifact_checksum,omitempty"`
+	SizeBytes         int64                         `json:"size_bytes,omitempty"`
 	Sources           []string                      `json:"sources"`
 	Warnings          []string                      `json:"warnings,omitempty"`
 	NextAction        string                        `json:"next_action"`
@@ -628,6 +642,8 @@ func dependencyBuildResponseFromRecord(record *storage.DependencyBuildRequestRec
 		DependencyRequest: dependencyRequest,
 		Packages:          packages,
 		PackageCount:      record.PackageCount,
+		ArtifactChecksum:  record.ArtifactChecksum,
+		SizeBytes:         record.SizeBytes,
 		Sources:           sources,
 		Warnings:          warnings,
 		NextAction:        dependencyBuildNextAction(record.Status),
