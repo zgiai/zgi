@@ -22,6 +22,7 @@ type Config struct {
 	MaxQueuedExecutionsPerOrganization     int
 	MaxWorkspaceFiles                      int
 	MaxWorkspaceBytes                      int64
+	MaxWorkspaceBytesPerOrganization       int64
 	MaxArtifactManifestFiles               int
 	MaxArtifactManifestBytes               int64
 	QueueTimeoutMS                         int
@@ -68,6 +69,7 @@ func FromEnv() Config {
 		MaxQueuedExecutionsPerOrganization:     getEnvIntAllowZero("ZGI_SANDBOX_MAX_QUEUED_EXECUTIONS_PER_ORGANIZATION", 0),
 		MaxWorkspaceFiles:                      getEnvIntAllowZero("ZGI_SANDBOX_MAX_WORKSPACE_FILES", 0),
 		MaxWorkspaceBytes:                      getEnvInt64AllowZero("ZGI_SANDBOX_MAX_WORKSPACE_BYTES", 0),
+		MaxWorkspaceBytesPerOrganization:       getEnvInt64AllowZero("ZGI_SANDBOX_MAX_WORKSPACE_BYTES_PER_ORGANIZATION", 0),
 		MaxArtifactManifestFiles:               getEnvIntAllowZero("ZGI_SANDBOX_MAX_ARTIFACT_MANIFEST_FILES", 0),
 		MaxArtifactManifestBytes:               getEnvInt64AllowZero("ZGI_SANDBOX_MAX_ARTIFACT_MANIFEST_BYTES", 0),
 		QueueTimeoutMS:                         getEnvInt("ZGI_SANDBOX_QUEUE_TIMEOUT_MS", 5000),
@@ -141,6 +143,7 @@ func (c Config) PublicSnapshot() map[string]any {
 		"max_queued_executions_per_organization":     c.MaxQueuedExecutionsPerOrganization,
 		"max_workspace_files":                        c.MaxWorkspaceFiles,
 		"max_workspace_bytes":                        c.MaxWorkspaceBytes,
+		"max_workspace_bytes_per_organization":       c.MaxWorkspaceBytesPerOrganization,
 		"max_artifact_manifest_files":                c.MaxArtifactManifestFiles,
 		"max_artifact_manifest_bytes":                c.MaxArtifactManifestBytes,
 		"queue_timeout_ms":                           c.QueueTimeoutMS,

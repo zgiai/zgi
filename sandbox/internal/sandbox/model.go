@@ -56,6 +56,7 @@ type ResourceLimits struct {
 	MaxQueuedExecutionsPerOrganization     int    `json:"max_queued_executions_per_organization"`
 	MaxWorkspaceFiles                      int    `json:"max_workspace_files"`
 	MaxWorkspaceBytes                      int64  `json:"max_workspace_bytes"`
+	MaxWorkspaceBytesPerOrganization       int64  `json:"max_workspace_bytes_per_organization"`
 	QueueTimeoutMS                         int    `json:"queue_timeout_ms"`
 	DefaultTimeoutSeconds                  int    `json:"default_timeout"`
 	DefaultExecutionTimeoutMS              int64  `json:"default_execution_timeout_ms"`
@@ -79,6 +80,7 @@ type ResourceLimits struct {
 	DependencyUpdatesLocked                bool   `json:"dependency_updates_locked"`
 	WorkspaceFileLimitEnforced             bool   `json:"workspace_file_limit_enforced"`
 	WorkspaceByteLimitEnforced             bool   `json:"workspace_byte_limit_enforced"`
+	OrganizationWorkspaceByteLimitEnforced bool   `json:"organization_workspace_byte_limit_enforced"`
 }
 
 type Endpoint struct {

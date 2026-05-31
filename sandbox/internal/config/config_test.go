@@ -96,6 +96,16 @@ func TestFromEnvReadsWorkspaceByteLimit(t *testing.T) {
 	}
 }
 
+func TestFromEnvReadsOrganizationWorkspaceByteLimit(t *testing.T) {
+	t.Setenv("ZGI_SANDBOX_MAX_WORKSPACE_BYTES_PER_ORGANIZATION", "131072")
+
+	cfg := FromEnv()
+
+	if cfg.MaxWorkspaceBytesPerOrganization != 131072 {
+		t.Fatalf("expected organization workspace byte limit 131072, got %d", cfg.MaxWorkspaceBytesPerOrganization)
+	}
+}
+
 func TestFromEnvReadsWorkspaceFileLimit(t *testing.T) {
 	t.Setenv("ZGI_SANDBOX_MAX_WORKSPACE_FILES", "9")
 

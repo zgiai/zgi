@@ -98,6 +98,7 @@ func TestNormalizeCreateReturnsEffectiveLimitsAndStructuredLimitError(t *testing
 	cfg.MaxActive = 2
 	cfg.MaxConcurrentExecutions = 3
 	cfg.MaxFileSizeKB = 128
+	cfg.MaxWorkspaceBytesPerOrganization = 4096
 	cfg.MaxArtifactManifestFiles = 7
 	cfg.MaxArtifactManifestBytes = 8192
 	service := NewService(cfg)
@@ -129,6 +130,12 @@ func TestNormalizeCreateReturnsEffectiveLimitsAndStructuredLimitError(t *testing
 	}
 	if decision.EffectiveLimits.MaxWorkspaceBytes != cfg.MaxWorkspaceBytes {
 		t.Fatalf("expected workspace byte limit in decision, got %+v", decision.EffectiveLimits)
+	}
+	if decision.EffectiveLimits.MaxWorkspaceBytesPerOrganization != cfg.MaxWorkspaceBytesPerOrganization {
+		t.Fatalf("expected organization workspace byte limit in decision, got %+v", decision.EffectiveLimits)
+	}
+	if !decision.EffectiveLimits.OrganizationWorkspaceByteLimitEnforced {
+		t.Fatalf("expected organization workspace byte limit enforcement in decision, got %+v", decision.EffectiveLimits)
 	}
 	if decision.EffectiveLimits.MaxWorkspaceFiles != cfg.MaxWorkspaceFiles {
 		t.Fatalf("expected workspace file limit in decision, got %+v", decision.EffectiveLimits)
