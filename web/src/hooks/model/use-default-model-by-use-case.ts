@@ -39,11 +39,7 @@ export function useDefaultModelByUseCase(
 ): UseDefaultModelByUseCaseReturn {
   const queryClient = useQueryClient();
 
-  const {
-    data,
-    isLoading,
-    error,
-  } = useQuery({
+  const { data, isLoading, error } = useQuery({
     queryKey: MODEL_KEYS.defaultModel(useCase),
     queryFn: async () => {
       const response = await queryClient.ensureQueryData({
@@ -99,4 +95,9 @@ export function useInitializeDefaultModelByUseCase({
       onInitialize(defaultModel);
     }
   }, [enabled, isLoading, defaultModel, shouldOverwrite, modelName, provider, onInitialize]);
+
+  return {
+    value: defaultModel,
+    isLoading,
+  };
 }

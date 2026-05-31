@@ -9,10 +9,7 @@ import { useInitializeDefaultModelByUseCase } from '@/hooks/model/use-default-mo
 import { useT } from '@/i18n/translations';
 import { useCurrentUser } from '@/store/auth-store';
 import { isDraftAIChatConversationId } from '@/components/chat/utils/aichat-message';
-import {
-  getLastSelectedAiModel,
-  saveLastSelectedAiModel,
-} from '@/utils/ui-local';
+import { getLastSelectedAiModel, saveLastSelectedAiModel } from '@/utils/ui-local';
 
 function ChatPageContent() {
   const t = useT('webapp');
@@ -35,10 +32,13 @@ function ChatPageContent() {
       : { provider: '', model: '', params: {} };
   });
 
-  useInitializeDefaultModelByUseCase({
+  const shouldInitializeDefaultModel = Boolean(
+    user?.id && !getLastSelectedAiModel(user.id, 'consoleChat')
+  );
+  const defaultModelInitialization = useInitializeDefaultModelByUseCase({
     useCase: 'text-chat',
     currentModel: modelSelectorValue,
-    enabled: Boolean(user?.id && !getLastSelectedAiModel(user.id, 'consoleChat')),
+    enabled: shouldInitializeDefaultModel,
     onInitialize: value => {
       setModelSelectorValue({
         provider: value.provider,
@@ -47,6 +47,11 @@ function ChatPageContent() {
       });
     },
   });
+  const isModelInitializing = Boolean(
+    shouldInitializeDefaultModel &&
+      !modelSelectorValue.model &&
+      defaultModelInitialization.isLoading
+  );
 
   useEffect(() => {
     if (!user?.id || modelSelectorValue.model) return;
@@ -177,6 +182,7 @@ function ChatPageContent() {
           mode="aichat"
           controller={controller}
           modelSelectorValue={modelSelectorValue}
+          isModelInitializing={isModelInitializing}
           onModelChange={handleModelChange}
           onSelectConversation={handleSelectConversation}
           onStartNewConversation={handleStartNewConversation}

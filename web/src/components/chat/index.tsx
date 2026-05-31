@@ -113,6 +113,7 @@ interface AIChatVariantProps {
   mode: 'aichat';
   controller: AIChatController;
   modelSelectorValue: AIChatModelValue;
+  isModelInitializing?: boolean;
   onModelChange: (value: ModelSelectorValue) => void;
   variant?: 'full' | 'embedded';
   showModelSelector?: boolean;
