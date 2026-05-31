@@ -320,7 +320,7 @@ Goal: enforce hard resource boundaries for every execution path.
 - Added optional max workspace bytes per sandbox with `ZGI_SANDBOX_MAX_WORKSPACE_BYTES`.
 - Added operator-configurable max artifact manifest files per run with `ZGI_SANDBOX_MAX_ARTIFACT_MANIFEST_FILES`.
 - Added operator-configurable max artifact manifest bytes per run with `ZGI_SANDBOX_MAX_ARTIFACT_MANIFEST_BYTES`.
-- Max sandbox lifetime.
+- [x] Max sandbox lifetime.
 
 ### F2. Queue Limits
 
