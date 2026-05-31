@@ -1,6 +1,6 @@
 SHELL := /bin/sh
 
-.PHONY: fmt test build check run kest test-linux-secure check-config-docs
+.PHONY: fmt test build check run kest test-linux-secure check-config-docs profile-build-stdlib
 .PHONY: docker-up docker-down docker-logs
 .PHONY: docker-config
 
@@ -26,6 +26,11 @@ test-linux-secure:
 
 check-config-docs:
 	./scripts/check_config_docs
+
+profile-build-stdlib:
+	tmp="$$(mktemp -d /tmp/zgi-profile-build.XXXXXX)"; \
+	trap 'rm -rf "$$tmp"' EXIT; \
+	./scripts/build-profile --profile stdlib --output-dir "$$tmp"
 
 docker-up:
 	./scripts/start-docker
