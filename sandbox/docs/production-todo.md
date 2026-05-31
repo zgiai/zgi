@@ -273,7 +273,7 @@ from internal infrastructure by default.
 
 - [x] Deny outbound network by default for all profiles.
 - [x] Require both sandbox-level and profile-level permission for network access.
-- Reject network-enabled requests when the selected runtime cannot enforce policy.
+- [x] Reject network-enabled requests when the selected runtime cannot enforce policy.
 - [x] Expose this rejection clearly in `/v1/policies`.
 
 ### E2. Egress Policy
@@ -286,9 +286,9 @@ from internal infrastructure by default.
   - denied CIDR ranges
   - DNS behavior
   - max request duration
-- Block local metadata addresses, loopback, private networks, service networks,
+- [x] Block local metadata addresses, loopback, private networks, service networks,
   and link-local ranges unless an operator explicitly permits them.
-- Add DNS resolution checks to prevent host allowlist bypass.
+- [x] Add DNS resolution checks to prevent host allowlist bypass.
 
 ### E3. Egress Proxy
 
@@ -299,11 +299,11 @@ from internal infrastructure by default.
 
 ### E4. Tests
 
-- Network disabled blocks outbound requests.
-- Allowed host succeeds.
-- Private address is blocked.
-- DNS rebinding attempt is blocked.
-- Policy decision is recorded in observer events.
+- [x] Network disabled blocks outbound requests.
+- [x] Allowed host succeeds.
+- [x] Private address is blocked.
+- [x] DNS rebinding attempt is blocked.
+- [x] Policy decision is recorded in observer events.
 
 ## 9. Milestone F: Resource Governance
 

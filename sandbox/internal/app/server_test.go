@@ -16,8 +16,11 @@ import (
 
 	"github.com/zgiai/zgi-sandbox/internal/config"
 	"github.com/zgiai/zgi-sandbox/internal/executor"
+	"github.com/zgiai/zgi-sandbox/internal/lifecycle"
 	"github.com/zgiai/zgi-sandbox/internal/observer"
+	"github.com/zgiai/zgi-sandbox/internal/policy"
 	"github.com/zgiai/zgi-sandbox/internal/runner"
+	"github.com/zgiai/zgi-sandbox/internal/sandbox"
 	"github.com/zgiai/zgi-sandbox/internal/testutil"
 )
 
@@ -208,6 +211,89 @@ func TestRunEndpointRejectsPreviewNetworkRequest(t *testing.T) {
 	}
 	if events[0].Metadata["runtime_backend"] != "preview-process" {
 		t.Fatalf("expected runtime backend metadata, got %+v", events[0].Metadata)
+	}
+}
+
+func TestEgressCheckDeniesSandboxNetworkDisabledAndRecordsDecision(t *testing.T) {
+	server, err := NewServer(testConfig(t))
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	createReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{
+		"runtime_profile":"session",
+		"ttl_seconds":60,
+		"organization_id":"organization-egress",
+		"workspace_id":"workspace-egress",
+		"network_enabled":false,
+		"network_policy":"workflow-safe"
+	}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	createRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(createRes, createReq)
+	if createRes.Code != http.StatusOK {
+		t.Fatalf("expected sandbox create to return 200, got %d body=%s", createRes.Code, createRes.Body.String())
+	}
+
+	var createPayload struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(createRes.Body.Bytes(), &createPayload); err != nil {
+		t.Fatalf("expected sandbox create payload, got %v", err)
+	}
+
+	checkReq := httptest.NewRequest(http.MethodPost, "/v1/network/egress/check", strings.NewReader(fmt.Sprintf(`{
+		"sandbox_id":%q,
+		"organization_id":"organization-egress",
+		"destination":"https://example.com/resource"
+	}`, createPayload.Data.ID)))
+	checkReq.Header.Set("Content-Type", "application/json")
+	checkReq.Header.Set("X-Request-ID", "req_egress_disabled_test")
+	checkRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(checkRes, checkReq)
+	if checkRes.Code != http.StatusOK {
+		t.Fatalf("expected egress check to return 200, got %d body=%s", checkRes.Code, checkRes.Body.String())
+	}
+	for _, expected := range []string{
+		`"allowed":false`,
+		`"code":"egress_denied_sandbox_network_disabled"`,
+		`"policy":"workflow-safe"`,
+		`"destination":"https://example.com/resource"`,
+	} {
+		if !strings.Contains(checkRes.Body.String(), expected) {
+			t.Fatalf("expected egress check response to include %s, got %s", expected, checkRes.Body.String())
+		}
+	}
+
+	events := server.observer.Query(observer.Query{SandboxID: createPayload.Data.ID, Type: "network.egress.decision", RequestID: "req_egress_disabled_test", Limit: 1})
+	if len(events) != 1 {
+		t.Fatalf("expected one egress decision event, got %d", len(events))
+	}
+	if fmt.Sprint(events[0].Metadata["allowed"]) != "false" || events[0].Metadata["code"] != "egress_denied_sandbox_network_disabled" {
+		t.Fatalf("expected sandbox network disabled decision metadata, got %+v", events[0].Metadata)
+	}
+	if events[0].Metadata["organization_id"] != "organization-egress" || events[0].Metadata["workspace_id"] != "workspace-egress" {
+		t.Fatalf("expected ownership metadata on egress decision, got %+v", events[0].Metadata)
+	}
+}
+
+func TestEgressCheckRejectsMissingDestination(t *testing.T) {
+	server, err := NewServer(testConfig(t))
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/network/egress/check", strings.NewReader(`{"sandbox_id":"sbx_missing","destination":" "}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "destination is required") {
+		t.Fatalf("expected destination validation error, got %s", rr.Body.String())
 	}
 }
 
@@ -484,6 +570,58 @@ func TestSkillEndpointRunsManifestPackage(t *testing.T) {
 		if !strings.Contains(runRes.Body.String(), expected) {
 			t.Fatalf("expected skill response to include %s, got %s", expected, runRes.Body.String())
 		}
+	}
+}
+
+func TestEgressCheckRecordsPolicyDecision(t *testing.T) {
+	recorder := observer.NewRecorder(100)
+	cfg := config.FromEnv()
+	cfg.RuntimeBackend = "linux-secure"
+	policyService := policy.NewService(cfg)
+	manager, err := lifecycle.NewManager(recorder, policyService)
+	if err != nil {
+		t.Fatalf("expected lifecycle manager, got %v", err)
+	}
+	server := &Server{
+		config:    cfg,
+		lifecycle: manager,
+		observer:  recorder,
+		policy:    policyService,
+	}
+
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile:    string(sandbox.RuntimeSession),
+		NetworkEnabled:    true,
+		NetworkPolicy:     "workflow-safe",
+		DependencyProfile: "stdlib",
+		OrganizationID:    "organization-egress",
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/network/egress/check", strings.NewReader(fmt.Sprintf(`{"sandbox_id":%q,"organization_id":"organization-egress","destination":"https://127.0.0.1"}`, box.ID)))
+	req = req.WithContext(observer.ContextWithRequestID(req.Context(), "req_egress_check"))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Request-ID", "req_egress_check")
+	rr := httptest.NewRecorder()
+	server.handleEgressCheck(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected egress check to return 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"allowed":false`) || !strings.Contains(rr.Body.String(), `"code":"egress_denied_cidr"`) || !strings.Contains(rr.Body.String(), `"denied_cidr":"127.0.0.0/8"`) {
+		t.Fatalf("expected denied CIDR decision, got %s", rr.Body.String())
+	}
+
+	events := recorder.Query(observer.Query{SandboxID: box.ID, Type: "network.egress.decision", Limit: 1})
+	if len(events) != 1 {
+		t.Fatalf("expected egress decision event, got %d", len(events))
+	}
+	if fmt.Sprint(events[0].Metadata["allowed"]) != "false" || events[0].Metadata["code"] != "egress_denied_cidr" || events[0].Metadata["denied_cidr"] != "127.0.0.0/8" {
+		t.Fatalf("unexpected egress event metadata: %#v", events[0].Metadata)
+	}
+	if events[0].Metadata["organization_id"] != "organization-egress" || events[0].Metadata["request_id"] != "req_egress_check" {
+		t.Fatalf("expected ownership and request metadata, got %#v", events[0].Metadata)
 	}
 }
 

@@ -128,6 +128,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/exec/command", s.handleExecCommand)
 	s.mux.HandleFunc("/v1/exec/template", s.handleExecTemplate)
 	s.mux.HandleFunc("/v1/exec/skill", s.handleExecSkill)
+	s.mux.HandleFunc("/v1/network/egress/check", s.handleEgressCheck)
 	s.mux.HandleFunc("/v1/files/upload", s.handleUploadFile)
 	s.mux.HandleFunc("/v1/files/upload-archive", s.handleUploadArchive)
 	s.mux.HandleFunc("/v1/files/download", s.handleDownloadFile)
@@ -673,6 +674,63 @@ func (s *Server) handleExecSkill(w http.ResponseWriter, r *http.Request) {
 	writeEnvelope(w, http.StatusOK, result)
 }
 
+func (s *Server) handleEgressCheck(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authorized(r) {
+		writeEnvelopeWithMessage(w, http.StatusUnauthorized, -401, "unauthorized", nil)
+		return
+	}
+
+	var req struct {
+		SandboxID      string `json:"sandbox_id"`
+		OrganizationID string `json:"organization_id,omitempty"`
+		Destination    string `json:"destination"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, s.maxSmallJSONRequestBytes())
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeDecodeError(w, err)
+		return
+	}
+	req.Destination = strings.TrimSpace(req.Destination)
+	if req.Destination == "" {
+		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "destination is required", nil)
+		return
+	}
+	box, ok := s.authorizeSandboxOrganization(r.Context(), w, req.SandboxID, requestOrganizationID(r, req.OrganizationID))
+	if !ok {
+		return
+	}
+	if box == nil {
+		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "sandbox_id is required", nil)
+		return
+	}
+	decision := policy.EgressDecision{}
+	if !box.NetworkEnabled {
+		decision = policy.EgressDecision{
+			Allowed:     false,
+			Code:        "egress_denied_sandbox_network_disabled",
+			Reason:      "sandbox network access is disabled",
+			Policy:      box.NetworkPolicy,
+			Destination: req.Destination,
+		}
+	} else {
+		var err error
+		decision, err = s.policy.CheckEgressDestination(r.Context(), box.NetworkPolicy, req.Destination)
+		if err != nil {
+			writeKnownError(w, err)
+			return
+		}
+	}
+	metadata := egressDecisionMetadata(decision)
+	addSandboxOwnershipMetadata(metadata, box)
+	metadata["runtime_backend"] = s.policy.RuntimeBackend()
+	s.observer.Record("network.egress.decision", box.ID, "network egress policy decision", observer.MetadataWithContext(r.Context(), metadata))
+	writeEnvelope(w, http.StatusOK, decision)
+}
+
 func (s *Server) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -1075,6 +1133,48 @@ func (s *Server) recordPolicyDenied(ctx context.Context, sandboxID string, code 
 		eventMetadata[key] = value
 	}
 	s.observer.Record("policy.denied", sandboxID, message, observer.MetadataWithContext(ctx, eventMetadata))
+}
+
+func egressDecisionMetadata(decision policy.EgressDecision) map[string]any {
+	metadata := map[string]any{
+		"allowed":                 decision.Allowed,
+		"code":                    decision.Code,
+		"reason":                  decision.Reason,
+		"network_policy":          decision.Policy,
+		"destination":             decision.Destination,
+		"protocol":                decision.Protocol,
+		"host":                    decision.Host,
+		"port":                    decision.Port,
+		"max_request_duration_ms": decision.MaxRequestDurationMS,
+	}
+	if len(decision.ResolvedIPs) > 0 {
+		metadata["resolved_ips"] = strings.Join(decision.ResolvedIPs, ",")
+	}
+	if decision.DeniedCIDR != "" {
+		metadata["denied_cidr"] = decision.DeniedCIDR
+	}
+	return metadata
+}
+
+func addSandboxOwnershipMetadata(metadata map[string]any, box *sandbox.Sandbox) {
+	if box == nil {
+		return
+	}
+	if box.OrganizationID != "" {
+		metadata["organization_id"] = box.OrganizationID
+	}
+	if box.WorkspaceID != "" {
+		metadata["workspace_id"] = box.WorkspaceID
+	}
+	if box.AppID != "" {
+		metadata["app_id"] = box.AppID
+	}
+	if box.WorkflowRunID != "" {
+		metadata["workflow_run_id"] = box.WorkflowRunID
+	}
+	if box.UserID != "" {
+		metadata["user_id"] = box.UserID
+	}
 }
 
 func (s *Server) shouldProxy(box sandbox.Sandbox) bool {
