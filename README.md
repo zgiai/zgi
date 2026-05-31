@@ -9,8 +9,6 @@ from one workspace.
 [![Frontend](https://img.shields.io/badge/frontend-Next.js-black)](web)
 [![Backend](https://img.shields.io/badge/backend-Go-00ADD8)](api)
 
-Repository: https://github.com/zgiai/zgi
-
 ![ZGI workflow editor](docs/assets/zgi-workflow-editor-api-enrichment.png)
 
 ## Core Features
@@ -58,14 +56,13 @@ http://localhost:2679
 On first launch, create the first administrator account. ZGI does not ship with
 a default admin account.
 
-For a lighter product preview, start only nginx, API, web, PostgreSQL, and
-Redis:
+For a lighter product preview, start only the core services:
 
 ```bash
 ./dev/start-docker --core
 ```
 
-Other startup profiles:
+Other profiles:
 
 ```bash
 ./dev/start-docker --runtime    # Core stack plus Sandbox and Runner
@@ -84,34 +81,6 @@ View logs:
 ```bash
 make docker-logs
 ```
-
-## Why ZGI
-
-ZGI is designed for teams that want more than a chat UI. It gives you a control
-plane for model access, a visual runtime for multi-step AI applications, and a
-skill system for connecting agents to real tools.
-
-- Build visual workflows with typed inputs, HTTP calls, JSON parsing, LLM steps,
-  branching, loops, approvals, and outputs.
-- Configure agents with instructions, model settings, knowledge, file upload,
-  memory, and selected skills.
-- Route traffic across model providers and channels while keeping credentials,
-  model defaults, and model policy centrally managed.
-- Debug agent and workflow runs with visible runtime events, skill calls, tool
-  results, and final output.
-- Manage prompts, skills, datasets, files, API keys, and content parsing from
-  the same workspace console.
-
-## Feature Map
-
-| Capability | Description |
-| --- | --- |
-| Agent runtime | Configure instructions, model settings, knowledge, skills, files, memory, and web app experience. |
-| Skill calls | Select reusable skills and inspect loading, invocation, results, and final responses during debug. |
-| Visual workflows | Compose multi-step applications with graph nodes for APIs, parsing, models, tools, control flow, and outputs. |
-| Model gateway | Manage providers, model channels, usable models, defaults, pricing metadata, and organization policy. |
-| Prompt operations | Maintain reusable prompts, versions, labels, and prompt optimization workflows. |
-| Runtime isolation | Use the sandbox and runner services for code execution and plugin/tool execution. |
 
 ## Architecture
 
@@ -146,7 +115,7 @@ Nginx gateway (:2679)
 └── README.md
 ```
 
-## Requirements
+## Development
 
 - Docker and Docker Compose
 - Make
@@ -154,8 +123,6 @@ Nginx gateway (:2679)
 - Node.js and pnpm, for frontend source development
 
 The web app uses `pnpm@10.12.1`.
-
-## Source Development
 
 Install and prepare local dependencies:
 
@@ -176,74 +143,12 @@ make dev-api
 make dev-web
 ```
 
-Service-specific commands:
-
-```bash
-cd api
-make test
-make build
-make run
-```
-
-```bash
-cd web
-pnpm lint
-pnpm type-check
-pnpm build
-```
-
-## Screenshots
-
-The main workflow editor screenshot is shown above. Additional product screens
-are intentionally kept out of the README so the page stays fast to scan.
-
-## Environment Files
-
-Environment templates are checked in as `.env.example` files. Local `.env`
-files are not committed.
-
-Check local environment drift:
-
-```bash
-make env-check
-```
-
-Append newly added template keys while keeping existing local values:
-
-```bash
-make env-sync
-```
-
-## Windows
-
-The recommended Windows path is Docker Desktop plus PowerShell:
-
-```powershell
-.\dev\start-docker.ps1
-```
-
-CMD is also supported:
-
-```bat
-dev\start-docker.cmd
-```
-
-Source-development helpers are designed for Unix-like shells. Windows
-contributors can use WSL for source development.
-
 ## Documentation
 
 - Product-level Docker notes: `docker/README.md`
 - Release process: `docs/release-process.md`
 - Web app notes: `web/README.md`
 - Backend service docs: `api/`
-
-## Project Links
-
-- Repository: https://github.com/zgiai/zgi
-- Issues: https://github.com/zgiai/zgi/issues
-- Pull requests: https://github.com/zgiai/zgi/pulls
-- Security: https://github.com/zgiai/zgi/security
 
 ## Contributing
 

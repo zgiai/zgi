@@ -786,19 +786,20 @@ func (s *Service) validateDependencyProfileLanguage(profile DependencyProfile, l
 }
 
 func (s *Service) ValidateDependencyProfilePackages(profile DependencyProfile) error {
+	allowPinnedUnlisted := profile.PublicReusable && profile.Pinned && strings.HasPrefix(profile.Name, "auto-")
 	for _, pkg := range profile.Packages {
 		ecosystem := normalizePackageEcosystem(pkg.Ecosystem)
 		if ecosystem == "" && len(profile.Languages) == 1 {
 			ecosystem = normalizeLanguage(profile.Languages[0])
 		}
-		if err := s.validateDependencyPackage(ecosystem, pkg); err != nil {
+		if err := s.validateDependencyPackage(ecosystem, pkg, allowPinnedUnlisted); err != nil {
 			return fmt.Errorf("dependency profile %s package %s is not allowed: %w", profile.Name, pkg.Name, err)
 		}
 	}
 	return nil
 }
 
-func (s *Service) validateDependencyPackage(ecosystem string, pkg DependencyPackage) error {
+func (s *Service) validateDependencyPackage(ecosystem string, pkg DependencyPackage, allowPinnedUnlisted bool) error {
 	name := normalizePackageName(pkg.Name)
 	version := strings.TrimSpace(pkg.Version)
 	if name == "" {
@@ -814,6 +815,9 @@ func (s *Service) validateDependencyPackage(ecosystem string, pkg DependencyPack
 		if packageRuleMatches(rule, ecosystem, name, version) {
 			return fmt.Errorf("package denied by policy: %s", rule.Reason)
 		}
+	}
+	if allowPinnedUnlisted {
+		return nil
 	}
 	if s.packagePolicy.DefaultAction != "deny-unlisted" {
 		return nil

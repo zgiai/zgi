@@ -29,9 +29,10 @@ WORKDIR /app
 COPY --from=node-runtime /usr/local/ /usr/local/
 
 COPY --from=builder /out/zgi-sandbox /usr/local/bin/zgi-sandbox
+COPY --chmod=755 scripts/build-dependency-profile /usr/local/bin/zgi-sandbox-build-dependency-profile
 
 RUN useradd --system --create-home --home-dir /home/zgi --shell /usr/sbin/nologin zgi && \
-    mkdir -p /var/lib/zgi-sandbox && \
+    mkdir -p /var/lib/zgi-sandbox/dependency-rootfs && \
     chown -R zgi:zgi /var/lib/zgi-sandbox
 
 EXPOSE 2660

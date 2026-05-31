@@ -59,6 +59,10 @@ cleanup() {
     kill "${DEPENDENCY_PROFILE_ARTIFACT_SERVER_PID}" 2>/dev/null || true
     wait "${DEPENDENCY_PROFILE_ARTIFACT_SERVER_PID}" 2>/dev/null || true
   fi
+  if [[ -n "${DEPENDENCY_BUILD_WORKER_SERVER_PID:-}" ]] && kill -0 "${DEPENDENCY_BUILD_WORKER_SERVER_PID}" 2>/dev/null; then
+    kill "${DEPENDENCY_BUILD_WORKER_SERVER_PID}" 2>/dev/null || true
+    wait "${DEPENDENCY_BUILD_WORKER_SERVER_PID}" 2>/dev/null || true
+  fi
   if [[ -n "${CONCURRENT_SERVER_PID:-}" ]] && kill -0 "${CONCURRENT_SERVER_PID}" 2>/dev/null; then
     kill "${CONCURRENT_SERVER_PID}" 2>/dev/null || true
     wait "${CONCURRENT_SERVER_PID}" 2>/dev/null || true
@@ -145,15 +149,18 @@ if ! curl -fsS "${BASE_URL}/health" >/dev/null 2>&1; then
   exit 1
 fi
 
-python3 - "${ARCHIVE_VARS}" <<'PY'
+dependency_prepare_pydantic_version="2.7.$(date +%s).${RANDOM}"
+DEPENDENCY_PREPARE_PYDANTIC_VERSION="${dependency_prepare_pydantic_version}" python3 - "${ARCHIVE_VARS}" <<'PY'
 import base64
 import io
 import json
+import os
 import stat
 import sys
 import zipfile
 
 out = sys.argv[1]
+dependency_prepare_pydantic_version = os.environ["DEPENDENCY_PREPARE_PYDANTIC_VERSION"]
 
 def zip_b64(entries):
     buf = io.BytesIO()
@@ -231,7 +238,7 @@ values = {
             "entrypoint": "scripts/run.py",
             "language": "python3",
             "dependencies": {
-                "python": ["pydantic==2.7.4"],
+                "python": [f"pydantic=={dependency_prepare_pydantic_version}"],
             },
         })),
         ("requirements.txt", "pandas==2.2.3\n-r nested.txt\n# ignored\n"),
@@ -243,6 +250,18 @@ values = {
         })),
         ("scripts/run.py", "import json\nfrom PIL import Image\nprint(json.dumps({'ok': True}))\n"),
         ("scripts/run.js", "import tool from '@org/tool/path';\n"),
+    ]),
+    "dependency_worker_archive_base64": zip_b64([
+        ("SKILL.md", "---\nname: dependency-worker-skill\ndescription: Dependency worker skill\nruntime_type: prompt\n---\n"),
+        ("skill.manifest.json", json.dumps({
+            "entrypoint": "scripts/run.py",
+            "language": "python3",
+            "dependencies": {
+                "python": [f"pydantic=={dependency_prepare_pydantic_version}.worker"],
+            },
+        })),
+        ("requirements.txt", "pandas==2.2.3\n"),
+        ("scripts/run.py", "import json\nprint(json.dumps({'ok': True}))\n"),
     ]),
     "zip_slip_archive_base64": zip_b64([
         ("../escape.txt", "nope"),
@@ -260,6 +279,7 @@ invalid_skill_manifest_archive_base64="$(python3 -c 'import json,sys; print(json
 mismatched_skill_manifest_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["mismatched_skill_manifest_archive_base64"])' "${ARCHIVE_VARS}")"
 strip_root_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["strip_root_archive_base64"])' "${ARCHIVE_VARS}")"
 dependency_prepare_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["dependency_prepare_archive_base64"])' "${ARCHIVE_VARS}")"
+dependency_worker_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["dependency_worker_archive_base64"])' "${ARCHIVE_VARS}")"
 zip_slip_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["zip_slip_archive_base64"])' "${ARCHIVE_VARS}")"
 symlink_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["symlink_archive_base64"])' "${ARCHIVE_VARS}")"
 template_render="Hello {{ upper .name }}"
@@ -289,9 +309,126 @@ run_kest .kest/sandbox-dependency-profile-catalog.flow.md \
 
 run_kest .kest/sandbox-dependency-prepare.flow.md \
   --var dependency_prepare_archive_base64="${dependency_prepare_archive_base64}" \
+  --var dependency_prepare_pydantic_version="${dependency_prepare_pydantic_version}" \
   --fail-fast
 
 if [[ "${START_LOCAL_SANDBOX}" = "1" ]]; then
+  DEPENDENCY_BUILD_WORKER_PORT="$(python3 - <<'PY'
+import socket
+
+with socket.socket() as s:
+    s.bind(("127.0.0.1", 0))
+    print(s.getsockname()[1])
+PY
+)"
+  DEPENDENCY_BUILD_WORKER_BASE_URL="http://127.0.0.1:${DEPENDENCY_BUILD_WORKER_PORT}"
+  DEPENDENCY_BUILD_WORKER_SERVER_LOG="${DATA_DIR}/sandbox-dependency-build-worker.log"
+  DEPENDENCY_BUILD_WORKER_API_KEY="kest-dependency-worker-key"
+  DEPENDENCY_BUILD_WORKER_ROOT="${DATA_DIR}/dependency-build-worker-artifacts"
+  DEPENDENCY_BUILD_STUB="${DATA_DIR}/dependency-build-stub.py"
+  mkdir -p "${DEPENDENCY_BUILD_WORKER_ROOT}"
+  cat >"${DEPENDENCY_BUILD_STUB}" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+input_path = Path(sys.argv[1])
+output_dir = Path(sys.argv[2])
+payload = json.loads(input_path.read_text(encoding="utf-8"))
+profile = payload["profile_name"]
+output_dir.mkdir(parents=True, exist_ok=True)
+
+files = {
+    "venv/bin/python": b"#!/usr/bin/env python3\n",
+    "venv/pyvenv.cfg": b"home = /usr/bin\ninclude-system-site-packages = false\n",
+    "node_modules/.profile-ready": b"ready\n",
+    "bin/profile-ready": b"ready\n",
+    "dependency-request.json": json.dumps(payload["dependency_request"], sort_keys=True).encode("utf-8") + b"\n",
+    "packages.json": json.dumps(payload["packages"], sort_keys=True).encode("utf-8") + b"\n",
+}
+for rel, raw in files.items():
+    target = output_dir / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(raw)
+
+digest = hashlib.sha256()
+size = 0
+for rel in sorted(files):
+    raw = files[rel]
+    digest.update(rel.encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(raw)
+    digest.update(b"\0")
+    size += len(raw)
+checksum = "sha256:" + digest.hexdigest()
+languages = set()
+packages = []
+for item in payload["packages"]:
+    ecosystem = item.get("ecosystem", "")
+    if ecosystem in ("python3", "nodejs"):
+        languages.add(ecosystem)
+    version = item.get("version") or "managed"
+    if version.startswith("=="):
+        version = version[2:]
+    packages.append({"ecosystem": ecosystem, "name": item.get("name", ""), "version": version})
+if not languages:
+    languages.add(payload["dependency_request"].get("language") or "python3")
+manifest = {
+    "name": profile,
+    "version": "sha256-" + payload["fingerprint"].split(":", 1)[-1][:16],
+    "status": "disabled",
+    "enabled": False,
+    "owner_scope": "global",
+    "languages": sorted(languages),
+    "base_runtime": payload["dependency_request"].get("base_runtime") or "linux-secure",
+    "checksum": payload["fingerprint"],
+    "estimated_size_bytes": size,
+    "description": "Automatically built dependency profile.",
+    "packages": packages,
+    "build": {
+        "checksum": checksum,
+        "size_bytes": size,
+        "verification_passed": True,
+    },
+}
+(output_dir / "manifest.json").write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
+PY
+  env \
+    ZGI_SANDBOX_SERVER_PORT="${DEPENDENCY_BUILD_WORKER_PORT}" \
+    ZGI_SANDBOX_DATA_DIR="${DATA_DIR}/dependency-build-worker-data" \
+    ZGI_SANDBOX_DEPENDENCY_ROOTFS_DIR="${DEPENDENCY_BUILD_WORKER_ROOT}" \
+    ZGI_SANDBOX_DEPENDENCY_BUILD_COMMAND="python3 ${DEPENDENCY_BUILD_STUB}" \
+    ZGI_SANDBOX_WORKER_ID="zgi-sandbox-dependency-build-worker-kest-${DEPENDENCY_BUILD_WORKER_PORT}" \
+    ZGI_SANDBOX_API_KEY="${DEPENDENCY_BUILD_WORKER_API_KEY}" \
+    go run cmd/server/main.go >"${DEPENDENCY_BUILD_WORKER_SERVER_LOG}" 2>&1 &
+  DEPENDENCY_BUILD_WORKER_SERVER_PID="$!"
+
+  for _ in {1..80}; do
+    if curl -fsS "${DEPENDENCY_BUILD_WORKER_BASE_URL}/health" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.25
+  done
+  if ! curl -fsS "${DEPENDENCY_BUILD_WORKER_BASE_URL}/health" >/dev/null 2>&1; then
+    cat "${DEPENDENCY_BUILD_WORKER_SERVER_LOG}" >&2
+    echo "dependency build worker sandbox did not become ready at ${DEPENDENCY_BUILD_WORKER_BASE_URL}" >&2
+    exit 1
+  fi
+
+  write_kest_config "${DEPENDENCY_BUILD_WORKER_BASE_URL}"
+  run_kest .kest/sandbox-dependency-build-worker.flow.md \
+    --var admin_api_key="${DEPENDENCY_BUILD_WORKER_API_KEY}" \
+    --var dependency_prepare_archive_base64="${dependency_worker_archive_base64}" \
+    --var dependency_prepare_pydantic_version="${dependency_prepare_pydantic_version}" \
+    --fail-fast
+
+  if kill -0 "${DEPENDENCY_BUILD_WORKER_SERVER_PID}" 2>/dev/null; then
+    kill "${DEPENDENCY_BUILD_WORKER_SERVER_PID}" 2>/dev/null || true
+    wait "${DEPENDENCY_BUILD_WORKER_SERVER_PID}" 2>/dev/null || true
+  fi
+  write_kest_config "${BASE_URL}"
+
   DEPENDENCY_PROFILE_BUILD_PORT="$(python3 - <<'PY'
 import socket
 

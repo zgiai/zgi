@@ -104,6 +104,27 @@ func TestRootFSSelectorUsesDependencyArtifactRootFS(t *testing.T) {
 	}
 }
 
+func TestRootFSSelectorFallsBackToDependencyProfileRootFSWhenArtifactRootFSIsMissing(t *testing.T) {
+	defaultRoot := testRootFSDir(t, "default")
+	profileRoot := t.TempDir()
+	expected := filepath.Join(profileRoot, "workflow-safe")
+	if err := os.Mkdir(expected, 0o755); err != nil {
+		t.Fatalf("create profile rootfs: %v", err)
+	}
+	checksum := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+	selected, err := rootFSSelector{
+		defaultRootFS:       defaultRoot,
+		dependencyRootFSDir: profileRoot,
+	}.resolve("workflow-safe", checksum)
+	if err != nil {
+		t.Fatalf("resolve profile fallback rootfs: %v", err)
+	}
+	if selected != expected {
+		t.Fatalf("expected profile rootfs %s, got %s", expected, selected)
+	}
+}
+
 func testRootFSDir(t *testing.T, name string) string {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), name)

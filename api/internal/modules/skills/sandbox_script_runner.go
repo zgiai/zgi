@@ -16,6 +16,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -29,29 +30,36 @@ const defaultSkillScriptTimeoutSeconds = 30
 const inlineSkillArtifactMaxBytes = 32 * 1024
 const maxSkillScriptArtifactCount = 10
 const maxSkillScriptArtifactBytes = 2 * 1024 * 1024
+const maxSkillScriptInputFileCount = 10
+const maxSkillScriptInputFileBytes = 10 * 1024 * 1024
 const defaultSkillDependencyProfile = "stdlib"
 
 const (
-	defaultSandboxConnectTimeout        = 5 * time.Second
-	defaultSandboxCreateTimeout         = 10 * time.Second
-	defaultSandboxUploadTimeout         = 30 * time.Second
-	defaultSandboxCommandTimeoutPadding = 15 * time.Second
-	defaultSandboxArtifactTimeout       = 10 * time.Second
-	defaultSandboxCleanupTimeout        = 5 * time.Second
-	defaultSandboxIdempotentAttempts    = 3
-	defaultSandboxRetryBaseDelay        = 50 * time.Millisecond
+	defaultSandboxConnectTimeout              = 5 * time.Second
+	defaultSandboxCreateTimeout               = 10 * time.Second
+	defaultSandboxUploadTimeout               = 30 * time.Second
+	defaultSandboxCommandTimeoutPadding       = 15 * time.Second
+	defaultSandboxArtifactTimeout             = 10 * time.Second
+	defaultSandboxCleanupTimeout              = 5 * time.Second
+	defaultSandboxDependencyBuildTimeout      = 60 * time.Second
+	defaultSandboxDependencyBuildPollInterval = time.Second
+	defaultSandboxIdempotentAttempts          = 3
+	defaultSandboxRetryBaseDelay              = 50 * time.Millisecond
 )
 
 type SandboxScriptRunnerConfig struct {
-	Endpoint              string
-	APIKey                string
-	ConnectTimeout        time.Duration
-	CreateTimeout         time.Duration
-	UploadTimeout         time.Duration
-	CommandTimeoutPadding time.Duration
-	ArtifactTimeout       time.Duration
-	CleanupTimeout        time.Duration
-	ArtifactPersister     SkillScriptArtifactPersister
+	Endpoint                    string
+	APIKey                      string
+	ConnectTimeout              time.Duration
+	CreateTimeout               time.Duration
+	UploadTimeout               time.Duration
+	CommandTimeoutPadding       time.Duration
+	ArtifactTimeout             time.Duration
+	CleanupTimeout              time.Duration
+	DependencyBuildTimeout      time.Duration
+	DependencyBuildPollInterval time.Duration
+	ArtifactPersister           SkillScriptArtifactPersister
+	InputFileProvider           SkillScriptInputFileProvider
 }
 
 type SandboxScriptRunner struct {
@@ -60,14 +68,17 @@ type SandboxScriptRunner struct {
 	client            *http.Client
 	timeouts          sandboxScriptRunnerTimeouts
 	artifactPersister SkillScriptArtifactPersister
+	inputFileProvider SkillScriptInputFileProvider
 }
 
 type sandboxScriptRunnerTimeouts struct {
-	Create         time.Duration
-	Upload         time.Duration
-	CommandPadding time.Duration
-	Artifact       time.Duration
-	Cleanup        time.Duration
+	Create              time.Duration
+	Upload              time.Duration
+	CommandPadding      time.Duration
+	Artifact            time.Duration
+	Cleanup             time.Duration
+	DependencyBuild     time.Duration
+	DependencyBuildPoll time.Duration
 }
 
 type SandboxRequestError struct {
@@ -103,6 +114,23 @@ type SkillScriptArtifactPersister interface {
 	PersistSkillScriptArtifact(ctx context.Context, request SkillScriptArtifactPersistRequest) (map[string]interface{}, error)
 }
 
+type SkillScriptInputFile struct {
+	FileID         string
+	Filename       string
+	Extension      string
+	MimeType       string
+	Size           int64
+	Data           []byte
+	OrganizationID string
+	TenantID       string
+	CreatedBy      string
+	IsTemporary    bool
+}
+
+type SkillScriptInputFileProvider interface {
+	GetSkillScriptInputFile(ctx context.Context, fileID string, maxBytes int64, execCtx ExecutionContext) (SkillScriptInputFile, error)
+}
+
 func NewSandboxScriptRunner(config SandboxScriptRunnerConfig) *SandboxScriptRunner {
 	endpoint := strings.TrimRight(strings.TrimSpace(config.Endpoint), "/")
 	if endpoint == "" {
@@ -116,13 +144,16 @@ func NewSandboxScriptRunner(config SandboxScriptRunnerConfig) *SandboxScriptRunn
 			Transport: sandboxHTTPTransport(connectTimeout),
 		},
 		timeouts: sandboxScriptRunnerTimeouts{
-			Create:         durationOrDefault(config.CreateTimeout, defaultSandboxCreateTimeout),
-			Upload:         durationOrDefault(config.UploadTimeout, defaultSandboxUploadTimeout),
-			CommandPadding: durationOrDefault(config.CommandTimeoutPadding, defaultSandboxCommandTimeoutPadding),
-			Artifact:       durationOrDefault(config.ArtifactTimeout, defaultSandboxArtifactTimeout),
-			Cleanup:        durationOrDefault(config.CleanupTimeout, defaultSandboxCleanupTimeout),
+			Create:              durationOrDefault(config.CreateTimeout, defaultSandboxCreateTimeout),
+			Upload:              durationOrDefault(config.UploadTimeout, defaultSandboxUploadTimeout),
+			CommandPadding:      durationOrDefault(config.CommandTimeoutPadding, defaultSandboxCommandTimeoutPadding),
+			Artifact:            durationOrDefault(config.ArtifactTimeout, defaultSandboxArtifactTimeout),
+			Cleanup:             durationOrDefault(config.CleanupTimeout, defaultSandboxCleanupTimeout),
+			DependencyBuild:     durationOrDefault(config.DependencyBuildTimeout, defaultSandboxDependencyBuildTimeout),
+			DependencyBuildPoll: durationOrDefault(config.DependencyBuildPollInterval, defaultSandboxDependencyBuildPollInterval),
 		},
 		artifactPersister: config.ArtifactPersister,
+		inputFileProvider: config.InputFileProvider,
 	}
 }
 
@@ -170,7 +201,39 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 		manifest = preparedManifest.Manifest
 		manifestRaw = preparedManifest.Raw
 	}
+	inputFiles, err := r.resolveInputFiles(ctx, arguments, execCtx, manifest)
+	if err != nil {
+		recordSkillScriptError(&trace, start, err)
+		return &ToolInvocationResult{Trace: trace}, err
+	}
+
+	archiveBase64, err := zipSkillDirectoryBase64(doc.Metadata.RootPath, manifestRaw)
+	if err != nil {
+		trace.Status = "error"
+		trace.Error = err.Error()
+		trace.DurationMS = time.Since(start).Milliseconds()
+		return &ToolInvocationResult{Trace: trace}, err
+	}
 	dependencyProfile := manifest.DependencyProfile
+	if dependencyProfile == defaultSkillDependencyProfile && skillPackageHasDependencyHints(doc.Metadata.RootPath) {
+		resolvedProfile, err := r.prepareDependencyProfile(ctx, execCtx, archiveBase64, manifest.Language)
+		if err != nil {
+			recordSkillScriptError(&trace, start, err)
+			return &ToolInvocationResult{Trace: trace}, err
+		}
+		dependencyProfile = resolvedProfile
+		manifest.DependencyProfile = resolvedProfile
+		manifestRaw, err = json.Marshal(manifest)
+		if err != nil {
+			recordSkillScriptError(&trace, start, err)
+			return &ToolInvocationResult{Trace: trace}, err
+		}
+		archiveBase64, err = zipSkillDirectoryBase64(doc.Metadata.RootPath, manifestRaw)
+		if err != nil {
+			recordSkillScriptError(&trace, start, err)
+			return &ToolInvocationResult{Trace: trace}, err
+		}
+	}
 
 	if err := r.preflightDependencyProfile(ctx, execCtx, manifest.Language, dependencyProfile); err != nil {
 		recordSkillScriptError(&trace, start, err)
@@ -184,19 +247,22 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 	}
 	defer func() { _ = r.deleteSandbox(context.WithoutCancel(ctx), sandboxID, execCtx) }()
 
-	archiveBase64, err := zipSkillDirectoryBase64(doc.Metadata.RootPath, manifestRaw)
-	if err != nil {
-		trace.Status = "error"
-		trace.Error = err.Error()
-		trace.DurationMS = time.Since(start).Milliseconds()
-		return &ToolInvocationResult{Trace: trace}, err
-	}
 	if err := r.uploadArchive(ctx, sandboxID, archiveBase64, execCtx, hasManifest); err != nil {
 		recordSkillScriptError(&trace, start, err)
 		return &ToolInvocationResult{Trace: trace}, err
 	}
 
-	stdin, err := json.Marshal(arguments)
+	if err := r.uploadInputFiles(ctx, sandboxID, inputFiles, execCtx); err != nil {
+		recordSkillScriptError(&trace, start, err)
+		return &ToolInvocationResult{Trace: trace}, err
+	}
+
+	stdinPayload, err := skillScriptStdinPayload(arguments, inputFiles)
+	if err != nil {
+		recordSkillScriptError(&trace, start, err)
+		return &ToolInvocationResult{Trace: trace}, err
+	}
+	stdin, err := json.Marshal(stdinPayload)
 	if err != nil {
 		trace.Status = "error"
 		trace.Error = err.Error()
@@ -298,6 +364,76 @@ func (r *SandboxScriptRunner) preflightDependencyProfile(ctx context.Context, ex
 	return fmt.Errorf("skill dependency profile preflight failed: unsupported dependency profile for %s: %s", language, profile)
 }
 
+func (r *SandboxScriptRunner) prepareDependencyProfile(ctx context.Context, execCtx ExecutionContext, archiveBase64 string, language string) (string, error) {
+	var build sandboxDependencyBuild
+	payload := map[string]interface{}{
+		"archive_base64": archiveBase64,
+		"format":         "zip",
+		"strip_root":     false,
+		"language":       normalizeSkillScriptLanguage(language),
+	}
+	if organizationID := strings.TrimSpace(execCtx.OrganizationID); organizationID != "" {
+		payload["organization_id"] = organizationID
+	}
+	if err := r.doJSON(ctx, http.MethodPost, withOrganizationQuery("/v1/sandbox/dependencies/builds", execCtx), payload, &build, r.timeouts.Create); err != nil {
+		return "", fmt.Errorf("skill dependency prepare failed: %w", err)
+	}
+	return r.waitDependencyBuildReady(ctx, execCtx, build)
+}
+
+func (r *SandboxScriptRunner) waitDependencyBuildReady(ctx context.Context, execCtx ExecutionContext, build sandboxDependencyBuild) (string, error) {
+	if strings.TrimSpace(build.ProfileName) == "" {
+		return "", fmt.Errorf("skill dependency prepare failed: sandbox did not return a dependency profile")
+	}
+	if build.Status == "ready" {
+		return build.ProfileName, nil
+	}
+	if build.Status == "failed" {
+		return "", fmt.Errorf("skill dependency build failed: %s", strings.TrimSpace(build.Error))
+	}
+	if strings.TrimSpace(build.Fingerprint) == "" {
+		return "", fmt.Errorf("skill dependency build did not return a fingerprint")
+	}
+
+	timeout := r.timeouts.DependencyBuild
+	if timeout <= 0 {
+		timeout = defaultSandboxDependencyBuildTimeout
+	}
+	pollInterval := r.timeouts.DependencyBuildPoll
+	if pollInterval <= 0 {
+		pollInterval = defaultSandboxDependencyBuildPollInterval
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	timer := time.NewTimer(pollInterval)
+	defer timer.Stop()
+
+	for {
+		select {
+		case <-waitCtx.Done():
+			return "", fmt.Errorf("skill dependency build timed out after %s for %s", timeout, build.ProfileName)
+		case <-timer.C:
+			var current sandboxDependencyBuild
+			endpoint := "/v1/sandbox/dependencies/builds/" + url.PathEscape(build.Fingerprint)
+			endpoint = withOrganizationQuery(endpoint, execCtx)
+			if err := r.doIdempotentJSON(waitCtx, http.MethodGet, endpoint, nil, &current, r.timeouts.Create); err != nil {
+				return "", fmt.Errorf("skill dependency build status failed: %w", err)
+			}
+			switch current.Status {
+			case "ready":
+				if strings.TrimSpace(current.ProfileName) == "" {
+					return "", fmt.Errorf("skill dependency build ready without profile name")
+				}
+				return current.ProfileName, nil
+			case "failed":
+				return "", fmt.Errorf("skill dependency build failed: %s", strings.TrimSpace(current.Error))
+			default:
+				timer.Reset(pollInterval)
+			}
+		}
+	}
+}
+
 func (r *SandboxScriptRunner) uploadArchive(ctx context.Context, sandboxID string, archiveBase64 string, execCtx ExecutionContext, validateSkillManifest bool) error {
 	payload := map[string]interface{}{
 		"sandbox_id":              sandboxID,
@@ -311,6 +447,255 @@ func (r *SandboxScriptRunner) uploadArchive(ctx context.Context, sandboxID strin
 		payload["organization_id"] = organizationID
 	}
 	return r.doJSON(ctx, http.MethodPost, "/v1/files/upload-archive", payload, nil, r.timeouts.Upload)
+}
+
+type preparedSkillInputFile struct {
+	Name     string
+	Path     string
+	FileID   string
+	Filename string
+	MimeType string
+	Size     int64
+	Data     []byte
+	Multiple bool
+}
+
+func (r *SandboxScriptRunner) resolveInputFiles(ctx context.Context, arguments map[string]interface{}, execCtx ExecutionContext, manifest skillScriptManifest) ([]preparedSkillInputFile, error) {
+	if len(manifest.InputFiles) == 0 {
+		return nil, nil
+	}
+	if r.inputFileProvider == nil {
+		return nil, fmt.Errorf("skill script input file provider is not configured")
+	}
+	prepared := make([]preparedSkillInputFile, 0, len(manifest.InputFiles))
+	for _, spec := range manifest.InputFiles {
+		fileIDs, ok := skillScriptInputFileIDs(arguments, spec.Argument)
+		if !ok || len(fileIDs) == 0 {
+			if spec.Required {
+				return nil, fmt.Errorf("skill input file %s requires argument %s", spec.Name, spec.Argument)
+			}
+			continue
+		}
+		if !spec.Multiple && len(fileIDs) > 1 {
+			return nil, fmt.Errorf("skill input file %s accepts one file, got %d", spec.Name, len(fileIDs))
+		}
+		if spec.Multiple && spec.MaxCount > 0 && len(fileIDs) > spec.MaxCount {
+			return nil, fmt.Errorf("skill input file %s accepts at most %d files", spec.Name, spec.MaxCount)
+		}
+		for _, fileID := range fileIDs {
+			inputFile, err := r.inputFileProvider.GetSkillScriptInputFile(ctx, fileID, spec.MaxBytes, execCtx)
+			if err != nil {
+				return nil, fmt.Errorf("failed to load skill input file %s: %w", spec.Name, err)
+			}
+			normalized, err := prepareSkillInputFile(spec, inputFile)
+			if err != nil {
+				return nil, err
+			}
+			prepared = append(prepared, normalized)
+			if len(prepared) > maxSkillScriptInputFileCount {
+				return nil, fmt.Errorf("skill script accepts at most %d input files", maxSkillScriptInputFileCount)
+			}
+		}
+	}
+	return prepared, nil
+}
+
+func (r *SandboxScriptRunner) uploadInputFiles(ctx context.Context, sandboxID string, files []preparedSkillInputFile, execCtx ExecutionContext) error {
+	if len(files) == 0 {
+		return nil
+	}
+	archiveBase64, err := zipSkillInputFilesBase64(files)
+	if err != nil {
+		return err
+	}
+	if err := r.uploadArchive(ctx, sandboxID, archiveBase64, execCtx, false); err != nil {
+		return fmt.Errorf("failed to upload skill input files: %w", err)
+	}
+	return nil
+}
+
+func skillScriptInputFileIDs(arguments map[string]interface{}, argument string) ([]string, bool) {
+	if arguments == nil {
+		return nil, false
+	}
+	value, ok := arguments[argument]
+	if !ok || value == nil {
+		return nil, false
+	}
+	ids := []string{}
+	appendID := func(raw interface{}) {
+		fileID := ""
+		switch typed := raw.(type) {
+		case string:
+			fileID = strings.TrimSpace(typed)
+		default:
+			fileID = strings.TrimSpace(fmt.Sprint(typed))
+		}
+		if fileID != "" {
+			ids = append(ids, fileID)
+		}
+	}
+	switch typed := value.(type) {
+	case string:
+		appendID(typed)
+	case []string:
+		for _, item := range typed {
+			appendID(item)
+		}
+	case []interface{}:
+		for _, item := range typed {
+			appendID(item)
+		}
+	default:
+		appendID(typed)
+	}
+	if len(ids) == 0 {
+		return nil, false
+	}
+	return ids, true
+}
+
+func prepareSkillInputFile(spec skillScriptInputFileSpec, input SkillScriptInputFile) (preparedSkillInputFile, error) {
+	dataSize := int64(len(input.Data))
+	size := input.Size
+	if size <= 0 {
+		size = dataSize
+	}
+	if size > spec.MaxBytes || dataSize > spec.MaxBytes {
+		return preparedSkillInputFile{}, fmt.Errorf("skill input file %s exceeds max_bytes %d", spec.Name, spec.MaxBytes)
+	}
+	filename := safeSkillInputFilename(input.Filename, input.FileID, input.Extension)
+	extension := strings.ToLower(path.Ext(filename))
+	if len(spec.Extensions) > 0 && !stringInList(extension, spec.Extensions) {
+		return preparedSkillInputFile{}, fmt.Errorf("skill input file %s extension %s is not allowed", spec.Name, extension)
+	}
+	mimeType := strings.ToLower(strings.TrimSpace(strings.Split(input.MimeType, ";")[0]))
+	if mimeType == "" {
+		mimeType = skillArtifactMimeType(filename, "", input.Data)
+	}
+	if len(spec.MimeTypes) > 0 && !stringInList(mimeType, spec.MimeTypes) {
+		return preparedSkillInputFile{}, fmt.Errorf("skill input file %s mime type %s is not allowed", spec.Name, mimeType)
+	}
+	fileID := strings.TrimSpace(input.FileID)
+	inputPath := "inputs/" + spec.Name + "/" + filename
+	if spec.Multiple {
+		inputPath = "inputs/" + spec.Name + "/" + safeSkillInputPathSegment(fileID) + "/" + filename
+	}
+	return preparedSkillInputFile{
+		Name:     spec.Name,
+		Path:     inputPath,
+		FileID:   fileID,
+		Filename: filename,
+		MimeType: mimeType,
+		Size:     dataSize,
+		Data:     input.Data,
+		Multiple: spec.Multiple,
+	}, nil
+}
+
+func safeSkillInputPathSegment(value string) string {
+	value = strings.TrimSpace(value)
+	var builder strings.Builder
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			builder.WriteRune(r)
+		}
+	}
+	out := builder.String()
+	if out == "" || out == "." || out == ".." {
+		return "input"
+	}
+	return out
+}
+
+func safeSkillInputFilename(filename string, fileID string, extension string) string {
+	name := filepath.Base(filepath.ToSlash(strings.TrimSpace(filename)))
+	name = strings.ReplaceAll(name, "\\", "_")
+	name = strings.Trim(name, " ./")
+	if name == "" || name == "." {
+		ext := strings.TrimSpace(extension)
+		if ext != "" && !strings.HasPrefix(ext, ".") {
+			ext = "." + ext
+		}
+		name = strings.TrimSpace(fileID)
+		if name == "" {
+			name = "input"
+		}
+		name += ext
+	}
+	if name == "" || name == "." || name == ".." {
+		return "input.bin"
+	}
+	return name
+}
+
+func zipSkillInputFilesBase64(files []preparedSkillInputFile) (string, error) {
+	var buffer bytes.Buffer
+	writer := zip.NewWriter(&buffer)
+	for _, file := range files {
+		if unsafeSkillManifestPath(file.Path) || !strings.HasPrefix(file.Path, "inputs/") {
+			_ = writer.Close()
+			return "", fmt.Errorf("skill input file path is invalid: %s", file.Path)
+		}
+		header := &zip.FileHeader{
+			Name:   filepath.ToSlash(file.Path),
+			Method: zip.Deflate,
+		}
+		header.SetMode(0o644)
+		entry, err := writer.CreateHeader(header)
+		if err != nil {
+			_ = writer.Close()
+			return "", err
+		}
+		if _, err := entry.Write(file.Data); err != nil {
+			_ = writer.Close()
+			return "", err
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(buffer.Bytes()), nil
+}
+
+func skillScriptStdinPayload(arguments map[string]interface{}, inputFiles []preparedSkillInputFile) (map[string]interface{}, error) {
+	if len(inputFiles) == 0 {
+		return arguments, nil
+	}
+	if _, exists := arguments["input_files"]; exists {
+		return nil, fmt.Errorf("skill script argument input_files is reserved")
+	}
+	payload := make(map[string]interface{}, len(arguments)+1)
+	for key, value := range arguments {
+		payload[key] = value
+	}
+	files := make(map[string]interface{}, len(inputFiles))
+	for _, inputFile := range inputFiles {
+		item := map[string]interface{}{
+			"path":      inputFile.Path,
+			"file_id":   inputFile.FileID,
+			"filename":  inputFile.Filename,
+			"mime_type": inputFile.MimeType,
+			"size":      inputFile.Size,
+		}
+		if inputFile.Multiple {
+			current, _ := files[inputFile.Name].([]map[string]interface{})
+			files[inputFile.Name] = append(current, item)
+			continue
+		}
+		files[inputFile.Name] = item
+	}
+	payload["input_files"] = files
+	return payload, nil
+}
+
+func stringInList(value string, allowed []string) bool {
+	for _, item := range allowed {
+		if strings.EqualFold(strings.TrimSpace(value), strings.TrimSpace(item)) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *SandboxScriptRunner) runCommand(ctx context.Context, sandboxID string, stdin string, timeoutSeconds int, execCtx ExecutionContext) (*sandboxCommandResult, error) {
@@ -552,6 +937,7 @@ func (r *SandboxScriptRunner) doJSONOnce(ctx context.Context, method string, pat
 	}
 	if r.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+r.apiKey)
+		req.Header.Set("X-API-Key", r.apiKey)
 	}
 	res, err := r.client.Do(req)
 	if err != nil {
@@ -721,6 +1107,16 @@ type sandboxDependencyProfile struct {
 	Languages []string `json:"languages"`
 }
 
+type sandboxDependencyBuild struct {
+	BuildID          string `json:"build_id"`
+	Fingerprint      string `json:"fingerprint"`
+	Status           string `json:"status"`
+	ProfileName      string `json:"profile_name"`
+	ArtifactChecksum string `json:"artifact_checksum,omitempty"`
+	NextAction       string `json:"next_action,omitempty"`
+	Error            string `json:"error,omitempty"`
+}
+
 type sandboxSkillManifest struct {
 	Entrypoint           string   `json:"entrypoint"`
 	Language             string   `json:"language"`
@@ -771,6 +1167,94 @@ type skillScriptArtifact struct {
 	Reason      string                 `json:"reason,omitempty"`
 	File        map[string]interface{} `json:"file,omitempty"`
 	Error       string                 `json:"error,omitempty"`
+}
+
+func skillPackageHasDependencyHints(root string) bool {
+	for _, rel := range []string{"requirements.txt", "package.json"} {
+		info, err := os.Lstat(filepath.Join(root, rel))
+		if err == nil && !info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
+			return true
+		}
+	}
+	manifest, err := loadSkillScriptManifest(root)
+	if err != nil {
+		return false
+	}
+	return len(manifest.Dependencies.Python) > 0 ||
+		len(manifest.Dependencies.Node) > 0 ||
+		len(manifest.Dependencies.NodeJS) > 0 ||
+		len(manifest.Dependencies.System) > 0 ||
+		skillScriptsHaveThirdPartyImports(root)
+}
+
+var (
+	pythonImportHintPattern = regexp.MustCompile(`(?m)^\s*(?:from|import)\s+([A-Za-z_][A-Za-z0-9_]*)`)
+	nodeImportHintPattern   = regexp.MustCompile(`(?m)^\s*(?:import\s+(?:[^'"]+\s+from\s+)?|const\s+\w+\s*=\s*require\()\s*['"]([^'"]+)['"]`)
+)
+
+func skillScriptsHaveThirdPartyImports(root string) bool {
+	scriptsRoot := filepath.Join(root, "scripts")
+	err := filepath.WalkDir(scriptsRoot, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry == nil || entry.IsDir() {
+			return nil
+		}
+		if path == scriptsRoot {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil || info.Mode()&os.ModeSymlink != 0 || info.Size() > 256*1024 {
+			return nil
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		switch filepath.Ext(path) {
+		case ".py":
+			if pythonContentHasThirdPartyImport(string(content)) {
+				return errDependencyHintFound
+			}
+		case ".js", ".mjs", ".cjs":
+			if nodeContentHasThirdPartyImport(string(content)) {
+				return errDependencyHintFound
+			}
+		}
+		return nil
+	})
+	return errors.Is(err, errDependencyHintFound)
+}
+
+var errDependencyHintFound = errors.New("dependency hint found")
+
+func pythonContentHasThirdPartyImport(content string) bool {
+	for _, match := range pythonImportHintPattern.FindAllStringSubmatch(content, -1) {
+		if len(match) >= 2 && !isKnownPythonStdlibRoot(match[1]) {
+			return true
+		}
+	}
+	return false
+}
+
+func nodeContentHasThirdPartyImport(content string) bool {
+	for _, match := range nodeImportHintPattern.FindAllStringSubmatch(content, -1) {
+		if len(match) < 2 {
+			continue
+		}
+		spec := strings.TrimSpace(match[1])
+		if spec != "" && !strings.HasPrefix(spec, ".") && !strings.HasPrefix(spec, "/") && !strings.HasPrefix(spec, "node:") {
+			return true
+		}
+	}
+	return false
+}
+
+func isKnownPythonStdlibRoot(name string) bool {
+	switch strings.TrimSpace(name) {
+	case "", "__future__", "argparse", "asyncio", "base64", "collections", "contextlib", "csv", "dataclasses", "datetime", "decimal", "functools", "glob", "hashlib", "io", "itertools", "json", "logging", "math", "os", "pathlib", "random", "re", "shutil", "statistics", "string", "subprocess", "sys", "tempfile", "time", "typing", "uuid", "zipfile":
+		return true
+	default:
+		return false
+	}
 }
 
 func hasSkillManifest(root string) (bool, error) {
@@ -839,14 +1323,34 @@ func zipSkillDirectoryBase64(root string, manifestRaw []byte) (string, error) {
 }
 
 type skillScriptManifest struct {
-	Entrypoint           string   `json:"entrypoint"`
-	Language             string   `json:"language"`
-	DependencyProfile    string   `json:"dependency_profile"`
-	TimeoutMS            int      `json:"timeout_ms"`
-	AllowedArtifactPaths []string `json:"allowed_artifact_paths"`
-	MaxArtifactCount     int      `json:"max_artifact_count"`
-	MaxArtifactBytes     int64    `json:"max_artifact_bytes"`
-	ResultMode           string   `json:"result_mode"`
+	Entrypoint           string                          `json:"entrypoint"`
+	Language             string                          `json:"language"`
+	DependencyProfile    string                          `json:"dependency_profile"`
+	Dependencies         skillScriptManifestDependencies `json:"dependencies,omitempty"`
+	TimeoutMS            int                             `json:"timeout_ms"`
+	AllowedArtifactPaths []string                        `json:"allowed_artifact_paths"`
+	MaxArtifactCount     int                             `json:"max_artifact_count"`
+	MaxArtifactBytes     int64                           `json:"max_artifact_bytes"`
+	ResultMode           string                          `json:"result_mode"`
+	InputFiles           []skillScriptInputFileSpec      `json:"input_files,omitempty"`
+}
+
+type skillScriptManifestDependencies struct {
+	Python []string `json:"python,omitempty"`
+	Node   []string `json:"node,omitempty"`
+	NodeJS []string `json:"nodejs,omitempty"`
+	System []string `json:"system,omitempty"`
+}
+
+type skillScriptInputFileSpec struct {
+	Name       string   `json:"name"`
+	Argument   string   `json:"argument"`
+	Required   bool     `json:"required"`
+	Multiple   bool     `json:"multiple,omitempty"`
+	MaxCount   int      `json:"max_count,omitempty"`
+	Extensions []string `json:"extensions,omitempty"`
+	MimeTypes  []string `json:"mime_types,omitempty"`
+	MaxBytes   int64    `json:"max_bytes,omitempty"`
 }
 
 type preparedSkillScriptManifest struct {
@@ -942,10 +1446,10 @@ func normalizeSkillScriptManifest(root string, fallbackTimeoutSeconds int, manif
 		return fmt.Errorf("skill manifest language must be python3 or nodejs for API run_script: %s", manifest.Language)
 	}
 
-	manifest.DependencyProfile = strings.TrimSpace(manifest.DependencyProfile)
-	if manifest.DependencyProfile == "" {
-		manifest.DependencyProfile = defaultSkillDependencyProfile
-	}
+	// Dependency profiles are selected by the platform from prepared dependency
+	// requests and verified artifacts. Skill packages may declare dependencies,
+	// but they must not choose the runtime profile directly.
+	manifest.DependencyProfile = defaultSkillDependencyProfile
 	if manifest.TimeoutMS <= 0 {
 		timeoutSeconds := fallbackTimeoutSeconds
 		if timeoutSeconds <= 0 {
@@ -987,10 +1491,88 @@ func normalizeSkillScriptManifest(root string, fallbackTimeoutSeconds int, manif
 	}
 	switch manifest.ResultMode {
 	case "stdout_json", "stdout_text", "artifacts", "mixed":
-		return nil
 	default:
 		return fmt.Errorf("skill manifest result_mode must be stdout_json, stdout_text, artifacts, or mixed")
 	}
+	if len(manifest.InputFiles) > maxSkillScriptInputFileCount {
+		return fmt.Errorf("skill manifest input_files must contain at most %d files", maxSkillScriptInputFileCount)
+	}
+	for index := range manifest.InputFiles {
+		if err := normalizeSkillScriptInputFileSpec(&manifest.InputFiles[index]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func normalizeSkillScriptInputFileSpec(spec *skillScriptInputFileSpec) error {
+	if spec == nil {
+		return fmt.Errorf("skill manifest input_files contains an empty item")
+	}
+	spec.Name = strings.TrimSpace(spec.Name)
+	if !safeSkillInputSegment(spec.Name) {
+		return fmt.Errorf("skill manifest input file name must be a safe path segment: %s", spec.Name)
+	}
+	spec.Argument = strings.TrimSpace(spec.Argument)
+	if spec.Argument == "" {
+		return fmt.Errorf("skill manifest input file %s argument is required", spec.Name)
+	}
+	if strings.ContainsAny(spec.Argument, "/\\") || spec.Argument == "." || spec.Argument == ".." {
+		return fmt.Errorf("skill manifest input file %s argument is invalid: %s", spec.Name, spec.Argument)
+	}
+	for i, extension := range spec.Extensions {
+		normalized := strings.ToLower(strings.TrimSpace(extension))
+		if normalized == "" {
+			return fmt.Errorf("skill manifest input file %s extension is empty", spec.Name)
+		}
+		if !strings.HasPrefix(normalized, ".") {
+			normalized = "." + normalized
+		}
+		if strings.ContainsAny(normalized, `/\`) || normalized == "." || strings.Contains(normalized, "..") {
+			return fmt.Errorf("skill manifest input file %s extension is invalid: %s", spec.Name, extension)
+		}
+		spec.Extensions[i] = normalized
+	}
+	for i, mimeType := range spec.MimeTypes {
+		normalized := strings.ToLower(strings.TrimSpace(strings.Split(mimeType, ";")[0]))
+		if normalized == "" || strings.ContainsAny(normalized, " \t\r\n") {
+			return fmt.Errorf("skill manifest input file %s mime type is invalid: %s", spec.Name, mimeType)
+		}
+		spec.MimeTypes[i] = normalized
+	}
+	if spec.MaxBytes <= 0 {
+		spec.MaxBytes = maxSkillScriptInputFileBytes
+	}
+	if spec.MaxBytes > maxSkillScriptInputFileBytes {
+		return fmt.Errorf("skill manifest input file %s max_bytes must be between 1 and %d", spec.Name, maxSkillScriptInputFileBytes)
+	}
+	if spec.Multiple {
+		if spec.MaxCount <= 0 {
+			spec.MaxCount = maxSkillScriptInputFileCount
+		}
+		if spec.MaxCount > maxSkillScriptInputFileCount {
+			return fmt.Errorf("skill manifest input file %s max_count must be between 1 and %d", spec.Name, maxSkillScriptInputFileCount)
+		}
+	} else if spec.MaxCount < 0 {
+		return fmt.Errorf("skill manifest input file %s max_count must not be negative", spec.Name)
+	}
+	return nil
+}
+
+func safeSkillInputSegment(value string) bool {
+	if value == "" || value == "." || value == ".." {
+		return false
+	}
+	if strings.ContainsAny(value, `/\`) {
+		return false
+	}
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func copyFileIntoZip(path string, writer io.Writer) error {
@@ -1181,7 +1763,7 @@ func skillArtifactMimeType(filename string, contentType string, data []byte) str
 
 func isGenericSkillArtifactMimeType(mimeType string) bool {
 	switch strings.ToLower(strings.TrimSpace(mimeType)) {
-	case "text/plain", "application/octet-stream":
+	case "text/plain", "application/octet-stream", "application/zip", "application/x-zip-compressed":
 		return true
 	default:
 		return false
@@ -1212,6 +1794,18 @@ func skillArtifactMimeTypeByExtension(extension string) string {
 		return "image/svg+xml"
 	case "zip":
 		return "application/zip"
+	case "doc":
+		return "application/msword"
+	case "docx":
+		return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	case "xls":
+		return "application/vnd.ms-excel"
+	case "xlsx":
+		return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+	case "ppt":
+		return "application/vnd.ms-powerpoint"
+	case "pptx":
+		return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 	default:
 		return ""
 	}

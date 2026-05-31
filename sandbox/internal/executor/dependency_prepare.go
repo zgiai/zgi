@@ -230,12 +230,12 @@ func addPackageSpecs(packages map[string]DetectedDependency, sources map[string]
 		}
 		added = true
 		key := dep.Ecosystem + "\x00" + dep.Name
-		if dep.Version != "" {
-			key += "\x00" + dep.Version
-		}
 		existing, ok := packages[key]
 		if ok {
 			existing.Source = appendUniqueString(existing.Source, source)
+			if existing.Version == "" && dep.Version != "" {
+				existing.Version = dep.Version
+			}
 			packages[key] = existing
 			continue
 		}

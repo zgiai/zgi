@@ -76,6 +76,9 @@ func ListDependencyProfileArtifacts(dependencyRootFSDir string) ([]DependencyPro
 	}
 	entries, err := os.ReadDir(root)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("read dependency profile rootfs directory: %w", err)
 	}
 	artifacts := make([]DependencyProfileArtifact, 0, len(entries))

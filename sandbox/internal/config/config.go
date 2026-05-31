@@ -33,6 +33,9 @@ type Config struct {
 	MaxDependencyProfilesPerOrganization       int
 	MaxDependencyProfileSizeBytes              int64
 	DependencyProfileBuildTimeoutSeconds       int
+	DependencyBuildCommand                     string
+	DependencyBuildWorkerEnabled               bool
+	DependencyBuildWorkerIntervalSeconds       int
 	QueueTimeoutMS                             int
 	ShutdownTimeoutSeconds                     int
 	SessionTTL                                 int
@@ -91,6 +94,9 @@ func FromEnv() Config {
 		MaxDependencyProfilesPerOrganization:       getEnvIntAllowZero("ZGI_SANDBOX_MAX_DEPENDENCY_PROFILES_PER_ORGANIZATION", 0),
 		MaxDependencyProfileSizeBytes:              getEnvInt64("ZGI_SANDBOX_MAX_DEPENDENCY_PROFILE_SIZE_BYTES", 512*1024*1024),
 		DependencyProfileBuildTimeoutSeconds:       getEnvInt("ZGI_SANDBOX_DEPENDENCY_PROFILE_BUILD_TIMEOUT_SECONDS", 600),
+		DependencyBuildCommand:                     getEnv("ZGI_SANDBOX_DEPENDENCY_BUILD_COMMAND", ""),
+		DependencyBuildWorkerEnabled:               getEnvBool("ZGI_SANDBOX_DEPENDENCY_BUILD_WORKER_ENABLED", true),
+		DependencyBuildWorkerIntervalSeconds:       getEnvInt("ZGI_SANDBOX_DEPENDENCY_BUILD_WORKER_INTERVAL_SECONDS", 2),
 		QueueTimeoutMS:                             getEnvInt("ZGI_SANDBOX_QUEUE_TIMEOUT_MS", 5000),
 		ShutdownTimeoutSeconds:                     getEnvInt("ZGI_SANDBOX_SHUTDOWN_TIMEOUT_SECONDS", 10),
 		SessionTTL:                                 getEnvInt("ZGI_SANDBOX_SESSION_TTL_SECONDS", 1800),
@@ -143,6 +149,7 @@ func (c Config) ValidateStartup() error {
 		requirePositiveInt64("ZGI_SANDBOX_EGRESS_PROXY_MAX_BODY_BYTES", c.EgressProxyMaxBodyBytes),
 		requirePositiveInt64("ZGI_SANDBOX_MAX_DEPENDENCY_PROFILE_SIZE_BYTES", c.MaxDependencyProfileSizeBytes),
 		requirePositiveInt("ZGI_SANDBOX_DEPENDENCY_PROFILE_BUILD_TIMEOUT_SECONDS", c.DependencyProfileBuildTimeoutSeconds),
+		requirePositiveInt("ZGI_SANDBOX_DEPENDENCY_BUILD_WORKER_INTERVAL_SECONDS", c.DependencyBuildWorkerIntervalSeconds),
 		requireNonNegativeInt("ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS", c.MaxConcurrentExecutions),
 		requireNonNegativeInt("ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS_PER_PROFILE", c.MaxConcurrentExecutionsPerProfile),
 		requireNonNegativeInt("ZGI_SANDBOX_MAX_ACTIVE_PER_ORGANIZATION", c.MaxActivePerOrganization),
@@ -176,6 +183,9 @@ func (c Config) ValidateStartup() error {
 	}
 	if strings.TrimSpace(c.WorkerID) == "" {
 		validationErrors = append(validationErrors, errors.New("ZGI_SANDBOX_WORKER_ID must not be empty"))
+	}
+	if err := validateOptionalCommand("ZGI_SANDBOX_DEPENDENCY_BUILD_COMMAND", c.DependencyBuildCommand); err != nil {
+		validationErrors = append(validationErrors, err)
 	}
 	if err := validateHTTPURL("ZGI_SANDBOX_ADVERTISE_URL", c.AdvertiseURL); err != nil {
 		validationErrors = append(validationErrors, err)
@@ -295,6 +305,21 @@ func validateRootFSDirectory(name string, value string, required bool) error {
 	return nil
 }
 
+func validateOptionalCommand(name string, value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	parts := strings.Fields(value)
+	if len(parts) == 0 {
+		return nil
+	}
+	if strings.Contains(parts[0], "/") && !filepath.IsAbs(parts[0]) {
+		return fmt.Errorf("%s command path must be absolute when a path is used", name)
+	}
+	return nil
+}
+
 func validateHTTPURL(name string, value string) error {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -380,6 +405,9 @@ func (c Config) PublicSnapshot() map[string]any {
 		"max_dependency_profiles_per_organization":         c.MaxDependencyProfilesPerOrganization,
 		"max_dependency_profile_size_bytes":                c.MaxDependencyProfileSizeBytes,
 		"dependency_profile_build_timeout_seconds":         c.DependencyProfileBuildTimeoutSeconds,
+		"dependency_build_command_configured":              strings.TrimSpace(c.DependencyBuildCommand) != "",
+		"dependency_build_worker_enabled":                  c.DependencyBuildWorkerEnabled,
+		"dependency_build_worker_interval_seconds":         c.DependencyBuildWorkerIntervalSeconds,
 		"queue_timeout_ms":                                 c.QueueTimeoutMS,
 		"shutdown_timeout_seconds":                         c.ShutdownTimeoutSeconds,
 		"session_ttl_seconds":                              c.SessionTTL,
@@ -491,6 +519,20 @@ func getEnvInt64AllowZero(key string, fallback int64) int64 {
 	}
 
 	return parsed
+}
+
+func getEnvBool(key string, fallback bool) bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	switch value {
+	case "":
+		return fallback
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return fallback
+	}
 }
 
 func defaultWorkerID() string {

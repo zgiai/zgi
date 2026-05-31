@@ -213,7 +213,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		WorkspacePermissionService: serviceContainer.GetOrganizationService(),
 		MemoryService:              serviceContainer.GetMemoryService(),
 		AgentMemoryService:         serviceContainer.GetAgentMemoryService(),
-		SkillRuntime:               newSkillRuntimeWithSandbox(serviceContainer.GetToolEngine(), serviceContainer.GetToolManager()),
+		SkillRuntime:               newSkillRuntimeWithSandbox(serviceContainer.GetToolEngine(), serviceContainer.GetToolManager(), serviceContainer.GetFileService(), serviceContainer.GetOrganizationService()),
 		AccountService:             accountService,
 	})
 

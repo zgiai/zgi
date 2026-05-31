@@ -22,6 +22,7 @@ import type { AIChatModelValue } from '@/components/chat/variants/aichat/types';
 
 interface AIChatInputToolbarProps {
   modelSelectorValue: AIChatModelValue;
+  isModelInitializing?: boolean;
   modelMissing: boolean;
   modelCapabilityFilter?: { features_vision: boolean };
   hasImageAttachment: boolean;
@@ -61,6 +62,7 @@ interface AIChatInputToolbarProps {
  */
 export function AIChatInputToolbar({
   modelSelectorValue,
+  isModelInitializing = false,
   modelMissing,
   modelCapabilityFilter,
   hasImageAttachment,
@@ -95,18 +97,22 @@ export function AIChatInputToolbar({
       <div className="flex min-w-0 items-center gap-1.5">
         {showModelSelector ? (
           <div className="w-44 min-w-0 sm:w-56">
-            <ModelSelector
-              modelType="text-chat"
-              value={modelSelectorValue}
-              onChange={onModelChange}
-              onModelPropsChange={onModelPropsChange}
-              capabilityFilter={modelCapabilityFilter}
-              className={cn(
-                'h-8 rounded-full border-border/70 px-3 text-xs',
-                modelMissing ? 'border-destructive/50' : ''
-              )}
-              showCapabilities={false}
-            />
+            {isModelInitializing ? (
+              <div className="h-8 rounded-full border border-border/70 bg-muted/50" />
+            ) : (
+              <ModelSelector
+                modelType="text-chat"
+                value={modelSelectorValue}
+                onChange={onModelChange}
+                onModelPropsChange={onModelPropsChange}
+                capabilityFilter={modelCapabilityFilter}
+                className={cn(
+                  'h-8 rounded-full border-border/70 px-3 text-xs',
+                  modelMissing ? 'border-destructive/50' : ''
+                )}
+                showCapabilities={false}
+              />
+            )}
           </div>
         ) : null}
         {hasImageAttachment ? (

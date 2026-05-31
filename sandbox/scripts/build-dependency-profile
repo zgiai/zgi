@@ -1,0 +1,212 @@
+#!/usr/bin/env python3
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+def fail(message):
+    print(message, file=sys.stderr)
+    return 1
+
+
+def safe_name(value):
+    if not value:
+        return False
+    return all(ch.islower() or ch.isdigit() or ch == "-" for ch in value)
+
+
+PYTHON_EXACT_VERSION = re.compile(
+    r"^\d+(?:\.\d+)*(?:(?:a|b|rc)\d+)?(?:\.post\d+)?(?:\.dev\d+)?(?:\+[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*)?$",
+    re.IGNORECASE,
+)
+NODE_EXACT_SEMVER = re.compile(
+    r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"
+)
+
+
+def pinned_version(pkg):
+    name = str(pkg.get("name") or "").strip()
+    ecosystem = str(pkg.get("ecosystem") or "").strip()
+    version = str(pkg.get("version") or "").strip()
+    if not name:
+        raise ValueError("dependency package name is required")
+    if version.startswith("=="):
+        normalized = version[2:]
+    elif version.startswith("="):
+        normalized = version[1:]
+    else:
+        normalized = version
+    if not normalized or normalized in ("managed", "latest"):
+        raise ValueError(f"dependency package {name} must declare an exact version")
+    if any(normalized.startswith(prefix) for prefix in ("http:", "https:", "file:", "git+", "github:", "gitlab:", "bitbucket:", "npm:", "workspace:", "link:", "portal:", ".")):
+        raise ValueError(f"dependency package {name} version must be an exact registry version")
+    if any(ch in normalized for ch in "<>~^*!,| "):
+        raise ValueError(f"dependency package {name} version must be an exact registry version")
+    if ecosystem == "python3" and not PYTHON_EXACT_VERSION.fullmatch(normalized):
+        raise ValueError(f"python dependency package {name} version must be an exact version")
+    if ecosystem == "nodejs" and not NODE_EXACT_SEMVER.fullmatch(normalized):
+        raise ValueError(f"node dependency package {name} version must be an exact semver")
+    return normalized
+
+
+def python_package_spec(pkg):
+    name = str(pkg.get("name") or "").strip()
+    return name + "==" + pinned_version(pkg)
+
+
+def manifest_package_version(pkg):
+    ecosystem = str(pkg.get("ecosystem") or "").strip()
+    if ecosystem in ("python3", "nodejs"):
+        return pinned_version(pkg)
+    return str(pkg.get("version") or "").strip() or "managed"
+
+
+def checksum_dir(root):
+    files = []
+    size = 0
+    for path in root.rglob("*"):
+        if path.is_symlink():
+            raise ValueError(f"dependency profile contains symlink: {path.relative_to(root).as_posix()}")
+        if not path.is_file():
+            continue
+        rel = path.relative_to(root).as_posix()
+        if rel == "manifest.json":
+            continue
+        files.append(rel)
+        size += path.stat().st_size
+    digest = hashlib.sha256()
+    for rel in sorted(files):
+        digest.update(rel.encode())
+        digest.update(b"\x00")
+        digest.update((root / rel).read_bytes())
+        digest.update(b"\x00")
+    return "sha256:" + digest.hexdigest(), size
+
+
+def run(cmd, cwd):
+    subprocess.run(cmd, cwd=cwd, check=True)
+
+
+def materialize_symlinks(root):
+    root_resolved = root.resolve(strict=True)
+    links = []
+    for current, dirnames, filenames in os.walk(root, followlinks=False):
+        current_path = Path(current)
+        for name in list(dirnames):
+            path = current_path / name
+            if path.is_symlink():
+                links.append(path)
+                dirnames.remove(name)
+        for name in filenames:
+            path = current_path / name
+            if path.is_symlink():
+                links.append(path)
+
+    for path in links:
+        target = path.resolve(strict=True)
+        try:
+            target.relative_to(root_resolved)
+        except ValueError as exc:
+            raise ValueError(f"dependency profile symlink escapes output directory: {path.relative_to(root).as_posix()}") from exc
+        if target.is_dir():
+            raise ValueError(f"dependency profile directory symlink is not allowed: {path.relative_to(root).as_posix()}")
+        path.unlink()
+        shutil.copy2(target, path)
+
+
+def build_python(output_dir, packages):
+    python_packages = [pkg for pkg in packages if pkg.get("ecosystem") == "python3"]
+    if not python_packages:
+        return
+    venv_dir = output_dir / "venv"
+    run([sys.executable, "-m", "venv", "--copies", str(venv_dir)], output_dir)
+    python = venv_dir / "bin" / "python"
+    run([str(python), "-m", "pip", "install", "--disable-pip-version-check", "--no-cache-dir", *[python_package_spec(pkg) for pkg in python_packages]], output_dir)
+
+
+def build_node(output_dir, packages):
+    node_packages = [pkg for pkg in packages if pkg.get("ecosystem") == "nodejs"]
+    if not node_packages:
+        return
+    package_json = {
+        "private": True,
+        "type": "module",
+        "dependencies": {},
+    }
+    for pkg in node_packages:
+        name = str(pkg.get("name") or "").strip()
+        if not name:
+            raise ValueError("node dependency package name is required")
+        package_json["dependencies"][name] = pinned_version(pkg)
+    (output_dir / "package.json").write_text(json.dumps(package_json, indent=2) + "\n", encoding="utf-8")
+    run(["npm", "install", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"], output_dir)
+
+
+def main():
+    if len(sys.argv) < 3:
+        return fail("usage: build-dependency-profile <input.json> <output_dir>")
+    input_path = Path(sys.argv[1])
+    output_dir = Path(sys.argv[2])
+    data = json.loads(input_path.read_text(encoding="utf-8"))
+    profile_name = str(data.get("profile_name") or "").strip()
+    if not safe_name(profile_name):
+        return fail(f"unsafe profile name: {profile_name}")
+    packages = data.get("packages") or []
+    request = data.get("dependency_request") or {}
+    languages = []
+    for value in [request.get("language"), *(pkg.get("ecosystem") for pkg in packages)]:
+        if value in ("python", "python3") and "python3" not in languages:
+            languages.append("python3")
+        if value in ("node", "nodejs", "javascript") and "nodejs" not in languages:
+            languages.append("nodejs")
+    if not languages:
+        languages = ["python3"]
+
+    if output_dir.exists():
+        shutil.rmtree(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    build_python(output_dir, packages)
+    build_node(output_dir, packages)
+    materialize_symlinks(output_dir)
+
+    checksum, size = checksum_dir(output_dir)
+    manifest = {
+        "name": profile_name,
+        "version": "auto-" + str(data.get("fingerprint") or "unknown").replace("sha256:", "")[:16],
+        "status": "ready",
+        "enabled": True,
+        "owner_scope": "global",
+        "languages": languages,
+        "base_runtime": request.get("base_runtime") or "linux-secure",
+        "checksum": data.get("fingerprint") or checksum,
+        "estimated_size_bytes": size,
+        "description": "Automatically built dependency profile.",
+        "packages": [
+            {
+                "ecosystem": pkg.get("ecosystem") or "",
+                "name": pkg.get("name") or "",
+                "version": manifest_package_version(pkg),
+            }
+            for pkg in packages
+        ],
+        "build": {
+            "checksum": checksum,
+            "size_bytes": size,
+            "built_at": datetime.now(timezone.utc).isoformat(),
+            "verification_passed": True,
+            "builder": "zgi-sandbox-build-dependency-profile",
+        },
+    }
+    (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps({"profile_name": profile_name, "checksum": checksum, "size_bytes": size}))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

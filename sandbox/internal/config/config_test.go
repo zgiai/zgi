@@ -162,6 +162,9 @@ func TestFromEnvReadsOrganizationDependencyProfileLimit(t *testing.T) {
 func TestFromEnvReadsDependencyProfileBuildLimits(t *testing.T) {
 	t.Setenv("ZGI_SANDBOX_MAX_DEPENDENCY_PROFILE_SIZE_BYTES", "1048576")
 	t.Setenv("ZGI_SANDBOX_DEPENDENCY_PROFILE_BUILD_TIMEOUT_SECONDS", "120")
+	t.Setenv("ZGI_SANDBOX_DEPENDENCY_BUILD_COMMAND", "/usr/local/bin/zgi-dependency-builder --mode safe")
+	t.Setenv("ZGI_SANDBOX_DEPENDENCY_BUILD_WORKER_ENABLED", "false")
+	t.Setenv("ZGI_SANDBOX_DEPENDENCY_BUILD_WORKER_INTERVAL_SECONDS", "9")
 
 	cfg := FromEnv()
 
@@ -170,6 +173,15 @@ func TestFromEnvReadsDependencyProfileBuildLimits(t *testing.T) {
 	}
 	if cfg.DependencyProfileBuildTimeoutSeconds != 120 {
 		t.Fatalf("expected dependency profile build timeout 120, got %d", cfg.DependencyProfileBuildTimeoutSeconds)
+	}
+	if cfg.DependencyBuildCommand != "/usr/local/bin/zgi-dependency-builder --mode safe" {
+		t.Fatalf("expected dependency build command, got %q", cfg.DependencyBuildCommand)
+	}
+	if cfg.DependencyBuildWorkerEnabled {
+		t.Fatal("expected dependency build worker disabled")
+	}
+	if cfg.DependencyBuildWorkerIntervalSeconds != 9 {
+		t.Fatalf("expected dependency build worker interval 9, got %d", cfg.DependencyBuildWorkerIntervalSeconds)
 	}
 }
 
@@ -244,6 +256,8 @@ func TestPublicSnapshotOmitsSecrets(t *testing.T) {
 		MaxDependencyProfilesPerOrganization:       2,
 		MaxDependencyProfileSizeBytes:              1048576,
 		DependencyProfileBuildTimeoutSeconds:       120,
+		DependencyBuildWorkerEnabled:               true,
+		DependencyBuildWorkerIntervalSeconds:       2,
 		EgressProxyMaxBodyBytes:                    2048,
 	}
 
@@ -293,6 +307,15 @@ func TestPublicSnapshotOmitsSecrets(t *testing.T) {
 	}
 	if snapshot["dependency_profile_build_timeout_seconds"] != 120 {
 		t.Fatalf("expected dependency profile build timeout, got %#v", snapshot["dependency_profile_build_timeout_seconds"])
+	}
+	if snapshot["dependency_build_command_configured"] != false {
+		t.Fatalf("expected dependency build command configured flag, got %#v", snapshot["dependency_build_command_configured"])
+	}
+	if snapshot["dependency_build_worker_enabled"] != true {
+		t.Fatalf("expected dependency build worker enabled flag, got %#v", snapshot["dependency_build_worker_enabled"])
+	}
+	if snapshot["dependency_build_worker_interval_seconds"] != 2 {
+		t.Fatalf("expected dependency build worker interval, got %#v", snapshot["dependency_build_worker_interval_seconds"])
 	}
 	if snapshot["egress_proxy_max_body_bytes"] != int64(2048) {
 		t.Fatalf("expected egress proxy body limit, got %#v", snapshot["egress_proxy_max_body_bytes"])
@@ -539,6 +562,8 @@ func validStartupConfig() Config {
 		MaxDependencyProfilesPerOrganization:       0,
 		MaxDependencyProfileSizeBytes:              512 * 1024 * 1024,
 		DependencyProfileBuildTimeoutSeconds:       600,
+		DependencyBuildWorkerEnabled:               true,
+		DependencyBuildWorkerIntervalSeconds:       2,
 		QueueTimeoutMS:                             5000,
 		ShutdownTimeoutSeconds:                     10,
 		SessionTTL:                                 1800,
