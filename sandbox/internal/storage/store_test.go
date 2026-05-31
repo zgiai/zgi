@@ -113,6 +113,17 @@ func TestPostgresStorePersistsSandboxAndEvents(t *testing.T) {
 	if err := store.AppendEvent(olderEvent); err != nil {
 		t.Fatalf("append older event: %v", err)
 	}
+	execEvent := observer.Event{
+		ID:        "evt_store_test_exec",
+		SandboxID: box.ID,
+		Type:      "exec.code",
+		Message:   "code executed",
+		CreatedAt: event.CreatedAt.Add(500 * time.Millisecond),
+		Metadata:  map[string]any{"worker_id": "worker-a"},
+	}
+	if err := store.AppendEvent(execEvent); err != nil {
+		t.Fatalf("append execution event: %v", err)
+	}
 
 	events, err := store.QueryEvents(observer.Query{SandboxID: box.ID, Limit: 1})
 	if err != nil {
@@ -121,11 +132,22 @@ func TestPostgresStorePersistsSandboxAndEvents(t *testing.T) {
 	if len(events) != 1 {
 		t.Fatalf("expected one event, got %d", len(events))
 	}
-	if events[0].Type != "sandbox.created" {
+	if events[0].Type != "exec.code" {
 		t.Fatalf("unexpected event type: %s", events[0].Type)
 	}
-	if events[0].Message != "created" {
+	if events[0].Message != "code executed" {
 		t.Fatalf("expected newest event first, got %q", events[0].Message)
+	}
+
+	execEvents, err := store.QueryEvents(observer.Query{SandboxID: box.ID, TypePrefix: "exec.", Limit: 10})
+	if err != nil {
+		t.Fatalf("query execution events: %v", err)
+	}
+	if len(execEvents) != 1 {
+		t.Fatalf("expected one execution event, got %d", len(execEvents))
+	}
+	if execEvents[0].Message != "code executed" {
+		t.Fatalf("expected execution event, got %q", execEvents[0].Message)
 	}
 
 	scopedEvents, err := store.QueryEvents(observer.Query{

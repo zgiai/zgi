@@ -800,6 +800,69 @@ func TestObserverEventsEndpointFiltersByRequestID(t *testing.T) {
 	}
 }
 
+func TestSandboxExecutionHistoryEndpointReturnsExecutionEventsOnly(t *testing.T) {
+	server, err := NewServer(testConfig(t))
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	createReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","ttl_seconds":60}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	createRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(createRes, createReq)
+	if createRes.Code != http.StatusOK {
+		t.Fatalf("expected create to return 200, got %d body=%s", createRes.Code, createRes.Body.String())
+	}
+
+	var createPayload struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(createRes.Body.Bytes(), &createPayload); err != nil {
+		t.Fatalf("expected create payload, got %v", err)
+	}
+
+	server.observer.Record("files.upload", createPayload.Data.ID, "file upload", nil)
+	server.observer.Record("exec.code", createPayload.Data.ID, "code executed", map[string]any{
+		"request_id":   "req_history_match",
+		"execution_id": "exec_history_code",
+	})
+	server.observer.Record("exec.command.failed", createPayload.Data.ID, "command failed", map[string]any{
+		"request_id":   "req_history_miss",
+		"execution_id": "exec_history_command",
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/sandboxes/"+createPayload.Data.ID+"/executions?request_id=req_history_match&limit=10", nil)
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected execution history to return 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var payload struct {
+		Data struct {
+			Events []struct {
+				Type     string         `json:"type"`
+				Message  string         `json:"message"`
+				Metadata map[string]any `json:"metadata"`
+			} `json:"events"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("expected execution history payload, got %v", err)
+	}
+	if len(payload.Data.Events) != 1 {
+		t.Fatalf("expected one execution event, got %d", len(payload.Data.Events))
+	}
+	if payload.Data.Events[0].Type != "exec.code" || payload.Data.Events[0].Message != "code executed" {
+		t.Fatalf("expected matching exec.code event, got %+v", payload.Data.Events[0])
+	}
+	if payload.Data.Events[0].Metadata["execution_id"] != "exec_history_code" {
+		t.Fatalf("expected execution metadata, got %+v", payload.Data.Events[0].Metadata)
+	}
+}
+
 func TestObserverEventsEndpointRejectsNonGet(t *testing.T) {
 	server, err := NewServer(testConfig(t))
 	if err != nil {

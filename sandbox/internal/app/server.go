@@ -393,6 +393,11 @@ func (s *Server) handleSandboxByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeEnvelope(w, http.StatusOK, box)
+	case len(parts) == 2 && parts[1] == "executions" && r.Method == http.MethodGet:
+		if s.proxyOwnedRequest(w, r, id) {
+			return
+		}
+		s.writeSandboxExecutionHistory(w, r, id)
 	case len(parts) == 3 && parts[1] == "endpoints" && r.Method == http.MethodGet:
 		endpoint, err := s.lifecycle.ResolveEndpoint(id, parts[2])
 		if err != nil {
@@ -737,6 +742,43 @@ func (s *Server) handleObserverEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	limit, before, ok := parseEventPage(w, r)
+	if !ok {
+		return
+	}
+
+	events := s.observer.Query(observer.Query{
+		SandboxID:      r.URL.Query().Get("sandbox_id"),
+		Type:           r.URL.Query().Get("type"),
+		OrganizationID: r.URL.Query().Get("organization_id"),
+		WorkspaceID:    r.URL.Query().Get("workspace_id"),
+		AppID:          r.URL.Query().Get("app_id"),
+		WorkflowRunID:  r.URL.Query().Get("workflow_run_id"),
+		UserID:         r.URL.Query().Get("user_id"),
+		RequestID:      r.URL.Query().Get("request_id"),
+		Limit:          limit + 1,
+		Before:         before,
+	})
+	writeEventPage(w, events, limit)
+}
+
+func (s *Server) writeSandboxExecutionHistory(w http.ResponseWriter, r *http.Request, sandboxID string) {
+	limit, before, ok := parseEventPage(w, r)
+	if !ok {
+		return
+	}
+
+	events := s.observer.Query(observer.Query{
+		SandboxID:  sandboxID,
+		TypePrefix: "exec.",
+		RequestID:  r.URL.Query().Get("request_id"),
+		Limit:      limit + 1,
+		Before:     before,
+	})
+	writeEventPage(w, events, limit)
+}
+
+func parseEventPage(w http.ResponseWriter, r *http.Request) (int, time.Time, bool) {
 	limit := 100
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		parsed, err := strconv.Atoi(raw)
@@ -753,23 +795,14 @@ func (s *Server) handleObserverEvents(w http.ResponseWriter, r *http.Request) {
 		parsed, err := time.Parse(time.RFC3339Nano, raw)
 		if err != nil {
 			writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "invalid before cursor", nil)
-			return
+			return 0, time.Time{}, false
 		}
 		before = parsed
 	}
+	return limit, before, true
+}
 
-	events := s.observer.Query(observer.Query{
-		SandboxID:      r.URL.Query().Get("sandbox_id"),
-		Type:           r.URL.Query().Get("type"),
-		OrganizationID: r.URL.Query().Get("organization_id"),
-		WorkspaceID:    r.URL.Query().Get("workspace_id"),
-		AppID:          r.URL.Query().Get("app_id"),
-		WorkflowRunID:  r.URL.Query().Get("workflow_run_id"),
-		UserID:         r.URL.Query().Get("user_id"),
-		RequestID:      r.URL.Query().Get("request_id"),
-		Limit:          limit + 1,
-		Before:         before,
-	})
+func writeEventPage(w http.ResponseWriter, events []observer.Event, limit int) {
 	hasMore := len(events) > limit
 	if hasMore {
 		events = events[:limit]

@@ -80,3 +80,18 @@ func TestRecorderFiltersByRequestID(t *testing.T) {
 		t.Fatalf("expected matching event, got %q", events[0].Message)
 	}
 }
+
+func TestRecorderFiltersByTypePrefix(t *testing.T) {
+	recorder := NewRecorder(20)
+	recorder.Record("sandbox.created", "sbx_history", "lifecycle", nil)
+	recorder.Record("exec.code", "sbx_history", "code", nil)
+	recorder.Record("exec.command.failed", "sbx_history", "command failed", nil)
+
+	events := recorder.Query(Query{SandboxID: "sbx_history", TypePrefix: "exec.", Limit: 10})
+	if len(events) != 2 {
+		t.Fatalf("expected two execution events, got %d", len(events))
+	}
+	if events[0].Message != "command failed" || events[1].Message != "code" {
+		t.Fatalf("expected newest execution events only, got %#v", events)
+	}
+}

@@ -36,6 +36,7 @@ Already available:
 - Configurable graceful shutdown for service drain on SIGTERM/SIGINT
 - Request correlation IDs for HTTP responses and execution observer events
 - Execution IDs for code, command, template, and skill execution responses and observer events
+- Sandbox-scoped execution history backed by observer execution events
 - Structured observer events for successful and failed execution paths
 - Observer event pagination with bounded default and maximum page sizes
 - Observer event filters for organization, workspace, app, workflow run, user, and request scope
@@ -190,7 +191,7 @@ ergonomic for workflow and agent use cases.
 
 - Add a session-bound execution mode for multi-step tools.
 - Preserve workspace state within the session TTL.
-- Track execution history per sandbox.
+- Added sandbox-scoped execution history backed by observer execution events.
 - Support explicit cleanup of generated files.
 - Add a clear boundary between workflow session sandboxes and interactive workspaces.
 

@@ -3,6 +3,7 @@ package observer
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"strings"
 	"sync"
 	"time"
 )
@@ -23,6 +24,7 @@ type Recorder struct {
 type Query struct {
 	SandboxID      string
 	Type           string
+	TypePrefix     string
 	OrganizationID string
 	WorkspaceID    string
 	AppID          string
@@ -189,6 +191,9 @@ func (s *memoryStore) QueryEvents(query Query) ([]Event, error) {
 			continue
 		}
 		if query.Type != "" && event.Type != query.Type {
+			continue
+		}
+		if query.TypePrefix != "" && !strings.HasPrefix(event.Type, query.TypePrefix) {
 			continue
 		}
 		if query.OrganizationID != "" && metadataString(event.Metadata, "organization_id") != query.OrganizationID {

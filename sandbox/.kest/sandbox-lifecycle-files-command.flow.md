@@ -303,6 +303,20 @@ data.events.0.metadata.workflow_run_id == "workflow_run_kest"
 ```
 
 ```step
+@id sandbox-execution-history
+@name Sandbox execution history
+
+GET {{base_url}}/v1/sandboxes/{{sandbox_id}}/executions?request_id=req_kest_command&limit=5
+
+[Asserts]
+status == 200
+code == 0
+data.events.0.type == "exec.command"
+data.events.0.metadata.request_id == "req_kest_command"
+data.events.0.metadata.execution_id == "{{command_execution_id}}"
+```
+
+```step
 @id observer-events-page-one
 @name Observer events first page
 

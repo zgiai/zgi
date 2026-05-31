@@ -362,13 +362,14 @@ func (s *Store) QueryEvents(query observer.Query) ([]observer.Event, error) {
 		FROM observer_events
 		WHERE ($1 = '' OR sandbox_id = $2)
 		  AND ($3 = '' OR type = $4)
-		  AND ($5::timestamptz IS NULL OR created_at < $5)
-		  AND ($6 = '' OR metadata_json->>'organization_id' = $7)
-		  AND ($8 = '' OR metadata_json->>'workspace_id' = $9)
-		  AND ($10 = '' OR metadata_json->>'app_id' = $11)
-		  AND ($12 = '' OR metadata_json->>'workflow_run_id' = $13)
-		  AND ($14 = '' OR metadata_json->>'user_id' = $15)
-		  AND ($16 = '' OR metadata_json->>'request_id' = $17)
+		  AND ($5 = '' OR type LIKE $6)
+		  AND ($7::timestamptz IS NULL OR created_at < $7)
+		  AND ($8 = '' OR metadata_json->>'organization_id' = $9)
+		  AND ($10 = '' OR metadata_json->>'workspace_id' = $11)
+		  AND ($12 = '' OR metadata_json->>'app_id' = $13)
+		  AND ($14 = '' OR metadata_json->>'workflow_run_id' = $15)
+		  AND ($16 = '' OR metadata_json->>'user_id' = $17)
+		  AND ($18 = '' OR metadata_json->>'request_id' = $19)
 		ORDER BY created_at DESC
 	`
 	var before any
@@ -378,6 +379,7 @@ func (s *Store) QueryEvents(query observer.Query) ([]observer.Event, error) {
 	args := []any{
 		query.SandboxID, query.SandboxID,
 		query.Type, query.Type,
+		query.TypePrefix, query.TypePrefix + "%",
 		before,
 		query.OrganizationID, query.OrganizationID,
 		query.WorkspaceID, query.WorkspaceID,
@@ -387,7 +389,7 @@ func (s *Store) QueryEvents(query observer.Query) ([]observer.Event, error) {
 		query.RequestID, query.RequestID,
 	}
 	if query.Limit > 0 {
-		statement += ` LIMIT $18`
+		statement += ` LIMIT $20`
 		args = append(args, query.Limit)
 	}
 
