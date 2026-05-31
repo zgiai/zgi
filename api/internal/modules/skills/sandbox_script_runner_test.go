@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -231,6 +232,97 @@ func TestSandboxScriptRunnerCommandRequestTimeoutIncludesPadding(t *testing.T) {
 
 	if got := runner.commandRequestTimeout(3); got != 5*time.Second {
 		t.Fatalf("command request timeout = %s, want 5s", got)
+	}
+}
+
+func TestSandboxScriptRunnerReturnsStructuredSandboxError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		if err := json.NewEncoder(w).Encode(map[string]interface{}{
+			"code":    -429,
+			"message": "workspace byte limit exceeded",
+			"data": map[string]interface{}{
+				"error_type": "limit_exceeded",
+				"limit":      "max_workspace_bytes",
+				"maximum":    1024,
+			},
+		}); err != nil {
+			t.Fatalf("write sandbox error: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	runner := NewSandboxScriptRunner(SandboxScriptRunnerConfig{Endpoint: server.URL})
+	err := runner.uploadArchive(context.Background(), "sbx_test", "archive", ExecutionContext{})
+	if err == nil {
+		t.Fatal("expected sandbox request error")
+	}
+	var sandboxErr *SandboxRequestError
+	if !errors.As(err, &sandboxErr) {
+		t.Fatalf("expected SandboxRequestError, got %T %v", err, err)
+	}
+	if sandboxErr.StatusCode != http.StatusTooManyRequests || sandboxErr.Code != -429 {
+		t.Fatalf("unexpected sandbox status/code: %+v", sandboxErr)
+	}
+	if sandboxErr.Data["error_type"] != "limit_exceeded" || sandboxErr.Data["limit"] != "max_workspace_bytes" {
+		t.Fatalf("unexpected sandbox error data: %+v", sandboxErr.Data)
+	}
+}
+
+func TestSandboxScriptRunnerRecordsStructuredSandboxErrorInTrace(t *testing.T) {
+	root := writeTestScriptSkill(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/sandboxes":
+			writeSandboxEnvelope(t, w, map[string]interface{}{"id": "sbx_test"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/files/upload-archive":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			if err := json.NewEncoder(w).Encode(map[string]interface{}{
+				"code":    -403,
+				"message": "sandbox does not belong to organization",
+				"data": map[string]interface{}{
+					"error_type": "access_denied",
+					"code":       "cross_organization_sandbox_access_denied",
+				},
+			}); err != nil {
+				t.Fatalf("write sandbox error: %v", err)
+			}
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/sandboxes/sbx_test":
+			writeSandboxEnvelope(t, w, map[string]interface{}{"deleted": true})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	runtime := NewRuntimeWithCatalog(nil, nil, "").WithScriptRunner(NewSandboxScriptRunner(SandboxScriptRunnerConfig{Endpoint: server.URL}))
+	doc, err := runtime.LoadCustomSkillDocument(root)
+	if err != nil {
+		t.Fatalf("load custom skill: %v", err)
+	}
+	result, err := runtime.CallSkillTool(context.Background(), &ResolvedSkills{Skills: []SkillDocument{doc}}, "script-skill", SkillScriptToolRun, map[string]interface{}{"input": "hello"}, ExecutionContext{OrganizationID: "organization-script"}, "call_1")
+	if err == nil {
+		t.Fatal("expected skill script error")
+	}
+	var sandboxErr *SandboxRequestError
+	if !errors.As(err, &sandboxErr) {
+		t.Fatalf("expected SandboxRequestError, got %T %v", err, err)
+	}
+	if result == nil || result.Trace.Status != "error" {
+		t.Fatalf("expected error trace, got %+v", result)
+	}
+	rawSandboxError, ok := result.Trace.Result["sandbox_error"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected sandbox_error trace result, got %+v", result.Trace.Result)
+	}
+	if rawSandboxError["status_code"] != http.StatusForbidden || rawSandboxError["code"] != -403 {
+		t.Fatalf("unexpected trace sandbox error: %+v", rawSandboxError)
+	}
+	data, ok := rawSandboxError["data"].(map[string]interface{})
+	if !ok || data["error_type"] != "access_denied" {
+		t.Fatalf("unexpected trace sandbox data: %+v", rawSandboxError["data"])
 	}
 }
 

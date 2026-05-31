@@ -503,7 +503,7 @@ business logic to sandbox internals.
   - [x] upload timeout
   - [x] execution timeout
   - [x] artifact download timeout
-- Add structured sandbox errors mapped to API-level errors.
+- [x] Add structured sandbox errors mapped to API-level errors.
 
 ### J2. Workflow Runtime
 
