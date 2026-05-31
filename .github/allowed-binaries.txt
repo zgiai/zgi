@@ -2,12 +2,6 @@
 # Keep this list short. Prefer source fixtures or generated artifacts over committed binaries.
 api/tests/file_process/hyperparse/fixtures/empty.pdf
 api/tests/file_process/hyperparse/fixtures/sample.pdf
-docs/assets/zgi-agent-editor-openai-skills.png
-docs/assets/zgi-agent-skill-call.png
-docs/assets/zgi-model-channel-management.png
-docs/assets/zgi-openai-model-provider-detail.png
-docs/assets/zgi-prompt-library.png
-docs/assets/zgi-skill-management.png
 docs/assets/zgi-workflow-editor-api-enrichment.png
 web/public/logo.png
 web/public/logo1.png
