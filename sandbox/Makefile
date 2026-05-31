@@ -2,6 +2,7 @@ SHELL := /bin/sh
 
 .PHONY: fmt test build check run kest test-linux-secure
 .PHONY: docker-up docker-down docker-logs
+.PHONY: docker-config
 
 fmt:
 	gofmt -w $$(find . -name '*.go')
@@ -25,6 +26,9 @@ test-linux-secure:
 
 docker-up:
 	./scripts/start-docker
+
+docker-config:
+	POSTGRES_PASSWORD=zgi-sandbox-local docker compose --env-file .env.example config >/dev/null
 
 docker-down:
 	docker compose down
