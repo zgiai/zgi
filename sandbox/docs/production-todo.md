@@ -279,7 +279,8 @@ Detailed implementation guidance is tracked in
 - [x] Verify Python and Node profile environments before activation.
 - [x] Inject profile-specific runtime environment variables.
 - [x] Bind profile directories read-only in the secure runtime.
-- Add API catalog preflight before skill sandbox creation.
+- [x] Load verified dependency profile artifacts into the startup catalog.
+- [x] Add API catalog preflight before skill sandbox creation.
 - Add Kest skill execution coverage for declared dependency profiles.
 
 ## 8. Milestone E: Network Governance

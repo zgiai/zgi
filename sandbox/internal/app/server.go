@@ -76,6 +76,15 @@ func NewServer(cfg config.Config) (*Server, error) {
 		_ = store.Close()
 		return nil, fmt.Errorf("load dependency profile cache: %w", err)
 	}
+	artifactProfiles, err := loadDependencyProfileArtifacts(cfg.DependencyRootFSDir)
+	if err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	if err := policyService.LoadDependencyProfiles(artifactProfiles); err != nil {
+		_ = store.Close()
+		return nil, fmt.Errorf("load dependency profile artifacts: %w", err)
+	}
 	recorder := observer.NewRecorderWithStore(store)
 	manager, err := lifecycle.NewManagerWithConfig(recorder, policyService, cfg, store, sandboxCache)
 	if err != nil {
@@ -106,6 +115,38 @@ func NewServer(cfg config.Config) (*Server, error) {
 
 func (s *Server) Handler() http.Handler {
 	return s.withRequestID(s.mux)
+}
+
+func loadDependencyProfileArtifacts(root string) ([]policy.DependencyProfile, error) {
+	artifacts, err := runner.ListDependencyProfileArtifacts(root)
+	if err != nil {
+		return nil, fmt.Errorf("load dependency profile artifacts: %w", err)
+	}
+	profiles := make([]policy.DependencyProfile, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		packages := make([]policy.DependencyPackage, 0, len(artifact.Packages))
+		for _, item := range artifact.Packages {
+			packages = append(packages, policy.DependencyPackage{
+				Name:      item.Name,
+				Version:   item.Version,
+				Ecosystem: item.Ecosystem,
+			})
+		}
+		profiles = append(profiles, policy.DependencyProfile{
+			Name:        artifact.Name,
+			Version:     artifact.Version,
+			Status:      "ready",
+			Enabled:     true,
+			OwnerScope:  artifact.OwnerScope,
+			Languages:   artifact.Languages,
+			Packages:    packages,
+			BaseRuntime: artifact.BaseRuntime,
+			Checksum:    artifact.Checksum,
+			SizeBytes:   artifact.SizeBytes,
+			Description: artifact.Description,
+		})
+	}
+	return profiles, nil
 }
 
 func (s *Server) registerRoutes() {

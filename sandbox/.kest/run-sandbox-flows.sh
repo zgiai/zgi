@@ -55,6 +55,10 @@ cleanup() {
     kill "${DEPENDENCY_PROFILE_BUILD_SERVER_PID}" 2>/dev/null || true
     wait "${DEPENDENCY_PROFILE_BUILD_SERVER_PID}" 2>/dev/null || true
   fi
+  if [[ -n "${DEPENDENCY_PROFILE_ARTIFACT_SERVER_PID:-}" ]] && kill -0 "${DEPENDENCY_PROFILE_ARTIFACT_SERVER_PID}" 2>/dev/null; then
+    kill "${DEPENDENCY_PROFILE_ARTIFACT_SERVER_PID}" 2>/dev/null || true
+    wait "${DEPENDENCY_PROFILE_ARTIFACT_SERVER_PID}" 2>/dev/null || true
+  fi
   if [[ -n "${CONCURRENT_SERVER_PID:-}" ]] && kill -0 "${CONCURRENT_SERVER_PID}" 2>/dev/null; then
     kill "${CONCURRENT_SERVER_PID}" 2>/dev/null || true
     wait "${CONCURRENT_SERVER_PID}" 2>/dev/null || true
@@ -342,6 +346,110 @@ PY
     --var admin_api_key="${DEPENDENCY_PROFILE_BUILD_API_KEY}" \
     --var dependency_profile_name="${DEPENDENCY_PROFILE_BUILD_NAME}" \
     --fail-fast
+
+  if kill -0 "${DEPENDENCY_PROFILE_BUILD_SERVER_PID}" 2>/dev/null; then
+    kill "${DEPENDENCY_PROFILE_BUILD_SERVER_PID}" 2>/dev/null || true
+    wait "${DEPENDENCY_PROFILE_BUILD_SERVER_PID}" 2>/dev/null || true
+  fi
+
+  DEPENDENCY_PROFILE_ARTIFACT_PORT="$(python3 - <<'PY'
+import socket
+
+with socket.socket() as s:
+    s.bind(("127.0.0.1", 0))
+    print(s.getsockname()[1])
+PY
+)"
+  DEPENDENCY_PROFILE_ARTIFACT_BASE_URL="http://127.0.0.1:${DEPENDENCY_PROFILE_ARTIFACT_PORT}"
+  DEPENDENCY_PROFILE_ARTIFACT_SERVER_LOG="${DATA_DIR}/sandbox-dependency-profile-artifact.log"
+  DEPENDENCY_PROFILE_ARTIFACT_ROOT="${DATA_DIR}/dependency-profile-artifacts"
+  DEPENDENCY_PROFILE_ARTIFACT_API_KEY="kest-artifact-admin-key"
+  DEPENDENCY_PROFILE_ARTIFACT_CHECKSUM="$(
+    DEPENDENCY_PROFILE_ARTIFACT_ROOT="${DEPENDENCY_PROFILE_ARTIFACT_ROOT}" python3 - <<'PY'
+import hashlib
+import json
+import os
+from pathlib import Path
+
+root = Path(os.environ["DEPENDENCY_PROFILE_ARTIFACT_ROOT"])
+profile_dir = root / "skill-office" / "opt" / "zgi" / "profiles" / "skill-office"
+files = {
+    "venv/bin/python": b"#!/usr/bin/env python3\n",
+    "venv/pyvenv.cfg": b"home = /usr/bin\ninclude-system-site-packages = false\n",
+    "node_modules/.bin/tool": b"#!/usr/bin/env node\n",
+    "node_modules/office-tools/package.json": b'{"name":"office-tools","version":"managed"}\n',
+    "bin/profile-ready": b"ready\n",
+}
+
+for rel, raw in files.items():
+    path = profile_dir / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(raw)
+
+digest = hashlib.sha256()
+size = 0
+for rel in sorted(files):
+    raw = files[rel]
+    digest.update(rel.encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(raw)
+    digest.update(b"\0")
+    size += len(raw)
+checksum = "sha256:" + digest.hexdigest()
+manifest = {
+    "name": "skill-office",
+    "version": "2026.05.31-artifact",
+    "status": "disabled",
+    "enabled": False,
+    "owner_scope": "global",
+    "languages": ["python3", "nodejs"],
+    "base_runtime": "linux-secure",
+    "description": "Managed office automation profile artifact.",
+    "packages": [
+        {"ecosystem": "python3", "name": "office-tools", "version": "managed"},
+        {"ecosystem": "nodejs", "name": "office-tools", "version": "managed"},
+    ],
+    "build": {
+        "checksum": checksum,
+        "size_bytes": size,
+        "verification_passed": True,
+    },
+}
+(profile_dir / "manifest.json").write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
+print(checksum)
+PY
+  )"
+  env \
+    ZGI_SANDBOX_SERVER_PORT="${DEPENDENCY_PROFILE_ARTIFACT_PORT}" \
+    ZGI_SANDBOX_DATA_DIR="${DATA_DIR}/dependency-profile-artifact-data" \
+    ZGI_SANDBOX_DEPENDENCY_ROOTFS_DIR="${DEPENDENCY_PROFILE_ARTIFACT_ROOT}" \
+    ZGI_SANDBOX_WORKER_ID="zgi-sandbox-dependency-profile-artifact-kest-${DEPENDENCY_PROFILE_ARTIFACT_PORT}" \
+    ZGI_SANDBOX_API_KEY="${DEPENDENCY_PROFILE_ARTIFACT_API_KEY}" \
+    go run cmd/server/main.go >"${DEPENDENCY_PROFILE_ARTIFACT_SERVER_LOG}" 2>&1 &
+  DEPENDENCY_PROFILE_ARTIFACT_SERVER_PID="$!"
+
+  for _ in {1..80}; do
+    if curl -fsS "${DEPENDENCY_PROFILE_ARTIFACT_BASE_URL}/health" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.25
+  done
+  if ! curl -fsS "${DEPENDENCY_PROFILE_ARTIFACT_BASE_URL}/health" >/dev/null 2>&1; then
+    cat "${DEPENDENCY_PROFILE_ARTIFACT_SERVER_LOG}" >&2
+    echo "dependency profile artifact sandbox did not become ready at ${DEPENDENCY_PROFILE_ARTIFACT_BASE_URL}" >&2
+    exit 1
+  fi
+
+  write_kest_config "${DEPENDENCY_PROFILE_ARTIFACT_BASE_URL}"
+  run_kest .kest/sandbox-dependency-profile-artifact-autoload.flow.md \
+    --var admin_api_key="${DEPENDENCY_PROFILE_ARTIFACT_API_KEY}" \
+    --var skill_office_checksum="${DEPENDENCY_PROFILE_ARTIFACT_CHECKSUM}" \
+    --fail-fast
+
+  if kill -0 "${DEPENDENCY_PROFILE_ARTIFACT_SERVER_PID}" 2>/dev/null; then
+    kill "${DEPENDENCY_PROFILE_ARTIFACT_SERVER_PID}" 2>/dev/null || true
+    wait "${DEPENDENCY_PROFILE_ARTIFACT_SERVER_PID}" 2>/dev/null || true
+  fi
   write_kest_config "${BASE_URL}"
 fi
 

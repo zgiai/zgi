@@ -30,11 +30,14 @@ The current codebase already has the policy and API foundation:
 - Archive upload rejects skill manifests that do not match the sandbox profile.
 - The secure Linux backend can select a profile-specific rootfs directory through
   `ZGI_SANDBOX_DEPENDENCY_ROOTFS_DIR`.
+- Service startup can load verified profile artifacts from
+  `ZGI_SANDBOX_DEPENDENCY_ROOTFS_DIR` into the dependency catalog as ready,
+  enabled profiles.
 - Runtime dependency installation commands are rejected by the executor policy.
 
-The remaining gap is that profile builds are still mostly a registry contract:
-the service validates and stores profile metadata, but it does not yet build,
-verify, publish, or activate complete Python and Node profile environments.
+The remaining gap is operational packaging: production deployments still need a
+release job that builds complete Python and Node profile environments, publishes
+the profile-specific rootfs output, and rolls it to sandbox workers.
 
 ## 3. Target Model
 
@@ -338,6 +341,14 @@ Validation:
 ### PR 5: Office Profile Release Gate
 
 Goal: make `skill-office` production-usable.
+
+Scope:
+
+- release verified profile artifacts from profile-specific rootfs directories;
+- load verified artifacts into the dependency catalog on sandbox startup;
+- keep source profiles disabled until a verified artifact is present;
+- reject corrupted, mismatched, symlinked, or unverified artifacts;
+- cover artifact autoload through unit tests and Kest.
 
 Scope:
 

@@ -22,11 +22,6 @@ data.profiles.0.status == "ready"
 data.profiles.0.enabled == true
 data.profiles.0.owner_scope == "global"
 data.profiles.0.base_runtime == "preview-process"
-data.profiles.3.name == "skill-office"
-data.profiles.3.version == "2026.05.31"
-data.profiles.3.status == "disabled"
-data.profiles.3.enabled == false
-data.profiles.3.base_runtime == "linux-secure"
 data.package_policy.mode == "managed-build-only"
 data.package_policy.enforced == true
 data.package_policy.default_action == "deny-unlisted"
