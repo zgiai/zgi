@@ -63,6 +63,7 @@ export default function ApiKeysTab({ agentId }: ApiKeysTabProps) {
         (k.name || '').toLowerCase().includes(q) || (k.key_prefix || '').toLowerCase().includes(q)
     );
   }, [keys, search]);
+  const hasSearch = search.trim().length > 0;
 
   // Create dialog state
   const [formOpen, setFormOpen] = useState(false);
@@ -224,8 +225,30 @@ export default function ApiKeysTab({ agentId }: ApiKeysTabProps) {
           <Skeleton className="h-10 w-full" />
         </div>
       ) : filteredKeys.length === 0 ? (
-        <div className="border rounded-lg p-8 text-center text-muted-foreground">
-          {t('agents.apiKeys.empty')}
+        <div className="rounded-lg border border-dashed p-8 text-center">
+          <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-lg bg-primary/10">
+            <KeyRound className="size-6 text-primary" />
+          </div>
+          <h3 className="text-base font-semibold text-foreground">
+            {hasSearch ? t('agents.apiKeys.emptySearchTitle') : t('agents.apiKeys.emptyTitle')}
+          </h3>
+          <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
+            {hasSearch
+              ? t('agents.apiKeys.emptySearchDescription')
+              : t('agents.apiKeys.emptyDescription')}
+          </p>
+          <div className="mt-5 flex justify-center gap-2">
+            {hasSearch ? (
+              <Button variant="outline" onClick={() => setSearch('')}>
+                {t('common.clear')}
+              </Button>
+            ) : (
+              <Button onClick={openCreate}>
+                <Plus className="size-4" />
+                {t('agents.apiKeys.actions.createKey')}
+              </Button>
+            )}
+          </div>
         </div>
       ) : (
         <div className="rounded-md border overflow-auto">
