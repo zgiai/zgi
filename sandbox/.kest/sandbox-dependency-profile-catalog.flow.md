@@ -86,6 +86,52 @@ data.exit_code == 0
 ```
 
 ```step
+@id reject-runtime-pip-install
+@name Reject runtime dependency install
+
+POST {{base_url}}/v1/exec/command
+Content-Type: application/json
+X-Request-ID: req_kest_dependency_install_rejected
+
+{
+  "sandbox_id": "{{profile_sandbox_id}}",
+  "command": "python3",
+  "args": ["-m", "pip", "install", "requests"],
+  "profile": "skill-python",
+  "timeout_ms": 30000,
+  "stdout_limit_kb": 1024,
+  "stderr_limit_kb": 1024
+}
+
+[Asserts]
+status == 400
+code == -400
+message == "runtime dependency installation is disabled for managed dependency profiles"
+data.error_type == "policy_denied"
+data.code == "dependency_install_disabled"
+data.package_manager == "pip"
+data.action == "install"
+```
+
+```step
+@id observer-runtime-pip-install-rejection
+@name Observer records runtime dependency install rejection
+
+GET {{base_url}}/v1/observer/events?sandbox_id={{profile_sandbox_id}}&type=exec.command.failed&request_id=req_kest_dependency_install_rejected&limit=1
+
+[Asserts]
+status == 200
+code == 0
+data.events.0.metadata.status == "failure"
+data.events.0.metadata.error_type == "policy_denied"
+data.events.0.metadata.code == "dependency_install_disabled"
+data.events.0.metadata.package_manager == "pip"
+data.events.0.metadata.action == "install"
+data.events.0.metadata.dependency_profile == "workflow-safe"
+data.events.0.metadata.dependency_profile_version == "2026.05.01"
+```
+
+```step
 @id observer-versioned-profile-execution
 @name Observer records execution dependency profile version
 

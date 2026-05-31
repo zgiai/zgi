@@ -2230,6 +2230,63 @@ func TestRunCommandRejectsDangerousEnv(t *testing.T) {
 	}
 }
 
+func TestRunCommandRejectsRuntimeDependencyInstall(t *testing.T) {
+	service, manager := newTestExecutorService(t)
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile:    string(sandbox.RuntimeSession),
+		DependencyProfile: "workflow-safe",
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	cases := []CommandRequest{
+		{SandboxID: box.ID, Command: "pip", Args: []string{"install", "requests"}},
+		{SandboxID: box.ID, Command: "python3", Args: []string{"-m", "pip", "install", "requests"}},
+		{SandboxID: box.ID, Command: "uv", Args: []string{"pip", "sync"}},
+		{SandboxID: box.ID, Command: "npm install left-pad"},
+		{SandboxID: box.ID, Command: "cd /tmp && npm install left-pad"},
+		{SandboxID: box.ID, Command: "sh", Args: []string{"-c", "npm install left-pad"}},
+		{SandboxID: box.ID, Command: "env", Args: []string{"NODE_ENV=production", "npm", "install"}},
+		{SandboxID: box.ID, Command: "pnpm", Args: []string{"add", "left-pad"}},
+		{SandboxID: box.ID, Command: "yarn", Args: []string{"add", "left-pad"}},
+	}
+	for _, req := range cases {
+		_, err := service.RunCommand(context.Background(), req)
+		var dependencyErr *DependencyInstallError
+		if !errors.As(err, &dependencyErr) {
+			t.Fatalf("expected dependency install error for %+v, got %T %v", req, err, err)
+		}
+		if dependencyErr.ResponseDetails()["code"] != "dependency_install_disabled" {
+			t.Fatalf("expected structured dependency install code, got %+v", dependencyErr.ResponseDetails())
+		}
+	}
+
+	events := service.observer.Query(observer.Query{SandboxID: box.ID, Type: "exec.command.failed", Limit: 1})
+	if len(events) != 1 {
+		t.Fatalf("expected dependency install failure event, got %d", len(events))
+	}
+	if events[0].Metadata["error_type"] != "policy_denied" || events[0].Metadata["code"] != "dependency_install_disabled" {
+		t.Fatalf("expected dependency install policy event, got %#v", events[0].Metadata)
+	}
+
+	if _, err := service.RunCommand(context.Background(), CommandRequest{
+		SandboxID: box.ID,
+		Command:   "echo npm install is documented",
+		Profile:   "code-short",
+	}); err != nil {
+		t.Fatalf("expected non-install shell text to run, got %v", err)
+	}
+	if _, err := service.RunCommand(context.Background(), CommandRequest{
+		SandboxID: box.ID,
+		Command:   "sh",
+		Args:      []string{"-c", "echo npm install is documented"},
+		Profile:   "code-short",
+	}); err != nil {
+		t.Fatalf("expected non-install shell argv text to run, got %v", err)
+	}
+}
+
 func TestBuildFileManifestReturnsHashesAndContentTypes(t *testing.T) {
 	service, manager := newTestExecutorService(t)
 	box, err := manager.Create(lifecycle.CreateRequest{

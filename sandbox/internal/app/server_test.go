@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/zgiai/zgi-sandbox/internal/config"
+	"github.com/zgiai/zgi-sandbox/internal/executor"
 	"github.com/zgiai/zgi-sandbox/internal/observer"
 	"github.com/zgiai/zgi-sandbox/internal/runner"
 	"github.com/zgiai/zgi-sandbox/internal/testutil"
@@ -603,6 +604,21 @@ func TestWriteKnownErrorMapsQueueTimeout(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), `"code":"execution_queue_timeout"`) {
 		t.Fatalf("expected queue timeout details, got %s", rr.Body.String())
+	}
+}
+
+func TestWriteKnownErrorIncludesPolicyDetails(t *testing.T) {
+	rr := httptest.NewRecorder()
+
+	writeKnownError(rr, &executor.DependencyInstallError{PackageManager: "pip", Action: "install"})
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	for _, expected := range []string{`"error_type":"policy_denied"`, `"code":"dependency_install_disabled"`, `"package_manager":"pip"`, `"action":"install"`} {
+		if !strings.Contains(rr.Body.String(), expected) {
+			t.Fatalf("expected %s in response, got %s", expected, rr.Body.String())
+		}
 	}
 }
 

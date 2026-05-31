@@ -249,7 +249,7 @@ arbitrary runtime installs from untrusted code.
 
 ### D3. Runtime Policy
 
-- Disable arbitrary dependency installation inside normal execution.
+- [x] Disable arbitrary dependency installation inside normal execution.
 - Add an administrator-only profile build path.
 - Add package allowlist and denylist controls.
 - Add maximum profile size and build timeout.

@@ -1149,6 +1149,9 @@ func writeKnownError(w http.ResponseWriter, err error) {
 	var limitErr *policy.LimitError
 	var queueErr *runner.QueueTimeoutError
 	var cancelErr *runner.CancellationError
+	var detailsErr interface {
+		ResponseDetails() map[string]any
+	}
 	switch {
 	case errors.As(err, &limitErr):
 		status = http.StatusTooManyRequests
@@ -1166,6 +1169,8 @@ func writeKnownError(w http.ResponseWriter, err error) {
 		status = statusClientClosedRequest
 		code = -499
 		data = (&runner.CancellationError{Phase: "request"}).ResponseDetails()
+	case errors.As(err, &detailsErr):
+		data = detailsErr.ResponseDetails()
 	case errors.Is(err, strconv.ErrSyntax):
 		status = http.StatusBadRequest
 	case strings.Contains(err.Error(), "not found"):

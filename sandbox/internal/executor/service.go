@@ -194,6 +194,36 @@ type FileManifestOptions struct {
 	MaxTotalBytes int64
 }
 
+type DependencyInstallError struct {
+	PackageManager string
+	Action         string
+	Command        string
+}
+
+func (e *DependencyInstallError) Error() string {
+	return "runtime dependency installation is disabled for managed dependency profiles"
+}
+
+func (e *DependencyInstallError) ResponseDetails() map[string]any {
+	details := map[string]any{
+		"error_type": "policy_denied",
+		"code":       "dependency_install_disabled",
+	}
+	if e == nil {
+		return details
+	}
+	if e.PackageManager != "" {
+		details["package_manager"] = e.PackageManager
+	}
+	if e.Action != "" {
+		details["action"] = e.Action
+	}
+	if e.Command != "" {
+		details["command"] = e.Command
+	}
+	return details
+}
+
 func NewService(manager *lifecycle.Manager, runnerService *runner.Service, recorder *observer.Recorder, policyService *policy.Service) *Service {
 	return &Service{
 		lifecycle:                      manager,
@@ -443,6 +473,10 @@ func (s *Service) RunCommand(ctx context.Context, req CommandRequest) (runner.Co
 		return runner.CommandResult{}, err
 	}
 	baseMetadata["profile"] = limits.Profile
+	if err := rejectRuntimeDependencyInstall(req.Command, req.Args); err != nil {
+		s.recordExecutionFailure(ctx, "exec.command.failed", req.SandboxID, "sandbox command execution failed", baseMetadata, err)
+		return runner.CommandResult{}, err
+	}
 	if len(req.Stdin) > limits.MaxStdinBytes {
 		err := fmt.Errorf("stdin exceeds max size of %d bytes", limits.MaxStdinBytes)
 		s.recordExecutionFailure(ctx, "exec.command.failed", req.SandboxID, "sandbox command execution failed", baseMetadata, err)
@@ -1014,11 +1048,14 @@ func classifyExecutionError(err error) string {
 	var cancelErr *runner.CancellationError
 	var queueErr *runner.QueueTimeoutError
 	var limitErr *policy.LimitError
+	var dependencyInstallErr *DependencyInstallError
 	switch {
 	case errors.As(err, &cancelErr):
 		return "execution_canceled"
 	case errors.As(err, &queueErr), errors.As(err, &limitErr):
 		return "limit_exceeded"
+	case errors.As(err, &dependencyInstallErr):
+		return "policy_denied"
 	case strings.Contains(err.Error(), "timed out"):
 		return "limit_exceeded"
 	case strings.Contains(err.Error(), "network access"):
@@ -2331,6 +2368,203 @@ func normalizeCommandEnv(env map[string]string) (map[string]string, error) {
 		normalized[key] = value
 	}
 	return normalized, nil
+}
+
+func rejectRuntimeDependencyInstall(command string, args []string) error {
+	if len(args) > 0 {
+		tokens := commandTokens(command, args)
+		if len(tokens) > 0 && isShellCommand(tokens[0]) {
+			if match := shellArgDependencyInstallMatch(command, args); match != nil {
+				match.Command = strings.TrimSpace(command)
+				return match
+			}
+			return nil
+		}
+		tokens = trimShellCommandPrefix(tokens)
+		if match := dependencyInstallHeadMatch(tokens); match != nil {
+			match.Command = strings.TrimSpace(command)
+			return match
+		}
+		return nil
+	}
+
+	if match := shellDependencyInstallMatch(command); match != nil {
+		match.Command = strings.TrimSpace(command)
+		return match
+	}
+	return nil
+}
+
+func shellArgDependencyInstallMatch(command string, args []string) *DependencyInstallError {
+	for i, arg := range args {
+		if cleanCommandToken(arg) == "-c" && i+1 < len(args) {
+			return shellDependencyInstallMatch(args[i+1])
+		}
+	}
+	return nil
+}
+
+func commandTokens(command string, args []string) []string {
+	if len(args) > 0 {
+		tokens := []string{cleanCommandToken(command)}
+		for _, arg := range args {
+			tokens = append(tokens, cleanCommandToken(arg))
+		}
+		return compactTokens(tokens)
+	}
+
+	replacer := strings.NewReplacer(
+		"&&", " ",
+		"||", " ",
+		";", " ",
+		"|", " ",
+		"\n", " ",
+		"\t", " ",
+	)
+	parts := strings.Fields(replacer.Replace(command))
+	tokens := make([]string, 0, len(parts))
+	for _, part := range parts {
+		tokens = append(tokens, cleanCommandToken(part))
+	}
+	return compactTokens(tokens)
+}
+
+func shellDependencyInstallMatch(command string) *DependencyInstallError {
+	for _, segment := range shellCommandSegments(command) {
+		tokens := commandTokens(segment, nil)
+		tokens = trimShellCommandPrefix(tokens)
+		if match := dependencyInstallHeadMatch(tokens); match != nil {
+			return match
+		}
+	}
+	return nil
+}
+
+func shellCommandSegments(command string) []string {
+	replacer := strings.NewReplacer(
+		"&&", "\n",
+		"||", "\n",
+		";", "\n",
+		"|", "\n",
+	)
+	parts := strings.Split(replacer.Replace(command), "\n")
+	segments := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part = strings.TrimSpace(part); part != "" {
+			segments = append(segments, part)
+		}
+	}
+	return segments
+}
+
+func trimShellCommandPrefix(tokens []string) []string {
+	for len(tokens) > 0 {
+		switch {
+		case tokens[0] == "env" || tokens[0] == "sudo" || tokens[0] == "command":
+			tokens = tokens[1:]
+		case strings.Contains(tokens[0], "="):
+			tokens = tokens[1:]
+		default:
+			return tokens
+		}
+	}
+	return tokens
+}
+
+func compactTokens(tokens []string) []string {
+	compacted := make([]string, 0, len(tokens))
+	for _, token := range tokens {
+		if token != "" {
+			compacted = append(compacted, token)
+		}
+	}
+	return compacted
+}
+
+func cleanCommandToken(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.Trim(value, `"'`)
+	value = strings.TrimRight(value, ",")
+	return strings.ToLower(filepath.Base(value))
+}
+
+func dependencyInstallMatch(tokens []string) *DependencyInstallError {
+	for i := 0; i < len(tokens); i++ {
+		if match := dependencyInstallMatchAt(tokens, i); match != nil {
+			return match
+		}
+	}
+	return nil
+}
+
+func dependencyInstallHeadMatch(tokens []string) *DependencyInstallError {
+	return dependencyInstallMatchAt(tokens, 0)
+}
+
+func dependencyInstallMatchAt(tokens []string, index int) *DependencyInstallError {
+	if index >= len(tokens) {
+		return nil
+	}
+	token := tokens[index]
+	switch {
+	case isPipCommand(token) && nextTokenIs(tokens, index, "install"):
+		return dependencyInstallError(token, tokens[index+1])
+	case isPythonCommand(token) && nextTokenIs(tokens, index, "-m") && nextTokenIsPip(tokens, index+1) && nextTokenIs(tokens, index+2, "install"):
+		return dependencyInstallError(tokens[index+2], tokens[index+3])
+	case token == "uv" && nextTokenIs(tokens, index, "pip") && nextTokenIsAny(tokens, index+1, "install", "sync"):
+		return dependencyInstallError("uv pip", tokens[index+2])
+	case token == "npm" && nextTokenIsAny(tokens, index, "install", "i", "ci", "add"):
+		return dependencyInstallError(token, tokens[index+1])
+	case token == "pnpm" && nextTokenIsAny(tokens, index, "install", "i", "add"):
+		return dependencyInstallError(token, tokens[index+1])
+	case token == "yarn" && nextTokenIsAny(tokens, index, "install", "add"):
+		return dependencyInstallError(token, tokens[index+1])
+	case token == "bun" && nextTokenIsAny(tokens, index, "install", "add"):
+		return dependencyInstallError(token, tokens[index+1])
+	case token == "poetry" && nextTokenIsAny(tokens, index, "install", "add"):
+		return dependencyInstallError(token, tokens[index+1])
+	default:
+		return nil
+	}
+}
+
+func dependencyInstallError(manager string, action string) *DependencyInstallError {
+	return &DependencyInstallError{PackageManager: manager, Action: action}
+}
+
+func isPipCommand(value string) bool {
+	return value == "pip" || value == "pip3" || value == "pipx"
+}
+
+func isPythonCommand(value string) bool {
+	return value == "python" || value == "python3" || value == "py"
+}
+
+func isShellCommand(value string) bool {
+	return value == "sh" || value == "bash" || value == "dash" || value == "zsh"
+}
+
+func nextTokenIs(tokens []string, index int, value string) bool {
+	next := index + 1
+	return next < len(tokens) && tokens[next] == value
+}
+
+func nextTokenIsPip(tokens []string, index int) bool {
+	next := index + 1
+	return next < len(tokens) && isPipCommand(tokens[next])
+}
+
+func nextTokenIsAny(tokens []string, index int, values ...string) bool {
+	next := index + 1
+	if next >= len(tokens) {
+		return false
+	}
+	for _, value := range values {
+		if tokens[next] == value {
+			return true
+		}
+	}
+	return false
 }
 
 func validEnvKey(key string) bool {
