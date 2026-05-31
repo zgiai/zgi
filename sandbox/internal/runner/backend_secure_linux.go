@@ -121,6 +121,10 @@ func (b *linuxSecureBackend) exec(ctx context.Context, workDir string, dependenc
 	if err != nil {
 		return Result{}, err
 	}
+	profileEnv, err := secureDependencyProfileEnv(dependencyProfile)
+	if err != nil {
+		return Result{}, err
+	}
 
 	bwrapArgs := buildSecureBwrapArgs(secureBwrapSpec{
 		RootFS:        rootfs,
@@ -129,6 +133,7 @@ func (b *linuxSecureBackend) exec(ctx context.Context, workDir string, dependenc
 		Args:          args,
 		EnableNetwork: enableNetwork,
 		Env:           env,
+		ProfileEnv:    profileEnv,
 		Limits:        b.limits,
 	})
 

@@ -277,7 +277,7 @@ Detailed implementation guidance is tracked in
 - [x] Add CI-validated source profile manifests for managed profiles.
 - [x] Add deterministic build scripts for profile artifacts.
 - Verify Python and Node profile environments before activation.
-- Inject profile-specific runtime environment variables.
+- [x] Inject profile-specific runtime environment variables.
 - Bind profile directories read-only in the secure runtime.
 - Add API catalog preflight before skill sandbox creation.
 - Add Kest skill execution coverage for declared dependency profiles.

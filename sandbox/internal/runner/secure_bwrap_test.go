@@ -49,6 +49,44 @@ func TestBuildSecureBwrapArgsAllowsNetworkWhenRequested(t *testing.T) {
 	}
 }
 
+func TestBuildSecureBwrapArgsAddsProfileEnvAfterRequestEnv(t *testing.T) {
+	profileEnv, err := secureDependencyProfileEnv("skill-office")
+	if err != nil {
+		t.Fatalf("profile env: %v", err)
+	}
+	args := buildSecureBwrapArgs(secureBwrapSpec{
+		RootFS:  "/runtime/rootfs",
+		WorkDir: "/workspace",
+		Binary:  "python3",
+		Env: map[string]string{
+			"NODE_PATH": "/workspace/node_modules",
+			"Z_VAR":     "z",
+		},
+		ProfileEnv: profileEnv,
+	})
+
+	if lastSetenvValue(args, "NODE_PATH") != "/opt/zgi/profiles/skill-office/node_modules" {
+		t.Fatalf("expected profile NODE_PATH to win, got %#v", args)
+	}
+	if lastSetenvValue(args, "PYTHONNOUSERSITE") != "1" {
+		t.Fatalf("expected python user site isolation, got %#v", args)
+	}
+	expectedPath := "/opt/zgi/profiles/skill-office/venv/bin:/opt/zgi/profiles/skill-office/node_modules/.bin:" + defaultSecurePath
+	if lastSetenvValue(args, "PATH") != expectedPath {
+		t.Fatalf("expected profile PATH, got %#v", args)
+	}
+	if argPairIndex(args, "--setenv", "Z_VAR") > lastSetenvKeyIndex(args, "PATH") {
+		t.Fatalf("expected profile env after request env, got %#v", args)
+	}
+}
+
+func TestSecureDependencyProfileEnvRejectsUnsafeName(t *testing.T) {
+	_, err := secureDependencyProfileEnv("../skill-office")
+	if err == nil {
+		t.Fatal("expected unsafe dependency profile name rejection")
+	}
+}
+
 func assertArgPair(t *testing.T, args []string, key string, value string) {
 	t.Helper()
 	if argPairIndex(args, key, value) < 0 {
@@ -63,6 +101,24 @@ func argPairIndex(args []string, key string, value string) int {
 		}
 	}
 	return -1
+}
+
+func lastSetenvValue(args []string, name string) string {
+	index := lastSetenvKeyIndex(args, name)
+	if index < 0 || index+2 >= len(args) {
+		return ""
+	}
+	return args[index+2]
+}
+
+func lastSetenvKeyIndex(args []string, name string) int {
+	index := -1
+	for i := 0; i < len(args)-2; i++ {
+		if args[i] == "--setenv" && args[i+1] == name {
+			index = i
+		}
+	}
+	return index
 }
 
 func hasArg(args []string, value string) bool {

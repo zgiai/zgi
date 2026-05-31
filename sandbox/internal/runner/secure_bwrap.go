@@ -2,9 +2,11 @@ package runner
 
 import (
 	"sort"
+	"strings"
 )
 
 const secureWorkspacePath = "/tmp/workspace"
+const defaultSecurePath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 type secureBwrapSpec struct {
 	RootFS        string
@@ -13,6 +15,7 @@ type secureBwrapSpec struct {
 	Args          []string
 	EnableNetwork bool
 	Env           map[string]string
+	ProfileEnv    map[string]string
 	Limits        secureRuntimeLimits
 }
 
@@ -29,7 +32,7 @@ func buildSecureBwrapArgs(spec secureBwrapSpec) []string {
 		"--bind", spec.WorkDir, secureWorkspacePath,
 		"--chdir", secureWorkspacePath,
 		"--setenv", "HOME", secureWorkspacePath,
-		"--setenv", "PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+		"--setenv", "PATH", defaultSecurePath,
 		"--unshare-user",
 		"--uid", "65534",
 		"--gid", "65534",
@@ -41,6 +44,9 @@ func buildSecureBwrapArgs(spec secureBwrapSpec) []string {
 	args = append(args, spec.Limits.bwrapArgs()...)
 	for _, key := range sortedEnvKeys(spec.Env) {
 		args = append(args, "--setenv", key, spec.Env[key])
+	}
+	for _, key := range sortedEnvKeys(spec.ProfileEnv) {
+		args = append(args, "--setenv", key, spec.ProfileEnv[key])
 	}
 	if !spec.EnableNetwork {
 		args = append(args, "--unshare-net")
@@ -60,4 +66,20 @@ func sortedEnvKeys(env map[string]string) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+func secureDependencyProfileEnv(profile string) (map[string]string, error) {
+	profile = strings.TrimSpace(profile)
+	if profile == "" {
+		return nil, nil
+	}
+	if !safeDependencyProfileName(profile) {
+		return nil, ErrUnsafeDependencyProfileName{Profile: profile}
+	}
+	base := "/opt/zgi/profiles/" + profile
+	return map[string]string{
+		"PATH":             base + "/venv/bin:" + base + "/node_modules/.bin:" + defaultSecurePath,
+		"PYTHONNOUSERSITE": "1",
+		"NODE_PATH":        base + "/node_modules",
+	}, nil
 }
