@@ -8,28 +8,51 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
 
+	workflowfile "github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
+	tool_file "github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
 	llmadapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
 
 const defaultSkillScriptTimeoutSeconds = 30
+const defaultSkillScriptHTTPTimeout = 6 * time.Minute
+const inlineSkillArtifactMaxBytes = 32 * 1024
+const maxSkillScriptArtifactCount = 10
+const maxSkillScriptArtifactBytes = 2 * 1024 * 1024
 
 type SandboxScriptRunnerConfig struct {
-	Endpoint string
-	APIKey   string
+	Endpoint          string
+	APIKey            string
+	ArtifactPersister SkillScriptArtifactPersister
 }
 
 type SandboxScriptRunner struct {
-	endpoint string
-	apiKey   string
-	client   *http.Client
+	endpoint          string
+	apiKey            string
+	client            *http.Client
+	artifactPersister SkillScriptArtifactPersister
+}
+
+type SkillScriptArtifactPersistRequest struct {
+	ExecContext ExecutionContext
+	Path        string
+	Name        string
+	Size        int64
+	ContentType string
+	Data        []byte
+}
+
+type SkillScriptArtifactPersister interface {
+	PersistSkillScriptArtifact(ctx context.Context, request SkillScriptArtifactPersistRequest) (map[string]interface{}, error)
 }
 
 func NewSandboxScriptRunner(config SandboxScriptRunnerConfig) *SandboxScriptRunner {
@@ -38,9 +61,10 @@ func NewSandboxScriptRunner(config SandboxScriptRunnerConfig) *SandboxScriptRunn
 		return nil
 	}
 	return &SandboxScriptRunner{
-		endpoint: endpoint,
-		apiKey:   strings.TrimSpace(config.APIKey),
-		client:   &http.Client{Timeout: 60 * time.Second},
+		endpoint:          endpoint,
+		apiKey:            strings.TrimSpace(config.APIKey),
+		client:            &http.Client{Timeout: defaultSkillScriptHTTPTimeout},
+		artifactPersister: config.ArtifactPersister,
 	}
 }
 
@@ -55,9 +79,15 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 	if !doc.Metadata.HasScripts {
 		return nil, fmt.Errorf("skill %s does not include scripts", doc.Metadata.ID)
 	}
-	entrypoint := filepath.Join(doc.Metadata.RootPath, "scripts", "run.py")
-	if info, err := os.Stat(entrypoint); err != nil || info.IsDir() {
-		return nil, fmt.Errorf("skill %s script entrypoint scripts/run.py not found", doc.Metadata.ID)
+	hasManifest, err := hasSkillManifest(doc.Metadata.RootPath)
+	if err != nil {
+		return nil, fmt.Errorf("skill %s manifest is invalid: %w", doc.Metadata.ID, err)
+	}
+	if !hasManifest {
+		entrypoint := filepath.Join(doc.Metadata.RootPath, "scripts", "run.py")
+		if info, err := os.Stat(entrypoint); err != nil || info.IsDir() {
+			return nil, fmt.Errorf("skill %s script entrypoint scripts/run.py not found", doc.Metadata.ID)
+		}
 	}
 
 	start := time.Now()
@@ -85,7 +115,7 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 		trace.DurationMS = time.Since(start).Milliseconds()
 		return &ToolInvocationResult{Trace: trace}, err
 	}
-	if err := r.uploadArchive(ctx, sandboxID, archiveBase64); err != nil {
+	if err := r.uploadArchive(ctx, sandboxID, archiveBase64, hasManifest); err != nil {
 		trace.Status = "error"
 		trace.Error = err.Error()
 		trace.DurationMS = time.Since(start).Milliseconds()
@@ -99,19 +129,36 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 		trace.DurationMS = time.Since(start).Milliseconds()
 		return &ToolInvocationResult{Trace: trace}, fmt.Errorf("failed to encode skill script arguments: %w", err)
 	}
-	timeout := docTimeoutSeconds(doc)
-	if timeout <= 0 {
-		timeout = defaultSkillScriptTimeoutSeconds
-	}
-	command, err := r.runCommand(ctx, sandboxID, string(stdin), timeout, execCtx)
-	if err != nil {
-		trace.Status = "error"
-		trace.Error = err.Error()
-		trace.DurationMS = time.Since(start).Milliseconds()
-		return &ToolInvocationResult{Trace: trace}, err
+
+	var command *sandboxCommandResult
+	var artifacts []skillScriptArtifact
+	var artifactErr error
+	if hasManifest {
+		runResult, err := r.runSkill(ctx, sandboxID, string(stdin))
+		if err != nil {
+			trace.Status = "error"
+			trace.Error = err.Error()
+			trace.DurationMS = time.Since(start).Milliseconds()
+			return &ToolInvocationResult{Trace: trace}, err
+		}
+		command = &runResult.Command
+		artifacts, artifactErr = r.artifactsFromManifests(ctx, sandboxID, runResult.ArtifactManifests)
+	} else {
+		timeout := docTimeoutSeconds(doc)
+		if timeout <= 0 {
+			timeout = defaultSkillScriptTimeoutSeconds
+		}
+		command, err = r.runCommand(ctx, sandboxID, string(stdin), timeout, execCtx)
+		if err != nil {
+			trace.Status = "error"
+			trace.Error = err.Error()
+			trace.DurationMS = time.Since(start).Milliseconds()
+			return &ToolInvocationResult{Trace: trace}, err
+		}
+		artifacts, artifactErr = r.collectArtifacts(ctx, sandboxID)
 	}
 
-	artifacts, artifactErr := r.collectArtifacts(ctx, sandboxID)
+	r.prepareArtifacts(ctx, sandboxID, artifacts, execCtx)
 	messages, content, err := skillScriptMessages(command, artifacts, artifactErr)
 	trace.DurationMS = time.Since(start).Milliseconds()
 	if command.ExitCode != 0 {
@@ -122,7 +169,7 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 		trace.Error = err.Error()
 		return &ToolInvocationResult{Trace: trace, Messages: messages, ToolMessage: skillScriptToolMessage(callID, content)}, err
 	}
-	trace.Result = summarizeSkillScriptResult(command, messages)
+	trace.Result = summarizeSkillScriptResult(command, messages, artifacts)
 	return &ToolInvocationResult{
 		Messages:    messages,
 		Trace:       trace,
@@ -153,13 +200,14 @@ func (r *SandboxScriptRunner) createSandbox(ctx context.Context, execCtx Executi
 	return response.ID, nil
 }
 
-func (r *SandboxScriptRunner) uploadArchive(ctx context.Context, sandboxID string, archiveBase64 string) error {
+func (r *SandboxScriptRunner) uploadArchive(ctx context.Context, sandboxID string, archiveBase64 string, validateSkillManifest bool) error {
 	return r.doJSON(ctx, http.MethodPost, "/v1/files/upload-archive", map[string]interface{}{
-		"sandbox_id":     sandboxID,
-		"path":           ".",
-		"archive_base64": archiveBase64,
-		"format":         "zip",
-		"strip_root":     false,
+		"sandbox_id":              sandboxID,
+		"path":                    ".",
+		"archive_base64":          archiveBase64,
+		"format":                  "zip",
+		"strip_root":              false,
+		"validate_skill_manifest": validateSkillManifest,
 	}, nil)
 }
 
@@ -176,6 +224,19 @@ func (r *SandboxScriptRunner) runCommand(ctx context.Context, sandboxID string, 
 		"stdout_limit_kb": 1024,
 		"stderr_limit_kb": 1024,
 		"working_subpath": ".",
+	}, &response)
+	if err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
+func (r *SandboxScriptRunner) runSkill(ctx context.Context, sandboxID string, stdin string) (*sandboxSkillRunResult, error) {
+	var response sandboxSkillRunResult
+	err := r.doJSON(ctx, http.MethodPost, "/v1/exec/skill", map[string]interface{}{
+		"sandbox_id": sandboxID,
+		"path":       ".",
+		"stdin":      stdin,
 	}, &response)
 	if err != nil {
 		return nil, err
@@ -204,26 +265,101 @@ func (r *SandboxScriptRunner) collectArtifacts(ctx context.Context, sandboxID st
 		if item.IsDirectory || !strings.HasPrefix(filepath.ToSlash(item.Path), "artifacts/") {
 			continue
 		}
-		if len(artifacts) >= 10 {
+		if len(artifacts) >= maxSkillScriptArtifactCount {
 			break
 		}
-		artifact := skillScriptArtifact{
-			Path: item.Path,
-			Name: filepath.Base(item.Path),
-			Size: item.Size,
-		}
-		if item.Size <= 32*1024 {
-			content, err := r.downloadArtifact(ctx, sandboxID, item.Path)
-			if err != nil {
-				artifact.Error = err.Error()
-			} else {
-				artifact.Content = content.Content
-				artifact.Encoding = content.Encoding
-			}
-		}
-		artifacts = append(artifacts, artifact)
+		artifacts = append(artifacts, artifactFromFileInfo(item.Path, item.Size, ""))
 	}
 	return artifacts, nil
+}
+
+func (r *SandboxScriptRunner) artifactsFromManifests(ctx context.Context, sandboxID string, manifests []sandboxFileManifest) ([]skillScriptArtifact, error) {
+	artifacts := make([]skillScriptArtifact, 0)
+	for _, manifest := range manifests {
+		for _, item := range manifest.Items {
+			if len(artifacts) >= maxSkillScriptArtifactCount {
+				return artifacts, nil
+			}
+			artifacts = append(artifacts, artifactFromFileInfo(item.Path, item.Size, item.ContentType))
+		}
+	}
+	return artifacts, nil
+}
+
+func artifactFromFileInfo(artifactPath string, size int64, contentType string) skillScriptArtifact {
+	return skillScriptArtifact{
+		Path:        artifactPath,
+		Name:        path.Base(filepath.ToSlash(artifactPath)),
+		Size:        size,
+		ContentType: strings.TrimSpace(contentType),
+	}
+}
+
+func (r *SandboxScriptRunner) prepareArtifacts(ctx context.Context, sandboxID string, artifacts []skillScriptArtifact, execCtx ExecutionContext) {
+	for index := range artifacts {
+		r.prepareArtifact(ctx, sandboxID, &artifacts[index], execCtx)
+	}
+}
+
+func (r *SandboxScriptRunner) prepareArtifact(ctx context.Context, sandboxID string, artifact *skillScriptArtifact, execCtx ExecutionContext) {
+	if artifact == nil {
+		return
+	}
+	if artifact.Size > maxSkillScriptArtifactBytes {
+		artifact.Persisted = false
+		artifact.Reason = "size_limit_exceeded"
+		return
+	}
+	content, err := r.downloadArtifact(ctx, sandboxID, artifact.Path)
+	if err != nil {
+		artifact.Error = err.Error()
+		artifact.Persisted = false
+		artifact.Reason = "download_failed"
+		return
+	}
+	if content.Encoding != "" && !strings.EqualFold(content.Encoding, "base64") {
+		artifact.Error = "unsupported artifact encoding: " + content.Encoding
+		artifact.Persisted = false
+		artifact.Reason = "unsupported_encoding"
+		return
+	}
+	data, err := base64.StdEncoding.DecodeString(content.Content)
+	if err != nil {
+		artifact.Error = err.Error()
+		artifact.Persisted = false
+		artifact.Reason = "decode_failed"
+		return
+	}
+	if int64(len(data)) > maxSkillScriptArtifactBytes {
+		artifact.Persisted = false
+		artifact.Reason = "size_limit_exceeded"
+		return
+	}
+	artifact.Size = int64(len(data))
+	if artifact.Size <= inlineSkillArtifactMaxBytes {
+		artifact.Content = content.Content
+		artifact.Encoding = "base64"
+	}
+	persister := r.artifactPersister
+	if persister == nil {
+		persister = defaultSkillScriptArtifactPersister{}
+	}
+	fileMeta, err := persister.PersistSkillScriptArtifact(ctx, SkillScriptArtifactPersistRequest{
+		ExecContext: execCtx,
+		Path:        artifact.Path,
+		Name:        artifact.Name,
+		Size:        artifact.Size,
+		ContentType: artifact.ContentType,
+		Data:        data,
+	})
+	if err != nil {
+		artifact.Error = err.Error()
+		artifact.Persisted = false
+		artifact.Reason = "persist_failed"
+		return
+	}
+	artifact.Persisted = true
+	artifact.File = fileMeta
 }
 
 func (r *SandboxScriptRunner) downloadArtifact(ctx context.Context, sandboxID string, path string) (*sandboxFileContent, error) {
@@ -297,6 +433,43 @@ type sandboxCommandResult struct {
 	Backend    string   `json:"backend"`
 }
 
+type sandboxSkillRunResult struct {
+	ExecutionID       string                `json:"execution_id"`
+	SandboxID         string                `json:"sandbox_id"`
+	Path              string                `json:"path"`
+	Manifest          sandboxSkillManifest  `json:"manifest"`
+	Command           sandboxCommandResult  `json:"command"`
+	ArtifactManifests []sandboxFileManifest `json:"artifact_manifests"`
+	ResultJSON        interface{}           `json:"result_json"`
+}
+
+type sandboxSkillManifest struct {
+	Entrypoint           string   `json:"entrypoint"`
+	Language             string   `json:"language"`
+	TimeoutMS            int      `json:"timeout_ms"`
+	AllowedArtifactPaths []string `json:"allowed_artifact_paths"`
+	MaxArtifactCount     int      `json:"max_artifact_count"`
+	MaxArtifactBytes     int64    `json:"max_artifact_bytes"`
+	ResultMode           string   `json:"result_mode"`
+}
+
+type sandboxFileManifest struct {
+	SandboxID string                    `json:"sandbox_id"`
+	Path      string                    `json:"path"`
+	Items     []sandboxFileManifestItem `json:"items"`
+	FileCount int                       `json:"file_count"`
+	TotalSize int64                     `json:"total_size"`
+	Truncated bool                      `json:"truncated"`
+}
+
+type sandboxFileManifestItem struct {
+	Path        string `json:"path"`
+	Size        int64  `json:"size"`
+	Encoding    string `json:"encoding"`
+	SHA256      string `json:"sha256"`
+	ContentType string `json:"content_type"`
+}
+
 type sandboxFileInfo struct {
 	Path        string `json:"path"`
 	Size        int64  `json:"size"`
@@ -310,12 +483,33 @@ type sandboxFileContent struct {
 }
 
 type skillScriptArtifact struct {
-	Path     string `json:"path"`
-	Name     string `json:"name"`
-	Size     int64  `json:"size"`
-	Content  string `json:"content,omitempty"`
-	Encoding string `json:"encoding,omitempty"`
-	Error    string `json:"error,omitempty"`
+	Path        string                 `json:"path"`
+	Name        string                 `json:"name"`
+	Size        int64                  `json:"size"`
+	ContentType string                 `json:"content_type,omitempty"`
+	Content     string                 `json:"content,omitempty"`
+	Encoding    string                 `json:"encoding,omitempty"`
+	Persisted   bool                   `json:"persisted"`
+	Reason      string                 `json:"reason,omitempty"`
+	File        map[string]interface{} `json:"file,omitempty"`
+	Error       string                 `json:"error,omitempty"`
+}
+
+func hasSkillManifest(root string) (bool, error) {
+	info, err := os.Lstat(filepath.Join(root, "skill.manifest.json"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if info.IsDir() {
+		return false, fmt.Errorf("skill.manifest.json is a directory")
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return false, fmt.Errorf("skill.manifest.json is a symlink")
+	}
+	return true, nil
 }
 
 func zipSkillDirectoryBase64(root string) (string, error) {
@@ -387,6 +581,118 @@ func skillScriptEnv(execCtx ExecutionContext) map[string]string {
 	return env
 }
 
+type defaultSkillScriptArtifactPersister struct{}
+
+func (defaultSkillScriptArtifactPersister) PersistSkillScriptArtifact(ctx context.Context, request SkillScriptArtifactPersistRequest) (map[string]interface{}, error) {
+	organizationID := strings.TrimSpace(request.ExecContext.OrganizationID)
+	userID := strings.TrimSpace(request.ExecContext.UserID)
+	if organizationID == "" {
+		return nil, fmt.Errorf("organization id is required to persist skill artifact")
+	}
+	if userID == "" {
+		return nil, fmt.Errorf("user id is required to persist skill artifact")
+	}
+	if len(request.Data) == 0 {
+		return nil, fmt.Errorf("skill artifact is empty")
+	}
+
+	filename := skillArtifactFilename(request.Name, request.Path)
+	mimeType := skillArtifactMimeType(filename, request.ContentType, request.Data)
+	extension := normalizedSkillArtifactExtension(filename, mimeType)
+	conversationID := strings.TrimSpace(request.ExecContext.ConversationID)
+	var conversationIDPtr *string
+	if conversationID != "" {
+		conversationIDPtr = &conversationID
+	}
+
+	toolFile, err := tool_file.CreateFileByRawGlobal(ctx, tool_file.CreateFileByRawParams{
+		UserID:         userID,
+		TenantID:       organizationID,
+		ConversationID: conversationIDPtr,
+		FileData:       request.Data,
+		MimeType:       mimeType,
+		Filename:       &filename,
+		Lifecycle:      tool_file.ToolFileLifecyclePersistent,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create skill artifact file: %w", err)
+	}
+	if extension == "" {
+		extension = normalizedSkillArtifactExtension(toolFile.Name, toolFile.MimeType)
+	}
+	url, err := tool_file.SignToolFileGlobal(toolFile.ID, extension)
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign skill artifact file: %w", err)
+	}
+	downloadURL := appendSkillArtifactDownloadQuery(url)
+	fileType := workflowfile.InferFileType(extension, mimeType)
+	fileObj := workflowfile.NewFile(
+		organizationID,
+		fileType,
+		workflowfile.FileTransferMethodToolFile,
+		workflowfile.WithID(toolFile.ID),
+		workflowfile.WithRelatedID(toolFile.ID),
+		workflowfile.WithFilename(toolFile.Name),
+		workflowfile.WithExtension(extension),
+		workflowfile.WithMimeType(mimeType),
+		workflowfile.WithSize(int(toolFile.Size)),
+		workflowfile.WithURL(url),
+	)
+	fileMeta := fileObj.ToDict()
+	fileMeta["url"] = url
+	fileMeta["download_url"] = downloadURL
+	return fileMeta, nil
+}
+
+func skillArtifactFilename(name string, artifactPath string) string {
+	filename := strings.TrimSpace(name)
+	if filename == "" || filename == "." || filename == "/" {
+		filename = path.Base(filepath.ToSlash(artifactPath))
+	}
+	filename = strings.TrimSpace(strings.ReplaceAll(filename, "\\", "_"))
+	filename = strings.Trim(filename, "/")
+	if filename == "" || filename == "." {
+		return "artifact.bin"
+	}
+	return filename
+}
+
+func skillArtifactMimeType(filename string, contentType string, data []byte) string {
+	mimeType := strings.TrimSpace(strings.Split(contentType, ";")[0])
+	if mimeType != "" {
+		return mimeType
+	}
+	if extension := path.Ext(filename); extension != "" {
+		if byExtension := mime.TypeByExtension(extension); byExtension != "" {
+			return strings.Split(byExtension, ";")[0]
+		}
+	}
+	if len(data) > 0 {
+		if detected := http.DetectContentType(data); detected != "" {
+			return detected
+		}
+	}
+	return "application/octet-stream"
+}
+
+func normalizedSkillArtifactExtension(filename string, mimeType string) string {
+	if extension := path.Ext(filename); extension != "" {
+		return extension
+	}
+	extensions, err := mime.ExtensionsByType(mimeType)
+	if err == nil && len(extensions) > 0 {
+		return extensions[0]
+	}
+	return ".bin"
+}
+
+func appendSkillArtifactDownloadQuery(rawURL string) string {
+	if strings.Contains(rawURL, "?") {
+		return rawURL + "&download=1"
+	}
+	return rawURL + "?download=1"
+}
+
 func skillScriptMessages(command *sandboxCommandResult, artifacts []skillScriptArtifact, artifactErr error) ([]tools.ToolInvokeMessage, string, error) {
 	if command == nil {
 		return nil, "", fmt.Errorf("sandbox command result is empty")
@@ -418,15 +724,33 @@ func skillScriptMessages(command *sandboxCommandResult, artifacts []skillScriptA
 		items := make([]map[string]interface{}, 0, len(artifacts))
 		for _, artifact := range artifacts {
 			item := map[string]interface{}{
-				"path": artifact.Path,
-				"name": artifact.Name,
-				"size": artifact.Size,
+				"path":      artifact.Path,
+				"name":      artifact.Name,
+				"size":      artifact.Size,
+				"persisted": artifact.Persisted,
+			}
+			if artifact.ContentType != "" {
+				item["content_type"] = artifact.ContentType
 			}
 			if artifact.Encoding != "" {
 				item["encoding"] = artifact.Encoding
 			}
 			if artifact.Content != "" {
 				item["content"] = artifact.Content
+			}
+			if artifact.Reason != "" {
+				item["reason"] = artifact.Reason
+			}
+			if artifact.File != nil {
+				messages = append(messages, tools.ToolInvokeMessage{
+					Type: tools.ToolInvokeMessageTypeFile,
+					Text: stringFromMap(artifact.File, "download_url"),
+					Meta: map[string]interface{}{
+						"file": artifact.File,
+					},
+				})
+				item["file_id"] = stringFromMap(artifact.File, "id")
+				item["download_url"] = stringFromMap(artifact.File, "download_url")
 			}
 			if artifact.Error != "" {
 				item["error"] = artifact.Error
@@ -451,6 +775,22 @@ func skillScriptMessages(command *sandboxCommandResult, artifacts []skillScriptA
 	return messages, string(contentBytes), nil
 }
 
+func stringFromMap(values map[string]interface{}, key string) string {
+	if values == nil {
+		return ""
+	}
+	value, ok := values[key]
+	if !ok || value == nil {
+		return ""
+	}
+	switch typed := value.(type) {
+	case string:
+		return typed
+	default:
+		return fmt.Sprint(typed)
+	}
+}
+
 func skillScriptToolMessage(callID string, content string) llmadapter.Message {
 	callID = strings.TrimSpace(callID)
 	if callID == "" {
@@ -463,14 +803,26 @@ func skillScriptToolMessage(callID string, content string) llmadapter.Message {
 	}
 }
 
-func summarizeSkillScriptResult(command *sandboxCommandResult, messages []tools.ToolInvokeMessage) map[string]interface{} {
+func summarizeSkillScriptResult(command *sandboxCommandResult, messages []tools.ToolInvokeMessage, artifacts []skillScriptArtifact) map[string]interface{} {
 	if command == nil {
 		return nil
 	}
+	persisted := 0
+	skipped := 0
+	for _, artifact := range artifacts {
+		if artifact.Persisted {
+			persisted++
+		} else {
+			skipped++
+		}
+	}
 	return map[string]interface{}{
-		"exit_code":   command.ExitCode,
-		"duration_ms": command.DurationMS,
-		"truncated":   command.Truncated,
-		"messages":    len(messages),
+		"exit_code":       command.ExitCode,
+		"duration_ms":     command.DurationMS,
+		"truncated":       command.Truncated,
+		"messages":        len(messages),
+		"artifact_count":  len(artifacts),
+		"persisted_count": persisted,
+		"skipped_count":   skipped,
 	}
 }
