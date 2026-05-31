@@ -539,7 +539,7 @@ managed environments.
 - Document all `ZGI_SANDBOX_` environment variables.
 - Provide safe defaults for local development.
 - Provide strict defaults for production examples.
-- Add config validation at startup.
+- [x] Add config validation at startup.
 - Added startup logging for effective non-secret config.
 
 ### K2. Deployment
@@ -565,7 +565,7 @@ managed environments.
 
 ### K4. Tests
 
-- Startup config validation tests.
+- [x] Startup config validation tests.
 - Readiness tests.
 - Shutdown drain tests.
 - Docker Compose smoke test.

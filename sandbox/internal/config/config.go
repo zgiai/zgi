@@ -3,7 +3,9 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -106,10 +108,73 @@ func FromEnv() Config {
 }
 
 func (c Config) ValidateStartup() error {
-	if c.IsProduction() && !c.NetworkPolicyEnforced() {
-		return errors.New("production sandbox deployments require a runtime backend that enforces network policy")
+	var validationErrors []error
+	if err := validatePort(c.Port); err != nil {
+		validationErrors = append(validationErrors, err)
 	}
-	return nil
+	validationErrors = append(validationErrors,
+		requirePositiveInt("ZGI_SANDBOX_LITE_MAX_WORKERS", c.MaxWorkers),
+		requirePositiveInt("ZGI_SANDBOX_LITE_WORKER_TIMEOUT", c.TimeoutSeconds),
+		requirePositiveInt("ZGI_SANDBOX_OUTPUT_LIMIT_KB", c.OutputLimitKB),
+		requirePositiveInt("ZGI_SANDBOX_MAX_ACTIVE", c.MaxActive),
+		requirePositiveInt("ZGI_SANDBOX_QUEUE_TIMEOUT_MS", c.QueueTimeoutMS),
+		requirePositiveInt("ZGI_SANDBOX_SHUTDOWN_TIMEOUT_SECONDS", c.ShutdownTimeoutSeconds),
+		requirePositiveInt("ZGI_SANDBOX_SESSION_TTL_SECONDS", c.SessionTTL),
+		requirePositiveInt("ZGI_SANDBOX_INTERACTIVE_TTL_SECONDS", c.InteractiveTTL),
+		requirePositiveInt("ZGI_SANDBOX_COMMAND_TIMEOUT_SECONDS", c.CommandTimeout),
+		requirePositiveInt("ZGI_SANDBOX_MAX_FILE_SIZE_KB", c.MaxFileSizeKB),
+		requirePositiveInt("ZGI_SANDBOX_CACHE_TTL_SECONDS", c.CacheTTL),
+		requirePositiveInt("ZGI_SANDBOX_PROXY_TIMEOUT_SECONDS", c.ProxyTimeout),
+		requirePositiveInt64("ZGI_SANDBOX_MAX_DEPENDENCY_PROFILE_SIZE_BYTES", c.MaxDependencyProfileSizeBytes),
+		requirePositiveInt("ZGI_SANDBOX_DEPENDENCY_PROFILE_BUILD_TIMEOUT_SECONDS", c.DependencyProfileBuildTimeoutSeconds),
+		requireNonNegativeInt("ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS", c.MaxConcurrentExecutions),
+		requireNonNegativeInt("ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS_PER_PROFILE", c.MaxConcurrentExecutionsPerProfile),
+		requireNonNegativeInt("ZGI_SANDBOX_MAX_ACTIVE_PER_ORGANIZATION", c.MaxActivePerOrganization),
+		requireNonNegativeInt("ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS_PER_ORGANIZATION", c.MaxConcurrentExecutionsPerOrganization),
+		requireNonNegativeInt("ZGI_SANDBOX_MAX_EXECUTIONS_PER_MINUTE_PER_ORGANIZATION", c.MaxExecutionsPerMinutePerOrganization),
+		requireNonNegativeInt("ZGI_SANDBOX_MAX_QUEUED_EXECUTIONS_PER_ORGANIZATION", c.MaxQueuedExecutionsPerOrganization),
+		requireNonNegativeInt("ZGI_SANDBOX_MAX_WORKSPACE_FILES", c.MaxWorkspaceFiles),
+		requireNonNegativeInt("ZGI_SANDBOX_MAX_ARTIFACT_MANIFEST_FILES", c.MaxArtifactManifestFiles),
+		requireNonNegativeInt("ZGI_SANDBOX_MAX_DEPENDENCY_PROFILES_PER_ORGANIZATION", c.MaxDependencyProfilesPerOrganization),
+		requireNonNegativeInt("ZGI_SANDBOX_OBSERVER_RETENTION_DAYS", c.ObserverRetentionDays),
+		requireNonNegativeInt("ZGI_SANDBOX_OBSERVER_MAX_EVENTS", c.ObserverMaxEvents),
+		requireNonNegativeInt("ZGI_SANDBOX_REDIS_DB", c.RedisDB),
+		requireNonNegativeInt64("ZGI_SANDBOX_MAX_WORKSPACE_BYTES", c.MaxWorkspaceBytes),
+		requireNonNegativeInt64("ZGI_SANDBOX_MAX_WORKSPACE_BYTES_PER_ORGANIZATION", c.MaxWorkspaceBytesPerOrganization),
+		requireNonNegativeInt64("ZGI_SANDBOX_MAX_ARTIFACT_MANIFEST_BYTES", c.MaxArtifactManifestBytes),
+		requireNonNegativeInt64("ZGI_SANDBOX_MAX_ARTIFACT_BYTES_PER_ORGANIZATION", c.MaxArtifactBytesPerOrganization),
+	)
+	if err := validateEnvironment(c.Environment); err != nil {
+		validationErrors = append(validationErrors, err)
+	}
+	if err := validateRuntimeBackend(c.RuntimeBackendName()); err != nil {
+		validationErrors = append(validationErrors, err)
+	}
+	if strings.TrimSpace(c.DataDir) == "" {
+		validationErrors = append(validationErrors, errors.New("ZGI_SANDBOX_DATA_DIR must not be empty"))
+	}
+	if strings.TrimSpace(c.WorkerID) == "" {
+		validationErrors = append(validationErrors, errors.New("ZGI_SANDBOX_WORKER_ID must not be empty"))
+	}
+	if err := validateHTTPURL("ZGI_SANDBOX_ADVERTISE_URL", c.AdvertiseURL); err != nil {
+		validationErrors = append(validationErrors, err)
+	}
+	if err := validateHTTPURL("ZGI_SANDBOX_PUBLIC_BASE_URL", c.PublicBaseURL); err != nil {
+		validationErrors = append(validationErrors, err)
+	}
+	if c.RuntimeBackendName() == "linux-secure" && strings.TrimSpace(c.SecureRootFS) == "" {
+		validationErrors = append(validationErrors, errors.New("ZGI_SANDBOX_SECURE_ROOTFS is required when ZGI_SANDBOX_RUNTIME_BACKEND=linux-secure"))
+	}
+	if c.RuntimeBackendName() == "linux-secure" && strings.TrimSpace(c.BwrapBinary) == "" {
+		validationErrors = append(validationErrors, errors.New("ZGI_SANDBOX_BWRAP_BINARY is required when ZGI_SANDBOX_RUNTIME_BACKEND=linux-secure"))
+	}
+	if c.IsProduction() && strings.TrimSpace(c.APIKey) == "" {
+		validationErrors = append(validationErrors, errors.New("production sandbox deployments require ZGI_SANDBOX_API_KEY"))
+	}
+	if c.IsProduction() && !c.NetworkPolicyEnforced() {
+		validationErrors = append(validationErrors, errors.New("production sandbox deployments require a runtime backend that enforces network policy"))
+	}
+	return errors.Join(compactErrors(validationErrors)...)
 }
 
 func (c Config) IsProduction() bool {
@@ -134,6 +199,89 @@ func (c Config) RuntimeBackendName() string {
 
 func (c Config) NetworkPolicyEnforced() bool {
 	return c.RuntimeBackendName() == "linux-secure"
+}
+
+func validatePort(value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return errors.New("ZGI_SANDBOX_SERVER_PORT must not be empty")
+	}
+	port, err := strconv.Atoi(value)
+	if err != nil || port < 1 || port > 65535 {
+		return fmt.Errorf("ZGI_SANDBOX_SERVER_PORT must be between 1 and 65535")
+	}
+	return nil
+}
+
+func validateEnvironment(value string) error {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "local", "dev", "development", "test", "staging", "production", "prod":
+		return nil
+	default:
+		return fmt.Errorf("ZGI_SANDBOX_ENV must be local, dev, development, test, staging, production, or prod")
+	}
+}
+
+func validateRuntimeBackend(value string) error {
+	switch value {
+	case "preview-process", "linux-secure":
+		return nil
+	default:
+		return fmt.Errorf("ZGI_SANDBOX_RUNTIME_BACKEND is unsupported: %s", value)
+	}
+}
+
+func validateHTTPURL(name string, value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fmt.Errorf("%s must not be empty", name)
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed == nil || parsed.Host == "" {
+		return fmt.Errorf("%s must be an absolute http or https URL", name)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("%s must use http or https", name)
+	}
+	return nil
+}
+
+func requirePositiveInt(name string, value int) error {
+	if value <= 0 {
+		return fmt.Errorf("%s must be greater than 0", name)
+	}
+	return nil
+}
+
+func requirePositiveInt64(name string, value int64) error {
+	if value <= 0 {
+		return fmt.Errorf("%s must be greater than 0", name)
+	}
+	return nil
+}
+
+func requireNonNegativeInt(name string, value int) error {
+	if value < 0 {
+		return fmt.Errorf("%s must be greater than or equal to 0", name)
+	}
+	return nil
+}
+
+func requireNonNegativeInt64(name string, value int64) error {
+	if value < 0 {
+		return fmt.Errorf("%s must be greater than or equal to 0", name)
+	}
+	return nil
+}
+
+func compactErrors(values []error) []error {
+	errs := make([]error, 0, len(values))
+	for _, err := range values {
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errs
 }
 
 func (c Config) PublicSnapshot() map[string]any {
