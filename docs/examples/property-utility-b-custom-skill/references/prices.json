@@ -1,0 +1,10 @@
+[
+  {"name": "31号楼3101电表", "utility_type": "electricity", "unit_price": 0.92},
+  {"name": "31号楼3101水表", "utility_type": "water", "unit_price": 4.45},
+  {"name": "31号楼3102电表", "utility_type": "electricity", "unit_price": 0.92},
+  {"name": "31号楼3102水表", "utility_type": "water", "unit_price": 4.45},
+  {"name": "水饺店电表01", "utility_type": "electricity", "unit_price": 0.92},
+  {"name": "水饺店电表02", "utility_type": "electricity", "unit_price": 0.92},
+  {"name": "上岸餐厅4号楼3层餐厅厨房电费", "utility_type": "electricity", "unit_price": 0.92},
+  {"name": "上岸餐厅4号楼3层卫生间水费", "utility_type": "water", "unit_price": 4.45}
+]

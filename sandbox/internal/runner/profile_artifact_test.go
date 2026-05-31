@@ -142,6 +142,41 @@ func TestResolveDependencyProfileActivationFallsBackToProfileRootForArtifactChec
 	}
 }
 
+func TestProcessBackendResolvesBuiltDependencyProfile(t *testing.T) {
+	profileRoot := testRootFSDir(t, "profile-root")
+	profileDir := filepath.Join(profileRoot, "opt", "zgi", "profiles", "auto-office")
+	writeBuiltProfileArtifact(t, profileDir, "auto-office", map[string]string{
+		"venv/bin/python3": "python",
+	})
+	manifest, err := validateBuiltProfileArtifact(profileDir, "auto-office")
+	if err != nil {
+		t.Fatalf("validate artifact: %v", err)
+	}
+	dependencyRoot := t.TempDir()
+	if err := os.Rename(profileRoot, filepath.Join(dependencyRoot, "auto-office")); err != nil {
+		t.Fatalf("move profile rootfs: %v", err)
+	}
+	backend := &processBackend{dependencyRootFSDir: dependencyRoot}
+
+	activation, err := backend.resolveDependencyProfile("auto-office", manifest.Build.Checksum)
+	if err != nil {
+		t.Fatalf("resolve process profile: %v", err)
+	}
+	if activation.ProfileChecksum != manifest.Build.Checksum {
+		t.Fatalf("expected profile checksum, got %+v", activation)
+	}
+	expectedPython := filepath.Join(activation.ProfileHostDir, "venv", "bin", "python3")
+	if got := processProfileCommandPath(activation.ProfileHostDir, "python3"); got != expectedPython {
+		t.Fatalf("expected profile python path %s, got %s", expectedPython, got)
+	}
+	if !strings.Contains(activation.ProfileEnv["PATH"], filepath.Join(activation.ProfileHostDir, "venv", "bin")) {
+		t.Fatalf("expected profile PATH, got %+v", activation.ProfileEnv)
+	}
+	if activation.ProfileEnv["NODE_PATH"] != filepath.Join(activation.ProfileHostDir, "node_modules") {
+		t.Fatalf("expected profile NODE_PATH, got %+v", activation.ProfileEnv)
+	}
+}
+
 func TestValidateBuiltProfileArtifactRejectsMismatchedName(t *testing.T) {
 	profileDir := filepath.Join(t.TempDir(), "profile")
 	writeBuiltProfileArtifact(t, profileDir, "other-profile", map[string]string{"data.txt": "ok"})
