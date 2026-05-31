@@ -59,6 +59,10 @@ cleanup() {
     kill "${CONCURRENT_SERVER_PID}" 2>/dev/null || true
     wait "${CONCURRENT_SERVER_PID}" 2>/dev/null || true
   fi
+  if [[ -n "${QUEUE_TIMEOUT_SERVER_PID:-}" ]] && kill -0 "${QUEUE_TIMEOUT_SERVER_PID}" 2>/dev/null; then
+    kill "${QUEUE_TIMEOUT_SERVER_PID}" 2>/dev/null || true
+    wait "${QUEUE_TIMEOUT_SERVER_PID}" 2>/dev/null || true
+  fi
   rm -rf "${DATA_DIR}" "${ARCHIVE_VARS}"
 }
 trap cleanup EXIT
@@ -706,6 +710,73 @@ EOF
   run_kest .kest/sandbox-profile-concurrent-execution-limit.flow.md \
     --var profile_organization_id="organization_profile_kest_${CONCURRENT_PORT}" \
     --fail-fast
+
+  QUEUE_TIMEOUT_PORT="$(python3 - <<'PY'
+import socket
+
+with socket.socket() as s:
+    s.bind(("127.0.0.1", 0))
+    print(s.getsockname()[1])
+PY
+)"
+  QUEUE_TIMEOUT_BASE_URL="http://127.0.0.1:${QUEUE_TIMEOUT_PORT}"
+  QUEUE_TIMEOUT_SERVER_LOG="${DATA_DIR}/sandbox-queue-timeout.log"
+  env \
+    ZGI_SANDBOX_SERVER_PORT="${QUEUE_TIMEOUT_PORT}" \
+    ZGI_SANDBOX_DATA_DIR="${DATA_DIR}/queue-timeout-data" \
+    ZGI_SANDBOX_WORKER_ID="zgi-sandbox-queue-timeout-kest-${QUEUE_TIMEOUT_PORT}" \
+    ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS_PER_ORGANIZATION="1" \
+    ZGI_SANDBOX_MAX_QUEUED_EXECUTIONS_PER_ORGANIZATION="1" \
+    ZGI_SANDBOX_QUEUE_TIMEOUT_MS="100" \
+    go run cmd/server/main.go >"${QUEUE_TIMEOUT_SERVER_LOG}" 2>&1 &
+  QUEUE_TIMEOUT_SERVER_PID="$!"
+
+  for _ in {1..80}; do
+    if curl -fsS "${QUEUE_TIMEOUT_BASE_URL}/health" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.25
+  done
+  if ! curl -fsS "${QUEUE_TIMEOUT_BASE_URL}/health" >/dev/null 2>&1; then
+    cat "${QUEUE_TIMEOUT_SERVER_LOG}" >&2
+    echo "queue-timeout sandbox did not become ready at ${QUEUE_TIMEOUT_BASE_URL}" >&2
+    exit 1
+  fi
+
+  write_kest_config "${QUEUE_TIMEOUT_BASE_URL}"
+  QUEUE_TIMEOUT_ORGANIZATION_ID="organization_queue_timeout_kest_${QUEUE_TIMEOUT_PORT}"
+  QUEUE_TIMEOUT_SANDBOX_ID="$(curl -fsS \
+    -H "Content-Type: application/json" \
+    -d "{\"runtime_profile\":\"session\",\"ttl_seconds\":60,\"organization_id\":\"${QUEUE_TIMEOUT_ORGANIZATION_ID}\"}" \
+    "${QUEUE_TIMEOUT_BASE_URL}/v1/sandboxes" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])')"
+  QUEUE_TIMEOUT_HOLDER_RESPONSE="${DATA_DIR}/queue-timeout-holder-response.json"
+  curl -fsS \
+    -H "Content-Type: application/json" \
+    -H "X-Request-ID: req_kest_queue_timeout_holder" \
+    -d "{\"sandbox_id\":\"${QUEUE_TIMEOUT_SANDBOX_ID}\",\"command\":\"python3\",\"args\":[\"-c\",\"import time; time.sleep(2); print('holder')\"],\"profile\":\"code-short\",\"timeout_ms\":5000}" \
+    "${QUEUE_TIMEOUT_BASE_URL}/v1/exec/command" >"${QUEUE_TIMEOUT_HOLDER_RESPONSE}" &
+  QUEUE_TIMEOUT_HOLDER_PID="$!"
+
+  for _ in {1..80}; do
+    active_workers="$(curl -fsS "${QUEUE_TIMEOUT_BASE_URL}/v1/metrics" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["runner"]["active_workers"])')"
+    if [[ "${active_workers}" != "0" ]]; then
+      break
+    fi
+    sleep 0.025
+  done
+  if [[ "$(curl -fsS "${QUEUE_TIMEOUT_BASE_URL}/v1/metrics" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["runner"]["active_workers"])')" = "0" ]]; then
+    echo "queue-timeout holder did not occupy a worker" >&2
+    exit 1
+  fi
+
+  run_kest .kest/sandbox-execution-queue-timeout.flow.md \
+    --var queue_timeout_sandbox_id="${QUEUE_TIMEOUT_SANDBOX_ID}" \
+    --var queue_timeout_organization_id="${QUEUE_TIMEOUT_ORGANIZATION_ID}" \
+    --fail-fast
+
+  wait "${QUEUE_TIMEOUT_HOLDER_PID}"
+  curl -fsS -X DELETE "${QUEUE_TIMEOUT_BASE_URL}/v1/sandboxes/${QUEUE_TIMEOUT_SANDBOX_ID}" >/dev/null
+  write_kest_config "${CONCURRENT_BASE_URL}"
 else
   echo "Skipping resource limit saturation flow against external sandbox: ${BASE_URL}"
 fi

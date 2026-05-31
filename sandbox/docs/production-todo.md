@@ -326,7 +326,7 @@ Goal: enforce hard resource boundaries for every execution path.
 - Added optional max concurrent executions per profile with `ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS_PER_PROFILE`.
 - Added optional max concurrent executions per organization with `ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS_PER_ORGANIZATION`.
 - Added optional max queued executions per organization with `ZGI_SANDBOX_MAX_QUEUED_EXECUTIONS_PER_ORGANIZATION`.
-- Queue wait timeout.
+- [x] Queue wait timeout.
 - Cancellation propagation.
 - Graceful shutdown drain behavior.
 
@@ -343,7 +343,7 @@ Goal: enforce hard resource boundaries for every execution path.
 - Memory pressure rejection or termination.
 - Disk quota enforcement.
 - Process count enforcement.
-- Queue timeout.
+- [x] Queue timeout.
 - Cancellation cleanup.
 
 ## 10. Milestone G: Strong Runtime Isolation
