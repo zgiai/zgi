@@ -77,6 +77,10 @@ if ! command -v "${KEST_BIN}" >/dev/null 2>&1; then
 fi
 
 cd "${SANDBOX_DIR}"
+
+./scripts/build-profile --profile skill-office --dry-run >/dev/null
+./scripts/build-profile --profile stdlib --output-dir "${DATA_DIR}/profile-build" --force >/dev/null
+
 mkdir -p "${FLOW_DIR}" "${KEST_HOME}" "${KEST_CONFIG_HOME}"
 for flow in .kest/*.flow.md; do
   sed 's#{{base_url}}##g' "${flow}" >"${FLOW_DIR}/$(basename "${flow}")"

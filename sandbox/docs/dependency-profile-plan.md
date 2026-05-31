@@ -285,6 +285,7 @@ Scope:
 - build Node dependencies from lockfiles;
 - run verification scripts;
 - emit `manifest.json` with checksum and size.
+- keep the build command operator-side and out of request execution paths.
 
 Validation:
 
