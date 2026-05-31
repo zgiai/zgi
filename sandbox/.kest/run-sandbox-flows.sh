@@ -249,6 +249,9 @@ cd "${SANDBOX_DIR}"
 run_kest .kest/sandbox-lifecycle-files-command.flow.md \
   --fail-fast
 
+run_kest .kest/sandbox-ttl-limits.flow.md \
+  --fail-fast
+
 run_kest .kest/sandbox-dependency-profile-catalog.flow.md \
   --fail-fast
 
