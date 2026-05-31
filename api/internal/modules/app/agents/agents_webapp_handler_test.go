@@ -83,11 +83,16 @@ func TestPublicAgentWebAppConfig_DoesNotExposeRuntimeSecrets(t *testing.T) {
 			Model:               "secret-model",
 			EnabledSkillIDs:     []string{"secret-skill"},
 			KnowledgeDatasetIDs: []string{"secret-dataset"},
-			HomeTitle:           "Home",
-			InputPlaceholder:    "Ask",
-			SuggestedQuestions:  []string{"Q1"},
-			FileUpload:          true,
-			AgentMemoryEnabled:  true,
+			DatabaseBindings: []dto.AgentDatabaseBinding{{
+				DataSourceID:     "secret-database",
+				TableIDs:         []string{"secret-table"},
+				WritableTableIDs: []string{"secret-writable-table"},
+			}},
+			HomeTitle:          "Home",
+			InputPlaceholder:   "Ask",
+			SuggestedQuestions: []string{"Q1"},
+			FileUpload:         true,
+			AgentMemoryEnabled: true,
 		},
 	})
 
@@ -97,6 +102,10 @@ func TestPublicAgentWebAppConfig_DoesNotExposeRuntimeSecrets(t *testing.T) {
 	require.NotContains(t, string(encoded), "secret prompt")
 	require.NotContains(t, string(encoded), "secret-model")
 	require.NotContains(t, string(encoded), "secret-dataset")
+	require.NotContains(t, string(encoded), "database_bindings")
+	require.NotContains(t, string(encoded), "secret-database")
+	require.NotContains(t, string(encoded), "secret-table")
+	require.NotContains(t, string(encoded), "secret-writable-table")
 	require.Contains(t, string(encoded), "Home")
 	require.Contains(t, string(encoded), "file_upload_enabled")
 	require.Contains(t, string(encoded), "agent_memory_enabled")

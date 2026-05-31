@@ -99,9 +99,6 @@ export function AgentRuntimeKnowledgeDialog({
               <span className="mt-3 line-clamp-2 text-xs leading-5 text-muted-foreground">
                 {dataset.description || t('knowledge.noDescription')}
               </span>
-              <span className="mt-auto pt-3 text-[11px] text-muted-foreground/70">
-                {t('knowledge.idLabel', { id: dataset.id })}
-              </span>
             </button>
           );
         })}

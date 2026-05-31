@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useT } from '@/i18n';
+import { ENABLE_AGENT_RUNTIME_LOGS_PAGE } from '@/lib/config';
 import { cn } from '@/lib/utils';
 import type { AgentRuntimeAgent, AgentRuntimeSaveState } from './types';
 import { pickAgentInitials } from './utils';
@@ -235,12 +236,14 @@ export function AgentRuntimeHeader({
               <Copy className="size-4" />
               {t('header.copyWebAppLink')}
             </DropdownMenuItem>
-            <DropdownMenuItem asChild>
-              <Link href={`/console/agents/${agentId}/logs`}>
-                <History className="size-4" />
-                {t('header.runtimeLogs')}
-              </Link>
-            </DropdownMenuItem>
+            {ENABLE_AGENT_RUNTIME_LOGS_PAGE ? (
+              <DropdownMenuItem asChild>
+                <Link href={`/console/agents/${agentId}/logs`}>
+                  <History className="size-4" />
+                  {t('header.runtimeLogs')}
+                </Link>
+              </DropdownMenuItem>
+            ) : null}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

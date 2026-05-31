@@ -104,8 +104,25 @@ func skillRuntimeParameters(scope Scope, config RunConfig) map[string]interface{
 	if len(config.KnowledgeDatasetIDs) > 0 {
 		params["knowledge_dataset_ids"] = append([]string(nil), config.KnowledgeDatasetIDs...)
 	}
+	if strings.TrimSpace(config.KnowledgeBoundByAccountID) != "" {
+		params["knowledge_bound_by_account_id"] = strings.TrimSpace(config.KnowledgeBoundByAccountID)
+	}
+	if config.KnowledgeBoundAtUnix > 0 {
+		params["knowledge_binding_grant"] = true
+		params["knowledge_bound_at_unix"] = config.KnowledgeBoundAtUnix
+	}
 	if len(config.KnowledgeRetrievalConfig) > 0 {
 		params["knowledge_retrieval_config"] = copyStringAnyMap(config.KnowledgeRetrievalConfig)
+	}
+	if len(config.DatabaseBindings) > 0 {
+		params["database_bindings"] = copyAgentDatabaseBindings(config.DatabaseBindings)
+	}
+	if strings.TrimSpace(config.DatabaseBoundByAccountID) != "" {
+		params["database_bound_by_account_id"] = strings.TrimSpace(config.DatabaseBoundByAccountID)
+	}
+	if config.DatabaseBoundAtUnix > 0 {
+		params["database_binding_grant"] = true
+		params["database_bound_at_unix"] = config.DatabaseBoundAtUnix
 	}
 	if strings.EqualFold(strings.TrimSpace(config.BillingAppType), runtimemodel.ConversationCallerAgent) && strings.TrimSpace(config.BillingAppID) != "" {
 		params["agent_id"] = strings.TrimSpace(config.BillingAppID)
@@ -118,6 +135,21 @@ func skillRuntimeParameters(scope Scope, config RunConfig) map[string]interface{
 		}
 	}
 	return params
+}
+
+func copyAgentDatabaseBindings(input []AgentDatabaseBinding) []AgentDatabaseBinding {
+	out := make([]AgentDatabaseBinding, 0, len(input))
+	for _, binding := range input {
+		if strings.TrimSpace(binding.DataSourceID) == "" || len(binding.TableIDs) == 0 {
+			continue
+		}
+		out = append(out, AgentDatabaseBinding{
+			DataSourceID:     strings.TrimSpace(binding.DataSourceID),
+			TableIDs:         append([]string(nil), binding.TableIDs...),
+			WritableTableIDs: append([]string(nil), binding.WritableTableIDs...),
+		})
+	}
+	return out
 }
 
 func mergeUsage(current *adapter.Usage, next *adapter.Usage) *adapter.Usage {

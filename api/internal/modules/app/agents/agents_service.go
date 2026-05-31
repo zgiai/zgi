@@ -13,6 +13,8 @@ import (
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
+	datasetservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
+	datasourceservice "github.com/zgiai/zgi/api/internal/modules/datasource/service"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	quota_model "github.com/zgiai/zgi/api/internal/modules/quota/model"
@@ -71,6 +73,8 @@ type agentsService struct {
 	workflowService           interfaces.WorkflowService
 	chatRuntimeService        runtimeservice.Service
 	agentMemoryService        *agentmemory.Service
+	dataSourceService         datasourceservice.DataSourceService
+	knowledgeRetrievalService *datasetservice.KnowledgeRetrievalService
 	resourcePermissionService interfaces.ResourcePermissionService
 	enterpriseService         interfaces.OrganizationService
 	quotaService              interfaces.QuotaService
@@ -87,6 +91,8 @@ func NewAgentsService(
 	workflowService interfaces.WorkflowService,
 	chatRuntimeService runtimeservice.Service,
 	agentMemoryService *agentmemory.Service,
+	dataSourceService datasourceservice.DataSourceService,
+	knowledgeRetrievalService *datasetservice.KnowledgeRetrievalService,
 	resourcePermissionService interfaces.ResourcePermissionService,
 	enterpriseService interfaces.OrganizationService,
 	quotaService interfaces.QuotaService,
@@ -102,6 +108,8 @@ func NewAgentsService(
 		workflowService:           workflowService,
 		chatRuntimeService:        chatRuntimeService,
 		agentMemoryService:        agentMemoryService,
+		dataSourceService:         dataSourceService,
+		knowledgeRetrievalService: knowledgeRetrievalService,
 		resourcePermissionService: resourcePermissionService,
 		enterpriseService:         enterpriseService,
 		quotaService:              quotaService,

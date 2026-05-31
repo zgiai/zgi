@@ -78,14 +78,15 @@ type KnowledgeListResponse struct {
 
 // KnowledgeRetrieveRequest describes a knowledge retrieval request.
 type KnowledgeRetrieveRequest struct {
-	Scope            KnowledgeScope
-	Query            string
-	DatasetIDs       []string
-	TopK             int
-	RetrievalMode    string
-	RetrievalConfig  map[string]interface{}
-	ContextSeparator string
-	MaxContextChars  int
+	Scope             KnowledgeScope
+	Query             string
+	DatasetIDs        []string
+	AgentBindingGrant bool
+	TopK              int
+	RetrievalMode     string
+	RetrievalConfig   map[string]interface{}
+	ContextSeparator  string
+	MaxContextChars   int
 }
 
 // KnowledgeRetrieverResource is a compact citation/resource payload for tools.
@@ -286,7 +287,7 @@ func (s *KnowledgeRetrievalService) Retrieve(ctx context.Context, req KnowledgeR
 	if strings.TrimSpace(req.Scope.AccountID) == "" {
 		return nil, fmt.Errorf("account_id is required")
 	}
-	if strings.TrimSpace(req.Scope.OrganizationID) == "" {
+	if strings.TrimSpace(req.Scope.OrganizationID) == "" && !req.AgentBindingGrant {
 		allowed, err := s.canAccessKnowledgeWorkspace(ctx, strings.TrimSpace(req.Scope.WorkspaceID), strings.TrimSpace(req.Scope.AccountID))
 		if err != nil {
 			return nil, err
@@ -309,7 +310,7 @@ func (s *KnowledgeRetrievalService) Retrieve(ctx context.Context, req KnowledgeR
 	scoredRecords := make([]scoredKnowledgeRecord, 0)
 	graphExecutions := make([]*dto.GraphExecution, 0)
 	for _, datasetID := range datasetIDs {
-		dataset, err := s.accessibleKnowledgeDataset(ctx, datasetID, req.Scope)
+		dataset, err := s.accessibleKnowledgeDataset(ctx, datasetID, req.Scope, req.AgentBindingGrant)
 		if err != nil {
 			return nil, fmt.Errorf("dataset %s is not accessible: %w", datasetID, err)
 		}
@@ -389,6 +390,16 @@ func (s *KnowledgeRetrievalService) RetrieveAgentKnowledge(ctx context.Context, 
 	req.DatasetIDs = datasetIDs
 	req.RetrievalConfig = retrievalConfig
 	return s.Retrieve(ctx, req)
+}
+
+// ValidateAccessibleDatasets verifies that accountID can access every dataset in ids now.
+func (s *KnowledgeRetrievalService) ValidateAccessibleDatasets(ctx context.Context, scope KnowledgeScope, ids []string) error {
+	for _, datasetID := range normalizeStringList(ids) {
+		if _, err := s.accessibleKnowledgeDataset(ctx, datasetID, scope, false); err != nil {
+			return fmt.Errorf("dataset %s is not accessible: %w", datasetID, err)
+		}
+	}
+	return nil
 }
 
 func (s *KnowledgeRetrievalService) canAccessKnowledgeWorkspace(ctx context.Context, workspaceID, accountID string) (bool, error) {
@@ -519,7 +530,7 @@ func (s *KnowledgeRetrievalService) accessibleKnowledgeWorkspaceIDs(ctx context.
 	return normalizeStringList(workspaceIDs), nil
 }
 
-func (s *KnowledgeRetrievalService) accessibleKnowledgeDataset(ctx context.Context, datasetID string, scope KnowledgeScope) (*dataset_model.Dataset, error) {
+func (s *KnowledgeRetrievalService) accessibleKnowledgeDataset(ctx context.Context, datasetID string, scope KnowledgeScope, agentBindingGrant bool) (*dataset_model.Dataset, error) {
 	datasetID = strings.TrimSpace(datasetID)
 	if datasetID == "" {
 		return nil, fmt.Errorf("dataset_id is required")
@@ -532,14 +543,21 @@ func (s *KnowledgeRetrievalService) accessibleKnowledgeDataset(ctx context.Conte
 
 	query := s.db.WithContext(ctx).Where("id = ?", datasetID)
 	if organizationID != "" {
-		workspaceIDs, err := s.accessibleKnowledgeWorkspaceIDs(ctx, organizationID, workspaceID, scope.AccountID)
-		if err != nil {
-			return nil, err
+		if agentBindingGrant {
+			query = query.Where("organization_id = ?", organizationID)
+			if workspaceID != "" {
+				query = query.Where("workspace_id = ?", workspaceID)
+			}
+		} else {
+			workspaceIDs, err := s.accessibleKnowledgeWorkspaceIDs(ctx, organizationID, workspaceID, scope.AccountID)
+			if err != nil {
+				return nil, err
+			}
+			if len(workspaceIDs) == 0 {
+				return nil, gorm.ErrRecordNotFound
+			}
+			query = query.Where("organization_id = ? AND workspace_id IN ?", organizationID, workspaceIDs)
 		}
-		if len(workspaceIDs) == 0 {
-			return nil, gorm.ErrRecordNotFound
-		}
-		query = query.Where("organization_id = ? AND workspace_id IN ?", organizationID, workspaceIDs)
 	} else {
 		query = query.Where("workspace_id = ?", workspaceID)
 	}

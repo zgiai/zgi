@@ -122,7 +122,7 @@ export function AgentRuntimePromptPanel({
         showType: false,
         description: dataset.load_error
           ? t('knowledge.loadFailedDescription')
-          : dataset.description || dataset.id,
+          : dataset.description || t('knowledge.noDescription'),
         invalid: dataset.load_error,
       })),
     [selectedKnowledgeDatasets, t]

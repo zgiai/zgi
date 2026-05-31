@@ -5,7 +5,13 @@ import { usePathname, useParams } from 'next/navigation';
 import { BookOpen, History, KeyRound, PanelsTopLeft, RotateCcw, ScanSearch } from 'lucide-react';
 import { useAgent } from '@/hooks/agent/use-agents';
 import { useT } from '@/i18n';
-import { ICON_BG, ICON_TEXT } from '@/lib/config';
+import {
+  ENABLE_AGENT_API_PAGE,
+  ENABLE_AGENT_BATCH_TEST_PAGE,
+  ENABLE_AGENT_RUNTIME_LOGS_PAGE,
+  ICON_BG,
+  ICON_TEXT,
+} from '@/lib/config';
 import {
   ResourceSidebar,
   ResourceSidebarHeader,
@@ -25,7 +31,7 @@ interface AgentSidebarProps {
  * AgentSidebar — collapsible agent-specific sidebar.
  * - Shows agent summary (icon, name, desc) on top; collapsed shows only icon (smaller size)
  * - First nav item is always Edit and links to /workflow
- * - "API Key" is always present
+ * - Feature-gated unfinished Agent pages stay hidden until enabled
  * - Collapsed state persisted to localStorage
  */
 export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
@@ -56,7 +62,7 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
       { title: t('agents.actions.edit'), href: editHref, icon: PanelsTopLeft },
     ];
 
-    if (agentData?.is_published) {
+    if (ENABLE_AGENT_RUNTIME_LOGS_PAGE && agentData?.is_published) {
       items.push({
         title: t('agents.workflow.webappLogs'),
         href: `/console/agents/${agentId}/logs`,
@@ -64,33 +70,38 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
       });
     }
 
-    items.push({
-      title: t('agents.apiKeys.navTitle'),
-      href: `/console/agents/${agentId}/api`,
-      icon: KeyRound,
-    });
+    if (ENABLE_AGENT_API_PAGE) {
+      items.push({
+        title: t('agents.apiKeys.navTitle'),
+        href: `/console/agents/${agentId}/api`,
+        icon: KeyRound,
+      });
+    }
 
-    items.push({
-      title: t('agents.workflowTest.navTitle'),
-      href: `/console/agents/${agentId}/batch-test`,
-      icon: ScanSearch,
-      children: [
-        {
-          title: t('agents.workflowTest.subnav.caseLibrary'),
-          href: `/console/agents/${agentId}/batch-test`,
-          icon: BookOpen,
-          isActive: currentPathname => currentPathname === `/console/agents/${agentId}/batch-test`,
-        },
-        {
-          title: t('agents.workflowTest.subnav.batches'),
-          href: `/console/agents/${agentId}/batch-test/batches`,
-          icon: RotateCcw,
-          isActive: currentPathname =>
-            currentPathname === `/console/agents/${agentId}/batch-test/batches` ||
-            currentPathname.startsWith(`/console/agents/${agentId}/batch-test/`),
-        },
-      ],
-    });
+    if (ENABLE_AGENT_BATCH_TEST_PAGE) {
+      items.push({
+        title: t('agents.workflowTest.navTitle'),
+        href: `/console/agents/${agentId}/batch-test`,
+        icon: ScanSearch,
+        children: [
+          {
+            title: t('agents.workflowTest.subnav.caseLibrary'),
+            href: `/console/agents/${agentId}/batch-test`,
+            icon: BookOpen,
+            isActive: currentPathname =>
+              currentPathname === `/console/agents/${agentId}/batch-test`,
+          },
+          {
+            title: t('agents.workflowTest.subnav.batches'),
+            href: `/console/agents/${agentId}/batch-test/batches`,
+            icon: RotateCcw,
+            isActive: currentPathname =>
+              currentPathname === `/console/agents/${agentId}/batch-test/batches` ||
+              currentPathname.startsWith(`/console/agents/${agentId}/batch-test/`),
+          },
+        ],
+      });
+    }
 
     return items;
   }, [agentData, agentId, editHref, t]);

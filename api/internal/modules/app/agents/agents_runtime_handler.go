@@ -264,21 +264,41 @@ func (h *AgentsHandler) webAppAgentRuntimeContext(c *gin.Context) (agentRuntimeC
 
 func agentRunConfig(agentID, systemPromptVersion string, cfg dto.AgentConfigResponse, agentMemoryUserScope string) runtimeservice.RunConfig {
 	return runtimeservice.RunConfig{
-		SystemPrompt:             cfg.SystemPrompt,
-		SystemPromptVersion:      systemPromptVersion,
-		ModelProvider:            cfg.ModelProvider,
-		Model:                    cfg.Model,
-		ModelParameters:          cfg.ModelParameters,
-		EnabledSkillIDs:          cfg.EnabledSkillIDs,
-		KnowledgeDatasetIDs:      cfg.KnowledgeDatasetIDs,
-		KnowledgeRetrievalConfig: cfg.KnowledgeRetrievalConfig,
-		UseMemory:                false,
-		AgentMemoryEnabled:       cfg.AgentMemoryEnabled,
-		AgentMemorySlots:         agentMemoryRuntimeSlots(cfg.AgentMemorySlots),
-		AgentMemoryUserScope:     agentMemoryUserScope,
-		BillingAppID:             agentID,
-		BillingAppType:           runtimemodel.ConversationCallerAgent,
+		SystemPrompt:              cfg.SystemPrompt,
+		SystemPromptVersion:       systemPromptVersion,
+		ModelProvider:             cfg.ModelProvider,
+		Model:                     cfg.Model,
+		ModelParameters:           cfg.ModelParameters,
+		EnabledSkillIDs:           cfg.EnabledSkillIDs,
+		KnowledgeDatasetIDs:       cfg.KnowledgeDatasetIDs,
+		KnowledgeBoundByAccountID: cfg.KnowledgeBoundByAccountID,
+		KnowledgeBoundAtUnix:      cfg.KnowledgeBoundAtUnix,
+		KnowledgeRetrievalConfig:  cfg.KnowledgeRetrievalConfig,
+		DatabaseBindings:          agentDatabaseRuntimeBindings(cfg.DatabaseBindings),
+		DatabaseBoundByAccountID:  cfg.DatabaseBoundByAccountID,
+		DatabaseBoundAtUnix:       cfg.DatabaseBoundAtUnix,
+		UseMemory:                 false,
+		AgentMemoryEnabled:        cfg.AgentMemoryEnabled,
+		AgentMemorySlots:          agentMemoryRuntimeSlots(cfg.AgentMemorySlots),
+		AgentMemoryUserScope:      agentMemoryUserScope,
+		BillingAppID:              agentID,
+		BillingAppType:            runtimemodel.ConversationCallerAgent,
 	}
+}
+
+func agentDatabaseRuntimeBindings(bindings []dto.AgentDatabaseBinding) []runtimeservice.AgentDatabaseBinding {
+	out := make([]runtimeservice.AgentDatabaseBinding, 0, len(bindings))
+	for _, binding := range bindings {
+		if strings.TrimSpace(binding.DataSourceID) == "" || len(binding.TableIDs) == 0 {
+			continue
+		}
+		out = append(out, runtimeservice.AgentDatabaseBinding{
+			DataSourceID:     strings.TrimSpace(binding.DataSourceID),
+			TableIDs:         append([]string(nil), binding.TableIDs...),
+			WritableTableIDs: append([]string(nil), binding.WritableTableIDs...),
+		})
+	}
+	return out
 }
 
 func webAppAgentMemoryUserScope(c *gin.Context) string {
@@ -558,6 +578,9 @@ func (h *AgentsHandler) validateAgentRuntimeSkills(c *gin.Context, req dto.Agent
 		}
 		if skillResponseRequires(metadata, "agent_knowledge") && len(req.KnowledgeDatasetIDs) == 0 {
 			return fmt.Errorf("skill %s requires configured knowledge datasets", id)
+		}
+		if skillResponseRequires(metadata, "agent_database") && len(normalizeAgentDatabaseBindings(req.DatabaseBindings)) == 0 {
+			return fmt.Errorf("skill %s requires configured database bindings", id)
 		}
 	}
 	return nil

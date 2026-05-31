@@ -46,6 +46,40 @@ func TestEffectiveAgentSkillIDsSkipsKnowledgeWithoutDatasets(t *testing.T) {
 	}
 }
 
+func TestEffectiveAgentSkillIDsAutoAddsHiddenDatabase(t *testing.T) {
+	catalog := []skills.SkillDiscoveryMetadata{
+		{ID: skills.SkillCalculator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAgent}},
+		{ID: skills.SkillAgentDatabase, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAgent}, RequiredConfig: []string{skills.SkillRequiredConfigAgentDatabase}},
+	}
+
+	got := effectiveAgentSkillIDs(
+		[]string{skills.SkillCalculator},
+		catalog,
+		&RunConfig{DatabaseBindings: []AgentDatabaseBinding{{DataSourceID: "db-1", TableIDs: []string{"table-1"}}}},
+	)
+	want := []string{skills.SkillAgentDatabase, skills.SkillCalculator}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("effectiveAgentSkillIDs() = %#v, want %#v", got, want)
+	}
+}
+
+func TestEffectiveAgentSkillIDsSkipsDatabaseWithoutBindings(t *testing.T) {
+	catalog := []skills.SkillDiscoveryMetadata{
+		{ID: skills.SkillCalculator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAgent}},
+		{ID: skills.SkillAgentDatabase, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAgent}, RequiredConfig: []string{skills.SkillRequiredConfigAgentDatabase}},
+	}
+
+	got := effectiveAgentSkillIDs(
+		[]string{skills.SkillCalculator, skills.SkillAgentDatabase},
+		catalog,
+		&RunConfig{},
+	)
+	want := []string{skills.SkillCalculator}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("effectiveAgentSkillIDs() = %#v, want %#v", got, want)
+	}
+}
+
 func TestEffectiveAgentSkillIDsDoesNotAutoAddHiddenAgentMemory(t *testing.T) {
 	catalog := []skills.SkillDiscoveryMetadata{
 		{ID: skills.SkillAgentMemory, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAgent}},
@@ -103,6 +137,7 @@ func TestVisibleSkillMetadataHidesRuntimeManagedSkills(t *testing.T) {
 	metadata := []skills.SkillDiscoveryMetadata{
 		{ID: skills.SkillInternalKnowledge},
 		{ID: skills.SkillAgentKnowledge},
+		{ID: skills.SkillAgentDatabase},
 		{ID: skills.SkillAgentMemory},
 		{ID: skills.SkillUserMemory},
 		{ID: skills.SkillCalculator},

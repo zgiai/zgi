@@ -48,6 +48,37 @@ func TestKnowledgeSystemSkillsExposeExpectedTools(t *testing.T) {
 	}
 }
 
+func TestDatabaseSystemSkillsExposeExpectedTools(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillInternalDatabase, SkillAgentDatabase})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	expectedTools := []string{
+		"list_accessible_databases",
+		"list_database_tables",
+		"describe_database_table",
+		"query_table_records",
+		"insert_table_records",
+		"update_table_records",
+		"delete_table_records",
+	}
+	internal, ok := resolved.Get(SkillInternalDatabase)
+	if !ok {
+		t.Fatalf("internal database skill was not resolved")
+	}
+	if got := toolNames(internal.Tools); !sameStrings(got, expectedTools) {
+		t.Fatalf("internal database tools = %v", got)
+	}
+	agent, ok := resolved.Get(SkillAgentDatabase)
+	if !ok {
+		t.Fatalf("agent database skill was not resolved")
+	}
+	if got := toolNames(agent.Tools); !sameStrings(got, expectedTools) {
+		t.Fatalf("agent database tools = %v", got)
+	}
+}
+
 func TestAgentMemorySystemSkillIsNotLoadable(t *testing.T) {
 	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
 	_, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillAgentMemory})
@@ -158,8 +189,10 @@ func TestSystemToolSkillsExposeArgumentContracts(t *testing.T) {
 	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
 	skillIDs := []string{
 		SkillAgentKnowledge,
+		SkillAgentDatabase,
 		SkillCalculator,
 		SkillFileGenerator,
+		SkillInternalDatabase,
 		SkillInternalKnowledge,
 		SkillTime,
 	}
@@ -185,6 +218,8 @@ func TestExpectedSkillToolArgumentsForBuiltInRequiredTools(t *testing.T) {
 		{SkillFileGenerator, "generate_file", []string{"content", "format"}},
 		{SkillInternalKnowledge, "retrieve_knowledge", []string{"query", "dataset_ids"}},
 		{SkillAgentKnowledge, "retrieve_agent_knowledge", []string{"query"}},
+		{SkillInternalDatabase, "query_table_records", []string{"data_source_id", "table_id"}},
+		{SkillAgentDatabase, "insert_table_records", []string{"data_source_id", "table_id", "records"}},
 		{SkillTime, "date_calculate", []string{"operation"}},
 	}
 	for _, tt := range tests {
@@ -214,8 +249,10 @@ func TestMetaToolArgumentsExposeAllLoadedSystemToolContracts(t *testing.T) {
 	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
 	skillIDs := []string{
 		SkillAgentKnowledge,
+		SkillAgentDatabase,
 		SkillCalculator,
 		SkillFileGenerator,
+		SkillInternalDatabase,
 		SkillInternalKnowledge,
 		SkillTime,
 	}

@@ -76,23 +76,33 @@ type Caller struct {
 }
 
 type RunConfig struct {
-	SystemPrompt             string
-	SystemPromptVersion      string
-	ModelProvider            string
-	Model                    string
-	ModelParameters          map[string]interface{}
-	EnabledSkillIDs          []string
-	KnowledgeDatasetIDs      []string
-	KnowledgeRetrievalConfig map[string]interface{}
-	UseMemory                bool
-	AgentMemoryEnabled       bool
-	AgentMemorySlots         []AgentMemorySlotConfig
-	AgentMemoryUserScope     string
-	BillingAppID             string
-	BillingAppType           string
+	SystemPrompt              string
+	SystemPromptVersion       string
+	ModelProvider             string
+	Model                     string
+	ModelParameters           map[string]interface{}
+	EnabledSkillIDs           []string
+	KnowledgeDatasetIDs       []string
+	KnowledgeBoundByAccountID string
+	KnowledgeBoundAtUnix      int64
+	KnowledgeRetrievalConfig  map[string]interface{}
+	DatabaseBindings          []AgentDatabaseBinding
+	DatabaseBoundByAccountID  string
+	DatabaseBoundAtUnix       int64
+	UseMemory                 bool
+	AgentMemoryEnabled        bool
+	AgentMemorySlots          []AgentMemorySlotConfig
+	AgentMemoryUserScope      string
+	BillingAppID              string
+	BillingAppType            string
 }
 
 type AgentMemorySlotConfig = agentmemoryruntime.Slot
+type AgentDatabaseBinding struct {
+	DataSourceID     string   `json:"data_source_id"`
+	TableIDs         []string `json:"table_ids"`
+	WritableTableIDs []string `json:"writable_table_ids,omitempty"`
+}
 type AgentMemoryRuntimeState = agentmemoryruntime.State
 type AgentMemoryPlannerDecision = agentmemoryruntime.Decision
 type AgentMemoryPlannerResult = agentmemoryruntime.PlannerResult

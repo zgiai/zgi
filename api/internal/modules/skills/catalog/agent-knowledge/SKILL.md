@@ -33,6 +33,7 @@ display:
 # Agent Knowledge Skill
 
 Use this skill to retrieve context only from knowledge bases configured on the current Agent.
+Knowledge access is authorized when the editor binds the knowledge bases to the Agent, and runtime retrieval uses that Agent binding grant.
 
 ## Workflow
 

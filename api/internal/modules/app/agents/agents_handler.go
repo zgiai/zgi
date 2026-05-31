@@ -459,6 +459,7 @@ func (h *AgentsHandler) PublishAgent(c *gin.Context) {
 	if err := h.validateAgentRuntimeSkills(c, dto.AgentConfigRequest{
 		EnabledSkillIDs:     cfg.EnabledSkillIDs,
 		KnowledgeDatasetIDs: cfg.KnowledgeDatasetIDs,
+		DatabaseBindings:    cfg.DatabaseBindings,
 	}); err != nil {
 		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
 		return

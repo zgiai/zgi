@@ -24,6 +24,7 @@ import agentService from '@/services/agent.service';
 import { datasetService } from '@/services';
 import { getTemplateAwareCharacterCount } from '@/components/workflow/common/workflow-value-editor/utils/value-transform';
 import type {
+  AgentDatabaseBinding,
   AgentMemorySlotConfig,
   AgentRuntimeConfig,
   UpdateAgentRuntimeConfigRequest,
@@ -85,6 +86,37 @@ function createAgentKnowledgeDatasetFallback(
   };
 }
 
+function normalizeAgentDatabaseBindings(bindings: AgentDatabaseBinding[]): AgentDatabaseBinding[] {
+  const byDataSource = new Map<string, { readable: Set<string>; writable: Set<string> }>();
+  bindings.forEach(binding => {
+    const dataSourceId = binding.data_source_id.trim();
+    if (!dataSourceId) return;
+    const tableIds = binding.table_ids.map(id => id.trim()).filter(Boolean);
+    if (tableIds.length === 0) return;
+    const existing = byDataSource.get(dataSourceId) ?? {
+      readable: new Set<string>(),
+      writable: new Set<string>(),
+    };
+    tableIds.forEach(id => existing.readable.add(id));
+    (binding.writable_table_ids ?? [])
+      .map(id => id.trim())
+      .filter(Boolean)
+      .forEach(id => {
+        if (tableIds.includes(id)) {
+          existing.writable.add(id);
+        }
+      });
+    byDataSource.set(dataSourceId, existing);
+  });
+  return Array.from(byDataSource.entries())
+    .map(([dataSourceId, tables]) => ({
+      data_source_id: dataSourceId,
+      table_ids: Array.from(tables.readable).sort(),
+      writable_table_ids: Array.from(tables.writable).filter(id => tables.readable.has(id)).sort(),
+    }))
+    .sort((left, right) => left.data_source_id.localeCompare(right.data_source_id));
+}
+
 export function useAgentRuntimePageModel(agentId: string) {
   const queryClient = useQueryClient();
   const { locale } = useLocale();
@@ -117,6 +149,7 @@ export function useAgentRuntimePageModel(agentId: string) {
   const [inputPlaceholder, setInputPlaceholder] = useState(defaultInputPlaceholder);
   const [suggestedQuestions, setSuggestedQuestions] = useState<string[]>([]);
   const [knowledgeDatasetIds, setKnowledgeDatasetIds] = useState<string[]>([]);
+  const [databaseBindings, setDatabaseBindings] = useState<AgentDatabaseBinding[]>([]);
   const [skillDialogOpen, setSkillDialogOpen] = useState(false);
   const [knowledgeDialogOpen, setKnowledgeDialogOpen] = useState(false);
   const [promptOptimizerOpen, setPromptOptimizerOpen] = useState(false);
@@ -139,6 +172,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     model: true,
     skills: true,
     knowledge: true,
+    databases: true,
     files: true,
     memory: true,
   });
@@ -187,7 +221,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       const hasLoadError = Boolean(query?.isError);
       return createAgentKnowledgeDatasetFallback(
         id,
-        hasLoadError ? t('knowledge.loadFailedName') : id,
+        t('knowledge.loadFailedName'),
         hasLoadError ? t('knowledge.loadFailedDescription') : '',
         hasLoadError
       );
@@ -294,6 +328,7 @@ export function useAgentRuntimePageModel(agentId: string) {
         .slice(0, 6),
       knowledge_dataset_ids: knowledgeDatasetIds,
       knowledge_retrieval_config: {},
+      database_bindings: databaseBindings,
     }),
     [
       defaultHomeTitle,
@@ -307,6 +342,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       normalizedSelectedSkillIds,
       suggestedQuestions,
       knowledgeDatasetIds,
+      databaseBindings,
       systemPrompt,
     ]
   );
@@ -346,6 +382,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     setInputPlaceholder(payload.input_placeholder);
     setSuggestedQuestions(payload.suggested_questions);
     setKnowledgeDatasetIds(payload.knowledge_dataset_ids ?? []);
+    setDatabaseBindings(normalizeAgentDatabaseBindings(payload.database_bindings ?? []));
   }, []);
 
   const payloadFromRuntimeConfig = useCallback(
@@ -368,6 +405,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       suggested_questions: runtimeConfig.suggested_questions ?? [],
       knowledge_dataset_ids: runtimeConfig.knowledge_dataset_ids ?? [],
       knowledge_retrieval_config: runtimeConfig.knowledge_retrieval_config ?? {},
+      database_bindings: normalizeAgentDatabaseBindings(runtimeConfig.database_bindings ?? []),
     }),
     [defaultHomeTitle, defaultInputPlaceholder]
   );
@@ -754,6 +792,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       isDatasetsLoading: isSelectedDatasetsLoading,
       selectedKnowledgeDatasets,
       selectedKnowledgeDatasetIds: knowledgeDatasetIds,
+      databaseBindings,
       suggestedQuestions,
       isGeneratingSuggestions,
       systemPrompt,
@@ -772,6 +811,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       onOpenKnowledgeDialog: () => setKnowledgeDialogOpen(true),
       onToggleSkill: handleToggleSkill,
       onToggleKnowledgeDataset: handleToggleKnowledgeDataset,
+      onChangeDatabaseBindings: setDatabaseBindings,
       onGenerateSuggestedQuestions: () => void handleGenerateSuggestedQuestions(),
       onChangeSuggestedQuestions: setSuggestedQuestions,
       onChangeFileUploadEnabled: setFileUploadEnabled,
