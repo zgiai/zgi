@@ -75,7 +75,7 @@ workflow:
         text: |-
           Run guide
 
-          Setup required. Requires: OpenAI gpt-5.5 model, database. Bind a real data source and tables before SQL generation and querying.
+          Setup required. Requires: OpenAI GPT-4o model, database. Bind a real data source and tables before SQL generation and querying.
 
           Suggested test input:
           The Start node fields are prefilled. Open Debug and run the defaults directly.
@@ -199,7 +199,7 @@ workflow:
         variables: []
         model:
           provider: openai
-          name: gpt-5.5
+          name: gpt-4o
           mode: chat
           completion_params: {}
         prompt_template:

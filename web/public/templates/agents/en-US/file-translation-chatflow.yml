@@ -75,7 +75,7 @@ workflow:
         text: |-
           Run guide
 
-          Ready. Requires: OpenAI gpt-5.5 model, file input. Run after uploading files or providing file content.
+          Ready. Requires: OpenAI GPT-4o model, file input. Run after uploading files or providing file content.
 
           Suggested test input:
           Type this in the debug chat:
@@ -133,7 +133,7 @@ workflow:
         variables: []
         model:
           provider: openai
-          name: gpt-5.5
+          name: gpt-4o
           mode: chat
           completion_params: {}
         prompt_template:

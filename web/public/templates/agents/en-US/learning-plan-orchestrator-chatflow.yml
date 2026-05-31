@@ -76,7 +76,7 @@ workflow:
         text: |-
           Run guide
 
-          Setup required. Requires: OpenAI gpt-5.5 model, database, and code sandbox service. Bind the planning detail table and confirm code execution before testing plan creation and persistence.
+          Setup required. Requires: OpenAI GPT-4o model, database, and code sandbox service. Bind the planning detail table and confirm code execution before testing plan creation and persistence.
 
           Suggested test input:
           Type this in the debug chat:
@@ -117,7 +117,7 @@ workflow:
         variables: []
         model:
           provider: openai
-          name: gpt-5.5
+          name: gpt-4o
           mode: chat
           completion_params:
             response_format: json_object
@@ -211,7 +211,7 @@ workflow:
         variables: []
         model:
           provider: openai
-          name: gpt-5.5
+          name: gpt-4o
           mode: chat
           completion_params:
             response_format: json_object

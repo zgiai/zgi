@@ -42,13 +42,15 @@ const expectedNodeTypes = new Set([
 const localeModel = {
   'en-US': {
     provider: 'openai',
-    name: 'gpt-5.5',
+    name: 'gpt-4o',
+    displayName: 'GPT-4o',
     noteKeyword: 'Run guide',
     debugKeyword: 'Suggested test input',
   },
   'zh-Hans': {
     provider: 'openai',
-    name: 'gpt-5.5',
+    name: 'gpt-4o',
+    displayName: 'GPT-4o',
     noteKeyword: '运行说明',
     debugKeyword: '调试输入',
   },
@@ -202,8 +204,8 @@ function validateRunGuide(locale, fileName, doc, nodes) {
     fail(`${locale}/${fileName} run guide note is missing a debug input section.`);
   }
 
-  if (hasLlmNode && !noteText.includes(model.name)) {
-    fail(`${locale}/${fileName} run guide note does not mention ${model.name}.`);
+  if (hasLlmNode && !noteText.includes(model.displayName)) {
+    fail(`${locale}/${fileName} run guide note does not mention ${model.displayName}.`);
   }
 
   if (doc?.app?.mode === 'CONVERSATIONAL_WORKFLOW') {

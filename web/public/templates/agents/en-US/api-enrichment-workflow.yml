@@ -75,7 +75,7 @@ workflow:
         text: |-
           Run guide
 
-          Ready. Requires: OpenAI gpt-5.5 model and outbound network. The HTTP node uses GitHub public search by default; replace it with an internal API for enterprise use.
+          Ready. Requires: OpenAI GPT-4o model and outbound network. The HTTP node uses GitHub public search by default; replace it with an internal API for enterprise use.
 
           Suggested test input:
           The Start node fields are prefilled. Open Debug and run the defaults directly.
@@ -203,7 +203,7 @@ workflow:
         variables: []
         model:
           provider: openai
-          name: gpt-5.5
+          name: gpt-4o
           mode: chat
           completion_params: {}
         prompt_template:
