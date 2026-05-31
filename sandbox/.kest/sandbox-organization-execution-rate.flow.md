@@ -15,7 +15,7 @@ Content-Type: application/json
 {
   "runtime_profile": "session",
   "ttl_seconds": 60,
-  "organization_id": "organization_rate_kest"
+  "organization_id": "{{rate_organization_id}}"
 }
 
 [Captures]
@@ -69,7 +69,7 @@ code == -429
 data.code == "organization_execution_rate_limit_exceeded"
 data.limit == "max_executions_per_minute_per_organization"
 data.maximum == 1
-data.organization_id == "organization_rate_kest"
+data.organization_id == "{{rate_organization_id}}"
 ```
 
 ```step
@@ -82,7 +82,7 @@ GET {{base_url}}/v1/observer/events?sandbox_id={{rate_sandbox_id}}&type=exec.com
 status == 200
 code == 0
 data.events.0.metadata.code == "organization_execution_rate_limit_exceeded"
-data.events.0.metadata.organization_id == "organization_rate_kest"
+data.events.0.metadata.organization_id == "{{rate_organization_id}}"
 data.events.0.metadata.request_id == "req_kest_rate_second"
 ```
 

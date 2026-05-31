@@ -35,6 +35,10 @@ cleanup() {
     kill "${RATE_SERVER_PID}" 2>/dev/null || true
     wait "${RATE_SERVER_PID}" 2>/dev/null || true
   fi
+  if [[ -n "${WORKSPACE_SERVER_PID:-}" ]] && kill -0 "${WORKSPACE_SERVER_PID}" 2>/dev/null; then
+    kill "${WORKSPACE_SERVER_PID}" 2>/dev/null || true
+    wait "${WORKSPACE_SERVER_PID}" 2>/dev/null || true
+  fi
   rm -rf "${DATA_DIR}" "${ARCHIVE_VARS}"
 }
 trap cleanup EXIT
@@ -288,6 +292,60 @@ profiles:
     sync: false
 EOF
   run_kest .kest/sandbox-organization-execution-rate.flow.md \
+    --var rate_organization_id="organization_rate_kest_${RATE_PORT}" \
+    --fail-fast
+
+  WORKSPACE_PORT="$(python3 - <<'PY'
+import socket
+
+with socket.socket() as s:
+    s.bind(("127.0.0.1", 0))
+    print(s.getsockname()[1])
+PY
+)"
+  WORKSPACE_BASE_URL="http://127.0.0.1:${WORKSPACE_PORT}"
+  WORKSPACE_SERVER_LOG="${DATA_DIR}/sandbox-workspace.log"
+  env \
+    ZGI_SANDBOX_SERVER_PORT="${WORKSPACE_PORT}" \
+    ZGI_SANDBOX_DATA_DIR="${DATA_DIR}/workspace-data" \
+    ZGI_SANDBOX_WORKER_ID="zgi-sandbox-workspace-kest-${WORKSPACE_PORT}" \
+    ZGI_SANDBOX_MAX_WORKSPACE_BYTES="16" \
+    go run cmd/server/main.go >"${WORKSPACE_SERVER_LOG}" 2>&1 &
+  WORKSPACE_SERVER_PID="$!"
+
+  for _ in {1..80}; do
+    if curl -fsS "${WORKSPACE_BASE_URL}/health" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.25
+  done
+  if ! curl -fsS "${WORKSPACE_BASE_URL}/health" >/dev/null 2>&1; then
+    cat "${WORKSPACE_SERVER_LOG}" >&2
+    echo "workspace-limit sandbox did not become ready at ${WORKSPACE_BASE_URL}" >&2
+    exit 1
+  fi
+
+  cat >"${local_config}" <<EOF
+version: 1
+environments:
+  local:
+    base_url: ${WORKSPACE_BASE_URL}
+active_env: local
+log_enabled: true
+EOF
+  cat >"${local_flow_config}" <<EOF
+version: 1
+profiles:
+  local:
+    include: [".kest/*.flow.md"]
+    env: local
+    base_url: "${WORKSPACE_BASE_URL}"
+    strict: true
+    fail_fast: false
+    sync: false
+EOF
+  run_kest .kest/sandbox-workspace-byte-limit.flow.md \
+    --var workspace_organization_id="organization_workspace_kest_${WORKSPACE_PORT}" \
     --fail-fast
 else
   echo "Skipping resource limit saturation flow against external sandbox: ${BASE_URL}"

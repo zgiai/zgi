@@ -49,6 +49,7 @@ type ResourceLimits struct {
 	MaxActiveSandboxes                    int    `json:"max_active_sandboxes"`
 	MaxActiveSandboxesPerOrganization     int    `json:"max_active_sandboxes_per_organization"`
 	MaxExecutionsPerMinutePerOrganization int    `json:"max_executions_per_minute_per_organization"`
+	MaxWorkspaceBytes                     int64  `json:"max_workspace_bytes"`
 	QueueTimeoutMS                        int    `json:"queue_timeout_ms"`
 	DefaultTimeoutSeconds                 int    `json:"default_timeout"`
 	DefaultExecutionTimeoutMS             int64  `json:"default_execution_timeout_ms"`

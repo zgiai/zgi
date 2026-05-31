@@ -47,6 +47,7 @@ Already available:
 - Worker-scoped active sandbox limit accounting
 - Optional organization-scoped active sandbox limit accounting
 - Optional organization-scoped execution rate limit accounting
+- Optional sandbox workspace byte limit accounting
 - Sandbox ownership fields for organization, workspace, app, workflow run, and user context
 - Ownership context persisted with sandbox records and propagated to lifecycle, endpoint, expiration, execution, file, archive, and artifact manifest observer events
 - Artifact manifests include content type, reference encoding, SHA-256 hashes, timestamps, and enforce file count and total byte limits
@@ -304,7 +305,7 @@ Goal: enforce hard resource boundaries for every execution path.
 - Process count limit.
 - Open file limit.
 - Max file count per sandbox.
-- Max workspace bytes per sandbox.
+- Added optional max workspace bytes per sandbox with `ZGI_SANDBOX_MAX_WORKSPACE_BYTES`.
 - Max artifact bytes per run.
 - Max sandbox lifetime.
 

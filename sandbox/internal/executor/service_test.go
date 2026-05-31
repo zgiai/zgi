@@ -242,6 +242,149 @@ func TestOrganizationExecutionRateLimit(t *testing.T) {
 	}
 }
 
+func TestWorkspaceByteLimit(t *testing.T) {
+	recorder := observer.NewRecorder(100)
+	cfg := config.FromEnv()
+	cfg.DataDir = t.TempDir()
+	cfg.MaxWorkspaceBytes = 16
+	policyService := policy.NewService(cfg)
+	manager, err := lifecycle.NewManagerWithConfig(recorder, policyService, cfg, nil, nil)
+	if err != nil {
+		t.Fatalf("expected lifecycle manager, got %v", err)
+	}
+	service := NewService(manager, runner.NewService(2, 3*time.Second, 4096), recorder, policyService)
+
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+		OrganizationID: "organization-workspace",
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	if _, err := service.UploadFile(FileWriteRequest{
+		SandboxID: box.ID,
+		Path:      "notes/one.txt",
+		Content:   "1234567890",
+	}); err != nil {
+		t.Fatalf("expected first upload below workspace limit, got %v", err)
+	}
+
+	_, err = service.UploadFile(FileWriteRequest{
+		SandboxID: box.ID,
+		Path:      "notes/two.txt",
+		Content:   "1234567890",
+	})
+	var limitErr *policy.LimitError
+	if !errors.As(err, &limitErr) || limitErr.Code != "workspace_byte_limit_exceeded" || limitErr.Limit != "max_workspace_bytes" {
+		t.Fatalf("expected workspace byte limit on upload, got %v", err)
+	}
+	if _, err := service.StatFile(box.ID, "notes/two.txt"); err == nil {
+		t.Fatal("expected rejected upload to leave no file")
+	}
+
+	_, err = service.RunCommand(context.Background(), CommandRequest{
+		SandboxID: box.ID,
+		Command:   "python3",
+		Args:      []string{"-c", "open('generated.txt', 'w').write('1234567890')"},
+		Profile:   "code-short",
+	})
+	if !errors.As(err, &limitErr) || limitErr.Code != "workspace_byte_limit_exceeded" {
+		t.Fatalf("expected workspace byte limit on generated files, got %v", err)
+	}
+	events := recorder.Query(observer.Query{SandboxID: box.ID, Type: "exec.command.failed", Limit: 1})
+	if len(events) != 1 || events[0].Metadata["code"] != "workspace_byte_limit_exceeded" {
+		t.Fatalf("expected structured workspace limit event, got %#v", events)
+	}
+
+	codeBox, err := manager.Create(lifecycle.CreateRequest{RuntimeProfile: string(sandbox.RuntimeSession)})
+	if err != nil {
+		t.Fatalf("expected code sandbox create, got %v", err)
+	}
+	_, err = service.RunCode(context.Background(), CodeRequest{
+		SandboxID: codeBox.ID,
+		Language:  "python3",
+		Code:      "open('code-generated.txt', 'w').write('12345678901234567')",
+	})
+	if !errors.As(err, &limitErr) || limitErr.Code != "workspace_byte_limit_exceeded" {
+		t.Fatalf("expected code workspace byte limit, got %v", err)
+	}
+
+	skillRecorder := observer.NewRecorder(100)
+	skillCfg := config.FromEnv()
+	skillCfg.DataDir = t.TempDir()
+	skillCfg.MaxWorkspaceBytes = 4096
+	skillPolicy := policy.NewService(skillCfg)
+	skillManager, err := lifecycle.NewManagerWithConfig(skillRecorder, skillPolicy, skillCfg, nil, nil)
+	if err != nil {
+		t.Fatalf("expected skill lifecycle manager, got %v", err)
+	}
+	skillService := NewService(skillManager, runner.NewService(2, 3*time.Second, 4096), skillRecorder, skillPolicy)
+	skillBox, err := skillManager.Create(lifecycle.CreateRequest{RuntimeProfile: string(sandbox.RuntimeSession)})
+	if err != nil {
+		t.Fatalf("expected skill sandbox create, got %v", err)
+	}
+	_, err = skillService.UploadArchive(ArchiveUploadRequest{
+		SandboxID: skillBox.ID,
+		Path:      "skills/workspace",
+		ArchiveBase64: zipBase64(t, map[string]string{
+			"SKILL.md":            "# Skill",
+			"scripts/run.py":      "import os\nos.makedirs('artifacts', exist_ok=True)\nopen('artifacts/large.txt', 'w').write('x' * 4096)\nprint('done')\n",
+			"skill.manifest.json": validSkillManifestJSON("scripts/run.py"),
+		}),
+		Format:                "zip",
+		ValidateSkillManifest: true,
+	})
+	if err != nil {
+		t.Fatalf("upload skill package: %v", err)
+	}
+	_, err = skillService.RunSkill(context.Background(), SkillRunRequest{
+		SandboxID: skillBox.ID,
+		Path:      "skills/workspace",
+	})
+	if !errors.As(err, &limitErr) || limitErr.Code != "workspace_byte_limit_exceeded" {
+		t.Fatalf("expected skill workspace byte limit, got %v", err)
+	}
+}
+
+func TestWorkspaceByteLimitRejectsArchiveBeforeWriting(t *testing.T) {
+	recorder := observer.NewRecorder(100)
+	cfg := config.FromEnv()
+	cfg.DataDir = t.TempDir()
+	cfg.MaxWorkspaceBytes = 8
+	policyService := policy.NewService(cfg)
+	manager, err := lifecycle.NewManagerWithConfig(recorder, policyService, cfg, nil, nil)
+	if err != nil {
+		t.Fatalf("expected lifecycle manager, got %v", err)
+	}
+	service := NewService(manager, runner.NewService(2, 3*time.Second, 4096), recorder, policyService)
+
+	box, err := manager.Create(lifecycle.CreateRequest{RuntimeProfile: string(sandbox.RuntimeSession)})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	_, err = service.UploadArchive(ArchiveUploadRequest{
+		SandboxID: box.ID,
+		Path:      "pkg",
+		ArchiveBase64: zipBase64(t, map[string]string{
+			"a.txt": "12345",
+			"b.txt": "67890",
+		}),
+		Format: "zip",
+	})
+	var limitErr *policy.LimitError
+	if !errors.As(err, &limitErr) || limitErr.Code != "workspace_byte_limit_exceeded" {
+		t.Fatalf("expected archive workspace byte limit, got %v", err)
+	}
+	if _, err := service.StatFile(box.ID, "pkg/a.txt"); err == nil {
+		t.Fatal("expected archive rejection to avoid partial writes")
+	}
+	if _, err := service.StatFile(box.ID, "pkg/b.txt"); err == nil {
+		t.Fatal("expected archive rejection to avoid partial writes")
+	}
+}
+
 func TestExecutionFailureEventsAvoidSensitivePayloads(t *testing.T) {
 	recorder := observer.NewRecorder(100)
 	policyService := policy.NewService(config.FromEnv())

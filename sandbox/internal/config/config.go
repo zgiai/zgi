@@ -16,6 +16,7 @@ type Config struct {
 	MaxActive                             int
 	MaxActivePerOrganization              int
 	MaxExecutionsPerMinutePerOrganization int
+	MaxWorkspaceBytes                     int64
 	QueueTimeoutMS                        int
 	ShutdownTimeoutSeconds                int
 	SessionTTL                            int
@@ -54,6 +55,7 @@ func FromEnv() Config {
 		MaxActive:                             getEnvInt("ZGI_SANDBOX_MAX_ACTIVE", 6),
 		MaxActivePerOrganization:              getEnvIntAllowZero("ZGI_SANDBOX_MAX_ACTIVE_PER_ORGANIZATION", 0),
 		MaxExecutionsPerMinutePerOrganization: getEnvIntAllowZero("ZGI_SANDBOX_MAX_EXECUTIONS_PER_MINUTE_PER_ORGANIZATION", 0),
+		MaxWorkspaceBytes:                     getEnvInt64AllowZero("ZGI_SANDBOX_MAX_WORKSPACE_BYTES", 0),
 		QueueTimeoutMS:                        getEnvInt("ZGI_SANDBOX_QUEUE_TIMEOUT_MS", 5000),
 		ShutdownTimeoutSeconds:                getEnvInt("ZGI_SANDBOX_SHUTDOWN_TIMEOUT_SECONDS", 10),
 		SessionTTL:                            getEnvInt("ZGI_SANDBOX_SESSION_TTL_SECONDS", 1800),
@@ -119,6 +121,7 @@ func (c Config) PublicSnapshot() map[string]any {
 		"max_active":                  c.MaxActive,
 		"max_active_per_organization": c.MaxActivePerOrganization,
 		"max_executions_per_minute_per_organization": c.MaxExecutionsPerMinutePerOrganization,
+		"max_workspace_bytes":                        c.MaxWorkspaceBytes,
 		"queue_timeout_ms":                           c.QueueTimeoutMS,
 		"shutdown_timeout_seconds":                   c.ShutdownTimeoutSeconds,
 		"session_ttl_seconds":                        c.SessionTTL,
@@ -184,6 +187,23 @@ func getEnvIntAllowZero(key string, fallback int) int {
 			return fallback
 		}
 		parsed = parsed*10 + int(char-'0')
+	}
+
+	return parsed
+}
+
+func getEnvInt64AllowZero(key string, fallback int64) int64 {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+
+	var parsed int64
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return fallback
+		}
+		parsed = parsed*10 + int64(char-'0')
 	}
 
 	return parsed

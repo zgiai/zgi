@@ -390,6 +390,7 @@ func (s *Service) EffectiveLimits() sandbox.ResourceLimits {
 		MaxActiveSandboxes:                    s.config.MaxActive,
 		MaxActiveSandboxesPerOrganization:     s.config.MaxActivePerOrganization,
 		MaxExecutionsPerMinutePerOrganization: s.config.MaxExecutionsPerMinutePerOrganization,
+		MaxWorkspaceBytes:                     s.config.MaxWorkspaceBytes,
 		QueueTimeoutMS:                        s.config.QueueTimeoutMS,
 		DefaultTimeoutSeconds:                 s.config.TimeoutSeconds,
 		DefaultExecutionTimeoutMS:             int64(s.config.TimeoutSeconds) * 1000,
@@ -410,12 +411,16 @@ func (s *Service) EffectiveLimits() sandbox.ResourceLimits {
 		MaxCompatTTLSecs:                      300,
 		MaxCompatTTLSeconds:                   300,
 		DependencyUpdatesLocked:               true,
-		WorkspaceByteLimitEnforced:            false,
+		WorkspaceByteLimitEnforced:            s.config.MaxWorkspaceBytes > 0,
 	}
 }
 
 func (s *Service) MaxExecutionsPerMinutePerOrganization() int {
 	return s.config.MaxExecutionsPerMinutePerOrganization
+}
+
+func (s *Service) MaxWorkspaceBytes() int64 {
+	return s.config.MaxWorkspaceBytes
 }
 
 func (s *Service) RuntimeBackend() string {
