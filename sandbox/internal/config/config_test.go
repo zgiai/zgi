@@ -46,6 +46,16 @@ func TestFromEnvReadsOrganizationExecutionRateLimit(t *testing.T) {
 	}
 }
 
+func TestFromEnvReadsOrganizationConcurrentExecutionLimit(t *testing.T) {
+	t.Setenv("ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS_PER_ORGANIZATION", "3")
+
+	cfg := FromEnv()
+
+	if cfg.MaxConcurrentExecutionsPerOrganization != 3 {
+		t.Fatalf("expected organization concurrent execution limit 3, got %d", cfg.MaxConcurrentExecutionsPerOrganization)
+	}
+}
+
 func TestFromEnvReadsWorkspaceByteLimit(t *testing.T) {
 	t.Setenv("ZGI_SANDBOX_MAX_WORKSPACE_BYTES", "65536")
 

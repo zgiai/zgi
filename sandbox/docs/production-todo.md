@@ -46,6 +46,7 @@ Already available:
 - Startup log emits effective non-secret configuration
 - Worker-scoped active sandbox limit accounting
 - Optional organization-scoped active sandbox limit accounting
+- Optional organization-scoped concurrent execution limit accounting
 - Optional organization-scoped execution rate limit accounting
 - Optional sandbox workspace file count limit accounting
 - Optional sandbox workspace byte limit accounting
@@ -314,7 +315,7 @@ Goal: enforce hard resource boundaries for every execution path.
 
 - Max concurrent executions per service.
 - Max concurrent executions per profile.
-- Max concurrent executions per organization.
+- Added optional max concurrent executions per organization with `ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS_PER_ORGANIZATION`.
 - Max queued jobs per organization.
 - Queue wait timeout.
 - Cancellation propagation.

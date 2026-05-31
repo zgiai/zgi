@@ -242,6 +242,112 @@ func TestOrganizationExecutionRateLimit(t *testing.T) {
 	}
 }
 
+func TestOrganizationConcurrentExecutionLimit(t *testing.T) {
+	recorder := observer.NewRecorder(100)
+	cfg := config.FromEnv()
+	cfg.DataDir = t.TempDir()
+	cfg.MaxConcurrentExecutionsPerOrganization = 1
+	policyService := policy.NewService(cfg)
+	manager, err := lifecycle.NewManagerWithConfig(recorder, policyService, cfg, nil, nil)
+	if err != nil {
+		t.Fatalf("expected lifecycle manager, got %v", err)
+	}
+	service := NewService(manager, runner.NewService(2, 3*time.Second, 4096), recorder, policyService)
+
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+		OrganizationID: "organization-concurrent",
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+	otherBox, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+		OrganizationID: "organization-other-concurrent",
+	})
+	if err != nil {
+		t.Fatalf("expected other sandbox create, got %v", err)
+	}
+	_, err = service.UploadArchive(ArchiveUploadRequest{
+		SandboxID: box.ID,
+		Path:      "skills/concurrent",
+		ArchiveBase64: zipBase64(t, map[string]string{
+			"SKILL.md":            "# Skill",
+			"scripts/run.py":      "print('skill')",
+			"skill.manifest.json": validSkillManifestJSON("scripts/run.py"),
+		}),
+		Format:                "zip",
+		ValidateSkillManifest: true,
+	})
+	if err != nil {
+		t.Fatalf("upload skill package: %v", err)
+	}
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := service.RunCommand(context.Background(), CommandRequest{
+			SandboxID: box.ID,
+			Command:   "python3",
+			Args:      []string{"-c", "import time; time.sleep(0.8)"},
+			TimeoutMS: 2000,
+		})
+		firstDone <- err
+	}()
+	waitForOrganizationExecutions(t, service, "organization-concurrent", 1)
+
+	_, err = service.RunCommand(context.Background(), CommandRequest{
+		SandboxID: box.ID,
+		Command:   "pwd",
+	})
+	var limitErr *policy.LimitError
+	if !errors.As(err, &limitErr) || limitErr.Code != "organization_concurrent_execution_limit_exceeded" || limitErr.Limit != "max_concurrent_executions_per_organization" {
+		t.Fatalf("expected organization concurrent command limit error, got %v", err)
+	}
+	if limitErr.Details["organization_id"] != "organization-concurrent" {
+		t.Fatalf("expected organization id in details, got %+v", limitErr.Details)
+	}
+
+	_, err = service.RunCode(context.Background(), CodeRequest{
+		SandboxID: box.ID,
+		Language:  "python3",
+		Code:      "print('blocked')",
+	})
+	if !errors.As(err, &limitErr) || limitErr.Code != "organization_concurrent_execution_limit_exceeded" {
+		t.Fatalf("expected organization concurrent code limit error, got %v", err)
+	}
+
+	_, err = service.RunSkill(context.Background(), SkillRunRequest{
+		SandboxID: box.ID,
+		Path:      "skills/concurrent",
+	})
+	if !errors.As(err, &limitErr) || limitErr.Code != "organization_concurrent_execution_limit_exceeded" {
+		t.Fatalf("expected organization concurrent skill limit error, got %v", err)
+	}
+
+	if _, err := service.RunCommand(context.Background(), CommandRequest{
+		SandboxID: otherBox.ID,
+		Command:   "pwd",
+	}); err != nil {
+		t.Fatalf("expected other organization execution to run, got %v", err)
+	}
+
+	if err := <-firstDone; err != nil {
+		t.Fatalf("expected first command to complete, got %v", err)
+	}
+	waitForOrganizationExecutions(t, service, "organization-concurrent", 0)
+
+	events := recorder.Query(observer.Query{SandboxID: box.ID, Type: "exec.command.failed", Limit: 1})
+	if len(events) != 1 {
+		t.Fatalf("expected concurrent limit failure event, got %d", len(events))
+	}
+	if events[0].Metadata["code"] != "organization_concurrent_execution_limit_exceeded" {
+		t.Fatalf("expected structured concurrent limit metadata, got %#v", events[0].Metadata)
+	}
+	if events[0].Metadata["organization_id"] != "organization-concurrent" {
+		t.Fatalf("expected organization metadata, got %#v", events[0].Metadata)
+	}
+}
+
 func TestWorkspaceByteLimit(t *testing.T) {
 	recorder := observer.NewRecorder(100)
 	cfg := config.FromEnv()
@@ -1397,6 +1503,22 @@ func newTestExecutorService(t *testing.T) (*Service, *lifecycle.Manager) {
 		t.Fatalf("expected lifecycle manager, got %v", err)
 	}
 	return NewService(manager, runner.NewService(2, 3*time.Second, 4096), recorder, policyService), manager
+}
+
+func waitForOrganizationExecutions(t *testing.T, service *Service, organizationID string, expected int) {
+	t.Helper()
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		service.executionMu.Lock()
+		active := service.activeExecutionsByOrganization[organizationID]
+		service.executionMu.Unlock()
+		if active == expected {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("expected %d active executions for organization %q", expected, organizationID)
 }
 
 func zipBase64(t *testing.T, files map[string]string) string {

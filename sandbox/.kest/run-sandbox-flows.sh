@@ -43,6 +43,10 @@ cleanup() {
     kill "${FILE_COUNT_SERVER_PID}" 2>/dev/null || true
     wait "${FILE_COUNT_SERVER_PID}" 2>/dev/null || true
   fi
+  if [[ -n "${CONCURRENT_SERVER_PID:-}" ]] && kill -0 "${CONCURRENT_SERVER_PID}" 2>/dev/null; then
+    kill "${CONCURRENT_SERVER_PID}" 2>/dev/null || true
+    wait "${CONCURRENT_SERVER_PID}" 2>/dev/null || true
+  fi
   rm -rf "${DATA_DIR}" "${ARCHIVE_VARS}"
 }
 trap cleanup EXIT
@@ -403,6 +407,59 @@ profiles:
 EOF
   run_kest .kest/sandbox-workspace-file-limit.flow.md \
     --var file_count_organization_id="organization_file_count_kest_${FILE_COUNT_PORT}" \
+    --fail-fast
+
+  CONCURRENT_PORT="$(python3 - <<'PY'
+import socket
+
+with socket.socket() as s:
+    s.bind(("127.0.0.1", 0))
+    print(s.getsockname()[1])
+PY
+)"
+  CONCURRENT_BASE_URL="http://127.0.0.1:${CONCURRENT_PORT}"
+  CONCURRENT_SERVER_LOG="${DATA_DIR}/sandbox-concurrent-execution.log"
+  env \
+    ZGI_SANDBOX_SERVER_PORT="${CONCURRENT_PORT}" \
+    ZGI_SANDBOX_DATA_DIR="${DATA_DIR}/concurrent-execution-data" \
+    ZGI_SANDBOX_WORKER_ID="zgi-sandbox-concurrent-kest-${CONCURRENT_PORT}" \
+    ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS_PER_ORGANIZATION="1" \
+    go run cmd/server/main.go >"${CONCURRENT_SERVER_LOG}" 2>&1 &
+  CONCURRENT_SERVER_PID="$!"
+
+  for _ in {1..80}; do
+    if curl -fsS "${CONCURRENT_BASE_URL}/health" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.25
+  done
+  if ! curl -fsS "${CONCURRENT_BASE_URL}/health" >/dev/null 2>&1; then
+    cat "${CONCURRENT_SERVER_LOG}" >&2
+    echo "organization-concurrent-execution-limit sandbox did not become ready at ${CONCURRENT_BASE_URL}" >&2
+    exit 1
+  fi
+
+  cat >"${local_config}" <<EOF
+version: 1
+environments:
+  local:
+    base_url: ${CONCURRENT_BASE_URL}
+active_env: local
+log_enabled: true
+EOF
+  cat >"${local_flow_config}" <<EOF
+version: 1
+profiles:
+  local:
+    include: [".kest/*.flow.md"]
+    env: local
+    base_url: "${CONCURRENT_BASE_URL}"
+    strict: true
+    fail_fast: false
+    sync: false
+EOF
+  run_kest .kest/sandbox-organization-concurrent-execution-limit.flow.md \
+    --var concurrent_organization_id="organization_concurrent_kest_${CONCURRENT_PORT}" \
     --fail-fast
 else
   echo "Skipping resource limit saturation flow against external sandbox: ${BASE_URL}"

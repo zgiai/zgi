@@ -384,41 +384,46 @@ func (s *Service) EffectiveLimits() sandbox.ResourceLimits {
 		maxFileSizeKB = 256
 	}
 	return sandbox.ResourceLimits{
-		RuntimeBackend:                        s.normalizedRuntimeBackend(),
-		NetworkPolicyEnforced:                 s.runtimeBackendEnforcesNetworkPolicy(),
-		MaxWorkers:                            s.config.MaxWorkers,
-		MaxActiveSandboxes:                    s.config.MaxActive,
-		MaxActiveSandboxesPerOrganization:     s.config.MaxActivePerOrganization,
-		MaxExecutionsPerMinutePerOrganization: s.config.MaxExecutionsPerMinutePerOrganization,
-		MaxWorkspaceFiles:                     s.config.MaxWorkspaceFiles,
-		MaxWorkspaceBytes:                     s.config.MaxWorkspaceBytes,
-		QueueTimeoutMS:                        s.config.QueueTimeoutMS,
-		DefaultTimeoutSeconds:                 s.config.TimeoutSeconds,
-		DefaultExecutionTimeoutMS:             int64(s.config.TimeoutSeconds) * 1000,
-		OutputLimitKB:                         s.config.OutputLimitKB,
-		MaxCommandTimeoutMS:                   int64(s.config.CommandTimeout) * 1000,
-		MaxCommandTimeoutSeconds:              s.config.CommandTimeout,
-		OutputLimitBytes:                      s.config.OutputLimitKB * 1024,
-		MaxFileSizeKB:                         maxFileSizeKB,
-		MaxFileSizeBytes:                      maxFileSizeBytes,
-		MaxArchiveFiles:                       256,
-		MaxArchiveTotalBytes:                  maxFileSizeBytes * 256,
-		MaxArtifactManifestFiles:              100,
-		MaxArtifactManifestTotalBytes:         maxFileSizeBytes * 256,
-		SessionTTLSecs:                        s.config.SessionTTL,
-		SessionTTLSeconds:                     s.config.SessionTTL,
-		InteractiveTTLSecs:                    s.config.InteractiveTTL,
-		InteractiveTTLSeconds:                 s.config.InteractiveTTL,
-		MaxCompatTTLSecs:                      300,
-		MaxCompatTTLSeconds:                   300,
-		DependencyUpdatesLocked:               true,
-		WorkspaceFileLimitEnforced:            s.config.MaxWorkspaceFiles > 0,
-		WorkspaceByteLimitEnforced:            s.config.MaxWorkspaceBytes > 0,
+		RuntimeBackend:                         s.normalizedRuntimeBackend(),
+		NetworkPolicyEnforced:                  s.runtimeBackendEnforcesNetworkPolicy(),
+		MaxWorkers:                             s.config.MaxWorkers,
+		MaxActiveSandboxes:                     s.config.MaxActive,
+		MaxActiveSandboxesPerOrganization:      s.config.MaxActivePerOrganization,
+		MaxConcurrentExecutionsPerOrganization: s.config.MaxConcurrentExecutionsPerOrganization,
+		MaxExecutionsPerMinutePerOrganization:  s.config.MaxExecutionsPerMinutePerOrganization,
+		MaxWorkspaceFiles:                      s.config.MaxWorkspaceFiles,
+		MaxWorkspaceBytes:                      s.config.MaxWorkspaceBytes,
+		QueueTimeoutMS:                         s.config.QueueTimeoutMS,
+		DefaultTimeoutSeconds:                  s.config.TimeoutSeconds,
+		DefaultExecutionTimeoutMS:              int64(s.config.TimeoutSeconds) * 1000,
+		OutputLimitKB:                          s.config.OutputLimitKB,
+		MaxCommandTimeoutMS:                    int64(s.config.CommandTimeout) * 1000,
+		MaxCommandTimeoutSeconds:               s.config.CommandTimeout,
+		OutputLimitBytes:                       s.config.OutputLimitKB * 1024,
+		MaxFileSizeKB:                          maxFileSizeKB,
+		MaxFileSizeBytes:                       maxFileSizeBytes,
+		MaxArchiveFiles:                        256,
+		MaxArchiveTotalBytes:                   maxFileSizeBytes * 256,
+		MaxArtifactManifestFiles:               100,
+		MaxArtifactManifestTotalBytes:          maxFileSizeBytes * 256,
+		SessionTTLSecs:                         s.config.SessionTTL,
+		SessionTTLSeconds:                      s.config.SessionTTL,
+		InteractiveTTLSecs:                     s.config.InteractiveTTL,
+		InteractiveTTLSeconds:                  s.config.InteractiveTTL,
+		MaxCompatTTLSecs:                       300,
+		MaxCompatTTLSeconds:                    300,
+		DependencyUpdatesLocked:                true,
+		WorkspaceFileLimitEnforced:             s.config.MaxWorkspaceFiles > 0,
+		WorkspaceByteLimitEnforced:             s.config.MaxWorkspaceBytes > 0,
 	}
 }
 
 func (s *Service) MaxExecutionsPerMinutePerOrganization() int {
 	return s.config.MaxExecutionsPerMinutePerOrganization
+}
+
+func (s *Service) MaxConcurrentExecutionsPerOrganization() int {
+	return s.config.MaxConcurrentExecutionsPerOrganization
 }
 
 func (s *Service) MaxWorkspaceBytes() int64 {

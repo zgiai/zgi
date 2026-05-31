@@ -16,6 +16,7 @@ status == 200
 code == 0
 data.limits.max_active_sandboxes == 6
 data.limits.max_active_sandboxes_per_organization == 2
+data.limits.max_concurrent_executions_per_organization == 0
 data.limits.max_archive_files == 256
 data.limits.max_artifact_manifest_files == 100
 data.limits.max_artifact_manifest_total_bytes == 67108864
@@ -42,6 +43,7 @@ organization_quota_sandbox_id_1 = data.id
 status == 200
 code == 0
 data.effective_limits.max_active_sandboxes_per_organization == 2
+data.effective_limits.max_concurrent_executions_per_organization == 0
 ```
 
 ```step

@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"text/template"
 	"text/template/parse"
 	"time"
@@ -34,6 +35,9 @@ type Service struct {
 	runner    *runner.Service
 	observer  *observer.Recorder
 	policy    *policy.Service
+
+	executionMu                    sync.Mutex
+	activeExecutionsByOrganization map[string]int
 }
 
 type CodeRequest struct {
@@ -175,10 +179,11 @@ type FileManifestOptions struct {
 
 func NewService(manager *lifecycle.Manager, runnerService *runner.Service, recorder *observer.Recorder, policyService *policy.Service) *Service {
 	return &Service{
-		lifecycle: manager,
-		runner:    runnerService,
-		observer:  recorder,
-		policy:    policyService,
+		lifecycle:                      manager,
+		runner:                         runnerService,
+		observer:                       recorder,
+		policy:                         policyService,
+		activeExecutionsByOrganization: make(map[string]int),
 	}
 }
 
@@ -266,6 +271,11 @@ func (s *Service) runCodeWithScope(ctx context.Context, req CodeRequest, runReq 
 	if err := s.enforceOrganizationExecutionRate(box); err != nil {
 		return runner.Result{}, box, err
 	}
+	releaseExecution, err := s.acquireOrganizationExecution(box)
+	if err != nil {
+		return runner.Result{}, box, err
+	}
+	defer releaseExecution()
 	result, err := s.runner.RunInDirWithLimits(ctx, runReq, box.RootPath, limits.Timeout, limits.StdoutLimitBytes, limits.StderrLimitBytes)
 	return result, box, err
 }
@@ -404,6 +414,12 @@ func (s *Service) RunCommand(ctx context.Context, req CommandRequest) (runner.Co
 		s.recordExecutionFailure(ctx, "exec.command.failed", req.SandboxID, "sandbox command execution failed", baseMetadata, err)
 		return runner.CommandResult{}, err
 	}
+	releaseExecution, err := s.acquireOrganizationExecution(box)
+	if err != nil {
+		s.recordExecutionFailure(ctx, "exec.command.failed", req.SandboxID, "sandbox command execution failed", baseMetadata, err)
+		return runner.CommandResult{}, err
+	}
+	defer releaseExecution()
 
 	result, err := s.runner.ExecuteCommandSpec(ctx, runner.CommandSpec{
 		WorkDir:        workDir,
@@ -499,6 +515,12 @@ func (s *Service) RunSkill(ctx context.Context, req SkillRunRequest) (SkillRunRe
 		s.recordExecutionFailure(ctx, "exec.skill.failed", req.SandboxID, "skill execution failed", baseMetadata, err)
 		return SkillRunResult{}, err
 	}
+	releaseExecution, err := s.acquireOrganizationExecution(box)
+	if err != nil {
+		s.recordExecutionFailure(ctx, "exec.skill.failed", req.SandboxID, "skill execution failed", baseMetadata, err)
+		return SkillRunResult{}, err
+	}
+	defer releaseExecution()
 	result, err := s.runner.ExecuteCommandSpec(ctx, runner.CommandSpec{
 		WorkDir:        packageRoot,
 		Command:        command,
@@ -589,6 +611,47 @@ func (s *Service) enforceOrganizationExecutionRate(box *sandbox.Sandbox) error {
 			"recent_executions": len(events),
 		},
 	}
+}
+
+func (s *Service) acquireOrganizationExecution(box *sandbox.Sandbox) (func(), error) {
+	limit := s.policy.MaxConcurrentExecutionsPerOrganization()
+	if limit <= 0 || box == nil || strings.TrimSpace(box.OrganizationID) == "" {
+		return func() {}, nil
+	}
+
+	s.executionMu.Lock()
+	defer s.executionMu.Unlock()
+
+	active := s.activeExecutionsByOrganization[box.OrganizationID]
+	if active >= limit {
+		return nil, &policy.LimitError{
+			Code:    "organization_concurrent_execution_limit_exceeded",
+			Limit:   "max_concurrent_executions_per_organization",
+			Maximum: limit,
+			Actual:  active + 1,
+			Details: map[string]any{
+				"organization_id":   box.OrganizationID,
+				"active_executions": active,
+			},
+		}
+	}
+	s.activeExecutionsByOrganization[box.OrganizationID] = active + 1
+
+	released := false
+	return func() {
+		s.executionMu.Lock()
+		defer s.executionMu.Unlock()
+		if released {
+			return
+		}
+		released = true
+		next := s.activeExecutionsByOrganization[box.OrganizationID] - 1
+		if next <= 0 {
+			delete(s.activeExecutionsByOrganization, box.OrganizationID)
+			return
+		}
+		s.activeExecutionsByOrganization[box.OrganizationID] = next
+	}, nil
 }
 
 func (s *Service) enforceWorkspaceByteLimit(box *sandbox.Sandbox) error {

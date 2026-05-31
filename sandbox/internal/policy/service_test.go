@@ -85,6 +85,9 @@ func TestNormalizeCreateReturnsEffectiveLimitsAndStructuredLimitError(t *testing
 	if decision.EffectiveLimits.MaxExecutionsPerMinutePerOrganization != cfg.MaxExecutionsPerMinutePerOrganization {
 		t.Fatalf("expected organization execution rate limit in decision, got %+v", decision.EffectiveLimits)
 	}
+	if decision.EffectiveLimits.MaxConcurrentExecutionsPerOrganization != cfg.MaxConcurrentExecutionsPerOrganization {
+		t.Fatalf("expected organization concurrent execution limit in decision, got %+v", decision.EffectiveLimits)
+	}
 	if decision.EffectiveLimits.MaxWorkspaceBytes != cfg.MaxWorkspaceBytes {
 		t.Fatalf("expected workspace byte limit in decision, got %+v", decision.EffectiveLimits)
 	}
