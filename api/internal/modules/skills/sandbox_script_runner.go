@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -56,6 +57,26 @@ type sandboxScriptRunnerTimeouts struct {
 	CommandPadding time.Duration
 	Artifact       time.Duration
 	Cleanup        time.Duration
+}
+
+type SandboxRequestError struct {
+	Method     string                 `json:"method"`
+	Path       string                 `json:"path"`
+	StatusCode int                    `json:"status_code"`
+	Code       int                    `json:"code"`
+	Message    string                 `json:"message"`
+	Data       map[string]interface{} `json:"data,omitempty"`
+}
+
+func (e *SandboxRequestError) Error() string {
+	if e == nil {
+		return ""
+	}
+	message := strings.TrimSpace(e.Message)
+	if message == "" {
+		message = http.StatusText(e.StatusCode)
+	}
+	return fmt.Sprintf("sandbox request %s %s failed: %s", e.Method, e.Path, message)
 }
 
 func NewSandboxScriptRunner(config SandboxScriptRunnerConfig) *SandboxScriptRunner {
@@ -115,9 +136,7 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 
 	sandboxID, err := r.createSandbox(ctx, execCtx, dependencyProfile)
 	if err != nil {
-		trace.Status = "error"
-		trace.Error = err.Error()
-		trace.DurationMS = time.Since(start).Milliseconds()
+		recordSkillScriptError(&trace, start, err)
 		return &ToolInvocationResult{Trace: trace}, err
 	}
 	defer func() { _ = r.deleteSandbox(context.WithoutCancel(ctx), sandboxID, execCtx) }()
@@ -130,9 +149,7 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 		return &ToolInvocationResult{Trace: trace}, err
 	}
 	if err := r.uploadArchive(ctx, sandboxID, archiveBase64, execCtx); err != nil {
-		trace.Status = "error"
-		trace.Error = err.Error()
-		trace.DurationMS = time.Since(start).Milliseconds()
+		recordSkillScriptError(&trace, start, err)
 		return &ToolInvocationResult{Trace: trace}, err
 	}
 
@@ -149,9 +166,7 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 	}
 	command, err := r.runCommand(ctx, sandboxID, string(stdin), timeout, execCtx)
 	if err != nil {
-		trace.Status = "error"
-		trace.Error = err.Error()
-		trace.DurationMS = time.Since(start).Milliseconds()
+		recordSkillScriptError(&trace, start, err)
 		return &ToolInvocationResult{Trace: trace}, err
 	}
 
@@ -162,8 +177,7 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 		err = fmt.Errorf("skill script exited with code %d: %s", command.ExitCode, strings.TrimSpace(command.Error))
 	}
 	if err != nil {
-		trace.Status = "error"
-		trace.Error = err.Error()
+		recordSkillScriptError(&trace, start, err)
 		return &ToolInvocationResult{Trace: trace, Messages: messages, ToolMessage: skillScriptToolMessage(callID, content)}, err
 	}
 	trace.Result = summarizeSkillScriptResult(command, messages)
@@ -358,7 +372,14 @@ func (r *SandboxScriptRunner) doJSON(ctx context.Context, method string, path st
 		if message == "" {
 			message = res.Status
 		}
-		return fmt.Errorf("sandbox request %s %s failed: %s", method, path, message)
+		return &SandboxRequestError{
+			Method:     method,
+			Path:       path,
+			StatusCode: res.StatusCode,
+			Code:       envelope.Code,
+			Message:    message,
+			Data:       sandboxErrorData(envelope.Data),
+		}
 	}
 	if out != nil && len(envelope.Data) > 0 && string(envelope.Data) != "null" {
 		if err := json.Unmarshal(envelope.Data, out); err != nil {
@@ -366,6 +387,49 @@ func (r *SandboxScriptRunner) doJSON(ctx context.Context, method string, path st
 		}
 	}
 	return nil
+}
+
+func recordSkillScriptError(trace *SkillTrace, start time.Time, err error) {
+	if trace == nil || err == nil {
+		return
+	}
+	trace.Status = "error"
+	trace.Error = err.Error()
+	trace.DurationMS = time.Since(start).Milliseconds()
+	if result := sandboxErrorTraceResult(err); len(result) > 0 {
+		trace.Result = result
+	}
+}
+
+func sandboxErrorTraceResult(err error) map[string]interface{} {
+	var sandboxErr *SandboxRequestError
+	if !errors.As(err, &sandboxErr) || sandboxErr == nil {
+		return nil
+	}
+	result := map[string]interface{}{
+		"sandbox_error": map[string]interface{}{
+			"method":      sandboxErr.Method,
+			"path":        sandboxErr.Path,
+			"status_code": sandboxErr.StatusCode,
+			"code":        sandboxErr.Code,
+			"message":     sandboxErr.Message,
+		},
+	}
+	if len(sandboxErr.Data) > 0 {
+		result["sandbox_error"].(map[string]interface{})["data"] = sandboxErr.Data
+	}
+	return result
+}
+
+func sandboxErrorData(raw json.RawMessage) map[string]interface{} {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var data map[string]interface{}
+	if err := json.Unmarshal(raw, &data); err != nil || len(data) == 0 {
+		return nil
+	}
+	return data
 }
 
 func durationOrDefault(value time.Duration, fallback time.Duration) time.Duration {
