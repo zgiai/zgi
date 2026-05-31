@@ -2409,6 +2409,39 @@ func TestRunCodeRejectsDeniedNetwork(t *testing.T) {
 	}
 }
 
+func TestRunCodeRejectsNetworkWhenProfileDisallowsIt(t *testing.T) {
+	recorder := observer.NewRecorder(100)
+	cfg := config.FromEnv()
+	cfg.RuntimeBackend = "linux-secure"
+	policyService := policy.NewService(cfg)
+	manager, err := lifecycle.NewManager(recorder, policyService)
+	if err != nil {
+		t.Fatalf("expected lifecycle manager, got %v", err)
+	}
+	service := NewService(manager, runner.NewService(2, 3*time.Second, 4096), recorder, policyService)
+
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile:    string(sandbox.RuntimeSession),
+		NetworkEnabled:    true,
+		NetworkPolicy:     "workflow-safe",
+		DependencyProfile: "stdlib",
+	})
+	if err != nil {
+		t.Fatalf("expected network-enabled sandbox create, got %v", err)
+	}
+
+	_, err = service.RunCode(context.Background(), CodeRequest{
+		SandboxID:     box.ID,
+		Language:      "python3",
+		Code:          "print('blocked')",
+		Profile:       "skill-python",
+		EnableNetwork: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "network access is disabled for command profile: skill-python") {
+		t.Fatalf("expected profile-level network rejection, got %v", err)
+	}
+}
+
 func newTestExecutorService(t *testing.T) (*Service, *lifecycle.Manager) {
 	t.Helper()
 

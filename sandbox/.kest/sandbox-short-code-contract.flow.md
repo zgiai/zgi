@@ -18,6 +18,8 @@ data.command_profiles.0.name == "code-short"
 data.command_profiles.0.stateless == true
 data.command_profiles.0.max_request_bytes == 131072
 data.command_profiles.0.max_result_json_bytes == 65536
+data.command_profiles.0.network_allowed == false
+data.command_profiles.0.network == "disabled"
 ```
 
 ```step

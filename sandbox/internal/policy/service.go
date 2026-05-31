@@ -48,6 +48,7 @@ type CommandLimits struct {
 	MaxRequestBytes    int           `json:"max_request_bytes"`
 	MaxResultJSONBytes int           `json:"max_result_json_bytes"`
 	Stateless          bool          `json:"stateless"`
+	NetworkAllowed     bool          `json:"network_allowed"`
 }
 
 type TemplateLimits struct {
@@ -377,6 +378,13 @@ func (s *Service) ValidateCodeExecution(box sandbox.Sandbox, enableNetwork bool)
 	return nil
 }
 
+func (s *Service) ValidateCommandProfileNetwork(limits CommandLimits, enableNetwork bool) error {
+	if enableNetwork && !limits.NetworkAllowed {
+		return fmt.Errorf("network access is disabled for command profile: %s", limits.Profile)
+	}
+	return nil
+}
+
 func (s *Service) NormalizeCommandTimeout(timeoutSeconds int) time.Duration {
 	if timeoutSeconds <= 0 {
 		timeoutSeconds = s.config.CommandTimeout
@@ -583,10 +591,18 @@ func (s *Service) commandProfileSnapshot() []map[string]any {
 			"max_request_bytes":     profile.MaxRequestBytes,
 			"max_result_json_bytes": profile.MaxResultJSONBytes,
 			"stateless":             profile.Stateless,
-			"network":               "inherits sandbox policy",
+			"network_allowed":       profile.NetworkAllowed,
+			"network":               networkProfileSummary(profile),
 		})
 	}
 	return items
+}
+
+func networkProfileSummary(profile CommandLimits) string {
+	if profile.NetworkAllowed {
+		return "requires sandbox policy"
+	}
+	return "disabled"
 }
 
 func (s *Service) templateProfileSnapshot() []TemplateLimits {

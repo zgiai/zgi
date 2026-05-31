@@ -280,6 +280,9 @@ func TestNormalizeCommandLimitsUsesProfileAndClampsRequest(t *testing.T) {
 	if shortLimits.MaxRequestBytes != 128*1024 {
 		t.Fatalf("expected code-short request body limit, got %d", shortLimits.MaxRequestBytes)
 	}
+	if shortLimits.NetworkAllowed {
+		t.Fatalf("expected code-short network to be disabled by default, got %+v", shortLimits)
+	}
 
 	snapshot := service.Snapshot()
 	profiles, ok := snapshot["command_profiles"].([]map[string]any)
@@ -291,6 +294,9 @@ func TestNormalizeCommandLimitsUsesProfileAndClampsRequest(t *testing.T) {
 	}
 	if profiles[0]["max_request_bytes"] != 128*1024 {
 		t.Fatalf("expected code-short request body limit in snapshot, got %#v", profiles[0])
+	}
+	if profiles[0]["network_allowed"] != false || profiles[0]["network"] != "disabled" {
+		t.Fatalf("expected code-short profile network denial in snapshot, got %#v", profiles[0])
 	}
 
 	if _, err := service.NormalizeCommandLimits("unknown", 0, 0, 0, 0); err == nil {
@@ -307,5 +313,20 @@ func TestValidateCodeExecutionRejectsUnauthorizedNetwork(t *testing.T) {
 
 	if err := service.ValidateCodeExecution(box, true); err == nil {
 		t.Fatal("expected network validation failure")
+	}
+}
+
+func TestValidateCommandProfileNetworkRequiresProfilePermission(t *testing.T) {
+	service := NewService(config.FromEnv())
+	limits, err := service.NormalizeCommandLimits("skill-python", 0, 0, 0, 0)
+	if err != nil {
+		t.Fatalf("expected command limits, got %v", err)
+	}
+
+	if err := service.ValidateCommandProfileNetwork(limits, true); err == nil {
+		t.Fatal("expected profile network validation failure")
+	}
+	if err := service.ValidateCommandProfileNetwork(limits, false); err != nil {
+		t.Fatalf("expected network-disabled request to pass profile validation, got %v", err)
 	}
 }

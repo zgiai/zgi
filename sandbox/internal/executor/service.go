@@ -296,6 +296,9 @@ func (s *Service) runCodeWithScope(ctx context.Context, req CodeRequest, runReq 
 	if limits.Stateless && !req.BindWorkspace && req.EnableNetwork {
 		return runner.Result{}, box, false, errors.New("network access is disabled for stateless code execution")
 	}
+	if err := s.policy.ValidateCommandProfileNetwork(limits, req.EnableNetwork); err != nil {
+		return runner.Result{}, box, false, err
+	}
 	if err := s.policy.ValidateCodeExecution(*box, req.EnableNetwork); err != nil {
 		return runner.Result{}, box, false, err
 	}
