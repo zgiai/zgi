@@ -106,9 +106,13 @@ func TestSandboxScriptRunnerLegacyCommandFlow(t *testing.T) {
 	artifacts := artifactItems(t, result.Messages[2])
 	if len(artifacts) != 1 ||
 		artifacts[0]["content"] != base64.StdEncoding.EncodeToString([]byte("artifact")) ||
+		artifacts[0]["content_type"] != "text/plain" ||
 		artifacts[0]["persisted"] != true ||
 		artifacts[0]["file_id"] == "" {
 		t.Fatalf("artifact message = %#v", result.Messages[2])
+	}
+	if len(persister.requests) != 1 || persister.requests[0].ContentType != "text/plain" {
+		t.Fatalf("persist requests = %#v, want stable text/plain content type", persister.requests)
 	}
 }
 
@@ -186,6 +190,64 @@ func TestSandboxScriptRunnerArtifactPersistenceFailureIsRecoverable(t *testing.T
 	}
 }
 
+func TestSkillArtifactMimeTypeUsesStableExtensionMapping(t *testing.T) {
+	tests := []struct {
+		filename string
+		want     string
+	}{
+		{"evaluation-summary.json", "application/json"},
+		{"report.html", "text/html"},
+		{"data.csv", "text/csv"},
+		{"notes.txt", "text/plain"},
+		{"README.md", "text/markdown"},
+		{"paper.pdf", "application/pdf"},
+		{"image.png", "image/png"},
+		{"photo.jpg", "image/jpeg"},
+		{"photo.jpeg", "image/jpeg"},
+		{"preview.webp", "image/webp"},
+		{"diagram.svg", "image/svg+xml"},
+		{"bundle.zip", "application/zip"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.filename, func(t *testing.T) {
+			if got := skillArtifactMimeType(tt.filename, "", []byte("{}")); got != tt.want {
+				t.Fatalf("skillArtifactMimeType(%q) = %q, want %q", tt.filename, got, tt.want)
+			}
+		})
+	}
+	if got := skillArtifactMimeType("result.json", "application/x-custom; charset=utf-8", []byte("{}")); got != "application/x-custom" {
+		t.Fatalf("explicit content type = %q, want application/x-custom", got)
+	}
+	if got := skillArtifactMimeType("result.json", "text/plain; charset=utf-8", []byte("{}")); got != "application/json" {
+		t.Fatalf("generic content type override = %q, want application/json", got)
+	}
+}
+
+func TestSandboxScriptRunnerNodeManifestUsesExecSkill(t *testing.T) {
+	root := writeNodeManifestSkill(t)
+	fake := newFakeSandboxServer(t)
+	fake.commandStdout = `{"mode":"node"}`
+	defer fake.server.Close()
+
+	runner := NewSandboxScriptRunner(SandboxScriptRunnerConfig{Endpoint: fake.server.URL, ArtifactPersister: &fakeSkillArtifactPersister{}})
+	result, err := runner.RunSkillScript(context.Background(), scriptSkillDocument(root), map[string]interface{}{"input": "hello"}, ExecutionContext{}, "call_1")
+	if err != nil {
+		t.Fatalf("RunSkillScript() error = %v", err)
+	}
+	if fake.commandRequests != 0 || fake.skillRequests != 1 {
+		t.Fatalf("requests command=%d skill=%d, want node manifest through exec/skill only", fake.commandRequests, fake.skillRequests)
+	}
+	if !fake.uploadValidateManifest {
+		t.Fatal("node manifest upload should request manifest validation")
+	}
+	if !fake.archiveNames["scripts/run.js"] || fake.archiveNames["scripts/run.py"] {
+		t.Fatalf("archive names = %#v, want node entrypoint without python fallback", fake.archiveNames)
+	}
+	if result.Messages[0].Data["mode"] != "node" {
+		t.Fatalf("stdout message = %#v, want node JSON", result.Messages[0])
+	}
+}
+
 func TestSandboxScriptRunnerManifestUploadFailureDoesNotFallback(t *testing.T) {
 	root := writeScriptSkill(t, true)
 	fake := newFakeSandboxServer(t)
@@ -255,6 +317,99 @@ func TestSandboxScriptRunnerRealSandboxE2E(t *testing.T) {
 	}
 }
 
+func TestSandboxScriptRunnerRealSandboxBacktestScenarios(t *testing.T) {
+	endpoint := strings.TrimSpace(os.Getenv("ZGI_SANDBOX_E2E_ENDPOINT"))
+	if endpoint == "" {
+		t.Skip("set ZGI_SANDBOX_E2E_ENDPOINT to run real sandbox backtest")
+	}
+	apiKey := strings.TrimSpace(os.Getenv("ZGI_SANDBOX_E2E_API_KEY"))
+
+	t.Run("json artifact", func(t *testing.T) {
+		persister := &fakeSkillArtifactPersister{}
+		result := runRealSandboxSkill(t, endpoint, apiKey, writePythonScenarioSkill(t, `
+import json, os
+os.makedirs("artifacts", exist_ok=True)
+open("artifacts/evaluation-summary.json", "w", encoding="utf-8").write(json.dumps({"case": "json", "count": 1}))
+print(json.dumps({"success": True, "case": "json"}))
+`), persister)
+		artifacts := firstArtifactItems(t, result.Messages)
+		if len(artifacts) != 1 || artifacts[0]["name"] != "evaluation-summary.json" || artifacts[0]["content_type"] != "application/json" {
+			t.Fatalf("json artifacts = %#v", artifacts)
+		}
+		if len(persister.requests) != 1 || persister.requests[0].ContentType != "application/json" {
+			t.Fatalf("persist requests = %#v, want application/json", persister.requests)
+		}
+	})
+
+	t.Run("html artifact", func(t *testing.T) {
+		persister := &fakeSkillArtifactPersister{}
+		result := runRealSandboxSkill(t, endpoint, apiKey, writePythonScenarioSkill(t, `
+import json, os
+os.makedirs("artifacts", exist_ok=True)
+open("artifacts/report.html", "w", encoding="utf-8").write("<!doctype html><title>Skill Report</title><h1>OK</h1>")
+print(json.dumps({"success": True, "case": "html"}))
+`), persister)
+		artifacts := firstArtifactItems(t, result.Messages)
+		if len(artifacts) != 1 || artifacts[0]["name"] != "report.html" || artifacts[0]["content_type"] != "text/html" {
+			t.Fatalf("html artifacts = %#v", artifacts)
+		}
+	})
+
+	t.Run("large artifact skipped", func(t *testing.T) {
+		persister := &fakeSkillArtifactPersister{}
+		result := runRealSandboxSkill(t, endpoint, apiKey, writePythonScenarioSkill(t, `
+import json, os
+os.makedirs("artifacts", exist_ok=True)
+open("artifacts/large.bin", "wb").write(b"x" * (2 * 1024 * 1024 + 1))
+print(json.dumps({"success": True, "case": "large"}))
+`), persister)
+		artifacts := firstArtifactItems(t, result.Messages)
+		if len(artifacts) != 1 || artifacts[0]["persisted"] != false || artifacts[0]["reason"] != "size_limit_exceeded" {
+			t.Fatalf("large artifacts = %#v", artifacts)
+		}
+		if persister.persisted != 0 {
+			t.Fatalf("persisted = %d, want 0 for large artifact", persister.persisted)
+		}
+	})
+
+	t.Run("stderr warning", func(t *testing.T) {
+		result := runRealSandboxSkill(t, endpoint, apiKey, writePythonScenarioSkill(t, `
+import json, sys
+sys.stderr.write("warning from skill\n")
+print(json.dumps({"success": True, "case": "stderr"}))
+`), &fakeSkillArtifactPersister{})
+		if !messagesContainLog(result.Messages, "warning from skill") {
+			t.Fatalf("messages = %#v, want stderr log", result.Messages)
+		}
+	})
+
+	t.Run("nonzero exit", func(t *testing.T) {
+		root := writePythonScenarioSkill(t, `
+import sys
+sys.stderr.write("boom\n")
+print("partial output")
+sys.exit(7)
+`)
+		runner := NewSandboxScriptRunner(SandboxScriptRunnerConfig{Endpoint: endpoint, APIKey: apiKey})
+		result, err := runner.RunSkillScript(context.Background(), scriptSkillDocument(root), map[string]interface{}{}, ExecutionContext{}, "call_real_nonzero")
+		if err == nil {
+			t.Fatal("RunSkillScript() error = nil, want nonzero exit error")
+		}
+		if result == nil || result.ToolMessage.Content == "" || !messagesContainLog(result.Messages, "boom") {
+			t.Fatalf("result = %#v, want tool message and stderr log", result)
+		}
+	})
+
+	t.Run("node manifest", func(t *testing.T) {
+		persister := &fakeSkillArtifactPersister{}
+		result := runRealSandboxSkill(t, endpoint, apiKey, writeNodeScenarioSkill(t), persister)
+		artifacts := firstArtifactItems(t, result.Messages)
+		if len(artifacts) != 1 || artifacts[0]["name"] != "node-result.json" || artifacts[0]["content_type"] != "application/json" {
+			t.Fatalf("node artifacts = %#v", artifacts)
+		}
+	})
+}
+
 func writeScriptSkill(t *testing.T, manifest bool) string {
 	t.Helper()
 	root := t.TempDir()
@@ -269,6 +424,56 @@ func writeScriptSkill(t *testing.T, manifest bool) string {
 		if err := os.WriteFile(filepath.Join(root, "skill.manifest.json"), []byte(content), 0o600); err != nil {
 			t.Fatalf("WriteFile(skill.manifest.json) error = %v", err)
 		}
+	}
+	return root
+}
+
+func writeNodeManifestSkill(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "scripts"), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "scripts", "run.js"), []byte("console.log(JSON.stringify({ok:true}))\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile(run.js) error = %v", err)
+	}
+	content := `{"entrypoint":"scripts/run.js","language":"nodejs","timeout_ms":30000,"allowed_artifact_paths":["artifacts"],"max_artifact_count":10,"max_artifact_bytes":1048576,"result_mode":"mixed"}`
+	if err := os.WriteFile(filepath.Join(root, "skill.manifest.json"), []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile(skill.manifest.json) error = %v", err)
+	}
+	return root
+}
+
+func writePythonScenarioSkill(t *testing.T, script string) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "scripts"), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "scripts", "run.py"), []byte(strings.TrimSpace(script)+"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile(run.py) error = %v", err)
+	}
+	return root
+}
+
+func writeNodeScenarioSkill(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "scripts"), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	script := `
+const fs = require("fs");
+fs.mkdirSync("artifacts", { recursive: true });
+fs.writeFileSync("artifacts/node-result.json", JSON.stringify({ runtime: "nodejs", ok: true }));
+console.log(JSON.stringify({ success: true, runtime: "nodejs" }));
+`
+	if err := os.WriteFile(filepath.Join(root, "scripts", "run.js"), []byte(strings.TrimSpace(script)+"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile(run.js) error = %v", err)
+	}
+	content := `{"entrypoint":"scripts/run.js","language":"nodejs","timeout_ms":30000,"allowed_artifact_paths":["artifacts"],"max_artifact_count":10,"max_artifact_bytes":1048576,"result_mode":"mixed"}`
+	if err := os.WriteFile(filepath.Join(root, "skill.manifest.json"), []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile(skill.manifest.json) error = %v", err)
 	}
 	return root
 }
@@ -317,6 +522,45 @@ func messagesContainArtifacts(messages []tools.ToolInvokeMessage) bool {
 	return false
 }
 
+func messagesContainLog(messages []tools.ToolInvokeMessage, text string) bool {
+	for _, message := range messages {
+		if message.Type == tools.ToolInvokeMessageTypeLog && strings.Contains(message.Text, text) {
+			return true
+		}
+	}
+	return false
+}
+
+func firstArtifactItems(t *testing.T, messages []tools.ToolInvokeMessage) []map[string]interface{} {
+	t.Helper()
+	for _, message := range messages {
+		if _, ok := message.Data["artifacts"]; ok {
+			return artifactItems(t, message)
+		}
+	}
+	t.Fatalf("messages = %#v, want artifact summary", messages)
+	return nil
+}
+
+func runRealSandboxSkill(t *testing.T, endpoint string, apiKey string, root string, persister SkillScriptArtifactPersister) *ToolInvocationResult {
+	t.Helper()
+	runner := NewSandboxScriptRunner(SandboxScriptRunnerConfig{
+		Endpoint:          endpoint,
+		APIKey:            apiKey,
+		ArtifactPersister: persister,
+	})
+	result, err := runner.RunSkillScript(context.Background(), scriptSkillDocument(root), map[string]interface{}{"input": "hello"}, ExecutionContext{
+		OrganizationID: "org-1",
+		UserID:         "user-1",
+		ConversationID: "conversation-1",
+		MessageID:      "message-1",
+	}, "call_real")
+	if err != nil {
+		t.Fatalf("RunSkillScript() error = %v", err)
+	}
+	return result
+}
+
 type fakeSandboxServer struct {
 	t *testing.T
 
@@ -341,6 +585,7 @@ type fakeSandboxServer struct {
 type fakeSkillArtifactPersister struct {
 	fail      bool
 	persisted int
+	requests  []SkillScriptArtifactPersistRequest
 }
 
 func (f *fakeSkillArtifactPersister) PersistSkillScriptArtifact(_ context.Context, request SkillScriptArtifactPersistRequest) (map[string]interface{}, error) {
@@ -348,6 +593,7 @@ func (f *fakeSkillArtifactPersister) PersistSkillScriptArtifact(_ context.Contex
 		return nil, io.ErrUnexpectedEOF
 	}
 	f.persisted++
+	f.requests = append(f.requests, request)
 	filename := request.Name
 	if filename == "" {
 		filename = filepath.Base(request.Path)
@@ -361,7 +607,7 @@ func (f *fakeSkillArtifactPersister) PersistSkillScriptArtifact(_ context.Contex
 		"transfer_method":    "tool_file",
 		"filename":           filename,
 		"extension":          filepath.Ext(filename),
-		"mime_type":          "text/plain",
+		"mime_type":          request.ContentType,
 		"size":               int64(len(request.Data)),
 		"url":                "http://example.test/files/" + filename,
 		"download_url":       "http://example.test/files/" + filename + "?download=1",

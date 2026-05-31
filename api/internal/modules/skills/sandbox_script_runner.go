@@ -336,6 +336,7 @@ func (r *SandboxScriptRunner) prepareArtifact(ctx context.Context, sandboxID str
 		return
 	}
 	artifact.Size = int64(len(data))
+	artifact.ContentType = skillArtifactMimeType(artifact.Name, artifact.ContentType, data)
 	if artifact.Size <= inlineSkillArtifactMaxBytes {
 		artifact.Content = content.Content
 		artifact.Encoding = "base64"
@@ -659,13 +660,22 @@ func skillArtifactFilename(name string, artifactPath string) string {
 
 func skillArtifactMimeType(filename string, contentType string, data []byte) string {
 	mimeType := strings.TrimSpace(strings.Split(contentType, ";")[0])
+	extensionMimeType := ""
+	if extension := path.Ext(filename); extension != "" {
+		if byExtension := skillArtifactMimeTypeByExtension(extension); byExtension != "" {
+			extensionMimeType = byExtension
+		} else if byExtension := mime.TypeByExtension(extension); byExtension != "" {
+			extensionMimeType = strings.Split(byExtension, ";")[0]
+		}
+	}
 	if mimeType != "" {
+		if extensionMimeType != "" && isGenericSkillArtifactMimeType(mimeType) {
+			return extensionMimeType
+		}
 		return mimeType
 	}
-	if extension := path.Ext(filename); extension != "" {
-		if byExtension := mime.TypeByExtension(extension); byExtension != "" {
-			return strings.Split(byExtension, ";")[0]
-		}
+	if extensionMimeType != "" {
+		return extensionMimeType
 	}
 	if len(data) > 0 {
 		if detected := http.DetectContentType(data); detected != "" {
@@ -673,6 +683,44 @@ func skillArtifactMimeType(filename string, contentType string, data []byte) str
 		}
 	}
 	return "application/octet-stream"
+}
+
+func isGenericSkillArtifactMimeType(mimeType string) bool {
+	switch strings.ToLower(strings.TrimSpace(mimeType)) {
+	case "text/plain", "application/octet-stream":
+		return true
+	default:
+		return false
+	}
+}
+
+func skillArtifactMimeTypeByExtension(extension string) string {
+	switch strings.ToLower(strings.TrimPrefix(strings.TrimSpace(extension), ".")) {
+	case "json":
+		return "application/json"
+	case "html", "htm":
+		return "text/html"
+	case "csv":
+		return "text/csv"
+	case "txt":
+		return "text/plain"
+	case "md", "markdown":
+		return "text/markdown"
+	case "pdf":
+		return "application/pdf"
+	case "png":
+		return "image/png"
+	case "jpg", "jpeg":
+		return "image/jpeg"
+	case "webp":
+		return "image/webp"
+	case "svg":
+		return "image/svg+xml"
+	case "zip":
+		return "application/zip"
+	default:
+		return ""
+	}
 }
 
 func normalizedSkillArtifactExtension(filename string, mimeType string) string {
