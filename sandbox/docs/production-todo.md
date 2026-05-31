@@ -30,14 +30,17 @@ Already available:
 - API key support
 - Kest black-box sandbox flows
 - API skill-script E2E runner
+- Stateless `code-short` profile execution by default, with explicit workspace binding when needed
 - Path escape, zip slip, symlink, dangerous env, stdin, timeout, and output guardrails
 - Process group cleanup for preview command timeouts
+- Signal-normalized execution exit codes for process and secure runtime failures
 - Structured cancellation errors for request-canceled execution paths
 - Configurable graceful shutdown for service drain on SIGTERM/SIGINT
 - Request correlation IDs for HTTP responses and execution observer events
 - Execution IDs for code, command, template, and skill execution responses and observer events
 - Sandbox-scoped execution history backed by observer execution events
 - Structured observer events for successful and failed execution paths
+- Structured observer events for API boundary policy denials
 - Observer event pagination with bounded default and maximum page sizes
 - Observer event filters for organization, workspace, app, workflow run, user, and request scope
 - Observer event retention by age and maximum row count
@@ -53,6 +56,7 @@ Already available:
 - Optional organization-scoped execution rate limit accounting
 - Optional sandbox workspace file count limit accounting
 - Optional sandbox workspace byte limit accounting
+- Optional organization-scoped active dependency profile limit accounting
 - Sandbox ownership fields for organization, workspace, app, workflow run, and user context
 - Ownership context persisted with sandbox records and propagated to lifecycle, endpoint, expiration, execution, file, archive, and artifact manifest observer events
 - Artifact manifests include content type, reference encoding, SHA-256 hashes, timestamps, and enforce operator-configurable file count and total byte limits
@@ -90,10 +94,10 @@ simple calculations, and deterministic data shaping.
   - `warnings`
 - Add optional request fields:
   - `input_json`
-  - `expected_output_schema`
+  - [x] `expected_output_schema`
   - `strict_result_json`
 - Keep `POST /v1/exec/code` backward compatible.
-- Add a new profile-level behavior flag for stateless execution.
+- [x] Add a new profile-level behavior flag for stateless execution.
 
 ### A2. Limits
 
@@ -102,24 +106,24 @@ simple calculations, and deterministic data shaping.
 - Default stdout limit: 64 KiB.
 - Default stderr limit: 64 KiB.
 - Default generated file limit: disabled or temporary-only.
-- Reject outputs that exceed configured JSON result limits.
-- Reject request bodies over a profile-specific maximum before decoding large payloads.
+- [x] Reject outputs that exceed configured JSON result limits.
+- [x] Reject request bodies over a profile-specific maximum before decoding large payloads.
 
 ### A3. Filesystem Behavior
 
-- Add an explicitly stateless execution mode.
-- Run each short-code request in a temporary workspace.
-- Remove the workspace after execution.
-- Prevent short-code paths from writing into session workspaces unless explicitly bound.
-- Add tests that prove no files survive a stateless execution.
+- [x] Add an explicitly stateless execution mode.
+- [x] Run each short-code request in a temporary workspace.
+- [x] Remove the workspace after execution.
+- [x] Prevent short-code paths from writing into session workspaces unless explicitly bound.
+- [x] Add tests that prove no files survive a stateless execution.
 
 ### A4. Tests
 
-- Unit tests for profile normalization.
-- API tests for size, timeout, output, and schema failures.
-- Kest flow for short-code success.
-- Kest flow for short-code timeout.
-- Kest flow for short-code output truncation.
+- [x] Unit tests for profile normalization.
+- [x] API tests for size, timeout, output, and schema failures.
+- [x] Kest flow for short-code success.
+- [x] Kest flow for short-code timeout.
+- [x] Kest flow for short-code output truncation.
 
 ## 5. Milestone B: Template Runtime
 
@@ -215,6 +219,9 @@ ergonomic for workflow and agent use cases.
 Goal: make dependencies repeatable, controlled, and fast without allowing
 arbitrary runtime installs from untrusted code.
 
+Detailed implementation guidance is tracked in
+[dependency-profile-plan.md](./dependency-profile-plan.md).
+
 ### D1. Profile Model
 
 - [x] Store dependency profiles as versioned records in the policy catalog.
@@ -236,26 +243,39 @@ arbitrary runtime installs from untrusted code.
 
 ### D2. Build Path
 
-- Build dependency profiles outside request execution.
-- Cache completed profiles.
+- [x] Build dependency profiles outside request execution.
+- [x] Cache completed profiles.
 - [x] Make profile selection explicit in sandbox creation.
 - [x] Reject unknown or disabled profiles.
 - [x] Record dependency profile version on each sandbox.
+- [x] Let skill manifests declare the required dependency profile.
+- [x] Reject skill packages whose dependency profile does not match the sandbox.
 
 ### D3. Runtime Policy
 
-- Disable arbitrary dependency installation inside normal execution.
-- Add an administrator-only profile build path.
-- Add package allowlist and denylist controls.
-- Add maximum profile size and build timeout.
+- [x] Disable arbitrary dependency installation inside normal execution.
+- [x] Add an administrator-only profile build path.
+- [x] Add package allowlist and denylist controls.
+- [x] Add maximum profile size and build timeout.
+- [x] Add optional dependency-profile rootfs binding for the secure runtime.
 
 ### D4. Tests
 
 - [x] Profile selection tests.
 - [x] Disabled profile rejection.
-- Version pinning tests.
-- Build failure reporting tests.
-- Execution uses expected profile version.
+- [x] Version pinning tests.
+- [x] Build failure reporting tests.
+- [x] Execution uses expected profile version.
+
+### D5. Remaining Production Work
+
+- Add maintained profile source directories under `sandbox/profiles/`.
+- Add deterministic build scripts for profile artifacts.
+- Verify Python and Node profile environments before activation.
+- Inject profile-specific runtime environment variables.
+- Bind profile directories read-only in the secure runtime.
+- Add API catalog preflight before skill sandbox creation.
+- Add Kest skill execution coverage for declared dependency profiles.
 
 ## 8. Milestone E: Network Governance
 
@@ -264,14 +284,14 @@ from internal infrastructure by default.
 
 ### E1. Default Behavior
 
-- Deny outbound network by default for all profiles.
-- Require both sandbox-level and profile-level permission for network access.
-- Reject network-enabled requests when the selected runtime cannot enforce policy.
-- Expose this rejection clearly in `/v1/policies`.
+- [x] Deny outbound network by default for all profiles.
+- [x] Require both sandbox-level and profile-level permission for network access.
+- [x] Reject network-enabled requests when the selected runtime cannot enforce policy.
+- [x] Expose this rejection clearly in `/v1/policies`.
 
 ### E2. Egress Policy
 
-- Add egress policy records:
+- [x] Add egress policy records:
   - policy name
   - allowed hosts
   - allowed ports
@@ -279,24 +299,24 @@ from internal infrastructure by default.
   - denied CIDR ranges
   - DNS behavior
   - max request duration
-- Block local metadata addresses, loopback, private networks, service networks,
+- [x] Block local metadata addresses, loopback, private networks, service networks,
   and link-local ranges unless an operator explicitly permits them.
-- Add DNS resolution checks to prevent host allowlist bypass.
+- [x] Add DNS resolution checks to prevent host allowlist bypass.
 
 ### E3. Egress Proxy
 
-- Route approved outbound traffic through a policy-aware proxy.
-- Log destination, policy decision, sandbox ID, and request correlation ID.
-- Enforce connect, read, and write timeouts.
-- Add response body caps for proxied requests when applicable.
+- [x] Route approved outbound traffic through a policy-aware proxy.
+- [x] Log destination, policy decision, sandbox ID, and request correlation ID.
+- [x] Enforce connect, read, and write timeouts.
+- [x] Add response body caps for proxied requests when applicable.
 
 ### E4. Tests
 
-- Network disabled blocks outbound requests.
-- Allowed host succeeds.
-- Private address is blocked.
-- DNS rebinding attempt is blocked.
-- Policy decision is recorded in observer events.
+- [x] Network disabled blocks outbound requests.
+- [x] Allowed host succeeds.
+- [x] Private address is blocked.
+- [x] DNS rebinding attempt is blocked.
+- [x] Policy decision is recorded in observer events.
 
 ## 9. Milestone F: Resource Governance
 
@@ -304,16 +324,16 @@ Goal: enforce hard resource boundaries for every execution path.
 
 ### F1. Runtime Limits
 
-- CPU time limit.
-- Memory limit.
+- [x] CPU time limit for the secure Linux runtime.
+- [x] Memory limit for the secure Linux runtime.
 - Disk quota.
-- Process count limit.
-- Open file limit.
+- [x] Process count limit for the secure Linux runtime.
+- [x] Open file limit for the secure Linux runtime.
 - Added optional max file count per sandbox with `ZGI_SANDBOX_MAX_WORKSPACE_FILES`.
 - Added optional max workspace bytes per sandbox with `ZGI_SANDBOX_MAX_WORKSPACE_BYTES`.
 - Added operator-configurable max artifact manifest files per run with `ZGI_SANDBOX_MAX_ARTIFACT_MANIFEST_FILES`.
 - Added operator-configurable max artifact manifest bytes per run with `ZGI_SANDBOX_MAX_ARTIFACT_MANIFEST_BYTES`.
-- Max sandbox lifetime.
+- [x] Max sandbox lifetime.
 
 ### F2. Queue Limits
 
@@ -321,25 +341,26 @@ Goal: enforce hard resource boundaries for every execution path.
 - Added optional max concurrent executions per profile with `ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS_PER_PROFILE`.
 - Added optional max concurrent executions per organization with `ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS_PER_ORGANIZATION`.
 - Added optional max queued executions per organization with `ZGI_SANDBOX_MAX_QUEUED_EXECUTIONS_PER_ORGANIZATION`.
-- Queue wait timeout.
+- [x] Queue wait timeout.
 - Cancellation propagation.
-- Graceful shutdown drain behavior.
+- [x] Graceful shutdown drain behavior.
 
 ### F3. Policy Surface
 
 - Expose effective limits in `/v1/policies`.
 - Include effective limits in sandbox create responses.
 - Include limit decisions in observer events.
+- Normalize signal-terminated executions to `128 + signal` exit codes with stderr context.
 - Add structured errors for every limit failure.
 
 ### F4. Tests
 
-- CPU-bound timeout.
+- [x] CPU-bound timeout.
 - Memory pressure rejection or termination.
 - Disk quota enforcement.
 - Process count enforcement.
-- Queue timeout.
-- Cancellation cleanup.
+- [x] Queue timeout.
+- [x] Cancellation cleanup.
 
 ## 10. Milestone G: Strong Runtime Isolation
 
@@ -352,19 +373,19 @@ clearly separated for local development.
   - `preview-process`
   - `linux-secure`
   - future remote worker mode
-- Require production deployments to choose a non-preview backend.
-- Fail startup when production mode uses preview execution.
-- Surface backend mode in `/health` and observer events.
+- [x] Require production deployments to choose a non-preview backend.
+- [x] Fail startup when production mode uses preview execution.
+- [x] Surface backend mode in `/health` and observer events.
 
 ### G2. Linux Secure Runtime
 
-- Validate rootfs at startup.
-- Run as non-root.
-- Use isolated namespaces.
-- Enforce network policy below the HTTP layer.
-- Bind only the sandbox workspace.
-- Keep host filesystem read-only and minimal.
-- Add platform guards for unsupported operating systems.
+- [x] Validate rootfs at startup.
+- [x] Run as non-root.
+- [x] Use isolated namespaces.
+- [x] Enforce network policy below the HTTP layer.
+- [x] Bind only the sandbox workspace.
+- [x] Keep host filesystem read-only and minimal.
+- [x] Add platform guards for unsupported operating systems.
 
 ### G3. Future Worker Runtime
 
@@ -375,11 +396,11 @@ clearly separated for local development.
 
 ### G4. Tests
 
-- Linux integration tests for isolated execution.
-- Network isolation tests.
-- Filesystem isolation tests.
-- Backend startup validation tests.
-- Unsupported platform tests.
+- [x] Linux integration tests for isolated execution.
+- [x] Network isolation tests.
+- [x] Filesystem isolation tests.
+- [x] Backend startup validation tests.
+- [x] Unsupported platform tests.
 
 ## 11. Milestone H: Observability and Audit
 
@@ -464,10 +485,10 @@ Goal: bind sandbox usage to ZGI organizations, workspaces, apps, workflows, and 
 
 - Added optional max active sandboxes per organization with `ZGI_SANDBOX_MAX_ACTIVE_PER_ORGANIZATION`.
 - Added optional max executions per minute per organization with `ZGI_SANDBOX_MAX_EXECUTIONS_PER_MINUTE_PER_ORGANIZATION`.
-- Max artifact bytes per organization.
-- Max workspace bytes per organization.
+- [x] Max artifact bytes per organization.
+- [x] Max workspace bytes per organization.
 - Max network requests per organization.
-- Max dependency profiles per organization.
+- [x] Max active dependency profiles per organization.
 
 ### I3. Audit
 
@@ -480,9 +501,9 @@ Goal: bind sandbox usage to ZGI organizations, workspaces, apps, workflows, and 
 ### I4. Tests
 
 - Organization quota success and failure.
-- Cross-organization sandbox access rejection.
-- Audit event completeness.
-- Ownership metadata propagation.
+- [x] Cross-organization sandbox access rejection.
+- [x] Audit event completeness.
+- [x] Ownership metadata propagation.
 
 ## 13. Milestone J: API and Workflow Integration
 
@@ -492,13 +513,13 @@ business logic to sandbox internals.
 ### J1. API Adapter
 
 - Keep sandbox calls behind a typed adapter in `zgi-api`.
-- Add retries only for safe idempotent operations.
-- Add clear timeout settings:
-  - connect timeout
-  - upload timeout
-  - execution timeout
-  - artifact download timeout
-- Add structured sandbox errors mapped to API-level errors.
+- [x] Add retries only for safe idempotent operations.
+- [x] Add clear timeout settings:
+  - [x] connect timeout
+  - [x] upload timeout
+  - [x] execution timeout
+  - [x] artifact download timeout
+- [x] Add structured sandbox errors mapped to API-level errors.
 
 ### J2. Workflow Runtime
 
@@ -510,8 +531,8 @@ business logic to sandbox internals.
 
 ### J3. Skill Runtime
 
-- Validate skill package manifests before execution.
-- Apply skill-specific artifact and timeout policies.
+- [x] Validate skill package manifests before execution.
+- [x] Apply skill-specific artifact and timeout policies.
 - Store skill execution traces.
 - Return structured tool messages with artifacts.
 - Add deterministic test fixtures for skill runs.
@@ -531,10 +552,10 @@ managed environments.
 
 ### K1. Configuration
 
-- Document all `ZGI_SANDBOX_` environment variables.
-- Provide safe defaults for local development.
-- Provide strict defaults for production examples.
-- Add config validation at startup.
+- [x] Document all `ZGI_SANDBOX_` environment variables.
+- [x] Provide safe defaults for local development.
+- [x] Provide strict defaults for production examples.
+- [x] Add config validation at startup.
 - Added startup logging for effective non-secret config.
 
 ### K2. Deployment
@@ -542,7 +563,7 @@ managed environments.
 - Keep Docker Compose path working.
 - Add hardened Linux deployment notes.
 - Add Kubernetes deployment notes after worker/runtime model stabilizes.
-- Add health and readiness probes.
+- [x] Add health and readiness probes.
 - Add graceful shutdown behavior.
 
 ### K3. Diagnostics
@@ -560,10 +581,10 @@ managed environments.
 
 ### K4. Tests
 
-- Startup config validation tests.
+- [x] Startup config validation tests.
 - Readiness tests.
-- Shutdown drain tests.
-- Docker Compose smoke test.
+- [x] Shutdown drain tests.
+- [x] Docker Compose smoke test.
 
 ## 15. Milestone L: Test and Release Gates
 
@@ -594,7 +615,7 @@ Goal: make production readiness measurable.
 - Resource limits are enforced and tested.
 - Organization quota is enforced and tested.
 - Audit events exist for execution and file operations.
-- Operator docs list all required environment variables.
+- [x] Operator docs list all required environment variables.
 
 ## 16. Suggested PR Order
 

@@ -38,6 +38,9 @@ interface BatchResultDetailProps {
 type BatchStatusKey = 'queued' | 'running' | 'completed' | 'stopped' | 'canceled';
 type BatchItemStatusKey = 'pending' | 'running' | 'passed' | 'failed' | 'review' | 'canceled';
 type SummaryKey = 'running' | 'allPassed' | 'hasIssues';
+const EMPTY_BATCHES: WorkflowTestBatch[] = [];
+const EMPTY_ITEMS: WorkflowTestBatchItem[] = [];
+const EMPTY_SCENARIOS: Array<{ id: string; name: string }> = [];
 
 function itemStatusLabel(status: string, t: (key: BatchItemStatusKey) => string, none: string) {
   const map: Record<string, string> = {
@@ -70,20 +73,6 @@ function batchStatusLabel(status: string, t: (key: BatchStatusKey) => string, no
   return map[status] || status || none;
 }
 
-function stringifyOutput(outputs: Record<string, unknown>, none: string) {
-  if (!outputs || Object.keys(outputs).length === 0) {
-    return none;
-  }
-  const preferredKeys = ['answer', 'text', 'result', 'output'];
-  for (const key of preferredKeys) {
-    const value = outputs[key];
-    if (typeof value === 'string' && value.trim()) {
-      return value;
-    }
-  }
-  return JSON.stringify(outputs, null, 2);
-}
-
 function formatResponseTime(item: WorkflowTestBatchItem, none: string) {
   const outputs = item.outputs || {};
   const elapsedKeys = ['elapsed_time', 'elapsed_ms', 'duration_ms', 'latency_ms', 'response_time_ms'];
@@ -94,16 +83,6 @@ function formatResponseTime(item: WorkflowTestBatchItem, none: string) {
     }
   }
   return none;
-}
-
-function stringifyValue(value: unknown, none: string) {
-  if (value === undefined || value === null || value === '') {
-    return none;
-  }
-  if (typeof value === 'string') {
-    return value;
-  }
-  return JSON.stringify(value, null, 2);
 }
 
 function hasAttachments(item: WorkflowTestBatchItem) {
@@ -149,10 +128,10 @@ export function BatchResultDetail({ agentId, batchId, agentName }: BatchResultDe
   const { data: scenariosData } = useWorkflowTestScenarios(agentId);
   const retestBatch = useRetestWorkflowTestBatch(agentId);
   const [retestConfirmOpen, setRetestConfirmOpen] = React.useState(false);
-  const batches = batchesData?.data?.items ?? [];
+  const batches = batchesData?.data?.items ?? EMPTY_BATCHES;
   const batch = batches.find(item => item.id === batchId);
-  const items = itemsData?.data?.items ?? [];
-  const scenarios = scenariosData?.data?.items ?? [];
+  const items = itemsData?.data?.items ?? EMPTY_ITEMS;
+  const scenarios = scenariosData?.data?.items ?? EMPTY_SCENARIOS;
   const isLoading = batchesLoading || itemsLoading;
   const error = batchesError || itemsError;
   const scenarioNameById = React.useMemo(() => {
@@ -373,11 +352,11 @@ export function BatchResultDetail({ agentId, batchId, agentName }: BatchResultDe
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-[45%]">{t('table.questionContent')}</TableHead>
+                  <TableHead className="w-[45%] pl-6">{t('table.questionContent')}</TableHead>
                   <TableHead>{t('table.scenario')}</TableHead>
                   <TableHead>{t('table.testResult')}</TableHead>
                   <TableHead>{t('table.responseTime')}</TableHead>
-                  <TableHead className="text-right">{t('table.actions')}</TableHead>
+                  <TableHead className="pr-6 text-right">{t('table.actions')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -390,8 +369,8 @@ export function BatchResultDetail({ agentId, batchId, agentName }: BatchResultDe
                 ) : (
                   items.map(item => (
                     <TableRow key={item.id}>
-                      <TableCell className="max-w-md align-top">
-                        <div className="line-clamp-2 font-medium text-slate-950">
+                      <TableCell className="max-w-md py-4 pl-6 align-middle">
+                        <div className="truncate text-sm font-medium text-slate-950">
                           {item.case_snapshot.content}
                         </div>
                         <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
@@ -401,18 +380,18 @@ export function BatchResultDetail({ agentId, batchId, agentName }: BatchResultDe
                           {hasAttachments(item) ? <span>{commonT('attachmentsIncluded')}</span> : null}
                         </div>
                       </TableCell>
-                      <TableCell className="align-top text-sm text-slate-700">
+                      <TableCell className="py-4 align-middle text-sm text-slate-700">
                         {getScenarioName(item)}
                       </TableCell>
-                      <TableCell className="align-top">
+                      <TableCell className="py-4 align-middle">
                         <Badge className={itemStatusClass(item.status)}>
                           {itemStatusLabel(item.status, itemStatusT, commonT('none'))}
                         </Badge>
                       </TableCell>
-                      <TableCell className="align-top text-sm text-slate-700">
+                      <TableCell className="py-4 align-middle text-sm text-slate-700">
                         {formatResponseTime(item, commonT('none'))}
                       </TableCell>
-                      <TableCell className="align-top text-right">
+                      <TableCell className="py-4 pr-6 text-right align-middle">
                         <Button variant="ghost" size="sm" asChild>
                           <Link href={`/console/agents/${agentId}/batch-test/${batchId}/items/${item.id}`}>
                             {t('viewDetail')}

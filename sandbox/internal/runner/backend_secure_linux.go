@@ -16,9 +16,11 @@ import (
 )
 
 type linuxSecureBackend struct {
-	rootfs     string
-	bwrapBin   string
-	allowShell bool
+	rootfs              string
+	dependencyRootFSDir string
+	bwrapBin            string
+	limits              secureRuntimeLimits
+	allowShell          bool
 }
 
 func newLinuxSecureBackend(cfg config.Config) (backend, error) {
@@ -39,9 +41,11 @@ func newLinuxSecureBackend(cfg config.Config) (backend, error) {
 	}
 
 	return &linuxSecureBackend{
-		rootfs:     rootfs,
-		bwrapBin:   bwrapBin,
-		allowShell: true,
+		rootfs:              rootfs,
+		dependencyRootFSDir: strings.TrimSpace(cfg.DependencyRootFSDir),
+		bwrapBin:            bwrapBin,
+		limits:              secureRuntimeLimitsFromConfig(cfg),
+		allowShell:          true,
 	}, nil
 }
 
@@ -77,7 +81,7 @@ func (b *linuxSecureBackend) Run(parent context.Context, req Request, workDir st
 	defer os.Remove(hostScriptPath)
 
 	containerPath := containerScriptPath(root, scriptName)
-	return b.exec(runCtx, root, spec.binary, spec.args(containerPath), req.EnableNetwork, stdoutLimit, stderrLimit, req.Stdin, nil)
+	return b.exec(runCtx, root, req.DependencyProfile, spec.binary, spec.args(containerPath), req.EnableNetwork, stdoutLimit, stderrLimit, req.Stdin, nil)
 }
 
 func (b *linuxSecureBackend) ExecuteCommand(parent context.Context, spec CommandSpec) (CommandResult, error) {
@@ -94,7 +98,7 @@ func (b *linuxSecureBackend) ExecuteCommand(parent context.Context, spec Command
 		commandArgs = []string{spec.Command}
 	}
 
-	result, err := b.exec(runCtx, spec.WorkDir, commandArgs[0], commandArgs[1:], false, spec.StdoutLimit, spec.StderrLimit, spec.Stdin, spec.Env)
+	result, err := b.exec(runCtx, spec.WorkDir, spec.DependencyProfile, commandArgs[0], commandArgs[1:], false, spec.StdoutLimit, spec.StderrLimit, spec.Stdin, spec.Env)
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -109,36 +113,24 @@ func (b *linuxSecureBackend) ExecuteCommand(parent context.Context, spec Command
 	}, nil
 }
 
-func (b *linuxSecureBackend) exec(ctx context.Context, workDir string, binary string, args []string, enableNetwork bool, stdoutLimit int, stderrLimit int, stdin string, env map[string]string) (Result, error) {
-	bwrapArgs := []string{
-		"--die-with-parent",
-		"--new-session",
-		"--clearenv",
-		"--ro-bind", b.rootfs, "/",
-		"--proc", "/proc",
-		"--dev", "/dev",
-		"--tmpfs", "/tmp",
-		"--dir", "/tmp/workspace",
-		"--bind", workDir, "/tmp/workspace",
-		"--chdir", "/tmp/workspace",
-		"--setenv", "HOME", "/tmp/workspace",
-		"--setenv", "PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-		"--unshare-user",
-		"--uid", "65534",
-		"--gid", "65534",
-		"--unshare-pid",
-		"--unshare-ipc",
-		"--unshare-uts",
-		"--unshare-cgroup",
+func (b *linuxSecureBackend) exec(ctx context.Context, workDir string, dependencyProfile string, binary string, args []string, enableNetwork bool, stdoutLimit int, stderrLimit int, stdin string, env map[string]string) (Result, error) {
+	rootfs, err := rootFSSelector{
+		defaultRootFS:       b.rootfs,
+		dependencyRootFSDir: b.dependencyRootFSDir,
+	}.resolve(dependencyProfile)
+	if err != nil {
+		return Result{}, err
 	}
-	for key, value := range env {
-		bwrapArgs = append(bwrapArgs, "--setenv", key, value)
-	}
-	if !enableNetwork {
-		bwrapArgs = append(bwrapArgs, "--unshare-net")
-	}
-	bwrapArgs = append(bwrapArgs, binary)
-	bwrapArgs = append(bwrapArgs, args...)
+
+	bwrapArgs := buildSecureBwrapArgs(secureBwrapSpec{
+		RootFS:        rootfs,
+		WorkDir:       workDir,
+		Binary:        binary,
+		Args:          args,
+		EnableNetwork: enableNetwork,
+		Env:           env,
+		Limits:        b.limits,
+	})
 
 	cmd := exec.CommandContext(ctx, b.bwrapBin, bwrapArgs...)
 	if stdin != "" {
@@ -150,7 +142,7 @@ func (b *linuxSecureBackend) exec(ctx context.Context, workDir string, binary st
 	cmd.Stderr = stderr
 
 	started := time.Now()
-	err := cmd.Run()
+	err = cmd.Run()
 	duration := time.Since(started).Milliseconds()
 
 	exitCode := 0
@@ -161,7 +153,7 @@ func (b *linuxSecureBackend) exec(ctx context.Context, workDir string, binary st
 			exitCode = 124
 			stderr.AppendLine("execution timed out")
 		case errors.As(err, &exitErr):
-			exitCode = exitErr.ExitCode()
+			exitCode = exitCodeFromExitError(exitErr, stderr)
 		default:
 			return Result{}, err
 		}

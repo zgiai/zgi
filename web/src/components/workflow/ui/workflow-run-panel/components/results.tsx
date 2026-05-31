@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Check, Copy, Download, Eye, FileText } from 'lucide-react';
 import { FileIcon } from '@/components/ui/file-icon';
 import { UniversalFilePreviewDialog } from '@/components/files/universal-file-preview-dialog';
-import { API_URL } from '@/lib/config';
+import { API_URL, FILE_PREVIEW_ALLOWED_ORIGINS } from '@/lib/config';
 import { useT } from '@/i18n';
 import { useLocale } from '@/hooks/use-locale';
 import { formatFileSize } from '@/utils/format';
@@ -148,6 +148,7 @@ function getTrustedPreviewURL(url?: string): string | undefined {
     if (!isAllowedPreviewOrigin(parsed.origin)) return undefined;
     if (isToolFilePreviewPath(parsed.pathname)) return url;
     if (isSignedFilePreviewPath(parsed)) return url;
+    if (isConfiguredFilePreviewOrigin(parsed.origin)) return url;
   } catch {
     return undefined;
   }
@@ -162,7 +163,26 @@ function isAllowedPreviewOrigin(origin: string): boolean {
   } catch {
     // Ignore invalid runtime API configuration and fall back to same-origin only.
   }
+  for (const configuredOrigin of getConfiguredFilePreviewOrigins()) {
+    allowedOrigins.add(configuredOrigin);
+  }
   return allowedOrigins.has(origin);
+}
+
+function isConfiguredFilePreviewOrigin(origin: string): boolean {
+  return getConfiguredFilePreviewOrigins().has(origin);
+}
+
+function getConfiguredFilePreviewOrigins(): Set<string> {
+  const origins = new Set<string>();
+  for (const value of FILE_PREVIEW_ALLOWED_ORIGINS) {
+    try {
+      origins.add(new URL(value).origin);
+    } catch {
+      // Ignore invalid optional preview origins.
+    }
+  }
+  return origins;
 }
 
 function isToolFilePreviewPath(pathname: string): boolean {

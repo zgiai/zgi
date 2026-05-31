@@ -27,8 +27,13 @@ data.limits.max_queued_executions_per_organization == 0
 data.limits.max_workspace_files == 0
 data.limits.max_workspace_bytes == 0
 data.limits.queue_timeout_ms == 5000
+data.limits.secure_runtime_cpu_seconds == 2
+data.limits.secure_runtime_memory_bytes == 268435456
+data.limits.secure_runtime_process_limit == 64
+data.limits.secure_runtime_open_file_limit == 128
 data.limits.workspace_file_limit_enforced == false
 data.limits.workspace_byte_limit_enforced == false
+data.limits.secure_runtime_resource_limits_enforced == false
 ```
 
 ```step

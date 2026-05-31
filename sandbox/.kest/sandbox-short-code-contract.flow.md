@@ -6,6 +6,23 @@
 ```
 
 ```step
+@id inspect-short-code-policy
+@name Inspect short-code stateless policy
+
+GET {{base_url}}/v1/policies
+
+[Asserts]
+status == 200
+code == 0
+data.command_profiles.0.name == "code-short"
+data.command_profiles.0.stateless == true
+data.command_profiles.0.max_request_bytes == 131072
+data.command_profiles.0.max_result_json_bytes == 65536
+data.command_profiles.0.network_allowed == false
+data.command_profiles.0.network == "disabled"
+```
+
+```step
 @id stateless-create-marker
 @name Stateless short code creates temporary marker
 
@@ -95,6 +112,79 @@ code == 0
 ```
 
 ```step
+@id sandbox-scoped-stateless-write
+@name Sandbox-scoped short code remains stateless by default
+
+POST {{base_url}}/v1/exec/code
+Content-Type: application/json
+
+{
+  "sandbox_id": "{{sandbox_id}}",
+  "language": "python3",
+  "profile": "code-short",
+  "strict_result_json": true,
+  "timeout_ms": 5000,
+  "code": "import json, pathlib\npathlib.Path('session-marker.txt').write_text('temporary')\nprint(json.dumps({'created': True}))",
+  "enable_network": false
+}
+
+[Asserts]
+status == 200
+code == 0
+data.exit_code == 0
+data.result_json.created == true
+```
+
+```step
+@id stateless-write-not-persisted
+@name Sandbox-scoped stateless write is not persisted
+
+GET {{base_url}}/v1/files/info?sandbox_id={{sandbox_id}}&path=session-marker.txt
+
+[Asserts]
+status == 400
+code == -400
+```
+
+```step
+@id explicitly-bound-short-code-write
+@name Explicitly bound short code can write workspace
+
+POST {{base_url}}/v1/exec/code
+Content-Type: application/json
+
+{
+  "sandbox_id": "{{sandbox_id}}",
+  "language": "python3",
+  "profile": "code-short",
+  "strict_result_json": true,
+  "bind_workspace": true,
+  "timeout_ms": 5000,
+  "code": "import json, pathlib\npathlib.Path('session-marker.txt').write_text('bound')\nprint(json.dumps({'created': True}))",
+  "enable_network": false
+}
+
+[Asserts]
+status == 200
+code == 0
+data.exit_code == 0
+data.result_json.created == true
+```
+
+```step
+@id bound-write-persisted
+@name Explicitly bound short code write is persisted
+
+GET {{base_url}}/v1/files/info?sandbox_id={{sandbox_id}}&path=session-marker.txt
+
+[Asserts]
+status == 200
+code == 0
+data.path == "session-marker.txt"
+data.size == 5
+```
+
+```step
 @id structured-json
 @name Execute short code with structured JSON result
 
@@ -138,6 +228,97 @@ Content-Type: application/json
   "strict_result_json": true,
   "timeout_ms": 5000,
   "code": "print('plain text')",
+  "enable_network": false
+}
+
+[Asserts]
+status == 400
+code == -400
+```
+
+```step
+@id schema-valid-output
+@name Validate short-code output schema
+
+POST {{base_url}}/v1/exec/code
+Content-Type: application/json
+
+{
+  "sandbox_id": "{{sandbox_id}}",
+  "language": "python3",
+  "profile": "code-short",
+  "strict_result_json": true,
+  "expected_output_schema": {
+    "type": "object",
+    "required": ["echo", "ok"],
+    "additional_properties": false,
+    "properties": {
+      "echo": {"type": "string"},
+      "ok": {"type": "boolean"},
+      "count": {"type": "integer"}
+    }
+  },
+  "timeout_ms": 5000,
+  "code": "import json\nprint(json.dumps({'echo': 'schema ok', 'ok': True, 'count': 2}))",
+  "enable_network": false
+}
+
+[Asserts]
+status == 200
+code == 0
+data.exit_code == 0
+data.result_json.echo == "schema ok"
+data.result_json.ok == true
+data.result_json.count == 2
+```
+
+```step
+@id schema-reject-extra-output
+@name Reject short-code output outside schema
+
+POST {{base_url}}/v1/exec/code
+Content-Type: application/json
+
+{
+  "sandbox_id": "{{sandbox_id}}",
+  "language": "python3",
+  "profile": "code-short",
+  "strict_result_json": true,
+  "expected_output_schema": {
+    "type": "object",
+    "required": ["echo", "ok"],
+    "additional_properties": false,
+    "properties": {
+      "echo": {"type": "string"},
+      "ok": {"type": "boolean"}
+    }
+  },
+  "timeout_ms": 5000,
+  "code": "import json\nprint(json.dumps({'echo': 'schema no', 'ok': True, 'extra': 'blocked'}))",
+  "enable_network": false
+}
+
+[Asserts]
+status == 400
+code == -400
+```
+
+```step
+@id result-json-size-rejection
+@name Reject oversized short-code JSON result
+
+POST {{base_url}}/v1/exec/code
+Content-Type: application/json
+
+{
+  "sandbox_id": "{{sandbox_id}}",
+  "language": "python3",
+  "profile": "code-short",
+  "strict_result_json": true,
+  "timeout_ms": 5000,
+  "stdout_limit_kb": 128,
+  "stderr_limit_kb": 64,
+  "code": "import json\nprint(json.dumps({'payload': 'x' * 70000}))",
   "enable_network": false
 }
 

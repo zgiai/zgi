@@ -54,6 +54,80 @@ func TestServeShutsDownWhenContextCanceled(t *testing.T) {
 	}
 }
 
+func TestServeDrainsInFlightRequestOnShutdown(t *testing.T) {
+	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("expected listener, got %v", err)
+	}
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	server := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			close(started)
+			<-release
+			_, _ = w.Write([]byte("drained"))
+		}),
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- serve(parent, server, listener, time.Second, log.New(io.Discard, "", 0))
+	}()
+
+	respCh := make(chan string, 1)
+	go func() {
+		resp, err := http.Get("http://" + listener.Addr().String())
+		if err != nil {
+			respCh <- "request failed: " + err.Error()
+			return
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			respCh <- "read failed: " + err.Error()
+			return
+		}
+		respCh <- string(body)
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("expected in-flight request to start")
+	}
+
+	cancel()
+	select {
+	case err := <-errCh:
+		t.Fatalf("server returned before in-flight request drained: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+
+	select {
+	case body := <-respCh:
+		if body != "drained" {
+			t.Fatalf("expected drained response, got %q", body)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected in-flight request to complete")
+	}
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("expected graceful shutdown after drain, got %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected server to stop after in-flight request drained")
+	}
+}
+
 func TestServeReturnsListenError(t *testing.T) {
 	parent, cancel := context.WithCancel(context.Background())
 	defer cancel()

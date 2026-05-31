@@ -72,7 +72,7 @@ func (b *processBackend) Run(parent context.Context, req Request, workDir string
 			exitCode = 124
 			stderr.AppendLine("execution timed out")
 		case errors.As(err, &exitErr):
-			exitCode = exitErr.ExitCode()
+			exitCode = exitCodeFromExitError(exitErr, stderr)
 		default:
 			return Result{}, err
 		}
@@ -126,7 +126,7 @@ func (b *processBackend) ExecuteCommand(parent context.Context, spec CommandSpec
 			exitCode = 124
 			stderr.AppendLine("command timed out")
 		case errors.As(err, &exitErr):
-			exitCode = exitErr.ExitCode()
+			exitCode = exitCodeFromExitError(exitErr, stderr)
 		default:
 			return CommandResult{}, err
 		}
