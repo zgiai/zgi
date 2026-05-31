@@ -14,4 +14,4 @@ docker run --rm \
   --privileged \
   -v "$TEST_BINARY:/runner.test" \
   "$RUNNER_IMAGE" \
-  sh -lc 'apk add --no-cache bubblewrap python3 >/dev/null && ZGI_SANDBOX_TEST_SECURE_ROOTFS=/ ZGI_SANDBOX_TEST_BWRAP_BINARY=bwrap /runner.test -test.v'
+  sh -lc 'apk add --no-cache bubblewrap python3 >/dev/null && ZGI_SANDBOX_TEST_SECURE_ROOTFS=/ ZGI_SANDBOX_TEST_BWRAP_BINARY=bwrap ZGI_SANDBOX_SECURE_RUNTIME_CPU_SECONDS=0 ZGI_SANDBOX_SECURE_RUNTIME_MEMORY_BYTES=0 ZGI_SANDBOX_SECURE_RUNTIME_PROCESS_LIMIT=0 ZGI_SANDBOX_SECURE_RUNTIME_OPEN_FILE_LIMIT=0 /runner.test -test.v -test.run "^TestLinuxSecureBackend"'

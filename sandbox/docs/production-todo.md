@@ -367,12 +367,12 @@ clearly separated for local development.
 ### G2. Linux Secure Runtime
 
 - [x] Validate rootfs at startup.
-- Run as non-root.
-- Use isolated namespaces.
-- Enforce network policy below the HTTP layer.
-- Bind only the sandbox workspace.
-- Keep host filesystem read-only and minimal.
-- Add platform guards for unsupported operating systems.
+- [x] Run as non-root.
+- [x] Use isolated namespaces.
+- [x] Enforce network policy below the HTTP layer.
+- [x] Bind only the sandbox workspace.
+- [x] Keep host filesystem read-only and minimal.
+- [x] Add platform guards for unsupported operating systems.
 
 ### G3. Future Worker Runtime
 
@@ -383,11 +383,11 @@ clearly separated for local development.
 
 ### G4. Tests
 
-- Linux integration tests for isolated execution.
-- Network isolation tests.
-- Filesystem isolation tests.
-- Backend startup validation tests.
-- Unsupported platform tests.
+- [x] Linux integration tests for isolated execution.
+- [x] Network isolation tests.
+- [x] Filesystem isolation tests.
+- [x] Backend startup validation tests.
+- [x] Unsupported platform tests.
 
 ## 11. Milestone H: Observability and Audit
 

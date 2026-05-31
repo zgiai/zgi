@@ -122,36 +122,15 @@ func (b *linuxSecureBackend) exec(ctx context.Context, workDir string, dependenc
 		return Result{}, err
 	}
 
-	bwrapArgs := []string{
-		"--die-with-parent",
-		"--new-session",
-		"--clearenv",
-		"--ro-bind", rootfs, "/",
-		"--proc", "/proc",
-		"--dev", "/dev",
-		"--tmpfs", "/tmp",
-		"--dir", "/tmp/workspace",
-		"--bind", workDir, "/tmp/workspace",
-		"--chdir", "/tmp/workspace",
-		"--setenv", "HOME", "/tmp/workspace",
-		"--setenv", "PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-		"--unshare-user",
-		"--uid", "65534",
-		"--gid", "65534",
-		"--unshare-pid",
-		"--unshare-ipc",
-		"--unshare-uts",
-		"--unshare-cgroup",
-	}
-	bwrapArgs = append(bwrapArgs, b.limits.bwrapArgs()...)
-	for key, value := range env {
-		bwrapArgs = append(bwrapArgs, "--setenv", key, value)
-	}
-	if !enableNetwork {
-		bwrapArgs = append(bwrapArgs, "--unshare-net")
-	}
-	bwrapArgs = append(bwrapArgs, binary)
-	bwrapArgs = append(bwrapArgs, args...)
+	bwrapArgs := buildSecureBwrapArgs(secureBwrapSpec{
+		RootFS:        rootfs,
+		WorkDir:       workDir,
+		Binary:        binary,
+		Args:          args,
+		EnableNetwork: enableNetwork,
+		Env:           env,
+		Limits:        b.limits,
+	})
 
 	cmd := exec.CommandContext(ctx, b.bwrapBin, bwrapArgs...)
 	if stdin != "" {

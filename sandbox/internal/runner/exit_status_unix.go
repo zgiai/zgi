@@ -20,5 +20,12 @@ func exitCodeFromExitError(err *exec.ExitError, stderr *cappedBuffer) int {
 		}
 		return 128 + int(signal)
 	}
-	return err.ExitCode()
+	exitCode := err.ExitCode()
+	if exitCode > 128 && exitCode <= 192 {
+		signal := syscall.Signal(exitCode - 128)
+		if stderr != nil {
+			stderr.AppendLine(fmt.Sprintf("process terminated by signal: %s", signal.String()))
+		}
+	}
+	return exitCode
 }
