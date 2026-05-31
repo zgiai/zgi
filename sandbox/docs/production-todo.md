@@ -258,7 +258,7 @@ arbitrary runtime installs from untrusted code.
 - [x] Disabled profile rejection.
 - Version pinning tests.
 - Build failure reporting tests.
-- Execution uses expected profile version.
+- [x] Execution uses expected profile version.
 
 ## 8. Milestone E: Network Governance
 

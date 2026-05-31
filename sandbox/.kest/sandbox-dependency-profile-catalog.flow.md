@@ -64,6 +64,43 @@ data.metadata.dependency_profile_version == "2026.05.01"
 ```
 
 ```step
+@id execute-versioned-profile-code
+@name Execute code in versioned dependency profile sandbox
+
+POST {{base_url}}/v1/exec/code
+Content-Type: application/json
+X-Request-ID: req_kest_dependency_profile_execution
+
+{
+  "sandbox_id": "{{profile_sandbox_id}}",
+  "language": "python3",
+  "profile": "code-short",
+  "code": "print('dependency-profile-ok')",
+  "enable_network": false
+}
+
+[Asserts]
+status == 200
+code == 0
+data.exit_code == 0
+```
+
+```step
+@id observer-versioned-profile-execution
+@name Observer records execution dependency profile version
+
+GET {{base_url}}/v1/observer/events?sandbox_id={{profile_sandbox_id}}&type=exec.code&request_id=req_kest_dependency_profile_execution&limit=1
+
+[Asserts]
+status == 200
+code == 0
+data.events.0.metadata.status == "success"
+data.events.0.metadata.dependency_profile == "workflow-safe"
+data.events.0.metadata.dependency_profile_version == "2026.05.01"
+data.events.0.metadata.request_id == "req_kest_dependency_profile_execution"
+```
+
+```step
 @id reject-disabled-profile
 @name Reject disabled dependency profile
 

@@ -240,24 +240,24 @@ func (s *Service) RunCode(ctx context.Context, req CodeRequest) (runner.Result, 
 
 	result, box, workspaceBound, err := s.runCodeWithScope(ctx, req, runReq, limits)
 	if err != nil {
-		addOwnershipMetadata(baseMetadata, box)
+		addExecutionSandboxMetadata(baseMetadata, box)
 		s.recordExecutionFailure(ctx, "exec.code.failed", req.SandboxID, "sandbox code execution failed", baseMetadata, err)
 		return runner.Result{}, err
 	}
 	if workspaceBound {
 		if err := s.enforceWorkspaceByteLimit(box); err != nil {
-			addOwnershipMetadata(baseMetadata, box)
+			addExecutionSandboxMetadata(baseMetadata, box)
 			s.recordExecutionFailure(ctx, "exec.code.failed", req.SandboxID, "sandbox code execution failed", baseMetadata, err)
 			return runner.Result{}, err
 		}
 		if err := s.enforceWorkspaceFileLimit(box); err != nil {
-			addOwnershipMetadata(baseMetadata, box)
+			addExecutionSandboxMetadata(baseMetadata, box)
 			s.recordExecutionFailure(ctx, "exec.code.failed", req.SandboxID, "sandbox code execution failed", baseMetadata, err)
 			return runner.Result{}, err
 		}
 	}
 	if err := attachResultJSON(&result, req.StrictResultJSON, outputSchema, limits.MaxResultJSONBytes); err != nil {
-		addOwnershipMetadata(baseMetadata, box)
+		addExecutionSandboxMetadata(baseMetadata, box)
 		s.recordExecutionFailure(ctx, "exec.code.failed", req.SandboxID, "sandbox code execution failed", baseMetadata, err)
 		return runner.Result{}, err
 	}
@@ -275,7 +275,7 @@ func (s *Service) RunCode(ctx context.Context, req CodeRequest) (runner.Result, 
 		"stateless":       limits.Stateless,
 		"workspace_bound": workspaceBound,
 	}
-	addOwnershipMetadata(metadata, box)
+	addExecutionSandboxMetadata(metadata, box)
 	s.observer.Record("exec.code", req.SandboxID, "sandbox code executed", observer.MetadataWithContext(ctx, metadata))
 	return result, nil
 }
@@ -422,7 +422,7 @@ func (s *Service) RunCommand(ctx context.Context, req CommandRequest) (runner.Co
 		s.recordExecutionFailure(ctx, "exec.command.failed", req.SandboxID, "sandbox command execution failed", baseMetadata, err)
 		return runner.CommandResult{}, err
 	}
-	addOwnershipMetadata(baseMetadata, box)
+	addExecutionSandboxMetadata(baseMetadata, box)
 
 	workDir := box.RootPath
 	if req.WorkingSubpath != "" {
@@ -495,7 +495,7 @@ func (s *Service) RunCommand(ctx context.Context, req CommandRequest) (runner.Co
 		"backend":      result.Backend,
 		"status":       "success",
 	}
-	addOwnershipMetadata(metadata, box)
+	addExecutionSandboxMetadata(metadata, box)
 	s.observer.Record("exec.command", req.SandboxID, "sandbox command executed", observer.MetadataWithContext(ctx, metadata))
 	return result, nil
 }
@@ -515,7 +515,7 @@ func (s *Service) RunSkill(ctx context.Context, req SkillRunRequest) (SkillRunRe
 		return SkillRunResult{}, err
 	}
 	baseMetadata := map[string]any{"execution_id": executionID, "path": req.Path}
-	addOwnershipMetadata(baseMetadata, box)
+	addExecutionSandboxMetadata(baseMetadata, box)
 
 	packageRoot, err := resolveExistingSandboxPath(box.RootPath, req.Path)
 	if err != nil {
@@ -620,7 +620,7 @@ func (s *Service) RunSkill(ctx context.Context, req SkillRunRequest) (SkillRunRe
 		"artifact_paths": len(artifactManifests),
 		"status":         "success",
 	}
-	addOwnershipMetadata(metadata, box)
+	addExecutionSandboxMetadata(metadata, box)
 	s.observer.Record("exec.skill", req.SandboxID, "skill executed", observer.MetadataWithContext(ctx, metadata))
 	return runResult, nil
 }
@@ -1237,6 +1237,19 @@ func addOwnershipMetadata(metadata map[string]any, box *sandbox.Sandbox) {
 	}
 	if box.UserID != "" {
 		metadata["user_id"] = box.UserID
+	}
+}
+
+func addExecutionSandboxMetadata(metadata map[string]any, box *sandbox.Sandbox) {
+	addOwnershipMetadata(metadata, box)
+	if box == nil {
+		return
+	}
+	if box.DependencyProfile != "" {
+		metadata["dependency_profile"] = box.DependencyProfile
+	}
+	if box.DependencyProfileVersion != "" {
+		metadata["dependency_profile_version"] = box.DependencyProfileVersion
 	}
 }
 

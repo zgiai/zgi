@@ -145,6 +145,69 @@ func TestExecutionEventsIncludeRequestID(t *testing.T) {
 	if events[0].Metadata["organization_id"] != "organization-exec" || events[0].Metadata["workspace_id"] != "workspace-exec" || events[0].Metadata["workflow_run_id"] != "run-exec" {
 		t.Fatalf("expected ownership metadata, got %#v", events[0].Metadata)
 	}
+	if events[0].Metadata["dependency_profile"] != "stdlib" || events[0].Metadata["dependency_profile_version"] != "2026.05.01" {
+		t.Fatalf("expected dependency profile metadata, got %#v", events[0].Metadata)
+	}
+}
+
+func TestExecutionEventsIncludePinnedDependencyProfileVersion(t *testing.T) {
+	recorder := observer.NewRecorder(100)
+	policyService := policy.NewService(config.FromEnv())
+	manager, err := lifecycle.NewManager(recorder, policyService)
+	if err != nil {
+		t.Fatalf("expected lifecycle manager, got %v", err)
+	}
+	service := NewService(manager, runner.NewService(2, 3*time.Second, 4096), recorder, policyService)
+
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile:    string(sandbox.RuntimeSession),
+		OrganizationID:    "organization-profile-version",
+		DependencyProfile: "workflow-safe",
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+	if box.DependencyProfile != "workflow-safe" || box.DependencyProfileVersion != "2026.05.01" {
+		t.Fatalf("expected pinned dependency profile on sandbox, got %+v", box)
+	}
+
+	codeResult, err := service.RunCode(observer.ContextWithRequestID(context.Background(), "req_profile_version_code"), CodeRequest{
+		SandboxID: box.ID,
+		Language:  "python3",
+		Code:      "print('profile-version')",
+		Profile:   "code-short",
+	})
+	if err != nil {
+		t.Fatalf("expected code run, got %v", err)
+	}
+	codeEvents := recorder.Query(observer.Query{SandboxID: box.ID, Type: "exec.code", RequestID: "req_profile_version_code", Limit: 1})
+	if len(codeEvents) != 1 {
+		t.Fatalf("expected code execution event, got %d", len(codeEvents))
+	}
+	if codeEvents[0].Metadata["execution_id"] != codeResult.ExecutionID {
+		t.Fatalf("expected code execution id metadata, got %#v", codeEvents[0].Metadata)
+	}
+	if codeEvents[0].Metadata["dependency_profile"] != "workflow-safe" || codeEvents[0].Metadata["dependency_profile_version"] != "2026.05.01" {
+		t.Fatalf("expected code dependency profile metadata, got %#v", codeEvents[0].Metadata)
+	}
+
+	commandResult, err := service.RunCommand(observer.ContextWithRequestID(context.Background(), "req_profile_version_command"), CommandRequest{
+		SandboxID: box.ID,
+		Command:   "pwd",
+	})
+	if err != nil {
+		t.Fatalf("expected command run, got %v", err)
+	}
+	commandEvents := recorder.Query(observer.Query{SandboxID: box.ID, Type: "exec.command", RequestID: "req_profile_version_command", Limit: 1})
+	if len(commandEvents) != 1 {
+		t.Fatalf("expected command execution event, got %d", len(commandEvents))
+	}
+	if commandEvents[0].Metadata["execution_id"] != commandResult.ExecutionID {
+		t.Fatalf("expected command execution id metadata, got %#v", commandEvents[0].Metadata)
+	}
+	if commandEvents[0].Metadata["dependency_profile"] != "workflow-safe" || commandEvents[0].Metadata["dependency_profile_version"] != "2026.05.01" {
+		t.Fatalf("expected command dependency profile metadata, got %#v", commandEvents[0].Metadata)
+	}
 }
 
 func TestOrganizationExecutionRateLimit(t *testing.T) {
