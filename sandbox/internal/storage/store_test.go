@@ -164,6 +164,32 @@ func TestPostgresStorePersistsSandboxAndEvents(t *testing.T) {
 		t.Fatalf("organization dependency profile did not round trip: %+v", byName["team-data"])
 	}
 
+	buildRecord, err := store.UpsertDependencyBuildRequest(DependencyBuildRequestRecord{
+		BuildID:               "depbuild_1234",
+		Fingerprint:           "sha256:1234",
+		Status:                "queued",
+		OrganizationID:        "organization-1",
+		ProfileName:           "auto-1234",
+		DependencyRequestJSON: []byte(`{"schema_version":1,"language":"python3","base_runtime":"linux-secure"}`),
+		PackagesJSON:          []byte(`[{"ecosystem":"python3","name":"pandas","version":"==2.2.3"}]`),
+		SourcesJSON:           []byte(`["requirements.txt"]`),
+		WarningsJSON:          []byte(`[]`),
+		PackageCount:          1,
+	})
+	if err != nil {
+		t.Fatalf("upsert dependency build request: %v", err)
+	}
+	if buildRecord.Status != "queued" || buildRecord.ProfileName != "auto-1234" || buildRecord.PackageCount != 1 {
+		t.Fatalf("dependency build request did not round trip: %+v", buildRecord)
+	}
+	loadedBuildRecord, err := store.GetDependencyBuildRequest("sha256:1234")
+	if err != nil {
+		t.Fatalf("get dependency build request: %v", err)
+	}
+	if loadedBuildRecord.BuildID != buildRecord.BuildID || string(loadedBuildRecord.PackagesJSON) == "" {
+		t.Fatalf("loaded dependency build request did not match: %+v", loadedBuildRecord)
+	}
+
 	event := observer.Event{
 		ID:        "evt_store_test",
 		SandboxID: box.ID,

@@ -1157,6 +1157,78 @@ func TestDependencyPrepareRequiresAPIKey(t *testing.T) {
 	}
 }
 
+func TestDependencyBuildQueuesPreparedArchive(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.APIKey = "build-test-key"
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"organization_id": "organization-build-test",
+		"archive_base64": testZipBase64(t, map[string]string{
+			"SKILL.md":         "Skill package\n",
+			"requirements.txt": "pandas==2.2.3\n",
+			"scripts/run.py":   "import pandas as pd\nprint('ok')\n",
+		}),
+		"format":       "zip",
+		"base_runtime": "linux-secure",
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/sandbox/dependencies/builds", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", "build-test-key")
+	req.Header.Set("X-Request-ID", "req_dependency_build_queue_test")
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected dependency build queue to return 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	var body struct {
+		Code int `json:"code"`
+		Data struct {
+			BuildID        string `json:"build_id"`
+			Fingerprint    string `json:"fingerprint"`
+			Status         string `json:"status"`
+			ProfileName    string `json:"profile_name"`
+			OrganizationID string `json:"organization_id"`
+			NextAction     string `json:"next_action"`
+			PackageCount   int    `json:"package_count"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Code != 0 || body.Data.Status != "queued" || body.Data.NextAction != "wait_for_dependency_build" {
+		t.Fatalf("expected queued dependency build, got %#v", body)
+	}
+	if body.Data.BuildID == "" || body.Data.Fingerprint == "" || !strings.HasPrefix(body.Data.ProfileName, "auto-") {
+		t.Fatalf("expected build identifiers, got %#v", body.Data)
+	}
+	if body.Data.OrganizationID != "organization-build-test" || body.Data.PackageCount != 1 {
+		t.Fatalf("unexpected queued build response: %#v", body.Data)
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/v1/sandbox/dependencies/builds?fingerprint="+url.QueryEscape(body.Data.Fingerprint), nil)
+	getReq.Header.Set("X-API-Key", "build-test-key")
+	getRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(getRes, getReq)
+	if getRes.Code != http.StatusOK {
+		t.Fatalf("expected dependency build lookup to return 200, got %d body=%s", getRes.Code, getRes.Body.String())
+	}
+	if !strings.Contains(getRes.Body.String(), body.Data.BuildID) || !strings.Contains(getRes.Body.String(), `"status":"queued"`) {
+		t.Fatalf("expected queued build lookup response, got %s", getRes.Body.String())
+	}
+
+	events := server.observer.Query(observer.Query{Type: "dependency_build.queued", RequestID: "req_dependency_build_queue_test", Limit: 1})
+	if len(events) != 1 || events[0].Metadata["fingerprint"] != body.Data.Fingerprint {
+		t.Fatalf("expected dependency build queued event, got %#v", events)
+	}
+}
+
 func TestDependencyUpdateRequiresAdminAPIKey(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.APIKey = "admin-test-key"

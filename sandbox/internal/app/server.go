@@ -169,6 +169,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/sandbox/run", s.handleRun)
 	s.mux.HandleFunc("/v1/sandbox/dependencies", s.handleDependencies)
 	s.mux.HandleFunc("/v1/sandbox/dependencies/prepare", s.handleDependencyPrepare)
+	s.mux.HandleFunc("/v1/sandbox/dependencies/builds", s.handleDependencyBuilds)
+	s.mux.HandleFunc("/v1/sandbox/dependencies/builds/", s.handleDependencyBuildByFingerprint)
 	s.mux.HandleFunc("/v1/sandbox/dependencies/update", s.handleDependencyUpdate)
 	s.mux.HandleFunc("/v1/sandboxes", s.handleSandboxes)
 	s.mux.HandleFunc("/v1/sandboxes/", s.handleSandboxByID)
@@ -397,6 +399,98 @@ func (s *Server) handleDependencyPrepare(w http.ResponseWriter, r *http.Request)
 	writeEnvelope(w, http.StatusOK, result)
 }
 
+func (s *Server) handleDependencyBuilds(w http.ResponseWriter, r *http.Request) {
+	if !s.authorized(r) {
+		writeEnvelopeWithMessage(w, http.StatusUnauthorized, -401, "unauthorized", nil)
+		return
+	}
+	switch r.Method {
+	case http.MethodPost:
+		s.handleDependencyBuildCreate(w, r)
+	case http.MethodGet:
+		s.handleDependencyBuildGet(w, r, r.URL.Query().Get("fingerprint"))
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleDependencyBuildByFingerprint(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authorized(r) {
+		writeEnvelopeWithMessage(w, http.StatusUnauthorized, -401, "unauthorized", nil)
+		return
+	}
+	fingerprint := strings.TrimPrefix(r.URL.Path, "/v1/sandbox/dependencies/builds/")
+	s.handleDependencyBuildGet(w, r, fingerprint)
+}
+
+func (s *Server) handleDependencyBuildCreate(w http.ResponseWriter, r *http.Request) {
+	body, err := s.readLimitedBody(w, r, s.maxArchiveUploadRequestBytes())
+	if err != nil {
+		return
+	}
+	var req executor.DependencyPrepareRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "invalid request payload", nil)
+		return
+	}
+
+	prepare, err := s.executor.PrepareDependencies(req)
+	if err != nil {
+		writeKnownError(w, err)
+		return
+	}
+	organizationID := requestOrganizationID(r, req.OrganizationID)
+	record, err := s.store.UpsertDependencyBuildRequest(newDependencyBuildRecord(prepare, organizationID))
+	if err != nil {
+		writeKnownError(w, err)
+		return
+	}
+	response, err := dependencyBuildResponseFromRecord(record)
+	if err != nil {
+		writeKnownError(w, err)
+		return
+	}
+	response.OrganizationID = organizationID
+
+	metadata := map[string]any{
+		"build_id":                  response.BuildID,
+		"fingerprint":               response.Fingerprint,
+		"status":                    response.Status,
+		"profile_name":              response.ProfileName,
+		"package_count":             response.PackageCount,
+		"dependency_request_status": prepare.Status,
+	}
+	if organizationID != "" {
+		metadata["organization_id"] = organizationID
+	}
+	s.observer.Record("dependency_build.queued", "", "dependency build request recorded", observer.MetadataWithContext(r.Context(), metadata))
+	writeEnvelope(w, http.StatusOK, response)
+}
+
+func (s *Server) handleDependencyBuildGet(w http.ResponseWriter, r *http.Request, fingerprint string) {
+	fingerprint = strings.TrimSpace(fingerprint)
+	if fingerprint == "" {
+		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "fingerprint is required", nil)
+		return
+	}
+	record, err := s.store.GetDependencyBuildRequest(fingerprint)
+	if err != nil {
+		writeKnownError(w, err)
+		return
+	}
+	response, err := dependencyBuildResponseFromRecord(record)
+	if err != nil {
+		writeKnownError(w, err)
+		return
+	}
+	response.OrganizationID = requestOrganizationID(r, "")
+	writeEnvelope(w, http.StatusOK, response)
+}
+
 func (s *Server) handleDependencyUpdate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -462,6 +556,131 @@ func (s *Server) handleDependencyUpdate(w http.ResponseWriter, r *http.Request) 
 
 	s.observer.Record("dependency_profile.build", "", "dependency profile build completed", observer.MetadataWithContext(r.Context(), metadata))
 	writeEnvelope(w, http.StatusOK, result)
+}
+
+type dependencyBuildResponse struct {
+	BuildID           string                        `json:"build_id"`
+	Fingerprint       string                        `json:"fingerprint"`
+	Status            string                        `json:"status"`
+	OrganizationID    string                        `json:"organization_id,omitempty"`
+	ProfileName       string                        `json:"profile_name"`
+	DependencyRequest executor.DependencyRequest    `json:"dependency_request"`
+	Packages          []executor.DetectedDependency `json:"packages"`
+	PackageCount      int                           `json:"package_count"`
+	Sources           []string                      `json:"sources"`
+	Warnings          []string                      `json:"warnings,omitempty"`
+	NextAction        string                        `json:"next_action"`
+	Error             string                        `json:"error,omitempty"`
+	CreatedAt         time.Time                     `json:"created_at"`
+	UpdatedAt         time.Time                     `json:"updated_at"`
+}
+
+func newDependencyBuildRecord(prepare executor.DependencyPrepareResult, organizationID string) storage.DependencyBuildRequestRecord {
+	status := "queued"
+	profileName := dependencyAutoProfileName(prepare.Fingerprint)
+	if prepare.Status == "ready" {
+		status = "ready"
+		profileName = "stdlib"
+	}
+	dependencyRequest, _ := json.Marshal(prepare.Request)
+	packages, _ := json.Marshal(defaultDetectedDependencies(prepare.Packages))
+	sources, _ := json.Marshal(defaultStringList(prepare.Sources))
+	warnings, _ := json.Marshal(defaultStringList(prepare.Warnings))
+	return storage.DependencyBuildRequestRecord{
+		BuildID:               dependencyBuildID(prepare.Fingerprint),
+		Fingerprint:           prepare.Fingerprint,
+		Status:                status,
+		OrganizationID:        strings.TrimSpace(organizationID),
+		ProfileName:           profileName,
+		DependencyRequestJSON: dependencyRequest,
+		PackagesJSON:          packages,
+		SourcesJSON:           sources,
+		WarningsJSON:          warnings,
+		PackageCount:          prepare.PackageCount,
+	}
+}
+
+func dependencyBuildResponseFromRecord(record *storage.DependencyBuildRequestRecord) (dependencyBuildResponse, error) {
+	if record == nil {
+		return dependencyBuildResponse{}, errors.New("dependency build request not found")
+	}
+	var dependencyRequest executor.DependencyRequest
+	if err := json.Unmarshal(record.DependencyRequestJSON, &dependencyRequest); err != nil {
+		return dependencyBuildResponse{}, fmt.Errorf("decode dependency request: %w", err)
+	}
+	var packages []executor.DetectedDependency
+	if err := json.Unmarshal(record.PackagesJSON, &packages); err != nil {
+		return dependencyBuildResponse{}, fmt.Errorf("decode dependency packages: %w", err)
+	}
+	var sources []string
+	if err := json.Unmarshal(record.SourcesJSON, &sources); err != nil {
+		return dependencyBuildResponse{}, fmt.Errorf("decode dependency sources: %w", err)
+	}
+	var warnings []string
+	if err := json.Unmarshal(record.WarningsJSON, &warnings); err != nil {
+		return dependencyBuildResponse{}, fmt.Errorf("decode dependency warnings: %w", err)
+	}
+	return dependencyBuildResponse{
+		BuildID:           record.BuildID,
+		Fingerprint:       record.Fingerprint,
+		Status:            record.Status,
+		ProfileName:       record.ProfileName,
+		DependencyRequest: dependencyRequest,
+		Packages:          packages,
+		PackageCount:      record.PackageCount,
+		Sources:           sources,
+		Warnings:          warnings,
+		NextAction:        dependencyBuildNextAction(record.Status),
+		Error:             record.Error,
+		CreatedAt:         record.CreatedAt,
+		UpdatedAt:         record.UpdatedAt,
+	}, nil
+}
+
+func dependencyBuildNextAction(status string) string {
+	switch status {
+	case "ready":
+		return "use_dependency_profile"
+	case "queued", "building":
+		return "wait_for_dependency_build"
+	case "failed":
+		return "inspect_dependency_build_error"
+	default:
+		return "inspect_dependency_build_status"
+	}
+}
+
+func dependencyBuildID(fingerprint string) string {
+	return "depbuild_" + dependencyFingerprintSuffix(fingerprint, 16)
+}
+
+func dependencyAutoProfileName(fingerprint string) string {
+	return "auto-" + dependencyFingerprintSuffix(fingerprint, 16)
+}
+
+func dependencyFingerprintSuffix(fingerprint string, size int) string {
+	value := strings.TrimPrefix(strings.TrimSpace(fingerprint), "sha256:")
+	if value == "" {
+		return "unknown"
+	}
+	if len(value) > size {
+		return value[:size]
+	}
+	return value
+}
+
+func defaultDetectedDependencies(value []executor.DetectedDependency) []executor.DetectedDependency {
+	if value == nil {
+		return []executor.DetectedDependency{}
+	}
+	return value
+}
+
+func defaultStringList(value []string) []string {
+	if value == nil {
+		return []string{}
+	}
+	return value
 }
 
 func (s *Server) handleSandboxes(w http.ResponseWriter, r *http.Request) {

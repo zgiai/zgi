@@ -233,6 +233,21 @@ the default profile. If the response is `build_required`, the API should wait
 for or request the matching verified artifact, then create the sandbox with the
 resolved profile reference.
 
+`POST /v1/sandbox/dependencies/builds` records the prepared dependency request
+under the same fingerprint. The operation is idempotent: repeated requests for
+the same normalized dependency set return the existing build record instead of
+creating duplicate work. A record can be:
+
+- `ready`: no external packages are needed and the default profile can be used;
+- `queued`: a build worker still needs to materialize the artifact;
+- `building`: a worker has claimed the request;
+- `failed`: the build failed and the error should be inspected.
+
+`GET /v1/sandbox/dependencies/builds?fingerprint=...` returns the current build
+record. A later worker should update the queued record to `building`, publish a
+verified artifact, create a profile reference to that artifact, and then mark the
+record `ready`.
+
 ### 5.4 Runtime Artifact Reuse
 
 Dependency profile artifacts should be stored by checksum and referenced by
@@ -438,6 +453,26 @@ Validation:
   scanning;
 - HTTP handler tests for success and API-key enforcement;
 - Kest flow covering the black-box prepare contract.
+
+### PR 7: Dependency Build Registry
+
+Goal: make prepared dependency requests reusable across organizations before the
+actual build worker exists.
+
+Scope:
+
+- add a persisted dependency build request table keyed by fingerprint;
+- add `POST /v1/sandbox/dependencies/builds`;
+- add build status lookup by fingerprint;
+- return deterministic build IDs and automatic profile names;
+- emit observer events for queued build requests;
+- keep the operation side-effect free with respect to runtime artifacts.
+
+Validation:
+
+- storage tests for round-tripping build records;
+- app tests for queue and lookup behavior;
+- Kest flow for queue, lookup, and observer event checks.
 
 ## 9. Test Matrix
 

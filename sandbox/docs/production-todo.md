@@ -62,6 +62,7 @@ Already available:
 - Ownership context persisted with sandbox records and propagated to lifecycle, endpoint, expiration, execution, file, archive, and artifact manifest observer events
 - Artifact manifests include content type, reference encoding, SHA-256 hashes, timestamps, and enforce operator-configurable file count and total byte limits
 - Dependency preparation endpoint for skill archive scanning and stable build fingerprints
+- Dependency build request registry for idempotent fingerprint queueing and lookup
 - Optional Linux secure backend with namespace-based isolation
 
 The service is useful for validation and controlled internal environments. It
@@ -285,6 +286,7 @@ Detailed implementation guidance is tracked in
 - [x] Add organization-scoped dependency profile references backed by reusable artifacts.
 - [x] Activate reusable runtime artifacts by checksum in the secure runtime.
 - [x] Add skill archive dependency scanning and fingerprint preparation.
+- [x] Add dependency build request queueing and status lookup by fingerprint.
 - Add asynchronous build worker that materializes prepared dependency fingerprints.
 - Add API automatic prepare/build/profile-resolution path for skills without an explicit profile.
 - Add Kest skill execution coverage for declared dependency profiles.
