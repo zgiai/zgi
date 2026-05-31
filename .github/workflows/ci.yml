@@ -68,7 +68,7 @@ jobs:
           POSTGRES_USER: zgi_sandbox
           POSTGRES_PASSWORD: zgi_sandbox_ci
         ports:
-          - 55432:5432
+          - 5432
         options: >-
           --health-cmd "pg_isready -U zgi_sandbox -d zgi_sandbox_ci"
           --health-interval 5s
@@ -131,5 +131,5 @@ jobs:
 
       - name: Run sandbox Kest flows
         env:
-          ZGI_SANDBOX_DATABASE_URL: postgres://zgi_sandbox:zgi_sandbox_ci@127.0.0.1:55432/zgi_sandbox_ci?sslmode=disable
+          ZGI_SANDBOX_DATABASE_URL: postgres://zgi_sandbox:zgi_sandbox_ci@127.0.0.1:${{ job.services.postgres.ports[5432] }}/zgi_sandbox_ci?sslmode=disable
         run: make test-sandbox-kest
