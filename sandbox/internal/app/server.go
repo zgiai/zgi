@@ -285,7 +285,12 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.EnableNetwork && !s.policy.NetworkPolicyEnforced() {
-		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, fmt.Sprintf("runtime backend %q does not enforce network policy", s.policy.RuntimeBackend()), nil)
+		message := fmt.Sprintf("runtime backend %q does not enforce network policy", s.policy.RuntimeBackend())
+		s.recordPolicyDenied(r.Context(), "", "network_policy_not_enforced", message, map[string]any{
+			"runtime_backend":         s.policy.RuntimeBackend(),
+			"network_policy_enforced": s.policy.NetworkPolicyEnforced(),
+		})
+		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, message, nil)
 		return
 	}
 
@@ -369,13 +374,13 @@ func (s *Server) handleSandboxByID(w http.ResponseWriter, r *http.Request) {
 	if len(parts) == 1 {
 		switch r.Method {
 		case http.MethodGet:
-			box, ok := s.authorizeSandboxOrganization(w, id, requestOrganizationID(r, ""))
+			box, ok := s.authorizeSandboxOrganization(r.Context(), w, id, requestOrganizationID(r, ""))
 			if !ok {
 				return
 			}
 			writeEnvelope(w, http.StatusOK, box)
 		case http.MethodDelete:
-			box, ok := s.authorizeSandboxOrganization(w, id, requestOrganizationID(r, ""))
+			box, ok := s.authorizeSandboxOrganization(r.Context(), w, id, requestOrganizationID(r, ""))
 			if !ok {
 				return
 			}
@@ -400,7 +405,7 @@ func (s *Server) handleSandboxByID(w http.ResponseWriter, r *http.Request) {
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, s.maxSmallJSONRequestBytes())
 		_ = json.NewDecoder(r.Body).Decode(&req)
-		if _, ok := s.authorizeSandboxOrganization(w, id, requestOrganizationID(r, "")); !ok {
+		if _, ok := s.authorizeSandboxOrganization(r.Context(), w, id, requestOrganizationID(r, "")); !ok {
 			return
 		}
 		box, err := s.lifecycle.Renew(id, req.TTLSeconds)
@@ -410,7 +415,7 @@ func (s *Server) handleSandboxByID(w http.ResponseWriter, r *http.Request) {
 		}
 		writeEnvelope(w, http.StatusOK, box)
 	case len(parts) == 2 && parts[1] == "executions" && r.Method == http.MethodGet:
-		box, ok := s.authorizeSandboxOrganization(w, id, requestOrganizationID(r, ""))
+		box, ok := s.authorizeSandboxOrganization(r.Context(), w, id, requestOrganizationID(r, ""))
 		if !ok {
 			return
 		}
@@ -419,7 +424,7 @@ func (s *Server) handleSandboxByID(w http.ResponseWriter, r *http.Request) {
 		}
 		s.writeSandboxExecutionHistory(w, r, id)
 	case len(parts) == 3 && parts[1] == "endpoints" && r.Method == http.MethodGet:
-		if _, ok := s.authorizeSandboxOrganization(w, id, requestOrganizationID(r, "")); !ok {
+		if _, ok := s.authorizeSandboxOrganization(r.Context(), w, id, requestOrganizationID(r, "")); !ok {
 			return
 		}
 		endpoint, err := s.lifecycle.ResolveEndpoint(id, parts[2])
@@ -429,7 +434,7 @@ func (s *Server) handleSandboxByID(w http.ResponseWriter, r *http.Request) {
 		}
 		writeEnvelope(w, http.StatusOK, endpoint)
 	case len(parts) == 3 && parts[1] == "endpoints" && r.Method == http.MethodPost:
-		box, ok := s.authorizeSandboxOrganization(w, id, requestOrganizationID(r, ""))
+		box, ok := s.authorizeSandboxOrganization(r.Context(), w, id, requestOrganizationID(r, ""))
 		if !ok {
 			return
 		}
@@ -475,7 +480,7 @@ func (s *Server) handleExecCode(w http.ResponseWriter, r *http.Request) {
 		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "invalid request payload", nil)
 		return
 	}
-	box, ok := s.authorizeSandboxOrganization(w, req.SandboxID, requestOrganizationID(r, req.OrganizationID))
+	box, ok := s.authorizeSandboxOrganization(r.Context(), w, req.SandboxID, requestOrganizationID(r, req.OrganizationID))
 	if !ok {
 		return
 	}
@@ -511,7 +516,7 @@ func (s *Server) handleExecCommand(w http.ResponseWriter, r *http.Request) {
 		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "invalid request payload", nil)
 		return
 	}
-	box, ok := s.authorizeSandboxOrganization(w, req.SandboxID, requestOrganizationID(r, req.OrganizationID))
+	box, ok := s.authorizeSandboxOrganization(r.Context(), w, req.SandboxID, requestOrganizationID(r, req.OrganizationID))
 	if !ok {
 		return
 	}
@@ -576,7 +581,7 @@ func (s *Server) handleExecSkill(w http.ResponseWriter, r *http.Request) {
 		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "invalid request payload", nil)
 		return
 	}
-	box, ok := s.authorizeSandboxOrganization(w, req.SandboxID, requestOrganizationID(r, req.OrganizationID))
+	box, ok := s.authorizeSandboxOrganization(r.Context(), w, req.SandboxID, requestOrganizationID(r, req.OrganizationID))
 	if !ok {
 		return
 	}
@@ -612,7 +617,7 @@ func (s *Server) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "invalid request payload", nil)
 		return
 	}
-	box, ok := s.authorizeSandboxOrganization(w, req.SandboxID, requestOrganizationID(r, req.OrganizationID))
+	box, ok := s.authorizeSandboxOrganization(r.Context(), w, req.SandboxID, requestOrganizationID(r, req.OrganizationID))
 	if !ok {
 		return
 	}
@@ -648,7 +653,7 @@ func (s *Server) handleUploadArchive(w http.ResponseWriter, r *http.Request) {
 		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "invalid request payload", nil)
 		return
 	}
-	box, ok := s.authorizeSandboxOrganization(w, req.SandboxID, requestOrganizationID(r, req.OrganizationID))
+	box, ok := s.authorizeSandboxOrganization(r.Context(), w, req.SandboxID, requestOrganizationID(r, req.OrganizationID))
 	if !ok {
 		return
 	}
@@ -673,7 +678,7 @@ func (s *Server) handleDownloadFile(w http.ResponseWriter, r *http.Request) {
 		writeEnvelopeWithMessage(w, http.StatusUnauthorized, -401, "unauthorized", nil)
 		return
 	}
-	box, ok := s.authorizeSandboxOrganization(w, r.URL.Query().Get("sandbox_id"), requestOrganizationID(r, ""))
+	box, ok := s.authorizeSandboxOrganization(r.Context(), w, r.URL.Query().Get("sandbox_id"), requestOrganizationID(r, ""))
 	if !ok {
 		return
 	}
@@ -698,7 +703,7 @@ func (s *Server) handleFileInfo(w http.ResponseWriter, r *http.Request) {
 		writeEnvelopeWithMessage(w, http.StatusUnauthorized, -401, "unauthorized", nil)
 		return
 	}
-	box, ok := s.authorizeSandboxOrganization(w, r.URL.Query().Get("sandbox_id"), requestOrganizationID(r, ""))
+	box, ok := s.authorizeSandboxOrganization(r.Context(), w, r.URL.Query().Get("sandbox_id"), requestOrganizationID(r, ""))
 	if !ok {
 		return
 	}
@@ -723,7 +728,7 @@ func (s *Server) handleFileTree(w http.ResponseWriter, r *http.Request) {
 		writeEnvelopeWithMessage(w, http.StatusUnauthorized, -401, "unauthorized", nil)
 		return
 	}
-	box, ok := s.authorizeSandboxOrganization(w, r.URL.Query().Get("sandbox_id"), requestOrganizationID(r, ""))
+	box, ok := s.authorizeSandboxOrganization(r.Context(), w, r.URL.Query().Get("sandbox_id"), requestOrganizationID(r, ""))
 	if !ok {
 		return
 	}
@@ -749,7 +754,7 @@ func (s *Server) handleFileManifest(w http.ResponseWriter, r *http.Request) {
 		writeEnvelopeWithMessage(w, http.StatusUnauthorized, -401, "unauthorized", nil)
 		return
 	}
-	box, ok := s.authorizeSandboxOrganization(w, r.URL.Query().Get("sandbox_id"), requestOrganizationID(r, ""))
+	box, ok := s.authorizeSandboxOrganization(r.Context(), w, r.URL.Query().Get("sandbox_id"), requestOrganizationID(r, ""))
 	if !ok {
 		return
 	}
@@ -780,7 +785,7 @@ func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request) {
 		writeEnvelopeWithMessage(w, http.StatusUnauthorized, -401, "unauthorized", nil)
 		return
 	}
-	box, ok := s.authorizeSandboxOrganization(w, r.URL.Query().Get("sandbox_id"), requestOrganizationID(r, ""))
+	box, ok := s.authorizeSandboxOrganization(r.Context(), w, r.URL.Query().Get("sandbox_id"), requestOrganizationID(r, ""))
 	if !ok {
 		return
 	}
@@ -939,7 +944,7 @@ func (s *Server) proxyOwnedBoxRequest(w http.ResponseWriter, r *http.Request, bo
 	return true
 }
 
-func (s *Server) authorizeSandboxOrganization(w http.ResponseWriter, sandboxID string, organizationID string) (*sandbox.Sandbox, bool) {
+func (s *Server) authorizeSandboxOrganization(ctx context.Context, w http.ResponseWriter, sandboxID string, organizationID string) (*sandbox.Sandbox, bool) {
 	if strings.TrimSpace(sandboxID) == "" {
 		return nil, true
 	}
@@ -955,6 +960,10 @@ func (s *Server) authorizeSandboxOrganization(w http.ResponseWriter, sandboxID s
 		return box, true
 	}
 
+	s.recordPolicyDenied(ctx, sandboxID, "cross_organization_sandbox_access_denied", "sandbox does not belong to organization", map[string]any{
+		"organization_id":           box.OrganizationID,
+		"requested_organization_id": requestedOrganizationID,
+	})
 	writeEnvelopeWithMessage(w, http.StatusForbidden, -403, "sandbox does not belong to organization", map[string]any{
 		"error_type":      "access_denied",
 		"code":            "cross_organization_sandbox_access_denied",
@@ -977,6 +986,18 @@ func requestOrganizationID(r *http.Request, bodyOrganizationID string) string {
 		}
 	}
 	return ""
+}
+
+func (s *Server) recordPolicyDenied(ctx context.Context, sandboxID string, code string, message string, metadata map[string]any) {
+	eventMetadata := map[string]any{
+		"status":     "failure",
+		"error_type": "policy_denied",
+		"code":       code,
+	}
+	for key, value := range metadata {
+		eventMetadata[key] = value
+	}
+	s.observer.Record("policy.denied", sandboxID, message, observer.MetadataWithContext(ctx, eventMetadata))
 }
 
 func (s *Server) shouldProxy(box sandbox.Sandbox) bool {
