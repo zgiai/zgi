@@ -341,9 +341,10 @@ func (s *Server) handleDependencyUpdate(w http.ResponseWriter, r *http.Request) 
 
 	result, profile, err := s.policy.PrepareDependencyProfileBuild(req)
 	metadata := map[string]any{
-		"build_id": result.BuildID,
-		"status":   result.Status,
-		"accepted": result.Accepted,
+		"build_id":        result.BuildID,
+		"status":          result.Status,
+		"accepted":        result.Accepted,
+		"runtime_backend": s.policy.RuntimeBackend(),
 	}
 	if result.Profile != nil {
 		metadata["dependency_profile"] = result.Profile.Name
@@ -1065,9 +1066,10 @@ func requestOrganizationID(r *http.Request, bodyOrganizationID string) string {
 
 func (s *Server) recordPolicyDenied(ctx context.Context, sandboxID string, code string, message string, metadata map[string]any) {
 	eventMetadata := map[string]any{
-		"status":     "failure",
-		"error_type": "policy_denied",
-		"code":       code,
+		"status":          "failure",
+		"error_type":      "policy_denied",
+		"code":            code,
+		"runtime_backend": s.policy.RuntimeBackend(),
 	}
 	for key, value := range metadata {
 		eventMetadata[key] = value
