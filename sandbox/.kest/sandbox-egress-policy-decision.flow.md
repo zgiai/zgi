@@ -76,6 +76,46 @@ data.events.0.metadata.request_id == "req_kest_egress_network_disabled"
 ```
 
 ```step
+@id deny-egress-proxy-when-sandbox-network-disabled
+@name Deny egress proxy when sandbox network is disabled
+
+POST {{base_url}}/v1/network/egress/proxy
+Content-Type: application/json
+X-Request-ID: req_kest_egress_proxy_network_disabled
+
+{
+  "sandbox_id": "{{egress_decision_sandbox_id}}",
+  "organization_id": "organization_egress_decision_kest",
+  "destination": "https://93.184.216.34/resource"
+}
+
+[Asserts]
+status == 403
+code == -403
+message == "sandbox network access is disabled"
+data.allowed == false
+data.code == "egress_denied_sandbox_network_disabled"
+data.policy == "workflow-safe"
+```
+
+```step
+@id inspect-egress-proxy-network-disabled-event
+@name Inspect egress proxy decision observer event
+
+GET {{base_url}}/v1/observer/events?sandbox_id={{egress_decision_sandbox_id}}&type=network.egress.decision&request_id=req_kest_egress_proxy_network_disabled&limit=1
+
+[Asserts]
+status == 200
+code == 0
+data.events.0.type == "network.egress.decision"
+data.events.0.metadata.allowed == "false"
+data.events.0.metadata.code == "egress_denied_sandbox_network_disabled"
+data.events.0.metadata.network_policy == "workflow-safe"
+data.events.0.metadata.organization_id == "organization_egress_decision_kest"
+data.events.0.metadata.request_id == "req_kest_egress_proxy_network_disabled"
+```
+
+```step
 @id reject-cross-organization-egress-check
 @name Reject cross-organization egress check
 

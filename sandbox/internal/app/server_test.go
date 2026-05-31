@@ -3,9 +3,11 @@ package app
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -622,6 +624,132 @@ func TestEgressCheckRecordsPolicyDecision(t *testing.T) {
 	}
 	if events[0].Metadata["organization_id"] != "organization-egress" || events[0].Metadata["request_id"] != "req_egress_check" {
 		t.Fatalf("expected ownership and request metadata, got %#v", events[0].Metadata)
+	}
+}
+
+func TestEgressProxyDeniesSandboxNetworkDisabledAndRecordsDecision(t *testing.T) {
+	server, err := NewServer(testConfig(t))
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	createReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{
+		"runtime_profile":"session",
+		"ttl_seconds":60,
+		"organization_id":"organization-egress-proxy",
+		"network_enabled":false,
+		"network_policy":"workflow-safe"
+	}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	createRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(createRes, createReq)
+	if createRes.Code != http.StatusOK {
+		t.Fatalf("expected sandbox create to return 200, got %d body=%s", createRes.Code, createRes.Body.String())
+	}
+
+	var createPayload struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(createRes.Body.Bytes(), &createPayload); err != nil {
+		t.Fatalf("expected sandbox create payload, got %v", err)
+	}
+
+	proxyReq := httptest.NewRequest(http.MethodPost, "/v1/network/egress/proxy", strings.NewReader(fmt.Sprintf(`{
+		"sandbox_id":%q,
+		"organization_id":"organization-egress-proxy",
+		"destination":"https://example.com/resource"
+	}`, createPayload.Data.ID)))
+	proxyReq.Header.Set("Content-Type", "application/json")
+	proxyReq.Header.Set("X-Request-ID", "req_egress_proxy_disabled_test")
+	proxyRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(proxyRes, proxyReq)
+	if proxyRes.Code != http.StatusForbidden {
+		t.Fatalf("expected egress proxy to return 403, got %d body=%s", proxyRes.Code, proxyRes.Body.String())
+	}
+	if !strings.Contains(proxyRes.Body.String(), `"code":"egress_denied_sandbox_network_disabled"`) {
+		t.Fatalf("expected network disabled decision in response, got %s", proxyRes.Body.String())
+	}
+
+	events := server.observer.Query(observer.Query{SandboxID: createPayload.Data.ID, Type: "network.egress.decision", RequestID: "req_egress_proxy_disabled_test", Limit: 1})
+	if len(events) != 1 {
+		t.Fatalf("expected one egress decision event, got %d", len(events))
+	}
+	if fmt.Sprint(events[0].Metadata["allowed"]) != "false" || events[0].Metadata["code"] != "egress_denied_sandbox_network_disabled" {
+		t.Fatalf("expected denied egress proxy decision metadata, got %+v", events[0].Metadata)
+	}
+}
+
+func TestExecuteEgressProxyRoutesApprovedRequestAndCapsResponse(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("expected POST, got %s", r.Method)
+		}
+		if r.Header.Get("Content-Type") != "text/plain" {
+			t.Fatalf("expected proxied content type, got %q", r.Header.Get("Content-Type"))
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read upstream request body: %v", err)
+		}
+		if string(body) != "payload!" {
+			t.Fatalf("expected proxied body, got %q", string(body))
+		}
+		w.Header().Set("Content-Type", "text/plain")
+		w.Header().Set("X-Upstream", "ok")
+		_, _ = w.Write([]byte("response-over-limit"))
+	}))
+	defer upstream.Close()
+
+	parsed, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatalf("parse upstream URL: %v", err)
+	}
+	port, err := strconv.Atoi(parsed.Port())
+	if err != nil {
+		t.Fatalf("parse upstream port: %v", err)
+	}
+	cfg := testConfig(t)
+	cfg.EgressProxyMaxBodyBytes = 8
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	box := &sandbox.Sandbox{ID: "sbx_proxy_unit"}
+	decision := policy.EgressDecision{
+		Allowed:              true,
+		Code:                 "egress_allowed",
+		Reason:               "network policy allows destination",
+		Policy:               "workflow-safe",
+		Destination:          upstream.URL + "/resource",
+		Protocol:             "http",
+		Host:                 parsed.Hostname(),
+		Port:                 port,
+		ResolvedIPs:          []string{parsed.Hostname()},
+		MaxRequestDurationMS: 1000,
+	}
+	result, err := server.executeEgressProxy(context.Background(), box, egressProxyRequest{
+		Method:      "POST",
+		Destination: decision.Destination,
+		Headers:     map[string]string{"Content-Type": "text/plain", "Connection": "blocked"},
+		Body:        "payload!",
+	}, decision)
+	if err != nil {
+		t.Fatalf("execute egress proxy: %v", err)
+	}
+	if result.StatusCode != http.StatusOK {
+		t.Fatalf("expected upstream status 200, got %d", result.StatusCode)
+	}
+	if result.Body != "response" || result.BodyEncoding != "text" || !result.Truncated || result.BodyBytes != 8 {
+		t.Fatalf("expected capped text response, got %+v", result)
+	}
+	if result.Headers["Content-Type"] != "text/plain" || result.ContentType != "text/plain" {
+		t.Fatalf("expected safe response headers, got %+v content_type=%s", result.Headers, result.ContentType)
+	}
+	if _, ok := result.Headers["X-Upstream"]; ok {
+		t.Fatalf("unexpected non-allowlisted response header: %+v", result.Headers)
 	}
 }
 

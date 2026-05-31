@@ -195,6 +195,16 @@ func TestFromEnvReadsSecureRuntimeLimits(t *testing.T) {
 	}
 }
 
+func TestFromEnvReadsEgressProxyBodyLimit(t *testing.T) {
+	t.Setenv("ZGI_SANDBOX_EGRESS_PROXY_MAX_BODY_BYTES", "2048")
+
+	cfg := FromEnv()
+
+	if cfg.EgressProxyMaxBodyBytes != 2048 {
+		t.Fatalf("expected egress proxy max body bytes 2048, got %d", cfg.EgressProxyMaxBodyBytes)
+	}
+}
+
 func TestPublicSnapshotOmitsSecrets(t *testing.T) {
 	cfg := Config{
 		Port:                                 "2660",
@@ -223,6 +233,7 @@ func TestPublicSnapshotOmitsSecrets(t *testing.T) {
 		MaxDependencyProfilesPerOrganization: 2,
 		MaxDependencyProfileSizeBytes:        1048576,
 		DependencyProfileBuildTimeoutSeconds: 120,
+		EgressProxyMaxBodyBytes:              2048,
 	}
 
 	snapshot := cfg.PublicSnapshot()
@@ -268,6 +279,9 @@ func TestPublicSnapshotOmitsSecrets(t *testing.T) {
 	}
 	if snapshot["dependency_profile_build_timeout_seconds"] != 120 {
 		t.Fatalf("expected dependency profile build timeout, got %#v", snapshot["dependency_profile_build_timeout_seconds"])
+	}
+	if snapshot["egress_proxy_max_body_bytes"] != int64(2048) {
+		t.Fatalf("expected egress proxy body limit, got %#v", snapshot["egress_proxy_max_body_bytes"])
 	}
 	if snapshot["secure_runtime_cpu_seconds"] != 3 {
 		t.Fatalf("expected secure runtime cpu seconds, got %#v", snapshot["secure_runtime_cpu_seconds"])
@@ -537,5 +551,6 @@ func validStartupConfig() Config {
 		SecureRuntimeProcessLimit:              64,
 		SecureRuntimeOpenFileLimit:             128,
 		ProxyTimeout:                           20,
+		EgressProxyMaxBodyBytes:                1024 * 1024,
 	}
 }

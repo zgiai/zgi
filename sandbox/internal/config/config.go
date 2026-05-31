@@ -59,6 +59,7 @@ type Config struct {
 	SecureRuntimeProcessLimit              int
 	SecureRuntimeOpenFileLimit             int
 	ProxyTimeout                           int
+	EgressProxyMaxBodyBytes                int64
 }
 
 func FromEnv() Config {
@@ -115,6 +116,7 @@ func FromEnv() Config {
 		SecureRuntimeProcessLimit:              getEnvIntAllowZero("ZGI_SANDBOX_SECURE_RUNTIME_PROCESS_LIMIT", 64),
 		SecureRuntimeOpenFileLimit:             getEnvIntAllowZero("ZGI_SANDBOX_SECURE_RUNTIME_OPEN_FILE_LIMIT", 128),
 		ProxyTimeout:                           getEnvInt("ZGI_SANDBOX_PROXY_TIMEOUT_SECONDS", 20),
+		EgressProxyMaxBodyBytes:                getEnvInt64("ZGI_SANDBOX_EGRESS_PROXY_MAX_BODY_BYTES", 1024*1024),
 	}
 }
 
@@ -136,6 +138,7 @@ func (c Config) ValidateStartup() error {
 		requirePositiveInt("ZGI_SANDBOX_MAX_FILE_SIZE_KB", c.MaxFileSizeKB),
 		requirePositiveInt("ZGI_SANDBOX_CACHE_TTL_SECONDS", c.CacheTTL),
 		requirePositiveInt("ZGI_SANDBOX_PROXY_TIMEOUT_SECONDS", c.ProxyTimeout),
+		requirePositiveInt64("ZGI_SANDBOX_EGRESS_PROXY_MAX_BODY_BYTES", c.EgressProxyMaxBodyBytes),
 		requirePositiveInt64("ZGI_SANDBOX_MAX_DEPENDENCY_PROFILE_SIZE_BYTES", c.MaxDependencyProfileSizeBytes),
 		requirePositiveInt("ZGI_SANDBOX_DEPENDENCY_PROFILE_BUILD_TIMEOUT_SECONDS", c.DependencyProfileBuildTimeoutSeconds),
 		requireNonNegativeInt("ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS", c.MaxConcurrentExecutions),
@@ -399,6 +402,7 @@ func (c Config) PublicSnapshot() map[string]any {
 		"secure_runtime_process_limit":               c.SecureRuntimeProcessLimit,
 		"secure_runtime_open_file_limit":             c.SecureRuntimeOpenFileLimit,
 		"proxy_timeout_seconds":                      c.ProxyTimeout,
+		"egress_proxy_max_body_bytes":                c.EgressProxyMaxBodyBytes,
 		"network_policy_enforced":                    c.NetworkPolicyEnforced(),
 	}
 }

@@ -292,10 +292,10 @@ from internal infrastructure by default.
 
 ### E3. Egress Proxy
 
-- Route approved outbound traffic through a policy-aware proxy.
-- Log destination, policy decision, sandbox ID, and request correlation ID.
-- Enforce connect, read, and write timeouts.
-- Add response body caps for proxied requests when applicable.
+- [x] Route approved outbound traffic through a policy-aware proxy.
+- [x] Log destination, policy decision, sandbox ID, and request correlation ID.
+- [x] Enforce connect, read, and write timeouts.
+- [x] Add response body caps for proxied requests when applicable.
 
 ### E4. Tests
 
