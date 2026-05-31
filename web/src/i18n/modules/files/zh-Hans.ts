@@ -173,10 +173,33 @@ const messages: FilesMessages = {
     },
     tabs: {
       overview: '概览',
+      preview: '文件预览',
       originalPreview: '原文件',
       parseReview: '解析确认',
       chunks: '内容切片',
       index: '索引信息',
+      qa: '文档问答',
+    },
+    workbench: {
+      title: '处理进度',
+      description: '质量检查待确认 {pending} 项，已生成 {chunks} 个切片和 {embeddings} 个向量。',
+      pendingHint: '{count} 项待确认',
+      steps: {
+        uploaded: '已上传',
+        parsed: '解析内容',
+        quality: '质量检查',
+        chunks: '生成切片',
+        index: '建立问答索引',
+        ready: '已就绪',
+      },
+      stepStates: {
+        done: '已完成',
+        active: '进行中',
+        attention: '需处理',
+        failed: '失败',
+        blocked: '等待前置步骤',
+        pending: '未开始',
+      },
     },
     parseReview: {
       title: '解析确认',

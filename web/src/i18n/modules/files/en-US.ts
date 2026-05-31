@@ -178,10 +178,33 @@ const messages = {
     },
     tabs: {
       overview: 'Overview',
+      preview: 'File Preview',
       originalPreview: 'Original File',
       parseReview: 'Parse Review',
       chunks: 'Chunks',
       index: 'Index',
+      qa: 'Document Q&A',
+    },
+    workbench: {
+      title: 'Processing progress',
+      description: '{pending} pending reviews, {chunks} chunks, and {embeddings} vectors generated.',
+      pendingHint: '{count} pending',
+      steps: {
+        uploaded: 'Uploaded',
+        parsed: 'Parse content',
+        quality: 'Quality check',
+        chunks: 'Generate chunks',
+        index: 'Build Q&A index',
+        ready: 'Ready',
+      },
+      stepStates: {
+        done: 'Done',
+        active: 'In progress',
+        attention: 'Needs action',
+        failed: 'Failed',
+        blocked: 'Waiting',
+        pending: 'Not started',
+      },
     },
     parseReview: {
       title: 'Parse Review',

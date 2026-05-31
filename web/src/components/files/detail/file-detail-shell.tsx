@@ -1,20 +1,18 @@
 'use client';
 
-import { useEffect, useMemo, useState, type ComponentType } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   AlertCircle,
   ArrowLeft,
-  CalendarDays,
-  CheckCircle2,
-  ClipboardCheck,
   Download,
   Eye,
   FileIcon,
-  HardDrive,
+  FileText,
+  Layers3,
   Loader2,
+  MessageSquareText,
   RefreshCw,
-  ScissorsLineDashed,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -76,34 +74,140 @@ function getVectorBadgeVariant(status?: string) {
   }
 }
 
-function DetailField({ label, value }: { label: string; value?: string | number | null }) {
-  return (
-    <div className="min-w-0 rounded-md border border-border/70 bg-background px-3 py-2">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="mt-1 truncate text-sm font-medium text-foreground">
-        {value === undefined || value === null || value === '' ? '-' : value}
-      </div>
-    </div>
-  );
+function getWorkbenchStepStates(status: string, pendingCount: number, embeddingCount: number) {
+  return [
+    { key: 'uploaded', state: 'done' },
+    {
+      key: 'parsed',
+      state:
+        status === 'stored_only'
+          ? 'pending'
+          : status === 'parsing'
+            ? 'active'
+            : status === 'parse_failed'
+              ? 'failed'
+              : 'done',
+    },
+    {
+      key: 'quality',
+      state:
+        status === 'confirming'
+          ? 'attention'
+          : status === 'ready' || status === 'generating'
+            ? 'done'
+            : status === 'parse_failed'
+              ? 'failed'
+              : 'pending',
+      count: pendingCount,
+    },
+    {
+      key: 'chunks',
+      state:
+        status === 'generating'
+          ? 'active'
+          : status === 'ready'
+            ? 'done'
+            : status === 'parse_failed'
+              ? 'blocked'
+              : 'pending',
+    },
+    {
+      key: 'index',
+      state:
+        status === 'ready'
+          ? 'done'
+          : status === 'generating' || embeddingCount > 0
+            ? 'active'
+            : status === 'parse_failed'
+              ? 'blocked'
+              : 'pending',
+    },
+    {
+      key: 'ready',
+      state: status === 'ready' ? 'done' : status === 'parse_failed' ? 'blocked' : 'pending',
+    },
+  ];
 }
 
-function DetailStat({
-  label,
-  value,
-  icon: Icon,
+function getWorkbenchStepTone(state: string) {
+  switch (state) {
+    case 'done':
+      return 'border-success/30 bg-success/10 text-success';
+    case 'active':
+      return 'border-primary/30 bg-primary/10 text-primary';
+    case 'attention':
+      return 'border-warning/40 bg-warning/10 text-warning';
+    case 'failed':
+      return 'border-destructive/30 bg-destructive/10 text-destructive';
+    case 'blocked':
+      return 'border-border bg-muted text-muted-foreground';
+    case 'pending':
+    default:
+      return 'border-border bg-background text-muted-foreground';
+  }
+}
+
+function ProcessingWorkbenchOverview({
+  status,
+  progress,
+  pendingCount,
+  chunkCount,
+  embeddingCount,
 }: {
-  label: string;
-  value: string | number;
-  icon: ComponentType<{ className?: string }>;
+  status: string;
+  progress: number;
+  pendingCount: number;
+  chunkCount: number;
+  embeddingCount: number;
 }) {
+  const t = useT('files');
+  const steps = getWorkbenchStepStates(status, pendingCount, embeddingCount);
+
   return (
-    <div className="rounded-md border border-border/70 bg-background p-3">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <Icon className="h-3.5 w-3.5" />
-        <span>{label}</span>
+    <section className="rounded-md border border-border bg-background p-4">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <h2 className="text-base font-semibold text-foreground">
+            {t('detail.workbench.title')}
+          </h2>
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+            {t('detail.workbench.description', {
+              pending: pendingCount,
+              chunks: chunkCount,
+              embeddings: embeddingCount,
+            })}
+          </p>
+        </div>
+        <div className="min-w-[220px]">
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span>{t('detail.processing')}</span>
+            <span>{progress}%</span>
+          </div>
+          <Progress className="mt-2 h-2" value={progress} />
+        </div>
       </div>
-      <div className="mt-2 text-lg font-semibold text-foreground">{value}</div>
-    </div>
+
+      <div className="mt-4 grid gap-2 sm:grid-cols-3 xl:grid-cols-6">
+        {steps.map(step => (
+          <div
+            key={step.key}
+            className={cn(
+              'min-h-[72px] rounded-md border px-3 py-2',
+              getWorkbenchStepTone(step.state)
+            )}
+          >
+            <div className="text-xs font-medium">
+              {t(`detail.workbench.steps.${step.key}` as never)}
+            </div>
+            <div className="mt-2 text-[11px] text-current/75">
+              {step.key === 'quality' && pendingCount > 0
+                ? t('detail.workbench.pendingHint', { count: pendingCount })
+                : t(`detail.workbench.stepStates.${step.state}` as never)}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -136,7 +240,7 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   const canDownload = hasPermission('file.download');
   const { downloadFile, isDownloading } = useDownloadFile();
   const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTab] = useState('preview');
   const [reparseConfirmOpen, setReparseConfirmOpen] = useState(false);
   const { data, isLoading, isFetching, error, refetch } = useFileDetail(fileId, {
     pollProcessingStatus: true,
@@ -157,7 +261,7 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   const hasPreview = file ? isOriginalPreviewSupported(file.extension, file.mime_type) : false;
   const parseReviewEnabled = status !== 'stored_only' && status !== 'parsing';
   const chunksEnabled = status === 'ready';
-  const indexEnabled = status === 'ready' || status === 'generating' || embeddingCount > 0;
+  const qaEnabled = status === 'ready' || status === 'generating' || embeddingCount > 0;
   const canRequestProcessing =
     hasPermission('file.manage') || hasPermission('file.upload_create') || canDownload;
   const canReparse = canRequestProcessing && (status === 'ready' || status === 'parse_failed');
@@ -194,54 +298,6 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
     }
   }, [t, vectorStatus]);
 
-  const currentView = useMemo(() => {
-    switch (status as FileAssetProductStatus | string) {
-      case 'parsing':
-        return {
-          title: t('detail.views.processing.title'),
-          description: t('detail.views.processing.description'),
-          icon: Loader2,
-          spinning: true,
-        };
-      case 'confirming':
-        return {
-          title: t('detail.views.confirming.title'),
-          description: t('detail.views.confirming.description'),
-          icon: ClipboardCheck,
-          spinning: false,
-        };
-      case 'generating':
-        return {
-          title: t('detail.views.generating.title'),
-          description: t('detail.views.generating.description'),
-          icon: Loader2,
-          spinning: true,
-        };
-      case 'ready':
-        return {
-          title: t('detail.views.ready.title'),
-          description: t('detail.views.ready.description'),
-          icon: CheckCircle2,
-          spinning: false,
-        };
-      case 'parse_failed':
-        return {
-          title: t('detail.views.failed.title'),
-          description: t('detail.views.failed.description'),
-          icon: AlertCircle,
-          spinning: false,
-        };
-      case 'stored_only':
-      default:
-        return {
-          title: t('detail.views.storedOnly.title'),
-          description: t('detail.views.storedOnly.description'),
-          icon: ScissorsLineDashed,
-          spinning: false,
-        };
-    }
-  }, [status, t]);
-
   const handleDownload = async () => {
     if (!file) return;
     await downloadFile(file.id, file.name);
@@ -253,15 +309,11 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
       force: false,
     });
   };
-  const CurrentViewIcon = currentView.icon;
 
   useEffect(() => {
     if (status === 'confirming') {
-      setActiveTab('parse-review');
+      setActiveTab('preview');
       return;
-    }
-    if (status === 'ready') {
-      setActiveTab('chunks');
     }
   }, [status]);
 
@@ -415,136 +467,57 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
         </div>
       ) : null}
 
-      <div className="p-4 sm:p-6">
+      <div className="space-y-4 p-4 sm:p-6">
+        <ProcessingWorkbenchOverview
+          status={status}
+          progress={progress}
+          pendingCount={pendingCount}
+          chunkCount={chunkCount}
+          embeddingCount={embeddingCount}
+        />
+
         <Tabs value={activeTab} onValueChange={setActiveTab} className="min-w-0">
           <TabsList className="flex h-auto w-full justify-start overflow-x-auto rounded-md sm:inline-flex sm:w-auto">
-            <TabsTrigger value="overview">{t('detail.tabs.overview')}</TabsTrigger>
-            <TabsTrigger value="original">{t('detail.tabs.originalPreview')}</TabsTrigger>
-            <TabsTrigger value="parse-review" disabled={!parseReviewEnabled}>
-              {t('detail.tabs.parseReview')}
+            <TabsTrigger value="preview" className="gap-2">
+              <FileText className="h-4 w-4" />
+              {t('detail.tabs.preview')}
             </TabsTrigger>
             <TabsTrigger value="chunks" disabled={!chunksEnabled}>
+              <Layers3 className="mr-2 h-4 w-4" />
               {t('detail.tabs.chunks')}
+              {chunkCount > 0 ? (
+                <Badge variant="subtle" className="ml-2 px-1.5 py-0 text-[10px]">
+                  {chunkCount}
+                </Badge>
+              ) : null}
             </TabsTrigger>
-            <TabsTrigger value="index" disabled={!indexEnabled}>
-              {t('detail.tabs.index')}
+            <TabsTrigger value="qa" disabled={!qaEnabled}>
+              <MessageSquareText className="mr-2 h-4 w-4" />
+              {t('detail.tabs.qa')}
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="overview" className="mt-4">
-            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-              <div className="min-w-0 space-y-4">
-                <section className="rounded-md border border-border bg-background p-4">
-                  <div className="mb-4 flex items-center justify-between gap-3">
-                    <h2 className="text-base font-semibold text-foreground">
-                      {t('detail.basicInfo')}
-                    </h2>
-                  </div>
-                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                    <DetailField label={t('detail.fileId')} value={file.id} />
-                    <DetailField
-                      label={t('detail.assetId')}
-                      value={detail.asset?.id || file.asset_id}
-                    />
-                    <DetailField label={t('detail.storageType')} value={file.storage_type} />
-                    <DetailField label={t('detail.workspaceId')} value={file.workspace_id} />
-                    <DetailField label={t('detail.createdBy')} value={file.created_by} />
-                    <DetailField label={t('detail.generationNo')} value={summary?.generation_no} />
-                  </div>
-                </section>
-
-                <section className="rounded-md border border-border bg-background p-4">
-                  <h2 className="text-base font-semibold text-foreground">
-                    {t('detail.nextViews')}
-                  </h2>
-                  <div className="mt-4 flex gap-3 rounded-md border border-dashed border-border bg-muted/30 p-4">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-background text-muted-foreground">
-                      <CurrentViewIcon
-                        className={cn('h-5 w-5', currentView.spinning && 'animate-spin')}
-                      />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium text-foreground">
-                        {currentView.title}
-                      </div>
-                      <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                        {currentView.description}
-                      </p>
-                    </div>
-                  </div>
-                </section>
-              </div>
-
-              <aside className="space-y-4">
-                <section className="rounded-md border border-border bg-background p-4">
-                  <h2 className="text-base font-semibold text-foreground">
-                    {t('detail.processingSummary')}
-                  </h2>
-                  <div className="mt-4 grid gap-3">
-                    <DetailStat
-                      label={t('detail.pendingConfirmationCount')}
-                      value={pendingCount}
-                      icon={AlertCircle}
-                    />
-                    <DetailStat label={t('detail.chunkCount')} value={chunkCount} icon={FileIcon} />
-                    <DetailStat
-                      label={t('detail.embeddingCount')}
-                      value={embeddingCount}
-                      icon={HardDrive}
-                    />
-                    <DetailStat
-                      label={t('detail.createdDate')}
-                      value={formatDate(file.created_at, 'YYYY-MM-DD')}
-                      icon={CalendarDays}
-                    />
-                  </div>
-                </section>
-
-                <section className="rounded-md border border-border bg-background p-4">
-                  <h2 className="text-base font-semibold text-foreground">
-                    {t('detail.indexInfo')}
-                  </h2>
-                  <div className="mt-4 grid gap-3">
-                    <DetailField
-                      label={t('detail.embeddingProvider')}
-                      value={artifactState?.embedding_provider}
-                    />
-                    <DetailField
-                      label={t('detail.embeddingModel')}
-                      value={artifactState?.embedding_model}
-                    />
-                    <DetailField
-                      label={t('detail.embeddingDimension')}
-                      value={artifactState?.embedding_dimension}
-                    />
-                  </div>
-                </section>
-              </aside>
+          <TabsContent value="preview" className="mt-4">
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.9fr)]">
+              <FileOriginalPreviewPanel
+                file={file}
+                onDownload={canDownload ? () => void handleDownload() : undefined}
+                isDownloading={isDownloading}
+              />
+              <FileParseReviewPanel fileId={file.id} enabled={parseReviewEnabled} />
             </div>
-          </TabsContent>
-
-          <TabsContent value="original" className="mt-4">
-            <FileOriginalPreviewPanel
-              file={file}
-              onDownload={canDownload ? () => void handleDownload() : undefined}
-              isDownloading={isDownloading}
-            />
-          </TabsContent>
-
-          <TabsContent value="parse-review" className="mt-4">
-            <FileParseReviewPanel fileId={file.id} enabled={parseReviewEnabled} />
           </TabsContent>
 
           <TabsContent value="chunks" className="mt-4">
             <FileChunksPanel fileId={file.id} enabled={chunksEnabled} />
           </TabsContent>
 
-          <TabsContent value="index" className="mt-4">
+          <TabsContent value="qa" className="mt-4">
             <FileIndexInfoPanel
               artifactState={artifactState}
               processing={processing}
               vectorStatus={vectorStatus}
-              enabled={indexEnabled}
+              enabled={qaEnabled}
             />
           </TabsContent>
         </Tabs>
