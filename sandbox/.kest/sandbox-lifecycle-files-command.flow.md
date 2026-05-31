@@ -48,6 +48,8 @@ data.limits.max_active_sandboxes == 6
 data.limits.queue_timeout_ms == 5000
 data.limits.output_limit_kb == 1024
 data.limits.max_file_size_kb == 256
+data.dependency_policy.package_policy.enforced == true
+data.dependency_policy.package_policy.default_action == "deny-unlisted"
 ```
 
 ```step

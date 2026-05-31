@@ -22,6 +22,12 @@ data.profiles.0.status == "ready"
 data.profiles.0.enabled == true
 data.profiles.0.owner_scope == "global"
 data.profiles.0.base_runtime == "preview-process"
+data.package_policy.mode == "managed-build-only"
+data.package_policy.enforced == true
+data.package_policy.default_action == "deny-unlisted"
+data.package_policy.allowed_packages.0.ecosystem == "python3"
+data.package_policy.allowed_packages.0.name == "data-tools"
+data.package_policy.denied_packages.0.name == "remote-url"
 ```
 
 ```step

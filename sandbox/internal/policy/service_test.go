@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -61,6 +62,59 @@ func TestNormalizeCreateRecordsDependencyProfileVersionAndRejectsUnavailableProf
 		t.Fatal("expected disabled dependency profile to be rejected before quota checks")
 	} else if _, ok := err.(*LimitError); ok {
 		t.Fatalf("expected disabled dependency profile error before quota checks, got %v", err)
+	}
+}
+
+func TestDependencyPackagePolicyRejectsUnlistedAndUnpinnedPackages(t *testing.T) {
+	service := NewService(config.FromEnv())
+
+	if err := service.ValidateDependencyProfilePackages(DependencyProfile{
+		Name:      "allowed-profile",
+		Languages: []string{"python3"},
+		Packages:  []DependencyPackage{{Name: "data-tools", Version: "managed"}},
+	}); err != nil {
+		t.Fatalf("expected allowlisted package, got %v", err)
+	}
+
+	for name, profile := range map[string]DependencyProfile{
+		"unlisted": {
+			Name:      "unlisted-profile",
+			Languages: []string{"python3"},
+			Packages:  []DependencyPackage{{Name: "unknown-package", Version: "1.0.0"}},
+		},
+		"latest": {
+			Name:      "latest-profile",
+			Languages: []string{"python3"},
+			Packages:  []DependencyPackage{{Name: "data-tools", Version: "latest"}},
+		},
+		"remote-url": {
+			Name:      "remote-profile",
+			Languages: []string{"python3"},
+			Packages:  []DependencyPackage{{Name: "remote-url", Version: "1.0.0"}},
+		},
+	} {
+		if err := service.ValidateDependencyProfilePackages(profile); err == nil {
+			t.Fatalf("expected package policy rejection for %s", name)
+		}
+	}
+}
+
+func TestNormalizeCreateAppliesDependencyPackagePolicy(t *testing.T) {
+	service := NewService(config.FromEnv())
+	service.dependencyProfiles = append(service.dependencyProfiles, DependencyProfile{
+		Name:        "unsafe-profile",
+		Version:     "2026.05.01",
+		Status:      "ready",
+		Enabled:     true,
+		OwnerScope:  "global",
+		Languages:   []string{"python3"},
+		Packages:    []DependencyPackage{{Name: "unknown-package", Version: "1.0.0"}},
+		BaseRuntime: "preview-process",
+		Checksum:    "profile:unsafe-profile:2026.05.01",
+	})
+
+	if _, err := service.NormalizeCreate("session", 60, false, "", "unsafe-profile", 0, "", 0); err == nil || !strings.Contains(err.Error(), "not in the managed allowlist") {
+		t.Fatalf("expected package policy rejection, got %v", err)
 	}
 }
 

@@ -25,8 +25,24 @@ type DependencyProfile struct {
 }
 
 type DependencyPackage struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
+	Name      string `json:"name"`
+	Version   string `json:"version"`
+	Ecosystem string `json:"ecosystem,omitempty"`
+}
+
+type DependencyPackageRule struct {
+	Ecosystem string `json:"ecosystem"`
+	Name      string `json:"name"`
+	Version   string `json:"version,omitempty"`
+	Reason    string `json:"reason"`
+}
+
+type DependencyPackagePolicy struct {
+	Mode            string                  `json:"mode"`
+	Enforced        bool                    `json:"enforced"`
+	DefaultAction   string                  `json:"default_action"`
+	AllowedPackages []DependencyPackageRule `json:"allowed_packages"`
+	DeniedPackages  []DependencyPackageRule `json:"denied_packages"`
 }
 
 type NetworkProfile struct {
@@ -78,6 +94,7 @@ type TemplateLimits struct {
 type Service struct {
 	config             config.Config
 	dependencyProfiles []DependencyProfile
+	packagePolicy      DependencyPackagePolicy
 	networkProfiles    []NetworkProfile
 	commandProfiles    map[string]CommandLimits
 	templateProfiles   map[string]TemplateLimits
@@ -118,6 +135,19 @@ func (e *LimitError) ResponseDetails() map[string]any {
 func NewService(cfg config.Config) *Service {
 	return &Service{
 		config: cfg,
+		packagePolicy: DependencyPackagePolicy{
+			Mode:          "managed-build-only",
+			Enforced:      true,
+			DefaultAction: "deny-unlisted",
+			AllowedPackages: []DependencyPackageRule{
+				{Ecosystem: "python3", Name: "data-tools", Version: "managed", Reason: "Reserved managed profile bundle."},
+			},
+			DeniedPackages: []DependencyPackageRule{
+				{Ecosystem: "*", Name: "remote-url", Reason: "Packages must come from operator-managed lockfiles."},
+				{Ecosystem: "*", Name: "local-path", Reason: "Packages must be built outside request execution."},
+				{Ecosystem: "*", Name: "latest", Reason: "Unpinned package versions are not reproducible."},
+			},
+		},
 		dependencyProfiles: []DependencyProfile{
 			{
 				Name:        "stdlib",
@@ -287,7 +317,7 @@ func (s *Service) Snapshot() map[string]any {
 		"network_enforcement": s.networkEnforcementSnapshot(),
 		"command_profiles":    s.commandProfileSnapshot(),
 		"template_profiles":   s.templateProfileSnapshot(),
-		"dependency_policy":   map[string]any{"mode": "managed-profiles", "supports_user_update": false},
+		"dependency_policy":   s.dependencyPolicySnapshot(),
 		"dependency_profiles": s.dependencyProfiles,
 		"limits":              s.EffectiveLimits(),
 	}
@@ -343,8 +373,17 @@ func (s *Service) DependencyCatalog(language string) map[string]any {
 		"language":             defaultString(normalizeLanguage(language), "python3"),
 		"mode":                 "managed-profiles",
 		"supports_user_update": false,
+		"package_policy":       s.packagePolicy,
 		"profiles":             items,
 		"note":                 "Dynamic dependency installation is intentionally disabled in this preview runtime.",
+	}
+}
+
+func (s *Service) dependencyPolicySnapshot() map[string]any {
+	return map[string]any{
+		"mode":                 "managed-profiles",
+		"supports_user_update": false,
+		"package_policy":       s.packagePolicy,
 	}
 }
 
@@ -358,6 +397,47 @@ func (s *Service) ValidateDependencyProfileForLanguage(value string, language st
 		return DependencyProfile{}, fmt.Errorf("dependency profile %s does not support language: %s", profile.Name, normalizedLanguage)
 	}
 	return profile, nil
+}
+
+func (s *Service) ValidateDependencyProfilePackages(profile DependencyProfile) error {
+	for _, pkg := range profile.Packages {
+		ecosystem := normalizePackageEcosystem(pkg.Ecosystem)
+		if ecosystem == "" && len(profile.Languages) == 1 {
+			ecosystem = normalizeLanguage(profile.Languages[0])
+		}
+		if err := s.validateDependencyPackage(ecosystem, pkg); err != nil {
+			return fmt.Errorf("dependency profile %s package %s is not allowed: %w", profile.Name, pkg.Name, err)
+		}
+	}
+	return nil
+}
+
+func (s *Service) validateDependencyPackage(ecosystem string, pkg DependencyPackage) error {
+	name := normalizePackageName(pkg.Name)
+	version := strings.TrimSpace(pkg.Version)
+	if name == "" {
+		return errors.New("package name is required")
+	}
+	if version == "" {
+		return errors.New("package version is required")
+	}
+	if version == "latest" || strings.Contains(version, "*") {
+		return errors.New("package version must be pinned")
+	}
+	for _, rule := range s.packagePolicy.DeniedPackages {
+		if packageRuleMatches(rule, ecosystem, name, version) {
+			return fmt.Errorf("package denied by policy: %s", rule.Reason)
+		}
+	}
+	if s.packagePolicy.DefaultAction != "deny-unlisted" {
+		return nil
+	}
+	for _, rule := range s.packagePolicy.AllowedPackages {
+		if packageRuleMatches(rule, ecosystem, name, version) {
+			return nil
+		}
+	}
+	return errors.New("package is not in the managed allowlist")
 }
 
 func (s *Service) NormalizeCreate(profile string, ttlSeconds int, networkEnabled bool, networkPolicy string, dependencyProfile string, activeCount int, organizationID string, organizationActiveCount int) (CreateDecision, error) {
@@ -739,10 +819,42 @@ func (s *Service) normalizeDependencyProfile(value string) (DependencyProfile, e
 			if !profile.Enabled || profile.Status != "ready" {
 				return DependencyProfile{}, fmt.Errorf("dependency profile is not enabled: %s", name)
 			}
+			if err := s.ValidateDependencyProfilePackages(profile); err != nil {
+				return DependencyProfile{}, err
+			}
 			return profile, nil
 		}
 	}
 	return DependencyProfile{}, fmt.Errorf("unsupported dependency profile: %s", name)
+}
+
+func normalizePackageEcosystem(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "python", "python3", "pypi":
+		return "python3"
+	case "node", "nodejs", "npm", "javascript":
+		return "nodejs"
+	case "*":
+		return "*"
+	default:
+		return strings.ToLower(strings.TrimSpace(value))
+	}
+}
+
+func normalizePackageName(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func packageRuleMatches(rule DependencyPackageRule, ecosystem string, name string, version string) bool {
+	ruleEcosystem := normalizePackageEcosystem(rule.Ecosystem)
+	if ruleEcosystem != "*" && ruleEcosystem != ecosystem {
+		return false
+	}
+	if normalizePackageName(rule.Name) != name {
+		return false
+	}
+	ruleVersion := strings.TrimSpace(rule.Version)
+	return ruleVersion == "" || ruleVersion == "*" || ruleVersion == version
 }
 
 func (s *Service) normalizeTTL(profile sandbox.RuntimeProfile, ttlSeconds int) time.Duration {
