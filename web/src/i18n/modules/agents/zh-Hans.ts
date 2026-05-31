@@ -1532,6 +1532,7 @@ const messages: AgentsMessages = {
       selectDatabaseForBinding: '选择 {name}',
       selectTableForBinding: '选择 {name}',
       noDatabases: '没有匹配的数据库。',
+      noDescription: '暂无描述',
       noTables: '没有匹配的表。',
       selectDatabaseFirst: '请选择数据库后查看表。',
       databaseUnavailable: '数据库不可用',

@@ -1628,6 +1628,7 @@ const messages = {
       selectDatabaseForBinding: 'Select {name}',
       selectTableForBinding: 'Select {name}',
       noDatabases: 'No matching database.',
+      noDescription: 'No description',
       noTables: 'No matching table.',
       selectDatabaseFirst: 'Select a database to view its tables.',
       databaseUnavailable: 'Database unavailable',

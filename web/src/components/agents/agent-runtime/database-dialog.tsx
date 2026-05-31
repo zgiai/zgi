@@ -1,10 +1,9 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Database, Search } from 'lucide-react';
+import { Check, Database, Search } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogBody,
@@ -94,7 +93,7 @@ export function AgentRuntimeDatabaseDialog({
             {isLoading ? (
               <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
                 {Array.from({ length: 4 }).map((_, index) => (
-                  <Skeleton key={index} className="h-24 w-full" />
+                  <Skeleton key={index} className="h-32 w-full rounded-lg" />
                 ))}
               </div>
             ) : filteredDbs.length === 0 ? (
@@ -147,40 +146,47 @@ function DatabaseOption({
   onSelect: (id: string, checked: boolean) => void;
 }) {
   const t = useT('agents.agentRuntime');
+  const label = db.name || db.schema_name || t('database.unnamedDatabase');
+  const meta = db.schema_name || db.provider;
 
   return (
-    <div
+    <button
+      type="button"
       className={cn(
-        'flex min-h-24 w-full items-start gap-3 rounded-md border bg-background p-3 text-left transition-colors hover:border-primary/50 hover:bg-muted/30',
-        selected && 'border-primary/80 bg-primary/[0.04] shadow-sm'
+        'flex min-h-32 cursor-pointer flex-col rounded-lg border bg-background p-4 text-left transition-colors hover:border-primary/50 hover:bg-muted/30',
+        selected ? 'border-primary bg-primary/5' : ''
       )}
+      onClick={() => onSelect(db.id, !selected)}
     >
-      <Checkbox
-        checked={selected}
-        onCheckedChange={value => onSelect(db.id, value === true)}
-        aria-label={t('database.selectDatabaseForBinding', {
-          name: db.name || db.schema_name || t('database.unnamedDatabase'),
-        })}
-        className="mt-1"
-      />
-      <span className="flex size-9 shrink-0 items-center justify-center rounded-md border bg-muted text-primary">
-        <Database className="size-4" />
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-medium">
-          {db.name || db.schema_name || t('database.unnamedDatabase')}
+      <span className="flex items-start gap-3">
+        <span className="flex size-10 shrink-0 items-center justify-center rounded-lg border bg-muted text-primary">
+          <Database className="size-5" />
         </span>
-        {db.description || db.schema_name ? (
-          <span className="mt-1.5 line-clamp-2 text-xs leading-5 text-muted-foreground">
-            {db.description || db.schema_name}
-          </span>
-        ) : null}
-        {selectedCount > 0 ? (
-          <Badge variant="subtle" className="mt-2 h-5 px-1.5 text-[10px]">
-            {t('database.selectedTablesCount', { count: selectedCount })}
-          </Badge>
-        ) : null}
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-semibold">{label}</span>
+          {meta ? (
+            <span className="mt-1 inline-flex rounded border bg-muted/40 px-1.5 py-0.5 text-[11px] text-muted-foreground">
+              {meta}
+            </span>
+          ) : null}
+        </span>
+        <span
+          className={cn(
+            'flex size-5 shrink-0 items-center justify-center rounded-full border',
+            selected ? 'border-primary bg-primary text-primary-foreground' : 'bg-background'
+          )}
+        >
+          {selected ? <Check className="size-3.5" /> : null}
+        </span>
       </span>
-    </div>
+      <span className="mt-3 line-clamp-2 text-xs leading-5 text-muted-foreground">
+        {db.description || db.schema_name || t('database.noDescription')}
+      </span>
+      {selectedCount > 0 ? (
+        <Badge variant="subtle" className="mt-3 w-fit">
+          {t('database.selectedTablesCount', { count: selectedCount })}
+        </Badge>
+      ) : null}
+    </button>
   );
 }
