@@ -401,8 +401,8 @@ func TestRuntime_CallSkillTool_RequiresAllowedTool(t *testing.T) {
 	}
 
 	_, err = runtime.CallSkillTool(context.Background(), resolved, "time", "not_allowed", nil, skills.ExecutionContext{
-		TenantID: "tenant-1",
-		UserID:   "user-1",
+		OrganizationID: "organization-1",
+		UserID:         "user-1",
 	}, "call_1")
 	if err == nil || !strings.Contains(err.Error(), "not available") {
 		t.Fatalf("CallSkillTool() error = %v, want not available", err)
