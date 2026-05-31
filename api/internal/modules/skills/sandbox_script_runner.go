@@ -128,7 +128,7 @@ type SkillScriptInputFile struct {
 }
 
 type SkillScriptInputFileProvider interface {
-	GetSkillScriptInputFile(ctx context.Context, fileID string, execCtx ExecutionContext) (SkillScriptInputFile, error)
+	GetSkillScriptInputFile(ctx context.Context, fileID string, maxBytes int64, execCtx ExecutionContext) (SkillScriptInputFile, error)
 }
 
 func NewSandboxScriptRunner(config SandboxScriptRunnerConfig) *SandboxScriptRunner {
@@ -483,7 +483,7 @@ func (r *SandboxScriptRunner) resolveInputFiles(ctx context.Context, arguments m
 			return nil, fmt.Errorf("skill input file %s accepts at most %d files", spec.Name, spec.MaxCount)
 		}
 		for _, fileID := range fileIDs {
-			inputFile, err := r.inputFileProvider.GetSkillScriptInputFile(ctx, fileID, execCtx)
+			inputFile, err := r.inputFileProvider.GetSkillScriptInputFile(ctx, fileID, spec.MaxBytes, execCtx)
 			if err != nil {
 				return nil, fmt.Errorf("failed to load skill input file %s: %w", spec.Name, err)
 			}

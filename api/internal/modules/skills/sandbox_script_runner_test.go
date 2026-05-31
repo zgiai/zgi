@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1448,7 +1449,7 @@ type fakeSkillInputFileProvider struct {
 	err   error
 }
 
-func (f *fakeSkillInputFileProvider) GetSkillScriptInputFile(_ context.Context, fileID string, _ ExecutionContext) (SkillScriptInputFile, error) {
+func (f *fakeSkillInputFileProvider) GetSkillScriptInputFile(_ context.Context, fileID string, maxBytes int64, _ ExecutionContext) (SkillScriptInputFile, error) {
 	if f.err != nil {
 		return SkillScriptInputFile{}, f.err
 	}
@@ -1461,6 +1462,9 @@ func (f *fakeSkillInputFileProvider) GetSkillScriptInputFile(_ context.Context, 
 	}
 	if file.FileID == "" {
 		file.FileID = fileID
+	}
+	if maxBytes > 0 && file.Size > maxBytes {
+		return SkillScriptInputFile{}, fmt.Errorf("file exceeds max_bytes %d", maxBytes)
 	}
 	return file, nil
 }

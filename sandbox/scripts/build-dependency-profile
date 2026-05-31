@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -20,16 +21,37 @@ def safe_name(value):
     return all(ch.islower() or ch.isdigit() or ch == "-" for ch in value)
 
 
+PYTHON_EXACT_VERSION = re.compile(
+    r"^\d+(?:\.\d+)*(?:(?:a|b|rc)\d+)?(?:\.post\d+)?(?:\.dev\d+)?(?:\+[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*)?$",
+    re.IGNORECASE,
+)
+NODE_EXACT_SEMVER = re.compile(
+    r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"
+)
+
+
 def pinned_version(pkg):
     name = str(pkg.get("name") or "").strip()
+    ecosystem = str(pkg.get("ecosystem") or "").strip()
     version = str(pkg.get("version") or "").strip()
     if not name:
         raise ValueError("dependency package name is required")
-    normalized = version.lstrip("=")
+    if version.startswith("=="):
+        normalized = version[2:]
+    elif version.startswith("="):
+        normalized = version[1:]
+    else:
+        normalized = version
     if not normalized or normalized in ("managed", "latest"):
         raise ValueError(f"dependency package {name} must declare an exact version")
-    if any(normalized.startswith(prefix) for prefix in ("http:", "https:", "file:", "git+", ".")):
+    if any(normalized.startswith(prefix) for prefix in ("http:", "https:", "file:", "git+", "github:", "gitlab:", "bitbucket:", "npm:", "workspace:", "link:", "portal:", ".")):
         raise ValueError(f"dependency package {name} version must be an exact registry version")
+    if any(ch in normalized for ch in "<>~^*!,| "):
+        raise ValueError(f"dependency package {name} version must be an exact registry version")
+    if ecosystem == "python3" and not PYTHON_EXACT_VERSION.fullmatch(normalized):
+        raise ValueError(f"python dependency package {name} version must be an exact version")
+    if ecosystem == "nodejs" and not NODE_EXACT_SEMVER.fullmatch(normalized):
+        raise ValueError(f"node dependency package {name} version must be an exact semver")
     return normalized
 
 
@@ -38,10 +60,19 @@ def python_package_spec(pkg):
     return name + "==" + pinned_version(pkg)
 
 
+def manifest_package_version(pkg):
+    ecosystem = str(pkg.get("ecosystem") or "").strip()
+    if ecosystem in ("python3", "nodejs"):
+        return pinned_version(pkg)
+    return str(pkg.get("version") or "").strip() or "managed"
+
+
 def checksum_dir(root):
     files = []
     size = 0
     for path in root.rglob("*"):
+        if path.is_symlink():
+            raise ValueError(f"dependency profile contains symlink: {path.relative_to(root).as_posix()}")
         if not path.is_file():
             continue
         rel = path.relative_to(root).as_posix()
@@ -63,6 +94,7 @@ def run(cmd, cwd):
 
 
 def materialize_symlinks(root):
+    root_resolved = root.resolve(strict=True)
     links = []
     for current, dirnames, filenames in os.walk(root, followlinks=False):
         current_path = Path(current)
@@ -78,11 +110,14 @@ def materialize_symlinks(root):
 
     for path in links:
         target = path.resolve(strict=True)
-        path.unlink()
+        try:
+            target.relative_to(root_resolved)
+        except ValueError as exc:
+            raise ValueError(f"dependency profile symlink escapes output directory: {path.relative_to(root).as_posix()}") from exc
         if target.is_dir():
-            shutil.copytree(target, path, symlinks=False)
-        else:
-            shutil.copy2(target, path)
+            raise ValueError(f"dependency profile directory symlink is not allowed: {path.relative_to(root).as_posix()}")
+        path.unlink()
+        shutil.copy2(target, path)
 
 
 def build_python(output_dir, packages):
@@ -156,7 +191,7 @@ def main():
             {
                 "ecosystem": pkg.get("ecosystem") or "",
                 "name": pkg.get("name") or "",
-                "version": str(pkg.get("version") or "").lstrip("=") or "managed",
+                "version": manifest_package_version(pkg),
             }
             for pkg in packages
         ],

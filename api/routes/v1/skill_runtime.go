@@ -43,7 +43,7 @@ type skillInputFileProvider struct {
 	organizationService interfaces.OrganizationService
 }
 
-func (p skillInputFileProvider) GetSkillScriptInputFile(ctx context.Context, fileID string, execCtx skills.ExecutionContext) (skills.SkillScriptInputFile, error) {
+func (p skillInputFileProvider) GetSkillScriptInputFile(ctx context.Context, fileID string, maxBytes int64, execCtx skills.ExecutionContext) (skills.SkillScriptInputFile, error) {
 	if p.fileService == nil {
 		return skills.SkillScriptInputFile{}, fmt.Errorf("file service is unavailable")
 	}
@@ -57,6 +57,9 @@ func (p skillInputFileProvider) GetSkillScriptInputFile(ctx context.Context, fil
 	}
 	if file == nil {
 		return skills.SkillScriptInputFile{}, fmt.Errorf("file not found")
+	}
+	if maxBytes > 0 && file.Size > maxBytes {
+		return skills.SkillScriptInputFile{}, fmt.Errorf("file exceeds max_bytes %d", maxBytes)
 	}
 	organizationID := nonZeroUUIDString(file.OrganizationID)
 	if organizationID == "" {
