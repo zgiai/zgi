@@ -32,6 +32,7 @@ type Query struct {
 	UserID         string
 	RequestID      string
 	Limit          int
+	After          time.Time
 	Before         time.Time
 }
 
@@ -212,6 +213,9 @@ func (s *memoryStore) QueryEvents(query Query) ([]Event, error) {
 			continue
 		}
 		if query.RequestID != "" && metadataString(event.Metadata, "request_id") != query.RequestID {
+			continue
+		}
+		if !query.After.IsZero() && !event.CreatedAt.After(query.After) {
 			continue
 		}
 		if !query.Before.IsZero() && !event.CreatedAt.Before(query.Before) {

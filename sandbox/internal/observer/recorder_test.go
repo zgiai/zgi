@@ -1,6 +1,9 @@
 package observer
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestMetricsAggregatesExecutionEvents(t *testing.T) {
 	recorder := NewRecorder(20)
@@ -93,5 +96,21 @@ func TestRecorderFiltersByTypePrefix(t *testing.T) {
 	}
 	if events[0].Message != "command failed" || events[1].Message != "code" {
 		t.Fatalf("expected newest execution events only, got %#v", events)
+	}
+}
+
+func TestRecorderFiltersByAfterCursor(t *testing.T) {
+	recorder := NewRecorder(20)
+	recorder.Record("exec.code", "sbx_after", "older", nil)
+	cutoff := time.Now().UTC()
+	time.Sleep(time.Millisecond)
+	recorder.Record("exec.code", "sbx_after", "newer", nil)
+
+	events := recorder.Query(Query{SandboxID: "sbx_after", TypePrefix: "exec.", After: cutoff, Limit: 10})
+	if len(events) != 1 {
+		t.Fatalf("expected one event after cutoff, got %d", len(events))
+	}
+	if events[0].Message != "newer" {
+		t.Fatalf("expected newer event, got %q", events[0].Message)
 	}
 }

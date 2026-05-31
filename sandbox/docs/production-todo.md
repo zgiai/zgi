@@ -46,6 +46,7 @@ Already available:
 - Startup log emits effective non-secret configuration
 - Worker-scoped active sandbox limit accounting
 - Optional organization-scoped active sandbox limit accounting
+- Optional organization-scoped execution rate limit accounting
 - Sandbox ownership fields for organization, workspace, app, workflow run, and user context
 - Ownership context persisted with sandbox records and propagated to lifecycle, endpoint, expiration, execution, file, archive, and artifact manifest observer events
 - Artifact manifests include content type, reference encoding, SHA-256 hashes, timestamps, and enforce file count and total byte limits
@@ -455,7 +456,7 @@ Goal: bind sandbox usage to ZGI organizations, workspaces, apps, workflows, and 
 ### I2. Quotas
 
 - Added optional max active sandboxes per organization with `ZGI_SANDBOX_MAX_ACTIVE_PER_ORGANIZATION`.
-- Max executions per minute per organization.
+- Added optional max executions per minute per organization with `ZGI_SANDBOX_MAX_EXECUTIONS_PER_MINUTE_PER_ORGANIZATION`.
 - Max artifact bytes per organization.
 - Max workspace bytes per organization.
 - Max network requests per organization.

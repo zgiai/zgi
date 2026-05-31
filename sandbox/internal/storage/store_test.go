@@ -194,6 +194,17 @@ func TestPostgresStorePersistsSandboxAndEvents(t *testing.T) {
 	if olderEvents[0].Message != "older" {
 		t.Fatalf("expected older event, got %q", olderEvents[0].Message)
 	}
+
+	recentEvents, err := store.QueryEvents(observer.Query{SandboxID: box.ID, After: event.CreatedAt, Limit: 10})
+	if err != nil {
+		t.Fatalf("query recent events: %v", err)
+	}
+	if len(recentEvents) != 1 {
+		t.Fatalf("expected one recent event, got %d", len(recentEvents))
+	}
+	if recentEvents[0].Message != "code executed" {
+		t.Fatalf("expected recent execution event, got %q", recentEvents[0].Message)
+	}
 }
 
 func TestPostgresStorePrunesObserverEventsByAgeAndCount(t *testing.T) {

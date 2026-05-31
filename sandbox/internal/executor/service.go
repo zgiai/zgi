@@ -253,6 +253,9 @@ func (s *Service) runCodeWithScope(ctx context.Context, req CodeRequest, runReq 
 	if err := s.policy.ValidateCodeExecution(*box, req.EnableNetwork); err != nil {
 		return runner.Result{}, box, err
 	}
+	if err := s.enforceOrganizationExecutionRate(box); err != nil {
+		return runner.Result{}, box, err
+	}
 	result, err := s.runner.RunInDirWithLimits(ctx, runReq, box.RootPath, limits.Timeout, limits.StdoutLimitBytes, limits.StderrLimitBytes)
 	return result, box, err
 }
@@ -387,6 +390,10 @@ func (s *Service) RunCommand(ctx context.Context, req CommandRequest) (runner.Co
 		s.recordExecutionFailure(ctx, "exec.command.failed", req.SandboxID, "sandbox command execution failed", baseMetadata, err)
 		return runner.CommandResult{}, err
 	}
+	if err := s.enforceOrganizationExecutionRate(box); err != nil {
+		s.recordExecutionFailure(ctx, "exec.command.failed", req.SandboxID, "sandbox command execution failed", baseMetadata, err)
+		return runner.CommandResult{}, err
+	}
 
 	result, err := s.runner.ExecuteCommandSpec(ctx, runner.CommandSpec{
 		WorkDir:        workDir,
@@ -470,6 +477,10 @@ func (s *Service) RunSkill(ctx context.Context, req SkillRunRequest) (SkillRunRe
 	}
 
 	command, args := skillCommand(manifest)
+	if err := s.enforceOrganizationExecutionRate(box); err != nil {
+		s.recordExecutionFailure(ctx, "exec.skill.failed", req.SandboxID, "skill execution failed", baseMetadata, err)
+		return SkillRunResult{}, err
+	}
 	result, err := s.runner.ExecuteCommandSpec(ctx, runner.CommandSpec{
 		WorkDir:        packageRoot,
 		Command:        command,
@@ -523,6 +534,35 @@ func (s *Service) RunSkill(ctx context.Context, req SkillRunRequest) (SkillRunRe
 	addOwnershipMetadata(metadata, box)
 	s.observer.Record("exec.skill", req.SandboxID, "skill executed", observer.MetadataWithContext(ctx, metadata))
 	return runResult, nil
+}
+
+func (s *Service) enforceOrganizationExecutionRate(box *sandbox.Sandbox) error {
+	limit := s.policy.MaxExecutionsPerMinutePerOrganization()
+	if limit <= 0 || box == nil || strings.TrimSpace(box.OrganizationID) == "" {
+		return nil
+	}
+
+	windowStart := time.Now().UTC().Add(-time.Minute)
+	events := s.observer.Query(observer.Query{
+		OrganizationID: box.OrganizationID,
+		TypePrefix:     "exec.",
+		After:          windowStart,
+		Limit:          limit + 1,
+	})
+	if len(events) < limit {
+		return nil
+	}
+	return &policy.LimitError{
+		Code:    "organization_execution_rate_limit_exceeded",
+		Limit:   "max_executions_per_minute_per_organization",
+		Maximum: limit,
+		Actual:  len(events) + 1,
+		Details: map[string]any{
+			"organization_id":   box.OrganizationID,
+			"window_seconds":    60,
+			"recent_executions": len(events),
+		},
+	}
 }
 
 func (s *Service) recordExecutionFailure(ctx context.Context, eventType string, sandboxID string, message string, metadata map[string]any, err error) {

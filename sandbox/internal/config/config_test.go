@@ -36,6 +36,16 @@ func TestFromEnvReadsObserverRetention(t *testing.T) {
 	}
 }
 
+func TestFromEnvReadsOrganizationExecutionRateLimit(t *testing.T) {
+	t.Setenv("ZGI_SANDBOX_MAX_EXECUTIONS_PER_MINUTE_PER_ORGANIZATION", "7")
+
+	cfg := FromEnv()
+
+	if cfg.MaxExecutionsPerMinutePerOrganization != 7 {
+		t.Fatalf("expected organization execution rate limit 7, got %d", cfg.MaxExecutionsPerMinutePerOrganization)
+	}
+}
+
 func TestPublicSnapshotOmitsSecrets(t *testing.T) {
 	cfg := Config{
 		Port:              "2660",

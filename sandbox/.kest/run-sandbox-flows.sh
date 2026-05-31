@@ -31,6 +31,10 @@ cleanup() {
     kill "${SERVER_PID}" 2>/dev/null || true
     wait "${SERVER_PID}" 2>/dev/null || true
   fi
+  if [[ -n "${RATE_SERVER_PID:-}" ]] && kill -0 "${RATE_SERVER_PID}" 2>/dev/null; then
+    kill "${RATE_SERVER_PID}" 2>/dev/null || true
+    wait "${RATE_SERVER_PID}" 2>/dev/null || true
+  fi
   rm -rf "${DATA_DIR}" "${ARCHIVE_VARS}"
 }
 trap cleanup EXIT
@@ -230,6 +234,60 @@ run_kest .kest/sandbox-security-limits.flow.md \
 
 if [[ "${START_LOCAL_SANDBOX}" = "1" ]]; then
   run_kest .kest/sandbox-resource-limits.flow.md \
+    --fail-fast
+
+  RATE_PORT="$(python3 - <<'PY'
+import socket
+
+with socket.socket() as s:
+    s.bind(("127.0.0.1", 0))
+    print(s.getsockname()[1])
+PY
+)"
+  RATE_BASE_URL="http://127.0.0.1:${RATE_PORT}"
+  RATE_SERVER_LOG="${DATA_DIR}/sandbox-rate.log"
+  env \
+    ZGI_SANDBOX_SERVER_PORT="${RATE_PORT}" \
+    ZGI_SANDBOX_DATA_DIR="${DATA_DIR}/rate-data" \
+    ZGI_SANDBOX_WORKER_ID="zgi-sandbox-rate-kest-${RATE_PORT}" \
+    ZGI_SANDBOX_MAX_EXECUTIONS_PER_MINUTE_PER_ORGANIZATION="1" \
+    go run cmd/server/main.go >"${RATE_SERVER_LOG}" 2>&1 &
+  RATE_SERVER_PID="$!"
+
+  for _ in {1..80}; do
+    if curl -fsS "${RATE_BASE_URL}/health" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.25
+  done
+  if ! curl -fsS "${RATE_BASE_URL}/health" >/dev/null 2>&1; then
+    cat "${RATE_SERVER_LOG}" >&2
+    echo "rate-limit sandbox did not become ready at ${RATE_BASE_URL}" >&2
+    exit 1
+  fi
+
+  local_config="${FLOW_DIR}/config.yaml"
+  local_flow_config="${FLOW_DIR}/flow.config.yaml"
+  cat >"${local_config}" <<EOF
+version: 1
+environments:
+  local:
+    base_url: ${RATE_BASE_URL}
+active_env: local
+log_enabled: true
+EOF
+  cat >"${local_flow_config}" <<EOF
+version: 1
+profiles:
+  local:
+    include: [".kest/*.flow.md"]
+    env: local
+    base_url: "${RATE_BASE_URL}"
+    strict: true
+    fail_fast: false
+    sync: false
+EOF
+  run_kest .kest/sandbox-organization-execution-rate.flow.md \
     --fail-fast
 else
   echo "Skipping resource limit saturation flow against external sandbox: ${BASE_URL}"

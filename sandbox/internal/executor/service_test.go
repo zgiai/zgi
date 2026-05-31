@@ -147,6 +147,101 @@ func TestExecutionEventsIncludeRequestID(t *testing.T) {
 	}
 }
 
+func TestOrganizationExecutionRateLimit(t *testing.T) {
+	recorder := observer.NewRecorder(100)
+	cfg := config.FromEnv()
+	cfg.DataDir = t.TempDir()
+	cfg.MaxExecutionsPerMinutePerOrganization = 1
+	policyService := policy.NewService(cfg)
+	manager, err := lifecycle.NewManagerWithConfig(recorder, policyService, cfg, nil, nil)
+	if err != nil {
+		t.Fatalf("expected lifecycle manager, got %v", err)
+	}
+	service := NewService(manager, runner.NewService(2, 3*time.Second, 4096), recorder, policyService)
+
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+		OrganizationID: "organization-rate",
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	if _, err := service.RunCommand(context.Background(), CommandRequest{
+		SandboxID: box.ID,
+		Command:   "pwd",
+	}); err != nil {
+		t.Fatalf("expected first command to run, got %v", err)
+	}
+
+	_, err = service.RunCommand(context.Background(), CommandRequest{
+		SandboxID: box.ID,
+		Command:   "pwd",
+	})
+	limitErr, ok := err.(*policy.LimitError)
+	if !ok {
+		t.Fatalf("expected organization execution rate LimitError, got %T %v", err, err)
+	}
+	if limitErr.Code != "organization_execution_rate_limit_exceeded" || limitErr.Limit != "max_executions_per_minute_per_organization" {
+		t.Fatalf("unexpected limit error: %+v", limitErr)
+	}
+
+	events := recorder.Query(observer.Query{SandboxID: box.ID, Type: "exec.command.failed", Limit: 1})
+	if len(events) != 1 {
+		t.Fatalf("expected rate limit failure event, got %d", len(events))
+	}
+	if events[0].Metadata["code"] != "organization_execution_rate_limit_exceeded" {
+		t.Fatalf("expected structured rate limit metadata, got %#v", events[0].Metadata)
+	}
+	if events[0].Metadata["organization_id"] != "organization-rate" {
+		t.Fatalf("expected organization metadata, got %#v", events[0].Metadata)
+	}
+
+	_, err = service.RunCode(context.Background(), CodeRequest{
+		SandboxID: box.ID,
+		Language:  "python3",
+		Code:      "print('blocked')",
+	})
+	if !errors.As(err, &limitErr) || limitErr.Code != "organization_execution_rate_limit_exceeded" {
+		t.Fatalf("expected code execution rate limit error, got %v", err)
+	}
+
+	skillBox, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+		OrganizationID: "organization-rate-skill",
+	})
+	if err != nil {
+		t.Fatalf("expected skill sandbox create, got %v", err)
+	}
+	_, err = service.UploadArchive(ArchiveUploadRequest{
+		SandboxID: skillBox.ID,
+		Path:      "skills/rate",
+		ArchiveBase64: zipBase64(t, map[string]string{
+			"SKILL.md":            "# Skill",
+			"scripts/run.py":      "print('skill')",
+			"skill.manifest.json": validSkillManifestJSON("scripts/run.py"),
+		}),
+		Format:                "zip",
+		ValidateSkillManifest: true,
+	})
+	if err != nil {
+		t.Fatalf("upload skill package: %v", err)
+	}
+	if _, err := service.RunSkill(context.Background(), SkillRunRequest{
+		SandboxID: skillBox.ID,
+		Path:      "skills/rate",
+	}); err != nil {
+		t.Fatalf("expected first skill run, got %v", err)
+	}
+	_, err = service.RunSkill(context.Background(), SkillRunRequest{
+		SandboxID: skillBox.ID,
+		Path:      "skills/rate",
+	})
+	if !errors.As(err, &limitErr) || limitErr.Code != "organization_execution_rate_limit_exceeded" {
+		t.Fatalf("expected skill execution rate limit error, got %v", err)
+	}
+}
+
 func TestExecutionFailureEventsAvoidSensitivePayloads(t *testing.T) {
 	recorder := observer.NewRecorder(100)
 	policyService := policy.NewService(config.FromEnv())
