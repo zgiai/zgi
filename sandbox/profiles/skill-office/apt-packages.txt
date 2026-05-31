@@ -1,0 +1,7 @@
+libreoffice
+poppler-utils
+qpdf
+tesseract-ocr
+tesseract-ocr-eng
+fonts-dejavu
+fonts-liberation
