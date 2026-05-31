@@ -240,7 +240,7 @@ arbitrary runtime installs from untrusted code.
 ### D2. Build Path
 
 - [x] Build dependency profiles outside request execution.
-- Cache completed profiles.
+- [x] Cache completed profiles.
 - [x] Make profile selection explicit in sandbox creation.
 - [x] Reject unknown or disabled profiles.
 - [x] Record dependency profile version on each sandbox.

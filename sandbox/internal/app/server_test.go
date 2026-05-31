@@ -762,6 +762,64 @@ func TestDependencyUpdateBuildsSelectableProfile(t *testing.T) {
 	}
 }
 
+func TestDependencyUpdatePersistsBuiltProfileAcrossRestart(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.APIKey = "admin-test-key"
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	body := `{
+		"name": "office-safe",
+		"version": "2026.05.31",
+		"languages": ["python3"],
+		"packages": [{"name": "data-tools", "version": "managed"}],
+		"base_runtime": "preview-process",
+		"checksum": "sha256:office-safe",
+		"size_bytes": 1024,
+		"description": "Managed document automation profile."
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/sandbox/dependencies/update", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", "admin-test-key")
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected dependency profile build to return 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if err := server.store.Close(); err != nil {
+		t.Fatalf("close first store: %v", err)
+	}
+
+	restarted, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("expected restarted server, got %v", err)
+	}
+
+	catalogReq := httptest.NewRequest(http.MethodGet, "/v1/sandbox/dependencies?language=python3", nil)
+	catalogRes := httptest.NewRecorder()
+	restarted.Handler().ServeHTTP(catalogRes, catalogReq)
+	if catalogRes.Code != http.StatusOK {
+		t.Fatalf("expected dependency catalog to return 200, got %d body=%s", catalogRes.Code, catalogRes.Body.String())
+	}
+	if !strings.Contains(catalogRes.Body.String(), `"name":"office-safe"`) || !strings.Contains(catalogRes.Body.String(), `"version":"2026.05.31"`) {
+		t.Fatalf("expected restarted server to load cached profile, got %s", catalogRes.Body.String())
+	}
+
+	createReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","dependency_profile":"office-safe"}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	createReq.Header.Set("X-API-Key", "admin-test-key")
+	createRes := httptest.NewRecorder()
+	restarted.Handler().ServeHTTP(createRes, createReq)
+	if createRes.Code != http.StatusOK {
+		t.Fatalf("expected cached profile to be selectable after restart, got %d body=%s", createRes.Code, createRes.Body.String())
+	}
+	if !strings.Contains(createRes.Body.String(), `"dependency_profile_version":"2026.05.31"`) {
+		t.Fatalf("expected created sandbox to use cached profile version, got %s", createRes.Body.String())
+	}
+}
+
 func TestDependencyUpdateReportsBuildFailure(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.APIKey = "admin-test-key"

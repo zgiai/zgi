@@ -6,6 +6,7 @@ import (
 
 	"github.com/zgiai/zgi-sandbox/internal/config"
 	"github.com/zgiai/zgi-sandbox/internal/observer"
+	"github.com/zgiai/zgi-sandbox/internal/policy"
 	"github.com/zgiai/zgi-sandbox/internal/sandbox"
 	"github.com/zgiai/zgi-sandbox/internal/testutil"
 )
@@ -93,6 +94,48 @@ func TestPostgresStorePersistsSandboxAndEvents(t *testing.T) {
 	}
 	if len(profiles) != 2 || profiles[0] != "stdlib" || profiles[1] != "workflow-safe" {
 		t.Fatalf("expected active dependency profiles for organization, got %+v", profiles)
+	}
+
+	dependencyProfile := policy.DependencyProfile{
+		Name:        "office-safe",
+		Version:     "2026.05.31",
+		Status:      "ready",
+		Enabled:     true,
+		OwnerScope:  "global",
+		Languages:   []string{"python3"},
+		Packages:    []policy.DependencyPackage{{Name: "data-tools", Version: "managed", Ecosystem: "python3"}},
+		BaseRuntime: "preview-process",
+		Checksum:    "sha256:office-safe",
+		SizeBytes:   1024,
+		Description: "Managed document automation profile.",
+	}
+	if err := store.SaveDependencyProfile(dependencyProfile); err != nil {
+		t.Fatalf("save dependency profile: %v", err)
+	}
+	dependencyProfiles, err := store.ListDependencyProfiles()
+	if err != nil {
+		t.Fatalf("list dependency profiles: %v", err)
+	}
+	if len(dependencyProfiles) != 1 {
+		t.Fatalf("expected one dependency profile, got %+v", dependencyProfiles)
+	}
+	loadedProfile := dependencyProfiles[0]
+	if loadedProfile.Name != dependencyProfile.Name ||
+		loadedProfile.Version != dependencyProfile.Version ||
+		loadedProfile.Status != dependencyProfile.Status ||
+		!loadedProfile.Enabled ||
+		loadedProfile.OwnerScope != dependencyProfile.OwnerScope ||
+		loadedProfile.BaseRuntime != dependencyProfile.BaseRuntime ||
+		loadedProfile.Checksum != dependencyProfile.Checksum ||
+		loadedProfile.SizeBytes != dependencyProfile.SizeBytes ||
+		loadedProfile.Description != dependencyProfile.Description {
+		t.Fatalf("dependency profile fields did not round trip: %+v", loadedProfile)
+	}
+	if len(loadedProfile.Languages) != 1 || loadedProfile.Languages[0] != "python3" {
+		t.Fatalf("dependency profile languages did not round trip: %+v", loadedProfile.Languages)
+	}
+	if len(loadedProfile.Packages) != 1 || loadedProfile.Packages[0].Name != "data-tools" || loadedProfile.Packages[0].Ecosystem != "python3" {
+		t.Fatalf("dependency profile packages did not round trip: %+v", loadedProfile.Packages)
 	}
 
 	event := observer.Event{

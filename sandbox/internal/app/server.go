@@ -59,18 +59,30 @@ func NewServer(cfg config.Config) (*Server, error) {
 
 	sandboxCache, err := cache.NewSandboxCache(cfg)
 	if err != nil {
+		_ = store.Close()
 		return nil, err
 	}
 
 	policyService := policy.NewService(cfg)
+	cachedProfiles, err := store.ListDependencyProfiles()
+	if err != nil {
+		_ = store.Close()
+		return nil, fmt.Errorf("load dependency profile cache: %w", err)
+	}
+	if err := policyService.LoadDependencyProfiles(cachedProfiles); err != nil {
+		_ = store.Close()
+		return nil, fmt.Errorf("load dependency profile cache: %w", err)
+	}
 	recorder := observer.NewRecorderWithStore(store)
 	manager, err := lifecycle.NewManagerWithConfig(recorder, policyService, cfg, store, sandboxCache)
 	if err != nil {
+		_ = store.Close()
 		return nil, err
 	}
 
 	runnerService, err := runner.NewServiceFromConfig(cfg)
 	if err != nil {
+		_ = store.Close()
 		return nil, err
 	}
 
@@ -327,7 +339,7 @@ func (s *Server) handleDependencyUpdate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	result, err := s.policy.BuildDependencyProfile(req)
+	result, profile, err := s.policy.PrepareDependencyProfileBuild(req)
 	metadata := map[string]any{
 		"build_id": result.BuildID,
 		"status":   result.Status,
@@ -344,6 +356,25 @@ func (s *Server) handleDependencyUpdate(w http.ResponseWriter, r *http.Request) 
 		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "dependency profile build failed", result)
 		return
 	}
+	result, err = s.policy.RegisterDependencyProfile(profile, result)
+	if err != nil {
+		metadata["status"] = result.Status
+		metadata["error"] = err.Error()
+		s.observer.Record("dependency_profile.build.failed", "", "dependency profile build failed", observer.MetadataWithContext(r.Context(), metadata))
+		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "dependency profile build failed", result)
+		return
+	}
+	if err := s.store.SaveDependencyProfile(profile); err != nil {
+		s.policy.RemoveDependencyProfile(profile.Name)
+		result.Status = "failed"
+		result.Error = err.Error()
+		metadata["status"] = result.Status
+		metadata["error"] = err.Error()
+		s.observer.Record("dependency_profile.build.failed", "", "dependency profile build persistence failed", observer.MetadataWithContext(r.Context(), metadata))
+		writeEnvelopeWithMessage(w, http.StatusInternalServerError, -500, "dependency profile build persistence failed", result)
+		return
+	}
+	metadata["status"] = result.Status
 
 	s.observer.Record("dependency_profile.build", "", "dependency profile build completed", observer.MetadataWithContext(r.Context(), metadata))
 	writeEnvelope(w, http.StatusOK, result)

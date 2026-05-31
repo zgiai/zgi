@@ -12,6 +12,7 @@ import (
 
 	"github.com/zgiai/zgi-sandbox/internal/config"
 	"github.com/zgiai/zgi-sandbox/internal/observer"
+	"github.com/zgiai/zgi-sandbox/internal/policy"
 	"github.com/zgiai/zgi-sandbox/internal/sandbox"
 )
 
@@ -112,6 +113,22 @@ func (s *Store) prepare(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_observer_events_scope ON observer_events(sandbox_id, type, created_at DESC);`,
 		`CREATE INDEX IF NOT EXISTS idx_observer_events_created_at ON observer_events(created_at DESC);`,
 		`CREATE INDEX IF NOT EXISTS idx_observer_events_ownership ON observer_events ((metadata_json->>'organization_id'), (metadata_json->>'workspace_id'), (metadata_json->>'workflow_run_id'), created_at DESC);`,
+		`CREATE TABLE IF NOT EXISTS dependency_profiles (
+			name TEXT PRIMARY KEY,
+			version TEXT NOT NULL,
+			status TEXT NOT NULL,
+			enabled BOOLEAN NOT NULL,
+			owner_scope TEXT NOT NULL,
+			languages_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+			packages_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+			base_runtime TEXT NOT NULL,
+			checksum TEXT NOT NULL,
+			size_bytes BIGINT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL,
+			updated_at TIMESTAMPTZ NOT NULL
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_dependency_profiles_status_enabled ON dependency_profiles(status, enabled);`,
 	}
 
 	for _, statement := range statements {
@@ -276,6 +293,78 @@ func (s *Store) ListActiveDependencyProfilesByOrganization(organizationID string
 			return nil, err
 		}
 		items = append(items, profile)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) SaveDependencyProfile(profile policy.DependencyProfile) error {
+	languages, err := json.Marshal(defaultStringSlice(profile.Languages))
+	if err != nil {
+		return err
+	}
+	packages, err := json.Marshal(defaultDependencyPackages(profile.Packages))
+	if err != nil {
+		return err
+	}
+
+	now := time.Now().UTC()
+	_, err = s.db.Exec(`
+		INSERT INTO dependency_profiles (
+			name, version, status, enabled, owner_scope, languages_json, packages_json,
+			base_runtime, checksum, size_bytes, description, created_at, updated_at
+		) VALUES (
+			$1, $2, $3, $4, $5, $6::jsonb, $7::jsonb,
+			$8, $9, $10, $11, $12, $13
+		)
+		ON CONFLICT(name) DO UPDATE SET
+			version = EXCLUDED.version,
+			status = EXCLUDED.status,
+			enabled = EXCLUDED.enabled,
+			owner_scope = EXCLUDED.owner_scope,
+			languages_json = EXCLUDED.languages_json,
+			packages_json = EXCLUDED.packages_json,
+			base_runtime = EXCLUDED.base_runtime,
+			checksum = EXCLUDED.checksum,
+			size_bytes = EXCLUDED.size_bytes,
+			description = EXCLUDED.description,
+			updated_at = EXCLUDED.updated_at
+	`,
+		profile.Name,
+		profile.Version,
+		profile.Status,
+		profile.Enabled,
+		profile.OwnerScope,
+		string(languages),
+		string(packages),
+		profile.BaseRuntime,
+		profile.Checksum,
+		profile.SizeBytes,
+		profile.Description,
+		now,
+		now,
+	)
+	return err
+}
+
+func (s *Store) ListDependencyProfiles() ([]policy.DependencyProfile, error) {
+	rows, err := s.db.Query(`
+		SELECT name, version, status, enabled, owner_scope, languages_json, packages_json,
+		       base_runtime, checksum, size_bytes, description
+		FROM dependency_profiles
+		ORDER BY created_at ASC, name ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]policy.DependencyProfile, 0)
+	for rows.Next() {
+		profile, err := scanDependencyProfile(rowsScan{rows: rows})
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, *profile)
 	}
 	return items, rows.Err()
 }
@@ -512,6 +601,34 @@ func scanSandbox(scanner rowScanner) (*sandbox.Sandbox, error) {
 	return &box, nil
 }
 
+func scanDependencyProfile(scanner rowScanner) (*policy.DependencyProfile, error) {
+	var profile policy.DependencyProfile
+	var languagesJSON []byte
+	var packagesJSON []byte
+	if err := scanner.Scan(
+		&profile.Name,
+		&profile.Version,
+		&profile.Status,
+		&profile.Enabled,
+		&profile.OwnerScope,
+		&languagesJSON,
+		&packagesJSON,
+		&profile.BaseRuntime,
+		&profile.Checksum,
+		&profile.SizeBytes,
+		&profile.Description,
+	); err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(languagesJSON, &profile.Languages); err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(packagesJSON, &profile.Packages); err != nil {
+		return nil, err
+	}
+	return &profile, nil
+}
+
 func defaultMap(value map[string]string) map[string]string {
 	if value == nil {
 		return map[string]string{}
@@ -522,6 +639,20 @@ func defaultMap(value map[string]string) map[string]string {
 func defaultAnyMap(value map[string]any) map[string]any {
 	if value == nil {
 		return map[string]any{}
+	}
+	return value
+}
+
+func defaultStringSlice(value []string) []string {
+	if value == nil {
+		return []string{}
+	}
+	return value
+}
+
+func defaultDependencyPackages(value []policy.DependencyPackage) []policy.DependencyPackage {
+	if value == nil {
+		return []policy.DependencyPackage{}
 	}
 	return value
 }
