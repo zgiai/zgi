@@ -348,6 +348,18 @@ func (s *Service) DependencyCatalog(language string) map[string]any {
 	}
 }
 
+func (s *Service) ValidateDependencyProfileForLanguage(value string, language string) (DependencyProfile, error) {
+	profile, err := s.normalizeDependencyProfile(value)
+	if err != nil {
+		return DependencyProfile{}, err
+	}
+	normalizedLanguage := normalizeLanguage(language)
+	if normalizedLanguage != "" && !slices.Contains(profile.Languages, normalizedLanguage) {
+		return DependencyProfile{}, fmt.Errorf("dependency profile %s does not support language: %s", profile.Name, normalizedLanguage)
+	}
+	return profile, nil
+}
+
 func (s *Service) NormalizeCreate(profile string, ttlSeconds int, networkEnabled bool, networkPolicy string, dependencyProfile string, activeCount int, organizationID string, organizationActiveCount int) (CreateDecision, error) {
 	runtimeProfile, err := s.normalizeProfile(profile)
 	if err != nil {

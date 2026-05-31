@@ -1470,8 +1470,103 @@ func TestUploadArchiveValidatesSkillManifest(t *testing.T) {
 	if result.SkillManifest == nil {
 		t.Fatal("expected skill manifest in upload result")
 	}
-	if result.SkillManifest.Entrypoint != "scripts/run.py" || result.SkillManifest.Language != "python3" {
+	if result.SkillManifest.Entrypoint != "scripts/run.py" || result.SkillManifest.Language != "python3" || result.SkillManifest.DependencyProfile != "stdlib" {
 		t.Fatalf("unexpected skill manifest: %+v", result.SkillManifest)
+	}
+}
+
+func TestUploadArchiveRejectsSkillManifestDependencyProfileMismatch(t *testing.T) {
+	service, manager := newTestExecutorService(t)
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile:    string(sandbox.RuntimeSession),
+		DependencyProfile: "stdlib",
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	_, err = service.UploadArchive(ArchiveUploadRequest{
+		SandboxID: box.ID,
+		Path:      ".",
+		ArchiveBase64: zipBase64(t, map[string]string{
+			"SKILL.md":            "# Skill",
+			"scripts/run.py":      "print('ok')",
+			"skill.manifest.json": validSkillManifestJSONWithDependencyProfile("scripts/run.py", "workflow-safe"),
+		}),
+		Format:                "zip",
+		ValidateSkillManifest: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "does not match sandbox dependency_profile") {
+		t.Fatalf("expected dependency profile mismatch, got %v", err)
+	}
+}
+
+func TestUploadArchiveDefaultsSkillManifestDependencyProfileToSandbox(t *testing.T) {
+	service, manager := newTestExecutorService(t)
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile:    string(sandbox.RuntimeSession),
+		DependencyProfile: "workflow-safe",
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	result, err := service.UploadArchive(ArchiveUploadRequest{
+		SandboxID: box.ID,
+		Path:      ".",
+		ArchiveBase64: zipBase64(t, map[string]string{
+			"SKILL.md":       "# Skill",
+			"scripts/run.py": "print('ok')",
+			"skill.manifest.json": `{
+  "entrypoint": "scripts/run.py",
+  "language": "python3",
+  "timeout_ms": 30000,
+  "allowed_artifact_paths": ["artifacts"],
+  "max_artifact_count": 10,
+  "max_artifact_bytes": 32768,
+  "result_mode": "mixed"
+}`,
+		}),
+		Format:                "zip",
+		ValidateSkillManifest: true,
+	})
+	if err != nil {
+		t.Fatalf("expected missing dependency profile to default to sandbox profile, got %v", err)
+	}
+	if result.SkillManifest == nil || result.SkillManifest.DependencyProfile != "workflow-safe" {
+		t.Fatalf("expected sandbox dependency profile default, got %+v", result.SkillManifest)
+	}
+}
+
+func TestUploadArchiveRejectsSkillManifestUnavailableDependencyProfile(t *testing.T) {
+	service, manager := newTestExecutorService(t)
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile:    string(sandbox.RuntimeSession),
+		DependencyProfile: "stdlib",
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	for name, expected := range map[string]string{
+		"missing-profile":     "unsupported dependency profile",
+		"python-data-preview": "dependency profile is not enabled",
+		"node-basic":          "does not support language",
+	} {
+		_, err = service.UploadArchive(ArchiveUploadRequest{
+			SandboxID: box.ID,
+			Path:      ".",
+			ArchiveBase64: zipBase64(t, map[string]string{
+				"SKILL.md":            "# Skill",
+				"scripts/run.py":      "print('ok')",
+				"skill.manifest.json": validSkillManifestJSONWithDependencyProfile("scripts/run.py", name),
+			}),
+			Format:                "zip",
+			ValidateSkillManifest: true,
+		})
+		if err == nil || !strings.Contains(err.Error(), expected) {
+			t.Fatalf("expected %s error for %s, got %v", expected, name, err)
+		}
 	}
 }
 
@@ -2568,9 +2663,14 @@ func zipBase64WithSymlink(t *testing.T) string {
 }
 
 func validSkillManifestJSON(entrypoint string) string {
+	return validSkillManifestJSONWithDependencyProfile(entrypoint, "stdlib")
+}
+
+func validSkillManifestJSONWithDependencyProfile(entrypoint string, dependencyProfile string) string {
 	return `{
   "entrypoint": "` + entrypoint + `",
   "language": "python3",
+  "dependency_profile": "` + dependencyProfile + `",
   "timeout_ms": 30000,
   "allowed_artifact_paths": ["artifacts"],
   "max_artifact_count": 10,

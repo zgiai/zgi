@@ -61,6 +61,9 @@ func TestSandboxScriptRunnerRunsSkillPackage(t *testing.T) {
 			if req["organization_id"] != "organization-script" {
 				t.Fatalf("unexpected sandbox create request: %#v", req)
 			}
+			if req["dependency_profile"] != defaultSkillDependencyProfile {
+				t.Fatalf("expected default dependency profile, got %#v", req)
+			}
 			writeSandboxEnvelope(t, w, map[string]interface{}{"id": "sbx_test"})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/files/upload-archive":
 			var req map[string]interface{}
@@ -134,6 +137,52 @@ func TestSandboxScriptRunnerRunsSkillPackage(t *testing.T) {
 		t.Fatal("expected sandbox to be deleted")
 	}
 	assertArchiveContains(t, uploadedArchive, "scripts/run.py")
+}
+
+func TestSandboxScriptRunnerUsesManifestDependencyProfile(t *testing.T) {
+	root := writeTestScriptSkill(t)
+	if err := os.WriteFile(filepath.Join(root, "skill.manifest.json"), []byte(`{"dependency_profile":"workflow-safe"}`), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/sandboxes":
+			var req map[string]interface{}
+			decodeJSON(t, r, &req)
+			if req["dependency_profile"] != "workflow-safe" {
+				t.Fatalf("expected manifest dependency profile, got %#v", req)
+			}
+			writeSandboxEnvelope(t, w, map[string]interface{}{"id": "sbx_test"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/files/upload-archive":
+			writeSandboxEnvelope(t, w, map[string]interface{}{"file_count": 3})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/exec/command":
+			writeSandboxEnvelope(t, w, map[string]interface{}{
+				"stdout":      "{\"result\":\"ok\"}\n",
+				"error":       "",
+				"exit_code":   0,
+				"duration_ms": 12,
+				"truncated":   false,
+				"command":     "python3",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/files/tree":
+			writeSandboxEnvelope(t, w, map[string]interface{}{"items": []map[string]interface{}{}})
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/sandboxes/sbx_test":
+			writeSandboxEnvelope(t, w, map[string]interface{}{"deleted": true})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	runtime := NewRuntimeWithCatalog(nil, nil, "").WithScriptRunner(NewSandboxScriptRunner(SandboxScriptRunnerConfig{Endpoint: server.URL}))
+	doc, err := runtime.LoadCustomSkillDocument(root)
+	if err != nil {
+		t.Fatalf("load custom skill: %v", err)
+	}
+	if _, err := runtime.CallSkillTool(context.Background(), &ResolvedSkills{Skills: []SkillDocument{doc}}, "script-skill", SkillScriptToolRun, map[string]interface{}{"input": "hello"}, ExecutionContext{}, "call_1"); err != nil {
+		t.Fatalf("run skill script: %v", err)
+	}
 }
 
 func TestSandboxScriptRunnerRealSandboxE2E(t *testing.T) {

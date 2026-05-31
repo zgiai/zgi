@@ -161,6 +161,21 @@ values = {
         ("skill.manifest.json", json.dumps({
             "entrypoint": "scripts/run.py",
             "language": "python3",
+            "dependency_profile": "stdlib",
+            "timeout_ms": 30000,
+            "allowed_artifact_paths": ["artifacts"],
+            "max_artifact_count": 10,
+            "max_artifact_bytes": 32768,
+            "result_mode": "mixed",
+        })),
+    ]),
+    "mismatched_skill_manifest_archive_base64": zip_b64([
+        ("SKILL.md", "---\nname: mismatched-manifest-skill\ndescription: Mismatched manifest skill\nruntime_type: prompt\n---\n"),
+        ("scripts/run.py", "print('ok')\n"),
+        ("skill.manifest.json", json.dumps({
+            "entrypoint": "scripts/run.py",
+            "language": "python3",
+            "dependency_profile": "workflow-safe",
             "timeout_ms": 30000,
             "allowed_artifact_paths": ["artifacts"],
             "max_artifact_count": 10,
@@ -199,6 +214,7 @@ PY
 skill_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["skill_archive_base64"])' "${ARCHIVE_VARS}")"
 valid_skill_manifest_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["valid_skill_manifest_archive_base64"])' "${ARCHIVE_VARS}")"
 invalid_skill_manifest_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["invalid_skill_manifest_archive_base64"])' "${ARCHIVE_VARS}")"
+mismatched_skill_manifest_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["mismatched_skill_manifest_archive_base64"])' "${ARCHIVE_VARS}")"
 strip_root_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["strip_root_archive_base64"])' "${ARCHIVE_VARS}")"
 zip_slip_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["zip_slip_archive_base64"])' "${ARCHIVE_VARS}")"
 symlink_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["symlink_archive_base64"])' "${ARCHIVE_VARS}")"
@@ -250,6 +266,7 @@ run_kest .kest/sandbox-archive-skill-artifacts.flow.md \
   --var skill_archive_base64="${skill_archive_base64}" \
   --var valid_skill_manifest_archive_base64="${valid_skill_manifest_archive_base64}" \
   --var invalid_skill_manifest_archive_base64="${invalid_skill_manifest_archive_base64}" \
+  --var mismatched_skill_manifest_archive_base64="${mismatched_skill_manifest_archive_base64}" \
   --fail-fast
 
 run_kest .kest/sandbox-archive-strip-root.flow.md \

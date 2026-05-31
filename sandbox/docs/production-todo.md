@@ -244,6 +244,8 @@ arbitrary runtime installs from untrusted code.
 - [x] Make profile selection explicit in sandbox creation.
 - [x] Reject unknown or disabled profiles.
 - [x] Record dependency profile version on each sandbox.
+- [x] Let skill manifests declare the required dependency profile.
+- [x] Reject skill packages whose dependency profile does not match the sandbox.
 
 ### D3. Runtime Policy
 

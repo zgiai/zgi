@@ -20,6 +20,7 @@ import (
 )
 
 const defaultSkillScriptTimeoutSeconds = 30
+const defaultSkillDependencyProfile = "stdlib"
 
 type SandboxScriptRunnerConfig struct {
 	Endpoint string
@@ -69,7 +70,15 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 		Arguments: summarizeArguments(arguments),
 	}
 
-	sandboxID, err := r.createSandbox(ctx, execCtx)
+	dependencyProfile, err := skillDependencyProfile(doc.Metadata.RootPath)
+	if err != nil {
+		trace.Status = "error"
+		trace.Error = err.Error()
+		trace.DurationMS = time.Since(start).Milliseconds()
+		return &ToolInvocationResult{Trace: trace}, err
+	}
+
+	sandboxID, err := r.createSandbox(ctx, execCtx, dependencyProfile)
 	if err != nil {
 		trace.Status = "error"
 		trace.Error = err.Error()
@@ -130,16 +139,19 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 	}, nil
 }
 
-func (r *SandboxScriptRunner) createSandbox(ctx context.Context, execCtx ExecutionContext) (string, error) {
+func (r *SandboxScriptRunner) createSandbox(ctx context.Context, execCtx ExecutionContext, dependencyProfile string) (string, error) {
 	var response struct {
 		ID string `json:"id"`
+	}
+	if strings.TrimSpace(dependencyProfile) == "" {
+		dependencyProfile = defaultSkillDependencyProfile
 	}
 	payload := map[string]interface{}{
 		"runtime_profile":    "session",
 		"ttl_seconds":        300,
 		"network_enabled":    false,
 		"network_policy":     "deny-by-default",
-		"dependency_profile": "stdlib",
+		"dependency_profile": dependencyProfile,
 	}
 	if organizationID := strings.TrimSpace(execCtx.OrganizationID); organizationID != "" {
 		payload["organization_id"] = organizationID
@@ -358,6 +370,30 @@ func zipSkillDirectoryBase64(root string) (string, error) {
 		return "", err
 	}
 	return base64.StdEncoding.EncodeToString(buffer.Bytes()), nil
+}
+
+type skillScriptManifest struct {
+	DependencyProfile string `json:"dependency_profile"`
+}
+
+func skillDependencyProfile(root string) (string, error) {
+	manifestPath := filepath.Join(root, "skill.manifest.json")
+	content, err := os.ReadFile(manifestPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return defaultSkillDependencyProfile, nil
+		}
+		return "", fmt.Errorf("failed to read skill manifest: %w", err)
+	}
+	var manifest skillScriptManifest
+	if err := json.Unmarshal(content, &manifest); err != nil {
+		return "", fmt.Errorf("invalid skill.manifest.json: %w", err)
+	}
+	profile := strings.TrimSpace(manifest.DependencyProfile)
+	if profile == "" {
+		return defaultSkillDependencyProfile, nil
+	}
+	return profile, nil
 }
 
 func copyFileIntoZip(path string, writer io.Writer) error {

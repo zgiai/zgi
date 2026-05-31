@@ -147,6 +147,7 @@ type ArchiveUploadResult struct {
 type SkillExecutionManifest struct {
 	Entrypoint           string   `json:"entrypoint"`
 	Language             string   `json:"language"`
+	DependencyProfile    string   `json:"dependency_profile"`
 	TimeoutMS            int      `json:"timeout_ms"`
 	AllowedArtifactPaths []string `json:"allowed_artifact_paths"`
 	MaxArtifactCount     int      `json:"max_artifact_count"`
@@ -536,7 +537,7 @@ func (s *Service) RunSkill(ctx context.Context, req SkillRunRequest) (SkillRunRe
 		return SkillRunResult{}, err
 	}
 
-	manifest, err := loadSkillExecutionManifest(packageRoot, s.policy.MaxArtifactManifestFiles(), s.policy.MaxArtifactManifestBytes())
+	manifest, err := loadSkillExecutionManifest(packageRoot, s.policy, box.DependencyProfile)
 	if err != nil {
 		s.recordExecutionFailure(ctx, "exec.skill.failed", req.SandboxID, "skill execution failed", baseMetadata, err)
 		return SkillRunResult{}, err
@@ -1335,7 +1336,7 @@ func (s *Service) UploadArchive(req ArchiveUploadRequest) (*ArchiveUploadResult,
 	}
 	var skillManifest *SkillExecutionManifest
 	if req.ValidateSkillManifest {
-		skillManifest, err = validateSkillExecutionManifest(entries, s.policy.MaxArtifactManifestFiles(), s.policy.MaxArtifactManifestBytes())
+		skillManifest, err = validateSkillExecutionManifest(entries, s.policy, box.DependencyProfile)
 		if err != nil {
 			return nil, err
 		}
@@ -2393,7 +2394,7 @@ func normalizeArchiveEntries(files []*zip.File, stripRoot bool) ([]archiveEntry,
 	return entries, nil
 }
 
-func validateSkillExecutionManifest(entries []archiveEntry, maxArtifactFiles int, maxArtifactBytes int64) (*SkillExecutionManifest, error) {
+func validateSkillExecutionManifest(entries []archiveEntry, policyService *policy.Service, sandboxDependencyProfile string) (*SkillExecutionManifest, error) {
 	names := make(map[string]bool, len(entries))
 	for _, entry := range entries {
 		names[filepath.ToSlash(entry.name)] = true
@@ -2417,10 +2418,10 @@ func validateSkillExecutionManifest(entries []archiveEntry, maxArtifactFiles int
 		return nil, err
 	}
 
-	return parseSkillExecutionManifest(content, names, maxArtifactFiles, maxArtifactBytes)
+	return parseSkillExecutionManifest(content, names, policyService, sandboxDependencyProfile)
 }
 
-func loadSkillExecutionManifest(packageRoot string, maxArtifactFiles int, maxArtifactBytes int64) (SkillExecutionManifest, error) {
+func loadSkillExecutionManifest(packageRoot string, policyService *policy.Service, sandboxDependencyProfile string) (SkillExecutionManifest, error) {
 	manifestPath := filepath.Join(packageRoot, "skill.manifest.json")
 	info, err := os.Lstat(manifestPath)
 	if err != nil {
@@ -2469,25 +2470,25 @@ func loadSkillExecutionManifest(packageRoot string, maxArtifactFiles int, maxArt
 		return SkillExecutionManifest{}, err
 	}
 
-	manifest, err := parseSkillExecutionManifest(content, names, maxArtifactFiles, maxArtifactBytes)
+	manifest, err := parseSkillExecutionManifest(content, names, policyService, sandboxDependencyProfile)
 	if err != nil {
 		return SkillExecutionManifest{}, err
 	}
 	return *manifest, nil
 }
 
-func parseSkillExecutionManifest(content []byte, names map[string]bool, maxArtifactFiles int, maxArtifactBytes int64) (*SkillExecutionManifest, error) {
+func parseSkillExecutionManifest(content []byte, names map[string]bool, policyService *policy.Service, sandboxDependencyProfile string) (*SkillExecutionManifest, error) {
 	var manifest SkillExecutionManifest
 	if err := json.Unmarshal(content, &manifest); err != nil {
 		return nil, fmt.Errorf("invalid skill.manifest.json: %w", err)
 	}
-	if err := validateSkillManifestFields(&manifest, names, maxArtifactFiles, maxArtifactBytes); err != nil {
+	if err := validateSkillManifestFields(&manifest, names, policyService, sandboxDependencyProfile); err != nil {
 		return nil, err
 	}
 	return &manifest, nil
 }
 
-func validateSkillManifestFields(manifest *SkillExecutionManifest, names map[string]bool, maxArtifactFiles int, maxArtifactBytes int64) error {
+func validateSkillManifestFields(manifest *SkillExecutionManifest, names map[string]bool, policyService *policy.Service, sandboxDependencyProfile string) error {
 	manifest.Entrypoint = filepath.ToSlash(strings.TrimSpace(manifest.Entrypoint))
 	if manifest.Entrypoint == "" {
 		return errors.New("skill manifest entrypoint is required")
@@ -2516,15 +2517,31 @@ func validateSkillManifestFields(manifest *SkillExecutionManifest, names map[str
 			return fmt.Errorf("skill manifest nodejs entrypoint must use .js: %s", manifest.Entrypoint)
 		}
 	}
+	if policyService == nil {
+		return errors.New("dependency profile policy is not configured")
+	}
+	if strings.TrimSpace(manifest.DependencyProfile) == "" {
+		manifest.DependencyProfile = strings.TrimSpace(sandboxDependencyProfile)
+	}
+	dependency, err := policyService.ValidateDependencyProfileForLanguage(manifest.DependencyProfile, manifest.Language)
+	if err != nil {
+		return err
+	}
+	manifest.DependencyProfile = dependency.Name
+	if selected := strings.TrimSpace(sandboxDependencyProfile); selected != "" && selected != manifest.DependencyProfile {
+		return fmt.Errorf("skill manifest dependency_profile %s does not match sandbox dependency_profile: %s", manifest.DependencyProfile, selected)
+	}
 	if manifest.TimeoutMS <= 0 || manifest.TimeoutMS > 300000 {
 		return errors.New("skill manifest timeout_ms must be between 1 and 300000")
 	}
+	maxArtifactFiles := policyService.MaxArtifactManifestFiles()
 	if maxArtifactFiles <= 0 {
 		maxArtifactFiles = 100
 	}
 	if manifest.MaxArtifactCount <= 0 || manifest.MaxArtifactCount > maxArtifactFiles {
 		return fmt.Errorf("skill manifest max_artifact_count must be between 1 and %d", maxArtifactFiles)
 	}
+	maxArtifactBytes := policyService.MaxArtifactManifestBytes()
 	if manifest.MaxArtifactBytes <= 0 || manifest.MaxArtifactBytes > maxArtifactBytes {
 		return fmt.Errorf("skill manifest max_artifact_bytes must be between 1 and %d", maxArtifactBytes)
 	}

@@ -53,6 +53,7 @@ code == 0
 data.file_count == 4
 data.skill_manifest.entrypoint == "scripts/run.py"
 data.skill_manifest.language == "python3"
+data.skill_manifest.dependency_profile == "stdlib"
 data.skill_manifest.result_mode == "mixed"
 ```
 
@@ -79,6 +80,7 @@ status == 200
 code == 0
 data.manifest.entrypoint == "scripts/run.py"
 data.manifest.language == "python3"
+data.manifest.dependency_profile == "stdlib"
 data.command.exit_code == 0
 data.result_json.input == "hello manifest"
 data.result_json.ok == true
@@ -122,6 +124,28 @@ Content-Type: application/json
 [Asserts]
 status == 400
 code == -400
+```
+
+```step
+@id reject-mismatched-skill-manifest-profile
+@name Reject mismatched skill manifest dependency profile
+
+POST {{base_url}}/v1/files/upload-archive
+Content-Type: application/json
+
+{
+  "sandbox_id": "{{sandbox_id}}",
+  "path": "mismatched",
+  "archive_base64": "{{mismatched_skill_manifest_archive_base64}}",
+  "format": "zip",
+  "strip_root": false,
+  "validate_skill_manifest": true
+}
+
+[Asserts]
+status == 400
+code == -400
+message == "skill manifest dependency_profile workflow-safe does not match sandbox dependency_profile: stdlib"
 ```
 
 ```step
