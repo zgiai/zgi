@@ -160,7 +160,7 @@ func buildGenerateCasesPrompt(req GenerateCasesRequest) string {
 已有测试问题（用于避免重复并生成有新增价值的问题）：
 %s
 
-生成提示词模板：
+用户补充生成要求：
 %s
 
 业务上下文：
