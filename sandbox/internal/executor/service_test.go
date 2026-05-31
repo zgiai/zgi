@@ -873,6 +873,87 @@ func TestWorkspaceByteLimitRejectsArchiveBeforeWriting(t *testing.T) {
 	}
 }
 
+func TestOrganizationWorkspaceByteLimit(t *testing.T) {
+	recorder := observer.NewRecorder(100)
+	cfg := config.FromEnv()
+	cfg.DataDir = t.TempDir()
+	cfg.MaxWorkspaceBytesPerOrganization = 16
+	policyService := policy.NewService(cfg)
+	manager, err := lifecycle.NewManagerWithConfig(recorder, policyService, cfg, nil, nil)
+	if err != nil {
+		t.Fatalf("expected lifecycle manager, got %v", err)
+	}
+	service := NewService(manager, runner.NewService(2, 3*time.Second, 4096), recorder, policyService)
+
+	firstBox, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+		OrganizationID: "organization-workspace-bytes",
+	})
+	if err != nil {
+		t.Fatalf("expected first sandbox create, got %v", err)
+	}
+	secondBox, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+		OrganizationID: "organization-workspace-bytes",
+	})
+	if err != nil {
+		t.Fatalf("expected second sandbox create, got %v", err)
+	}
+	otherBox, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+		OrganizationID: "organization-workspace-other",
+	})
+	if err != nil {
+		t.Fatalf("expected other sandbox create, got %v", err)
+	}
+
+	if _, err := service.UploadFile(FileWriteRequest{
+		SandboxID: firstBox.ID,
+		Path:      "notes/one.txt",
+		Content:   "1234567890",
+	}); err != nil {
+		t.Fatalf("expected first organization upload below limit, got %v", err)
+	}
+
+	_, err = service.UploadFile(FileWriteRequest{
+		SandboxID: secondBox.ID,
+		Path:      "notes/two.txt",
+		Content:   "1234567890",
+	})
+	var limitErr *policy.LimitError
+	if !errors.As(err, &limitErr) || limitErr.Code != "organization_workspace_byte_limit_exceeded" || limitErr.Limit != "max_workspace_bytes_per_organization" {
+		t.Fatalf("expected organization workspace byte limit, got %v", err)
+	}
+	if limitErr.Details["organization_id"] != "organization-workspace-bytes" {
+		t.Fatalf("expected organization id in limit details, got %+v", limitErr.Details)
+	}
+	if _, err := service.StatFile(secondBox.ID, "notes/two.txt"); err == nil {
+		t.Fatal("expected rejected organization upload to leave no file")
+	}
+
+	if _, err := service.UploadFile(FileWriteRequest{
+		SandboxID: otherBox.ID,
+		Path:      "notes/other.txt",
+		Content:   "1234567890",
+	}); err != nil {
+		t.Fatalf("expected other organization upload to use separate quota, got %v", err)
+	}
+
+	_, err = service.RunCommand(context.Background(), CommandRequest{
+		SandboxID: secondBox.ID,
+		Command:   "python3",
+		Args:      []string{"-c", "open('generated.txt', 'w').write('1234567890')"},
+		Profile:   "code-short",
+	})
+	if !errors.As(err, &limitErr) || limitErr.Code != "organization_workspace_byte_limit_exceeded" {
+		t.Fatalf("expected organization workspace byte limit on generated files, got %v", err)
+	}
+	events := recorder.Query(observer.Query{SandboxID: secondBox.ID, Type: "exec.command.failed", Limit: 1})
+	if len(events) != 1 || events[0].Metadata["code"] != "organization_workspace_byte_limit_exceeded" || events[0].Metadata["organization_id"] != "organization-workspace-bytes" {
+		t.Fatalf("expected structured organization workspace limit event, got %#v", events)
+	}
+}
+
 func TestWorkspaceFileLimit(t *testing.T) {
 	recorder := observer.NewRecorder(100)
 	cfg := config.FromEnv()

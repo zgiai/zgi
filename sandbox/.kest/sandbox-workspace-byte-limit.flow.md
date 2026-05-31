@@ -25,7 +25,9 @@ workspace_sandbox_id = data.id
 status == 200
 code == 0
 data.effective_limits.max_workspace_bytes == 16
+data.effective_limits.max_workspace_bytes_per_organization == 16
 data.effective_limits.workspace_byte_limit_enforced == true
+data.effective_limits.organization_workspace_byte_limit_enforced == true
 ```
 
 ```step
@@ -83,6 +85,65 @@ code == -400
 ```
 
 ```step
+@id create-second-organization-workspace-sandbox
+@name Create second organization workspace sandbox
+
+POST {{base_url}}/v1/sandboxes
+Content-Type: application/json
+
+{
+  "runtime_profile": "session",
+  "ttl_seconds": 60,
+  "organization_id": "{{workspace_organization_id}}"
+}
+
+[Captures]
+second_workspace_sandbox_id = data.id
+
+[Asserts]
+status == 200
+code == 0
+data.effective_limits.max_workspace_bytes_per_organization == 16
+data.effective_limits.organization_workspace_byte_limit_enforced == true
+```
+
+```step
+@id reject-organization-workspace-byte-limit
+@name Reject organization workspace byte limit
+
+POST {{base_url}}/v1/files/upload
+Content-Type: application/json
+
+{
+  "sandbox_id": "{{second_workspace_sandbox_id}}",
+  "path": "notes/org-two.txt",
+  "content": "1234567890"
+}
+
+[Asserts]
+status == 429
+code == -429
+data.error_type == "limit_exceeded"
+data.code == "organization_workspace_byte_limit_exceeded"
+data.limit == "max_workspace_bytes_per_organization"
+data.maximum == 16
+data.actual == 20
+data.organization_id == "{{workspace_organization_id}}"
+data.organization_workspace_bytes == 20
+```
+
+```step
+@id rejected-organization-file-was-not-written
+@name Rejected organization file was not written
+
+GET {{base_url}}/v1/files/info?sandbox_id={{second_workspace_sandbox_id}}&path=notes/org-two.txt
+
+[Asserts]
+status == 400
+code == -400
+```
+
+```step
 @id reject-command-generated-workspace-growth
 @name Reject command-generated workspace growth
 
@@ -130,6 +191,17 @@ data.events.0.metadata.request_id == "req_kest_workspace_command"
 @name Delete workspace-limited sandbox
 
 DELETE {{base_url}}/v1/sandboxes/{{workspace_sandbox_id}}
+
+[Asserts]
+status == 200
+code == 0
+```
+
+```step
+@id delete-second-workspace-limited-sandbox
+@name Delete second workspace-limited sandbox
+
+DELETE {{base_url}}/v1/sandboxes/{{second_workspace_sandbox_id}}
 
 [Asserts]
 status == 200

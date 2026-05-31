@@ -331,6 +331,7 @@ PY
     ZGI_SANDBOX_DATA_DIR="${DATA_DIR}/workspace-data" \
     ZGI_SANDBOX_WORKER_ID="zgi-sandbox-workspace-kest-${WORKSPACE_PORT}" \
     ZGI_SANDBOX_MAX_WORKSPACE_BYTES="16" \
+    ZGI_SANDBOX_MAX_WORKSPACE_BYTES_PER_ORGANIZATION="16" \
     go run cmd/server/main.go >"${WORKSPACE_SERVER_LOG}" 2>&1 &
   WORKSPACE_SERVER_PID="$!"
 

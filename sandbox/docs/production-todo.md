@@ -466,7 +466,7 @@ Goal: bind sandbox usage to ZGI organizations, workspaces, apps, workflows, and 
 - Added optional max active sandboxes per organization with `ZGI_SANDBOX_MAX_ACTIVE_PER_ORGANIZATION`.
 - Added optional max executions per minute per organization with `ZGI_SANDBOX_MAX_EXECUTIONS_PER_MINUTE_PER_ORGANIZATION`.
 - Max artifact bytes per organization.
-- Max workspace bytes per organization.
+- [x] Max workspace bytes per organization.
 - Max network requests per organization.
 - Max dependency profiles per organization.
 

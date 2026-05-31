@@ -839,11 +839,14 @@ func (s *Service) enforceWorkspaceByteLimit(box *sandbox.Sandbox) error {
 	if err != nil {
 		return err
 	}
-	return s.enforceWorkspaceByteLimitForSize(box, size)
+	if err := s.enforceWorkspaceByteLimitForSize(box, size); err != nil {
+		return err
+	}
+	return s.enforceOrganizationWorkspaceByteLimitForSize(box, size)
 }
 
 func (s *Service) enforceWorkspaceByteLimitForWrite(box *sandbox.Sandbox, target string, newSize int64) error {
-	if box == nil || s.policy.MaxWorkspaceBytes() <= 0 {
+	if box == nil {
 		return nil
 	}
 	currentSize, err := workspaceByteSize(box.RootPath)
@@ -854,7 +857,11 @@ func (s *Service) enforceWorkspaceByteLimitForWrite(box *sandbox.Sandbox, target
 	if err != nil {
 		return err
 	}
-	return s.enforceWorkspaceByteLimitForSize(box, currentSize-existingSize+newSize)
+	projectedSize := currentSize - existingSize + newSize
+	if err := s.enforceWorkspaceByteLimitForSize(box, projectedSize); err != nil {
+		return err
+	}
+	return s.enforceOrganizationWorkspaceByteLimitForSize(box, projectedSize)
 }
 
 func (s *Service) enforceWorkspaceByteLimitForSize(box *sandbox.Sandbox, actualSize int64) error {
@@ -871,6 +878,49 @@ func (s *Service) enforceWorkspaceByteLimitForSize(box *sandbox.Sandbox, actualS
 			"workspace_bytes": actualSize,
 		},
 	}
+}
+
+func (s *Service) enforceOrganizationWorkspaceByteLimitForSize(box *sandbox.Sandbox, projectedBoxSize int64) error {
+	limit := s.policy.MaxWorkspaceBytesPerOrganization()
+	if limit <= 0 || box == nil || box.OrganizationID == "" {
+		return nil
+	}
+	actualSize, err := s.organizationWorkspaceByteSize(box, projectedBoxSize)
+	if err != nil {
+		return err
+	}
+	if actualSize <= limit {
+		return nil
+	}
+	return &policy.LimitError{
+		Code:    "organization_workspace_byte_limit_exceeded",
+		Limit:   "max_workspace_bytes_per_organization",
+		Maximum: limitMaximumInt(limit),
+		Actual:  limitMaximumInt(actualSize),
+		Details: map[string]any{
+			"organization_id":              box.OrganizationID,
+			"organization_workspace_bytes": actualSize,
+		},
+	}
+}
+
+func (s *Service) organizationWorkspaceByteSize(currentBox *sandbox.Sandbox, projectedCurrentBoxSize int64) (int64, error) {
+	var total int64
+	for _, item := range s.lifecycle.List() {
+		if item.OrganizationID != currentBox.OrganizationID {
+			continue
+		}
+		if item.ID == currentBox.ID {
+			total += projectedCurrentBoxSize
+			continue
+		}
+		size, err := workspaceByteSize(item.RootPath)
+		if err != nil {
+			return 0, err
+		}
+		total += size
+	}
+	return total, nil
 }
 
 func (s *Service) enforceWorkspaceFileLimit(box *sandbox.Sandbox) error {
@@ -1268,6 +1318,8 @@ func (s *Service) UploadArchive(req ArchiveUploadRequest) (*ArchiveUploadResult,
 	if projectedSize, err := projectedWorkspaceSizeForArchive(box.RootPath, req.Path, entries); err != nil {
 		return nil, err
 	} else if err := s.enforceWorkspaceByteLimitForSize(box, projectedSize); err != nil {
+		return nil, err
+	} else if err := s.enforceOrganizationWorkspaceByteLimitForSize(box, projectedSize); err != nil {
 		return nil, err
 	}
 	if projectedCount, err := projectedWorkspaceFileCountForArchive(box.RootPath, req.Path, entries); err != nil {
