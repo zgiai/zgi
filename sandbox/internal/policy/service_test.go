@@ -257,6 +257,17 @@ func TestNormalizeCommandLimitsUsesProfileAndClampsRequest(t *testing.T) {
 	if limits.StdoutLimitBytes != 512*1024 || limits.StderrLimitBytes != 512*1024 {
 		t.Fatalf("expected output limits to clamp to config cap, got stdout=%d stderr=%d", limits.StdoutLimitBytes, limits.StderrLimitBytes)
 	}
+	if limits.Stateless {
+		t.Fatalf("expected skill-python to be workspace-bound, got %+v", limits)
+	}
+
+	shortLimits, err := service.NormalizeCommandLimits("code-short", 0, 0, 0, 0)
+	if err != nil {
+		t.Fatalf("expected code-short limits, got %v", err)
+	}
+	if !shortLimits.Stateless {
+		t.Fatalf("expected code-short to be stateless, got %+v", shortLimits)
+	}
 
 	if _, err := service.NormalizeCommandLimits("unknown", 0, 0, 0, 0); err == nil {
 		t.Fatal("expected unknown command profile to be rejected")

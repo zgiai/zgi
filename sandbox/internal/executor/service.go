@@ -57,6 +57,7 @@ type CodeRequest struct {
 	StdoutLimitKB    int             `json:"stdout_limit_kb,omitempty"`
 	StderrLimitKB    int             `json:"stderr_limit_kb,omitempty"`
 	StrictResultJSON bool            `json:"strict_result_json,omitempty"`
+	BindWorkspace    bool            `json:"bind_workspace,omitempty"`
 	EnableNetwork    bool            `json:"enable_network"`
 }
 
@@ -231,21 +232,23 @@ func (s *Service) RunCode(ctx context.Context, req CodeRequest) (runner.Result, 
 		EnableNetwork: req.EnableNetwork,
 	}
 
-	result, box, err := s.runCodeWithScope(ctx, req, runReq, limits)
+	result, box, workspaceBound, err := s.runCodeWithScope(ctx, req, runReq, limits)
 	if err != nil {
 		addOwnershipMetadata(baseMetadata, box)
 		s.recordExecutionFailure(ctx, "exec.code.failed", req.SandboxID, "sandbox code execution failed", baseMetadata, err)
 		return runner.Result{}, err
 	}
-	if err := s.enforceWorkspaceByteLimit(box); err != nil {
-		addOwnershipMetadata(baseMetadata, box)
-		s.recordExecutionFailure(ctx, "exec.code.failed", req.SandboxID, "sandbox code execution failed", baseMetadata, err)
-		return runner.Result{}, err
-	}
-	if err := s.enforceWorkspaceFileLimit(box); err != nil {
-		addOwnershipMetadata(baseMetadata, box)
-		s.recordExecutionFailure(ctx, "exec.code.failed", req.SandboxID, "sandbox code execution failed", baseMetadata, err)
-		return runner.Result{}, err
+	if workspaceBound {
+		if err := s.enforceWorkspaceByteLimit(box); err != nil {
+			addOwnershipMetadata(baseMetadata, box)
+			s.recordExecutionFailure(ctx, "exec.code.failed", req.SandboxID, "sandbox code execution failed", baseMetadata, err)
+			return runner.Result{}, err
+		}
+		if err := s.enforceWorkspaceFileLimit(box); err != nil {
+			addOwnershipMetadata(baseMetadata, box)
+			s.recordExecutionFailure(ctx, "exec.code.failed", req.SandboxID, "sandbox code execution failed", baseMetadata, err)
+			return runner.Result{}, err
+		}
 	}
 	if err := attachResultJSON(&result, req.StrictResultJSON); err != nil {
 		addOwnershipMetadata(baseMetadata, box)
@@ -255,46 +258,56 @@ func (s *Service) RunCode(ctx context.Context, req CodeRequest) (runner.Result, 
 	result.ExecutionID = executionID
 
 	metadata := map[string]any{
-		"execution_id": executionID,
-		"language":     req.Language,
-		"profile":      limits.Profile,
-		"exit_code":    result.ExitCode,
-		"duration_ms":  result.DurationMS,
-		"truncated":    result.Truncated,
-		"backend":      result.Backend,
-		"status":       "success",
+		"execution_id":    executionID,
+		"language":        req.Language,
+		"profile":         limits.Profile,
+		"exit_code":       result.ExitCode,
+		"duration_ms":     result.DurationMS,
+		"truncated":       result.Truncated,
+		"backend":         result.Backend,
+		"status":          "success",
+		"stateless":       limits.Stateless,
+		"workspace_bound": workspaceBound,
 	}
 	addOwnershipMetadata(metadata, box)
 	s.observer.Record("exec.code", req.SandboxID, "sandbox code executed", observer.MetadataWithContext(ctx, metadata))
 	return result, nil
 }
 
-func (s *Service) runCodeWithScope(ctx context.Context, req CodeRequest, runReq runner.Request, limits policy.CommandLimits) (runner.Result, *sandbox.Sandbox, error) {
+func (s *Service) runCodeWithScope(ctx context.Context, req CodeRequest, runReq runner.Request, limits policy.CommandLimits) (runner.Result, *sandbox.Sandbox, bool, error) {
 	if strings.TrimSpace(req.SandboxID) == "" {
 		if req.EnableNetwork {
-			return runner.Result{}, nil, errors.New("network access is disabled for stateless code execution")
+			return runner.Result{}, nil, false, errors.New("network access is disabled for stateless code execution")
 		}
 		result, err := s.runner.RunWithLimits(ctx, runReq, limits.Timeout, limits.StdoutLimitBytes, limits.StderrLimitBytes)
-		return result, nil, err
+		return result, nil, false, err
 	}
 
 	box, err := s.lifecycle.GetActive(req.SandboxID)
 	if err != nil {
-		return runner.Result{}, nil, err
+		return runner.Result{}, nil, false, err
+	}
+	if limits.Stateless && !req.BindWorkspace && req.EnableNetwork {
+		return runner.Result{}, box, false, errors.New("network access is disabled for stateless code execution")
 	}
 	if err := s.policy.ValidateCodeExecution(*box, req.EnableNetwork); err != nil {
-		return runner.Result{}, box, err
+		return runner.Result{}, box, false, err
 	}
 	if err := s.enforceOrganizationExecutionRate(box); err != nil {
-		return runner.Result{}, box, err
+		return runner.Result{}, box, false, err
 	}
 	releaseExecution, err := s.acquireExecutionAdmission(ctx, box, limits.Profile)
 	if err != nil {
-		return runner.Result{}, box, err
+		return runner.Result{}, box, false, err
 	}
 	defer releaseExecution()
+	if limits.Stateless && !req.BindWorkspace {
+		result, err := s.runner.RunWithLimits(ctx, runReq, limits.Timeout, limits.StdoutLimitBytes, limits.StderrLimitBytes)
+		return result, box, false, err
+	}
+
 	result, err := s.runner.RunInDirWithLimits(ctx, runReq, box.RootPath, limits.Timeout, limits.StdoutLimitBytes, limits.StderrLimitBytes)
-	return result, box, err
+	return result, box, true, err
 }
 
 func (s *Service) RunTemplate(ctx context.Context, req TemplateRequest) (TemplateResult, error) {

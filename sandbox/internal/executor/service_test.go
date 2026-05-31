@@ -790,9 +790,10 @@ func TestWorkspaceByteLimit(t *testing.T) {
 		t.Fatalf("expected code sandbox create, got %v", err)
 	}
 	_, err = service.RunCode(context.Background(), CodeRequest{
-		SandboxID: codeBox.ID,
-		Language:  "python3",
-		Code:      "open('code-generated.txt', 'w').write('12345678901234567')",
+		SandboxID:     codeBox.ID,
+		Language:      "python3",
+		Code:          "open('code-generated.txt', 'w').write('12345678901234567')",
+		BindWorkspace: true,
 	})
 	if !errors.As(err, &limitErr) || limitErr.Code != "workspace_byte_limit_exceeded" {
 		t.Fatalf("expected code workspace byte limit, got %v", err)
@@ -1013,16 +1014,18 @@ func TestWorkspaceFileLimit(t *testing.T) {
 		t.Fatalf("expected code sandbox create, got %v", err)
 	}
 	if _, err := service.RunCode(context.Background(), CodeRequest{
-		SandboxID: codeBox.ID,
-		Language:  "python3",
-		Code:      "open('one.txt', 'w').write('one')",
+		SandboxID:     codeBox.ID,
+		Language:      "python3",
+		Code:          "open('one.txt', 'w').write('one')",
+		BindWorkspace: true,
 	}); err != nil {
 		t.Fatalf("expected first code-generated file below limit, got %v", err)
 	}
 	_, err = service.RunCode(context.Background(), CodeRequest{
-		SandboxID: codeBox.ID,
-		Language:  "python3",
-		Code:      "open('two.txt', 'w').write('two')",
+		SandboxID:     codeBox.ID,
+		Language:      "python3",
+		Code:          "open('two.txt', 'w').write('two')",
+		BindWorkspace: true,
 	})
 	if !errors.As(err, &limitErr) || limitErr.Code != "workspace_file_count_limit_exceeded" {
 		t.Fatalf("expected code workspace file limit, got %v", err)
@@ -1805,6 +1808,87 @@ func TestRunCodeWithoutSandboxUsesStatelessWorkspace(t *testing.T) {
 	}
 	if data["exists"] != false {
 		t.Fatalf("expected stateless workspace cleanup between runs, got %#v", data)
+	}
+}
+
+func TestRunCodeShortProfileUsesStatelessWorkspaceWithSandboxByDefault(t *testing.T) {
+	service, manager := newTestExecutorService(t)
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	result, err := service.RunCode(context.Background(), CodeRequest{
+		SandboxID:        box.ID,
+		Language:         "python3",
+		Code:             "import json, pathlib\npathlib.Path('session-marker.txt').write_text('temporary')\nprint(json.dumps({'created': True}))",
+		Profile:          "code-short",
+		StrictResultJSON: true,
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox-scoped stateless code run, got %v", err)
+	}
+	if result.ExitCode != 0 {
+		t.Fatalf("expected zero exit code, got %d stderr=%q", result.ExitCode, result.Error)
+	}
+	if _, err := service.StatFile(box.ID, "session-marker.txt"); err == nil {
+		t.Fatal("expected code-short to avoid writing into sandbox workspace by default")
+	}
+}
+
+func TestRunCodeCanExplicitlyBindStatelessProfileToWorkspace(t *testing.T) {
+	service, manager := newTestExecutorService(t)
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	result, err := service.RunCode(context.Background(), CodeRequest{
+		SandboxID:        box.ID,
+		Language:         "python3",
+		Code:             "import json, pathlib\npathlib.Path('session-marker.txt').write_text('bound')\nprint(json.dumps({'created': True}))",
+		Profile:          "code-short",
+		StrictResultJSON: true,
+		BindWorkspace:    true,
+	})
+	if err != nil {
+		t.Fatalf("expected workspace-bound code run, got %v", err)
+	}
+	if result.ExitCode != 0 {
+		t.Fatalf("expected zero exit code, got %d stderr=%q", result.ExitCode, result.Error)
+	}
+	info, err := service.StatFile(box.ID, "session-marker.txt")
+	if err != nil {
+		t.Fatalf("expected explicit workspace binding to write marker, got %v", err)
+	}
+	if info.Size != 5 {
+		t.Fatalf("expected marker size, got %+v", info)
+	}
+}
+
+func TestRunCodeStatelessProfileRejectsNetworkEvenWithSandbox(t *testing.T) {
+	service, manager := newTestExecutorService(t)
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	_, err = service.RunCode(context.Background(), CodeRequest{
+		SandboxID:     box.ID,
+		Language:      "python3",
+		Code:          "print('no network')",
+		Profile:       "code-short",
+		EnableNetwork: true,
+		BindWorkspace: false,
+	})
+	if err == nil || !strings.Contains(err.Error(), "stateless code execution") {
+		t.Fatalf("expected stateless network rejection, got %v", err)
 	}
 }
 

@@ -6,6 +6,19 @@
 ```
 
 ```step
+@id inspect-short-code-policy
+@name Inspect short-code stateless policy
+
+GET {{base_url}}/v1/policies
+
+[Asserts]
+status == 200
+code == 0
+data.command_profiles.0.name == "code-short"
+data.command_profiles.0.stateless == true
+```
+
+```step
 @id stateless-create-marker
 @name Stateless short code creates temporary marker
 
@@ -92,6 +105,79 @@ sandbox_id = data.id
 [Asserts]
 status == 200
 code == 0
+```
+
+```step
+@id sandbox-scoped-stateless-write
+@name Sandbox-scoped short code remains stateless by default
+
+POST {{base_url}}/v1/exec/code
+Content-Type: application/json
+
+{
+  "sandbox_id": "{{sandbox_id}}",
+  "language": "python3",
+  "profile": "code-short",
+  "strict_result_json": true,
+  "timeout_ms": 5000,
+  "code": "import json, pathlib\npathlib.Path('session-marker.txt').write_text('temporary')\nprint(json.dumps({'created': True}))",
+  "enable_network": false
+}
+
+[Asserts]
+status == 200
+code == 0
+data.exit_code == 0
+data.result_json.created == true
+```
+
+```step
+@id stateless-write-not-persisted
+@name Sandbox-scoped stateless write is not persisted
+
+GET {{base_url}}/v1/files/info?sandbox_id={{sandbox_id}}&path=session-marker.txt
+
+[Asserts]
+status == 400
+code == -400
+```
+
+```step
+@id explicitly-bound-short-code-write
+@name Explicitly bound short code can write workspace
+
+POST {{base_url}}/v1/exec/code
+Content-Type: application/json
+
+{
+  "sandbox_id": "{{sandbox_id}}",
+  "language": "python3",
+  "profile": "code-short",
+  "strict_result_json": true,
+  "bind_workspace": true,
+  "timeout_ms": 5000,
+  "code": "import json, pathlib\npathlib.Path('session-marker.txt').write_text('bound')\nprint(json.dumps({'created': True}))",
+  "enable_network": false
+}
+
+[Asserts]
+status == 200
+code == 0
+data.exit_code == 0
+data.result_json.created == true
+```
+
+```step
+@id bound-write-persisted
+@name Explicitly bound short code write is persisted
+
+GET {{base_url}}/v1/files/info?sandbox_id={{sandbox_id}}&path=session-marker.txt
+
+[Asserts]
+status == 200
+code == 0
+data.path == "session-marker.txt"
+data.size == 5
 ```
 
 ```step

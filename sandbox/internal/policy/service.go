@@ -45,6 +45,7 @@ type CommandLimits struct {
 	StdoutLimitBytes int           `json:"stdout_limit_bytes"`
 	StderrLimitBytes int           `json:"stderr_limit_bytes"`
 	MaxStdinBytes    int           `json:"max_stdin_bytes"`
+	Stateless        bool          `json:"stateless"`
 }
 
 type TemplateLimits struct {
@@ -176,6 +177,7 @@ func NewService(cfg config.Config) *Service {
 				StdoutLimitBytes: 64 * 1024,
 				StderrLimitBytes: 64 * 1024,
 				MaxStdinBytes:    64 * 1024,
+				Stateless:        true,
 			},
 			"skill-python": {
 				Profile:          "skill-python",
@@ -564,6 +566,7 @@ func (s *Service) commandProfileSnapshot() []map[string]any {
 			"stdout_limit_bytes": profile.StdoutLimitBytes,
 			"stderr_limit_bytes": profile.StderrLimitBytes,
 			"max_stdin_bytes":    profile.MaxStdinBytes,
+			"stateless":          profile.Stateless,
 			"network":            "inherits sandbox policy",
 		})
 	}
