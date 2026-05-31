@@ -215,6 +215,7 @@ type CodeExecConfig struct {
 	CommandTimeoutPaddingSeconds int    `json:"command_timeout_padding_seconds"`
 	ArtifactTimeoutSeconds       int    `json:"artifact_timeout_seconds"`
 	CleanupTimeoutSeconds        int    `json:"cleanup_timeout_seconds"`
+	EnableNetwork                bool   `json:"enable_network"`
 	MaxNumber                    int64  `json:"max_number"`
 	MinNumber                    int64  `json:"min_number"`
 	MaxStringLength              int    `json:"max_string_length"`

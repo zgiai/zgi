@@ -22,6 +22,8 @@ func TestLoadCodeExecConfigLoadsAdapterTimeouts(t *testing.T) {
 			return "6", true
 		case envCodeExecutionCleanupTimeout:
 			return "7", true
+		case envCodeExecutionEnableNetwork:
+			return "true", true
 		default:
 			return "", false
 		}
@@ -38,7 +40,8 @@ func TestLoadCodeExecConfigLoadsAdapterTimeouts(t *testing.T) {
 		cfg.CodeExec.UploadTimeoutSeconds != 4 ||
 		cfg.CodeExec.CommandTimeoutPaddingSeconds != 5 ||
 		cfg.CodeExec.ArtifactTimeoutSeconds != 6 ||
-		cfg.CodeExec.CleanupTimeoutSeconds != 7 {
+		cfg.CodeExec.CleanupTimeoutSeconds != 7 ||
+		!cfg.CodeExec.EnableNetwork {
 		t.Fatalf("unexpected code execution timeouts: %+v", cfg.CodeExec)
 	}
 }
@@ -55,7 +58,8 @@ func TestLoadCodeExecConfigUsesAdapterTimeoutDefaults(t *testing.T) {
 		cfg.CodeExec.UploadTimeoutSeconds != 30 ||
 		cfg.CodeExec.CommandTimeoutPaddingSeconds != 15 ||
 		cfg.CodeExec.ArtifactTimeoutSeconds != 10 ||
-		cfg.CodeExec.CleanupTimeoutSeconds != 5 {
+		cfg.CodeExec.CleanupTimeoutSeconds != 5 ||
+		cfg.CodeExec.EnableNetwork {
 		t.Fatalf("unexpected default code execution timeouts: %+v", cfg.CodeExec)
 	}
 }

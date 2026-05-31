@@ -328,6 +328,8 @@ const (
 	envCodeExecutionArtifactTimeout = "CODE_EXECUTION_ARTIFACT_TIMEOUT_SECONDS"
 	// envCodeExecutionCleanupTimeout sets sandbox cleanup request timeout in seconds. Default: 5.
 	envCodeExecutionCleanupTimeout = "CODE_EXECUTION_CLEANUP_TIMEOUT_SECONDS"
+	// envCodeExecutionEnableNetwork toggles network access for the legacy /v1/sandbox/run workflow code path. Default: false.
+	envCodeExecutionEnableNetwork = "CODE_EXECUTION_ENABLE_NETWORK"
 
 	// Code execution safety limits.
 	// envCodeMaxNumber sets the largest numeric value allowed in code execution. Default: 9223372036854775807.

@@ -92,8 +92,8 @@ def main(name="world"):
 	if receivedPayload.Preload != "" {
 		t.Fatalf("expected empty preload but got %q", receivedPayload.Preload)
 	}
-	if !receivedPayload.EnableNetwork {
-		t.Fatalf("expected network to be enabled")
+	if receivedPayload.EnableNetwork {
+		t.Fatal("expected network to be disabled by default")
 	}
 	if !strings.Contains(receivedPayload.Code, "def main") {
 		t.Fatalf("runner script should contain original code")

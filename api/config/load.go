@@ -627,6 +627,10 @@ func loadCodeExecConfig(cfg *Config, source *envSource) error {
 	if err != nil {
 		return err
 	}
+	enableNetwork, err := source.bool(false, envCodeExecutionEnableNetwork)
+	if err != nil {
+		return err
+	}
 	maxNumber, err := source.int64(9223372036854775807, envCodeMaxNumber)
 	if err != nil {
 		return err
@@ -649,6 +653,7 @@ func loadCodeExecConfig(cfg *Config, source *envSource) error {
 		CommandTimeoutPaddingSeconds: commandTimeoutPadding,
 		ArtifactTimeoutSeconds:       artifactTimeout,
 		CleanupTimeoutSeconds:        cleanupTimeout,
+		EnableNetwork:                enableNetwork,
 		MaxNumber:                    maxNumber,
 		MinNumber:                    minNumber,
 		MaxStringLength:              maxStringLength,
