@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	llmadapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
@@ -23,12 +24,27 @@ func TestKnowledgeSystemSkillsExposeExpectedTools(t *testing.T) {
 	if got := toolNames(internal.Tools); !sameStrings(got, []string{"list_accessible_knowledge_bases", "retrieve_knowledge"}) {
 		t.Fatalf("internal knowledge tools = %v", got)
 	}
+	if internal.Metadata.MaxCallsPerTurn != 6 {
+		t.Fatalf("internal knowledge max calls = %d, want 6", internal.Metadata.MaxCallsPerTurn)
+	}
+	if internal.Metadata.Display.Label["zh_Hans"] != "内部知识库" {
+		t.Fatalf("internal knowledge zh label = %q", internal.Metadata.Display.Label["zh_Hans"])
+	}
 	agent, ok := resolved.Get(SkillAgentKnowledge)
 	if !ok {
 		t.Fatalf("agent knowledge skill was not resolved")
 	}
 	if got := toolNames(agent.Tools); !sameStrings(got, []string{"retrieve_agent_knowledge"}) {
 		t.Fatalf("agent knowledge tools = %v", got)
+	}
+	if agent.Metadata.MaxCallsPerTurn != 3 {
+		t.Fatalf("agent knowledge max calls = %d, want 3", agent.Metadata.MaxCallsPerTurn)
+	}
+	if agent.Metadata.Display.Label["zh_Hans"] != "智能体知识库" {
+		t.Fatalf("agent knowledge zh label = %q", agent.Metadata.Display.Label["zh_Hans"])
+	}
+	if strings.Contains(agent.Metadata.Display.Description["zh_Hans"], "�") || strings.Contains(agent.Metadata.Display.Description["zh_Hans"], "?") {
+		t.Fatalf("agent knowledge zh description looks corrupted: %q", agent.Metadata.Display.Description["zh_Hans"])
 	}
 }
 

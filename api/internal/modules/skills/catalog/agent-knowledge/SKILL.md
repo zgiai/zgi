@@ -7,7 +7,7 @@ provider_id: knowledge
 runtime_type: tool
 tools:
   - retrieve_agent_knowledge
-max_calls_per_turn: 8
+max_calls_per_turn: 3
 timeout_seconds: 30
 display:
   icon: library
@@ -36,16 +36,22 @@ Use this skill to retrieve context only from knowledge bases configured on the c
 
 ## Workflow
 
-1. Call `retrieve_agent_knowledge` directly with the user query.
-2. Do not enumerate all user-accessible knowledge bases.
+1. Call `retrieve_agent_knowledge` when the answer depends on the Agent's configured knowledge, product facts, policy, documentation, or other long-lived source material.
+2. Use a concise query derived from the user's intent. Do not enumerate all user-accessible knowledge bases.
 3. Do not ask for, guess, or pass dataset IDs. The backend reads configured knowledge bases from the Agent config.
-4. If the Agent has no configured knowledge bases or no relevant results, answer clearly that no configured relevant knowledge was found.
-5. When retrieved context is used, cite source names from `retriever_resources` when useful.
+4. Inspect `status`, `source_summary`, `context_blocks`, and scores before answering:
+   - If `status` is `success` and the retrieved blocks answer the user, answer from those blocks.
+   - If results are missing, weak, or off-topic, rewrite the query once using clearer entities, synonyms, or constraints from the user question and retry.
+   - After two retrieval attempts, if the relevant answer is still unclear, ask the user for clarification or say that no configured relevant knowledge was found.
+5. When the user asks for original wording, definitions, synopsis text, policy clauses, exact wording, or "what does it say", quote or closely excerpt the retrieved source text first and cite the source. Summarize only when the user asks for a summary or the original text is too long.
+6. When retrieved context is used, cite source names from `source_summary` or `retriever_resources` when useful.
+7. Never expose internal IDs such as dataset ID, document ID, or segment ID to the user.
+8. Never invent a knowledge-base answer when no relevant configured context was found.
 
 ## Tool Usage
 
 `retrieve_agent_knowledge` accepts:
 
-- `query`: the user question or search query.
-- `top_k`: optional maximum retrieved chunks.
-- `retrieval_mode`: optional `hybrid`, `vector`, or `graph`.
+- `query`: the user question or refined search query.
+- `top_k`: optional maximum retrieved chunks. Defaults to 5 and is capped at 20.
+- `retrieval_mode`: optional `hybrid`, `vector`, or `graph`. Omit it for the default hybrid mode; use `graph` only for relationship or entity questions.

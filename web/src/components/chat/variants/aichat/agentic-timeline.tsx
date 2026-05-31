@@ -24,6 +24,7 @@ import {
   type AIChatSkillDisplayMap,
 } from '@/components/chat/variants/aichat/skill-display';
 import { AIChatSkillIcon } from '@/components/chat/variants/aichat/skill-icon';
+import { AIChatSkillResultSummary } from '@/components/chat/variants/aichat/skill-result-summary';
 
 type TimelineTone = 'running' | 'success' | 'error';
 type TimelineDebugLabel = keyof typeof TIMELINE_DEBUG_LABEL_KEYS;
@@ -207,6 +208,7 @@ function SkillTimelineRow({
               {event.detail}
             </div>
           ) : null}
+          <AIChatSkillResultSummary result={event.item.invocation.result} className="mb-2" />
           <dl className="grid gap-1 rounded-md bg-background/80 p-2 text-[11px]">
             {timelineDebugRows(event.item.invocation, locale).map(([labelKey, value]) => {
               const formatted = formatDebugValue(value);
