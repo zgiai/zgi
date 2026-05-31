@@ -266,6 +266,11 @@ func TestNormalizeCreateReturnsEffectiveLimitsAndStructuredLimitError(t *testing
 	cfg.MaxArtifactManifestBytes = 8192
 	cfg.MaxArtifactBytesPerOrganization = 16384
 	cfg.MaxDependencyProfilesPerOrganization = 2
+	cfg.RuntimeBackend = "linux-secure"
+	cfg.SecureRuntimeCPUSeconds = 3
+	cfg.SecureRuntimeMemoryBytes = 134217728
+	cfg.SecureRuntimeProcessLimit = 32
+	cfg.SecureRuntimeOpenFileLimit = 64
 	service := NewService(cfg)
 
 	decision, err := service.NormalizeCreate("session", 60, false, "", "stdlib", 1, "organization-1", 1)
@@ -328,6 +333,21 @@ func TestNormalizeCreateReturnsEffectiveLimitsAndStructuredLimitError(t *testing
 	}
 	if decision.EffectiveLimits.DependencyProfileBuildTimeoutSeconds != cfg.DependencyProfileBuildTimeoutSeconds {
 		t.Fatalf("expected dependency profile build timeout in decision, got %+v", decision.EffectiveLimits)
+	}
+	if decision.EffectiveLimits.SecureRuntimeCPUSeconds != cfg.SecureRuntimeCPUSeconds {
+		t.Fatalf("expected secure runtime cpu limit in decision, got %+v", decision.EffectiveLimits)
+	}
+	if decision.EffectiveLimits.SecureRuntimeMemoryBytes != cfg.SecureRuntimeMemoryBytes {
+		t.Fatalf("expected secure runtime memory limit in decision, got %+v", decision.EffectiveLimits)
+	}
+	if decision.EffectiveLimits.SecureRuntimeProcessLimit != cfg.SecureRuntimeProcessLimit {
+		t.Fatalf("expected secure runtime process limit in decision, got %+v", decision.EffectiveLimits)
+	}
+	if decision.EffectiveLimits.SecureRuntimeOpenFileLimit != cfg.SecureRuntimeOpenFileLimit {
+		t.Fatalf("expected secure runtime open file limit in decision, got %+v", decision.EffectiveLimits)
+	}
+	if !decision.EffectiveLimits.SecureRuntimeResourceLimitsEnforced {
+		t.Fatalf("expected secure runtime resource limits enforcement in decision, got %+v", decision.EffectiveLimits)
 	}
 
 	_, err = service.NormalizeCreate("session", 60, false, "", "stdlib", 2, "organization-1", 1)

@@ -66,6 +66,10 @@ named after each profile.
 | `ZGI_SANDBOX_REDIS_DB` | Redis database number. | `0` | Use an isolated database where needed. |
 | `ZGI_SANDBOX_REDIS_PASSWORD` | Redis password. | empty | Set when Redis requires authentication. |
 | `ZGI_SANDBOX_RUNTIME_BACKEND` | Runtime backend selector. | `preview` | Use `linux-secure` in production. |
+| `ZGI_SANDBOX_SECURE_RUNTIME_CPU_SECONDS` | Secure Linux backend CPU time limit in seconds. | `2` | Keep positive in production and tune to command profile timeouts. |
+| `ZGI_SANDBOX_SECURE_RUNTIME_MEMORY_BYTES` | Secure Linux backend address-space memory limit. | `268435456` | Set according to profile memory budget. |
+| `ZGI_SANDBOX_SECURE_RUNTIME_OPEN_FILE_LIMIT` | Secure Linux backend open file descriptor limit. | `128` | Keep low unless a managed profile needs more descriptors. |
+| `ZGI_SANDBOX_SECURE_RUNTIME_PROCESS_LIMIT` | Secure Linux backend process count limit. | `64` | Keep low enough to contain fork-heavy workloads. |
 | `ZGI_SANDBOX_SECURE_ROOTFS` | Root filesystem path for the secure Linux backend. | empty | Required when using `linux-secure`. |
 | `ZGI_SANDBOX_SERVER_PORT` | HTTP server port. | `2660` | Set to the exposed service port. |
 | `ZGI_SANDBOX_SESSION_TTL_SECONDS` | Session sandbox TTL. | `1800` | Keep bounded and align with cleanup policy. |

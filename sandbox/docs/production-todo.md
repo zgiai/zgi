@@ -310,11 +310,11 @@ Goal: enforce hard resource boundaries for every execution path.
 
 ### F1. Runtime Limits
 
-- CPU time limit.
-- Memory limit.
+- [x] CPU time limit for the secure Linux runtime.
+- [x] Memory limit for the secure Linux runtime.
 - Disk quota.
-- Process count limit.
-- Open file limit.
+- [x] Process count limit for the secure Linux runtime.
+- [x] Open file limit for the secure Linux runtime.
 - Added optional max file count per sandbox with `ZGI_SANDBOX_MAX_WORKSPACE_FILES`.
 - Added optional max workspace bytes per sandbox with `ZGI_SANDBOX_MAX_WORKSPACE_BYTES`.
 - Added operator-configurable max artifact manifest files per run with `ZGI_SANDBOX_MAX_ARTIFACT_MANIFEST_FILES`.
@@ -340,7 +340,7 @@ Goal: enforce hard resource boundaries for every execution path.
 
 ### F4. Tests
 
-- CPU-bound timeout.
+- [x] CPU-bound timeout.
 - Memory pressure rejection or termination.
 - Disk quota enforcement.
 - Process count enforcement.

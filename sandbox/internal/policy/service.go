@@ -894,6 +894,10 @@ func (s *Service) EffectiveLimits() sandbox.ResourceLimits {
 		MaxDependencyProfilesPerOrganization:       s.config.MaxDependencyProfilesPerOrganization,
 		MaxDependencyProfileSizeBytes:              s.config.MaxDependencyProfileSizeBytes,
 		DependencyProfileBuildTimeoutSeconds:       s.config.DependencyProfileBuildTimeoutSeconds,
+		SecureRuntimeCPUSeconds:                    s.config.SecureRuntimeCPUSeconds,
+		SecureRuntimeMemoryBytes:                   s.config.SecureRuntimeMemoryBytes,
+		SecureRuntimeProcessLimit:                  s.config.SecureRuntimeProcessLimit,
+		SecureRuntimeOpenFileLimit:                 s.config.SecureRuntimeOpenFileLimit,
 		SessionTTLSecs:                             s.config.SessionTTL,
 		SessionTTLSeconds:                          s.config.SessionTTL,
 		InteractiveTTLSecs:                         s.config.InteractiveTTL,
@@ -906,6 +910,7 @@ func (s *Service) EffectiveLimits() sandbox.ResourceLimits {
 		OrganizationWorkspaceByteLimitEnforced:     s.config.MaxWorkspaceBytesPerOrganization > 0,
 		OrganizationArtifactByteLimitEnforced:      s.config.MaxArtifactBytesPerOrganization > 0,
 		OrganizationDependencyProfileLimitEnforced: s.config.MaxDependencyProfilesPerOrganization > 0,
+		SecureRuntimeResourceLimitsEnforced:        s.secureRuntimeResourceLimitsEnforced(),
 	}
 }
 
@@ -1238,6 +1243,14 @@ func defaultDeniedCIDRRanges() []string {
 
 func (s *Service) runtimeBackendEnforcesNetworkPolicy() bool {
 	return s.config.NetworkPolicyEnforced()
+}
+
+func (s *Service) secureRuntimeResourceLimitsEnforced() bool {
+	return s.normalizedRuntimeBackend() == "linux-secure" &&
+		s.config.SecureRuntimeCPUSeconds > 0 &&
+		s.config.SecureRuntimeMemoryBytes > 0 &&
+		s.config.SecureRuntimeProcessLimit > 0 &&
+		s.config.SecureRuntimeOpenFileLimit > 0
 }
 
 func (s *Service) normalizedRuntimeBackend() string {

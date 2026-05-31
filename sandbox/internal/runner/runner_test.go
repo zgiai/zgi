@@ -32,6 +32,24 @@ func TestRunPython(t *testing.T) {
 	}
 }
 
+func TestRunTerminatesCPUBoundCodeOnTimeout(t *testing.T) {
+	service := NewService(1, 2*time.Second, 4096)
+
+	result, err := service.RunWithLimits(context.Background(), Request{
+		Language: "python3",
+		Code:     "while True:\n    pass",
+	}, 100*time.Millisecond, 4096, 4096)
+	if err != nil {
+		t.Fatalf("expected timeout result, got error: %v", err)
+	}
+	if result.ExitCode != 124 {
+		t.Fatalf("expected timeout exit code 124, got %d stderr=%q", result.ExitCode, result.Error)
+	}
+	if !strings.Contains(result.Error, "execution timed out") {
+		t.Fatalf("expected timeout stderr, got %q", result.Error)
+	}
+}
+
 func TestRunUnsupportedLanguage(t *testing.T) {
 	service := NewService(1, 2*time.Second, 4096)
 
@@ -358,6 +376,30 @@ func TestCommandTimeoutKillsShellChildren(t *testing.T) {
 		time.Sleep(25 * time.Millisecond)
 	}
 	t.Fatalf("expected child process %d to be killed with the shell process group", childPID)
+}
+
+func TestCommandTerminatesCPUBoundProcessOnTimeout(t *testing.T) {
+	service := NewService(1, 2*time.Second, 4096)
+	workDir := t.TempDir()
+
+	result, err := service.ExecuteCommandSpec(context.Background(), CommandSpec{
+		WorkDir:        workDir,
+		Command:        "python3",
+		Args:           []string{"-c", "while True: pass"},
+		Timeout:        100 * time.Millisecond,
+		StdoutLimit:    4096,
+		StderrLimit:    4096,
+		AllowShellForm: false,
+	})
+	if err != nil {
+		t.Fatalf("expected timeout result, got error: %v", err)
+	}
+	if result.ExitCode != 124 {
+		t.Fatalf("expected timeout exit code 124, got %d stderr=%q", result.ExitCode, result.Error)
+	}
+	if !strings.Contains(result.Error, "command timed out") {
+		t.Fatalf("expected timeout stderr, got %q", result.Error)
+	}
 }
 
 func processExists(pid int) bool {

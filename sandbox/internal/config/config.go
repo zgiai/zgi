@@ -54,6 +54,10 @@ type Config struct {
 	SecureRootFS                           string
 	DependencyRootFSDir                    string
 	BwrapBinary                            string
+	SecureRuntimeCPUSeconds                int
+	SecureRuntimeMemoryBytes               int64
+	SecureRuntimeProcessLimit              int
+	SecureRuntimeOpenFileLimit             int
 	ProxyTimeout                           int
 }
 
@@ -106,6 +110,10 @@ func FromEnv() Config {
 		SecureRootFS:                           getEnv("ZGI_SANDBOX_SECURE_ROOTFS", ""),
 		DependencyRootFSDir:                    getEnv("ZGI_SANDBOX_DEPENDENCY_ROOTFS_DIR", ""),
 		BwrapBinary:                            getEnv("ZGI_SANDBOX_BWRAP_BINARY", "bwrap"),
+		SecureRuntimeCPUSeconds:                getEnvIntAllowZero("ZGI_SANDBOX_SECURE_RUNTIME_CPU_SECONDS", 2),
+		SecureRuntimeMemoryBytes:               getEnvInt64AllowZero("ZGI_SANDBOX_SECURE_RUNTIME_MEMORY_BYTES", 256*1024*1024),
+		SecureRuntimeProcessLimit:              getEnvIntAllowZero("ZGI_SANDBOX_SECURE_RUNTIME_PROCESS_LIMIT", 64),
+		SecureRuntimeOpenFileLimit:             getEnvIntAllowZero("ZGI_SANDBOX_SECURE_RUNTIME_OPEN_FILE_LIMIT", 128),
 		ProxyTimeout:                           getEnvInt("ZGI_SANDBOX_PROXY_TIMEOUT_SECONDS", 20),
 	}
 }
@@ -146,6 +154,10 @@ func (c Config) ValidateStartup() error {
 		requireNonNegativeInt64("ZGI_SANDBOX_MAX_WORKSPACE_BYTES_PER_ORGANIZATION", c.MaxWorkspaceBytesPerOrganization),
 		requireNonNegativeInt64("ZGI_SANDBOX_MAX_ARTIFACT_MANIFEST_BYTES", c.MaxArtifactManifestBytes),
 		requireNonNegativeInt64("ZGI_SANDBOX_MAX_ARTIFACT_BYTES_PER_ORGANIZATION", c.MaxArtifactBytesPerOrganization),
+		requireNonNegativeInt("ZGI_SANDBOX_SECURE_RUNTIME_CPU_SECONDS", c.SecureRuntimeCPUSeconds),
+		requireNonNegativeInt64("ZGI_SANDBOX_SECURE_RUNTIME_MEMORY_BYTES", c.SecureRuntimeMemoryBytes),
+		requireNonNegativeInt("ZGI_SANDBOX_SECURE_RUNTIME_PROCESS_LIMIT", c.SecureRuntimeProcessLimit),
+		requireNonNegativeInt("ZGI_SANDBOX_SECURE_RUNTIME_OPEN_FILE_LIMIT", c.SecureRuntimeOpenFileLimit),
 	)
 	if err := validateEnvironment(c.Environment); err != nil {
 		validationErrors = append(validationErrors, err)
@@ -181,6 +193,9 @@ func (c Config) ValidateStartup() error {
 	}
 	if c.IsProduction() && !c.NetworkPolicyEnforced() {
 		validationErrors = append(validationErrors, errors.New("production sandbox deployments require a runtime backend that enforces network policy"))
+	}
+	if c.IsProduction() && c.RuntimeBackendName() == "linux-secure" {
+		validationErrors = append(validationErrors, requirePositiveSecureRuntimeLimits(c)...)
 	}
 	return errors.Join(compactErrors(validationErrors)...)
 }
@@ -317,6 +332,15 @@ func requireNonNegativeInt64(name string, value int64) error {
 	return nil
 }
 
+func requirePositiveSecureRuntimeLimits(c Config) []error {
+	return []error{
+		requirePositiveInt("ZGI_SANDBOX_SECURE_RUNTIME_CPU_SECONDS", c.SecureRuntimeCPUSeconds),
+		requirePositiveInt64("ZGI_SANDBOX_SECURE_RUNTIME_MEMORY_BYTES", c.SecureRuntimeMemoryBytes),
+		requirePositiveInt("ZGI_SANDBOX_SECURE_RUNTIME_PROCESS_LIMIT", c.SecureRuntimeProcessLimit),
+		requirePositiveInt("ZGI_SANDBOX_SECURE_RUNTIME_OPEN_FILE_LIMIT", c.SecureRuntimeOpenFileLimit),
+	}
+}
+
 func compactErrors(values []error) []error {
 	errs := make([]error, 0, len(values))
 	for _, err := range values {
@@ -370,6 +394,10 @@ func (c Config) PublicSnapshot() map[string]any {
 		"secure_rootfs_configured":                   c.SecureRootFS != "",
 		"dependency_rootfs_configured":               c.DependencyRootFSDir != "",
 		"bwrap_binary":                               c.BwrapBinary,
+		"secure_runtime_cpu_seconds":                 c.SecureRuntimeCPUSeconds,
+		"secure_runtime_memory_bytes":                c.SecureRuntimeMemoryBytes,
+		"secure_runtime_process_limit":               c.SecureRuntimeProcessLimit,
+		"secure_runtime_open_file_limit":             c.SecureRuntimeOpenFileLimit,
 		"proxy_timeout_seconds":                      c.ProxyTimeout,
 		"network_policy_enforced":                    c.NetworkPolicyEnforced(),
 	}
