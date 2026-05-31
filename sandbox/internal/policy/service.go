@@ -242,6 +242,7 @@ func (s *Service) Snapshot() map[string]any {
 			},
 		},
 		"network_profiles":    s.networkProfiles,
+		"network_enforcement": s.networkEnforcementSnapshot(),
 		"command_profiles":    s.commandProfileSnapshot(),
 		"template_profiles":   s.templateProfileSnapshot(),
 		"dependency_policy":   map[string]any{"mode": "managed-profiles", "supports_user_update": false},
@@ -596,6 +597,31 @@ func (s *Service) commandProfileSnapshot() []map[string]any {
 		})
 	}
 	return items
+}
+
+func (s *Service) networkEnforcementSnapshot() map[string]any {
+	enforced := s.NetworkPolicyEnforced()
+	return map[string]any{
+		"runtime_backend":                   s.RuntimeBackend(),
+		"network_policy_enforced":           enforced,
+		"network_enabled_requests_rejected": !enforced,
+		"rejection_code":                    networkEnforcementRejectionCode(enforced),
+		"rejection_reason":                  networkEnforcementRejectionReason(enforced, s.RuntimeBackend()),
+	}
+}
+
+func networkEnforcementRejectionCode(enforced bool) string {
+	if enforced {
+		return ""
+	}
+	return "network_policy_not_enforced"
+}
+
+func networkEnforcementRejectionReason(enforced bool, backend string) string {
+	if enforced {
+		return ""
+	}
+	return fmt.Sprintf("runtime backend %q does not enforce network policy", backend)
 }
 
 func networkProfileSummary(profile CommandLimits) string {

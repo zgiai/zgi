@@ -16,6 +16,10 @@ status == 200
 code == 0
 data.limits.runtime_backend == "preview-process"
 data.limits.network_policy_enforced == false
+data.network_enforcement.runtime_backend == "preview-process"
+data.network_enforcement.network_policy_enforced == false
+data.network_enforcement.network_enabled_requests_rejected == true
+data.network_enforcement.rejection_code == "network_policy_not_enforced"
 data.limits.max_archive_files == 256
 data.limits.workspace_byte_limit_enforced == false
 ```

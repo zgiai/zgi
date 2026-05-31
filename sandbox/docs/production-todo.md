@@ -270,7 +270,7 @@ from internal infrastructure by default.
 - [x] Deny outbound network by default for all profiles.
 - [x] Require both sandbox-level and profile-level permission for network access.
 - Reject network-enabled requests when the selected runtime cannot enforce policy.
-- Expose this rejection clearly in `/v1/policies`.
+- [x] Expose this rejection clearly in `/v1/policies`.
 
 ### E2. Egress Policy
 

@@ -79,6 +79,16 @@ func TestNetworkPolicySurfaceReportsBackendEnforcement(t *testing.T) {
 	if previewLimits.NetworkPolicyEnforced {
 		t.Fatalf("expected preview snapshot to report network_policy_enforced=false, got %#v", previewLimits.NetworkPolicyEnforced)
 	}
+	previewEnforcement := previewSnapshot["network_enforcement"].(map[string]any)
+	if previewEnforcement["runtime_backend"] != "preview-process" || previewEnforcement["network_policy_enforced"] != false || previewEnforcement["network_enabled_requests_rejected"] != true {
+		t.Fatalf("expected preview network enforcement surface, got %#v", previewEnforcement)
+	}
+	if previewEnforcement["rejection_code"] != "network_policy_not_enforced" {
+		t.Fatalf("expected preview rejection code, got %#v", previewEnforcement)
+	}
+	if previewEnforcement["rejection_reason"] != `runtime backend "preview-process" does not enforce network policy` {
+		t.Fatalf("expected preview rejection reason, got %#v", previewEnforcement)
+	}
 
 	secureCfg := config.FromEnv()
 	secureCfg.RuntimeBackend = "linux-secure"
@@ -90,6 +100,16 @@ func TestNetworkPolicySurfaceReportsBackendEnforcement(t *testing.T) {
 	secureLimits := secureSnapshot["limits"].(sandbox.ResourceLimits)
 	if !secureLimits.NetworkPolicyEnforced {
 		t.Fatalf("expected secure snapshot to report network_policy_enforced=true, got %#v", secureLimits.NetworkPolicyEnforced)
+	}
+	secureEnforcement := secureSnapshot["network_enforcement"].(map[string]any)
+	if secureEnforcement["runtime_backend"] != "linux-secure" || secureEnforcement["network_policy_enforced"] != true || secureEnforcement["network_enabled_requests_rejected"] != false {
+		t.Fatalf("expected secure network enforcement surface, got %#v", secureEnforcement)
+	}
+	if secureEnforcement["rejection_code"] != "" {
+		t.Fatalf("expected empty secure rejection code, got %#v", secureEnforcement)
+	}
+	if secureEnforcement["rejection_reason"] != "" {
+		t.Fatalf("expected empty secure rejection reason, got %#v", secureEnforcement)
 	}
 }
 
