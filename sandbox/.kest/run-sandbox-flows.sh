@@ -260,6 +260,7 @@ PY
   DEPENDENCY_PROFILE_BUILD_BASE_URL="http://127.0.0.1:${DEPENDENCY_PROFILE_BUILD_PORT}"
   DEPENDENCY_PROFILE_BUILD_SERVER_LOG="${DATA_DIR}/sandbox-dependency-profile-build.log"
   DEPENDENCY_PROFILE_BUILD_API_KEY="kest-admin-key"
+  DEPENDENCY_PROFILE_BUILD_NAME="office-safe-${DEPENDENCY_PROFILE_BUILD_PORT}-${RANDOM}"
   env \
     ZGI_SANDBOX_SERVER_PORT="${DEPENDENCY_PROFILE_BUILD_PORT}" \
     ZGI_SANDBOX_DATA_DIR="${DATA_DIR}/dependency-profile-build-data" \
@@ -283,6 +284,48 @@ PY
   write_kest_config "${DEPENDENCY_PROFILE_BUILD_BASE_URL}"
   run_kest .kest/sandbox-dependency-profile-build.flow.md \
     --var admin_api_key="${DEPENDENCY_PROFILE_BUILD_API_KEY}" \
+    --var dependency_profile_name="${DEPENDENCY_PROFILE_BUILD_NAME}" \
+    --fail-fast
+
+  if kill -0 "${DEPENDENCY_PROFILE_BUILD_SERVER_PID}" 2>/dev/null; then
+    kill "${DEPENDENCY_PROFILE_BUILD_SERVER_PID}" 2>/dev/null || true
+    wait "${DEPENDENCY_PROFILE_BUILD_SERVER_PID}" 2>/dev/null || true
+  fi
+
+  DEPENDENCY_PROFILE_CACHE_PORT="$(python3 - <<'PY'
+import socket
+
+with socket.socket() as s:
+    s.bind(("127.0.0.1", 0))
+    print(s.getsockname()[1])
+PY
+)"
+  DEPENDENCY_PROFILE_BUILD_BASE_URL="http://127.0.0.1:${DEPENDENCY_PROFILE_CACHE_PORT}"
+  DEPENDENCY_PROFILE_BUILD_SERVER_LOG="${DATA_DIR}/sandbox-dependency-profile-cache.log"
+  env \
+    ZGI_SANDBOX_SERVER_PORT="${DEPENDENCY_PROFILE_CACHE_PORT}" \
+    ZGI_SANDBOX_DATA_DIR="${DATA_DIR}/dependency-profile-build-data" \
+    ZGI_SANDBOX_WORKER_ID="zgi-sandbox-dependency-profile-cache-kest-${DEPENDENCY_PROFILE_CACHE_PORT}" \
+    ZGI_SANDBOX_API_KEY="${DEPENDENCY_PROFILE_BUILD_API_KEY}" \
+    go run cmd/server/main.go >"${DEPENDENCY_PROFILE_BUILD_SERVER_LOG}" 2>&1 &
+  DEPENDENCY_PROFILE_BUILD_SERVER_PID="$!"
+
+  for _ in {1..80}; do
+    if curl -fsS "${DEPENDENCY_PROFILE_BUILD_BASE_URL}/health" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.25
+  done
+  if ! curl -fsS "${DEPENDENCY_PROFILE_BUILD_BASE_URL}/health" >/dev/null 2>&1; then
+    cat "${DEPENDENCY_PROFILE_BUILD_SERVER_LOG}" >&2
+    echo "dependency profile cache sandbox did not become ready at ${DEPENDENCY_PROFILE_BUILD_BASE_URL}" >&2
+    exit 1
+  fi
+
+  write_kest_config "${DEPENDENCY_PROFILE_BUILD_BASE_URL}"
+  run_kest .kest/sandbox-dependency-profile-cache.flow.md \
+    --var admin_api_key="${DEPENDENCY_PROFILE_BUILD_API_KEY}" \
+    --var dependency_profile_name="${DEPENDENCY_PROFILE_BUILD_NAME}" \
     --fail-fast
   write_kest_config "${BASE_URL}"
 fi

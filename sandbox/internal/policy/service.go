@@ -454,6 +454,14 @@ func (s *Service) ValidateDependencyProfileBuildLimits(profile DependencyProfile
 }
 
 func (s *Service) BuildDependencyProfile(req DependencyProfileBuildRequest) (DependencyProfileBuildResult, error) {
+	result, profile, err := s.PrepareDependencyProfileBuild(req)
+	if err != nil {
+		return result, err
+	}
+	return s.RegisterDependencyProfile(profile, result)
+}
+
+func (s *Service) PrepareDependencyProfileBuild(req DependencyProfileBuildRequest) (DependencyProfileBuildResult, DependencyProfile, error) {
 	buildID := dependencyProfileBuildID(req.Name, req.Version)
 	result := DependencyProfileBuildResult{
 		BuildID:  buildID,
@@ -464,10 +472,13 @@ func (s *Service) BuildDependencyProfile(req DependencyProfileBuildRequest) (Dep
 	profile, err := s.normalizeDependencyProfileBuildRequest(req)
 	if err != nil {
 		result.Error = err.Error()
-		return result, err
+		return result, DependencyProfile{}, err
 	}
 	result.Profile = &profile
+	return result, profile, nil
+}
 
+func (s *Service) RegisterDependencyProfile(profile DependencyProfile, result DependencyProfileBuildResult) (DependencyProfileBuildResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, existing := range s.dependencyProfiles {
@@ -479,7 +490,53 @@ func (s *Service) BuildDependencyProfile(req DependencyProfileBuildRequest) (Dep
 	}
 	s.dependencyProfiles = append(s.dependencyProfiles, profile)
 	result.Status = profile.Status
+	result.Profile = &profile
 	return result, nil
+}
+
+func (s *Service) RemoveDependencyProfile(name string) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for index, profile := range s.dependencyProfiles {
+		if profile.Name == name {
+			s.dependencyProfiles = append(s.dependencyProfiles[:index], s.dependencyProfiles[index+1:]...)
+			return
+		}
+	}
+}
+
+func (s *Service) LoadDependencyProfiles(profiles []DependencyProfile) error {
+	normalized := make([]DependencyProfile, 0, len(profiles))
+	seen := map[string]bool{}
+	for _, profile := range profiles {
+		item, err := s.normalizeCachedDependencyProfile(profile)
+		if err != nil {
+			return err
+		}
+		if seen[item.Name] {
+			return fmt.Errorf("duplicate cached dependency profile: %s", item.Name)
+		}
+		seen[item.Name] = true
+		normalized = append(normalized, item)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	existing := map[string]bool{}
+	for _, profile := range s.dependencyProfiles {
+		existing[profile.Name] = true
+	}
+	for _, profile := range normalized {
+		if existing[profile.Name] {
+			continue
+		}
+		s.dependencyProfiles = append(s.dependencyProfiles, profile)
+	}
+	return nil
 }
 
 func (s *Service) normalizeDependencyProfileBuildRequest(req DependencyProfileBuildRequest) (DependencyProfile, error) {
@@ -528,6 +585,64 @@ func (s *Service) normalizeDependencyProfileBuildRequest(req DependencyProfileBu
 		return DependencyProfile{}, err
 	}
 	return profile, nil
+}
+
+func (s *Service) normalizeCachedDependencyProfile(profile DependencyProfile) (DependencyProfile, error) {
+	name := strings.ToLower(strings.TrimSpace(profile.Name))
+	if !validDependencyProfileName(name) {
+		return DependencyProfile{}, errors.New("cached dependency profile name must contain only lowercase letters, numbers, and hyphens")
+	}
+	version := strings.TrimSpace(profile.Version)
+	if version == "" || version == "latest" || strings.Contains(version, "*") {
+		return DependencyProfile{}, fmt.Errorf("cached dependency profile %s version must be pinned", name)
+	}
+	languages := normalizeDependencyProfileLanguages(profile.Languages)
+	if len(languages) == 0 {
+		return DependencyProfile{}, fmt.Errorf("cached dependency profile %s must include at least one supported language", name)
+	}
+	status := strings.TrimSpace(profile.Status)
+	if status != "ready" {
+		return DependencyProfile{}, fmt.Errorf("cached dependency profile %s is not ready", name)
+	}
+	if !profile.Enabled {
+		return DependencyProfile{}, fmt.Errorf("cached dependency profile %s is disabled", name)
+	}
+	ownerScope := strings.TrimSpace(profile.OwnerScope)
+	if ownerScope == "" {
+		ownerScope = "global"
+	}
+	baseRuntime := strings.TrimSpace(profile.BaseRuntime)
+	if baseRuntime == "" {
+		baseRuntime = s.normalizedRuntimeBackend()
+	}
+	checksum := strings.TrimSpace(profile.Checksum)
+	if checksum == "" {
+		return DependencyProfile{}, fmt.Errorf("cached dependency profile %s checksum is required", name)
+	}
+	if profile.SizeBytes <= 0 {
+		return DependencyProfile{}, fmt.Errorf("cached dependency profile %s size_bytes must be positive", name)
+	}
+
+	item := DependencyProfile{
+		Name:        name,
+		Version:     version,
+		Status:      status,
+		Enabled:     true,
+		OwnerScope:  ownerScope,
+		Languages:   languages,
+		Packages:    normalizeDependencyProfilePackages(profile.Packages, languages),
+		BaseRuntime: baseRuntime,
+		Checksum:    checksum,
+		SizeBytes:   profile.SizeBytes,
+		Description: strings.TrimSpace(profile.Description),
+	}
+	if err := s.ValidateDependencyProfilePackages(item); err != nil {
+		return DependencyProfile{}, err
+	}
+	if err := s.ValidateDependencyProfileBuildLimits(item); err != nil {
+		return DependencyProfile{}, err
+	}
+	return item, nil
 }
 
 func (s *Service) ValidateDependencyProfileForLanguage(value string, language string) (DependencyProfile, error) {

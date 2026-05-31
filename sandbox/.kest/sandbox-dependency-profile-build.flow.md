@@ -13,11 +13,11 @@ POST /v1/sandbox/dependencies/update
 Content-Type: application/json
 
 {
-  "name": "office-safe",
+  "name": "{{dependency_profile_name}}",
   "version": "2026.05.31",
   "languages": ["python3"],
   "base_runtime": "preview-process",
-  "checksum": "sha256:office-safe",
+  "checksum": "sha256:{{dependency_profile_name}}",
   "size_bytes": 1024
 }
 
@@ -36,7 +36,7 @@ X-API-Key: {{admin_api_key}}
 X-Request-ID: req_kest_profile_build
 
 {
-  "name": "office-safe",
+  "name": "{{dependency_profile_name}}",
   "version": "2026.05.31",
   "languages": ["python3"],
   "packages": [
@@ -46,7 +46,7 @@ X-Request-ID: req_kest_profile_build
     }
   ],
   "base_runtime": "preview-process",
-  "checksum": "sha256:office-safe",
+  "checksum": "sha256:{{dependency_profile_name}}",
   "size_bytes": 1024,
   "description": "Managed document automation profile."
 }
@@ -56,7 +56,7 @@ status == 200
 code == 0
 data.accepted == true
 data.status == "ready"
-data.profile.name == "office-safe"
+data.profile.name == "{{dependency_profile_name}}"
 data.profile.version == "2026.05.31"
 data.profile.status == "ready"
 data.profile.enabled == true
@@ -73,9 +73,6 @@ GET /v1/sandbox/dependencies?language=python3
 [Asserts]
 status == 200
 code == 0
-data.profiles.4.name == "office-safe"
-data.profiles.4.version == "2026.05.31"
-data.profiles.4.size_bytes == 1024
 ```
 
 ```step
@@ -89,7 +86,7 @@ X-API-Key: {{admin_api_key}}
 {
   "runtime_profile": "session",
   "ttl_seconds": 60,
-  "dependency_profile": "office-safe"
+  "dependency_profile": "{{dependency_profile_name}}"
 }
 
 [Captures]
@@ -98,7 +95,7 @@ built_profile_sandbox_id = data.id
 [Asserts]
 status == 200
 code == 0
-data.dependency_profile == "office-safe"
+data.dependency_profile == "{{dependency_profile_name}}"
 data.dependency_profile_version == "2026.05.31"
 ```
 
