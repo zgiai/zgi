@@ -57,6 +57,7 @@ Already available:
 - Optional sandbox workspace file count limit accounting
 - Optional sandbox workspace byte limit accounting
 - Optional organization-scoped active dependency profile limit accounting
+- Optional organization-scoped network request rate limit accounting
 - Sandbox ownership fields for organization, workspace, app, workflow run, and user context
 - Ownership context persisted with sandbox records and propagated to lifecycle, endpoint, expiration, execution, file, archive, and artifact manifest observer events
 - Artifact manifests include content type, reference encoding, SHA-256 hashes, timestamps, and enforce operator-configurable file count and total byte limits
@@ -487,7 +488,7 @@ Goal: bind sandbox usage to ZGI organizations, workspaces, apps, workflows, and 
 - Added optional max executions per minute per organization with `ZGI_SANDBOX_MAX_EXECUTIONS_PER_MINUTE_PER_ORGANIZATION`.
 - [x] Max artifact bytes per organization.
 - [x] Max workspace bytes per organization.
-- Max network requests per organization.
+- [x] Max network requests per organization.
 - [x] Max active dependency profiles per organization.
 
 ### I3. Audit

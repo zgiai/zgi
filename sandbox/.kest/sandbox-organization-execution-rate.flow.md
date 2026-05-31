@@ -25,6 +25,7 @@ rate_sandbox_id = data.id
 status == 200
 code == 0
 data.effective_limits.max_executions_per_minute_per_organization == 1
+data.effective_limits.max_network_requests_per_minute_per_organization == 1
 ```
 
 ```step

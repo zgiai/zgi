@@ -53,6 +53,7 @@ type ResourceLimits struct {
 	MaxActiveSandboxesPerOrganization          int    `json:"max_active_sandboxes_per_organization"`
 	MaxConcurrentExecutionsPerOrganization     int    `json:"max_concurrent_executions_per_organization"`
 	MaxExecutionsPerMinutePerOrganization      int    `json:"max_executions_per_minute_per_organization"`
+	MaxNetworkRequestsPerMinutePerOrganization int    `json:"max_network_requests_per_minute_per_organization"`
 	MaxQueuedExecutionsPerOrganization         int    `json:"max_queued_executions_per_organization"`
 	MaxWorkspaceFiles                          int    `json:"max_workspace_files"`
 	MaxWorkspaceBytes                          int64  `json:"max_workspace_bytes"`

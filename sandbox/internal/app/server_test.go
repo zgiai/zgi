@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -750,6 +751,104 @@ func TestExecuteEgressProxyRoutesApprovedRequestAndCapsResponse(t *testing.T) {
 	}
 	if _, ok := result.Headers["X-Upstream"]; ok {
 		t.Fatalf("unexpected non-allowlisted response header: %+v", result.Headers)
+	}
+}
+
+func TestEgressProxyEnforcesOrganizationNetworkRequestRate(t *testing.T) {
+	cfg := config.FromEnv()
+	cfg.MaxNetworkRequestsPerMinutePerOrganization = 1
+	recorder := observer.NewRecorder(100)
+	server := &Server{
+		config:   cfg,
+		observer: recorder,
+		policy:   policy.NewService(cfg),
+	}
+	box := &sandbox.Sandbox{
+		ID:             "sbx_network_rate",
+		OrganizationID: "organization-network-rate",
+	}
+	if err := server.enforceOrganizationNetworkRequestRate(box); err != nil {
+		t.Fatalf("expected first network request to pass, got %v", err)
+	}
+	recorder.Record("network.egress.proxy", box.ID, "network egress proxied", map[string]any{
+		"organization_id": box.OrganizationID,
+		"status":          "success",
+	})
+
+	err := server.enforceOrganizationNetworkRequestRate(box)
+	var limitErr *policy.LimitError
+	if !errors.As(err, &limitErr) {
+		t.Fatalf("expected network request rate limit error, got %T %v", err, err)
+	}
+	if limitErr.Code != "organization_network_request_rate_limit_exceeded" || limitErr.Limit != "max_network_requests_per_minute_per_organization" {
+		t.Fatalf("unexpected network request rate limit error: %+v", limitErr)
+	}
+	if limitErr.Details["organization_id"] != box.OrganizationID || limitErr.Details["recent_network_requests"] != 1 {
+		t.Fatalf("unexpected network request rate details: %+v", limitErr.Details)
+	}
+	if err := server.enforceOrganizationNetworkRequestRate(&sandbox.Sandbox{ID: "sbx_other", OrganizationID: "organization-other"}); err != nil {
+		t.Fatalf("expected other organization to have separate network request quota, got %v", err)
+	}
+}
+
+func TestEgressProxyEndpointRejectsOrganizationNetworkRequestRateLimit(t *testing.T) {
+	cfg := config.FromEnv()
+	cfg.DataDir = t.TempDir()
+	cfg.RuntimeBackend = "linux-secure"
+	cfg.MaxNetworkRequestsPerMinutePerOrganization = 1
+	cfg.ProxyTimeout = 1
+	recorder := observer.NewRecorder(100)
+	policyService := policy.NewService(cfg)
+	manager, err := lifecycle.NewManagerWithConfig(recorder, policyService, cfg, nil, nil)
+	if err != nil {
+		t.Fatalf("expected lifecycle manager, got %v", err)
+	}
+	server := &Server{
+		config:    cfg,
+		lifecycle: manager,
+		observer:  recorder,
+		policy:    policyService,
+		mux:       http.NewServeMux(),
+	}
+	server.registerRoutes()
+
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile:    string(sandbox.RuntimeSession),
+		OrganizationID:    "organization-network-rate-http",
+		NetworkEnabled:    true,
+		NetworkPolicy:     "workflow-safe",
+		DependencyProfile: "stdlib",
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+	recorder.Record("network.egress.proxy", box.ID, "network egress proxied", map[string]any{
+		"organization_id": box.OrganizationID,
+		"status":          "success",
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/network/egress/proxy", strings.NewReader(fmt.Sprintf(`{
+		"sandbox_id":%q,
+		"organization_id":%q,
+		"destination":"https://93.184.216.34/resource"
+	}`, box.ID, box.OrganizationID)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Request-ID", "req_network_rate_http")
+	res := httptest.NewRecorder()
+	server.Handler().ServeHTTP(res, req)
+
+	if res.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected egress proxy to return 429, got %d body=%s", res.Code, res.Body.String())
+	}
+	if !strings.Contains(res.Body.String(), `"code":"organization_network_request_rate_limit_exceeded"`) {
+		t.Fatalf("expected network request rate limit response, got %s", res.Body.String())
+	}
+	events := recorder.Query(observer.Query{SandboxID: box.ID, Type: "network.egress.proxy.failed", RequestID: "req_network_rate_http", Limit: 1})
+	if len(events) != 1 {
+		t.Fatalf("expected one egress proxy failure event, got %d", len(events))
+	}
+	if events[0].Metadata["code"] != "organization_network_request_rate_limit_exceeded" || events[0].Metadata["organization_id"] != box.OrganizationID {
+		t.Fatalf("expected structured network rate metadata, got %#v", events[0].Metadata)
 	}
 }
 

@@ -51,6 +51,16 @@ func TestFromEnvReadsOrganizationExecutionRateLimit(t *testing.T) {
 	}
 }
 
+func TestFromEnvReadsOrganizationNetworkRequestRateLimit(t *testing.T) {
+	t.Setenv("ZGI_SANDBOX_MAX_NETWORK_REQUESTS_PER_MINUTE_PER_ORGANIZATION", "5")
+
+	cfg := FromEnv()
+
+	if cfg.MaxNetworkRequestsPerMinutePerOrganization != 5 {
+		t.Fatalf("expected organization network request rate limit 5, got %d", cfg.MaxNetworkRequestsPerMinutePerOrganization)
+	}
+}
+
 func TestFromEnvReadsOrganizationConcurrentExecutionLimit(t *testing.T) {
 	t.Setenv("ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS_PER_ORGANIZATION", "3")
 
@@ -207,33 +217,34 @@ func TestFromEnvReadsEgressProxyBodyLimit(t *testing.T) {
 
 func TestPublicSnapshotOmitsSecrets(t *testing.T) {
 	cfg := Config{
-		Port:                                 "2660",
-		APIKey:                               "secret-api-key",
-		RedisPassword:                        "secret-redis-password",
-		DatabaseURL:                          "postgres://user:secret-db-password@127.0.0.1:5432/postgres",
-		RedisAddr:                            "127.0.0.1:6379",
-		RedisDB:                              2,
-		WorkerID:                             "worker-a",
-		RuntimeBackend:                       "preview",
-		SecureRootFS:                         "/srv/rootfs",
-		DependencyRootFSDir:                  "/srv/profiles",
-		BwrapBinary:                          "bwrap",
-		SecureRuntimeCPUSeconds:              3,
-		SecureRuntimeMemoryBytes:             134217728,
-		SecureRuntimeProcessLimit:            32,
-		SecureRuntimeOpenFileLimit:           64,
-		Environment:                          "local",
-		AdvertiseURL:                         "http://127.0.0.1:2660",
-		PublicBaseURL:                        "http://127.0.0.1:2660",
-		ObserverMaxEvents:                    100,
-		MaxConcurrentExecutions:              3,
-		MaxArtifactManifestFiles:             12,
-		MaxArtifactManifestBytes:             4096,
-		MaxArtifactBytesPerOrganization:      8192,
-		MaxDependencyProfilesPerOrganization: 2,
-		MaxDependencyProfileSizeBytes:        1048576,
-		DependencyProfileBuildTimeoutSeconds: 120,
-		EgressProxyMaxBodyBytes:              2048,
+		Port:                       "2660",
+		APIKey:                     "secret-api-key",
+		RedisPassword:              "secret-redis-password",
+		DatabaseURL:                "postgres://user:secret-db-password@127.0.0.1:5432/postgres",
+		RedisAddr:                  "127.0.0.1:6379",
+		RedisDB:                    2,
+		WorkerID:                   "worker-a",
+		RuntimeBackend:             "preview",
+		SecureRootFS:               "/srv/rootfs",
+		DependencyRootFSDir:        "/srv/profiles",
+		BwrapBinary:                "bwrap",
+		SecureRuntimeCPUSeconds:    3,
+		SecureRuntimeMemoryBytes:   134217728,
+		SecureRuntimeProcessLimit:  32,
+		SecureRuntimeOpenFileLimit: 64,
+		Environment:                "local",
+		AdvertiseURL:               "http://127.0.0.1:2660",
+		PublicBaseURL:              "http://127.0.0.1:2660",
+		ObserverMaxEvents:          100,
+		MaxConcurrentExecutions:    3,
+		MaxNetworkRequestsPerMinutePerOrganization: 4,
+		MaxArtifactManifestFiles:                   12,
+		MaxArtifactManifestBytes:                   4096,
+		MaxArtifactBytesPerOrganization:            8192,
+		MaxDependencyProfilesPerOrganization:       2,
+		MaxDependencyProfileSizeBytes:              1048576,
+		DependencyProfileBuildTimeoutSeconds:       120,
+		EgressProxyMaxBodyBytes:                    2048,
 	}
 
 	snapshot := cfg.PublicSnapshot()
@@ -261,6 +272,9 @@ func TestPublicSnapshotOmitsSecrets(t *testing.T) {
 	}
 	if snapshot["max_concurrent_executions"] != 3 {
 		t.Fatalf("expected service concurrent execution limit, got %#v", snapshot["max_concurrent_executions"])
+	}
+	if snapshot["max_network_requests_per_minute_per_organization"] != 4 {
+		t.Fatalf("expected organization network request rate limit, got %#v", snapshot["max_network_requests_per_minute_per_organization"])
 	}
 	if snapshot["max_artifact_manifest_files"] != 12 {
 		t.Fatalf("expected artifact manifest file limit, got %#v", snapshot["max_artifact_manifest_files"])
@@ -514,43 +528,44 @@ func validStartupConfig() Config {
 		MaxActivePerOrganization:               0,
 		MaxConcurrentExecutionsPerOrganization: 0,
 		MaxExecutionsPerMinutePerOrganization:  0,
-		MaxQueuedExecutionsPerOrganization:     0,
-		MaxWorkspaceFiles:                      0,
-		MaxWorkspaceBytes:                      0,
-		MaxWorkspaceBytesPerOrganization:       0,
-		MaxArtifactManifestFiles:               0,
-		MaxArtifactManifestBytes:               0,
-		MaxArtifactBytesPerOrganization:        0,
-		MaxDependencyProfilesPerOrganization:   0,
-		MaxDependencyProfileSizeBytes:          512 * 1024 * 1024,
-		DependencyProfileBuildTimeoutSeconds:   600,
-		QueueTimeoutMS:                         5000,
-		ShutdownTimeoutSeconds:                 10,
-		SessionTTL:                             1800,
-		InteractiveTTL:                         3600,
-		CommandTimeout:                         30,
-		MaxFileSizeKB:                          256,
-		ObserverRetentionDays:                  7,
-		ObserverMaxEvents:                      10000,
-		DatabaseURL:                            "postgres://postgres@127.0.0.1:5432/postgres?sslmode=disable",
-		DataDir:                                ".zgi-sandbox-data",
-		CacheTTL:                               30,
-		RedisAddr:                              "",
-		RedisPassword:                          "",
-		RedisDB:                                0,
-		WorkerID:                               "worker-a",
-		AdvertiseURL:                           "http://127.0.0.1:2660",
-		PublicBaseURL:                          "http://127.0.0.1:2660",
-		Environment:                            "local",
-		RuntimeBackend:                         "preview",
-		SecureRootFS:                           "",
-		DependencyRootFSDir:                    "",
-		BwrapBinary:                            "bwrap",
-		SecureRuntimeCPUSeconds:                2,
-		SecureRuntimeMemoryBytes:               256 * 1024 * 1024,
-		SecureRuntimeProcessLimit:              64,
-		SecureRuntimeOpenFileLimit:             128,
-		ProxyTimeout:                           20,
-		EgressProxyMaxBodyBytes:                1024 * 1024,
+		MaxNetworkRequestsPerMinutePerOrganization: 0,
+		MaxQueuedExecutionsPerOrganization:         0,
+		MaxWorkspaceFiles:                          0,
+		MaxWorkspaceBytes:                          0,
+		MaxWorkspaceBytesPerOrganization:           0,
+		MaxArtifactManifestFiles:                   0,
+		MaxArtifactManifestBytes:                   0,
+		MaxArtifactBytesPerOrganization:            0,
+		MaxDependencyProfilesPerOrganization:       0,
+		MaxDependencyProfileSizeBytes:              512 * 1024 * 1024,
+		DependencyProfileBuildTimeoutSeconds:       600,
+		QueueTimeoutMS:                             5000,
+		ShutdownTimeoutSeconds:                     10,
+		SessionTTL:                                 1800,
+		InteractiveTTL:                             3600,
+		CommandTimeout:                             30,
+		MaxFileSizeKB:                              256,
+		ObserverRetentionDays:                      7,
+		ObserverMaxEvents:                          10000,
+		DatabaseURL:                                "postgres://postgres@127.0.0.1:5432/postgres?sslmode=disable",
+		DataDir:                                    ".zgi-sandbox-data",
+		CacheTTL:                                   30,
+		RedisAddr:                                  "",
+		RedisPassword:                              "",
+		RedisDB:                                    0,
+		WorkerID:                                   "worker-a",
+		AdvertiseURL:                               "http://127.0.0.1:2660",
+		PublicBaseURL:                              "http://127.0.0.1:2660",
+		Environment:                                "local",
+		RuntimeBackend:                             "preview",
+		SecureRootFS:                               "",
+		DependencyRootFSDir:                        "",
+		BwrapBinary:                                "bwrap",
+		SecureRuntimeCPUSeconds:                    2,
+		SecureRuntimeMemoryBytes:                   256 * 1024 * 1024,
+		SecureRuntimeProcessLimit:                  64,
+		SecureRuntimeOpenFileLimit:                 128,
+		ProxyTimeout:                               20,
+		EgressProxyMaxBodyBytes:                    1024 * 1024,
 	}
 }
