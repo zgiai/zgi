@@ -17,6 +17,7 @@ type Config struct {
 	MaxActivePerOrganization               int
 	MaxConcurrentExecutionsPerOrganization int
 	MaxExecutionsPerMinutePerOrganization  int
+	MaxQueuedExecutionsPerOrganization     int
 	MaxWorkspaceFiles                      int
 	MaxWorkspaceBytes                      int64
 	QueueTimeoutMS                         int
@@ -58,6 +59,7 @@ func FromEnv() Config {
 		MaxActivePerOrganization:               getEnvIntAllowZero("ZGI_SANDBOX_MAX_ACTIVE_PER_ORGANIZATION", 0),
 		MaxConcurrentExecutionsPerOrganization: getEnvIntAllowZero("ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS_PER_ORGANIZATION", 0),
 		MaxExecutionsPerMinutePerOrganization:  getEnvIntAllowZero("ZGI_SANDBOX_MAX_EXECUTIONS_PER_MINUTE_PER_ORGANIZATION", 0),
+		MaxQueuedExecutionsPerOrganization:     getEnvIntAllowZero("ZGI_SANDBOX_MAX_QUEUED_EXECUTIONS_PER_ORGANIZATION", 0),
 		MaxWorkspaceFiles:                      getEnvIntAllowZero("ZGI_SANDBOX_MAX_WORKSPACE_FILES", 0),
 		MaxWorkspaceBytes:                      getEnvInt64AllowZero("ZGI_SANDBOX_MAX_WORKSPACE_BYTES", 0),
 		QueueTimeoutMS:                         getEnvInt("ZGI_SANDBOX_QUEUE_TIMEOUT_MS", 5000),
@@ -126,6 +128,7 @@ func (c Config) PublicSnapshot() map[string]any {
 		"max_active_per_organization": c.MaxActivePerOrganization,
 		"max_concurrent_executions_per_organization": c.MaxConcurrentExecutionsPerOrganization,
 		"max_executions_per_minute_per_organization": c.MaxExecutionsPerMinutePerOrganization,
+		"max_queued_executions_per_organization":     c.MaxQueuedExecutionsPerOrganization,
 		"max_workspace_files":                        c.MaxWorkspaceFiles,
 		"max_workspace_bytes":                        c.MaxWorkspaceBytes,
 		"queue_timeout_ms":                           c.QueueTimeoutMS,

@@ -424,6 +424,7 @@ PY
     ZGI_SANDBOX_DATA_DIR="${DATA_DIR}/concurrent-execution-data" \
     ZGI_SANDBOX_WORKER_ID="zgi-sandbox-concurrent-kest-${CONCURRENT_PORT}" \
     ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS_PER_ORGANIZATION="1" \
+    ZGI_SANDBOX_MAX_QUEUED_EXECUTIONS_PER_ORGANIZATION="1" \
     go run cmd/server/main.go >"${CONCURRENT_SERVER_LOG}" 2>&1 &
   CONCURRENT_SERVER_PID="$!"
 
@@ -460,6 +461,9 @@ profiles:
 EOF
   run_kest .kest/sandbox-organization-concurrent-execution-limit.flow.md \
     --var concurrent_organization_id="organization_concurrent_kest_${CONCURRENT_PORT}" \
+    --fail-fast
+  run_kest .kest/sandbox-organization-queued-execution-limit.flow.md \
+    --var queued_organization_id="organization_queued_kest_${CONCURRENT_PORT}" \
     --fail-fast
 else
   echo "Skipping resource limit saturation flow against external sandbox: ${BASE_URL}"

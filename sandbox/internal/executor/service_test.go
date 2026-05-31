@@ -348,6 +348,137 @@ func TestOrganizationConcurrentExecutionLimit(t *testing.T) {
 	}
 }
 
+func TestOrganizationQueuedExecutionLimit(t *testing.T) {
+	recorder := observer.NewRecorder(100)
+	cfg := config.FromEnv()
+	cfg.DataDir = t.TempDir()
+	cfg.MaxConcurrentExecutionsPerOrganization = 1
+	cfg.MaxQueuedExecutionsPerOrganization = 1
+	cfg.QueueTimeoutMS = 1000
+	policyService := policy.NewService(cfg)
+	manager, err := lifecycle.NewManagerWithConfig(recorder, policyService, cfg, nil, nil)
+	if err != nil {
+		t.Fatalf("expected lifecycle manager, got %v", err)
+	}
+	service := NewService(manager, runner.NewService(2, 3*time.Second, 4096), recorder, policyService)
+
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+		OrganizationID: "organization-queued",
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := service.RunCommand(context.Background(), CommandRequest{
+			SandboxID: box.ID,
+			Command:   "python3",
+			Args:      []string{"-c", "import time; time.sleep(0.3)"},
+			TimeoutMS: 1000,
+		})
+		firstDone <- err
+	}()
+	waitForOrganizationExecutions(t, service, "organization-queued", 1)
+
+	queuedDone := make(chan error, 1)
+	go func() {
+		_, err := service.RunCommand(context.Background(), CommandRequest{
+			SandboxID: box.ID,
+			Command:   "python3",
+			Args:      []string{"-c", "print('queued')"},
+			TimeoutMS: 1000,
+		})
+		queuedDone <- err
+	}()
+	waitForQueuedOrganizationExecutions(t, service, "organization-queued", 1)
+
+	_, err = service.RunCommand(context.Background(), CommandRequest{
+		SandboxID: box.ID,
+		Command:   "pwd",
+	})
+	var limitErr *policy.LimitError
+	if !errors.As(err, &limitErr) || limitErr.Code != "organization_queued_execution_limit_exceeded" || limitErr.Limit != "max_queued_executions_per_organization" {
+		t.Fatalf("expected organization queued execution limit error, got %v", err)
+	}
+	if limitErr.Details["organization_id"] != "organization-queued" {
+		t.Fatalf("expected organization id in details, got %+v", limitErr.Details)
+	}
+
+	if err := <-firstDone; err != nil {
+		t.Fatalf("expected first command to complete, got %v", err)
+	}
+	if err := <-queuedDone; err != nil {
+		t.Fatalf("expected queued command to complete, got %v", err)
+	}
+	waitForOrganizationExecutions(t, service, "organization-queued", 0)
+	waitForQueuedOrganizationExecutions(t, service, "organization-queued", 0)
+
+	events := recorder.Query(observer.Query{SandboxID: box.ID, Type: "exec.command.failed", Limit: 1})
+	if len(events) != 1 {
+		t.Fatalf("expected queued limit failure event, got %d", len(events))
+	}
+	if events[0].Metadata["code"] != "organization_queued_execution_limit_exceeded" {
+		t.Fatalf("expected structured queued limit metadata, got %#v", events[0].Metadata)
+	}
+	if events[0].Metadata["organization_id"] != "organization-queued" {
+		t.Fatalf("expected organization metadata, got %#v", events[0].Metadata)
+	}
+}
+
+func TestOrganizationQueuedExecutionTimeout(t *testing.T) {
+	recorder := observer.NewRecorder(100)
+	cfg := config.FromEnv()
+	cfg.DataDir = t.TempDir()
+	cfg.MaxConcurrentExecutionsPerOrganization = 1
+	cfg.MaxQueuedExecutionsPerOrganization = 1
+	cfg.QueueTimeoutMS = 50
+	policyService := policy.NewService(cfg)
+	manager, err := lifecycle.NewManagerWithConfig(recorder, policyService, cfg, nil, nil)
+	if err != nil {
+		t.Fatalf("expected lifecycle manager, got %v", err)
+	}
+	service := NewService(manager, runner.NewService(2, 3*time.Second, 4096), recorder, policyService)
+
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+		OrganizationID: "organization-queue-timeout",
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := service.RunCommand(context.Background(), CommandRequest{
+			SandboxID: box.ID,
+			Command:   "python3",
+			Args:      []string{"-c", "import time; time.sleep(0.3)"},
+			TimeoutMS: 1000,
+		})
+		firstDone <- err
+	}()
+	waitForOrganizationExecutions(t, service, "organization-queue-timeout", 1)
+
+	_, err = service.RunCommand(context.Background(), CommandRequest{
+		SandboxID: box.ID,
+		Command:   "pwd",
+	})
+	var limitErr *policy.LimitError
+	if !errors.As(err, &limitErr) || limitErr.Code != "organization_execution_queue_timeout" || limitErr.Limit != "queue_timeout_ms" {
+		t.Fatalf("expected organization queue timeout error, got %v", err)
+	}
+	if limitErr.Maximum != cfg.QueueTimeoutMS {
+		t.Fatalf("expected queue timeout maximum %d, got %+v", cfg.QueueTimeoutMS, limitErr)
+	}
+
+	if err := <-firstDone; err != nil {
+		t.Fatalf("expected first command to complete, got %v", err)
+	}
+	waitForQueuedOrganizationExecutions(t, service, "organization-queue-timeout", 0)
+}
+
 func TestWorkspaceByteLimit(t *testing.T) {
 	recorder := observer.NewRecorder(100)
 	cfg := config.FromEnv()
@@ -1519,6 +1650,22 @@ func waitForOrganizationExecutions(t *testing.T, service *Service, organizationI
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("expected %d active executions for organization %q", expected, organizationID)
+}
+
+func waitForQueuedOrganizationExecutions(t *testing.T, service *Service, organizationID string, expected int) {
+	t.Helper()
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		service.executionMu.Lock()
+		queued := service.queuedExecutionsByOrganization[organizationID]
+		service.executionMu.Unlock()
+		if queued == expected {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("expected %d queued executions for organization %q", expected, organizationID)
 }
 
 func zipBase64(t *testing.T, files map[string]string) string {

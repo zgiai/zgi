@@ -37,7 +37,9 @@ type Service struct {
 	policy    *policy.Service
 
 	executionMu                    sync.Mutex
+	executionChanged               chan struct{}
 	activeExecutionsByOrganization map[string]int
+	queuedExecutionsByOrganization map[string]int
 }
 
 type CodeRequest struct {
@@ -183,7 +185,9 @@ func NewService(manager *lifecycle.Manager, runnerService *runner.Service, recor
 		runner:                         runnerService,
 		observer:                       recorder,
 		policy:                         policyService,
+		executionChanged:               make(chan struct{}),
 		activeExecutionsByOrganization: make(map[string]int),
+		queuedExecutionsByOrganization: make(map[string]int),
 	}
 }
 
@@ -271,7 +275,7 @@ func (s *Service) runCodeWithScope(ctx context.Context, req CodeRequest, runReq 
 	if err := s.enforceOrganizationExecutionRate(box); err != nil {
 		return runner.Result{}, box, err
 	}
-	releaseExecution, err := s.acquireOrganizationExecution(box)
+	releaseExecution, err := s.acquireOrganizationExecution(ctx, box)
 	if err != nil {
 		return runner.Result{}, box, err
 	}
@@ -414,7 +418,7 @@ func (s *Service) RunCommand(ctx context.Context, req CommandRequest) (runner.Co
 		s.recordExecutionFailure(ctx, "exec.command.failed", req.SandboxID, "sandbox command execution failed", baseMetadata, err)
 		return runner.CommandResult{}, err
 	}
-	releaseExecution, err := s.acquireOrganizationExecution(box)
+	releaseExecution, err := s.acquireOrganizationExecution(ctx, box)
 	if err != nil {
 		s.recordExecutionFailure(ctx, "exec.command.failed", req.SandboxID, "sandbox command execution failed", baseMetadata, err)
 		return runner.CommandResult{}, err
@@ -515,7 +519,7 @@ func (s *Service) RunSkill(ctx context.Context, req SkillRunRequest) (SkillRunRe
 		s.recordExecutionFailure(ctx, "exec.skill.failed", req.SandboxID, "skill execution failed", baseMetadata, err)
 		return SkillRunResult{}, err
 	}
-	releaseExecution, err := s.acquireOrganizationExecution(box)
+	releaseExecution, err := s.acquireOrganizationExecution(ctx, box)
 	if err != nil {
 		s.recordExecutionFailure(ctx, "exec.skill.failed", req.SandboxID, "skill execution failed", baseMetadata, err)
 		return SkillRunResult{}, err
@@ -613,30 +617,103 @@ func (s *Service) enforceOrganizationExecutionRate(box *sandbox.Sandbox) error {
 	}
 }
 
-func (s *Service) acquireOrganizationExecution(box *sandbox.Sandbox) (func(), error) {
+func (s *Service) acquireOrganizationExecution(ctx context.Context, box *sandbox.Sandbox) (func(), error) {
 	limit := s.policy.MaxConcurrentExecutionsPerOrganization()
 	if limit <= 0 || box == nil || strings.TrimSpace(box.OrganizationID) == "" {
 		return func() {}, nil
 	}
 
-	s.executionMu.Lock()
-	defer s.executionMu.Unlock()
+	organizationID := box.OrganizationID
+	queueLimit := s.policy.MaxQueuedExecutionsPerOrganization()
+	queueTimeout := time.Duration(s.policy.QueueTimeoutMS()) * time.Millisecond
+	if queueTimeout <= 0 {
+		queueTimeout = 5 * time.Second
+	}
+	timer := time.NewTimer(queueTimeout)
+	defer timer.Stop()
 
-	active := s.activeExecutionsByOrganization[box.OrganizationID]
-	if active >= limit {
-		return nil, &policy.LimitError{
-			Code:    "organization_concurrent_execution_limit_exceeded",
-			Limit:   "max_concurrent_executions_per_organization",
-			Maximum: limit,
-			Actual:  active + 1,
-			Details: map[string]any{
-				"organization_id":   box.OrganizationID,
-				"active_executions": active,
-			},
+	queued := false
+	defer func() {
+		if queued {
+			s.executionMu.Lock()
+			s.releaseQueuedOrganizationExecutionLocked(organizationID)
+			s.notifyExecutionChangedLocked()
+			s.executionMu.Unlock()
+		}
+	}()
+
+	for {
+		s.executionMu.Lock()
+		active := s.activeExecutionsByOrganization[organizationID]
+		currentQueued := s.queuedExecutionsByOrganization[organizationID]
+		if active < limit && (queued || currentQueued == 0) {
+			s.activeExecutionsByOrganization[organizationID] = active + 1
+			if queued {
+				s.releaseQueuedOrganizationExecutionLocked(organizationID)
+				queued = false
+				s.notifyExecutionChangedLocked()
+			}
+			s.executionMu.Unlock()
+			return s.releaseOrganizationExecution(organizationID), nil
+		}
+
+		if queueLimit <= 0 {
+			s.executionMu.Unlock()
+			return nil, &policy.LimitError{
+				Code:    "organization_concurrent_execution_limit_exceeded",
+				Limit:   "max_concurrent_executions_per_organization",
+				Maximum: limit,
+				Actual:  active + 1,
+				Details: map[string]any{
+					"organization_id":   organizationID,
+					"active_executions": active,
+				},
+			}
+		}
+
+		if !queued {
+			if currentQueued >= queueLimit {
+				s.executionMu.Unlock()
+				return nil, &policy.LimitError{
+					Code:    "organization_queued_execution_limit_exceeded",
+					Limit:   "max_queued_executions_per_organization",
+					Maximum: queueLimit,
+					Actual:  currentQueued + 1,
+					Details: map[string]any{
+						"organization_id":   organizationID,
+						"queued_executions": currentQueued,
+					},
+				}
+			}
+			s.queuedExecutionsByOrganization[organizationID] = currentQueued + 1
+			queued = true
+		}
+
+		changed := s.executionChanged
+		queuedCount := s.queuedExecutionsByOrganization[organizationID]
+		s.executionMu.Unlock()
+
+		select {
+		case <-changed:
+			continue
+		case <-timer.C:
+			return nil, &policy.LimitError{
+				Code:    "organization_execution_queue_timeout",
+				Limit:   "queue_timeout_ms",
+				Maximum: s.policy.QueueTimeoutMS(),
+				Actual:  s.policy.QueueTimeoutMS(),
+				Details: map[string]any{
+					"organization_id":   organizationID,
+					"queued_executions": queuedCount,
+				},
+			}
+		case <-ctx.Done():
+			return nil, &runner.CancellationError{Phase: "queue"}
 		}
 	}
-	s.activeExecutionsByOrganization[box.OrganizationID] = active + 1
+}
 
+func (s *Service) releaseOrganizationExecution(organizationID string) func() {
 	released := false
 	return func() {
 		s.executionMu.Lock()
@@ -645,13 +722,29 @@ func (s *Service) acquireOrganizationExecution(box *sandbox.Sandbox) (func(), er
 			return
 		}
 		released = true
-		next := s.activeExecutionsByOrganization[box.OrganizationID] - 1
+		next := s.activeExecutionsByOrganization[organizationID] - 1
 		if next <= 0 {
-			delete(s.activeExecutionsByOrganization, box.OrganizationID)
+			delete(s.activeExecutionsByOrganization, organizationID)
+			s.notifyExecutionChangedLocked()
 			return
 		}
-		s.activeExecutionsByOrganization[box.OrganizationID] = next
-	}, nil
+		s.activeExecutionsByOrganization[organizationID] = next
+		s.notifyExecutionChangedLocked()
+	}
+}
+
+func (s *Service) releaseQueuedOrganizationExecutionLocked(organizationID string) {
+	next := s.queuedExecutionsByOrganization[organizationID] - 1
+	if next <= 0 {
+		delete(s.queuedExecutionsByOrganization, organizationID)
+		return
+	}
+	s.queuedExecutionsByOrganization[organizationID] = next
+}
+
+func (s *Service) notifyExecutionChangedLocked() {
+	close(s.executionChanged)
+	s.executionChanged = make(chan struct{})
 }
 
 func (s *Service) enforceWorkspaceByteLimit(box *sandbox.Sandbox) error {
