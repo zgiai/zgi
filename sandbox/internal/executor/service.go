@@ -45,20 +45,21 @@ type Service struct {
 }
 
 type CodeRequest struct {
-	SandboxID        string          `json:"sandbox_id"`
-	OrganizationID   string          `json:"organization_id,omitempty"`
-	Language         string          `json:"language"`
-	Code             string          `json:"code"`
-	Preload          string          `json:"preload"`
-	InputJSON        json.RawMessage `json:"input_json,omitempty"`
-	Profile          string          `json:"profile,omitempty"`
-	TimeoutSeconds   int             `json:"timeout_seconds,omitempty"`
-	TimeoutMS        int             `json:"timeout_ms,omitempty"`
-	StdoutLimitKB    int             `json:"stdout_limit_kb,omitempty"`
-	StderrLimitKB    int             `json:"stderr_limit_kb,omitempty"`
-	StrictResultJSON bool            `json:"strict_result_json,omitempty"`
-	BindWorkspace    bool            `json:"bind_workspace,omitempty"`
-	EnableNetwork    bool            `json:"enable_network"`
+	SandboxID            string          `json:"sandbox_id"`
+	OrganizationID       string          `json:"organization_id,omitempty"`
+	Language             string          `json:"language"`
+	Code                 string          `json:"code"`
+	Preload              string          `json:"preload"`
+	InputJSON            json.RawMessage `json:"input_json,omitempty"`
+	ExpectedOutputSchema json.RawMessage `json:"expected_output_schema,omitempty"`
+	Profile              string          `json:"profile,omitempty"`
+	TimeoutSeconds       int             `json:"timeout_seconds,omitempty"`
+	TimeoutMS            int             `json:"timeout_ms,omitempty"`
+	StdoutLimitKB        int             `json:"stdout_limit_kb,omitempty"`
+	StderrLimitKB        int             `json:"stderr_limit_kb,omitempty"`
+	StrictResultJSON     bool            `json:"strict_result_json,omitempty"`
+	BindWorkspace        bool            `json:"bind_workspace,omitempty"`
+	EnableNetwork        bool            `json:"enable_network"`
 }
 
 type CommandRequest struct {
@@ -223,6 +224,11 @@ func (s *Service) RunCode(ctx context.Context, req CodeRequest) (runner.Result, 
 		s.recordExecutionFailure(ctx, "exec.code.failed", req.SandboxID, "sandbox code execution failed", baseMetadata, err)
 		return runner.Result{}, err
 	}
+	outputSchema, err := parseExpectedOutputSchema(req.ExpectedOutputSchema)
+	if err != nil {
+		s.recordExecutionFailure(ctx, "exec.code.failed", req.SandboxID, "sandbox code execution failed", baseMetadata, err)
+		return runner.Result{}, err
+	}
 
 	runReq := runner.Request{
 		Language:      req.Language,
@@ -250,7 +256,7 @@ func (s *Service) RunCode(ctx context.Context, req CodeRequest) (runner.Result, 
 			return runner.Result{}, err
 		}
 	}
-	if err := attachResultJSON(&result, req.StrictResultJSON); err != nil {
+	if err := attachResultJSON(&result, req.StrictResultJSON, outputSchema); err != nil {
 		addOwnershipMetadata(baseMetadata, box)
 		s.recordExecutionFailure(ctx, "exec.code.failed", req.SandboxID, "sandbox code execution failed", baseMetadata, err)
 		return runner.Result{}, err
@@ -2015,26 +2021,178 @@ func skillCommandProfile(manifest SkillExecutionManifest) string {
 	}
 }
 
-func attachResultJSON(result *runner.Result, strict bool) error {
+func attachResultJSON(result *runner.Result, strict bool, schema *outputSchema) error {
 	if result == nil || result.ExitCode != 0 {
 		return nil
 	}
 	raw := strings.TrimSpace(result.Stdout)
 	if raw == "" {
-		if strict {
-			return errors.New("strict_result_json requires stdout to contain JSON")
+		if strict || schema != nil {
+			return errors.New("strict_result_json or expected_output_schema requires stdout to contain JSON")
 		}
 		return nil
 	}
 
 	var decoded any
 	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
-		if strict {
-			return fmt.Errorf("strict_result_json failed to parse stdout JSON: %w", err)
+		if strict || schema != nil {
+			return fmt.Errorf("strict_result_json or expected_output_schema failed to parse stdout JSON: %w", err)
 		}
 		return nil
 	}
+	if schema != nil {
+		if err := schema.validate(decoded, "$"); err != nil {
+			return fmt.Errorf("expected_output_schema validation failed: %w", err)
+		}
+	}
 	result.ResultJSON = decoded
+	return nil
+}
+
+type outputSchema struct {
+	Type                 string                  `json:"type"`
+	Required             []string                `json:"required"`
+	Properties           map[string]outputSchema `json:"properties"`
+	Items                *outputSchema           `json:"items"`
+	AdditionalProperties *bool                   `json:"additional_properties"`
+}
+
+func parseExpectedOutputSchema(raw json.RawMessage) (*outputSchema, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	if len(raw) > 16*1024 {
+		return nil, errors.New("expected_output_schema exceeds max size of 16384 bytes")
+	}
+	var schema outputSchema
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		return nil, fmt.Errorf("expected_output_schema must contain valid JSON: %w", err)
+	}
+	if err := schema.validateDefinition("$"); err != nil {
+		return nil, fmt.Errorf("invalid expected_output_schema: %w", err)
+	}
+	return &schema, nil
+}
+
+func (s outputSchema) validateDefinition(path string) error {
+	if s.Type == "" {
+		return fmt.Errorf("%s.type is required", path)
+	}
+	if !isSupportedOutputSchemaType(s.Type) {
+		return fmt.Errorf("%s.type is unsupported: %s", path, s.Type)
+	}
+	if len(s.Required) > 128 {
+		return fmt.Errorf("%s.required exceeds max field count of 128", path)
+	}
+	seenRequired := map[string]struct{}{}
+	for _, name := range s.Required {
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("%s.required contains an empty field", path)
+		}
+		if _, exists := seenRequired[name]; exists {
+			return fmt.Errorf("%s.required contains duplicate field: %s", path, name)
+		}
+		seenRequired[name] = struct{}{}
+	}
+	if len(s.Properties) > 128 {
+		return fmt.Errorf("%s.properties exceeds max field count of 128", path)
+	}
+	for name, child := range s.Properties {
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("%s.properties contains an empty field", path)
+		}
+		if err := child.validateDefinition(path + ".properties." + name); err != nil {
+			return err
+		}
+	}
+	if s.Items != nil {
+		if err := s.Items.validateDefinition(path + ".items"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func isSupportedOutputSchemaType(value string) bool {
+	switch value {
+	case "object", "array", "string", "number", "integer", "boolean", "null":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s outputSchema) validate(value any, path string) error {
+	if err := validateOutputSchemaType(value, s.Type, path); err != nil {
+		return err
+	}
+	switch s.Type {
+	case "object":
+		object, _ := value.(map[string]any)
+		for _, name := range s.Required {
+			if _, ok := object[name]; !ok {
+				return fmt.Errorf("%s.%s is required", path, name)
+			}
+		}
+		for name, child := range s.Properties {
+			if childValue, ok := object[name]; ok {
+				if err := child.validate(childValue, path+"."+name); err != nil {
+					return err
+				}
+			}
+		}
+		if s.AdditionalProperties != nil && !*s.AdditionalProperties {
+			for name := range object {
+				if _, ok := s.Properties[name]; !ok {
+					return fmt.Errorf("%s.%s is not allowed", path, name)
+				}
+			}
+		}
+	case "array":
+		if s.Items != nil {
+			items, _ := value.([]any)
+			for index, item := range items {
+				if err := s.Items.validate(item, fmt.Sprintf("%s[%d]", path, index)); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func validateOutputSchemaType(value any, expected string, path string) error {
+	switch expected {
+	case "object":
+		if _, ok := value.(map[string]any); !ok {
+			return fmt.Errorf("%s must be object", path)
+		}
+	case "array":
+		if _, ok := value.([]any); !ok {
+			return fmt.Errorf("%s must be array", path)
+		}
+	case "string":
+		if _, ok := value.(string); !ok {
+			return fmt.Errorf("%s must be string", path)
+		}
+	case "number":
+		if _, ok := value.(float64); !ok {
+			return fmt.Errorf("%s must be number", path)
+		}
+	case "integer":
+		number, ok := value.(float64)
+		if !ok || number != float64(int64(number)) {
+			return fmt.Errorf("%s must be integer", path)
+		}
+	case "boolean":
+		if _, ok := value.(bool); !ok {
+			return fmt.Errorf("%s must be boolean", path)
+		}
+	case "null":
+		if value != nil {
+			return fmt.Errorf("%s must be null", path)
+		}
+	}
 	return nil
 }
 

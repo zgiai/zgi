@@ -1930,6 +1930,86 @@ func TestRunCodeStrictResultJSONRejectsPlainText(t *testing.T) {
 	}
 }
 
+func TestRunCodeValidatesExpectedOutputSchema(t *testing.T) {
+	service, manager := newTestExecutorService(t)
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	schema := []byte(`{
+		"type": "object",
+		"required": ["echo", "ok"],
+		"additional_properties": false,
+		"properties": {
+			"echo": {"type": "string"},
+			"ok": {"type": "boolean"},
+			"count": {"type": "integer"}
+		}
+	}`)
+	result, err := service.RunCode(context.Background(), CodeRequest{
+		SandboxID:            box.ID,
+		Language:             "python3",
+		Code:                 "import json\nprint(json.dumps({'echo': 'hello', 'ok': True, 'count': 2}))",
+		Profile:              "code-short",
+		StrictResultJSON:     true,
+		ExpectedOutputSchema: schema,
+	})
+	if err != nil {
+		t.Fatalf("expected schema-valid code result, got %v", err)
+	}
+	data, ok := result.ResultJSON.(map[string]any)
+	if !ok || data["echo"] != "hello" || data["ok"] != true || data["count"] != float64(2) {
+		t.Fatalf("unexpected schema-valid result json: %#v", result.ResultJSON)
+	}
+
+	_, err = service.RunCode(context.Background(), CodeRequest{
+		SandboxID:            box.ID,
+		Language:             "python3",
+		Code:                 "import json\nprint(json.dumps({'echo': 'hello', 'extra': 'blocked'}))",
+		Profile:              "code-short",
+		StrictResultJSON:     true,
+		ExpectedOutputSchema: schema,
+	})
+	if err == nil || !strings.Contains(err.Error(), "expected_output_schema validation failed") {
+		t.Fatalf("expected schema validation failure, got %v", err)
+	}
+
+	_, err = service.RunCode(context.Background(), CodeRequest{
+		SandboxID:            box.ID,
+		Language:             "python3",
+		Code:                 "print('plain text')",
+		Profile:              "code-short",
+		ExpectedOutputSchema: schema,
+	})
+	if err == nil || !strings.Contains(err.Error(), "expected_output_schema") {
+		t.Fatalf("expected schema parse failure for plain stdout, got %v", err)
+	}
+}
+
+func TestRunCodeRejectsInvalidExpectedOutputSchema(t *testing.T) {
+	service, manager := newTestExecutorService(t)
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	_, err = service.RunCode(context.Background(), CodeRequest{
+		SandboxID:            box.ID,
+		Language:             "python3",
+		Code:                 "print('{}')",
+		Profile:              "code-short",
+		ExpectedOutputSchema: []byte(`{"type":"unsupported"}`),
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid expected_output_schema") {
+		t.Fatalf("expected invalid schema rejection, got %v", err)
+	}
+}
+
 func TestRunCodeRejectsOversizedInputJSON(t *testing.T) {
 	service, manager := newTestExecutorService(t)
 	box, err := manager.Create(lifecycle.CreateRequest{

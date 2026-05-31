@@ -233,6 +233,73 @@ code == -400
 ```
 
 ```step
+@id schema-valid-output
+@name Validate short-code output schema
+
+POST {{base_url}}/v1/exec/code
+Content-Type: application/json
+
+{
+  "sandbox_id": "{{sandbox_id}}",
+  "language": "python3",
+  "profile": "code-short",
+  "strict_result_json": true,
+  "expected_output_schema": {
+    "type": "object",
+    "required": ["echo", "ok"],
+    "additional_properties": false,
+    "properties": {
+      "echo": {"type": "string"},
+      "ok": {"type": "boolean"},
+      "count": {"type": "integer"}
+    }
+  },
+  "timeout_ms": 5000,
+  "code": "import json\nprint(json.dumps({'echo': 'schema ok', 'ok': True, 'count': 2}))",
+  "enable_network": false
+}
+
+[Asserts]
+status == 200
+code == 0
+data.exit_code == 0
+data.result_json.echo == "schema ok"
+data.result_json.ok == true
+data.result_json.count == 2
+```
+
+```step
+@id schema-reject-extra-output
+@name Reject short-code output outside schema
+
+POST {{base_url}}/v1/exec/code
+Content-Type: application/json
+
+{
+  "sandbox_id": "{{sandbox_id}}",
+  "language": "python3",
+  "profile": "code-short",
+  "strict_result_json": true,
+  "expected_output_schema": {
+    "type": "object",
+    "required": ["echo", "ok"],
+    "additional_properties": false,
+    "properties": {
+      "echo": {"type": "string"},
+      "ok": {"type": "boolean"}
+    }
+  },
+  "timeout_ms": 5000,
+  "code": "import json\nprint(json.dumps({'echo': 'schema no', 'ok': True, 'extra': 'blocked'}))",
+  "enable_network": false
+}
+
+[Asserts]
+status == 400
+code == -400
+```
+
+```step
 @id output-truncation
 @name Truncate short-code stdout at request limit
 
