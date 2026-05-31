@@ -31,6 +31,8 @@ const (
 	defaultSandboxCommandTimeoutPadding = 15 * time.Second
 	defaultSandboxArtifactTimeout       = 10 * time.Second
 	defaultSandboxCleanupTimeout        = 5 * time.Second
+	defaultSandboxIdempotentAttempts    = 3
+	defaultSandboxRetryBaseDelay        = 50 * time.Millisecond
 )
 
 type SandboxScriptRunnerConfig struct {
@@ -256,7 +258,7 @@ func (r *SandboxScriptRunner) deleteSandbox(ctx context.Context, sandboxID strin
 		return nil
 	}
 	path := withOrganizationQuery("/v1/sandboxes/"+url.PathEscape(sandboxID), execCtx)
-	return r.doJSON(ctx, http.MethodDelete, path, nil, nil, r.timeouts.Cleanup)
+	return r.doIdempotentJSON(ctx, http.MethodDelete, path, nil, nil, r.timeouts.Cleanup)
 }
 
 func (r *SandboxScriptRunner) collectArtifacts(ctx context.Context, sandboxID string, execCtx ExecutionContext, manifest skillScriptManifest) ([]skillScriptArtifact, error) {
@@ -264,7 +266,7 @@ func (r *SandboxScriptRunner) collectArtifacts(ctx context.Context, sandboxID st
 		Items []sandboxFileInfo `json:"items"`
 	}
 	path := withOrganizationQuery("/v1/files/tree?sandbox_id="+url.QueryEscape(sandboxID), execCtx)
-	if err := r.doJSON(ctx, http.MethodGet, path, nil, &tree, r.timeouts.Artifact); err != nil {
+	if err := r.doIdempotentJSON(ctx, http.MethodGet, path, nil, &tree, r.timeouts.Artifact); err != nil {
 		return nil, err
 	}
 
@@ -299,7 +301,7 @@ func (r *SandboxScriptRunner) downloadArtifact(ctx context.Context, sandboxID st
 	var content sandboxFileContent
 	endpoint := "/v1/files/download?sandbox_id=" + url.QueryEscape(sandboxID) + "&path=" + url.QueryEscape(path) + "&encoding=base64"
 	endpoint = withOrganizationQuery(endpoint, execCtx)
-	if err := r.doJSON(ctx, http.MethodGet, endpoint, nil, &content, r.timeouts.Artifact); err != nil {
+	if err := r.doIdempotentJSON(ctx, http.MethodGet, endpoint, nil, &content, r.timeouts.Artifact); err != nil {
 		return nil, err
 	}
 	return &content, nil
@@ -326,6 +328,24 @@ func withOrganizationQuery(path string, execCtx ExecutionContext) string {
 }
 
 func (r *SandboxScriptRunner) doJSON(ctx context.Context, method string, path string, payload interface{}, out interface{}, timeout time.Duration) error {
+	return r.doJSONOnce(ctx, method, path, payload, out, timeout)
+}
+
+func (r *SandboxScriptRunner) doIdempotentJSON(ctx context.Context, method string, path string, payload interface{}, out interface{}, timeout time.Duration) error {
+	var lastErr error
+	for attempt := 1; attempt <= defaultSandboxIdempotentAttempts; attempt++ {
+		lastErr = r.doJSONOnce(ctx, method, path, payload, out, timeout)
+		if lastErr == nil || !retryableSandboxError(ctx, lastErr) || attempt == defaultSandboxIdempotentAttempts {
+			return lastErr
+		}
+		if err := sleepSandboxRetry(ctx, attempt); err != nil {
+			return err
+		}
+	}
+	return lastErr
+}
+
+func (r *SandboxScriptRunner) doJSONOnce(ctx context.Context, method string, path string, payload interface{}, out interface{}, timeout time.Duration) error {
 	var body io.Reader
 	if payload != nil {
 		raw, err := json.Marshal(payload)
@@ -386,6 +406,41 @@ func (r *SandboxScriptRunner) doJSON(ctx context.Context, method string, path st
 		}
 	}
 	return nil
+}
+
+func retryableSandboxError(ctx context.Context, err error) bool {
+	if err == nil {
+		return false
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return false
+	}
+	var sandboxErr *SandboxRequestError
+	if errors.As(err, &sandboxErr) {
+		switch sandboxErr.StatusCode {
+		case http.StatusRequestTimeout, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+			return true
+		default:
+			return false
+		}
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	return false
+}
+
+func sleepSandboxRetry(ctx context.Context, attempt int) error {
+	delay := defaultSandboxRetryBaseDelay * time.Duration(1<<(attempt-1))
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func recordSkillScriptError(trace *SkillTrace, start time.Time, err error) {

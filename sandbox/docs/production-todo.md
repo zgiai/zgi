@@ -497,7 +497,7 @@ business logic to sandbox internals.
 ### J1. API Adapter
 
 - Keep sandbox calls behind a typed adapter in `zgi-api`.
-- Add retries only for safe idempotent operations.
+- [x] Add retries only for safe idempotent operations.
 - [x] Add clear timeout settings:
   - [x] connect timeout
   - [x] upload timeout
