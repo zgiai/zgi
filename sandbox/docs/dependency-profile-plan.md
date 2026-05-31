@@ -313,6 +313,10 @@ Validation:
 - command execution tests for `PATH`, `PYTHONNOUSERSITE`, and `NODE_PATH`;
 - Kest flow for profile selection.
 
+The HTTP Kest suite runs against the default preview backend. Secure rootfs
+artifact activation is covered by Go tests because it depends on host rootfs and
+Bubblewrap setup.
+
 ### PR 4: API Catalog Preflight
 
 Goal: make the API validate skill `dependency_profile` before sandbox creation.

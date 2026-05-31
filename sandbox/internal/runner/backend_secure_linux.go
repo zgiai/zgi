@@ -103,38 +103,34 @@ func (b *linuxSecureBackend) ExecuteCommand(parent context.Context, spec Command
 		return CommandResult{}, err
 	}
 	return CommandResult{
-		Stdout:     result.Stdout,
-		Error:      result.Error,
-		ExitCode:   result.ExitCode,
-		DurationMS: result.DurationMS,
-		Truncated:  result.Truncated,
-		Command:    spec.Command,
-		Args:       spec.Args,
+		Stdout:          result.Stdout,
+		Error:           result.Error,
+		ExitCode:        result.ExitCode,
+		DurationMS:      result.DurationMS,
+		Truncated:       result.Truncated,
+		Command:         spec.Command,
+		Args:            spec.Args,
+		ProfileChecksum: result.ProfileChecksum,
 	}, nil
 }
 
 func (b *linuxSecureBackend) exec(ctx context.Context, workDir string, dependencyProfile string, binary string, args []string, enableNetwork bool, stdoutLimit int, stderrLimit int, stdin string, env map[string]string) (Result, error) {
-	rootfs, err := rootFSSelector{
-		defaultRootFS:       b.rootfs,
-		dependencyRootFSDir: b.dependencyRootFSDir,
-	}.resolve(dependencyProfile)
-	if err != nil {
-		return Result{}, err
-	}
-	profileEnv, err := secureDependencyProfileEnv(dependencyProfile)
+	activation, err := resolveDependencyProfileActivation(b.rootfs, b.dependencyRootFSDir, dependencyProfile)
 	if err != nil {
 		return Result{}, err
 	}
 
 	bwrapArgs := buildSecureBwrapArgs(secureBwrapSpec{
-		RootFS:        rootfs,
-		WorkDir:       workDir,
-		Binary:        binary,
-		Args:          args,
-		EnableNetwork: enableNetwork,
-		Env:           env,
-		ProfileEnv:    profileEnv,
-		Limits:        b.limits,
+		RootFS:              activation.RootFS,
+		WorkDir:             workDir,
+		Binary:              binary,
+		Args:                args,
+		EnableNetwork:       enableNetwork,
+		Env:                 env,
+		ProfileEnv:          activation.ProfileEnv,
+		ProfileHostDir:      activation.ProfileHostDir,
+		ProfileContainerDir: activation.ProfileContainerDir,
+		Limits:              b.limits,
 	})
 
 	cmd := exec.CommandContext(ctx, b.bwrapBin, bwrapArgs...)
@@ -165,10 +161,11 @@ func (b *linuxSecureBackend) exec(ctx context.Context, workDir string, dependenc
 	}
 
 	return Result{
-		Stdout:     stdout.String(),
-		Error:      stderr.String(),
-		ExitCode:   exitCode,
-		DurationMS: duration,
-		Truncated:  stdout.Truncated() || stderr.Truncated(),
+		Stdout:          stdout.String(),
+		Error:           stderr.String(),
+		ExitCode:        exitCode,
+		DurationMS:      duration,
+		Truncated:       stdout.Truncated() || stderr.Truncated(),
+		ProfileChecksum: activation.ProfileChecksum,
 	}, nil
 }

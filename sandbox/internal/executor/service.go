@@ -309,6 +309,7 @@ func (s *Service) RunCode(ctx context.Context, req CodeRequest) (runner.Result, 
 		"workspace_bound": workspaceBound,
 	}
 	addExecutionSandboxMetadata(metadata, box)
+	addRunnerProfileMetadata(metadata, result.ProfileChecksum)
 	s.observer.Record("exec.code", req.SandboxID, "sandbox code executed", observer.MetadataWithContext(ctx, metadata))
 	return result, nil
 }
@@ -540,6 +541,7 @@ func (s *Service) RunCommand(ctx context.Context, req CommandRequest) (runner.Co
 		"status":          "success",
 	}
 	addExecutionSandboxMetadata(metadata, box)
+	addRunnerProfileMetadata(metadata, result.ProfileChecksum)
 	s.observer.Record("exec.command", req.SandboxID, "sandbox command executed", observer.MetadataWithContext(ctx, metadata))
 	return result, nil
 }
@@ -673,6 +675,7 @@ func (s *Service) RunSkill(ctx context.Context, req SkillRunRequest) (SkillRunRe
 		"status":          "success",
 	}
 	addExecutionSandboxMetadata(metadata, box)
+	addRunnerProfileMetadata(metadata, result.ProfileChecksum)
 	s.observer.Record("exec.skill", req.SandboxID, "skill executed", observer.MetadataWithContext(ctx, metadata))
 	return runResult, nil
 }
@@ -1307,6 +1310,12 @@ func addExecutionSandboxMetadata(metadata map[string]any, box *sandbox.Sandbox) 
 	}
 	if box.DependencyProfileVersion != "" {
 		metadata["dependency_profile_version"] = box.DependencyProfileVersion
+	}
+}
+
+func addRunnerProfileMetadata(metadata map[string]any, checksum string) {
+	if strings.TrimSpace(checksum) != "" {
+		metadata["dependency_profile_checksum"] = checksum
 	}
 }
 

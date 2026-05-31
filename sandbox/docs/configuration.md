@@ -25,7 +25,9 @@ named after each profile.
 When a sandbox selects a dependency profile, the secure Linux backend activates
 profile-local Python and Node paths under `/opt/zgi/profiles/<profile>`.
 Profile environment values are applied after request environment values so user
-code cannot override the managed profile path contract.
+code cannot override the managed profile path contract. When profile-specific
+rootfs directories are enabled, the backend also verifies the built profile
+manifest and read-only binds `/opt/zgi/profiles/<profile>` before execution.
 
 ## Variables
 
