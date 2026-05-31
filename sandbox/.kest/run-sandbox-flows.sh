@@ -39,6 +39,10 @@ cleanup() {
     kill "${WORKSPACE_SERVER_PID}" 2>/dev/null || true
     wait "${WORKSPACE_SERVER_PID}" 2>/dev/null || true
   fi
+  if [[ -n "${FILE_COUNT_SERVER_PID:-}" ]] && kill -0 "${FILE_COUNT_SERVER_PID}" 2>/dev/null; then
+    kill "${FILE_COUNT_SERVER_PID}" 2>/dev/null || true
+    wait "${FILE_COUNT_SERVER_PID}" 2>/dev/null || true
+  fi
   rm -rf "${DATA_DIR}" "${ARCHIVE_VARS}"
 }
 trap cleanup EXIT
@@ -346,6 +350,59 @@ profiles:
 EOF
   run_kest .kest/sandbox-workspace-byte-limit.flow.md \
     --var workspace_organization_id="organization_workspace_kest_${WORKSPACE_PORT}" \
+    --fail-fast
+
+  FILE_COUNT_PORT="$(python3 - <<'PY'
+import socket
+
+with socket.socket() as s:
+    s.bind(("127.0.0.1", 0))
+    print(s.getsockname()[1])
+PY
+)"
+  FILE_COUNT_BASE_URL="http://127.0.0.1:${FILE_COUNT_PORT}"
+  FILE_COUNT_SERVER_LOG="${DATA_DIR}/sandbox-file-count.log"
+  env \
+    ZGI_SANDBOX_SERVER_PORT="${FILE_COUNT_PORT}" \
+    ZGI_SANDBOX_DATA_DIR="${DATA_DIR}/file-count-data" \
+    ZGI_SANDBOX_WORKER_ID="zgi-sandbox-file-count-kest-${FILE_COUNT_PORT}" \
+    ZGI_SANDBOX_MAX_WORKSPACE_FILES="1" \
+    go run cmd/server/main.go >"${FILE_COUNT_SERVER_LOG}" 2>&1 &
+  FILE_COUNT_SERVER_PID="$!"
+
+  for _ in {1..80}; do
+    if curl -fsS "${FILE_COUNT_BASE_URL}/health" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.25
+  done
+  if ! curl -fsS "${FILE_COUNT_BASE_URL}/health" >/dev/null 2>&1; then
+    cat "${FILE_COUNT_SERVER_LOG}" >&2
+    echo "workspace-file-limit sandbox did not become ready at ${FILE_COUNT_BASE_URL}" >&2
+    exit 1
+  fi
+
+  cat >"${local_config}" <<EOF
+version: 1
+environments:
+  local:
+    base_url: ${FILE_COUNT_BASE_URL}
+active_env: local
+log_enabled: true
+EOF
+  cat >"${local_flow_config}" <<EOF
+version: 1
+profiles:
+  local:
+    include: [".kest/*.flow.md"]
+    env: local
+    base_url: "${FILE_COUNT_BASE_URL}"
+    strict: true
+    fail_fast: false
+    sync: false
+EOF
+  run_kest .kest/sandbox-workspace-file-limit.flow.md \
+    --var file_count_organization_id="organization_file_count_kest_${FILE_COUNT_PORT}" \
     --fail-fast
 else
   echo "Skipping resource limit saturation flow against external sandbox: ${BASE_URL}"

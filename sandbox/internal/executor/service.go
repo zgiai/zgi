@@ -220,6 +220,11 @@ func (s *Service) RunCode(ctx context.Context, req CodeRequest) (runner.Result, 
 		s.recordExecutionFailure(ctx, "exec.code.failed", req.SandboxID, "sandbox code execution failed", baseMetadata, err)
 		return runner.Result{}, err
 	}
+	if err := s.enforceWorkspaceFileLimit(box); err != nil {
+		addOwnershipMetadata(baseMetadata, box)
+		s.recordExecutionFailure(ctx, "exec.code.failed", req.SandboxID, "sandbox code execution failed", baseMetadata, err)
+		return runner.Result{}, err
+	}
 	if err := attachResultJSON(&result, req.StrictResultJSON); err != nil {
 		addOwnershipMetadata(baseMetadata, box)
 		s.recordExecutionFailure(ctx, "exec.code.failed", req.SandboxID, "sandbox code execution failed", baseMetadata, err)
@@ -419,6 +424,10 @@ func (s *Service) RunCommand(ctx context.Context, req CommandRequest) (runner.Co
 		s.recordExecutionFailure(ctx, "exec.command.failed", req.SandboxID, "sandbox command execution failed", baseMetadata, err)
 		return runner.CommandResult{}, err
 	}
+	if err := s.enforceWorkspaceFileLimit(box); err != nil {
+		s.recordExecutionFailure(ctx, "exec.command.failed", req.SandboxID, "sandbox command execution failed", baseMetadata, err)
+		return runner.CommandResult{}, err
+	}
 	result.ExecutionID = executionID
 
 	metadata := map[string]any{
@@ -505,6 +514,10 @@ func (s *Service) RunSkill(ctx context.Context, req SkillRunRequest) (SkillRunRe
 		return SkillRunResult{}, err
 	}
 	if err := s.enforceWorkspaceByteLimit(box); err != nil {
+		s.recordExecutionFailure(ctx, "exec.skill.failed", req.SandboxID, "skill execution failed", baseMetadata, err)
+		return SkillRunResult{}, err
+	}
+	if err := s.enforceWorkspaceFileLimit(box); err != nil {
 		s.recordExecutionFailure(ctx, "exec.skill.failed", req.SandboxID, "skill execution failed", baseMetadata, err)
 		return SkillRunResult{}, err
 	}
@@ -616,6 +629,51 @@ func (s *Service) enforceWorkspaceByteLimitForSize(box *sandbox.Sandbox, actualS
 		Actual:  limitMaximumInt(actualSize),
 		Details: map[string]any{
 			"workspace_bytes": actualSize,
+		},
+	}
+}
+
+func (s *Service) enforceWorkspaceFileLimit(box *sandbox.Sandbox) error {
+	if box == nil {
+		return nil
+	}
+	count, err := workspaceFileCount(box.RootPath)
+	if err != nil {
+		return err
+	}
+	return s.enforceWorkspaceFileLimitForCount(box, count)
+}
+
+func (s *Service) enforceWorkspaceFileLimitForWrite(box *sandbox.Sandbox, target string) error {
+	if box == nil || s.policy.MaxWorkspaceFiles() <= 0 {
+		return nil
+	}
+	currentCount, err := workspaceFileCount(box.RootPath)
+	if err != nil {
+		return err
+	}
+	exists, err := regularFileExists(target)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		currentCount++
+	}
+	return s.enforceWorkspaceFileLimitForCount(box, currentCount)
+}
+
+func (s *Service) enforceWorkspaceFileLimitForCount(box *sandbox.Sandbox, actualCount int) error {
+	limit := s.policy.MaxWorkspaceFiles()
+	if limit <= 0 || box == nil || actualCount <= limit {
+		return nil
+	}
+	return &policy.LimitError{
+		Code:    "workspace_file_count_limit_exceeded",
+		Limit:   "max_workspace_files",
+		Maximum: limit,
+		Actual:  actualCount,
+		Details: map[string]any{
+			"workspace_files": actualCount,
 		},
 	}
 }
@@ -879,6 +937,9 @@ func (s *Service) UploadFile(req FileWriteRequest) (*FileInfo, error) {
 	if err := s.enforceWorkspaceByteLimitForWrite(box, target, int64(len(content))); err != nil {
 		return nil, err
 	}
+	if err := s.enforceWorkspaceFileLimitForWrite(box, target); err != nil {
+		return nil, err
+	}
 	if err := os.WriteFile(target, content, 0o644); err != nil {
 		return nil, err
 	}
@@ -941,34 +1002,24 @@ func (s *Service) UploadArchive(req ArchiveUploadRequest) (*ArchiveUploadResult,
 		maxFileSize:  s.policy.MaxFileSizeBytes(),
 		maxTotalSize: s.policy.MaxFileSizeBytes() * 256,
 	}
+	totalSize, err := validateArchiveEntriesWithinLimits(entries, limit)
+	if err != nil {
+		return nil, err
+	}
 	if projectedSize, err := projectedWorkspaceSizeForArchive(box.RootPath, req.Path, entries); err != nil {
 		return nil, err
 	} else if err := s.enforceWorkspaceByteLimitForSize(box, projectedSize); err != nil {
 		return nil, err
 	}
+	if projectedCount, err := projectedWorkspaceFileCountForArchive(box.RootPath, req.Path, entries); err != nil {
+		return nil, err
+	} else if err := s.enforceWorkspaceFileLimitForCount(box, projectedCount); err != nil {
+		return nil, err
+	}
 
 	written := make([]fileSnapshot, 0, len(entries))
 	files := make([]FileInfo, 0, len(entries))
-	var totalSize int64
 	for _, entry := range entries {
-		if len(files) >= limit.maxFiles {
-			rollbackWrittenFiles(written)
-			return nil, fmt.Errorf("archive exceeds max file count of %d", limit.maxFiles)
-		}
-		if entry.file.FileInfo().Mode()&os.ModeSymlink != 0 {
-			rollbackWrittenFiles(written)
-			return nil, fmt.Errorf("archive contains symlink: %s", entry.name)
-		}
-		if entry.file.UncompressedSize64 > uint64(limit.maxFileSize) {
-			rollbackWrittenFiles(written)
-			return nil, fmt.Errorf("file %s exceeds max size of %d bytes", entry.name, limit.maxFileSize)
-		}
-		totalSize += int64(entry.file.UncompressedSize64)
-		if totalSize > limit.maxTotalSize {
-			rollbackWrittenFiles(written)
-			return nil, fmt.Errorf("archive exceeds max total size of %d bytes", limit.maxTotalSize)
-		}
-
 		relativePath := filepath.ToSlash(filepath.Join(req.Path, entry.name))
 		target, err := resolveWritableSandboxPath(box.RootPath, relativePath)
 		if err != nil {
@@ -1252,6 +1303,28 @@ func workspaceByteSize(root string) (int64, error) {
 	return total, err
 }
 
+func workspaceFileCount(root string) (int, error) {
+	count := 0
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == root || d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("workspace contains symlink: %s", path)
+		}
+		count++
+		return nil
+	})
+	return count, err
+}
+
 func existingRegularFileSize(path string) (int64, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -1267,6 +1340,23 @@ func existingRegularFileSize(path string) (int64, error) {
 		return 0, fmt.Errorf("target path is a directory: %s", path)
 	}
 	return info.Size(), nil
+}
+
+func regularFileExists(path string) (bool, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return false, fmt.Errorf("target path is a symlink: %s", path)
+	}
+	if info.IsDir() {
+		return false, fmt.Errorf("target path is a directory: %s", path)
+	}
+	return true, nil
 }
 
 func projectedWorkspaceSizeForArchive(root string, destination string, entries []archiveEntry) (int64, error) {
@@ -1302,6 +1392,54 @@ func projectedWorkspaceSizeForArchive(root string, destination string, entries [
 		projectedSize += incomingSizes[target]
 	}
 	return projectedSize, nil
+}
+
+func projectedWorkspaceFileCountForArchive(root string, destination string, entries []archiveEntry) (int, error) {
+	currentCount, err := workspaceFileCount(root)
+	if err != nil {
+		return 0, err
+	}
+
+	targets := make(map[string]bool)
+	for _, entry := range entries {
+		relativePath := filepath.ToSlash(filepath.Join(destination, entry.name))
+		target, err := resolveWritableSandboxPath(root, relativePath)
+		if err != nil {
+			return 0, err
+		}
+		if _, seen := targets[target]; seen {
+			continue
+		}
+		exists, err := regularFileExists(target)
+		if err != nil {
+			return 0, err
+		}
+		if !exists {
+			currentCount++
+		}
+		targets[target] = true
+	}
+	return currentCount, nil
+}
+
+func validateArchiveEntriesWithinLimits(entries []archiveEntry, limit archiveLimits) (int64, error) {
+	var totalSize int64
+	for index, entry := range entries {
+		if index >= limit.maxFiles {
+			return 0, fmt.Errorf("archive exceeds max file count of %d", limit.maxFiles)
+		}
+		if entry.file.FileInfo().Mode()&os.ModeSymlink != 0 {
+			return 0, fmt.Errorf("archive contains symlink: %s", entry.name)
+		}
+		if entry.file.UncompressedSize64 > uint64(limit.maxFileSize) {
+			return 0, fmt.Errorf("file %s exceeds max size of %d bytes", entry.name, limit.maxFileSize)
+		}
+		totalSize += int64(entry.file.UncompressedSize64)
+		if totalSize > limit.maxTotalSize {
+			return 0, fmt.Errorf("archive exceeds max total size of %d bytes", limit.maxTotalSize)
+		}
+	}
+	return totalSize, nil
 }
 
 func resolveSandboxPath(root string, relativePath string) (string, error) {

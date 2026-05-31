@@ -88,6 +88,9 @@ func TestNormalizeCreateReturnsEffectiveLimitsAndStructuredLimitError(t *testing
 	if decision.EffectiveLimits.MaxWorkspaceBytes != cfg.MaxWorkspaceBytes {
 		t.Fatalf("expected workspace byte limit in decision, got %+v", decision.EffectiveLimits)
 	}
+	if decision.EffectiveLimits.MaxWorkspaceFiles != cfg.MaxWorkspaceFiles {
+		t.Fatalf("expected workspace file limit in decision, got %+v", decision.EffectiveLimits)
+	}
 	if decision.EffectiveLimits.MaxFileSizeBytes != 128*1024 {
 		t.Fatalf("expected max file size bytes in decision, got %+v", decision.EffectiveLimits)
 	}

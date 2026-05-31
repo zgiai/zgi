@@ -385,6 +385,155 @@ func TestWorkspaceByteLimitRejectsArchiveBeforeWriting(t *testing.T) {
 	}
 }
 
+func TestWorkspaceFileLimit(t *testing.T) {
+	recorder := observer.NewRecorder(100)
+	cfg := config.FromEnv()
+	cfg.DataDir = t.TempDir()
+	cfg.MaxWorkspaceFiles = 1
+	policyService := policy.NewService(cfg)
+	manager, err := lifecycle.NewManagerWithConfig(recorder, policyService, cfg, nil, nil)
+	if err != nil {
+		t.Fatalf("expected lifecycle manager, got %v", err)
+	}
+	service := NewService(manager, runner.NewService(2, 3*time.Second, 4096), recorder, policyService)
+
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+		OrganizationID: "organization-file-count",
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+	if _, err := service.UploadFile(FileWriteRequest{
+		SandboxID: box.ID,
+		Path:      "notes/one.txt",
+		Content:   "one",
+	}); err != nil {
+		t.Fatalf("expected first upload below workspace file limit, got %v", err)
+	}
+
+	_, err = service.UploadFile(FileWriteRequest{
+		SandboxID: box.ID,
+		Path:      "notes/two.txt",
+		Content:   "two",
+	})
+	var limitErr *policy.LimitError
+	if !errors.As(err, &limitErr) || limitErr.Code != "workspace_file_count_limit_exceeded" || limitErr.Limit != "max_workspace_files" {
+		t.Fatalf("expected workspace file count limit on upload, got %v", err)
+	}
+	if _, err := service.StatFile(box.ID, "notes/two.txt"); err == nil {
+		t.Fatal("expected rejected upload to leave no file")
+	}
+
+	_, err = service.RunCommand(context.Background(), CommandRequest{
+		SandboxID: box.ID,
+		Command:   "python3",
+		Args:      []string{"-c", "open('generated.txt', 'w').write('generated')"},
+		Profile:   "code-short",
+	})
+	if !errors.As(err, &limitErr) || limitErr.Code != "workspace_file_count_limit_exceeded" {
+		t.Fatalf("expected workspace file count limit on generated files, got %v", err)
+	}
+	events := recorder.Query(observer.Query{SandboxID: box.ID, Type: "exec.command.failed", Limit: 1})
+	if len(events) != 1 || events[0].Metadata["code"] != "workspace_file_count_limit_exceeded" {
+		t.Fatalf("expected structured workspace file limit event, got %#v", events)
+	}
+
+	codeBox, err := manager.Create(lifecycle.CreateRequest{RuntimeProfile: string(sandbox.RuntimeSession)})
+	if err != nil {
+		t.Fatalf("expected code sandbox create, got %v", err)
+	}
+	if _, err := service.RunCode(context.Background(), CodeRequest{
+		SandboxID: codeBox.ID,
+		Language:  "python3",
+		Code:      "open('one.txt', 'w').write('one')",
+	}); err != nil {
+		t.Fatalf("expected first code-generated file below limit, got %v", err)
+	}
+	_, err = service.RunCode(context.Background(), CodeRequest{
+		SandboxID: codeBox.ID,
+		Language:  "python3",
+		Code:      "open('two.txt', 'w').write('two')",
+	})
+	if !errors.As(err, &limitErr) || limitErr.Code != "workspace_file_count_limit_exceeded" {
+		t.Fatalf("expected code workspace file limit, got %v", err)
+	}
+
+	skillRecorder := observer.NewRecorder(100)
+	skillCfg := config.FromEnv()
+	skillCfg.DataDir = t.TempDir()
+	skillCfg.MaxWorkspaceFiles = 4
+	skillPolicy := policy.NewService(skillCfg)
+	skillManager, err := lifecycle.NewManagerWithConfig(skillRecorder, skillPolicy, skillCfg, nil, nil)
+	if err != nil {
+		t.Fatalf("expected skill lifecycle manager, got %v", err)
+	}
+	skillService := NewService(skillManager, runner.NewService(2, 3*time.Second, 4096), skillRecorder, skillPolicy)
+	skillBox, err := skillManager.Create(lifecycle.CreateRequest{RuntimeProfile: string(sandbox.RuntimeSession)})
+	if err != nil {
+		t.Fatalf("expected skill sandbox create, got %v", err)
+	}
+	_, err = skillService.UploadArchive(ArchiveUploadRequest{
+		SandboxID: skillBox.ID,
+		Path:      "skills/file-count",
+		ArchiveBase64: zipBase64(t, map[string]string{
+			"SKILL.md":            "# Skill",
+			"scripts/run.py":      "import os\nos.makedirs('artifacts', exist_ok=True)\nopen('artifacts/one.txt', 'w').write('one')\nopen('artifacts/two.txt', 'w').write('two')\nprint('done')\n",
+			"skill.manifest.json": validSkillManifestJSON("scripts/run.py"),
+		}),
+		Format:                "zip",
+		ValidateSkillManifest: true,
+	})
+	if err != nil {
+		t.Fatalf("upload skill package: %v", err)
+	}
+	_, err = skillService.RunSkill(context.Background(), SkillRunRequest{
+		SandboxID: skillBox.ID,
+		Path:      "skills/file-count",
+	})
+	if !errors.As(err, &limitErr) || limitErr.Code != "workspace_file_count_limit_exceeded" {
+		t.Fatalf("expected skill workspace file limit, got %v", err)
+	}
+}
+
+func TestWorkspaceFileLimitRejectsArchiveBeforeWriting(t *testing.T) {
+	recorder := observer.NewRecorder(100)
+	cfg := config.FromEnv()
+	cfg.DataDir = t.TempDir()
+	cfg.MaxWorkspaceFiles = 1
+	policyService := policy.NewService(cfg)
+	manager, err := lifecycle.NewManagerWithConfig(recorder, policyService, cfg, nil, nil)
+	if err != nil {
+		t.Fatalf("expected lifecycle manager, got %v", err)
+	}
+	service := NewService(manager, runner.NewService(2, 3*time.Second, 4096), recorder, policyService)
+
+	box, err := manager.Create(lifecycle.CreateRequest{RuntimeProfile: string(sandbox.RuntimeSession)})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	_, err = service.UploadArchive(ArchiveUploadRequest{
+		SandboxID: box.ID,
+		Path:      "pkg",
+		ArchiveBase64: zipBase64(t, map[string]string{
+			"a.txt": "a",
+			"b.txt": "b",
+		}),
+		Format: "zip",
+	})
+	var limitErr *policy.LimitError
+	if !errors.As(err, &limitErr) || limitErr.Code != "workspace_file_count_limit_exceeded" {
+		t.Fatalf("expected archive workspace file count limit, got %v", err)
+	}
+	if _, err := service.StatFile(box.ID, "pkg/a.txt"); err == nil {
+		t.Fatal("expected archive rejection to avoid partial writes")
+	}
+	if _, err := service.StatFile(box.ID, "pkg/b.txt"); err == nil {
+		t.Fatal("expected archive rejection to avoid partial writes")
+	}
+}
+
 func TestExecutionFailureEventsAvoidSensitivePayloads(t *testing.T) {
 	recorder := observer.NewRecorder(100)
 	policyService := policy.NewService(config.FromEnv())

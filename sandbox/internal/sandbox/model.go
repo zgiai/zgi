@@ -49,6 +49,7 @@ type ResourceLimits struct {
 	MaxActiveSandboxes                    int    `json:"max_active_sandboxes"`
 	MaxActiveSandboxesPerOrganization     int    `json:"max_active_sandboxes_per_organization"`
 	MaxExecutionsPerMinutePerOrganization int    `json:"max_executions_per_minute_per_organization"`
+	MaxWorkspaceFiles                     int    `json:"max_workspace_files"`
 	MaxWorkspaceBytes                     int64  `json:"max_workspace_bytes"`
 	QueueTimeoutMS                        int    `json:"queue_timeout_ms"`
 	DefaultTimeoutSeconds                 int    `json:"default_timeout"`
@@ -70,6 +71,7 @@ type ResourceLimits struct {
 	MaxCompatTTLSecs                      int    `json:"max_compat_ttl_secs"`
 	MaxCompatTTLSeconds                   int    `json:"max_compat_ttl_seconds"`
 	DependencyUpdatesLocked               bool   `json:"dependency_updates_locked"`
+	WorkspaceFileLimitEnforced            bool   `json:"workspace_file_limit_enforced"`
 	WorkspaceByteLimitEnforced            bool   `json:"workspace_byte_limit_enforced"`
 }
 

@@ -56,6 +56,16 @@ func TestFromEnvReadsWorkspaceByteLimit(t *testing.T) {
 	}
 }
 
+func TestFromEnvReadsWorkspaceFileLimit(t *testing.T) {
+	t.Setenv("ZGI_SANDBOX_MAX_WORKSPACE_FILES", "9")
+
+	cfg := FromEnv()
+
+	if cfg.MaxWorkspaceFiles != 9 {
+		t.Fatalf("expected workspace file limit 9, got %d", cfg.MaxWorkspaceFiles)
+	}
+}
+
 func TestPublicSnapshotOmitsSecrets(t *testing.T) {
 	cfg := Config{
 		Port:              "2660",
