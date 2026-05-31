@@ -535,6 +535,10 @@ const messages: DashboardMessages = {
         disabled: '未启用',
         invalid: '无效',
       },
+      scriptStatus: {
+        runnable: '脚本可运行',
+        unsupported: '脚本未启用',
+      },
       autoSave: {
         ready: '自动保存',
         saving: '保存中...',
