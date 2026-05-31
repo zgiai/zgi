@@ -129,6 +129,43 @@ func (s *Store) prepare(ctx context.Context) error {
 			updated_at TIMESTAMPTZ NOT NULL
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_dependency_profiles_status_enabled ON dependency_profiles(status, enabled);`,
+		`CREATE TABLE IF NOT EXISTS runtime_artifacts (
+			checksum TEXT PRIMARY KEY,
+			size_bytes BIGINT NOT NULL,
+			storage_path TEXT NOT NULL DEFAULT '',
+			languages_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+			packages_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+			base_runtime TEXT NOT NULL,
+			public_reusable BOOLEAN NOT NULL DEFAULT false,
+			security_status TEXT NOT NULL DEFAULT 'verified',
+			created_at TIMESTAMPTZ NOT NULL,
+			updated_at TIMESTAMPTZ NOT NULL,
+			last_used_at TIMESTAMPTZ
+		);`,
+		`CREATE TABLE IF NOT EXISTS dependency_profile_records (
+			scope TEXT NOT NULL,
+			organization_id TEXT NOT NULL DEFAULT '',
+			name TEXT NOT NULL,
+			version TEXT NOT NULL,
+			status TEXT NOT NULL,
+			enabled BOOLEAN NOT NULL,
+			owner_scope TEXT NOT NULL,
+			languages_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+			packages_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+			base_runtime TEXT NOT NULL,
+			checksum TEXT NOT NULL,
+			artifact_checksum TEXT NOT NULL,
+			size_bytes BIGINT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			public_reusable BOOLEAN NOT NULL DEFAULT false,
+			pinned BOOLEAN NOT NULL DEFAULT false,
+			created_at TIMESTAMPTZ NOT NULL,
+			updated_at TIMESTAMPTZ NOT NULL,
+			last_used_at TIMESTAMPTZ,
+			PRIMARY KEY (scope, organization_id, name)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_dependency_profile_records_status_enabled ON dependency_profile_records(status, enabled);`,
+		`CREATE INDEX IF NOT EXISTS idx_dependency_profile_records_artifact ON dependency_profile_records(artifact_checksum);`,
 	}
 
 	for _, statement := range statements {
@@ -306,9 +343,74 @@ func (s *Store) SaveDependencyProfile(profile policy.DependencyProfile) error {
 	if err != nil {
 		return err
 	}
+	scope := defaultString(profile.Scope, "global")
+	organizationID := profile.OrganizationID
+	if scope == "global" {
+		organizationID = ""
+	}
+	artifactChecksum := defaultString(profile.ArtifactChecksum, profile.Checksum)
 
 	now := time.Now().UTC()
-	_, err = s.db.Exec(`
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	if _, err := tx.Exec(`
+		INSERT INTO runtime_artifacts (
+			checksum, size_bytes, languages_json, packages_json, base_runtime,
+			public_reusable, security_status, created_at, updated_at
+		) VALUES (
+			$1, $2, $3::jsonb, $4::jsonb, $5,
+			$6, 'verified', $7, $8
+		)
+		ON CONFLICT(checksum) DO UPDATE SET
+			size_bytes = EXCLUDED.size_bytes,
+			languages_json = EXCLUDED.languages_json,
+			packages_json = EXCLUDED.packages_json,
+			base_runtime = EXCLUDED.base_runtime,
+			public_reusable = runtime_artifacts.public_reusable OR EXCLUDED.public_reusable,
+			updated_at = EXCLUDED.updated_at
+	`, artifactChecksum, profile.SizeBytes, string(languages), string(packages), profile.BaseRuntime, profile.PublicReusable || scope == "global", now, now); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(`
+		INSERT INTO dependency_profile_records (
+			scope, organization_id, name, version, status, enabled, owner_scope,
+			languages_json, packages_json, base_runtime, checksum, artifact_checksum,
+			size_bytes, description, public_reusable, pinned, created_at, updated_at
+		) VALUES (
+			$1, $2, $3, $4, $5, $6, $7,
+			$8::jsonb, $9::jsonb, $10, $11, $12,
+			$13, $14, $15, $16, $17, $18
+		)
+		ON CONFLICT(scope, organization_id, name) DO UPDATE SET
+			version = EXCLUDED.version,
+			status = EXCLUDED.status,
+			enabled = EXCLUDED.enabled,
+			owner_scope = EXCLUDED.owner_scope,
+			languages_json = EXCLUDED.languages_json,
+			packages_json = EXCLUDED.packages_json,
+			base_runtime = EXCLUDED.base_runtime,
+			checksum = EXCLUDED.checksum,
+			artifact_checksum = EXCLUDED.artifact_checksum,
+			size_bytes = EXCLUDED.size_bytes,
+			description = EXCLUDED.description,
+			public_reusable = EXCLUDED.public_reusable,
+			pinned = EXCLUDED.pinned,
+			updated_at = EXCLUDED.updated_at
+	`, scope, organizationID, profile.Name, profile.Version, profile.Status, profile.Enabled, defaultString(profile.OwnerScope, scope), string(languages), string(packages), profile.BaseRuntime, profile.Checksum, artifactChecksum, profile.SizeBytes, profile.Description, profile.PublicReusable || scope == "global", profile.Pinned, now, now); err != nil {
+		return err
+	}
+
+	if scope != "global" {
+		return tx.Commit()
+	}
+	_, err = tx.Exec(`
 		INSERT INTO dependency_profiles (
 			name, version, status, enabled, owner_scope, languages_json, packages_json,
 			base_runtime, checksum, size_bytes, description, created_at, updated_at
@@ -343,10 +445,54 @@ func (s *Store) SaveDependencyProfile(profile policy.DependencyProfile) error {
 		now,
 		now,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) ListDependencyProfiles() ([]policy.DependencyProfile, error) {
+	rows, err := s.db.Query(`
+		SELECT name, version, status, enabled, owner_scope, scope, organization_id,
+		       languages_json, packages_json, base_runtime, checksum, artifact_checksum,
+		       size_bytes, description, public_reusable, pinned
+		FROM dependency_profile_records
+		ORDER BY created_at ASC, scope ASC, organization_id ASC, name ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]policy.DependencyProfile, 0)
+	for rows.Next() {
+		profile, err := scanDependencyProfile(rowsScan{rows: rows})
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, *profile)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	legacy, err := s.listLegacyDependencyProfiles()
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]bool, len(items))
+	for _, item := range items {
+		seen[dependencyProfileStorageKey(item)] = true
+	}
+	for _, item := range legacy {
+		if seen[dependencyProfileStorageKey(item)] {
+			continue
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+func (s *Store) listLegacyDependencyProfiles() ([]policy.DependencyProfile, error) {
 	rows, err := s.db.Query(`
 		SELECT name, version, status, enabled, owner_scope, languages_json, packages_json,
 		       base_runtime, checksum, size_bytes, description
@@ -360,7 +506,7 @@ func (s *Store) ListDependencyProfiles() ([]policy.DependencyProfile, error) {
 
 	items := make([]policy.DependencyProfile, 0)
 	for rows.Next() {
-		profile, err := scanDependencyProfile(rowsScan{rows: rows})
+		profile, err := scanLegacyDependencyProfile(rowsScan{rows: rows})
 		if err != nil {
 			return nil, err
 		}
@@ -611,6 +757,39 @@ func scanDependencyProfile(scanner rowScanner) (*policy.DependencyProfile, error
 		&profile.Status,
 		&profile.Enabled,
 		&profile.OwnerScope,
+		&profile.Scope,
+		&profile.OrganizationID,
+		&languagesJSON,
+		&packagesJSON,
+		&profile.BaseRuntime,
+		&profile.Checksum,
+		&profile.ArtifactChecksum,
+		&profile.SizeBytes,
+		&profile.Description,
+		&profile.PublicReusable,
+		&profile.Pinned,
+	); err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(languagesJSON, &profile.Languages); err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(packagesJSON, &profile.Packages); err != nil {
+		return nil, err
+	}
+	return &profile, nil
+}
+
+func scanLegacyDependencyProfile(scanner rowScanner) (*policy.DependencyProfile, error) {
+	var profile policy.DependencyProfile
+	var languagesJSON []byte
+	var packagesJSON []byte
+	if err := scanner.Scan(
+		&profile.Name,
+		&profile.Version,
+		&profile.Status,
+		&profile.Enabled,
+		&profile.OwnerScope,
 		&languagesJSON,
 		&packagesJSON,
 		&profile.BaseRuntime,
@@ -626,6 +805,9 @@ func scanDependencyProfile(scanner rowScanner) (*policy.DependencyProfile, error
 	if err := json.Unmarshal(packagesJSON, &profile.Packages); err != nil {
 		return nil, err
 	}
+	profile.Scope = "global"
+	profile.ArtifactChecksum = profile.Checksum
+	profile.PublicReusable = true
 	return &profile, nil
 }
 
@@ -662,6 +844,11 @@ func defaultString(value string, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func dependencyProfileStorageKey(profile policy.DependencyProfile) string {
+	scope := defaultString(profile.Scope, "global")
+	return scope + "\x00" + profile.OrganizationID + "\x00" + profile.Name
 }
 
 func max(left int, right int) int {

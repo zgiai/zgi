@@ -13,17 +13,22 @@ import (
 )
 
 type DependencyProfile struct {
-	Name        string              `json:"name"`
-	Version     string              `json:"version"`
-	Status      string              `json:"status"`
-	Enabled     bool                `json:"enabled"`
-	OwnerScope  string              `json:"owner_scope"`
-	Languages   []string            `json:"languages"`
-	Packages    []DependencyPackage `json:"packages"`
-	BaseRuntime string              `json:"base_runtime"`
-	Checksum    string              `json:"checksum"`
-	SizeBytes   int64               `json:"size_bytes"`
-	Description string              `json:"description"`
+	Name             string              `json:"name"`
+	Version          string              `json:"version"`
+	Status           string              `json:"status"`
+	Enabled          bool                `json:"enabled"`
+	OwnerScope       string              `json:"owner_scope"`
+	Scope            string              `json:"scope"`
+	OrganizationID   string              `json:"organization_id,omitempty"`
+	Languages        []string            `json:"languages"`
+	Packages         []DependencyPackage `json:"packages"`
+	BaseRuntime      string              `json:"base_runtime"`
+	Checksum         string              `json:"checksum"`
+	ArtifactChecksum string              `json:"artifact_checksum"`
+	SizeBytes        int64               `json:"size_bytes"`
+	Description      string              `json:"description"`
+	PublicReusable   bool                `json:"public_reusable,omitempty"`
+	Pinned           bool                `json:"pinned,omitempty"`
 }
 
 type DependencyPackage struct {
@@ -56,14 +61,30 @@ type DependencyBuildPolicy struct {
 }
 
 type DependencyProfileBuildRequest struct {
-	Name        string              `json:"name"`
-	Version     string              `json:"version"`
-	Languages   []string            `json:"languages"`
-	Packages    []DependencyPackage `json:"packages"`
-	BaseRuntime string              `json:"base_runtime"`
-	Checksum    string              `json:"checksum"`
-	SizeBytes   int64               `json:"size_bytes"`
-	Description string              `json:"description"`
+	Name             string              `json:"name"`
+	Version          string              `json:"version"`
+	Scope            string              `json:"scope"`
+	OrganizationID   string              `json:"organization_id"`
+	Languages        []string            `json:"languages"`
+	Packages         []DependencyPackage `json:"packages"`
+	BaseRuntime      string              `json:"base_runtime"`
+	Checksum         string              `json:"checksum"`
+	ArtifactChecksum string              `json:"artifact_checksum"`
+	SizeBytes        int64               `json:"size_bytes"`
+	Description      string              `json:"description"`
+	PublicReusable   bool                `json:"public_reusable"`
+	Pinned           bool                `json:"pinned"`
+}
+
+type DependencyArtifact struct {
+	Checksum       string              `json:"checksum"`
+	SizeBytes      int64               `json:"size_bytes"`
+	StoragePath    string              `json:"storage_path,omitempty"`
+	Languages      []string            `json:"languages"`
+	Packages       []DependencyPackage `json:"packages"`
+	BaseRuntime    string              `json:"base_runtime"`
+	PublicReusable bool                `json:"public_reusable"`
+	SecurityStatus string              `json:"security_status"`
 }
 
 type DependencyProfileBuildResult struct {
@@ -195,6 +216,7 @@ func NewService(cfg config.Config) *Service {
 				Status:      "ready",
 				Enabled:     true,
 				OwnerScope:  "global",
+				Scope:       "global",
 				Languages:   []string{"python3", "nodejs"},
 				Packages:    []DependencyPackage{},
 				BaseRuntime: "preview-process",
@@ -208,6 +230,7 @@ func NewService(cfg config.Config) *Service {
 				Status:      "ready",
 				Enabled:     true,
 				OwnerScope:  "global",
+				Scope:       "global",
 				Languages:   []string{"python3"},
 				Packages:    []DependencyPackage{},
 				BaseRuntime: "preview-process",
@@ -221,6 +244,7 @@ func NewService(cfg config.Config) *Service {
 				Status:      "ready",
 				Enabled:     true,
 				OwnerScope:  "global",
+				Scope:       "global",
 				Languages:   []string{"nodejs"},
 				Packages:    []DependencyPackage{},
 				BaseRuntime: "preview-process",
@@ -234,6 +258,7 @@ func NewService(cfg config.Config) *Service {
 				Status:      "ready",
 				Enabled:     true,
 				OwnerScope:  "global",
+				Scope:       "global",
 				Languages:   []string{"python3", "nodejs"},
 				Packages:    []DependencyPackage{},
 				BaseRuntime: "preview-process",
@@ -247,6 +272,7 @@ func NewService(cfg config.Config) *Service {
 				Status:      "disabled",
 				Enabled:     false,
 				OwnerScope:  "global",
+				Scope:       "global",
 				Languages:   []string{"python3", "nodejs"},
 				Packages:    []DependencyPackage{{Ecosystem: "python3", Name: "office-tools", Version: "managed"}, {Ecosystem: "nodejs", Name: "office-tools", Version: "managed"}},
 				BaseRuntime: "linux-secure",
@@ -260,6 +286,7 @@ func NewService(cfg config.Config) *Service {
 				Status:      "disabled",
 				Enabled:     false,
 				OwnerScope:  "global",
+				Scope:       "global",
 				Languages:   []string{"python3"},
 				Packages:    []DependencyPackage{{Name: "data-tools", Version: "managed"}},
 				BaseRuntime: "preview-process",
@@ -424,12 +451,20 @@ func (s *Service) NormalizeTemplateLimits(profile string, engine string, timeout
 }
 
 func (s *Service) DependencyCatalog(language string) map[string]any {
+	return s.DependencyCatalogForOrganization(language, "")
+}
+
+func (s *Service) DependencyCatalogForOrganization(language string, organizationID string) map[string]any {
 	s.mu.RLock()
 	profiles := append([]DependencyProfile(nil), s.dependencyProfiles...)
 	s.mu.RUnlock()
 
 	items := make([]DependencyProfile, 0, len(profiles))
+	normalizedOrganizationID := strings.TrimSpace(organizationID)
 	for _, profile := range profiles {
+		if !profileVisibleToOrganization(profile, normalizedOrganizationID) {
+			continue
+		}
 		if language == "" || slices.Contains(profile.Languages, normalizeLanguage(language)) {
 			items = append(items, profile)
 		}
@@ -443,6 +478,17 @@ func (s *Service) DependencyCatalog(language string) map[string]any {
 		"build_policy":         s.buildPolicy,
 		"profiles":             items,
 		"note":                 "Dynamic dependency installation is intentionally disabled in this preview runtime.",
+	}
+}
+
+func profileVisibleToOrganization(profile DependencyProfile, organizationID string) bool {
+	switch normalizeDependencyProfileScope(profile.Scope, profile.OrganizationID) {
+	case "global":
+		return true
+	case "organization":
+		return organizationID != "" && strings.TrimSpace(profile.OrganizationID) == organizationID
+	default:
+		return false
 	}
 }
 
@@ -497,7 +543,7 @@ func (s *Service) RegisterDependencyProfile(profile DependencyProfile, result De
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for index, existing := range s.dependencyProfiles {
-		if existing.Name == profile.Name {
+		if dependencyProfileIdentityMatches(existing, profile) {
 			if existing.Enabled && existing.Status == "ready" {
 				err := fmt.Errorf("dependency profile already exists: %s", profile.Name)
 				result.Error = err.Error()
@@ -523,7 +569,18 @@ func (s *Service) RemoveDependencyProfile(name string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for index, profile := range s.dependencyProfiles {
-		if profile.Name == name {
+		if profile.Name == name && normalizeDependencyProfileScope(profile.Scope, profile.OrganizationID) == "global" {
+			s.dependencyProfiles = append(s.dependencyProfiles[:index], s.dependencyProfiles[index+1:]...)
+			return
+		}
+	}
+}
+
+func (s *Service) RemoveDependencyProfileRef(target DependencyProfile) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for index, profile := range s.dependencyProfiles {
+		if dependencyProfileIdentityMatches(profile, target) {
 			s.dependencyProfiles = append(s.dependencyProfiles[:index], s.dependencyProfiles[index+1:]...)
 			return
 		}
@@ -538,10 +595,11 @@ func (s *Service) LoadDependencyProfiles(profiles []DependencyProfile) error {
 		if err != nil {
 			return err
 		}
-		if seen[item.Name] {
+		key := dependencyProfileIdentityKey(item)
+		if seen[key] {
 			return fmt.Errorf("duplicate cached dependency profile: %s", item.Name)
 		}
-		seen[item.Name] = true
+		seen[key] = true
 		normalized = append(normalized, item)
 	}
 
@@ -549,12 +607,13 @@ func (s *Service) LoadDependencyProfiles(profiles []DependencyProfile) error {
 	defer s.mu.Unlock()
 	existing := map[string]bool{}
 	for _, profile := range s.dependencyProfiles {
-		existing[profile.Name] = true
+		existing[dependencyProfileIdentityKey(profile)] = true
 	}
 	for _, profile := range normalized {
-		if existing[profile.Name] {
+		key := dependencyProfileIdentityKey(profile)
+		if existing[key] {
 			for index := range s.dependencyProfiles {
-				if s.dependencyProfiles[index].Name == profile.Name {
+				if dependencyProfileIdentityMatches(s.dependencyProfiles[index], profile) {
 					s.dependencyProfiles[index] = profile
 					break
 				}
@@ -562,7 +621,7 @@ func (s *Service) LoadDependencyProfiles(profiles []DependencyProfile) error {
 			continue
 		}
 		s.dependencyProfiles = append(s.dependencyProfiles, profile)
-		existing[profile.Name] = true
+		existing[key] = true
 	}
 	return nil
 }
@@ -571,6 +630,11 @@ func (s *Service) normalizeDependencyProfileBuildRequest(req DependencyProfileBu
 	name := strings.ToLower(strings.TrimSpace(req.Name))
 	if !validDependencyProfileName(name) {
 		return DependencyProfile{}, errors.New("dependency profile name must contain only lowercase letters, numbers, and hyphens")
+	}
+	scope := normalizeDependencyProfileScope(req.Scope, req.OrganizationID)
+	organizationID := strings.TrimSpace(req.OrganizationID)
+	if scope == "organization" && organizationID == "" {
+		return DependencyProfile{}, errors.New("organization dependency profile requires organization_id")
 	}
 	version := strings.TrimSpace(req.Version)
 	if version == "" || version == "latest" || strings.Contains(version, "*") {
@@ -588,23 +652,32 @@ func (s *Service) normalizeDependencyProfileBuildRequest(req DependencyProfileBu
 	if checksum == "" {
 		return DependencyProfile{}, errors.New("dependency profile checksum is required")
 	}
+	artifactChecksum := strings.TrimSpace(req.ArtifactChecksum)
+	if artifactChecksum == "" {
+		artifactChecksum = checksum
+	}
 	if req.SizeBytes <= 0 {
 		return DependencyProfile{}, errors.New("dependency profile size_bytes must be positive")
 	}
 
 	packages := normalizeDependencyProfilePackages(req.Packages, languages)
 	profile := DependencyProfile{
-		Name:        name,
-		Version:     version,
-		Status:      "ready",
-		Enabled:     true,
-		OwnerScope:  "global",
-		Languages:   languages,
-		Packages:    packages,
-		BaseRuntime: baseRuntime,
-		Checksum:    checksum,
-		SizeBytes:   req.SizeBytes,
-		Description: strings.TrimSpace(req.Description),
+		Name:             name,
+		Version:          version,
+		Status:           "ready",
+		Enabled:          true,
+		OwnerScope:       scope,
+		Scope:            scope,
+		OrganizationID:   organizationID,
+		Languages:        languages,
+		Packages:         packages,
+		BaseRuntime:      baseRuntime,
+		Checksum:         checksum,
+		ArtifactChecksum: artifactChecksum,
+		SizeBytes:        req.SizeBytes,
+		Description:      strings.TrimSpace(req.Description),
+		PublicReusable:   req.PublicReusable || scope == "global",
+		Pinned:           req.Pinned,
 	}
 	if err := s.ValidateDependencyProfilePackages(profile); err != nil {
 		return DependencyProfile{}, err
@@ -639,6 +712,11 @@ func (s *Service) normalizeCachedDependencyProfile(profile DependencyProfile) (D
 	if ownerScope == "" {
 		ownerScope = "global"
 	}
+	scope := normalizeDependencyProfileScope(profile.Scope, profile.OrganizationID)
+	organizationID := strings.TrimSpace(profile.OrganizationID)
+	if scope == "organization" && organizationID == "" {
+		return DependencyProfile{}, fmt.Errorf("cached dependency profile %s requires organization_id", name)
+	}
 	baseRuntime := strings.TrimSpace(profile.BaseRuntime)
 	if baseRuntime == "" {
 		baseRuntime = s.normalizedRuntimeBackend()
@@ -650,19 +728,28 @@ func (s *Service) normalizeCachedDependencyProfile(profile DependencyProfile) (D
 	if profile.SizeBytes <= 0 {
 		return DependencyProfile{}, fmt.Errorf("cached dependency profile %s size_bytes must be positive", name)
 	}
+	artifactChecksum := strings.TrimSpace(profile.ArtifactChecksum)
+	if artifactChecksum == "" {
+		artifactChecksum = checksum
+	}
 
 	item := DependencyProfile{
-		Name:        name,
-		Version:     version,
-		Status:      status,
-		Enabled:     true,
-		OwnerScope:  ownerScope,
-		Languages:   languages,
-		Packages:    normalizeDependencyProfilePackages(profile.Packages, languages),
-		BaseRuntime: baseRuntime,
-		Checksum:    checksum,
-		SizeBytes:   profile.SizeBytes,
-		Description: strings.TrimSpace(profile.Description),
+		Name:             name,
+		Version:          version,
+		Status:           status,
+		Enabled:          true,
+		OwnerScope:       ownerScope,
+		Scope:            scope,
+		OrganizationID:   organizationID,
+		Languages:        languages,
+		Packages:         normalizeDependencyProfilePackages(profile.Packages, languages),
+		BaseRuntime:      baseRuntime,
+		Checksum:         checksum,
+		ArtifactChecksum: artifactChecksum,
+		SizeBytes:        profile.SizeBytes,
+		Description:      strings.TrimSpace(profile.Description),
+		PublicReusable:   profile.PublicReusable || scope == "global",
+		Pinned:           profile.Pinned,
 	}
 	if err := s.ValidateDependencyProfilePackages(item); err != nil {
 		return DependencyProfile{}, err
@@ -674,10 +761,22 @@ func (s *Service) normalizeCachedDependencyProfile(profile DependencyProfile) (D
 }
 
 func (s *Service) ValidateDependencyProfileForLanguage(value string, language string) (DependencyProfile, error) {
-	profile, err := s.normalizeDependencyProfile(value)
+	profile, err := s.normalizeDependencyProfile(value, "")
 	if err != nil {
 		return DependencyProfile{}, err
 	}
+	return s.validateDependencyProfileLanguage(profile, language)
+}
+
+func (s *Service) ValidateDependencyProfileForOrganizationAndLanguage(value string, organizationID string, language string) (DependencyProfile, error) {
+	profile, err := s.normalizeDependencyProfile(value, organizationID)
+	if err != nil {
+		return DependencyProfile{}, err
+	}
+	return s.validateDependencyProfileLanguage(profile, language)
+}
+
+func (s *Service) validateDependencyProfileLanguage(profile DependencyProfile, language string) (DependencyProfile, error) {
 	normalizedLanguage := normalizeLanguage(language)
 	if normalizedLanguage != "" && !slices.Contains(profile.Languages, normalizedLanguage) {
 		return DependencyProfile{}, fmt.Errorf("dependency profile %s does not support language: %s", profile.Name, normalizedLanguage)
@@ -737,7 +836,7 @@ func (s *Service) NormalizeCreate(profile string, ttlSeconds int, networkEnabled
 		return CreateDecision{}, err
 	}
 
-	dependency, err := s.normalizeDependencyProfile(dependencyProfile)
+	dependency, err := s.normalizeDependencyProfile(dependencyProfile, organizationID)
 	if err != nil {
 		return CreateDecision{}, err
 	}
@@ -1107,7 +1206,7 @@ func (s *Service) normalizeNetworkPolicy(profile sandbox.RuntimeProfile, value s
 	return "", fmt.Errorf("unsupported network policy: %s", policyName)
 }
 
-func (s *Service) normalizeDependencyProfile(value string) (DependencyProfile, error) {
+func (s *Service) normalizeDependencyProfile(value string, organizationID string) (DependencyProfile, error) {
 	name := strings.TrimSpace(value)
 	if name == "" {
 		name = "stdlib"
@@ -1116,21 +1215,53 @@ func (s *Service) normalizeDependencyProfile(value string) (DependencyProfile, e
 	profiles := append([]DependencyProfile(nil), s.dependencyProfiles...)
 	s.mu.RUnlock()
 
+	organizationID = strings.TrimSpace(organizationID)
 	for _, profile := range profiles {
-		if profile.Name == name {
-			if !profile.Enabled || profile.Status != "ready" {
-				return DependencyProfile{}, fmt.Errorf("dependency profile is not enabled: %s", name)
-			}
-			if err := s.ValidateDependencyProfilePackages(profile); err != nil {
-				return DependencyProfile{}, err
-			}
-			if err := s.ValidateDependencyProfileBuildLimits(profile); err != nil {
-				return DependencyProfile{}, err
-			}
-			return profile, nil
+		if profile.Name == name && normalizeDependencyProfileScope(profile.Scope, profile.OrganizationID) == "organization" && organizationID != "" && strings.TrimSpace(profile.OrganizationID) == organizationID {
+			return s.validateSelectableDependencyProfile(profile, name)
+		}
+	}
+	for _, profile := range profiles {
+		if profile.Name == name && normalizeDependencyProfileScope(profile.Scope, profile.OrganizationID) == "global" {
+			return s.validateSelectableDependencyProfile(profile, name)
 		}
 	}
 	return DependencyProfile{}, fmt.Errorf("unsupported dependency profile: %s", name)
+}
+
+func (s *Service) validateSelectableDependencyProfile(profile DependencyProfile, name string) (DependencyProfile, error) {
+	if !profile.Enabled || profile.Status != "ready" {
+		return DependencyProfile{}, fmt.Errorf("dependency profile is not enabled: %s", name)
+	}
+	if err := s.ValidateDependencyProfilePackages(profile); err != nil {
+		return DependencyProfile{}, err
+	}
+	if err := s.ValidateDependencyProfileBuildLimits(profile); err != nil {
+		return DependencyProfile{}, err
+	}
+	return profile, nil
+}
+
+func normalizeDependencyProfileScope(scope string, organizationID string) string {
+	value := strings.ToLower(strings.TrimSpace(scope))
+	switch value {
+	case "organization":
+		return "organization"
+	default:
+		if strings.TrimSpace(organizationID) != "" {
+			return "organization"
+		}
+		return "global"
+	}
+}
+
+func dependencyProfileIdentityKey(profile DependencyProfile) string {
+	scope := normalizeDependencyProfileScope(profile.Scope, profile.OrganizationID)
+	return scope + "\x00" + strings.TrimSpace(profile.OrganizationID) + "\x00" + profile.Name
+}
+
+func dependencyProfileIdentityMatches(left DependencyProfile, right DependencyProfile) bool {
+	return dependencyProfileIdentityKey(left) == dependencyProfileIdentityKey(right)
 }
 
 func dependencyProfileBuildID(name string, version string) string {

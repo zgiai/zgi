@@ -1216,6 +1216,72 @@ func TestDependencyUpdatePromotesReservedProfile(t *testing.T) {
 	}
 }
 
+func TestDependencyUpdateCreatesOrganizationProfileReference(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.APIKey = "admin-test-key"
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	body := `{
+		"name": "team-data",
+		"version": "2026.06.01",
+		"scope": "organization",
+		"organization_id": "organization-a",
+		"languages": ["python3"],
+		"packages": [{"ecosystem": "python3", "name": "data-tools", "version": "managed"}],
+		"base_runtime": "preview-process",
+		"checksum": "sha256:team-data",
+		"artifact_checksum": "sha256:shared-data-artifact",
+		"size_bytes": 1024,
+		"description": "Organization managed data runtime."
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/sandbox/dependencies/update", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", "admin-test-key")
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected organization profile update to return 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"scope":"organization"`) || !strings.Contains(rr.Body.String(), `"organization_id":"organization-a"`) {
+		t.Fatalf("expected organization profile response, got %s", rr.Body.String())
+	}
+
+	globalCatalogReq := httptest.NewRequest(http.MethodGet, "/v1/sandbox/dependencies?language=python3", nil)
+	globalCatalogRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(globalCatalogRes, globalCatalogReq)
+	if strings.Contains(globalCatalogRes.Body.String(), `"name":"team-data"`) {
+		t.Fatalf("expected global catalog to hide organization profile, got %s", globalCatalogRes.Body.String())
+	}
+
+	orgCatalogReq := httptest.NewRequest(http.MethodGet, "/v1/sandbox/dependencies?language=python3&organization_id=organization-a", nil)
+	orgCatalogRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(orgCatalogRes, orgCatalogReq)
+	if !strings.Contains(orgCatalogRes.Body.String(), `"name":"team-data"`) || !strings.Contains(orgCatalogRes.Body.String(), `"artifact_checksum":"sha256:shared-data-artifact"`) {
+		t.Fatalf("expected organization catalog to include profile, got %s", orgCatalogRes.Body.String())
+	}
+
+	createReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","organization_id":"organization-a","dependency_profile":"team-data"}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	createReq.Header.Set("X-API-Key", "admin-test-key")
+	createRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(createRes, createReq)
+	if createRes.Code != http.StatusOK {
+		t.Fatalf("expected organization profile to be selectable, got %d body=%s", createRes.Code, createRes.Body.String())
+	}
+
+	otherReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","organization_id":"organization-b","dependency_profile":"team-data"}`))
+	otherReq.Header.Set("Content-Type", "application/json")
+	otherReq.Header.Set("X-API-Key", "admin-test-key")
+	otherRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(otherRes, otherReq)
+	if otherRes.Code != http.StatusBadRequest || !strings.Contains(otherRes.Body.String(), "unsupported dependency profile") {
+		t.Fatalf("expected other organization to be rejected, got %d body=%s", otherRes.Code, otherRes.Body.String())
+	}
+}
+
 func TestServerLoadsVerifiedDependencyProfileArtifacts(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.DependencyRootFSDir = t.TempDir()

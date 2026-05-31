@@ -579,7 +579,7 @@ func (s *Service) RunSkill(ctx context.Context, req SkillRunRequest) (SkillRunRe
 		return SkillRunResult{}, err
 	}
 
-	manifest, err := loadSkillExecutionManifest(packageRoot, s.policy, box.DependencyProfile)
+	manifest, err := loadSkillExecutionManifest(packageRoot, s.policy, box.DependencyProfile, box.OrganizationID)
 	if err != nil {
 		s.recordExecutionFailure(ctx, "exec.skill.failed", req.SandboxID, "skill execution failed", baseMetadata, err)
 		return SkillRunResult{}, err
@@ -1405,7 +1405,7 @@ func (s *Service) UploadArchive(req ArchiveUploadRequest) (*ArchiveUploadResult,
 	}
 	var skillManifest *SkillExecutionManifest
 	if req.ValidateSkillManifest {
-		skillManifest, err = validateSkillExecutionManifest(entries, s.policy, box.DependencyProfile)
+		skillManifest, err = validateSkillExecutionManifest(entries, s.policy, box.DependencyProfile, box.OrganizationID)
 		if err != nil {
 			return nil, err
 		}
@@ -2664,7 +2664,7 @@ func normalizeArchiveEntries(files []*zip.File, stripRoot bool) ([]archiveEntry,
 	return entries, nil
 }
 
-func validateSkillExecutionManifest(entries []archiveEntry, policyService *policy.Service, sandboxDependencyProfile string) (*SkillExecutionManifest, error) {
+func validateSkillExecutionManifest(entries []archiveEntry, policyService *policy.Service, sandboxDependencyProfile string, organizationID string) (*SkillExecutionManifest, error) {
 	names := make(map[string]bool, len(entries))
 	for _, entry := range entries {
 		names[filepath.ToSlash(entry.name)] = true
@@ -2688,10 +2688,10 @@ func validateSkillExecutionManifest(entries []archiveEntry, policyService *polic
 		return nil, err
 	}
 
-	return parseSkillExecutionManifest(content, names, policyService, sandboxDependencyProfile)
+	return parseSkillExecutionManifest(content, names, policyService, sandboxDependencyProfile, organizationID)
 }
 
-func loadSkillExecutionManifest(packageRoot string, policyService *policy.Service, sandboxDependencyProfile string) (SkillExecutionManifest, error) {
+func loadSkillExecutionManifest(packageRoot string, policyService *policy.Service, sandboxDependencyProfile string, organizationID string) (SkillExecutionManifest, error) {
 	manifestPath := filepath.Join(packageRoot, "skill.manifest.json")
 	info, err := os.Lstat(manifestPath)
 	if err != nil {
@@ -2740,25 +2740,25 @@ func loadSkillExecutionManifest(packageRoot string, policyService *policy.Servic
 		return SkillExecutionManifest{}, err
 	}
 
-	manifest, err := parseSkillExecutionManifest(content, names, policyService, sandboxDependencyProfile)
+	manifest, err := parseSkillExecutionManifest(content, names, policyService, sandboxDependencyProfile, organizationID)
 	if err != nil {
 		return SkillExecutionManifest{}, err
 	}
 	return *manifest, nil
 }
 
-func parseSkillExecutionManifest(content []byte, names map[string]bool, policyService *policy.Service, sandboxDependencyProfile string) (*SkillExecutionManifest, error) {
+func parseSkillExecutionManifest(content []byte, names map[string]bool, policyService *policy.Service, sandboxDependencyProfile string, organizationID string) (*SkillExecutionManifest, error) {
 	var manifest SkillExecutionManifest
 	if err := json.Unmarshal(content, &manifest); err != nil {
 		return nil, fmt.Errorf("invalid skill.manifest.json: %w", err)
 	}
-	if err := validateSkillManifestFields(&manifest, names, policyService, sandboxDependencyProfile); err != nil {
+	if err := validateSkillManifestFields(&manifest, names, policyService, sandboxDependencyProfile, organizationID); err != nil {
 		return nil, err
 	}
 	return &manifest, nil
 }
 
-func validateSkillManifestFields(manifest *SkillExecutionManifest, names map[string]bool, policyService *policy.Service, sandboxDependencyProfile string) error {
+func validateSkillManifestFields(manifest *SkillExecutionManifest, names map[string]bool, policyService *policy.Service, sandboxDependencyProfile string, organizationID string) error {
 	manifest.Entrypoint = filepath.ToSlash(strings.TrimSpace(manifest.Entrypoint))
 	if manifest.Entrypoint == "" {
 		return errors.New("skill manifest entrypoint is required")
@@ -2793,7 +2793,7 @@ func validateSkillManifestFields(manifest *SkillExecutionManifest, names map[str
 	if strings.TrimSpace(manifest.DependencyProfile) == "" {
 		manifest.DependencyProfile = strings.TrimSpace(sandboxDependencyProfile)
 	}
-	dependency, err := policyService.ValidateDependencyProfileForLanguage(manifest.DependencyProfile, manifest.Language)
+	dependency, err := policyService.ValidateDependencyProfileForOrganizationAndLanguage(manifest.DependencyProfile, organizationID, manifest.Language)
 	if err != nil {
 		return err
 	}

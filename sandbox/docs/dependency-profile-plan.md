@@ -205,6 +205,23 @@ The catalog response should be the source of truth for the API:
 The API should cache catalog reads briefly but must fail closed for unknown
 profiles.
 
+### 5.3 Runtime Artifact Reuse
+
+Dependency profile artifacts should be stored by checksum and referenced by
+profiles. A single verified artifact may back multiple profile records when the
+artifact is public, reproducible, and free of organization-private content.
+
+Profile visibility is scoped:
+
+- `global` profiles are visible to every organization.
+- `organization` profiles are visible only to the matching `organization_id`.
+
+This allows common runtimes to be reused without duplicating storage while still
+keeping private packages, private registry output, license files, and internal
+SDKs isolated to the owning organization. Cleanup should remove profile
+references first and delete artifact files only when no profiles reference the
+artifact.
+
 ## 6. Build Pipeline
 
 ### 6.1 Python

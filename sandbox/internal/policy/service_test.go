@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -62,6 +63,52 @@ func TestNormalizeCreateRecordsDependencyProfileVersionAndRejectsUnavailableProf
 		t.Fatal("expected disabled dependency profile to be rejected before quota checks")
 	} else if _, ok := err.(*LimitError); ok {
 		t.Fatalf("expected disabled dependency profile error before quota checks, got %v", err)
+	}
+}
+
+func TestOrganizationDependencyProfileIsVisibleOnlyToOrganization(t *testing.T) {
+	service := NewService(config.FromEnv())
+	result, err := service.BuildDependencyProfile(DependencyProfileBuildRequest{
+		Name:             "team-data",
+		Version:          "2026.06.01",
+		Scope:            "organization",
+		OrganizationID:   "organization-a",
+		Languages:        []string{"python3"},
+		Packages:         []DependencyPackage{{Ecosystem: "python3", Name: "data-tools", Version: "managed"}},
+		BaseRuntime:      "preview-process",
+		Checksum:         "sha256:team-data",
+		ArtifactChecksum: "sha256:shared-data-artifact",
+		SizeBytes:        1024,
+		Description:      "Organization managed data runtime.",
+	})
+	if err != nil {
+		t.Fatalf("build organization profile: %v", err)
+	}
+	if result.Profile == nil || result.Profile.Scope != "organization" || result.Profile.OrganizationID != "organization-a" {
+		t.Fatalf("expected organization profile, got %+v", result)
+	}
+
+	decision, err := service.NormalizeCreate("session", 60, false, "", "team-data", 0, "organization-a", 0)
+	if err != nil {
+		t.Fatalf("expected organization profile to be selectable by owner organization, got %v", err)
+	}
+	if decision.DependencyProfile != "team-data" || decision.DependencyProfileVersion != "2026.06.01" {
+		t.Fatalf("unexpected organization profile decision: %+v", decision)
+	}
+	if _, err := service.NormalizeCreate("session", 60, false, "", "team-data", 0, "organization-b", 0); err == nil {
+		t.Fatal("expected other organization to be unable to select organization profile")
+	}
+	if _, err := service.NormalizeCreate("session", 60, false, "", "team-data", 0, "", 0); err == nil {
+		t.Fatal("expected missing organization to be unable to select organization profile")
+	}
+
+	globalCatalog := service.DependencyCatalogForOrganization("python3", "")
+	if strings.Contains(fmt.Sprint(globalCatalog["profiles"]), "team-data") {
+		t.Fatalf("expected global catalog to hide organization profile, got %+v", globalCatalog)
+	}
+	ownerCatalog := service.DependencyCatalogForOrganization("python3", "organization-a")
+	if !strings.Contains(fmt.Sprint(ownerCatalog["profiles"]), "team-data") {
+		t.Fatalf("expected owner catalog to include organization profile, got %+v", ownerCatalog)
 	}
 }
 

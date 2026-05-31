@@ -137,6 +137,28 @@ func TestPostgresStorePersistsSandboxAndEvents(t *testing.T) {
 	if len(loadedProfile.Packages) != 1 || loadedProfile.Packages[0].Name != "data-tools" || loadedProfile.Packages[0].Ecosystem != "python3" {
 		t.Fatalf("dependency profile packages did not round trip: %+v", loadedProfile.Packages)
 	}
+	organizationProfile := dependencyProfile
+	organizationProfile.Name = "team-data"
+	organizationProfile.Scope = "organization"
+	organizationProfile.OwnerScope = "organization"
+	organizationProfile.OrganizationID = "organization-1"
+	organizationProfile.Checksum = "sha256:team-data"
+	organizationProfile.ArtifactChecksum = "sha256:office-safe"
+	organizationProfile.PublicReusable = false
+	if err := store.SaveDependencyProfile(organizationProfile); err != nil {
+		t.Fatalf("save organization dependency profile: %v", err)
+	}
+	dependencyProfiles, err = store.ListDependencyProfiles()
+	if err != nil {
+		t.Fatalf("list dependency profiles with organization profile: %v", err)
+	}
+	byName := map[string]policy.DependencyProfile{}
+	for _, item := range dependencyProfiles {
+		byName[item.Name] = item
+	}
+	if byName["team-data"].Scope != "organization" || byName["team-data"].OrganizationID != "organization-1" || byName["team-data"].ArtifactChecksum != "sha256:office-safe" {
+		t.Fatalf("organization dependency profile did not round trip: %+v", byName["team-data"])
+	}
 
 	event := observer.Event{
 		ID:        "evt_store_test",

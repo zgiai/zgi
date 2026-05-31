@@ -133,17 +133,20 @@ func loadDependencyProfileArtifacts(root string) ([]policy.DependencyProfile, er
 			})
 		}
 		profiles = append(profiles, policy.DependencyProfile{
-			Name:        artifact.Name,
-			Version:     artifact.Version,
-			Status:      "ready",
-			Enabled:     true,
-			OwnerScope:  artifact.OwnerScope,
-			Languages:   artifact.Languages,
-			Packages:    packages,
-			BaseRuntime: artifact.BaseRuntime,
-			Checksum:    artifact.Checksum,
-			SizeBytes:   artifact.SizeBytes,
-			Description: artifact.Description,
+			Name:             artifact.Name,
+			Version:          artifact.Version,
+			Status:           "ready",
+			Enabled:          true,
+			OwnerScope:       artifact.OwnerScope,
+			Scope:            "global",
+			Languages:        artifact.Languages,
+			Packages:         packages,
+			BaseRuntime:      artifact.BaseRuntime,
+			Checksum:         artifact.Checksum,
+			ArtifactChecksum: artifact.Checksum,
+			SizeBytes:        artifact.SizeBytes,
+			Description:      artifact.Description,
+			PublicReusable:   true,
 		})
 	}
 	return profiles, nil
@@ -362,7 +365,7 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDependencies(w http.ResponseWriter, r *http.Request) {
-	writeEnvelope(w, http.StatusOK, s.policy.DependencyCatalog(r.URL.Query().Get("language")))
+	writeEnvelope(w, http.StatusOK, s.policy.DependencyCatalogForOrganization(r.URL.Query().Get("language"), requestOrganizationID(r, "")))
 }
 
 func (s *Server) handleDependencyUpdate(w http.ResponseWriter, r *http.Request) {
@@ -395,6 +398,11 @@ func (s *Server) handleDependencyUpdate(w http.ResponseWriter, r *http.Request) 
 	if result.Profile != nil {
 		metadata["dependency_profile"] = result.Profile.Name
 		metadata["dependency_profile_version"] = result.Profile.Version
+		metadata["dependency_profile_scope"] = result.Profile.Scope
+		if result.Profile.OrganizationID != "" {
+			metadata["organization_id"] = result.Profile.OrganizationID
+		}
+		metadata["artifact_checksum"] = result.Profile.ArtifactChecksum
 		metadata["size_bytes"] = result.Profile.SizeBytes
 	}
 	if err != nil {
@@ -412,7 +420,7 @@ func (s *Server) handleDependencyUpdate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err := s.store.SaveDependencyProfile(profile); err != nil {
-		s.policy.RemoveDependencyProfile(profile.Name)
+		s.policy.RemoveDependencyProfileRef(profile)
 		result.Status = "failed"
 		result.Error = err.Error()
 		metadata["status"] = result.Status
