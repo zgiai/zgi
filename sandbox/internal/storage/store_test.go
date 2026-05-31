@@ -67,6 +67,33 @@ func TestPostgresStorePersistsSandboxAndEvents(t *testing.T) {
 	if organizationCount != 1 {
 		t.Fatalf("expected one active sandbox for organization, got %d", organizationCount)
 	}
+	workflowBox := box
+	workflowBox.ID = "sbx_store_test_workflow_profile"
+	workflowBox.DependencyProfile = "workflow-safe"
+	if err := store.SaveSandbox(workflowBox); err != nil {
+		t.Fatalf("save workflow profile sandbox: %v", err)
+	}
+	expiredBox := box
+	expiredBox.ID = "sbx_store_test_expired_profile"
+	expiredBox.DependencyProfile = "node-basic"
+	expiredBox.ExpiresAt = time.Now().UTC().Add(-time.Minute)
+	if err := store.SaveSandbox(expiredBox); err != nil {
+		t.Fatalf("save expired profile sandbox: %v", err)
+	}
+	otherOrganizationBox := box
+	otherOrganizationBox.ID = "sbx_store_test_other_organization_profile"
+	otherOrganizationBox.OrganizationID = "organization-2"
+	otherOrganizationBox.DependencyProfile = "node-basic"
+	if err := store.SaveSandbox(otherOrganizationBox); err != nil {
+		t.Fatalf("save other organization profile sandbox: %v", err)
+	}
+	profiles, err := store.ListActiveDependencyProfilesByOrganization(box.OrganizationID, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("list active dependency profiles by organization: %v", err)
+	}
+	if len(profiles) != 2 || profiles[0] != "stdlib" || profiles[1] != "workflow-safe" {
+		t.Fatalf("expected active dependency profiles for organization, got %+v", profiles)
+	}
 
 	event := observer.Event{
 		ID:        "evt_store_test",
