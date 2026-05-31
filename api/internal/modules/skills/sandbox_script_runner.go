@@ -16,6 +16,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -32,26 +33,30 @@ const maxSkillScriptArtifactBytes = 2 * 1024 * 1024
 const defaultSkillDependencyProfile = "stdlib"
 
 const (
-	defaultSandboxConnectTimeout        = 5 * time.Second
-	defaultSandboxCreateTimeout         = 10 * time.Second
-	defaultSandboxUploadTimeout         = 30 * time.Second
-	defaultSandboxCommandTimeoutPadding = 15 * time.Second
-	defaultSandboxArtifactTimeout       = 10 * time.Second
-	defaultSandboxCleanupTimeout        = 5 * time.Second
-	defaultSandboxIdempotentAttempts    = 3
-	defaultSandboxRetryBaseDelay        = 50 * time.Millisecond
+	defaultSandboxConnectTimeout              = 5 * time.Second
+	defaultSandboxCreateTimeout               = 10 * time.Second
+	defaultSandboxUploadTimeout               = 30 * time.Second
+	defaultSandboxCommandTimeoutPadding       = 15 * time.Second
+	defaultSandboxArtifactTimeout             = 10 * time.Second
+	defaultSandboxCleanupTimeout              = 5 * time.Second
+	defaultSandboxDependencyBuildTimeout      = 60 * time.Second
+	defaultSandboxDependencyBuildPollInterval = time.Second
+	defaultSandboxIdempotentAttempts          = 3
+	defaultSandboxRetryBaseDelay              = 50 * time.Millisecond
 )
 
 type SandboxScriptRunnerConfig struct {
-	Endpoint              string
-	APIKey                string
-	ConnectTimeout        time.Duration
-	CreateTimeout         time.Duration
-	UploadTimeout         time.Duration
-	CommandTimeoutPadding time.Duration
-	ArtifactTimeout       time.Duration
-	CleanupTimeout        time.Duration
-	ArtifactPersister     SkillScriptArtifactPersister
+	Endpoint                    string
+	APIKey                      string
+	ConnectTimeout              time.Duration
+	CreateTimeout               time.Duration
+	UploadTimeout               time.Duration
+	CommandTimeoutPadding       time.Duration
+	ArtifactTimeout             time.Duration
+	CleanupTimeout              time.Duration
+	DependencyBuildTimeout      time.Duration
+	DependencyBuildPollInterval time.Duration
+	ArtifactPersister           SkillScriptArtifactPersister
 }
 
 type SandboxScriptRunner struct {
@@ -63,11 +68,13 @@ type SandboxScriptRunner struct {
 }
 
 type sandboxScriptRunnerTimeouts struct {
-	Create         time.Duration
-	Upload         time.Duration
-	CommandPadding time.Duration
-	Artifact       time.Duration
-	Cleanup        time.Duration
+	Create              time.Duration
+	Upload              time.Duration
+	CommandPadding      time.Duration
+	Artifact            time.Duration
+	Cleanup             time.Duration
+	DependencyBuild     time.Duration
+	DependencyBuildPoll time.Duration
 }
 
 type SandboxRequestError struct {
@@ -116,11 +123,13 @@ func NewSandboxScriptRunner(config SandboxScriptRunnerConfig) *SandboxScriptRunn
 			Transport: sandboxHTTPTransport(connectTimeout),
 		},
 		timeouts: sandboxScriptRunnerTimeouts{
-			Create:         durationOrDefault(config.CreateTimeout, defaultSandboxCreateTimeout),
-			Upload:         durationOrDefault(config.UploadTimeout, defaultSandboxUploadTimeout),
-			CommandPadding: durationOrDefault(config.CommandTimeoutPadding, defaultSandboxCommandTimeoutPadding),
-			Artifact:       durationOrDefault(config.ArtifactTimeout, defaultSandboxArtifactTimeout),
-			Cleanup:        durationOrDefault(config.CleanupTimeout, defaultSandboxCleanupTimeout),
+			Create:              durationOrDefault(config.CreateTimeout, defaultSandboxCreateTimeout),
+			Upload:              durationOrDefault(config.UploadTimeout, defaultSandboxUploadTimeout),
+			CommandPadding:      durationOrDefault(config.CommandTimeoutPadding, defaultSandboxCommandTimeoutPadding),
+			Artifact:            durationOrDefault(config.ArtifactTimeout, defaultSandboxArtifactTimeout),
+			Cleanup:             durationOrDefault(config.CleanupTimeout, defaultSandboxCleanupTimeout),
+			DependencyBuild:     durationOrDefault(config.DependencyBuildTimeout, defaultSandboxDependencyBuildTimeout),
+			DependencyBuildPoll: durationOrDefault(config.DependencyBuildPollInterval, defaultSandboxDependencyBuildPollInterval),
 		},
 		artifactPersister: config.ArtifactPersister,
 	}
@@ -172,6 +181,33 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 	}
 	dependencyProfile := manifest.DependencyProfile
 
+	archiveBase64, err := zipSkillDirectoryBase64(doc.Metadata.RootPath, manifestRaw)
+	if err != nil {
+		trace.Status = "error"
+		trace.Error = err.Error()
+		trace.DurationMS = time.Since(start).Milliseconds()
+		return &ToolInvocationResult{Trace: trace}, err
+	}
+	if dependencyProfile == defaultSkillDependencyProfile && skillPackageHasDependencyHints(doc.Metadata.RootPath) {
+		resolvedProfile, err := r.prepareDependencyProfile(ctx, execCtx, archiveBase64, manifest.Language)
+		if err != nil {
+			recordSkillScriptError(&trace, start, err)
+			return &ToolInvocationResult{Trace: trace}, err
+		}
+		dependencyProfile = resolvedProfile
+		manifest.DependencyProfile = resolvedProfile
+		manifestRaw, err = json.Marshal(manifest)
+		if err != nil {
+			recordSkillScriptError(&trace, start, err)
+			return &ToolInvocationResult{Trace: trace}, err
+		}
+		archiveBase64, err = zipSkillDirectoryBase64(doc.Metadata.RootPath, manifestRaw)
+		if err != nil {
+			recordSkillScriptError(&trace, start, err)
+			return &ToolInvocationResult{Trace: trace}, err
+		}
+	}
+
 	if err := r.preflightDependencyProfile(ctx, execCtx, manifest.Language, dependencyProfile); err != nil {
 		recordSkillScriptError(&trace, start, err)
 		return &ToolInvocationResult{Trace: trace}, err
@@ -184,13 +220,6 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 	}
 	defer func() { _ = r.deleteSandbox(context.WithoutCancel(ctx), sandboxID, execCtx) }()
 
-	archiveBase64, err := zipSkillDirectoryBase64(doc.Metadata.RootPath, manifestRaw)
-	if err != nil {
-		trace.Status = "error"
-		trace.Error = err.Error()
-		trace.DurationMS = time.Since(start).Milliseconds()
-		return &ToolInvocationResult{Trace: trace}, err
-	}
 	if err := r.uploadArchive(ctx, sandboxID, archiveBase64, execCtx, hasManifest); err != nil {
 		recordSkillScriptError(&trace, start, err)
 		return &ToolInvocationResult{Trace: trace}, err
@@ -296,6 +325,76 @@ func (r *SandboxScriptRunner) preflightDependencyProfile(ctx context.Context, ex
 		return nil
 	}
 	return fmt.Errorf("skill dependency profile preflight failed: unsupported dependency profile for %s: %s", language, profile)
+}
+
+func (r *SandboxScriptRunner) prepareDependencyProfile(ctx context.Context, execCtx ExecutionContext, archiveBase64 string, language string) (string, error) {
+	var build sandboxDependencyBuild
+	payload := map[string]interface{}{
+		"archive_base64": archiveBase64,
+		"format":         "zip",
+		"strip_root":     false,
+		"language":       normalizeSkillScriptLanguage(language),
+	}
+	if organizationID := strings.TrimSpace(execCtx.OrganizationID); organizationID != "" {
+		payload["organization_id"] = organizationID
+	}
+	if err := r.doJSON(ctx, http.MethodPost, withOrganizationQuery("/v1/sandbox/dependencies/builds", execCtx), payload, &build, r.timeouts.Create); err != nil {
+		return "", fmt.Errorf("skill dependency prepare failed: %w", err)
+	}
+	return r.waitDependencyBuildReady(ctx, execCtx, build)
+}
+
+func (r *SandboxScriptRunner) waitDependencyBuildReady(ctx context.Context, execCtx ExecutionContext, build sandboxDependencyBuild) (string, error) {
+	if strings.TrimSpace(build.ProfileName) == "" {
+		return "", fmt.Errorf("skill dependency prepare failed: sandbox did not return a dependency profile")
+	}
+	if build.Status == "ready" {
+		return build.ProfileName, nil
+	}
+	if build.Status == "failed" {
+		return "", fmt.Errorf("skill dependency build failed: %s", strings.TrimSpace(build.Error))
+	}
+	if strings.TrimSpace(build.Fingerprint) == "" {
+		return "", fmt.Errorf("skill dependency build did not return a fingerprint")
+	}
+
+	timeout := r.timeouts.DependencyBuild
+	if timeout <= 0 {
+		timeout = defaultSandboxDependencyBuildTimeout
+	}
+	pollInterval := r.timeouts.DependencyBuildPoll
+	if pollInterval <= 0 {
+		pollInterval = defaultSandboxDependencyBuildPollInterval
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	timer := time.NewTimer(pollInterval)
+	defer timer.Stop()
+
+	for {
+		select {
+		case <-waitCtx.Done():
+			return "", fmt.Errorf("skill dependency build timed out after %s for %s", timeout, build.ProfileName)
+		case <-timer.C:
+			var current sandboxDependencyBuild
+			endpoint := "/v1/sandbox/dependencies/builds/" + url.PathEscape(build.Fingerprint)
+			endpoint = withOrganizationQuery(endpoint, execCtx)
+			if err := r.doIdempotentJSON(waitCtx, http.MethodGet, endpoint, nil, &current, r.timeouts.Create); err != nil {
+				return "", fmt.Errorf("skill dependency build status failed: %w", err)
+			}
+			switch current.Status {
+			case "ready":
+				if strings.TrimSpace(current.ProfileName) == "" {
+					return "", fmt.Errorf("skill dependency build ready without profile name")
+				}
+				return current.ProfileName, nil
+			case "failed":
+				return "", fmt.Errorf("skill dependency build failed: %s", strings.TrimSpace(current.Error))
+			default:
+				timer.Reset(pollInterval)
+			}
+		}
+	}
 }
 
 func (r *SandboxScriptRunner) uploadArchive(ctx context.Context, sandboxID string, archiveBase64 string, execCtx ExecutionContext, validateSkillManifest bool) error {
@@ -721,6 +820,16 @@ type sandboxDependencyProfile struct {
 	Languages []string `json:"languages"`
 }
 
+type sandboxDependencyBuild struct {
+	BuildID          string `json:"build_id"`
+	Fingerprint      string `json:"fingerprint"`
+	Status           string `json:"status"`
+	ProfileName      string `json:"profile_name"`
+	ArtifactChecksum string `json:"artifact_checksum,omitempty"`
+	NextAction       string `json:"next_action,omitempty"`
+	Error            string `json:"error,omitempty"`
+}
+
 type sandboxSkillManifest struct {
 	Entrypoint           string   `json:"entrypoint"`
 	Language             string   `json:"language"`
@@ -771,6 +880,94 @@ type skillScriptArtifact struct {
 	Reason      string                 `json:"reason,omitempty"`
 	File        map[string]interface{} `json:"file,omitempty"`
 	Error       string                 `json:"error,omitempty"`
+}
+
+func skillPackageHasDependencyHints(root string) bool {
+	for _, rel := range []string{"requirements.txt", "package.json"} {
+		info, err := os.Lstat(filepath.Join(root, rel))
+		if err == nil && !info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
+			return true
+		}
+	}
+	manifest, err := loadSkillScriptManifest(root)
+	if err != nil {
+		return false
+	}
+	return len(manifest.Dependencies.Python) > 0 ||
+		len(manifest.Dependencies.Node) > 0 ||
+		len(manifest.Dependencies.NodeJS) > 0 ||
+		len(manifest.Dependencies.System) > 0 ||
+		skillScriptsHaveThirdPartyImports(root)
+}
+
+var (
+	pythonImportHintPattern = regexp.MustCompile(`(?m)^\s*(?:from|import)\s+([A-Za-z_][A-Za-z0-9_]*)`)
+	nodeImportHintPattern   = regexp.MustCompile(`(?m)^\s*(?:import\s+(?:[^'"]+\s+from\s+)?|const\s+\w+\s*=\s*require\()\s*['"]([^'"]+)['"]`)
+)
+
+func skillScriptsHaveThirdPartyImports(root string) bool {
+	scriptsRoot := filepath.Join(root, "scripts")
+	err := filepath.WalkDir(scriptsRoot, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry == nil || entry.IsDir() {
+			return nil
+		}
+		if path == scriptsRoot {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil || info.Mode()&os.ModeSymlink != 0 || info.Size() > 256*1024 {
+			return nil
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		switch filepath.Ext(path) {
+		case ".py":
+			if pythonContentHasThirdPartyImport(string(content)) {
+				return errDependencyHintFound
+			}
+		case ".js", ".mjs", ".cjs":
+			if nodeContentHasThirdPartyImport(string(content)) {
+				return errDependencyHintFound
+			}
+		}
+		return nil
+	})
+	return errors.Is(err, errDependencyHintFound)
+}
+
+var errDependencyHintFound = errors.New("dependency hint found")
+
+func pythonContentHasThirdPartyImport(content string) bool {
+	for _, match := range pythonImportHintPattern.FindAllStringSubmatch(content, -1) {
+		if len(match) >= 2 && !isKnownPythonStdlibRoot(match[1]) {
+			return true
+		}
+	}
+	return false
+}
+
+func nodeContentHasThirdPartyImport(content string) bool {
+	for _, match := range nodeImportHintPattern.FindAllStringSubmatch(content, -1) {
+		if len(match) < 2 {
+			continue
+		}
+		spec := strings.TrimSpace(match[1])
+		if spec != "" && !strings.HasPrefix(spec, ".") && !strings.HasPrefix(spec, "/") && !strings.HasPrefix(spec, "node:") {
+			return true
+		}
+	}
+	return false
+}
+
+func isKnownPythonStdlibRoot(name string) bool {
+	switch strings.TrimSpace(name) {
+	case "", "__future__", "argparse", "asyncio", "base64", "collections", "contextlib", "csv", "dataclasses", "datetime", "decimal", "functools", "glob", "hashlib", "io", "itertools", "json", "logging", "math", "os", "pathlib", "random", "re", "shutil", "statistics", "string", "subprocess", "sys", "tempfile", "time", "typing", "uuid", "zipfile":
+		return true
+	default:
+		return false
+	}
 }
 
 func hasSkillManifest(root string) (bool, error) {
@@ -839,14 +1036,22 @@ func zipSkillDirectoryBase64(root string, manifestRaw []byte) (string, error) {
 }
 
 type skillScriptManifest struct {
-	Entrypoint           string   `json:"entrypoint"`
-	Language             string   `json:"language"`
-	DependencyProfile    string   `json:"dependency_profile"`
-	TimeoutMS            int      `json:"timeout_ms"`
-	AllowedArtifactPaths []string `json:"allowed_artifact_paths"`
-	MaxArtifactCount     int      `json:"max_artifact_count"`
-	MaxArtifactBytes     int64    `json:"max_artifact_bytes"`
-	ResultMode           string   `json:"result_mode"`
+	Entrypoint           string                          `json:"entrypoint"`
+	Language             string                          `json:"language"`
+	DependencyProfile    string                          `json:"dependency_profile"`
+	Dependencies         skillScriptManifestDependencies `json:"dependencies,omitempty"`
+	TimeoutMS            int                             `json:"timeout_ms"`
+	AllowedArtifactPaths []string                        `json:"allowed_artifact_paths"`
+	MaxArtifactCount     int                             `json:"max_artifact_count"`
+	MaxArtifactBytes     int64                           `json:"max_artifact_bytes"`
+	ResultMode           string                          `json:"result_mode"`
+}
+
+type skillScriptManifestDependencies struct {
+	Python []string `json:"python,omitempty"`
+	Node   []string `json:"node,omitempty"`
+	NodeJS []string `json:"nodejs,omitempty"`
+	System []string `json:"system,omitempty"`
 }
 
 type preparedSkillScriptManifest struct {

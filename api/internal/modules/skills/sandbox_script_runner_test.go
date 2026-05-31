@@ -368,6 +368,106 @@ func TestSandboxScriptRunnerUsesManifestDependencyProfile(t *testing.T) {
 	}
 }
 
+func TestSandboxScriptRunnerAutoBuildsDefaultDependencyProfile(t *testing.T) {
+	root := writeTestScriptSkill(t)
+	if err := os.WriteFile(filepath.Join(root, "requirements.txt"), []byte("pandas==2.2.3\n"), 0o644); err != nil {
+		t.Fatalf("write requirements: %v", err)
+	}
+
+	requests := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/sandbox/dependencies/builds":
+			var req map[string]interface{}
+			decodeJSON(t, r, &req)
+			if req["organization_id"] != "organization-auto-deps" {
+				t.Fatalf("expected organization id in dependency build request, got %#v", req)
+			}
+			if archiveFileContent(t, req["archive_base64"].(string), "requirements.txt") == "" {
+				t.Fatalf("expected dependency build archive to include requirements.txt")
+			}
+			writeSandboxOK(t, w, map[string]interface{}{
+				"build_id":     "depbuild_auto",
+				"fingerprint":  "sha256:auto",
+				"status":       "queued",
+				"profile_name": "auto-deps",
+				"next_action":  "wait_for_dependency_build",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/sandbox/dependencies/builds/sha256:auto":
+			writeSandboxOK(t, w, map[string]interface{}{
+				"build_id":          "depbuild_auto",
+				"fingerprint":       "sha256:auto",
+				"status":            "ready",
+				"profile_name":      "auto-deps",
+				"artifact_checksum": "sha256:artifact",
+				"next_action":       "use_dependency_profile",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/sandbox/dependencies":
+			writeSandboxOK(t, w, map[string]interface{}{
+				"language":             "python3",
+				"mode":                 "managed-profiles",
+				"supports_user_update": false,
+				"profiles": []map[string]interface{}{
+					{"name": "auto-deps", "version": "sha256-auto", "status": "ready", "enabled": true, "languages": []string{"python3"}},
+				},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/sandboxes":
+			var req map[string]interface{}
+			decodeJSON(t, r, &req)
+			if req["dependency_profile"] != "auto-deps" {
+				t.Fatalf("expected auto dependency profile, got %#v", req)
+			}
+			writeSandboxOK(t, w, map[string]interface{}{"id": "sbx_test"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/files/upload-archive":
+			var req map[string]interface{}
+			decodeJSON(t, r, &req)
+			manifestContent := archiveFileContent(t, req["archive_base64"].(string), "skill.manifest.json")
+			if !strings.Contains(manifestContent, `"dependency_profile":"auto-deps"`) {
+				t.Fatalf("expected uploaded manifest to use auto dependency profile, got %s", manifestContent)
+			}
+			writeSandboxOK(t, w, map[string]interface{}{"file_count": 4})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/exec/command":
+			writeSandboxOK(t, w, map[string]interface{}{
+				"stdout":      "{\"result\":\"ok\"}\n",
+				"error":       "",
+				"exit_code":   0,
+				"duration_ms": 12,
+				"truncated":   false,
+				"command":     "python3",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/files/tree":
+			writeSandboxOK(t, w, map[string]interface{}{"items": []map[string]interface{}{}})
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/sandboxes/sbx_test":
+			writeSandboxOK(t, w, map[string]interface{}{"deleted": true})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	runner := NewSandboxScriptRunner(SandboxScriptRunnerConfig{
+		Endpoint:                    server.URL,
+		DependencyBuildTimeout:      2 * time.Second,
+		DependencyBuildPollInterval: time.Millisecond,
+	})
+	if _, err := runner.RunSkillScript(context.Background(), scriptSkillDocument(root), map[string]interface{}{"input": "hello"}, ExecutionContext{OrganizationID: "organization-auto-deps"}, "call_1"); err != nil {
+		t.Fatalf("run skill script: %v; requests=%v", err, requests)
+	}
+}
+
+func TestSkillPackageDependencyHintsDetectThirdPartyImports(t *testing.T) {
+	root := writePythonScenarioSkill(t, "import json\nimport pandas as pd\nprint('ok')")
+	if !skillPackageHasDependencyHints(root) {
+		t.Fatal("expected third-party Python import to trigger dependency prepare")
+	}
+
+	stdlibRoot := writePythonScenarioSkill(t, "import json\nfrom pathlib import Path\nprint(Path('.'))")
+	if skillPackageHasDependencyHints(stdlibRoot) {
+		t.Fatal("did not expect stdlib-only Python imports to trigger dependency prepare")
+	}
+}
+
 func TestSandboxScriptRunnerRejectsUnknownDependencyProfileBeforeCreate(t *testing.T) {
 	root := writeTestScriptSkill(t)
 	if err := os.WriteFile(filepath.Join(root, "skill.manifest.json"), []byte(`{"dependency_profile":"missing-profile"}`), 0o644); err != nil {

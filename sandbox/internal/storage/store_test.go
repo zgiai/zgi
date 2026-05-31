@@ -189,6 +189,20 @@ func TestPostgresStorePersistsSandboxAndEvents(t *testing.T) {
 	if loadedBuildRecord.BuildID != buildRecord.BuildID || string(loadedBuildRecord.PackagesJSON) == "" {
 		t.Fatalf("loaded dependency build request did not match: %+v", loadedBuildRecord)
 	}
+	claimedBuildRecord, err := store.ClaimNextDependencyBuildRequest()
+	if err != nil {
+		t.Fatalf("claim dependency build request: %v", err)
+	}
+	if claimedBuildRecord == nil || claimedBuildRecord.Fingerprint != "sha256:1234" || claimedBuildRecord.Status != "building" {
+		t.Fatalf("dependency build request claim did not mark building: %+v", claimedBuildRecord)
+	}
+	emptyBuildRecord, err := store.ClaimNextDependencyBuildRequest()
+	if err != nil {
+		t.Fatalf("claim empty dependency build request: %v", err)
+	}
+	if emptyBuildRecord != nil {
+		t.Fatalf("expected no queued dependency build request, got %+v", emptyBuildRecord)
+	}
 	readyBuildRecord, err := store.UpdateDependencyBuildRequestStatus("sha256:1234", "ready", "sha256:artifact", 2048, "")
 	if err != nil {
 		t.Fatalf("mark dependency build request ready: %v", err)

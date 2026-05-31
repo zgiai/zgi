@@ -436,6 +436,36 @@ func (s *Store) GetDependencyBuildRequest(fingerprint string) (*DependencyBuildR
 	return record, nil
 }
 
+func (s *Store) ClaimNextDependencyBuildRequest() (*DependencyBuildRequestRecord, error) {
+	row := s.db.QueryRow(`
+		WITH next_build AS (
+			SELECT fingerprint
+			FROM dependency_build_requests
+			WHERE status = 'queued'
+			ORDER BY created_at ASC, fingerprint ASC
+			FOR UPDATE SKIP LOCKED
+			LIMIT 1
+		)
+		UPDATE dependency_build_requests
+		SET status = 'building',
+		    error = '',
+		    updated_at = $1
+		WHERE fingerprint = (SELECT fingerprint FROM next_build)
+		RETURNING
+			build_id, fingerprint, status, organization_id, profile_name,
+			dependency_request_json, packages_json, sources_json, warnings_json,
+			package_count, artifact_checksum, size_bytes, error, created_at, updated_at
+	`, time.Now().UTC())
+	record, err := scanDependencyBuildRequest(rowScan{row: row})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return record, nil
+}
+
 func (s *Store) UpdateDependencyBuildRequestStatus(fingerprint string, status string, artifactChecksum string, sizeBytes int64, message string) (*DependencyBuildRequestRecord, error) {
 	row := s.db.QueryRow(`
 		UPDATE dependency_build_requests
