@@ -619,6 +619,7 @@ export function ModelSelector({
                 onRefresh={() => {
                   refetch();
                 }}
+                refreshLabel={t('models.selector.empty.refresh')}
                 isFetching={isFetching}
               />
             )}
@@ -676,6 +677,7 @@ export function ModelSelector({
                 !isLoading && (
                   <EmptyState
                     searchQuery={searchQuery}
+                    noModelsTitle={t('models.selector.empty.noModelsTitle')}
                     noResultsText={t('models.selector.empty.noResults')}
                     noModelsText={t('models.selector.empty.noModels', {
                       type: t(`models.selector.usecases.${modelType}`),
@@ -683,7 +685,11 @@ export function ModelSelector({
                     isAdminOrOwner={isAdminOrOwner}
                     contactAdminText={t('models.selector.empty.contactAdmin')}
                     configureText={t('models.selector.empty.configure')}
-                    modelTypeLabel={modelType}
+                    configureDescription={t('models.selector.empty.configureDescription', {
+                      type: t(`models.selector.usecases.${modelType}`),
+                    })}
+                    clearSearchText={t('models.selector.empty.clearSearch')}
+                    onClearSearch={() => setSearchQuery('')}
                   />
                 )
               )}
