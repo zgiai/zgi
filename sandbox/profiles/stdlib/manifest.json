@@ -1,0 +1,14 @@
+{
+  "name": "stdlib",
+  "version": "2026.05.01",
+  "status": "ready",
+  "enabled": true,
+  "owner_scope": "global",
+  "languages": ["python3", "nodejs"],
+  "base_runtime": "preview-process",
+  "checksum": "profile:stdlib:2026.05.01",
+  "estimated_size_bytes": 33554432,
+  "description": "Base language runtime with only built-in packages.",
+  "packages": [],
+  "required_files": ["manifest.json", "verify.py"]
+}

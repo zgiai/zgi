@@ -74,7 +74,7 @@ workflow:
         text: |-
           Run guide
 
-          Ready. Requires: OpenAI gpt-5.5 model. Provide text or JSON that can be extracted into a records array.
+          Ready. Requires: OpenAI GPT-4o model. Provide text or JSON that can be extracted into a records array.
 
           Suggested test input:
           The Start node fields are prefilled. Open Debug and run the defaults directly.
@@ -122,7 +122,7 @@ workflow:
         variables: []
         model:
           provider: openai
-          name: gpt-5.5
+          name: gpt-4o
           mode: chat
           completion_params:
             response_format: json_object
@@ -231,7 +231,7 @@ workflow:
         variables: []
         model:
           provider: openai
-          name: gpt-5.5
+          name: gpt-4o
           mode: chat
           completion_params: {}
         prompt_template:

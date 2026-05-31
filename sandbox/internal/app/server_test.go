@@ -3,9 +3,12 @@ package app
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -15,7 +18,12 @@ import (
 	"time"
 
 	"github.com/zgiai/zgi-sandbox/internal/config"
+	"github.com/zgiai/zgi-sandbox/internal/executor"
+	"github.com/zgiai/zgi-sandbox/internal/lifecycle"
+	"github.com/zgiai/zgi-sandbox/internal/observer"
+	"github.com/zgiai/zgi-sandbox/internal/policy"
 	"github.com/zgiai/zgi-sandbox/internal/runner"
+	"github.com/zgiai/zgi-sandbox/internal/sandbox"
 	"github.com/zgiai/zgi-sandbox/internal/testutil"
 )
 
@@ -185,6 +193,7 @@ func TestRunEndpointRejectsPreviewNetworkRequest(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/sandbox/run", strings.NewReader(`{"language":"python3","code":"print('blocked')","enable_network":true}`))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Request-ID", "req_policy_network_test")
 
 	rr := httptest.NewRecorder()
 	server.Handler().ServeHTTP(rr, req)
@@ -194,6 +203,120 @@ func TestRunEndpointRejectsPreviewNetworkRequest(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "does not enforce network policy") {
 		t.Fatalf("expected network enforcement error, got %s", rr.Body.String())
+	}
+
+	events := server.observer.Query(observer.Query{Type: "policy.denied", RequestID: "req_policy_network_test", Limit: 1})
+	if len(events) != 1 {
+		t.Fatalf("expected one policy deny event, got %d", len(events))
+	}
+	if events[0].Metadata["code"] != "network_policy_not_enforced" {
+		t.Fatalf("expected network policy deny code, got %+v", events[0].Metadata)
+	}
+	if events[0].Metadata["runtime_backend"] != "preview-process" {
+		t.Fatalf("expected runtime backend metadata, got %+v", events[0].Metadata)
+	}
+}
+
+func TestEgressCheckDeniesSandboxNetworkDisabledAndRecordsDecision(t *testing.T) {
+	server, err := NewServer(testConfig(t))
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	createReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{
+		"runtime_profile":"session",
+		"ttl_seconds":60,
+		"organization_id":"organization-egress",
+		"workspace_id":"workspace-egress",
+		"network_enabled":false,
+		"network_policy":"workflow-safe"
+	}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	createRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(createRes, createReq)
+	if createRes.Code != http.StatusOK {
+		t.Fatalf("expected sandbox create to return 200, got %d body=%s", createRes.Code, createRes.Body.String())
+	}
+
+	var createPayload struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(createRes.Body.Bytes(), &createPayload); err != nil {
+		t.Fatalf("expected sandbox create payload, got %v", err)
+	}
+
+	checkReq := httptest.NewRequest(http.MethodPost, "/v1/network/egress/check", strings.NewReader(fmt.Sprintf(`{
+		"sandbox_id":%q,
+		"organization_id":"organization-egress",
+		"destination":"https://example.com/resource"
+	}`, createPayload.Data.ID)))
+	checkReq.Header.Set("Content-Type", "application/json")
+	checkReq.Header.Set("X-Request-ID", "req_egress_disabled_test")
+	checkRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(checkRes, checkReq)
+	if checkRes.Code != http.StatusOK {
+		t.Fatalf("expected egress check to return 200, got %d body=%s", checkRes.Code, checkRes.Body.String())
+	}
+	for _, expected := range []string{
+		`"allowed":false`,
+		`"code":"egress_denied_sandbox_network_disabled"`,
+		`"policy":"workflow-safe"`,
+		`"destination":"https://example.com/resource"`,
+	} {
+		if !strings.Contains(checkRes.Body.String(), expected) {
+			t.Fatalf("expected egress check response to include %s, got %s", expected, checkRes.Body.String())
+		}
+	}
+
+	events := server.observer.Query(observer.Query{SandboxID: createPayload.Data.ID, Type: "network.egress.decision", RequestID: "req_egress_disabled_test", Limit: 1})
+	if len(events) != 1 {
+		t.Fatalf("expected one egress decision event, got %d", len(events))
+	}
+	if fmt.Sprint(events[0].Metadata["allowed"]) != "false" || events[0].Metadata["code"] != "egress_denied_sandbox_network_disabled" {
+		t.Fatalf("expected sandbox network disabled decision metadata, got %+v", events[0].Metadata)
+	}
+	if events[0].Metadata["organization_id"] != "organization-egress" || events[0].Metadata["workspace_id"] != "workspace-egress" {
+		t.Fatalf("expected ownership metadata on egress decision, got %+v", events[0].Metadata)
+	}
+}
+
+func TestEgressCheckRejectsMissingDestination(t *testing.T) {
+	server, err := NewServer(testConfig(t))
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/network/egress/check", strings.NewReader(`{"sandbox_id":"sbx_missing","destination":" "}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "destination is required") {
+		t.Fatalf("expected destination validation error, got %s", rr.Body.String())
+	}
+}
+
+func TestExecCodeRejectsOversizedShortCodeRequestBeforeFullDecode(t *testing.T) {
+	server, err := NewServer(testConfig(t))
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	body := `{"language":"python3","profile":"code-short","code":"` + strings.Repeat("x", 140*1024) + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/exec/code", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "request body exceeds max size of 131072 bytes") {
+		t.Fatalf("expected profile-specific request limit message, got %s", rr.Body.String())
 	}
 }
 
@@ -235,6 +358,21 @@ func TestSandboxListEndpoint(t *testing.T) {
 			t.Fatalf("expected create response to include %s, got %s", expected, createRes.Body.String())
 		}
 	}
+	var createPayload struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(createRes.Body.Bytes(), &createPayload); err != nil {
+		t.Fatalf("expected sandbox create payload, got %v", err)
+	}
+	createdEvents := server.observer.Query(observer.Query{SandboxID: createPayload.Data.ID, Type: "sandbox.created", Limit: 1})
+	if len(createdEvents) != 1 {
+		t.Fatalf("expected sandbox created event, got %#v", createdEvents)
+	}
+	if createdEvents[0].Metadata["runtime_backend"] != "preview-process" || createdEvents[0].Metadata["runtime_profile"] != "session" {
+		t.Fatalf("expected runtime metadata on sandbox created event, got %+v", createdEvents[0].Metadata)
+	}
 
 	listReq := httptest.NewRequest(http.MethodGet, "/v1/sandboxes", nil)
 	listRes := httptest.NewRecorder()
@@ -264,6 +402,94 @@ func TestSandboxCreateRejectsInvalidOwnershipField(t *testing.T) {
 	}
 	if !strings.Contains(createRes.Body.String(), "organization_id contains invalid characters") {
 		t.Fatalf("expected ownership validation error, got %s", createRes.Body.String())
+	}
+}
+
+func TestSandboxOperationsRejectCrossOrganizationAccess(t *testing.T) {
+	server, err := NewServer(testConfig(t))
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	createReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","ttl_seconds":60,"organization_id":"organization-one"}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	createRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(createRes, createReq)
+	if createRes.Code != http.StatusOK {
+		t.Fatalf("expected sandbox create to return 200, got %d body=%s", createRes.Code, createRes.Body.String())
+	}
+	var createBody struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(createRes.Body.Bytes(), &createBody); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	if createBody.Data.ID == "" {
+		t.Fatalf("expected sandbox id, got %s", createRes.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/v1/sandboxes/"+createBody.Data.ID+"?organization_id=organization-two", nil)
+	getReq.Header.Set("X-Request-ID", "req_cross_organization_get_test")
+	getRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(getRes, getReq)
+	assertCrossOrganizationAccessDenied(t, getRes)
+
+	codeReq := httptest.NewRequest(http.MethodPost, "/v1/exec/code", strings.NewReader(fmt.Sprintf(`{"sandbox_id":%q,"organization_id":"organization-two","language":"python3","code":"print('blocked')"}`, createBody.Data.ID)))
+	codeReq.Header.Set("Content-Type", "application/json")
+	codeRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(codeRes, codeReq)
+	assertCrossOrganizationAccessDenied(t, codeRes)
+
+	fileReq := httptest.NewRequest(http.MethodGet, "/v1/files/tree?sandbox_id="+url.QueryEscape(createBody.Data.ID), nil)
+	fileReq.Header.Set("X-ZGI-Organization-ID", "organization-two")
+	fileRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(fileRes, fileReq)
+	assertCrossOrganizationAccessDenied(t, fileRes)
+
+	listOtherReq := httptest.NewRequest(http.MethodGet, "/v1/sandboxes?organization_id=organization-two", nil)
+	listOtherRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(listOtherRes, listOtherReq)
+	if listOtherRes.Code != http.StatusOK {
+		t.Fatalf("expected cross organization sandbox list to return 200, got %d body=%s", listOtherRes.Code, listOtherRes.Body.String())
+	}
+	if strings.Contains(listOtherRes.Body.String(), createBody.Data.ID) {
+		t.Fatalf("expected cross organization sandbox list to hide sandbox, got %s", listOtherRes.Body.String())
+	}
+
+	allowedReq := httptest.NewRequest(http.MethodGet, "/v1/sandboxes/"+createBody.Data.ID+"?organization_id=organization-one", nil)
+	allowedRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(allowedRes, allowedReq)
+	if allowedRes.Code != http.StatusOK {
+		t.Fatalf("expected matching organization access to return 200, got %d body=%s", allowedRes.Code, allowedRes.Body.String())
+	}
+
+	events := server.observer.Query(observer.Query{SandboxID: createBody.Data.ID, Type: "policy.denied", RequestID: "req_cross_organization_get_test", Limit: 1})
+	if len(events) != 1 {
+		t.Fatalf("expected one cross organization policy deny event, got %d", len(events))
+	}
+	if events[0].Metadata["code"] != "cross_organization_sandbox_access_denied" {
+		t.Fatalf("expected cross organization policy deny code, got %+v", events[0].Metadata)
+	}
+	if events[0].Metadata["organization_id"] != "organization-one" || events[0].Metadata["requested_organization_id"] != "organization-two" {
+		t.Fatalf("expected owner and requested organization metadata, got %+v", events[0].Metadata)
+	}
+}
+
+func assertCrossOrganizationAccessDenied(t *testing.T, rr *httptest.ResponseRecorder) {
+	t.Helper()
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected cross organization access to return 403, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	for _, expected := range []string{
+		`"code":"cross_organization_sandbox_access_denied"`,
+		`"organization_id":"organization-two"`,
+		"sandbox does not belong to organization",
+	} {
+		if !strings.Contains(rr.Body.String(), expected) {
+			t.Fatalf("expected cross organization response to include %s, got %s", expected, rr.Body.String())
+		}
 	}
 }
 
@@ -347,6 +573,282 @@ func TestSkillEndpointRunsManifestPackage(t *testing.T) {
 		if !strings.Contains(runRes.Body.String(), expected) {
 			t.Fatalf("expected skill response to include %s, got %s", expected, runRes.Body.String())
 		}
+	}
+}
+
+func TestEgressCheckRecordsPolicyDecision(t *testing.T) {
+	recorder := observer.NewRecorder(100)
+	cfg := config.FromEnv()
+	cfg.RuntimeBackend = "linux-secure"
+	policyService := policy.NewService(cfg)
+	manager, err := lifecycle.NewManager(recorder, policyService)
+	if err != nil {
+		t.Fatalf("expected lifecycle manager, got %v", err)
+	}
+	server := &Server{
+		config:    cfg,
+		lifecycle: manager,
+		observer:  recorder,
+		policy:    policyService,
+	}
+
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile:    string(sandbox.RuntimeSession),
+		NetworkEnabled:    true,
+		NetworkPolicy:     "workflow-safe",
+		DependencyProfile: "stdlib",
+		OrganizationID:    "organization-egress",
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/network/egress/check", strings.NewReader(fmt.Sprintf(`{"sandbox_id":%q,"organization_id":"organization-egress","destination":"https://127.0.0.1"}`, box.ID)))
+	req = req.WithContext(observer.ContextWithRequestID(req.Context(), "req_egress_check"))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Request-ID", "req_egress_check")
+	rr := httptest.NewRecorder()
+	server.handleEgressCheck(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected egress check to return 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"allowed":false`) || !strings.Contains(rr.Body.String(), `"code":"egress_denied_cidr"`) || !strings.Contains(rr.Body.String(), `"denied_cidr":"127.0.0.0/8"`) {
+		t.Fatalf("expected denied CIDR decision, got %s", rr.Body.String())
+	}
+
+	events := recorder.Query(observer.Query{SandboxID: box.ID, Type: "network.egress.decision", Limit: 1})
+	if len(events) != 1 {
+		t.Fatalf("expected egress decision event, got %d", len(events))
+	}
+	if fmt.Sprint(events[0].Metadata["allowed"]) != "false" || events[0].Metadata["code"] != "egress_denied_cidr" || events[0].Metadata["denied_cidr"] != "127.0.0.0/8" {
+		t.Fatalf("unexpected egress event metadata: %#v", events[0].Metadata)
+	}
+	if events[0].Metadata["organization_id"] != "organization-egress" || events[0].Metadata["request_id"] != "req_egress_check" {
+		t.Fatalf("expected ownership and request metadata, got %#v", events[0].Metadata)
+	}
+}
+
+func TestEgressProxyDeniesSandboxNetworkDisabledAndRecordsDecision(t *testing.T) {
+	server, err := NewServer(testConfig(t))
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	createReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{
+		"runtime_profile":"session",
+		"ttl_seconds":60,
+		"organization_id":"organization-egress-proxy",
+		"network_enabled":false,
+		"network_policy":"workflow-safe"
+	}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	createRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(createRes, createReq)
+	if createRes.Code != http.StatusOK {
+		t.Fatalf("expected sandbox create to return 200, got %d body=%s", createRes.Code, createRes.Body.String())
+	}
+
+	var createPayload struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(createRes.Body.Bytes(), &createPayload); err != nil {
+		t.Fatalf("expected sandbox create payload, got %v", err)
+	}
+
+	proxyReq := httptest.NewRequest(http.MethodPost, "/v1/network/egress/proxy", strings.NewReader(fmt.Sprintf(`{
+		"sandbox_id":%q,
+		"organization_id":"organization-egress-proxy",
+		"destination":"https://example.com/resource"
+	}`, createPayload.Data.ID)))
+	proxyReq.Header.Set("Content-Type", "application/json")
+	proxyReq.Header.Set("X-Request-ID", "req_egress_proxy_disabled_test")
+	proxyRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(proxyRes, proxyReq)
+	if proxyRes.Code != http.StatusForbidden {
+		t.Fatalf("expected egress proxy to return 403, got %d body=%s", proxyRes.Code, proxyRes.Body.String())
+	}
+	if !strings.Contains(proxyRes.Body.String(), `"code":"egress_denied_sandbox_network_disabled"`) {
+		t.Fatalf("expected network disabled decision in response, got %s", proxyRes.Body.String())
+	}
+
+	events := server.observer.Query(observer.Query{SandboxID: createPayload.Data.ID, Type: "network.egress.decision", RequestID: "req_egress_proxy_disabled_test", Limit: 1})
+	if len(events) != 1 {
+		t.Fatalf("expected one egress decision event, got %d", len(events))
+	}
+	if fmt.Sprint(events[0].Metadata["allowed"]) != "false" || events[0].Metadata["code"] != "egress_denied_sandbox_network_disabled" {
+		t.Fatalf("expected denied egress proxy decision metadata, got %+v", events[0].Metadata)
+	}
+}
+
+func TestExecuteEgressProxyRoutesApprovedRequestAndCapsResponse(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("expected POST, got %s", r.Method)
+		}
+		if r.Header.Get("Content-Type") != "text/plain" {
+			t.Fatalf("expected proxied content type, got %q", r.Header.Get("Content-Type"))
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read upstream request body: %v", err)
+		}
+		if string(body) != "payload!" {
+			t.Fatalf("expected proxied body, got %q", string(body))
+		}
+		w.Header().Set("Content-Type", "text/plain")
+		w.Header().Set("X-Upstream", "ok")
+		_, _ = w.Write([]byte("response-over-limit"))
+	}))
+	defer upstream.Close()
+
+	parsed, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatalf("parse upstream URL: %v", err)
+	}
+	port, err := strconv.Atoi(parsed.Port())
+	if err != nil {
+		t.Fatalf("parse upstream port: %v", err)
+	}
+	cfg := testConfig(t)
+	cfg.EgressProxyMaxBodyBytes = 8
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	box := &sandbox.Sandbox{ID: "sbx_proxy_unit"}
+	decision := policy.EgressDecision{
+		Allowed:              true,
+		Code:                 "egress_allowed",
+		Reason:               "network policy allows destination",
+		Policy:               "workflow-safe",
+		Destination:          upstream.URL + "/resource",
+		Protocol:             "http",
+		Host:                 parsed.Hostname(),
+		Port:                 port,
+		ResolvedIPs:          []string{parsed.Hostname()},
+		MaxRequestDurationMS: 1000,
+	}
+	result, err := server.executeEgressProxy(context.Background(), box, egressProxyRequest{
+		Method:      "POST",
+		Destination: decision.Destination,
+		Headers:     map[string]string{"Content-Type": "text/plain", "Connection": "blocked"},
+		Body:        "payload!",
+	}, decision)
+	if err != nil {
+		t.Fatalf("execute egress proxy: %v", err)
+	}
+	if result.StatusCode != http.StatusOK {
+		t.Fatalf("expected upstream status 200, got %d", result.StatusCode)
+	}
+	if result.Body != "response" || result.BodyEncoding != "text" || !result.Truncated || result.BodyBytes != 8 {
+		t.Fatalf("expected capped text response, got %+v", result)
+	}
+	if result.Headers["Content-Type"] != "text/plain" || result.ContentType != "text/plain" {
+		t.Fatalf("expected safe response headers, got %+v content_type=%s", result.Headers, result.ContentType)
+	}
+	if _, ok := result.Headers["X-Upstream"]; ok {
+		t.Fatalf("unexpected non-allowlisted response header: %+v", result.Headers)
+	}
+}
+
+func TestEgressProxyEnforcesOrganizationNetworkRequestRate(t *testing.T) {
+	cfg := config.FromEnv()
+	cfg.MaxNetworkRequestsPerMinutePerOrganization = 1
+	recorder := observer.NewRecorder(100)
+	server := &Server{
+		config:   cfg,
+		observer: recorder,
+		policy:   policy.NewService(cfg),
+	}
+	box := &sandbox.Sandbox{
+		ID:             "sbx_network_rate",
+		OrganizationID: "organization-network-rate",
+	}
+	if err := server.enforceOrganizationNetworkRequestRate(box); err != nil {
+		t.Fatalf("expected first network request to pass, got %v", err)
+	}
+	recorder.Record("network.egress.proxy", box.ID, "network egress proxied", map[string]any{
+		"organization_id": box.OrganizationID,
+		"status":          "success",
+	})
+
+	err := server.enforceOrganizationNetworkRequestRate(box)
+	var limitErr *policy.LimitError
+	if !errors.As(err, &limitErr) {
+		t.Fatalf("expected network request rate limit error, got %T %v", err, err)
+	}
+	if limitErr.Code != "organization_network_request_rate_limit_exceeded" || limitErr.Limit != "max_network_requests_per_minute_per_organization" {
+		t.Fatalf("unexpected network request rate limit error: %+v", limitErr)
+	}
+	if limitErr.Details["organization_id"] != box.OrganizationID || limitErr.Details["recent_network_requests"] != 1 {
+		t.Fatalf("unexpected network request rate details: %+v", limitErr.Details)
+	}
+	if err := server.enforceOrganizationNetworkRequestRate(&sandbox.Sandbox{ID: "sbx_other", OrganizationID: "organization-other"}); err != nil {
+		t.Fatalf("expected other organization to have separate network request quota, got %v", err)
+	}
+}
+
+func TestEgressProxyEndpointRejectsOrganizationNetworkRequestRateLimit(t *testing.T) {
+	cfg := config.FromEnv()
+	cfg.DataDir = t.TempDir()
+	cfg.RuntimeBackend = "linux-secure"
+	cfg.MaxNetworkRequestsPerMinutePerOrganization = 1
+	cfg.ProxyTimeout = 1
+	recorder := observer.NewRecorder(100)
+	policyService := policy.NewService(cfg)
+	manager, err := lifecycle.NewManagerWithConfig(recorder, policyService, cfg, nil, nil)
+	if err != nil {
+		t.Fatalf("expected lifecycle manager, got %v", err)
+	}
+	server := &Server{
+		config:    cfg,
+		lifecycle: manager,
+		observer:  recorder,
+		policy:    policyService,
+		mux:       http.NewServeMux(),
+	}
+	server.registerRoutes()
+
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile:    string(sandbox.RuntimeSession),
+		OrganizationID:    "organization-network-rate-http",
+		NetworkEnabled:    true,
+		NetworkPolicy:     "workflow-safe",
+		DependencyProfile: "stdlib",
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+	recorder.Record("network.egress.proxy", box.ID, "network egress proxied", map[string]any{
+		"organization_id": box.OrganizationID,
+		"status":          "success",
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/network/egress/proxy", strings.NewReader(fmt.Sprintf(`{
+		"sandbox_id":%q,
+		"organization_id":%q,
+		"destination":"https://93.184.216.34/resource"
+	}`, box.ID, box.OrganizationID)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Request-ID", "req_network_rate_http")
+	res := httptest.NewRecorder()
+	server.Handler().ServeHTTP(res, req)
+
+	if res.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected egress proxy to return 429, got %d body=%s", res.Code, res.Body.String())
+	}
+	if !strings.Contains(res.Body.String(), `"code":"organization_network_request_rate_limit_exceeded"`) {
+		t.Fatalf("expected network request rate limit response, got %s", res.Body.String())
+	}
+	events := recorder.Query(observer.Query{SandboxID: box.ID, Type: "network.egress.proxy.failed", RequestID: "req_network_rate_http", Limit: 1})
+	if len(events) != 1 {
+		t.Fatalf("expected one egress proxy failure event, got %d", len(events))
+	}
+	if events[0].Metadata["code"] != "organization_network_request_rate_limit_exceeded" || events[0].Metadata["organization_id"] != box.OrganizationID {
+		t.Fatalf("expected structured network rate metadata, got %#v", events[0].Metadata)
 	}
 }
 
@@ -485,6 +987,21 @@ func TestWriteKnownErrorMapsQueueTimeout(t *testing.T) {
 	}
 }
 
+func TestWriteKnownErrorIncludesPolicyDetails(t *testing.T) {
+	rr := httptest.NewRecorder()
+
+	writeKnownError(rr, &executor.DependencyInstallError{PackageManager: "pip", Action: "install"})
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	for _, expected := range []string{`"error_type":"policy_denied"`, `"code":"dependency_install_disabled"`, `"package_manager":"pip"`, `"action":"install"`} {
+		if !strings.Contains(rr.Body.String(), expected) {
+			t.Fatalf("expected %s in response, got %s", expected, rr.Body.String())
+		}
+	}
+}
+
 func TestWriteKnownErrorMapsCancellation(t *testing.T) {
 	rr := httptest.NewRecorder()
 
@@ -548,6 +1065,166 @@ func TestDependencyEndpoint(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), `"enabled":true`) {
 		t.Fatalf("expected dependency profile enabled flag in response, got %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"package_policy"`) || !strings.Contains(rr.Body.String(), `"default_action":"deny-unlisted"`) {
+		t.Fatalf("expected dependency package policy in response, got %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"build_policy"`) || !strings.Contains(rr.Body.String(), `"build_timeout_seconds":600`) {
+		t.Fatalf("expected dependency build policy in response, got %s", rr.Body.String())
+	}
+}
+
+func TestDependencyUpdateRequiresAdminAPIKey(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.APIKey = "admin-test-key"
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/sandbox/dependencies/update", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected admin endpoint to require api key, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestDependencyUpdateBuildsSelectableProfile(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.APIKey = "admin-test-key"
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	body := `{
+		"name": "office-safe",
+		"version": "2026.05.31",
+		"languages": ["python3"],
+		"packages": [{"name": "data-tools", "version": "managed"}],
+		"base_runtime": "preview-process",
+		"checksum": "sha256:office-safe",
+		"size_bytes": 1024,
+		"description": "Managed document automation profile."
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/sandbox/dependencies/update", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", "admin-test-key")
+	req.Header.Set("X-Request-ID", "req_profile_build")
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected dependency profile build to return 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"status":"ready"`) || !strings.Contains(rr.Body.String(), `"name":"office-safe"`) {
+		t.Fatalf("expected ready dependency profile build, got %s", rr.Body.String())
+	}
+
+	createReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","dependency_profile":"office-safe"}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	createReq.Header.Set("X-API-Key", "admin-test-key")
+	createRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(createRes, createReq)
+	if createRes.Code != http.StatusOK {
+		t.Fatalf("expected built profile to be selectable, got %d body=%s", createRes.Code, createRes.Body.String())
+	}
+	if !strings.Contains(createRes.Body.String(), `"dependency_profile":"office-safe"`) {
+		t.Fatalf("expected created sandbox to use built profile, got %s", createRes.Body.String())
+	}
+
+	events := server.observer.Query(observer.Query{Type: "dependency_profile.build", RequestID: "req_profile_build", Limit: 1})
+	if len(events) != 1 || events[0].Metadata["dependency_profile"] != "office-safe" {
+		t.Fatalf("expected dependency profile build event, got %#v", events)
+	}
+}
+
+func TestDependencyUpdatePersistsBuiltProfileAcrossRestart(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.APIKey = "admin-test-key"
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	body := `{
+		"name": "office-safe",
+		"version": "2026.05.31",
+		"languages": ["python3"],
+		"packages": [{"name": "data-tools", "version": "managed"}],
+		"base_runtime": "preview-process",
+		"checksum": "sha256:office-safe",
+		"size_bytes": 1024,
+		"description": "Managed document automation profile."
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/sandbox/dependencies/update", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", "admin-test-key")
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected dependency profile build to return 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if err := server.store.Close(); err != nil {
+		t.Fatalf("close first store: %v", err)
+	}
+
+	restarted, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("expected restarted server, got %v", err)
+	}
+
+	catalogReq := httptest.NewRequest(http.MethodGet, "/v1/sandbox/dependencies?language=python3", nil)
+	catalogRes := httptest.NewRecorder()
+	restarted.Handler().ServeHTTP(catalogRes, catalogReq)
+	if catalogRes.Code != http.StatusOK {
+		t.Fatalf("expected dependency catalog to return 200, got %d body=%s", catalogRes.Code, catalogRes.Body.String())
+	}
+	if !strings.Contains(catalogRes.Body.String(), `"name":"office-safe"`) || !strings.Contains(catalogRes.Body.String(), `"version":"2026.05.31"`) {
+		t.Fatalf("expected restarted server to load cached profile, got %s", catalogRes.Body.String())
+	}
+
+	createReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","dependency_profile":"office-safe"}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	createReq.Header.Set("X-API-Key", "admin-test-key")
+	createRes := httptest.NewRecorder()
+	restarted.Handler().ServeHTTP(createRes, createReq)
+	if createRes.Code != http.StatusOK {
+		t.Fatalf("expected cached profile to be selectable after restart, got %d body=%s", createRes.Code, createRes.Body.String())
+	}
+	if !strings.Contains(createRes.Body.String(), `"dependency_profile_version":"2026.05.31"`) {
+		t.Fatalf("expected created sandbox to use cached profile version, got %s", createRes.Body.String())
+	}
+}
+
+func TestDependencyUpdateReportsBuildFailure(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.APIKey = "admin-test-key"
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	body := `{"name":"bad-profile","version":"latest","languages":["python3"],"checksum":"sha256:bad","size_bytes":1024}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/sandbox/dependencies/update", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", "admin-test-key")
+	req.Header.Set("X-Request-ID", "req_profile_build_failed")
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected dependency profile build failure to return 400, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"status":"failed"`) || !strings.Contains(rr.Body.String(), "version must be pinned") {
+		t.Fatalf("expected failed build details, got %s", rr.Body.String())
+	}
+	events := server.observer.Query(observer.Query{Type: "dependency_profile.build.failed", RequestID: "req_profile_build_failed", Limit: 1})
+	if len(events) != 1 || !strings.Contains(fmt.Sprint(events[0].Metadata["error"]), "version must be pinned") {
+		t.Fatalf("expected dependency profile build failure event, got %#v", events)
 	}
 }
 

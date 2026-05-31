@@ -800,6 +800,11 @@ const messages: AgentsMessages = {
     },
     searchPlaceholder: '搜索名称或前缀',
     empty: '暂无 API Key，点击右上角“新建 API Key”创建。',
+    emptyTitle: '暂无 API Key',
+    emptyDescription:
+      '当外部应用、集成或自动化需要调用这个智能体时，创建一个独立的访问密钥。密钥正文只会在创建后显示一次。',
+    emptySearchTitle: '没有匹配的 API Key',
+    emptySearchDescription: '当前搜索条件没有匹配到名称或前缀。清空搜索后可查看全部密钥。',
     columns: {
       name: '名称',
       key: 'Key',
@@ -1066,6 +1071,7 @@ const messages: AgentsMessages = {
         caseCount: '已归类 {count} 条测试问题',
         nameLabel: '场景名称',
         namePlaceholder: '例如：售前咨询',
+        nameRequired: '请填写场景名称',
         descriptionLabel: '场景说明',
         descriptionPlaceholder: '简要描述这个场景覆盖的用户问题。',
         add: '添加场景',

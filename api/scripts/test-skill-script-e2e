@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 API_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_DIR="$(cd "${API_DIR}/.." && pwd)"
 SANDBOX_DIR="${REPO_DIR}/sandbox"
-PORT="${ZGI_SANDBOX_E2E_PORT:-2664}"
+PORT="${ZGI_SANDBOX_E2E_PORT:-2760}"
 START_LOCAL_SANDBOX=1
 
 if [[ -n "${ZGI_SANDBOX_E2E_ENDPOINT:-}" ]]; then
@@ -65,4 +65,4 @@ fi
 cd "${API_DIR}"
 ZGI_SANDBOX_E2E_ENDPOINT="${SANDBOX_ENDPOINT}" \
 ZGI_SANDBOX_E2E_API_KEY="${ZGI_SANDBOX_E2E_API_KEY:-}" \
-  go test ./internal/modules/skills -run TestSandboxScriptRunnerRealSandboxE2E -count=1 -v
+  go test ./internal/modules/skills -run 'TestSandboxScriptRunnerRealSandbox(E2E|BacktestScenarios)' -count=1 -v

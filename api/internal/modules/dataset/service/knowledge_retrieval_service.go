@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,6 +38,14 @@ const (
 	defaultKnowledgeContextSep     = "\n"
 	defaultKnowledgeMaxContextChar = 12000
 	legacyKnowledgeRateLimitPlan   = "default"
+
+	KnowledgeRetrieveStatusSuccess   = "success"
+	KnowledgeRetrieveStatusNoResults = "no_results"
+	KnowledgeRetrieveStatusNoConfig  = "no_config"
+
+	KnowledgeListStatusSuccess   = "success"
+	KnowledgeListStatusNoResults = "no_results"
+	KnowledgeListStatusFallback  = "fallback"
 )
 
 // KnowledgeScope identifies the caller that is allowed to retrieve knowledge.
@@ -54,6 +63,17 @@ type KnowledgeDatasetSummary struct {
 	Description     string `json:"description,omitempty"`
 	Provider        string `json:"provider,omitempty"`
 	EnableGraphFlow bool   `json:"enable_graph_flow"`
+}
+
+// KnowledgeListResponse describes accessible knowledge base candidates.
+type KnowledgeListResponse struct {
+	Query          string                    `json:"query"`
+	Status         string                    `json:"status"`
+	ResultCount    int                       `json:"result_count"`
+	FallbackUsed   bool                      `json:"fallback_used"`
+	Limit          int                       `json:"limit"`
+	Warnings       []string                  `json:"warnings,omitempty"`
+	KnowledgeBases []KnowledgeDatasetSummary `json:"knowledge_bases"`
 }
 
 // KnowledgeRetrieveRequest describes a knowledge retrieval request.
@@ -85,10 +105,32 @@ type KnowledgeRetrieverResource struct {
 	DocMetadata     map[string]interface{}       `json:"doc_metadata,omitempty"`
 }
 
+// KnowledgeSourceSummary is a model-facing citation summary without internal ids.
+type KnowledgeSourceSummary struct {
+	Position     int     `json:"position"`
+	DatasetName  string  `json:"dataset_name,omitempty"`
+	DocumentName string  `json:"document_name,omitempty"`
+	MatchType    string  `json:"match_type,omitempty"`
+	Score        float64 `json:"score,omitempty"`
+}
+
+// KnowledgeContextBlock is a source-marked context block aligned with retriever resources.
+type KnowledgeContextBlock struct {
+	Position int     `json:"position"`
+	Source   string  `json:"source,omitempty"`
+	Score    float64 `json:"score,omitempty"`
+}
+
 // KnowledgeRetrieveResponse is returned to builtin tools and skill callers.
 type KnowledgeRetrieveResponse struct {
 	Query           string                         `json:"query"`
+	Status          string                         `json:"status"`
 	Context         string                         `json:"context"`
+	ResultCount     int                            `json:"result_count"`
+	TopScore        *float64                       `json:"top_score,omitempty"`
+	SourceSummary   []KnowledgeSourceSummary       `json:"source_summary,omitempty"`
+	ContextBlocks   []KnowledgeContextBlock        `json:"context_blocks,omitempty"`
+	Warnings        []string                       `json:"warnings,omitempty"`
 	Resources       []KnowledgeRetrieverResource   `json:"retriever_resources"`
 	Records         []dto.HitTestingRecordResponse `json:"records,omitempty"`
 	GraphExecutions []*dto.GraphExecution          `json:"graph_executions,omitempty"`
@@ -163,10 +205,12 @@ func NewKnowledgeRetrievalService(
 }
 
 // ListAccessibleDatasets returns datasets visible to the current account in the current workspace.
-func (s *KnowledgeRetrievalService) ListAccessibleDatasets(ctx context.Context, scope KnowledgeScope, query string, limit int) ([]KnowledgeDatasetSummary, error) {
+func (s *KnowledgeRetrievalService) ListAccessibleDatasets(ctx context.Context, scope KnowledgeScope, query string, limit int) (*KnowledgeListResponse, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("knowledge retrieval service is not configured")
 	}
+	limit = normalizeKnowledgeLimit(limit, defaultKnowledgeListLimit, maxKnowledgeListLimit)
+	search := strings.TrimSpace(query)
 	workspaceID := strings.TrimSpace(scope.WorkspaceID)
 	organizationID := strings.TrimSpace(scope.OrganizationID)
 	accountID := strings.TrimSpace(scope.AccountID)
@@ -184,7 +228,7 @@ func (s *KnowledgeRetrievalService) ListAccessibleDatasets(ctx context.Context, 
 			return nil, err
 		}
 		if len(accessibleWorkspaceIDs) == 0 {
-			return []KnowledgeDatasetSummary{}, nil
+			return knowledgeListResponse(search, limit, false, nil), nil
 		}
 		workspaceIDs = accessibleWorkspaceIDs
 	} else {
@@ -193,21 +237,21 @@ func (s *KnowledgeRetrievalService) ListAccessibleDatasets(ctx context.Context, 
 			return nil, err
 		}
 		if !allowed {
-			return []KnowledgeDatasetSummary{}, nil
+			return knowledgeListResponse(search, limit, false, nil), nil
 		}
 	}
 
-	limit = normalizeKnowledgeLimit(limit, defaultKnowledgeListLimit, maxKnowledgeListLimit)
-	search := strings.TrimSpace(query)
 	datasets, err := s.findAccessibleDatasets(ctx, workspaceIDs, search, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list accessible datasets: %w", err)
 	}
+	fallbackUsed := false
 	if len(datasets) == 0 && search != "" {
 		datasets, err = s.findAccessibleDatasets(ctx, workspaceIDs, "", limit)
 		if err != nil {
 			return nil, fmt.Errorf("failed to list accessible datasets: %w", err)
 		}
+		fallbackUsed = len(datasets) > 0
 	}
 
 	out := make([]KnowledgeDatasetSummary, 0, len(datasets))
@@ -223,7 +267,7 @@ func (s *KnowledgeRetrievalService) ListAccessibleDatasets(ctx context.Context, 
 			EnableGraphFlow: dataset.EnableGraphFlow,
 		})
 	}
-	return out, nil
+	return knowledgeListResponse(search, limit, fallbackUsed, out), nil
 }
 
 // Retrieve retrieves and merges knowledge from explicitly provided datasets.
@@ -295,10 +339,15 @@ func (s *KnowledgeRetrievalService) Retrieve(ctx context.Context, req KnowledgeR
 	for _, item := range scoredRecords {
 		records = append(records, item.Record)
 	}
-	resources, contextText := knowledgeResourcesAndContext(scoredRecords, req.ContextSeparator, req.MaxContextChars)
+	resources, contextText, contextBlocks := knowledgeResourcesAndContext(scoredRecords, req.ContextSeparator, req.MaxContextChars)
 	return &KnowledgeRetrieveResponse{
 		Query:           query,
+		Status:          knowledgeRetrieveStatus(resources),
 		Context:         contextText,
+		ResultCount:     len(resources),
+		TopScore:        knowledgeTopScore(resources),
+		SourceSummary:   knowledgeSourceSummary(resources),
+		ContextBlocks:   contextBlocks,
 		Resources:       resources,
 		Records:         records,
 		GraphExecutions: graphExecutions,
@@ -307,6 +356,10 @@ func (s *KnowledgeRetrievalService) Retrieve(ctx context.Context, req KnowledgeR
 
 // RetrieveAgentKnowledge retrieves using dataset ids configured on the agent.
 func (s *KnowledgeRetrievalService) RetrieveAgentKnowledge(ctx context.Context, req KnowledgeRetrieveRequest) (*KnowledgeRetrieveResponse, error) {
+	query := strings.TrimSpace(req.Query)
+	if query == "" {
+		return nil, fmt.Errorf("query is required")
+	}
 	agentID := strings.TrimSpace(req.Scope.AppID)
 	if agentID == "" {
 		return nil, fmt.Errorf("agent_id is required")
@@ -326,7 +379,13 @@ func (s *KnowledgeRetrievalService) RetrieveAgentKnowledge(ctx context.Context, 
 		}
 	}
 	if len(datasetIDs) == 0 {
-		return nil, fmt.Errorf("agent has no configured knowledge datasets")
+		return &KnowledgeRetrieveResponse{
+			Query:       query,
+			Status:      KnowledgeRetrieveStatusNoConfig,
+			ResultCount: 0,
+			Warnings:    []string{"agent has no configured knowledge datasets"},
+			Resources:   []KnowledgeRetrieverResource{},
+		}, nil
 	}
 	req.DatasetIDs = datasetIDs
 	req.RetrievalConfig = retrievalConfig
@@ -412,6 +471,26 @@ func (s *KnowledgeRetrievalService) findAccessibleDatasets(ctx context.Context, 
 		return nil, err
 	}
 	return datasets, nil
+}
+
+func knowledgeListResponse(query string, limit int, fallbackUsed bool, datasets []KnowledgeDatasetSummary) *KnowledgeListResponse {
+	status := KnowledgeListStatusSuccess
+	warnings := []string(nil)
+	if fallbackUsed {
+		status = KnowledgeListStatusFallback
+		warnings = append(warnings, "no knowledge bases matched the query; showing recent accessible knowledge bases")
+	} else if len(datasets) == 0 {
+		status = KnowledgeListStatusNoResults
+	}
+	return &KnowledgeListResponse{
+		Query:          strings.TrimSpace(query),
+		Status:         status,
+		ResultCount:    len(datasets),
+		FallbackUsed:   fallbackUsed,
+		Limit:          limit,
+		Warnings:       warnings,
+		KnowledgeBases: datasets,
+	}
 }
 
 func (s *KnowledgeRetrievalService) accessibleKnowledgeWorkspaceIDs(ctx context.Context, organizationID, workspaceID, accountID string) ([]string, error) {
@@ -642,7 +721,7 @@ func stringsFromValue(value interface{}) []string {
 	}
 }
 
-func knowledgeResourcesAndContext(records []scoredKnowledgeRecord, separator string, maxChars int) ([]KnowledgeRetrieverResource, string) {
+func knowledgeResourcesAndContext(records []scoredKnowledgeRecord, separator string, maxChars int) ([]KnowledgeRetrieverResource, string, []KnowledgeContextBlock) {
 	if separator == "" {
 		separator = defaultKnowledgeContextSep
 	}
@@ -651,6 +730,7 @@ func knowledgeResourcesAndContext(records []scoredKnowledgeRecord, separator str
 	}
 	resources := make([]KnowledgeRetrieverResource, 0, len(records))
 	contextParts := make([]string, 0, len(records))
+	contextBlocks := make([]KnowledgeContextBlock, 0, len(records))
 	for i, scored := range records {
 		record := scored.Record
 		content := record.Segment.Content
@@ -670,24 +750,94 @@ func knowledgeResourcesAndContext(records []scoredKnowledgeRecord, separator str
 		}
 		resources = append(resources, resource)
 		if strings.TrimSpace(content) != "" {
-			contextParts = append(contextParts, content)
-		}
-	}
-	contextText := ""
-	for _, part := range contextParts {
-		if contextText == "" {
-			contextText = part
-		} else {
-			contextText += separator + part
-		}
-		if len(contextText) >= maxChars {
-			if len(contextText) > maxChars {
-				contextText = contextText[:maxChars]
+			block := KnowledgeContextBlock{
+				Position: resource.Position,
+				Source:   knowledgeSourceLabel(resource),
+				Score:    resource.Score,
 			}
-			break
+			remaining := maxChars - len(strings.Join(contextParts, separator))
+			if len(contextParts) > 0 {
+				remaining -= len(separator)
+			}
+			if remaining <= 0 {
+				continue
+			}
+			contextBlockText := knowledgeContextBlockText(block, resource.MatchType, content, remaining)
+			contextParts = append(contextParts, contextBlockText)
+			contextBlocks = append(contextBlocks, block)
 		}
 	}
-	return resources, contextText
+	return resources, strings.Join(contextParts, separator), contextBlocks
+}
+
+func knowledgeRetrieveStatus(resources []KnowledgeRetrieverResource) string {
+	if len(resources) == 0 {
+		return KnowledgeRetrieveStatusNoResults
+	}
+	return KnowledgeRetrieveStatusSuccess
+}
+
+func knowledgeTopScore(resources []KnowledgeRetrieverResource) *float64 {
+	if len(resources) == 0 {
+		return nil
+	}
+	score := resources[0].Score
+	return &score
+}
+
+func knowledgeSourceSummary(resources []KnowledgeRetrieverResource) []KnowledgeSourceSummary {
+	if len(resources) == 0 {
+		return nil
+	}
+	out := make([]KnowledgeSourceSummary, 0, len(resources))
+	for _, resource := range resources {
+		out = append(out, KnowledgeSourceSummary{
+			Position:     resource.Position,
+			DatasetName:  resource.DatasetName,
+			DocumentName: resource.DocumentName,
+			MatchType:    resource.MatchType,
+			Score:        resource.Score,
+		})
+	}
+	return out
+}
+
+func knowledgeSourceLabel(resource KnowledgeRetrieverResource) string {
+	parts := make([]string, 0, 2)
+	if strings.TrimSpace(resource.DatasetName) != "" {
+		parts = append(parts, strings.TrimSpace(resource.DatasetName))
+	}
+	if strings.TrimSpace(resource.DocumentName) != "" && strings.TrimSpace(resource.DocumentName) != strings.TrimSpace(resource.DatasetName) {
+		parts = append(parts, strings.TrimSpace(resource.DocumentName))
+	}
+	if len(parts) == 0 {
+		return "Unknown source"
+	}
+	return strings.Join(parts, " / ")
+}
+
+func knowledgeContextBlockText(block KnowledgeContextBlock, matchType string, content string, maxChars int) string {
+	headerParts := []string{
+		"[" + strconv.Itoa(block.Position) + "] Source: " + block.Source,
+	}
+	if block.Score != 0 {
+		headerParts = append(headerParts, "Score: "+strconv.FormatFloat(block.Score, 'f', 4, 64))
+	}
+	if strings.TrimSpace(matchType) != "" {
+		headerParts = append(headerParts, "Match: "+strings.TrimSpace(matchType))
+	}
+	header := strings.Join(headerParts, "; ") + "\n"
+	if maxChars <= 0 {
+		return ""
+	}
+	if len(header) >= maxChars {
+		return header[:maxChars]
+	}
+	available := maxChars - len(header)
+	if len(content) > available {
+		content = content[:available]
+	}
+	return header + content
 }
 
 func normalizeKnowledgeLimit(value int, defaultValue int, maxValue int) int {

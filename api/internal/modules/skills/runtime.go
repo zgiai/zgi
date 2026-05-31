@@ -790,11 +790,11 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 		SkillInternalKnowledge + "/list_accessible_knowledge_bases": {
 			SkillID:     SkillInternalKnowledge,
 			ToolName:    "list_accessible_knowledge_bases",
-			Description: "List knowledge bases accessible to the current AIChat user.",
+			Description: "List knowledge bases accessible to the current AIChat user. Inspect status and fallback_used before selecting dataset IDs.",
 			Schema: objectSchema(
 				map[string]interface{}{
 					"query": stringValueSchema("Optional search text for narrowing candidate knowledge bases."),
-					"limit": numberSchema("Maximum number of knowledge bases to list. Defaults to 20."),
+					"limit": numberSchema("Maximum number of knowledge bases to list. Defaults to 20 and is capped at 100."),
 				},
 				nil,
 			),
@@ -803,13 +803,13 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 		SkillInternalKnowledge + "/retrieve_knowledge": {
 			SkillID:     SkillInternalKnowledge,
 			ToolName:    "retrieve_knowledge",
-			Description: "Retrieve relevant context from selected accessible knowledge base IDs.",
+			Description: "Retrieve relevant context from selected accessible knowledge base IDs returned by list_accessible_knowledge_bases.",
 			Schema: objectSchema(
 				map[string]interface{}{
-					"query":          stringValueSchema("The user question or search query."),
+					"query":          stringValueSchema("The user question or refined search query."),
 					"dataset_ids":    stringArrayOrCSVSchema("Knowledge base IDs selected from list_accessible_knowledge_bases. Pass a JSON array of IDs when possible."),
-					"top_k":          numberSchema("Maximum number of retrieved chunks. Defaults to 5."),
-					"retrieval_mode": enumStringSchema("Optional retrieval mode.", []string{"hybrid", "vector", "graph"}),
+					"top_k":          numberSchema("Maximum number of retrieved chunks. Defaults to 5 and is capped at 20."),
+					"retrieval_mode": enumStringSchema("Optional retrieval mode. Omit for default hybrid mode; use graph only for relationship/entity questions.", []string{"hybrid", "vector", "graph"}),
 				},
 				[]string{"query", "dataset_ids"},
 			),
@@ -818,12 +818,12 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 		SkillAgentKnowledge + "/retrieve_agent_knowledge": {
 			SkillID:     SkillAgentKnowledge,
 			ToolName:    "retrieve_agent_knowledge",
-			Description: "Retrieve relevant context from knowledge bases bound to the current Agent.",
+			Description: "Retrieve relevant context from knowledge bases bound to the current Agent. Do not pass dataset IDs.",
 			Schema: objectSchema(
 				map[string]interface{}{
-					"query":          stringValueSchema("The user question or search query."),
-					"top_k":          numberSchema("Maximum number of retrieved chunks. Defaults to 5."),
-					"retrieval_mode": enumStringSchema("Optional retrieval mode.", []string{"hybrid", "vector", "graph"}),
+					"query":          stringValueSchema("The user question or refined search query."),
+					"top_k":          numberSchema("Maximum number of retrieved chunks. Defaults to 5 and is capped at 20."),
+					"retrieval_mode": enumStringSchema("Optional retrieval mode. Omit for default hybrid mode; use graph only for relationship/entity questions.", []string{"hybrid", "vector", "graph"}),
 				},
 				[]string{"query"},
 			),

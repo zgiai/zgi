@@ -48,6 +48,7 @@ type Store interface {
 	ListSandboxes() ([]sandbox.Sandbox, error)
 	CountActive(string, time.Time) (int, error)
 	CountActiveByOrganization(string, time.Time) (int, error)
+	ListActiveDependencyProfilesByOrganization(string, time.Time) ([]string, error)
 	SaveEndpoint(sandbox.Endpoint) error
 	GetEndpoint(string, string) (*sandbox.Endpoint, error)
 }
@@ -134,6 +135,9 @@ func (m *Manager) Create(req CreateRequest) (*sandbox.Sandbox, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := m.enforceOrganizationDependencyProfileLimit(ownership.OrganizationID, decision.DependencyProfile, now); err != nil {
+		return nil, err
+	}
 
 	id := "sbx_" + token()
 	root := filepath.Join(m.baseDir, id)
@@ -176,20 +180,23 @@ func (m *Manager) Create(req CreateRequest) (*sandbox.Sandbox, error) {
 
 	eventMetadata := map[string]any{
 		"runtime_profile":            item.RuntimeProfile,
+		"runtime_backend":            m.policy.RuntimeBackend(),
 		"ttl_seconds":                item.TTLSeconds,
 		"network_policy":             item.NetworkPolicy,
 		"dependency_profile":         item.DependencyProfile,
 		"dependency_profile_version": item.DependencyProfileVersion,
 		"worker_id":                  item.WorkerID,
 		"limit_decisions": map[string]any{
-			"ttl_seconds":                           item.TTLSeconds,
-			"max_active_sandboxes":                  decision.EffectiveLimits.MaxActiveSandboxes,
-			"max_active_sandboxes_per_organization": decision.EffectiveLimits.MaxActiveSandboxesPerOrganization,
-			"max_file_size_bytes":                   decision.EffectiveLimits.MaxFileSizeBytes,
-			"max_archive_files":                     decision.EffectiveLimits.MaxArchiveFiles,
-			"max_archive_total_bytes":               decision.EffectiveLimits.MaxArchiveTotalBytes,
-			"network_policy_enforced":               decision.EffectiveLimits.NetworkPolicyEnforced,
-			"workspace_bytes_enforced":              decision.EffectiveLimits.WorkspaceByteLimitEnforced,
+			"ttl_seconds":                                    item.TTLSeconds,
+			"max_active_sandboxes":                           decision.EffectiveLimits.MaxActiveSandboxes,
+			"max_active_sandboxes_per_organization":          decision.EffectiveLimits.MaxActiveSandboxesPerOrganization,
+			"max_dependency_profiles_per_organization":       decision.EffectiveLimits.MaxDependencyProfilesPerOrganization,
+			"organization_dependency_profile_limit_enforced": decision.EffectiveLimits.OrganizationDependencyProfileLimitEnforced,
+			"max_file_size_bytes":                            decision.EffectiveLimits.MaxFileSizeBytes,
+			"max_archive_files":                              decision.EffectiveLimits.MaxArchiveFiles,
+			"max_archive_total_bytes":                        decision.EffectiveLimits.MaxArchiveTotalBytes,
+			"network_policy_enforced":                        decision.EffectiveLimits.NetworkPolicyEnforced,
+			"workspace_bytes_enforced":                       decision.EffectiveLimits.WorkspaceByteLimitEnforced,
 		},
 	}
 	addOwnershipMetadata(eventMetadata, item)
@@ -197,6 +204,54 @@ func (m *Manager) Create(req CreateRequest) (*sandbox.Sandbox, error) {
 
 	copyItem := item
 	return &copyItem, nil
+}
+
+func (m *Manager) enforceOrganizationDependencyProfileLimit(organizationID string, dependencyProfile string, now time.Time) error {
+	limit := m.policy.MaxDependencyProfilesPerOrganization()
+	if organizationID == "" || limit <= 0 {
+		return nil
+	}
+
+	profiles, err := m.store.ListActiveDependencyProfilesByOrganization(organizationID, now)
+	if err != nil {
+		return err
+	}
+
+	profileSet := map[string]struct{}{}
+	for _, profile := range profiles {
+		profile = strings.TrimSpace(profile)
+		if profile == "" {
+			continue
+		}
+		profileSet[profile] = struct{}{}
+	}
+
+	if _, exists := profileSet[dependencyProfile]; exists {
+		return nil
+	}
+
+	actual := len(profileSet) + 1
+	if actual <= limit {
+		return nil
+	}
+
+	names := make([]string, 0, len(profileSet))
+	for name := range profileSet {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	return &policy.LimitError{
+		Code:    "organization_dependency_profile_limit_exceeded",
+		Limit:   "max_dependency_profiles_per_organization",
+		Maximum: limit,
+		Actual:  actual,
+		Details: map[string]any{
+			"organization_id":     organizationID,
+			"dependency_profile":  dependencyProfile,
+			"dependency_profiles": names,
+		},
+	}
 }
 
 type ownershipFields struct {
@@ -354,7 +409,10 @@ func (m *Manager) Delete(id string) error {
 	_ = m.cache.Delete(context.Background(), id)
 	_ = os.RemoveAll(item.RootPath)
 	metadata := map[string]any{
-		"worker_id": item.WorkerID,
+		"worker_id":          item.WorkerID,
+		"runtime_backend":    m.policy.RuntimeBackend(),
+		"runtime_profile":    item.RuntimeProfile,
+		"dependency_profile": item.DependencyProfile,
 	}
 	addOwnershipMetadata(metadata, *item)
 	m.observer.Record("sandbox.deleted", id, "sandbox deleted", metadata)
@@ -385,7 +443,9 @@ func (m *Manager) Renew(id string, ttlSeconds int) (*sandbox.Sandbox, error) {
 	_ = m.cache.Set(context.Background(), *item, m.cacheTTL(*item))
 
 	metadata := map[string]any{
-		"ttl_seconds": item.TTLSeconds,
+		"ttl_seconds":     item.TTLSeconds,
+		"runtime_backend": m.policy.RuntimeBackend(),
+		"runtime_profile": item.RuntimeProfile,
 	}
 	addOwnershipMetadata(metadata, *item)
 	m.observer.Record("sandbox.renewed", id, "sandbox renewed", metadata)
@@ -429,10 +489,12 @@ func (m *Manager) RegisterEndpoint(id string, port string, req RegisterEndpointR
 	}
 
 	metadata := map[string]any{
-		"port":        port,
-		"target_host": endpoint.TargetHost,
-		"target_port": endpoint.TargetPort,
-		"scheme":      endpoint.Scheme,
+		"port":            port,
+		"target_host":     endpoint.TargetHost,
+		"target_port":     endpoint.TargetPort,
+		"scheme":          endpoint.Scheme,
+		"runtime_backend": m.policy.RuntimeBackend(),
+		"runtime_profile": item.RuntimeProfile,
 	}
 	addOwnershipMetadata(metadata, *item)
 	m.observer.Record("sandbox.endpoint.registered", id, "sandbox endpoint registered", metadata)
@@ -477,10 +539,12 @@ func (m *Manager) resolveEndpoint(id string, port string, record bool) (*sandbox
 	endpoint.URL = m.endpointURL(id, port)
 	if record {
 		metadata := map[string]any{
-			"port":        port,
-			"url":         endpoint.URL,
-			"target_host": endpoint.TargetHost,
-			"target_port": endpoint.TargetPort,
+			"port":            port,
+			"url":             endpoint.URL,
+			"target_host":     endpoint.TargetHost,
+			"target_port":     endpoint.TargetPort,
+			"runtime_backend": m.policy.RuntimeBackend(),
+			"runtime_profile": item.RuntimeProfile,
 		}
 		addOwnershipMetadata(metadata, *item)
 		m.observer.Record("sandbox.endpoint.resolved", id, "sandbox endpoint resolved", metadata)
@@ -511,7 +575,10 @@ func (m *Manager) expireIfNeeded(item sandbox.Sandbox) (bool, bool, error) {
 			return true, false, err
 		}
 		_ = m.cache.Delete(context.Background(), item.ID)
-		metadata := map[string]any{}
+		metadata := map[string]any{
+			"runtime_backend": m.policy.RuntimeBackend(),
+			"runtime_profile": item.RuntimeProfile,
+		}
 		addOwnershipMetadata(metadata, item)
 		m.observer.Record("sandbox.expired", item.ID, "sandbox expired", metadata)
 		return true, true, nil
@@ -616,6 +683,23 @@ func (s *memoryStore) CountActiveByOrganization(organizationID string, now time.
 		}
 	}
 	return count, nil
+}
+
+func (s *memoryStore) ListActiveDependencyProfilesByOrganization(organizationID string, now time.Time) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	profiles := map[string]struct{}{}
+	for _, item := range s.sandboxes {
+		if item.Status == sandbox.StatusActive && item.ExpiresAt.After(now) && item.OrganizationID == organizationID && item.DependencyProfile != "" {
+			profiles[item.DependencyProfile] = struct{}{}
+		}
+	}
+	items := make([]string, 0, len(profiles))
+	for profile := range profiles {
+		items = append(items, profile)
+	}
+	sort.Strings(items)
+	return items, nil
 }
 
 func (s *memoryStore) SaveEndpoint(endpoint sandbox.Endpoint) error {

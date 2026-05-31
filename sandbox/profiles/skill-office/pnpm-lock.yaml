@@ -1,0 +1,18 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+  .:
+    dependencies:
+      docx:
+        specifier: 9.1.1
+        version: 9.1.1
+      pdf-lib:
+        specifier: 1.17.1
+        version: 1.17.1
+      pptxgenjs:
+        specifier: 3.12.0
+        version: 3.12.0

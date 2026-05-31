@@ -34,6 +34,11 @@ Content-Type: application/json
   "variables": {
     "name": "zgi"
   },
+  "organization_id": "organization_template_kest",
+  "workspace_id": "workspace_template_kest",
+  "app_id": "app_template_kest",
+  "workflow_run_id": "workflow_run_template_kest",
+  "user_id": "user_template_kest",
   "timeout_ms": 2000,
   "output_limit_kb": 64
 }
@@ -49,6 +54,24 @@ data.truncated == false
 ```
 
 ```step
+@id inspect-template-ownership-event
+@name Inspect template ownership event
+
+GET {{base_url}}/v1/observer/events?type=exec.template&organization_id=organization_template_kest&workspace_id=workspace_template_kest&app_id=app_template_kest&workflow_run_id=workflow_run_template_kest&user_id=user_template_kest&limit=1
+
+[Asserts]
+status == 200
+code == 0
+data.events.0.type == "exec.template"
+data.events.0.metadata.execution_id == "{{template_execution_id}}"
+data.events.0.metadata.organization_id == "organization_template_kest"
+data.events.0.metadata.workspace_id == "workspace_template_kest"
+data.events.0.metadata.app_id == "app_template_kest"
+data.events.0.metadata.workflow_run_id == "workflow_run_template_kest"
+data.events.0.metadata.user_id == "user_template_kest"
+```
+
+```step
 @id reject-missing-variable
 @name Reject missing template variable
 
@@ -57,12 +80,31 @@ Content-Type: application/json
 
 {
   "template": "{{template_missing}}",
-  "variables": {}
+  "variables": {},
+  "organization_id": "organization_template_failure_kest",
+  "workspace_id": "workspace_template_failure_kest",
+  "workflow_run_id": "workflow_run_template_failure_kest"
 }
 
 [Asserts]
 status == 400
 code == -400
+```
+
+```step
+@id inspect-template-failure-ownership-event
+@name Inspect template failure ownership event
+
+GET {{base_url}}/v1/observer/events?type=exec.template.failed&organization_id=organization_template_failure_kest&workspace_id=workspace_template_failure_kest&workflow_run_id=workflow_run_template_failure_kest&limit=1
+
+[Asserts]
+status == 200
+code == 0
+data.events.0.type == "exec.template.failed"
+data.events.0.metadata.organization_id == "organization_template_failure_kest"
+data.events.0.metadata.workspace_id == "workspace_template_failure_kest"
+data.events.0.metadata.workflow_run_id == "workflow_run_template_failure_kest"
+data.events.0.metadata.status == "failure"
 ```
 
 ```step

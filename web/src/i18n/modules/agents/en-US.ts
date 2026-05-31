@@ -828,6 +828,12 @@ const messages = {
     },
     searchPlaceholder: 'Search name or prefix',
     empty: 'No API Keys. Click "Create API Key" in the top right.',
+    emptyTitle: 'No API keys yet',
+    emptyDescription:
+      'Create a scoped key when this agent needs to be called from an external app, integration, or automation. The secret is shown only once after creation.',
+    emptySearchTitle: 'No matching API keys',
+    emptySearchDescription:
+      'No key name or prefix matches the current search. Clear the search to review all keys.',
     columns: {
       name: 'Name',
       key: 'Key',
@@ -1105,6 +1111,7 @@ const messages = {
         caseCount: '{count} test questions assigned',
         nameLabel: 'Scenario Name',
         namePlaceholder: 'For example: Pre-sales Consulting',
+        nameRequired: 'Please enter a scenario name',
         descriptionLabel: 'Scenario Description',
         descriptionPlaceholder: 'Briefly describe the user questions covered by this scenario.',
         add: 'Add Scenario',

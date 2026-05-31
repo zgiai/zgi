@@ -116,9 +116,18 @@ jobs:
           chmod +x "${RUNNER_TEMP}/bin/kest"
           echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
 
+      - name: Install ripgrep
+        run: |
+          curl -fsSL https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-unknown-linux-musl.tar.gz \
+            | tar -xz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/ripgrep-14.1.1-x86_64-unknown-linux-musl" >> "$GITHUB_PATH"
+
       - name: Run sandbox Go tests
         working-directory: sandbox
         run: go test ./...
+
+      - name: Check sandbox config docs
+        run: make -C sandbox check-config-docs
 
       - name: Run sandbox Kest flows
         env:

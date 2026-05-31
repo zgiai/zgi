@@ -47,9 +47,25 @@ cleanup() {
     kill "${ARTIFACT_LIMIT_SERVER_PID}" 2>/dev/null || true
     wait "${ARTIFACT_LIMIT_SERVER_PID}" 2>/dev/null || true
   fi
+  if [[ -n "${DEPENDENCY_PROFILE_LIMIT_SERVER_PID:-}" ]] && kill -0 "${DEPENDENCY_PROFILE_LIMIT_SERVER_PID}" 2>/dev/null; then
+    kill "${DEPENDENCY_PROFILE_LIMIT_SERVER_PID}" 2>/dev/null || true
+    wait "${DEPENDENCY_PROFILE_LIMIT_SERVER_PID}" 2>/dev/null || true
+  fi
+  if [[ -n "${DEPENDENCY_PROFILE_BUILD_SERVER_PID:-}" ]] && kill -0 "${DEPENDENCY_PROFILE_BUILD_SERVER_PID}" 2>/dev/null; then
+    kill "${DEPENDENCY_PROFILE_BUILD_SERVER_PID}" 2>/dev/null || true
+    wait "${DEPENDENCY_PROFILE_BUILD_SERVER_PID}" 2>/dev/null || true
+  fi
   if [[ -n "${CONCURRENT_SERVER_PID:-}" ]] && kill -0 "${CONCURRENT_SERVER_PID}" 2>/dev/null; then
     kill "${CONCURRENT_SERVER_PID}" 2>/dev/null || true
     wait "${CONCURRENT_SERVER_PID}" 2>/dev/null || true
+  fi
+  if [[ -n "${QUEUE_TIMEOUT_SERVER_PID:-}" ]] && kill -0 "${QUEUE_TIMEOUT_SERVER_PID}" 2>/dev/null; then
+    kill "${QUEUE_TIMEOUT_SERVER_PID}" 2>/dev/null || true
+    wait "${QUEUE_TIMEOUT_SERVER_PID}" 2>/dev/null || true
+  fi
+  if [[ -n "${SHUTDOWN_DRAIN_SERVER_PID:-}" ]] && kill -0 "${SHUTDOWN_DRAIN_SERVER_PID}" 2>/dev/null; then
+    kill "${SHUTDOWN_DRAIN_SERVER_PID}" 2>/dev/null || true
+    wait "${SHUTDOWN_DRAIN_SERVER_PID}" 2>/dev/null || true
   fi
   rm -rf "${DATA_DIR}" "${ARCHIVE_VARS}"
 }
@@ -61,29 +77,37 @@ if ! command -v "${KEST_BIN}" >/dev/null 2>&1; then
 fi
 
 cd "${SANDBOX_DIR}"
+
+./scripts/build-profile --profile skill-office --dry-run >/dev/null
+./scripts/build-profile --profile stdlib --output-dir "${DATA_DIR}/profile-build" --force >/dev/null
+
 mkdir -p "${FLOW_DIR}" "${KEST_HOME}" "${KEST_CONFIG_HOME}"
 for flow in .kest/*.flow.md; do
   sed 's#{{base_url}}##g' "${flow}" >"${FLOW_DIR}/$(basename "${flow}")"
 done
-cat >"${FLOW_DIR}/config.yaml" <<EOF
+write_kest_config() {
+  local base_url="$1"
+  cat >"${FLOW_DIR}/config.yaml" <<EOF
 version: 1
 environments:
   local:
-    base_url: ${BASE_URL}
+    base_url: ${base_url}
 active_env: local
 log_enabled: true
 EOF
-cat >"${FLOW_DIR}/flow.config.yaml" <<EOF
+  cat >"${FLOW_DIR}/flow.config.yaml" <<EOF
 version: 1
 profiles:
   local:
     include: [".kest/*.flow.md"]
     env: local
-    base_url: "${BASE_URL}"
+    base_url: "${base_url}"
     strict: true
     fail_fast: false
     sync: false
 EOF
+}
+write_kest_config "${BASE_URL}"
 
 run_kest() {
   (
@@ -157,6 +181,21 @@ values = {
         ("skill.manifest.json", json.dumps({
             "entrypoint": "scripts/run.py",
             "language": "python3",
+            "dependency_profile": "stdlib",
+            "timeout_ms": 30000,
+            "allowed_artifact_paths": ["artifacts"],
+            "max_artifact_count": 10,
+            "max_artifact_bytes": 32768,
+            "result_mode": "mixed",
+        })),
+    ]),
+    "mismatched_skill_manifest_archive_base64": zip_b64([
+        ("SKILL.md", "---\nname: mismatched-manifest-skill\ndescription: Mismatched manifest skill\nruntime_type: prompt\n---\n"),
+        ("scripts/run.py", "print('ok')\n"),
+        ("skill.manifest.json", json.dumps({
+            "entrypoint": "scripts/run.py",
+            "language": "python3",
+            "dependency_profile": "workflow-safe",
             "timeout_ms": 30000,
             "allowed_artifact_paths": ["artifacts"],
             "max_artifact_count": 10,
@@ -195,6 +234,7 @@ PY
 skill_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["skill_archive_base64"])' "${ARCHIVE_VARS}")"
 valid_skill_manifest_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["valid_skill_manifest_archive_base64"])' "${ARCHIVE_VARS}")"
 invalid_skill_manifest_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["invalid_skill_manifest_archive_base64"])' "${ARCHIVE_VARS}")"
+mismatched_skill_manifest_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["mismatched_skill_manifest_archive_base64"])' "${ARCHIVE_VARS}")"
 strip_root_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["strip_root_archive_base64"])' "${ARCHIVE_VARS}")"
 zip_slip_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["zip_slip_archive_base64"])' "${ARCHIVE_VARS}")"
 symlink_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["symlink_archive_base64"])' "${ARCHIVE_VARS}")"
@@ -217,7 +257,101 @@ cd "${SANDBOX_DIR}"
 run_kest .kest/sandbox-lifecycle-files-command.flow.md \
   --fail-fast
 
+run_kest .kest/sandbox-ttl-limits.flow.md \
+  --fail-fast
+
 run_kest .kest/sandbox-dependency-profile-catalog.flow.md \
+  --fail-fast
+
+if [[ "${START_LOCAL_SANDBOX}" = "1" ]]; then
+  DEPENDENCY_PROFILE_BUILD_PORT="$(python3 - <<'PY'
+import socket
+
+with socket.socket() as s:
+    s.bind(("127.0.0.1", 0))
+    print(s.getsockname()[1])
+PY
+)"
+  DEPENDENCY_PROFILE_BUILD_BASE_URL="http://127.0.0.1:${DEPENDENCY_PROFILE_BUILD_PORT}"
+  DEPENDENCY_PROFILE_BUILD_SERVER_LOG="${DATA_DIR}/sandbox-dependency-profile-build.log"
+  DEPENDENCY_PROFILE_BUILD_API_KEY="kest-admin-key"
+  DEPENDENCY_PROFILE_BUILD_NAME="office-safe-${DEPENDENCY_PROFILE_BUILD_PORT}-${RANDOM}"
+  env \
+    ZGI_SANDBOX_SERVER_PORT="${DEPENDENCY_PROFILE_BUILD_PORT}" \
+    ZGI_SANDBOX_DATA_DIR="${DATA_DIR}/dependency-profile-build-data" \
+    ZGI_SANDBOX_WORKER_ID="zgi-sandbox-dependency-profile-build-kest-${DEPENDENCY_PROFILE_BUILD_PORT}" \
+    ZGI_SANDBOX_API_KEY="${DEPENDENCY_PROFILE_BUILD_API_KEY}" \
+    go run cmd/server/main.go >"${DEPENDENCY_PROFILE_BUILD_SERVER_LOG}" 2>&1 &
+  DEPENDENCY_PROFILE_BUILD_SERVER_PID="$!"
+
+  for _ in {1..80}; do
+    if curl -fsS "${DEPENDENCY_PROFILE_BUILD_BASE_URL}/health" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.25
+  done
+  if ! curl -fsS "${DEPENDENCY_PROFILE_BUILD_BASE_URL}/health" >/dev/null 2>&1; then
+    cat "${DEPENDENCY_PROFILE_BUILD_SERVER_LOG}" >&2
+    echo "dependency profile build sandbox did not become ready at ${DEPENDENCY_PROFILE_BUILD_BASE_URL}" >&2
+    exit 1
+  fi
+
+  write_kest_config "${DEPENDENCY_PROFILE_BUILD_BASE_URL}"
+  run_kest .kest/sandbox-dependency-profile-build.flow.md \
+    --var admin_api_key="${DEPENDENCY_PROFILE_BUILD_API_KEY}" \
+    --var dependency_profile_name="${DEPENDENCY_PROFILE_BUILD_NAME}" \
+    --fail-fast
+
+  if kill -0 "${DEPENDENCY_PROFILE_BUILD_SERVER_PID}" 2>/dev/null; then
+    kill "${DEPENDENCY_PROFILE_BUILD_SERVER_PID}" 2>/dev/null || true
+    wait "${DEPENDENCY_PROFILE_BUILD_SERVER_PID}" 2>/dev/null || true
+  fi
+
+  DEPENDENCY_PROFILE_CACHE_PORT="$(python3 - <<'PY'
+import socket
+
+with socket.socket() as s:
+    s.bind(("127.0.0.1", 0))
+    print(s.getsockname()[1])
+PY
+)"
+  DEPENDENCY_PROFILE_BUILD_BASE_URL="http://127.0.0.1:${DEPENDENCY_PROFILE_CACHE_PORT}"
+  DEPENDENCY_PROFILE_BUILD_SERVER_LOG="${DATA_DIR}/sandbox-dependency-profile-cache.log"
+  env \
+    ZGI_SANDBOX_SERVER_PORT="${DEPENDENCY_PROFILE_CACHE_PORT}" \
+    ZGI_SANDBOX_DATA_DIR="${DATA_DIR}/dependency-profile-build-data" \
+    ZGI_SANDBOX_WORKER_ID="zgi-sandbox-dependency-profile-cache-kest-${DEPENDENCY_PROFILE_CACHE_PORT}" \
+    ZGI_SANDBOX_API_KEY="${DEPENDENCY_PROFILE_BUILD_API_KEY}" \
+    go run cmd/server/main.go >"${DEPENDENCY_PROFILE_BUILD_SERVER_LOG}" 2>&1 &
+  DEPENDENCY_PROFILE_BUILD_SERVER_PID="$!"
+
+  for _ in {1..80}; do
+    if curl -fsS "${DEPENDENCY_PROFILE_BUILD_BASE_URL}/health" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.25
+  done
+  if ! curl -fsS "${DEPENDENCY_PROFILE_BUILD_BASE_URL}/health" >/dev/null 2>&1; then
+    cat "${DEPENDENCY_PROFILE_BUILD_SERVER_LOG}" >&2
+    echo "dependency profile cache sandbox did not become ready at ${DEPENDENCY_PROFILE_BUILD_BASE_URL}" >&2
+    exit 1
+  fi
+
+  write_kest_config "${DEPENDENCY_PROFILE_BUILD_BASE_URL}"
+  run_kest .kest/sandbox-dependency-profile-cache.flow.md \
+    --var admin_api_key="${DEPENDENCY_PROFILE_BUILD_API_KEY}" \
+    --var dependency_profile_name="${DEPENDENCY_PROFILE_BUILD_NAME}" \
+    --fail-fast
+  write_kest_config "${BASE_URL}"
+fi
+
+run_kest .kest/sandbox-organization-access-scope.flow.md \
+  --fail-fast
+
+run_kest .kest/sandbox-policy-deny-audit.flow.md \
+  --fail-fast
+
+run_kest .kest/sandbox-egress-policy-decision.flow.md \
   --fail-fast
 
 run_kest .kest/sandbox-short-code-contract.flow.md \
@@ -236,10 +370,49 @@ run_kest .kest/sandbox-template-runtime.flow.md \
 run_kest .kest/sandbox-execution-timeouts.flow.md \
   --fail-fast
 
+if [[ "${START_LOCAL_SANDBOX}" = "1" ]]; then
+  CANCELLATION_REQUEST_ID="req_kest_canceled_command"
+  CANCELLATION_SANDBOX_ID="$(curl -fsS \
+    -H "Content-Type: application/json" \
+    -d '{"runtime_profile":"session","ttl_seconds":60,"dependency_profile":"stdlib","network_enabled":false,"network_policy":"deny-by-default"}' \
+    "${BASE_URL}/v1/sandboxes" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])')"
+
+  set +e
+  curl -fsS --max-time 0.2 \
+    -H "Content-Type: application/json" \
+    -H "X-Request-ID: ${CANCELLATION_REQUEST_ID}" \
+    -d "{\"sandbox_id\":\"${CANCELLATION_SANDBOX_ID}\",\"command\":\"python3\",\"args\":[\"-c\",\"import time; time.sleep(5)\"],\"profile\":\"code-short\",\"timeout_ms\":10000}" \
+    "${BASE_URL}/v1/exec/command" >/dev/null
+  CANCELLATION_CURL_STATUS="$?"
+  set -e
+  if [[ "${CANCELLATION_CURL_STATUS}" -eq 0 ]]; then
+    echo "cancellation request unexpectedly completed before client timeout" >&2
+    exit 1
+  fi
+
+  for _ in {1..120}; do
+    active_workers="$(curl -fsS "${BASE_URL}/v1/metrics" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["runner"]["active_workers"])')"
+    queued_executions="$(curl -fsS "${BASE_URL}/v1/metrics" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["runner"]["queued_executions"])')"
+    cancellation_events="$(curl -fsS "${BASE_URL}/v1/observer/events?sandbox_id=${CANCELLATION_SANDBOX_ID}&type=exec.command.failed&request_id=${CANCELLATION_REQUEST_ID}&limit=1" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["data"]["events"]))')"
+    if [[ "${active_workers}" = "0" && "${queued_executions}" = "0" && "${cancellation_events}" = "1" ]]; then
+      break
+    fi
+    sleep 0.05
+  done
+
+  run_kest .kest/sandbox-execution-cancellation.flow.md \
+    --var cancellation_sandbox_id="${CANCELLATION_SANDBOX_ID}" \
+    --var cancellation_request_id="${CANCELLATION_REQUEST_ID}" \
+    --fail-fast
+else
+  echo "Skipping cancellation cleanup flow against external sandbox: ${BASE_URL}"
+fi
+
 run_kest .kest/sandbox-archive-skill-artifacts.flow.md \
   --var skill_archive_base64="${skill_archive_base64}" \
   --var valid_skill_manifest_archive_base64="${valid_skill_manifest_archive_base64}" \
   --var invalid_skill_manifest_archive_base64="${invalid_skill_manifest_archive_base64}" \
+  --var mismatched_skill_manifest_archive_base64="${mismatched_skill_manifest_archive_base64}" \
   --fail-fast
 
 run_kest .kest/sandbox-archive-strip-root.flow.md \
@@ -270,6 +443,7 @@ PY
     ZGI_SANDBOX_DATA_DIR="${DATA_DIR}/rate-data" \
     ZGI_SANDBOX_WORKER_ID="zgi-sandbox-rate-kest-${RATE_PORT}" \
     ZGI_SANDBOX_MAX_EXECUTIONS_PER_MINUTE_PER_ORGANIZATION="1" \
+    ZGI_SANDBOX_MAX_NETWORK_REQUESTS_PER_MINUTE_PER_ORGANIZATION="1" \
     go run cmd/server/main.go >"${RATE_SERVER_LOG}" 2>&1 &
   RATE_SERVER_PID="$!"
 
@@ -325,6 +499,7 @@ PY
     ZGI_SANDBOX_DATA_DIR="${DATA_DIR}/workspace-data" \
     ZGI_SANDBOX_WORKER_ID="zgi-sandbox-workspace-kest-${WORKSPACE_PORT}" \
     ZGI_SANDBOX_MAX_WORKSPACE_BYTES="16" \
+    ZGI_SANDBOX_MAX_WORKSPACE_BYTES_PER_ORGANIZATION="16" \
     go run cmd/server/main.go >"${WORKSPACE_SERVER_LOG}" 2>&1 &
   WORKSPACE_SERVER_PID="$!"
 
@@ -432,6 +607,7 @@ PY
     ZGI_SANDBOX_WORKER_ID="zgi-sandbox-artifact-limit-kest-${ARTIFACT_LIMIT_PORT}" \
     ZGI_SANDBOX_MAX_ARTIFACT_MANIFEST_FILES="10" \
     ZGI_SANDBOX_MAX_ARTIFACT_MANIFEST_BYTES="8" \
+    ZGI_SANDBOX_MAX_ARTIFACT_BYTES_PER_ORGANIZATION="10" \
     go run cmd/server/main.go >"${ARTIFACT_LIMIT_SERVER_LOG}" 2>&1 &
   ARTIFACT_LIMIT_SERVER_PID="$!"
 
@@ -468,6 +644,59 @@ profiles:
 EOF
   run_kest .kest/sandbox-artifact-manifest-config-limit.flow.md \
     --var artifact_limit_organization_id="organization_artifact_limit_kest_${ARTIFACT_LIMIT_PORT}" \
+    --fail-fast
+
+  DEPENDENCY_PROFILE_LIMIT_PORT="$(python3 - <<'PY'
+import socket
+
+with socket.socket() as s:
+    s.bind(("127.0.0.1", 0))
+    print(s.getsockname()[1])
+PY
+)"
+  DEPENDENCY_PROFILE_LIMIT_BASE_URL="http://127.0.0.1:${DEPENDENCY_PROFILE_LIMIT_PORT}"
+  DEPENDENCY_PROFILE_LIMIT_SERVER_LOG="${DATA_DIR}/sandbox-dependency-profile-limit.log"
+  env \
+    ZGI_SANDBOX_SERVER_PORT="${DEPENDENCY_PROFILE_LIMIT_PORT}" \
+    ZGI_SANDBOX_DATA_DIR="${DATA_DIR}/dependency-profile-limit-data" \
+    ZGI_SANDBOX_WORKER_ID="zgi-sandbox-dependency-profile-limit-kest-${DEPENDENCY_PROFILE_LIMIT_PORT}" \
+    ZGI_SANDBOX_MAX_DEPENDENCY_PROFILES_PER_ORGANIZATION="1" \
+    go run cmd/server/main.go >"${DEPENDENCY_PROFILE_LIMIT_SERVER_LOG}" 2>&1 &
+  DEPENDENCY_PROFILE_LIMIT_SERVER_PID="$!"
+
+  for _ in {1..80}; do
+    if curl -fsS "${DEPENDENCY_PROFILE_LIMIT_BASE_URL}/health" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.25
+  done
+  if ! curl -fsS "${DEPENDENCY_PROFILE_LIMIT_BASE_URL}/health" >/dev/null 2>&1; then
+    cat "${DEPENDENCY_PROFILE_LIMIT_SERVER_LOG}" >&2
+    echo "dependency-profile-limit sandbox did not become ready at ${DEPENDENCY_PROFILE_LIMIT_BASE_URL}" >&2
+    exit 1
+  fi
+
+  cat >"${local_config}" <<EOF
+version: 1
+environments:
+  local:
+    base_url: ${DEPENDENCY_PROFILE_LIMIT_BASE_URL}
+active_env: local
+log_enabled: true
+EOF
+  cat >"${local_flow_config}" <<EOF
+version: 1
+profiles:
+  local:
+    include: [".kest/*.flow.md"]
+    env: local
+    base_url: "${DEPENDENCY_PROFILE_LIMIT_BASE_URL}"
+    strict: true
+    fail_fast: false
+    sync: false
+EOF
+  run_kest .kest/sandbox-organization-dependency-profile-limit.flow.md \
+    --var dependency_profile_limit_organization_id="organization_dependency_profile_limit_kest_${DEPENDENCY_PROFILE_LIMIT_PORT}" \
     --fail-fast
 
   CONCURRENT_PORT="$(python3 - <<'PY'
@@ -534,6 +763,147 @@ EOF
   run_kest .kest/sandbox-profile-concurrent-execution-limit.flow.md \
     --var profile_organization_id="organization_profile_kest_${CONCURRENT_PORT}" \
     --fail-fast
+
+  QUEUE_TIMEOUT_PORT="$(python3 - <<'PY'
+import socket
+
+with socket.socket() as s:
+    s.bind(("127.0.0.1", 0))
+    print(s.getsockname()[1])
+PY
+)"
+  QUEUE_TIMEOUT_BASE_URL="http://127.0.0.1:${QUEUE_TIMEOUT_PORT}"
+  QUEUE_TIMEOUT_SERVER_LOG="${DATA_DIR}/sandbox-queue-timeout.log"
+  env \
+    ZGI_SANDBOX_SERVER_PORT="${QUEUE_TIMEOUT_PORT}" \
+    ZGI_SANDBOX_DATA_DIR="${DATA_DIR}/queue-timeout-data" \
+    ZGI_SANDBOX_WORKER_ID="zgi-sandbox-queue-timeout-kest-${QUEUE_TIMEOUT_PORT}" \
+    ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS_PER_ORGANIZATION="1" \
+    ZGI_SANDBOX_MAX_QUEUED_EXECUTIONS_PER_ORGANIZATION="1" \
+    ZGI_SANDBOX_QUEUE_TIMEOUT_MS="100" \
+    go run cmd/server/main.go >"${QUEUE_TIMEOUT_SERVER_LOG}" 2>&1 &
+  QUEUE_TIMEOUT_SERVER_PID="$!"
+
+  for _ in {1..80}; do
+    if curl -fsS "${QUEUE_TIMEOUT_BASE_URL}/health" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.25
+  done
+  if ! curl -fsS "${QUEUE_TIMEOUT_BASE_URL}/health" >/dev/null 2>&1; then
+    cat "${QUEUE_TIMEOUT_SERVER_LOG}" >&2
+    echo "queue-timeout sandbox did not become ready at ${QUEUE_TIMEOUT_BASE_URL}" >&2
+    exit 1
+  fi
+
+  write_kest_config "${QUEUE_TIMEOUT_BASE_URL}"
+  QUEUE_TIMEOUT_ORGANIZATION_ID="organization_queue_timeout_kest_${QUEUE_TIMEOUT_PORT}"
+  QUEUE_TIMEOUT_SANDBOX_ID="$(curl -fsS \
+    -H "Content-Type: application/json" \
+    -d "{\"runtime_profile\":\"session\",\"ttl_seconds\":60,\"organization_id\":\"${QUEUE_TIMEOUT_ORGANIZATION_ID}\"}" \
+    "${QUEUE_TIMEOUT_BASE_URL}/v1/sandboxes" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])')"
+  QUEUE_TIMEOUT_HOLDER_RESPONSE="${DATA_DIR}/queue-timeout-holder-response.json"
+  curl -fsS \
+    -H "Content-Type: application/json" \
+    -H "X-Request-ID: req_kest_queue_timeout_holder" \
+    -d "{\"sandbox_id\":\"${QUEUE_TIMEOUT_SANDBOX_ID}\",\"command\":\"python3\",\"args\":[\"-c\",\"import time; time.sleep(2); print('holder')\"],\"profile\":\"code-short\",\"timeout_ms\":5000}" \
+    "${QUEUE_TIMEOUT_BASE_URL}/v1/exec/command" >"${QUEUE_TIMEOUT_HOLDER_RESPONSE}" &
+  QUEUE_TIMEOUT_HOLDER_PID="$!"
+
+  for _ in {1..80}; do
+    active_workers="$(curl -fsS "${QUEUE_TIMEOUT_BASE_URL}/v1/metrics" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["runner"]["active_workers"])')"
+    if [[ "${active_workers}" != "0" ]]; then
+      break
+    fi
+    sleep 0.025
+  done
+  if [[ "$(curl -fsS "${QUEUE_TIMEOUT_BASE_URL}/v1/metrics" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["runner"]["active_workers"])')" = "0" ]]; then
+    echo "queue-timeout holder did not occupy a worker" >&2
+    exit 1
+  fi
+
+  run_kest .kest/sandbox-execution-queue-timeout.flow.md \
+    --var queue_timeout_sandbox_id="${QUEUE_TIMEOUT_SANDBOX_ID}" \
+    --var queue_timeout_organization_id="${QUEUE_TIMEOUT_ORGANIZATION_ID}" \
+    --fail-fast
+
+  wait "${QUEUE_TIMEOUT_HOLDER_PID}"
+  curl -fsS -X DELETE "${QUEUE_TIMEOUT_BASE_URL}/v1/sandboxes/${QUEUE_TIMEOUT_SANDBOX_ID}" >/dev/null
+  write_kest_config "${CONCURRENT_BASE_URL}"
 else
   echo "Skipping resource limit saturation flow against external sandbox: ${BASE_URL}"
+fi
+
+if [[ "${START_LOCAL_SANDBOX}" = "1" ]]; then
+  SHUTDOWN_DRAIN_PORT="$(python3 - <<'PY'
+import socket
+
+with socket.socket() as s:
+    s.bind(("127.0.0.1", 0))
+    print(s.getsockname()[1])
+PY
+)"
+  SHUTDOWN_DRAIN_BASE_URL="http://127.0.0.1:${SHUTDOWN_DRAIN_PORT}"
+  SHUTDOWN_DRAIN_SERVER_LOG="${DATA_DIR}/sandbox-shutdown-drain.log"
+  SHUTDOWN_DRAIN_BINARY="${DATA_DIR}/zgi-sandbox-server"
+  go build -o "${SHUTDOWN_DRAIN_BINARY}" ./cmd/server
+  env \
+    ZGI_SANDBOX_SERVER_PORT="${SHUTDOWN_DRAIN_PORT}" \
+    ZGI_SANDBOX_DATA_DIR="${DATA_DIR}/shutdown-drain-data" \
+    ZGI_SANDBOX_WORKER_ID="zgi-sandbox-shutdown-drain-kest-${SHUTDOWN_DRAIN_PORT}" \
+    "${SHUTDOWN_DRAIN_BINARY}" >"${SHUTDOWN_DRAIN_SERVER_LOG}" 2>&1 &
+  SHUTDOWN_DRAIN_SERVER_PID="$!"
+
+  for _ in {1..80}; do
+    if curl -fsS "${SHUTDOWN_DRAIN_BASE_URL}/health" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.25
+  done
+  if ! curl -fsS "${SHUTDOWN_DRAIN_BASE_URL}/health" >/dev/null 2>&1; then
+    cat "${SHUTDOWN_DRAIN_SERVER_LOG}" >&2
+    echo "shutdown-drain sandbox did not become ready at ${SHUTDOWN_DRAIN_BASE_URL}" >&2
+    exit 1
+  fi
+
+  SHUTDOWN_DRAIN_SANDBOX_ID="$(curl -fsS \
+    -H "Content-Type: application/json" \
+    -d '{"runtime_profile":"session","ttl_seconds":60,"dependency_profile":"stdlib","network_enabled":false,"network_policy":"deny-by-default"}' \
+    "${SHUTDOWN_DRAIN_BASE_URL}/v1/sandboxes" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])')"
+  SHUTDOWN_DRAIN_RESPONSE="${DATA_DIR}/shutdown-drain-response.json"
+  curl -fsS \
+    -H "Content-Type: application/json" \
+    -H "X-Request-ID: req_kest_shutdown_drain" \
+    -d "{\"sandbox_id\":\"${SHUTDOWN_DRAIN_SANDBOX_ID}\",\"command\":\"python3\",\"args\":[\"-c\",\"import time; time.sleep(0.5); print('shutdown-drain-ok')\"],\"profile\":\"code-short\",\"timeout_ms\":5000}" \
+    "${SHUTDOWN_DRAIN_BASE_URL}/v1/exec/command" >"${SHUTDOWN_DRAIN_RESPONSE}" &
+  SHUTDOWN_DRAIN_CURL_PID="$!"
+
+  for _ in {1..80}; do
+    active_workers="$(curl -fsS "${SHUTDOWN_DRAIN_BASE_URL}/v1/metrics" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["runner"]["active_workers"])')"
+    if [[ "${active_workers}" != "0" ]]; then
+      break
+    fi
+    sleep 0.025
+  done
+  if [[ "$(curl -fsS "${SHUTDOWN_DRAIN_BASE_URL}/v1/metrics" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["runner"]["active_workers"])')" = "0" ]]; then
+    echo "shutdown-drain command did not occupy a worker" >&2
+    exit 1
+  fi
+
+  kill -TERM "${SHUTDOWN_DRAIN_SERVER_PID}"
+  wait "${SHUTDOWN_DRAIN_CURL_PID}"
+  python3 - "${SHUTDOWN_DRAIN_RESPONSE}" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as f:
+    payload = json.load(f)
+data = payload["data"]
+if payload["code"] != 0 or data["exit_code"] != 0 or data["stdout"] != "shutdown-drain-ok\n":
+    raise SystemExit(f"unexpected shutdown drain response: {payload}")
+PY
+  wait "${SHUTDOWN_DRAIN_SERVER_PID}"
+  SHUTDOWN_DRAIN_SERVER_PID=""
+else
+  echo "Skipping shutdown drain flow against external sandbox: ${BASE_URL}"
 fi

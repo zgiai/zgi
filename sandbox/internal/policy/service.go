@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/zgiai/zgi-sandbox/internal/config"
@@ -21,12 +22,68 @@ type DependencyProfile struct {
 	Packages    []DependencyPackage `json:"packages"`
 	BaseRuntime string              `json:"base_runtime"`
 	Checksum    string              `json:"checksum"`
+	SizeBytes   int64               `json:"size_bytes"`
 	Description string              `json:"description"`
 }
 
 type DependencyPackage struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
+	Name      string `json:"name"`
+	Version   string `json:"version"`
+	Ecosystem string `json:"ecosystem,omitempty"`
+}
+
+type DependencyPackageRule struct {
+	Ecosystem string `json:"ecosystem"`
+	Name      string `json:"name"`
+	Version   string `json:"version,omitempty"`
+	Reason    string `json:"reason"`
+}
+
+type DependencyPackagePolicy struct {
+	Mode            string                  `json:"mode"`
+	Enforced        bool                    `json:"enforced"`
+	DefaultAction   string                  `json:"default_action"`
+	AllowedPackages []DependencyPackageRule `json:"allowed_packages"`
+	DeniedPackages  []DependencyPackageRule `json:"denied_packages"`
+}
+
+type DependencyBuildPolicy struct {
+	Mode                       string `json:"mode"`
+	Enforced                   bool   `json:"enforced"`
+	MaxProfileSizeBytes        int64  `json:"max_profile_size_bytes"`
+	BuildTimeoutSeconds        int    `json:"build_timeout_seconds"`
+	BuildsAllowedDuringRuntime bool   `json:"builds_allowed_during_runtime"`
+}
+
+type DependencyProfileBuildRequest struct {
+	Name        string              `json:"name"`
+	Version     string              `json:"version"`
+	Languages   []string            `json:"languages"`
+	Packages    []DependencyPackage `json:"packages"`
+	BaseRuntime string              `json:"base_runtime"`
+	Checksum    string              `json:"checksum"`
+	SizeBytes   int64               `json:"size_bytes"`
+	Description string              `json:"description"`
+}
+
+type DependencyProfileBuildResult struct {
+	BuildID  string             `json:"build_id"`
+	Accepted bool               `json:"accepted"`
+	Status   string             `json:"status"`
+	Profile  *DependencyProfile `json:"profile,omitempty"`
+	Error    string             `json:"error,omitempty"`
+}
+
+type NetworkProfile struct {
+	Name                 string   `json:"name"`
+	Default              bool     `json:"default"`
+	NetworkEnabled       bool     `json:"network_enabled"`
+	AllowedHosts         []string `json:"allowed_hosts"`
+	AllowedPorts         []int    `json:"allowed_ports"`
+	AllowedProtocols     []string `json:"allowed_protocols"`
+	DeniedCIDRRanges     []string `json:"denied_cidr_ranges"`
+	DNSBehavior          string   `json:"dns_behavior"`
+	MaxRequestDurationMS int      `json:"max_request_duration_ms"`
 }
 
 type CreateDecision struct {
@@ -40,11 +97,15 @@ type CreateDecision struct {
 }
 
 type CommandLimits struct {
-	Profile          string        `json:"profile"`
-	Timeout          time.Duration `json:"-"`
-	StdoutLimitBytes int           `json:"stdout_limit_bytes"`
-	StderrLimitBytes int           `json:"stderr_limit_bytes"`
-	MaxStdinBytes    int           `json:"max_stdin_bytes"`
+	Profile            string        `json:"profile"`
+	Timeout            time.Duration `json:"-"`
+	StdoutLimitBytes   int           `json:"stdout_limit_bytes"`
+	StderrLimitBytes   int           `json:"stderr_limit_bytes"`
+	MaxStdinBytes      int           `json:"max_stdin_bytes"`
+	MaxRequestBytes    int           `json:"max_request_bytes"`
+	MaxResultJSONBytes int           `json:"max_result_json_bytes"`
+	Stateless          bool          `json:"stateless"`
+	NetworkAllowed     bool          `json:"network_allowed"`
 }
 
 type TemplateLimits struct {
@@ -60,9 +121,12 @@ type TemplateLimits struct {
 }
 
 type Service struct {
+	mu                 sync.RWMutex
 	config             config.Config
 	dependencyProfiles []DependencyProfile
-	networkProfiles    []map[string]any
+	packagePolicy      DependencyPackagePolicy
+	buildPolicy        DependencyBuildPolicy
+	networkProfiles    []NetworkProfile
 	commandProfiles    map[string]CommandLimits
 	templateProfiles   map[string]TemplateLimits
 }
@@ -102,6 +166,28 @@ func (e *LimitError) ResponseDetails() map[string]any {
 func NewService(cfg config.Config) *Service {
 	return &Service{
 		config: cfg,
+		packagePolicy: DependencyPackagePolicy{
+			Mode:          "managed-build-only",
+			Enforced:      true,
+			DefaultAction: "deny-unlisted",
+			AllowedPackages: []DependencyPackageRule{
+				{Ecosystem: "python3", Name: "data-tools", Version: "managed", Reason: "Reserved managed profile bundle."},
+				{Ecosystem: "python3", Name: "office-tools", Version: "managed", Reason: "Reserved managed profile bundle."},
+				{Ecosystem: "nodejs", Name: "office-tools", Version: "managed", Reason: "Reserved managed profile bundle."},
+			},
+			DeniedPackages: []DependencyPackageRule{
+				{Ecosystem: "*", Name: "remote-url", Reason: "Packages must come from operator-managed lockfiles."},
+				{Ecosystem: "*", Name: "local-path", Reason: "Packages must be built outside request execution."},
+				{Ecosystem: "*", Name: "latest", Reason: "Unpinned package versions are not reproducible."},
+			},
+		},
+		buildPolicy: DependencyBuildPolicy{
+			Mode:                       "operator-managed",
+			Enforced:                   true,
+			MaxProfileSizeBytes:        cfg.MaxDependencyProfileSizeBytes,
+			BuildTimeoutSeconds:        cfg.DependencyProfileBuildTimeoutSeconds,
+			BuildsAllowedDuringRuntime: false,
+		},
 		dependencyProfiles: []DependencyProfile{
 			{
 				Name:        "stdlib",
@@ -113,6 +199,7 @@ func NewService(cfg config.Config) *Service {
 				Packages:    []DependencyPackage{},
 				BaseRuntime: "preview-process",
 				Checksum:    "profile:stdlib:2026.05.01",
+				SizeBytes:   32 * 1024 * 1024,
 				Description: "Base language runtime with only built-in packages.",
 			},
 			{
@@ -125,6 +212,7 @@ func NewService(cfg config.Config) *Service {
 				Packages:    []DependencyPackage{},
 				BaseRuntime: "preview-process",
 				Checksum:    "profile:workflow-safe:2026.05.01",
+				SizeBytes:   64 * 1024 * 1024,
 				Description: "Managed Python profile for deterministic workflow execution.",
 			},
 			{
@@ -137,6 +225,7 @@ func NewService(cfg config.Config) *Service {
 				Packages:    []DependencyPackage{},
 				BaseRuntime: "preview-process",
 				Checksum:    "profile:node-basic:2026.05.01",
+				SizeBytes:   96 * 1024 * 1024,
 				Description: "Managed Node.js profile for script-style automation tasks.",
 			},
 			{
@@ -149,7 +238,21 @@ func NewService(cfg config.Config) *Service {
 				Packages:    []DependencyPackage{},
 				BaseRuntime: "preview-process",
 				Checksum:    "profile:agent-tools:2026.05.01",
+				SizeBytes:   128 * 1024 * 1024,
 				Description: "Broader operator-managed profile for internal agent tooling.",
+			},
+			{
+				Name:        "skill-office",
+				Version:     "2026.05.31",
+				Status:      "disabled",
+				Enabled:     false,
+				OwnerScope:  "global",
+				Languages:   []string{"python3", "nodejs"},
+				Packages:    []DependencyPackage{{Ecosystem: "python3", Name: "office-tools", Version: "managed"}, {Ecosystem: "nodejs", Name: "office-tools", Version: "managed"}},
+				BaseRuntime: "linux-secure",
+				Checksum:    "profile-source:skill-office:2026.05.31",
+				SizeBytes:   512 * 1024 * 1024,
+				Description: "Reserved managed document automation profile that is not available until build artifacts are verified.",
 			},
 			{
 				Name:        "python-data-preview",
@@ -161,35 +264,73 @@ func NewService(cfg config.Config) *Service {
 				Packages:    []DependencyPackage{{Name: "data-tools", Version: "managed"}},
 				BaseRuntime: "preview-process",
 				Checksum:    "profile:python-data-preview:2026.05.01",
+				SizeBytes:   256 * 1024 * 1024,
 				Description: "Reserved managed profile that is not available for sandbox creation.",
 			},
 		},
-		networkProfiles: []map[string]any{
-			{"name": "deny-by-default", "default": true, "network_enabled": false},
-			{"name": "workflow-safe", "default": false, "network_enabled": true},
-			{"name": "interactive-preview", "default": false, "network_enabled": true},
+		networkProfiles: []NetworkProfile{
+			{
+				Name:                 "deny-by-default",
+				Default:              true,
+				NetworkEnabled:       false,
+				AllowedHosts:         []string{},
+				AllowedPorts:         []int{},
+				AllowedProtocols:     []string{},
+				DeniedCIDRRanges:     defaultDeniedCIDRRanges(),
+				DNSBehavior:          "disabled",
+				MaxRequestDurationMS: 0,
+			},
+			{
+				Name:                 "workflow-safe",
+				Default:              false,
+				NetworkEnabled:       true,
+				AllowedHosts:         []string{},
+				AllowedPorts:         []int{443},
+				AllowedProtocols:     []string{"https"},
+				DeniedCIDRRanges:     defaultDeniedCIDRRanges(),
+				DNSBehavior:          "resolve-and-check-denied-ranges",
+				MaxRequestDurationMS: 5000,
+			},
+			{
+				Name:                 "interactive-preview",
+				Default:              false,
+				NetworkEnabled:       true,
+				AllowedHosts:         []string{},
+				AllowedPorts:         []int{80, 443},
+				AllowedProtocols:     []string{"http", "https"},
+				DeniedCIDRRanges:     defaultDeniedCIDRRanges(),
+				DNSBehavior:          "resolve-and-check-denied-ranges",
+				MaxRequestDurationMS: 10000,
+			},
 		},
 		commandProfiles: map[string]CommandLimits{
 			"code-short": {
-				Profile:          "code-short",
-				Timeout:          5 * time.Second,
-				StdoutLimitBytes: 64 * 1024,
-				StderrLimitBytes: 64 * 1024,
-				MaxStdinBytes:    64 * 1024,
+				Profile:            "code-short",
+				Timeout:            5 * time.Second,
+				StdoutLimitBytes:   64 * 1024,
+				StderrLimitBytes:   64 * 1024,
+				MaxStdinBytes:      64 * 1024,
+				MaxRequestBytes:    128 * 1024,
+				MaxResultJSONBytes: 64 * 1024,
+				Stateless:          true,
 			},
 			"skill-python": {
-				Profile:          "skill-python",
-				Timeout:          30 * time.Second,
-				StdoutLimitBytes: 1024 * 1024,
-				StderrLimitBytes: 1024 * 1024,
-				MaxStdinBytes:    1024 * 1024,
+				Profile:            "skill-python",
+				Timeout:            30 * time.Second,
+				StdoutLimitBytes:   1024 * 1024,
+				StderrLimitBytes:   1024 * 1024,
+				MaxStdinBytes:      1024 * 1024,
+				MaxRequestBytes:    4 * 1024 * 1024,
+				MaxResultJSONBytes: 256 * 1024,
 			},
 			"skill-node": {
-				Profile:          "skill-node",
-				Timeout:          30 * time.Second,
-				StdoutLimitBytes: 1024 * 1024,
-				StderrLimitBytes: 1024 * 1024,
-				MaxStdinBytes:    1024 * 1024,
+				Profile:            "skill-node",
+				Timeout:            30 * time.Second,
+				StdoutLimitBytes:   1024 * 1024,
+				StderrLimitBytes:   1024 * 1024,
+				MaxStdinBytes:      1024 * 1024,
+				MaxRequestBytes:    4 * 1024 * 1024,
+				MaxResultJSONBytes: 256 * 1024,
 			},
 		},
 		templateProfiles: map[string]TemplateLimits{
@@ -209,6 +350,10 @@ func NewService(cfg config.Config) *Service {
 }
 
 func (s *Service) Snapshot() map[string]any {
+	s.mu.RLock()
+	dependencyProfiles := append([]DependencyProfile(nil), s.dependencyProfiles...)
+	s.mu.RUnlock()
+
 	return map[string]any{
 		"runtime_profiles": []map[string]any{
 			{
@@ -231,10 +376,11 @@ func (s *Service) Snapshot() map[string]any {
 			},
 		},
 		"network_profiles":    s.networkProfiles,
+		"network_enforcement": s.networkEnforcementSnapshot(),
 		"command_profiles":    s.commandProfileSnapshot(),
 		"template_profiles":   s.templateProfileSnapshot(),
-		"dependency_policy":   map[string]any{"mode": "managed-profiles", "supports_user_update": false},
-		"dependency_profiles": s.dependencyProfiles,
+		"dependency_policy":   s.dependencyPolicySnapshot(),
+		"dependency_profiles": dependencyProfiles,
 		"limits":              s.EffectiveLimits(),
 	}
 }
@@ -278,8 +424,12 @@ func (s *Service) NormalizeTemplateLimits(profile string, engine string, timeout
 }
 
 func (s *Service) DependencyCatalog(language string) map[string]any {
-	items := make([]DependencyProfile, 0, len(s.dependencyProfiles))
-	for _, profile := range s.dependencyProfiles {
+	s.mu.RLock()
+	profiles := append([]DependencyProfile(nil), s.dependencyProfiles...)
+	s.mu.RUnlock()
+
+	items := make([]DependencyProfile, 0, len(profiles))
+	for _, profile := range profiles {
 		if language == "" || slices.Contains(profile.Languages, normalizeLanguage(language)) {
 			items = append(items, profile)
 		}
@@ -289,9 +439,278 @@ func (s *Service) DependencyCatalog(language string) map[string]any {
 		"language":             defaultString(normalizeLanguage(language), "python3"),
 		"mode":                 "managed-profiles",
 		"supports_user_update": false,
+		"package_policy":       s.packagePolicy,
+		"build_policy":         s.buildPolicy,
 		"profiles":             items,
 		"note":                 "Dynamic dependency installation is intentionally disabled in this preview runtime.",
 	}
+}
+
+func (s *Service) dependencyPolicySnapshot() map[string]any {
+	return map[string]any{
+		"mode":                 "managed-profiles",
+		"supports_user_update": false,
+		"package_policy":       s.packagePolicy,
+		"build_policy":         s.buildPolicy,
+	}
+}
+
+func (s *Service) ValidateDependencyProfileBuildLimits(profile DependencyProfile) error {
+	if !s.buildPolicy.Enforced {
+		return nil
+	}
+	if s.buildPolicy.MaxProfileSizeBytes > 0 && profile.SizeBytes > s.buildPolicy.MaxProfileSizeBytes {
+		return fmt.Errorf("dependency profile %s size %d exceeds max profile size of %d bytes", profile.Name, profile.SizeBytes, s.buildPolicy.MaxProfileSizeBytes)
+	}
+	if s.buildPolicy.BuildTimeoutSeconds <= 0 {
+		return errors.New("dependency profile build timeout must be positive")
+	}
+	return nil
+}
+
+func (s *Service) BuildDependencyProfile(req DependencyProfileBuildRequest) (DependencyProfileBuildResult, error) {
+	result, profile, err := s.PrepareDependencyProfileBuild(req)
+	if err != nil {
+		return result, err
+	}
+	return s.RegisterDependencyProfile(profile, result)
+}
+
+func (s *Service) PrepareDependencyProfileBuild(req DependencyProfileBuildRequest) (DependencyProfileBuildResult, DependencyProfile, error) {
+	buildID := dependencyProfileBuildID(req.Name, req.Version)
+	result := DependencyProfileBuildResult{
+		BuildID:  buildID,
+		Accepted: true,
+		Status:   "failed",
+	}
+
+	profile, err := s.normalizeDependencyProfileBuildRequest(req)
+	if err != nil {
+		result.Error = err.Error()
+		return result, DependencyProfile{}, err
+	}
+	result.Profile = &profile
+	return result, profile, nil
+}
+
+func (s *Service) RegisterDependencyProfile(profile DependencyProfile, result DependencyProfileBuildResult) (DependencyProfileBuildResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, existing := range s.dependencyProfiles {
+		if existing.Name == profile.Name {
+			err := fmt.Errorf("dependency profile already exists: %s", profile.Name)
+			result.Error = err.Error()
+			return result, err
+		}
+	}
+	s.dependencyProfiles = append(s.dependencyProfiles, profile)
+	result.Status = profile.Status
+	result.Profile = &profile
+	return result, nil
+}
+
+func (s *Service) RemoveDependencyProfile(name string) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for index, profile := range s.dependencyProfiles {
+		if profile.Name == name {
+			s.dependencyProfiles = append(s.dependencyProfiles[:index], s.dependencyProfiles[index+1:]...)
+			return
+		}
+	}
+}
+
+func (s *Service) LoadDependencyProfiles(profiles []DependencyProfile) error {
+	normalized := make([]DependencyProfile, 0, len(profiles))
+	seen := map[string]bool{}
+	for _, profile := range profiles {
+		item, err := s.normalizeCachedDependencyProfile(profile)
+		if err != nil {
+			return err
+		}
+		if seen[item.Name] {
+			return fmt.Errorf("duplicate cached dependency profile: %s", item.Name)
+		}
+		seen[item.Name] = true
+		normalized = append(normalized, item)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	existing := map[string]bool{}
+	for _, profile := range s.dependencyProfiles {
+		existing[profile.Name] = true
+	}
+	for _, profile := range normalized {
+		if existing[profile.Name] {
+			continue
+		}
+		s.dependencyProfiles = append(s.dependencyProfiles, profile)
+	}
+	return nil
+}
+
+func (s *Service) normalizeDependencyProfileBuildRequest(req DependencyProfileBuildRequest) (DependencyProfile, error) {
+	name := strings.ToLower(strings.TrimSpace(req.Name))
+	if !validDependencyProfileName(name) {
+		return DependencyProfile{}, errors.New("dependency profile name must contain only lowercase letters, numbers, and hyphens")
+	}
+	version := strings.TrimSpace(req.Version)
+	if version == "" || version == "latest" || strings.Contains(version, "*") {
+		return DependencyProfile{}, errors.New("dependency profile version must be pinned")
+	}
+	languages := normalizeDependencyProfileLanguages(req.Languages)
+	if len(languages) == 0 {
+		return DependencyProfile{}, errors.New("dependency profile must include at least one supported language")
+	}
+	baseRuntime := strings.TrimSpace(req.BaseRuntime)
+	if baseRuntime == "" {
+		baseRuntime = s.normalizedRuntimeBackend()
+	}
+	checksum := strings.TrimSpace(req.Checksum)
+	if checksum == "" {
+		return DependencyProfile{}, errors.New("dependency profile checksum is required")
+	}
+	if req.SizeBytes <= 0 {
+		return DependencyProfile{}, errors.New("dependency profile size_bytes must be positive")
+	}
+
+	packages := normalizeDependencyProfilePackages(req.Packages, languages)
+	profile := DependencyProfile{
+		Name:        name,
+		Version:     version,
+		Status:      "ready",
+		Enabled:     true,
+		OwnerScope:  "global",
+		Languages:   languages,
+		Packages:    packages,
+		BaseRuntime: baseRuntime,
+		Checksum:    checksum,
+		SizeBytes:   req.SizeBytes,
+		Description: strings.TrimSpace(req.Description),
+	}
+	if err := s.ValidateDependencyProfilePackages(profile); err != nil {
+		return DependencyProfile{}, err
+	}
+	if err := s.ValidateDependencyProfileBuildLimits(profile); err != nil {
+		return DependencyProfile{}, err
+	}
+	return profile, nil
+}
+
+func (s *Service) normalizeCachedDependencyProfile(profile DependencyProfile) (DependencyProfile, error) {
+	name := strings.ToLower(strings.TrimSpace(profile.Name))
+	if !validDependencyProfileName(name) {
+		return DependencyProfile{}, errors.New("cached dependency profile name must contain only lowercase letters, numbers, and hyphens")
+	}
+	version := strings.TrimSpace(profile.Version)
+	if version == "" || version == "latest" || strings.Contains(version, "*") {
+		return DependencyProfile{}, fmt.Errorf("cached dependency profile %s version must be pinned", name)
+	}
+	languages := normalizeDependencyProfileLanguages(profile.Languages)
+	if len(languages) == 0 {
+		return DependencyProfile{}, fmt.Errorf("cached dependency profile %s must include at least one supported language", name)
+	}
+	status := strings.TrimSpace(profile.Status)
+	if status != "ready" {
+		return DependencyProfile{}, fmt.Errorf("cached dependency profile %s is not ready", name)
+	}
+	if !profile.Enabled {
+		return DependencyProfile{}, fmt.Errorf("cached dependency profile %s is disabled", name)
+	}
+	ownerScope := strings.TrimSpace(profile.OwnerScope)
+	if ownerScope == "" {
+		ownerScope = "global"
+	}
+	baseRuntime := strings.TrimSpace(profile.BaseRuntime)
+	if baseRuntime == "" {
+		baseRuntime = s.normalizedRuntimeBackend()
+	}
+	checksum := strings.TrimSpace(profile.Checksum)
+	if checksum == "" {
+		return DependencyProfile{}, fmt.Errorf("cached dependency profile %s checksum is required", name)
+	}
+	if profile.SizeBytes <= 0 {
+		return DependencyProfile{}, fmt.Errorf("cached dependency profile %s size_bytes must be positive", name)
+	}
+
+	item := DependencyProfile{
+		Name:        name,
+		Version:     version,
+		Status:      status,
+		Enabled:     true,
+		OwnerScope:  ownerScope,
+		Languages:   languages,
+		Packages:    normalizeDependencyProfilePackages(profile.Packages, languages),
+		BaseRuntime: baseRuntime,
+		Checksum:    checksum,
+		SizeBytes:   profile.SizeBytes,
+		Description: strings.TrimSpace(profile.Description),
+	}
+	if err := s.ValidateDependencyProfilePackages(item); err != nil {
+		return DependencyProfile{}, err
+	}
+	if err := s.ValidateDependencyProfileBuildLimits(item); err != nil {
+		return DependencyProfile{}, err
+	}
+	return item, nil
+}
+
+func (s *Service) ValidateDependencyProfileForLanguage(value string, language string) (DependencyProfile, error) {
+	profile, err := s.normalizeDependencyProfile(value)
+	if err != nil {
+		return DependencyProfile{}, err
+	}
+	normalizedLanguage := normalizeLanguage(language)
+	if normalizedLanguage != "" && !slices.Contains(profile.Languages, normalizedLanguage) {
+		return DependencyProfile{}, fmt.Errorf("dependency profile %s does not support language: %s", profile.Name, normalizedLanguage)
+	}
+	return profile, nil
+}
+
+func (s *Service) ValidateDependencyProfilePackages(profile DependencyProfile) error {
+	for _, pkg := range profile.Packages {
+		ecosystem := normalizePackageEcosystem(pkg.Ecosystem)
+		if ecosystem == "" && len(profile.Languages) == 1 {
+			ecosystem = normalizeLanguage(profile.Languages[0])
+		}
+		if err := s.validateDependencyPackage(ecosystem, pkg); err != nil {
+			return fmt.Errorf("dependency profile %s package %s is not allowed: %w", profile.Name, pkg.Name, err)
+		}
+	}
+	return nil
+}
+
+func (s *Service) validateDependencyPackage(ecosystem string, pkg DependencyPackage) error {
+	name := normalizePackageName(pkg.Name)
+	version := strings.TrimSpace(pkg.Version)
+	if name == "" {
+		return errors.New("package name is required")
+	}
+	if version == "" {
+		return errors.New("package version is required")
+	}
+	if version == "latest" || strings.Contains(version, "*") {
+		return errors.New("package version must be pinned")
+	}
+	for _, rule := range s.packagePolicy.DeniedPackages {
+		if packageRuleMatches(rule, ecosystem, name, version) {
+			return fmt.Errorf("package denied by policy: %s", rule.Reason)
+		}
+	}
+	if s.packagePolicy.DefaultAction != "deny-unlisted" {
+		return nil
+	}
+	for _, rule := range s.packagePolicy.AllowedPackages {
+		if packageRuleMatches(rule, ecosystem, name, version) {
+			return nil
+		}
+	}
+	return errors.New("package is not in the managed allowlist")
 }
 
 func (s *Service) NormalizeCreate(profile string, ttlSeconds int, networkEnabled bool, networkPolicy string, dependencyProfile string, activeCount int, organizationID string, organizationActiveCount int) (CreateDecision, error) {
@@ -367,6 +786,13 @@ func (s *Service) ValidateCodeExecution(box sandbox.Sandbox, enableNetwork bool)
 	return nil
 }
 
+func (s *Service) ValidateCommandProfileNetwork(limits CommandLimits, enableNetwork bool) error {
+	if enableNetwork && !limits.NetworkAllowed {
+		return fmt.Errorf("network access is disabled for command profile: %s", limits.Profile)
+	}
+	return nil
+}
+
 func (s *Service) NormalizeCommandTimeout(timeoutSeconds int) time.Duration {
 	if timeoutSeconds <= 0 {
 		timeoutSeconds = s.config.CommandTimeout
@@ -421,6 +847,12 @@ func (s *Service) NormalizeCommandLimits(profile string, timeoutSeconds int, tim
 	if limits.StderrLimitBytes <= 0 {
 		limits.StderrLimitBytes = 64 * 1024
 	}
+	if limits.MaxResultJSONBytes <= 0 {
+		limits.MaxResultJSONBytes = 64 * 1024
+	}
+	if limits.MaxRequestBytes <= 0 {
+		limits.MaxRequestBytes = 128 * 1024
+	}
 	return limits, nil
 }
 
@@ -446,46 +878,64 @@ func (s *Service) EffectiveLimits() sandbox.ResourceLimits {
 		maxArtifactManifestBytes = maxFileSizeBytes * 256
 	}
 	return sandbox.ResourceLimits{
-		RuntimeBackend:                         s.normalizedRuntimeBackend(),
-		NetworkPolicyEnforced:                  s.runtimeBackendEnforcesNetworkPolicy(),
-		MaxWorkers:                             s.config.MaxWorkers,
-		MaxActiveSandboxes:                     s.config.MaxActive,
-		MaxConcurrentExecutions:                s.config.MaxConcurrentExecutions,
-		MaxConcurrentExecutionsPerProfile:      s.config.MaxConcurrentExecutionsPerProfile,
-		MaxActiveSandboxesPerOrganization:      s.config.MaxActivePerOrganization,
-		MaxConcurrentExecutionsPerOrganization: s.config.MaxConcurrentExecutionsPerOrganization,
-		MaxExecutionsPerMinutePerOrganization:  s.config.MaxExecutionsPerMinutePerOrganization,
-		MaxQueuedExecutionsPerOrganization:     s.config.MaxQueuedExecutionsPerOrganization,
-		MaxWorkspaceFiles:                      s.config.MaxWorkspaceFiles,
-		MaxWorkspaceBytes:                      s.config.MaxWorkspaceBytes,
-		QueueTimeoutMS:                         s.config.QueueTimeoutMS,
-		DefaultTimeoutSeconds:                  s.config.TimeoutSeconds,
-		DefaultExecutionTimeoutMS:              int64(s.config.TimeoutSeconds) * 1000,
-		OutputLimitKB:                          s.config.OutputLimitKB,
-		MaxCommandTimeoutMS:                    int64(s.config.CommandTimeout) * 1000,
-		MaxCommandTimeoutSeconds:               s.config.CommandTimeout,
-		OutputLimitBytes:                       s.config.OutputLimitKB * 1024,
-		MaxFileSizeKB:                          maxFileSizeKB,
-		MaxFileSizeBytes:                       maxFileSizeBytes,
-		MaxArchiveFiles:                        256,
-		MaxArchiveTotalBytes:                   maxFileSizeBytes * 256,
-		MaxArtifactManifestFiles:               maxArtifactManifestFiles,
-		MaxArtifactManifestTotalBytes:          maxArtifactManifestBytes,
-		MaxArtifactManifestBytes:               maxArtifactManifestBytes,
-		SessionTTLSecs:                         s.config.SessionTTL,
-		SessionTTLSeconds:                      s.config.SessionTTL,
-		InteractiveTTLSecs:                     s.config.InteractiveTTL,
-		InteractiveTTLSeconds:                  s.config.InteractiveTTL,
-		MaxCompatTTLSecs:                       300,
-		MaxCompatTTLSeconds:                    300,
-		DependencyUpdatesLocked:                true,
-		WorkspaceFileLimitEnforced:             s.config.MaxWorkspaceFiles > 0,
-		WorkspaceByteLimitEnforced:             s.config.MaxWorkspaceBytes > 0,
+		RuntimeBackend:                             s.normalizedRuntimeBackend(),
+		NetworkPolicyEnforced:                      s.runtimeBackendEnforcesNetworkPolicy(),
+		MaxWorkers:                                 s.config.MaxWorkers,
+		MaxActiveSandboxes:                         s.config.MaxActive,
+		MaxConcurrentExecutions:                    s.config.MaxConcurrentExecutions,
+		MaxConcurrentExecutionsPerProfile:          s.config.MaxConcurrentExecutionsPerProfile,
+		MaxActiveSandboxesPerOrganization:          s.config.MaxActivePerOrganization,
+		MaxConcurrentExecutionsPerOrganization:     s.config.MaxConcurrentExecutionsPerOrganization,
+		MaxExecutionsPerMinutePerOrganization:      s.config.MaxExecutionsPerMinutePerOrganization,
+		MaxNetworkRequestsPerMinutePerOrganization: s.config.MaxNetworkRequestsPerMinutePerOrganization,
+		MaxQueuedExecutionsPerOrganization:         s.config.MaxQueuedExecutionsPerOrganization,
+		MaxWorkspaceFiles:                          s.config.MaxWorkspaceFiles,
+		MaxWorkspaceBytes:                          s.config.MaxWorkspaceBytes,
+		MaxWorkspaceBytesPerOrganization:           s.config.MaxWorkspaceBytesPerOrganization,
+		QueueTimeoutMS:                             s.config.QueueTimeoutMS,
+		DefaultTimeoutSeconds:                      s.config.TimeoutSeconds,
+		DefaultExecutionTimeoutMS:                  int64(s.config.TimeoutSeconds) * 1000,
+		OutputLimitKB:                              s.config.OutputLimitKB,
+		MaxCommandTimeoutMS:                        int64(s.config.CommandTimeout) * 1000,
+		MaxCommandTimeoutSeconds:                   s.config.CommandTimeout,
+		OutputLimitBytes:                           s.config.OutputLimitKB * 1024,
+		MaxFileSizeKB:                              maxFileSizeKB,
+		MaxFileSizeBytes:                           maxFileSizeBytes,
+		MaxArchiveFiles:                            256,
+		MaxArchiveTotalBytes:                       maxFileSizeBytes * 256,
+		MaxArtifactManifestFiles:                   maxArtifactManifestFiles,
+		MaxArtifactManifestTotalBytes:              maxArtifactManifestBytes,
+		MaxArtifactManifestBytes:                   maxArtifactManifestBytes,
+		MaxArtifactBytesPerOrganization:            s.config.MaxArtifactBytesPerOrganization,
+		MaxDependencyProfilesPerOrganization:       s.config.MaxDependencyProfilesPerOrganization,
+		MaxDependencyProfileSizeBytes:              s.config.MaxDependencyProfileSizeBytes,
+		DependencyProfileBuildTimeoutSeconds:       s.config.DependencyProfileBuildTimeoutSeconds,
+		SecureRuntimeCPUSeconds:                    s.config.SecureRuntimeCPUSeconds,
+		SecureRuntimeMemoryBytes:                   s.config.SecureRuntimeMemoryBytes,
+		SecureRuntimeProcessLimit:                  s.config.SecureRuntimeProcessLimit,
+		SecureRuntimeOpenFileLimit:                 s.config.SecureRuntimeOpenFileLimit,
+		SessionTTLSecs:                             s.config.SessionTTL,
+		SessionTTLSeconds:                          s.config.SessionTTL,
+		InteractiveTTLSecs:                         s.config.InteractiveTTL,
+		InteractiveTTLSeconds:                      s.config.InteractiveTTL,
+		MaxCompatTTLSecs:                           300,
+		MaxCompatTTLSeconds:                        300,
+		DependencyUpdatesLocked:                    true,
+		WorkspaceFileLimitEnforced:                 s.config.MaxWorkspaceFiles > 0,
+		WorkspaceByteLimitEnforced:                 s.config.MaxWorkspaceBytes > 0,
+		OrganizationWorkspaceByteLimitEnforced:     s.config.MaxWorkspaceBytesPerOrganization > 0,
+		OrganizationArtifactByteLimitEnforced:      s.config.MaxArtifactBytesPerOrganization > 0,
+		OrganizationDependencyProfileLimitEnforced: s.config.MaxDependencyProfilesPerOrganization > 0,
+		SecureRuntimeResourceLimitsEnforced:        s.secureRuntimeResourceLimitsEnforced(),
 	}
 }
 
 func (s *Service) MaxExecutionsPerMinutePerOrganization() int {
 	return s.config.MaxExecutionsPerMinutePerOrganization
+}
+
+func (s *Service) MaxNetworkRequestsPerMinutePerOrganization() int {
+	return s.config.MaxNetworkRequestsPerMinutePerOrganization
 }
 
 func (s *Service) MaxConcurrentExecutions() int {
@@ -512,6 +962,10 @@ func (s *Service) MaxWorkspaceBytes() int64 {
 	return s.config.MaxWorkspaceBytes
 }
 
+func (s *Service) MaxWorkspaceBytesPerOrganization() int64 {
+	return s.config.MaxWorkspaceBytesPerOrganization
+}
+
 func (s *Service) MaxWorkspaceFiles() int {
 	return s.config.MaxWorkspaceFiles
 }
@@ -522,6 +976,14 @@ func (s *Service) MaxArtifactManifestBytes() int64 {
 
 func (s *Service) MaxArtifactManifestFiles() int {
 	return s.EffectiveLimits().MaxArtifactManifestFiles
+}
+
+func (s *Service) MaxArtifactBytesPerOrganization() int64 {
+	return s.config.MaxArtifactBytesPerOrganization
+}
+
+func (s *Service) MaxDependencyProfilesPerOrganization() int {
+	return s.config.MaxDependencyProfilesPerOrganization
 }
 
 func (s *Service) RuntimeBackend() string {
@@ -541,15 +1003,51 @@ func (s *Service) commandProfileSnapshot() []map[string]any {
 			continue
 		}
 		items = append(items, map[string]any{
-			"name":               profile.Profile,
-			"default_timeout_ms": profile.Timeout.Milliseconds(),
-			"stdout_limit_bytes": profile.StdoutLimitBytes,
-			"stderr_limit_bytes": profile.StderrLimitBytes,
-			"max_stdin_bytes":    profile.MaxStdinBytes,
-			"network":            "inherits sandbox policy",
+			"name":                  profile.Profile,
+			"default_timeout_ms":    profile.Timeout.Milliseconds(),
+			"stdout_limit_bytes":    profile.StdoutLimitBytes,
+			"stderr_limit_bytes":    profile.StderrLimitBytes,
+			"max_stdin_bytes":       profile.MaxStdinBytes,
+			"max_request_bytes":     profile.MaxRequestBytes,
+			"max_result_json_bytes": profile.MaxResultJSONBytes,
+			"stateless":             profile.Stateless,
+			"network_allowed":       profile.NetworkAllowed,
+			"network":               networkProfileSummary(profile),
 		})
 	}
 	return items
+}
+
+func (s *Service) networkEnforcementSnapshot() map[string]any {
+	enforced := s.NetworkPolicyEnforced()
+	return map[string]any{
+		"runtime_backend":                   s.RuntimeBackend(),
+		"network_policy_enforced":           enforced,
+		"network_enabled_requests_rejected": !enforced,
+		"rejection_code":                    networkEnforcementRejectionCode(enforced),
+		"rejection_reason":                  networkEnforcementRejectionReason(enforced, s.RuntimeBackend()),
+	}
+}
+
+func networkEnforcementRejectionCode(enforced bool) string {
+	if enforced {
+		return ""
+	}
+	return "network_policy_not_enforced"
+}
+
+func networkEnforcementRejectionReason(enforced bool, backend string) string {
+	if enforced {
+		return ""
+	}
+	return fmt.Sprintf("runtime backend %q does not enforce network policy", backend)
+}
+
+func networkProfileSummary(profile CommandLimits) string {
+	if profile.NetworkAllowed {
+		return "requires sandbox policy"
+	}
+	return "disabled"
 }
 
 func (s *Service) templateProfileSnapshot() []TemplateLimits {
@@ -585,7 +1083,7 @@ func (s *Service) normalizeNetworkPolicy(profile sandbox.RuntimeProfile, value s
 	}
 
 	for _, item := range s.networkProfiles {
-		if item["name"] == policyName {
+		if item.Name == policyName {
 			if profile == sandbox.RuntimeSession && policyName == "interactive-preview" {
 				return "", errors.New("interactive-preview network policy is only valid for interactive sandboxes")
 			}
@@ -601,15 +1099,116 @@ func (s *Service) normalizeDependencyProfile(value string) (DependencyProfile, e
 	if name == "" {
 		name = "stdlib"
 	}
-	for _, profile := range s.dependencyProfiles {
+	s.mu.RLock()
+	profiles := append([]DependencyProfile(nil), s.dependencyProfiles...)
+	s.mu.RUnlock()
+
+	for _, profile := range profiles {
 		if profile.Name == name {
 			if !profile.Enabled || profile.Status != "ready" {
 				return DependencyProfile{}, fmt.Errorf("dependency profile is not enabled: %s", name)
+			}
+			if err := s.ValidateDependencyProfilePackages(profile); err != nil {
+				return DependencyProfile{}, err
+			}
+			if err := s.ValidateDependencyProfileBuildLimits(profile); err != nil {
+				return DependencyProfile{}, err
 			}
 			return profile, nil
 		}
 	}
 	return DependencyProfile{}, fmt.Errorf("unsupported dependency profile: %s", name)
+}
+
+func dependencyProfileBuildID(name string, version string) string {
+	name = strings.TrimSpace(name)
+	version = strings.TrimSpace(version)
+	if name == "" {
+		name = "profile"
+	}
+	if version == "" {
+		version = "unknown"
+	}
+	return "build_" + normalizePackageName(name) + "_" + strings.NewReplacer(".", "_", "-", "_", ":", "_", "/", "_").Replace(version)
+}
+
+func validDependencyProfileName(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') || char == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func normalizeDependencyProfileLanguages(values []string) []string {
+	seen := make(map[string]bool)
+	languages := make([]string, 0, len(values))
+	for _, value := range values {
+		language := normalizeLanguage(value)
+		if language == "" || seen[language] {
+			continue
+		}
+		switch language {
+		case "python3", "nodejs":
+			seen[language] = true
+			languages = append(languages, language)
+		}
+	}
+	return languages
+}
+
+func normalizeDependencyProfilePackages(packages []DependencyPackage, languages []string) []DependencyPackage {
+	normalized := make([]DependencyPackage, 0, len(packages))
+	defaultEcosystem := ""
+	if len(languages) == 1 {
+		defaultEcosystem = languages[0]
+	}
+	for _, pkg := range packages {
+		ecosystem := normalizePackageEcosystem(pkg.Ecosystem)
+		if ecosystem == "" {
+			ecosystem = defaultEcosystem
+		}
+		normalized = append(normalized, DependencyPackage{
+			Name:      normalizePackageName(pkg.Name),
+			Version:   strings.TrimSpace(pkg.Version),
+			Ecosystem: ecosystem,
+		})
+	}
+	return normalized
+}
+
+func normalizePackageEcosystem(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "python", "python3", "pypi":
+		return "python3"
+	case "node", "nodejs", "npm", "javascript":
+		return "nodejs"
+	case "*":
+		return "*"
+	default:
+		return strings.ToLower(strings.TrimSpace(value))
+	}
+}
+
+func normalizePackageName(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func packageRuleMatches(rule DependencyPackageRule, ecosystem string, name string, version string) bool {
+	ruleEcosystem := normalizePackageEcosystem(rule.Ecosystem)
+	if ruleEcosystem != "*" && ruleEcosystem != ecosystem {
+		return false
+	}
+	if normalizePackageName(rule.Name) != name {
+		return false
+	}
+	ruleVersion := strings.TrimSpace(rule.Version)
+	return ruleVersion == "" || ruleVersion == "*" || ruleVersion == version
 }
 
 func (s *Service) normalizeTTL(profile sandbox.RuntimeProfile, ttlSeconds int) time.Duration {
@@ -637,16 +1236,41 @@ func (s *Service) maxTTL(profile sandbox.RuntimeProfile) time.Duration {
 }
 
 func (s *Service) networkPolicyAllowsEgress(policyName string) bool {
-	switch policyName {
-	case "workflow-safe", "interactive-preview":
-		return true
-	default:
-		return false
+	for _, item := range s.networkProfiles {
+		if item.Name == policyName {
+			return item.NetworkEnabled
+		}
+	}
+	return false
+}
+
+func defaultDeniedCIDRRanges() []string {
+	return []string{
+		"0.0.0.0/8",
+		"10.0.0.0/8",
+		"100.64.0.0/10",
+		"127.0.0.0/8",
+		"169.254.0.0/16",
+		"172.16.0.0/12",
+		"192.0.0.0/24",
+		"192.168.0.0/16",
+		"198.18.0.0/15",
+		"::1/128",
+		"fc00::/7",
+		"fe80::/10",
 	}
 }
 
 func (s *Service) runtimeBackendEnforcesNetworkPolicy() bool {
 	return s.config.NetworkPolicyEnforced()
+}
+
+func (s *Service) secureRuntimeResourceLimitsEnforced() bool {
+	return s.normalizedRuntimeBackend() == "linux-secure" &&
+		s.config.SecureRuntimeCPUSeconds > 0 &&
+		s.config.SecureRuntimeMemoryBytes > 0 &&
+		s.config.SecureRuntimeProcessLimit > 0 &&
+		s.config.SecureRuntimeOpenFileLimit > 0
 }
 
 func (s *Service) normalizedRuntimeBackend() string {

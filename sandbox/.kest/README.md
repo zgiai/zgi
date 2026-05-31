@@ -22,6 +22,10 @@ The runner starts a temporary local sandbox server, generates the
 archive inputs needed by the flows, runs Kest, then stops the server.
 It also runs Kest from a temporary flow workspace and generated config so local
 or CI user-level Kest settings cannot change the target base URL.
+Before the HTTP flows start, the runner validates the managed dependency
+profile sources, dry-runs the `skill-office` profile build plan, and performs a
+local `stdlib` profile smoke build. That build command is an operator-side CLI,
+so it is covered by the runner and Go tests rather than an HTTP-only flow step.
 
 By default, the runner chooses a random local port and a unique worker ID so the
 flows do not attach to a stale sandbox process or share active-sandbox capacity

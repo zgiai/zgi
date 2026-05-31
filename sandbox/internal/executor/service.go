@@ -45,22 +45,26 @@ type Service struct {
 }
 
 type CodeRequest struct {
-	SandboxID        string          `json:"sandbox_id"`
-	Language         string          `json:"language"`
-	Code             string          `json:"code"`
-	Preload          string          `json:"preload"`
-	InputJSON        json.RawMessage `json:"input_json,omitempty"`
-	Profile          string          `json:"profile,omitempty"`
-	TimeoutSeconds   int             `json:"timeout_seconds,omitempty"`
-	TimeoutMS        int             `json:"timeout_ms,omitempty"`
-	StdoutLimitKB    int             `json:"stdout_limit_kb,omitempty"`
-	StderrLimitKB    int             `json:"stderr_limit_kb,omitempty"`
-	StrictResultJSON bool            `json:"strict_result_json,omitempty"`
-	EnableNetwork    bool            `json:"enable_network"`
+	SandboxID            string          `json:"sandbox_id"`
+	OrganizationID       string          `json:"organization_id,omitempty"`
+	Language             string          `json:"language"`
+	Code                 string          `json:"code"`
+	Preload              string          `json:"preload"`
+	InputJSON            json.RawMessage `json:"input_json,omitempty"`
+	ExpectedOutputSchema json.RawMessage `json:"expected_output_schema,omitempty"`
+	Profile              string          `json:"profile,omitempty"`
+	TimeoutSeconds       int             `json:"timeout_seconds,omitempty"`
+	TimeoutMS            int             `json:"timeout_ms,omitempty"`
+	StdoutLimitKB        int             `json:"stdout_limit_kb,omitempty"`
+	StderrLimitKB        int             `json:"stderr_limit_kb,omitempty"`
+	StrictResultJSON     bool            `json:"strict_result_json,omitempty"`
+	BindWorkspace        bool            `json:"bind_workspace,omitempty"`
+	EnableNetwork        bool            `json:"enable_network"`
 }
 
 type CommandRequest struct {
 	SandboxID      string            `json:"sandbox_id"`
+	OrganizationID string            `json:"organization_id,omitempty"`
 	Command        string            `json:"command"`
 	Args           []string          `json:"args"`
 	Stdin          string            `json:"stdin"`
@@ -74,12 +78,17 @@ type CommandRequest struct {
 }
 
 type TemplateRequest struct {
-	Engine        string         `json:"engine"`
-	Template      string         `json:"template"`
-	Variables     map[string]any `json:"variables"`
-	Profile       string         `json:"profile"`
-	TimeoutMS     int            `json:"timeout_ms"`
-	OutputLimitKB int            `json:"output_limit_kb"`
+	Engine         string         `json:"engine"`
+	Template       string         `json:"template"`
+	Variables      map[string]any `json:"variables"`
+	Profile        string         `json:"profile"`
+	TimeoutMS      int            `json:"timeout_ms"`
+	OutputLimitKB  int            `json:"output_limit_kb"`
+	OrganizationID string         `json:"organization_id,omitempty"`
+	WorkspaceID    string         `json:"workspace_id,omitempty"`
+	AppID          string         `json:"app_id,omitempty"`
+	WorkflowRunID  string         `json:"workflow_run_id,omitempty"`
+	UserID         string         `json:"user_id,omitempty"`
 }
 
 type TemplateResult struct {
@@ -91,10 +100,12 @@ type TemplateResult struct {
 }
 
 type SkillRunRequest struct {
-	SandboxID string          `json:"sandbox_id"`
-	Path      string          `json:"path"`
-	InputJSON json.RawMessage `json:"input_json,omitempty"`
-	Stdin     string          `json:"stdin,omitempty"`
+	SandboxID      string            `json:"sandbox_id"`
+	OrganizationID string            `json:"organization_id,omitempty"`
+	Path           string            `json:"path"`
+	InputJSON      json.RawMessage   `json:"input_json,omitempty"`
+	Stdin          string            `json:"stdin,omitempty"`
+	Env            map[string]string `json:"env,omitempty"`
 }
 
 type SkillRunResult struct {
@@ -108,14 +119,16 @@ type SkillRunResult struct {
 }
 
 type FileWriteRequest struct {
-	SandboxID string `json:"sandbox_id"`
-	Path      string `json:"path"`
-	Content   string `json:"content"`
-	Encoding  string `json:"encoding"`
+	SandboxID      string `json:"sandbox_id"`
+	OrganizationID string `json:"organization_id,omitempty"`
+	Path           string `json:"path"`
+	Content        string `json:"content"`
+	Encoding       string `json:"encoding"`
 }
 
 type ArchiveUploadRequest struct {
 	SandboxID             string `json:"sandbox_id"`
+	OrganizationID        string `json:"organization_id,omitempty"`
 	Path                  string `json:"path"`
 	ArchiveBase64         string `json:"archive_base64"`
 	Format                string `json:"format"`
@@ -135,6 +148,7 @@ type ArchiveUploadResult struct {
 type SkillExecutionManifest struct {
 	Entrypoint           string   `json:"entrypoint"`
 	Language             string   `json:"language"`
+	DependencyProfile    string   `json:"dependency_profile"`
 	TimeoutMS            int      `json:"timeout_ms"`
 	AllowedArtifactPaths []string `json:"allowed_artifact_paths"`
 	MaxArtifactCount     int      `json:"max_artifact_count"`
@@ -181,6 +195,36 @@ type FileManifestOptions struct {
 	MaxTotalBytes int64
 }
 
+type DependencyInstallError struct {
+	PackageManager string
+	Action         string
+	Command        string
+}
+
+func (e *DependencyInstallError) Error() string {
+	return "runtime dependency installation is disabled for managed dependency profiles"
+}
+
+func (e *DependencyInstallError) ResponseDetails() map[string]any {
+	details := map[string]any{
+		"error_type": "policy_denied",
+		"code":       "dependency_install_disabled",
+	}
+	if e == nil {
+		return details
+	}
+	if e.PackageManager != "" {
+		details["package_manager"] = e.PackageManager
+	}
+	if e.Action != "" {
+		details["action"] = e.Action
+	}
+	if e.Command != "" {
+		details["command"] = e.Command
+	}
+	return details
+}
+
 func NewService(manager *lifecycle.Manager, runnerService *runner.Service, recorder *observer.Recorder, policyService *policy.Service) *Service {
 	return &Service{
 		lifecycle:                      manager,
@@ -212,6 +256,11 @@ func (s *Service) RunCode(ctx context.Context, req CodeRequest) (runner.Result, 
 		s.recordExecutionFailure(ctx, "exec.code.failed", req.SandboxID, "sandbox code execution failed", baseMetadata, err)
 		return runner.Result{}, err
 	}
+	outputSchema, err := parseExpectedOutputSchema(req.ExpectedOutputSchema)
+	if err != nil {
+		s.recordExecutionFailure(ctx, "exec.code.failed", req.SandboxID, "sandbox code execution failed", baseMetadata, err)
+		return runner.Result{}, err
+	}
 
 	runReq := runner.Request{
 		Language:      req.Language,
@@ -221,70 +270,88 @@ func (s *Service) RunCode(ctx context.Context, req CodeRequest) (runner.Result, 
 		EnableNetwork: req.EnableNetwork,
 	}
 
-	result, box, err := s.runCodeWithScope(ctx, req, runReq, limits)
+	result, box, workspaceBound, err := s.runCodeWithScope(ctx, req, runReq, limits)
 	if err != nil {
-		addOwnershipMetadata(baseMetadata, box)
+		addExecutionSandboxMetadata(baseMetadata, box)
 		s.recordExecutionFailure(ctx, "exec.code.failed", req.SandboxID, "sandbox code execution failed", baseMetadata, err)
 		return runner.Result{}, err
 	}
-	if err := s.enforceWorkspaceByteLimit(box); err != nil {
-		addOwnershipMetadata(baseMetadata, box)
-		s.recordExecutionFailure(ctx, "exec.code.failed", req.SandboxID, "sandbox code execution failed", baseMetadata, err)
-		return runner.Result{}, err
+	if workspaceBound {
+		if err := s.enforceWorkspaceByteLimit(box); err != nil {
+			addExecutionSandboxMetadata(baseMetadata, box)
+			s.recordExecutionFailure(ctx, "exec.code.failed", req.SandboxID, "sandbox code execution failed", baseMetadata, err)
+			return runner.Result{}, err
+		}
+		if err := s.enforceWorkspaceFileLimit(box); err != nil {
+			addExecutionSandboxMetadata(baseMetadata, box)
+			s.recordExecutionFailure(ctx, "exec.code.failed", req.SandboxID, "sandbox code execution failed", baseMetadata, err)
+			return runner.Result{}, err
+		}
 	}
-	if err := s.enforceWorkspaceFileLimit(box); err != nil {
-		addOwnershipMetadata(baseMetadata, box)
-		s.recordExecutionFailure(ctx, "exec.code.failed", req.SandboxID, "sandbox code execution failed", baseMetadata, err)
-		return runner.Result{}, err
-	}
-	if err := attachResultJSON(&result, req.StrictResultJSON); err != nil {
-		addOwnershipMetadata(baseMetadata, box)
+	if err := attachResultJSON(&result, req.StrictResultJSON, outputSchema, limits.MaxResultJSONBytes); err != nil {
+		addExecutionSandboxMetadata(baseMetadata, box)
 		s.recordExecutionFailure(ctx, "exec.code.failed", req.SandboxID, "sandbox code execution failed", baseMetadata, err)
 		return runner.Result{}, err
 	}
 	result.ExecutionID = executionID
 
 	metadata := map[string]any{
-		"execution_id": executionID,
-		"language":     req.Language,
-		"profile":      limits.Profile,
-		"exit_code":    result.ExitCode,
-		"duration_ms":  result.DurationMS,
-		"truncated":    result.Truncated,
-		"backend":      result.Backend,
-		"status":       "success",
+		"execution_id":    executionID,
+		"language":        req.Language,
+		"profile":         limits.Profile,
+		"exit_code":       result.ExitCode,
+		"duration_ms":     result.DurationMS,
+		"truncated":       result.Truncated,
+		"backend":         result.Backend,
+		"runtime_backend": result.Backend,
+		"status":          "success",
+		"stateless":       limits.Stateless,
+		"workspace_bound": workspaceBound,
 	}
-	addOwnershipMetadata(metadata, box)
+	addExecutionSandboxMetadata(metadata, box)
+	addRunnerProfileMetadata(metadata, result.ProfileChecksum)
 	s.observer.Record("exec.code", req.SandboxID, "sandbox code executed", observer.MetadataWithContext(ctx, metadata))
 	return result, nil
 }
 
-func (s *Service) runCodeWithScope(ctx context.Context, req CodeRequest, runReq runner.Request, limits policy.CommandLimits) (runner.Result, *sandbox.Sandbox, error) {
+func (s *Service) runCodeWithScope(ctx context.Context, req CodeRequest, runReq runner.Request, limits policy.CommandLimits) (runner.Result, *sandbox.Sandbox, bool, error) {
 	if strings.TrimSpace(req.SandboxID) == "" {
 		if req.EnableNetwork {
-			return runner.Result{}, nil, errors.New("network access is disabled for stateless code execution")
+			return runner.Result{}, nil, false, errors.New("network access is disabled for stateless code execution")
 		}
 		result, err := s.runner.RunWithLimits(ctx, runReq, limits.Timeout, limits.StdoutLimitBytes, limits.StderrLimitBytes)
-		return result, nil, err
+		return result, nil, false, err
 	}
 
 	box, err := s.lifecycle.GetActive(req.SandboxID)
 	if err != nil {
-		return runner.Result{}, nil, err
+		return runner.Result{}, nil, false, err
+	}
+	if limits.Stateless && !req.BindWorkspace && req.EnableNetwork {
+		return runner.Result{}, box, false, errors.New("network access is disabled for stateless code execution")
+	}
+	if err := s.policy.ValidateCommandProfileNetwork(limits, req.EnableNetwork); err != nil {
+		return runner.Result{}, box, false, err
 	}
 	if err := s.policy.ValidateCodeExecution(*box, req.EnableNetwork); err != nil {
-		return runner.Result{}, box, err
+		return runner.Result{}, box, false, err
 	}
+	runReq.DependencyProfile = box.DependencyProfile
 	if err := s.enforceOrganizationExecutionRate(box); err != nil {
-		return runner.Result{}, box, err
+		return runner.Result{}, box, false, err
 	}
 	releaseExecution, err := s.acquireExecutionAdmission(ctx, box, limits.Profile)
 	if err != nil {
-		return runner.Result{}, box, err
+		return runner.Result{}, box, false, err
 	}
 	defer releaseExecution()
+	if limits.Stateless && !req.BindWorkspace {
+		result, err := s.runner.RunWithLimits(ctx, runReq, limits.Timeout, limits.StdoutLimitBytes, limits.StderrLimitBytes)
+		return result, box, false, err
+	}
+
 	result, err := s.runner.RunInDirWithLimits(ctx, runReq, box.RootPath, limits.Timeout, limits.StdoutLimitBytes, limits.StderrLimitBytes)
-	return result, box, err
+	return result, box, true, err
 }
 
 func (s *Service) RunTemplate(ctx context.Context, req TemplateRequest) (TemplateResult, error) {
@@ -363,14 +430,17 @@ func (s *Service) RunTemplate(ctx context.Context, req TemplateRequest) (Templat
 		if rendered.truncated {
 			result.Warnings = append(result.Warnings, "output truncated")
 		}
-		s.observer.Record("exec.template", "", "template rendered", observer.MetadataWithContext(ctx, map[string]any{
-			"execution_id": executionID,
-			"engine":       limits.Engine,
-			"profile":      limits.Profile,
-			"duration_ms":  result.DurationMS,
-			"truncated":    result.Truncated,
-			"status":       "success",
-		}))
+		metadata := map[string]any{
+			"execution_id":    executionID,
+			"engine":          limits.Engine,
+			"profile":         limits.Profile,
+			"duration_ms":     result.DurationMS,
+			"truncated":       result.Truncated,
+			"runtime_backend": s.policy.RuntimeBackend(),
+			"status":          "success",
+		}
+		addTemplateOwnershipMetadata(metadata, req)
+		s.observer.Record("exec.template", "", "template rendered", observer.MetadataWithContext(ctx, metadata))
 		return result, nil
 	case <-renderCtx.Done():
 		err := fmt.Errorf("template execution timed out after %d ms", limits.Timeout.Milliseconds())
@@ -391,7 +461,7 @@ func (s *Service) RunCommand(ctx context.Context, req CommandRequest) (runner.Co
 		s.recordExecutionFailure(ctx, "exec.command.failed", req.SandboxID, "sandbox command execution failed", baseMetadata, err)
 		return runner.CommandResult{}, err
 	}
-	addOwnershipMetadata(baseMetadata, box)
+	addExecutionSandboxMetadata(baseMetadata, box)
 
 	workDir := box.RootPath
 	if req.WorkingSubpath != "" {
@@ -408,6 +478,10 @@ func (s *Service) RunCommand(ctx context.Context, req CommandRequest) (runner.Co
 		return runner.CommandResult{}, err
 	}
 	baseMetadata["profile"] = limits.Profile
+	if err := rejectRuntimeDependencyInstall(req.Command, req.Args); err != nil {
+		s.recordExecutionFailure(ctx, "exec.command.failed", req.SandboxID, "sandbox command execution failed", baseMetadata, err)
+		return runner.CommandResult{}, err
+	}
 	if len(req.Stdin) > limits.MaxStdinBytes {
 		err := fmt.Errorf("stdin exceeds max size of %d bytes", limits.MaxStdinBytes)
 		s.recordExecutionFailure(ctx, "exec.command.failed", req.SandboxID, "sandbox command execution failed", baseMetadata, err)
@@ -430,15 +504,16 @@ func (s *Service) RunCommand(ctx context.Context, req CommandRequest) (runner.Co
 	defer releaseExecution()
 
 	result, err := s.runner.ExecuteCommandSpec(ctx, runner.CommandSpec{
-		WorkDir:        workDir,
-		Command:        req.Command,
-		Args:           req.Args,
-		Stdin:          req.Stdin,
-		Env:            env,
-		Timeout:        limits.Timeout,
-		StdoutLimit:    limits.StdoutLimitBytes,
-		StderrLimit:    limits.StderrLimitBytes,
-		AllowShellForm: true,
+		WorkDir:           workDir,
+		Command:           req.Command,
+		Args:              req.Args,
+		Stdin:             req.Stdin,
+		Env:               env,
+		DependencyProfile: box.DependencyProfile,
+		Timeout:           limits.Timeout,
+		StdoutLimit:       limits.StdoutLimitBytes,
+		StderrLimit:       limits.StderrLimitBytes,
+		AllowShellForm:    true,
 	})
 	if err != nil {
 		s.recordExecutionFailure(ctx, "exec.command.failed", req.SandboxID, "sandbox command execution failed", baseMetadata, err)
@@ -455,16 +530,18 @@ func (s *Service) RunCommand(ctx context.Context, req CommandRequest) (runner.Co
 	result.ExecutionID = executionID
 
 	metadata := map[string]any{
-		"execution_id": executionID,
-		"command":      req.Command,
-		"profile":      limits.Profile,
-		"exit_code":    result.ExitCode,
-		"duration_ms":  result.DurationMS,
-		"truncated":    result.Truncated,
-		"backend":      result.Backend,
-		"status":       "success",
+		"execution_id":    executionID,
+		"command":         req.Command,
+		"profile":         limits.Profile,
+		"exit_code":       result.ExitCode,
+		"duration_ms":     result.DurationMS,
+		"truncated":       result.Truncated,
+		"backend":         result.Backend,
+		"runtime_backend": result.Backend,
+		"status":          "success",
 	}
-	addOwnershipMetadata(metadata, box)
+	addExecutionSandboxMetadata(metadata, box)
+	addRunnerProfileMetadata(metadata, result.ProfileChecksum)
 	s.observer.Record("exec.command", req.SandboxID, "sandbox command executed", observer.MetadataWithContext(ctx, metadata))
 	return result, nil
 }
@@ -484,7 +561,7 @@ func (s *Service) RunSkill(ctx context.Context, req SkillRunRequest) (SkillRunRe
 		return SkillRunResult{}, err
 	}
 	baseMetadata := map[string]any{"execution_id": executionID, "path": req.Path}
-	addOwnershipMetadata(baseMetadata, box)
+	addExecutionSandboxMetadata(baseMetadata, box)
 
 	packageRoot, err := resolveExistingSandboxPath(box.RootPath, req.Path)
 	if err != nil {
@@ -502,7 +579,7 @@ func (s *Service) RunSkill(ctx context.Context, req SkillRunRequest) (SkillRunRe
 		return SkillRunResult{}, err
 	}
 
-	manifest, err := loadSkillExecutionManifest(packageRoot, s.policy.MaxArtifactManifestFiles(), s.policy.MaxArtifactManifestBytes())
+	manifest, err := loadSkillExecutionManifest(packageRoot, s.policy, box.DependencyProfile)
 	if err != nil {
 		s.recordExecutionFailure(ctx, "exec.skill.failed", req.SandboxID, "skill execution failed", baseMetadata, err)
 		return SkillRunResult{}, err
@@ -516,6 +593,11 @@ func (s *Service) RunSkill(ctx context.Context, req SkillRunRequest) (SkillRunRe
 			return SkillRunResult{}, err
 		}
 		stdin = string(req.InputJSON)
+	}
+	env, err := normalizeCommandEnv(req.Env)
+	if err != nil {
+		s.recordExecutionFailure(ctx, "exec.skill.failed", req.SandboxID, "skill execution failed", baseMetadata, err)
+		return SkillRunResult{}, err
 	}
 
 	command, args := skillCommand(manifest)
@@ -531,14 +613,16 @@ func (s *Service) RunSkill(ctx context.Context, req SkillRunRequest) (SkillRunRe
 	}
 	defer releaseExecution()
 	result, err := s.runner.ExecuteCommandSpec(ctx, runner.CommandSpec{
-		WorkDir:        packageRoot,
-		Command:        command,
-		Args:           args,
-		Stdin:          stdin,
-		Timeout:        time.Duration(manifest.TimeoutMS) * time.Millisecond,
-		StdoutLimit:    64 * 1024,
-		StderrLimit:    64 * 1024,
-		AllowShellForm: false,
+		WorkDir:           packageRoot,
+		Command:           command,
+		Args:              args,
+		Stdin:             stdin,
+		Env:               env,
+		DependencyProfile: box.DependencyProfile,
+		Timeout:           time.Duration(manifest.TimeoutMS) * time.Millisecond,
+		StdoutLimit:       64 * 1024,
+		StderrLimit:       64 * 1024,
+		AllowShellForm:    false,
 	})
 	if err != nil {
 		s.recordExecutionFailure(ctx, "exec.skill.failed", req.SandboxID, "skill execution failed", baseMetadata, err)
@@ -576,20 +660,22 @@ func (s *Service) RunSkill(ctx context.Context, req SkillRunRequest) (SkillRunRe
 	}
 
 	metadata := map[string]any{
-		"execution_id":   executionID,
-		"path":           req.Path,
-		"entrypoint":     manifest.Entrypoint,
-		"language":       manifest.Language,
-		"profile":        profile,
-		"result_mode":    manifest.ResultMode,
-		"exit_code":      result.ExitCode,
-		"duration_ms":    result.DurationMS,
-		"truncated":      result.Truncated,
-		"backend":        result.Backend,
-		"artifact_paths": len(artifactManifests),
-		"status":         "success",
+		"execution_id":    executionID,
+		"path":            req.Path,
+		"entrypoint":      manifest.Entrypoint,
+		"language":        manifest.Language,
+		"profile":         profile,
+		"result_mode":     manifest.ResultMode,
+		"exit_code":       result.ExitCode,
+		"duration_ms":     result.DurationMS,
+		"truncated":       result.Truncated,
+		"backend":         result.Backend,
+		"runtime_backend": result.Backend,
+		"artifact_paths":  len(artifactManifests),
+		"status":          "success",
 	}
-	addOwnershipMetadata(metadata, box)
+	addExecutionSandboxMetadata(metadata, box)
+	addRunnerProfileMetadata(metadata, result.ProfileChecksum)
 	s.observer.Record("exec.skill", req.SandboxID, "skill executed", observer.MetadataWithContext(ctx, metadata))
 	return runResult, nil
 }
@@ -827,11 +913,14 @@ func (s *Service) enforceWorkspaceByteLimit(box *sandbox.Sandbox) error {
 	if err != nil {
 		return err
 	}
-	return s.enforceWorkspaceByteLimitForSize(box, size)
+	if err := s.enforceWorkspaceByteLimitForSize(box, size); err != nil {
+		return err
+	}
+	return s.enforceOrganizationWorkspaceByteLimitForSize(box, size)
 }
 
 func (s *Service) enforceWorkspaceByteLimitForWrite(box *sandbox.Sandbox, target string, newSize int64) error {
-	if box == nil || s.policy.MaxWorkspaceBytes() <= 0 {
+	if box == nil {
 		return nil
 	}
 	currentSize, err := workspaceByteSize(box.RootPath)
@@ -842,7 +931,11 @@ func (s *Service) enforceWorkspaceByteLimitForWrite(box *sandbox.Sandbox, target
 	if err != nil {
 		return err
 	}
-	return s.enforceWorkspaceByteLimitForSize(box, currentSize-existingSize+newSize)
+	projectedSize := currentSize - existingSize + newSize
+	if err := s.enforceWorkspaceByteLimitForSize(box, projectedSize); err != nil {
+		return err
+	}
+	return s.enforceOrganizationWorkspaceByteLimitForSize(box, projectedSize)
 }
 
 func (s *Service) enforceWorkspaceByteLimitForSize(box *sandbox.Sandbox, actualSize int64) error {
@@ -859,6 +952,49 @@ func (s *Service) enforceWorkspaceByteLimitForSize(box *sandbox.Sandbox, actualS
 			"workspace_bytes": actualSize,
 		},
 	}
+}
+
+func (s *Service) enforceOrganizationWorkspaceByteLimitForSize(box *sandbox.Sandbox, projectedBoxSize int64) error {
+	limit := s.policy.MaxWorkspaceBytesPerOrganization()
+	if limit <= 0 || box == nil || box.OrganizationID == "" {
+		return nil
+	}
+	actualSize, err := s.organizationWorkspaceByteSize(box, projectedBoxSize)
+	if err != nil {
+		return err
+	}
+	if actualSize <= limit {
+		return nil
+	}
+	return &policy.LimitError{
+		Code:    "organization_workspace_byte_limit_exceeded",
+		Limit:   "max_workspace_bytes_per_organization",
+		Maximum: limitMaximumInt(limit),
+		Actual:  limitMaximumInt(actualSize),
+		Details: map[string]any{
+			"organization_id":              box.OrganizationID,
+			"organization_workspace_bytes": actualSize,
+		},
+	}
+}
+
+func (s *Service) organizationWorkspaceByteSize(currentBox *sandbox.Sandbox, projectedCurrentBoxSize int64) (int64, error) {
+	var total int64
+	for _, item := range s.lifecycle.List() {
+		if item.OrganizationID != currentBox.OrganizationID {
+			continue
+		}
+		if item.ID == currentBox.ID {
+			total += projectedCurrentBoxSize
+			continue
+		}
+		size, err := workspaceByteSize(item.RootPath)
+		if err != nil {
+			return 0, err
+		}
+		total += size
+	}
+	return total, nil
 }
 
 func (s *Service) enforceWorkspaceFileLimit(box *sandbox.Sandbox) error {
@@ -922,6 +1058,7 @@ func (s *Service) recordExecutionFailure(ctx context.Context, eventType string, 
 	for key, value := range metadata {
 		eventMetadata[key] = value
 	}
+	addRuntimeBackendMetadata(eventMetadata, s.policy.RuntimeBackend())
 	s.observer.Record(eventType, sandboxID, message, observer.MetadataWithContext(ctx, eventMetadata))
 }
 
@@ -929,11 +1066,14 @@ func classifyExecutionError(err error) string {
 	var cancelErr *runner.CancellationError
 	var queueErr *runner.QueueTimeoutError
 	var limitErr *policy.LimitError
+	var dependencyInstallErr *DependencyInstallError
 	switch {
 	case errors.As(err, &cancelErr):
 		return "execution_canceled"
 	case errors.As(err, &queueErr), errors.As(err, &limitErr):
 		return "limit_exceeded"
+	case errors.As(err, &dependencyInstallErr):
+		return "policy_denied"
 	case strings.Contains(err.Error(), "timed out"):
 		return "limit_exceeded"
 	case strings.Contains(err.Error(), "network access"):
@@ -949,13 +1089,33 @@ func classifyExecutionError(err error) string {
 
 func (s *Service) recordTemplateFailure(ctx context.Context, req TemplateRequest, executionID string, err error) {
 	metadata := map[string]any{
-		"execution_id": executionID,
-		"engine":       defaultString(req.Engine, "go-text"),
-		"profile":      defaultString(req.Profile, "template-short"),
-		"status":       "failure",
-		"error_type":   classifyExecutionError(err),
+		"execution_id":    executionID,
+		"engine":          defaultString(req.Engine, "go-text"),
+		"profile":         defaultString(req.Profile, "template-short"),
+		"runtime_backend": s.policy.RuntimeBackend(),
+		"status":          "failure",
+		"error_type":      classifyExecutionError(err),
 	}
+	addTemplateOwnershipMetadata(metadata, req)
 	s.observer.Record("exec.template.failed", "", "template render failed", observer.MetadataWithContext(ctx, metadata))
+}
+
+func addTemplateOwnershipMetadata(metadata map[string]any, req TemplateRequest) {
+	if req.OrganizationID != "" {
+		metadata["organization_id"] = req.OrganizationID
+	}
+	if req.WorkspaceID != "" {
+		metadata["workspace_id"] = req.WorkspaceID
+	}
+	if req.AppID != "" {
+		metadata["app_id"] = req.AppID
+	}
+	if req.WorkflowRunID != "" {
+		metadata["workflow_run_id"] = req.WorkflowRunID
+	}
+	if req.UserID != "" {
+		metadata["user_id"] = req.UserID
+	}
 }
 
 var errTemplateOutputTruncated = errors.New("template output truncated")
@@ -1140,6 +1300,31 @@ func addOwnershipMetadata(metadata map[string]any, box *sandbox.Sandbox) {
 	}
 }
 
+func addExecutionSandboxMetadata(metadata map[string]any, box *sandbox.Sandbox) {
+	addOwnershipMetadata(metadata, box)
+	if box == nil {
+		return
+	}
+	if box.DependencyProfile != "" {
+		metadata["dependency_profile"] = box.DependencyProfile
+	}
+	if box.DependencyProfileVersion != "" {
+		metadata["dependency_profile_version"] = box.DependencyProfileVersion
+	}
+}
+
+func addRunnerProfileMetadata(metadata map[string]any, checksum string) {
+	if strings.TrimSpace(checksum) != "" {
+		metadata["dependency_profile_checksum"] = checksum
+	}
+}
+
+func addRuntimeBackendMetadata(metadata map[string]any, runtimeBackend string) {
+	if strings.TrimSpace(runtimeBackend) != "" {
+		metadata["runtime_backend"] = runtimeBackend
+	}
+}
+
 func (s *Service) UploadFile(req FileWriteRequest) (*FileInfo, error) {
 	box, err := s.lifecycle.GetActive(req.SandboxID)
 	if err != nil {
@@ -1175,6 +1360,7 @@ func (s *Service) UploadFile(req FileWriteRequest) (*FileInfo, error) {
 	info, err := s.StatFile(req.SandboxID, req.Path)
 	if err == nil {
 		metadata := map[string]any{"path": req.Path, "size": info.Size}
+		addRuntimeBackendMetadata(metadata, s.policy.RuntimeBackend())
 		addOwnershipMetadata(metadata, box)
 		s.observer.Record("files.upload", req.SandboxID, "file uploaded", metadata)
 	}
@@ -1219,7 +1405,7 @@ func (s *Service) UploadArchive(req ArchiveUploadRequest) (*ArchiveUploadResult,
 	}
 	var skillManifest *SkillExecutionManifest
 	if req.ValidateSkillManifest {
-		skillManifest, err = validateSkillExecutionManifest(entries, s.policy.MaxArtifactManifestFiles(), s.policy.MaxArtifactManifestBytes())
+		skillManifest, err = validateSkillExecutionManifest(entries, s.policy, box.DependencyProfile)
 		if err != nil {
 			return nil, err
 		}
@@ -1237,6 +1423,8 @@ func (s *Service) UploadArchive(req ArchiveUploadRequest) (*ArchiveUploadResult,
 	if projectedSize, err := projectedWorkspaceSizeForArchive(box.RootPath, req.Path, entries); err != nil {
 		return nil, err
 	} else if err := s.enforceWorkspaceByteLimitForSize(box, projectedSize); err != nil {
+		return nil, err
+	} else if err := s.enforceOrganizationWorkspaceByteLimitForSize(box, projectedSize); err != nil {
 		return nil, err
 	}
 	if projectedCount, err := projectedWorkspaceFileCountForArchive(box.RootPath, req.Path, entries); err != nil {
@@ -1288,6 +1476,7 @@ func (s *Service) UploadArchive(req ArchiveUploadRequest) (*ArchiveUploadResult,
 		"file_count": len(files),
 		"total_size": totalSize,
 	}
+	addRuntimeBackendMetadata(metadata, s.policy.RuntimeBackend())
 	addOwnershipMetadata(metadata, box)
 	s.observer.Record("files.upload_archive", req.SandboxID, "archive uploaded", metadata)
 	return &ArchiveUploadResult{
@@ -1322,6 +1511,7 @@ func (s *Service) DownloadFile(sandboxID string, relativePath string, encoding s
 	}
 
 	metadata := map[string]any{"path": relativePath}
+	addRuntimeBackendMetadata(metadata, s.policy.RuntimeBackend())
 	addOwnershipMetadata(metadata, box)
 	s.observer.Record("files.download", sandboxID, "file downloaded", metadata)
 	return &FileContent{
@@ -1377,6 +1567,7 @@ func (s *Service) DeleteFile(sandboxID string, relativePath string) error {
 	}
 
 	metadata := map[string]any{"path": relativePath}
+	addRuntimeBackendMetadata(metadata, s.policy.RuntimeBackend())
 	addOwnershipMetadata(metadata, box)
 	s.observer.Record("files.delete", sandboxID, "file deleted", metadata)
 	return nil
@@ -1463,6 +1654,9 @@ func (s *Service) BuildFileManifestWithOptions(sandboxID string, relativePath st
 	if err != nil {
 		return nil, err
 	}
+	if err := s.enforceOrganizationArtifactByteLimit(box, target, totalSize); err != nil {
+		return nil, err
+	}
 
 	metadata := map[string]any{
 		"path":       relativePath,
@@ -1470,6 +1664,7 @@ func (s *Service) BuildFileManifestWithOptions(sandboxID string, relativePath st
 		"total_size": totalSize,
 		"truncated":  false,
 	}
+	addRuntimeBackendMetadata(metadata, s.policy.RuntimeBackend())
 	addOwnershipMetadata(metadata, box)
 	s.observer.Record("files.manifest", sandboxID, "file manifest generated", metadata)
 	return &FileManifest{
@@ -1480,6 +1675,45 @@ func (s *Service) BuildFileManifestWithOptions(sandboxID string, relativePath st
 		TotalSize: totalSize,
 		Truncated: false,
 	}, nil
+}
+
+func (s *Service) enforceOrganizationArtifactByteLimit(box *sandbox.Sandbox, manifestTarget string, manifestTotalSize int64) error {
+	limit := s.policy.MaxArtifactBytesPerOrganization()
+	if limit <= 0 || box == nil || box.OrganizationID == "" {
+		return nil
+	}
+	currentArtifactBytes, err := artifactByteSize(box.RootPath)
+	if err != nil {
+		return err
+	}
+	currentManifestBytes, err := directoryByteSize(manifestTarget)
+	if err != nil {
+		return err
+	}
+	actualSize := currentArtifactBytes - currentManifestBytes + manifestTotalSize
+	for _, item := range s.lifecycle.List() {
+		if item.ID == box.ID || item.OrganizationID != box.OrganizationID {
+			continue
+		}
+		size, err := artifactByteSize(item.RootPath)
+		if err != nil {
+			return err
+		}
+		actualSize += size
+	}
+	if actualSize <= limit {
+		return nil
+	}
+	return &policy.LimitError{
+		Code:    "organization_artifact_byte_limit_exceeded",
+		Limit:   "max_artifact_bytes_per_organization",
+		Maximum: limitMaximumInt(limit),
+		Actual:  limitMaximumInt(actualSize),
+		Details: map[string]any{
+			"organization_id":             box.OrganizationID,
+			"organization_artifact_bytes": actualSize,
+		},
+	}
 }
 
 func (s *Service) normalizeManifestLimits(options FileManifestOptions) (int, int64) {
@@ -1529,6 +1763,65 @@ func workspaceByteSize(root string) (int64, error) {
 		return nil
 	})
 	return total, err
+}
+
+func artifactByteSize(root string) (int64, error) {
+	var total int64
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == root || d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("artifact path contains symlink: %s", path)
+		}
+		if pathHasSegment(root, path, "artifacts") {
+			total += info.Size()
+		}
+		return nil
+	})
+	return total, err
+}
+
+func directoryByteSize(root string) (int64, error) {
+	var total int64
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == root || d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("directory contains symlink: %s", path)
+		}
+		total += info.Size()
+		return nil
+	})
+	return total, err
+}
+
+func pathHasSegment(root string, target string, segment string) bool {
+	rel, err := filepath.Rel(root, target)
+	if err != nil {
+		return false
+	}
+	for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
+		if part == segment {
+			return true
+		}
+	}
+	return false
 }
 
 func workspaceFileCount(root string) (int, error) {
@@ -1818,26 +2111,185 @@ func skillCommandProfile(manifest SkillExecutionManifest) string {
 	}
 }
 
-func attachResultJSON(result *runner.Result, strict bool) error {
+func attachResultJSON(result *runner.Result, strict bool, schema *outputSchema, maxBytes int) error {
 	if result == nil || result.ExitCode != 0 {
 		return nil
 	}
 	raw := strings.TrimSpace(result.Stdout)
 	if raw == "" {
-		if strict {
-			return errors.New("strict_result_json requires stdout to contain JSON")
+		if strict || schema != nil {
+			return errors.New("strict_result_json or expected_output_schema requires stdout to contain JSON")
 		}
+		return nil
+	}
+	if maxBytes > 0 && len([]byte(raw)) > maxBytes {
+		if strict || schema != nil {
+			return fmt.Errorf("result_json exceeds max size of %d bytes", maxBytes)
+		}
+		result.Warnings = append(result.Warnings, fmt.Sprintf("result_json omitted because output exceeded max size of %d bytes", maxBytes))
 		return nil
 	}
 
 	var decoded any
 	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
-		if strict {
-			return fmt.Errorf("strict_result_json failed to parse stdout JSON: %w", err)
+		if strict || schema != nil {
+			return fmt.Errorf("strict_result_json or expected_output_schema failed to parse stdout JSON: %w", err)
 		}
 		return nil
 	}
+	if schema != nil {
+		if err := schema.validate(decoded, "$"); err != nil {
+			return fmt.Errorf("expected_output_schema validation failed: %w", err)
+		}
+	}
 	result.ResultJSON = decoded
+	return nil
+}
+
+type outputSchema struct {
+	Type                 string                  `json:"type"`
+	Required             []string                `json:"required"`
+	Properties           map[string]outputSchema `json:"properties"`
+	Items                *outputSchema           `json:"items"`
+	AdditionalProperties *bool                   `json:"additional_properties"`
+}
+
+func parseExpectedOutputSchema(raw json.RawMessage) (*outputSchema, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	if len(raw) > 16*1024 {
+		return nil, errors.New("expected_output_schema exceeds max size of 16384 bytes")
+	}
+	var schema outputSchema
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		return nil, fmt.Errorf("expected_output_schema must contain valid JSON: %w", err)
+	}
+	if err := schema.validateDefinition("$"); err != nil {
+		return nil, fmt.Errorf("invalid expected_output_schema: %w", err)
+	}
+	return &schema, nil
+}
+
+func (s outputSchema) validateDefinition(path string) error {
+	if s.Type == "" {
+		return fmt.Errorf("%s.type is required", path)
+	}
+	if !isSupportedOutputSchemaType(s.Type) {
+		return fmt.Errorf("%s.type is unsupported: %s", path, s.Type)
+	}
+	if len(s.Required) > 128 {
+		return fmt.Errorf("%s.required exceeds max field count of 128", path)
+	}
+	seenRequired := map[string]struct{}{}
+	for _, name := range s.Required {
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("%s.required contains an empty field", path)
+		}
+		if _, exists := seenRequired[name]; exists {
+			return fmt.Errorf("%s.required contains duplicate field: %s", path, name)
+		}
+		seenRequired[name] = struct{}{}
+	}
+	if len(s.Properties) > 128 {
+		return fmt.Errorf("%s.properties exceeds max field count of 128", path)
+	}
+	for name, child := range s.Properties {
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("%s.properties contains an empty field", path)
+		}
+		if err := child.validateDefinition(path + ".properties." + name); err != nil {
+			return err
+		}
+	}
+	if s.Items != nil {
+		if err := s.Items.validateDefinition(path + ".items"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func isSupportedOutputSchemaType(value string) bool {
+	switch value {
+	case "object", "array", "string", "number", "integer", "boolean", "null":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s outputSchema) validate(value any, path string) error {
+	if err := validateOutputSchemaType(value, s.Type, path); err != nil {
+		return err
+	}
+	switch s.Type {
+	case "object":
+		object, _ := value.(map[string]any)
+		for _, name := range s.Required {
+			if _, ok := object[name]; !ok {
+				return fmt.Errorf("%s.%s is required", path, name)
+			}
+		}
+		for name, child := range s.Properties {
+			if childValue, ok := object[name]; ok {
+				if err := child.validate(childValue, path+"."+name); err != nil {
+					return err
+				}
+			}
+		}
+		if s.AdditionalProperties != nil && !*s.AdditionalProperties {
+			for name := range object {
+				if _, ok := s.Properties[name]; !ok {
+					return fmt.Errorf("%s.%s is not allowed", path, name)
+				}
+			}
+		}
+	case "array":
+		if s.Items != nil {
+			items, _ := value.([]any)
+			for index, item := range items {
+				if err := s.Items.validate(item, fmt.Sprintf("%s[%d]", path, index)); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func validateOutputSchemaType(value any, expected string, path string) error {
+	switch expected {
+	case "object":
+		if _, ok := value.(map[string]any); !ok {
+			return fmt.Errorf("%s must be object", path)
+		}
+	case "array":
+		if _, ok := value.([]any); !ok {
+			return fmt.Errorf("%s must be array", path)
+		}
+	case "string":
+		if _, ok := value.(string); !ok {
+			return fmt.Errorf("%s must be string", path)
+		}
+	case "number":
+		if _, ok := value.(float64); !ok {
+			return fmt.Errorf("%s must be number", path)
+		}
+	case "integer":
+		number, ok := value.(float64)
+		if !ok || number != float64(int64(number)) {
+			return fmt.Errorf("%s must be integer", path)
+		}
+	case "boolean":
+		if _, ok := value.(bool); !ok {
+			return fmt.Errorf("%s must be boolean", path)
+		}
+	case "null":
+		if value != nil {
+			return fmt.Errorf("%s must be null", path)
+		}
+	}
 	return nil
 }
 
@@ -1954,6 +2406,203 @@ func normalizeCommandEnv(env map[string]string) (map[string]string, error) {
 	return normalized, nil
 }
 
+func rejectRuntimeDependencyInstall(command string, args []string) error {
+	if len(args) > 0 {
+		tokens := commandTokens(command, args)
+		if len(tokens) > 0 && isShellCommand(tokens[0]) {
+			if match := shellArgDependencyInstallMatch(command, args); match != nil {
+				match.Command = strings.TrimSpace(command)
+				return match
+			}
+			return nil
+		}
+		tokens = trimShellCommandPrefix(tokens)
+		if match := dependencyInstallHeadMatch(tokens); match != nil {
+			match.Command = strings.TrimSpace(command)
+			return match
+		}
+		return nil
+	}
+
+	if match := shellDependencyInstallMatch(command); match != nil {
+		match.Command = strings.TrimSpace(command)
+		return match
+	}
+	return nil
+}
+
+func shellArgDependencyInstallMatch(command string, args []string) *DependencyInstallError {
+	for i, arg := range args {
+		if cleanCommandToken(arg) == "-c" && i+1 < len(args) {
+			return shellDependencyInstallMatch(args[i+1])
+		}
+	}
+	return nil
+}
+
+func commandTokens(command string, args []string) []string {
+	if len(args) > 0 {
+		tokens := []string{cleanCommandToken(command)}
+		for _, arg := range args {
+			tokens = append(tokens, cleanCommandToken(arg))
+		}
+		return compactTokens(tokens)
+	}
+
+	replacer := strings.NewReplacer(
+		"&&", " ",
+		"||", " ",
+		";", " ",
+		"|", " ",
+		"\n", " ",
+		"\t", " ",
+	)
+	parts := strings.Fields(replacer.Replace(command))
+	tokens := make([]string, 0, len(parts))
+	for _, part := range parts {
+		tokens = append(tokens, cleanCommandToken(part))
+	}
+	return compactTokens(tokens)
+}
+
+func shellDependencyInstallMatch(command string) *DependencyInstallError {
+	for _, segment := range shellCommandSegments(command) {
+		tokens := commandTokens(segment, nil)
+		tokens = trimShellCommandPrefix(tokens)
+		if match := dependencyInstallHeadMatch(tokens); match != nil {
+			return match
+		}
+	}
+	return nil
+}
+
+func shellCommandSegments(command string) []string {
+	replacer := strings.NewReplacer(
+		"&&", "\n",
+		"||", "\n",
+		";", "\n",
+		"|", "\n",
+	)
+	parts := strings.Split(replacer.Replace(command), "\n")
+	segments := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part = strings.TrimSpace(part); part != "" {
+			segments = append(segments, part)
+		}
+	}
+	return segments
+}
+
+func trimShellCommandPrefix(tokens []string) []string {
+	for len(tokens) > 0 {
+		switch {
+		case tokens[0] == "env" || tokens[0] == "sudo" || tokens[0] == "command":
+			tokens = tokens[1:]
+		case strings.Contains(tokens[0], "="):
+			tokens = tokens[1:]
+		default:
+			return tokens
+		}
+	}
+	return tokens
+}
+
+func compactTokens(tokens []string) []string {
+	compacted := make([]string, 0, len(tokens))
+	for _, token := range tokens {
+		if token != "" {
+			compacted = append(compacted, token)
+		}
+	}
+	return compacted
+}
+
+func cleanCommandToken(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.Trim(value, `"'`)
+	value = strings.TrimRight(value, ",")
+	return strings.ToLower(filepath.Base(value))
+}
+
+func dependencyInstallMatch(tokens []string) *DependencyInstallError {
+	for i := 0; i < len(tokens); i++ {
+		if match := dependencyInstallMatchAt(tokens, i); match != nil {
+			return match
+		}
+	}
+	return nil
+}
+
+func dependencyInstallHeadMatch(tokens []string) *DependencyInstallError {
+	return dependencyInstallMatchAt(tokens, 0)
+}
+
+func dependencyInstallMatchAt(tokens []string, index int) *DependencyInstallError {
+	if index >= len(tokens) {
+		return nil
+	}
+	token := tokens[index]
+	switch {
+	case isPipCommand(token) && nextTokenIs(tokens, index, "install"):
+		return dependencyInstallError(token, tokens[index+1])
+	case isPythonCommand(token) && nextTokenIs(tokens, index, "-m") && nextTokenIsPip(tokens, index+1) && nextTokenIs(tokens, index+2, "install"):
+		return dependencyInstallError(tokens[index+2], tokens[index+3])
+	case token == "uv" && nextTokenIs(tokens, index, "pip") && nextTokenIsAny(tokens, index+1, "install", "sync"):
+		return dependencyInstallError("uv pip", tokens[index+2])
+	case token == "npm" && nextTokenIsAny(tokens, index, "install", "i", "ci", "add"):
+		return dependencyInstallError(token, tokens[index+1])
+	case token == "pnpm" && nextTokenIsAny(tokens, index, "install", "i", "add"):
+		return dependencyInstallError(token, tokens[index+1])
+	case token == "yarn" && nextTokenIsAny(tokens, index, "install", "add"):
+		return dependencyInstallError(token, tokens[index+1])
+	case token == "bun" && nextTokenIsAny(tokens, index, "install", "add"):
+		return dependencyInstallError(token, tokens[index+1])
+	case token == "poetry" && nextTokenIsAny(tokens, index, "install", "add"):
+		return dependencyInstallError(token, tokens[index+1])
+	default:
+		return nil
+	}
+}
+
+func dependencyInstallError(manager string, action string) *DependencyInstallError {
+	return &DependencyInstallError{PackageManager: manager, Action: action}
+}
+
+func isPipCommand(value string) bool {
+	return value == "pip" || value == "pip3" || value == "pipx"
+}
+
+func isPythonCommand(value string) bool {
+	return value == "python" || value == "python3" || value == "py"
+}
+
+func isShellCommand(value string) bool {
+	return value == "sh" || value == "bash" || value == "dash" || value == "zsh"
+}
+
+func nextTokenIs(tokens []string, index int, value string) bool {
+	next := index + 1
+	return next < len(tokens) && tokens[next] == value
+}
+
+func nextTokenIsPip(tokens []string, index int) bool {
+	next := index + 1
+	return next < len(tokens) && isPipCommand(tokens[next])
+}
+
+func nextTokenIsAny(tokens []string, index int, values ...string) bool {
+	next := index + 1
+	if next >= len(tokens) {
+		return false
+	}
+	for _, value := range values {
+		if tokens[next] == value {
+			return true
+		}
+	}
+	return false
+}
+
 func validEnvKey(key string) bool {
 	for i, char := range key {
 		if char >= 'A' && char <= 'Z' || char >= 'a' && char <= 'z' || char == '_' {
@@ -2015,7 +2664,7 @@ func normalizeArchiveEntries(files []*zip.File, stripRoot bool) ([]archiveEntry,
 	return entries, nil
 }
 
-func validateSkillExecutionManifest(entries []archiveEntry, maxArtifactFiles int, maxArtifactBytes int64) (*SkillExecutionManifest, error) {
+func validateSkillExecutionManifest(entries []archiveEntry, policyService *policy.Service, sandboxDependencyProfile string) (*SkillExecutionManifest, error) {
 	names := make(map[string]bool, len(entries))
 	for _, entry := range entries {
 		names[filepath.ToSlash(entry.name)] = true
@@ -2039,10 +2688,10 @@ func validateSkillExecutionManifest(entries []archiveEntry, maxArtifactFiles int
 		return nil, err
 	}
 
-	return parseSkillExecutionManifest(content, names, maxArtifactFiles, maxArtifactBytes)
+	return parseSkillExecutionManifest(content, names, policyService, sandboxDependencyProfile)
 }
 
-func loadSkillExecutionManifest(packageRoot string, maxArtifactFiles int, maxArtifactBytes int64) (SkillExecutionManifest, error) {
+func loadSkillExecutionManifest(packageRoot string, policyService *policy.Service, sandboxDependencyProfile string) (SkillExecutionManifest, error) {
 	manifestPath := filepath.Join(packageRoot, "skill.manifest.json")
 	info, err := os.Lstat(manifestPath)
 	if err != nil {
@@ -2091,25 +2740,25 @@ func loadSkillExecutionManifest(packageRoot string, maxArtifactFiles int, maxArt
 		return SkillExecutionManifest{}, err
 	}
 
-	manifest, err := parseSkillExecutionManifest(content, names, maxArtifactFiles, maxArtifactBytes)
+	manifest, err := parseSkillExecutionManifest(content, names, policyService, sandboxDependencyProfile)
 	if err != nil {
 		return SkillExecutionManifest{}, err
 	}
 	return *manifest, nil
 }
 
-func parseSkillExecutionManifest(content []byte, names map[string]bool, maxArtifactFiles int, maxArtifactBytes int64) (*SkillExecutionManifest, error) {
+func parseSkillExecutionManifest(content []byte, names map[string]bool, policyService *policy.Service, sandboxDependencyProfile string) (*SkillExecutionManifest, error) {
 	var manifest SkillExecutionManifest
 	if err := json.Unmarshal(content, &manifest); err != nil {
 		return nil, fmt.Errorf("invalid skill.manifest.json: %w", err)
 	}
-	if err := validateSkillManifestFields(&manifest, names, maxArtifactFiles, maxArtifactBytes); err != nil {
+	if err := validateSkillManifestFields(&manifest, names, policyService, sandboxDependencyProfile); err != nil {
 		return nil, err
 	}
 	return &manifest, nil
 }
 
-func validateSkillManifestFields(manifest *SkillExecutionManifest, names map[string]bool, maxArtifactFiles int, maxArtifactBytes int64) error {
+func validateSkillManifestFields(manifest *SkillExecutionManifest, names map[string]bool, policyService *policy.Service, sandboxDependencyProfile string) error {
 	manifest.Entrypoint = filepath.ToSlash(strings.TrimSpace(manifest.Entrypoint))
 	if manifest.Entrypoint == "" {
 		return errors.New("skill manifest entrypoint is required")
@@ -2138,15 +2787,31 @@ func validateSkillManifestFields(manifest *SkillExecutionManifest, names map[str
 			return fmt.Errorf("skill manifest nodejs entrypoint must use .js: %s", manifest.Entrypoint)
 		}
 	}
+	if policyService == nil {
+		return errors.New("dependency profile policy is not configured")
+	}
+	if strings.TrimSpace(manifest.DependencyProfile) == "" {
+		manifest.DependencyProfile = strings.TrimSpace(sandboxDependencyProfile)
+	}
+	dependency, err := policyService.ValidateDependencyProfileForLanguage(manifest.DependencyProfile, manifest.Language)
+	if err != nil {
+		return err
+	}
+	manifest.DependencyProfile = dependency.Name
+	if selected := strings.TrimSpace(sandboxDependencyProfile); selected != "" && selected != manifest.DependencyProfile {
+		return fmt.Errorf("skill manifest dependency_profile %s does not match sandbox dependency_profile: %s", manifest.DependencyProfile, selected)
+	}
 	if manifest.TimeoutMS <= 0 || manifest.TimeoutMS > 300000 {
 		return errors.New("skill manifest timeout_ms must be between 1 and 300000")
 	}
+	maxArtifactFiles := policyService.MaxArtifactManifestFiles()
 	if maxArtifactFiles <= 0 {
 		maxArtifactFiles = 100
 	}
 	if manifest.MaxArtifactCount <= 0 || manifest.MaxArtifactCount > maxArtifactFiles {
 		return fmt.Errorf("skill manifest max_artifact_count must be between 1 and %d", maxArtifactFiles)
 	}
+	maxArtifactBytes := policyService.MaxArtifactManifestBytes()
 	if manifest.MaxArtifactBytes <= 0 || manifest.MaxArtifactBytes > maxArtifactBytes {
 		return fmt.Errorf("skill manifest max_artifact_bytes must be between 1 and %d", maxArtifactBytes)
 	}

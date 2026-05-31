@@ -569,7 +569,9 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
                     className="flex items-center gap-1.5 rounded-md border border-primary/25 bg-primary/10 px-3.5 text-primary shadow-none transition-colors hover:border-primary/35 hover:bg-primary/15"
                   >
                     <UploadCloud size={16} />
-                    <span className="font-semibold">{t('workflow.publish')}</span>
+                    <span className="font-semibold">
+                      {hasPubilshed ? t('workflow.update') : t('workflow.publish')}
+                    </span>
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-56">

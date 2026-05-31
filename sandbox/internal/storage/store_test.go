@@ -6,6 +6,7 @@ import (
 
 	"github.com/zgiai/zgi-sandbox/internal/config"
 	"github.com/zgiai/zgi-sandbox/internal/observer"
+	"github.com/zgiai/zgi-sandbox/internal/policy"
 	"github.com/zgiai/zgi-sandbox/internal/sandbox"
 	"github.com/zgiai/zgi-sandbox/internal/testutil"
 )
@@ -66,6 +67,75 @@ func TestPostgresStorePersistsSandboxAndEvents(t *testing.T) {
 	}
 	if organizationCount != 1 {
 		t.Fatalf("expected one active sandbox for organization, got %d", organizationCount)
+	}
+	workflowBox := box
+	workflowBox.ID = "sbx_store_test_workflow_profile"
+	workflowBox.DependencyProfile = "workflow-safe"
+	if err := store.SaveSandbox(workflowBox); err != nil {
+		t.Fatalf("save workflow profile sandbox: %v", err)
+	}
+	expiredBox := box
+	expiredBox.ID = "sbx_store_test_expired_profile"
+	expiredBox.DependencyProfile = "node-basic"
+	expiredBox.ExpiresAt = time.Now().UTC().Add(-time.Minute)
+	if err := store.SaveSandbox(expiredBox); err != nil {
+		t.Fatalf("save expired profile sandbox: %v", err)
+	}
+	otherOrganizationBox := box
+	otherOrganizationBox.ID = "sbx_store_test_other_organization_profile"
+	otherOrganizationBox.OrganizationID = "organization-2"
+	otherOrganizationBox.DependencyProfile = "node-basic"
+	if err := store.SaveSandbox(otherOrganizationBox); err != nil {
+		t.Fatalf("save other organization profile sandbox: %v", err)
+	}
+	profiles, err := store.ListActiveDependencyProfilesByOrganization(box.OrganizationID, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("list active dependency profiles by organization: %v", err)
+	}
+	if len(profiles) != 2 || profiles[0] != "stdlib" || profiles[1] != "workflow-safe" {
+		t.Fatalf("expected active dependency profiles for organization, got %+v", profiles)
+	}
+
+	dependencyProfile := policy.DependencyProfile{
+		Name:        "office-safe",
+		Version:     "2026.05.31",
+		Status:      "ready",
+		Enabled:     true,
+		OwnerScope:  "global",
+		Languages:   []string{"python3"},
+		Packages:    []policy.DependencyPackage{{Name: "data-tools", Version: "managed", Ecosystem: "python3"}},
+		BaseRuntime: "preview-process",
+		Checksum:    "sha256:office-safe",
+		SizeBytes:   1024,
+		Description: "Managed document automation profile.",
+	}
+	if err := store.SaveDependencyProfile(dependencyProfile); err != nil {
+		t.Fatalf("save dependency profile: %v", err)
+	}
+	dependencyProfiles, err := store.ListDependencyProfiles()
+	if err != nil {
+		t.Fatalf("list dependency profiles: %v", err)
+	}
+	if len(dependencyProfiles) != 1 {
+		t.Fatalf("expected one dependency profile, got %+v", dependencyProfiles)
+	}
+	loadedProfile := dependencyProfiles[0]
+	if loadedProfile.Name != dependencyProfile.Name ||
+		loadedProfile.Version != dependencyProfile.Version ||
+		loadedProfile.Status != dependencyProfile.Status ||
+		!loadedProfile.Enabled ||
+		loadedProfile.OwnerScope != dependencyProfile.OwnerScope ||
+		loadedProfile.BaseRuntime != dependencyProfile.BaseRuntime ||
+		loadedProfile.Checksum != dependencyProfile.Checksum ||
+		loadedProfile.SizeBytes != dependencyProfile.SizeBytes ||
+		loadedProfile.Description != dependencyProfile.Description {
+		t.Fatalf("dependency profile fields did not round trip: %+v", loadedProfile)
+	}
+	if len(loadedProfile.Languages) != 1 || loadedProfile.Languages[0] != "python3" {
+		t.Fatalf("dependency profile languages did not round trip: %+v", loadedProfile.Languages)
+	}
+	if len(loadedProfile.Packages) != 1 || loadedProfile.Packages[0].Name != "data-tools" || loadedProfile.Packages[0].Ecosystem != "python3" {
+		t.Fatalf("dependency profile packages did not round trip: %+v", loadedProfile.Packages)
 	}
 
 	event := observer.Event{

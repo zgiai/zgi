@@ -192,7 +192,7 @@ export function AgentRuntimeHeader({
               aria-label={isPublishing ? publishingLabel : publishLabel}
             >
               {isPublishing ? <Loader2 className="size-4 animate-spin" /> : <UploadCloud className="size-4" />}
-              <span className="hidden font-semibold sm:inline">{t('header.publish')}</span>
+              <span className="hidden font-semibold sm:inline">{publishLabel}</span>
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">

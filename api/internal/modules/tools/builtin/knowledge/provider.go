@@ -22,7 +22,7 @@ const (
 )
 
 type RetrievalService interface {
-	ListAccessibleDatasets(ctx context.Context, scope dataset_service.KnowledgeScope, query string, limit int) ([]dataset_service.KnowledgeDatasetSummary, error)
+	ListAccessibleDatasets(ctx context.Context, scope dataset_service.KnowledgeScope, query string, limit int) (*dataset_service.KnowledgeListResponse, error)
 	Retrieve(ctx context.Context, req dataset_service.KnowledgeRetrieveRequest) (*dataset_service.KnowledgeRetrieveResponse, error)
 	RetrieveAgentKnowledge(ctx context.Context, req dataset_service.KnowledgeRetrieveRequest) (*dataset_service.KnowledgeRetrieveResponse, error)
 }
@@ -104,13 +104,11 @@ func (t *knowledgeTool) Invoke(ctx context.Context, userID string, params map[st
 	case ToolListAccessibleKnowledge:
 		query := stringValue(params, "query")
 		limit := intValue(params, "limit", defaultKnowledgeListToolLimit)
-		datasets, err := t.service.ListAccessibleDatasets(ctx, scope, query, limit)
+		response, err := t.service.ListAccessibleDatasets(ctx, scope, query, limit)
 		if err != nil {
 			return nil, err
 		}
-		return jsonMessages(map[string]interface{}{
-			"knowledge_bases": datasets,
-		})
+		return knowledgeListMessages(response)
 	case ToolRetrieveKnowledge:
 		req, err := knowledgeRetrieveRequest(scope, params)
 		if err != nil {
@@ -255,13 +253,28 @@ func retrievalMessages(response *dataset_service.KnowledgeRetrieveResponse) ([]t
 	if response == nil {
 		response = &dataset_service.KnowledgeRetrieveResponse{}
 	}
+	payload := map[string]interface{}{
+		"query":               response.Query,
+		"status":              response.Status,
+		"context":             response.Context,
+		"result_count":        response.ResultCount,
+		"retriever_resources": response.Resources,
+		"graph_executions":    response.GraphExecutions,
+	}
+	if response.TopScore != nil {
+		payload["top_score"] = *response.TopScore
+	}
+	if len(response.SourceSummary) > 0 {
+		payload["source_summary"] = response.SourceSummary
+	}
+	if len(response.ContextBlocks) > 0 {
+		payload["context_blocks"] = response.ContextBlocks
+	}
+	if len(response.Warnings) > 0 {
+		payload["warnings"] = response.Warnings
+	}
 	return []tools.ToolInvokeMessage{
-		builtin.CreateJSONMessage(map[string]interface{}{
-			"query":               response.Query,
-			"context":             response.Context,
-			"retriever_resources": response.Resources,
-			"graph_executions":    response.GraphExecutions,
-		}),
+		builtin.CreateJSONMessage(payload),
 		{
 			Type: tools.ToolInvokeMessageTypeRetrieverResources,
 			Data: map[string]interface{}{
@@ -269,6 +282,24 @@ func retrievalMessages(response *dataset_service.KnowledgeRetrieveResponse) ([]t
 			},
 		},
 	}, nil
+}
+
+func knowledgeListMessages(response *dataset_service.KnowledgeListResponse) ([]tools.ToolInvokeMessage, error) {
+	if response == nil {
+		response = &dataset_service.KnowledgeListResponse{}
+	}
+	payload := map[string]interface{}{
+		"query":           response.Query,
+		"status":          response.Status,
+		"result_count":    response.ResultCount,
+		"fallback_used":   response.FallbackUsed,
+		"limit":           response.Limit,
+		"knowledge_bases": response.KnowledgeBases,
+	}
+	if len(response.Warnings) > 0 {
+		payload["warnings"] = response.Warnings
+	}
+	return jsonMessages(payload)
 }
 
 func jsonMessages(payload map[string]interface{}) ([]tools.ToolInvokeMessage, error) {
@@ -291,11 +322,11 @@ func knowledgeToolLabel(kind string) string {
 func knowledgeToolDescription(kind string) string {
 	switch kind {
 	case ToolListAccessibleKnowledge:
-		return "List knowledge bases the current user can access in the current workspace. Use before retrieve_knowledge."
+		return "List knowledge bases the current AIChat user can access. Inspect status and fallback_used before choosing dataset IDs for retrieve_knowledge."
 	case ToolRetrieveKnowledge:
-		return "Retrieve relevant context from explicitly selected knowledge base IDs. dataset_ids is required and must come from list_accessible_knowledge_bases."
+		return "Retrieve relevant context from explicitly selected knowledge base IDs returned by list_accessible_knowledge_bases."
 	case ToolRetrieveAgentKnowledge:
-		return "Retrieve relevant context only from knowledge bases configured on the current Agent. Ignores any dataset IDs supplied by the model."
+		return "Retrieve relevant context only from knowledge bases configured on the current Agent. Use a concise query derived from the user intent; do not pass dataset IDs."
 	default:
 		return kind
 	}
@@ -303,9 +334,9 @@ func knowledgeToolDescription(kind string) string {
 
 func knowledgeToolParameters(kind string) []tools.ToolParameter {
 	query := stringParam("query", "Query", "The user question or search query.", kind != ToolListAccessibleKnowledge)
-	limit := numberParam("limit", "Limit", "Maximum number of knowledge bases to list. Defaults to 20.")
-	topK := numberParam("top_k", "Top K", "Maximum number of retrieved chunks. Defaults to 5.")
-	retrievalMode := selectParam("retrieval_mode", "Retrieval mode", "Optional retrieval mode: hybrid, vector, or graph.", []string{"hybrid", "vector", "graph"})
+	limit := numberParam("limit", "Limit", "Maximum number of knowledge bases to list. Defaults to 20 and is capped at 100.")
+	topK := numberParam("top_k", "Top K", "Maximum number of retrieved chunks. Defaults to 5 and is capped at 20.")
+	retrievalMode := selectParam("retrieval_mode", "Retrieval mode", "Optional retrieval mode. Omit for the default hybrid mode; use graph only for relationship/entity questions.", []string{"hybrid", "vector", "graph"})
 	datasetIDs := stringParam("dataset_ids", "Dataset IDs", "Required knowledge base IDs selected after listing. Pass a JSON array or comma-separated string.", true)
 
 	switch kind {

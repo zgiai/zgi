@@ -25,11 +25,12 @@ type Service struct {
 }
 
 type Request struct {
-	Language      string `json:"language"`
-	Code          string `json:"code"`
-	Preload       string `json:"preload"`
-	Stdin         string `json:"stdin,omitempty"`
-	EnableNetwork bool   `json:"enable_network"`
+	Language          string `json:"language"`
+	Code              string `json:"code"`
+	Preload           string `json:"preload"`
+	Stdin             string `json:"stdin,omitempty"`
+	EnableNetwork     bool   `json:"enable_network"`
+	DependencyProfile string `json:"dependency_profile,omitempty"`
 }
 
 type Result struct {
@@ -41,32 +42,35 @@ type Result struct {
 	NetworkRequested bool     `json:"network_requested"`
 	Truncated        bool     `json:"truncated"`
 	Backend          string   `json:"backend,omitempty"`
+	ProfileChecksum  string   `json:"profile_checksum,omitempty"`
 	ResultJSON       any      `json:"result_json,omitempty"`
 	Warnings         []string `json:"warnings,omitempty"`
 }
 
 type CommandResult struct {
-	ExecutionID string   `json:"execution_id,omitempty"`
-	Stdout      string   `json:"stdout"`
-	Error       string   `json:"error"`
-	ExitCode    int      `json:"exit_code"`
-	DurationMS  int64    `json:"duration_ms"`
-	Truncated   bool     `json:"truncated"`
-	Command     string   `json:"command"`
-	Args        []string `json:"args,omitempty"`
-	Backend     string   `json:"backend,omitempty"`
+	ExecutionID     string   `json:"execution_id,omitempty"`
+	Stdout          string   `json:"stdout"`
+	Error           string   `json:"error"`
+	ExitCode        int      `json:"exit_code"`
+	DurationMS      int64    `json:"duration_ms"`
+	Truncated       bool     `json:"truncated"`
+	Command         string   `json:"command"`
+	Args            []string `json:"args,omitempty"`
+	Backend         string   `json:"backend,omitempty"`
+	ProfileChecksum string   `json:"profile_checksum,omitempty"`
 }
 
 type CommandSpec struct {
-	WorkDir        string
-	Command        string
-	Args           []string
-	Stdin          string
-	Env            map[string]string
-	Timeout        time.Duration
-	StdoutLimit    int
-	StderrLimit    int
-	AllowShellForm bool
+	WorkDir           string
+	Command           string
+	Args              []string
+	Stdin             string
+	Env               map[string]string
+	DependencyProfile string
+	Timeout           time.Duration
+	StdoutLimit       int
+	StderrLimit       int
+	AllowShellForm    bool
 }
 
 type Options struct {

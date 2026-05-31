@@ -80,6 +80,12 @@ func validateConfig(cfg *Config) error {
 		return fmt.Errorf("%s must be greater than 0", envWorkflowCleanupTimeout)
 	}
 
+	switch cfg.Workflow.ImageInputURLMode {
+	case "", WorkflowImageInputURLModeZGIProxy, WorkflowImageInputURLModePublicStorageURL:
+	default:
+		return fmt.Errorf("%s must be one of: %s, %s", envWorkflowImageInputURLMode, WorkflowImageInputURLModeZGIProxy, WorkflowImageInputURLModePublicStorageURL)
+	}
+
 	if cfg.WorkflowFileExtraction.MaxContentSize <= 0 {
 		return fmt.Errorf("%s must be greater than 0", envWorkflowFileExtractionMaxContentSize)
 	}

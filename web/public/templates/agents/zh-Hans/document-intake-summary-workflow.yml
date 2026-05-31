@@ -74,7 +74,7 @@ workflow:
         text: |-
           运行说明
 
-          可运行。依赖：OpenAI GPT gpt-5.5 模型、文件输入。运行时上传文档，流程会抽取正文并生成接收摘要。
+          可运行。依赖：OpenAI GPT-4o 模型、文件输入。运行时上传文档，流程会抽取正文并生成接收摘要。
 
           调试输入：
           打开调试面板后上传一份 PDF/TXT/DOCX/MD 样例文件，例如会议纪要、合同或服务请求说明。
@@ -151,7 +151,7 @@ workflow:
         variables: []
         model:
           provider: openai
-          name: gpt-5.5
+          name: gpt-4o
           mode: chat
           completion_params: {}
         prompt_template:
