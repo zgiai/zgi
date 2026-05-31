@@ -43,6 +43,10 @@ cleanup() {
     kill "${FILE_COUNT_SERVER_PID}" 2>/dev/null || true
     wait "${FILE_COUNT_SERVER_PID}" 2>/dev/null || true
   fi
+  if [[ -n "${ARTIFACT_LIMIT_SERVER_PID:-}" ]] && kill -0 "${ARTIFACT_LIMIT_SERVER_PID}" 2>/dev/null; then
+    kill "${ARTIFACT_LIMIT_SERVER_PID}" 2>/dev/null || true
+    wait "${ARTIFACT_LIMIT_SERVER_PID}" 2>/dev/null || true
+  fi
   if [[ -n "${CONCURRENT_SERVER_PID:-}" ]] && kill -0 "${CONCURRENT_SERVER_PID}" 2>/dev/null; then
     kill "${CONCURRENT_SERVER_PID}" 2>/dev/null || true
     wait "${CONCURRENT_SERVER_PID}" 2>/dev/null || true
@@ -407,6 +411,60 @@ profiles:
 EOF
   run_kest .kest/sandbox-workspace-file-limit.flow.md \
     --var file_count_organization_id="organization_file_count_kest_${FILE_COUNT_PORT}" \
+    --fail-fast
+
+  ARTIFACT_LIMIT_PORT="$(python3 - <<'PY'
+import socket
+
+with socket.socket() as s:
+    s.bind(("127.0.0.1", 0))
+    print(s.getsockname()[1])
+PY
+)"
+  ARTIFACT_LIMIT_BASE_URL="http://127.0.0.1:${ARTIFACT_LIMIT_PORT}"
+  ARTIFACT_LIMIT_SERVER_LOG="${DATA_DIR}/sandbox-artifact-limit.log"
+  env \
+    ZGI_SANDBOX_SERVER_PORT="${ARTIFACT_LIMIT_PORT}" \
+    ZGI_SANDBOX_DATA_DIR="${DATA_DIR}/artifact-limit-data" \
+    ZGI_SANDBOX_WORKER_ID="zgi-sandbox-artifact-limit-kest-${ARTIFACT_LIMIT_PORT}" \
+    ZGI_SANDBOX_MAX_ARTIFACT_MANIFEST_FILES="10" \
+    ZGI_SANDBOX_MAX_ARTIFACT_MANIFEST_BYTES="8" \
+    go run cmd/server/main.go >"${ARTIFACT_LIMIT_SERVER_LOG}" 2>&1 &
+  ARTIFACT_LIMIT_SERVER_PID="$!"
+
+  for _ in {1..80}; do
+    if curl -fsS "${ARTIFACT_LIMIT_BASE_URL}/health" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.25
+  done
+  if ! curl -fsS "${ARTIFACT_LIMIT_BASE_URL}/health" >/dev/null 2>&1; then
+    cat "${ARTIFACT_LIMIT_SERVER_LOG}" >&2
+    echo "artifact-manifest-limit sandbox did not become ready at ${ARTIFACT_LIMIT_BASE_URL}" >&2
+    exit 1
+  fi
+
+  cat >"${local_config}" <<EOF
+version: 1
+environments:
+  local:
+    base_url: ${ARTIFACT_LIMIT_BASE_URL}
+active_env: local
+log_enabled: true
+EOF
+  cat >"${local_flow_config}" <<EOF
+version: 1
+profiles:
+  local:
+    include: [".kest/*.flow.md"]
+    env: local
+    base_url: "${ARTIFACT_LIMIT_BASE_URL}"
+    strict: true
+    fail_fast: false
+    sync: false
+EOF
+  run_kest .kest/sandbox-artifact-manifest-config-limit.flow.md \
+    --var artifact_limit_organization_id="organization_artifact_limit_kest_${ARTIFACT_LIMIT_PORT}" \
     --fail-fast
 
   CONCURRENT_PORT="$(python3 - <<'PY'

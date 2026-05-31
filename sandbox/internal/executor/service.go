@@ -502,7 +502,7 @@ func (s *Service) RunSkill(ctx context.Context, req SkillRunRequest) (SkillRunRe
 		return SkillRunResult{}, err
 	}
 
-	manifest, err := loadSkillExecutionManifest(packageRoot, s.policy.MaxFileSizeBytes()*256)
+	manifest, err := loadSkillExecutionManifest(packageRoot, s.policy.MaxArtifactManifestFiles(), s.policy.MaxArtifactManifestBytes())
 	if err != nil {
 		s.recordExecutionFailure(ctx, "exec.skill.failed", req.SandboxID, "skill execution failed", baseMetadata, err)
 		return SkillRunResult{}, err
@@ -1219,7 +1219,7 @@ func (s *Service) UploadArchive(req ArchiveUploadRequest) (*ArchiveUploadResult,
 	}
 	var skillManifest *SkillExecutionManifest
 	if req.ValidateSkillManifest {
-		skillManifest, err = validateSkillExecutionManifest(entries, s.policy.MaxFileSizeBytes()*256)
+		skillManifest, err = validateSkillExecutionManifest(entries, s.policy.MaxArtifactManifestFiles(), s.policy.MaxArtifactManifestBytes())
 		if err != nil {
 			return nil, err
 		}
@@ -2015,7 +2015,7 @@ func normalizeArchiveEntries(files []*zip.File, stripRoot bool) ([]archiveEntry,
 	return entries, nil
 }
 
-func validateSkillExecutionManifest(entries []archiveEntry, maxArtifactBytes int64) (*SkillExecutionManifest, error) {
+func validateSkillExecutionManifest(entries []archiveEntry, maxArtifactFiles int, maxArtifactBytes int64) (*SkillExecutionManifest, error) {
 	names := make(map[string]bool, len(entries))
 	for _, entry := range entries {
 		names[filepath.ToSlash(entry.name)] = true
@@ -2039,10 +2039,10 @@ func validateSkillExecutionManifest(entries []archiveEntry, maxArtifactBytes int
 		return nil, err
 	}
 
-	return parseSkillExecutionManifest(content, names, maxArtifactBytes)
+	return parseSkillExecutionManifest(content, names, maxArtifactFiles, maxArtifactBytes)
 }
 
-func loadSkillExecutionManifest(packageRoot string, maxArtifactBytes int64) (SkillExecutionManifest, error) {
+func loadSkillExecutionManifest(packageRoot string, maxArtifactFiles int, maxArtifactBytes int64) (SkillExecutionManifest, error) {
 	manifestPath := filepath.Join(packageRoot, "skill.manifest.json")
 	info, err := os.Lstat(manifestPath)
 	if err != nil {
@@ -2091,25 +2091,25 @@ func loadSkillExecutionManifest(packageRoot string, maxArtifactBytes int64) (Ski
 		return SkillExecutionManifest{}, err
 	}
 
-	manifest, err := parseSkillExecutionManifest(content, names, maxArtifactBytes)
+	manifest, err := parseSkillExecutionManifest(content, names, maxArtifactFiles, maxArtifactBytes)
 	if err != nil {
 		return SkillExecutionManifest{}, err
 	}
 	return *manifest, nil
 }
 
-func parseSkillExecutionManifest(content []byte, names map[string]bool, maxArtifactBytes int64) (*SkillExecutionManifest, error) {
+func parseSkillExecutionManifest(content []byte, names map[string]bool, maxArtifactFiles int, maxArtifactBytes int64) (*SkillExecutionManifest, error) {
 	var manifest SkillExecutionManifest
 	if err := json.Unmarshal(content, &manifest); err != nil {
 		return nil, fmt.Errorf("invalid skill.manifest.json: %w", err)
 	}
-	if err := validateSkillManifestFields(&manifest, names, maxArtifactBytes); err != nil {
+	if err := validateSkillManifestFields(&manifest, names, maxArtifactFiles, maxArtifactBytes); err != nil {
 		return nil, err
 	}
 	return &manifest, nil
 }
 
-func validateSkillManifestFields(manifest *SkillExecutionManifest, names map[string]bool, maxArtifactBytes int64) error {
+func validateSkillManifestFields(manifest *SkillExecutionManifest, names map[string]bool, maxArtifactFiles int, maxArtifactBytes int64) error {
 	manifest.Entrypoint = filepath.ToSlash(strings.TrimSpace(manifest.Entrypoint))
 	if manifest.Entrypoint == "" {
 		return errors.New("skill manifest entrypoint is required")
@@ -2141,8 +2141,11 @@ func validateSkillManifestFields(manifest *SkillExecutionManifest, names map[str
 	if manifest.TimeoutMS <= 0 || manifest.TimeoutMS > 300000 {
 		return errors.New("skill manifest timeout_ms must be between 1 and 300000")
 	}
-	if manifest.MaxArtifactCount <= 0 || manifest.MaxArtifactCount > 100 {
-		return errors.New("skill manifest max_artifact_count must be between 1 and 100")
+	if maxArtifactFiles <= 0 {
+		maxArtifactFiles = 100
+	}
+	if manifest.MaxArtifactCount <= 0 || manifest.MaxArtifactCount > maxArtifactFiles {
+		return fmt.Errorf("skill manifest max_artifact_count must be between 1 and %d", maxArtifactFiles)
 	}
 	if manifest.MaxArtifactBytes <= 0 || manifest.MaxArtifactBytes > maxArtifactBytes {
 		return fmt.Errorf("skill manifest max_artifact_bytes must be between 1 and %d", maxArtifactBytes)

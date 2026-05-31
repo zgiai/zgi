@@ -1307,6 +1307,46 @@ func TestUploadArchiveValidatesSkillManifest(t *testing.T) {
 	}
 }
 
+func TestUploadArchiveUsesConfiguredArtifactManifestCountLimit(t *testing.T) {
+	recorder := observer.NewRecorder(100)
+	cfg := config.FromEnv()
+	cfg.DataDir = t.TempDir()
+	cfg.MaxArtifactManifestFiles = 1
+	policyService := policy.NewService(cfg)
+	manager, err := lifecycle.NewManagerWithConfig(recorder, policyService, cfg, nil, nil)
+	if err != nil {
+		t.Fatalf("expected lifecycle manager, got %v", err)
+	}
+	service := NewService(manager, runner.NewService(2, 3*time.Second, 4096), recorder, policyService)
+	box, err := manager.Create(lifecycle.CreateRequest{RuntimeProfile: string(sandbox.RuntimeSession)})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	_, err = service.UploadArchive(ArchiveUploadRequest{
+		SandboxID: box.ID,
+		Path:      ".",
+		ArchiveBase64: zipBase64(t, map[string]string{
+			"SKILL.md":       "# Skill",
+			"scripts/run.py": "print('ok')",
+			"skill.manifest.json": `{
+  "entrypoint": "scripts/run.py",
+  "language": "python3",
+  "timeout_ms": 30000,
+  "allowed_artifact_paths": ["artifacts"],
+  "max_artifact_count": 2,
+  "max_artifact_bytes": 32768,
+  "result_mode": "mixed"
+}`,
+		}),
+		Format:                "zip",
+		ValidateSkillManifest: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "max_artifact_count must be between 1 and 1") {
+		t.Fatalf("expected configured artifact count limit error, got %v", err)
+	}
+}
+
 func TestUploadArchiveRejectsInvalidSkillManifest(t *testing.T) {
 	service, manager := newTestExecutorService(t)
 	box, err := manager.Create(lifecycle.CreateRequest{
@@ -1826,6 +1866,76 @@ func TestBuildFileManifestEnforcesArtifactLimits(t *testing.T) {
 	maxFiles, maxTotalBytes := service.normalizeManifestLimits(FileManifestOptions{MaxFiles: 1000, MaxTotalBytes: 1 << 40})
 	if maxFiles != 100 || maxTotalBytes != 64*1024*1024 {
 		t.Fatalf("expected request options not to raise manifest limits, got maxFiles=%d maxTotalBytes=%d", maxFiles, maxTotalBytes)
+	}
+}
+
+func TestBuildFileManifestUsesConfiguredArtifactLimits(t *testing.T) {
+	recorder := observer.NewRecorder(100)
+	cfg := config.FromEnv()
+	cfg.DataDir = t.TempDir()
+	cfg.MaxArtifactManifestFiles = 1
+	cfg.MaxArtifactManifestBytes = 4
+	policyService := policy.NewService(cfg)
+	manager, err := lifecycle.NewManagerWithConfig(recorder, policyService, cfg, nil, nil)
+	if err != nil {
+		t.Fatalf("expected lifecycle manager, got %v", err)
+	}
+	service := NewService(manager, runner.NewService(2, 3*time.Second, 4096), recorder, policyService)
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+	for _, item := range []struct {
+		path    string
+		content string
+	}{
+		{path: "artifacts/one.txt", content: "one"},
+		{path: "artifacts/two.txt", content: "two"},
+	} {
+		if _, err := service.UploadFile(FileWriteRequest{
+			SandboxID: box.ID,
+			Path:      item.path,
+			Content:   item.content,
+		}); err != nil {
+			t.Fatalf("upload %s: %v", item.path, err)
+		}
+	}
+
+	maxFiles, maxTotalBytes := service.normalizeManifestLimits(FileManifestOptions{MaxFiles: 1000, MaxTotalBytes: 1 << 20})
+	if maxFiles != 1 || maxTotalBytes != 4 {
+		t.Fatalf("expected configured limits to clamp request options, got maxFiles=%d maxTotalBytes=%d", maxFiles, maxTotalBytes)
+	}
+
+	_, err = service.BuildFileManifest(box.ID, "artifacts")
+	var limitErr *policy.LimitError
+	if !errors.As(err, &limitErr) || limitErr.Code != "artifact_manifest_file_count_exceeded" || limitErr.Maximum != 1 {
+		t.Fatalf("expected configured file count limit error, got %v", err)
+	}
+
+	cfg.MaxArtifactManifestFiles = 10
+	cfg.DataDir = t.TempDir()
+	policyService = policy.NewService(cfg)
+	manager, err = lifecycle.NewManagerWithConfig(recorder, policyService, cfg, nil, nil)
+	if err != nil {
+		t.Fatalf("expected lifecycle manager, got %v", err)
+	}
+	service = NewService(manager, runner.NewService(2, 3*time.Second, 4096), recorder, policyService)
+	box, err = manager.Create(lifecycle.CreateRequest{RuntimeProfile: string(sandbox.RuntimeSession)})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+	if _, err := service.UploadFile(FileWriteRequest{
+		SandboxID: box.ID,
+		Path:      "artifacts/large.txt",
+		Content:   "hello",
+	}); err != nil {
+		t.Fatalf("upload large artifact: %v", err)
+	}
+	_, err = service.BuildFileManifest(box.ID, "artifacts")
+	if !errors.As(err, &limitErr) || limitErr.Code != "artifact_manifest_total_bytes_exceeded" || limitErr.Maximum != 4 {
+		t.Fatalf("expected configured byte limit error, got %v", err)
 	}
 }
 

@@ -22,6 +22,7 @@ data.limits.max_concurrent_executions_per_organization == 0
 data.limits.max_archive_files == 256
 data.limits.max_artifact_manifest_files == 100
 data.limits.max_artifact_manifest_total_bytes == 67108864
+data.limits.max_artifact_manifest_bytes == 67108864
 data.limits.max_queued_executions_per_organization == 0
 data.limits.max_workspace_files == 0
 data.limits.max_workspace_bytes == 0
@@ -48,6 +49,9 @@ code == 0
 data.effective_limits.max_active_sandboxes_per_organization == 2
 data.effective_limits.max_concurrent_executions == 0
 data.effective_limits.max_concurrent_executions_per_organization == 0
+data.effective_limits.max_artifact_manifest_files == 100
+data.effective_limits.max_artifact_manifest_total_bytes == 67108864
+data.effective_limits.max_artifact_manifest_bytes == 67108864
 ```
 
 ```step

@@ -55,7 +55,7 @@ Already available:
 - Optional sandbox workspace byte limit accounting
 - Sandbox ownership fields for organization, workspace, app, workflow run, and user context
 - Ownership context persisted with sandbox records and propagated to lifecycle, endpoint, expiration, execution, file, archive, and artifact manifest observer events
-- Artifact manifests include content type, reference encoding, SHA-256 hashes, timestamps, and enforce file count and total byte limits
+- Artifact manifests include content type, reference encoding, SHA-256 hashes, timestamps, and enforce operator-configurable file count and total byte limits
 - Optional Linux secure backend with namespace-based isolation
 
 The service is useful for validation and controlled internal environments. It
@@ -191,7 +191,7 @@ ergonomic for workflow and agent use cases.
   - SHA-256 hash
   - modified time
   - truncated flag
-- Added artifact count and total byte enforcement before returning manifest results.
+- Added operator-configurable artifact count and total byte enforcement before returning manifest results.
 - Return large artifacts by reference rather than embedding content.
 
 ### C3. Interpreter Sessions
@@ -311,7 +311,8 @@ Goal: enforce hard resource boundaries for every execution path.
 - Open file limit.
 - Added optional max file count per sandbox with `ZGI_SANDBOX_MAX_WORKSPACE_FILES`.
 - Added optional max workspace bytes per sandbox with `ZGI_SANDBOX_MAX_WORKSPACE_BYTES`.
-- Max artifact bytes per run.
+- Added operator-configurable max artifact manifest files per run with `ZGI_SANDBOX_MAX_ARTIFACT_MANIFEST_FILES`.
+- Added operator-configurable max artifact manifest bytes per run with `ZGI_SANDBOX_MAX_ARTIFACT_MANIFEST_BYTES`.
 - Max sandbox lifetime.
 
 ### F2. Queue Limits

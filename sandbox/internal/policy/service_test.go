@@ -71,6 +71,8 @@ func TestNormalizeCreateReturnsEffectiveLimitsAndStructuredLimitError(t *testing
 	cfg.MaxActive = 2
 	cfg.MaxConcurrentExecutions = 3
 	cfg.MaxFileSizeKB = 128
+	cfg.MaxArtifactManifestFiles = 7
+	cfg.MaxArtifactManifestBytes = 8192
 	service := NewService(cfg)
 
 	decision, err := service.NormalizeCreate("session", 60, false, "", "stdlib", 1, "organization-1", 1)
@@ -107,7 +109,7 @@ func TestNormalizeCreateReturnsEffectiveLimitsAndStructuredLimitError(t *testing
 	if decision.EffectiveLimits.MaxFileSizeBytes != 128*1024 {
 		t.Fatalf("expected max file size bytes in decision, got %+v", decision.EffectiveLimits)
 	}
-	if decision.EffectiveLimits.MaxArtifactManifestFiles != 100 || decision.EffectiveLimits.MaxArtifactManifestTotalBytes != 128*1024*256 {
+	if decision.EffectiveLimits.MaxArtifactManifestFiles != 7 || decision.EffectiveLimits.MaxArtifactManifestTotalBytes != 8192 || decision.EffectiveLimits.MaxArtifactManifestBytes != 8192 {
 		t.Fatalf("expected artifact manifest limits in decision, got %+v", decision.EffectiveLimits)
 	}
 

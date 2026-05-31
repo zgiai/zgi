@@ -106,23 +106,39 @@ func TestFromEnvReadsWorkspaceFileLimit(t *testing.T) {
 	}
 }
 
+func TestFromEnvReadsArtifactManifestLimits(t *testing.T) {
+	t.Setenv("ZGI_SANDBOX_MAX_ARTIFACT_MANIFEST_FILES", "12")
+	t.Setenv("ZGI_SANDBOX_MAX_ARTIFACT_MANIFEST_BYTES", "4096")
+
+	cfg := FromEnv()
+
+	if cfg.MaxArtifactManifestFiles != 12 {
+		t.Fatalf("expected artifact manifest file limit 12, got %d", cfg.MaxArtifactManifestFiles)
+	}
+	if cfg.MaxArtifactManifestBytes != 4096 {
+		t.Fatalf("expected artifact manifest byte limit 4096, got %d", cfg.MaxArtifactManifestBytes)
+	}
+}
+
 func TestPublicSnapshotOmitsSecrets(t *testing.T) {
 	cfg := Config{
-		Port:                    "2660",
-		APIKey:                  "secret-api-key",
-		RedisPassword:           "secret-redis-password",
-		DatabaseURL:             "postgres://user:secret-db-password@127.0.0.1:5432/postgres",
-		RedisAddr:               "127.0.0.1:6379",
-		RedisDB:                 2,
-		WorkerID:                "worker-a",
-		RuntimeBackend:          "preview",
-		SecureRootFS:            "/srv/rootfs",
-		BwrapBinary:             "bwrap",
-		Environment:             "local",
-		AdvertiseURL:            "http://127.0.0.1:2660",
-		PublicBaseURL:           "http://127.0.0.1:2660",
-		ObserverMaxEvents:       100,
-		MaxConcurrentExecutions: 3,
+		Port:                     "2660",
+		APIKey:                   "secret-api-key",
+		RedisPassword:            "secret-redis-password",
+		DatabaseURL:              "postgres://user:secret-db-password@127.0.0.1:5432/postgres",
+		RedisAddr:                "127.0.0.1:6379",
+		RedisDB:                  2,
+		WorkerID:                 "worker-a",
+		RuntimeBackend:           "preview",
+		SecureRootFS:             "/srv/rootfs",
+		BwrapBinary:              "bwrap",
+		Environment:              "local",
+		AdvertiseURL:             "http://127.0.0.1:2660",
+		PublicBaseURL:            "http://127.0.0.1:2660",
+		ObserverMaxEvents:        100,
+		MaxConcurrentExecutions:  3,
+		MaxArtifactManifestFiles: 12,
+		MaxArtifactManifestBytes: 4096,
 	}
 
 	snapshot := cfg.PublicSnapshot()
@@ -147,6 +163,12 @@ func TestPublicSnapshotOmitsSecrets(t *testing.T) {
 	}
 	if snapshot["max_concurrent_executions"] != 3 {
 		t.Fatalf("expected service concurrent execution limit, got %#v", snapshot["max_concurrent_executions"])
+	}
+	if snapshot["max_artifact_manifest_files"] != 12 {
+		t.Fatalf("expected artifact manifest file limit, got %#v", snapshot["max_artifact_manifest_files"])
+	}
+	if snapshot["max_artifact_manifest_bytes"] != int64(4096) {
+		t.Fatalf("expected artifact manifest byte limit, got %#v", snapshot["max_artifact_manifest_bytes"])
 	}
 }
 

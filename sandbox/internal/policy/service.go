@@ -383,6 +383,14 @@ func (s *Service) EffectiveLimits() sandbox.ResourceLimits {
 	if maxFileSizeKB <= 0 {
 		maxFileSizeKB = 256
 	}
+	maxArtifactManifestFiles := s.config.MaxArtifactManifestFiles
+	if maxArtifactManifestFiles <= 0 {
+		maxArtifactManifestFiles = 100
+	}
+	maxArtifactManifestBytes := s.config.MaxArtifactManifestBytes
+	if maxArtifactManifestBytes <= 0 {
+		maxArtifactManifestBytes = maxFileSizeBytes * 256
+	}
 	return sandbox.ResourceLimits{
 		RuntimeBackend:                         s.normalizedRuntimeBackend(),
 		NetworkPolicyEnforced:                  s.runtimeBackendEnforcesNetworkPolicy(),
@@ -407,8 +415,9 @@ func (s *Service) EffectiveLimits() sandbox.ResourceLimits {
 		MaxFileSizeBytes:                       maxFileSizeBytes,
 		MaxArchiveFiles:                        256,
 		MaxArchiveTotalBytes:                   maxFileSizeBytes * 256,
-		MaxArtifactManifestFiles:               100,
-		MaxArtifactManifestTotalBytes:          maxFileSizeBytes * 256,
+		MaxArtifactManifestFiles:               maxArtifactManifestFiles,
+		MaxArtifactManifestTotalBytes:          maxArtifactManifestBytes,
+		MaxArtifactManifestBytes:               maxArtifactManifestBytes,
 		SessionTTLSecs:                         s.config.SessionTTL,
 		SessionTTLSeconds:                      s.config.SessionTTL,
 		InteractiveTTLSecs:                     s.config.InteractiveTTL,
@@ -451,6 +460,14 @@ func (s *Service) MaxWorkspaceBytes() int64 {
 
 func (s *Service) MaxWorkspaceFiles() int {
 	return s.config.MaxWorkspaceFiles
+}
+
+func (s *Service) MaxArtifactManifestBytes() int64 {
+	return s.EffectiveLimits().MaxArtifactManifestTotalBytes
+}
+
+func (s *Service) MaxArtifactManifestFiles() int {
+	return s.EffectiveLimits().MaxArtifactManifestFiles
 }
 
 func (s *Service) RuntimeBackend() string {
