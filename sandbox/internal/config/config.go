@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -162,11 +163,13 @@ func (c Config) ValidateStartup() error {
 	if err := validateHTTPURL("ZGI_SANDBOX_PUBLIC_BASE_URL", c.PublicBaseURL); err != nil {
 		validationErrors = append(validationErrors, err)
 	}
-	if c.RuntimeBackendName() == "linux-secure" && strings.TrimSpace(c.SecureRootFS) == "" {
-		validationErrors = append(validationErrors, errors.New("ZGI_SANDBOX_SECURE_ROOTFS is required when ZGI_SANDBOX_RUNTIME_BACKEND=linux-secure"))
-	}
-	if c.RuntimeBackendName() == "linux-secure" && strings.TrimSpace(c.BwrapBinary) == "" {
-		validationErrors = append(validationErrors, errors.New("ZGI_SANDBOX_BWRAP_BINARY is required when ZGI_SANDBOX_RUNTIME_BACKEND=linux-secure"))
+	if c.RuntimeBackendName() == "linux-secure" {
+		if err := validateSecureRootFS(c.SecureRootFS); err != nil {
+			validationErrors = append(validationErrors, err)
+		}
+		if strings.TrimSpace(c.BwrapBinary) == "" {
+			validationErrors = append(validationErrors, errors.New("ZGI_SANDBOX_BWRAP_BINARY is required when ZGI_SANDBOX_RUNTIME_BACKEND=linux-secure"))
+		}
 	}
 	if c.IsProduction() && strings.TrimSpace(c.APIKey) == "" {
 		validationErrors = append(validationErrors, errors.New("production sandbox deployments require ZGI_SANDBOX_API_KEY"))
@@ -229,6 +232,30 @@ func validateRuntimeBackend(value string) error {
 	default:
 		return fmt.Errorf("ZGI_SANDBOX_RUNTIME_BACKEND is unsupported: %s", value)
 	}
+}
+
+func validateSecureRootFS(value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return errors.New("ZGI_SANDBOX_SECURE_ROOTFS is required when ZGI_SANDBOX_RUNTIME_BACKEND=linux-secure")
+	}
+	if !filepath.IsAbs(value) {
+		return errors.New("ZGI_SANDBOX_SECURE_ROOTFS must be an absolute path")
+	}
+	info, err := os.Lstat(value)
+	if err != nil {
+		return fmt.Errorf("ZGI_SANDBOX_SECURE_ROOTFS must reference an existing directory: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("ZGI_SANDBOX_SECURE_ROOTFS must not be a symlink")
+	}
+	if !info.IsDir() {
+		return errors.New("ZGI_SANDBOX_SECURE_ROOTFS must be a directory")
+	}
+	if info.Mode().Perm()&0o002 != 0 {
+		return errors.New("ZGI_SANDBOX_SECURE_ROOTFS must not be world-writable")
+	}
+	return nil
 }
 
 func validateHTTPURL(name string, value string) error {

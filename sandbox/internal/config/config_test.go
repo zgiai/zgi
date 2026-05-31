@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -244,7 +246,7 @@ func TestValidateStartupRejectsMissingProductionAPIKey(t *testing.T) {
 	cfg := validStartupConfig()
 	cfg.Environment = "production"
 	cfg.RuntimeBackend = "linux-secure"
-	cfg.SecureRootFS = "/srv/rootfs"
+	cfg.SecureRootFS = secureRootFSDir(t)
 	cfg.APIKey = ""
 
 	if err := cfg.ValidateStartup(); err == nil || !strings.Contains(err.Error(), "ZGI_SANDBOX_API_KEY") {
@@ -296,6 +298,66 @@ func TestValidateStartupRejectsSecureBackendWithoutRootFS(t *testing.T) {
 	}
 }
 
+func TestValidateStartupRejectsRelativeSecureRootFS(t *testing.T) {
+	cfg := validStartupConfig()
+	cfg.RuntimeBackend = "linux-secure"
+	cfg.SecureRootFS = "rootfs"
+
+	if err := cfg.ValidateStartup(); err == nil || !strings.Contains(err.Error(), "absolute path") {
+		t.Fatalf("expected relative secure rootfs to be rejected, got %v", err)
+	}
+}
+
+func TestValidateStartupRejectsMissingSecureRootFSPath(t *testing.T) {
+	cfg := validStartupConfig()
+	cfg.RuntimeBackend = "linux-secure"
+	cfg.SecureRootFS = filepath.Join(t.TempDir(), "missing-rootfs")
+
+	if err := cfg.ValidateStartup(); err == nil || !strings.Contains(err.Error(), "existing directory") {
+		t.Fatalf("expected missing secure rootfs path to be rejected, got %v", err)
+	}
+}
+
+func TestValidateStartupRejectsSecureRootFSFile(t *testing.T) {
+	cfg := validStartupConfig()
+	cfg.RuntimeBackend = "linux-secure"
+	cfg.SecureRootFS = filepath.Join(t.TempDir(), "rootfs-file")
+	if err := os.WriteFile(cfg.SecureRootFS, []byte("not a directory"), 0o644); err != nil {
+		t.Fatalf("write rootfs file: %v", err)
+	}
+
+	if err := cfg.ValidateStartup(); err == nil || !strings.Contains(err.Error(), "must be a directory") {
+		t.Fatalf("expected secure rootfs file to be rejected, got %v", err)
+	}
+}
+
+func TestValidateStartupRejectsSecureRootFSSymlink(t *testing.T) {
+	cfg := validStartupConfig()
+	cfg.RuntimeBackend = "linux-secure"
+	target := secureRootFSDir(t)
+	cfg.SecureRootFS = filepath.Join(t.TempDir(), "rootfs-link")
+	if err := os.Symlink(target, cfg.SecureRootFS); err != nil {
+		t.Fatalf("create rootfs symlink: %v", err)
+	}
+
+	if err := cfg.ValidateStartup(); err == nil || !strings.Contains(err.Error(), "must not be a symlink") {
+		t.Fatalf("expected secure rootfs symlink to be rejected, got %v", err)
+	}
+}
+
+func TestValidateStartupRejectsWorldWritableSecureRootFS(t *testing.T) {
+	cfg := validStartupConfig()
+	cfg.RuntimeBackend = "linux-secure"
+	cfg.SecureRootFS = secureRootFSDir(t)
+	if err := os.Chmod(cfg.SecureRootFS, 0o777); err != nil {
+		t.Fatalf("chmod rootfs: %v", err)
+	}
+
+	if err := cfg.ValidateStartup(); err == nil || !strings.Contains(err.Error(), "must not be world-writable") {
+		t.Fatalf("expected world-writable secure rootfs to be rejected, got %v", err)
+	}
+}
+
 func TestValidateStartupRejectsUnknownEnvironment(t *testing.T) {
 	cfg := validStartupConfig()
 	cfg.Environment = "prod-like"
@@ -319,12 +381,21 @@ func TestValidateStartupAllowsSecureBackendInProduction(t *testing.T) {
 	cfg := validStartupConfig()
 	cfg.Environment = "prod"
 	cfg.RuntimeBackend = "linux-secure"
-	cfg.SecureRootFS = "/srv/rootfs"
+	cfg.SecureRootFS = secureRootFSDir(t)
 	cfg.APIKey = "secret"
 
 	if err := cfg.ValidateStartup(); err != nil {
 		t.Fatalf("expected production secure backend to be allowed, got %v", err)
 	}
+}
+
+func secureRootFSDir(t *testing.T) string {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), "rootfs")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatalf("create rootfs dir: %v", err)
+	}
+	return root
 }
 
 func validStartupConfig() Config {
