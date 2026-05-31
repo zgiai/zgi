@@ -603,6 +603,30 @@ func normalizeHyperparseBackend(v string) (string, bool) {
 }
 
 func loadCodeExecConfig(cfg *Config, source *envSource) error {
+	connectTimeout, err := source.int(5, envCodeExecutionConnectTimeout)
+	if err != nil {
+		return err
+	}
+	createTimeout, err := source.int(10, envCodeExecutionCreateTimeout)
+	if err != nil {
+		return err
+	}
+	uploadTimeout, err := source.int(30, envCodeExecutionUploadTimeout)
+	if err != nil {
+		return err
+	}
+	commandTimeoutPadding, err := source.int(15, envCodeExecutionCommandTimeoutPadding)
+	if err != nil {
+		return err
+	}
+	artifactTimeout, err := source.int(10, envCodeExecutionArtifactTimeout)
+	if err != nil {
+		return err
+	}
+	cleanupTimeout, err := source.int(5, envCodeExecutionCleanupTimeout)
+	if err != nil {
+		return err
+	}
 	maxNumber, err := source.int64(9223372036854775807, envCodeMaxNumber)
 	if err != nil {
 		return err
@@ -617,11 +641,17 @@ func loadCodeExecConfig(cfg *Config, source *envSource) error {
 	}
 
 	cfg.CodeExec = CodeExecConfig{
-		Endpoint:        source.string("", envCodeExecutionEndpoint),
-		APIKey:          source.string("", envCodeExecutionAPIKey),
-		MaxNumber:       maxNumber,
-		MinNumber:       minNumber,
-		MaxStringLength: maxStringLength,
+		Endpoint:                     source.string("", envCodeExecutionEndpoint),
+		APIKey:                       source.string("", envCodeExecutionAPIKey),
+		ConnectTimeoutSeconds:        connectTimeout,
+		CreateTimeoutSeconds:         createTimeout,
+		UploadTimeoutSeconds:         uploadTimeout,
+		CommandTimeoutPaddingSeconds: commandTimeoutPadding,
+		ArtifactTimeoutSeconds:       artifactTimeout,
+		CleanupTimeoutSeconds:        cleanupTimeout,
+		MaxNumber:                    maxNumber,
+		MinNumber:                    minNumber,
+		MaxStringLength:              maxStringLength,
 	}
 	return nil
 }
@@ -643,12 +673,18 @@ func loadWorkflowConfig(cfg *Config, source *envSource) error {
 	if err != nil {
 		return err
 	}
+	imageInputURLMode := strings.ToLower(strings.TrimSpace(source.string(WorkflowImageInputURLModeZGIProxy, envWorkflowImageInputURLMode)))
+	if imageInputURLMode == "" {
+		imageInputURLMode = WorkflowImageInputURLModeZGIProxy
+	}
 
 	cfg.Workflow = WorkflowConfig{
-		ExecutionTimeout:  executionTimeout,
-		LLMTimeout:        llmTimeout,
-		HeartbeatInterval: heartbeatInterval,
-		CleanupTimeout:    cleanupTimeout,
+		ExecutionTimeout:        executionTimeout,
+		LLMTimeout:              llmTimeout,
+		HeartbeatInterval:       heartbeatInterval,
+		CleanupTimeout:          cleanupTimeout,
+		ImageInputURLMode:       imageInputURLMode,
+		ImageInputPublicBaseURL: strings.TrimSpace(source.string("", envWorkflowImageInputPublicBaseURL)),
 	}
 	return nil
 }

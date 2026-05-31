@@ -59,18 +59,30 @@ func NewServer(cfg config.Config) (*Server, error) {
 
 	sandboxCache, err := cache.NewSandboxCache(cfg)
 	if err != nil {
+		_ = store.Close()
 		return nil, err
 	}
 
 	policyService := policy.NewService(cfg)
+	cachedProfiles, err := store.ListDependencyProfiles()
+	if err != nil {
+		_ = store.Close()
+		return nil, fmt.Errorf("load dependency profile cache: %w", err)
+	}
+	if err := policyService.LoadDependencyProfiles(cachedProfiles); err != nil {
+		_ = store.Close()
+		return nil, fmt.Errorf("load dependency profile cache: %w", err)
+	}
 	recorder := observer.NewRecorderWithStore(store)
 	manager, err := lifecycle.NewManagerWithConfig(recorder, policyService, cfg, store, sandboxCache)
 	if err != nil {
+		_ = store.Close()
 		return nil, err
 	}
 
 	runnerService, err := runner.NewServiceFromConfig(cfg)
 	if err != nil {
+		_ = store.Close()
 		return nil, err
 	}
 
@@ -116,6 +128,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/exec/command", s.handleExecCommand)
 	s.mux.HandleFunc("/v1/exec/template", s.handleExecTemplate)
 	s.mux.HandleFunc("/v1/exec/skill", s.handleExecSkill)
+	s.mux.HandleFunc("/v1/network/egress/check", s.handleEgressCheck)
 	s.mux.HandleFunc("/v1/files/upload", s.handleUploadFile)
 	s.mux.HandleFunc("/v1/files/upload-archive", s.handleUploadArchive)
 	s.mux.HandleFunc("/v1/files/download", s.handleDownloadFile)
@@ -285,7 +298,12 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.EnableNetwork && !s.policy.NetworkPolicyEnforced() {
-		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, fmt.Sprintf("runtime backend %q does not enforce network policy", s.policy.RuntimeBackend()), nil)
+		message := fmt.Sprintf("runtime backend %q does not enforce network policy", s.policy.RuntimeBackend())
+		s.recordPolicyDenied(r.Context(), "", "network_policy_not_enforced", message, map[string]any{
+			"runtime_backend":         s.policy.RuntimeBackend(),
+			"network_policy_enforced": s.policy.NetworkPolicyEnforced(),
+		})
+		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, message, nil)
 		return
 	}
 
@@ -307,11 +325,61 @@ func (s *Server) handleDependencyUpdate(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if !s.authorizedAdmin(r) {
+		writeEnvelopeWithMessage(w, http.StatusUnauthorized, -401, "admin api key required", nil)
+		return
+	}
 
-	writeEnvelopeWithMessage(w, http.StatusOK, 0, "preview mode: dependency updates are disabled", map[string]any{
-		"accepted":           false,
-		"available_profiles": s.policy.DependencyCatalog(r.URL.Query().Get("language")),
-	})
+	body, err := s.readLimitedBody(w, r, s.maxSmallJSONRequestBytes())
+	if err != nil {
+		return
+	}
+	var req policy.DependencyProfileBuildRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "invalid request payload", nil)
+		return
+	}
+
+	result, profile, err := s.policy.PrepareDependencyProfileBuild(req)
+	metadata := map[string]any{
+		"build_id":        result.BuildID,
+		"status":          result.Status,
+		"accepted":        result.Accepted,
+		"runtime_backend": s.policy.RuntimeBackend(),
+	}
+	if result.Profile != nil {
+		metadata["dependency_profile"] = result.Profile.Name
+		metadata["dependency_profile_version"] = result.Profile.Version
+		metadata["size_bytes"] = result.Profile.SizeBytes
+	}
+	if err != nil {
+		metadata["error"] = err.Error()
+		s.observer.Record("dependency_profile.build.failed", "", "dependency profile build failed", observer.MetadataWithContext(r.Context(), metadata))
+		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "dependency profile build failed", result)
+		return
+	}
+	result, err = s.policy.RegisterDependencyProfile(profile, result)
+	if err != nil {
+		metadata["status"] = result.Status
+		metadata["error"] = err.Error()
+		s.observer.Record("dependency_profile.build.failed", "", "dependency profile build failed", observer.MetadataWithContext(r.Context(), metadata))
+		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "dependency profile build failed", result)
+		return
+	}
+	if err := s.store.SaveDependencyProfile(profile); err != nil {
+		s.policy.RemoveDependencyProfile(profile.Name)
+		result.Status = "failed"
+		result.Error = err.Error()
+		metadata["status"] = result.Status
+		metadata["error"] = err.Error()
+		s.observer.Record("dependency_profile.build.failed", "", "dependency profile build persistence failed", observer.MetadataWithContext(r.Context(), metadata))
+		writeEnvelopeWithMessage(w, http.StatusInternalServerError, -500, "dependency profile build persistence failed", result)
+		return
+	}
+	metadata["status"] = result.Status
+
+	s.observer.Record("dependency_profile.build", "", "dependency profile build completed", observer.MetadataWithContext(r.Context(), metadata))
+	writeEnvelope(w, http.StatusOK, result)
 }
 
 func (s *Server) handleSandboxes(w http.ResponseWriter, r *http.Request) {
@@ -322,7 +390,17 @@ func (s *Server) handleSandboxes(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		writeEnvelope(w, http.StatusOK, map[string]any{"items": s.lifecycle.List()})
+		items := s.lifecycle.List()
+		if organizationID := requestOrganizationID(r, ""); organizationID != "" {
+			filtered := make([]sandbox.Sandbox, 0, len(items))
+			for _, item := range items {
+				if item.OrganizationID == organizationID {
+					filtered = append(filtered, item)
+				}
+			}
+			items = filtered
+		}
+		writeEnvelope(w, http.StatusOK, map[string]any{"items": items})
 	case http.MethodPost:
 		var req lifecycle.CreateRequest
 		r.Body = http.MaxBytesReader(w, r.Body, s.maxSmallJSONRequestBytes())
@@ -359,14 +437,17 @@ func (s *Server) handleSandboxByID(w http.ResponseWriter, r *http.Request) {
 	if len(parts) == 1 {
 		switch r.Method {
 		case http.MethodGet:
-			box, err := s.lifecycle.Get(id)
-			if err != nil {
-				writeKnownError(w, err)
+			box, ok := s.authorizeSandboxOrganization(r.Context(), w, id, requestOrganizationID(r, ""))
+			if !ok {
 				return
 			}
 			writeEnvelope(w, http.StatusOK, box)
 		case http.MethodDelete:
-			if s.proxyOwnedRequest(w, r, id) {
+			box, ok := s.authorizeSandboxOrganization(r.Context(), w, id, requestOrganizationID(r, ""))
+			if !ok {
+				return
+			}
+			if s.proxyOwnedBoxRequest(w, r, box) {
 				return
 			}
 			if err := s.lifecycle.Delete(id); err != nil {
@@ -387,6 +468,9 @@ func (s *Server) handleSandboxByID(w http.ResponseWriter, r *http.Request) {
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, s.maxSmallJSONRequestBytes())
 		_ = json.NewDecoder(r.Body).Decode(&req)
+		if _, ok := s.authorizeSandboxOrganization(r.Context(), w, id, requestOrganizationID(r, "")); !ok {
+			return
+		}
 		box, err := s.lifecycle.Renew(id, req.TTLSeconds)
 		if err != nil {
 			writeKnownError(w, err)
@@ -394,11 +478,18 @@ func (s *Server) handleSandboxByID(w http.ResponseWriter, r *http.Request) {
 		}
 		writeEnvelope(w, http.StatusOK, box)
 	case len(parts) == 2 && parts[1] == "executions" && r.Method == http.MethodGet:
-		if s.proxyOwnedRequest(w, r, id) {
+		box, ok := s.authorizeSandboxOrganization(r.Context(), w, id, requestOrganizationID(r, ""))
+		if !ok {
+			return
+		}
+		if s.proxyOwnedBoxRequest(w, r, box) {
 			return
 		}
 		s.writeSandboxExecutionHistory(w, r, id)
 	case len(parts) == 3 && parts[1] == "endpoints" && r.Method == http.MethodGet:
+		if _, ok := s.authorizeSandboxOrganization(r.Context(), w, id, requestOrganizationID(r, "")); !ok {
+			return
+		}
 		endpoint, err := s.lifecycle.ResolveEndpoint(id, parts[2])
 		if err != nil {
 			writeKnownError(w, err)
@@ -406,7 +497,11 @@ func (s *Server) handleSandboxByID(w http.ResponseWriter, r *http.Request) {
 		}
 		writeEnvelope(w, http.StatusOK, endpoint)
 	case len(parts) == 3 && parts[1] == "endpoints" && r.Method == http.MethodPost:
-		if s.proxyOwnedRequest(w, r, id) {
+		box, ok := s.authorizeSandboxOrganization(r.Context(), w, id, requestOrganizationID(r, ""))
+		if !ok {
+			return
+		}
+		if s.proxyOwnedBoxRequest(w, r, box) {
 			return
 		}
 
@@ -442,13 +537,31 @@ func (s *Server) handleExecCode(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+	requestProfile, err := codeRequestProfile(body)
+	if err != nil {
+		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "invalid request payload", nil)
+		return
+	}
+	requestLimits, err := s.policy.NormalizeCommandLimits(defaultString(requestProfile, "code-short"), 0, 0, 0, 0)
+	if err != nil {
+		writeKnownError(w, err)
+		return
+	}
+	if requestLimits.MaxRequestBytes > 0 && len(body) > requestLimits.MaxRequestBytes {
+		writeEnvelopeWithMessage(w, http.StatusRequestEntityTooLarge, -413, fmt.Sprintf("request body exceeds max size of %d bytes", requestLimits.MaxRequestBytes), nil)
+		return
+	}
 
 	var req executor.CodeRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "invalid request payload", nil)
 		return
 	}
-	if s.proxyOwnedBodyRequest(w, r, req.SandboxID, body) {
+	box, ok := s.authorizeSandboxOrganization(r.Context(), w, req.SandboxID, requestOrganizationID(r, req.OrganizationID))
+	if !ok {
+		return
+	}
+	if s.proxyOwnedBoxBodyRequest(w, r, box, body) {
 		return
 	}
 
@@ -480,7 +593,11 @@ func (s *Server) handleExecCommand(w http.ResponseWriter, r *http.Request) {
 		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "invalid request payload", nil)
 		return
 	}
-	if s.proxyOwnedBodyRequest(w, r, req.SandboxID, body) {
+	box, ok := s.authorizeSandboxOrganization(r.Context(), w, req.SandboxID, requestOrganizationID(r, req.OrganizationID))
+	if !ok {
+		return
+	}
+	if s.proxyOwnedBoxBodyRequest(w, r, box, body) {
 		return
 	}
 
@@ -541,7 +658,11 @@ func (s *Server) handleExecSkill(w http.ResponseWriter, r *http.Request) {
 		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "invalid request payload", nil)
 		return
 	}
-	if s.proxyOwnedBodyRequest(w, r, req.SandboxID, body) {
+	box, ok := s.authorizeSandboxOrganization(r.Context(), w, req.SandboxID, requestOrganizationID(r, req.OrganizationID))
+	if !ok {
+		return
+	}
+	if s.proxyOwnedBoxBodyRequest(w, r, box, body) {
 		return
 	}
 
@@ -551,6 +672,63 @@ func (s *Server) handleExecSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeEnvelope(w, http.StatusOK, result)
+}
+
+func (s *Server) handleEgressCheck(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authorized(r) {
+		writeEnvelopeWithMessage(w, http.StatusUnauthorized, -401, "unauthorized", nil)
+		return
+	}
+
+	var req struct {
+		SandboxID      string `json:"sandbox_id"`
+		OrganizationID string `json:"organization_id,omitempty"`
+		Destination    string `json:"destination"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, s.maxSmallJSONRequestBytes())
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeDecodeError(w, err)
+		return
+	}
+	req.Destination = strings.TrimSpace(req.Destination)
+	if req.Destination == "" {
+		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "destination is required", nil)
+		return
+	}
+	box, ok := s.authorizeSandboxOrganization(r.Context(), w, req.SandboxID, requestOrganizationID(r, req.OrganizationID))
+	if !ok {
+		return
+	}
+	if box == nil {
+		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "sandbox_id is required", nil)
+		return
+	}
+	decision := policy.EgressDecision{}
+	if !box.NetworkEnabled {
+		decision = policy.EgressDecision{
+			Allowed:     false,
+			Code:        "egress_denied_sandbox_network_disabled",
+			Reason:      "sandbox network access is disabled",
+			Policy:      box.NetworkPolicy,
+			Destination: req.Destination,
+		}
+	} else {
+		var err error
+		decision, err = s.policy.CheckEgressDestination(r.Context(), box.NetworkPolicy, req.Destination)
+		if err != nil {
+			writeKnownError(w, err)
+			return
+		}
+	}
+	metadata := egressDecisionMetadata(decision)
+	addSandboxOwnershipMetadata(metadata, box)
+	metadata["runtime_backend"] = s.policy.RuntimeBackend()
+	s.observer.Record("network.egress.decision", box.ID, "network egress policy decision", observer.MetadataWithContext(r.Context(), metadata))
+	writeEnvelope(w, http.StatusOK, decision)
 }
 
 func (s *Server) handleUploadFile(w http.ResponseWriter, r *http.Request) {
@@ -573,7 +751,11 @@ func (s *Server) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "invalid request payload", nil)
 		return
 	}
-	if s.proxyOwnedBodyRequest(w, r, req.SandboxID, body) {
+	box, ok := s.authorizeSandboxOrganization(r.Context(), w, req.SandboxID, requestOrganizationID(r, req.OrganizationID))
+	if !ok {
+		return
+	}
+	if s.proxyOwnedBoxBodyRequest(w, r, box, body) {
 		return
 	}
 
@@ -605,7 +787,11 @@ func (s *Server) handleUploadArchive(w http.ResponseWriter, r *http.Request) {
 		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "invalid request payload", nil)
 		return
 	}
-	if s.proxyOwnedBodyRequest(w, r, req.SandboxID, body) {
+	box, ok := s.authorizeSandboxOrganization(r.Context(), w, req.SandboxID, requestOrganizationID(r, req.OrganizationID))
+	if !ok {
+		return
+	}
+	if s.proxyOwnedBoxBodyRequest(w, r, box, body) {
 		return
 	}
 
@@ -626,7 +812,11 @@ func (s *Server) handleDownloadFile(w http.ResponseWriter, r *http.Request) {
 		writeEnvelopeWithMessage(w, http.StatusUnauthorized, -401, "unauthorized", nil)
 		return
 	}
-	if s.proxyOwnedRequest(w, r, r.URL.Query().Get("sandbox_id")) {
+	box, ok := s.authorizeSandboxOrganization(r.Context(), w, r.URL.Query().Get("sandbox_id"), requestOrganizationID(r, ""))
+	if !ok {
+		return
+	}
+	if s.proxyOwnedBoxRequest(w, r, box) {
 		return
 	}
 
@@ -647,7 +837,11 @@ func (s *Server) handleFileInfo(w http.ResponseWriter, r *http.Request) {
 		writeEnvelopeWithMessage(w, http.StatusUnauthorized, -401, "unauthorized", nil)
 		return
 	}
-	if s.proxyOwnedRequest(w, r, r.URL.Query().Get("sandbox_id")) {
+	box, ok := s.authorizeSandboxOrganization(r.Context(), w, r.URL.Query().Get("sandbox_id"), requestOrganizationID(r, ""))
+	if !ok {
+		return
+	}
+	if s.proxyOwnedBoxRequest(w, r, box) {
 		return
 	}
 
@@ -668,7 +862,11 @@ func (s *Server) handleFileTree(w http.ResponseWriter, r *http.Request) {
 		writeEnvelopeWithMessage(w, http.StatusUnauthorized, -401, "unauthorized", nil)
 		return
 	}
-	if s.proxyOwnedRequest(w, r, r.URL.Query().Get("sandbox_id")) {
+	box, ok := s.authorizeSandboxOrganization(r.Context(), w, r.URL.Query().Get("sandbox_id"), requestOrganizationID(r, ""))
+	if !ok {
+		return
+	}
+	if s.proxyOwnedBoxRequest(w, r, box) {
 		return
 	}
 
@@ -690,7 +888,11 @@ func (s *Server) handleFileManifest(w http.ResponseWriter, r *http.Request) {
 		writeEnvelopeWithMessage(w, http.StatusUnauthorized, -401, "unauthorized", nil)
 		return
 	}
-	if s.proxyOwnedRequest(w, r, r.URL.Query().Get("sandbox_id")) {
+	box, ok := s.authorizeSandboxOrganization(r.Context(), w, r.URL.Query().Get("sandbox_id"), requestOrganizationID(r, ""))
+	if !ok {
+		return
+	}
+	if s.proxyOwnedBoxRequest(w, r, box) {
 		return
 	}
 
@@ -717,7 +919,11 @@ func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request) {
 		writeEnvelopeWithMessage(w, http.StatusUnauthorized, -401, "unauthorized", nil)
 		return
 	}
-	if s.proxyOwnedRequest(w, r, r.URL.Query().Get("sandbox_id")) {
+	box, ok := s.authorizeSandboxOrganization(r.Context(), w, r.URL.Query().Get("sandbox_id"), requestOrganizationID(r, ""))
+	if !ok {
+		return
+	}
+	if s.proxyOwnedBoxRequest(w, r, box) {
 		return
 	}
 
@@ -853,16 +1059,8 @@ func (s *Server) handleInteractiveProxy(w http.ResponseWriter, r *http.Request) 
 	s.proxyToTarget(w, r, target, remainder)
 }
 
-func (s *Server) proxyOwnedBodyRequest(w http.ResponseWriter, r *http.Request, sandboxID string, body []byte) bool {
-	if sandboxID == "" {
-		return false
-	}
-	box, err := s.lifecycle.Get(sandboxID)
-	if err != nil {
-		writeKnownError(w, err)
-		return true
-	}
-	if !s.shouldProxy(*box) {
+func (s *Server) proxyOwnedBoxBodyRequest(w http.ResponseWriter, r *http.Request, box *sandbox.Sandbox, body []byte) bool {
+	if box == nil || !s.shouldProxy(*box) {
 		return false
 	}
 
@@ -871,21 +1069,112 @@ func (s *Server) proxyOwnedBodyRequest(w http.ResponseWriter, r *http.Request, s
 	return true
 }
 
-func (s *Server) proxyOwnedRequest(w http.ResponseWriter, r *http.Request, sandboxID string) bool {
-	if sandboxID == "" {
-		return false
-	}
-	box, err := s.lifecycle.Get(sandboxID)
-	if err != nil {
-		writeKnownError(w, err)
-		return true
-	}
-	if !s.shouldProxy(*box) {
+func (s *Server) proxyOwnedBoxRequest(w http.ResponseWriter, r *http.Request, box *sandbox.Sandbox) bool {
+	if box == nil || !s.shouldProxy(*box) {
 		return false
 	}
 
 	s.proxyToWorker(w, r, box.WorkerAddr)
 	return true
+}
+
+func (s *Server) authorizeSandboxOrganization(ctx context.Context, w http.ResponseWriter, sandboxID string, organizationID string) (*sandbox.Sandbox, bool) {
+	if strings.TrimSpace(sandboxID) == "" {
+		return nil, true
+	}
+
+	box, err := s.lifecycle.Get(sandboxID)
+	if err != nil {
+		writeKnownError(w, err)
+		return nil, false
+	}
+
+	requestedOrganizationID := strings.TrimSpace(organizationID)
+	if requestedOrganizationID == "" || requestedOrganizationID == box.OrganizationID {
+		return box, true
+	}
+
+	s.recordPolicyDenied(ctx, sandboxID, "cross_organization_sandbox_access_denied", "sandbox does not belong to organization", map[string]any{
+		"organization_id":           box.OrganizationID,
+		"requested_organization_id": requestedOrganizationID,
+	})
+	writeEnvelopeWithMessage(w, http.StatusForbidden, -403, "sandbox does not belong to organization", map[string]any{
+		"error_type":      "access_denied",
+		"code":            "cross_organization_sandbox_access_denied",
+		"sandbox_id":      sandboxID,
+		"organization_id": requestedOrganizationID,
+	})
+	return nil, false
+}
+
+func requestOrganizationID(r *http.Request, bodyOrganizationID string) string {
+	if value := strings.TrimSpace(bodyOrganizationID); value != "" {
+		return value
+	}
+	if value := strings.TrimSpace(r.URL.Query().Get("organization_id")); value != "" {
+		return value
+	}
+	for _, header := range []string{"X-ZGI-Organization-ID", "X-Organization-ID"} {
+		if value := strings.TrimSpace(r.Header.Get(header)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func (s *Server) recordPolicyDenied(ctx context.Context, sandboxID string, code string, message string, metadata map[string]any) {
+	eventMetadata := map[string]any{
+		"status":          "failure",
+		"error_type":      "policy_denied",
+		"code":            code,
+		"runtime_backend": s.policy.RuntimeBackend(),
+	}
+	for key, value := range metadata {
+		eventMetadata[key] = value
+	}
+	s.observer.Record("policy.denied", sandboxID, message, observer.MetadataWithContext(ctx, eventMetadata))
+}
+
+func egressDecisionMetadata(decision policy.EgressDecision) map[string]any {
+	metadata := map[string]any{
+		"allowed":                 decision.Allowed,
+		"code":                    decision.Code,
+		"reason":                  decision.Reason,
+		"network_policy":          decision.Policy,
+		"destination":             decision.Destination,
+		"protocol":                decision.Protocol,
+		"host":                    decision.Host,
+		"port":                    decision.Port,
+		"max_request_duration_ms": decision.MaxRequestDurationMS,
+	}
+	if len(decision.ResolvedIPs) > 0 {
+		metadata["resolved_ips"] = strings.Join(decision.ResolvedIPs, ",")
+	}
+	if decision.DeniedCIDR != "" {
+		metadata["denied_cidr"] = decision.DeniedCIDR
+	}
+	return metadata
+}
+
+func addSandboxOwnershipMetadata(metadata map[string]any, box *sandbox.Sandbox) {
+	if box == nil {
+		return
+	}
+	if box.OrganizationID != "" {
+		metadata["organization_id"] = box.OrganizationID
+	}
+	if box.WorkspaceID != "" {
+		metadata["workspace_id"] = box.WorkspaceID
+	}
+	if box.AppID != "" {
+		metadata["app_id"] = box.AppID
+	}
+	if box.WorkflowRunID != "" {
+		metadata["workflow_run_id"] = box.WorkflowRunID
+	}
+	if box.UserID != "" {
+		metadata["user_id"] = box.UserID
+	}
 }
 
 func (s *Server) shouldProxy(box sandbox.Sandbox) bool {
@@ -922,6 +1211,13 @@ func (s *Server) authorized(r *http.Request) bool {
 		return true
 	}
 
+	return r.Header.Get("X-API-Key") == s.config.APIKey
+}
+
+func (s *Server) authorizedAdmin(r *http.Request) bool {
+	if strings.TrimSpace(s.config.APIKey) == "" {
+		return false
+	}
 	return r.Header.Get("X-API-Key") == s.config.APIKey
 }
 
@@ -972,6 +1268,23 @@ func maxInt64(left int64, right int64) int64 {
 	return right
 }
 
+func codeRequestProfile(body []byte) (string, error) {
+	var probe struct {
+		Profile string `json:"profile"`
+	}
+	if err := json.Unmarshal(body, &probe); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(probe.Profile), nil
+}
+
+func defaultString(value string, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
+}
+
 func writeDecodeError(w http.ResponseWriter, err error) {
 	var maxBytesErr *http.MaxBytesError
 	if errors.As(err, &maxBytesErr) {
@@ -1006,6 +1319,9 @@ func writeKnownError(w http.ResponseWriter, err error) {
 	var limitErr *policy.LimitError
 	var queueErr *runner.QueueTimeoutError
 	var cancelErr *runner.CancellationError
+	var detailsErr interface {
+		ResponseDetails() map[string]any
+	}
 	switch {
 	case errors.As(err, &limitErr):
 		status = http.StatusTooManyRequests
@@ -1023,6 +1339,8 @@ func writeKnownError(w http.ResponseWriter, err error) {
 		status = statusClientClosedRequest
 		code = -499
 		data = (&runner.CancellationError{Phase: "request"}).ResponseDetails()
+	case errors.As(err, &detailsErr):
+		data = detailsErr.ResponseDetails()
 	case errors.Is(err, strconv.ErrSyntax):
 		status = http.StatusBadRequest
 	case strings.Contains(err.Error(), "not found"):

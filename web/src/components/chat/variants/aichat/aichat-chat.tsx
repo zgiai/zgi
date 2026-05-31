@@ -105,6 +105,8 @@ interface AIChatShellProps {
     startNewConversation: () => void;
     isHome: boolean;
   }) => React.ReactNode;
+  onSelectConversation?: (id: string) => void;
+  onStartNewConversation?: () => void;
   showAssistantModelMeta?: boolean;
   surface?: 'aichat' | 'agent-draft' | 'agent-webapp';
   themeColor?: string;
@@ -151,6 +153,8 @@ export function AIChatShell({
   embeddedConversationControlsClassName,
   embeddedConversationControlsPortalId,
   renderEmbeddedConversationControls,
+  onSelectConversation,
+  onStartNewConversation,
   showAssistantModelMeta = true,
   surface = 'aichat',
   themeColor,
@@ -516,16 +520,24 @@ export function AIChatShell({
       setMobileSidebarOpen(false);
       return;
     }
-    controller.startNew();
+    if (onStartNewConversation) {
+      onStartNewConversation();
+    } else {
+      controller.startNew();
+    }
     setMobileSidebarOpen(false);
-  }, [controller, isHome, t]);
+  }, [controller, isHome, onStartNewConversation, t]);
 
   const handleSelectConversation = useCallback(
     (id: string) => {
-      void controller.select(id);
+      if (onSelectConversation) {
+        onSelectConversation(id);
+      } else {
+        void controller.select(id);
+      }
       setMobileSidebarOpen(false);
     },
-    [controller]
+    [controller, onSelectConversation]
   );
 
   const handleDeleteConversation = useCallback(

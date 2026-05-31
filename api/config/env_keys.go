@@ -316,6 +316,18 @@ const (
 	envCodeExecutionEndpoint = "CODE_EXECUTION_ENDPOINT"
 	// envCodeExecutionAPIKey sets the API key for the remote code execution service. Default: empty.
 	envCodeExecutionAPIKey = "CODE_EXECUTION_API_KEY"
+	// envCodeExecutionConnectTimeout sets the sandbox adapter connect timeout in seconds. Default: 5.
+	envCodeExecutionConnectTimeout = "CODE_EXECUTION_CONNECT_TIMEOUT_SECONDS"
+	// envCodeExecutionCreateTimeout sets the sandbox creation request timeout in seconds. Default: 10.
+	envCodeExecutionCreateTimeout = "CODE_EXECUTION_CREATE_TIMEOUT_SECONDS"
+	// envCodeExecutionUploadTimeout sets the sandbox archive upload request timeout in seconds. Default: 30.
+	envCodeExecutionUploadTimeout = "CODE_EXECUTION_UPLOAD_TIMEOUT_SECONDS"
+	// envCodeExecutionCommandTimeoutPadding sets extra HTTP time allowed beyond the skill command timeout in seconds. Default: 15.
+	envCodeExecutionCommandTimeoutPadding = "CODE_EXECUTION_COMMAND_TIMEOUT_PADDING_SECONDS"
+	// envCodeExecutionArtifactTimeout sets artifact list and download request timeout in seconds. Default: 10.
+	envCodeExecutionArtifactTimeout = "CODE_EXECUTION_ARTIFACT_TIMEOUT_SECONDS"
+	// envCodeExecutionCleanupTimeout sets sandbox cleanup request timeout in seconds. Default: 5.
+	envCodeExecutionCleanupTimeout = "CODE_EXECUTION_CLEANUP_TIMEOUT_SECONDS"
 
 	// Code execution safety limits.
 	// envCodeMaxNumber sets the largest numeric value allowed in code execution. Default: 9223372036854775807.
@@ -337,6 +349,11 @@ const (
 	envWorkflowHeartbeatInterval = "WORKFLOW_HEARTBEAT_INTERVAL"
 	// envWorkflowCleanupTimeout sets the workflow cleanup timeout in seconds. Default: 30.
 	envWorkflowCleanupTimeout = "WORKFLOW_CLEANUP_TIMEOUT"
+	// envWorkflowImageInputURLMode controls URLs passed to LLM vision for workflow image inputs.
+	// Accepted values: zgi_proxy | public_storage_url. Default: zgi_proxy.
+	envWorkflowImageInputURLMode = "WORKFLOW_IMAGE_INPUT_URL_MODE"
+	// envWorkflowImageInputPublicBaseURL sets the optional public storage/CDN base URL for workflow image inputs.
+	envWorkflowImageInputPublicBaseURL = "WORKFLOW_IMAGE_INPUT_PUBLIC_BASE_URL"
 
 	// Workflow file extraction behavior.
 	// envWorkflowFileExtractionEnabled controls whether workflow file extraction is enabled. Default: true.

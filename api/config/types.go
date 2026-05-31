@@ -207,18 +207,31 @@ type ETLConfig struct {
 }
 
 type CodeExecConfig struct {
-	Endpoint        string `json:"endpoint"`
-	APIKey          string `json:"-"`
-	MaxNumber       int64  `json:"max_number"`
-	MinNumber       int64  `json:"min_number"`
-	MaxStringLength int    `json:"max_string_length"`
+	Endpoint                     string `json:"endpoint"`
+	APIKey                       string `json:"-"`
+	ConnectTimeoutSeconds        int    `json:"connect_timeout_seconds"`
+	CreateTimeoutSeconds         int    `json:"create_timeout_seconds"`
+	UploadTimeoutSeconds         int    `json:"upload_timeout_seconds"`
+	CommandTimeoutPaddingSeconds int    `json:"command_timeout_padding_seconds"`
+	ArtifactTimeoutSeconds       int    `json:"artifact_timeout_seconds"`
+	CleanupTimeoutSeconds        int    `json:"cleanup_timeout_seconds"`
+	MaxNumber                    int64  `json:"max_number"`
+	MinNumber                    int64  `json:"min_number"`
+	MaxStringLength              int    `json:"max_string_length"`
 }
 
+const (
+	WorkflowImageInputURLModeZGIProxy         = "zgi_proxy"
+	WorkflowImageInputURLModePublicStorageURL = "public_storage_url"
+)
+
 type WorkflowConfig struct {
-	ExecutionTimeout  int `json:"execution_timeout"`
-	LLMTimeout        int `json:"llm_timeout"`
-	HeartbeatInterval int `json:"heartbeat_interval"`
-	CleanupTimeout    int `json:"cleanup_timeout"`
+	ExecutionTimeout        int    `json:"execution_timeout"`
+	LLMTimeout              int    `json:"llm_timeout"`
+	HeartbeatInterval       int    `json:"heartbeat_interval"`
+	CleanupTimeout          int    `json:"cleanup_timeout"`
+	ImageInputURLMode       string `json:"image_input_url_mode"`
+	ImageInputPublicBaseURL string `json:"image_input_public_base_url"`
 }
 
 type WorkflowFileExtractionConfig struct {
