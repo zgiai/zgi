@@ -97,7 +97,7 @@ values = {
     ]),
     "valid_skill_manifest_archive_base64": zip_b64([
         ("SKILL.md", "---\nname: manifest-skill\ndescription: Manifest skill\nruntime_type: prompt\n---\n"),
-        ("scripts/run.py", "print('ok')\n"),
+        ("scripts/run.py", "import json, os, sys\npayload = json.loads(sys.stdin.read() or '{}')\nos.makedirs('artifacts', exist_ok=True)\nopen('artifacts/manifest-report.txt', 'w').write('manifest artifact\\n')\nprint(json.dumps({'input': payload.get('input'), 'ok': True}))\n"),
         ("references/schema.md", "schema\n"),
         ("skill.manifest.json", json.dumps({
             "entrypoint": "scripts/run.py",

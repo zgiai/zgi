@@ -21,6 +21,7 @@ Already available:
 - File upload, download, info, tree, and delete APIs
 - Archive upload API for zip packages
 - Skill script package execution through `zgi-api`
+- Manifest-driven skill execution API
 - Artifact collection for script-generated files
 - Command profiles: `code-short`, `skill-python`, `skill-node`
 - Template profile: `template-short`
@@ -157,8 +158,9 @@ ergonomic for workflow and agent use cases.
 
 ### C1. Skill Package Execution
 
-- Promote archive upload plus `scripts/run.py` execution into a documented runtime contract.
-- Add a skill execution manifest:
+- Added `POST /v1/exec/skill` for manifest-driven package execution.
+- Added archive upload plus manifest execution as a runtime contract.
+- Added a skill execution manifest:
   - `entrypoint`
   - `language`
   - `timeout_ms`
@@ -166,7 +168,7 @@ ergonomic for workflow and agent use cases.
   - `max_artifact_count`
   - `max_artifact_bytes`
   - `result_mode`
-- Validate the manifest before upload or execution.
+- Validate the manifest before upload and execution.
 - Keep `SKILL.md`, `references/`, `scripts/`, and `artifacts/` as the default package shape.
 
 ### C2. Artifact Manifest

@@ -1,6 +1,9 @@
 package app
 
 import (
+	"archive/zip"
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -287,6 +290,63 @@ func TestTemplateEndpointRendersAndRejectsUnsafeHelpers(t *testing.T) {
 	server.Handler().ServeHTTP(rejectRes, rejectReq)
 	if rejectRes.Code != http.StatusBadRequest {
 		t.Fatalf("expected unsafe helper to return 400, got %d body=%s", rejectRes.Code, rejectRes.Body.String())
+	}
+}
+
+func TestSkillEndpointRunsManifestPackage(t *testing.T) {
+	server, err := NewServer(testConfig(t))
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	createReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","ttl_seconds":60}`))
+	createRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(createRes, createReq)
+	if createRes.Code != http.StatusOK {
+		t.Fatalf("expected sandbox create to return 200, got %d body=%s", createRes.Code, createRes.Body.String())
+	}
+	var createBody struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(createRes.Body.Bytes(), &createBody); err != nil {
+		t.Fatalf("decode sandbox create: %v", err)
+	}
+
+	archive := testZipBase64(t, map[string]string{
+		"SKILL.md":       "skill",
+		"scripts/run.py": "import json, os, sys\npayload = json.loads(sys.stdin.read() or '{}')\nos.makedirs('artifacts', exist_ok=True)\nopen('artifacts/report.txt', 'w').write('api artifact\\n')\nprint(json.dumps({'ok': True, 'input': payload.get('input')}))\n",
+		"skill.manifest.json": `{
+  "entrypoint": "scripts/run.py",
+  "language": "python3",
+  "timeout_ms": 30000,
+  "allowed_artifact_paths": ["artifacts"],
+  "max_artifact_count": 10,
+  "max_artifact_bytes": 32768,
+  "result_mode": "mixed"
+}`,
+	})
+	uploadBody := fmt.Sprintf(`{"sandbox_id":%q,"path":"skills/api","archive_base64":%q,"format":"zip","validate_skill_manifest":true}`, createBody.Data.ID, archive)
+	uploadReq := httptest.NewRequest(http.MethodPost, "/v1/files/upload-archive", strings.NewReader(uploadBody))
+	uploadReq.Header.Set("Content-Type", "application/json")
+	uploadRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(uploadRes, uploadReq)
+	if uploadRes.Code != http.StatusOK {
+		t.Fatalf("expected archive upload to return 200, got %d body=%s", uploadRes.Code, uploadRes.Body.String())
+	}
+
+	runReq := httptest.NewRequest(http.MethodPost, "/v1/exec/skill", strings.NewReader(fmt.Sprintf(`{"sandbox_id":%q,"path":"skills/api","input_json":{"input":"api"}}`, createBody.Data.ID)))
+	runReq.Header.Set("Content-Type", "application/json")
+	runRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(runRes, runReq)
+	if runRes.Code != http.StatusOK {
+		t.Fatalf("expected skill execution to return 200, got %d body=%s", runRes.Code, runRes.Body.String())
+	}
+	for _, expected := range []string{`"entrypoint":"scripts/run.py"`, `"artifact_manifests"`, `"result_json":{"input":"api","ok":true}`} {
+		if !strings.Contains(runRes.Body.String(), expected) {
+			t.Fatalf("expected skill response to include %s, got %s", expected, runRes.Body.String())
+		}
 	}
 }
 
@@ -814,4 +874,24 @@ func testConfig(t *testing.T) config.Config {
 	cfg.RedisAddr = ""
 	cfg.RuntimeBackend = "preview"
 	return cfg
+}
+
+func testZipBase64(t *testing.T, files map[string]string) string {
+	t.Helper()
+
+	var buffer bytes.Buffer
+	writer := zip.NewWriter(&buffer)
+	for path, content := range files {
+		fileWriter, err := writer.Create(path)
+		if err != nil {
+			t.Fatalf("create zip entry: %v", err)
+		}
+		if _, err := fileWriter.Write([]byte(content)); err != nil {
+			t.Fatalf("write zip entry: %v", err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close zip: %v", err)
+	}
+	return base64.StdEncoding.EncodeToString(buffer.Bytes())
 }

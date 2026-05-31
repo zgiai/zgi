@@ -115,6 +115,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/exec/code", s.handleExecCode)
 	s.mux.HandleFunc("/v1/exec/command", s.handleExecCommand)
 	s.mux.HandleFunc("/v1/exec/template", s.handleExecTemplate)
+	s.mux.HandleFunc("/v1/exec/skill", s.handleExecSkill)
 	s.mux.HandleFunc("/v1/files/upload", s.handleUploadFile)
 	s.mux.HandleFunc("/v1/files/upload-archive", s.handleUploadArchive)
 	s.mux.HandleFunc("/v1/files/download", s.handleDownloadFile)
@@ -508,6 +509,38 @@ func (s *Server) handleExecTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := s.executor.RunTemplate(r.Context(), req)
+	if err != nil {
+		writeKnownError(w, err)
+		return
+	}
+	writeEnvelope(w, http.StatusOK, result)
+}
+
+func (s *Server) handleExecSkill(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authorized(r) {
+		writeEnvelopeWithMessage(w, http.StatusUnauthorized, -401, "unauthorized", nil)
+		return
+	}
+
+	body, err := s.readLimitedBody(w, r, s.maxExecutionRequestBytes())
+	if err != nil {
+		return
+	}
+
+	var req executor.SkillRunRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "invalid request payload", nil)
+		return
+	}
+	if s.proxyOwnedBodyRequest(w, r, req.SandboxID, body) {
+		return
+	}
+
+	result, err := s.executor.RunSkill(r.Context(), req)
 	if err != nil {
 		writeKnownError(w, err)
 		return

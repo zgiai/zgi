@@ -436,6 +436,120 @@ func TestUploadArchiveRejectsInvalidSkillManifest(t *testing.T) {
 	if !strings.Contains(err.Error(), "entrypoint is missing") {
 		t.Fatalf("expected entrypoint error, got %v", err)
 	}
+
+	_, err = service.UploadArchive(ArchiveUploadRequest{
+		SandboxID: box.ID,
+		Path:      ".",
+		ArchiveBase64: zipBase64(t, map[string]string{
+			"SKILL.md":            "# Skill",
+			"run.py":              "print('ok')",
+			"skill.manifest.json": validSkillManifestJSON("run.py"),
+		}),
+		Format:                "zip",
+		ValidateSkillManifest: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "entrypoint must be under scripts") {
+		t.Fatalf("expected entrypoint directory error, got %v", err)
+	}
+}
+
+func TestRunSkillUsesManifestPolicyAndReturnsArtifacts(t *testing.T) {
+	service, manager := newTestExecutorService(t)
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+		OrganizationID: "organization-skill",
+		WorkspaceID:    "workspace-skill",
+		WorkflowRunID:  "run-skill",
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	_, err = service.UploadArchive(ArchiveUploadRequest{
+		SandboxID: box.ID,
+		Path:      "skills/echo",
+		ArchiveBase64: zipBase64(t, map[string]string{
+			"SKILL.md":            "# Skill",
+			"scripts/run.py":      "import json, os, sys\npayload = json.loads(sys.stdin.read() or '{}')\nos.makedirs('artifacts', exist_ok=True)\nopen('artifacts/report.txt', 'w').write('skill artifact\\n')\nprint(json.dumps({'echo': payload.get('input'), 'ok': True}))\n",
+			"skill.manifest.json": validSkillManifestJSON("scripts/run.py"),
+		}),
+		Format:                "zip",
+		ValidateSkillManifest: true,
+	})
+	if err != nil {
+		t.Fatalf("upload skill package: %v", err)
+	}
+
+	result, err := service.RunSkill(context.Background(), SkillRunRequest{
+		SandboxID: box.ID,
+		Path:      "skills/echo",
+		InputJSON: []byte(`{"input":"hello"}`),
+	})
+	if err != nil {
+		t.Fatalf("run skill: %v", err)
+	}
+	if result.Command.ExitCode != 0 || !strings.Contains(result.Command.Stdout, `"echo": "hello"`) && !strings.Contains(result.Command.Stdout, `"echo":"hello"`) {
+		t.Fatalf("unexpected skill command result: %+v", result.Command)
+	}
+	if result.Manifest.Entrypoint != "scripts/run.py" || result.Manifest.Language != "python3" {
+		t.Fatalf("unexpected manifest: %+v", result.Manifest)
+	}
+	if len(result.ArtifactManifests) != 1 || result.ArtifactManifests[0].FileCount != 1 {
+		t.Fatalf("expected one artifact manifest, got %+v", result.ArtifactManifests)
+	}
+	if result.ArtifactManifests[0].Items[0].Path != "skills/echo/artifacts/report.txt" {
+		t.Fatalf("unexpected artifact path: %+v", result.ArtifactManifests[0].Items[0])
+	}
+
+	events := service.observer.Query(observer.Query{SandboxID: box.ID, Type: "exec.skill", Limit: 1})
+	if len(events) != 1 || events[0].Metadata["organization_id"] != "organization-skill" {
+		t.Fatalf("expected skill execution event with ownership metadata, got %#v", events)
+	}
+}
+
+func TestRunSkillRejectsManifestArtifactLimit(t *testing.T) {
+	service, manager := newTestExecutorService(t)
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	_, err = service.UploadArchive(ArchiveUploadRequest{
+		SandboxID: box.ID,
+		Path:      "skills/limited",
+		ArchiveBase64: zipBase64(t, map[string]string{
+			"SKILL.md":       "limited",
+			"scripts/run.py": "import os\nos.makedirs('artifacts', exist_ok=True)\nopen('artifacts/one.txt', 'w').write('one')\nopen('artifacts/two.txt', 'w').write('two')\nprint('ok')\n",
+			"skill.manifest.json": `{
+  "entrypoint": "scripts/run.py",
+  "language": "python3",
+  "timeout_ms": 30000,
+  "allowed_artifact_paths": ["artifacts"],
+  "max_artifact_count": 1,
+  "max_artifact_bytes": 32768,
+  "result_mode": "mixed"
+}`,
+		}),
+		Format:                "zip",
+		ValidateSkillManifest: true,
+	})
+	if err != nil {
+		t.Fatalf("upload skill package: %v", err)
+	}
+
+	_, err = service.RunSkill(context.Background(), SkillRunRequest{
+		SandboxID: box.ID,
+		Path:      "skills/limited",
+	})
+	if err == nil {
+		t.Fatal("expected artifact count limit")
+	}
+	var limitErr *policy.LimitError
+	if !errors.As(err, &limitErr) || limitErr.Code != "artifact_manifest_file_count_exceeded" {
+		t.Fatalf("expected artifact count limit error, got %v", err)
+	}
 }
 
 func TestUploadArchiveRejectsZipSlip(t *testing.T) {

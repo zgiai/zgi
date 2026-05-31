@@ -57,6 +57,49 @@ data.skill_manifest.result_mode == "mixed"
 ```
 
 ```step
+@id run-manifest-skill
+@name Run manifest skill package
+
+POST {{base_url}}/v1/exec/skill
+Content-Type: application/json
+
+{
+  "sandbox_id": "{{sandbox_id}}",
+  "path": "validated",
+  "input_json": {
+    "input": "hello manifest"
+  }
+}
+
+[Asserts]
+status == 200
+code == 0
+data.manifest.entrypoint == "scripts/run.py"
+data.manifest.language == "python3"
+data.command.exit_code == 0
+data.result_json.input == "hello manifest"
+data.result_json.ok == true
+data.artifact_manifests.0.path == "validated/artifacts"
+data.artifact_manifests.0.file_count == 1
+data.artifact_manifests.0.items.0.path == "validated/artifacts/manifest-report.txt"
+```
+
+```step
+@id observer-skill-exec-event
+@name Observer skill execution event
+
+GET {{base_url}}/v1/observer/events?sandbox_id={{sandbox_id}}&type=exec.skill&limit=1
+
+[Asserts]
+status == 200
+code == 0
+data.events.0.metadata.path == "validated"
+data.events.0.metadata.organization_id == "organization_archive_kest"
+data.events.0.metadata.workspace_id == "workspace_archive_kest"
+data.events.0.metadata.workflow_run_id == "workflow_run_archive_kest"
+```
+
+```step
 @id reject-invalid-skill-manifest
 @name Reject archive with invalid skill manifest
 

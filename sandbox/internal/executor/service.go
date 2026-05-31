@@ -80,6 +80,22 @@ type TemplateResult struct {
 	Warnings   []string `json:"warnings,omitempty"`
 }
 
+type SkillRunRequest struct {
+	SandboxID string          `json:"sandbox_id"`
+	Path      string          `json:"path"`
+	InputJSON json.RawMessage `json:"input_json,omitempty"`
+	Stdin     string          `json:"stdin,omitempty"`
+}
+
+type SkillRunResult struct {
+	SandboxID         string                 `json:"sandbox_id"`
+	Path              string                 `json:"path"`
+	Manifest          SkillExecutionManifest `json:"manifest"`
+	Command           runner.CommandResult   `json:"command"`
+	ArtifactManifests []FileManifest         `json:"artifact_manifests,omitempty"`
+	ResultJSON        any                    `json:"result_json,omitempty"`
+}
+
 type FileWriteRequest struct {
 	SandboxID string `json:"sandbox_id"`
 	Path      string `json:"path"`
@@ -388,6 +404,107 @@ func (s *Service) RunCommand(ctx context.Context, req CommandRequest) (runner.Co
 	addOwnershipMetadata(metadata, box)
 	s.observer.Record("exec.command", req.SandboxID, "sandbox command executed", observer.MetadataWithContext(ctx, metadata))
 	return result, nil
+}
+
+func (s *Service) RunSkill(ctx context.Context, req SkillRunRequest) (SkillRunResult, error) {
+	if strings.TrimSpace(req.SandboxID) == "" {
+		return SkillRunResult{}, errors.New("sandbox_id is required")
+	}
+	if strings.TrimSpace(req.Path) == "" {
+		req.Path = "."
+	}
+
+	box, err := s.lifecycle.GetActive(req.SandboxID)
+	if err != nil {
+		s.recordExecutionFailure(ctx, "exec.skill.failed", req.SandboxID, "skill execution failed", map[string]any{"path": req.Path}, err)
+		return SkillRunResult{}, err
+	}
+	baseMetadata := map[string]any{"path": req.Path}
+	addOwnershipMetadata(baseMetadata, box)
+
+	packageRoot, err := resolveExistingSandboxPath(box.RootPath, req.Path)
+	if err != nil {
+		s.recordExecutionFailure(ctx, "exec.skill.failed", req.SandboxID, "skill execution failed", baseMetadata, err)
+		return SkillRunResult{}, err
+	}
+	info, err := os.Stat(packageRoot)
+	if err != nil {
+		s.recordExecutionFailure(ctx, "exec.skill.failed", req.SandboxID, "skill execution failed", baseMetadata, err)
+		return SkillRunResult{}, err
+	}
+	if !info.IsDir() {
+		err := fmt.Errorf("skill package path is not a directory: %s", req.Path)
+		s.recordExecutionFailure(ctx, "exec.skill.failed", req.SandboxID, "skill execution failed", baseMetadata, err)
+		return SkillRunResult{}, err
+	}
+
+	manifest, err := loadSkillExecutionManifest(packageRoot, s.policy.MaxFileSizeBytes()*256)
+	if err != nil {
+		s.recordExecutionFailure(ctx, "exec.skill.failed", req.SandboxID, "skill execution failed", baseMetadata, err)
+		return SkillRunResult{}, err
+	}
+
+	stdin := req.Stdin
+	if len(req.InputJSON) > 0 {
+		if !json.Valid(req.InputJSON) {
+			err := errors.New("input_json must contain valid JSON")
+			s.recordExecutionFailure(ctx, "exec.skill.failed", req.SandboxID, "skill execution failed", baseMetadata, err)
+			return SkillRunResult{}, err
+		}
+		stdin = string(req.InputJSON)
+	}
+
+	command, args := skillCommand(manifest)
+	result, err := s.runner.ExecuteCommandSpec(ctx, runner.CommandSpec{
+		WorkDir:        packageRoot,
+		Command:        command,
+		Args:           args,
+		Stdin:          stdin,
+		Timeout:        time.Duration(manifest.TimeoutMS) * time.Millisecond,
+		StdoutLimit:    64 * 1024,
+		StderrLimit:    64 * 1024,
+		AllowShellForm: false,
+	})
+	if err != nil {
+		s.recordExecutionFailure(ctx, "exec.skill.failed", req.SandboxID, "skill execution failed", baseMetadata, err)
+		return SkillRunResult{}, err
+	}
+
+	artifactManifests, err := s.skillArtifactManifests(req.SandboxID, req.Path, manifest)
+	if err != nil {
+		s.recordExecutionFailure(ctx, "exec.skill.failed", req.SandboxID, "skill execution failed", baseMetadata, err)
+		return SkillRunResult{}, err
+	}
+
+	runResult := SkillRunResult{
+		SandboxID:         req.SandboxID,
+		Path:              req.Path,
+		Manifest:          manifest,
+		Command:           result,
+		ArtifactManifests: artifactManifests,
+	}
+	if manifest.ResultMode == "stdout_json" || manifest.ResultMode == "mixed" {
+		var decoded any
+		if strings.TrimSpace(result.Stdout) != "" && json.Unmarshal([]byte(strings.TrimSpace(result.Stdout)), &decoded) == nil {
+			runResult.ResultJSON = decoded
+		}
+	}
+
+	metadata := map[string]any{
+		"path":           req.Path,
+		"entrypoint":     manifest.Entrypoint,
+		"language":       manifest.Language,
+		"result_mode":    manifest.ResultMode,
+		"exit_code":      result.ExitCode,
+		"duration_ms":    result.DurationMS,
+		"truncated":      result.Truncated,
+		"backend":        result.Backend,
+		"artifact_paths": len(artifactManifests),
+		"status":         "success",
+	}
+	addOwnershipMetadata(metadata, box)
+	s.observer.Record("exec.skill", req.SandboxID, "skill executed", observer.MetadataWithContext(ctx, metadata))
+	return runResult, nil
 }
 
 func (s *Service) recordExecutionFailure(ctx context.Context, eventType string, sandboxID string, message string, metadata map[string]any, err error) {
@@ -1099,6 +1216,37 @@ func normalizeEncoding(encoding string) string {
 	return "utf-8"
 }
 
+func (s *Service) skillArtifactManifests(sandboxID string, packagePath string, manifest SkillExecutionManifest) ([]FileManifest, error) {
+	manifests := make([]FileManifest, 0, len(manifest.AllowedArtifactPaths))
+	for _, artifactPath := range manifest.AllowedArtifactPaths {
+		relativePath := filepath.ToSlash(filepath.Join(packagePath, artifactPath))
+		if _, err := s.StatFile(sandboxID, relativePath); err != nil {
+			if os.IsNotExist(err) || strings.Contains(err.Error(), "no such file") {
+				continue
+			}
+			return nil, err
+		}
+		artifactManifest, err := s.BuildFileManifestWithOptions(sandboxID, relativePath, FileManifestOptions{
+			MaxFiles:      manifest.MaxArtifactCount,
+			MaxTotalBytes: manifest.MaxArtifactBytes,
+		})
+		if err != nil {
+			return nil, err
+		}
+		manifests = append(manifests, *artifactManifest)
+	}
+	return manifests, nil
+}
+
+func skillCommand(manifest SkillExecutionManifest) (string, []string) {
+	switch manifest.Language {
+	case "nodejs":
+		return "node", []string{manifest.Entrypoint}
+	default:
+		return "python3", []string{manifest.Entrypoint}
+	}
+}
+
 func attachResultJSON(result *runner.Result, strict bool) error {
 	if result == nil || result.ExitCode != 0 {
 		return nil
@@ -1289,23 +1437,89 @@ func normalizeArchiveEntries(files []*zip.File, stripRoot bool) ([]archiveEntry,
 }
 
 func validateSkillExecutionManifest(entries []archiveEntry, maxArtifactBytes int64) (*SkillExecutionManifest, error) {
-	names := make(map[string]archiveEntry, len(entries))
+	names := make(map[string]bool, len(entries))
 	for _, entry := range entries {
-		names[filepath.ToSlash(entry.name)] = entry
+		names[filepath.ToSlash(entry.name)] = true
 	}
 
-	manifestEntry, ok := names["skill.manifest.json"]
-	if !ok {
+	var manifestEntry *zip.File
+	for _, entry := range entries {
+		if filepath.ToSlash(entry.name) == "skill.manifest.json" {
+			manifestEntry = entry.file
+			break
+		}
+	}
+	if manifestEntry == nil {
 		return nil, errors.New("skill.manifest.json is required when validate_skill_manifest is true")
 	}
-	if manifestEntry.file.UncompressedSize64 > 64*1024 {
+	if manifestEntry.UncompressedSize64 > 64*1024 {
 		return nil, errors.New("skill.manifest.json exceeds max size of 65536 bytes")
 	}
-	content, err := readZipFile(manifestEntry.file, 64*1024)
+	content, err := readZipFile(manifestEntry, 64*1024)
 	if err != nil {
 		return nil, err
 	}
 
+	return parseSkillExecutionManifest(content, names, maxArtifactBytes)
+}
+
+func loadSkillExecutionManifest(packageRoot string, maxArtifactBytes int64) (SkillExecutionManifest, error) {
+	manifestPath := filepath.Join(packageRoot, "skill.manifest.json")
+	info, err := os.Lstat(manifestPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return SkillExecutionManifest{}, errors.New("skill.manifest.json is required")
+		}
+		return SkillExecutionManifest{}, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return SkillExecutionManifest{}, errors.New("skill.manifest.json must not be a symlink")
+	}
+	if info.IsDir() {
+		return SkillExecutionManifest{}, errors.New("skill.manifest.json must be a file")
+	}
+	if info.Size() > 64*1024 {
+		return SkillExecutionManifest{}, errors.New("skill.manifest.json exceeds max size of 65536 bytes")
+	}
+	content, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return SkillExecutionManifest{}, err
+	}
+
+	names := make(map[string]bool)
+	err = filepath.WalkDir(packageRoot, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if path == packageRoot || d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("skill package contains symlink: %s", path)
+		}
+		relative, err := filepath.Rel(packageRoot, path)
+		if err != nil {
+			return err
+		}
+		names[filepath.ToSlash(relative)] = true
+		return nil
+	})
+	if err != nil {
+		return SkillExecutionManifest{}, err
+	}
+
+	manifest, err := parseSkillExecutionManifest(content, names, maxArtifactBytes)
+	if err != nil {
+		return SkillExecutionManifest{}, err
+	}
+	return *manifest, nil
+}
+
+func parseSkillExecutionManifest(content []byte, names map[string]bool, maxArtifactBytes int64) (*SkillExecutionManifest, error) {
 	var manifest SkillExecutionManifest
 	if err := json.Unmarshal(content, &manifest); err != nil {
 		return nil, fmt.Errorf("invalid skill.manifest.json: %w", err)
@@ -1316,7 +1530,7 @@ func validateSkillExecutionManifest(entries []archiveEntry, maxArtifactBytes int
 	return &manifest, nil
 }
 
-func validateSkillManifestFields(manifest *SkillExecutionManifest, names map[string]archiveEntry, maxArtifactBytes int64) error {
+func validateSkillManifestFields(manifest *SkillExecutionManifest, names map[string]bool, maxArtifactBytes int64) error {
 	manifest.Entrypoint = filepath.ToSlash(strings.TrimSpace(manifest.Entrypoint))
 	if manifest.Entrypoint == "" {
 		return errors.New("skill manifest entrypoint is required")
@@ -1324,13 +1538,26 @@ func validateSkillManifestFields(manifest *SkillExecutionManifest, names map[str
 	if unsafeArchivePath(manifest.Entrypoint) {
 		return fmt.Errorf("skill manifest entrypoint escapes package root: %s", manifest.Entrypoint)
 	}
-	if _, ok := names[manifest.Entrypoint]; !ok {
+	if !strings.HasPrefix(manifest.Entrypoint, "scripts/") {
+		return fmt.Errorf("skill manifest entrypoint must be under scripts: %s", manifest.Entrypoint)
+	}
+	if !names[manifest.Entrypoint] {
 		return fmt.Errorf("skill manifest entrypoint is missing from package: %s", manifest.Entrypoint)
 	}
 
 	manifest.Language = normalizeSkillLanguage(manifest.Language)
 	if manifest.Language == "" {
 		return errors.New("skill manifest language must be python3 or nodejs")
+	}
+	switch manifest.Language {
+	case "python3":
+		if filepath.Ext(manifest.Entrypoint) != ".py" {
+			return fmt.Errorf("skill manifest python3 entrypoint must use .py: %s", manifest.Entrypoint)
+		}
+	case "nodejs":
+		if filepath.Ext(manifest.Entrypoint) != ".js" {
+			return fmt.Errorf("skill manifest nodejs entrypoint must use .js: %s", manifest.Entrypoint)
+		}
 	}
 	if manifest.TimeoutMS <= 0 || manifest.TimeoutMS > 300000 {
 		return errors.New("skill manifest timeout_ms must be between 1 and 300000")
