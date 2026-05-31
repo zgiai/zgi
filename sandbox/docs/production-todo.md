@@ -330,7 +330,7 @@ Goal: enforce hard resource boundaries for every execution path.
 - Added optional max queued executions per organization with `ZGI_SANDBOX_MAX_QUEUED_EXECUTIONS_PER_ORGANIZATION`.
 - [x] Queue wait timeout.
 - Cancellation propagation.
-- Graceful shutdown drain behavior.
+- [x] Graceful shutdown drain behavior.
 
 ### F3. Policy Surface
 
@@ -570,7 +570,7 @@ managed environments.
 
 - [x] Startup config validation tests.
 - Readiness tests.
-- Shutdown drain tests.
+- [x] Shutdown drain tests.
 - [x] Docker Compose smoke test.
 
 ## 15. Milestone L: Test and Release Gates
