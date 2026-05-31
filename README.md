@@ -13,16 +13,27 @@ Repository: https://github.com/zgiai/zgi
 
 ![ZGI workflow editor](docs/assets/zgi-workflow-editor-api-enrichment.png)
 
-## At A Glance
+## Core Features
 
-| Area | What is included |
-| --- | --- |
-| Application builder | Agents, chatflows, workflows, prompt library, web app publishing |
-| Workflow nodes | HTTP, JSON parsing, LLM, branching, loops, approval, tools, code, database, notification, knowledge retrieval |
-| Model operations | Provider catalog, model channels, model policy, model defaults, pricing metadata |
-| Runtime services | Go API, Next.js console, sandbox service, plugin runner |
-| Built-in templates | 23 agent/workflow templates in English and Simplified Chinese |
-| Local startup | One Docker Compose command, default gateway at `http://localhost:2679` |
+ZGI brings the pieces of an AI application platform into one self-hostable
+workspace: visual app building, model routing, knowledge retrieval, reusable
+skills, and runtime services.
+
+- **Agent applications**: configure instructions, model settings, knowledge,
+  memory, file upload, skills, and web app publishing from the console.
+- **Visual workflows**: compose API calls, JSON parsing, LLM steps, branching,
+  loops, approvals, tools, code execution, database access, notifications, and
+  knowledge retrieval on a canvas.
+- **Model operations**: manage providers, channels, credentials, defaults,
+  policy controls, and pricing metadata without scattering model configuration
+  across applications.
+- **Knowledge and skills**: connect datasets, content parsing, retrieval, and
+  reusable tool skills so agents can act on real workspace context.
+- **Local-first deployment**: run the Go API, Next.js console, sandbox, plugin
+  runner, PostgreSQL, and Redis behind a local gateway at
+  `http://localhost:2679`.
+- **Starter templates**: explore 23 built-in agent and workflow templates in
+  English and Simplified Chinese.
 
 ## Quick Start
 
@@ -91,7 +102,7 @@ skill system for connecting agents to real tools.
 - Manage prompts, skills, datasets, files, API keys, and content parsing from
   the same workspace console.
 
-## Core Capabilities
+## Feature Map
 
 | Capability | Description |
 | --- | --- |
