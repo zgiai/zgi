@@ -93,7 +93,7 @@ simple calculations, and deterministic data shaping.
   - `warnings`
 - Add optional request fields:
   - `input_json`
-  - `expected_output_schema`
+  - [x] `expected_output_schema`
   - `strict_result_json`
 - Keep `POST /v1/exec/code` backward compatible.
 - [x] Add a new profile-level behavior flag for stateless execution.
@@ -119,7 +119,7 @@ simple calculations, and deterministic data shaping.
 ### A4. Tests
 
 - [x] Unit tests for profile normalization.
-- API tests for size, timeout, output, and schema failures.
+- [x] API tests for size, timeout, output, and schema failures.
 - [x] Kest flow for short-code success.
 - Kest flow for short-code timeout.
 - Kest flow for short-code output truncation.
