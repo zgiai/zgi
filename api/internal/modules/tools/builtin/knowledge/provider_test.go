@@ -137,3 +137,37 @@ func TestRetrieveAgentKnowledgeIgnoresDatasetIDs(t *testing.T) {
 		t.Fatalf("messages = %#v, want json context and retriever resources", messages)
 	}
 }
+
+func TestRetrieveAgentKnowledgeUsesBindingActorAccount(t *testing.T) {
+	service := &fakeRetrievalService{}
+	tool, err := NewProvider(service).GetTool(ToolRetrieveAgentKnowledge)
+	if err != nil {
+		t.Fatalf("GetTool() error = %v", err)
+	}
+	appID := "agent-1"
+	tool = tool.ForkToolRuntime(&tools.ToolRuntime{
+		TenantID:   "tenant-1",
+		InvokeFrom: tools.ToolInvokeFromAgent,
+		RuntimeParameters: map[string]interface{}{
+			"knowledge_bound_by_account_id": "binder-1",
+			"knowledge_binding_grant":       true,
+			"knowledge_dataset_ids":         []string{"ds-1"},
+		},
+	})
+
+	_, err = tool.Invoke(context.Background(), "caller-1", map[string]interface{}{
+		"query": "refund policy",
+	}, nil, &appID, nil)
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if service.lastRequest.Scope.AccountID != "binder-1" {
+		t.Fatalf("Scope.AccountID = %q, want binder-1", service.lastRequest.Scope.AccountID)
+	}
+	if got := service.lastRequest.DatasetIDs; len(got) != 1 || got[0] != "ds-1" {
+		t.Fatalf("DatasetIDs = %v, want [ds-1]", got)
+	}
+	if !service.lastRequest.AgentBindingGrant {
+		t.Fatalf("AgentBindingGrant = false, want true")
+	}
+}

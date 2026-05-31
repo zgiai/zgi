@@ -189,6 +189,12 @@ func effectiveAgentSkillIDs(input []string, catalog []skills.SkillDiscoveryMetad
 			out = append(out, id)
 		}
 	}
+	if runConfigHasDatabaseBindings(runConfig) && agentDatabaseAvailable(catalog) {
+		id := skills.SkillAgentDatabase
+		if _, ok := seen[id]; !ok {
+			out = append(out, id)
+		}
+	}
 	sort.Strings(out)
 	return out
 }
@@ -268,6 +274,10 @@ func validateSkillRequiredConfig(item skills.SkillDiscoveryMetadata, runConfig *
 		case skills.SkillRequiredConfigAgentKnowledge:
 			if runConfig == nil || len(normalizedSkillIDs(runConfig.KnowledgeDatasetIDs)) == 0 {
 				return fmt.Errorf("%w: skill %s requires configured knowledge datasets", ErrInvalidInput, item.ID)
+			}
+		case skills.SkillRequiredConfigAgentDatabase:
+			if !runConfigHasDatabaseBindings(runConfig) {
+				return fmt.Errorf("%w: skill %s requires configured database bindings", ErrInvalidInput, item.ID)
 			}
 		}
 	}
@@ -421,6 +431,21 @@ func runConfigHasKnowledgeDatasets(runConfig *RunConfig) bool {
 	return runConfig != nil && len(normalizedSkillIDs(runConfig.KnowledgeDatasetIDs)) > 0
 }
 
+func runConfigHasDatabaseBindings(runConfig *RunConfig) bool {
+	if runConfig == nil {
+		return false
+	}
+	for _, binding := range runConfig.DatabaseBindings {
+		if strings.TrimSpace(binding.DataSourceID) == "" {
+			continue
+		}
+		if len(normalizedSkillIDs(binding.TableIDs)) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func runConfigHasAgentMemory(runConfig *RunConfig) bool {
 	return runConfig != nil && runConfig.AgentMemoryEnabled && len(enabledAgentMemorySlots(runConfig.AgentMemorySlots)) > 0
 }
@@ -428,6 +453,15 @@ func runConfigHasAgentMemory(runConfig *RunConfig) bool {
 func agentKnowledgeAvailable(catalog []skills.SkillDiscoveryMetadata) bool {
 	for _, item := range catalog {
 		if strings.EqualFold(strings.TrimSpace(item.ID), skills.SkillAgentKnowledge) && item.Status != skills.SkillStatusInvalid && skillSupportsCaller(item, runtimemodel.ConversationCallerAgent) {
+			return true
+		}
+	}
+	return false
+}
+
+func agentDatabaseAvailable(catalog []skills.SkillDiscoveryMetadata) bool {
+	for _, item := range catalog {
+		if strings.EqualFold(strings.TrimSpace(item.ID), skills.SkillAgentDatabase) && item.Status != skills.SkillStatusInvalid && skillSupportsCaller(item, runtimemodel.ConversationCallerAgent) {
 			return true
 		}
 	}

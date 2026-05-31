@@ -56,12 +56,35 @@ func TestAccessibleKnowledgeDatasetAllowsOrganizationScopedDataset(t *testing.T)
 	dataset, err := svc.accessibleKnowledgeDataset(context.Background(), "dataset-1", KnowledgeScope{
 		OrganizationID: "org-1",
 		AccountID:      "account-1",
-	})
+	}, false)
 	if err != nil {
 		t.Fatalf("accessibleKnowledgeDataset() error = %v", err)
 	}
 	if dataset.Name != "故事大纲" {
 		t.Fatalf("Name = %q, want %q", dataset.Name, "故事大纲")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
+func TestAccessibleKnowledgeDatasetGrantSkipsAccountMembership(t *testing.T) {
+	db, mock := newKnowledgeMockDB(t)
+	svc := &KnowledgeRetrievalService{db: db}
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "datasets"`)).
+		WillReturnRows(datasetRows().AddRow("dataset-1", "org-1", "workspace-1", "Stories", "Story corpus", "vendor", false, "account-1", time.Now()))
+
+	dataset, err := svc.accessibleKnowledgeDataset(context.Background(), "dataset-1", KnowledgeScope{
+		OrganizationID: "org-1",
+		WorkspaceID:    "workspace-1",
+		AccountID:      "revoked-binder",
+	}, true)
+	if err != nil {
+		t.Fatalf("accessibleKnowledgeDataset() error = %v", err)
+	}
+	if dataset.ID != "dataset-1" {
+		t.Fatalf("ID = %q, want dataset-1", dataset.ID)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("sql expectations: %v", err)

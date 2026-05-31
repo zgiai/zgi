@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,8 +14,10 @@ import (
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/suggestedquestions"
+	datasetservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
 	sharedmodel "github.com/zgiai/zgi/api/internal/modules/shared/model"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
+	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"gorm.io/gorm"
 )
 
@@ -53,7 +56,11 @@ func (s *agentsService) UpdateAgentConfig(ctx context.Context, agentID, accountI
 	if err != nil {
 		return nil, err
 	}
-	if _, err := applyAgentConfigRequestToDraft(cfg, req); err != nil {
+	runtimeReq := normalizeAgentConfigRequest(req)
+	if err := s.validateAgentBindingGrantChanges(ctx, ag, cfg, accountID, runtimeReq); err != nil {
+		return nil, err
+	}
+	if _, err := applyAgentConfigRequestToDraft(cfg, runtimeReq, accountID); err != nil {
 		return nil, err
 	}
 	if uid, err := uuid.Parse(accountID); err == nil {
@@ -65,6 +72,123 @@ func (s *agentsService) UpdateAgentConfig(ctx context.Context, agentID, accountI
 	resp := agentConfigResponse(ag.ID.String(), cfg)
 	resp.AgentMemorySlots = s.agentMemorySlotsForDraft(ctx, ag.ID)
 	return resp, nil
+}
+
+func (s *agentsService) validateAgentBindingGrantChanges(ctx context.Context, ag *Agent, cfg *AgentsConfig, accountID string, req dto.AgentConfigRequest) error {
+	if ag == nil {
+		return fmt.Errorf("agent is required")
+	}
+	previous := agentRuntimeModeFromConfig(cfg)
+	workspaceID := ag.TenantID.String()
+	organizationID := workspaceID
+	if s.enterpriseService != nil {
+		org, err := s.enterpriseService.GetOrganizationByWorkspaceID(ctx, workspaceID)
+		if err != nil {
+			return fmt.Errorf("resolve agent organization: %w", err)
+		}
+		if org != nil && strings.TrimSpace(org.ID) != "" {
+			organizationID = strings.TrimSpace(org.ID)
+		}
+	}
+	if bindingGrantNeedsRefresh(previous.KnowledgeDatasetIDs, previous.KnowledgeBoundByAccountID, previous.KnowledgeBoundAtUnix, req.KnowledgeDatasetIDs) {
+		if err := s.validateKnowledgeBindingGrant(ctx, organizationID, workspaceID, accountID, req.KnowledgeDatasetIDs); err != nil {
+			return err
+		}
+	}
+	if databaseBindingGrantNeedsRefresh(previous.DatabaseBindings, previous.DatabaseBoundByAccountID, previous.DatabaseBoundAtUnix, req.DatabaseBindings) {
+		if err := s.validateDatabaseBindingGrant(ctx, organizationID, accountID, req.DatabaseBindings); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *agentsService) validateKnowledgeBindingGrant(ctx context.Context, organizationID, workspaceID, accountID string, datasetIDs []string) error {
+	if len(normalizeStringIDs(datasetIDs)) == 0 {
+		return nil
+	}
+	if s.knowledgeRetrievalService == nil {
+		return fmt.Errorf("knowledge binding validation service is not configured")
+	}
+	scope := datasetservice.KnowledgeScope{
+		OrganizationID: organizationID,
+		WorkspaceID:    workspaceID,
+		AccountID:      accountID,
+	}
+	if err := s.knowledgeRetrievalService.ValidateAccessibleDatasets(ctx, scope, datasetIDs); err != nil {
+		return fmt.Errorf("validate knowledge binding: %w", err)
+	}
+	return nil
+}
+
+func (s *agentsService) validateDatabaseBindingGrant(ctx context.Context, organizationID, accountID string, bindings []dto.AgentDatabaseBinding) error {
+	bindings = normalizeAgentDatabaseBindings(bindings)
+	if len(bindings) == 0 {
+		return nil
+	}
+	if s.dataSourceService == nil || s.enterpriseService == nil {
+		return fmt.Errorf("database binding validation service is not configured")
+	}
+	for _, binding := range bindings {
+		dataSource, err := s.dataSourceService.GetDataSourceByID(ctx, organizationID, binding.DataSourceID, accountID)
+		if err != nil {
+			return fmt.Errorf("load database %s: %w", binding.DataSourceID, err)
+		}
+		if dataSource == nil || strings.TrimSpace(dataSource.OrganizationID) != strings.TrimSpace(organizationID) {
+			return fmt.Errorf("database %s not found", binding.DataSourceID)
+		}
+		workspaceID := strings.TrimSpace(organizationID)
+		if dataSource.WorkspaceID != nil && strings.TrimSpace(*dataSource.WorkspaceID) != "" {
+			workspaceID = strings.TrimSpace(*dataSource.WorkspaceID)
+		}
+		if err := s.requireDatabaseReadBindingPermission(ctx, organizationID, workspaceID, accountID); err != nil {
+			return fmt.Errorf("database %s read binding: %w", binding.DataSourceID, err)
+		}
+		for _, tableID := range binding.TableIDs {
+			table, err := s.dataSourceService.GetTable(ctx, organizationID, binding.DataSourceID, tableID, accountID)
+			if err != nil {
+				return fmt.Errorf("load table %s: %w", tableID, err)
+			}
+			if table == nil || strings.TrimSpace(table.DataSourceID) != binding.DataSourceID {
+				return fmt.Errorf("table %s not found in database %s", tableID, binding.DataSourceID)
+			}
+		}
+		if len(binding.WritableTableIDs) > 0 {
+			if err := s.requireDatabaseWriteBindingPermission(ctx, organizationID, workspaceID, accountID); err != nil {
+				return fmt.Errorf("database %s write binding: %w", binding.DataSourceID, err)
+			}
+		}
+	}
+	return nil
+}
+
+func (s *agentsService) requireDatabaseReadBindingPermission(ctx context.Context, organizationID, workspaceID, accountID string) error {
+	hasAIQuery, err := s.enterpriseService.CheckWorkspacePermission(ctx, organizationID, workspaceID, accountID, workspacemodel.WorkspacePermissionDatabaseAIQuery)
+	if err != nil {
+		return err
+	}
+	if !hasAIQuery {
+		return fmt.Errorf("database ai query permission is required")
+	}
+	hasView, err := s.enterpriseService.CheckWorkspacePermission(ctx, organizationID, workspaceID, accountID, workspacemodel.WorkspacePermissionDatabaseView)
+	if err != nil {
+		return err
+	}
+	if !hasView {
+		return fmt.Errorf("database view permission is required")
+	}
+	return nil
+}
+
+func (s *agentsService) requireDatabaseWriteBindingPermission(ctx context.Context, organizationID, workspaceID, accountID string) error {
+	hasWrite, err := s.enterpriseService.CheckWorkspaceOrganizationAnyPermission(ctx, organizationID, workspaceID, accountID, workspacemodel.WorkspacePermissionDatabaseDataEdit, workspacemodel.WorkspacePermissionDatabaseManage)
+	if err != nil {
+		return err
+	}
+	if !hasWrite {
+		return fmt.Errorf("database data edit or manage permission is required")
+	}
+	return nil
 }
 
 func (s *agentsService) PublishAgent(ctx context.Context, agentID, accountID string, req dto.PublishAgentRequest) (*dto.PublishAgentResponse, error) {
@@ -196,21 +320,26 @@ func (s *agentsService) RollbackAgentPublishedVersion(ctx context.Context, agent
 	}
 	snapshot := agentConfigResponseFromSnapshot(agentID, version.ConfigSnapshot)
 	applied, err := applyAgentConfigRequestToDraft(cfg, dto.AgentConfigRequest{
-		SystemPrompt:             snapshot.SystemPrompt,
-		ModelProvider:            snapshot.ModelProvider,
-		Model:                    snapshot.Model,
-		ModelParameters:          snapshot.ModelParameters,
-		EnabledSkillIDs:          snapshot.EnabledSkillIDs,
-		UseMemory:                false,
-		AgentMemoryEnabled:       snapshot.AgentMemoryEnabled,
-		FileUpload:               snapshot.FileUpload,
-		HomeTitle:                snapshot.HomeTitle,
-		InputPlaceholder:         snapshot.InputPlaceholder,
-		ThemeColor:               snapshot.ThemeColor,
-		SuggestedQuestions:       snapshot.SuggestedQuestions,
-		KnowledgeDatasetIDs:      snapshot.KnowledgeDatasetIDs,
-		KnowledgeRetrievalConfig: snapshot.KnowledgeRetrievalConfig,
-	})
+		SystemPrompt:              snapshot.SystemPrompt,
+		ModelProvider:             snapshot.ModelProvider,
+		Model:                     snapshot.Model,
+		ModelParameters:           snapshot.ModelParameters,
+		EnabledSkillIDs:           snapshot.EnabledSkillIDs,
+		UseMemory:                 false,
+		AgentMemoryEnabled:        snapshot.AgentMemoryEnabled,
+		FileUpload:                snapshot.FileUpload,
+		HomeTitle:                 snapshot.HomeTitle,
+		InputPlaceholder:          snapshot.InputPlaceholder,
+		ThemeColor:                snapshot.ThemeColor,
+		SuggestedQuestions:        snapshot.SuggestedQuestions,
+		KnowledgeDatasetIDs:       snapshot.KnowledgeDatasetIDs,
+		KnowledgeBoundByAccountID: snapshot.KnowledgeBoundByAccountID,
+		KnowledgeBoundAtUnix:      snapshot.KnowledgeBoundAtUnix,
+		KnowledgeRetrievalConfig:  snapshot.KnowledgeRetrievalConfig,
+		DatabaseBindings:          snapshot.DatabaseBindings,
+		DatabaseBoundByAccountID:  snapshot.DatabaseBoundByAccountID,
+		DatabaseBoundAtUnix:       snapshot.DatabaseBoundAtUnix,
+	}, accountID)
 	if err != nil {
 		return nil, err
 	}
@@ -468,16 +597,33 @@ func normalizeAgentConfigRequest(req dto.AgentConfigRequest) dto.AgentConfigRequ
 	if req.KnowledgeRetrievalConfig == nil {
 		req.KnowledgeRetrievalConfig = map[string]interface{}{}
 	}
+	req.DatabaseBindings = normalizeAgentDatabaseBindings(req.DatabaseBindings)
 	return req
 }
 
-func applyAgentConfigRequestToDraft(cfg *AgentsConfig, req dto.AgentConfigRequest) (dto.AgentConfigRequest, error) {
+func applyAgentConfigRequestToDraft(cfg *AgentsConfig, req dto.AgentConfigRequest, actorAccountIDs ...string) (dto.AgentConfigRequest, error) {
 	if cfg == nil {
 		return dto.AgentConfigRequest{}, fmt.Errorf("agent config is required")
 	}
+	previousMode := agentRuntimeModeFromConfig(cfg)
 	runtimeCfg := normalizeAgentConfigRequest(req)
 	if err := validateAgentSystemPromptSource(runtimeCfg.SystemPrompt); err != nil {
 		return dto.AgentConfigRequest{}, err
+	}
+	actorAccountID := ""
+	if len(actorAccountIDs) > 0 {
+		actorAccountID = strings.TrimSpace(actorAccountIDs[0])
+	}
+	nowUnix := time.Now().Unix()
+	knowledgeBoundByAccountID, knowledgeBoundAtUnix := bindingGrantForStringIDs(previousMode.KnowledgeDatasetIDs, previousMode.KnowledgeBoundByAccountID, previousMode.KnowledgeBoundAtUnix, runtimeCfg.KnowledgeDatasetIDs, actorAccountID, nowUnix)
+	databaseBoundByAccountID, databaseBoundAtUnix := bindingGrantForDatabaseBindings(previousMode.DatabaseBindings, previousMode.DatabaseBoundByAccountID, previousMode.DatabaseBoundAtUnix, runtimeCfg.DatabaseBindings, actorAccountID, nowUnix)
+	if strings.TrimSpace(runtimeCfg.KnowledgeBoundByAccountID) != "" && runtimeCfg.KnowledgeBoundAtUnix > 0 {
+		knowledgeBoundByAccountID = strings.TrimSpace(runtimeCfg.KnowledgeBoundByAccountID)
+		knowledgeBoundAtUnix = runtimeCfg.KnowledgeBoundAtUnix
+	}
+	if strings.TrimSpace(runtimeCfg.DatabaseBoundByAccountID) != "" && runtimeCfg.DatabaseBoundAtUnix > 0 {
+		databaseBoundByAccountID = strings.TrimSpace(runtimeCfg.DatabaseBoundByAccountID)
+		databaseBoundAtUnix = runtimeCfg.DatabaseBoundAtUnix
 	}
 	cfg.PrePrompt = stringPtr(runtimeCfg.SystemPrompt)
 	cfg.ModelProvider = nullableStringPtr(runtimeCfg.ModelProvider)
@@ -489,16 +635,21 @@ func applyAgentConfigRequestToDraft(cfg *AgentsConfig, req dto.AgentConfigReques
 	params := string(paramsJSON)
 	cfg.Configs = &params
 	modeJSON, err := json.Marshal(dto.AgentRuntimeModeConfig{
-		EnabledSkillIDs:          runtimeCfg.EnabledSkillIDs,
-		UseMemory:                false,
-		AgentMemoryEnabled:       runtimeCfg.AgentMemoryEnabled,
-		FileUploadEnabled:        runtimeCfg.FileUpload,
-		HomeTitle:                runtimeCfg.HomeTitle,
-		InputPlaceholder:         runtimeCfg.InputPlaceholder,
-		ThemeColor:               runtimeCfg.ThemeColor,
-		SuggestedQuestions:       runtimeCfg.SuggestedQuestions,
-		KnowledgeDatasetIDs:      runtimeCfg.KnowledgeDatasetIDs,
-		KnowledgeRetrievalConfig: runtimeCfg.KnowledgeRetrievalConfig,
+		EnabledSkillIDs:           runtimeCfg.EnabledSkillIDs,
+		UseMemory:                 false,
+		AgentMemoryEnabled:        runtimeCfg.AgentMemoryEnabled,
+		FileUploadEnabled:         runtimeCfg.FileUpload,
+		HomeTitle:                 runtimeCfg.HomeTitle,
+		InputPlaceholder:          runtimeCfg.InputPlaceholder,
+		ThemeColor:                runtimeCfg.ThemeColor,
+		SuggestedQuestions:        runtimeCfg.SuggestedQuestions,
+		KnowledgeDatasetIDs:       runtimeCfg.KnowledgeDatasetIDs,
+		KnowledgeBoundByAccountID: knowledgeBoundByAccountID,
+		KnowledgeBoundAtUnix:      knowledgeBoundAtUnix,
+		KnowledgeRetrievalConfig:  runtimeCfg.KnowledgeRetrievalConfig,
+		DatabaseBindings:          runtimeCfg.DatabaseBindings,
+		DatabaseBoundByAccountID:  databaseBoundByAccountID,
+		DatabaseBoundAtUnix:       databaseBoundAtUnix,
 	})
 	if err != nil {
 		return dto.AgentConfigRequest{}, fmt.Errorf("failed to marshal agent mode: %w", err)
@@ -513,24 +664,26 @@ func agentConfigResponse(agentID string, cfg *AgentsConfig) *dto.AgentConfigResp
 	if cfg != nil && cfg.Configs != nil && strings.TrimSpace(*cfg.Configs) != "" {
 		_ = json.Unmarshal([]byte(*cfg.Configs), &params)
 	}
-	mode := dto.AgentRuntimeModeConfig{}
-	if cfg != nil && cfg.AgentMode != nil && strings.TrimSpace(*cfg.AgentMode) != "" {
-		_ = json.Unmarshal([]byte(*cfg.AgentMode), &mode)
-	}
+	mode := agentRuntimeModeFromConfig(cfg)
 	resp := &dto.AgentConfigResponse{
-		AgentID:                  agentID,
-		ModelParameters:          params,
-		EnabledSkillIDs:          normalizeAgentEnabledSkillIDs(mode.EnabledSkillIDs),
-		UseMemory:                false,
-		AgentMemoryEnabled:       mode.AgentMemoryEnabled,
-		AgentMemorySlots:         normalizeAgentMemorySlotConfigs(mode.AgentMemorySlots),
-		FileUpload:               mode.FileUploadEnabled,
-		HomeTitle:                normalizeAgentHomeTitle(mode.HomeTitle),
-		InputPlaceholder:         normalizeAgentInputPlaceholder(mode.InputPlaceholder),
-		ThemeColor:               normalizeAgentThemeColor(mode.ThemeColor),
-		SuggestedQuestions:       normalizeSuggestedQuestions(mode.SuggestedQuestions),
-		KnowledgeDatasetIDs:      normalizeStringIDs(mode.KnowledgeDatasetIDs),
-		KnowledgeRetrievalConfig: copyStringAnyMap(mode.KnowledgeRetrievalConfig),
+		AgentID:                   agentID,
+		ModelParameters:           params,
+		EnabledSkillIDs:           normalizeAgentEnabledSkillIDs(mode.EnabledSkillIDs),
+		UseMemory:                 false,
+		AgentMemoryEnabled:        mode.AgentMemoryEnabled,
+		AgentMemorySlots:          normalizeAgentMemorySlotConfigs(mode.AgentMemorySlots),
+		FileUpload:                mode.FileUploadEnabled,
+		HomeTitle:                 normalizeAgentHomeTitle(mode.HomeTitle),
+		InputPlaceholder:          normalizeAgentInputPlaceholder(mode.InputPlaceholder),
+		ThemeColor:                normalizeAgentThemeColor(mode.ThemeColor),
+		SuggestedQuestions:        normalizeSuggestedQuestions(mode.SuggestedQuestions),
+		KnowledgeDatasetIDs:       normalizeStringIDs(mode.KnowledgeDatasetIDs),
+		KnowledgeBoundByAccountID: strings.TrimSpace(mode.KnowledgeBoundByAccountID),
+		KnowledgeBoundAtUnix:      mode.KnowledgeBoundAtUnix,
+		KnowledgeRetrievalConfig:  copyStringAnyMap(mode.KnowledgeRetrievalConfig),
+		DatabaseBindings:          normalizeAgentDatabaseBindings(mode.DatabaseBindings),
+		DatabaseBoundByAccountID:  strings.TrimSpace(mode.DatabaseBoundByAccountID),
+		DatabaseBoundAtUnix:       mode.DatabaseBoundAtUnix,
 	}
 	if cfg != nil {
 		resp.SystemPrompt = stringPtrValue(cfg.PrePrompt)
@@ -544,22 +697,27 @@ func agentConfigResponse(agentID string, cfg *AgentsConfig) *dto.AgentConfigResp
 func agentConfigSnapshot(agentID string, cfg *AgentsConfig) map[string]interface{} {
 	resp := agentConfigResponse(agentID, cfg)
 	return map[string]interface{}{
-		"agent_id":                   resp.AgentID,
-		"system_prompt":              resp.SystemPrompt,
-		"model_provider":             resp.ModelProvider,
-		"model":                      resp.Model,
-		"model_parameters":           resp.ModelParameters,
-		"enabled_skill_ids":          resp.EnabledSkillIDs,
-		"use_memory":                 false,
-		"agent_memory_enabled":       resp.AgentMemoryEnabled,
-		"agent_memory_slots":         normalizeAgentMemorySlotConfigs(resp.AgentMemorySlots),
-		"file_upload_enabled":        resp.FileUpload,
-		"home_title":                 resp.HomeTitle,
-		"input_placeholder":          resp.InputPlaceholder,
-		"theme_color":                resp.ThemeColor,
-		"suggested_questions":        resp.SuggestedQuestions,
-		"knowledge_dataset_ids":      resp.KnowledgeDatasetIDs,
-		"knowledge_retrieval_config": resp.KnowledgeRetrievalConfig,
+		"agent_id":                      resp.AgentID,
+		"system_prompt":                 resp.SystemPrompt,
+		"model_provider":                resp.ModelProvider,
+		"model":                         resp.Model,
+		"model_parameters":              resp.ModelParameters,
+		"enabled_skill_ids":             resp.EnabledSkillIDs,
+		"use_memory":                    false,
+		"agent_memory_enabled":          resp.AgentMemoryEnabled,
+		"agent_memory_slots":            normalizeAgentMemorySlotConfigs(resp.AgentMemorySlots),
+		"file_upload_enabled":           resp.FileUpload,
+		"home_title":                    resp.HomeTitle,
+		"input_placeholder":             resp.InputPlaceholder,
+		"theme_color":                   resp.ThemeColor,
+		"suggested_questions":           resp.SuggestedQuestions,
+		"knowledge_dataset_ids":         resp.KnowledgeDatasetIDs,
+		"knowledge_bound_by_account_id": resp.KnowledgeBoundByAccountID,
+		"knowledge_bound_at_unix":       resp.KnowledgeBoundAtUnix,
+		"knowledge_retrieval_config":    resp.KnowledgeRetrievalConfig,
+		"database_bindings":             normalizeAgentDatabaseBindings(resp.DatabaseBindings),
+		"database_bound_by_account_id":  resp.DatabaseBoundByAccountID,
+		"database_bound_at_unix":        resp.DatabaseBoundAtUnix,
 	}
 }
 
@@ -592,9 +750,14 @@ func agentConfigResponseFromSnapshot(agentID string, snapshot map[string]interfa
 	resp.ThemeColor = normalizeAgentThemeColor(stringFromSnapshot(snapshot, "theme_color"))
 	resp.SuggestedQuestions = normalizeSuggestedQuestions(stringSliceFromSnapshot(snapshot["suggested_questions"]))
 	resp.KnowledgeDatasetIDs = normalizeStringIDs(stringSliceFromSnapshot(snapshot["knowledge_dataset_ids"]))
+	resp.KnowledgeBoundByAccountID = strings.TrimSpace(stringFromSnapshot(snapshot, "knowledge_bound_by_account_id"))
+	resp.KnowledgeBoundAtUnix = int64FromSnapshot(snapshot["knowledge_bound_at_unix"])
 	if cfg, ok := snapshot["knowledge_retrieval_config"].(map[string]interface{}); ok {
 		resp.KnowledgeRetrievalConfig = copyStringAnyMap(cfg)
 	}
+	resp.DatabaseBindings = agentDatabaseBindingsFromSnapshot(snapshot["database_bindings"])
+	resp.DatabaseBoundByAccountID = strings.TrimSpace(stringFromSnapshot(snapshot, "database_bound_by_account_id"))
+	resp.DatabaseBoundAtUnix = int64FromSnapshot(snapshot["database_bound_at_unix"])
 	return resp
 }
 
@@ -935,6 +1098,26 @@ func stringFromSnapshot(snapshot map[string]interface{}, key string) string {
 	return ""
 }
 
+func int64FromSnapshot(value interface{}) int64 {
+	switch typed := value.(type) {
+	case int64:
+		return typed
+	case int:
+		return int64(typed)
+	case float64:
+		return int64(typed)
+	case json.Number:
+		if parsed, err := typed.Int64(); err == nil {
+			return parsed
+		}
+	case string:
+		if parsed, err := strconv.ParseInt(strings.TrimSpace(typed), 10, 64); err == nil {
+			return parsed
+		}
+	}
+	return 0
+}
+
 func stringSliceFromSnapshot(value interface{}) []string {
 	switch items := value.(type) {
 	case []string:
@@ -968,6 +1151,165 @@ func normalizeStringIDs(input []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func normalizeAgentDatabaseBindings(input []dto.AgentDatabaseBinding) []dto.AgentDatabaseBinding {
+	type bindingTables struct {
+		readable map[string]struct{}
+		writable map[string]struct{}
+	}
+	byDataSource := map[string]bindingTables{}
+	for _, binding := range input {
+		dataSourceID := strings.ToLower(strings.TrimSpace(binding.DataSourceID))
+		if dataSourceID == "" {
+			continue
+		}
+		tableIDs := normalizeStringIDs(binding.TableIDs)
+		if len(tableIDs) == 0 {
+			continue
+		}
+		tables, ok := byDataSource[dataSourceID]
+		if !ok {
+			tables = bindingTables{readable: map[string]struct{}{}, writable: map[string]struct{}{}}
+		}
+		for _, tableID := range tableIDs {
+			tables.readable[tableID] = struct{}{}
+		}
+		for _, tableID := range normalizeStringIDs(binding.WritableTableIDs) {
+			if _, ok := tables.readable[tableID]; ok {
+				tables.writable[tableID] = struct{}{}
+			}
+		}
+		byDataSource[dataSourceID] = tables
+	}
+	dataSourceIDs := make([]string, 0, len(byDataSource))
+	for dataSourceID := range byDataSource {
+		dataSourceIDs = append(dataSourceIDs, dataSourceID)
+	}
+	sort.Strings(dataSourceIDs)
+	out := make([]dto.AgentDatabaseBinding, 0, len(dataSourceIDs))
+	for _, dataSourceID := range dataSourceIDs {
+		tableIDs := make([]string, 0, len(byDataSource[dataSourceID].readable))
+		for tableID := range byDataSource[dataSourceID].readable {
+			tableIDs = append(tableIDs, tableID)
+		}
+		sort.Strings(tableIDs)
+		writableTableIDs := make([]string, 0, len(byDataSource[dataSourceID].writable))
+		for tableID := range byDataSource[dataSourceID].writable {
+			if _, ok := byDataSource[dataSourceID].readable[tableID]; ok {
+				writableTableIDs = append(writableTableIDs, tableID)
+			}
+		}
+		sort.Strings(writableTableIDs)
+		binding := dto.AgentDatabaseBinding{
+			DataSourceID: dataSourceID,
+			TableIDs:     tableIDs,
+		}
+		if len(writableTableIDs) > 0 {
+			binding.WritableTableIDs = writableTableIDs
+		}
+		out = append(out, binding)
+	}
+	return out
+}
+
+func agentRuntimeModeFromConfig(cfg *AgentsConfig) dto.AgentRuntimeModeConfig {
+	mode := dto.AgentRuntimeModeConfig{}
+	if cfg == nil || cfg.AgentMode == nil || strings.TrimSpace(*cfg.AgentMode) == "" {
+		return mode
+	}
+	_ = json.Unmarshal([]byte(*cfg.AgentMode), &mode)
+	return mode
+}
+
+func bindingGrantNeedsRefresh(previous []string, previousActor string, previousAtUnix int64, current []string) bool {
+	current = normalizeStringIDs(current)
+	if len(current) == 0 {
+		return false
+	}
+	if strings.TrimSpace(previousActor) == "" || previousAtUnix <= 0 {
+		return true
+	}
+	return !stringIDsEqual(normalizeStringIDs(previous), current)
+}
+
+func databaseBindingGrantNeedsRefresh(previous []dto.AgentDatabaseBinding, previousActor string, previousAtUnix int64, current []dto.AgentDatabaseBinding) bool {
+	current = normalizeAgentDatabaseBindings(current)
+	if len(current) == 0 {
+		return false
+	}
+	if strings.TrimSpace(previousActor) == "" || previousAtUnix <= 0 {
+		return true
+	}
+	return !databaseBindingsEqual(normalizeAgentDatabaseBindings(previous), current)
+}
+
+func bindingGrantForStringIDs(previous []string, previousActor string, previousAtUnix int64, current []string, actorAccountID string, nowUnix int64) (string, int64) {
+	current = normalizeStringIDs(current)
+	if len(current) == 0 {
+		return "", 0
+	}
+	previous = normalizeStringIDs(previous)
+	previousActor = strings.TrimSpace(previousActor)
+	if stringIDsEqual(previous, current) && previousActor != "" && previousAtUnix > 0 {
+		return previousActor, previousAtUnix
+	}
+	if strings.TrimSpace(actorAccountID) != "" {
+		return strings.TrimSpace(actorAccountID), nowUnix
+	}
+	return previousActor, previousAtUnix
+}
+
+func bindingGrantForDatabaseBindings(previous []dto.AgentDatabaseBinding, previousActor string, previousAtUnix int64, current []dto.AgentDatabaseBinding, actorAccountID string, nowUnix int64) (string, int64) {
+	current = normalizeAgentDatabaseBindings(current)
+	if len(current) == 0 {
+		return "", 0
+	}
+	previous = normalizeAgentDatabaseBindings(previous)
+	previousActor = strings.TrimSpace(previousActor)
+	if databaseBindingsEqual(previous, current) && previousActor != "" && previousAtUnix > 0 {
+		return previousActor, previousAtUnix
+	}
+	if strings.TrimSpace(actorAccountID) != "" {
+		return strings.TrimSpace(actorAccountID), nowUnix
+	}
+	return previousActor, previousAtUnix
+}
+
+func stringIDsEqual(left []string, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func databaseBindingsEqual(left []dto.AgentDatabaseBinding, right []dto.AgentDatabaseBinding) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i].DataSourceID != right[i].DataSourceID || !stringIDsEqual(left[i].TableIDs, right[i].TableIDs) || !stringIDsEqual(left[i].WritableTableIDs, right[i].WritableTableIDs) {
+			return false
+		}
+	}
+	return true
+}
+
+func agentDatabaseBindingsFromSnapshot(value interface{}) []dto.AgentDatabaseBinding {
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return []dto.AgentDatabaseBinding{}
+	}
+	var bindings []dto.AgentDatabaseBinding
+	if err := json.Unmarshal(payload, &bindings); err != nil {
+		return []dto.AgentDatabaseBinding{}
+	}
+	return normalizeAgentDatabaseBindings(bindings)
 }
 
 func normalizeAgentEnabledSkillIDs(input []string) []string {

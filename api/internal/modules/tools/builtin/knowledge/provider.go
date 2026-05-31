@@ -147,6 +147,9 @@ func applyAgentKnowledgeRuntimeConfig(runtime *tools.ToolRuntime, req *dataset_s
 	if config := mapValue(runtime.RuntimeParameters, "knowledge_retrieval_config"); len(config) > 0 {
 		req.RetrievalConfig = config
 	}
+	if boolValue(runtime.RuntimeParameters, "knowledge_binding_grant") {
+		req.AgentBindingGrant = true
+	}
 }
 
 func (t *knowledgeTool) ForkToolRuntime(runtime *tools.ToolRuntime) tools.Tool {
@@ -163,14 +166,20 @@ func (t *knowledgeTool) scope(userID string, appID *string) (dataset_service.Kno
 	if runtime != nil && strings.TrimSpace(runtime.TenantID) != "" {
 		tenantID = strings.TrimSpace(runtime.TenantID)
 	}
-	if strings.TrimSpace(userID) == "" {
-		return dataset_service.KnowledgeScope{}, fmt.Errorf("account_id is required")
-	}
 	organizationID := ""
 	workspaceID := ""
+	accountID := strings.TrimSpace(userID)
 	if runtime != nil {
 		organizationID = strings.TrimSpace(stringValue(runtime.RuntimeParameters, "organization_id"))
 		workspaceID = strings.TrimSpace(stringValue(runtime.RuntimeParameters, "workspace_id"))
+		if runtime.InvokeFrom == tools.ToolInvokeFromAgent {
+			if boundBy := strings.TrimSpace(stringValue(runtime.RuntimeParameters, "knowledge_bound_by_account_id")); boundBy != "" {
+				accountID = boundBy
+			}
+		}
+	}
+	if accountID == "" {
+		return dataset_service.KnowledgeScope{}, fmt.Errorf("account_id is required")
 	}
 	if organizationID == "" && workspaceID == "" {
 		if runtime != nil && runtime.InvokeFrom == tools.ToolInvokeFromAIChat {
@@ -185,7 +194,7 @@ func (t *knowledgeTool) scope(userID string, appID *string) (dataset_service.Kno
 	scope := dataset_service.KnowledgeScope{
 		WorkspaceID:    workspaceID,
 		OrganizationID: organizationID,
-		AccountID:      strings.TrimSpace(userID),
+		AccountID:      accountID,
 	}
 	if appID != nil {
 		scope.AppID = strings.TrimSpace(*appID)
@@ -467,6 +476,25 @@ func mapValue(params map[string]interface{}, key string) map[string]interface{} 
 		out[itemKey] = itemValue
 	}
 	return out
+}
+
+func boolValue(params map[string]interface{}, key string) bool {
+	if params == nil {
+		return false
+	}
+	value, ok := params[key]
+	if !ok || value == nil {
+		return false
+	}
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		normalized := strings.ToLower(strings.TrimSpace(typed))
+		return normalized == "true" || normalized == "1" || normalized == "yes"
+	default:
+		return strings.EqualFold(strings.TrimSpace(fmt.Sprint(value)), "true")
+	}
 }
 
 var _ tools.ToolProvider = (*Provider)(nil)
