@@ -59,7 +59,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 		fileService,
 		contentExtractor,
 		enterpriseService,
-		newSkillRuntimeWithSandbox(toolEngine, toolManager),
+		newSkillRuntimeWithSandbox(toolEngine, toolManager, fileService, enterpriseService),
 		memoryService,
 		agentMemoryService,
 	)
