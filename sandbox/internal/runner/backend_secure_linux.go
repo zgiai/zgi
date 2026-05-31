@@ -174,7 +174,7 @@ func (b *linuxSecureBackend) exec(ctx context.Context, workDir string, dependenc
 			exitCode = 124
 			stderr.AppendLine("execution timed out")
 		case errors.As(err, &exitErr):
-			exitCode = exitErr.ExitCode()
+			exitCode = exitCodeFromExitError(exitErr, stderr)
 		default:
 			return Result{}, err
 		}

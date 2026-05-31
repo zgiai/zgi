@@ -33,6 +33,7 @@ Already available:
 - Stateless `code-short` profile execution by default, with explicit workspace binding when needed
 - Path escape, zip slip, symlink, dangerous env, stdin, timeout, and output guardrails
 - Process group cleanup for preview command timeouts
+- Signal-normalized execution exit codes for process and secure runtime failures
 - Structured cancellation errors for request-canceled execution paths
 - Configurable graceful shutdown for service drain on SIGTERM/SIGINT
 - Request correlation IDs for HTTP responses and execution observer events
@@ -336,6 +337,7 @@ Goal: enforce hard resource boundaries for every execution path.
 - Expose effective limits in `/v1/policies`.
 - Include effective limits in sandbox create responses.
 - Include limit decisions in observer events.
+- Normalize signal-terminated executions to `128 + signal` exit codes with stderr context.
 - Add structured errors for every limit failure.
 
 ### F4. Tests
@@ -345,7 +347,7 @@ Goal: enforce hard resource boundaries for every execution path.
 - Disk quota enforcement.
 - Process count enforcement.
 - [x] Queue timeout.
-- Cancellation cleanup.
+- [x] Cancellation cleanup.
 
 ## 10. Milestone G: Strong Runtime Isolation
 

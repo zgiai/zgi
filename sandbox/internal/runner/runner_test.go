@@ -50,6 +50,24 @@ func TestRunTerminatesCPUBoundCodeOnTimeout(t *testing.T) {
 	}
 }
 
+func TestRunReportsSignalTermination(t *testing.T) {
+	service := NewService(1, 2*time.Second, 4096)
+
+	result, err := service.Run(context.Background(), Request{
+		Language: "python3",
+		Code:     "import os, signal\nos.kill(os.getpid(), signal.SIGTERM)",
+	})
+	if err != nil {
+		t.Fatalf("expected signal result, got error: %v", err)
+	}
+	if result.ExitCode != 143 {
+		t.Fatalf("expected signal exit code 143, got %d stderr=%q", result.ExitCode, result.Error)
+	}
+	if !strings.Contains(result.Error, "process terminated by signal") {
+		t.Fatalf("expected signal stderr, got %q", result.Error)
+	}
+}
+
 func TestRunUnsupportedLanguage(t *testing.T) {
 	service := NewService(1, 2*time.Second, 4096)
 
@@ -399,6 +417,30 @@ func TestCommandTerminatesCPUBoundProcessOnTimeout(t *testing.T) {
 	}
 	if !strings.Contains(result.Error, "command timed out") {
 		t.Fatalf("expected timeout stderr, got %q", result.Error)
+	}
+}
+
+func TestCommandReportsSignalTermination(t *testing.T) {
+	service := NewService(1, 2*time.Second, 4096)
+	workDir := t.TempDir()
+
+	result, err := service.ExecuteCommandSpec(context.Background(), CommandSpec{
+		WorkDir:        workDir,
+		Command:        "python3",
+		Args:           []string{"-c", "import os, signal; os.kill(os.getpid(), signal.SIGTERM)"},
+		Timeout:        time.Second,
+		StdoutLimit:    4096,
+		StderrLimit:    4096,
+		AllowShellForm: false,
+	})
+	if err != nil {
+		t.Fatalf("expected signal result, got error: %v", err)
+	}
+	if result.ExitCode != 143 {
+		t.Fatalf("expected signal exit code 143, got %d stderr=%q", result.ExitCode, result.Error)
+	}
+	if !strings.Contains(result.Error, "process terminated by signal") {
+		t.Fatalf("expected signal stderr, got %q", result.Error)
 	}
 }
 

@@ -356,6 +356,44 @@ run_kest .kest/sandbox-template-runtime.flow.md \
 run_kest .kest/sandbox-execution-timeouts.flow.md \
   --fail-fast
 
+if [[ "${START_LOCAL_SANDBOX}" = "1" ]]; then
+  CANCELLATION_REQUEST_ID="req_kest_canceled_command"
+  CANCELLATION_SANDBOX_ID="$(curl -fsS \
+    -H "Content-Type: application/json" \
+    -d '{"runtime_profile":"session","ttl_seconds":60,"dependency_profile":"stdlib","network_enabled":false,"network_policy":"deny-by-default"}' \
+    "${BASE_URL}/v1/sandboxes" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])')"
+
+  set +e
+  curl -fsS --max-time 0.2 \
+    -H "Content-Type: application/json" \
+    -H "X-Request-ID: ${CANCELLATION_REQUEST_ID}" \
+    -d "{\"sandbox_id\":\"${CANCELLATION_SANDBOX_ID}\",\"command\":\"python3\",\"args\":[\"-c\",\"import time; time.sleep(5)\"],\"profile\":\"code-short\",\"timeout_ms\":10000}" \
+    "${BASE_URL}/v1/exec/command" >/dev/null
+  CANCELLATION_CURL_STATUS="$?"
+  set -e
+  if [[ "${CANCELLATION_CURL_STATUS}" -eq 0 ]]; then
+    echo "cancellation request unexpectedly completed before client timeout" >&2
+    exit 1
+  fi
+
+  for _ in {1..120}; do
+    active_workers="$(curl -fsS "${BASE_URL}/v1/metrics" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["runner"]["active_workers"])')"
+    queued_executions="$(curl -fsS "${BASE_URL}/v1/metrics" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["runner"]["queued_executions"])')"
+    cancellation_events="$(curl -fsS "${BASE_URL}/v1/observer/events?sandbox_id=${CANCELLATION_SANDBOX_ID}&type=exec.command.failed&request_id=${CANCELLATION_REQUEST_ID}&limit=1" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["data"]["events"]))')"
+    if [[ "${active_workers}" = "0" && "${queued_executions}" = "0" && "${cancellation_events}" = "1" ]]; then
+      break
+    fi
+    sleep 0.05
+  done
+
+  run_kest .kest/sandbox-execution-cancellation.flow.md \
+    --var cancellation_sandbox_id="${CANCELLATION_SANDBOX_ID}" \
+    --var cancellation_request_id="${CANCELLATION_REQUEST_ID}" \
+    --fail-fast
+else
+  echo "Skipping cancellation cleanup flow against external sandbox: ${BASE_URL}"
+fi
+
 run_kest .kest/sandbox-archive-skill-artifacts.flow.md \
   --var skill_archive_base64="${skill_archive_base64}" \
   --var valid_skill_manifest_archive_base64="${valid_skill_manifest_archive_base64}" \

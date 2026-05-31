@@ -110,6 +110,41 @@ func TestLinuxSecureBackendRunsCommand(t *testing.T) {
 	}
 }
 
+func TestLinuxSecureBackendReportsSignalTermination(t *testing.T) {
+	rootfs := os.Getenv("ZGI_SANDBOX_TEST_SECURE_ROOTFS")
+	if strings.TrimSpace(rootfs) == "" {
+		t.Skip("ZGI_SANDBOX_TEST_SECURE_ROOTFS is not set")
+	}
+	if _, err := exec.LookPath(defaultBwrap(os.Getenv("ZGI_SANDBOX_TEST_BWRAP_BINARY"))); err != nil {
+		t.Skipf("bubblewrap unavailable: %v", err)
+	}
+
+	cfg := config.FromEnv()
+	cfg.RuntimeBackend = "linux-secure"
+	cfg.SecureRootFS = rootfs
+	cfg.BwrapBinary = defaultBwrap(os.Getenv("ZGI_SANDBOX_TEST_BWRAP_BINARY"))
+	cfg.TimeoutSeconds = 10
+
+	service, err := NewServiceFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("new linux-secure service: %v", err)
+	}
+
+	result, err := service.Run(context.Background(), Request{
+		Language: "python3",
+		Code:     "import os, signal\nos.kill(os.getpid(), signal.SIGTERM)",
+	})
+	if err != nil {
+		t.Fatalf("run signal termination in secure backend: %v", err)
+	}
+	if result.ExitCode != 143 {
+		t.Fatalf("expected signal exit code 143, got stdout=%q stderr=%q exit=%d", result.Stdout, result.Error, result.ExitCode)
+	}
+	if !strings.Contains(result.Error, "process terminated by signal") {
+		t.Fatalf("expected signal stderr, got %q", result.Error)
+	}
+}
+
 func defaultBwrap(value string) string {
 	if strings.TrimSpace(value) == "" {
 		return "bwrap"

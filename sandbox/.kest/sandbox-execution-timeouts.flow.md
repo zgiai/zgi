@@ -30,6 +30,29 @@ data.network_requested == false
 ```
 
 ```step
+@id stateless-code-signal-termination
+@name Stateless code reports signal termination
+
+POST {{base_url}}/v1/exec/code
+Content-Type: application/json
+
+{
+  "language": "python3",
+  "profile": "code-short",
+  "timeout_ms": 1000,
+  "stdout_limit_kb": 64,
+  "stderr_limit_kb": 64,
+  "code": "import os, signal\nos.kill(os.getpid(), signal.SIGTERM)",
+  "enable_network": false
+}
+
+[Asserts]
+status == 200
+code == 0
+data.exit_code == 143
+```
+
+```step
 @id create-timeout-sandbox
 @name Create sandbox for command timeout
 
@@ -121,6 +144,30 @@ Content-Type: application/json
 status == 200
 code == 0
 data.exit_code == 124
+data.command == "python3"
+```
+
+```step
+@id command-signal-termination
+@name Command reports signal termination
+
+POST {{base_url}}/v1/exec/command
+Content-Type: application/json
+
+{
+  "sandbox_id": "{{sandbox_id}}",
+  "command": "python3",
+  "args": ["-c", "import os, signal; os.kill(os.getpid(), signal.SIGTERM)"],
+  "profile": "code-short",
+  "timeout_ms": 1000,
+  "stdout_limit_kb": 64,
+  "stderr_limit_kb": 64
+}
+
+[Asserts]
+status == 200
+code == 0
+data.exit_code == 143
 data.command == "python3"
 ```
 
