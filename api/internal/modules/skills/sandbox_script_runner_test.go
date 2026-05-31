@@ -135,7 +135,12 @@ func TestSandboxScriptRunnerManifestFlowUsesExecSkill(t *testing.T) {
 
 	persister := &fakeSkillArtifactPersister{}
 	runner := NewSandboxScriptRunner(SandboxScriptRunnerConfig{Endpoint: fake.server.URL, ArtifactPersister: persister})
-	result, err := runner.RunSkillScript(context.Background(), scriptSkillDocument(root), map[string]interface{}{"input": "hello"}, ExecutionContext{}, "call_1")
+	result, err := runner.RunSkillScript(context.Background(), scriptSkillDocument(root), map[string]interface{}{"input": "hello"}, ExecutionContext{
+		OrganizationID: "org-1",
+		UserID:         "user-1",
+		ConversationID: "conversation-1",
+		MessageID:      "message-1",
+	}, "call_1")
 	if err != nil {
 		t.Fatalf("RunSkillScript() error = %v", err)
 	}
@@ -153,6 +158,14 @@ func TestSandboxScriptRunnerManifestFlowUsesExecSkill(t *testing.T) {
 	}
 	if got := fake.lastSkill["stdin"]; !strings.Contains(got.(string), `"input":"hello"`) {
 		t.Fatalf("stdin = %v, want encoded arguments", got)
+	}
+	env, ok := fake.lastSkill["env"].(map[string]interface{})
+	if !ok ||
+		env["ZGI_ORGANIZATION_ID"] != "org-1" ||
+		env["ZGI_USER_ID"] != "user-1" ||
+		env["ZGI_CONVERSATION_ID"] != "conversation-1" ||
+		env["ZGI_MESSAGE_ID"] != "message-1" {
+		t.Fatalf("manifest env = %#v, want ZGI context", fake.lastSkill["env"])
 	}
 	if result.Messages[0].Data["mode"] != "manifest" {
 		t.Fatalf("stdout message = %#v, want manifest JSON", result.Messages[0])
@@ -232,7 +245,9 @@ func TestSandboxScriptRunnerNodeManifestUsesExecSkill(t *testing.T) {
 	defer fake.server.Close()
 
 	runner := NewSandboxScriptRunner(SandboxScriptRunnerConfig{Endpoint: fake.server.URL, ArtifactPersister: &fakeSkillArtifactPersister{}})
-	result, err := runner.RunSkillScript(context.Background(), scriptSkillDocument(root), map[string]interface{}{"input": "hello"}, ExecutionContext{}, "call_1")
+	result, err := runner.RunSkillScript(context.Background(), scriptSkillDocument(root), map[string]interface{}{"input": "hello"}, ExecutionContext{
+		MessageID: "message-node",
+	}, "call_1")
 	if err != nil {
 		t.Fatalf("RunSkillScript() error = %v", err)
 	}
@@ -244,6 +259,10 @@ func TestSandboxScriptRunnerNodeManifestUsesExecSkill(t *testing.T) {
 	}
 	if !fake.archiveNames["scripts/run.js"] || fake.archiveNames["scripts/run.py"] {
 		t.Fatalf("archive names = %#v, want node entrypoint without python fallback", fake.archiveNames)
+	}
+	env, ok := fake.lastSkill["env"].(map[string]interface{})
+	if !ok || env["ZGI_MESSAGE_ID"] != "message-node" {
+		t.Fatalf("node manifest env = %#v, want message env", fake.lastSkill["env"])
 	}
 	if result.Messages[0].Data["mode"] != "node" {
 		t.Fatalf("stdout message = %#v, want node JSON", result.Messages[0])

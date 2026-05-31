@@ -173,6 +173,9 @@ ergonomic for workflow and agent use cases.
 
 - Added `POST /v1/exec/skill` for manifest-driven package execution.
 - Added archive upload plus manifest execution as a runtime contract.
+- `/v1/exec/skill` accepts optional restricted `env` values for runtime context;
+  ownership checks still use `organization_id`, and environment variables are
+  normalized with the same policy as `/v1/exec/command`.
 - Added a skill execution manifest:
   - `entrypoint`
   - `language`

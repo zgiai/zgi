@@ -309,6 +309,7 @@ func (r *SandboxScriptRunner) runSkill(ctx context.Context, sandboxID string, st
 		"sandbox_id": sandboxID,
 		"path":       ".",
 		"stdin":      stdin,
+		"env":        skillScriptEnv(execCtx),
 	}
 	if organizationID := strings.TrimSpace(execCtx.OrganizationID); organizationID != "" {
 		payload["organization_id"] = organizationID
