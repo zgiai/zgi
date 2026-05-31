@@ -55,9 +55,11 @@ func TestBuildSecureBwrapArgsAddsProfileEnvAfterRequestEnv(t *testing.T) {
 		t.Fatalf("profile env: %v", err)
 	}
 	args := buildSecureBwrapArgs(secureBwrapSpec{
-		RootFS:  "/runtime/rootfs",
-		WorkDir: "/workspace",
-		Binary:  "python3",
+		RootFS:              "/runtime/rootfs",
+		WorkDir:             "/workspace",
+		Binary:              "python3",
+		ProfileHostDir:      "/runtime/rootfs/opt/zgi/profiles/skill-office",
+		ProfileContainerDir: "/opt/zgi/profiles/skill-office",
 		Env: map[string]string{
 			"NODE_PATH": "/workspace/node_modules",
 			"Z_VAR":     "z",
@@ -78,6 +80,14 @@ func TestBuildSecureBwrapArgsAddsProfileEnvAfterRequestEnv(t *testing.T) {
 	if argPairIndex(args, "--setenv", "Z_VAR") > lastSetenvKeyIndex(args, "PATH") {
 		t.Fatalf("expected profile env after request env, got %#v", args)
 	}
+	assertArgPair(t, args, "--ro-bind", "/runtime/rootfs/opt/zgi/profiles/skill-office")
+	bindIndex := argPairIndex(args, "--ro-bind", "/runtime/rootfs/opt/zgi/profiles/skill-office")
+	if bindIndex+2 >= len(args) || args[bindIndex+2] != "/opt/zgi/profiles/skill-office" {
+		t.Fatalf("expected profile bind target, got %#v", args)
+	}
+	if bindIndex > singleArgIndex(args, "--unshare-net") {
+		t.Fatalf("expected profile bind before network isolation, got %#v", args)
+	}
 }
 
 func TestSecureDependencyProfileEnvRejectsUnsafeName(t *testing.T) {
@@ -97,6 +107,15 @@ func assertArgPair(t *testing.T, args []string, key string, value string) {
 func argPairIndex(args []string, key string, value string) int {
 	for index := 0; index < len(args)-1; index++ {
 		if args[index] == key && args[index+1] == value {
+			return index
+		}
+	}
+	return -1
+}
+
+func singleArgIndex(args []string, value string) int {
+	for index, arg := range args {
+		if arg == value {
 			return index
 		}
 	}

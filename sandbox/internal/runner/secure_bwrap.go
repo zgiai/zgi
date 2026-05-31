@@ -9,14 +9,16 @@ const secureWorkspacePath = "/tmp/workspace"
 const defaultSecurePath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 type secureBwrapSpec struct {
-	RootFS        string
-	WorkDir       string
-	Binary        string
-	Args          []string
-	EnableNetwork bool
-	Env           map[string]string
-	ProfileEnv    map[string]string
-	Limits        secureRuntimeLimits
+	RootFS              string
+	WorkDir             string
+	Binary              string
+	Args                []string
+	EnableNetwork       bool
+	Env                 map[string]string
+	ProfileEnv          map[string]string
+	ProfileHostDir      string
+	ProfileContainerDir string
+	Limits              secureRuntimeLimits
 }
 
 func buildSecureBwrapArgs(spec secureBwrapSpec) []string {
@@ -47,6 +49,9 @@ func buildSecureBwrapArgs(spec secureBwrapSpec) []string {
 	}
 	for _, key := range sortedEnvKeys(spec.ProfileEnv) {
 		args = append(args, "--setenv", key, spec.ProfileEnv[key])
+	}
+	if spec.ProfileHostDir != "" && spec.ProfileContainerDir != "" {
+		args = append(args, "--ro-bind", spec.ProfileHostDir, spec.ProfileContainerDir)
 	}
 	if !spec.EnableNetwork {
 		args = append(args, "--unshare-net")
