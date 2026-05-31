@@ -71,6 +71,7 @@ const messages = {
     removeFromFavorites: 'Remove from Favorites',
     bulkDelete: 'Batch Delete',
     deleting: 'Deleting...',
+    confirmParse: 'Review',
   },
 
   preview: {
@@ -135,6 +136,11 @@ const messages = {
 
   filter: {
     allProcessingStatuses: 'All statuses',
+    processingStatusLabel: 'File status',
+    processingStatusAll: 'All',
+    processingStatusNeedsAction: 'Needs action',
+    processingStatusReady: 'Ready',
+    processingStatusStoredOnly: 'Stored only',
   },
 
   detail: {
@@ -239,6 +245,7 @@ const messages = {
     },
     reparse: {
       action: 'Reparse',
+      reparsing: 'Submitting...',
       confirmTitle: 'Reparse this file?',
       confirmDescription:
         'The current searchable asset will be unavailable while the file is parsing, reviewing, and indexing again.',

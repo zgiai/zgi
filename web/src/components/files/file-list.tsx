@@ -1,4 +1,5 @@
 import { memo, useState, type ComponentType, type KeyboardEvent } from 'react';
+import Link from 'next/link';
 import {
   MoreVertical,
   FileIcon,
@@ -21,6 +22,7 @@ import {
   Info,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import { useQueryClient } from '@tanstack/react-query';
 import { useT } from '@/i18n';
 import { toast } from 'sonner';
 import {
@@ -40,12 +42,13 @@ import {
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
 import type { FileItem } from '@/services/types/file';
 import { formatDate } from '@/utils/format';
 import { RelatedResourcesPopover } from './related-resources-popover';
 import { DeleteWarningDialog } from './delete-warning-dialog';
-import { useDownloadFile, useDeleteFiles, FileAssociationError } from '@/hooks/use-files';
+import { useDownloadFile, useDeleteFiles, FileAssociationError, FILES_QUERY_KEY } from '@/hooks/use-files';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { Badge } from '@/components/ui/badge';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -53,6 +56,7 @@ import { FilePreviewDialog } from './file-preview-dialog';
 import { isOriginalPreviewSupported } from '@/utils/file-helpers';
 import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { WorkspaceAssetMoveDialog } from '@/components/common/workspace-asset-move-dialog';
+import { fileManageService } from '@/services/file-manage.service';
 
 function getProcessingStatus(file: FileItem): string {
   return file.processing_status || 'stored_only';
@@ -116,6 +120,9 @@ function FileProcessingStatus({ file, compact = false }: { file: FileItem; compa
           <span className="text-[11px] font-medium text-muted-foreground">{progress}%</span>
         ) : null}
       </div>
+      {isProcessingActive(status) ? (
+        <Progress className="h-1.5 w-20 max-w-full" value={progress} />
+      ) : null}
       {!compact ? (
         <div className="flex min-w-0 flex-wrap gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
           {pendingCount > 0 ? (
@@ -224,11 +231,13 @@ function FileListBase({
 }: FileListProps) {
   const { files: t, common } = useT();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const isMobile = useIsMobile();
   const { downloadFile, isDownloading } = useDownloadFile();
   const { deleteFiles, isDeleting } = useDeleteFiles();
   const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
   const [workspaceMoveFile, setWorkspaceMoveFile] = useState<FileItem | null>(null);
+  const [reparsingFileId, setReparsingFileId] = useState<string | null>(null);
   const { currentOrganization } = useOrganizations();
 
   // Permission checks
@@ -305,6 +314,23 @@ function FileListBase({
 
   const handleOpenDetail = (file: FileItem) => {
     router.push(`/console/files/${file.id}`);
+  };
+
+  const handleReparse = async (file: FileItem) => {
+    try {
+      setReparsingFileId(file.id);
+      await fileManageService.createProcessingRequest(file.id, {
+        mode: 'reparse',
+        target_level: 'vectorize',
+        force: false,
+      });
+      toast.success(t('detail.reparse.toasts.started'));
+      await queryClient.invalidateQueries({ queryKey: [FILES_QUERY_KEY] });
+    } catch (error) {
+      toast.error((error as { message?: string }).message || t('detail.reparse.toasts.failed'));
+    } finally {
+      setReparsingFileId(null);
+    }
   };
 
   const handleCardKeyDown = (event: KeyboardEvent<HTMLDivElement>, file: FileItem) => {
@@ -780,7 +806,17 @@ function FileListBase({
                       const { Icon, color } = getFileTypeConfig(file.extension);
                       return <Icon className={cn('h-5 w-5 flex-shrink-0', color)} />;
                     })()}
-                    <span className="truncate">{file.name}</span>
+                    {canViewDetail ? (
+                      <Link
+                        href={`/console/files/${file.id}`}
+                        className="truncate underline-offset-4 hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                        onClick={event => event.stopPropagation()}
+                      >
+                        {file.name}
+                      </Link>
+                    ) : (
+                      <span className="truncate">{file.name}</span>
+                    )}
                   </div>
                 </TableCell>
                 <TableCell className="text-sm">{file.extension}</TableCell>
@@ -806,7 +842,38 @@ function FileListBase({
                 </TableCell>
                 {hasAnyAction && (
                   <TableCell className="text-right">
-                    <DropdownMenu>
+                    <div className="flex min-w-0 items-center justify-end gap-1.5">
+                      {canViewDetail && getProcessingStatus(file) === 'confirming' ? (
+                        <Button
+                          asChild
+                          variant="outline"
+                          size="sm"
+                          className="h-8 rounded-md px-3 text-xs"
+                          onClick={event => event.stopPropagation()}
+                        >
+                          <Link href={`/console/files/${file.id}`}>
+                            {t('actions.confirmParse')}
+                          </Link>
+                        </Button>
+                      ) : null}
+                      {getProcessingStatus(file) === 'parse_failed' ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-8 rounded-md px-3 text-xs"
+                          disabled={reparsingFileId === file.id}
+                          onClick={event => {
+                            event.stopPropagation();
+                            void handleReparse(file);
+                          }}
+                        >
+                          {reparsingFileId === file.id
+                            ? t('detail.reparse.reparsing')
+                            : t('detail.reparse.action')}
+                        </Button>
+                      ) : null}
+                      <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button
                           variant="ghost"
@@ -907,7 +974,8 @@ function FileListBase({
                           </DropdownMenuItem>
                         )}
                       </DropdownMenuContent>
-                    </DropdownMenu>
+                      </DropdownMenu>
+                    </div>
                   </TableCell>
                 )}
               </TableRow>

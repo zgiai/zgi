@@ -30,13 +30,6 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Pagination } from '@/components/ui/pagination';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
   Dialog,
   DialogBody,
   DialogContent,
@@ -99,17 +92,40 @@ export interface FileManagementContentProps {
 
 const SYSTEM_FILE_CATEGORIES = new Set(['all', 'uploaded', 'default']);
 
-type FileProcessingStatusFilter = 'all' | FileAssetProductStatus;
+type FileProcessingStatusFilter = 'all' | 'needs_action' | 'ready' | 'stored_only';
 
-const FILE_PROCESSING_STATUS_FILTERS: FileProcessingStatusFilter[] = [
-  'all',
-  'stored_only',
-  'parsing',
-  'confirming',
-  'generating',
-  'parse_failed',
-  'ready',
+const FILE_PROCESSING_STATUS_FILTERS: Array<{
+  id: FileProcessingStatusFilter;
+  labelKey: 'all' | 'needsAction' | 'ready' | 'storedOnly';
+}> = [
+  { id: 'all', labelKey: 'all' },
+  { id: 'needs_action', labelKey: 'needsAction' },
+  { id: 'ready', labelKey: 'ready' },
+  { id: 'stored_only', labelKey: 'storedOnly' },
 ];
+
+function getFileProcessingStatus(file: FileItem): FileAssetProductStatus | string {
+  return file.processing_status || 'stored_only';
+}
+
+function fileMatchesProcessingStatusFilter(
+  file: FileItem,
+  filter: FileProcessingStatusFilter
+): boolean {
+  const status = getFileProcessingStatus(file);
+
+  switch (filter) {
+    case 'needs_action':
+      return status === 'confirming' || status === 'parse_failed';
+    case 'ready':
+      return status === 'ready';
+    case 'stored_only':
+      return status === 'stored_only';
+    case 'all':
+    default:
+      return true;
+  }
+}
 
 const waitForMinimumRefreshDuration = () =>
   new Promise<void>(resolve => {
@@ -434,6 +450,7 @@ const FileManagementContent = ({
   const [spaceSwitcherOpen, setSpaceSwitcherOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const t = useT();
+  const tFiles = useT('files');
   const tNavigation = useT('navigation');
   const queryClient = useQueryClient();
   const isMobile = useIsMobile();
@@ -495,8 +512,18 @@ const FileManagementContent = ({
   const displayedFiles =
     processingStatusFilter === 'all'
       ? files
-      : files.filter(file => (file.processing_status || 'stored_only') === processingStatusFilter);
+      : files.filter(file => fileMatchesProcessingStatusFilter(file, processingStatusFilter));
   const displayedTotal = processingStatusFilter === 'all' ? total : displayedFiles.length;
+  const processingStatusFilterCounts = FILE_PROCESSING_STATUS_FILTERS.reduce(
+    (acc, filter) => {
+      acc[filter.id] =
+        filter.id === 'all'
+          ? files.length
+          : files.filter(file => fileMatchesProcessingStatusFilter(file, filter.id)).length;
+      return acc;
+    },
+    {} as Record<FileProcessingStatusFilter, number>
+  );
 
   const prevPropRef = useRef<string[]>(selectedFileIds);
   const prevInternalRef = useRef<string[]>(selectedFiles);
@@ -1076,25 +1103,6 @@ const FileManagementContent = ({
                     className="h-9 rounded-md bg-background pl-9 shadow-none"
                   />
                 </div>
-                <Select
-                  value={processingStatusFilter}
-                  onValueChange={value =>
-                    setProcessingStatusFilter(value as FileProcessingStatusFilter)
-                  }
-                >
-                  <SelectTrigger className="h-9 w-full rounded-md bg-background shadow-none lg:w-[180px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {FILE_PROCESSING_STATUS_FILTERS.map(status => (
-                      <SelectItem key={status} value={status}>
-                        {status === 'all'
-                          ? t('files.filter.allProcessingStatuses')
-                          : t(`files.processingStatus.${status}`)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
                 {searchValue.trim() || processingStatusFilter !== 'all' ? (
                   <Button
                     variant="ghost"
@@ -1107,6 +1115,54 @@ const FileManagementContent = ({
                     {t('common.clear')}
                   </Button>
                 ) : null}
+              </div>
+              <div className="mt-3 flex min-h-10 flex-wrap items-center gap-2 border-t border-border/70 pt-3">
+                <span className="mr-1 text-xs font-medium text-muted-foreground">
+                  {t('files.filter.processingStatusLabel')}
+                </span>
+                <div
+                  className="flex flex-wrap items-center gap-2"
+                  role="tablist"
+                  aria-label={t('files.filter.processingStatusLabel')}
+                >
+                  {FILE_PROCESSING_STATUS_FILTERS.map(filter => {
+                    const active = processingStatusFilter === filter.id;
+                    const label = (() => {
+                      switch (filter.labelKey) {
+                        case 'needsAction':
+                          return tFiles('filter.processingStatusNeedsAction');
+                        case 'ready':
+                          return tFiles('filter.processingStatusReady');
+                        case 'storedOnly':
+                          return tFiles('filter.processingStatusStoredOnly');
+                        case 'all':
+                        default:
+                          return tFiles('filter.processingStatusAll');
+                      }
+                    })();
+
+                    return (
+                      <Button
+                        key={filter.id}
+                        type="button"
+                        variant={active ? 'secondary' : 'ghost'}
+                        size="sm"
+                        className={cn(
+                          'h-7 rounded-full px-3 text-xs',
+                          active && 'text-foreground'
+                        )}
+                        role="tab"
+                        aria-selected={active}
+                        onClick={() => setProcessingStatusFilter(filter.id)}
+                      >
+                        {label}
+                        <span className="ml-1 text-[11px] text-muted-foreground">
+                          {processingStatusFilterCounts[filter.id]}
+                        </span>
+                      </Button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
 

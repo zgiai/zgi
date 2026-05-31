@@ -72,6 +72,7 @@ const messages: FilesMessages = {
     removeFromFavorites: '取消收藏',
     bulkDelete: '批量删除',
     deleting: '删除中...',
+    confirmParse: '去确认',
   },
 
   preview: {
@@ -130,6 +131,11 @@ const messages: FilesMessages = {
 
   filter: {
     allProcessingStatuses: '全部状态',
+    processingStatusLabel: '文件状态',
+    processingStatusAll: '全部',
+    processingStatusNeedsAction: '需处理',
+    processingStatusReady: '已就绪',
+    processingStatusStoredOnly: '仅存储',
   },
 
   detail: {
@@ -234,6 +240,7 @@ const messages: FilesMessages = {
     },
     reparse: {
       action: '重新解析',
+      reparsing: '提交中...',
       confirmTitle: '重新解析这个文件？',
       confirmDescription: '重新解析期间，当前可检索资产会不可用，文件会重新经历解析、确认和索引流程。',
       confirm: '重新解析',
