@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useState, useEffect, useRef } from 'react';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useT } from '@/i18n';
 import {
   ChevronLeft,
@@ -62,8 +62,11 @@ import { StickyDataTable } from '@/components/common/sticky-data-table';
 export default function WorkspaceDetailPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const workspaceId = typeof params?.workspaceId === 'string' ? params.workspaceId : '';
   const t = useT('dashboard.organization.workspaceManagement');
+  const assignMemberKeyword = searchParams.get('assignMember')?.trim() || '';
+  const openedAssignMemberModalRef = useRef<string | null>(null);
 
   // Get organization
   const { currentOrganization } = useOrganizations();
@@ -222,6 +225,16 @@ export default function WorkspaceDetailPage() {
   // Show skeleton until workspace detail and members list are both loaded (first time only)
   const isLoading = isLoadingWorkspaces || (isLoadingMembers && !workspaceMembers);
 
+  useEffect(() => {
+    if (!assignMemberKeyword || !workspaceId || isLoading) return;
+
+    const openKey = `${workspaceId}:${assignMemberKeyword}`;
+    if (openedAssignMemberModalRef.current === openKey) return;
+
+    openedAssignMemberModalRef.current = openKey;
+    setAddMemberDialogOpen(true);
+  }, [assignMemberKeyword, isLoading, workspaceId]);
+
   if (isLoading) {
     return (
       <div className="flex flex-col h-full p-6 space-y-6 overflow-auto">
@@ -328,6 +341,17 @@ export default function WorkspaceDetailPage() {
       </header>
 
       <main className="flex-1 overflow-y-auto p-4 lg:p-8 space-y-6 scrollbar-thin scrollbar-thumb-muted-foreground/10">
+        {assignMemberKeyword ? (
+          <div className="rounded-xl border border-warning/20 bg-warning/10 px-4 py-3">
+            <p className="text-sm font-semibold text-warning">
+              {t('detail.assignMemberBannerTitle', { member: assignMemberKeyword })}
+            </p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              {t('detail.assignMemberBannerDescription')}
+            </p>
+          </div>
+        ) : null}
+
         <div className="space-y-6">
           {/* Left-Right Layout: Quota Card (left) + Members Table (right) */}
           <div className="flex gap-6">
@@ -603,6 +627,7 @@ export default function WorkspaceDetailPage() {
         onOpenChange={setAddMemberDialogOpen}
         workspaceId={workspaceId}
         workspaceName={workspaceInfo?.name || ''}
+        initialSearchQuery={assignMemberKeyword}
         onAdd={async (memberIds: string[], roleId?: string) => {
           if (!workspaceId) return;
           try {
