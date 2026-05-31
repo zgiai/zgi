@@ -13,6 +13,14 @@ type rootFSSelector struct {
 	dependencyRootFSDir string
 }
 
+type ErrUnsafeDependencyProfileName struct {
+	Profile string
+}
+
+func (e ErrUnsafeDependencyProfileName) Error() string {
+	return fmt.Sprintf("dependency profile name is not safe: %s", e.Profile)
+}
+
 func (s rootFSSelector) resolve(dependencyProfile string) (string, error) {
 	defaultRootFS := strings.TrimSpace(s.defaultRootFS)
 	if defaultRootFS == "" {
@@ -24,7 +32,7 @@ func (s rootFSSelector) resolve(dependencyProfile string) (string, error) {
 		return defaultRootFS, nil
 	}
 	if !safeDependencyProfileName(profile) {
-		return "", fmt.Errorf("dependency profile name is not safe for rootfs selection: %s", profile)
+		return "", fmt.Errorf("dependency profile rootfs selection failed: %w", ErrUnsafeDependencyProfileName{Profile: profile})
 	}
 	root := filepath.Join(profileDir, profile)
 	if err := validateRuntimeRootFS(root); err != nil {
