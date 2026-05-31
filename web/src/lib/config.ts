@@ -338,4 +338,15 @@ export const ROOT_COOKIE_DOMAIN: string = (readPublicEnvRaw('NEXT_PUBLIC_ROOT_CO
 
 export const ENABLE_ROOT_COOKIE_TOKEN_SYNC: boolean = ROOT_COOKIE_DOMAIN.length > 0;
 
+/**
+ * Agent detail features that are still being refined.
+ * Keep them hidden by default while retaining the implementation behind
+ * explicit public flags for local validation or customer-specific builds.
+ */
+export const ENABLE_AGENT_API_PAGE: boolean =
+  readPublicEnvRaw('NEXT_PUBLIC_ENABLE_AGENT_API_PAGE') === 'true';
+
+export const ENABLE_AGENT_BATCH_TEST_PAGE: boolean =
+  readPublicEnvRaw('NEXT_PUBLIC_ENABLE_AGENT_BATCH_TEST_PAGE') === 'true';
+
 // Add more env variables here as needed, always use this file for env access

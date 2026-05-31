@@ -180,7 +180,7 @@ function DatabaseOption({
         </span>
       </span>
       <span className="mt-3 line-clamp-2 text-xs leading-5 text-muted-foreground">
-        {db.description || db.schema_name || t('database.noDescription')}
+        {db.description || t('database.noDescription')}
       </span>
       {selectedCount > 0 ? (
         <Badge variant="subtle" className="mt-3 w-fit">
