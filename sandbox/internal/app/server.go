@@ -5,18 +5,21 @@ import (
 	"context"
 	"crypto/rand"
 	"embed"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/zgiai/zgi-sandbox/internal/cache"
 	"github.com/zgiai/zgi-sandbox/internal/catalog"
@@ -129,6 +132,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/exec/template", s.handleExecTemplate)
 	s.mux.HandleFunc("/v1/exec/skill", s.handleExecSkill)
 	s.mux.HandleFunc("/v1/network/egress/check", s.handleEgressCheck)
+	s.mux.HandleFunc("/v1/network/egress/proxy", s.handleEgressProxy)
 	s.mux.HandleFunc("/v1/files/upload", s.handleUploadFile)
 	s.mux.HandleFunc("/v1/files/upload-archive", s.handleUploadArchive)
 	s.mux.HandleFunc("/v1/files/download", s.handleDownloadFile)
@@ -724,11 +728,108 @@ func (s *Server) handleEgressCheck(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	s.recordEgressDecision(r.Context(), box, decision)
+	writeEnvelope(w, http.StatusOK, decision)
+}
+
+type egressProxyRequest struct {
+	SandboxID      string            `json:"sandbox_id"`
+	OrganizationID string            `json:"organization_id,omitempty"`
+	Method         string            `json:"method,omitempty"`
+	Destination    string            `json:"destination"`
+	Headers        map[string]string `json:"headers,omitempty"`
+	Body           string            `json:"body,omitempty"`
+	BodyBase64     string            `json:"body_base64,omitempty"`
+}
+
+type egressProxyResponse struct {
+	SandboxID     string                `json:"sandbox_id"`
+	StatusCode    int                   `json:"status_code"`
+	Headers       map[string]string     `json:"headers"`
+	Body          string                `json:"body"`
+	BodyEncoding  string                `json:"body_encoding"`
+	Truncated     bool                  `json:"truncated"`
+	BodyBytes     int64                 `json:"body_bytes"`
+	Decision      policy.EgressDecision `json:"decision"`
+	DurationMS    int64                 `json:"duration_ms"`
+	ContentType   string                `json:"content_type,omitempty"`
+	ContentLength int64                 `json:"content_length,omitempty"`
+}
+
+func (s *Server) handleEgressProxy(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authorized(r) {
+		writeEnvelopeWithMessage(w, http.StatusUnauthorized, -401, "unauthorized", nil)
+		return
+	}
+
+	var req egressProxyRequest
+	r.Body = http.MaxBytesReader(w, r.Body, s.maxSmallJSONRequestBytes())
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeDecodeError(w, err)
+		return
+	}
+	req.Destination = strings.TrimSpace(req.Destination)
+	if req.Destination == "" {
+		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "destination is required", nil)
+		return
+	}
+	box, ok := s.authorizeSandboxOrganization(r.Context(), w, req.SandboxID, requestOrganizationID(r, req.OrganizationID))
+	if !ok {
+		return
+	}
+	if box == nil {
+		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "sandbox_id is required", nil)
+		return
+	}
+
+	decision := policy.EgressDecision{}
+	if !box.NetworkEnabled {
+		decision = policy.EgressDecision{
+			Allowed:     false,
+			Code:        "egress_denied_sandbox_network_disabled",
+			Reason:      "sandbox network access is disabled",
+			Policy:      box.NetworkPolicy,
+			Destination: req.Destination,
+		}
+	} else {
+		var err error
+		decision, err = s.policy.CheckEgressDestination(r.Context(), box.NetworkPolicy, req.Destination)
+		if err != nil {
+			writeKnownError(w, err)
+			return
+		}
+	}
+	s.recordEgressDecision(r.Context(), box, decision)
+	if !decision.Allowed {
+		writeEnvelopeWithMessage(w, http.StatusForbidden, -403, decision.Reason, decision)
+		return
+	}
+
+	result, err := s.executeEgressProxy(r.Context(), box, req, decision)
+	if err != nil {
+		metadata := egressDecisionMetadata(decision)
+		addSandboxOwnershipMetadata(metadata, box)
+		metadata["status"] = "failure"
+		metadata["error"] = err.Error()
+		metadata["runtime_backend"] = s.policy.RuntimeBackend()
+		s.observer.Record("network.egress.proxy.failed", box.ID, "network egress proxy failed", observer.MetadataWithContext(r.Context(), metadata))
+		writeKnownError(w, err)
+		return
+	}
 	metadata := egressDecisionMetadata(decision)
 	addSandboxOwnershipMetadata(metadata, box)
+	metadata["status"] = "success"
+	metadata["status_code"] = result.StatusCode
+	metadata["body_bytes"] = result.BodyBytes
+	metadata["truncated"] = result.Truncated
+	metadata["duration_ms"] = result.DurationMS
 	metadata["runtime_backend"] = s.policy.RuntimeBackend()
-	s.observer.Record("network.egress.decision", box.ID, "network egress policy decision", observer.MetadataWithContext(r.Context(), metadata))
-	writeEnvelope(w, http.StatusOK, decision)
+	s.observer.Record("network.egress.proxy", box.ID, "network egress proxied", observer.MetadataWithContext(r.Context(), metadata))
+	writeEnvelope(w, http.StatusOK, result)
 }
 
 func (s *Server) handleUploadFile(w http.ResponseWriter, r *http.Request) {
@@ -1156,6 +1257,16 @@ func egressDecisionMetadata(decision policy.EgressDecision) map[string]any {
 	return metadata
 }
 
+func (s *Server) recordEgressDecision(ctx context.Context, box *sandbox.Sandbox, decision policy.EgressDecision) {
+	if box == nil {
+		return
+	}
+	metadata := egressDecisionMetadata(decision)
+	addSandboxOwnershipMetadata(metadata, box)
+	metadata["runtime_backend"] = s.policy.RuntimeBackend()
+	s.observer.Record("network.egress.decision", box.ID, "network egress policy decision", observer.MetadataWithContext(ctx, metadata))
+}
+
 func addSandboxOwnershipMetadata(metadata map[string]any, box *sandbox.Sandbox) {
 	if box == nil {
 		return
@@ -1175,6 +1286,219 @@ func addSandboxOwnershipMetadata(metadata map[string]any, box *sandbox.Sandbox) 
 	if box.UserID != "" {
 		metadata["user_id"] = box.UserID
 	}
+}
+
+func (s *Server) executeEgressProxy(ctx context.Context, box *sandbox.Sandbox, req egressProxyRequest, decision policy.EgressDecision) (egressProxyResponse, error) {
+	method, err := normalizeEgressProxyMethod(req.Method)
+	if err != nil {
+		return egressProxyResponse{}, err
+	}
+	parsedDestination, err := url.Parse(decision.Destination)
+	if err != nil || parsedDestination.Scheme == "" || parsedDestination.Host == "" {
+		return egressProxyResponse{}, errors.New("destination must be an absolute URL")
+	}
+	if parsedDestination.User != nil {
+		return egressProxyResponse{}, errors.New("destination must not include credentials")
+	}
+	body, err := decodeEgressProxyBody(req)
+	if err != nil {
+		return egressProxyResponse{}, err
+	}
+	bodyLimit := s.egressProxyBodyLimit()
+	if int64(len(body)) > bodyLimit {
+		return egressProxyResponse{}, fmt.Errorf("egress proxy request body exceeds max size of %d bytes", bodyLimit)
+	}
+	timeout := s.egressProxyTimeout(decision)
+	proxyCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	outbound, err := http.NewRequestWithContext(proxyCtx, method, parsedDestination.String(), bytes.NewReader(body))
+	if err != nil {
+		return egressProxyResponse{}, err
+	}
+	applyEgressProxyHeaders(outbound, req.Headers)
+	if len(body) > 0 && outbound.Header.Get("Content-Type") == "" {
+		outbound.Header.Set("Content-Type", "application/octet-stream")
+	}
+
+	client := &http.Client{
+		Timeout:   timeout,
+		Transport: egressProxyTransport(decision, timeout),
+	}
+	started := time.Now()
+	res, err := client.Do(outbound)
+	duration := time.Since(started).Milliseconds()
+	if err != nil {
+		if errors.Is(proxyCtx.Err(), context.DeadlineExceeded) {
+			return egressProxyResponse{}, fmt.Errorf("egress proxy timed out after %d ms", timeout.Milliseconds())
+		}
+		return egressProxyResponse{}, fmt.Errorf("egress proxy request failed: %w", err)
+	}
+	defer res.Body.Close()
+
+	capped := io.LimitReader(res.Body, bodyLimit+1)
+	payload, err := io.ReadAll(capped)
+	if err != nil {
+		return egressProxyResponse{}, fmt.Errorf("read egress proxy response: %w", err)
+	}
+	truncated := int64(len(payload)) > bodyLimit
+	if truncated {
+		payload = payload[:bodyLimit]
+	}
+	encodedBody, encoding := encodeEgressProxyBody(payload)
+
+	return egressProxyResponse{
+		SandboxID:     box.ID,
+		StatusCode:    res.StatusCode,
+		Headers:       safeResponseHeaders(res.Header),
+		Body:          encodedBody,
+		BodyEncoding:  encoding,
+		Truncated:     truncated,
+		BodyBytes:     int64(len(payload)),
+		Decision:      decision,
+		DurationMS:    duration,
+		ContentType:   res.Header.Get("Content-Type"),
+		ContentLength: res.ContentLength,
+	}, nil
+}
+
+func normalizeEgressProxyMethod(value string) (string, error) {
+	method := strings.ToUpper(strings.TrimSpace(value))
+	if method == "" {
+		method = http.MethodGet
+	}
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodPost:
+		return method, nil
+	default:
+		return "", fmt.Errorf("unsupported egress proxy method: %s", method)
+	}
+}
+
+func decodeEgressProxyBody(req egressProxyRequest) ([]byte, error) {
+	if req.Body != "" && req.BodyBase64 != "" {
+		return nil, errors.New("body and body_base64 are mutually exclusive")
+	}
+	if req.BodyBase64 != "" {
+		body, err := base64.StdEncoding.DecodeString(req.BodyBase64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid body_base64: %w", err)
+		}
+		return body, nil
+	}
+	return []byte(req.Body), nil
+}
+
+func (s *Server) egressProxyTimeout(decision policy.EgressDecision) time.Duration {
+	timeout := time.Duration(s.config.ProxyTimeout) * time.Second
+	if timeout <= 0 {
+		timeout = 20 * time.Second
+	}
+	if decision.MaxRequestDurationMS > 0 {
+		policyTimeout := time.Duration(decision.MaxRequestDurationMS) * time.Millisecond
+		if policyTimeout < timeout {
+			timeout = policyTimeout
+		}
+	}
+	return timeout
+}
+
+func (s *Server) egressProxyBodyLimit() int64 {
+	if s.config.EgressProxyMaxBodyBytes <= 0 {
+		return 1024 * 1024
+	}
+	return s.config.EgressProxyMaxBodyBytes
+}
+
+func egressProxyTransport(decision policy.EgressDecision, timeout time.Duration) *http.Transport {
+	dialer := &net.Dialer{Timeout: timeout, KeepAlive: 0}
+	return &http.Transport{
+		Proxy:                 nil,
+		DialContext:           egressProxyDialContext(dialer, decision),
+		ForceAttemptHTTP2:     false,
+		MaxIdleConns:          0,
+		DisableKeepAlives:     true,
+		TLSHandshakeTimeout:   timeout,
+		ResponseHeaderTimeout: timeout,
+		ExpectContinueTimeout: minDuration(timeout, time.Second),
+	}
+}
+
+func egressProxyDialContext(dialer *net.Dialer, decision policy.EgressDecision) func(context.Context, string, string) (net.Conn, error) {
+	return func(ctx context.Context, network string, address string) (net.Conn, error) {
+		if network != "tcp" && network != "tcp4" && network != "tcp6" {
+			return nil, fmt.Errorf("egress proxy network is not allowed: %s", network)
+		}
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, err
+		}
+		if !strings.EqualFold(strings.TrimSuffix(host, "."), decision.Host) {
+			return nil, fmt.Errorf("egress proxy host changed after policy decision: %s", host)
+		}
+		if port != strconv.Itoa(decision.Port) {
+			return nil, fmt.Errorf("egress proxy port changed after policy decision: %s", port)
+		}
+		if len(decision.ResolvedIPs) == 0 {
+			return nil, errors.New("egress proxy decision has no resolved IPs")
+		}
+		target := net.JoinHostPort(decision.ResolvedIPs[0], port)
+		return dialer.DialContext(ctx, network, target)
+	}
+}
+
+func applyEgressProxyHeaders(req *http.Request, headers map[string]string) {
+	for key, value := range headers {
+		canonical := http.CanonicalHeaderKey(strings.TrimSpace(key))
+		if !safeEgressRequestHeader(canonical) {
+			continue
+		}
+		req.Header.Set(canonical, strings.TrimSpace(value))
+	}
+}
+
+func safeEgressRequestHeader(key string) bool {
+	switch key {
+	case "Accept", "Accept-Language", "Content-Type", "User-Agent":
+		return true
+	default:
+		return false
+	}
+}
+
+func safeResponseHeaders(headers http.Header) map[string]string {
+	values := map[string]string{}
+	for key, items := range headers {
+		canonical := http.CanonicalHeaderKey(strings.TrimSpace(key))
+		if !safeEgressResponseHeader(canonical) || len(items) == 0 {
+			continue
+		}
+		values[canonical] = strings.Join(items, ", ")
+	}
+	return values
+}
+
+func safeEgressResponseHeader(key string) bool {
+	switch key {
+	case "Cache-Control", "Content-Language", "Content-Type", "Etag", "Last-Modified":
+		return true
+	default:
+		return false
+	}
+}
+
+func encodeEgressProxyBody(payload []byte) (string, string) {
+	if utf8.Valid(payload) {
+		return string(payload), "text"
+	}
+	return base64.StdEncoding.EncodeToString(payload), "base64"
+}
+
+func minDuration(left time.Duration, right time.Duration) time.Duration {
+	if left < right {
+		return left
+	}
+	return right
 }
 
 func (s *Server) shouldProxy(box sandbox.Sandbox) bool {
