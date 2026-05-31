@@ -30,6 +30,7 @@ Already available:
 - API key support
 - Kest black-box sandbox flows
 - API skill-script E2E runner
+- Stateless `code-short` profile execution by default, with explicit workspace binding when needed
 - Path escape, zip slip, symlink, dangerous env, stdin, timeout, and output guardrails
 - Process group cleanup for preview command timeouts
 - Structured cancellation errors for request-canceled execution paths
@@ -95,7 +96,7 @@ simple calculations, and deterministic data shaping.
   - `expected_output_schema`
   - `strict_result_json`
 - Keep `POST /v1/exec/code` backward compatible.
-- Add a new profile-level behavior flag for stateless execution.
+- [x] Add a new profile-level behavior flag for stateless execution.
 
 ### A2. Limits
 
@@ -109,17 +110,17 @@ simple calculations, and deterministic data shaping.
 
 ### A3. Filesystem Behavior
 
-- Add an explicitly stateless execution mode.
-- Run each short-code request in a temporary workspace.
-- Remove the workspace after execution.
-- Prevent short-code paths from writing into session workspaces unless explicitly bound.
-- Add tests that prove no files survive a stateless execution.
+- [x] Add an explicitly stateless execution mode.
+- [x] Run each short-code request in a temporary workspace.
+- [x] Remove the workspace after execution.
+- [x] Prevent short-code paths from writing into session workspaces unless explicitly bound.
+- [x] Add tests that prove no files survive a stateless execution.
 
 ### A4. Tests
 
-- Unit tests for profile normalization.
+- [x] Unit tests for profile normalization.
 - API tests for size, timeout, output, and schema failures.
-- Kest flow for short-code success.
+- [x] Kest flow for short-code success.
 - Kest flow for short-code timeout.
 - Kest flow for short-code output truncation.
 
