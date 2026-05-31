@@ -1,7 +1,8 @@
 'use client';
 
 import * as React from 'react';
-import { ChevronsUpDown, Check, Users } from 'lucide-react';
+import Link from 'next/link';
+import { ChevronsUpDown, Check, Loader2, Settings, Users } from 'lucide-react';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import {
@@ -14,7 +15,9 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useJoinedWorkspaces } from '@/hooks/workspace/use-joined-workspaces';
 import { useUpdateCurrentWorkspace } from '@/hooks/workspace/use-update-current-workspace';
+import { useCurrentUser } from '@/store/auth-store';
 import { useWorkspaceStore } from '@/store';
+import { canManageOrganizationWorkspaces } from '@/utils/workspace-access';
 import type { Workspace } from '@/store';
 
 interface WorkspaceSwitcherProps {
@@ -28,13 +31,16 @@ interface WorkspaceSwitcherProps {
 export function WorkspaceSwitcher({ isCollapsed }: WorkspaceSwitcherProps) {
   const t = useT('navigation');
   const tCommon = useT('common');
+  const user = useCurrentUser();
   const workspaces = useWorkspaceStore.use.workspaces();
   const currentWorkspace = useWorkspaceStore.use.currentWorkspace();
   const isOrganizationMode = useWorkspaceStore.use.isOrganizationMode();
   const { mutate: updateWorkspace } = useUpdateCurrentWorkspace();
 
   // Fetch joined workspaces from API and sync to store
-  useJoinedWorkspaces({ syncToStore: true });
+  const { isLoading, isFetching } = useJoinedWorkspaces({ syncToStore: true });
+  const canManageWorkspaces = canManageOrganizationWorkspaces(user);
+  const isLoadingWorkspaces = (isLoading || isFetching) && workspaces.length === 0;
 
   const handleSelectWorkspace = (workspace: Workspace) => {
     updateWorkspace(workspace);
@@ -103,7 +109,12 @@ export function WorkspaceSwitcher({ isCollapsed }: WorkspaceSwitcherProps) {
               'min(16rem, calc(var(--radix-dropdown-menu-content-available-height) - 4.5rem))',
           }}
         >
-          {workspaces.length > 0 ? (
+          {isLoadingWorkspaces ? (
+            <DropdownMenuItem disabled className="text-xs text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              {tCommon('workspaceSelector.loading')}
+            </DropdownMenuItem>
+          ) : workspaces.length > 0 ? (
             workspaces.map(workspace => (
               <DropdownMenuItem
                 key={workspace.id}
@@ -125,9 +136,27 @@ export function WorkspaceSwitcher({ isCollapsed }: WorkspaceSwitcherProps) {
               </DropdownMenuItem>
             ))
           ) : (
-            <DropdownMenuItem disabled className="text-xs text-muted-foreground">
-              {tCommon('workspaceSelector.noWorkspaces')}
-            </DropdownMenuItem>
+            <>
+              <DropdownMenuItem
+                disabled
+                className="whitespace-normal text-xs leading-5 text-muted-foreground"
+              >
+                {canManageWorkspaces
+                  ? tCommon('workspaceSelector.noWorkspacesAdmin')
+                  : tCommon('workspaceSelector.noWorkspacesMember')}
+              </DropdownMenuItem>
+              {canManageWorkspaces ? (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem asChild className="cursor-pointer text-xs">
+                    <Link href="/dashboard/organization/workspaces">
+                      <Settings className="h-3.5 w-3.5" />
+                      {tCommon('workspaceRequired.manageWorkspaces')}
+                    </Link>
+                  </DropdownMenuItem>
+                </>
+              ) : null}
+            </>
           )}
         </div>
       </DropdownMenuContent>
