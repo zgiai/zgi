@@ -15,6 +15,7 @@ GET {{base_url}}/v1/policies
 status == 200
 code == 0
 data.limits.max_concurrent_executions_per_organization == 1
+data.limits.max_concurrent_executions == 1
 data.limits.max_concurrent_executions_per_profile == 1
 data.limits.max_queued_executions_per_organization == 1
 ```
@@ -40,6 +41,7 @@ status == 200
 code == 0
 data.organization_id == "{{concurrent_organization_id}}"
 data.effective_limits.max_concurrent_executions_per_organization == 1
+data.effective_limits.max_concurrent_executions == 1
 data.effective_limits.max_concurrent_executions_per_profile == 1
 data.effective_limits.max_queued_executions_per_organization == 1
 ```

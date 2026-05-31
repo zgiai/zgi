@@ -348,6 +348,98 @@ func TestOrganizationConcurrentExecutionLimit(t *testing.T) {
 	}
 }
 
+func TestServiceConcurrentExecutionLimit(t *testing.T) {
+	recorder := observer.NewRecorder(100)
+	cfg := config.FromEnv()
+	cfg.DataDir = t.TempDir()
+	cfg.MaxConcurrentExecutions = 1
+	policyService := policy.NewService(cfg)
+	manager, err := lifecycle.NewManagerWithConfig(recorder, policyService, cfg, nil, nil)
+	if err != nil {
+		t.Fatalf("expected lifecycle manager, got %v", err)
+	}
+	service := NewService(manager, runner.NewService(2, 3*time.Second, 4096), recorder, policyService)
+
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+		OrganizationID: "organization-service-limit",
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+	_, err = service.UploadArchive(ArchiveUploadRequest{
+		SandboxID: box.ID,
+		Path:      "skills/service-limit",
+		ArchiveBase64: zipBase64(t, map[string]string{
+			"SKILL.md":            "# Skill",
+			"scripts/run.py":      "print('skill')",
+			"skill.manifest.json": validSkillManifestJSON("scripts/run.py"),
+		}),
+		Format:                "zip",
+		ValidateSkillManifest: true,
+	})
+	if err != nil {
+		t.Fatalf("upload skill package: %v", err)
+	}
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := service.RunCommand(context.Background(), CommandRequest{
+			SandboxID: box.ID,
+			Command:   "python3",
+			Args:      []string{"-c", "import time; time.sleep(0.4)"},
+			Profile:   "code-short",
+			TimeoutMS: 1000,
+		})
+		firstDone <- err
+	}()
+	waitForServiceExecutions(t, service, 1)
+
+	_, err = service.RunCommand(context.Background(), CommandRequest{
+		SandboxID: box.ID,
+		Command:   "pwd",
+		Profile:   "skill-python",
+	})
+	var limitErr *policy.LimitError
+	if !errors.As(err, &limitErr) || limitErr.Code != "service_concurrent_execution_limit_exceeded" || limitErr.Limit != "max_concurrent_executions" {
+		t.Fatalf("expected service concurrent command limit error, got %v", err)
+	}
+
+	_, err = service.RunCode(context.Background(), CodeRequest{
+		SandboxID: box.ID,
+		Language:  "python3",
+		Code:      "print('blocked')",
+		Profile:   "skill-python",
+	})
+	if !errors.As(err, &limitErr) || limitErr.Code != "service_concurrent_execution_limit_exceeded" {
+		t.Fatalf("expected service concurrent code limit error, got %v", err)
+	}
+
+	_, err = service.RunSkill(context.Background(), SkillRunRequest{
+		SandboxID: box.ID,
+		Path:      "skills/service-limit",
+	})
+	if !errors.As(err, &limitErr) || limitErr.Code != "service_concurrent_execution_limit_exceeded" {
+		t.Fatalf("expected service concurrent skill limit error, got %v", err)
+	}
+
+	if err := <-firstDone; err != nil {
+		t.Fatalf("expected first command to complete, got %v", err)
+	}
+	waitForServiceExecutions(t, service, 0)
+
+	events := recorder.Query(observer.Query{SandboxID: box.ID, Type: "exec.command.failed", Limit: 1})
+	if len(events) != 1 {
+		t.Fatalf("expected service limit failure event, got %d", len(events))
+	}
+	if events[0].Metadata["code"] != "service_concurrent_execution_limit_exceeded" {
+		t.Fatalf("expected structured service limit metadata, got %#v", events[0].Metadata)
+	}
+	if events[0].Metadata["limit"] != "max_concurrent_executions" {
+		t.Fatalf("expected service limit metadata, got %#v", events[0].Metadata)
+	}
+}
+
 func TestProfileConcurrentExecutionLimit(t *testing.T) {
 	recorder := observer.NewRecorder(100)
 	cfg := config.FromEnv()
@@ -1809,6 +1901,22 @@ func waitForOrganizationExecutions(t *testing.T, service *Service, organizationI
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("expected %d active executions for organization %q", expected, organizationID)
+}
+
+func waitForServiceExecutions(t *testing.T, service *Service, expected int) {
+	t.Helper()
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		service.executionMu.Lock()
+		active := service.activeExecutions
+		service.executionMu.Unlock()
+		if active == expected {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("expected %d active service executions", expected)
 }
 
 func waitForProfileExecutions(t *testing.T, service *Service, profile string, expected int) {

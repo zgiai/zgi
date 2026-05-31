@@ -56,6 +56,16 @@ func TestFromEnvReadsOrganizationConcurrentExecutionLimit(t *testing.T) {
 	}
 }
 
+func TestFromEnvReadsServiceConcurrentExecutionLimit(t *testing.T) {
+	t.Setenv("ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS", "2")
+
+	cfg := FromEnv()
+
+	if cfg.MaxConcurrentExecutions != 2 {
+		t.Fatalf("expected service concurrent execution limit 2, got %d", cfg.MaxConcurrentExecutions)
+	}
+}
+
 func TestFromEnvReadsProfileConcurrentExecutionLimit(t *testing.T) {
 	t.Setenv("ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS_PER_PROFILE", "4")
 
@@ -98,20 +108,21 @@ func TestFromEnvReadsWorkspaceFileLimit(t *testing.T) {
 
 func TestPublicSnapshotOmitsSecrets(t *testing.T) {
 	cfg := Config{
-		Port:              "2660",
-		APIKey:            "secret-api-key",
-		RedisPassword:     "secret-redis-password",
-		DatabaseURL:       "postgres://user:secret-db-password@127.0.0.1:5432/postgres",
-		RedisAddr:         "127.0.0.1:6379",
-		RedisDB:           2,
-		WorkerID:          "worker-a",
-		RuntimeBackend:    "preview",
-		SecureRootFS:      "/srv/rootfs",
-		BwrapBinary:       "bwrap",
-		Environment:       "local",
-		AdvertiseURL:      "http://127.0.0.1:2660",
-		PublicBaseURL:     "http://127.0.0.1:2660",
-		ObserverMaxEvents: 100,
+		Port:                    "2660",
+		APIKey:                  "secret-api-key",
+		RedisPassword:           "secret-redis-password",
+		DatabaseURL:             "postgres://user:secret-db-password@127.0.0.1:5432/postgres",
+		RedisAddr:               "127.0.0.1:6379",
+		RedisDB:                 2,
+		WorkerID:                "worker-a",
+		RuntimeBackend:          "preview",
+		SecureRootFS:            "/srv/rootfs",
+		BwrapBinary:             "bwrap",
+		Environment:             "local",
+		AdvertiseURL:            "http://127.0.0.1:2660",
+		PublicBaseURL:           "http://127.0.0.1:2660",
+		ObserverMaxEvents:       100,
+		MaxConcurrentExecutions: 3,
 	}
 
 	snapshot := cfg.PublicSnapshot()
@@ -133,6 +144,9 @@ func TestPublicSnapshotOmitsSecrets(t *testing.T) {
 	}
 	if snapshot["secure_rootfs_configured"] != true {
 		t.Fatalf("expected rootfs configured flag, got %#v", snapshot["secure_rootfs_configured"])
+	}
+	if snapshot["max_concurrent_executions"] != 3 {
+		t.Fatalf("expected service concurrent execution limit, got %#v", snapshot["max_concurrent_executions"])
 	}
 }
 

@@ -69,6 +69,7 @@ func TestNetworkPolicySurfaceReportsBackendEnforcement(t *testing.T) {
 func TestNormalizeCreateReturnsEffectiveLimitsAndStructuredLimitError(t *testing.T) {
 	cfg := config.FromEnv()
 	cfg.MaxActive = 2
+	cfg.MaxConcurrentExecutions = 3
 	cfg.MaxFileSizeKB = 128
 	service := NewService(cfg)
 
@@ -90,6 +91,9 @@ func TestNormalizeCreateReturnsEffectiveLimitsAndStructuredLimitError(t *testing
 	}
 	if decision.EffectiveLimits.MaxConcurrentExecutionsPerOrganization != cfg.MaxConcurrentExecutionsPerOrganization {
 		t.Fatalf("expected organization concurrent execution limit in decision, got %+v", decision.EffectiveLimits)
+	}
+	if decision.EffectiveLimits.MaxConcurrentExecutions != cfg.MaxConcurrentExecutions {
+		t.Fatalf("expected service concurrent execution limit in decision, got %+v", decision.EffectiveLimits)
 	}
 	if decision.EffectiveLimits.MaxQueuedExecutionsPerOrganization != cfg.MaxQueuedExecutionsPerOrganization {
 		t.Fatalf("expected organization queued execution limit in decision, got %+v", decision.EffectiveLimits)

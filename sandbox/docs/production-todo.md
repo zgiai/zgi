@@ -45,6 +45,7 @@ Already available:
 - Readiness probe for dependency checks
 - Startup log emits effective non-secret configuration
 - Worker-scoped active sandbox limit accounting
+- Optional service-scoped concurrent execution limit accounting
 - Optional profile-scoped concurrent execution limit accounting
 - Optional organization-scoped active sandbox limit accounting
 - Optional organization-scoped concurrent execution limit accounting
@@ -315,7 +316,7 @@ Goal: enforce hard resource boundaries for every execution path.
 
 ### F2. Queue Limits
 
-- Max concurrent executions per service.
+- Added optional max concurrent executions per service with `ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS`.
 - Added optional max concurrent executions per profile with `ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS_PER_PROFILE`.
 - Added optional max concurrent executions per organization with `ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS_PER_ORGANIZATION`.
 - Added optional max queued executions per organization with `ZGI_SANDBOX_MAX_QUEUED_EXECUTIONS_PER_ORGANIZATION`.

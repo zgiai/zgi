@@ -38,6 +38,7 @@ type Service struct {
 
 	executionMu                    sync.Mutex
 	executionChanged               chan struct{}
+	activeExecutions               int
 	activeExecutionsByProfile      map[string]int
 	activeExecutionsByOrganization map[string]int
 	queuedExecutionsByOrganization map[string]int
@@ -624,9 +625,10 @@ func (s *Service) enforceOrganizationExecutionRate(box *sandbox.Sandbox) error {
 
 func (s *Service) acquireExecutionAdmission(ctx context.Context, box *sandbox.Sandbox, profile string) (func(), error) {
 	profile = strings.TrimSpace(profile)
+	serviceLimit := s.policy.MaxConcurrentExecutions()
 	profileLimit := s.policy.MaxConcurrentExecutionsPerProfile()
 	organizationLimit := s.policy.MaxConcurrentExecutionsPerOrganization()
-	if profileLimit <= 0 && (organizationLimit <= 0 || box == nil || strings.TrimSpace(box.OrganizationID) == "") {
+	if serviceLimit <= 0 && profileLimit <= 0 && (organizationLimit <= 0 || box == nil || strings.TrimSpace(box.OrganizationID) == "") {
 		return func() {}, nil
 	}
 
@@ -654,6 +656,25 @@ func (s *Service) acquireExecutionAdmission(ctx context.Context, box *sandbox.Sa
 
 	for {
 		s.executionMu.Lock()
+		if serviceLimit > 0 && s.activeExecutions >= serviceLimit {
+			if queued {
+				s.releaseQueuedOrganizationExecutionLocked(organizationID)
+				queued = false
+				s.notifyExecutionChangedLocked()
+			}
+			activeService := s.activeExecutions
+			s.executionMu.Unlock()
+			return nil, &policy.LimitError{
+				Code:    "service_concurrent_execution_limit_exceeded",
+				Limit:   "max_concurrent_executions",
+				Maximum: serviceLimit,
+				Actual:  activeService + 1,
+				Details: map[string]any{
+					"active_executions": activeService,
+				},
+			}
+		}
+
 		activeProfile := s.activeExecutionsByProfile[profile]
 		if profileLimit > 0 && activeProfile >= profileLimit {
 			if queued {
@@ -678,6 +699,9 @@ func (s *Service) acquireExecutionAdmission(ctx context.Context, box *sandbox.Sa
 		currentQueued := s.queuedExecutionsByOrganization[organizationID]
 		organizationLimited := organizationLimit > 0 && organizationID != ""
 		if !organizationLimited || (activeOrganization < organizationLimit && (queued || currentQueued == 0)) {
+			if serviceLimit > 0 {
+				s.activeExecutions++
+			}
 			if profileLimit > 0 {
 				s.activeExecutionsByProfile[profile] = activeProfile + 1
 			}
@@ -690,7 +714,7 @@ func (s *Service) acquireExecutionAdmission(ctx context.Context, box *sandbox.Sa
 				s.notifyExecutionChangedLocked()
 			}
 			s.executionMu.Unlock()
-			return s.releaseExecutionAdmission(profile, organizationID), nil
+			return s.releaseExecutionAdmission(profile, organizationID, serviceLimit > 0), nil
 		}
 
 		if queueLimit <= 0 {
@@ -749,7 +773,7 @@ func (s *Service) acquireExecutionAdmission(ctx context.Context, box *sandbox.Sa
 	}
 }
 
-func (s *Service) releaseExecutionAdmission(profile string, organizationID string) func() {
+func (s *Service) releaseExecutionAdmission(profile string, organizationID string, releaseService bool) func() {
 	released := false
 	return func() {
 		s.executionMu.Lock()
@@ -758,6 +782,9 @@ func (s *Service) releaseExecutionAdmission(profile string, organizationID strin
 			return
 		}
 		released = true
+		if releaseService && s.activeExecutions > 0 {
+			s.activeExecutions--
+		}
 		if profile != "" {
 			nextProfile := s.activeExecutionsByProfile[profile] - 1
 			if nextProfile <= 0 {
