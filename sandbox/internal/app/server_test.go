@@ -1142,6 +1142,75 @@ func TestDependencyUpdateBuildsSelectableProfile(t *testing.T) {
 	}
 }
 
+func TestDependencyUpdatePromotesReservedProfile(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.APIKey = "admin-test-key"
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	body := `{
+		"name": "skill-office",
+		"version": "2026.05.31",
+		"languages": ["python3", "nodejs"],
+		"packages": [
+			{"ecosystem": "python3", "name": "office-tools", "version": "managed"},
+			{"ecosystem": "nodejs", "name": "office-tools", "version": "managed"}
+		],
+		"base_runtime": "linux-secure",
+		"checksum": "sha256:skill-office",
+		"size_bytes": 1024,
+		"description": "Managed document automation profile."
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/sandbox/dependencies/update", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", "admin-test-key")
+	req.Header.Set("X-Request-ID", "req_skill_office_release")
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected reserved profile promotion to return 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"name":"skill-office"`) || !strings.Contains(rr.Body.String(), `"status":"ready"`) {
+		t.Fatalf("expected promoted skill-office profile, got %s", rr.Body.String())
+	}
+
+	createReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","dependency_profile":"skill-office"}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	createReq.Header.Set("X-API-Key", "admin-test-key")
+	createRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(createRes, createReq)
+	if createRes.Code != http.StatusOK {
+		t.Fatalf("expected promoted skill-office profile to be selectable, got %d body=%s", createRes.Code, createRes.Body.String())
+	}
+	if !strings.Contains(createRes.Body.String(), `"dependency_profile":"skill-office"`) {
+		t.Fatalf("expected created sandbox to use skill-office, got %s", createRes.Body.String())
+	}
+
+	events := server.observer.Query(observer.Query{Type: "dependency_profile.build", RequestID: "req_skill_office_release", Limit: 1})
+	if len(events) != 1 || events[0].Metadata["dependency_profile"] != "skill-office" {
+		t.Fatalf("expected dependency profile release event, got %#v", events)
+	}
+
+	if err := server.store.Close(); err != nil {
+		t.Fatalf("close first store: %v", err)
+	}
+	restarted, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("expected restarted server, got %v", err)
+	}
+	restartReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","dependency_profile":"skill-office"}`))
+	restartReq.Header.Set("Content-Type", "application/json")
+	restartReq.Header.Set("X-API-Key", "admin-test-key")
+	restartRes := httptest.NewRecorder()
+	restarted.Handler().ServeHTTP(restartRes, restartReq)
+	if restartRes.Code != http.StatusOK {
+		t.Fatalf("expected promoted skill-office profile to remain selectable after restart, got %d body=%s", restartRes.Code, restartRes.Body.String())
+	}
+}
+
 func TestDependencyUpdatePersistsBuiltProfileAcrossRestart(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.APIKey = "admin-test-key"

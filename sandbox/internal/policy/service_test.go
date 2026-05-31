@@ -173,6 +173,79 @@ func TestBuildDependencyProfileRegistersReadyProfile(t *testing.T) {
 	}
 }
 
+func TestBuildDependencyProfilePromotesReservedProfile(t *testing.T) {
+	service := NewService(config.FromEnv())
+
+	result, err := service.BuildDependencyProfile(DependencyProfileBuildRequest{
+		Name:        "skill-office",
+		Version:     "2026.05.31",
+		Languages:   []string{"python3", "nodejs"},
+		Packages:    []DependencyPackage{{Ecosystem: "python3", Name: "office-tools", Version: "managed"}, {Ecosystem: "nodejs", Name: "office-tools", Version: "managed"}},
+		BaseRuntime: "linux-secure",
+		Checksum:    "sha256:skill-office",
+		SizeBytes:   1024,
+		Description: "Managed document automation profile.",
+	})
+	if err != nil {
+		t.Fatalf("expected reserved dependency profile promotion to succeed, got %v", err)
+	}
+	if result.Profile == nil || result.Profile.Name != "skill-office" || !result.Profile.Enabled || result.Profile.Status != "ready" {
+		t.Fatalf("expected promoted skill-office profile, got %+v", result)
+	}
+
+	decision, err := service.NormalizeCreate("session", 60, false, "", "skill-office", 0, "", 0)
+	if err != nil {
+		t.Fatalf("expected promoted profile to be selectable, got %v", err)
+	}
+	if decision.DependencyProfile != "skill-office" || decision.DependencyProfileVersion != "2026.05.31" {
+		t.Fatalf("expected promoted profile in decision, got %+v", decision)
+	}
+}
+
+func TestBuildDependencyProfileRejectsReadyProfileReplacement(t *testing.T) {
+	service := NewService(config.FromEnv())
+
+	_, err := service.BuildDependencyProfile(DependencyProfileBuildRequest{
+		Name:        "workflow-safe",
+		Version:     "2026.05.31",
+		Languages:   []string{"python3"},
+		BaseRuntime: "preview-process",
+		Checksum:    "sha256:workflow-safe",
+		SizeBytes:   1024,
+	})
+	if err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("expected ready profile replacement rejection, got %v", err)
+	}
+}
+
+func TestLoadDependencyProfilesReplacesReservedProfile(t *testing.T) {
+	service := NewService(config.FromEnv())
+
+	if err := service.LoadDependencyProfiles([]DependencyProfile{{
+		Name:        "skill-office",
+		Version:     "2026.05.31",
+		Status:      "ready",
+		Enabled:     true,
+		OwnerScope:  "global",
+		Languages:   []string{"python3", "nodejs"},
+		Packages:    []DependencyPackage{{Ecosystem: "python3", Name: "office-tools", Version: "managed"}, {Ecosystem: "nodejs", Name: "office-tools", Version: "managed"}},
+		BaseRuntime: "linux-secure",
+		Checksum:    "sha256:skill-office",
+		SizeBytes:   1024,
+		Description: "Managed document automation profile.",
+	}}); err != nil {
+		t.Fatalf("load cached profile: %v", err)
+	}
+
+	decision, err := service.NormalizeCreate("session", 60, false, "", "skill-office", 0, "", 0)
+	if err != nil {
+		t.Fatalf("expected cached profile to replace reserved profile, got %v", err)
+	}
+	if decision.DependencyProfileVersion != "2026.05.31" {
+		t.Fatalf("expected cached profile version, got %+v", decision)
+	}
+}
+
 func TestBuildDependencyProfileReportsValidationFailure(t *testing.T) {
 	service := NewService(config.FromEnv())
 

@@ -496,11 +496,17 @@ func (s *Service) PrepareDependencyProfileBuild(req DependencyProfileBuildReques
 func (s *Service) RegisterDependencyProfile(profile DependencyProfile, result DependencyProfileBuildResult) (DependencyProfileBuildResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, existing := range s.dependencyProfiles {
+	for index, existing := range s.dependencyProfiles {
 		if existing.Name == profile.Name {
-			err := fmt.Errorf("dependency profile already exists: %s", profile.Name)
-			result.Error = err.Error()
-			return result, err
+			if existing.Enabled && existing.Status == "ready" {
+				err := fmt.Errorf("dependency profile already exists: %s", profile.Name)
+				result.Error = err.Error()
+				return result, err
+			}
+			s.dependencyProfiles[index] = profile
+			result.Status = profile.Status
+			result.Profile = &profile
+			return result, nil
 		}
 	}
 	s.dependencyProfiles = append(s.dependencyProfiles, profile)
@@ -547,9 +553,16 @@ func (s *Service) LoadDependencyProfiles(profiles []DependencyProfile) error {
 	}
 	for _, profile := range normalized {
 		if existing[profile.Name] {
+			for index := range s.dependencyProfiles {
+				if s.dependencyProfiles[index].Name == profile.Name {
+					s.dependencyProfiles[index] = profile
+					break
+				}
+			}
 			continue
 		}
 		s.dependencyProfiles = append(s.dependencyProfiles, profile)
+		existing[profile.Name] = true
 	}
 	return nil
 }

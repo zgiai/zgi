@@ -100,6 +100,72 @@ data.dependency_profile_version == "2026.05.31"
 ```
 
 ```step
+@id promote-reserved-skill-office-profile
+@name Promote reserved skill office dependency profile
+
+POST /v1/sandbox/dependencies/update
+Content-Type: application/json
+X-API-Key: {{admin_api_key}}
+X-Request-ID: req_kest_skill_office_release
+
+{
+  "name": "skill-office",
+  "version": "2026.05.31",
+  "languages": ["python3", "nodejs"],
+  "packages": [
+    {
+      "ecosystem": "python3",
+      "name": "office-tools",
+      "version": "managed"
+    },
+    {
+      "ecosystem": "nodejs",
+      "name": "office-tools",
+      "version": "managed"
+    }
+  ],
+  "base_runtime": "linux-secure",
+  "checksum": "sha256:skill-office",
+  "size_bytes": 1024,
+  "description": "Managed document automation profile."
+}
+
+[Asserts]
+status == 200
+code == 0
+data.accepted == true
+data.status == "ready"
+data.profile.name == "skill-office"
+data.profile.version == "2026.05.31"
+data.profile.status == "ready"
+data.profile.enabled == true
+```
+
+```step
+@id create-promoted-skill-office-sandbox
+@name Create sandbox with promoted skill office dependency profile
+
+POST /v1/sandboxes
+Content-Type: application/json
+X-API-Key: {{admin_api_key}}
+
+{
+  "runtime_profile": "session",
+  "ttl_seconds": 60,
+  "dependency_profile": "skill-office"
+}
+
+[Captures]
+skill_office_sandbox_id = data.id
+
+[Asserts]
+status == 200
+code == 0
+data.dependency_profile == "skill-office"
+data.dependency_profile_version == "2026.05.31"
+```
+
+```step
 @id reject-unpinned-profile-build
 @name Reject unpinned dependency profile build
 
@@ -138,6 +204,34 @@ code == 0
 data.events.0.type == "dependency_profile.build.failed"
 data.events.0.metadata.status == "failed"
 data.events.0.metadata.error == "dependency profile version must be pinned"
+```
+
+```step
+@id observer-skill-office-release-event
+@name Observer records reserved profile release
+
+GET /v1/observer/events?type=dependency_profile.build&request_id=req_kest_skill_office_release&limit=1
+X-API-Key: {{admin_api_key}}
+
+[Asserts]
+status == 200
+code == 0
+data.events.0.type == "dependency_profile.build"
+data.events.0.metadata.dependency_profile == "skill-office"
+data.events.0.metadata.dependency_profile_version == "2026.05.31"
+data.events.0.metadata.status == "ready"
+```
+
+```step
+@id delete-skill-office-sandbox
+@name Delete promoted skill office sandbox
+
+DELETE /v1/sandboxes/{{skill_office_sandbox_id}}
+X-API-Key: {{admin_api_key}}
+
+[Asserts]
+status == 200
+code == 0
 ```
 
 ```step
