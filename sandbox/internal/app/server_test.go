@@ -264,6 +264,32 @@ func TestSandboxCreateRejectsInvalidOwnershipField(t *testing.T) {
 	}
 }
 
+func TestTemplateEndpointRendersAndRejectsUnsafeHelpers(t *testing.T) {
+	server, err := NewServer(testConfig(t))
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/exec/template", strings.NewReader(`{"template":"Hello {{ upper .name }}","variables":{"name":"zgi"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected template render to return 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"content":"Hello ZGI"`) {
+		t.Fatalf("expected rendered content, got %s", rr.Body.String())
+	}
+
+	rejectReq := httptest.NewRequest(http.MethodPost, "/v1/exec/template", strings.NewReader(`{"template":"{{ env \"HOME\" }}","variables":{}}`))
+	rejectReq.Header.Set("Content-Type", "application/json")
+	rejectRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rejectRes, rejectReq)
+	if rejectRes.Code != http.StatusBadRequest {
+		t.Fatalf("expected unsafe helper to return 400, got %d body=%s", rejectRes.Code, rejectRes.Body.String())
+	}
+}
+
 func TestFileManifestEndpointEnforcesArtifactLimits(t *testing.T) {
 	server, err := NewServer(testConfig(t))
 	if err != nil {

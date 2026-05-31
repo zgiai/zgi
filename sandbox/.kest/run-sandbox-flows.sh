@@ -143,6 +143,19 @@ invalid_skill_manifest_archive_base64="$(python3 -c 'import json,sys; print(json
 strip_root_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["strip_root_archive_base64"])' "${ARCHIVE_VARS}")"
 zip_slip_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["zip_slip_archive_base64"])' "${ARCHIVE_VARS}")"
 symlink_archive_base64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["symlink_archive_base64"])' "${ARCHIVE_VARS}")"
+template_render="Hello {{ upper .name }}"
+template_missing="Hello {{ .missing }}"
+template_unsafe_helper="{{ env .name }}"
+template_builtin_helper="{{ len .name }}"
+template_value="{{ .value }}"
+template_output_value="$(python3 - <<'PY'
+print("x" * 2048)
+PY
+)"
+oversized_template_value="$(python3 - <<'PY'
+print("x" * 17408)
+PY
+)"
 
 cd "${SANDBOX_DIR}"
 
@@ -152,6 +165,17 @@ cd "${SANDBOX_DIR}"
 
 "${KEST_BIN}" run .kest/sandbox-short-code-contract.flow.md \
   --var base_url="${BASE_URL}" \
+  --fail-fast
+
+"${KEST_BIN}" run .kest/sandbox-template-runtime.flow.md \
+  --var base_url="${BASE_URL}" \
+  --var template_render="${template_render}" \
+  --var template_missing="${template_missing}" \
+  --var template_unsafe_helper="${template_unsafe_helper}" \
+  --var template_builtin_helper="${template_builtin_helper}" \
+  --var template_value="${template_value}" \
+  --var template_output_value="${template_output_value}" \
+  --var oversized_template_value="${oversized_template_value}" \
   --fail-fast
 
 "${KEST_BIN}" run .kest/sandbox-execution-timeouts.flow.md \

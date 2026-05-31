@@ -34,11 +34,24 @@ type CommandLimits struct {
 	MaxStdinBytes    int           `json:"max_stdin_bytes"`
 }
 
+type TemplateLimits struct {
+	Profile                string        `json:"profile"`
+	Engine                 string        `json:"engine"`
+	Timeout                time.Duration `json:"-"`
+	TimeoutMS              int64         `json:"timeout_ms"`
+	OutputLimitBytes       int           `json:"output_limit_bytes"`
+	MaxTemplateBytes       int           `json:"max_template_bytes"`
+	MaxVariableCount       int           `json:"max_variable_count"`
+	MaxVariableDepth       int           `json:"max_variable_depth"`
+	MaxVariableStringBytes int           `json:"max_variable_string_bytes"`
+}
+
 type Service struct {
 	config             config.Config
 	dependencyProfiles []DependencyProfile
 	networkProfiles    []map[string]any
 	commandProfiles    map[string]CommandLimits
+	templateProfiles   map[string]TemplateLimits
 }
 
 type LimitError struct {
@@ -126,6 +139,19 @@ func NewService(cfg config.Config) *Service {
 				MaxStdinBytes:    1024 * 1024,
 			},
 		},
+		templateProfiles: map[string]TemplateLimits{
+			"template-short": {
+				Profile:                "template-short",
+				Engine:                 "go-text",
+				Timeout:                2 * time.Second,
+				TimeoutMS:              2000,
+				OutputLimitBytes:       64 * 1024,
+				MaxTemplateBytes:       64 * 1024,
+				MaxVariableCount:       128,
+				MaxVariableDepth:       8,
+				MaxVariableStringBytes: 16 * 1024,
+			},
+		},
 	}
 }
 
@@ -153,10 +179,49 @@ func (s *Service) Snapshot() map[string]any {
 		},
 		"network_profiles":    s.networkProfiles,
 		"command_profiles":    s.commandProfileSnapshot(),
+		"template_profiles":   s.templateProfileSnapshot(),
 		"dependency_policy":   map[string]any{"mode": "managed-profiles", "supports_user_update": false},
 		"dependency_profiles": s.dependencyProfiles,
 		"limits":              s.EffectiveLimits(),
 	}
+}
+
+func (s *Service) NormalizeTemplateLimits(profile string, engine string, timeoutMS int, outputLimitKB int) (TemplateLimits, error) {
+	if timeoutMS < 0 {
+		return TemplateLimits{}, errors.New("template timeout_ms must be non-negative")
+	}
+	if outputLimitKB < 0 {
+		return TemplateLimits{}, errors.New("template output_limit_kb must be non-negative")
+	}
+	name := strings.TrimSpace(profile)
+	if name == "" {
+		name = "template-short"
+	}
+	limits, ok := s.templateProfiles[name]
+	if !ok {
+		return TemplateLimits{}, fmt.Errorf("unsupported template profile: %s", name)
+	}
+	normalizedEngine := strings.TrimSpace(engine)
+	if normalizedEngine == "" {
+		normalizedEngine = limits.Engine
+	}
+	if normalizedEngine != limits.Engine {
+		return TemplateLimits{}, fmt.Errorf("unsupported template engine: %s", normalizedEngine)
+	}
+	if timeoutMS > 0 {
+		requested := time.Duration(timeoutMS) * time.Millisecond
+		if requested < limits.Timeout {
+			limits.Timeout = requested
+			limits.TimeoutMS = int64(timeoutMS)
+		}
+	}
+	if outputLimitKB > 0 {
+		requested := outputLimitKB * 1024
+		if requested < limits.OutputLimitBytes {
+			limits.OutputLimitBytes = requested
+		}
+	}
+	return limits, nil
 }
 
 func (s *Service) DependencyCatalog(language string) map[string]any {
@@ -372,6 +437,14 @@ func (s *Service) commandProfileSnapshot() []map[string]any {
 			"max_stdin_bytes":    profile.MaxStdinBytes,
 			"network":            "inherits sandbox policy",
 		})
+	}
+	return items
+}
+
+func (s *Service) templateProfileSnapshot() []TemplateLimits {
+	items := make([]TemplateLimits, 0, len(s.templateProfiles))
+	if profile, ok := s.templateProfiles["template-short"]; ok {
+		items = append(items, profile)
 	}
 	return items
 }

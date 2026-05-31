@@ -87,11 +87,6 @@ func (s *Store) prepare(ctx context.Context) error {
 			worker_id TEXT NOT NULL,
 			worker_addr TEXT NOT NULL
 		);`,
-		`ALTER TABLE sandboxes ADD COLUMN IF NOT EXISTS organization_id TEXT NOT NULL DEFAULT '';`,
-		`ALTER TABLE sandboxes ADD COLUMN IF NOT EXISTS workspace_id TEXT NOT NULL DEFAULT '';`,
-		`ALTER TABLE sandboxes ADD COLUMN IF NOT EXISTS app_id TEXT NOT NULL DEFAULT '';`,
-		`ALTER TABLE sandboxes ADD COLUMN IF NOT EXISTS workflow_run_id TEXT NOT NULL DEFAULT '';`,
-		`ALTER TABLE sandboxes ADD COLUMN IF NOT EXISTS user_id TEXT NOT NULL DEFAULT '';`,
 		`CREATE INDEX IF NOT EXISTS idx_sandboxes_status_expires ON sandboxes(status, expires_at);`,
 		`CREATE INDEX IF NOT EXISTS idx_sandboxes_ownership ON sandboxes(organization_id, workspace_id, workflow_run_id);`,
 		`CREATE TABLE IF NOT EXISTS sandbox_endpoints (

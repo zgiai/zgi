@@ -17,11 +17,13 @@ Already available:
 - Sandbox lifecycle APIs
 - Code execution API
 - Command execution API
+- Bounded template rendering API
 - File upload, download, info, tree, and delete APIs
 - Archive upload API for zip packages
 - Skill script package execution through `zgi-api`
 - Artifact collection for script-generated files
 - Command profiles: `code-short`, `skill-python`, `skill-node`
+- Template profile: `template-short`
 - Dependency profile catalog
 - PostgreSQL-backed sandbox metadata, endpoint metadata, and observer events
 - API key support
@@ -116,15 +118,15 @@ forcing template use cases through general command execution.
 
 ### B1. API
 
-- Add `POST /v1/exec/template`.
-- Request fields:
+- Added `POST /v1/exec/template`.
+- Added request fields:
   - `engine`
   - `template`
   - `variables`
   - `profile`
   - `timeout_ms`
   - `output_limit_kb`
-- Response fields:
+- Added response fields:
   - `content`
   - `duration_ms`
   - `truncated`
@@ -132,12 +134,12 @@ forcing template use cases through general command execution.
 
 ### B2. Policy
 
-- Default profile: `template-short`.
-- Disable filesystem access.
-- Disable network access.
-- Restrict helper functions to a small allowlist.
-- Limit variable count, nesting depth, string length, and rendered output size.
-- Reject template engines not registered in policy.
+- Added default profile: `template-short`.
+- Filesystem access is not exposed to template rendering.
+- Network access is not exposed to template rendering.
+- Added a small helper allowlist.
+- Added variable count, nesting depth, string length, and rendered output size limits.
+- Added rejection for template engines not registered in policy.
 
 ### B3. Tests
 

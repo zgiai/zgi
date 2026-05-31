@@ -1,9 +1,9 @@
 # Kest sandbox flows
 
 These flows are black-box checks for the sandbox HTTP API. They cover lifecycle,
-file I/O, short-code structured results, command execution, archive upload,
-skill-script style execution, artifact manifests, timeout behavior, and security
-rejection paths.
+file I/O, short-code structured results, bounded template rendering, command
+execution, archive upload, skill-script style execution, artifact manifests,
+timeout behavior, and security rejection paths.
 
 Run the full local suite from the sandbox directory:
 

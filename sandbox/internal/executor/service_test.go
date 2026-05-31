@@ -191,6 +191,96 @@ func TestExecutionFailureEventsAvoidSensitivePayloads(t *testing.T) {
 	}
 }
 
+func TestRunTemplateRendersWithBoundedHelpers(t *testing.T) {
+	recorder := observer.NewRecorder(100)
+	policyService := policy.NewService(config.FromEnv())
+	manager, err := lifecycle.NewManager(recorder, policyService)
+	if err != nil {
+		t.Fatalf("expected lifecycle manager, got %v", err)
+	}
+	service := NewService(manager, runner.NewService(2, 3*time.Second, 4096), recorder, policyService)
+
+	result, err := service.RunTemplate(context.Background(), TemplateRequest{
+		Template: "Hello {{ upper .name }}",
+		Variables: map[string]any{
+			"name": "zgi",
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected template render, got %v", err)
+	}
+	if result.Content != "Hello ZGI" || result.Truncated {
+		t.Fatalf("unexpected template result: %+v", result)
+	}
+
+	events := recorder.Query(observer.Query{Type: "exec.template", Limit: 1})
+	if len(events) != 1 || events[0].Metadata["status"] != "success" {
+		t.Fatalf("expected template success event, got %#v", events)
+	}
+}
+
+func TestRunTemplateEnforcesOutputAndVariableLimits(t *testing.T) {
+	recorder := observer.NewRecorder(100)
+	policyService := policy.NewService(config.FromEnv())
+	manager, err := lifecycle.NewManager(recorder, policyService)
+	if err != nil {
+		t.Fatalf("expected lifecycle manager, got %v", err)
+	}
+	service := NewService(manager, runner.NewService(2, 3*time.Second, 4096), recorder, policyService)
+
+	result, err := service.RunTemplate(context.Background(), TemplateRequest{
+		Template:      "{{ .value }}",
+		Variables:     map[string]any{"value": strings.Repeat("x", 32)},
+		OutputLimitKB: 1,
+	})
+	if err != nil {
+		t.Fatalf("expected output-limited render, got %v", err)
+	}
+	if result.Truncated {
+		t.Fatalf("did not expect truncation below limit, got %+v", result)
+	}
+
+	result, err = service.RunTemplate(context.Background(), TemplateRequest{
+		Template:      "{{ .value }}",
+		Variables:     map[string]any{"value": strings.Repeat("x", 2048)},
+		OutputLimitKB: 1,
+	})
+	if err != nil {
+		t.Fatalf("expected truncated render, got %v", err)
+	}
+	if !result.Truncated || len(result.Content) != 1024 {
+		t.Fatalf("expected truncated 1 KiB result, got len=%d result=%+v", len(result.Content), result)
+	}
+
+	_, err = service.RunTemplate(context.Background(), TemplateRequest{
+		Template:  "{{ .value }}",
+		Variables: map[string]any{"value": strings.Repeat("x", 17*1024)},
+	})
+	if err == nil || !strings.Contains(err.Error(), "template variable string exceeds") {
+		t.Fatalf("expected variable string limit, got %v", err)
+	}
+}
+
+func TestRunTemplateRejectsMissingVariablesAndUnknownFunctions(t *testing.T) {
+	recorder := observer.NewRecorder(100)
+	policyService := policy.NewService(config.FromEnv())
+	manager, err := lifecycle.NewManager(recorder, policyService)
+	if err != nil {
+		t.Fatalf("expected lifecycle manager, got %v", err)
+	}
+	service := NewService(manager, runner.NewService(2, 3*time.Second, 4096), recorder, policyService)
+
+	if _, err := service.RunTemplate(context.Background(), TemplateRequest{Template: "{{ .missing }}"}); err == nil {
+		t.Fatal("expected missing variable to be rejected")
+	}
+	if _, err := service.RunTemplate(context.Background(), TemplateRequest{Template: "{{ env \"HOME\" }}"}); err == nil {
+		t.Fatal("expected unknown function to be rejected")
+	}
+	if _, err := service.RunTemplate(context.Background(), TemplateRequest{Template: "{{ printf \"%s\" .value }}", Variables: map[string]any{"value": "x"}}); err == nil {
+		t.Fatal("expected built-in helper outside allowlist to be rejected")
+	}
+}
+
 func TestFileEventsIncludeOwnershipMetadata(t *testing.T) {
 	recorder := observer.NewRecorder(100)
 	policyService := policy.NewService(config.FromEnv())

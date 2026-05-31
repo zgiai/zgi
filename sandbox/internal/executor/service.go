@@ -17,6 +17,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"text/template"
+	"text/template/parse"
 	"time"
 
 	"github.com/zgiai/zgi-sandbox/internal/lifecycle"
@@ -60,6 +62,22 @@ type CommandRequest struct {
 	StdoutLimitKB  int               `json:"stdout_limit_kb"`
 	StderrLimitKB  int               `json:"stderr_limit_kb"`
 	WorkingSubpath string            `json:"working_subpath"`
+}
+
+type TemplateRequest struct {
+	Engine        string         `json:"engine"`
+	Template      string         `json:"template"`
+	Variables     map[string]any `json:"variables"`
+	Profile       string         `json:"profile"`
+	TimeoutMS     int            `json:"timeout_ms"`
+	OutputLimitKB int            `json:"output_limit_kb"`
+}
+
+type TemplateResult struct {
+	Content    string   `json:"content"`
+	DurationMS int64    `json:"duration_ms"`
+	Truncated  bool     `json:"truncated"`
+	Warnings   []string `json:"warnings,omitempty"`
 }
 
 type FileWriteRequest struct {
@@ -216,6 +234,95 @@ func (s *Service) runCodeWithScope(ctx context.Context, req CodeRequest, runReq 
 	return result, box, err
 }
 
+func (s *Service) RunTemplate(ctx context.Context, req TemplateRequest) (TemplateResult, error) {
+	limits, err := s.policy.NormalizeTemplateLimits(req.Profile, req.Engine, req.TimeoutMS, req.OutputLimitKB)
+	if err != nil {
+		s.recordTemplateFailure(ctx, req, err)
+		return TemplateResult{}, err
+	}
+	if len([]byte(req.Template)) > limits.MaxTemplateBytes {
+		err := fmt.Errorf("template exceeds max size of %d bytes", limits.MaxTemplateBytes)
+		s.recordTemplateFailure(ctx, req, err)
+		return TemplateResult{}, err
+	}
+	if err := validateTemplateVariables(req.Variables, limits); err != nil {
+		s.recordTemplateFailure(ctx, req, err)
+		return TemplateResult{}, err
+	}
+
+	parsed, err := template.New("zgi-template").
+		Option("missingkey=error").
+		Funcs(templateFuncMap()).
+		Parse(req.Template)
+	if err != nil {
+		s.recordTemplateFailure(ctx, req, err)
+		return TemplateResult{}, err
+	}
+	if err := validateTemplateHelpers(parsed.Tree.Root); err != nil {
+		s.recordTemplateFailure(ctx, req, err)
+		return TemplateResult{}, err
+	}
+
+	started := time.Now()
+	renderCtx, cancel := context.WithTimeout(ctx, limits.Timeout)
+	defer cancel()
+
+	resultCh := make(chan struct {
+		content   string
+		truncated bool
+		err       error
+	}, 1)
+	go func() {
+		var output strings.Builder
+		writer := &limitedTemplateWriter{
+			ctx:       renderCtx,
+			writer:    &output,
+			remaining: limits.OutputLimitBytes,
+		}
+		err := parsed.Execute(writer, req.Variables)
+		if errors.Is(err, errTemplateOutputTruncated) {
+			err = nil
+		}
+		resultCh <- struct {
+			content   string
+			truncated bool
+			err       error
+		}{
+			content:   output.String(),
+			truncated: writer.truncated,
+			err:       err,
+		}
+	}()
+
+	select {
+	case rendered := <-resultCh:
+		if rendered.err != nil {
+			s.recordTemplateFailure(ctx, req, rendered.err)
+			return TemplateResult{}, rendered.err
+		}
+		result := TemplateResult{
+			Content:    rendered.content,
+			DurationMS: time.Since(started).Milliseconds(),
+			Truncated:  rendered.truncated,
+		}
+		if rendered.truncated {
+			result.Warnings = append(result.Warnings, "output truncated")
+		}
+		s.observer.Record("exec.template", "", "template rendered", observer.MetadataWithContext(ctx, map[string]any{
+			"engine":      limits.Engine,
+			"profile":     limits.Profile,
+			"duration_ms": result.DurationMS,
+			"truncated":   result.Truncated,
+			"status":      "success",
+		}))
+		return result, nil
+	case <-renderCtx.Done():
+		err := fmt.Errorf("template execution timed out after %d ms", limits.Timeout.Milliseconds())
+		s.recordTemplateFailure(ctx, req, err)
+		return TemplateResult{}, err
+	}
+}
+
 func (s *Service) RunCommand(ctx context.Context, req CommandRequest) (runner.CommandResult, error) {
 	baseMetadata := map[string]any{
 		"command": req.Command,
@@ -311,6 +418,8 @@ func classifyExecutionError(err error) string {
 		return "execution_canceled"
 	case errors.As(err, &queueErr), errors.As(err, &limitErr):
 		return "limit_exceeded"
+	case strings.Contains(err.Error(), "timed out"):
+		return "limit_exceeded"
 	case strings.Contains(err.Error(), "network access"):
 		return "network_policy_rejected"
 	case strings.Contains(err.Error(), "not found"):
@@ -320,6 +429,177 @@ func classifyExecutionError(err error) string {
 	default:
 		return "execution_error"
 	}
+}
+
+func (s *Service) recordTemplateFailure(ctx context.Context, req TemplateRequest, err error) {
+	metadata := map[string]any{
+		"engine":     defaultString(req.Engine, "go-text"),
+		"profile":    defaultString(req.Profile, "template-short"),
+		"status":     "failure",
+		"error_type": classifyExecutionError(err),
+	}
+	s.observer.Record("exec.template.failed", "", "template render failed", observer.MetadataWithContext(ctx, metadata))
+}
+
+var errTemplateOutputTruncated = errors.New("template output truncated")
+
+type limitedTemplateWriter struct {
+	ctx       context.Context
+	writer    *strings.Builder
+	remaining int
+	truncated bool
+}
+
+func (w *limitedTemplateWriter) Write(data []byte) (int, error) {
+	if err := w.ctx.Err(); err != nil {
+		return 0, err
+	}
+	if w.remaining <= 0 {
+		w.truncated = true
+		return 0, errTemplateOutputTruncated
+	}
+	if len(data) > w.remaining {
+		n, _ := w.writer.Write(data[:w.remaining])
+		w.remaining = 0
+		w.truncated = true
+		return n, errTemplateOutputTruncated
+	}
+	n, err := w.writer.Write(data)
+	w.remaining -= n
+	return n, err
+}
+
+func templateFuncMap() template.FuncMap {
+	return template.FuncMap{
+		"upper": strings.ToUpper,
+		"lower": strings.ToLower,
+		"title": func(value string) string {
+			words := strings.Fields(value)
+			for i, word := range words {
+				if word == "" {
+					continue
+				}
+				words[i] = strings.ToUpper(word[:1]) + strings.ToLower(word[1:])
+			}
+			return strings.Join(words, " ")
+		},
+		"default": func(fallback string, value any) any {
+			switch typed := value.(type) {
+			case nil:
+				return fallback
+			case string:
+				if typed == "" {
+					return fallback
+				}
+			}
+			return value
+		},
+	}
+}
+
+func validateTemplateHelpers(node parse.Node) error {
+	switch typed := node.(type) {
+	case nil:
+		return nil
+	case *parse.ListNode:
+		for _, item := range typed.Nodes {
+			if err := validateTemplateHelpers(item); err != nil {
+				return err
+			}
+		}
+	case *parse.ActionNode:
+		return validateTemplateHelpers(typed.Pipe)
+	case *parse.IfNode:
+		if err := validateTemplateHelpers(typed.Pipe); err != nil {
+			return err
+		}
+		if err := validateTemplateHelpers(typed.List); err != nil {
+			return err
+		}
+		return validateTemplateHelpers(typed.ElseList)
+	case *parse.RangeNode:
+		if err := validateTemplateHelpers(typed.Pipe); err != nil {
+			return err
+		}
+		if err := validateTemplateHelpers(typed.List); err != nil {
+			return err
+		}
+		return validateTemplateHelpers(typed.ElseList)
+	case *parse.WithNode:
+		if err := validateTemplateHelpers(typed.Pipe); err != nil {
+			return err
+		}
+		if err := validateTemplateHelpers(typed.List); err != nil {
+			return err
+		}
+		return validateTemplateHelpers(typed.ElseList)
+	case *parse.PipeNode:
+		for _, command := range typed.Cmds {
+			if err := validateTemplateHelpers(command); err != nil {
+				return err
+			}
+		}
+	case *parse.CommandNode:
+		for _, arg := range typed.Args {
+			if err := validateTemplateHelpers(arg); err != nil {
+				return err
+			}
+		}
+	case *parse.IdentifierNode:
+		if !templateHelperAllowed(typed.Ident) {
+			return fmt.Errorf("template helper is not allowed: %s", typed.Ident)
+		}
+	case *parse.TemplateNode:
+		return errors.New("nested template execution is not allowed")
+	}
+	return nil
+}
+
+func templateHelperAllowed(name string) bool {
+	switch name {
+	case "upper", "lower", "title", "default":
+		return true
+	default:
+		return false
+	}
+}
+
+func validateTemplateVariables(value any, limits policy.TemplateLimits) error {
+	count := 0
+	return validateTemplateValue(value, 0, limits, &count)
+}
+
+func validateTemplateValue(value any, depth int, limits policy.TemplateLimits, count *int) error {
+	if depth > limits.MaxVariableDepth {
+		return fmt.Errorf("template variables exceed max depth of %d", limits.MaxVariableDepth)
+	}
+	switch typed := value.(type) {
+	case map[string]any:
+		*count += len(typed)
+		if *count > limits.MaxVariableCount {
+			return fmt.Errorf("template variables exceed max count of %d", limits.MaxVariableCount)
+		}
+		for _, item := range typed {
+			if err := validateTemplateValue(item, depth+1, limits, count); err != nil {
+				return err
+			}
+		}
+	case []any:
+		*count += len(typed)
+		if *count > limits.MaxVariableCount {
+			return fmt.Errorf("template variables exceed max count of %d", limits.MaxVariableCount)
+		}
+		for _, item := range typed {
+			if err := validateTemplateValue(item, depth+1, limits, count); err != nil {
+				return err
+			}
+		}
+	case string:
+		if len([]byte(typed)) > limits.MaxVariableStringBytes {
+			return fmt.Errorf("template variable string exceeds max size of %d bytes", limits.MaxVariableStringBytes)
+		}
+	}
+	return nil
 }
 
 func addOwnershipMetadata(metadata map[string]any, box *sandbox.Sandbox) {

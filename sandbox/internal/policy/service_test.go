@@ -99,6 +99,42 @@ func TestNormalizeCreateReturnsEffectiveLimitsAndStructuredLimitError(t *testing
 	}
 }
 
+func TestNormalizeTemplateLimits(t *testing.T) {
+	service := NewService(config.FromEnv())
+
+	limits, err := service.NormalizeTemplateLimits("", "", 500, 1)
+	if err != nil {
+		t.Fatalf("expected default template limits, got %v", err)
+	}
+	if limits.Profile != "template-short" || limits.Engine != "go-text" {
+		t.Fatalf("unexpected template profile: %+v", limits)
+	}
+	if limits.TimeoutMS != 500 || limits.OutputLimitBytes != 1024 {
+		t.Fatalf("expected request to tighten timeout and output limits, got %+v", limits)
+	}
+
+	limits, err = service.NormalizeTemplateLimits("template-short", "go-text", 60000, 1024)
+	if err != nil {
+		t.Fatalf("expected raised template limits to be capped, got %v", err)
+	}
+	if limits.TimeoutMS != 2000 || limits.OutputLimitBytes != 64*1024 {
+		t.Fatalf("expected template limits to keep policy caps, got %+v", limits)
+	}
+
+	if _, err := service.NormalizeTemplateLimits("unknown", "", 0, 0); err == nil {
+		t.Fatal("expected unknown template profile to be rejected")
+	}
+	if _, err := service.NormalizeTemplateLimits("template-short", "unknown", 0, 0); err == nil {
+		t.Fatal("expected unknown template engine to be rejected")
+	}
+	if _, err := service.NormalizeTemplateLimits("template-short", "go-text", -1, 0); err == nil {
+		t.Fatal("expected negative template timeout to be rejected")
+	}
+	if _, err := service.NormalizeTemplateLimits("template-short", "go-text", 0, -1); err == nil {
+		t.Fatal("expected negative template output limit to be rejected")
+	}
+}
+
 func TestNormalizeCreateRejectsOrganizationActiveLimit(t *testing.T) {
 	cfg := config.FromEnv()
 	cfg.MaxActive = 10
