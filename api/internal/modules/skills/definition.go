@@ -12,6 +12,8 @@ const (
 	SkillFileGenerator     = "file-generator"
 	SkillInternalKnowledge = "internal-knowledge"
 	SkillAgentKnowledge    = "agent-knowledge"
+	SkillInternalDatabase  = "internal-database"
+	SkillAgentDatabase     = "agent-database"
 	SkillAgentMemory       = "agent-memory"
 	SkillUserMemory        = "user-memory"
 
@@ -31,11 +33,12 @@ const (
 	SkillCallerAgent  = "agent"
 
 	SkillRequiredConfigAgentKnowledge = "agent_knowledge"
+	SkillRequiredConfigAgentDatabase  = "agent_database"
 )
 
 func IsHiddenSystemSkill(skillID string) bool {
 	switch normalizeSkillID(skillID) {
-	case SkillAgentKnowledge, SkillAgentMemory, SkillUserMemory:
+	case SkillAgentKnowledge, SkillAgentDatabase, SkillAgentMemory, SkillUserMemory:
 		return true
 	default:
 		return false

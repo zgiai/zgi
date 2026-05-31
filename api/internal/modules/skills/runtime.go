@@ -829,6 +829,20 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 			),
 			Example: map[string]interface{}{"query": "Summarize the configured product FAQ."},
 		},
+		SkillInternalDatabase + "/list_accessible_databases": databaseListContract(SkillInternalDatabase),
+		SkillInternalDatabase + "/list_database_tables":      databaseTablesContract(SkillInternalDatabase),
+		SkillInternalDatabase + "/describe_database_table":   databaseDescribeTableContract(SkillInternalDatabase),
+		SkillInternalDatabase + "/query_table_records":       databaseQueryRecordsContract(SkillInternalDatabase),
+		SkillInternalDatabase + "/insert_table_records":      databaseMutateRecordsContract(SkillInternalDatabase, "insert_table_records", "Insert records into a database table."),
+		SkillInternalDatabase + "/update_table_records":      databaseMutateRecordsContract(SkillInternalDatabase, "update_table_records", "Update records in a database table. Each record must include id."),
+		SkillInternalDatabase + "/delete_table_records":      databaseMutateRecordsContract(SkillInternalDatabase, "delete_table_records", "Delete records from a database table. Each record must include id."),
+		SkillAgentDatabase + "/list_accessible_databases":    databaseListContract(SkillAgentDatabase),
+		SkillAgentDatabase + "/list_database_tables":         databaseTablesContract(SkillAgentDatabase),
+		SkillAgentDatabase + "/describe_database_table":      databaseDescribeTableContract(SkillAgentDatabase),
+		SkillAgentDatabase + "/query_table_records":          databaseQueryRecordsContract(SkillAgentDatabase),
+		SkillAgentDatabase + "/insert_table_records":         databaseMutateRecordsContract(SkillAgentDatabase, "insert_table_records", "Insert records into an Agent-bound database table."),
+		SkillAgentDatabase + "/update_table_records":         databaseMutateRecordsContract(SkillAgentDatabase, "update_table_records", "Update records in an Agent-bound database table. Each record must include id."),
+		SkillAgentDatabase + "/delete_table_records":         databaseMutateRecordsContract(SkillAgentDatabase, "delete_table_records", "Delete records from an Agent-bound database table. Each record must include id."),
 		SkillTime + "/current_time": {
 			SkillID:     SkillTime,
 			ToolName:    "current_time",
@@ -873,6 +887,99 @@ func ExpectedSkillToolArguments(skillID string, toolName string) map[string]inte
 		"description": contract.Description,
 		"schema":      contract.Schema,
 		"example":     contract.Example,
+	}
+}
+
+func databaseListContract(skillID string) SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     skillID,
+		ToolName:    "list_accessible_databases",
+		Description: "List databases accessible to the current user or bound to the current Agent.",
+		Schema: objectSchema(
+			map[string]interface{}{
+				"query": stringValueSchema("Optional search text for narrowing candidate databases."),
+				"limit": numberSchema("Maximum number of databases to list. Defaults to 20."),
+			},
+			nil,
+		),
+		Example: map[string]interface{}{"query": "customers", "limit": 10},
+	}
+}
+
+func databaseTablesContract(skillID string) SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     skillID,
+		ToolName:    "list_database_tables",
+		Description: "List tables in an accessible database.",
+		Schema: objectSchema(
+			map[string]interface{}{
+				"data_source_id": stringValueSchema("Database ID returned by list_accessible_databases."),
+				"query":          stringValueSchema("Optional search text for narrowing tables by name or description."),
+				"limit":          numberSchema("Maximum number of tables to list. Defaults to 50."),
+			},
+			[]string{"data_source_id"},
+		),
+		Example: map[string]interface{}{"data_source_id": "database-id", "query": "orders"},
+	}
+}
+
+func databaseDescribeTableContract(skillID string) SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     skillID,
+		ToolName:    "describe_database_table",
+		Description: "Describe a database table and its columns.",
+		Schema: objectSchema(
+			map[string]interface{}{
+				"data_source_id":        stringValueSchema("Database ID returned by list_accessible_databases."),
+				"table_id":              stringValueSchema("Table metadata ID returned by list_database_tables."),
+				"include_system_fields": booleanSchema("Whether to include system fields such as id and timestamps. Defaults to false."),
+			},
+			[]string{"data_source_id", "table_id"},
+		),
+		Example: map[string]interface{}{"data_source_id": "database-id", "table_id": "table-id"},
+	}
+}
+
+func databaseQueryRecordsContract(skillID string) SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     skillID,
+		ToolName:    "query_table_records",
+		Description: "Query table records with pagination and a safe order clause.",
+		Schema: objectSchema(
+			map[string]interface{}{
+				"data_source_id": stringValueSchema("Database ID returned by list_accessible_databases."),
+				"table_id":       stringValueSchema("Table metadata ID returned by list_database_tables."),
+				"limit":          numberSchema("Maximum number of records. Defaults to 20 and is capped by the backend."),
+				"offset":         numberSchema("Pagination offset. Defaults to 0."),
+				"order":          stringValueSchema("Optional safe order clause such as id DESC."),
+			},
+			[]string{"data_source_id", "table_id"},
+		),
+		Example: map[string]interface{}{"data_source_id": "database-id", "table_id": "table-id", "limit": 20},
+	}
+}
+
+func databaseMutateRecordsContract(skillID string, toolName string, description string) SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     skillID,
+		ToolName:    toolName,
+		Description: description,
+		Schema: objectSchema(
+			map[string]interface{}{
+				"data_source_id": stringValueSchema("Database ID returned by list_accessible_databases."),
+				"table_id":       stringValueSchema("Table metadata ID returned by list_database_tables."),
+				"records": map[string]interface{}{
+					"type":        "array",
+					"description": "Records to mutate. For update and delete, each record must include id.",
+					"items": map[string]interface{}{
+						"type":                 "object",
+						"additionalProperties": true,
+					},
+				},
+			},
+			[]string{"data_source_id", "table_id", "records"},
+		),
+		Example: map[string]interface{}{"data_source_id": "database-id", "table_id": "table-id", "records": []map[string]interface{}{{"id": "record-id"}}},
 	}
 }
 
@@ -1127,9 +1234,9 @@ func normalizeSkillCallers(id string, source string, callers []string) []string 
 		return out
 	}
 	switch normalizeSkillID(id) {
-	case SkillInternalKnowledge:
+	case SkillInternalKnowledge, SkillInternalDatabase:
 		return []string{SkillCallerAIChat}
-	case SkillAgentKnowledge:
+	case SkillAgentKnowledge, SkillAgentDatabase:
 		return []string{SkillCallerAgent}
 	default:
 		return []string{SkillCallerAIChat, SkillCallerAgent}
@@ -1152,6 +1259,9 @@ func normalizeSkillRequiredConfig(id string, required []string) []string {
 	}
 	if len(out) == 0 && normalizeSkillID(id) == SkillAgentKnowledge {
 		out = append(out, SkillRequiredConfigAgentKnowledge)
+	}
+	if len(out) == 0 && normalizeSkillID(id) == SkillAgentDatabase {
+		out = append(out, SkillRequiredConfigAgentDatabase)
 	}
 	sort.Strings(out)
 	return out

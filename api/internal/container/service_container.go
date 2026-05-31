@@ -65,6 +65,7 @@ import (
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/memory"
+	database_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/database"
 	knowledge_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/knowledge"
 	helper "github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -789,6 +790,7 @@ func (c *ServiceContainer) GetToolManager() *tools.ToolManager {
 		// Register builtin tool providers
 		c.toolManager.RegisterBuiltinProviders(getBuiltinToolProviders())
 		_ = c.toolManager.RegisterProvider(knowledge_tools.NewProvider(c.GetKnowledgeRetrievalService()))
+		_ = c.toolManager.RegisterProvider(database_tools.NewProvider(c.GetDataSourceService(), c.GetOrganizationService()))
 
 		logger.Info("ToolManager initialized with builtin providers")
 	}
