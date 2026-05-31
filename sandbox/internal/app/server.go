@@ -766,6 +766,7 @@ func (s *Server) handleObserverEvents(w http.ResponseWriter, r *http.Request) {
 		AppID:          r.URL.Query().Get("app_id"),
 		WorkflowRunID:  r.URL.Query().Get("workflow_run_id"),
 		UserID:         r.URL.Query().Get("user_id"),
+		RequestID:      r.URL.Query().Get("request_id"),
 		Limit:          limit + 1,
 		Before:         before,
 	})

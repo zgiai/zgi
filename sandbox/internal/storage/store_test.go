@@ -77,6 +77,7 @@ func TestPostgresStorePersistsSandboxAndEvents(t *testing.T) {
 			"app_id":          "app-1",
 			"workflow_run_id": "run-1",
 			"user_id":         "user-1",
+			"request_id":      "req-store-match",
 		},
 	}
 	if err := store.AppendEvent(event); err != nil {
@@ -95,6 +96,7 @@ func TestPostgresStorePersistsSandboxAndEvents(t *testing.T) {
 			"app_id":          "app-2",
 			"workflow_run_id": "run-2",
 			"user_id":         "user-2",
+			"request_id":      "req-store-miss",
 		},
 	}
 	if err := store.AppendEvent(otherEvent); err != nil {
@@ -143,6 +145,21 @@ func TestPostgresStorePersistsSandboxAndEvents(t *testing.T) {
 	}
 	if scopedEvents[0].Message != "created" {
 		t.Fatalf("expected scoped event, got %q", scopedEvents[0].Message)
+	}
+
+	requestEvents, err := store.QueryEvents(observer.Query{
+		SandboxID: box.ID,
+		RequestID: "req-store-match",
+		Limit:     10,
+	})
+	if err != nil {
+		t.Fatalf("query request events: %v", err)
+	}
+	if len(requestEvents) != 1 {
+		t.Fatalf("expected one request event, got %d", len(requestEvents))
+	}
+	if requestEvents[0].Message != "created" {
+		t.Fatalf("expected request event, got %q", requestEvents[0].Message)
 	}
 
 	olderEvents, err := store.QueryEvents(observer.Query{SandboxID: box.ID, Before: otherEvent.CreatedAt, Limit: 10})

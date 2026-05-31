@@ -281,6 +281,21 @@ data.events.0.metadata.workflow_run_id == "workflow_run_kest"
 ```
 
 ```step
+@id observer-events-request-filter
+@name Observer events request filter
+
+GET {{base_url}}/v1/observer/events?sandbox_id={{sandbox_id}}&request_id=req_kest_command&limit=5
+
+[Asserts]
+status == 200
+code == 0
+data.events.0.metadata.request_id == "req_kest_command"
+data.events.0.metadata.organization_id == "organization_kest"
+data.events.0.metadata.workspace_id == "workspace_kest"
+data.events.0.metadata.workflow_run_id == "workflow_run_kest"
+```
+
+```step
 @id observer-events-page-one
 @name Observer events first page
 

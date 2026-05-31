@@ -66,3 +66,17 @@ func TestMetricsAggregatesExecutionEvents(t *testing.T) {
 		t.Fatalf("expected cancellation reason count 1, got %d", metrics.ExecutionFailureCountByReason["execution_canceled"])
 	}
 }
+
+func TestRecorderFiltersByRequestID(t *testing.T) {
+	recorder := NewRecorder(20)
+	recorder.Record("exec.command", "sbx_request", "match", map[string]any{"request_id": "req_match"})
+	recorder.Record("exec.command", "sbx_request", "miss", map[string]any{"request_id": "req_miss"})
+
+	events := recorder.Query(Query{SandboxID: "sbx_request", RequestID: "req_match", Limit: 10})
+	if len(events) != 1 {
+		t.Fatalf("expected one request-filtered event, got %d", len(events))
+	}
+	if events[0].Message != "match" {
+		t.Fatalf("expected matching event, got %q", events[0].Message)
+	}
+}

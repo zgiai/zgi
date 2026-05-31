@@ -28,6 +28,7 @@ type Query struct {
 	AppID          string
 	WorkflowRunID  string
 	UserID         string
+	RequestID      string
 	Limit          int
 	Before         time.Time
 }
@@ -203,6 +204,9 @@ func (s *memoryStore) QueryEvents(query Query) ([]Event, error) {
 			continue
 		}
 		if query.UserID != "" && metadataString(event.Metadata, "user_id") != query.UserID {
+			continue
+		}
+		if query.RequestID != "" && metadataString(event.Metadata, "request_id") != query.RequestID {
 			continue
 		}
 		if !query.Before.IsZero() && !event.CreatedAt.Before(query.Before) {

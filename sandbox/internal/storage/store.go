@@ -368,6 +368,7 @@ func (s *Store) QueryEvents(query observer.Query) ([]observer.Event, error) {
 		  AND ($10 = '' OR metadata_json->>'app_id' = $11)
 		  AND ($12 = '' OR metadata_json->>'workflow_run_id' = $13)
 		  AND ($14 = '' OR metadata_json->>'user_id' = $15)
+		  AND ($16 = '' OR metadata_json->>'request_id' = $17)
 		ORDER BY created_at DESC
 	`
 	var before any
@@ -383,9 +384,10 @@ func (s *Store) QueryEvents(query observer.Query) ([]observer.Event, error) {
 		query.AppID, query.AppID,
 		query.WorkflowRunID, query.WorkflowRunID,
 		query.UserID, query.UserID,
+		query.RequestID, query.RequestID,
 	}
 	if query.Limit > 0 {
-		statement += ` LIMIT $16`
+		statement += ` LIMIT $18`
 		args = append(args, query.Limit)
 	}
 

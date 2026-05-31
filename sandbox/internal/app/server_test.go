@@ -761,6 +761,45 @@ func TestObserverEventsEndpointFiltersByOwnershipScope(t *testing.T) {
 	}
 }
 
+func TestObserverEventsEndpointFiltersByRequestID(t *testing.T) {
+	server, err := NewServer(testConfig(t))
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	server.observer.Record("exec.command", "sbx_request", "match", map[string]any{
+		"request_id": "req_filter_match",
+	})
+	server.observer.Record("exec.command", "sbx_request", "miss", map[string]any{
+		"request_id": "req_filter_miss",
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/observer/events?sandbox_id=sbx_request&request_id=req_filter_match&limit=10", nil)
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected request filter to return 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var payload struct {
+		Data struct {
+			Events []struct {
+				Message  string         `json:"message"`
+				Metadata map[string]any `json:"metadata"`
+			} `json:"events"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("expected observer payload, got %v", err)
+	}
+	if len(payload.Data.Events) != 1 {
+		t.Fatalf("expected one request-filtered event, got %d", len(payload.Data.Events))
+	}
+	if payload.Data.Events[0].Message != "match" || payload.Data.Events[0].Metadata["request_id"] != "req_filter_match" {
+		t.Fatalf("expected matching request event, got %+v", payload.Data.Events[0])
+	}
+}
+
 func TestObserverEventsEndpointRejectsNonGet(t *testing.T) {
 	server, err := NewServer(testConfig(t))
 	if err != nil {
