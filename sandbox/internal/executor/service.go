@@ -100,11 +100,12 @@ type TemplateResult struct {
 }
 
 type SkillRunRequest struct {
-	SandboxID      string          `json:"sandbox_id"`
-	OrganizationID string          `json:"organization_id,omitempty"`
-	Path           string          `json:"path"`
-	InputJSON      json.RawMessage `json:"input_json,omitempty"`
-	Stdin          string          `json:"stdin,omitempty"`
+	SandboxID      string            `json:"sandbox_id"`
+	OrganizationID string            `json:"organization_id,omitempty"`
+	Path           string            `json:"path"`
+	InputJSON      json.RawMessage   `json:"input_json,omitempty"`
+	Stdin          string            `json:"stdin,omitempty"`
+	Env            map[string]string `json:"env,omitempty"`
 }
 
 type SkillRunResult struct {
@@ -591,6 +592,11 @@ func (s *Service) RunSkill(ctx context.Context, req SkillRunRequest) (SkillRunRe
 		}
 		stdin = string(req.InputJSON)
 	}
+	env, err := normalizeCommandEnv(req.Env)
+	if err != nil {
+		s.recordExecutionFailure(ctx, "exec.skill.failed", req.SandboxID, "skill execution failed", baseMetadata, err)
+		return SkillRunResult{}, err
+	}
 
 	command, args := skillCommand(manifest)
 	profile := skillCommandProfile(manifest)
@@ -609,6 +615,7 @@ func (s *Service) RunSkill(ctx context.Context, req SkillRunRequest) (SkillRunRe
 		Command:           command,
 		Args:              args,
 		Stdin:             stdin,
+		Env:               env,
 		DependencyProfile: box.DependencyProfile,
 		Timeout:           time.Duration(manifest.TimeoutMS) * time.Millisecond,
 		StdoutLimit:       64 * 1024,

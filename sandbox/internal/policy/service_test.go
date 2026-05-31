@@ -265,6 +265,7 @@ func TestNormalizeCreateReturnsEffectiveLimitsAndStructuredLimitError(t *testing
 	cfg.MaxArtifactManifestFiles = 7
 	cfg.MaxArtifactManifestBytes = 8192
 	cfg.MaxArtifactBytesPerOrganization = 16384
+	cfg.MaxNetworkRequestsPerMinutePerOrganization = 5
 	cfg.MaxDependencyProfilesPerOrganization = 2
 	cfg.RuntimeBackend = "linux-secure"
 	cfg.SecureRuntimeCPUSeconds = 3
@@ -288,6 +289,9 @@ func TestNormalizeCreateReturnsEffectiveLimitsAndStructuredLimitError(t *testing
 	}
 	if decision.EffectiveLimits.MaxExecutionsPerMinutePerOrganization != cfg.MaxExecutionsPerMinutePerOrganization {
 		t.Fatalf("expected organization execution rate limit in decision, got %+v", decision.EffectiveLimits)
+	}
+	if decision.EffectiveLimits.MaxNetworkRequestsPerMinutePerOrganization != cfg.MaxNetworkRequestsPerMinutePerOrganization {
+		t.Fatalf("expected organization network request rate limit in decision, got %+v", decision.EffectiveLimits)
 	}
 	if decision.EffectiveLimits.MaxConcurrentExecutionsPerOrganization != cfg.MaxConcurrentExecutionsPerOrganization {
 		t.Fatalf("expected organization concurrent execution limit in decision, got %+v", decision.EffectiveLimits)

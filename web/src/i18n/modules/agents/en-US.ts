@@ -1105,6 +1105,7 @@ const messages = {
         caseCount: '{count} test questions assigned',
         nameLabel: 'Scenario Name',
         namePlaceholder: 'For example: Pre-sales Consulting',
+        nameRequired: 'Please enter a scenario name',
         descriptionLabel: 'Scenario Description',
         descriptionPlaceholder: 'Briefly describe the user questions covered by this scenario.',
         add: 'Add Scenario',

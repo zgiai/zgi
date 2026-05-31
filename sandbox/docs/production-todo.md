@@ -57,6 +57,7 @@ Already available:
 - Optional sandbox workspace file count limit accounting
 - Optional sandbox workspace byte limit accounting
 - Optional organization-scoped active dependency profile limit accounting
+- Optional organization-scoped network request rate limit accounting
 - Sandbox ownership fields for organization, workspace, app, workflow run, and user context
 - Ownership context persisted with sandbox records and propagated to lifecycle, endpoint, expiration, execution, file, archive, and artifact manifest observer events
 - Artifact manifests include content type, reference encoding, SHA-256 hashes, timestamps, and enforce operator-configurable file count and total byte limits
@@ -173,6 +174,9 @@ ergonomic for workflow and agent use cases.
 
 - Added `POST /v1/exec/skill` for manifest-driven package execution.
 - Added archive upload plus manifest execution as a runtime contract.
+- `/v1/exec/skill` accepts optional restricted `env` values for runtime context;
+  ownership checks still use `organization_id`, and environment variables are
+  normalized with the same policy as `/v1/exec/command`.
 - Added a skill execution manifest:
   - `entrypoint`
   - `language`
@@ -269,7 +273,8 @@ Detailed implementation guidance is tracked in
 
 ### D5. Remaining Production Work
 
-- Add maintained profile source directories under `sandbox/profiles/`.
+- [x] Add maintained profile source directories under `sandbox/profiles/`.
+- [x] Add CI-validated source profile manifests for managed profiles.
 - Add deterministic build scripts for profile artifacts.
 - Verify Python and Node profile environments before activation.
 - Inject profile-specific runtime environment variables.
@@ -487,7 +492,7 @@ Goal: bind sandbox usage to ZGI organizations, workspaces, apps, workflows, and 
 - Added optional max executions per minute per organization with `ZGI_SANDBOX_MAX_EXECUTIONS_PER_MINUTE_PER_ORGANIZATION`.
 - [x] Max artifact bytes per organization.
 - [x] Max workspace bytes per organization.
-- Max network requests per organization.
+- [x] Max network requests per organization.
 - [x] Max active dependency profiles per organization.
 
 ### I3. Audit

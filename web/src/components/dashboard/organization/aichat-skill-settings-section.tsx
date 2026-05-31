@@ -75,6 +75,11 @@ const STATUS_LABEL_KEYS = {
   invalid: 'organization.aichatSkills.status.invalid',
 } as const satisfies Record<string, DashboardSuffix>;
 
+const SCRIPT_STATUS_LABEL_KEYS = {
+  runnable: 'organization.aichatSkills.scriptStatus.runnable',
+  unsupported: 'organization.aichatSkills.scriptStatus.unsupported',
+} as const satisfies Record<string, DashboardSuffix>;
+
 const AUTO_SAVE_LABEL_KEYS = {
   idle: 'organization.aichatSkills.autoSave.ready',
   saving: 'organization.aichatSkills.autoSave.saving',
@@ -109,6 +114,13 @@ function getSkillSource(skill: AIChatSkillMetadata): AIChatSkillSource {
 
 function isInvalidSkill(skill: AIChatSkillMetadata): boolean {
   return skill.status === 'invalid';
+}
+
+function getScriptStatusLabelKey(skill: AIChatSkillMetadata): DashboardSuffix | null {
+  if (!skill.has_scripts) return null;
+  return skill.scripts_supported
+    ? SCRIPT_STATUS_LABEL_KEYS.runnable
+    : SCRIPT_STATUS_LABEL_KEYS.unsupported;
 }
 
 function getFilterSearchText(
@@ -224,6 +236,7 @@ function AIChatSkillCard({
   const runtimeLabel = t(RUNTIME_LABEL_KEYS[skill.runtime_type]);
   const isCustom = getSkillSource(skill) === 'custom';
   const invalid = isInvalidSkill(skill);
+  const scriptStatusLabelKey = getScriptStatusLabelKey(skill);
 
   return (
     <article
@@ -268,6 +281,14 @@ function AIChatSkillCard({
                 : STATUS_LABEL_KEYS.disabled
           )}
         </Badge>
+        {scriptStatusLabelKey ? (
+          <Badge
+            variant={skill.scripts_supported ? 'success' : 'warning'}
+            className="rounded-md font-normal"
+          >
+            {t(scriptStatusLabelKey)}
+          </Badge>
+        ) : null}
       </div>
 
       <p className="mt-2.5 line-clamp-2 min-h-10 text-sm leading-5 text-muted-foreground">
@@ -541,6 +562,7 @@ function SkillImportPreviewDialog({
   const validationErrors = previewValidationErrors(preview, t);
   const existingSkillName =
     preview?.existing_skill?.name || preview?.existing_skill?.skill_id || skill?.skill_id || '';
+  const scriptStatusLabelKey = skill ? getScriptStatusLabelKey(skill) : null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -561,9 +583,19 @@ function SkillImportPreviewDialog({
                   </h3>
                   <p className="mt-1 text-xs text-muted-foreground">{skill.skill_id}</p>
                 </div>
-                <Badge variant="outline" className="w-fit rounded-md font-normal">
-                  {t(RUNTIME_LABEL_KEYS[skill.runtime_type])}
-                </Badge>
+                <div className="flex flex-wrap gap-1.5">
+                  <Badge variant="outline" className="w-fit rounded-md font-normal">
+                    {t(RUNTIME_LABEL_KEYS[skill.runtime_type])}
+                  </Badge>
+                  {scriptStatusLabelKey ? (
+                    <Badge
+                      variant={skill.scripts_supported ? 'success' : 'warning'}
+                      className="w-fit rounded-md font-normal"
+                    >
+                      {t(scriptStatusLabelKey)}
+                    </Badge>
+                  ) : null}
+                </div>
               </div>
               <p className="mt-3 text-sm leading-5 text-muted-foreground">{skill.description}</p>
             </div>

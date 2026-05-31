@@ -1066,6 +1066,7 @@ const messages: AgentsMessages = {
         caseCount: '已归类 {count} 条测试问题',
         nameLabel: '场景名称',
         namePlaceholder: '例如：售前咨询',
+        nameRequired: '请填写场景名称',
         descriptionLabel: '场景说明',
         descriptionPlaceholder: '简要描述这个场景覆盖的用户问题。',
         add: '添加场景',

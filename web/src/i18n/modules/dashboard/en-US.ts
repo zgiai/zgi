@@ -547,6 +547,10 @@ const messages = {
         disabled: 'Disabled',
         invalid: 'Invalid',
       },
+      scriptStatus: {
+        runnable: 'Scripts runnable',
+        unsupported: 'Scripts disabled',
+      },
       autoSave: {
         ready: 'Auto-save on',
         saving: 'Saving...',

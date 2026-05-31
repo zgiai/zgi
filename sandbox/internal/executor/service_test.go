@@ -1670,7 +1670,7 @@ func TestRunSkillUsesManifestPolicyAndReturnsArtifacts(t *testing.T) {
 		Path:      "skills/echo",
 		ArchiveBase64: zipBase64(t, map[string]string{
 			"SKILL.md":            "# Skill",
-			"scripts/run.py":      "import json, os, sys\npayload = json.loads(sys.stdin.read() or '{}')\nos.makedirs('artifacts', exist_ok=True)\nopen('artifacts/report.txt', 'w').write('skill artifact\\n')\nprint(json.dumps({'echo': payload.get('input'), 'ok': True}))\n",
+			"scripts/run.py":      "import json, os, sys\npayload = json.loads(sys.stdin.read() or '{}')\nos.makedirs('artifacts', exist_ok=True)\nopen('artifacts/report.txt', 'w').write('skill artifact\\n')\nprint(json.dumps({'echo': payload.get('input'), 'message_id': os.environ.get('ZGI_MESSAGE_ID'), 'ok': True}))\n",
 			"skill.manifest.json": validSkillManifestJSON("scripts/run.py"),
 		}),
 		Format:                "zip",
@@ -1684,12 +1684,16 @@ func TestRunSkillUsesManifestPolicyAndReturnsArtifacts(t *testing.T) {
 		SandboxID: box.ID,
 		Path:      "skills/echo",
 		InputJSON: []byte(`{"input":"hello"}`),
+		Env:       map[string]string{"ZGI_MESSAGE_ID": "message-skill"},
 	})
 	if err != nil {
 		t.Fatalf("run skill: %v", err)
 	}
 	if result.Command.ExitCode != 0 || !strings.Contains(result.Command.Stdout, `"echo": "hello"`) && !strings.Contains(result.Command.Stdout, `"echo":"hello"`) {
 		t.Fatalf("unexpected skill command result: %+v", result.Command)
+	}
+	if !strings.Contains(result.Command.Stdout, `"message_id": "message-skill"`) && !strings.Contains(result.Command.Stdout, `"message_id":"message-skill"`) {
+		t.Fatalf("expected skill env in stdout, got %q", result.Command.Stdout)
 	}
 	if !strings.HasPrefix(result.ExecutionID, "exec_") || result.Command.ExecutionID != result.ExecutionID {
 		t.Fatalf("expected skill execution id to propagate, got result=%q command=%q", result.ExecutionID, result.Command.ExecutionID)
@@ -1710,6 +1714,40 @@ func TestRunSkillUsesManifestPolicyAndReturnsArtifacts(t *testing.T) {
 	}
 	if events[0].Metadata["execution_id"] != result.ExecutionID {
 		t.Fatalf("expected skill execution ID metadata, got %#v result=%q", events[0].Metadata, result.ExecutionID)
+	}
+}
+
+func TestRunSkillRejectsDangerousEnv(t *testing.T) {
+	service, manager := newTestExecutorService(t)
+	box, err := manager.Create(lifecycle.CreateRequest{
+		RuntimeProfile: string(sandbox.RuntimeSession),
+	})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	_, err = service.UploadArchive(ArchiveUploadRequest{
+		SandboxID: box.ID,
+		Path:      "skills/env",
+		ArchiveBase64: zipBase64(t, map[string]string{
+			"SKILL.md":            "# Skill",
+			"scripts/run.py":      "print('nope')\n",
+			"skill.manifest.json": validSkillManifestJSON("scripts/run.py"),
+		}),
+		Format:                "zip",
+		ValidateSkillManifest: true,
+	})
+	if err != nil {
+		t.Fatalf("upload skill package: %v", err)
+	}
+
+	_, err = service.RunSkill(context.Background(), SkillRunRequest{
+		SandboxID: box.ID,
+		Path:      "skills/env",
+		Env:       map[string]string{"LD_PRELOAD": "x"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "env key is not allowed") {
+		t.Fatalf("expected dangerous env rejection, got %v", err)
 	}
 }
 

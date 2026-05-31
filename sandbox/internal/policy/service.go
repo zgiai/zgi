@@ -172,6 +172,8 @@ func NewService(cfg config.Config) *Service {
 			DefaultAction: "deny-unlisted",
 			AllowedPackages: []DependencyPackageRule{
 				{Ecosystem: "python3", Name: "data-tools", Version: "managed", Reason: "Reserved managed profile bundle."},
+				{Ecosystem: "python3", Name: "office-tools", Version: "managed", Reason: "Reserved managed profile bundle."},
+				{Ecosystem: "nodejs", Name: "office-tools", Version: "managed", Reason: "Reserved managed profile bundle."},
 			},
 			DeniedPackages: []DependencyPackageRule{
 				{Ecosystem: "*", Name: "remote-url", Reason: "Packages must come from operator-managed lockfiles."},
@@ -238,6 +240,19 @@ func NewService(cfg config.Config) *Service {
 				Checksum:    "profile:agent-tools:2026.05.01",
 				SizeBytes:   128 * 1024 * 1024,
 				Description: "Broader operator-managed profile for internal agent tooling.",
+			},
+			{
+				Name:        "skill-office",
+				Version:     "2026.05.31",
+				Status:      "disabled",
+				Enabled:     false,
+				OwnerScope:  "global",
+				Languages:   []string{"python3", "nodejs"},
+				Packages:    []DependencyPackage{{Ecosystem: "python3", Name: "office-tools", Version: "managed"}, {Ecosystem: "nodejs", Name: "office-tools", Version: "managed"}},
+				BaseRuntime: "linux-secure",
+				Checksum:    "profile-source:skill-office:2026.05.31",
+				SizeBytes:   512 * 1024 * 1024,
+				Description: "Reserved managed document automation profile that is not available until build artifacts are verified.",
 			},
 			{
 				Name:        "python-data-preview",
@@ -872,6 +887,7 @@ func (s *Service) EffectiveLimits() sandbox.ResourceLimits {
 		MaxActiveSandboxesPerOrganization:          s.config.MaxActivePerOrganization,
 		MaxConcurrentExecutionsPerOrganization:     s.config.MaxConcurrentExecutionsPerOrganization,
 		MaxExecutionsPerMinutePerOrganization:      s.config.MaxExecutionsPerMinutePerOrganization,
+		MaxNetworkRequestsPerMinutePerOrganization: s.config.MaxNetworkRequestsPerMinutePerOrganization,
 		MaxQueuedExecutionsPerOrganization:         s.config.MaxQueuedExecutionsPerOrganization,
 		MaxWorkspaceFiles:                          s.config.MaxWorkspaceFiles,
 		MaxWorkspaceBytes:                          s.config.MaxWorkspaceBytes,
@@ -916,6 +932,10 @@ func (s *Service) EffectiveLimits() sandbox.ResourceLimits {
 
 func (s *Service) MaxExecutionsPerMinutePerOrganization() int {
 	return s.config.MaxExecutionsPerMinutePerOrganization
+}
+
+func (s *Service) MaxNetworkRequestsPerMinutePerOrganization() int {
+	return s.config.MaxNetworkRequestsPerMinutePerOrganization
 }
 
 func (s *Service) MaxConcurrentExecutions() int {
