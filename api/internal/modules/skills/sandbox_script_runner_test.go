@@ -68,6 +68,9 @@ func TestSandboxScriptRunnerRunsSkillPackage(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/files/upload-archive":
 			var req map[string]interface{}
 			decodeJSON(t, r, &req)
+			if req["organization_id"] != "organization-script" {
+				t.Fatalf("expected upload organization scope, got %#v", req)
+			}
 			uploadedArchive, _ = req["archive_base64"].(string)
 			writeSandboxEnvelope(t, w, map[string]interface{}{"file_count": 2})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/exec/command":
@@ -75,6 +78,9 @@ func TestSandboxScriptRunnerRunsSkillPackage(t *testing.T) {
 			decodeJSON(t, r, &req)
 			if req["sandbox_id"] != "sbx_test" || req["command"] != "python3" || req["profile"] != "skill-python" {
 				t.Fatalf("unexpected command request: %#v", req)
+			}
+			if req["organization_id"] != "organization-script" {
+				t.Fatalf("expected command organization scope, got %#v", req)
 			}
 			if !strings.Contains(req["stdin"].(string), "hello") {
 				t.Fatalf("expected stdin arguments, got %#v", req["stdin"])
@@ -95,6 +101,9 @@ func TestSandboxScriptRunnerRunsSkillPackage(t *testing.T) {
 				"command":     "python3",
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/files/tree":
+			if r.URL.Query().Get("organization_id") != "organization-script" {
+				t.Fatalf("expected tree organization scope, got query %s", r.URL.RawQuery)
+			}
 			writeSandboxEnvelope(t, w, map[string]interface{}{
 				"items": []map[string]interface{}{
 					{"path": "artifacts/report.txt", "size": 8, "is_directory": false},
@@ -104,12 +113,18 @@ func TestSandboxScriptRunnerRunsSkillPackage(t *testing.T) {
 			if r.URL.Query().Get("path") != "artifacts/report.txt" || r.URL.Query().Get("encoding") != "base64" {
 				t.Fatalf("unexpected download query: %s", r.URL.RawQuery)
 			}
+			if r.URL.Query().Get("organization_id") != "organization-script" {
+				t.Fatalf("expected download organization scope, got query %s", r.URL.RawQuery)
+			}
 			writeSandboxEnvelope(t, w, map[string]interface{}{
 				"path":     "artifacts/report.txt",
 				"content":  "cmVwb3J0Cg==",
 				"encoding": "base64",
 			})
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/sandboxes/sbx_test":
+			if r.URL.Query().Get("organization_id") != "organization-script" {
+				t.Fatalf("expected delete organization scope, got query %s", r.URL.RawQuery)
+			}
 			deleted = true
 			writeSandboxEnvelope(t, w, map[string]interface{}{"deleted": true})
 		default:

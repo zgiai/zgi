@@ -85,7 +85,7 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 		trace.DurationMS = time.Since(start).Milliseconds()
 		return &ToolInvocationResult{Trace: trace}, err
 	}
-	defer func() { _ = r.deleteSandbox(context.WithoutCancel(ctx), sandboxID) }()
+	defer func() { _ = r.deleteSandbox(context.WithoutCancel(ctx), sandboxID, execCtx) }()
 
 	archiveBase64, err := zipSkillDirectoryBase64(doc.Metadata.RootPath)
 	if err != nil {
@@ -94,7 +94,7 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 		trace.DurationMS = time.Since(start).Milliseconds()
 		return &ToolInvocationResult{Trace: trace}, err
 	}
-	if err := r.uploadArchive(ctx, sandboxID, archiveBase64); err != nil {
+	if err := r.uploadArchive(ctx, sandboxID, archiveBase64, execCtx); err != nil {
 		trace.Status = "error"
 		trace.Error = err.Error()
 		trace.DurationMS = time.Since(start).Milliseconds()
@@ -120,7 +120,7 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 		return &ToolInvocationResult{Trace: trace}, err
 	}
 
-	artifacts, artifactErr := r.collectArtifacts(ctx, sandboxID)
+	artifacts, artifactErr := r.collectArtifacts(ctx, sandboxID, execCtx)
 	messages, content, err := skillScriptMessages(command, artifacts, artifactErr)
 	trace.DurationMS = time.Since(start).Milliseconds()
 	if command.ExitCode != 0 {
@@ -165,19 +165,23 @@ func (r *SandboxScriptRunner) createSandbox(ctx context.Context, execCtx Executi
 	return response.ID, nil
 }
 
-func (r *SandboxScriptRunner) uploadArchive(ctx context.Context, sandboxID string, archiveBase64 string) error {
-	return r.doJSON(ctx, http.MethodPost, "/v1/files/upload-archive", map[string]interface{}{
+func (r *SandboxScriptRunner) uploadArchive(ctx context.Context, sandboxID string, archiveBase64 string, execCtx ExecutionContext) error {
+	payload := map[string]interface{}{
 		"sandbox_id":     sandboxID,
 		"path":           ".",
 		"archive_base64": archiveBase64,
 		"format":         "zip",
 		"strip_root":     false,
-	}, nil)
+	}
+	if organizationID := strings.TrimSpace(execCtx.OrganizationID); organizationID != "" {
+		payload["organization_id"] = organizationID
+	}
+	return r.doJSON(ctx, http.MethodPost, "/v1/files/upload-archive", payload, nil)
 }
 
 func (r *SandboxScriptRunner) runCommand(ctx context.Context, sandboxID string, stdin string, timeoutSeconds int, execCtx ExecutionContext) (*sandboxCommandResult, error) {
 	var response sandboxCommandResult
-	err := r.doJSON(ctx, http.MethodPost, "/v1/exec/command", map[string]interface{}{
+	payload := map[string]interface{}{
 		"sandbox_id":      sandboxID,
 		"command":         "python3",
 		"args":            []string{"scripts/run.py"},
@@ -188,25 +192,30 @@ func (r *SandboxScriptRunner) runCommand(ctx context.Context, sandboxID string, 
 		"stdout_limit_kb": 1024,
 		"stderr_limit_kb": 1024,
 		"working_subpath": ".",
-	}, &response)
+	}
+	if organizationID := strings.TrimSpace(execCtx.OrganizationID); organizationID != "" {
+		payload["organization_id"] = organizationID
+	}
+	err := r.doJSON(ctx, http.MethodPost, "/v1/exec/command", payload, &response)
 	if err != nil {
 		return nil, err
 	}
 	return &response, nil
 }
 
-func (r *SandboxScriptRunner) deleteSandbox(ctx context.Context, sandboxID string) error {
+func (r *SandboxScriptRunner) deleteSandbox(ctx context.Context, sandboxID string, execCtx ExecutionContext) error {
 	if strings.TrimSpace(sandboxID) == "" {
 		return nil
 	}
-	return r.doJSON(ctx, http.MethodDelete, "/v1/sandboxes/"+sandboxID, nil, nil)
+	path := withOrganizationQuery("/v1/sandboxes/"+url.PathEscape(sandboxID), execCtx)
+	return r.doJSON(ctx, http.MethodDelete, path, nil, nil)
 }
 
-func (r *SandboxScriptRunner) collectArtifacts(ctx context.Context, sandboxID string) ([]skillScriptArtifact, error) {
+func (r *SandboxScriptRunner) collectArtifacts(ctx context.Context, sandboxID string, execCtx ExecutionContext) ([]skillScriptArtifact, error) {
 	var tree struct {
 		Items []sandboxFileInfo `json:"items"`
 	}
-	path := "/v1/files/tree?sandbox_id=" + url.QueryEscape(sandboxID)
+	path := withOrganizationQuery("/v1/files/tree?sandbox_id="+url.QueryEscape(sandboxID), execCtx)
 	if err := r.doJSON(ctx, http.MethodGet, path, nil, &tree); err != nil {
 		return nil, err
 	}
@@ -225,7 +234,7 @@ func (r *SandboxScriptRunner) collectArtifacts(ctx context.Context, sandboxID st
 			Size: item.Size,
 		}
 		if item.Size <= 32*1024 {
-			content, err := r.downloadArtifact(ctx, sandboxID, item.Path)
+			content, err := r.downloadArtifact(ctx, sandboxID, item.Path, execCtx)
 			if err != nil {
 				artifact.Error = err.Error()
 			} else {
@@ -238,13 +247,26 @@ func (r *SandboxScriptRunner) collectArtifacts(ctx context.Context, sandboxID st
 	return artifacts, nil
 }
 
-func (r *SandboxScriptRunner) downloadArtifact(ctx context.Context, sandboxID string, path string) (*sandboxFileContent, error) {
+func (r *SandboxScriptRunner) downloadArtifact(ctx context.Context, sandboxID string, path string, execCtx ExecutionContext) (*sandboxFileContent, error) {
 	var content sandboxFileContent
 	endpoint := "/v1/files/download?sandbox_id=" + url.QueryEscape(sandboxID) + "&path=" + url.QueryEscape(path) + "&encoding=base64"
+	endpoint = withOrganizationQuery(endpoint, execCtx)
 	if err := r.doJSON(ctx, http.MethodGet, endpoint, nil, &content); err != nil {
 		return nil, err
 	}
 	return &content, nil
+}
+
+func withOrganizationQuery(path string, execCtx ExecutionContext) string {
+	organizationID := strings.TrimSpace(execCtx.OrganizationID)
+	if organizationID == "" {
+		return path
+	}
+	separator := "?"
+	if strings.Contains(path, "?") {
+		separator = "&"
+	}
+	return path + separator + "organization_id=" + url.QueryEscape(organizationID)
 }
 
 func (r *SandboxScriptRunner) doJSON(ctx context.Context, method string, path string, payload interface{}, out interface{}) error {
