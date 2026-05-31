@@ -180,6 +180,7 @@ func (m *Manager) Create(req CreateRequest) (*sandbox.Sandbox, error) {
 
 	eventMetadata := map[string]any{
 		"runtime_profile":            item.RuntimeProfile,
+		"runtime_backend":            m.policy.RuntimeBackend(),
 		"ttl_seconds":                item.TTLSeconds,
 		"network_policy":             item.NetworkPolicy,
 		"dependency_profile":         item.DependencyProfile,
@@ -408,7 +409,10 @@ func (m *Manager) Delete(id string) error {
 	_ = m.cache.Delete(context.Background(), id)
 	_ = os.RemoveAll(item.RootPath)
 	metadata := map[string]any{
-		"worker_id": item.WorkerID,
+		"worker_id":          item.WorkerID,
+		"runtime_backend":    m.policy.RuntimeBackend(),
+		"runtime_profile":    item.RuntimeProfile,
+		"dependency_profile": item.DependencyProfile,
 	}
 	addOwnershipMetadata(metadata, *item)
 	m.observer.Record("sandbox.deleted", id, "sandbox deleted", metadata)
@@ -439,7 +443,9 @@ func (m *Manager) Renew(id string, ttlSeconds int) (*sandbox.Sandbox, error) {
 	_ = m.cache.Set(context.Background(), *item, m.cacheTTL(*item))
 
 	metadata := map[string]any{
-		"ttl_seconds": item.TTLSeconds,
+		"ttl_seconds":     item.TTLSeconds,
+		"runtime_backend": m.policy.RuntimeBackend(),
+		"runtime_profile": item.RuntimeProfile,
 	}
 	addOwnershipMetadata(metadata, *item)
 	m.observer.Record("sandbox.renewed", id, "sandbox renewed", metadata)
@@ -483,10 +489,12 @@ func (m *Manager) RegisterEndpoint(id string, port string, req RegisterEndpointR
 	}
 
 	metadata := map[string]any{
-		"port":        port,
-		"target_host": endpoint.TargetHost,
-		"target_port": endpoint.TargetPort,
-		"scheme":      endpoint.Scheme,
+		"port":            port,
+		"target_host":     endpoint.TargetHost,
+		"target_port":     endpoint.TargetPort,
+		"scheme":          endpoint.Scheme,
+		"runtime_backend": m.policy.RuntimeBackend(),
+		"runtime_profile": item.RuntimeProfile,
 	}
 	addOwnershipMetadata(metadata, *item)
 	m.observer.Record("sandbox.endpoint.registered", id, "sandbox endpoint registered", metadata)
@@ -531,10 +539,12 @@ func (m *Manager) resolveEndpoint(id string, port string, record bool) (*sandbox
 	endpoint.URL = m.endpointURL(id, port)
 	if record {
 		metadata := map[string]any{
-			"port":        port,
-			"url":         endpoint.URL,
-			"target_host": endpoint.TargetHost,
-			"target_port": endpoint.TargetPort,
+			"port":            port,
+			"url":             endpoint.URL,
+			"target_host":     endpoint.TargetHost,
+			"target_port":     endpoint.TargetPort,
+			"runtime_backend": m.policy.RuntimeBackend(),
+			"runtime_profile": item.RuntimeProfile,
 		}
 		addOwnershipMetadata(metadata, *item)
 		m.observer.Record("sandbox.endpoint.resolved", id, "sandbox endpoint resolved", metadata)
@@ -565,7 +575,10 @@ func (m *Manager) expireIfNeeded(item sandbox.Sandbox) (bool, bool, error) {
 			return true, false, err
 		}
 		_ = m.cache.Delete(context.Background(), item.ID)
-		metadata := map[string]any{}
+		metadata := map[string]any{
+			"runtime_backend": m.policy.RuntimeBackend(),
+			"runtime_profile": item.RuntimeProfile,
+		}
 		addOwnershipMetadata(metadata, item)
 		m.observer.Record("sandbox.expired", item.ID, "sandbox expired", metadata)
 		return true, true, nil

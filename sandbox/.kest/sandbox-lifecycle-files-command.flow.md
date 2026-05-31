@@ -106,6 +106,22 @@ data.dependency_profile_version == "2026.05.01"
 ```
 
 ```step
+@id observer-sandbox-created-event
+@name Observer sandbox created event
+
+GET {{base_url}}/v1/observer/events?sandbox_id={{sandbox_id}}&type=sandbox.created&limit=1
+
+[Asserts]
+status == 200
+code == 0
+data.events.0.metadata.runtime_backend == "preview-process"
+data.events.0.metadata.runtime_profile == "session"
+data.events.0.metadata.organization_id == "organization_kest"
+data.events.0.metadata.workspace_id == "workspace_kest"
+data.events.0.metadata.workflow_run_id == "workflow_run_kest"
+```
+
+```step
 @id get-sandbox
 @name Get sandbox
 
@@ -194,6 +210,7 @@ GET {{base_url}}/v1/observer/events?sandbox_id={{sandbox_id}}&type=files.downloa
 status == 200
 code == 0
 data.events.0.metadata.path == "notes/hello.txt"
+data.events.0.metadata.runtime_backend == "preview-process"
 data.events.0.metadata.organization_id == "organization_kest"
 data.events.0.metadata.workspace_id == "workspace_kest"
 data.events.0.metadata.workflow_run_id == "workflow_run_kest"
@@ -276,6 +293,7 @@ status == 200
 code == 0
 data.events.0.metadata.request_id == "req_kest_command"
 data.events.0.metadata.execution_id == "{{command_execution_id}}"
+data.events.0.metadata.runtime_backend == "preview-process"
 data.events.0.metadata.organization_id == "organization_kest"
 data.events.0.metadata.workspace_id == "workspace_kest"
 data.events.0.metadata.workflow_run_id == "workflow_run_kest"
@@ -305,6 +323,7 @@ GET {{base_url}}/v1/observer/events?sandbox_id={{sandbox_id}}&request_id=req_kes
 status == 200
 code == 0
 data.events.0.metadata.request_id == "req_kest_command"
+data.events.0.metadata.runtime_backend == "preview-process"
 data.events.0.metadata.organization_id == "organization_kest"
 data.events.0.metadata.workspace_id == "workspace_kest"
 data.events.0.metadata.workflow_run_id == "workflow_run_kest"
@@ -391,6 +410,7 @@ GET {{base_url}}/v1/observer/events?sandbox_id={{sandbox_id}}&type=files.delete&
 status == 200
 code == 0
 data.events.0.metadata.path == "notes/hello.txt"
+data.events.0.metadata.runtime_backend == "preview-process"
 data.events.0.metadata.organization_id == "organization_kest"
 data.events.0.metadata.workspace_id == "workspace_kest"
 data.events.0.metadata.workflow_run_id == "workflow_run_kest"

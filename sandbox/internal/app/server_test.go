@@ -269,6 +269,21 @@ func TestSandboxListEndpoint(t *testing.T) {
 			t.Fatalf("expected create response to include %s, got %s", expected, createRes.Body.String())
 		}
 	}
+	var createPayload struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(createRes.Body.Bytes(), &createPayload); err != nil {
+		t.Fatalf("expected sandbox create payload, got %v", err)
+	}
+	createdEvents := server.observer.Query(observer.Query{SandboxID: createPayload.Data.ID, Type: "sandbox.created", Limit: 1})
+	if len(createdEvents) != 1 {
+		t.Fatalf("expected sandbox created event, got %#v", createdEvents)
+	}
+	if createdEvents[0].Metadata["runtime_backend"] != "preview-process" || createdEvents[0].Metadata["runtime_profile"] != "session" {
+		t.Fatalf("expected runtime metadata on sandbox created event, got %+v", createdEvents[0].Metadata)
+	}
 
 	listReq := httptest.NewRequest(http.MethodGet, "/v1/sandboxes", nil)
 	listRes := httptest.NewRecorder()

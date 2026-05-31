@@ -357,9 +357,9 @@ clearly separated for local development.
   - `preview-process`
   - `linux-secure`
   - future remote worker mode
-- Require production deployments to choose a non-preview backend.
-- Fail startup when production mode uses preview execution.
-- Surface backend mode in `/health` and observer events.
+- [x] Require production deployments to choose a non-preview backend.
+- [x] Fail startup when production mode uses preview execution.
+- [x] Surface backend mode in `/health` and observer events.
 
 ### G2. Linux Secure Runtime
 

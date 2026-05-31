@@ -302,6 +302,7 @@ func (s *Service) RunCode(ctx context.Context, req CodeRequest) (runner.Result, 
 		"duration_ms":     result.DurationMS,
 		"truncated":       result.Truncated,
 		"backend":         result.Backend,
+		"runtime_backend": result.Backend,
 		"status":          "success",
 		"stateless":       limits.Stateless,
 		"workspace_bound": workspaceBound,
@@ -427,12 +428,13 @@ func (s *Service) RunTemplate(ctx context.Context, req TemplateRequest) (Templat
 			result.Warnings = append(result.Warnings, "output truncated")
 		}
 		metadata := map[string]any{
-			"execution_id": executionID,
-			"engine":       limits.Engine,
-			"profile":      limits.Profile,
-			"duration_ms":  result.DurationMS,
-			"truncated":    result.Truncated,
-			"status":       "success",
+			"execution_id":    executionID,
+			"engine":          limits.Engine,
+			"profile":         limits.Profile,
+			"duration_ms":     result.DurationMS,
+			"truncated":       result.Truncated,
+			"runtime_backend": s.policy.RuntimeBackend(),
+			"status":          "success",
 		}
 		addTemplateOwnershipMetadata(metadata, req)
 		s.observer.Record("exec.template", "", "template rendered", observer.MetadataWithContext(ctx, metadata))
@@ -524,14 +526,15 @@ func (s *Service) RunCommand(ctx context.Context, req CommandRequest) (runner.Co
 	result.ExecutionID = executionID
 
 	metadata := map[string]any{
-		"execution_id": executionID,
-		"command":      req.Command,
-		"profile":      limits.Profile,
-		"exit_code":    result.ExitCode,
-		"duration_ms":  result.DurationMS,
-		"truncated":    result.Truncated,
-		"backend":      result.Backend,
-		"status":       "success",
+		"execution_id":    executionID,
+		"command":         req.Command,
+		"profile":         limits.Profile,
+		"exit_code":       result.ExitCode,
+		"duration_ms":     result.DurationMS,
+		"truncated":       result.Truncated,
+		"backend":         result.Backend,
+		"runtime_backend": result.Backend,
+		"status":          "success",
 	}
 	addExecutionSandboxMetadata(metadata, box)
 	s.observer.Record("exec.command", req.SandboxID, "sandbox command executed", observer.MetadataWithContext(ctx, metadata))
@@ -645,18 +648,19 @@ func (s *Service) RunSkill(ctx context.Context, req SkillRunRequest) (SkillRunRe
 	}
 
 	metadata := map[string]any{
-		"execution_id":   executionID,
-		"path":           req.Path,
-		"entrypoint":     manifest.Entrypoint,
-		"language":       manifest.Language,
-		"profile":        profile,
-		"result_mode":    manifest.ResultMode,
-		"exit_code":      result.ExitCode,
-		"duration_ms":    result.DurationMS,
-		"truncated":      result.Truncated,
-		"backend":        result.Backend,
-		"artifact_paths": len(artifactManifests),
-		"status":         "success",
+		"execution_id":    executionID,
+		"path":            req.Path,
+		"entrypoint":      manifest.Entrypoint,
+		"language":        manifest.Language,
+		"profile":         profile,
+		"result_mode":     manifest.ResultMode,
+		"exit_code":       result.ExitCode,
+		"duration_ms":     result.DurationMS,
+		"truncated":       result.Truncated,
+		"backend":         result.Backend,
+		"runtime_backend": result.Backend,
+		"artifact_paths":  len(artifactManifests),
+		"status":          "success",
 	}
 	addExecutionSandboxMetadata(metadata, box)
 	s.observer.Record("exec.skill", req.SandboxID, "skill executed", observer.MetadataWithContext(ctx, metadata))
@@ -1041,6 +1045,7 @@ func (s *Service) recordExecutionFailure(ctx context.Context, eventType string, 
 	for key, value := range metadata {
 		eventMetadata[key] = value
 	}
+	addRuntimeBackendMetadata(eventMetadata, s.policy.RuntimeBackend())
 	s.observer.Record(eventType, sandboxID, message, observer.MetadataWithContext(ctx, eventMetadata))
 }
 
@@ -1071,11 +1076,12 @@ func classifyExecutionError(err error) string {
 
 func (s *Service) recordTemplateFailure(ctx context.Context, req TemplateRequest, executionID string, err error) {
 	metadata := map[string]any{
-		"execution_id": executionID,
-		"engine":       defaultString(req.Engine, "go-text"),
-		"profile":      defaultString(req.Profile, "template-short"),
-		"status":       "failure",
-		"error_type":   classifyExecutionError(err),
+		"execution_id":    executionID,
+		"engine":          defaultString(req.Engine, "go-text"),
+		"profile":         defaultString(req.Profile, "template-short"),
+		"runtime_backend": s.policy.RuntimeBackend(),
+		"status":          "failure",
+		"error_type":      classifyExecutionError(err),
 	}
 	addTemplateOwnershipMetadata(metadata, req)
 	s.observer.Record("exec.template.failed", "", "template render failed", observer.MetadataWithContext(ctx, metadata))
@@ -1294,6 +1300,12 @@ func addExecutionSandboxMetadata(metadata map[string]any, box *sandbox.Sandbox) 
 	}
 }
 
+func addRuntimeBackendMetadata(metadata map[string]any, runtimeBackend string) {
+	if strings.TrimSpace(runtimeBackend) != "" {
+		metadata["runtime_backend"] = runtimeBackend
+	}
+}
+
 func (s *Service) UploadFile(req FileWriteRequest) (*FileInfo, error) {
 	box, err := s.lifecycle.GetActive(req.SandboxID)
 	if err != nil {
@@ -1329,6 +1341,7 @@ func (s *Service) UploadFile(req FileWriteRequest) (*FileInfo, error) {
 	info, err := s.StatFile(req.SandboxID, req.Path)
 	if err == nil {
 		metadata := map[string]any{"path": req.Path, "size": info.Size}
+		addRuntimeBackendMetadata(metadata, s.policy.RuntimeBackend())
 		addOwnershipMetadata(metadata, box)
 		s.observer.Record("files.upload", req.SandboxID, "file uploaded", metadata)
 	}
@@ -1444,6 +1457,7 @@ func (s *Service) UploadArchive(req ArchiveUploadRequest) (*ArchiveUploadResult,
 		"file_count": len(files),
 		"total_size": totalSize,
 	}
+	addRuntimeBackendMetadata(metadata, s.policy.RuntimeBackend())
 	addOwnershipMetadata(metadata, box)
 	s.observer.Record("files.upload_archive", req.SandboxID, "archive uploaded", metadata)
 	return &ArchiveUploadResult{
@@ -1478,6 +1492,7 @@ func (s *Service) DownloadFile(sandboxID string, relativePath string, encoding s
 	}
 
 	metadata := map[string]any{"path": relativePath}
+	addRuntimeBackendMetadata(metadata, s.policy.RuntimeBackend())
 	addOwnershipMetadata(metadata, box)
 	s.observer.Record("files.download", sandboxID, "file downloaded", metadata)
 	return &FileContent{
@@ -1533,6 +1548,7 @@ func (s *Service) DeleteFile(sandboxID string, relativePath string) error {
 	}
 
 	metadata := map[string]any{"path": relativePath}
+	addRuntimeBackendMetadata(metadata, s.policy.RuntimeBackend())
 	addOwnershipMetadata(metadata, box)
 	s.observer.Record("files.delete", sandboxID, "file deleted", metadata)
 	return nil
@@ -1629,6 +1645,7 @@ func (s *Service) BuildFileManifestWithOptions(sandboxID string, relativePath st
 		"total_size": totalSize,
 		"truncated":  false,
 	}
+	addRuntimeBackendMetadata(metadata, s.policy.RuntimeBackend())
 	addOwnershipMetadata(metadata, box)
 	s.observer.Record("files.manifest", sandboxID, "file manifest generated", metadata)
 	return &FileManifest{
