@@ -347,6 +347,9 @@ run_kest .kest/sandbox-organization-access-scope.flow.md \
 run_kest .kest/sandbox-policy-deny-audit.flow.md \
   --fail-fast
 
+run_kest .kest/sandbox-egress-policy-decision.flow.md \
+  --fail-fast
+
 run_kest .kest/sandbox-short-code-contract.flow.md \
   --fail-fast
 
