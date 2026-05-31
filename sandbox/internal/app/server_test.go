@@ -4,7 +4,9 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +14,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -1211,6 +1216,40 @@ func TestDependencyUpdatePromotesReservedProfile(t *testing.T) {
 	}
 }
 
+func TestServerLoadsVerifiedDependencyProfileArtifacts(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.DependencyRootFSDir = t.TempDir()
+	writeServerDependencyProfileArtifact(t, cfg.DependencyRootFSDir, "skill-office")
+
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	catalogReq := httptest.NewRequest(http.MethodGet, "/v1/sandbox/dependencies?language=python3", nil)
+	catalogRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(catalogRes, catalogReq)
+	if catalogRes.Code != http.StatusOK {
+		t.Fatalf("expected dependency catalog, got %d body=%s", catalogRes.Code, catalogRes.Body.String())
+	}
+	if !strings.Contains(catalogRes.Body.String(), `"name":"skill-office"`) ||
+		!strings.Contains(catalogRes.Body.String(), `"status":"ready"`) ||
+		!strings.Contains(catalogRes.Body.String(), `"enabled":true`) {
+		t.Fatalf("expected verified artifact to promote skill-office, got %s", catalogRes.Body.String())
+	}
+
+	createReq := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", strings.NewReader(`{"runtime_profile":"session","dependency_profile":"skill-office"}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	createRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(createRes, createReq)
+	if createRes.Code != http.StatusOK {
+		t.Fatalf("expected artifact-backed skill-office profile to be selectable, got %d body=%s", createRes.Code, createRes.Body.String())
+	}
+	if !strings.Contains(createRes.Body.String(), `"dependency_profile_version":"2026.05.31"`) {
+		t.Fatalf("expected artifact-backed version in create response, got %s", createRes.Body.String())
+	}
+}
+
 func TestDependencyUpdatePersistsBuiltProfileAcrossRestart(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.APIKey = "admin-test-key"
@@ -1750,6 +1789,94 @@ func testConfig(t *testing.T) config.Config {
 	cfg.RedisAddr = ""
 	cfg.RuntimeBackend = "preview"
 	return cfg
+}
+
+func writeServerDependencyProfileArtifact(t *testing.T, dependencyRoot string, profile string) {
+	t.Helper()
+	profileDir := filepath.Join(dependencyRoot, profile, "opt", "zgi", "profiles", profile)
+	files := map[string]string{
+		"venv/bin/python":       "python",
+		"node_modules/pkg.json": "{}",
+	}
+	for name, content := range files {
+		path := filepath.Join(profileDir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("create artifact parent: %v", err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write artifact file: %v", err)
+		}
+	}
+	checksum, size := checksumServerDependencyProfileArtifact(t, profileDir)
+	manifest := map[string]any{
+		"name":         profile,
+		"version":      "2026.05.31",
+		"status":       "disabled",
+		"enabled":      false,
+		"owner_scope":  "global",
+		"languages":    []string{"python3", "nodejs"},
+		"base_runtime": "linux-secure",
+		"description":  "Managed document automation profile.",
+		"packages": []map[string]string{
+			{"ecosystem": "python3", "name": "office-tools", "version": "managed"},
+			{"ecosystem": "nodejs", "name": "office-tools", "version": "managed"},
+		},
+		"build": map[string]any{
+			"checksum":            checksum,
+			"size_bytes":          size,
+			"verification_passed": true,
+		},
+	}
+	raw, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		t.Fatalf("encode artifact manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(profileDir, "manifest.json"), append(raw, '\n'), 0o644); err != nil {
+		t.Fatalf("write artifact manifest: %v", err)
+	}
+}
+
+func checksumServerDependencyProfileArtifact(t *testing.T, root string) (string, int64) {
+	t.Helper()
+	files := make([]string, 0)
+	var size int64
+	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		if filepath.ToSlash(rel) == "manifest.json" {
+			return nil
+		}
+		files = append(files, rel)
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		size += info.Size()
+		return nil
+	}); err != nil {
+		t.Fatalf("walk artifact: %v", err)
+	}
+	slices.Sort(files)
+	hash := sha256.New()
+	for _, rel := range files {
+		hash.Write([]byte(filepath.ToSlash(rel)))
+		hash.Write([]byte{0})
+		raw, err := os.ReadFile(filepath.Join(root, rel))
+		if err != nil {
+			t.Fatalf("read artifact file: %v", err)
+		}
+		hash.Write(raw)
+		hash.Write([]byte{0})
+	}
+	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), size
 }
 
 func testZipBase64(t *testing.T, files map[string]string) string {

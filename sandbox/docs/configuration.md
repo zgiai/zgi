@@ -21,7 +21,9 @@ The production example uses `ZGI_SANDBOX_RUNTIME_BACKEND=linux-secure`. That
 backend also requires `ZGI_SANDBOX_SECURE_ROOTFS` and
 `ZGI_SANDBOX_BWRAP_BINARY`. When `ZGI_SANDBOX_DEPENDENCY_ROOTFS_DIR` is set,
 the secure runtime resolves dependency profiles from child rootfs directories
-named after each profile.
+named after each profile. During startup, the service also scans those
+profile-specific rootfs directories for verified profile artifacts and loads
+them into the dependency catalog as ready, enabled profiles.
 When a sandbox selects a dependency profile, the secure Linux backend activates
 profile-local Python and Node paths under `/opt/zgi/profiles/<profile>`.
 Profile environment values are applied after request environment values so user

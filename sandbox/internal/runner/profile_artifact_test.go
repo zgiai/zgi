@@ -153,6 +153,27 @@ func TestValidateBuiltProfileArtifactRejectsSymlink(t *testing.T) {
 	}
 }
 
+func TestListDependencyProfileArtifactsReadsRootFSArtifacts(t *testing.T) {
+	root := t.TempDir()
+	profileDir := filepath.Join(root, "skill-office", "opt", "zgi", "profiles", "skill-office")
+	writeBuiltProfileArtifact(t, profileDir, "skill-office", map[string]string{"venv/bin/python": "python"})
+
+	artifacts, err := ListDependencyProfileArtifacts(root)
+	if err != nil {
+		t.Fatalf("list dependency profile artifacts: %v", err)
+	}
+	if len(artifacts) != 1 {
+		t.Fatalf("expected one artifact, got %+v", artifacts)
+	}
+	artifact := artifacts[0]
+	if artifact.Name != "skill-office" || artifact.Version != "2026.05.31" || artifact.Checksum == "" || artifact.SizeBytes <= 0 {
+		t.Fatalf("unexpected artifact metadata: %+v", artifact)
+	}
+	if len(artifact.Languages) != 2 || artifact.Languages[0] != "python3" || artifact.Packages[0].Name != "office-tools" {
+		t.Fatalf("unexpected profile catalog metadata: %+v", artifact)
+	}
+}
+
 func writeBuiltProfileArtifact(t *testing.T, profileDir string, profile string, files map[string]string) {
 	t.Helper()
 	if err := os.MkdirAll(profileDir, 0o755); err != nil {
@@ -172,8 +193,19 @@ func writeBuiltProfileArtifact(t *testing.T, profileDir string, profile string, 
 		t.Fatalf("checksum artifact: %v", err)
 	}
 	manifest := builtProfileManifest{
-		Name:    profile,
-		Version: "2026.05.31",
+		Name:        profile,
+		Version:     "2026.05.31",
+		Status:      "disabled",
+		Enabled:     false,
+		OwnerScope:  "global",
+		Languages:   []string{"python3", "nodejs"},
+		BaseRuntime: "linux-secure",
+		Checksum:    "profile-source:" + profile + ":2026.05.31",
+		Description: "Managed document automation profile.",
+		Packages: []builtProfilePackage{
+			{Ecosystem: "python3", Name: "office-tools", Version: "managed"},
+			{Ecosystem: "nodejs", Name: "office-tools", Version: "managed"},
+		},
 		Build: profileBuildMetadata{
 			Checksum:           checksum,
 			SizeBytes:          size,

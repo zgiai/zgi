@@ -25,15 +25,106 @@ type dependencyProfileActivation struct {
 }
 
 type builtProfileManifest struct {
-	Name    string               `json:"name"`
-	Version string               `json:"version"`
-	Build   profileBuildMetadata `json:"build"`
+	Name               string                `json:"name"`
+	Version            string                `json:"version"`
+	Status             string                `json:"status"`
+	Enabled            bool                  `json:"enabled"`
+	OwnerScope         string                `json:"owner_scope"`
+	Languages          []string              `json:"languages"`
+	BaseRuntime        string                `json:"base_runtime"`
+	Checksum           string                `json:"checksum"`
+	EstimatedSizeBytes int64                 `json:"estimated_size_bytes"`
+	Description        string                `json:"description"`
+	Packages           []builtProfilePackage `json:"packages"`
+	Build              profileBuildMetadata  `json:"build"`
+}
+
+type builtProfilePackage struct {
+	Name      string `json:"name"`
+	Version   string `json:"version"`
+	Ecosystem string `json:"ecosystem,omitempty"`
 }
 
 type profileBuildMetadata struct {
 	Checksum           string `json:"checksum"`
 	SizeBytes          int64  `json:"size_bytes"`
 	VerificationPassed bool   `json:"verification_passed"`
+}
+
+type DependencyProfileArtifact struct {
+	Name        string
+	Version     string
+	OwnerScope  string
+	Languages   []string
+	Packages    []DependencyProfileArtifactPackage
+	BaseRuntime string
+	Checksum    string
+	SizeBytes   int64
+	Description string
+}
+
+type DependencyProfileArtifactPackage struct {
+	Name      string
+	Version   string
+	Ecosystem string
+}
+
+func ListDependencyProfileArtifacts(dependencyRootFSDir string) ([]DependencyProfileArtifact, error) {
+	root := strings.TrimSpace(dependencyRootFSDir)
+	if root == "" {
+		return nil, nil
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, fmt.Errorf("read dependency profile rootfs directory: %w", err)
+	}
+	artifacts := make([]DependencyProfileArtifact, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		profile := entry.Name()
+		if !safeDependencyProfileName(profile) {
+			return nil, ErrUnsafeDependencyProfileName{Profile: profile}
+		}
+		profileDir := filepath.Join(root, profile, strings.TrimPrefix(secureProfileBasePath, "/"), profile)
+		manifest, err := validateBuiltProfileArtifact(profileDir, profile)
+		if err != nil {
+			return nil, fmt.Errorf("inspect dependency profile artifact %s: %w", profile, err)
+		}
+		artifacts = append(artifacts, dependencyProfileArtifactFromManifest(manifest))
+	}
+	return artifacts, nil
+}
+
+func dependencyProfileArtifactFromManifest(manifest builtProfileManifest) DependencyProfileArtifact {
+	packages := make([]DependencyProfileArtifactPackage, 0, len(manifest.Packages))
+	for _, item := range manifest.Packages {
+		packages = append(packages, DependencyProfileArtifactPackage{
+			Name:      item.Name,
+			Version:   item.Version,
+			Ecosystem: item.Ecosystem,
+		})
+	}
+	return DependencyProfileArtifact{
+		Name:        manifest.Name,
+		Version:     manifest.Version,
+		OwnerScope:  defaultString(manifest.OwnerScope, "global"),
+		Languages:   append([]string(nil), manifest.Languages...),
+		Packages:    packages,
+		BaseRuntime: defaultString(manifest.BaseRuntime, "linux-secure"),
+		Checksum:    manifest.Build.Checksum,
+		SizeBytes:   manifest.Build.SizeBytes,
+		Description: strings.TrimSpace(manifest.Description),
+	}
+}
+
+func defaultString(value string, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	return value
 }
 
 func resolveDependencyProfileActivation(defaultRootFS string, dependencyRootFSDir string, dependencyProfile string) (dependencyProfileActivation, error) {
