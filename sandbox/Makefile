@@ -1,6 +1,6 @@
 SHELL := /bin/sh
 
-.PHONY: fmt test build check run kest test-linux-secure
+.PHONY: fmt test build check run kest test-linux-secure check-config-docs
 .PHONY: docker-up docker-down docker-logs
 .PHONY: docker-config
 
@@ -23,6 +23,9 @@ kest:
 
 test-linux-secure:
 	./scripts/test_linux_secure_container.sh
+
+check-config-docs:
+	./scripts/check_config_docs
 
 docker-up:
 	./scripts/start-docker

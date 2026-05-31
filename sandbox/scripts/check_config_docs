@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SANDBOX_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CONFIG_FILE="${SANDBOX_DIR}/internal/config/config.go"
+DOC_FILE="${SANDBOX_DIR}/docs/configuration.md"
+LOCAL_ENV_FILE="${SANDBOX_DIR}/.env.example"
+PRODUCTION_ENV_FILE="${SANDBOX_DIR}/.env.production.example"
+
+if ! command -v rg >/dev/null 2>&1; then
+  echo "check-config-docs: ripgrep (rg) is required" >&2
+  exit 2
+fi
+
+failures=0
+while IFS= read -r name; do
+  [ -n "${name}" ] || continue
+  for file in "${DOC_FILE}" "${LOCAL_ENV_FILE}" "${PRODUCTION_ENV_FILE}"; do
+    if ! rg -q "(^|[^A-Z0-9_])${name}([^A-Z0-9_]|$)" "${file}"; then
+      echo "check-config-docs: ${name} is missing from ${file#${SANDBOX_DIR}/}" >&2
+      failures=$((failures + 1))
+    fi
+  done
+done < <(rg -o 'ZGI_SANDBOX_[A-Z0-9_]+' "${CONFIG_FILE}" | sort -u)
+
+if [ "${failures}" -ne 0 ]; then
+  exit 1
+fi
+
+echo "check-config-docs: ok"

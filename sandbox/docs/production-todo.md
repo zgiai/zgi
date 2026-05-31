@@ -536,9 +536,9 @@ managed environments.
 
 ### K1. Configuration
 
-- Document all `ZGI_SANDBOX_` environment variables.
-- Provide safe defaults for local development.
-- Provide strict defaults for production examples.
+- [x] Document all `ZGI_SANDBOX_` environment variables.
+- [x] Provide safe defaults for local development.
+- [x] Provide strict defaults for production examples.
 - [x] Add config validation at startup.
 - Added startup logging for effective non-secret config.
 
@@ -599,7 +599,7 @@ Goal: make production readiness measurable.
 - Resource limits are enforced and tested.
 - Organization quota is enforced and tested.
 - Audit events exist for execution and file operations.
-- Operator docs list all required environment variables.
+- [x] Operator docs list all required environment variables.
 
 ## 16. Suggested PR Order
 
