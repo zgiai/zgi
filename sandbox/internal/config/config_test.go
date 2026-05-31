@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestFromEnvReadsShutdownTimeout(t *testing.T) {
 	t.Setenv("ZGI_SANDBOX_SHUTDOWN_TIMEOUT_SECONDS", "17")
@@ -227,21 +230,85 @@ func TestPublicSnapshotOmitsSecrets(t *testing.T) {
 }
 
 func TestValidateStartupRejectsPreviewBackendInProduction(t *testing.T) {
-	cfg := Config{
-		Environment:    "production",
-		RuntimeBackend: "preview",
-	}
+	cfg := validStartupConfig()
+	cfg.Environment = "production"
+	cfg.RuntimeBackend = "preview"
+	cfg.APIKey = "secret"
 
-	if err := cfg.ValidateStartup(); err == nil {
-		t.Fatal("expected production preview backend to be rejected")
+	if err := cfg.ValidateStartup(); err == nil || !strings.Contains(err.Error(), "runtime backend that enforces network policy") {
+		t.Fatalf("expected production preview backend to be rejected, got %v", err)
+	}
+}
+
+func TestValidateStartupRejectsMissingProductionAPIKey(t *testing.T) {
+	cfg := validStartupConfig()
+	cfg.Environment = "production"
+	cfg.RuntimeBackend = "linux-secure"
+	cfg.SecureRootFS = "/srv/rootfs"
+	cfg.APIKey = ""
+
+	if err := cfg.ValidateStartup(); err == nil || !strings.Contains(err.Error(), "ZGI_SANDBOX_API_KEY") {
+		t.Fatalf("expected missing production API key to be rejected, got %v", err)
+	}
+}
+
+func TestValidateStartupRejectsInvalidBounds(t *testing.T) {
+	cfg := validStartupConfig()
+	cfg.Port = "70000"
+	cfg.MaxWorkers = 0
+	cfg.MaxConcurrentExecutions = -1
+	cfg.MaxWorkspaceBytes = -1
+	cfg.AdvertiseURL = "localhost:2660"
+
+	err := cfg.ValidateStartup()
+	if err == nil {
+		t.Fatal("expected invalid startup config to be rejected")
+	}
+	for _, expected := range []string{
+		"ZGI_SANDBOX_SERVER_PORT",
+		"ZGI_SANDBOX_LITE_MAX_WORKERS",
+		"ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS",
+		"ZGI_SANDBOX_MAX_WORKSPACE_BYTES",
+		"ZGI_SANDBOX_ADVERTISE_URL",
+	} {
+		if !strings.Contains(err.Error(), expected) {
+			t.Fatalf("expected validation error for %s, got %v", expected, err)
+		}
+	}
+}
+
+func TestValidateStartupRejectsUnsupportedRuntimeBackend(t *testing.T) {
+	cfg := validStartupConfig()
+	cfg.RuntimeBackend = "unknown"
+
+	if err := cfg.ValidateStartup(); err == nil || !strings.Contains(err.Error(), "ZGI_SANDBOX_RUNTIME_BACKEND") {
+		t.Fatalf("expected unsupported runtime backend to be rejected, got %v", err)
+	}
+}
+
+func TestValidateStartupRejectsSecureBackendWithoutRootFS(t *testing.T) {
+	cfg := validStartupConfig()
+	cfg.RuntimeBackend = "linux-secure"
+	cfg.SecureRootFS = ""
+
+	if err := cfg.ValidateStartup(); err == nil || !strings.Contains(err.Error(), "ZGI_SANDBOX_SECURE_ROOTFS") {
+		t.Fatalf("expected missing secure rootfs to be rejected, got %v", err)
+	}
+}
+
+func TestValidateStartupRejectsUnknownEnvironment(t *testing.T) {
+	cfg := validStartupConfig()
+	cfg.Environment = "prod-like"
+
+	if err := cfg.ValidateStartup(); err == nil || !strings.Contains(err.Error(), "ZGI_SANDBOX_ENV") {
+		t.Fatalf("expected unknown environment to be rejected, got %v", err)
 	}
 }
 
 func TestValidateStartupAllowsPreviewBackendOutsideProduction(t *testing.T) {
-	cfg := Config{
-		Environment:    "local",
-		RuntimeBackend: "preview",
-	}
+	cfg := validStartupConfig()
+	cfg.Environment = "local"
+	cfg.RuntimeBackend = "preview"
 
 	if err := cfg.ValidateStartup(); err != nil {
 		t.Fatalf("expected local preview backend to be allowed, got %v", err)
@@ -249,12 +316,61 @@ func TestValidateStartupAllowsPreviewBackendOutsideProduction(t *testing.T) {
 }
 
 func TestValidateStartupAllowsSecureBackendInProduction(t *testing.T) {
-	cfg := Config{
-		Environment:    "prod",
-		RuntimeBackend: "linux-secure",
-	}
+	cfg := validStartupConfig()
+	cfg.Environment = "prod"
+	cfg.RuntimeBackend = "linux-secure"
+	cfg.SecureRootFS = "/srv/rootfs"
+	cfg.APIKey = "secret"
 
 	if err := cfg.ValidateStartup(); err != nil {
 		t.Fatalf("expected production secure backend to be allowed, got %v", err)
+	}
+}
+
+func validStartupConfig() Config {
+	return Config{
+		Port:                                   "2660",
+		APIKey:                                 "",
+		MaxWorkers:                             4,
+		TimeoutSeconds:                         5,
+		OutputLimitKB:                          1024,
+		MaxActive:                              6,
+		MaxConcurrentExecutions:                0,
+		MaxConcurrentExecutionsPerProfile:      0,
+		MaxActivePerOrganization:               0,
+		MaxConcurrentExecutionsPerOrganization: 0,
+		MaxExecutionsPerMinutePerOrganization:  0,
+		MaxQueuedExecutionsPerOrganization:     0,
+		MaxWorkspaceFiles:                      0,
+		MaxWorkspaceBytes:                      0,
+		MaxWorkspaceBytesPerOrganization:       0,
+		MaxArtifactManifestFiles:               0,
+		MaxArtifactManifestBytes:               0,
+		MaxArtifactBytesPerOrganization:        0,
+		MaxDependencyProfilesPerOrganization:   0,
+		MaxDependencyProfileSizeBytes:          512 * 1024 * 1024,
+		DependencyProfileBuildTimeoutSeconds:   600,
+		QueueTimeoutMS:                         5000,
+		ShutdownTimeoutSeconds:                 10,
+		SessionTTL:                             1800,
+		InteractiveTTL:                         3600,
+		CommandTimeout:                         30,
+		MaxFileSizeKB:                          256,
+		ObserverRetentionDays:                  7,
+		ObserverMaxEvents:                      10000,
+		DatabaseURL:                            "postgres://postgres@127.0.0.1:5432/postgres?sslmode=disable",
+		DataDir:                                ".zgi-sandbox-data",
+		CacheTTL:                               30,
+		RedisAddr:                              "",
+		RedisPassword:                          "",
+		RedisDB:                                0,
+		WorkerID:                               "worker-a",
+		AdvertiseURL:                           "http://127.0.0.1:2660",
+		PublicBaseURL:                          "http://127.0.0.1:2660",
+		Environment:                            "local",
+		RuntimeBackend:                         "preview",
+		SecureRootFS:                           "",
+		BwrapBinary:                            "bwrap",
+		ProxyTimeout:                           20,
 	}
 }
