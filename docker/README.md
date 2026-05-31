@@ -98,6 +98,30 @@ Local default endpoints:
 On first launch, open the gateway URL and create the first administrator account.
 ZGI does not ship with a default administrator account. Use your own email and a strong password.
 
+## AIChat / Agent Knowledge Smoke Checks
+
+When smoke testing local AIChat or Agent knowledge retrieval changes, rebuild the
+application images first because the default Docker stack runs images rather
+than bind-mounted source:
+
+```bash
+cd docker
+docker compose --env-file .env up -d --build api web
+docker compose --env-file .env ps api web
+```
+
+Wait until `zgi-api-1` and `zgi-web-1` are healthy before browser testing.
+
+Use a dedicated smoke Agent that is already bound to a small knowledge base,
+for example a "story outline" knowledge base. Do not temporarily modify a
+general-purpose demo Agent during smoke tests. The smoke pass should cover:
+
+- AIChat knowledge-base listing with fallback candidates.
+- AIChat retrieve success and no-results cases.
+- Agent retrieve success from the bound knowledge base.
+- Original-wording questions such as "what is the one-sentence synopsis",
+  verifying that the answer quotes or closely excerpts the source and cites it.
+
 Host ports can be changed in `docker/.env`:
 
 - Gateway: `${PUBLIC_PORT:-2679}`
