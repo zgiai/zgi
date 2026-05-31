@@ -785,6 +785,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       systemPrompt,
       selectedKnowledgeDatasets,
       selectedSkills,
+      databaseBindings,
       onChangeSystemPrompt: setSystemPrompt,
       onOpenOptimizer: () => setPromptOptimizerOpen(true),
     },

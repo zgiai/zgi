@@ -6,7 +6,7 @@ export const TOKEN_REGEX_GLOBAL = /\{\{#([^.#}]+)(?:\.([^#}]+))?#\}\}/g;
 export const TOKEN_REGEX_SINGLE = /\{\{#([^.#}]+)(?:\.([^#}]+))?#\}\}/;
 
 const ZGI_BLOCK_REGEX_GLOBAL =
-  /<zgi:(slot|knowledge|skill)\b([^>]*)>([\s\S]*?)<\/zgi:(slot|knowledge|skill)>/g;
+  /<zgi:(slot|knowledge|skill|database|table)\b([^>]*)>([\s\S]*?)<\/zgi:(slot|knowledge|skill|database|table)>/g;
 const ZGI_ATTR_REGEX = /([a-zA-Z_][\w-]*)="([^"]*)"/g;
 
 export interface ValueTransformOptions {
@@ -101,13 +101,13 @@ function parseInlineTokens(line: string, options?: ValueTransformOptions): JSONC
         contentNodes.push({ type: 'text', text: match });
       } else if (kind === 'slot') {
         contentNodes.push(slotToInlineNode(attrs, label));
-      } else if (kind === 'knowledge') {
+      } else if (kind === 'knowledge' || kind === 'database' || kind === 'table') {
         contentNodes.push({
           type: 'variableToken',
           attrs: {
-            sourceId: 'knowledge',
+            sourceId: kind,
             key: attrs.id || '',
-            title: 'Knowledge',
+            title: kind,
             label,
             syntax: 'zgi',
           },
@@ -189,7 +189,13 @@ export function getTemplateAwareCharacterCount(
     const closingKind = String(args[4] ?? '');
     if (kind !== closingKind) {
       count += characterLength(match);
-    } else if (kind === 'slot' || kind === 'knowledge' || kind === 'skill') {
+    } else if (
+      kind === 'slot' ||
+      kind === 'knowledge' ||
+      kind === 'skill' ||
+      kind === 'database' ||
+      kind === 'table'
+    ) {
       count += characterLength(decodeTemplateText(rawContent));
     } else {
       count += characterLength(match);
@@ -238,11 +244,14 @@ export function docToValue(json: JSONContent): string {
         );
         const syntax = String((node.attrs as { syntax?: string })?.syntax ?? '');
         const label = String((node.attrs as { label?: string })?.label ?? '');
-        if (syntax === 'zgi' && sourceId === 'knowledge') {
-          return `<zgi:knowledge id="${encodeTemplateAttribute(key)}">${encodeTemplateText(label)}</zgi:knowledge>`;
-        }
-        if (syntax === 'zgi' && sourceId === 'skill') {
-          return `<zgi:skill id="${encodeTemplateAttribute(key)}">${encodeTemplateText(label)}</zgi:skill>`;
+        if (
+          syntax === 'zgi' &&
+          (sourceId === 'knowledge' ||
+            sourceId === 'skill' ||
+            sourceId === 'database' ||
+            sourceId === 'table')
+        ) {
+          return `<zgi:${sourceId} id="${encodeTemplateAttribute(key)}">${encodeTemplateText(label)}</zgi:${sourceId}>`;
         }
         // For special single-part token (e.g., {{#context#}}) we store key as empty string
         if (key === '') return `{{#${sourceId}#}}`;

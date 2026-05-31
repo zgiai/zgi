@@ -656,7 +656,11 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
         title: idToTitleRef.current.get(item.sourceId) || item.sourceId,
         label: item.label || item.displayKey || item.key,
         syntax:
-          templateBlocksEnabled && (item.sourceId === 'knowledge' || item.sourceId === 'skill')
+          templateBlocksEnabled &&
+          (item.sourceId === 'knowledge' ||
+            item.sourceId === 'skill' ||
+            item.sourceId === 'database' ||
+            item.sourceId === 'table')
             ? 'zgi'
             : '',
       }),
