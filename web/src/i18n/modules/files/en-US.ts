@@ -2,17 +2,20 @@ const messages = {
   title: 'File Management',
   eyebrow: 'Asset Library',
   description:
-    'Manage uploaded files, folders, and resource references. Files can be used for knowledge bases, database imports, and chat workflows.',
+    'Upload and manage source files. Parsed content can be used for follow-up Q&A and knowledge base references.',
 
   // Sidebar
   sidebar: {
     storage: 'Storage',
     newFolder: 'New Folder',
     uploadFile: 'Upload File',
+    viewsTitle: 'Views',
+    fileSpaceTitle: 'File Space',
     allFiles: 'All Files',
+    needsActionFiles: 'Needs Action',
     uploadedFiles: 'Recently Uploaded',
     favorites: 'Favorites',
-    defaultFolders: 'Default Folders',
+    defaultFolders: 'My Files',
     noFolders: 'No folders yet',
   },
 
@@ -22,8 +25,8 @@ const messages = {
     fileType: 'File Type',
     fileSize: 'File Size',
     processingStatus: 'Processing Status',
-    relatedStatus: 'Related Status',
-    uploadDate: 'Upload Date',
+    relatedStatus: 'Knowledge Base',
+    uploadDate: 'Upload Time',
     lastModified: 'Last Modified',
     actions: 'Actions',
     selectAll: 'Select All',
@@ -70,6 +73,10 @@ const messages = {
     addToFavorites: 'Add to Favorites',
     removeFromFavorites: 'Remove from Favorites',
     bulkDelete: 'Batch Delete',
+    batchParse: 'Batch Parse',
+    batchMove: 'Batch Move',
+    batchUnavailable:
+      'This batch capability requires backend API support and is not available yet.',
     deleting: 'Deleting...',
     confirmParse: 'Review',
   },
@@ -187,7 +194,8 @@ const messages = {
     },
     workbench: {
       title: 'Processing progress',
-      description: '{pending} pending reviews, {chunks} chunks, and {embeddings} vectors generated.',
+      description:
+        '{pending} pending reviews, {chunks} chunks, and {embeddings} vectors generated.',
       pendingHint: '{count} pending',
       steps: {
         uploaded: 'Uploaded',
@@ -242,7 +250,8 @@ const messages = {
     chunks: {
       title: 'Content Chunks',
       notReadyTitle: 'Chunks are not ready',
-      notReadyDescription: 'Chunks become available after parsing, review, and vector generation finish.',
+      notReadyDescription:
+        'Chunks become available after parsing, review, and vector generation finish.',
       loadErrorTitle: 'Failed to load chunks',
       loadErrorDescription: 'The chunk result may not be ready yet.',
       total: '{count} chunks',
@@ -262,9 +271,11 @@ const messages = {
     },
     index: {
       title: 'Index Information',
-      description: 'File-level chunk and embedding assets generated before adding to a knowledge base.',
+      description:
+        'File-level chunk and embedding assets generated before adding to a knowledge base.',
       notReadyTitle: 'Index information is not ready',
-      notReadyDescription: 'Index metadata becomes available after chunking and embedding generation starts.',
+      notReadyDescription:
+        'Index metadata becomes available after chunking and embedding generation starts.',
     },
     reparse: {
       action: 'Reparse',
@@ -280,16 +291,19 @@ const messages = {
     },
     failure: {
       storeOnly: 'Mark as Stored Only',
-      storeOnlyUnavailable: 'This requires a backend status transition API and is not available yet.',
+      storeOnlyUnavailable:
+        'This requires a backend status transition API and is not available yet.',
     },
     views: {
       storedOnly: {
         title: 'Stored only',
-        description: 'The original file is saved. Start parsing later to produce chunks and vectors.',
+        description:
+          'The original file is saved. Start parsing later to produce chunks and vectors.',
       },
       processing: {
         title: 'Parsing in progress',
-        description: 'The system is extracting document content. This page refreshes every 2 seconds.',
+        description:
+          'The system is extracting document content. This page refreshes every 2 seconds.',
       },
       confirming: {
         title: 'Parse review required',
@@ -297,7 +311,8 @@ const messages = {
       },
       generating: {
         title: 'Generating chunks and vectors',
-        description: 'The system is chunking content and writing embeddings. This page refreshes every 2 seconds.',
+        description:
+          'The system is chunking content and writing embeddings. This page refreshes every 2 seconds.',
       },
       ready: {
         title: 'Searchable asset ready',

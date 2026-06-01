@@ -20,6 +20,7 @@ import {
   MoveRight,
   Activity,
   Info,
+  FileSearch,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
@@ -48,7 +49,12 @@ import type { FileItem } from '@/services/types/file';
 import { formatDate } from '@/utils/format';
 import { RelatedResourcesPopover } from './related-resources-popover';
 import { DeleteWarningDialog } from './delete-warning-dialog';
-import { useDownloadFile, useDeleteFiles, FileAssociationError, FILES_QUERY_KEY } from '@/hooks/use-files';
+import {
+  useDownloadFile,
+  useDeleteFiles,
+  FileAssociationError,
+  FILES_QUERY_KEY,
+} from '@/hooks/use-files';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { Badge } from '@/components/ui/badge';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -265,6 +271,9 @@ function FileListBase({
 
   const allSelected = files.length > 0 && files.every(file => selectedFiles.includes(file.id));
   const someSelected = files.some(file => selectedFiles.includes(file.id));
+  const selectedStoredOnlyCount = files.filter(
+    file => selectedFiles.includes(file.id) && getProcessingStatus(file) === 'stored_only'
+  ).length;
 
   const handleSelectAll = (checked: boolean) => {
     if (!onSelectionChange) return;
@@ -657,13 +666,13 @@ function FileListBase({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
-      <div className="flex min-h-12 items-center justify-between border-b px-5 py-2.5">
+      <div className="flex min-h-12 items-center justify-between border-b px-4 py-2.5">
         <div className="flex min-w-0 items-center gap-3">
-          <div className="text-sm font-medium text-foreground">
+          <div className="text-base font-medium text-foreground">
             {t('fileList.totalItems', { total })}
           </div>
           {selectedFiles.length > 0 ? (
-            <span className="rounded-full bg-bg-canvas px-2.5 py-1 text-xs font-medium text-muted-foreground">
+            <span className="rounded-full border bg-muted/40 px-2.5 py-1 text-xs font-medium text-muted-foreground">
               {maxCount !== undefined
                 ? t('selectedCountWithMax', { count: selectedFiles.length, max: maxCount })
                 : t('selectedCount', { count: selectedFiles.length })}
@@ -671,22 +680,60 @@ function FileListBase({
           ) : null}
         </div>
 
-        {selectedFiles.length > 0 && canManage && !selectionMode ? (
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8 rounded-md border-destructive/30 bg-background px-3 text-destructive shadow-none hover:bg-destructive/5 hover:text-destructive"
-            onClick={handleBulkDeleteClick}
-            disabled={isDeleting}
-          >
-            {isDeleting ? t('actions.deleting') : t('actions.bulkDelete')}
-          </Button>
+        {selectedFiles.length > 0 && !selectionMode ? (
+          <div className="flex shrink-0 items-center gap-1.5 rounded-lg border bg-muted/30 p-1">
+            <Button
+              type="button"
+              size="sm"
+              className="h-8 rounded-md px-3 text-xs"
+              disabled
+              title={t('actions.batchUnavailable')}
+            >
+              <FileSearch className="h-4 w-4" />
+              {t('actions.batchParse')}
+              {selectedStoredOnlyCount > 0 ? (
+                <span className="ml-1 text-[11px] opacity-80">{selectedStoredOnlyCount}</span>
+              ) : null}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 rounded-md px-3 text-xs shadow-none"
+              disabled
+              title={t('actions.batchUnavailable')}
+            >
+              <MoveRight className="h-4 w-4" />
+              {t('actions.batchMove')}
+            </Button>
+            {canManage ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 rounded-md px-3 text-xs text-muted-foreground shadow-none hover:bg-destructive/5 hover:text-destructive"
+                onClick={handleBulkDeleteClick}
+                disabled={isDeleting}
+              >
+                {isDeleting ? t('actions.deleting') : t('actions.bulkDelete')}
+              </Button>
+            ) : null}
+          </div>
         ) : null}
       </div>
-      <Table containerClassName="overflow-y-auto flex-1 relative">
-        <TableHeader className="sticky top-0 z-10 bg-bg-canvas/90 backdrop-blur">
-          <TableRow className="hover:bg-transparent">
-            <TableHead className="w-[40px] ">
+      <Table className="table-fixed" containerClassName="overflow-y-auto flex-1 relative">
+        <colgroup>
+          <col style={{ width: 44 }} />
+          <col style={{ width: 260 }} />
+          <col style={{ width: 90 }} />
+          <col style={{ width: 100 }} />
+          <col style={{ width: 240 }} />
+          <col style={{ width: 140 }} />
+          <col style={{ width: 160 }} />
+          {hasAnyAction ? <col style={{ width: 170 }} /> : null}
+        </colgroup>
+        <TableHeader className="sticky top-0 z-10 bg-muted/30 backdrop-blur">
+          <TableRow className="h-11 hover:bg-muted/30">
+            <TableHead className="px-3">
               <Checkbox
                 checked={allSelected}
                 onCheckedChange={handleSelectAll}
@@ -702,14 +749,14 @@ function FileListBase({
                 }}
               />
             </TableHead>
-            <TableHead>{t('fileList.fileName')}</TableHead>
-            <TableHead>{t('fileList.fileType')}</TableHead>
-            <TableHead>{t('fileList.fileSize')}</TableHead>
-            <TableHead>{t('fileList.processingStatus')}</TableHead>
-            <TableHead>{t('fileList.relatedStatus')}</TableHead>
-            <TableHead>{t('fileList.uploadDate')}</TableHead>
+            <TableHead className="text-sm">{t('fileList.fileName')}</TableHead>
+            <TableHead className="text-sm">{t('fileList.fileType')}</TableHead>
+            <TableHead className="text-sm">{t('fileList.fileSize')}</TableHead>
+            <TableHead className="text-sm">{t('fileList.processingStatus')}</TableHead>
+            <TableHead className="text-sm">{t('fileList.relatedStatus')}</TableHead>
+            <TableHead className="text-sm">{t('fileList.uploadDate')}</TableHead>
             {hasAnyAction && (
-              <TableHead className="w-[50px] text-right">{t('fileList.actions')}</TableHead>
+              <TableHead className="text-right text-sm">{t('fileList.actions')}</TableHead>
             )}
           </TableRow>
         </TableHeader>
@@ -779,151 +826,163 @@ function FileListBase({
               </TableCell>
             </TableRow>
           ) : (
-            files.map(file => (
-              <TableRow
-                key={file.id}
-                className={cn(
-                  'cursor-pointer transition-colors hover:bg-bg-canvas/70',
-                  selectedFiles.includes(file.id) && 'bg-primary/5'
-                )}
-                onClick={() => handleRowClick(file)}
-              >
-                <TableCell>
-                  <Checkbox
-                    checked={selectedFiles.includes(file.id)}
-                    onCheckedChange={checked => handleFileSelect(file.id, checked as boolean)}
-                    onClick={e => e.stopPropagation()}
-                    disabled={
-                      maxCount !== undefined &&
-                      selectedFiles.length >= maxCount &&
-                      !selectedFiles.includes(file.id)
-                    }
-                  />
-                </TableCell>
-                <TableCell className="font-medium max-w-[200px]">
-                  <div className="flex items-center gap-2">
-                    {(() => {
-                      const { Icon, color } = getFileTypeConfig(file.extension);
-                      return <Icon className={cn('h-5 w-5 flex-shrink-0', color)} />;
-                    })()}
-                    {canViewDetail ? (
-                      <Link
-                        href={`/console/files/${file.id}`}
-                        className="truncate underline-offset-4 hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
-                        onClick={event => event.stopPropagation()}
-                      >
-                        {file.name}
-                      </Link>
-                    ) : (
-                      <span className="truncate">{file.name}</span>
-                    )}
-                  </div>
-                </TableCell>
-                <TableCell className="text-sm">{file.extension}</TableCell>
-                <TableCell className="text-sm">{formatFileSize(file.size)}</TableCell>
-                <TableCell className="text-sm">
-                  <FileProcessingStatus file={file} />
-                </TableCell>
-                <TableCell className="text-sm">
-                  {file.related_count > 0 ? (
-                    <RelatedResourcesPopover fileId={file.id} relatedCount={file.related_count}>
-                      <span className="inline-flex cursor-pointer items-center rounded-full bg-primary/10 px-2 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/15">
-                        {t('fileList.relatedCount', { count: file.related_count })}
-                      </span>
-                    </RelatedResourcesPopover>
-                  ) : (
-                    <span className="inline-flex items-center rounded-full px-2 py-1 text-xs font-medium bg-muted">
-                      {t('fileList.notRelated')}
-                    </span>
+            files.map(file => {
+              const processingStatus = getProcessingStatus(file);
+
+              return (
+                <TableRow
+                  key={file.id}
+                  className={cn(
+                    'h-14 cursor-pointer transition-colors hover:bg-muted/30',
+                    processingStatus === 'confirming' &&
+                      'bg-amber-50/40 shadow-[inset_2px_0_0_rgb(245,158,11)] hover:bg-amber-50/60',
+                    processingStatus === 'parse_failed' &&
+                      'bg-red-50/40 shadow-[inset_2px_0_0_rgb(239,68,68)] hover:bg-red-50/60',
+                    selectedFiles.includes(file.id) &&
+                      'bg-primary/5 shadow-[inset_2px_0_0_hsl(var(--primary))]'
                   )}
-                </TableCell>
-                <TableCell className="text-sm text-muted-foreground">
-                  {formatDate(new Date(file.created_at).getTime() - 8 * 60 * 60 * 1000)}
-                </TableCell>
-                {hasAnyAction && (
-                  <TableCell className="text-right">
-                    <div className="flex min-w-0 items-center justify-end gap-1.5">
-                      {canViewDetail && getProcessingStatus(file) === 'confirming' ? (
-                        <Button
-                          asChild
-                          variant="outline"
-                          size="sm"
-                          className="h-8 rounded-md px-3 text-xs"
+                  onClick={() => handleRowClick(file)}
+                >
+                  <TableCell className="px-3">
+                    <Checkbox
+                      checked={selectedFiles.includes(file.id)}
+                      onCheckedChange={checked => handleFileSelect(file.id, checked as boolean)}
+                      onClick={e => e.stopPropagation()}
+                      disabled={
+                        maxCount !== undefined &&
+                        selectedFiles.length >= maxCount &&
+                        !selectedFiles.includes(file.id)
+                      }
+                    />
+                  </TableCell>
+                  <TableCell className="max-w-0 font-medium">
+                    <div className="flex min-w-0 items-center gap-3">
+                      {(() => {
+                        const { Icon, color } = getFileTypeConfig(file.extension);
+                        return <Icon className={cn('h-5 w-5 flex-shrink-0', color)} />;
+                      })()}
+                      {canViewDetail ? (
+                        <Link
+                          href={`/console/files/${file.id}`}
+                          className="truncate text-sm font-medium text-foreground underline-offset-4 hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
                           onClick={event => event.stopPropagation()}
                         >
-                          <Link href={`/console/files/${file.id}`}>
-                            {t('actions.confirmParse')}
-                          </Link>
-                        </Button>
-                      ) : null}
-                      {getProcessingStatus(file) === 'parse_failed' ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-8 rounded-md px-3 text-xs"
-                          disabled={reparsingFileId === file.id}
-                          onClick={event => {
-                            event.stopPropagation();
-                            void handleReparse(file);
-                          }}
-                        >
-                          {reparsingFileId === file.id
-                            ? t('detail.reparse.reparsing')
-                            : t('detail.reparse.action')}
-                        </Button>
-                      ) : null}
-                      <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 w-8 p-0"
-                          onClick={e => e.stopPropagation()}
-                        >
-                          <MoreVertical className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        {canViewDetail ? (
-                          <DropdownMenuItem
-                            onClick={e => {
-                              e.stopPropagation();
-                              handleOpenDetail(file);
+                          {file.name}
+                        </Link>
+                      ) : (
+                        <span className="truncate text-sm font-medium text-foreground">
+                          {file.name}
+                        </span>
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-sm text-foreground">{file.extension}</TableCell>
+                  <TableCell className="text-sm text-foreground">
+                    {formatFileSize(file.size)}
+                  </TableCell>
+                  <TableCell className="text-sm">
+                    <FileProcessingStatus file={file} />
+                  </TableCell>
+                  <TableCell className="text-sm">
+                    {file.related_count > 0 ? (
+                      <RelatedResourcesPopover fileId={file.id} relatedCount={file.related_count}>
+                        <span className="inline-flex cursor-pointer items-center rounded-full bg-primary/10 px-2 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/15">
+                          {t('fileList.relatedCount', { count: file.related_count })}
+                        </span>
+                      </RelatedResourcesPopover>
+                    ) : (
+                      <span className="inline-flex items-center rounded-full px-2 py-1 text-xs font-medium bg-muted">
+                        {t('fileList.notRelated')}
+                      </span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {formatDate(new Date(file.created_at).getTime() - 8 * 60 * 60 * 1000)}
+                  </TableCell>
+                  {hasAnyAction && (
+                    <TableCell className="text-right">
+                      <div className="flex min-w-0 items-center justify-end gap-1.5">
+                        {canViewDetail && processingStatus === 'confirming' ? (
+                          <Button
+                            asChild
+                            variant="outline"
+                            size="sm"
+                            className="h-8 rounded-md px-3 text-xs"
+                            onClick={event => event.stopPropagation()}
+                          >
+                            <Link href={`/console/files/${file.id}`}>
+                              {t('actions.confirmParse')}
+                            </Link>
+                          </Button>
+                        ) : null}
+                        {processingStatus === 'parse_failed' ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 rounded-md px-3 text-xs"
+                            disabled={reparsingFileId === file.id}
+                            onClick={event => {
+                              event.stopPropagation();
+                              void handleReparse(file);
                             }}
                           >
-                            <Info className="h-4 w-4 mr-2" />
-                            {t('actions.viewDetails')}
-                          </DropdownMenuItem>
+                            {reparsingFileId === file.id
+                              ? t('detail.reparse.reparsing')
+                              : t('detail.reparse.action')}
+                          </Button>
                         ) : null}
-                        {canDownload && (
-                          <>
-                            {isOriginalPreviewSupported(file.extension, file.mime_type) ? (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 w-8 p-0"
+                              onClick={e => e.stopPropagation()}
+                            >
+                              <MoreVertical className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            {canViewDetail ? (
                               <DropdownMenuItem
                                 onClick={e => {
                                   e.stopPropagation();
-                                  handlePreview(file);
+                                  handleOpenDetail(file);
                                 }}
                               >
-                                <Eye className="h-4 w-4 mr-2" />
-                                {t('actions.preview')}
+                                <Info className="h-4 w-4 mr-2" />
+                                {t('actions.viewDetails')}
                               </DropdownMenuItem>
                             ) : null}
+                            {canDownload && (
+                              <>
+                                {isOriginalPreviewSupported(file.extension, file.mime_type) ? (
+                                  <DropdownMenuItem
+                                    onClick={e => {
+                                      e.stopPropagation();
+                                      handlePreview(file);
+                                    }}
+                                  >
+                                    <Eye className="h-4 w-4 mr-2" />
+                                    {t('actions.preview')}
+                                  </DropdownMenuItem>
+                                ) : null}
 
-                            <DropdownMenuItem
-                              onClick={e => {
-                                e.stopPropagation();
-                                handleDownload(file);
-                              }}
-                              disabled={isDownloading}
-                            >
-                              <Download className="h-4 w-4 mr-2" />
-                              {t('actions.downloadFile')}
-                            </DropdownMenuItem>
-                          </>
-                        )}
+                                <DropdownMenuItem
+                                  onClick={e => {
+                                    e.stopPropagation();
+                                    handleDownload(file);
+                                  }}
+                                  disabled={isDownloading}
+                                >
+                                  <Download className="h-4 w-4 mr-2" />
+                                  {t('actions.downloadFile')}
+                                </DropdownMenuItem>
+                              </>
+                            )}
 
-                        {/* TODO: Favorites feature temporarily disabled, may restore later
+                            {/* TODO: Favorites feature temporarily disabled, may restore later
                       {file.is_favorite ? (
                         <DropdownMenuItem
                           onClick={e => {
@@ -949,37 +1008,38 @@ function FileListBase({
                       )}
                       */}
 
-                        {canManage && !selectionMode && (
-                          <DropdownMenuItem
-                            className="text-destructive"
-                            onClick={e => {
-                              e.stopPropagation();
-                              handleDelete(file);
-                            }}
-                            disabled={isDeleting}
-                          >
-                            <Trash2 className="h-4 w-4 mr-2 text-destructive" />
-                            {t('actions.delete')}
-                          </DropdownMenuItem>
-                        )}
-                        {canMoveAssets && !selectionMode && (
-                          <DropdownMenuItem
-                            onClick={e => {
-                              e.stopPropagation();
-                              setWorkspaceMoveFile(file);
-                            }}
-                          >
-                            <MoveRight className="h-4 w-4 mr-2" />
-                            {common('assetMove.title')}
-                          </DropdownMenuItem>
-                        )}
-                      </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                  </TableCell>
-                )}
-              </TableRow>
-            ))
+                            {canManage && !selectionMode && (
+                              <DropdownMenuItem
+                                className="text-destructive"
+                                onClick={e => {
+                                  e.stopPropagation();
+                                  handleDelete(file);
+                                }}
+                                disabled={isDeleting}
+                              >
+                                <Trash2 className="h-4 w-4 mr-2 text-destructive" />
+                                {t('actions.delete')}
+                              </DropdownMenuItem>
+                            )}
+                            {canMoveAssets && !selectionMode && (
+                              <DropdownMenuItem
+                                onClick={e => {
+                                  e.stopPropagation();
+                                  setWorkspaceMoveFile(file);
+                                }}
+                              >
+                                <MoveRight className="h-4 w-4 mr-2" />
+                                {common('assetMove.title')}
+                              </DropdownMenuItem>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                    </TableCell>
+                  )}
+                </TableRow>
+              );
+            })
           )}
         </TableBody>
       </Table>

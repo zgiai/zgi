@@ -23,7 +23,6 @@ import {
   Info,
   Upload,
   PanelLeft,
-  FolderPlus,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -90,7 +89,7 @@ export interface FileManagementContentProps {
   allowWorkspaceSwitch?: boolean;
 }
 
-const SYSTEM_FILE_CATEGORIES = new Set(['all', 'uploaded', 'default']);
+const SYSTEM_FILE_CATEGORIES = new Set(['all', 'needs_action', 'uploaded', 'default']);
 
 type FileProcessingStatusFilter = 'all' | 'needs_action' | 'ready' | 'stored_only';
 
@@ -471,7 +470,8 @@ const FileManagementContent = ({
   const canManage = hasPermission('file.manage');
   const canCreateFolder = hasPermission('file.move_create');
   const canUpload = hasPermission('file.upload_create');
-  const canCreateInActiveFolder = canCreateFolder && activeFolderDepth >= 0 && activeFolderDepth < 2;
+  const canCreateInActiveFolder =
+    canCreateFolder && activeFolderDepth >= 0 && activeFolderDepth < 2;
   const { organizations } = useOrganizations(isAuthenticated);
   const showOrganizationSwitcher = isAuthenticated && organizations.length > 1;
   const currentSpaceLabel = currentWorkspace?.name || tNavigation('switchWorkspace');
@@ -502,24 +502,36 @@ const FileManagementContent = ({
 
   const { files, currentPage, totalPages, total, isLoading, isFetching, error, goToPage, reload } =
     useFiles('20', {
-      category: activeCategory,
+      category: activeCategory === 'needs_action' ? 'all' : activeCategory,
       keyword: debouncedSearchValue,
       sort: 'created_at',
       extension: extensionParam,
       workspaceId: workspaceId,
     });
 
+  const scopeFilteredFiles =
+    activeCategory === 'needs_action'
+      ? files.filter(file => fileMatchesProcessingStatusFilter(file, 'needs_action'))
+      : files;
   const displayedFiles =
     processingStatusFilter === 'all'
-      ? files
-      : files.filter(file => fileMatchesProcessingStatusFilter(file, processingStatusFilter));
-  const displayedTotal = processingStatusFilter === 'all' ? total : displayedFiles.length;
+      ? scopeFilteredFiles
+      : scopeFilteredFiles.filter(file =>
+          fileMatchesProcessingStatusFilter(file, processingStatusFilter)
+        );
+  const displayedTotal =
+    activeCategory === 'needs_action' || processingStatusFilter !== 'all'
+      ? displayedFiles.length
+      : total;
   const processingStatusFilterCounts = FILE_PROCESSING_STATUS_FILTERS.reduce(
     (acc, filter) => {
       acc[filter.id] =
         filter.id === 'all'
-          ? files.length
-          : files.filter(file => fileMatchesProcessingStatusFilter(file, filter.id)).length;
+          ? activeCategory === 'needs_action'
+            ? scopeFilteredFiles.length
+            : total
+          : scopeFilteredFiles.filter(file => fileMatchesProcessingStatusFilter(file, filter.id))
+              .length;
       return acc;
     },
     {} as Record<FileProcessingStatusFilter, number>
@@ -582,6 +594,7 @@ const FileManagementContent = ({
 
   const handleCategoryChange = useCallback((category: string) => {
     setActiveCategory(category);
+    setProcessingStatusFilter('all');
     setSelectedFiles([]);
     setMobileSidebarOpen(false);
   }, []);
@@ -707,8 +720,7 @@ const FileManagementContent = ({
     goToPage(1);
   }, [goToPage, reload]);
 
-  const initialUploadFolderId =
-    SYSTEM_FILE_CATEGORIES.has(activeCategory) ? '' : activeCategory;
+  const initialUploadFolderId = SYSTEM_FILE_CATEGORIES.has(activeCategory) ? '' : activeCategory;
 
   const selectedFolder = folders.find(f => f.id === selectedFolderId);
   const selectedFolderName = selectedFolder?.name || t('files.upload.defaultFolder');
@@ -737,8 +749,8 @@ const FileManagementContent = ({
     <FileSidebar
       activeItemId={activeCategory}
       onItemClick={handleCategoryChange}
-      onNewFolder={selectionMode && canCreateInActiveFolder ? handleNewFolder : undefined}
-      onUpload={selectionMode && canUpload ? handleUpload : undefined}
+      onNewFolder={canCreateInActiveFolder ? handleNewFolder : undefined}
+      onUpload={canUpload ? handleUpload : undefined}
       onFolderDelete={canManage ? handleFolderDelete : undefined}
       workspaceId={workspaceId}
       flushTop
@@ -879,6 +891,13 @@ const FileManagementContent = ({
       </div>
     ) : null;
 
+  const shouldShowPagination =
+    !isLoading &&
+    files.length > 0 &&
+    totalPages > 1 &&
+    processingStatusFilter === 'all' &&
+    activeCategory !== 'needs_action';
+
   const fileContent = error ? (
     <div className="flex h-full items-center justify-center">
       <div className="text-center">
@@ -918,7 +937,7 @@ const FileManagementContent = ({
           setMobileSidebarOpen(true);
         }}
       />
-      {!isLoading && files.length > 0 && totalPages > 1 ? (
+      {shouldShowPagination ? (
         <div
           className={cn(
             'shrink-0 border-t',
@@ -1039,8 +1058,8 @@ const FileManagementContent = ({
           </div>
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 bg-bg-canvas">
-          <div className="flex w-52 shrink-0 flex-col border-r bg-background">
+        <div className="flex min-h-0 flex-1 bg-background text-foreground">
+          <div className="flex w-[208px] shrink-0 flex-col border-r bg-background">
             {spaceSwitcherButton ? (
               <div className="shrink-0 border-b px-4 py-2">{spaceSwitcherButton}</div>
             ) : null}
@@ -1049,60 +1068,43 @@ const FileManagementContent = ({
           </div>
 
           <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-            <div className="sticky top-0 z-10 border-b bg-bg-canvas/95 px-6 py-5 backdrop-blur">
-              <div className="flex min-w-0 items-start justify-between gap-4">
+            <div className="shrink-0 border-b bg-background px-4 py-3 lg:px-7">
+              <div className="flex min-h-14 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                 <div className="min-w-0">
-                  <div className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
-                    {t('files.eyebrow')}
+                  <div className="flex min-w-0 items-center gap-2">
+                    <h1 className="text-[28px] font-semibold leading-tight tracking-normal text-foreground">
+                      {t('files.title')}
+                    </h1>
+                    <Button
+                      isIcon
+                      variant="ghost"
+                      className="size-8 rounded-lg text-muted-foreground hover:bg-muted"
+                      onClick={handleRefresh}
+                      disabled={isRefreshPending}
+                      aria-label={t('common.refresh')}
+                    >
+                      <RefreshCw className={`${isRefreshPending ? 'animate-spin' : ''} h-4 w-4`} />
+                    </Button>
                   </div>
-                  <h1 className="mt-1 text-2xl font-semibold tracking-tight text-foreground">
-                    {t('files.title')}
-                  </h1>
-                  <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+                  <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
                     {t('files.description')}
                   </p>
                 </div>
 
-                <div className="flex shrink-0 items-center gap-2">
-                  <Button
-                    isIcon
-                    variant="outline"
-                    className="size-9 rounded-md bg-background shadow-none"
-                    onClick={handleRefresh}
-                    disabled={isRefreshPending}
-                    aria-label={t('common.refresh')}
-                  >
-                    <RefreshCw className={`${isRefreshPending ? 'animate-spin' : ''} h-4 w-4`} />
-                  </Button>
-                  {canCreateInActiveFolder ? (
-                    <Button
-                      variant="outline"
-                      className="h-9 gap-2 rounded-md bg-background px-3 shadow-none"
-                      onClick={handleNewFolder}
-                    >
-                      <FolderPlus className="h-4 w-4" />
-                      {t('files.sidebar.newFolder')}
-                    </Button>
-                  ) : null}
-                  {canUpload ? (
-                    <Button className="h-9 gap-2 rounded-md px-3" onClick={handleUpload}>
-                      <Upload className="h-4 w-4" />
-                      {t('files.sidebar.uploadFile')}
-                    </Button>
-                  ) : null}
-                </div>
-              </div>
-
-              <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-center">
-                <div className="relative w-full max-w-xl">
+                <div className="relative w-full max-w-[280px] self-end lg:w-[300px] lg:max-w-none">
                   <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
                     placeholder={t('files.search.placeholder')}
                     value={searchValue}
                     onChange={e => setSearchValue(e.target.value)}
-                    className="h-9 rounded-md bg-background pl-9 shadow-none"
+                    className="h-10 rounded-lg bg-background pl-9 text-sm shadow-sm"
                   />
                 </div>
+              </div>
+            </div>
+
+            <div className="shrink-0 border-b bg-background">
+              <div className="flex min-h-10 items-center gap-2 px-4 py-1.5 lg:px-7">
                 {searchValue.trim() || processingStatusFilter !== 'all' ? (
                   <Button
                     variant="ghost"
@@ -1115,9 +1117,7 @@ const FileManagementContent = ({
                     {t('common.clear')}
                   </Button>
                 ) : null}
-              </div>
-              <div className="mt-3 flex min-h-10 flex-wrap items-center gap-2 border-t border-border/70 pt-3">
-                <span className="mr-1 text-xs font-medium text-muted-foreground">
+                <span className="mr-1 text-sm font-medium text-muted-foreground">
                   {t('files.filter.processingStatusLabel')}
                 </span>
                 <div
@@ -1145,11 +1145,11 @@ const FileManagementContent = ({
                       <Button
                         key={filter.id}
                         type="button"
-                        variant={active ? 'secondary' : 'ghost'}
-                        size="sm"
+                        variant="ghost"
+                        size="default"
                         className={cn(
-                          'h-7 rounded-full px-3 text-xs',
-                          active && 'text-foreground'
+                          'h-8 rounded-lg border border-transparent px-3 text-sm font-medium text-muted-foreground shadow-none hover:border-border hover:bg-muted/60 hover:text-foreground',
+                          active && 'border-border bg-muted text-foreground hover:bg-muted'
                         )}
                         role="tab"
                         aria-selected={active}
@@ -1166,10 +1166,8 @@ const FileManagementContent = ({
               </div>
             </div>
 
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-6 pb-6 pt-4">
-              <div className="flex h-full flex-col overflow-hidden rounded-lg border border-border/80 bg-background shadow-sm">
-                {fileContent}
-              </div>
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+              {fileContent}
             </div>
           </div>
         </div>

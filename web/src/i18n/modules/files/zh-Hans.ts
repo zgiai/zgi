@@ -3,17 +3,20 @@ import type { FilesMessages } from './en-US';
 const messages: FilesMessages = {
   title: '文件管理',
   eyebrow: '资产库',
-  description: '统一管理上传文件、文件夹和资源引用，上传后可用于知识库、数据库导入和对话工作流。',
+  description: '上传并管理源文件，解析内容后用于后续问答和知识库引用。',
 
   // Sidebar
   sidebar: {
     storage: '文件存储',
     newFolder: '新建文件夹',
     uploadFile: '上传文件',
-    allFiles: '所有文件',
+    viewsTitle: '视图',
+    fileSpaceTitle: '文件空间',
+    allFiles: '全部文件',
+    needsActionFiles: '需处理',
     uploadedFiles: '最近上传',
     favorites: '收藏夹',
-    defaultFolders: '默认文件夹',
+    defaultFolders: '我的文件',
     noFolders: '暂无文件夹',
   },
 
@@ -23,8 +26,8 @@ const messages: FilesMessages = {
     fileType: '文件类型',
     fileSize: '文件大小',
     processingStatus: '处理状态',
-    relatedStatus: '关联状态',
-    uploadDate: '上传日期',
+    relatedStatus: '关联知识库',
+    uploadDate: '上传时间',
     lastModified: '更新时间',
     actions: '操作',
     selectAll: '全选',
@@ -71,6 +74,9 @@ const messages: FilesMessages = {
     addToFavorites: '加入收藏',
     removeFromFavorites: '取消收藏',
     bulkDelete: '批量删除',
+    batchParse: '批量解析',
+    batchMove: '批量移动',
+    batchUnavailable: '该批量能力需要后端接口支持，当前暂不可用。',
     deleting: '删除中...',
     confirmParse: '去确认',
   },
@@ -265,7 +271,8 @@ const messages: FilesMessages = {
       action: '重新解析',
       reparsing: '提交中...',
       confirmTitle: '重新解析这个文件？',
-      confirmDescription: '重新解析期间，当前可检索资产会不可用，文件会重新经历解析、确认和索引流程。',
+      confirmDescription:
+        '重新解析期间，当前可检索资产会不可用，文件会重新经历解析、确认和索引流程。',
       confirm: '重新解析',
       toasts: {
         started: '已提交重新解析请求',

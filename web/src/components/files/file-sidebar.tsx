@@ -1,5 +1,5 @@
 import { memo, useState, useCallback, useEffect } from 'react';
-import { FolderPlus, Upload, Files, FolderOpen } from 'lucide-react';
+import { Clock3, FolderPlus, Upload, Files, FolderOpen, HardDrive } from 'lucide-react';
 import { useT, type FilesSuffix } from '@/i18n';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
@@ -35,12 +35,13 @@ export interface FileSidebarProps {
  */
 const DEFAULT_ITEMS: FileSidebarItem[] = [
   { id: 'all', labelKey: 'sidebar.allFiles', icon: Files },
+  { id: 'needs_action', labelKey: 'sidebar.needsActionFiles', icon: Clock3 },
   { id: 'uploaded', labelKey: 'sidebar.uploadedFiles', icon: Upload },
   // { id: 'favorites', labelKey: 'favorites', icon: Heart }, // TODO: Temporarily disabled, may restore later
   { id: 'default', labelKey: 'sidebar.defaultFolders', icon: FolderOpen },
 ];
 
-const SYSTEM_FILE_CATEGORIES = new Set(['all', 'uploaded', 'default']);
+const SYSTEM_FILE_CATEGORIES = new Set(['all', 'needs_action', 'uploaded', 'default']);
 
 /**
  * File sidebar component - displays navigation and storage info
@@ -121,15 +122,18 @@ function FileSidebarBase({
     });
   }, []);
 
+  const viewItems = items.filter(item => item.id !== 'default');
+  const rootItem = items.find(item => item.id === 'default');
+
   return (
     <aside className={cn('flex h-full w-full flex-col bg-background', flushTop ? 'pt-0' : 'pt-4')}>
       {topContent ? <div className="px-3 pb-2.5">{topContent}</div> : null}
 
       {/* Storage Info */}
-      <div className={cn('mb-3 space-y-1.5 px-3', flushTop ? 'pt-3' : '')}>
+      <div className={cn('space-y-2 px-4 pb-4', flushTop ? 'pt-4' : '')}>
         <div className="flex items-center justify-between mb-1.5">
-          <h3 className="text-xs font-semibold">{t('files.sidebar.storage')}</h3>
-          <span className="text-[11px] text-muted-foreground">
+          <h3 className="text-sm font-semibold text-foreground">{t('files.sidebar.storage')}</h3>
+          <span className="text-sm font-medium text-muted-foreground">
             {isLoadingStorage ? '...' : `${storageUsed.toFixed(1)}GB / ${storageTotal}GB`}
           </span>
         </div>
@@ -137,12 +141,11 @@ function FileSidebarBase({
       </div>
 
       {(onNewFolder || onUpload) && (
-        <div className="space-y-1.5 px-3 pb-3">
+        <div className="space-y-2 px-4 pb-5">
           {onNewFolder && (
             <Button
-              className="w-full gap-1.5 text-xs"
+              className="h-10 w-full justify-center gap-2 rounded-lg text-sm font-semibold shadow-sm"
               variant="outline"
-              size="sm"
               onClick={onNewFolder}
             >
               <FolderPlus className="h-4 w-4" />
@@ -151,9 +154,8 @@ function FileSidebarBase({
           )}
           {onUpload && (
             <Button
-              className="w-full gap-1.5 text-xs"
+              className="h-10 w-full justify-center gap-2 rounded-lg text-sm font-semibold shadow-sm shadow-primary/20"
               variant="default"
-              size="sm"
               onClick={onUpload}
             >
               <Upload className="h-4 w-4" />
@@ -164,81 +166,101 @@ function FileSidebarBase({
       )}
 
       {/* Navigation Items */}
-      <nav className="flex-1 space-y-0.5 overflow-y-auto border-t px-3 py-3">
+      <nav className="flex-1 space-y-5 overflow-y-auto border-t px-3 py-5">
         {/* Default Items */}
-        {items.map(item => {
-          const Icon = item.icon;
-          const isActive = activeItemId === item.id;
+        <section className="space-y-1" aria-label={t('files.sidebar.viewsTitle')}>
+          <p className="px-2 pb-2 text-xs font-medium text-muted-foreground">
+            {t('files.sidebar.viewsTitle')}
+          </p>
+          {viewItems.map(item => {
+            const Icon = item.icon;
+            const isActive = activeItemId === item.id;
 
-          return (
-            <div key={item.id}>
-              <div
-                className={cn(
-                  'w-full flex items-center justify-between px-2 py-1.5 rounded-md text-xs font-medium transition-colors group',
-                  isActive ? 'bg-muted text-primary' : 'text-gray-700 hover:bg-gray-50'
-                )}
-              >
+            return (
+              <div key={item.id}>
                 <div
-                  onClick={() => onItemClick?.(item.id)}
-                  className="flex items-center gap-1.5 flex-1 min-w-0 cursor-pointer"
-                >
-                  <Icon className="h-4 w-4 flex-shrink-0" />
-                  <span className="truncate">{t(`files.${item.labelKey}`)}</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  {item.count !== undefined && (
-                    <span
-                      className={cn(
-                        'text-[11px] flex-shrink-0',
-                        isActive ? 'text-primary font-semibold' : 'text-muted-foreground'
-                      )}
-                    >
-                      {item.count}
-                    </span>
+                  className={cn(
+                    'group flex h-9 w-full items-center justify-between rounded-lg px-3 text-sm font-medium transition-colors',
+                    isActive
+                      ? 'bg-muted text-primary'
+                      : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
                   )}
+                >
+                  <div
+                    onClick={() => onItemClick?.(item.id)}
+                    className="flex items-center gap-1.5 flex-1 min-w-0 cursor-pointer"
+                  >
+                    <Icon className="h-4 w-4 flex-shrink-0" />
+                    <span className="truncate">{t(`files.${item.labelKey}`)}</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    {item.count !== undefined && (
+                      <span
+                        className={cn(
+                          'text-[11px] flex-shrink-0',
+                          isActive ? 'text-primary font-semibold' : 'text-muted-foreground'
+                        )}
+                      >
+                        {item.count}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
+            );
+          })}
+        </section>
 
-              {/* Show folders under "defaultFolders" item */}
-              {item.id === 'default' && (
-                <div className="ml-1.5 mt-0.5 space-y-0.5">
-                  {/* Loading Skeleton for Folders */}
-                  {isLoadingFolders && (
-                    <>
-                      {[1, 2, 3].map(i => (
-                        <div
-                          key={`skeleton-${i}`}
-                          className="w-full flex items-center gap-1.5 px-2 py-1.5"
-                        >
-                          <Skeleton className="h-4 w-4 flex-shrink-0" />
-                          <Skeleton className="h-4 flex-1" />
-                        </div>
-                      ))}
-                    </>
-                  )}
-
-                  {/* Folder Tree Items */}
-                  {!isLoadingFolders &&
-                    folders.map(folder => (
-                      <FolderTreeNode
-                        key={folder.id}
-                        folder={folder}
-                        level={0}
-                        activeItemId={activeItemId}
-                        onItemClick={onItemClick}
-                        expandedFolders={expandedFolders}
-                        onToggleExpand={handleToggleExpand}
-                        maxLevel={1}
-                        variant="sidebar"
-                        onDelete={onFolderDelete}
-                        workspaceId={workspaceId}
-                      />
-                    ))}
-                </div>
+        <section className="space-y-1" aria-label={t('files.sidebar.fileSpaceTitle')}>
+          <p className="px-2 pb-2 text-xs font-medium text-muted-foreground">
+            {t('files.sidebar.fileSpaceTitle')}
+          </p>
+          {rootItem ? (
+            <button
+              type="button"
+              className={cn(
+                'flex h-9 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-medium transition-colors',
+                activeItemId === rootItem.id
+                  ? 'bg-muted text-primary'
+                  : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
               )}
-            </div>
-          );
-        })}
+              onClick={() => onItemClick?.(rootItem.id)}
+            >
+              <HardDrive className="h-4 w-4 shrink-0" />
+              <span className="truncate">{t(`files.${rootItem.labelKey}`)}</span>
+            </button>
+          ) : null}
+
+          <div className="space-y-0.5">
+            {isLoadingFolders && (
+              <>
+                {[1, 2, 3].map(i => (
+                  <div key={`skeleton-${i}`} className="flex w-full items-center gap-2 px-3 py-2">
+                    <Skeleton className="h-4 w-4 flex-shrink-0" />
+                    <Skeleton className="h-4 flex-1" />
+                  </div>
+                ))}
+              </>
+            )}
+
+            {!isLoadingFolders &&
+              folders.map(folder => (
+                <FolderTreeNode
+                  key={folder.id}
+                  folder={folder}
+                  level={0}
+                  activeItemId={activeItemId}
+                  onItemClick={onItemClick}
+                  expandedFolders={expandedFolders}
+                  onToggleExpand={handleToggleExpand}
+                  maxLevel={1}
+                  variant="sidebar"
+                  onDelete={onFolderDelete}
+                  workspaceId={workspaceId}
+                />
+              ))}
+          </div>
+        </section>
       </nav>
     </aside>
   );

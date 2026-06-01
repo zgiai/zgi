@@ -65,10 +65,10 @@ export function FolderTreeNode({
   const shouldShowArrow = !isMaxLevel && (hasChildFolders || isLoadingChildren);
 
   // Styling based on variant
-  const paddingLeft = variant === 'sidebar' ? level * 10 + 10 : level * 16 + 12;
+  const paddingLeft = variant === 'sidebar' ? level * 14 + 12 : level * 16 + 12;
   const iconSize = variant === 'sidebar' ? 'h-4 w-4' : 'h-5 w-5';
-  const textSize = variant === 'sidebar' ? 'text-xs' : 'text-sm';
-  const padding = variant === 'sidebar' ? 'px-2 py-1.5' : 'px-3 py-2.5';
+  const textSize = variant === 'sidebar' ? 'text-sm' : 'text-sm';
+  const padding = variant === 'sidebar' ? 'px-3 py-2' : 'px-3 py-2.5';
 
   return (
     <div>
@@ -80,7 +80,7 @@ export function FolderTreeNode({
           variant === 'sidebar'
             ? isFolderActive
               ? 'bg-muted text-primary'
-              : 'text-gray-700 hover:bg-gray-50'
+              : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
             : isFolderActive
               ? 'bg-muted text-primary hover:bg-muted'
               : 'hover:bg-gray-100 text-gray-700'
