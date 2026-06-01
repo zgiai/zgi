@@ -22,6 +22,7 @@ import {
 } from '@/utils/file-helpers';
 import { generateClientId } from '@/utils/client-id';
 import { FileList } from '@/components/common/file-upload/file-list';
+import { Button } from '@/components/ui/button';
 import {
   calculateFileHash,
   getExistingFileKeys,
@@ -441,6 +442,8 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
             hidden
             accept={inputAccept}
             disabled={isFull}
+            aria-label={t('fileUpload.uploadAria')}
+            data-testid="local-file-input"
             onChange={e => {
               if (e.target.files) {
                 enqueueFiles(e.target.files);
@@ -474,6 +477,20 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
               )}
             </div>
           )}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="mt-4"
+            disabled={isFull}
+            onClick={e => {
+              e.preventDefault();
+              e.stopPropagation();
+              inputRef.current?.click();
+            }}
+          >
+            {t('fileUpload.selectLocalFiles')}
+          </Button>
         </div>
 
         {/* Table */}

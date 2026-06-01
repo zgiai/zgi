@@ -37,6 +37,7 @@ const messages = {
     partialDueToLimit: 'Only {count} files added due to limits',
     disallowedBySettings: 'Some files are not allowed by current settings',
     selectFromSystem: 'Select from System',
+    selectLocalFiles: 'Choose local files',
     uploadFilesLabel: 'Upload Files',
     loginRequiredTitle: 'Login Required',
     loginRequiredDescription: 'Please sign in to select system files.',

@@ -634,6 +634,8 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
             hidden
             accept={inputAccept}
             disabled={isFull}
+            aria-label={t('fileUpload.uploadAria')}
+            data-testid="local-file-input"
             onChange={e => {
               if (e.target.files) {
                 enqueueFiles(e.target.files);
@@ -667,6 +669,20 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
               )}
             </div>
           )}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="mt-4"
+            disabled={isFull}
+            onClick={e => {
+              e.preventDefault();
+              e.stopPropagation();
+              inputRef.current?.click();
+            }}
+          >
+            {t('fileUpload.selectLocalFiles')}
+          </Button>
         </div>
 
         {/* Table */}

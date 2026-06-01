@@ -39,6 +39,7 @@ const messages: UiMessages = {
     partialDueToLimit: '由于限制，仅添加 {count} 个文件',
     disallowedBySettings: '部分文件不符合当前设置',
     selectFromSystem: '从系统选择',
+    selectLocalFiles: '选择本地文件',
     uploadFilesLabel: '上传文件',
     loginRequiredTitle: '需要登录',
     loginRequiredDescription: '请先登录后再选择系统文件。',
