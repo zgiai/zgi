@@ -1,11 +1,17 @@
 const messages = {
   title: 'Prompts',
+  description:
+    'Manage reusable prompts, test them in the playground, then use stable versions in workflows.',
   search: {
     placeholder: 'Search prompts',
   },
   tabs: {
     library: 'Library',
+    libraryDescription:
+      'Browse official, workspace, and personal prompt versions that can be reused by agents and workflows.',
     playground: 'Playground',
+    playgroundDescription:
+      'Test prompt behavior with a model before turning it into a managed prompt or workflow configuration.',
   },
   sources: {
     official: 'Official',
@@ -97,7 +103,8 @@ const messages = {
       'Use the built-in optimizer to rewrite a raw prompt into stronger, production-ready prompt variants.',
     goalLabel: 'Optimization goal',
     sourceLabel: 'Raw prompt',
-    sourceHelpDescription: 'Paste the prompt you want to improve here, then click an optimization goal to run it.',
+    sourceHelpDescription:
+      'Paste the prompt you want to improve here, then click an optimization goal to run it.',
     prefilledSourceDescription:
       'If content is already loaded here, you can edit it directly before running the optimizer.',
     resetSource: 'Restore original',
@@ -114,7 +121,8 @@ const messages = {
     detectedVariablesLabel: 'Detected variables',
     noVariables: 'No variables detected yet',
     outputLabel: 'Optimization results',
-    variantHint: 'You will get one stronger result. If it is not ideal, adjust the goal or run it again.',
+    variantHint:
+      'You will get one stronger result. If it is not ideal, adjust the goal or run it again.',
     copy: 'Copy result',
     apply: 'Apply result',
     run: 'Optimize now',
@@ -268,7 +276,8 @@ const messages = {
     inputPlaceholder: 'Enter a sample user input or test payload',
     inputHelp: 'In most cases, filling only this field is enough to start testing.',
     variablesTitle: 'Variables',
-    missingPromptHint: 'Open Advanced settings first, enter the prompt you want to test, then run it.',
+    missingPromptHint:
+      'Open Advanced settings first, enter the prompt you want to test, then run it.',
     missingInputHint:
       'This prompt uses the test input field. Enter any sample input above before running.',
     missingVariablesHint: 'You still need to fill these extra variables:',

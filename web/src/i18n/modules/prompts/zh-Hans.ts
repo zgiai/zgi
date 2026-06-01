@@ -2,12 +2,15 @@ import type enUS from './en-US';
 
 const messages: typeof enUS = {
   title: '提示词',
+  description: '管理可复用提示词，在调试台验证效果后，再把稳定版本用于智能体和工作流。',
   search: {
     placeholder: '搜索提示词',
   },
   tabs: {
     library: '提示词库',
+    libraryDescription: '查看官方模板、工作空间共享和个人提示词版本，用于智能体和工作流复用。',
     playground: '调试台',
+    playgroundDescription: '先用模型验证提示词效果，再决定是否沉淀为托管提示词或工作流配置。',
   },
   sources: {
     official: '官方模板',
@@ -82,10 +85,13 @@ const messages: typeof enUS = {
     followLabel: '跟随标签',
     pinVersion: '固定版本',
     label: '标签',
-    copyModeDescription: '选择一个版本后，会复制到当前节点中，你可以继续修改，不会影响提示词库里的原始提示词。',
+    copyModeDescription:
+      '选择一个版本后，会复制到当前节点中，你可以继续修改，不会影响提示词库里的原始提示词。',
     replaceWarningTitle: '将替换当前提示词',
-    replaceWarningDescriptionCopy: '应用这个模板后，当前节点下面已经填写的提示词内容会被替换。替换后你仍然可以继续编辑。',
-    replaceWarningDescriptionReference: '应用这个模板后，当前节点下面已经填写的提示词内容会被替换。',
+    replaceWarningDescriptionCopy:
+      '应用这个模板后，当前节点下面已经填写的提示词内容会被替换。替换后你仍然可以继续编辑。',
+    replaceWarningDescriptionReference:
+      '应用这个模板后，当前节点下面已经填写的提示词内容会被替换。',
     replaceWarningConfirm: '确认替换',
   },
   optimizer: {
@@ -206,7 +212,8 @@ const messages: typeof enUS = {
     },
     insights: {
       title: '引用偏差',
-      description: '当前托管引用和最近运行证据并不完全一致，这通常意味着实际运行已经开始偏离当前引用的版本或标签。',
+      description:
+        '当前托管引用和最近运行证据并不完全一致，这通常意味着实际运行已经开始偏离当前引用的版本或标签。',
       labelsOnlyInRuns: '最近运行里出现、但当前引用中没有的标签：',
       labelsOnlyInReferences: '当前引用还在使用、但最近运行里没有出现的标签：',
       versionsOnlyInRuns: '最近运行里出现、但当前引用中没有的版本：',
@@ -288,10 +295,12 @@ const messages: typeof enUS = {
     currentModelFallback: '当前模型',
     providerBillingIssue: '{model} 当前不可用，请检查模型渠道的余额/额度状态，或切换到其他模型。',
     providerBillingHintAdmin: '请前往渠道管理检查并充值模型额度，或者临时切换到其他可用模型。',
-    providerBillingHintMember: '当前模型渠道额度不足，请联系管理员充值模型额度，或者先切换到其他可用模型。',
+    providerBillingHintMember:
+      '当前模型渠道额度不足，请联系管理员充值模型额度，或者先切换到其他可用模型。',
     providerAccessDenied: '{model} 当前不可用，请检查模型渠道权限或切换到其他模型。',
     providerAccessHintAdmin: '请前往渠道管理检查该模型渠道权限配置，或者临时切换到其他可用模型。',
-    providerAccessHintMember: '当前模型渠道没有可用权限，请联系管理员检查对应模型配置，或者先切换到其他可用模型。',
+    providerAccessHintMember:
+      '当前模型渠道没有可用权限，请联系管理员检查对应模型配置，或者先切换到其他可用模型。',
     providerActionSwitchModel: '切换模型',
     providerActionManageChannels: '前往渠道管理',
     optimizerCopied: '优化后的提示词已复制',

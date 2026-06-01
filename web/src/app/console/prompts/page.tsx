@@ -97,25 +97,33 @@ export default function PromptsPage() {
   return (
     <>
       <div className="p-4 sm:p-6 lg:p-8 space-y-6 flex flex-col h-full overflow-y-auto">
-        <Tabs value={activeTab} onValueChange={value => setActiveTab(value as 'library' | 'playground')}>
+        <Tabs
+          value={activeTab}
+          onValueChange={value => setActiveTab(value as 'library' | 'playground')}
+        >
           <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
-            <div className="flex flex-wrap items-center gap-3">
-              <h1 className="text-2xl font-semibold">{t('title')}</h1>
-              <TabsList>
-                <TabsTrigger value="library">{t('tabs.library')}</TabsTrigger>
-                <TabsTrigger value="playground">{t('tabs.playground')}</TabsTrigger>
-              </TabsList>
-              {activeTab === 'library' ? (
-                <Button
-                  isIcon
-                  variant="ghost"
-                  className="size-7 rounded-sm hover:bg-muted"
-                  onClick={() => void refetch()}
-                  disabled={isFetching}
-                >
-                  <RefreshCw size={16} className={isFetching ? 'animate-spin' : ''} />
-                </Button>
-              ) : null}
+            <div className="flex flex-col gap-3">
+              <div>
+                <h1 className="text-2xl font-semibold">{t('title')}</h1>
+                <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{t('description')}</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <TabsList>
+                  <TabsTrigger value="library">{t('tabs.library')}</TabsTrigger>
+                  <TabsTrigger value="playground">{t('tabs.playground')}</TabsTrigger>
+                </TabsList>
+                {activeTab === 'library' ? (
+                  <Button
+                    isIcon
+                    variant="ghost"
+                    className="size-7 rounded-sm hover:bg-muted"
+                    onClick={() => void refetch()}
+                    disabled={isFetching}
+                  >
+                    <RefreshCw size={16} className={isFetching ? 'animate-spin' : ''} />
+                  </Button>
+                ) : null}
+              </div>
             </div>
             {activeTab === 'library' ? (
               <div className="flex w-full flex-col gap-3 sm:flex-row sm:flex-wrap xl:w-auto xl:justify-end">
@@ -125,7 +133,11 @@ export default function PromptsPage() {
                   placeholder={t('search.placeholder')}
                   className="w-full sm:min-w-64 sm:flex-1 xl:w-72 xl:flex-none"
                 />
-                <Button variant="outline" className="shrink-0" onClick={() => setOptimizerOpen(true)}>
+                <Button
+                  variant="outline"
+                  className="shrink-0"
+                  onClick={() => setOptimizerOpen(true)}
+                >
                   <WandSparkles className="h-4 w-4" />
                   {t('actions.optimizePrompt')}
                 </Button>
@@ -140,6 +152,10 @@ export default function PromptsPage() {
           </div>
 
           <TabsContent value="library" className="space-y-6">
+            <section className="space-y-1">
+              <h2 className="text-lg font-semibold">{t('tabs.library')}</h2>
+              <p className="text-sm text-muted-foreground">{t('tabs.libraryDescription')}</p>
+            </section>
             {empty ? (
               isOrganizationMode && !canManage ? (
                 <div className="rounded-xl border border-dashed p-8 text-center text-muted-foreground">
@@ -180,7 +196,10 @@ export default function PromptsPage() {
                             <div className="flex items-center gap-2 flex-wrap mt-3">
                               <Badge variant="outline">v{prompt.latest_version}</Badge>
                               {prompt.latest_labels.map(label => (
-                                <Badge key={label} variant={label === 'production' ? 'default' : 'secondary'}>
+                                <Badge
+                                  key={label}
+                                  variant={label === 'production' ? 'default' : 'secondary'}
+                                >
                                   {label}
                                 </Badge>
                               ))}
@@ -195,7 +214,11 @@ export default function PromptsPage() {
             )}
           </TabsContent>
 
-          <TabsContent value="playground">
+          <TabsContent value="playground" className="space-y-6">
+            <section className="space-y-1">
+              <h2 className="text-lg font-semibold">{t('tabs.playground')}</h2>
+              <p className="text-sm text-muted-foreground">{t('tabs.playgroundDescription')}</p>
+            </section>
             <PromptPlaygroundPanel prefillPromptId={prefillPromptId || undefined} />
           </TabsContent>
         </Tabs>

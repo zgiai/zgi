@@ -95,9 +95,9 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
       const raw = localStorage.getItem(STORAGE_KEY);
       return raw
         ? (JSON.parse(raw) as Record<string, boolean>)
-        : { work: true, resources: true, developer: true, management: true };
+        : { work: true, resources: true, tools: true, management: true };
     } catch {
-      return { work: true, resources: true, developer: true, management: true };
+      return { work: true, resources: true, tools: true, management: true };
     }
   });
 
@@ -150,7 +150,6 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
         title: t('resources'),
         items: [
           { title: t('agents'), href: '/console/agents', icon: Atom, permission: 'agent.view' },
-          { title: t('prompts'), href: '/console/prompts', icon: BookText, permission: 'agent.view' },
           {
             title: t('datasets'),
             href: '/console/dataset',
@@ -162,9 +161,15 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
         ],
       },
       {
-        key: 'developer',
-        title: t('developer'),
+        key: 'tools',
+        title: t('tools'),
         items: [
+          {
+            title: t('prompts'),
+            href: '/console/prompts',
+            icon: BookText,
+            permission: 'agent.view',
+          },
           {
             title: t('fileRecognition'),
             href: '/console/developer/content-parse',
@@ -460,7 +465,7 @@ export function ConsoleMobileSidebar({
   const [openGroups, setOpenGroups] = React.useState<Record<string, boolean>>({
     work: true,
     resources: true,
-    developer: true,
+    tools: true,
     management: true,
   });
 
@@ -512,9 +517,15 @@ export function ConsoleMobileSidebar({
         ],
       },
       {
-        key: 'developer',
-        title: t('developer'),
+        key: 'tools',
+        title: t('tools'),
         items: [
+          {
+            title: t('prompts'),
+            href: '/console/prompts',
+            icon: BookText,
+            permission: 'agent.view',
+          },
           {
             title: t('fileRecognition'),
             href: '/console/developer/content-parse',
