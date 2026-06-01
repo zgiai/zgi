@@ -38,6 +38,7 @@ const messages = {
   image: 'Image',
   resources: 'Assets',
   developer: 'Developer',
+  tools: 'Authoring',
   fileRecognition: 'File recognition',
   management: 'Settings',
 };
