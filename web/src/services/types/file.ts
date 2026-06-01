@@ -537,6 +537,9 @@ export interface ListFileChunksResponse {
   items: FileDocumentChunk[];
   tree?: FileDocumentChunk[];
   total: number;
+  primary_chunk_count?: number;
+  secondary_chunk_count?: number;
+  embedding_count?: number;
   limit: number;
   page: number;
   has_more: boolean;

@@ -122,12 +122,17 @@ func (r *GenerateCurrentResultRunner) Run(ctx context.Context, processingRequest
 	if err != nil {
 		return r.failRequest(ctx, request, asset, "chunk_transform_failed", err)
 	}
+	var processRule map[string]interface{}
+	if transformResult.ProcessOptions != nil {
+		processRule = transformResult.ProcessOptions.ProcessRule
+	}
 	chunkResult, err := r.chunkGeneration.GenerateChunks(ctx, datalibraryservice.GenerateDocumentChunksInput{
 		OrganizationID:  request.OrganizationID,
 		AssetID:         asset.ID,
 		ProcessingRunID: runID,
 		GenerationNo:    generationNo,
 		Chunks:          transformResult.Chunks,
+		ProcessRule:     processRule,
 		CreatedBy:       request.RequestedBy,
 	})
 	if err != nil {
@@ -166,20 +171,21 @@ func (r *GenerateCurrentResultRunner) Run(ctx context.Context, processingRequest
 	}
 
 	_, err = r.processingService.CompleteRequest(ctx, request.OrganizationID, started.ID, map[string]any{
-		"processing_run_id":   runID.String(),
-		"generation_no":       generationNo,
-		"parse_artifact_id":   asset.ParseArtifactID.String(),
-		"chunk_count":         chunkResult.ChunkCount,
-		"leaf_chunk_count":    chunkResult.LeafCount,
-		"embedding_count":     embeddingResult.EmbeddingCount,
-		"embedding_provider":  embeddingResult.EmbeddingProvider,
-		"embedding_model":     embeddingResult.EmbeddingModel,
-		"embedding_dimension": embeddingResult.EmbeddingDimension,
-		"chunk_index_type":    string(transformResult.IndexType),
-		"chunk_process_mode":  transformResult.ProcessOptions.Mode,
-		"chunk_routing":       transformResult.Routing,
-		"next_product_status": ready.ProductStatus,
-		"next_vector_status":  ready.VectorStatus,
+		"processing_run_id":     runID.String(),
+		"generation_no":         generationNo,
+		"parse_artifact_id":     asset.ParseArtifactID.String(),
+		"chunk_count":           chunkResult.PrimaryChunkCount,
+		"primary_chunk_count":   chunkResult.PrimaryChunkCount,
+		"secondary_chunk_count": chunkResult.SecondaryChunkCount,
+		"embedding_count":       embeddingResult.EmbeddingCount,
+		"embedding_provider":    embeddingResult.EmbeddingProvider,
+		"embedding_model":       embeddingResult.EmbeddingModel,
+		"embedding_dimension":   embeddingResult.EmbeddingDimension,
+		"chunk_index_type":      string(transformResult.IndexType),
+		"chunk_process_mode":    transformResult.ProcessOptions.Mode,
+		"chunk_routing":         transformResult.Routing,
+		"next_product_status":   ready.ProductStatus,
+		"next_vector_status":    ready.VectorStatus,
 	})
 	return err
 }

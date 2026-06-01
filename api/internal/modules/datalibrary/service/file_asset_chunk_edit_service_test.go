@@ -227,6 +227,24 @@ func (r *fileAssetChunkEditChunkRepo) CountByAssetGeneration(ctx context.Context
 	return int64(len(r.items)), nil
 }
 
+func (r *fileAssetChunkEditChunkRepo) CountByAssetGenerationAndTypes(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64, chunkTypes []string) (int64, error) {
+	allowed := map[string]struct{}{}
+	for _, chunkType := range chunkTypes {
+		allowed[chunkType] = struct{}{}
+	}
+	var count int64
+	for _, item := range r.items {
+		if len(allowed) == 0 {
+			count++
+			continue
+		}
+		if _, ok := allowed[item.ChunkType]; ok {
+			count++
+		}
+	}
+	return count, nil
+}
+
 func (r *fileAssetChunkEditChunkRepo) DeleteByAssetGeneration(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64) error {
 	r.items = map[uuid.UUID]*model.DocumentChunk{}
 	return nil

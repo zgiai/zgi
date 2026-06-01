@@ -101,7 +101,7 @@ func NewModuleWithRuntime(
 	documentChunkEmbeddingService := service.NewDocumentChunkEmbeddingService(documentAssetRepo, documentChunkEmbeddingRepo, llmClient, defaultModelSvc)
 	fileAssetDetailService := service.NewFileAssetDetailService(documentAssetRepo, processingRequestRepo, parseConfirmationItemRepo, documentChunkRepo, documentChunkEmbeddingRepo)
 	fileAssetSummaryService := service.NewFileAssetSummaryService(documentAssetRepo, parseConfirmationItemRepo, documentChunkRepo, documentChunkEmbeddingRepo)
-	fileAssetChunkService := service.NewFileAssetChunkService(documentAssetRepo, documentChunkRepo)
+	fileAssetChunkService := service.NewFileAssetChunkService(documentAssetRepo, documentChunkRepo, documentChunkEmbeddingRepo)
 	fileAssetChunkEditService := service.NewFileAssetChunkEditService(documentAssetRepo, documentChunkRepo, documentChunkEmbeddingRepo, documentChunkEmbeddingService)
 	processingExecutorRegistry := service.NewDefaultProcessingExecutorRegistry()
 	vectorArtifactService := service.NewVectorArtifactService(vectorArtifactRepo)

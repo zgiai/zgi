@@ -24,6 +24,8 @@ var (
 	ErrEmbeddingServiceRequired        = errors.New("embedding service is required")
 )
 
+const documentChunkEmbeddingBatchSize = 8
+
 type DocumentChunkEmbeddingService interface {
 	GenerateEmbeddings(ctx context.Context, input GenerateDocumentChunkEmbeddingsInput) (*GenerateDocumentChunkEmbeddingsResult, error)
 	GenerateChunkEmbedding(ctx context.Context, input GenerateDocumentChunkEmbeddingInput) (*model.DocumentChunkEmbedding, error)
@@ -168,7 +170,7 @@ func (s *documentChunkEmbeddingService) generateEmbeddings(ctx context.Context, 
 	for _, chunk := range leafChunks {
 		texts = append(texts, chunk.Content)
 	}
-	vectors, err := embeddingSvc.EmbedTexts(ctx, texts)
+	vectors, err := embedDocumentChunkTexts(ctx, embeddingSvc, texts)
 	if err != nil {
 		return nil, fmt.Errorf("embed document chunks: %w", err)
 	}
@@ -284,11 +286,27 @@ func leafDocumentChunks(chunks []*model.DocumentChunk) []*model.DocumentChunk {
 			continue
 		}
 		switch chunk.ChunkType {
-		case model.DocumentChunkTypeChild, model.DocumentChunkTypeAuto, model.DocumentChunkTypeManual:
+		case model.DocumentChunkTypeChild:
 			out = append(out, chunk)
 		}
 	}
 	return out
+}
+
+func embedDocumentChunkTexts(ctx context.Context, embeddingSvc embedding.EmbeddingService, texts []string) ([][]float64, error) {
+	vectors := make([][]float64, 0, len(texts))
+	for start := 0; start < len(texts); start += documentChunkEmbeddingBatchSize {
+		end := start + documentChunkEmbeddingBatchSize
+		if end > len(texts) {
+			end = len(texts)
+		}
+		batchVectors, err := embeddingSvc.EmbedTexts(ctx, texts[start:end])
+		if err != nil {
+			return nil, err
+		}
+		vectors = append(vectors, batchVectors...)
+	}
+	return vectors, nil
 }
 
 func float64ToFloat32Array(values []float64) model.Float32Array {

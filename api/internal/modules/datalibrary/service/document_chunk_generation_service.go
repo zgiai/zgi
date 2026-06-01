@@ -11,6 +11,8 @@ import (
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/datalibrary/model"
 	"github.com/zgiai/zgi/api/internal/modules/datalibrary/repository"
+	datasetindexing "github.com/zgiai/zgi/api/internal/modules/dataset/indexing"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/splitter"
 )
 
 var ErrDocumentChunksRequired = errors.New("document chunks are required")
@@ -26,14 +28,16 @@ type GenerateDocumentChunksInput struct {
 	GenerationNo       int64
 	ChunkArtifactSetID *uuid.UUID
 	Chunks             []dto.TransformedChunk
+	ProcessRule        map[string]interface{}
 	CreatedBy          string
 }
 
 type GenerateDocumentChunksResult struct {
-	Asset      *model.DocumentAsset   `json:"asset"`
-	Chunks     []*model.DocumentChunk `json:"chunks"`
-	ChunkCount int                    `json:"chunk_count"`
-	LeafCount  int                    `json:"leaf_count"`
+	Asset               *model.DocumentAsset   `json:"asset"`
+	Chunks              []*model.DocumentChunk `json:"chunks"`
+	ChunkCount          int                    `json:"chunk_count"`
+	PrimaryChunkCount   int                    `json:"primary_chunk_count"`
+	SecondaryChunkCount int                    `json:"secondary_chunk_count"`
 }
 
 type documentChunkGenerationService struct {
@@ -82,7 +86,8 @@ func (s *documentChunkGenerationService) GenerateChunks(ctx context.Context, inp
 		return nil, err
 	}
 
-	chunkCount := len(items)
+	primaryChunkCount := countDocumentChunksByType(items, model.DocumentChunkTypeParent)
+	secondaryChunkCount := countDocumentChunksByType(items, model.DocumentChunkTypeChild)
 	progress := 70
 	status := model.DocumentAssetProductStatusGenerating
 	stage := model.DocumentAssetProcessingStageChunk
@@ -93,7 +98,7 @@ func (s *documentChunkGenerationService) GenerateChunks(ctx context.Context, inp
 		ProcessingStage:        &stage,
 		ProcessingProgress:     &progress,
 		ChunkArtifactSetID:     input.ChunkArtifactSetID,
-		ChunkCount:             &chunkCount,
+		ChunkCount:             &primaryChunkCount,
 		VectorStatus:           &vectorStatus,
 		RequireProcessingRunID: &input.ProcessingRunID,
 		RequireGenerationNo:    &input.GenerationNo,
@@ -106,34 +111,38 @@ func (s *documentChunkGenerationService) GenerateChunks(ctx context.Context, inp
 		return nil, ErrProcessingRunMismatch
 	}
 	return &GenerateDocumentChunksResult{
-		Asset:      updated,
-		Chunks:     items,
-		ChunkCount: chunkCount,
-		LeafCount:  countLeafDocumentChunks(items),
+		Asset:               updated,
+		Chunks:              items,
+		ChunkCount:          primaryChunkCount,
+		PrimaryChunkCount:   primaryChunkCount,
+		SecondaryChunkCount: secondaryChunkCount,
 	}, nil
 }
 
 func buildDocumentChunksFromTransformed(asset *model.DocumentAsset, input GenerateDocumentChunksInput) []*model.DocumentChunk {
 	items := make([]*model.DocumentChunk, 0, len(input.Chunks))
+	rule := parseDocumentSubchunkRule(input.ProcessRule)
 	for position, chunk := range input.Chunks {
 		content := strings.TrimSpace(chunk.Content)
 		children := nonEmptyChildChunks(chunk.Children)
-		if len(children) > 0 {
-			parentID := uuid.New()
-			if content != "" {
-				items = append(items, newDocumentChunk(asset, input, parentID, nil, position, model.DocumentChunkTypeParent, content, chunk.BBox, chunk.Metadata))
-			} else {
-				items = append(items, newDocumentChunk(asset, input, parentID, nil, position, model.DocumentChunkTypeParent, joinedChildContent(children), chunk.BBox, chunk.Metadata))
-			}
-			for childPosition, child := range children {
-				items = append(items, newDocumentChunk(asset, input, uuid.New(), &parentID, childPosition, model.DocumentChunkTypeChild, strings.TrimSpace(child.Content), child.BBox, child.Metadata))
-			}
-			continue
+		if content == "" && len(children) > 0 {
+			content = joinedChildContent(children)
 		}
 		if content == "" {
 			continue
 		}
-		items = append(items, newDocumentChunk(asset, input, uuid.New(), nil, position, model.DocumentChunkTypeAuto, content, chunk.BBox, chunk.Metadata))
+		parentID := uuid.New()
+		items = append(items, newDocumentChunk(asset, input, parentID, nil, position, model.DocumentChunkTypeParent, content, chunk.BBox, chunk.Metadata))
+		if len(children) == 0 {
+			children = splitDocumentChildChunks(chunk, content, rule)
+		}
+		for childPosition, child := range children {
+			childContent := strings.TrimSpace(child.Content)
+			if childContent == "" {
+				continue
+			}
+			items = append(items, newDocumentChunk(asset, input, uuid.New(), &parentID, childPosition, model.DocumentChunkTypeChild, childContent, child.BBox, child.Metadata))
+		}
 	}
 	return items
 }
@@ -195,15 +204,87 @@ func joinedChildContent(children []dto.TransformedChildChunk) string {
 	return strings.Join(contents, "\n")
 }
 
-func countLeafDocumentChunks(items []*model.DocumentChunk) int {
+func countDocumentChunksByType(items []*model.DocumentChunk, chunkType string) int {
 	count := 0
 	for _, item := range items {
-		switch item.ChunkType {
-		case model.DocumentChunkTypeChild, model.DocumentChunkTypeAuto, model.DocumentChunkTypeManual:
+		if item != nil && item.ChunkType == chunkType {
 			count++
 		}
 	}
 	return count
+}
+
+func parseDocumentSubchunkRule(processRule map[string]interface{}) *datasetindexing.Rule {
+	rule, err := datasetindexing.ParseRule(processRule)
+	if err != nil || rule == nil {
+		rule, _ = datasetindexing.ParseRule(nil)
+	}
+	return rule
+}
+
+func splitDocumentChildChunks(parent dto.TransformedChunk, content string, rule *datasetindexing.Rule) []dto.TransformedChildChunk {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return nil
+	}
+	if rule == nil || rule.SubchunkSegmentation == nil {
+		return []dto.TransformedChildChunk{{Content: content, BBox: parent.BBox, Metadata: childChunkMetadata(parent.Metadata, 0)}}
+	}
+	fixedSeparator, separators := documentSubchunkSeparators(rule.SubchunkSegmentation.Separator)
+	textSplitter := splitter.NewFixedRecursiveCharacterTextSplitter(
+		fixedSeparator,
+		separators,
+		rule.SubchunkSegmentation.MaxTokens,
+		rule.SubchunkSegmentation.ChunkOverlap,
+		nil,
+		false,
+		false,
+	)
+	rawChunks := textSplitter.SplitText(content)
+	children := make([]dto.TransformedChildChunk, 0, len(rawChunks))
+	for _, raw := range rawChunks {
+		childContent := strings.TrimSpace(raw)
+		if childContent == "" {
+			continue
+		}
+		children = append(children, dto.TransformedChildChunk{
+			Content:  childContent,
+			BBox:     parent.BBox,
+			Metadata: childChunkMetadata(parent.Metadata, len(children)),
+		})
+	}
+	if len(children) == 0 {
+		children = append(children, dto.TransformedChildChunk{Content: content, BBox: parent.BBox, Metadata: childChunkMetadata(parent.Metadata, 0)})
+	}
+	return children
+}
+
+func childChunkMetadata(parent map[string]any, childIndex int) map[string]any {
+	metadata := cloneAnyMap(parent)
+	metadata["is_child"] = true
+	metadata["child_index"] = childIndex
+	if parentID, ok := metadata["doc_id"]; ok {
+		metadata["parent_id"] = parentID
+	}
+	return metadata
+}
+
+func documentSubchunkSeparators(preferredSeparator string) (string, []string) {
+	defaultSeparators := []string{"\n\n", "\n", "。", "！", "？", "；", "：", ". ", "! ", "? ", "; ", ": ", ".", "!", "?", ";", ":", "，", ",", "、", " ", ""}
+	fixedSeparator := preferredSeparator
+	if fixedSeparator == "" {
+		fixedSeparator = "\n"
+	}
+	separators := make([]string, 0, len(defaultSeparators)+1)
+	seen := make(map[string]struct{}, len(defaultSeparators)+1)
+	for _, separator := range append([]string{fixedSeparator}, defaultSeparators...) {
+		if _, ok := seen[separator]; ok {
+			continue
+		}
+		seen[separator] = struct{}{}
+		separators = append(separators, separator)
+	}
+	return fixedSeparator, separators
 }
 
 func documentChunkSourceLocator(bbox *dto.ExtractBoundingBox, metadata map[string]any) map[string]any {

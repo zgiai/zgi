@@ -40,6 +40,7 @@ type DocumentChunkRepository interface {
 	GetByID(ctx context.Context, id uuid.UUID) (*model.DocumentChunk, error)
 	List(ctx context.Context, filter DocumentChunkListFilter) ([]*model.DocumentChunk, int64, error)
 	CountByAssetGeneration(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64) (int64, error)
+	CountByAssetGenerationAndTypes(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64, chunkTypes []string) (int64, error)
 	DeleteByAssetGeneration(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64) error
 	Update(ctx context.Context, id uuid.UUID, patch DocumentChunkPatch) (*model.DocumentChunk, error)
 }
@@ -132,6 +133,23 @@ func (r *documentChunkRepository) CountByAssetGeneration(ctx context.Context, or
 		Where("generation_no = ?", generationNo).
 		Where("deleted_at IS NULL").
 		Count(&count).Error
+	return count, err
+}
+
+func (r *documentChunkRepository) CountByAssetGenerationAndTypes(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64, chunkTypes []string) (int64, error) {
+	if organizationID == "" || assetID == uuid.Nil {
+		return 0, nil
+	}
+	query := r.db.WithContext(ctx).Model(&model.DocumentChunk{}).
+		Where("organization_id = ?", organizationID).
+		Where("asset_id = ?", assetID).
+		Where("generation_no = ?", generationNo).
+		Where("deleted_at IS NULL")
+	if len(chunkTypes) > 0 {
+		query = query.Where("chunk_type IN ?", chunkTypes)
+	}
+	var count int64
+	err := query.Count(&count).Error
 	return count, err
 }
 

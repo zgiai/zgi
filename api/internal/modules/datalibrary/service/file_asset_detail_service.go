@@ -157,7 +157,7 @@ func (s *fileAssetDetailService) applyCurrentResultCounts(ctx context.Context, v
 		return nil
 	}
 	if s.chunks != nil {
-		count, err := s.chunks.CountByAssetGeneration(ctx, view.Asset.OrganizationID, view.Asset.ID, view.Asset.GenerationNo)
+		count, err := s.chunks.CountByAssetGenerationAndTypes(ctx, view.Asset.OrganizationID, view.Asset.ID, view.Asset.GenerationNo, []string{model.DocumentChunkTypeParent})
 		if err != nil {
 			return err
 		}

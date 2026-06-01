@@ -110,22 +110,87 @@ func TestDocumentChunkEmbeddingServiceEmbedsOnlyLeafChunks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateEmbeddings: %v", err)
 	}
-	if !reflect.DeepEqual(embeddingSvc.texts, []string{"child text", "manual text"}) {
+	if !reflect.DeepEqual(embeddingSvc.texts, []string{"child text"}) {
 		t.Fatalf("embedded texts=%+v", embeddingSvc.texts)
 	}
 	if embeddingRepo.deletedCalls != 1 {
 		t.Fatalf("deletedCalls=%d want 1", embeddingRepo.deletedCalls)
 	}
-	if result.EmbeddingCount != 2 || result.EmbeddingDimension != 3 {
+	if result.EmbeddingCount != 1 || result.EmbeddingDimension != 3 {
 		t.Fatalf("result=%+v", result)
 	}
-	if len(embeddingRepo.items) != 2 {
-		t.Fatalf("items=%d want 2", len(embeddingRepo.items))
+	if len(embeddingRepo.items) != 1 {
+		t.Fatalf("items=%d want 1", len(embeddingRepo.items))
 	}
 	if embeddingRepo.items[0].EmbeddingVector[0] != float32(1) ||
-		embeddingRepo.items[0].EmbeddingVector[1] != float32(1.5) ||
-		embeddingRepo.items[1].ContentHash != chunks[2].ContentHash {
+		embeddingRepo.items[0].EmbeddingVector[1] != float32(1.5) {
 		t.Fatalf("embedding items=%+v", embeddingRepo.items)
+	}
+}
+
+func TestDocumentChunkEmbeddingServiceBatchesTextsByEight(t *testing.T) {
+	assetID := uuid.New()
+	runID := uuid.New()
+	assetRepo := &fileAssetStateAssetRepo{
+		asset: &model.DocumentAsset{
+			ID:              assetID,
+			OrganizationID:  "org-1",
+			SourceFileID:    "file-1",
+			ProductStatus:   model.DocumentAssetProductStatusGenerating,
+			ProcessingRunID: &runID,
+			GenerationNo:    6,
+		},
+	}
+	chunks := make([]*model.DocumentChunk, 0, 20)
+	vectors := make([][]float64, 0, 20)
+	for i := 0; i < 20; i++ {
+		content := "child text"
+		chunks = append(chunks, &model.DocumentChunk{
+			ID:              uuid.New(),
+			OrganizationID:  "org-1",
+			AssetID:         assetID,
+			ProcessingRunID: runID,
+			GenerationNo:    6,
+			ChunkType:       model.DocumentChunkTypeChild,
+			Content:         content,
+			ContentHash:     documentChunkContentHash(content),
+			Enabled:         true,
+			Status:          model.DocumentChunkStatusReady,
+		})
+		vectors = append(vectors, []float64{float64(i), float64(i + 1)})
+	}
+	embeddingSvc := &documentChunkEmbeddingFakeEmbeddingService{vectors: vectors}
+	svc := NewDocumentChunkEmbeddingService(
+		assetRepo,
+		&documentChunkEmbeddingRepo{},
+		nil,
+		nil,
+		WithDocumentChunkEmbeddingFactory(func(ctx context.Context, input GenerateDocumentChunkEmbeddingsInput, asset *model.DocumentAsset, provider string, modelName string) (embedding.EmbeddingService, error) {
+			return embeddingSvc, nil
+		}),
+	)
+
+	result, err := svc.GenerateEmbeddings(context.Background(), GenerateDocumentChunkEmbeddingsInput{
+		OrganizationID:    "org-1",
+		AssetID:           assetID,
+		ProcessingRunID:   runID,
+		GenerationNo:      6,
+		EmbeddingProvider: "provider-1",
+		EmbeddingModel:    "model-1",
+		Chunks:            chunks,
+	})
+	if err != nil {
+		t.Fatalf("GenerateEmbeddings: %v", err)
+	}
+	if result.EmbeddingCount != 20 {
+		t.Fatalf("embedding count=%d want 20", result.EmbeddingCount)
+	}
+	gotBatchSizes := make([]int, 0, len(embeddingSvc.calls))
+	for _, call := range embeddingSvc.calls {
+		gotBatchSizes = append(gotBatchSizes, len(call))
+	}
+	if !reflect.DeepEqual(gotBatchSizes, []int{8, 8, 4}) {
+		t.Fatalf("batch sizes=%v", gotBatchSizes)
 	}
 }
 
@@ -193,7 +258,9 @@ func TestDocumentChunkEmbeddingServiceRegeneratesSingleChunkWithoutClearingGener
 
 type documentChunkEmbeddingFakeEmbeddingService struct {
 	texts   []string
+	calls   [][]string
 	vectors [][]float64
+	offset  int
 }
 
 func (s *documentChunkEmbeddingFakeEmbeddingService) EmbedText(ctx context.Context, text string) ([]float64, error) {
@@ -205,8 +272,18 @@ func (s *documentChunkEmbeddingFakeEmbeddingService) EmbedText(ctx context.Conte
 }
 
 func (s *documentChunkEmbeddingFakeEmbeddingService) EmbedTexts(ctx context.Context, texts []string) ([][]float64, error) {
-	s.texts = append([]string(nil), texts...)
-	return s.vectors, nil
+	s.texts = append(s.texts, texts...)
+	s.calls = append(s.calls, append([]string(nil), texts...))
+	if len(s.vectors) == 0 {
+		return nil, nil
+	}
+	end := s.offset + len(texts)
+	if end > len(s.vectors) {
+		end = len(s.vectors)
+	}
+	out := append([][]float64(nil), s.vectors[s.offset:end]...)
+	s.offset = end
+	return out, nil
 }
 
 func (s *documentChunkEmbeddingFakeEmbeddingService) GetDimension() int {

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/modules/datalibrary/model"
 	"github.com/zgiai/zgi/api/internal/modules/datalibrary/repository"
 )
 
@@ -109,7 +110,7 @@ func (s *fileAssetSummaryService) ListCurrentFileAssetSummaries(ctx context.Cont
 		}
 		if asset.GenerationNo > 0 {
 			if s.chunks != nil {
-				count, err := s.chunks.CountByAssetGeneration(ctx, asset.OrganizationID, asset.ID, asset.GenerationNo)
+				count, err := s.chunks.CountByAssetGenerationAndTypes(ctx, asset.OrganizationID, asset.ID, asset.GenerationNo, []string{model.DocumentChunkTypeParent})
 				if err != nil {
 					return nil, err
 				}

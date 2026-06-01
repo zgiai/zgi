@@ -697,14 +697,17 @@ func (h *FileHandler) ListFileChunks(c *gin.Context) {
 		return
 	}
 	response.Success(c, gin.H{
-		"asset":         result.Asset,
-		"items":         result.Items,
-		"tree":          result.Tree,
-		"total":         result.Total,
-		"limit":         result.Limit,
-		"page":          page,
-		"has_more":      int64(page*limit) < result.Total,
-		"generation_no": result.GenerationNo,
+		"asset":                 result.Asset,
+		"items":                 result.Items,
+		"tree":                  result.Tree,
+		"total":                 result.Total,
+		"primary_chunk_count":   result.PrimaryChunkCount,
+		"secondary_chunk_count": result.SecondaryChunkCount,
+		"embedding_count":       result.EmbeddingCount,
+		"limit":                 result.Limit,
+		"page":                  page,
+		"has_more":              int64(page*limit) < result.Total,
+		"generation_no":         result.GenerationNo,
 	})
 }
 

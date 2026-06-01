@@ -46,13 +46,13 @@ func TestDocumentChunkGenerationServiceWritesParentChildAndAutoChunks(t *testing
 	if err != nil {
 		t.Fatalf("GenerateChunks: %v", err)
 	}
-	if result.ChunkCount != 4 || result.LeafCount != 3 {
+	if result.ChunkCount != 2 || result.PrimaryChunkCount != 2 || result.SecondaryChunkCount != 3 {
 		t.Fatalf("result=%+v", result)
 	}
-	if result.Asset == nil || result.Asset.ChunkCount != 4 || result.Asset.VectorStatus != model.DocumentAssetVectorStatusIndexing {
+	if result.Asset == nil || result.Asset.ChunkCount != 2 || result.Asset.VectorStatus != model.DocumentAssetVectorStatusIndexing {
 		t.Fatalf("asset=%+v", result.Asset)
 	}
-	if len(chunkRepo.items) != 4 || chunkRepo.deletedCalls != 1 {
+	if len(chunkRepo.items) != 5 || chunkRepo.deletedCalls != 1 {
 		t.Fatalf("repo items=%+v deleted=%d", chunkRepo.items, chunkRepo.deletedCalls)
 	}
 	parent := chunkRepo.items[0]
@@ -64,8 +64,12 @@ func TestDocumentChunkGenerationServiceWritesParentChildAndAutoChunks(t *testing
 			t.Fatalf("child=%+v parent=%+v", child, parent)
 		}
 	}
-	if chunkRepo.items[3].ChunkType != model.DocumentChunkTypeAuto {
-		t.Fatalf("auto=%+v", chunkRepo.items[3])
+	secondParent := chunkRepo.items[3]
+	if secondParent.ChunkType != model.DocumentChunkTypeParent {
+		t.Fatalf("second parent=%+v", secondParent)
+	}
+	if chunkRepo.items[4].ChunkType != model.DocumentChunkTypeChild || chunkRepo.items[4].ParentChunkID == nil || *chunkRepo.items[4].ParentChunkID != secondParent.ID {
+		t.Fatalf("generated child=%+v parent=%+v", chunkRepo.items[4], secondParent)
 	}
 }
 
@@ -106,6 +110,24 @@ func (r *documentChunkGenerationChunkRepo) List(ctx context.Context, filter repo
 
 func (r *documentChunkGenerationChunkRepo) CountByAssetGeneration(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64) (int64, error) {
 	return int64(len(r.items)), nil
+}
+
+func (r *documentChunkGenerationChunkRepo) CountByAssetGenerationAndTypes(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64, chunkTypes []string) (int64, error) {
+	allowed := map[string]struct{}{}
+	for _, chunkType := range chunkTypes {
+		allowed[chunkType] = struct{}{}
+	}
+	var count int64
+	for _, item := range r.items {
+		if len(allowed) == 0 {
+			count++
+			continue
+		}
+		if _, ok := allowed[item.ChunkType]; ok {
+			count++
+		}
+	}
+	return count, nil
 }
 
 func (r *documentChunkGenerationChunkRepo) DeleteByAssetGeneration(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64) error {

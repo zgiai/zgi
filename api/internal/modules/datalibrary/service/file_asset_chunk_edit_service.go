@@ -87,7 +87,7 @@ func (s *fileAssetChunkEditService) UpdateCurrentFileChunk(ctx context.Context, 
 	if chunk.GenerationNo != asset.GenerationNo {
 		return nil, ErrProcessingRunMismatch
 	}
-	if !isEditableChunkType(chunk.ChunkType) {
+	if !isEditableChunkUpdateAllowed(chunk, input) {
 		return nil, ErrFileChunkEditNotAllowed
 	}
 
@@ -134,10 +134,15 @@ func (s *fileAssetChunkEditService) UpdateCurrentFileChunk(ctx context.Context, 
 	}, nil
 }
 
-func isEditableChunkType(chunkType string) bool {
-	switch chunkType {
+func isEditableChunkUpdateAllowed(chunk *model.DocumentChunk, input FileAssetChunkEditInput) bool {
+	if chunk == nil {
+		return false
+	}
+	switch chunk.ChunkType {
 	case model.DocumentChunkTypeChild, model.DocumentChunkTypeAuto, model.DocumentChunkTypeManual:
 		return true
+	case model.DocumentChunkTypeParent:
+		return input.Content == nil && input.Enabled != nil
 	default:
 		return false
 	}

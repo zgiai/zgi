@@ -27,13 +27,16 @@ type FileAssetChunkListInput struct {
 }
 
 type FileAssetChunkListView struct {
-	Asset        *model.DocumentAsset  `json:"asset"`
-	Items        []*FileAssetChunkView `json:"items"`
-	Tree         []*FileAssetChunkView `json:"tree,omitempty"`
-	Total        int64                 `json:"total"`
-	Limit        int                   `json:"limit"`
-	Offset       int                   `json:"offset"`
-	GenerationNo int64                 `json:"generation_no"`
+	Asset               *model.DocumentAsset  `json:"asset"`
+	Items               []*FileAssetChunkView `json:"items"`
+	Tree                []*FileAssetChunkView `json:"tree,omitempty"`
+	Total               int64                 `json:"total"`
+	PrimaryChunkCount   int64                 `json:"primary_chunk_count"`
+	SecondaryChunkCount int64                 `json:"secondary_chunk_count"`
+	EmbeddingCount      int64                 `json:"embedding_count"`
+	Limit               int                   `json:"limit"`
+	Offset              int                   `json:"offset"`
+	GenerationNo        int64                 `json:"generation_no"`
 }
 
 type FileAssetChunkView struct {
@@ -57,12 +60,13 @@ type FileAssetChunkView struct {
 }
 
 type fileAssetChunkService struct {
-	assets repository.DocumentAssetRepository
-	chunks repository.DocumentChunkRepository
+	assets     repository.DocumentAssetRepository
+	chunks     repository.DocumentChunkRepository
+	embeddings repository.DocumentChunkEmbeddingRepository
 }
 
-func NewFileAssetChunkService(assets repository.DocumentAssetRepository, chunks repository.DocumentChunkRepository) FileAssetChunkService {
-	return &fileAssetChunkService{assets: assets, chunks: chunks}
+func NewFileAssetChunkService(assets repository.DocumentAssetRepository, chunks repository.DocumentChunkRepository, embeddings repository.DocumentChunkEmbeddingRepository) FileAssetChunkService {
+	return &fileAssetChunkService{assets: assets, chunks: chunks, embeddings: embeddings}
 }
 
 func (s *fileAssetChunkService) ListCurrentFileChunks(ctx context.Context, input FileAssetChunkListInput) (*FileAssetChunkListView, error) {
@@ -99,12 +103,19 @@ func (s *fileAssetChunkService) ListCurrentFileChunks(ctx context.Context, input
 		return view, nil
 	}
 	generationNo := asset.GenerationNo
+	if err := s.applyCounts(ctx, view, asset, generationNo); err != nil {
+		return nil, err
+	}
+	chunkTypes := normalizeChunkTypes(input.ChunkTypes)
+	if input.ParentChunkID == nil && len(chunkTypes) == 0 {
+		chunkTypes = []string{model.DocumentChunkTypeParent}
+	}
 	items, total, err := s.chunks.List(ctx, repository.DocumentChunkListFilter{
 		OrganizationID: input.OrganizationID,
 		AssetID:        asset.ID,
 		GenerationNo:   &generationNo,
 		ParentChunkID:  input.ParentChunkID,
-		ChunkTypes:     normalizeChunkTypes(input.ChunkTypes),
+		ChunkTypes:     chunkTypes,
 		Enabled:        input.Enabled,
 		Status:         strings.TrimSpace(input.Status),
 		Search:         strings.TrimSpace(input.Search),
@@ -116,10 +127,44 @@ func (s *fileAssetChunkService) ListCurrentFileChunks(ctx context.Context, input
 	}
 	view.Total = total
 	view.Items = documentChunksToViews(items)
-	if input.IncludeTree {
-		view.Tree = buildChunkTree(view.Items)
+	if input.IncludeTree || input.ParentChunkID == nil {
+		treeItems, _, err := s.chunks.List(ctx, repository.DocumentChunkListFilter{
+			OrganizationID: input.OrganizationID,
+			AssetID:        asset.ID,
+			GenerationNo:   &generationNo,
+			ChunkTypes:     []string{model.DocumentChunkTypeParent, model.DocumentChunkTypeChild},
+			Enabled:        input.Enabled,
+			Status:         strings.TrimSpace(input.Status),
+			Limit:          500,
+			Offset:         0,
+		})
+		if err != nil {
+			return nil, err
+		}
+		view.Tree = buildChunkTree(documentChunksToViews(treeItems))
 	}
 	return view, nil
+}
+
+func (s *fileAssetChunkService) applyCounts(ctx context.Context, view *FileAssetChunkListView, asset *model.DocumentAsset, generationNo int64) error {
+	primaryCount, err := s.chunks.CountByAssetGenerationAndTypes(ctx, asset.OrganizationID, asset.ID, generationNo, []string{model.DocumentChunkTypeParent})
+	if err != nil {
+		return err
+	}
+	secondaryCount, err := s.chunks.CountByAssetGenerationAndTypes(ctx, asset.OrganizationID, asset.ID, generationNo, []string{model.DocumentChunkTypeChild})
+	if err != nil {
+		return err
+	}
+	view.PrimaryChunkCount = primaryCount
+	view.SecondaryChunkCount = secondaryCount
+	if s.embeddings != nil {
+		embeddingCount, err := s.embeddings.CountReadyByAssetGeneration(ctx, asset.OrganizationID, asset.ID, generationNo)
+		if err != nil {
+			return err
+		}
+		view.EmbeddingCount = embeddingCount
+	}
+	return nil
 }
 
 func normalizeChunkTypes(input []string) []string {
