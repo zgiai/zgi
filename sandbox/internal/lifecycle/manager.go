@@ -24,6 +24,11 @@ type CreateRequest struct {
 	RuntimeProfile    string            `json:"runtime_profile"`
 	TTLSeconds        int               `json:"ttl_seconds"`
 	Metadata          map[string]string `json:"metadata"`
+	OrganizationID    string            `json:"organization_id"`
+	WorkspaceID       string            `json:"workspace_id"`
+	AppID             string            `json:"app_id"`
+	WorkflowRunID     string            `json:"workflow_run_id"`
+	UserID            string            `json:"user_id"`
 	NetworkEnabled    bool              `json:"network_enabled"`
 	NetworkPolicy     string            `json:"network_policy"`
 	DependencyProfile string            `json:"dependency_profile"`
@@ -41,7 +46,9 @@ type Store interface {
 	SaveSandbox(sandbox.Sandbox) error
 	GetSandbox(string) (*sandbox.Sandbox, error)
 	ListSandboxes() ([]sandbox.Sandbox, error)
-	CountActive(time.Time) (int, error)
+	CountActive(string, time.Time) (int, error)
+	CountActiveByOrganization(string, time.Time) (int, error)
+	ListActiveDependencyProfilesByOrganization(string, time.Time) ([]string, error)
 	SaveEndpoint(sandbox.Endpoint) error
 	GetEndpoint(string, string) (*sandbox.Endpoint, error)
 }
@@ -97,9 +104,22 @@ func NewManagerWithConfig(recorder *observer.Recorder, policyService *policy.Ser
 }
 
 func (m *Manager) Create(req CreateRequest) (*sandbox.Sandbox, error) {
-	activeCount, err := m.store.CountActive(time.Now().UTC())
+	ownership, err := normalizeOwnership(req)
 	if err != nil {
 		return nil, err
+	}
+
+	now := time.Now().UTC()
+	activeCount, err := m.store.CountActive(m.workerID, now)
+	if err != nil {
+		return nil, err
+	}
+	organizationActiveCount := 0
+	if ownership.OrganizationID != "" {
+		organizationActiveCount, err = m.store.CountActiveByOrganization(ownership.OrganizationID, now)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	decision, err := m.policy.NormalizeCreate(
@@ -109,8 +129,13 @@ func (m *Manager) Create(req CreateRequest) (*sandbox.Sandbox, error) {
 		req.NetworkPolicy,
 		req.DependencyProfile,
 		activeCount,
+		ownership.OrganizationID,
+		organizationActiveCount,
 	)
 	if err != nil {
+		return nil, err
+	}
+	if err := m.enforceOrganizationDependencyProfileLimit(ownership.OrganizationID, decision.DependencyProfile, now); err != nil {
 		return nil, err
 	}
 
@@ -120,23 +145,36 @@ func (m *Manager) Create(req CreateRequest) (*sandbox.Sandbox, error) {
 		return nil, err
 	}
 
-	now := time.Now().UTC()
+	metadata := cloneMetadata(req.Metadata)
+	metadata["dependency_profile_version"] = decision.DependencyProfileVersion
+	if decision.DependencyArtifactChecksum != "" {
+		metadata["dependency_artifact_checksum"] = decision.DependencyArtifactChecksum
+	}
+
 	item := sandbox.Sandbox{
-		ID:                id,
-		RuntimeProfile:    decision.RuntimeProfile,
-		Status:            sandbox.StatusActive,
-		CreatedAt:         now,
-		UpdatedAt:         now,
-		ExpiresAt:         now.Add(decision.TTL),
-		RootPath:          root,
-		Metadata:          cloneMetadata(req.Metadata),
-		NetworkEnabled:    decision.NetworkEnabled,
-		NetworkPolicy:     decision.NetworkPolicy,
-		DependencyProfile: decision.DependencyProfile,
-		WorkspaceBinding:  strings.TrimSpace(req.WorkspaceBinding),
-		TTLSeconds:        int(decision.TTL.Seconds()),
-		WorkerID:          m.workerID,
-		WorkerAddr:        m.workerAddr,
+		ID:                         id,
+		RuntimeProfile:             decision.RuntimeProfile,
+		Status:                     sandbox.StatusActive,
+		CreatedAt:                  now,
+		UpdatedAt:                  now,
+		ExpiresAt:                  now.Add(decision.TTL),
+		RootPath:                   root,
+		Metadata:                   metadata,
+		OrganizationID:             ownership.OrganizationID,
+		WorkspaceID:                ownership.WorkspaceID,
+		AppID:                      ownership.AppID,
+		WorkflowRunID:              ownership.WorkflowRunID,
+		UserID:                     ownership.UserID,
+		NetworkEnabled:             decision.NetworkEnabled,
+		NetworkPolicy:              decision.NetworkPolicy,
+		DependencyProfile:          decision.DependencyProfile,
+		DependencyProfileVersion:   decision.DependencyProfileVersion,
+		DependencyArtifactChecksum: decision.DependencyArtifactChecksum,
+		WorkspaceBinding:           strings.TrimSpace(req.WorkspaceBinding),
+		TTLSeconds:                 int(decision.TTL.Seconds()),
+		WorkerID:                   m.workerID,
+		WorkerAddr:                 m.workerAddr,
+		EffectiveLimits:            &decision.EffectiveLimits,
 	}
 
 	if err := m.store.SaveSandbox(item); err != nil {
@@ -144,16 +182,166 @@ func (m *Manager) Create(req CreateRequest) (*sandbox.Sandbox, error) {
 	}
 	_ = m.cache.Set(context.Background(), item, m.cacheTTL(item))
 
-	m.observer.Record("sandbox.created", item.ID, "sandbox created", map[string]any{
-		"runtime_profile":    item.RuntimeProfile,
-		"ttl_seconds":        item.TTLSeconds,
-		"network_policy":     item.NetworkPolicy,
-		"dependency_profile": item.DependencyProfile,
-		"worker_id":          item.WorkerID,
-	})
+	eventMetadata := map[string]any{
+		"runtime_profile":            item.RuntimeProfile,
+		"runtime_backend":            m.policy.RuntimeBackend(),
+		"ttl_seconds":                item.TTLSeconds,
+		"network_policy":             item.NetworkPolicy,
+		"dependency_profile":         item.DependencyProfile,
+		"dependency_profile_version": item.DependencyProfileVersion,
+		"worker_id":                  item.WorkerID,
+		"limit_decisions": map[string]any{
+			"ttl_seconds":                                    item.TTLSeconds,
+			"max_active_sandboxes":                           decision.EffectiveLimits.MaxActiveSandboxes,
+			"max_active_sandboxes_per_organization":          decision.EffectiveLimits.MaxActiveSandboxesPerOrganization,
+			"max_dependency_profiles_per_organization":       decision.EffectiveLimits.MaxDependencyProfilesPerOrganization,
+			"organization_dependency_profile_limit_enforced": decision.EffectiveLimits.OrganizationDependencyProfileLimitEnforced,
+			"max_file_size_bytes":                            decision.EffectiveLimits.MaxFileSizeBytes,
+			"max_archive_files":                              decision.EffectiveLimits.MaxArchiveFiles,
+			"max_archive_total_bytes":                        decision.EffectiveLimits.MaxArchiveTotalBytes,
+			"network_policy_enforced":                        decision.EffectiveLimits.NetworkPolicyEnforced,
+			"workspace_bytes_enforced":                       decision.EffectiveLimits.WorkspaceByteLimitEnforced,
+		},
+	}
+	if item.DependencyArtifactChecksum != "" {
+		eventMetadata["dependency_artifact_checksum"] = item.DependencyArtifactChecksum
+	}
+	addOwnershipMetadata(eventMetadata, item)
+	m.observer.Record("sandbox.created", item.ID, "sandbox created", eventMetadata)
 
 	copyItem := item
 	return &copyItem, nil
+}
+
+func (m *Manager) enforceOrganizationDependencyProfileLimit(organizationID string, dependencyProfile string, now time.Time) error {
+	limit := m.policy.MaxDependencyProfilesPerOrganization()
+	if organizationID == "" || limit <= 0 {
+		return nil
+	}
+
+	profiles, err := m.store.ListActiveDependencyProfilesByOrganization(organizationID, now)
+	if err != nil {
+		return err
+	}
+
+	profileSet := map[string]struct{}{}
+	for _, profile := range profiles {
+		profile = strings.TrimSpace(profile)
+		if profile == "" {
+			continue
+		}
+		profileSet[profile] = struct{}{}
+	}
+
+	if _, exists := profileSet[dependencyProfile]; exists {
+		return nil
+	}
+
+	actual := len(profileSet) + 1
+	if actual <= limit {
+		return nil
+	}
+
+	names := make([]string, 0, len(profileSet))
+	for name := range profileSet {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	return &policy.LimitError{
+		Code:    "organization_dependency_profile_limit_exceeded",
+		Limit:   "max_dependency_profiles_per_organization",
+		Maximum: limit,
+		Actual:  actual,
+		Details: map[string]any{
+			"organization_id":     organizationID,
+			"dependency_profile":  dependencyProfile,
+			"dependency_profiles": names,
+		},
+	}
+}
+
+type ownershipFields struct {
+	OrganizationID string
+	WorkspaceID    string
+	AppID          string
+	WorkflowRunID  string
+	UserID         string
+}
+
+func normalizeOwnership(req CreateRequest) (ownershipFields, error) {
+	organizationID, err := normalizeOwnershipValue("organization_id", req.OrganizationID)
+	if err != nil {
+		return ownershipFields{}, err
+	}
+	workspaceID, err := normalizeOwnershipValue("workspace_id", req.WorkspaceID)
+	if err != nil {
+		return ownershipFields{}, err
+	}
+	appID, err := normalizeOwnershipValue("app_id", req.AppID)
+	if err != nil {
+		return ownershipFields{}, err
+	}
+	workflowRunID, err := normalizeOwnershipValue("workflow_run_id", req.WorkflowRunID)
+	if err != nil {
+		return ownershipFields{}, err
+	}
+	userID, err := normalizeOwnershipValue("user_id", req.UserID)
+	if err != nil {
+		return ownershipFields{}, err
+	}
+	return ownershipFields{
+		OrganizationID: organizationID,
+		WorkspaceID:    workspaceID,
+		AppID:          appID,
+		WorkflowRunID:  workflowRunID,
+		UserID:         userID,
+	}, nil
+}
+
+func normalizeOwnershipValue(field string, value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", nil
+	}
+	if len(value) > 128 {
+		return "", fmt.Errorf("%s exceeds max length of 128", field)
+	}
+	for _, char := range value {
+		if !isOwnershipChar(char) {
+			return "", fmt.Errorf("%s contains invalid characters", field)
+		}
+	}
+	return value, nil
+}
+
+func isOwnershipChar(char rune) bool {
+	return char >= 'a' && char <= 'z' ||
+		char >= 'A' && char <= 'Z' ||
+		char >= '0' && char <= '9' ||
+		char == '_' ||
+		char == '-' ||
+		char == '.' ||
+		char == ':' ||
+		char == '@'
+}
+
+func addOwnershipMetadata(metadata map[string]any, item sandbox.Sandbox) {
+	if item.OrganizationID != "" {
+		metadata["organization_id"] = item.OrganizationID
+	}
+	if item.WorkspaceID != "" {
+		metadata["workspace_id"] = item.WorkspaceID
+	}
+	if item.AppID != "" {
+		metadata["app_id"] = item.AppID
+	}
+	if item.WorkflowRunID != "" {
+		metadata["workflow_run_id"] = item.WorkflowRunID
+	}
+	if item.UserID != "" {
+		metadata["user_id"] = item.UserID
+	}
 }
 
 func (m *Manager) Get(id string) (*sandbox.Sandbox, error) {
@@ -165,6 +353,7 @@ func (m *Manager) Get(id string) (*sandbox.Sandbox, error) {
 		} else if updated {
 			_ = m.cache.Set(context.Background(), *item, m.cacheTTL(*item))
 		}
+		m.attachEffectiveLimits(item)
 		return item, nil
 	}
 
@@ -179,6 +368,7 @@ func (m *Manager) Get(id string) (*sandbox.Sandbox, error) {
 	}
 
 	_ = m.cache.Set(context.Background(), *item, m.cacheTTL(*item))
+	m.attachEffectiveLimits(item)
 	return item, nil
 }
 
@@ -195,6 +385,7 @@ func (m *Manager) List() []sandbox.Sandbox {
 	filtered := make([]sandbox.Sandbox, 0, len(items))
 	for _, item := range items {
 		if expired, _, err := m.expireIfNeeded(item); err == nil && !expired {
+			m.attachEffectiveLimits(&item)
 			_ = m.cache.Set(context.Background(), item, m.cacheTTL(item))
 			filtered = append(filtered, item)
 		}
@@ -205,6 +396,10 @@ func (m *Manager) List() []sandbox.Sandbox {
 	})
 
 	return filtered
+}
+
+func (m *Manager) ActiveCount() (int, error) {
+	return m.store.CountActive(m.workerID, time.Now().UTC())
 }
 
 func (m *Manager) Delete(id string) error {
@@ -220,9 +415,14 @@ func (m *Manager) Delete(id string) error {
 	}
 	_ = m.cache.Delete(context.Background(), id)
 	_ = os.RemoveAll(item.RootPath)
-	m.observer.Record("sandbox.deleted", id, "sandbox deleted", map[string]any{
-		"worker_id": item.WorkerID,
-	})
+	metadata := map[string]any{
+		"worker_id":          item.WorkerID,
+		"runtime_backend":    m.policy.RuntimeBackend(),
+		"runtime_profile":    item.RuntimeProfile,
+		"dependency_profile": item.DependencyProfile,
+	}
+	addOwnershipMetadata(metadata, *item)
+	m.observer.Record("sandbox.deleted", id, "sandbox deleted", metadata)
 	return nil
 }
 
@@ -249,9 +449,13 @@ func (m *Manager) Renew(id string, ttlSeconds int) (*sandbox.Sandbox, error) {
 	}
 	_ = m.cache.Set(context.Background(), *item, m.cacheTTL(*item))
 
-	m.observer.Record("sandbox.renewed", id, "sandbox renewed", map[string]any{
-		"ttl_seconds": item.TTLSeconds,
-	})
+	metadata := map[string]any{
+		"ttl_seconds":     item.TTLSeconds,
+		"runtime_backend": m.policy.RuntimeBackend(),
+		"runtime_profile": item.RuntimeProfile,
+	}
+	addOwnershipMetadata(metadata, *item)
+	m.observer.Record("sandbox.renewed", id, "sandbox renewed", metadata)
 
 	copyItem := *item
 	return &copyItem, nil
@@ -291,12 +495,16 @@ func (m *Manager) RegisterEndpoint(id string, port string, req RegisterEndpointR
 		return nil, err
 	}
 
-	m.observer.Record("sandbox.endpoint.registered", id, "sandbox endpoint registered", map[string]any{
-		"port":        port,
-		"target_host": endpoint.TargetHost,
-		"target_port": endpoint.TargetPort,
-		"scheme":      endpoint.Scheme,
-	})
+	metadata := map[string]any{
+		"port":            port,
+		"target_host":     endpoint.TargetHost,
+		"target_port":     endpoint.TargetPort,
+		"scheme":          endpoint.Scheme,
+		"runtime_backend": m.policy.RuntimeBackend(),
+		"runtime_profile": item.RuntimeProfile,
+	}
+	addOwnershipMetadata(metadata, *item)
+	m.observer.Record("sandbox.endpoint.registered", id, "sandbox endpoint registered", metadata)
 
 	return &endpoint, nil
 }
@@ -337,12 +545,16 @@ func (m *Manager) resolveEndpoint(id string, port string, record bool) (*sandbox
 
 	endpoint.URL = m.endpointURL(id, port)
 	if record {
-		m.observer.Record("sandbox.endpoint.resolved", id, "sandbox endpoint resolved", map[string]any{
-			"port":        port,
-			"url":         endpoint.URL,
-			"target_host": endpoint.TargetHost,
-			"target_port": endpoint.TargetPort,
-		})
+		metadata := map[string]any{
+			"port":            port,
+			"url":             endpoint.URL,
+			"target_host":     endpoint.TargetHost,
+			"target_port":     endpoint.TargetPort,
+			"runtime_backend": m.policy.RuntimeBackend(),
+			"runtime_profile": item.RuntimeProfile,
+		}
+		addOwnershipMetadata(metadata, *item)
+		m.observer.Record("sandbox.endpoint.resolved", id, "sandbox endpoint resolved", metadata)
 	}
 
 	return endpoint, nil
@@ -370,10 +582,23 @@ func (m *Manager) expireIfNeeded(item sandbox.Sandbox) (bool, bool, error) {
 			return true, false, err
 		}
 		_ = m.cache.Delete(context.Background(), item.ID)
-		m.observer.Record("sandbox.expired", item.ID, "sandbox expired", nil)
+		metadata := map[string]any{
+			"runtime_backend": m.policy.RuntimeBackend(),
+			"runtime_profile": item.RuntimeProfile,
+		}
+		addOwnershipMetadata(metadata, item)
+		m.observer.Record("sandbox.expired", item.ID, "sandbox expired", metadata)
 		return true, true, nil
 	}
 	return false, false, nil
+}
+
+func (m *Manager) attachEffectiveLimits(item *sandbox.Sandbox) {
+	if item == nil {
+		return
+	}
+	limits := m.policy.EffectiveLimits()
+	item.EffectiveLimits = &limits
 }
 
 func (m *Manager) endpointURL(id string, port string) string {
@@ -382,10 +607,10 @@ func (m *Manager) endpointURL(id string, port string) string {
 }
 
 func cloneMetadata(source map[string]string) map[string]string {
-	if len(source) == 0 {
-		return nil
-	}
 	target := make(map[string]string, len(source))
+	if len(source) == 0 {
+		return target
+	}
 	for key, value := range source {
 		target[key] = value
 	}
@@ -443,16 +668,45 @@ func (s *memoryStore) ListSandboxes() ([]sandbox.Sandbox, error) {
 	return items, nil
 }
 
-func (s *memoryStore) CountActive(now time.Time) (int, error) {
+func (s *memoryStore) CountActive(workerID string, now time.Time) (int, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	count := 0
 	for _, item := range s.sandboxes {
-		if item.Status == sandbox.StatusActive && item.ExpiresAt.After(now) {
+		if item.Status == sandbox.StatusActive && item.ExpiresAt.After(now) && item.WorkerID == workerID {
 			count++
 		}
 	}
 	return count, nil
+}
+
+func (s *memoryStore) CountActiveByOrganization(organizationID string, now time.Time) (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, item := range s.sandboxes {
+		if item.Status == sandbox.StatusActive && item.ExpiresAt.After(now) && item.OrganizationID == organizationID {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func (s *memoryStore) ListActiveDependencyProfilesByOrganization(organizationID string, now time.Time) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	profiles := map[string]struct{}{}
+	for _, item := range s.sandboxes {
+		if item.Status == sandbox.StatusActive && item.ExpiresAt.After(now) && item.OrganizationID == organizationID && item.DependencyProfile != "" {
+			profiles[item.DependencyProfile] = struct{}{}
+		}
+	}
+	items := make([]string, 0, len(profiles))
+	for profile := range profiles {
+		items = append(items, profile)
+	}
+	sort.Strings(items)
+	return items, nil
 }
 
 func (s *memoryStore) SaveEndpoint(endpoint sandbox.Endpoint) error {

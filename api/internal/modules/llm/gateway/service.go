@@ -126,6 +126,7 @@ type llmGatewayServiceImpl struct {
 	cryptoService         shared.CryptoService
 	consoleProvider       pconsole.ConsoleProvider // Console provider for official channels
 	officialCreditChecker paymentservice.OfficialCreditChecker
+	policyPrompt          llmPolicyPromptInjector
 }
 
 func (s *llmGatewayServiceImpl) isModelRoutable(ctx context.Context, organizationID uuid.UUID, modelName string) (bool, error) {
@@ -232,6 +233,7 @@ func NewLLMGatewayServiceWithCrypto(
 		cryptoService:         cryptoService,
 		consoleProvider:       platformContainer.Console,
 		officialCreditChecker: paymentservice.NewConsoleOfficialCreditChecker(),
+		policyPrompt:          newLLMPolicyPromptInjector(cfg.LLMPolicyPrompt),
 	}, nil
 }
 

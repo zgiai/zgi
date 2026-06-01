@@ -8,8 +8,6 @@ import (
 	"github.com/google/uuid"
 	aichatdto "github.com/zgiai/zgi/api/internal/modules/aichat/dto"
 	aichatmodel "github.com/zgiai/zgi/api/internal/modules/aichat/model"
-	"github.com/zgiai/zgi/api/internal/modules/memory"
-	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
 type fakeUserMemoryService struct {
@@ -81,19 +79,6 @@ func TestBuildUpstreamMessagesSkipsUserMemoryWhenSettingDisabled(t *testing.T) {
 	}
 	if userMemory["enabled"] != false {
 		t.Fatalf("user_memory metadata = %#v, want enabled=false", userMemory)
-	}
-}
-
-func TestAppendUserMemorySkillOnlyWhenCatalogHasHiddenSkill(t *testing.T) {
-	parts := &chatRequestParts{UseMemory: true}
-	appendUserMemorySkill(context.Background(), parts, []skills.SkillDiscoveryMetadata{
-		{ID: memory.SkillID, Status: skills.SkillStatusActive, RuntimeType: skills.SkillRuntimeTypeHybrid},
-	})
-	if len(parts.SkillIDs) != 1 || parts.SkillIDs[0] != memory.SkillID {
-		t.Fatalf("SkillIDs = %#v, want user-memory", parts.SkillIDs)
-	}
-	if len(parts.ToolSkillIDs) != 1 || parts.ToolSkillIDs[0] != memory.SkillID {
-		t.Fatalf("ToolSkillIDs = %#v, want user-memory", parts.ToolSkillIDs)
 	}
 }
 

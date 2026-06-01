@@ -22,6 +22,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install ripgrep
+        run: |
+          curl -fsSL https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-unknown-linux-musl.tar.gz \
+            | tar -xz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/ripgrep-14.1.1-x86_64-unknown-linux-musl" >> "$GITHUB_PATH"
+
       - name: Check repository hygiene
         run: ./scripts/check-open-source.sh --worktree
 
@@ -50,3 +56,80 @@ jobs:
 
       - name: Type check
         run: pnpm type-check
+
+  sandbox:
+    name: Sandbox runtime tests
+    runs-on: ${{ fromJSON(vars.CI_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: zgi_sandbox_ci
+          POSTGRES_USER: zgi_sandbox
+          POSTGRES_PASSWORD: zgi_sandbox_ci
+        ports:
+          - 5432
+        options: >-
+          --health-cmd "pg_isready -U zgi_sandbox -d zgi_sandbox_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: sandbox/go.mod
+          cache-dependency-path: sandbox/go.sum
+
+      - name: Install Kest
+        env:
+          KEST_VERSION: v0.7.7
+          KEST_SHA256_LINUX_AMD64: 3814d8662a1cc01410302fcea43910f8437d01f969140c406f64b10249134a5a
+          KEST_SHA256_LINUX_ARM64: 43d45c493bed73146928a2454ba6e712a5f68f02ebbfcefab978e0b4aa731b6d
+        run: |
+          case "$(uname -m)" in
+            x86_64|amd64)
+              archive="kest_linux_amd64.tar.gz"
+              expected_sha="${KEST_SHA256_LINUX_AMD64}"
+              ;;
+            aarch64|arm64)
+              archive="kest_linux_arm64.tar.gz"
+              expected_sha="${KEST_SHA256_LINUX_ARM64}"
+              ;;
+            *)
+              echo "unsupported runner architecture for sandbox Kest flow: $(uname -m)" >&2
+              exit 1
+              ;;
+          esac
+
+          curl -fsSL "https://github.com/kest-labs/kest/releases/download/${KEST_VERSION}/${archive}" -o "${RUNNER_TEMP}/${archive}"
+          echo "${expected_sha}  ${RUNNER_TEMP}/${archive}" | sha256sum -c -
+          tar -xzf "${RUNNER_TEMP}/${archive}" -C "${RUNNER_TEMP}" kest
+          mkdir -p "${RUNNER_TEMP}/bin"
+          mv "${RUNNER_TEMP}/kest" "${RUNNER_TEMP}/bin/kest"
+          chmod +x "${RUNNER_TEMP}/bin/kest"
+          echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
+
+      - name: Install ripgrep
+        run: |
+          curl -fsSL https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-unknown-linux-musl.tar.gz \
+            | tar -xz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/ripgrep-14.1.1-x86_64-unknown-linux-musl" >> "$GITHUB_PATH"
+
+      - name: Run sandbox Go tests
+        working-directory: sandbox
+        run: go test ./...
+
+      - name: Check sandbox config docs
+        run: make -C sandbox check-config-docs
+
+      - name: Run sandbox Kest flows
+        env:
+          ZGI_SANDBOX_DATABASE_URL: postgres://zgi_sandbox:zgi_sandbox_ci@127.0.0.1:${{ job.services.postgres.ports[5432] }}/zgi_sandbox_ci?sslmode=disable
+        run: make test-sandbox-kest

@@ -22,17 +22,18 @@ func NewToolEngine(toolManager *ToolManager) *ToolEngine {
 
 // InvokeRequest represents a tool invocation request
 type InvokeRequest struct {
-	ProviderType   ToolProviderType       `json:"provider_type"`
-	ProviderID     string                 `json:"provider_id"`
-	ToolName       string                 `json:"tool_name"`
-	TenantID       string                 `json:"tenant_id"`
-	UserID         string                 `json:"user_id"`
-	Parameters     map[string]interface{} `json:"parameters"`
-	CredentialID   string                 `json:"credential_id,omitempty"`
-	ConversationID string                 `json:"conversation_id,omitempty"`
-	AppID          string                 `json:"app_id,omitempty"`
-	MessageID      string                 `json:"message_id,omitempty"`
-	InvokeFrom     ToolInvokeFrom         `json:"invoke_from"`
+	ProviderType      ToolProviderType       `json:"provider_type"`
+	ProviderID        string                 `json:"provider_id"`
+	ToolName          string                 `json:"tool_name"`
+	TenantID          string                 `json:"tenant_id"`
+	UserID            string                 `json:"user_id"`
+	Parameters        map[string]interface{} `json:"parameters"`
+	CredentialID      string                 `json:"credential_id,omitempty"`
+	ConversationID    string                 `json:"conversation_id,omitempty"`
+	AppID             string                 `json:"app_id,omitempty"`
+	MessageID         string                 `json:"message_id,omitempty"`
+	InvokeFrom        ToolInvokeFrom         `json:"invoke_from"`
+	RuntimeParameters map[string]interface{} `json:"runtime_parameters,omitempty"`
 }
 
 // InvokeResult represents the result of a tool invocation
@@ -63,6 +64,7 @@ func (e *ToolEngine) Invoke(ctx context.Context, req InvokeRequest) (*InvokeResu
 		req.TenantID,
 		req.InvokeFrom,
 		req.CredentialID,
+		req.RuntimeParameters,
 	)
 	if err != nil {
 		return &InvokeResult{
@@ -183,22 +185,24 @@ type AgentToolInvokeRequest struct {
 	Parameters     map[string]interface{} `json:"parameters"`
 	ConversationID string                 `json:"conversation_id,omitempty"`
 	MessageID      string                 `json:"message_id,omitempty"`
+	UserScope      string                 `json:"user_scope,omitempty"`
 }
 
 // InvokeForAgent invokes a tool for agent execution
 func (e *ToolEngine) InvokeForAgent(ctx context.Context, req AgentToolInvokeRequest) (*InvokeResult, error) {
 	return e.Invoke(ctx, InvokeRequest{
-		ProviderType:   req.ProviderType,
-		ProviderID:     req.ProviderID,
-		ToolName:       req.ToolName,
-		TenantID:       req.TenantID,
-		UserID:         req.UserID,
-		Parameters:     req.Parameters,
-		CredentialID:   req.CredentialID,
-		ConversationID: req.ConversationID,
-		AppID:          req.AppID,
-		MessageID:      req.MessageID,
-		InvokeFrom:     ToolInvokeFromAgent,
+		ProviderType:      req.ProviderType,
+		ProviderID:        req.ProviderID,
+		ToolName:          req.ToolName,
+		TenantID:          req.TenantID,
+		UserID:            req.UserID,
+		Parameters:        req.Parameters,
+		CredentialID:      req.CredentialID,
+		ConversationID:    req.ConversationID,
+		AppID:             req.AppID,
+		MessageID:         req.MessageID,
+		InvokeFrom:        ToolInvokeFromAgent,
+		RuntimeParameters: map[string]interface{}{"user_scope": req.UserScope},
 	})
 }
 
@@ -249,6 +253,7 @@ func (e *ToolEngine) GetToolParameters(
 		tenantID,
 		ToolInvokeFromAPI,
 		"",
+		nil,
 	)
 	if err != nil {
 		return nil, err

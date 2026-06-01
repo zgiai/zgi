@@ -8,9 +8,22 @@ import (
 	"time"
 
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
+	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/gorm"
 )
+
+const batchStaleFailureMessage = "测试执行长时间无进展，系统已自动停止未完成问题"
+
+var batchItemExecutionTimeout = 10 * time.Minute
+
+const (
+	generationPromptExistingCasesMaxTotal       = 30
+	generationPromptExistingCasesMaxPerScenario = 5
+)
+
+var ErrJudgeModelNotConfigured = errors.New("judge model is not configured")
 
 type Service struct {
 	repo                    *Repository
@@ -18,10 +31,16 @@ type Service struct {
 	judge                   Judge
 	summarizer              Summarizer
 	workflowContextProvider WorkflowContextProvider
+	defaultModelResolver    llmdefaultservice.DefaultModelResolver
+	taskCanceler            TaskCanceler
 }
 
 func NewService(repo *Repository) *Service {
 	return &Service{repo: repo}
+}
+
+type TaskCanceler interface {
+	Cancel(taskID string)
 }
 
 func (s *Service) SetRunner(runner Runner) {
@@ -38,6 +57,14 @@ func (s *Service) SetSummarizer(summarizer Summarizer) {
 
 func (s *Service) SetWorkflowContextProvider(provider WorkflowContextProvider) {
 	s.workflowContextProvider = provider
+}
+
+func (s *Service) SetTaskCanceler(canceler TaskCanceler) {
+	s.taskCanceler = canceler
+}
+
+func (s *Service) SetDefaultModelResolver(resolver llmdefaultservice.DefaultModelResolver) {
+	s.defaultModelResolver = resolver
 }
 
 type UpdateSettingsRequest struct {
@@ -109,7 +136,10 @@ func normalizeQuestionType(questionType string) (string, error) {
 	if questionType == "" {
 		return CaseTypeCore, nil
 	}
-	if questionType != CaseTypeCore && questionType != CaseTypeExtension && questionType != CaseTypeFuzzy {
+	if questionType != CaseTypeCore &&
+		questionType != CaseTypeExtension &&
+		questionType != CaseTypeFuzzy &&
+		questionType != CaseTypeManual {
 		return "", fmt.Errorf("invalid question type")
 	}
 	return questionType, nil
@@ -197,6 +227,41 @@ func (s *Service) ResetSettings(ctx context.Context, agentID string) (*Setting, 
 		JudgeModelProvider:  existing.JudgeModelProvider,
 		JudgeModelName:      existing.JudgeModelName,
 	})
+}
+
+func (s *Service) resolveBatchJudgeSettings(ctx context.Context, agentID string) (*Setting, error) {
+	settings, err := s.GetSettings(ctx, agentID)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(settings.JudgeModelProvider) != "" && strings.TrimSpace(settings.JudgeModelName) != "" {
+		return settings, nil
+	}
+	if s.defaultModelResolver == nil {
+		return nil, ErrJudgeModelNotConfigured
+	}
+
+	organizationID, err := s.repo.GetAgentOrganizationID(ctx, agentID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve judge model organization: %w", err)
+	}
+	organizationID = strings.TrimSpace(organizationID)
+	if organizationID == "" {
+		return nil, ErrJudgeModelNotConfigured
+	}
+
+	resolved, err := s.defaultModelResolver.ResolveUseCase(ctx, organizationID, llmmodelmodel.UseCaseTextChat, nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("resolve default judge model: %w", err)
+	}
+	if resolved == nil || strings.TrimSpace(resolved.Provider) == "" || strings.TrimSpace(resolved.Model) == "" {
+		return nil, ErrJudgeModelNotConfigured
+	}
+
+	copy := *settings
+	copy.JudgeModelProvider = strings.TrimSpace(resolved.Provider)
+	copy.JudgeModelName = strings.TrimSpace(resolved.Model)
+	return &copy, nil
 }
 
 func (s *Service) CreateScenario(ctx context.Context, agentID string, req CreateScenarioRequest) (*Scenario, error) {
@@ -548,7 +613,7 @@ func (s *Service) CreateGenerationTask(ctx context.Context, agentID, workspaceID
 	}
 	questionTypes := normalizeQuestionTypes(req.QuestionTypes)
 	if len(questionTypes) == 0 {
-		questionTypes = []string{CaseTypeCore, CaseTypeExtension, CaseTypeFuzzy}
+		questionTypes = []string{CaseTypeCore, CaseTypeExtension, CaseTypeFuzzy, CaseTypeManual}
 	}
 	now := time.Now()
 	task := &GenerationTask{
@@ -600,6 +665,9 @@ func (s *Service) GetGenerationTask(ctx context.Context, agentID, taskID string)
 func (s *Service) CancelGenerationTask(ctx context.Context, agentID, taskID string) (*GenerationTask, error) {
 	if _, err := s.repo.CancelGenerationTask(ctx, agentID, taskID, time.Now()); err != nil {
 		return nil, err
+	}
+	if s.taskCanceler != nil {
+		s.taskCanceler.Cancel(taskID)
 	}
 	return s.GetGenerationTask(ctx, agentID, taskID)
 }
@@ -809,6 +877,26 @@ func (s *Service) generateCasesForScenarios(ctx context.Context, agentID string,
 	generateReq.Count = req.Count
 	generateReq.ScenarioID = ""
 	generateReq.ScenarioIDs = scenarioIDs
+	generateReq.WorkflowContext = s.resolveWorkflowRecognitionContext(ctx, agentID)
+	scenarios, err := s.ListScenarios(ctx, agentID)
+	if err != nil {
+		return nil, err
+	}
+	scenarioByID := make(map[string]Scenario, len(scenarios))
+	for _, scenario := range scenarios {
+		scenarioByID[scenario.ID] = scenario
+	}
+	generateReq.Scenarios = make([]Scenario, 0, len(scenarioIDs))
+	for _, scenarioID := range scenarioIDs {
+		if scenario, ok := scenarioByID[scenarioID]; ok {
+			generateReq.Scenarios = append(generateReq.Scenarios, scenario)
+		}
+	}
+	existingCases, err := s.ListCases(ctx, agentID, "")
+	if err != nil {
+		return nil, err
+	}
+	generateReq.ExistingCases = selectExistingCasesForGenerationPrompt(existingCases, scenarioIDs)
 	generated, err := generator.GenerateCases(ctx, generateReq)
 	if err != nil {
 		return nil, err
@@ -822,6 +910,11 @@ func (s *Service) generateCasesForScenarios(ctx context.Context, agentID string,
 	}
 	for index, item := range normalized {
 		scenarioID := scenarioIDs[index%len(scenarioIDs)]
+		if itemScenarioID := strings.TrimSpace(item.ScenarioID); itemScenarioID != "" {
+			if _, ok := scenarioByID[itemScenarioID]; ok {
+				scenarioID = itemScenarioID
+			}
+		}
 		created, err := s.CreateCase(ctx, agentID, CreateCaseRequest{
 			Content:        item.Content,
 			ExpectedResult: item.ExpectedResult,
@@ -842,6 +935,62 @@ func (s *Service) generateCasesForScenarios(ctx context.Context, agentID string,
 		}
 	}
 	return &GenerateCasesResult{Cases: generatedCases, Items: items}, nil
+}
+
+func selectExistingCasesForGenerationPrompt(cases []Case, scenarioIDs []string) []Case {
+	if len(cases) == 0 || len(scenarioIDs) == 0 {
+		return nil
+	}
+
+	selectedScenarioSet := make(map[string]struct{}, len(scenarioIDs))
+	orderedScenarioIDs := make([]string, 0, len(scenarioIDs))
+	for _, scenarioID := range scenarioIDs {
+		scenarioID = strings.TrimSpace(scenarioID)
+		if scenarioID == "" {
+			continue
+		}
+		if _, exists := selectedScenarioSet[scenarioID]; exists {
+			continue
+		}
+		selectedScenarioSet[scenarioID] = struct{}{}
+		orderedScenarioIDs = append(orderedScenarioIDs, scenarioID)
+	}
+	if len(orderedScenarioIDs) == 0 {
+		return nil
+	}
+
+	grouped := make(map[string][]Case, len(orderedScenarioIDs))
+	for _, testCase := range cases {
+		if testCase.ScenarioID == nil {
+			continue
+		}
+		scenarioID := strings.TrimSpace(*testCase.ScenarioID)
+		if _, ok := selectedScenarioSet[scenarioID]; !ok {
+			continue
+		}
+		if len(grouped[scenarioID]) >= generationPromptExistingCasesMaxPerScenario {
+			continue
+		}
+		grouped[scenarioID] = append(grouped[scenarioID], testCase)
+	}
+
+	selected := make([]Case, 0, minInt(len(cases), generationPromptExistingCasesMaxTotal))
+	for _, scenarioID := range orderedScenarioIDs {
+		for _, testCase := range grouped[scenarioID] {
+			if len(selected) >= generationPromptExistingCasesMaxTotal {
+				return selected
+			}
+			selected = append(selected, testCase)
+		}
+	}
+	return selected
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func normalizeGenerateScenarioIDs(req GenerateCasesRequest) []string {
@@ -1010,6 +1159,16 @@ func (s *Service) GetScenarioRecognitionTask(ctx context.Context, agentID, taskI
 	return s.repo.GetScenarioRecognitionTask(ctx, agentID, taskID)
 }
 
+func (s *Service) CancelScenarioRecognitionTask(ctx context.Context, agentID, taskID string) (*ScenarioRecognitionTask, error) {
+	if _, err := s.repo.CancelScenarioRecognitionTask(ctx, agentID, taskID, time.Now()); err != nil {
+		return nil, err
+	}
+	if s.taskCanceler != nil {
+		s.taskCanceler.Cancel(taskID)
+	}
+	return s.GetScenarioRecognitionTask(ctx, agentID, taskID)
+}
+
 func (s *Service) RunScenarioRecognitionTask(ctx context.Context, taskID string, recognizer ScenarioRecognizer) error {
 	task, err := s.repo.GetScenarioRecognitionTaskByID(ctx, taskID)
 	if err != nil {
@@ -1055,7 +1214,32 @@ func (s *Service) RunScenarioRecognitionTask(ctx context.Context, taskID string,
 		return nil
 	}
 
+	checkScenarioRecognitionCanceled := func(ctx context.Context) error {
+		current, err := s.repo.GetScenarioRecognitionTaskByID(ctx, task.ID)
+		if err != nil {
+			return err
+		}
+		if current.Status == GenerationTaskStatusCanceling {
+			if err := s.finishScenarioRecognitionTask(ctx, task.ID, GenerationTaskStatusCanceled, "", 0, 0); err != nil {
+				return err
+			}
+			return errGenerationTaskCanceled
+		}
+		return nil
+	}
+	if err := checkScenarioRecognitionCanceled(ctx); err != nil {
+		if errors.Is(err, errGenerationTaskCanceled) {
+			return nil
+		}
+		return err
+	}
 	result, err := s.recognizeScenarios(ctx, task.AgentID, scenarioRecognitionTaskRequest(task), task.WorkflowContextSnapshot, recognizer)
+	if cancelErr := checkScenarioRecognitionCanceled(ctx); cancelErr != nil {
+		if errors.Is(cancelErr, errGenerationTaskCanceled) {
+			return nil
+		}
+		return cancelErr
+	}
 	if err != nil {
 		reason := scenarioRecognitionTaskFailureReason(err)
 		if finishErr := s.finishScenarioRecognitionTask(ctx, task.ID, GenerationTaskStatusFailed, reason, 0, 0); finishErr != nil {
@@ -1166,7 +1350,7 @@ func (s *Service) CreateBatch(ctx context.Context, agentID string, req CreateBat
 	if name == "" {
 		return nil, fmt.Errorf("name is required")
 	}
-	settings, err := s.GetSettings(ctx, agentID)
+	settings, err := s.resolveBatchJudgeSettings(ctx, agentID)
 	if err != nil {
 		return nil, err
 	}
@@ -1253,7 +1437,7 @@ func (s *Service) RetestBatch(ctx context.Context, agentID string, batchID strin
 	if len(originalItems) == 0 {
 		return nil, fmt.Errorf("batch has no test items")
 	}
-	settings, err := s.GetSettings(ctx, agentID)
+	settings, err := s.resolveBatchJudgeSettings(ctx, agentID)
 	if err != nil {
 		return nil, err
 	}
@@ -1319,9 +1503,6 @@ func (s *Service) StartBatch(ctx context.Context, agentID string, batchID string
 	}
 	if !updated {
 		return nil, fmt.Errorf("batch can only be started from queued status")
-	}
-	if err := s.repo.UpdateBatchItemsStatus(ctx, agentID, batchID, []string{string(BatchItemStatusPending)}, string(BatchItemStatusRunning)); err != nil {
-		return nil, err
 	}
 	return s.repo.GetBatch(ctx, agentID, batchID)
 }
@@ -1393,17 +1574,37 @@ func (s *Service) ExecuteStartedBatchWithRunnerJudgeAndSummarizer(ctx context.Co
 		if item.Status == string(BatchItemStatusCanceled) {
 			continue
 		}
+		if item.Status == string(BatchItemStatusPending) {
+			updated, err := s.repo.UpdateBatchItemStatusIfCurrent(ctx, agentID, item.ID, string(BatchItemStatusPending), string(BatchItemStatusRunning))
+			if err != nil {
+				return nil, err
+			}
+			if !updated {
+				continue
+			}
+			item.Status = string(BatchItemStatusRunning)
+		}
+		if item.Status != string(BatchItemStatusRunning) {
+			continue
+		}
 		snapshot := CaseSnapshot(item.CaseSnapshot)
-		result, runErr := runBatchItem(ctx, runner, RunCaseRequest{
+		itemCtx, cancel := context.WithTimeout(ctx, batchItemExecutionTimeout)
+		result, runErr := runBatchItem(itemCtx, runner, RunCaseRequest{
 			AgentID:      agentID,
 			BatchID:      batchID,
 			BatchItemID:  item.ID,
 			CaseSnapshot: snapshot,
 		})
+		timedOut := errors.Is(itemCtx.Err(), context.DeadlineExceeded)
+		cancel()
 		item.Outputs = JSONMap{}
 		if runErr != nil {
 			item.Status = string(BatchItemStatusFailed)
-			item.Error = runErr.Error()
+			if timedOut {
+				item.Error = "测试问题执行超时"
+			} else {
+				item.Error = runErr.Error()
+			}
 			failed++
 		} else {
 			if batch.JudgeModelNameSnapshot != "" {
@@ -1444,6 +1645,9 @@ func (s *Service) ExecuteStartedBatchWithRunnerJudgeAndSummarizer(ctx context.Co
 			return nil, err
 		}
 		processedItems = append(processedItems, item)
+		if err := s.repo.TouchBatch(ctx, agentID, batchID); err != nil {
+			return nil, err
+		}
 	}
 	batch.PassedCount = passed
 	batch.FailedCount = failed
@@ -1480,6 +1684,10 @@ func (s *Service) MarkBatchExecutionFailed(ctx context.Context, agentID string, 
 	if updateErr := s.repo.UpdateBatchItemsStatus(ctx, agentID, batchID, unfinished, string(BatchItemStatusFailed)); updateErr != nil {
 		logger.Error("workflow test mark batch items failed", updateErr)
 	}
+}
+
+func (s *Service) RecoverStaleRunningBatches(ctx context.Context, agentID string, staleBefore time.Time) (int64, error) {
+	return s.repo.RecoverStaleRunningBatches(ctx, agentID, staleBefore, batchStaleFailureMessage, batchStaleFailureMessage, time.Now())
 }
 
 func runBatchItem(ctx context.Context, runner Runner, req RunCaseRequest) (*RunCaseResult, error) {

@@ -1128,7 +1128,7 @@ export function TaskEditorPanel({
       />
 
       <ConfirmDialog
-        variant="warning"
+        variant="danger"
         open={Boolean(deleteTargetId)}
         onOpenChange={open => {
           if (!open) {

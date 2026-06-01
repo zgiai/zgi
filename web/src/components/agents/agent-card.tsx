@@ -19,6 +19,7 @@ import {
   Download,
   MessageSquareText,
   MoveRight,
+  Bot,
 } from 'lucide-react';
 import { useT } from '@/i18n';
 import { useDeleteAgent } from '@/hooks/agent/use-agents';
@@ -60,10 +61,22 @@ function AgentCard({ agent, onDeleted, pageIndex }: AgentCardProps) {
   const { hasPermission } = useAccountPermissions();
   const canManage = hasPermission('agent.manage');
   const canMoveAssets = ['owner', 'admin'].includes(currentOrganization?.organization_role ?? '');
-  const agentHref = `/console/agents/${agent.id}/workflow`;
+  const agentHref =
+    agent.agent_type === AgentType.AGENT
+      ? `/console/agents/${agent.id}/agent`
+      : `/console/agents/${agent.id}/workflow`;
   const modeText =
-    agent.agent_type === AgentType.WORKFLOW ? t('modes.workflow') : t('modes.conversational');
-  const ModeIcon = agent.agent_type === AgentType.WORKFLOW ? Workflow : MessageSquareText;
+    agent.agent_type === AgentType.AGENT
+      ? t('modes.agent')
+      : agent.agent_type === AgentType.WORKFLOW
+        ? t('modes.workflow')
+        : t('modes.conversational');
+  const ModeIcon =
+    agent.agent_type === AgentType.AGENT
+      ? Bot
+      : agent.agent_type === AgentType.WORKFLOW
+        ? Workflow
+        : MessageSquareText;
   const isWebAppOffline = agent.is_published && agent.web_app_status === 'inactive';
   const isPublishedOnline = agent.is_published && agent.web_app_status === 'active';
   const statusText = isWebAppOffline
@@ -218,7 +231,7 @@ function AgentCard({ agent, onDeleted, pageIndex }: AgentCardProps) {
       />
       {/* Delete confirmation dialog outside dropdown */}
       <ConfirmDialog
-        variant="warning"
+        variant="danger"
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
         title={t('deleteConfirmTitle', { name: agent.name })}

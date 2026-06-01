@@ -11,6 +11,7 @@ import (
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
+	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
@@ -850,11 +851,11 @@ func (s *service) handleCallSkillTool(
 		trace := failedSkillTrace("tool_call", toolName, err)
 		trace.SkillID = skillID
 		trace.Arguments = argumentSummary
-		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "fix the tool_name or arguments and retry")), true, false)
+		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, "fix the tool_name or arguments and retry", skillID, toolName)), true, false)
 	}
 	invocation.Trace.Arguments = argumentSummary
 	if err != nil {
-		return recoverableSkillStep(invocation.Trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "fix the tool arguments based on the error and retry")), true, false)
+		return recoverableSkillStep(invocation.Trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, "fix the tool arguments based on the error and retry", skillID, toolName)), true, false)
 	}
 	invocation.Trace.Result = summarizeSkillToolResult(invocation.Trace.SkillID, invocation.Trace.ToolName, invocation.Messages)
 	logger.DebugContext(ctx, "aichat skill tool completed",
@@ -900,16 +901,20 @@ func fatalSkillStep(trace skills.SkillTrace, toolMessage adapter.Message, err er
 }
 
 func (s *service) skillExecutionContext(prepared *PreparedChat) skills.ExecutionContext {
-	tenantID := prepared.Scope.OrganizationID.String()
+	runtimeParameters := map[string]interface{}{
+		"organization_id": prepared.Scope.OrganizationID.String(),
+	}
 	if prepared.Scope.WorkspaceID != nil {
-		tenantID = prepared.Scope.WorkspaceID.String()
+		runtimeParameters["workspace_id"] = prepared.Scope.WorkspaceID.String()
 	}
 	return skills.ExecutionContext{
-		TenantID:       tenantID,
-		UserID:         prepared.Scope.AccountID.String(),
-		ConversationID: prepared.Conversation.ID.String(),
-		AppID:          prepared.Conversation.ID.String(),
-		MessageID:      prepared.Message.ID.String(),
+		OrganizationID:    prepared.Scope.OrganizationID.String(),
+		UserID:            prepared.Scope.AccountID.String(),
+		ConversationID:    prepared.Conversation.ID.String(),
+		AppID:             prepared.Conversation.ID.String(),
+		MessageID:         prepared.Message.ID.String(),
+		InvokeFrom:        tools.ToolInvokeFromAIChat,
+		RuntimeParameters: runtimeParameters,
 	}
 }
 

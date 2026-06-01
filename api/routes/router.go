@@ -51,14 +51,36 @@ func RegisterRoutes(r *gin.Engine, serviceContainer *container.ServiceContainer,
 	v1Group := r.Group("/console/api")
 	v1.RegisterRoutes(r, v1Group, serviceContainer, workflowEngineFactory)
 
-	external.RegisterExternalRoutes(r, serviceContainer, workflowEngineFactory)
+	external.RegisterExternalRoutes(r, external.ExternalRouteDeps{
+		DB:                    serviceContainer.GetDB(),
+		AccountService:        serviceContainer.GetAccountService(),
+		FileService:           serviceContainer.GetFileService(),
+		ContentExtractor:      serviceContainer.GetContentExtractor(),
+		QuotaService:          serviceContainer.GetQuotaService(),
+		OrganizationService:   serviceContainer.GetOrganizationService(),
+		LLMClient:             serviceContainer.GetLLMClient(),
+		ToolEngine:            serviceContainer.GetToolEngine(),
+		GraphFlowService:      serviceContainer.GetGraphFlowService(),
+		PromptResolver:        serviceContainer.GetPromptService(),
+		WorkflowEngineFactory: workflowEngineFactory,
+	})
 
 	registerConsoleInternalRoutes(r, serviceContainer.GetDB())
 
 	// OpenAI-compatible LLM Gateway API (/v1/*)
 	// Uses API Key authentication (sk-xxx)
 	// Note: RegisterGatewayRoutes internally creates /v1 group
-	v1.RegisterGatewayRoutes(r.Group(""), serviceContainer)
+	gatewayDeps := v1.GatewayRouteDeps{
+		DB:         serviceContainer.GetDB(),
+		APIKeyRepo: serviceContainer.GetLLMAPIKeyRepository(),
+	}
+	platformChannels, err := serviceContainer.GetPlatformChannels()
+	if err != nil {
+		logger.Warn("failed to load platform channels, skipping channel provider wiring", err)
+	} else {
+		gatewayDeps.ChannelProvider = platformChannels.Channel
+	}
+	v1.RegisterGatewayRoutes(r.Group(""), gatewayDeps)
 }
 
 func registerConsoleInternalRoutes(r *gin.Engine, db *gorm.DB) {

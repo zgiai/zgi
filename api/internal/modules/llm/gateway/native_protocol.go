@@ -26,9 +26,13 @@ func (s *llmGatewayServiceImpl) CreateResponseRaw(
 	if err := validateRawResponseRequest(req); err != nil {
 		return nil, err
 	}
+	effectiveReq, err := s.policyPrompt.injectRawResponseRequest(req)
+	if err != nil {
+		return nil, err
+	}
 	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, modelCategoryResponses)
 
-	return s.createNativeResponse(ctx, apiKey, req)
+	return s.createNativeResponse(ctx, apiKey, effectiveReq)
 }
 
 func (s *llmGatewayServiceImpl) CreateResponseStream(
@@ -39,9 +43,13 @@ func (s *llmGatewayServiceImpl) CreateResponseStream(
 	if err := validateRawResponseRequest(req); err != nil {
 		return nil, err
 	}
+	effectiveReq, err := s.policyPrompt.injectRawResponseRequest(req)
+	if err != nil {
+		return nil, err
+	}
 	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, modelCategoryResponses)
 
-	return s.createNativeResponseStream(ctx, apiKey, req)
+	return s.createNativeResponseStream(ctx, apiKey, effectiveReq)
 }
 
 func (s *llmGatewayServiceImpl) CreateAnthropicMessage(
@@ -52,9 +60,13 @@ func (s *llmGatewayServiceImpl) CreateAnthropicMessage(
 	if err := validateAnthropicMessageRequest(req); err != nil {
 		return nil, err
 	}
+	effectiveReq, err := s.policyPrompt.injectAnthropicMessageRequest(req)
+	if err != nil {
+		return nil, err
+	}
 	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, modelCategoryAnthropicMessages)
 
-	return s.createNativeAnthropicMessage(ctx, apiKey, req)
+	return s.createNativeAnthropicMessage(ctx, apiKey, effectiveReq)
 }
 
 func (s *llmGatewayServiceImpl) CreateAnthropicMessageStream(
@@ -65,9 +77,13 @@ func (s *llmGatewayServiceImpl) CreateAnthropicMessageStream(
 	if err := validateAnthropicMessageRequest(req); err != nil {
 		return nil, err
 	}
+	effectiveReq, err := s.policyPrompt.injectAnthropicMessageRequest(req)
+	if err != nil {
+		return nil, err
+	}
 	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, modelCategoryAnthropicMessages)
 
-	return s.createNativeAnthropicMessageStream(ctx, apiKey, req)
+	return s.createNativeAnthropicMessageStream(ctx, apiKey, effectiveReq)
 }
 
 func validateRawResponseRequest(req *adapter.RawResponseRequest) error {

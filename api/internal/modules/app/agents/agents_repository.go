@@ -60,6 +60,13 @@ type AgentsRepository interface {
 	CreateInstalled(ctx context.Context, inst *InstalledAgent) error
 	CreateAgentsConfig(ctx context.Context, cfg *AgentsConfig) error
 	GetAgentsConfigByID(ctx context.Context, id string) (*AgentsConfig, error)
+	GetAgentsConfigByAgentID(ctx context.Context, agentID string) (*AgentsConfig, error)
+	UpdateAgentsConfig(ctx context.Context, cfg *AgentsConfig) error
+	CreateAgentPublishedVersion(ctx context.Context, version *AgentPublishedVersion) error
+	GetAgentPublishedVersionByID(ctx context.Context, agentID, versionID string) (*AgentPublishedVersion, error)
+	GetLatestAgentPublishedVersion(ctx context.Context, agentID string) (*AgentPublishedVersion, error)
+	ListAgentPublishedVersions(ctx context.Context, agentID string, limit, offset int) ([]*AgentPublishedVersion, int64, error)
+	HasPublishedAgentVersion(ctx context.Context, agentID string) (bool, error)
 	UpdateWorkflowID(ctx context.Context, agentID, workflowID string) error
 	UpdateWorkflowConfig(ctx context.Context, agentID, workflowConfig string) error
 	HasPublishedWorkflow(ctx context.Context, agentID string) (bool, error)
@@ -350,6 +357,86 @@ func (r *agentsRepository) GetAgentsConfigByID(ctx context.Context, id string) (
 		return nil, fmt.Errorf("failed to get agents config: %w", err)
 	}
 	return &cfg, nil
+}
+
+func (r *agentsRepository) GetAgentsConfigByAgentID(ctx context.Context, agentID string) (*AgentsConfig, error) {
+	var cfg AgentsConfig
+	if err := r.db.WithContext(ctx).Where("agents_id = ? AND deleted_at IS NULL", agentID).Order("created_at DESC").First(&cfg).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get agents config by agent: %w", err)
+	}
+	return &cfg, nil
+}
+
+func (r *agentsRepository) UpdateAgentsConfig(ctx context.Context, cfg *AgentsConfig) error {
+	if cfg == nil {
+		return fmt.Errorf("agents config is required")
+	}
+	cfg.UpdatedAt = time.Now()
+	if err := r.db.WithContext(ctx).Save(cfg).Error; err != nil {
+		return fmt.Errorf("failed to update agents config: %w", err)
+	}
+	return nil
+}
+
+func (r *agentsRepository) CreateAgentPublishedVersion(ctx context.Context, version *AgentPublishedVersion) error {
+	if version == nil {
+		return fmt.Errorf("agent published version is required")
+	}
+	if err := r.db.WithContext(ctx).Create(version).Error; err != nil {
+		return fmt.Errorf("failed to create agent published version: %w", err)
+	}
+	return nil
+}
+
+func (r *agentsRepository) GetAgentPublishedVersionByID(ctx context.Context, agentID, versionID string) (*AgentPublishedVersion, error) {
+	var version AgentPublishedVersion
+	if err := r.db.WithContext(ctx).
+		Where("id = ? AND agent_id = ? AND deleted_at IS NULL", versionID, agentID).
+		First(&version).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get agent published version: %w", err)
+	}
+	return &version, nil
+}
+
+func (r *agentsRepository) GetLatestAgentPublishedVersion(ctx context.Context, agentID string) (*AgentPublishedVersion, error) {
+	var version AgentPublishedVersion
+	if err := r.db.WithContext(ctx).
+		Where("agent_id = ? AND deleted_at IS NULL", agentID).
+		Order("created_at DESC, version DESC").
+		First(&version).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get latest agent published version: %w", err)
+	}
+	return &version, nil
+}
+
+func (r *agentsRepository) ListAgentPublishedVersions(ctx context.Context, agentID string, limit, offset int) ([]*AgentPublishedVersion, int64, error) {
+	var versions []*AgentPublishedVersion
+	var total int64
+	query := r.db.WithContext(ctx).Model(&AgentPublishedVersion{}).Where("agent_id = ? AND deleted_at IS NULL", agentID)
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("failed to count agent published versions: %w", err)
+	}
+	if err := query.Order("created_at DESC, version DESC").Limit(limit).Offset(offset).Find(&versions).Error; err != nil {
+		return nil, 0, fmt.Errorf("failed to list agent published versions: %w", err)
+	}
+	return versions, total, nil
+}
+
+func (r *agentsRepository) HasPublishedAgentVersion(ctx context.Context, agentID string) (bool, error) {
+	var count int64
+	if err := r.db.WithContext(ctx).Model(&AgentPublishedVersion{}).Where("agent_id = ? AND deleted_at IS NULL", agentID).Count(&count).Error; err != nil {
+		return false, fmt.Errorf("failed to check published agent version: %w", err)
+	}
+	return count > 0, nil
 }
 
 // UpdateWorkflowID updates the workflow_id for an agent

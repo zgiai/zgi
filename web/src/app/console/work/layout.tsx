@@ -4,10 +4,17 @@ import React from 'react';
 import { ShieldAlert, Loader2 } from 'lucide-react';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useT } from '@/i18n';
+import { WorkspaceRequiredState } from '@/components/common/workspace-required-state';
+import { useCurrentWorkspace } from '@/store/workspace-store';
 
 export default function ConsoleWorkLayout({ children }: { children: React.ReactNode }) {
   const t = useT();
+  const currentWorkspace = useCurrentWorkspace();
   const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+
+  if (!currentWorkspace) {
+    return <WorkspaceRequiredState />;
+  }
 
   if (isPermissionsLoading) {
     return (

@@ -1,54 +1,45 @@
 # ZGI
 
-ZGI is a source-available platform for building and operating AI applications.
+ZGI is a source-available AI application platform for building, running, and
+operating agents, visual workflows, skills, prompts, knowledge, and model routes
+from one workspace.
 
-It includes a Go backend, a Next.js web console, a sandbox service for code execution, and a runner service for extensible plugin execution. The repository is organized as a monorepo so contributors can run and inspect the full stack from one place.
+[![License](https://img.shields.io/badge/license-ZGI%20Community%20License-blue)](LICENSE)
+[![Docker](https://img.shields.io/badge/run-Docker%20Compose-2496ED)](#quick-start)
+[![Frontend](https://img.shields.io/badge/frontend-Next.js-black)](web)
+[![Backend](https://img.shields.io/badge/backend-Go-00ADD8)](api)
 
-Repository: https://github.com/zgiai/zgi
+![ZGI workflow editor](docs/assets/zgi-workflow-editor-api-enrichment.png)
 
-## What Is Included
+## Core Features
 
-- Multi-provider LLM gateway with routing, model management, billing, and quota support.
-- Workflow and agent application runtime.
-- Dataset, knowledge, file, and content parsing capabilities.
-- Web console for workspace, model, workflow, dataset, and application management.
-- Sandbox service for isolated execution workloads.
-- Plugin runner for installing and invoking external tools.
-- Docker-based local development stack.
+ZGI brings the pieces of an AI application platform into one self-hostable
+workspace: visual app building, model routing, knowledge retrieval, reusable
+skills, and runtime services.
 
-## Repository Layout
-
-```text
-.
-├── api/             Go backend service
-├── web/             Next.js web application
-├── sandbox/         Isolated execution service
-├── runner/          Plugin execution service
-├── docker/          Product-level Docker Compose assets
-├── dev/             Local development scripts
-├── scripts/         Maintenance scripts
-├── Makefile         Common local entry points
-└── README.md
-```
-
-## Requirements
-
-- Docker and Docker Compose
-- Make
-- Go, for source development of backend services
-- Node.js and pnpm, for source development of the web app
-
-The web app uses `pnpm@10.12.1`.
+- **Agent applications**: configure instructions, model settings, knowledge,
+  memory, file upload, skills, and web app publishing from the console.
+- **Visual workflows**: compose API calls, JSON parsing, LLM steps, branching,
+  loops, approvals, tools, code execution, database access, notifications, and
+  knowledge retrieval on a canvas.
+- **Model operations**: manage providers, channels, credentials, defaults,
+  policy controls, and pricing metadata without scattering model configuration
+  across applications.
+- **Knowledge and skills**: connect datasets, content parsing, retrieval, and
+  reusable tool skills so agents can act on real workspace context.
+- **Local-first deployment**: run the Go API, Next.js console, sandbox, plugin
+  runner, PostgreSQL, and Redis behind a local gateway at
+  `http://localhost:2679`.
+- **Starter templates**: explore 23 built-in agent and workflow templates in
+  English and Simplified Chinese.
 
 ## Quick Start
 
-Start the full local stack with Docker:
+Start the full local stack:
 
 ```bash
-make docker-up
+make dev-docker
 ```
-
-The startup script copies missing environment files from examples, prepares Docker Compose configuration, and starts the product stack.
 
 If you do not have `make`, run the startup script directly:
 
@@ -56,31 +47,28 @@ If you do not have `make`, run the startup script directly:
 ./dev/start-docker
 ```
 
-Default local endpoints:
+Open:
 
-- Web and API gateway: `http://localhost:2679`
+```text
+http://localhost:2679
+```
 
-On first launch, open `http://localhost:2679` and create the first administrator account.
-For local testing, you can use example credentials such as:
+On first launch, create the first administrator account. ZGI does not ship with
+a default admin account.
 
-- Email: `admin@zgi.ai`
-- Password: `Zgi@2679`
+For a lighter product preview, start only the core services:
 
-These credentials are examples only. ZGI does not ship with a default administrator account.
-Use your own email and a strong password in production.
+```bash
+./dev/start-docker --core
+```
 
-The application and infrastructure services use internal container ports by default:
+Other profiles:
 
-- Web: `2680`
-- API: `2670`
-- Sandbox: `2660`
-- Runner: `2665`
-- PostgreSQL: `5432`
-- Redis: `6379`
-- Neo4j HTTP: `7474`
-- Neo4j Bolt: `7687`
-
-The default Docker stack starts the full local experience, including knowledge base, code execution, and plugin services. Use `./dev/start-docker --core` when you only need nginx, API, web, PostgreSQL, and Redis.
+```bash
+./dev/start-docker --runtime    # Core stack plus Sandbox and Runner
+./dev/start-docker --knowledge  # Core stack plus knowledge dependencies
+./dev/start-docker --full       # Full stack, same as the default
+```
 
 Stop the stack:
 
@@ -94,7 +82,47 @@ View logs:
 make docker-logs
 ```
 
-## Source Development
+## Architecture
+
+```text
+Browser
+  |
+  v
+Nginx gateway (:2679)
+  |
+  +-- Next.js console (web)
+  +-- Go API service
+        |
+        +-- PostgreSQL / Redis
+        +-- Sandbox service
+        +-- Plugin runner
+        +-- Optional knowledge services: Weaviate / Neo4j
+```
+
+## Repository Layout
+
+```text
+.
+├── api/             Go backend service
+├── web/             Next.js web console
+├── sandbox/         Isolated execution service
+├── runner/          Plugin execution service
+├── docker/          Product-level Docker Compose assets
+├── dev/             Local development scripts
+├── scripts/         Maintenance scripts
+├── docs/            Public documentation and assets
+├── Makefile         Common local entry points
+└── README.md
+```
+
+## Development
+
+- Docker and Docker Compose
+- Make
+- Go, for backend source development
+- Node.js and pnpm, for frontend source development
+
+The web app uses `pnpm@10.12.1`.
 
 Install and prepare local dependencies:
 
@@ -115,54 +143,6 @@ make dev-api
 make dev-web
 ```
 
-Service-specific commands are available inside each service directory:
-
-```bash
-cd api
-make test
-make build
-make run
-```
-
-```bash
-cd web
-pnpm lint
-pnpm type-check
-pnpm build
-```
-
-## Environment Files
-
-Environment templates are checked in as `.env.example` files. Local `.env` files are not committed.
-
-Check local environment drift:
-
-```bash
-make env-check
-```
-
-Append newly added template keys while keeping existing local values:
-
-```bash
-make env-sync
-```
-
-## Windows
-
-The recommended Windows path is Docker Desktop plus PowerShell:
-
-```powershell
-.\dev\start-docker.ps1
-```
-
-CMD is also supported:
-
-```bat
-dev\start-docker.cmd
-```
-
-Source-development helpers are designed for Unix-like shells. Windows contributors can use WSL for source development.
-
 ## Documentation
 
 - Product-level Docker notes: `docker/README.md`
@@ -170,16 +150,10 @@ Source-development helpers are designed for Unix-like shells. Windows contributo
 - Web app notes: `web/README.md`
 - Backend service docs: `api/`
 
-## Project Links
-
-- Repository: https://github.com/zgiai/zgi
-- Issues: https://github.com/zgiai/zgi/issues
-- Pull requests: https://github.com/zgiai/zgi/pulls
-- Security: https://github.com/zgiai/zgi/security
-
 ## Contributing
 
-Contributions are welcome. Please read `CONTRIBUTING.md` before opening a pull request.
+Contributions are welcome. Please read `CONTRIBUTING.md` before opening a pull
+request.
 
 Community expectations are documented in `CODE_OF_CONDUCT.md`.
 
@@ -187,11 +161,11 @@ For security-sensitive reports, follow `SECURITY.md`.
 
 ## License
 
-ZGI is source-available under the ZGI Community License, based on Apache
-License 2.0 with additional conditions. ZGI is free for personal, research,
-educational, and internal organizational use. Hosted multi-tenant services,
-white-label distribution, and removal of official ZGI branding require a
-commercial license. See `LICENSE` for details.
+ZGI is source-available under the ZGI Community License, based on Apache License
+2.0 with additional conditions. ZGI is free for personal, research, educational,
+and internal organizational use. Hosted multi-tenant services, white-label
+distribution, and removal of official ZGI branding require a commercial license.
+See `LICENSE` for details.
 
-The Apache License 2.0 text referenced by the ZGI Community License is
-included in `LICENSE-APACHE`.
+The Apache License 2.0 text referenced by the ZGI Community License is included
+in `LICENSE-APACHE`.

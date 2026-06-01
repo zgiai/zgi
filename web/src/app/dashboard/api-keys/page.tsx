@@ -363,7 +363,7 @@ export default function ApiKeysPage(): JSX.Element {
       )}
 
       <ConfirmDialog
-        variant="warning"
+        variant="danger"
         open={Boolean(confirmId)}
         onOpenChange={open => !open && setConfirmId(null)}
         title={t('actions.confirmDeleteTitle')}

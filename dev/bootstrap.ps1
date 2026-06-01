@@ -48,7 +48,8 @@ function Test-UnsetOrPlaceholder {
   return [string]::IsNullOrWhiteSpace($Value) -or @(
     'replace-with-strong-random-secret',
     'replace-with-32-byte-random-key',
-    'change-me-in-production'
+    'change-me-in-production',
+    'change-me'
   ) -contains $Value.Trim()
 }
 
@@ -102,6 +103,26 @@ function Replace-EnvValueIfCurrent {
   }
 }
 
+function Get-EnvValue {
+  param(
+    [string]$TargetPath,
+    [string]$Key
+  )
+
+  if (-not (Test-Path -LiteralPath $TargetPath)) {
+    return $null
+  }
+
+  $content = Get-Content -LiteralPath $TargetPath -Raw
+  $pattern = "(?m)^$([regex]::Escape($Key))=(.*)$"
+  $match = [regex]::Match($content, $pattern)
+  if ($match.Success) {
+    return $match.Groups[1].Value
+  }
+
+  return $null
+}
+
 Set-Location $Root
 
 Copy-IfMissing -SourcePath (Join-Path $Root 'docker/.env.example') -TargetPath (Join-Path $Root 'docker/.env')
@@ -113,14 +134,60 @@ Copy-IfMissing -SourcePath (Join-Path $Root 'runner/.env.example') -TargetPath (
 
 $apiEnv = Join-Path $Root 'api/.env'
 $apiDockerEnv = Join-Path $Root 'api/.env.docker'
+$dockerEnv = Join-Path $Root 'docker/.env'
+$postgresPassword = New-Secret32
+$redisPassword = New-Secret32
+$neo4jPassword = New-Secret32
+$runnerApiKey = New-Secret32
+$sandboxPostgresPassword = New-Secret32
 Ensure-EnvValue -TargetPath $apiEnv -Key 'SECRET_KEY' -Value (New-Secret32)
 Ensure-EnvValue -TargetPath $apiEnv -Key 'API_KEY_ENCRYPTION_KEY' -Value (New-Secret32)
 Ensure-EnvValue -TargetPath $apiDockerEnv -Key 'SECRET_KEY' -Value (New-Secret32)
 Ensure-EnvValue -TargetPath $apiDockerEnv -Key 'API_KEY_ENCRYPTION_KEY' -Value (New-Secret32)
 Replace-EnvValueIfCurrent -TargetPath $apiDockerEnv -Key 'SQL_BASE_INTERNAL_DB' -OldValue 'zgi' -NewValue 'zgi_sql_base'
-$dockerEnv = Join-Path $Root 'docker/.env'
 Ensure-EnvValue -TargetPath $dockerEnv -Key 'PUBLIC_PORT' -Value '2679'
 Ensure-EnvValue -TargetPath $dockerEnv -Key 'PUBLIC_URL' -Value 'http://localhost:2679'
+Ensure-EnvValue -TargetPath $dockerEnv -Key 'POSTGRES_PASSWORD' -Value $postgresPassword
+Ensure-EnvValue -TargetPath $dockerEnv -Key 'REDIS_PASSWORD' -Value $redisPassword
+Ensure-EnvValue -TargetPath $dockerEnv -Key 'NEO4J_PASSWORD' -Value $neo4jPassword
+
+$currentPostgresPassword = Get-EnvValue -TargetPath $dockerEnv -Key 'POSTGRES_PASSWORD'
+if (-not [string]::IsNullOrWhiteSpace($currentPostgresPassword)) {
+  $postgresPassword = $currentPostgresPassword
+}
+$currentRedisPassword = Get-EnvValue -TargetPath $dockerEnv -Key 'REDIS_PASSWORD'
+if (-not [string]::IsNullOrWhiteSpace($currentRedisPassword)) {
+  $redisPassword = $currentRedisPassword
+}
+$currentNeo4jPassword = Get-EnvValue -TargetPath $dockerEnv -Key 'NEO4J_PASSWORD'
+if (-not [string]::IsNullOrWhiteSpace($currentNeo4jPassword)) {
+  $neo4jPassword = $currentNeo4jPassword
+}
+Ensure-EnvValue -TargetPath $apiEnv -Key 'DB_PASSWORD' -Value $postgresPassword
+Ensure-EnvValue -TargetPath $apiEnv -Key 'REDIS_PASSWORD' -Value $redisPassword
+Ensure-EnvValue -TargetPath $apiEnv -Key 'NEO4J_PASSWORD' -Value $neo4jPassword
+Ensure-EnvValue -TargetPath $apiDockerEnv -Key 'DB_PASSWORD' -Value $postgresPassword
+Ensure-EnvValue -TargetPath $apiDockerEnv -Key 'REDIS_PASSWORD' -Value $redisPassword
+Ensure-EnvValue -TargetPath $apiDockerEnv -Key 'NEO4J_PASSWORD' -Value $neo4jPassword
+
+$runnerEnv = Join-Path $Root 'runner/.env'
+Ensure-EnvValue -TargetPath $runnerEnv -Key 'EXECUTOR_API_KEY' -Value $runnerApiKey
+$currentRunnerApiKey = Get-EnvValue -TargetPath $runnerEnv -Key 'EXECUTOR_API_KEY'
+if (-not [string]::IsNullOrWhiteSpace($currentRunnerApiKey)) {
+  $runnerApiKey = $currentRunnerApiKey
+}
+Ensure-EnvValue -TargetPath $apiEnv -Key 'PLUGIN_RUNNER_API_KEY' -Value $runnerApiKey
+Ensure-EnvValue -TargetPath $apiDockerEnv -Key 'PLUGIN_RUNNER_API_KEY' -Value $runnerApiKey
+Ensure-EnvValue -TargetPath $runnerEnv -Key 'EXECUTOR_DB_PASSWORD' -Value $postgresPassword
+Ensure-EnvValue -TargetPath $runnerEnv -Key 'EXECUTOR_REDIS_PASSWORD' -Value $redisPassword
+
+$sandboxEnv = Join-Path $Root 'sandbox/.env'
+Ensure-EnvValue -TargetPath $sandboxEnv -Key 'POSTGRES_PASSWORD' -Value $sandboxPostgresPassword
+$currentSandboxPostgresPassword = Get-EnvValue -TargetPath $sandboxEnv -Key 'POSTGRES_PASSWORD'
+if (-not [string]::IsNullOrWhiteSpace($currentSandboxPostgresPassword)) {
+  $sandboxPostgresPassword = $currentSandboxPostgresPassword
+}
+Ensure-EnvValue -TargetPath $sandboxEnv -Key 'ZGI_SANDBOX_DATABASE_URL' -Value "postgres://postgres:$sandboxPostgresPassword@sandbox-postgres:5432/zgi_sandbox?sslmode=disable"
 
 Write-Host "[bootstrap] generate docker compose"
 & (Join-Path $Root 'docker/generate_docker_compose.ps1')

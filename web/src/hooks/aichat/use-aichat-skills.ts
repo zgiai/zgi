@@ -6,6 +6,7 @@ import { aichatService } from '@/services/aichat.service';
 import type {
   AIChatConfirmImportSkillRequest,
   AIChatSkillOrganizationConfig,
+  AIChatSkillPreference,
 } from '@/services/types/aichat';
 
 interface UpdateAIChatSkillConfigVariables {
@@ -13,17 +14,23 @@ interface UpdateAIChatSkillConfigVariables {
   silent?: boolean;
 }
 
+interface UpdateAIChatSkillPreferenceVariables {
+  payload: AIChatSkillPreference;
+  silent?: boolean;
+}
+
 /**
  * @hook useAIChatSkills
  * @description Load available AIChat Skill V2 metadata for the console chat selector.
  */
-export function useAIChatSkills() {
+export function useAIChatSkills(options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: AICHAT_KEYS.skills(),
     queryFn: async () => {
       const response = await aichatService.listSkills();
       return response.data ?? [];
     },
+    enabled: options?.enabled ?? true,
     retry: false,
   });
 }
@@ -70,9 +77,13 @@ export function useUpdateAIChatSkillConfig() {
   return useMutation({
     mutationFn: ({ payload }: UpdateAIChatSkillConfigVariables) =>
       aichatService.updateSkillConfig(payload),
-    onSuccess: async (_response, variables) => {
+    onSuccess: async (response, variables) => {
       if (variables.silent) {
         return;
+      }
+
+      if (response.data) {
+        queryClient.setQueryData(AICHAT_KEYS.skillConfig(), response.data);
       }
 
       await Promise.all([
@@ -89,6 +100,39 @@ export function useUpdateAIChatSkillConfig() {
       toast.error(
         error instanceof Error ? error.message : t('organization.aichatSkills.messages.saveFailed')
       );
+    },
+  });
+}
+
+export function useSkillCatalog() {
+  return useAIChatSkills();
+}
+
+export function useOrganizationSkillPolicy() {
+  return useAIChatSkillConfig();
+}
+
+export function useAIChatSkillPreference(options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: AICHAT_KEYS.skillPreference(),
+    queryFn: async () => {
+      const response = await aichatService.getSkillPreference();
+      return response.data;
+    },
+    enabled: options?.enabled ?? true,
+    retry: false,
+  });
+}
+
+export function useUpdateAIChatSkillPreference() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ payload }: UpdateAIChatSkillPreferenceVariables) =>
+      aichatService.updateSkillPreference(payload),
+    onSuccess: async response => {
+      queryClient.setQueryData(AICHAT_KEYS.skillPreference(), response.data);
+      await queryClient.invalidateQueries({ queryKey: AICHAT_KEYS.skills() });
     },
   });
 }

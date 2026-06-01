@@ -24,6 +24,7 @@ import { ModelFeatureIcon } from '@/components/model/model-feature-icon';
 import { useLocale } from '@/hooks/use-locale';
 import { formatTokens } from '@/utils/format';
 import { getModelPriceDisplay } from '@/utils/model-price';
+import { getModelDisplayName } from '@/utils/model-label';
 import { USE_CASE_BADGE_COLORS } from '@/config/model-colors';
 import { useT, type AiProvidersKey } from '@/i18n';
 
@@ -304,142 +305,149 @@ export default function ModelsGroupTable({
               </TableRow>
             ) : (
               models
-                .sort((a, b) => (a.model_name || a.model).localeCompare(b.model_name || b.model))
-                .map(m => (
-                  <TableRow key={m.id}>
-                    {showSelectionColumn && (
+                .sort((a, b) =>
+                  getModelDisplayName(a, locale).localeCompare(getModelDisplayName(b, locale))
+                )
+                .map(m => {
+                  const modelLabel = getModelDisplayName(m, locale);
+                  return (
+                    <TableRow key={m.id}>
+                      {showSelectionColumn && (
+                        <TableCell>
+                          <Checkbox
+                            aria-label={modelLabel}
+                            checked={selected.has(m.model)}
+                            onCheckedChange={checked => onSelectRow(m.model, Boolean(checked))}
+                          />
+                        </TableCell>
+                      )}
                       <TableCell>
-                        <Checkbox
-                          aria-label={m.model_name || m.model}
-                          checked={selected.has(m.model)}
-                          onCheckedChange={checked => onSelectRow(m.model, Boolean(checked))}
-                        />
+                        <div className="flex items-center gap-2">
+                          <ModelIcon model={m.model} size={24} />
+                          <div>
+                            <div className="flex items-center gap-1.5 font-medium text-sm">
+                              {modelLabel}
+                              {m.zgi_official_available && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <ShieldCheck className="w-3.5 h-3.5 text-green-600 cursor-help" />
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    {t('aiProviders.models.tooltips.systemChannel')}
+                                  </TooltipContent>
+                                </Tooltip>
+                              )}
+                            </div>
+                            <div className="text-xs text-muted-foreground">{m.model}</div>
+                          </div>
+                        </div>
                       </TableCell>
-                    )}
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <ModelIcon model={m.model} size={24} />
-                        <div>
-                          <div className="flex items-center gap-1.5 font-medium text-sm">
-                            {m.model_name || m.model}
-                            {m.zgi_official_available && (
-                              <Tooltip>
+                      <TableCell>{renderChannelStatus(m)}</TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1">
+                          {m.use_cases?.map(uc => (
+                            <Badge
+                              key={uc}
+                              variant="outline"
+                              className={`text-[10px] px-1.5 py-0 leading-3 h-5 ${USE_CASE_BADGE_COLORS[uc] || ''}`}
+                            >
+                              {t(`aiProviders.models.usecases.${uc}`)}
+                            </Badge>
+                          ))}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-2">
+                          {Object.entries(m.features || {})
+                            .filter(([, enabled]) => enabled)
+                            .slice(0, 6)
+                            .map(([key]) => (
+                              <Tooltip key={key}>
                                 <TooltipTrigger asChild>
-                                  <ShieldCheck className="w-3.5 h-3.5 text-green-600 cursor-help" />
+                                  <span
+                                    role="img"
+                                    aria-label={t(
+                                      `aiProviders.models.features.${key}` as AiProvidersKey
+                                    )}
+                                    className="inline-flex items-center justify-center size-6 rounded-md bg-accent/60"
+                                  >
+                                    <ModelFeatureIcon feature={key} />
+                                  </span>
                                 </TooltipTrigger>
                                 <TooltipContent>
-                                  {t('aiProviders.models.tooltips.systemChannel')}
+                                  {t(`aiProviders.models.features.${key}` as AiProvidersKey)}
                                 </TooltipContent>
                               </Tooltip>
-                            )}
-                          </div>
-                          <div className="text-xs text-muted-foreground">{m.model}</div>
-                        </div>
-                      </div>
-                    </TableCell>
-                    <TableCell>{renderChannelStatus(m)}</TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap gap-1">
-                        {m.use_cases?.map(uc => (
-                          <Badge
-                            key={uc}
-                            variant="outline"
-                            className={`text-[10px] px-1.5 py-0 leading-3 h-5 ${USE_CASE_BADGE_COLORS[uc] || ''}`}
-                          >
-                            {t(`aiProviders.models.usecases.${uc}`)}
-                          </Badge>
-                        ))}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap gap-2">
-                        {Object.entries(m.features || {})
-                          .filter(([, enabled]) => enabled)
-                          .slice(0, 6)
-                          .map(([key]) => (
-                            <Tooltip key={key}>
-                              <TooltipTrigger asChild>
-                                <span
-                                  role="img"
-                                  aria-label={t(
-                                    `aiProviders.models.features.${key}` as AiProvidersKey
-                                  )}
-                                  className="inline-flex items-center justify-center size-6 rounded-md bg-accent/60"
-                                >
-                                  <ModelFeatureIcon feature={key} />
-                                </span>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                {t(`aiProviders.models.features.${key}` as AiProvidersKey)}
-                              </TooltipContent>
-                            </Tooltip>
-                          ))}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <span className="bg-accent text-secondary-foreground text-sm px-2 py-0.5 rounded-full">
-                        {formatTokens(m.context_window)}
-                      </span>
-                    </TableCell>
-                    <TableCell>
-                      <div className="space-y-1 text-sm">
-                        {getModelPriceDisplay({
-                          inputPrice: m.input_price,
-                          outputPrice: m.output_price,
-                          useCases: m.use_cases,
-                          locale,
-                        }).map(item => {
-                          const unitKey =
-                            `aiProviders.models.pricing.${item.unit}` as AiProvidersKey;
-                          const labelKey =
-                            `aiProviders.models.pricing.${item.label}` as AiProvidersKey;
-                          const displayText =
-                            item.formattedValue === '-'
-                              ? item.formattedValue
-                              : `${item.formattedValue}${t(unitKey)}`;
-
-                          return (
-                            <div key={item.label} className="flex items-center gap-1.5">
-                              <span className="text-xs text-muted-foreground">{t(labelKey)}</span>
-                              <span className="font-medium text-xs">{displayText}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </TableCell>
-                    {showEnabledColumn && (
-                      <TableCell className="text-right">{renderPolicyControl(m)}</TableCell>
-                    )}
-                    {showActionsColumn && (
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-1">
-                          {onEditModel && (
-                            <Button
-                              variant="ghost"
-                              isIcon
-                              className="h-8 w-8"
-                              onClick={() => onEditModel(m)}
-                            >
-                              <span className="sr-only">Edit</span>
-                              <Pencil className="w-4 h-4" />
-                            </Button>
-                          )}
-                          {onDeleteModel && (
-                            <Button
-                              variant="ghost"
-                              isIcon
-                              className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
-                              onClick={() => onDeleteModel(m)}
-                            >
-                              <span className="sr-only">Delete</span>
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          )}
+                            ))}
                         </div>
                       </TableCell>
-                    )}
-                  </TableRow>
-                ))
+                      <TableCell>
+                        <span className="bg-accent text-secondary-foreground text-sm px-2 py-0.5 rounded-full">
+                          {formatTokens(m.context_window)}
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        <div className="space-y-1 text-sm">
+                          {getModelPriceDisplay({
+                            inputPrice: m.input_price,
+                            outputPrice: m.output_price,
+                            useCases: m.use_cases,
+                            locale,
+                          }).map(item => {
+                            const unitKey =
+                              `aiProviders.models.pricing.${item.unit}` as AiProvidersKey;
+                            const labelKey =
+                              `aiProviders.models.pricing.${item.label}` as AiProvidersKey;
+                            const displayText =
+                              item.formattedValue === '-'
+                                ? item.formattedValue
+                                : `${item.formattedValue}${t(unitKey)}`;
+
+                            return (
+                              <div key={item.label} className="flex items-center gap-1.5">
+                                <span className="text-xs text-muted-foreground">
+                                  {t(labelKey)}
+                                </span>
+                                <span className="font-medium text-xs">{displayText}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </TableCell>
+                      {showEnabledColumn && (
+                        <TableCell className="text-right">{renderPolicyControl(m)}</TableCell>
+                      )}
+                      {showActionsColumn && (
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-1">
+                            {onEditModel && (
+                              <Button
+                                variant="ghost"
+                                isIcon
+                                className="h-8 w-8"
+                                onClick={() => onEditModel(m)}
+                              >
+                                <span className="sr-only">Edit</span>
+                                <Pencil className="w-4 h-4" />
+                              </Button>
+                            )}
+                            {onDeleteModel && (
+                              <Button
+                                variant="ghost"
+                                isIcon
+                                className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                                onClick={() => onDeleteModel(m)}
+                              >
+                                <span className="sr-only">Delete</span>
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            )}
+                          </div>
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  );
+                })
             )}
           </TableBody>
         </Table>

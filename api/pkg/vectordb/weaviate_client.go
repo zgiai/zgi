@@ -87,6 +87,51 @@ func (c *WeaviateClient) StoreVector(ctx context.Context, id, className string, 
 	return nil
 }
 
+// DeleteVector deletes a vector object from Weaviate. Missing objects are treated as already deleted.
+func (c *WeaviateClient) DeleteVector(ctx context.Context, id, className string) error {
+	if c.endpoint == "" {
+		return fmt.Errorf("weaviate endpoint not configured")
+	}
+	if strings.TrimSpace(id) == "" {
+		return fmt.Errorf("weaviate vector id is required")
+	}
+	if strings.TrimSpace(className) == "" {
+		return fmt.Errorf("weaviate class name is required")
+	}
+
+	url := fmt.Sprintf("%s/v1/objects/%s/%s", c.endpoint, className, id)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create delete request: %w", err)
+	}
+
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to delete vector from weaviate: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("weaviate delete returned status code: %d, response: %s", resp.StatusCode, string(body))
+	}
+
+	logger.Info("Vector deleted from Weaviate", map[string]interface{}{
+		"id":          id,
+		"class":       className,
+		"status_code": resp.StatusCode,
+	})
+
+	return nil
+}
+
 // StoreVectors stores vectors with metadata in Weaviate using the batch objects API.
 func (c *WeaviateClient) StoreVectors(ctx context.Context, objects []VectorObject) error {
 	if c.endpoint == "" {

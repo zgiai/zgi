@@ -8,6 +8,8 @@ The goal is to ensure that future code, documentation, configuration, image name
 
 The engineering quality rules that support this goal are defined in [engineering-standards.md](./engineering-standards.md).
 
+The detailed production hardening backlog is tracked in [production-todo.md](./production-todo.md).
+
 ## 2. Brand and Naming Rules
 
 ### 2.1 Service Identity
@@ -134,9 +136,16 @@ V2 should add lifecycle APIs:
 - `POST /v1/exec/code`
 - `POST /v1/exec/command`
 - `POST /v1/files/upload`
+- `POST /v1/files/upload-archive`
 - `GET /v1/files/download`
 - `GET /v1/files/info`
 - `DELETE /v1/files`
+
+Command execution includes bounded `stdin`, restricted `env`, `timeout_ms`, and per-request stdout/stderr caps. The first supported command profiles are:
+
+- `code-short`
+- `skill-python`
+- `skill-node`
 
 ## 5. Configuration Naming
 

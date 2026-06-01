@@ -7,15 +7,20 @@ import (
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/container"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
+	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
 	workspace_service "github.com/zgiai/zgi/api/internal/modules/workspace/service"
 	"github.com/zgiai/zgi/api/pkg/database"
+	"github.com/zgiai/zgi/api/pkg/storage"
 )
 
 // RegisterRoutes registers all v1 version routes
 func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *container.ServiceContainer, workflowEngineFactory *graph_engine.EngineFactory) {
 	// Health & setup routes first
 	RegisterHealthRoutes(v1)
-	RegisterSetupRoutes(v1, serviceContainer)
+	RegisterSetupRoutes(v1, SetupRouteDeps{
+		BootstrapService: serviceContainer.GetBootstrapService(),
+		FeatureService:   system_service.NewFeatureService(),
+	})
 
 	// TaskQueue debug routes removed (module deprecated)
 
@@ -29,10 +34,24 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	tenantService := serviceContainer.GetTenantServiceAdapter()
 
 	// ---------- User / Auth domain ----------
-	RegisterUserRoutes(v1, serviceContainer, config.GlobalConfig.Email.ConsoleWebURL)
+	RegisterUserRoutes(v1, UserRouteDeps{
+		DB:                         db,
+		AccountService:             serviceContainer.GetAccountService(),
+		WorkspaceManagementService: serviceContainer.GetTenantService(),
+		OrganizationService:        serviceContainer.GetOrganizationService(),
+		DepartmentService:          serviceContainer.GetDepartmentService(),
+		ConsoleWebURL:              config.GlobalConfig.Email.ConsoleWebURL,
+	})
 
 	// ---------- Workspace / Tenant ----------
-	RegisterWorkspaceRoutes(v1, db, accountService, config.GlobalConfig.Email.ConsoleWebURL, serviceContainer)
+	RegisterWorkspaceRoutes(v1, WorkspaceRouteDeps{
+		DB:                               db,
+		AccountService:                   accountService,
+		OrganizationService:              serviceContainer.GetOrganizationService(),
+		WorkspacePermissionFilterService: serviceContainer.GetWorkspacePermissionFilterService(),
+		DepartmentService:                serviceContainer.GetDepartmentService(),
+		ConsoleWebURL:                    config.GlobalConfig.Email.ConsoleWebURL,
+	})
 
 	// ---------- Explore ----------
 	RegisterExploreRoutes(v1, accountService)
@@ -43,7 +62,13 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	RegisterPluginRunnerTenantRoutes(v1, accountService, tenantServiceImpl, db)
 
 	// ---------- Tool ----------
-	RegisterToolRoutes(v1, serviceContainer)
+	RegisterToolRoutes(v1, ToolRouteDeps{
+		ToolManager:                serviceContainer.GetToolManager(),
+		AccountInstallationService: serviceContainer.GetAccountInstallationService(),
+		MemberSubscriptionService:  serviceContainer.GetMemberSubscriptionService(),
+		AccountService:             accountService,
+		WorkspaceManagementService: tenantService,
+	})
 
 	// ---------- API Key ----------
 	if tenantServiceImplConcrete, ok := tenantServiceImpl.(*workspace_service.WorkspaceManagementServiceImpl); ok {
@@ -51,7 +76,18 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	}
 
 	// ---------- File (common) ----------
-	RegisterFileRoutes(v1, accountService, serviceContainer)
+	RegisterFileRoutes(v1, FileRouteDeps{
+		DB:                         db,
+		Storage:                    storage.GetStorage(),
+		AccountService:             accountService,
+		WorkspaceManagementService: serviceContainer.GetTenantService(),
+		OrganizationService:        serviceContainer.GetOrganizationService(),
+		QuotaService:               serviceContainer.GetQuotaService(),
+		LLMClient:                  serviceContainer.GetLLMClient(),
+		DefaultModelService:        serviceContainer.GetDefaultModelService(),
+		Scheduler:                  serviceContainer.GetScheduler(),
+		ScheduledFileService:       serviceContainer.GetFileService(),
+	})
 
 	// ---------- Memory (common) ----------
 	RegisterMemoryRoutes(v1, MemoryRouteDeps{
@@ -60,22 +96,65 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	})
 
 	// ---------- Dataset ----------
-	RegisterDatasetRoutes(v1, serviceContainer)
+	RegisterDatasetRoutes(v1, DatasetRouteDeps{
+		DB:                         db,
+		Storage:                    storage.GetStorage(),
+		AccountService:             accountService,
+		WorkspaceManagementService: tenantService,
+		OrganizationService:        serviceContainer.GetOrganizationService(),
+		BillingService:             serviceContainer.GetBillingService(),
+		QuotaService:               serviceContainer.GetQuotaService(),
+		LLMClient:                  serviceContainer.GetLLMClient(),
+		DefaultModelService:        serviceContainer.GetDefaultModelService(),
+		TaskManager:                serviceContainer.GetTaskManager(),
+		GraphFlowService:           serviceContainer.GetGraphFlowService(),
+		TaskHandlerRegistry:        serviceContainer.GetTaskHandlerRegistry(),
+		ResourcePermissionService:  serviceContainer.GetResourcePermissionService(),
+	})
 
 	// ---------- Content Parse ----------
-	RegisterContentParseRoutes(v1, serviceContainer)
+	RegisterContentParseRoutes(v1, ContentParseRouteDeps{
+		DB:                  db,
+		AccountService:      accountService,
+		LLMClient:           serviceContainer.GetLLMClient(),
+		DefaultModelService: serviceContainer.GetDefaultModelService(),
+	})
 
 	// ---------- Data Library ----------
-	RegisterDataLibraryRoutes(v1, serviceContainer)
+	RegisterDataLibraryRoutes(v1, DataLibraryRouteDeps{
+		AccountService:    accountService,
+		DataLibraryModule: serviceContainer.GetDataLibraryModule(),
+	})
 
 	// ---------- DataSource ----------
-	RegisterDataSourceRoutes(v1, serviceContainer)
+	RegisterDataSourceRoutes(v1, DataSourceRouteDeps{
+		DataSourceService:   serviceContainer.GetDataSourceService(),
+		AccountService:      serviceContainer.GetAccountService(),
+		OrganizationService: serviceContainer.GetOrganizationService(),
+	})
 
 	// ---------- Automation ----------
-	RegisterAutomationRoutes(v1, serviceContainer)
+	automationDefinitionService := RegisterAutomationRoutes(v1, AutomationRouteDeps{
+		DB:                               db,
+		TaskManager:                      serviceContainer.GetTaskManager(),
+		TaskHandlerRegistry:              serviceContainer.GetTaskHandlerRegistry(),
+		Scheduler:                        serviceContainer.GetScheduler(),
+		NotificationSMSService:           serviceContainer.GetNotificationSMSService(),
+		AutomationWorkflowRunnerProvider: serviceContainer.GetAutomationWorkflowRunner,
+		AccountService:                   accountService,
+		OrganizationService:              serviceContainer.GetOrganizationService(),
+		WorkspaceManagementService:       tenantService,
+		LLMClient:                        serviceContainer.GetLLMClient(),
+		DefaultModelService:              serviceContainer.GetDefaultModelService(),
+	})
+	serviceContainer.SetAutomationDefinitionService(automationDefinitionService)
 
 	// ---------- Payment ----------
-	RegisterPaymentRoutes(v1, serviceContainer)
+	RegisterPaymentRoutes(v1, PaymentRouteDeps{
+		DB:              db,
+		AccountService:  accountService,
+		ConsoleProvider: serviceContainer.GetConsoleProvider(),
+	})
 
 	// ---------- Quota ----------
 	RegisterQuotaRoutes(v1, QuotaRouteDeps{
@@ -83,11 +162,28 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	})
 
 	// ---------- Workflow ----------
-	RegisterWorkflowRoutes(v1, accountService, tenantService, serviceContainer.GetFileService(), db, serviceContainer.GetContentExtractor(), serviceContainer.GetQuotaService(), serviceContainer.GetOrganizationService(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), serviceContainer.GetAutomationDefinitionService(), serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetScheduler(), workflowEngineFactory, serviceContainer)
+	RegisterWorkflowRoutes(v1, WorkflowRouteDeps{
+		DB:                          db,
+		AccountService:              accountService,
+		FileService:                 serviceContainer.GetFileService(),
+		ContentExtractor:            serviceContainer.GetContentExtractor(),
+		QuotaService:                serviceContainer.GetQuotaService(),
+		OrganizationService:         serviceContainer.GetOrganizationService(),
+		LLMClient:                   serviceContainer.GetLLMClient(),
+		ToolEngine:                  serviceContainer.GetToolEngine(),
+		GraphFlowService:            serviceContainer.GetGraphFlowService(),
+		PromptResolver:              serviceContainer.GetPromptService(),
+		AutomationDefinitionService: automationDefinitionService,
+		TaskManager:                 serviceContainer.GetTaskManager(),
+		TaskRegistry:                serviceContainer.GetTaskHandlerRegistry(),
+		Scheduler:                   serviceContainer.GetScheduler(),
+		EngineFactory:               workflowEngineFactory,
+		AutomationRunnerSetter:      serviceContainer,
+	})
 
 	// ---------- Agent ----------
 	resourcePermissionService := serviceContainer.GetResourcePermissionService()
-	RegisterAgentsRoutes(v1, db, accountService, tenantService, resourcePermissionService, serviceContainer.GetOrganizationService(), serviceContainer.GetQuotaService(), serviceContainer.GetFileService(), serviceContainer.GetContentExtractor(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), workflowEngineFactory, serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry())
+	RegisterAgentsRoutes(v1, db, accountService, tenantService, resourcePermissionService, serviceContainer.GetOrganizationService(), serviceContainer.GetQuotaService(), serviceContainer.GetFileService(), serviceContainer.GetContentExtractor(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetToolManager(), serviceContainer.GetMemoryService(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), serviceContainer.GetDataSourceService(), serviceContainer.GetKnowledgeRetrievalService(), workflowEngineFactory, serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetWorkflowTestService(), config.Current().TaskQueue.WorkflowTestTaskBackend)
 
 	// ---------- Prompt Library ----------
 	RegisterPromptRoutes(v1, PromptRouteDeps{
@@ -99,13 +195,39 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	})
 
 	// ---------- LLM Management ----------
-	llmModule := RegisterLLMRoutes(v1, serviceContainer)
+	llmModule := RegisterLLMRoutes(v1, LLMRouteDeps{
+		DB:                         db,
+		AccountService:             serviceContainer.GetAccountService(),
+		WorkspaceManagementService: serviceContainer.GetTenantService(),
+		OrganizationService:        serviceContainer.GetOrganizationService(),
+		ConsoleProvider:            serviceContainer.GetConsoleProvider(),
+	})
 
 	// ---------- AIChat ----------
-	RegisterAIChatRoutes(v1, serviceContainer)
+	RegisterAIChatRoutes(v1, AIChatRouteDeps{
+		DB:                         db,
+		LLMClient:                  serviceContainer.GetLLMClient(),
+		DefaultModelService:        serviceContainer.GetDefaultModelService(),
+		FileService:                serviceContainer.GetFileService(),
+		ContentExtractor:           serviceContainer.GetContentExtractor(),
+		WorkspacePermissionService: serviceContainer.GetOrganizationService(),
+		MemoryService:              serviceContainer.GetMemoryService(),
+		AgentMemoryService:         serviceContainer.GetAgentMemoryService(),
+		SkillRuntime:               newSkillRuntimeWithSandbox(serviceContainer.GetToolEngine(), serviceContainer.GetToolManager(), serviceContainer.GetFileService(), serviceContainer.GetOrganizationService()),
+		AccountService:             accountService,
+	})
 
 	// ---------- Dashboard ----------
-	RegisterDashboardRoutes(v1, serviceContainer, llmModule)
+	var availableModels system_service.AvailableModelsLister
+	if llmModule != nil && llmModule.LLMModelModule != nil {
+		availableModels = llmModule.LLMModelModule.AvailableModelsSvc
+	}
+	RegisterDashboardRoutes(v1, DashboardRouteDeps{
+		DB:                  db,
+		AccountService:      accountService,
+		OrganizationService: serviceContainer.GetOrganizationService(),
+		AvailableModels:     availableModels,
+	})
 
 	// ---------- GDPR Compliance ----------
 	RegisterGDPRRoutes(v1, GDPRRouteDeps{

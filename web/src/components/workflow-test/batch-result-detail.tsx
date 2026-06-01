@@ -2,11 +2,12 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { ArrowLeft, RefreshCcw, WandSparkles } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, RefreshCcw, WandSparkles } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
@@ -23,6 +24,7 @@ import {
   useWorkflowTestScenarios,
 } from '@/hooks/workflow-test/use-workflow-test';
 import { useT } from '@/i18n';
+import { cn } from '@/lib/utils';
 import { getErrorMessage } from '@/utils/error-notifications';
 import { formatWorkflowElapsedMs } from '@/utils/format';
 import type { WorkflowTestBatch, WorkflowTestBatchItem } from '@/services/types/workflow-test';
@@ -36,7 +38,9 @@ interface BatchResultDetailProps {
 type BatchStatusKey = 'queued' | 'running' | 'completed' | 'stopped' | 'canceled';
 type BatchItemStatusKey = 'pending' | 'running' | 'passed' | 'failed' | 'review' | 'canceled';
 type SummaryKey = 'running' | 'allPassed' | 'hasIssues';
-type WorkflowVersionLabelKey = 'currentDraft' | 'latestPublished' | 'specificPublished';
+const EMPTY_BATCHES: WorkflowTestBatch[] = [];
+const EMPTY_ITEMS: WorkflowTestBatchItem[] = [];
+const EMPTY_SCENARIOS: Array<{ id: string; name: string }> = [];
 
 function itemStatusLabel(status: string, t: (key: BatchItemStatusKey) => string, none: string) {
   const map: Record<string, string> = {
@@ -69,37 +73,6 @@ function batchStatusLabel(status: string, t: (key: BatchStatusKey) => string, no
   return map[status] || status || none;
 }
 
-function workflowVersionLabel(
-  label: string,
-  mode: string,
-  t: (key: WorkflowVersionLabelKey) => string,
-  none: string
-) {
-  const value = label || mode;
-  const map: Record<string, WorkflowVersionLabelKey> = {
-    current_draft: 'currentDraft',
-    draft: 'currentDraft',
-    latest_published: 'latestPublished',
-    specific_published: 'specificPublished',
-  };
-  const key = map[value];
-  return key ? t(key) : value || none;
-}
-
-function stringifyOutput(outputs: Record<string, unknown>, none: string) {
-  if (!outputs || Object.keys(outputs).length === 0) {
-    return none;
-  }
-  const preferredKeys = ['answer', 'text', 'result', 'output'];
-  for (const key of preferredKeys) {
-    const value = outputs[key];
-    if (typeof value === 'string' && value.trim()) {
-      return value;
-    }
-  }
-  return JSON.stringify(outputs, null, 2);
-}
-
 function formatResponseTime(item: WorkflowTestBatchItem, none: string) {
   const outputs = item.outputs || {};
   const elapsedKeys = ['elapsed_time', 'elapsed_ms', 'duration_ms', 'latency_ms', 'response_time_ms'];
@@ -110,16 +83,6 @@ function formatResponseTime(item: WorkflowTestBatchItem, none: string) {
     }
   }
   return none;
-}
-
-function stringifyValue(value: unknown, none: string) {
-  if (value === undefined || value === null || value === '') {
-    return none;
-  }
-  if (typeof value === 'string') {
-    return value;
-  }
-  return JSON.stringify(value, null, 2);
 }
 
 function hasAttachments(item: WorkflowTestBatchItem) {
@@ -150,7 +113,6 @@ export function BatchResultDetail({ agentId, batchId, agentName }: BatchResultDe
   const batchStatusT = useT('agents.workflowTest.batchStatus');
   const summaryT = useT('agents.workflowTest.detail.summary');
   const itemStatusT = useT('agents.workflowTest.detail.itemStatus');
-  const workflowVersionT = useT('agents.workflowTest.detail.workflowVersion');
   const {
     data: batchesData,
     isLoading: batchesLoading,
@@ -165,10 +127,11 @@ export function BatchResultDetail({ agentId, batchId, agentName }: BatchResultDe
   } = useWorkflowTestBatchItems(agentId, batchId);
   const { data: scenariosData } = useWorkflowTestScenarios(agentId);
   const retestBatch = useRetestWorkflowTestBatch(agentId);
-  const batches = batchesData?.data?.items ?? [];
+  const [retestConfirmOpen, setRetestConfirmOpen] = React.useState(false);
+  const batches = batchesData?.data?.items ?? EMPTY_BATCHES;
   const batch = batches.find(item => item.id === batchId);
-  const items = itemsData?.data?.items ?? [];
-  const scenarios = scenariosData?.data?.items ?? [];
+  const items = itemsData?.data?.items ?? EMPTY_ITEMS;
+  const scenarios = scenariosData?.data?.items ?? EMPTY_SCENARIOS;
   const isLoading = batchesLoading || itemsLoading;
   const error = batchesError || itemsError;
   const scenarioNameById = React.useMemo(() => {
@@ -181,6 +144,22 @@ export function BatchResultDetail({ agentId, batchId, agentName }: BatchResultDe
     },
     [commonT, scenarioNameById]
   );
+  const buildRetestName = React.useCallback(
+    (batchName: string) => {
+      const baseName = batchName.replace(/\s+重新测试\d*$/, '');
+      const escapedBaseName = baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const retestPattern = new RegExp(`^${escapedBaseName}\\s+重新测试(\\d+)?$`);
+      const maxIndex = batches.reduce((max, existingBatch) => {
+        const match = existingBatch.name.match(retestPattern);
+        if (!match) return max;
+        return Math.max(max, Number(match[1] || 1));
+      }, 1);
+
+      return commonT('retestName', { name: baseName, index: maxIndex + 1 });
+    },
+    [batches, commonT]
+  );
+  const executionErrorCount = items.filter(item => item.error).length;
 
   if (isLoading) {
     return (
@@ -218,6 +197,9 @@ export function BatchResultDetail({ agentId, batchId, agentName }: BatchResultDe
     );
   }
 
+  const finishedCount =
+    batch.passed_count + batch.failed_count + batch.review_count + executionErrorCount;
+
   return (
     <div className="min-h-full bg-slate-50 px-8 py-8">
       <div className="mx-auto flex max-w-[1600px] flex-col gap-6">
@@ -234,14 +216,14 @@ export function BatchResultDetail({ agentId, batchId, agentName }: BatchResultDe
               </Link>
             </Button>
             <div className="flex items-start justify-between gap-4">
-              <div>
+              <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-3">
                   <h1 className="text-2xl font-semibold text-slate-950">{batch.name}</h1>
                   <Badge className="bg-blue-50 text-blue-700">
                     {batchStatusLabel(batch.status, batchStatusT, commonT('none'))}
                   </Badge>
                 </div>
-                <div className="mt-4 grid grid-cols-3 gap-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm">
+                <div className="mt-4 grid max-w-[760px] grid-cols-3 gap-12 rounded-xl border border-slate-200 bg-slate-50 px-5 py-4 text-sm">
                   <div>
                     <div className="text-slate-500">{t('createdAt')}</div>
                     <div className="mt-1 font-semibold text-slate-950">
@@ -259,36 +241,22 @@ export function BatchResultDetail({ agentId, batchId, agentName }: BatchResultDe
                     </div>
                   </div>
                 </div>
-                <div className="mt-4 text-sm text-slate-600">
-                  <span className="text-slate-500">{t('workflowVersionLabel')}</span>
-                  <span className="font-medium text-slate-950">
-                    {workflowVersionLabel(
-                      batch.workflow_version_label,
-                      batch.workflow_version_mode,
-                      workflowVersionT,
-                      commonT('none')
-                    )}
-                  </span>
-                </div>
               </div>
               <Button
                 variant="outline"
+                className="text-blue-600 hover:text-blue-700"
                 disabled={
                   batch.status === 'queued' || batch.status === 'running' || retestBatch.isPending
                 }
-                onClick={() =>
-                  retestBatch.mutate({
-                    batchId: batch.id,
-                    data: { name: commonT('retestName', { name: batch.name }) },
-                  })
-                }
+                onClick={() => setRetestConfirmOpen(true)}
               >
+                <RefreshCcw className="mr-2 size-4" />
                 {commonT('retest')}
               </Button>
             </div>
 
-            <div className="mt-5 grid grid-cols-[minmax(0,1fr)_280px] gap-4 rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-700">
-              <div>
+            <div className="mt-5 grid grid-cols-2 rounded-xl border border-slate-200 bg-white px-5 py-6 text-sm text-slate-700">
+              <div className="pr-8">
                 <div className="text-slate-500">{t('businessResult')}</div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <span className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-sm font-medium text-emerald-700">
@@ -302,12 +270,35 @@ export function BatchResultDetail({ agentId, batchId, agentName }: BatchResultDe
                   </span>
                 </div>
               </div>
-              <div className="rounded-lg bg-slate-50 p-4">
-                <div className="text-slate-500">{t('executionErrors')}</div>
-                <div className="mt-2 text-lg font-semibold text-slate-950">
-                  {items.filter(item => item.error).length}
+              <div className="border-l border-slate-200 pl-8">
+                <div className="text-slate-500">{t('executionStatus')}</div>
+                <div className="mt-3">
+                  <span
+                    className={cn(
+                      'inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-medium',
+                      executionErrorCount > 0
+                        ? 'bg-red-50 text-red-700'
+                        : 'bg-emerald-50 text-emerald-700'
+                    )}
+                  >
+                    {executionErrorCount === 0 ? <CheckCircle2 className="size-4" /> : null}
+                    {executionErrorCount > 0
+                      ? t('executionStatusWithErrors', {
+                          done: finishedCount,
+                          total: batch.case_count,
+                          count: executionErrorCount,
+                        })
+                      : t('executionStatusNormal', {
+                          done: finishedCount,
+                          total: batch.case_count,
+                        })}
+                  </span>
                 </div>
-                <div className="mt-1 text-xs text-slate-500">{commonT('none')}</div>
+                {executionErrorCount > 0 ? (
+                  <div className="mt-2 text-xs text-red-600">
+                    {t('executionErrorsDescription')}
+                  </div>
+                ) : null}
               </div>
             </div>
 
@@ -324,6 +315,33 @@ export function BatchResultDetail({ agentId, batchId, agentName }: BatchResultDe
             </div>
           </CardContent>
         </Card>
+        <ConfirmDialog
+          open={retestConfirmOpen}
+          onOpenChange={open => {
+            if (!open && !retestBatch.isPending) setRetestConfirmOpen(false);
+          }}
+          title={t('retestConfirmTitle')}
+          description={t('retestConfirmDescription', {
+            name: batch.name,
+            count: batch.case_count,
+          })}
+          confirmText={t('retestConfirmButton')}
+          cancelText={commonT('cancel')}
+          loading={retestBatch.isPending}
+          contentClassName="max-w-2xl rounded-2xl"
+          footerClassName="justify-end bg-white px-8 py-6"
+          cancelClassName="border border-slate-200 bg-white hover:bg-slate-50"
+          confirmClassName="bg-slate-950 text-white hover:bg-slate-800"
+          onConfirm={() =>
+            retestBatch.mutate(
+              {
+                batchId: batch.id,
+                data: { name: buildRetestName(batch.name) },
+              },
+              { onSuccess: () => setRetestConfirmOpen(false) }
+            )
+          }
+        />
 
         <Card className="rounded-2xl">
           <CardHeader>
@@ -334,11 +352,11 @@ export function BatchResultDetail({ agentId, batchId, agentName }: BatchResultDe
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-[45%]">{t('table.questionContent')}</TableHead>
+                  <TableHead className="w-[45%] pl-6">{t('table.questionContent')}</TableHead>
                   <TableHead>{t('table.scenario')}</TableHead>
                   <TableHead>{t('table.testResult')}</TableHead>
                   <TableHead>{t('table.responseTime')}</TableHead>
-                  <TableHead className="text-right">{t('table.actions')}</TableHead>
+                  <TableHead className="pr-6 text-right">{t('table.actions')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -351,8 +369,8 @@ export function BatchResultDetail({ agentId, batchId, agentName }: BatchResultDe
                 ) : (
                   items.map(item => (
                     <TableRow key={item.id}>
-                      <TableCell className="max-w-md align-top">
-                        <div className="line-clamp-2 font-medium text-slate-950">
+                      <TableCell className="max-w-md py-4 pl-6 align-middle">
+                        <div className="truncate text-sm font-medium text-slate-950">
                           {item.case_snapshot.content}
                         </div>
                         <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
@@ -362,18 +380,18 @@ export function BatchResultDetail({ agentId, batchId, agentName }: BatchResultDe
                           {hasAttachments(item) ? <span>{commonT('attachmentsIncluded')}</span> : null}
                         </div>
                       </TableCell>
-                      <TableCell className="align-top text-sm text-slate-700">
+                      <TableCell className="py-4 align-middle text-sm text-slate-700">
                         {getScenarioName(item)}
                       </TableCell>
-                      <TableCell className="align-top">
+                      <TableCell className="py-4 align-middle">
                         <Badge className={itemStatusClass(item.status)}>
                           {itemStatusLabel(item.status, itemStatusT, commonT('none'))}
                         </Badge>
                       </TableCell>
-                      <TableCell className="align-top text-sm text-slate-700">
+                      <TableCell className="py-4 align-middle text-sm text-slate-700">
                         {formatResponseTime(item, commonT('none'))}
                       </TableCell>
-                      <TableCell className="align-top text-right">
+                      <TableCell className="py-4 pr-6 text-right align-middle">
                         <Button variant="ghost" size="sm" asChild>
                           <Link href={`/console/agents/${agentId}/batch-test/${batchId}/items/${item.id}`}>
                             {t('viewDetail')}

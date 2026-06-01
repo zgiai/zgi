@@ -448,7 +448,7 @@ export function ChildSegmentsDialog({
         confirmText={t('actions.delete')}
         cancelText={t('actions.cancel')}
         onConfirm={handleConfirmDelete}
-        variant="warning"
+        variant="danger"
       />
     </Dialog>
   );

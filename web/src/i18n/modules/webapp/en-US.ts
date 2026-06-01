@@ -112,6 +112,24 @@ const messages = {
     description:
       'The app is currently unavailable. Please contact the app owner or try again after it is brought online.',
   },
+  notPublished: {
+    title: 'This web app has not been published',
+    description: 'Publish this agent before opening its web app.',
+  },
+  header: {
+    guestMode: 'Guest mode: sign in to save conversations and unlock more capabilities.',
+    guestModeShort: 'Guest',
+    login: 'Sign in',
+    loginHint: 'Sign in to save conversations and use more capabilities',
+    signedIn: 'Signed in',
+  },
+  agentChat: {
+    fallbackTitle: 'Agent',
+    defaultHomeTitle: 'title',
+    memoryLoginRequiredTitle: 'Sign in to use this agent',
+    memoryLoginRequiredDescription:
+      'This agent has memory enabled. Please sign in before using it.',
+  },
   billing: {
     precheckWarnings: {
       '207008': {
@@ -175,6 +193,31 @@ const messages = {
     sendEdited: 'Send edited message',
     previousBranch: 'Previous branch',
     nextBranch: 'Next branch',
+    skillPreferences: {
+      action: 'My Skills',
+      title: 'My AIChat Skills',
+      description: 'Choose which organization-enabled Skills are active for your AIChat.',
+      empty: 'No organization-enabled AIChat Skill is available.',
+      save: 'Save',
+      saving: 'Saving...',
+      cancel: 'Cancel',
+      saved: 'AIChat Skill preference saved',
+      savedWithChanges: 'Preference saved, but some Skills are unavailable and were adjusted.',
+      saveFailed: 'Failed to save AIChat Skill preference',
+      enabled: 'Enabled',
+      disabled: 'Disabled',
+      selectedCount: '{count} selected',
+      visibleCount: '{count}/{total} shown',
+      searchPlaceholder: 'Search Skills',
+      noResults: 'No Skills match the current search.',
+      closeConfirm: {
+        title: 'Close Skill preferences?',
+        description: 'You have unsaved Skill preference changes. Choose how to close this panel.',
+        directClose: 'Close directly',
+        cancel: 'Cancel',
+        saveAndClose: 'Save and close',
+      },
+    },
     skills: {
       trace: {
         unknownSkill: 'skill',
@@ -195,8 +238,28 @@ const messages = {
           path: 'Path',
           duration: 'Duration',
           arguments: 'Arguments',
+          result: 'Result',
           message: 'Message',
           error: 'Error',
+        },
+        result: {
+          result: 'Result',
+          status: 'Status',
+          fallbackUsed: 'Fallback',
+          resultCount: 'Result count',
+          topScore: 'Top score',
+          warnings: 'Warnings',
+          sources: 'Sources',
+          databaseName: 'Database',
+          schemaName: 'Schema',
+          tableName: 'Table',
+          databasesCount: 'Databases',
+          tablesCount: 'Tables',
+          columnsCount: 'Columns',
+          recordsCount: 'Records',
+          affectedRows: 'Affected rows',
+          totalNum: 'Total',
+          hasMore: 'Has more',
         },
       },
       agentic: {

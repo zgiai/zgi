@@ -100,7 +100,7 @@ workflow:
         text: |-
           Run guide
 
-          Setup required. Requires: OpenAI gpt-5.5 model, file input, knowledge base, database. This enterprise orchestration requires dataset and database bindings before real case runs.
+          Setup required. Requires: OpenAI GPT-4o model, file input, knowledge base, database. This enterprise orchestration requires dataset and database bindings before real case runs.
 
           Suggested test input:
           Type this in the debug chat:
@@ -141,7 +141,7 @@ workflow:
         variables: []
         model:
           provider: openai
-          name: gpt-5.5
+          name: gpt-4o
           mode: chat
           completion_params:
             response_format: json_object
@@ -293,7 +293,7 @@ workflow:
         variables: []
         model:
           provider: openai
-          name: gpt-5.5
+          name: gpt-4o
           mode: chat
           completion_params:
             response_format: json_object
@@ -493,7 +493,7 @@ workflow:
         variables: []
         model:
           provider: openai
-          name: gpt-5.5
+          name: gpt-4o
           mode: chat
           completion_params: {}
         prompt_template:

@@ -277,7 +277,7 @@ export default function WorkspaceMembersPage() {
                 <TableCell className="py-3.5">
                   {member.id !== currentUser?.id && member.role !== 'owner' ? (
                     <ConfirmDialog
-                      variant="warning"
+                      variant="danger"
                       title={t('workspace.members.removeMember.title')}
                       description={t('workspace.members.removeMember.description', {
                         name: member.name,

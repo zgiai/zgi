@@ -1,4 +1,5 @@
 export const WEBAPP_OFFLINE_ERROR_CODE = '204008';
+export const WEBAPP_NOT_PUBLISHED_ERROR_CODE = '204009';
 export const WEBAPP_OFFLINE_EVENT = 'webapp:offline';
 
 interface ErrorLikeRecord {
@@ -43,6 +44,10 @@ export function getWebAppErrorCode(error: unknown): string | undefined {
  */
 export function isWebAppOfflineError(error: unknown): boolean {
   return getWebAppErrorCode(error) === WEBAPP_OFFLINE_ERROR_CODE;
+}
+
+export function isWebAppNotPublishedError(error: unknown): boolean {
+  return getWebAppErrorCode(error) === WEBAPP_NOT_PUBLISHED_ERROR_CODE;
 }
 
 /**

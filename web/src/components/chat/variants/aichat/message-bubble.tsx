@@ -4,6 +4,7 @@ import { ModelIcon } from 'modelicons';
 import { useMemo, useState } from 'react';
 import {
   AlertCircle,
+  Bot,
   CheckCircle2,
   CircleStop,
   Download,
@@ -65,6 +66,9 @@ interface AIChatMessageBubbleProps {
   onEditChange?: (value: string) => void;
   onEditCancel?: () => void;
   onEditSubmit?: (message: AIChatMessage) => void;
+  showAssistantModelMeta?: boolean;
+  showMemoryKey?: boolean;
+  showSkillEventDetails?: boolean;
 }
 
 function formatAIChatTime(timestamp: number): string {
@@ -287,6 +291,9 @@ export function AIChatMessageBubble({
   onEditChange,
   onEditCancel,
   onEditSubmit,
+  showAssistantModelMeta = true,
+  showMemoryKey = true,
+  showSkillEventDetails = true,
 }: AIChatMessageBubbleProps) {
   const t = useT('webapp');
   const tGlobal = useT();
@@ -464,12 +471,21 @@ export function AIChatMessageBubble({
       </div>
 
       <div className="flex justify-start gap-3">
-        <div className="mt-1 flex size-7 shrink-0 items-center justify-center rounded-full border bg-background">
-          <ModelIcon model={message.model_name || 'unknown'} size={28} />
+        <div
+          className={cn(
+            'mt-1 flex size-7 shrink-0 items-center justify-center rounded-full',
+            showAssistantModelMeta ? 'border bg-background' : 'bg-primary text-primary-foreground'
+          )}
+        >
+          {showAssistantModelMeta ? (
+            <ModelIcon model={message.model_name || 'unknown'} size={28} />
+          ) : (
+            <Bot className="size-4" />
+          )}
         </div>
         <div className="min-w-0 flex-1">
           <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            {message.model_name ? <span>{message.model_name}</span> : null}
+            {showAssistantModelMeta && message.model_name ? <span>{message.model_name}</span> : null}
             {message.created_at ? <span>{formatAIChatTime(message.created_at)}</span> : null}
             {isStreaming ? (
               <span className="inline-flex items-center gap-1">
@@ -494,6 +510,8 @@ export function AIChatMessageBubble({
               timeline={displayTimeline}
               skillDisplayById={skillDisplayById}
               defaultOpen={shouldOpenTimelineByDefault}
+              showMemoryKey={showMemoryKey}
+              showSkillEventDetails={showSkillEventDetails}
             />
           ) : null}
 
@@ -506,10 +524,12 @@ export function AIChatMessageBubble({
           ) : null}
 
           {answer ? (
-            <div className="prose prose-sm min-w-0 max-w-full overflow-x-hidden dark:prose-invert sm:pr-4 md:pr-6 lg:pr-8 xl:pr-9">
+            <div className="prose prose-sm min-w-0 max-w-full dark:prose-invert sm:pr-4 md:pr-6 lg:pr-8 xl:pr-9">
               <MarkdownViewer
-                className="md-viewer min-w-0 max-w-full overflow-x-hidden break-words"
+                className="md-viewer min-w-0 max-w-full break-words"
                 content={displayAnswer}
+                isStreaming={isStreaming}
+                renderIdentity={message.id}
               />
               {shouldHideAssistantToolbar ? null : (
                 <AssistantMessageToolbar

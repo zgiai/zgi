@@ -2,6 +2,12 @@ package runner
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -26,6 +32,42 @@ func TestRunPython(t *testing.T) {
 	}
 }
 
+func TestRunTerminatesCPUBoundCodeOnTimeout(t *testing.T) {
+	service := NewService(1, 2*time.Second, 4096)
+
+	result, err := service.RunWithLimits(context.Background(), Request{
+		Language: "python3",
+		Code:     "while True:\n    pass",
+	}, 100*time.Millisecond, 4096, 4096)
+	if err != nil {
+		t.Fatalf("expected timeout result, got error: %v", err)
+	}
+	if result.ExitCode != 124 {
+		t.Fatalf("expected timeout exit code 124, got %d stderr=%q", result.ExitCode, result.Error)
+	}
+	if !strings.Contains(result.Error, "execution timed out") {
+		t.Fatalf("expected timeout stderr, got %q", result.Error)
+	}
+}
+
+func TestRunReportsSignalTermination(t *testing.T) {
+	service := NewService(1, 2*time.Second, 4096)
+
+	result, err := service.Run(context.Background(), Request{
+		Language: "python3",
+		Code:     "import os, signal\nos.kill(os.getpid(), signal.SIGTERM)",
+	})
+	if err != nil {
+		t.Fatalf("expected signal result, got error: %v", err)
+	}
+	if result.ExitCode != 143 {
+		t.Fatalf("expected signal exit code 143, got %d stderr=%q", result.ExitCode, result.Error)
+	}
+	if !strings.Contains(result.Error, "process terminated by signal") {
+		t.Fatalf("expected signal stderr, got %q", result.Error)
+	}
+}
+
 func TestRunUnsupportedLanguage(t *testing.T) {
 	service := NewService(1, 2*time.Second, 4096)
 
@@ -36,4 +78,376 @@ func TestRunUnsupportedLanguage(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error for unsupported language")
 	}
+}
+
+func TestRunReturnsQueueTimeoutWhenWorkersAreBusy(t *testing.T) {
+	service := NewServiceWithOptions(Options{
+		MaxWorkers:   1,
+		Timeout:      2 * time.Second,
+		QueueTimeout: 50 * time.Millisecond,
+		OutputCap:    4096,
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := service.Run(context.Background(), Request{
+			Language: "python3",
+			Code:     "import time; time.sleep(0.3)",
+		})
+		done <- err
+	}()
+	waitForBusyWorker(t, service)
+
+	_, err := service.Run(context.Background(), Request{
+		Language: "python3",
+		Code:     "print('queued')",
+	})
+	if err == nil {
+		t.Fatal("expected queue timeout")
+	}
+	if _, ok := err.(*QueueTimeoutError); !ok {
+		t.Fatalf("expected QueueTimeoutError, got %T %v", err, err)
+	}
+
+	if err := <-done; err != nil {
+		t.Fatalf("expected first run to complete, got %v", err)
+	}
+}
+
+func TestMetricsReportsQueuedExecutions(t *testing.T) {
+	service := NewServiceWithOptions(Options{
+		MaxWorkers:   1,
+		Timeout:      2 * time.Second,
+		QueueTimeout: time.Second,
+		OutputCap:    4096,
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := service.Run(context.Background(), Request{
+			Language: "python3",
+			Code:     "import time; time.sleep(0.3)",
+		})
+		done <- err
+	}()
+	waitForBusyWorker(t, service)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	queuedDone := make(chan error, 1)
+	go func() {
+		_, err := service.Run(ctx, Request{
+			Language: "python3",
+			Code:     "print('queued')",
+		})
+		queuedDone <- err
+	}()
+	waitForQueuedExecution(t, service)
+
+	metrics := service.Metrics()
+	if metrics.MaxWorkers != 1 {
+		t.Fatalf("expected one max worker, got %d", metrics.MaxWorkers)
+	}
+	if metrics.ActiveWorkers != 1 {
+		t.Fatalf("expected one active worker, got %d", metrics.ActiveWorkers)
+	}
+	if metrics.QueuedExecutions != 1 {
+		t.Fatalf("expected one queued execution, got %d", metrics.QueuedExecutions)
+	}
+
+	cancel()
+	if err := <-queuedDone; err == nil {
+		t.Fatal("expected queued execution to be canceled")
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("expected first run to complete, got %v", err)
+	}
+	if queued := service.Metrics().QueuedExecutions; queued != 0 {
+		t.Fatalf("expected queued executions to return to zero, got %d", queued)
+	}
+}
+
+func TestCommandReturnsQueueTimeoutWhenWorkersAreBusy(t *testing.T) {
+	service := NewServiceWithOptions(Options{
+		MaxWorkers:   1,
+		Timeout:      2 * time.Second,
+		QueueTimeout: 50 * time.Millisecond,
+		OutputCap:    4096,
+	})
+	workDir := t.TempDir()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := service.ExecuteCommandSpec(context.Background(), CommandSpec{
+			WorkDir:        workDir,
+			Command:        "python3",
+			Args:           []string{"-c", "import time; time.sleep(0.3)"},
+			Timeout:        time.Second,
+			StdoutLimit:    4096,
+			StderrLimit:    4096,
+			AllowShellForm: false,
+		})
+		done <- err
+	}()
+	waitForBusyWorker(t, service)
+
+	_, err := service.ExecuteCommandSpec(context.Background(), CommandSpec{
+		WorkDir:        workDir,
+		Command:        "python3",
+		Args:           []string{"-c", "print('queued')"},
+		Timeout:        time.Second,
+		StdoutLimit:    4096,
+		StderrLimit:    4096,
+		AllowShellForm: false,
+	})
+	if err == nil {
+		t.Fatal("expected queue timeout")
+	}
+	if _, ok := err.(*QueueTimeoutError); !ok {
+		t.Fatalf("expected QueueTimeoutError, got %T %v", err, err)
+	}
+
+	if err := <-done; err != nil {
+		t.Fatalf("expected first command to complete, got %v", err)
+	}
+}
+
+func TestRunReturnsCancellationWhenQueuedContextIsCanceled(t *testing.T) {
+	service := NewServiceWithOptions(Options{
+		MaxWorkers:   1,
+		Timeout:      2 * time.Second,
+		QueueTimeout: time.Second,
+		OutputCap:    4096,
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := service.Run(context.Background(), Request{
+			Language: "python3",
+			Code:     "import time; time.sleep(0.3)",
+		})
+		done <- err
+	}()
+	waitForBusyWorker(t, service)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := service.Run(ctx, Request{
+		Language: "python3",
+		Code:     "print('queued')",
+	})
+	if err == nil {
+		t.Fatal("expected cancellation error")
+	}
+	var cancelErr *CancellationError
+	if !errors.As(err, &cancelErr) {
+		t.Fatalf("expected CancellationError, got %T %v", err, err)
+	}
+	if cancelErr.Phase != "queue" {
+		t.Fatalf("expected queue phase, got %q", cancelErr.Phase)
+	}
+
+	if err := <-done; err != nil {
+		t.Fatalf("expected first run to complete, got %v", err)
+	}
+}
+
+func TestCommandCancellationKillsShellChildren(t *testing.T) {
+	service := NewService(1, 2*time.Second, 4096)
+	workDir := t.TempDir()
+	pidFile := filepath.Join(workDir, "child.pid")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := service.ExecuteCommandSpec(ctx, CommandSpec{
+			WorkDir:        workDir,
+			Command:        "sleep 20 & echo $! > child.pid; wait",
+			Timeout:        time.Second,
+			StdoutLimit:    4096,
+			StderrLimit:    4096,
+			AllowShellForm: true,
+		})
+		done <- err
+	}()
+
+	childPID := waitForChildPID(t, pidFile)
+	cancel()
+
+	err := <-done
+	if err == nil {
+		t.Fatal("expected cancellation error")
+	}
+	var cancelErr *CancellationError
+	if !errors.As(err, &cancelErr) {
+		t.Fatalf("expected CancellationError, got %T %v", err, err)
+	}
+	if cancelErr.Phase != "execution" {
+		t.Fatalf("expected execution phase, got %q", cancelErr.Phase)
+	}
+
+	for i := 0; i < 20; i++ {
+		if !processExists(childPID) {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("expected child process %d to be killed with the shell process group", childPID)
+}
+
+func waitForBusyWorker(t *testing.T, service *Service) {
+	t.Helper()
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if len(service.semaphore) > 0 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("expected worker to become busy")
+}
+
+func waitForQueuedExecution(t *testing.T, service *Service) {
+	t.Helper()
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if service.Metrics().QueuedExecutions > 0 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("expected execution to become queued")
+}
+
+func waitForChildPID(t *testing.T, path string) int {
+	t.Helper()
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		rawPID, err := os.ReadFile(path)
+		if err == nil {
+			childPID, err := strconv.Atoi(strings.TrimSpace(string(rawPID)))
+			if err != nil {
+				t.Fatalf("parse child pid: %v", err)
+			}
+			return childPID
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("expected child pid file %s", path)
+	return 0
+}
+
+func TestSafeBaseEnvDropsDangerousKeys(t *testing.T) {
+	env := safeBaseEnv([]string{
+		"PATH=/usr/bin",
+		"LD_PRELOAD=x",
+		"DYLD_INSERT_LIBRARIES=x",
+		"NODE_OPTIONS=--require x",
+		"ZGI_OK=1",
+	})
+
+	for _, item := range env {
+		if item == "LD_PRELOAD=x" || item == "DYLD_INSERT_LIBRARIES=x" || item == "NODE_OPTIONS=--require x" {
+			t.Fatalf("expected dangerous env to be dropped, got %v", env)
+		}
+	}
+	if len(env) != 2 {
+		t.Fatalf("expected safe env entries only, got %v", env)
+	}
+}
+
+func TestCommandTimeoutKillsShellChildren(t *testing.T) {
+	service := NewService(1, 2*time.Second, 4096)
+	workDir := t.TempDir()
+	pidFile := filepath.Join(workDir, "child.pid")
+
+	result, err := service.ExecuteCommandSpec(context.Background(), CommandSpec{
+		WorkDir:        workDir,
+		Command:        "sleep 20 & echo $! > child.pid; wait",
+		Timeout:        100 * time.Millisecond,
+		StdoutLimit:    4096,
+		StderrLimit:    4096,
+		AllowShellForm: true,
+	})
+	if err != nil {
+		t.Fatalf("expected timeout result, got error: %v", err)
+	}
+	if result.ExitCode != 124 {
+		t.Fatalf("expected timeout exit code 124, got %d stderr=%q", result.ExitCode, result.Error)
+	}
+
+	rawPID, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatalf("read child pid: %v", err)
+	}
+	childPID, err := strconv.Atoi(strings.TrimSpace(string(rawPID)))
+	if err != nil {
+		t.Fatalf("parse child pid: %v", err)
+	}
+
+	for i := 0; i < 20; i++ {
+		if !processExists(childPID) {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("expected child process %d to be killed with the shell process group", childPID)
+}
+
+func TestCommandTerminatesCPUBoundProcessOnTimeout(t *testing.T) {
+	service := NewService(1, 2*time.Second, 4096)
+	workDir := t.TempDir()
+
+	result, err := service.ExecuteCommandSpec(context.Background(), CommandSpec{
+		WorkDir:        workDir,
+		Command:        "python3",
+		Args:           []string{"-c", "while True: pass"},
+		Timeout:        100 * time.Millisecond,
+		StdoutLimit:    4096,
+		StderrLimit:    4096,
+		AllowShellForm: false,
+	})
+	if err != nil {
+		t.Fatalf("expected timeout result, got error: %v", err)
+	}
+	if result.ExitCode != 124 {
+		t.Fatalf("expected timeout exit code 124, got %d stderr=%q", result.ExitCode, result.Error)
+	}
+	if !strings.Contains(result.Error, "command timed out") {
+		t.Fatalf("expected timeout stderr, got %q", result.Error)
+	}
+}
+
+func TestCommandReportsSignalTermination(t *testing.T) {
+	service := NewService(1, 2*time.Second, 4096)
+	workDir := t.TempDir()
+
+	result, err := service.ExecuteCommandSpec(context.Background(), CommandSpec{
+		WorkDir:        workDir,
+		Command:        "python3",
+		Args:           []string{"-c", "import os, signal; os.kill(os.getpid(), signal.SIGTERM)"},
+		Timeout:        time.Second,
+		StdoutLimit:    4096,
+		StderrLimit:    4096,
+		AllowShellForm: false,
+	})
+	if err != nil {
+		t.Fatalf("expected signal result, got error: %v", err)
+	}
+	if result.ExitCode != 143 {
+		t.Fatalf("expected signal exit code 143, got %d stderr=%q", result.ExitCode, result.Error)
+	}
+	if !strings.Contains(result.Error, "process terminated by signal") {
+		t.Fatalf("expected signal stderr, got %q", result.Error)
+	}
+}
+
+func processExists(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	err := syscall.Kill(pid, 0)
+	return err == nil || err == syscall.EPERM
 }

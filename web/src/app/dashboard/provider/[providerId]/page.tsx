@@ -516,7 +516,7 @@ export default function ModelPage() {
       />
 
       <ConfirmDialog
-        variant="warning"
+        variant="danger"
         open={isDeleteDialogOpen}
         onOpenChange={setIsDeleteDialogOpen}
         title={t('aiProviders.custom.delete.title')}
@@ -546,7 +546,7 @@ export default function ModelPage() {
       />
 
       <ConfirmDialog
-        variant="warning"
+        variant="danger"
         open={isModelDeleteConfirmOpen}
         onOpenChange={setIsModelDeleteConfirmOpen}
         title={t('aiProviders.customModel.delete.title')}

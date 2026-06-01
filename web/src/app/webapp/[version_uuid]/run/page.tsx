@@ -7,7 +7,8 @@ import { useParams } from 'next/navigation';
 import { useT } from '@/i18n';
 import { AlertCircle } from 'lucide-react';
 import { WebAppOfflineState } from '@/components/webapp/offline-state';
-import { isWebAppOfflineError } from '@/utils/webapp/errors';
+import { WebAppNotPublishedState } from '@/components/webapp/not-published-state';
+import { isWebAppNotPublishedError, isWebAppOfflineError } from '@/utils/webapp/errors';
 
 export default function WebappRunPage(): JSX.Element {
   const { version_uuid } = useParams<{ version_uuid: string }>();
@@ -33,6 +34,8 @@ export default function WebappRunPage(): JSX.Element {
           </div>
         ) : isWebAppOfflineError(error) ? (
           <WebAppOfflineState />
+        ) : isWebAppNotPublishedError(error) ? (
+          <WebAppNotPublishedState />
         ) : data?.data ? (
           <WebappRun versionUuid={version_uuid} config={data.data} />
         ) : (

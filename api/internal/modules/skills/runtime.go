@@ -33,9 +33,15 @@ const (
 var ErrSkillNotFound = errors.New("skill not found")
 
 type Runtime struct {
-	engine     *tools.ToolEngine
-	manager    *tools.ToolManager
-	catalogDir string
+	engine       *tools.ToolEngine
+	manager      *tools.ToolManager
+	catalogDir   string
+	scriptRunner SkillScriptRunner
+}
+
+type SkillScriptRunner interface {
+	RunSkillScript(ctx context.Context, doc SkillDocument, arguments map[string]interface{}, execCtx ExecutionContext, callID string) (*ToolInvocationResult, error)
+	Configured() bool
 }
 
 type skillLocation struct {
@@ -45,11 +51,13 @@ type skillLocation struct {
 }
 
 type ExecutionContext struct {
-	TenantID       string
-	UserID         string
-	ConversationID string
-	AppID          string
-	MessageID      string
+	OrganizationID    string
+	UserID            string
+	ConversationID    string
+	AppID             string
+	MessageID         string
+	InvokeFrom        tools.ToolInvokeFrom
+	RuntimeParameters map[string]interface{}
 }
 
 type ToolInvocationResult struct {
@@ -68,6 +76,17 @@ func NewRuntimeWithCatalog(engine *tools.ToolEngine, manager *tools.ToolManager,
 		manager:    manager,
 		catalogDir: strings.TrimSpace(catalogDir),
 	}
+}
+
+func (r *Runtime) WithScriptRunner(scriptRunner SkillScriptRunner) *Runtime {
+	if r != nil && scriptRunner != nil && scriptRunner.Configured() {
+		r.scriptRunner = scriptRunner
+	}
+	return r
+}
+
+func (r *Runtime) ScriptsSupported() bool {
+	return r != nil && r.scriptRunner != nil && r.scriptRunner.Configured()
 }
 
 func (r *Runtime) ResolveEnabledSkills(ctx context.Context, skillIDs []string) (*ResolvedSkills, error) {
@@ -257,6 +276,15 @@ func LoadCustomSkillDocument(root string) (SkillDocument, error) {
 	return doc, nil
 }
 
+func (r *Runtime) LoadCustomSkillDocument(root string) (SkillDocument, error) {
+	doc, err := LoadCustomSkillDocument(root)
+	if err != nil {
+		return SkillDocument{}, err
+	}
+	r.applyScriptSupport(&doc)
+	return doc, nil
+}
+
 func (r *Runtime) LoadSkill(ctx context.Context, resolved *ResolvedSkills, skillID string) (*SkillDocument, SkillTrace, error) {
 	_ = ctx
 	start := time.Now()
@@ -325,12 +353,21 @@ func (r *Runtime) CallSkillTool(
 	execCtx ExecutionContext,
 	callID string,
 ) (*ToolInvocationResult, error) {
-	if r == nil || r.engine == nil {
-		return nil, fmt.Errorf("tool engine is not configured")
+	if r == nil {
+		return nil, fmt.Errorf("skill runtime is not configured")
 	}
 	doc, ok := resolved.Get(skillID)
 	if !ok {
 		return nil, fmt.Errorf("skill %s is not enabled", normalizeSkillID(skillID))
+	}
+	if strings.TrimSpace(toolName) == SkillScriptToolRun {
+		if !doc.Metadata.ScriptsSupported || r.scriptRunner == nil {
+			return nil, fmt.Errorf("skill %s scripts are not supported", doc.Metadata.ID)
+		}
+		return r.scriptRunner.RunSkillScript(ctx, *doc, arguments, execCtx, callID)
+	}
+	if r.engine == nil {
+		return nil, fmt.Errorf("tool engine is not configured")
 	}
 	toolDef, ok := findSkillTool(*doc, toolName)
 	if !ok {
@@ -343,16 +380,17 @@ func (r *Runtime) CallSkillTool(
 
 	start := time.Now()
 	result, err := r.engine.Invoke(runCtx, tools.InvokeRequest{
-		ProviderType:   toolDef.ProviderType,
-		ProviderID:     toolDef.ProviderID,
-		ToolName:       toolDef.Name,
-		TenantID:       execCtx.TenantID,
-		UserID:         execCtx.UserID,
-		Parameters:     arguments,
-		ConversationID: execCtx.ConversationID,
-		AppID:          execCtx.AppID,
-		MessageID:      execCtx.MessageID,
-		InvokeFrom:     tools.ToolInvokeFromAIChat,
+		ProviderType:      toolDef.ProviderType,
+		ProviderID:        toolDef.ProviderID,
+		ToolName:          toolDef.Name,
+		TenantID:          execCtx.OrganizationID,
+		UserID:            execCtx.UserID,
+		Parameters:        arguments,
+		ConversationID:    execCtx.ConversationID,
+		AppID:             execCtx.AppID,
+		MessageID:         execCtx.MessageID,
+		InvokeFrom:        normalizeToolInvokeFrom(execCtx.InvokeFrom),
+		RuntimeParameters: copyStringAnyMap(execCtx.RuntimeParameters),
 	})
 	trace := SkillTrace{
 		Kind:       "tool_call",
@@ -409,8 +447,8 @@ func MetaToolsForSkillState(resolved *ResolvedSkills, loadedSkillIDs map[string]
 	if referenceSkillIDs, referencePaths := loadedReferenceOptions(resolved, loaded); len(referenceSkillIDs) > 0 && len(referencePaths) > 0 {
 		tools = append(tools, readReferenceMetaTool(referenceSkillIDs, referencePaths))
 	}
-	if toolSkillIDs, toolNames, pairs := loadedToolOptions(resolved, loaded); len(toolSkillIDs) > 0 && len(toolNames) > 0 {
-		tools = append(tools, callSkillToolMetaTool(toolSkillIDs, toolNames, pairs))
+	if toolSkillIDs, toolNames, pairs, contracts, hasUntyped := loadedToolOptions(resolved, loaded); len(toolSkillIDs) > 0 && len(toolNames) > 0 {
+		tools = append(tools, callSkillToolMetaTool(toolSkillIDs, toolNames, pairs, contracts, hasUntyped))
 	}
 	return tools
 }
@@ -422,7 +460,7 @@ func metaTools(includeToolCaller bool) []llmadapter.Tool {
 		intermediateAnswerMetaTool(),
 	}
 	if includeToolCaller {
-		tools = append(tools, callSkillToolMetaTool(nil, nil, nil))
+		tools = append(tools, callSkillToolMetaTool(nil, nil, nil, nil, true))
 	}
 	return tools
 }
@@ -486,11 +524,12 @@ func intermediateAnswerMetaTool() llmadapter.Tool {
 	}
 }
 
-func callSkillToolMetaTool(skillIDs []string, toolNames []string, pairs []string) llmadapter.Tool {
+func callSkillToolMetaTool(skillIDs []string, toolNames []string, pairs []string, contracts []SkillToolArgumentContract, hasUntypedTools bool) llmadapter.Tool {
 	description := "Call a tool allowed by a loaded skill after reading its instructions."
 	if len(pairs) > 0 {
 		description += " Allowed skill/tool pairs: " + strings.Join(pairs, "; ") + "."
 	}
+	argumentsSchema := callSkillToolArgumentsSchema(contracts, hasUntypedTools)
 	return llmadapter.Tool{
 		Type: "function",
 		Function: llmadapter.Function{
@@ -501,15 +540,54 @@ func callSkillToolMetaTool(skillIDs []string, toolNames []string, pairs []string
 				"properties": map[string]interface{}{
 					"skill_id":  stringSchema("The loaded skill ID that allows the tool.", skillIDs),
 					"tool_name": stringSchema("The allowed tool name to call.", toolNames),
-					"arguments": map[string]interface{}{
-						"type":        "object",
-						"description": "Arguments for the skill tool.",
-					},
+					"arguments": argumentsSchema,
 				},
 				"required": []string{"skill_id", "tool_name", "arguments"},
 			},
 		},
 	}
+}
+
+func callSkillToolArgumentsSchema(contracts []SkillToolArgumentContract, hasUntypedTools bool) map[string]interface{} {
+	schema := map[string]interface{}{
+		"type":        "object",
+		"description": "Arguments for the selected skill tool. Pass a non-empty object that satisfies the selected tool's required parameters.",
+	}
+	if len(contracts) == 0 {
+		return schema
+	}
+	options := make([]interface{}, 0, len(contracts)+1)
+	for _, contract := range contracts {
+		if len(contract.Schema) == 0 {
+			continue
+		}
+		options = append(options, contract.Schema)
+	}
+	if hasUntypedTools {
+		options = append(options, map[string]interface{}{
+			"type":        "object",
+			"description": "Arguments for a skill tool that does not expose a structured argument schema.",
+		})
+	}
+	if len(options) == 0 {
+		return schema
+	}
+	if hasUntypedTools || hasOptionalOnlyContract(contracts) {
+		schema["anyOf"] = options
+	} else {
+		schema["oneOf"] = options
+	}
+	return schema
+}
+
+func hasOptionalOnlyContract(contracts []SkillToolArgumentContract) bool {
+	for _, contract := range contracts {
+		required, _ := contract.Schema["required"].([]string)
+		if len(required) == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func stringSchema(description string, values []string) map[string]interface{} {
@@ -582,15 +660,17 @@ func loadedReferenceOptions(resolved *ResolvedSkills, loaded map[string]struct{}
 	return skillIDs, paths
 }
 
-func loadedToolOptions(resolved *ResolvedSkills, loaded map[string]struct{}) ([]string, []string, []string) {
+func loadedToolOptions(resolved *ResolvedSkills, loaded map[string]struct{}) ([]string, []string, []string, []SkillToolArgumentContract, bool) {
 	if resolved == nil || len(loaded) == 0 {
-		return nil, nil, nil
+		return nil, nil, nil, nil, false
 	}
 	skillSeen := map[string]struct{}{}
 	toolSeen := map[string]struct{}{}
 	skillIDs := []string{}
 	toolNames := []string{}
 	pairs := []string{}
+	contracts := []SkillToolArgumentContract{}
+	hasUntyped := false
 	for _, doc := range resolved.Skills {
 		skillID := normalizeSkillID(doc.Metadata.ID)
 		if _, ok := loaded[skillID]; !ok || len(doc.Tools) == 0 {
@@ -611,6 +691,11 @@ func loadedToolOptions(resolved *ResolvedSkills, loaded map[string]struct{}) ([]
 				toolSeen[name] = struct{}{}
 				toolNames = append(toolNames, name)
 			}
+			if contract, ok := SkillToolArgumentContractFor(skillID, name); ok {
+				contracts = append(contracts, contract)
+			} else {
+				hasUntyped = true
+			}
 		}
 		sort.Strings(docToolNames)
 		if len(docToolNames) > 0 {
@@ -620,7 +705,347 @@ func loadedToolOptions(resolved *ResolvedSkills, loaded map[string]struct{}) ([]
 	sort.Strings(skillIDs)
 	sort.Strings(toolNames)
 	sort.Strings(pairs)
-	return skillIDs, toolNames, pairs
+	sort.Slice(contracts, func(i, j int) bool {
+		left := contracts[i].SkillID + "/" + contracts[i].ToolName
+		right := contracts[j].SkillID + "/" + contracts[j].ToolName
+		return left < right
+	})
+	return skillIDs, toolNames, pairs, contracts, hasUntyped
+}
+
+func SkillToolArgumentContractFor(skillID string, toolName string) (SkillToolArgumentContract, bool) {
+	skillID = normalizeSkillID(skillID)
+	toolName = strings.TrimSpace(toolName)
+	key := skillID + "/" + toolName
+	contract, ok := skillToolArgumentContracts()[key]
+	return contract, ok
+}
+
+func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
+	return map[string]SkillToolArgumentContract{
+		SkillCalculator + "/evaluate_expression": {
+			SkillID:     SkillCalculator,
+			ToolName:    "evaluate_expression",
+			Description: "Evaluate one deterministic arithmetic expression.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"expression": map[string]interface{}{
+						"type":        "string",
+						"description": "Arithmetic expression to evaluate, such as 23*17+9. Only numbers, parentheses, +, -, *, /, %, and ^ are allowed.",
+					},
+					"precision": precisionSchema(),
+				},
+				[]string{"expression"},
+			),
+			Example: map[string]interface{}{"expression": "23*17+9"},
+		},
+		SkillCalculator + "/calculate": {
+			SkillID:     SkillCalculator,
+			ToolName:    "calculate",
+			Description: "Perform deterministic binary arithmetic between two numbers.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"operation": enumStringSchema("Arithmetic operation.", []string{"add", "subtract", "multiply", "divide", "power", "mod"}),
+					"left":      numberSchema("Left operand."),
+					"right":     numberSchema("Right operand."),
+					"precision": precisionSchema(),
+				},
+				[]string{"operation", "left", "right"},
+			),
+			Example: map[string]interface{}{"operation": "multiply", "left": 23, "right": 17},
+		},
+		SkillCalculator + "/percentage": {
+			SkillID:     SkillCalculator,
+			ToolName:    "percentage",
+			Description: "Calculate percent-of, percentage change, or apply a percentage increase/decrease.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"operation": enumStringSchema("Percentage operation. percent_of/apply_* require value and percent; change requires from and to.", []string{"percent_of", "change", "apply_increase", "apply_decrease"}),
+					"value":     numberSchema("Base value for percent_of, apply_increase, and apply_decrease."),
+					"percent":   numberSchema("Percentage value, such as 15 for 15 percent."),
+					"from":      numberSchema("Original value for change."),
+					"to":        numberSchema("New value for change."),
+					"precision": precisionSchema(),
+				},
+				[]string{"operation"},
+			),
+			Example: map[string]interface{}{"operation": "percent_of", "value": 200, "percent": 15},
+		},
+		SkillFileGenerator + "/generate_file": {
+			SkillID:     SkillFileGenerator,
+			ToolName:    "generate_file",
+			Description: "Generate a downloadable file artifact from provided content.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"content":   stringValueSchema("Text content to write into the generated file. Use valid CSV content for xlsx and runnable HTML content for html."),
+					"format":    enumStringSchema("Output format.", []string{"txt", "md", "html", "json", "csv", "docx", "xlsx", "pdf"}),
+					"filename":  stringValueSchema("Optional display filename. Do not include path separators or an extension."),
+					"title":     stringValueSchema("Optional document title used by generated HTML and PDF files."),
+					"lifecycle": enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+				},
+				[]string{"content", "format"},
+			),
+			Example: map[string]interface{}{"content": "# Report\n\nSummary...", "format": "md", "filename": "report"},
+		},
+		SkillInternalKnowledge + "/list_accessible_knowledge_bases": {
+			SkillID:     SkillInternalKnowledge,
+			ToolName:    "list_accessible_knowledge_bases",
+			Description: "List knowledge bases accessible to the current AIChat user. Inspect status and fallback_used before selecting dataset IDs.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"query": stringValueSchema("Optional search text for narrowing candidate knowledge bases."),
+					"limit": numberSchema("Maximum number of knowledge bases to list. Defaults to 20 and is capped at 100."),
+				},
+				nil,
+			),
+			Example: map[string]interface{}{"query": "expense policy", "limit": 10},
+		},
+		SkillInternalKnowledge + "/retrieve_knowledge": {
+			SkillID:     SkillInternalKnowledge,
+			ToolName:    "retrieve_knowledge",
+			Description: "Retrieve relevant context from selected accessible knowledge base IDs returned by list_accessible_knowledge_bases.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"query":          stringValueSchema("The user question or refined search query."),
+					"dataset_ids":    stringArrayOrCSVSchema("Knowledge base IDs selected from list_accessible_knowledge_bases. Pass a JSON array of IDs when possible."),
+					"top_k":          numberSchema("Maximum number of retrieved chunks. Defaults to 5 and is capped at 20."),
+					"retrieval_mode": enumStringSchema("Optional retrieval mode. Omit for default hybrid mode; use graph only for relationship/entity questions.", []string{"hybrid", "vector", "graph"}),
+				},
+				[]string{"query", "dataset_ids"},
+			),
+			Example: map[string]interface{}{"query": "What is the reimbursement policy?", "dataset_ids": []string{"dataset-id"}},
+		},
+		SkillAgentKnowledge + "/retrieve_agent_knowledge": {
+			SkillID:     SkillAgentKnowledge,
+			ToolName:    "retrieve_agent_knowledge",
+			Description: "Retrieve relevant context from knowledge bases bound to the current Agent. Do not pass dataset IDs.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"query":          stringValueSchema("The user question or refined search query."),
+					"top_k":          numberSchema("Maximum number of retrieved chunks. Defaults to 5 and is capped at 20."),
+					"retrieval_mode": enumStringSchema("Optional retrieval mode. Omit for default hybrid mode; use graph only for relationship/entity questions.", []string{"hybrid", "vector", "graph"}),
+				},
+				[]string{"query"},
+			),
+			Example: map[string]interface{}{"query": "Summarize the configured product FAQ."},
+		},
+		SkillInternalDatabase + "/list_accessible_databases": databaseListContract(SkillInternalDatabase),
+		SkillInternalDatabase + "/list_database_tables":      databaseTablesContract(SkillInternalDatabase),
+		SkillInternalDatabase + "/describe_database_table":   databaseDescribeTableContract(SkillInternalDatabase),
+		SkillInternalDatabase + "/query_table_records":       databaseQueryRecordsContract(SkillInternalDatabase),
+		SkillInternalDatabase + "/insert_table_records":      databaseMutateRecordsContract(SkillInternalDatabase, "insert_table_records", "Insert records into a database table."),
+		SkillInternalDatabase + "/update_table_records":      databaseMutateRecordsContract(SkillInternalDatabase, "update_table_records", "Update records in a database table. Each record must include id."),
+		SkillInternalDatabase + "/delete_table_records":      databaseMutateRecordsContract(SkillInternalDatabase, "delete_table_records", "Delete records from a database table. Each record must include id."),
+		SkillAgentDatabase + "/list_accessible_databases":    databaseListContract(SkillAgentDatabase),
+		SkillAgentDatabase + "/list_database_tables":         databaseTablesContract(SkillAgentDatabase),
+		SkillAgentDatabase + "/describe_database_table":      databaseDescribeTableContract(SkillAgentDatabase),
+		SkillAgentDatabase + "/query_table_records":          databaseQueryRecordsContract(SkillAgentDatabase),
+		SkillAgentDatabase + "/insert_table_records":         databaseMutateRecordsContract(SkillAgentDatabase, "insert_table_records", "Insert records into an Agent-bound database table."),
+		SkillAgentDatabase + "/update_table_records":         databaseMutateRecordsContract(SkillAgentDatabase, "update_table_records", "Update records in an Agent-bound database table. Each record must include id."),
+		SkillAgentDatabase + "/delete_table_records":         databaseMutateRecordsContract(SkillAgentDatabase, "delete_table_records", "Delete records from an Agent-bound database table. Each record must include id."),
+		SkillTime + "/current_time": {
+			SkillID:     SkillTime,
+			ToolName:    "current_time",
+			Description: "Get the current system time with optional timezone and format.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"format":   stringValueSchema("Optional strftime-style output format. Defaults to %Y-%m-%d %H:%M:%S."),
+					"timezone": stringValueSchema("Optional IANA timezone such as Asia/Shanghai. Defaults to UTC."),
+				},
+				nil,
+			),
+			Example: map[string]interface{}{"timezone": "Asia/Shanghai", "format": "%Y-%m-%d %H:%M:%S"},
+		},
+		SkillTime + "/date_calculate": {
+			SkillID:     SkillTime,
+			ToolName:    "date_calculate",
+			Description: "Add or subtract date intervals, or calculate the day interval between two dates.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"operation":   enumStringSchema("Operation to perform. diff requires target_date.", []string{"add", "subtract", "diff"}),
+					"base_date":   stringValueSchema("Base date in YYYY-MM-DD format. Use today or omit to use the current date."),
+					"amount":      numberSchema("Interval amount for add or subtract. Defaults to 1."),
+					"unit":        enumStringSchema("Interval unit for add or subtract.", []string{"day", "week", "month", "year"}),
+					"target_date": stringValueSchema("Target date in YYYY-MM-DD format. Required when operation is diff."),
+					"timezone":    stringValueSchema("IANA timezone used when base_date is omitted. Defaults to UTC."),
+				},
+				[]string{"operation"},
+			),
+			Example: map[string]interface{}{"operation": "add", "base_date": "today", "amount": 3, "unit": "day", "timezone": "Asia/Shanghai"},
+		},
+	}
+}
+
+func ExpectedSkillToolArguments(skillID string, toolName string) map[string]interface{} {
+	contract, ok := SkillToolArgumentContractFor(skillID, toolName)
+	if !ok {
+		return nil
+	}
+	return map[string]interface{}{
+		"skill_id":    contract.SkillID,
+		"tool_name":   contract.ToolName,
+		"description": contract.Description,
+		"schema":      contract.Schema,
+		"example":     contract.Example,
+	}
+}
+
+func databaseListContract(skillID string) SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     skillID,
+		ToolName:    "list_accessible_databases",
+		Description: "List databases accessible to the current user or bound to the current Agent.",
+		Schema: objectSchema(
+			map[string]interface{}{
+				"query": stringValueSchema("Optional search text for narrowing candidate databases."),
+				"limit": numberSchema("Maximum number of databases to list. Defaults to 20."),
+			},
+			nil,
+		),
+		Example: map[string]interface{}{"query": "customers", "limit": 10},
+	}
+}
+
+func databaseTablesContract(skillID string) SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     skillID,
+		ToolName:    "list_database_tables",
+		Description: "List tables in an accessible database.",
+		Schema: objectSchema(
+			map[string]interface{}{
+				"data_source_id": stringValueSchema("Database ID returned by list_accessible_databases."),
+				"query":          stringValueSchema("Optional search text for narrowing tables by name or description."),
+				"limit":          numberSchema("Maximum number of tables to list. Defaults to 50."),
+			},
+			[]string{"data_source_id"},
+		),
+		Example: map[string]interface{}{"data_source_id": "database-id", "query": "orders"},
+	}
+}
+
+func databaseDescribeTableContract(skillID string) SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     skillID,
+		ToolName:    "describe_database_table",
+		Description: "Describe a database table and its columns.",
+		Schema: objectSchema(
+			map[string]interface{}{
+				"data_source_id":        stringValueSchema("Database ID returned by list_accessible_databases."),
+				"table_id":              stringValueSchema("Table metadata ID returned by list_database_tables."),
+				"include_system_fields": booleanSchema("Whether to include system fields such as id and timestamps. Defaults to false."),
+			},
+			[]string{"data_source_id", "table_id"},
+		),
+		Example: map[string]interface{}{"data_source_id": "database-id", "table_id": "table-id"},
+	}
+}
+
+func databaseQueryRecordsContract(skillID string) SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     skillID,
+		ToolName:    "query_table_records",
+		Description: "Query table records with pagination and a safe order clause.",
+		Schema: objectSchema(
+			map[string]interface{}{
+				"data_source_id": stringValueSchema("Database ID returned by list_accessible_databases."),
+				"table_id":       stringValueSchema("Table metadata ID returned by list_database_tables."),
+				"limit":          numberSchema("Maximum number of records. Defaults to 20 and is capped by the backend."),
+				"offset":         numberSchema("Pagination offset. Defaults to 0."),
+				"order":          stringValueSchema("Optional safe order clause such as id DESC."),
+			},
+			[]string{"data_source_id", "table_id"},
+		),
+		Example: map[string]interface{}{"data_source_id": "database-id", "table_id": "table-id", "limit": 20},
+	}
+}
+
+func databaseMutateRecordsContract(skillID string, toolName string, description string) SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     skillID,
+		ToolName:    toolName,
+		Description: description,
+		Schema: objectSchema(
+			map[string]interface{}{
+				"data_source_id": stringValueSchema("Database ID returned by list_accessible_databases."),
+				"table_id":       stringValueSchema("Table metadata ID returned by list_database_tables."),
+				"records": map[string]interface{}{
+					"type":        "array",
+					"description": "Records to mutate. For update and delete, each record must include id.",
+					"items": map[string]interface{}{
+						"type":                 "object",
+						"additionalProperties": true,
+					},
+				},
+			},
+			[]string{"data_source_id", "table_id", "records"},
+		),
+		Example: map[string]interface{}{"data_source_id": "database-id", "table_id": "table-id", "records": []map[string]interface{}{{"id": "record-id"}}},
+	}
+}
+
+func objectSchema(properties map[string]interface{}, required []string) map[string]interface{} {
+	if required == nil {
+		required = []string{}
+	}
+	return map[string]interface{}{
+		"type":                 "object",
+		"properties":           properties,
+		"required":             required,
+		"additionalProperties": false,
+	}
+}
+
+func numberSchema(description string) map[string]interface{} {
+	return map[string]interface{}{
+		"type":        "number",
+		"description": description,
+	}
+}
+
+func stringValueSchema(description string) map[string]interface{} {
+	return map[string]interface{}{
+		"type":        "string",
+		"description": description,
+	}
+}
+
+func enumStringSchema(description string, values []string) map[string]interface{} {
+	schema := stringValueSchema(description)
+	if len(values) > 0 {
+		schema["enum"] = values
+	}
+	return schema
+}
+
+func booleanSchema(description string) map[string]interface{} {
+	return map[string]interface{}{
+		"type":        "boolean",
+		"description": description,
+	}
+}
+
+func stringArrayOrCSVSchema(description string) map[string]interface{} {
+	return map[string]interface{}{
+		"description": description,
+		"oneOf": []interface{}{
+			map[string]interface{}{
+				"type":  "array",
+				"items": map[string]interface{}{"type": "string"},
+			},
+			map[string]interface{}{
+				"type": "string",
+			},
+		},
+	}
+}
+
+func precisionSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type":        "number",
+		"description": "Optional decimal places to round the result to. Defaults to 6 and must be between 0 and 12.",
+		"minimum":     0,
+		"maximum":     12,
+	}
 }
 
 func SkillMetadataSystemMessage(metadata []SkillPromptMetadata) llmadapter.Message {
@@ -718,6 +1143,7 @@ func (r *Runtime) loadSkillDocumentFromLocation(location skillLocation) (SkillDo
 		return SkillDocument{}, fmt.Errorf("failed to parse skill %s: %w", id, err)
 	}
 	doc := buildSkillDocument(id, root, source, frontmatter, body)
+	r.applyScriptSupport(&doc)
 	if source == SkillSourceCustom {
 		if err := validateCustomSkillDocument(doc); err != nil {
 			return SkillDocument{}, err
@@ -735,6 +1161,7 @@ func buildSkillDocument(id string, root string, source string, frontmatter Skill
 	if normalizeSkillSource(source) == SkillSourceCustom && whenToUse == "" {
 		whenToUse = strings.TrimSpace(frontmatter.Description)
 	}
+	scriptPresent := hasScripts(root)
 	return SkillDocument{
 		Metadata: SkillMetadata{
 			ID:               normalizeSkillID(id),
@@ -746,15 +1173,98 @@ func buildSkillDocument(id string, root string, source string, frontmatter Skill
 			Tools:            append([]string{}, frontmatter.Tools...),
 			RuntimeType:      normalizeSkillRuntimeType(frontmatter.RuntimeType, frontmatter.Tools),
 			MaxCallsPerTurn:  normalizePositive(frontmatter.MaxCallsPerTurn, defaultMaxCallsPerTurn),
-			TimeoutSeconds:   normalizePositive(frontmatter.TimeoutSeconds, defaultTimeoutSeconds),
+			TimeoutSeconds:   normalizeSkillTimeout(frontmatter.TimeoutSeconds, scriptPresent),
 			References:       listReferences(root, source),
-			HasScripts:       hasScripts(root),
+			HasScripts:       scriptPresent,
 			ScriptsSupported: false,
 			RootPath:         root,
+			SupportedCallers: normalizeSkillCallers(id, source, frontmatter.SupportedCallers),
+			RequiredConfig:   normalizeSkillRequiredConfig(id, frontmatter.RequiredConfig),
 		},
 		Instructions: strings.TrimSpace(body),
 		Tools:        buildSkillToolDefinitions(frontmatter),
 	}
+}
+
+func (r *Runtime) applyScriptSupport(doc *SkillDocument) {
+	if r == nil || doc == nil || !doc.Metadata.HasScripts || !r.ScriptsSupported() {
+		return
+	}
+	doc.Metadata.ScriptsSupported = true
+	ensureScriptTool(doc)
+}
+
+func normalizeToolInvokeFrom(value tools.ToolInvokeFrom) tools.ToolInvokeFrom {
+	switch value {
+	case tools.ToolInvokeFromAgent:
+		return tools.ToolInvokeFromAgent
+	default:
+		return tools.ToolInvokeFromAIChat
+	}
+}
+
+func normalizeSkillTimeout(value int, hasScriptFiles bool) int {
+	if value > 0 {
+		return value
+	}
+	if hasScriptFiles {
+		return defaultSkillScriptTimeoutSeconds
+	}
+	return defaultTimeoutSeconds
+}
+
+func normalizeSkillCallers(id string, source string, callers []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(callers))
+	for _, raw := range callers {
+		switch strings.ToLower(strings.TrimSpace(raw)) {
+		case SkillCallerAIChat:
+			if _, ok := seen[SkillCallerAIChat]; !ok {
+				seen[SkillCallerAIChat] = struct{}{}
+				out = append(out, SkillCallerAIChat)
+			}
+		case SkillCallerAgent:
+			if _, ok := seen[SkillCallerAgent]; !ok {
+				seen[SkillCallerAgent] = struct{}{}
+				out = append(out, SkillCallerAgent)
+			}
+		}
+	}
+	if len(out) > 0 {
+		return out
+	}
+	switch normalizeSkillID(id) {
+	case SkillInternalKnowledge, SkillInternalDatabase:
+		return []string{SkillCallerAIChat}
+	case SkillAgentKnowledge, SkillAgentDatabase:
+		return []string{SkillCallerAgent}
+	default:
+		return []string{SkillCallerAIChat, SkillCallerAgent}
+	}
+}
+
+func normalizeSkillRequiredConfig(id string, required []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(required))
+	for _, raw := range required {
+		value := strings.ToLower(strings.TrimSpace(raw))
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	if len(out) == 0 && normalizeSkillID(id) == SkillAgentKnowledge {
+		out = append(out, SkillRequiredConfigAgentKnowledge)
+	}
+	if len(out) == 0 && normalizeSkillID(id) == SkillAgentDatabase {
+		out = append(out, SkillRequiredConfigAgentDatabase)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func parseSkillMarkdown(raw []byte) (SkillFrontmatter, string, error) {
@@ -825,7 +1335,7 @@ func validateCustomSkillDocument(doc SkillDocument) error {
 	if doc.Metadata.RuntimeType != SkillRuntimeTypePrompt {
 		return fmt.Errorf("custom skill %s must use prompt runtime_type", doc.Metadata.ID)
 	}
-	if len(doc.Metadata.Tools) > 0 || len(doc.Tools) > 0 {
+	if len(doc.Metadata.Tools) > 0 || hasNonScriptTools(doc.Tools) {
 		return fmt.Errorf("custom skill %s must not declare tools", doc.Metadata.ID)
 	}
 	if err := validateSkillDocument(doc); err != nil {
@@ -878,6 +1388,35 @@ func findSkillTool(doc SkillDocument, toolName string) (SkillToolDefinition, boo
 		}
 	}
 	return SkillToolDefinition{}, false
+}
+
+func hasNonScriptTools(tools []SkillToolDefinition) bool {
+	for _, tool := range tools {
+		if strings.TrimSpace(tool.Name) != SkillScriptToolRun {
+			return true
+		}
+	}
+	return false
+}
+
+func ensureScriptTool(doc *SkillDocument) {
+	if doc == nil {
+		return
+	}
+	for _, tool := range doc.Tools {
+		if strings.TrimSpace(tool.Name) == SkillScriptToolRun {
+			return
+		}
+	}
+	doc.Tools = append(doc.Tools, scriptToolDefinition())
+}
+
+func scriptToolDefinition() SkillToolDefinition {
+	return SkillToolDefinition{
+		Name:         SkillScriptToolRun,
+		ProviderType: tools.ToolProviderTypeBuiltin,
+		ProviderID:   "skill-script",
+	}
 }
 
 func (r *Runtime) validateSkillTools(ctx context.Context, doc SkillDocument) error {

@@ -1125,7 +1125,7 @@ const FileManagementContent = ({
       />
       {/* Delete Folder Confirmation Dialog (only for full page mode) */}
       <ConfirmDialog
-        variant="warning"
+        variant="danger"
         open={deleteDialogOpen}
         onOpenChange={setDeleteDialogOpen}
         title={t('files.delete.folderConfirmTitle', { name: folderToDelete?.name || '' })}

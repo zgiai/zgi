@@ -535,6 +535,10 @@ const messages: DashboardMessages = {
         disabled: '未启用',
         invalid: '无效',
       },
+      scriptStatus: {
+        runnable: '脚本可运行',
+        unsupported: '脚本未启用',
+      },
       autoSave: {
         ready: '自动保存',
         saving: '保存中...',
@@ -818,6 +822,9 @@ const messages: DashboardMessages = {
       email: '邮箱',
       workspaces: '所属工作空间',
       allWorkspaces: '所有工作空间',
+      unassignedWorkspace: '未分配工作空间',
+      unassignedWorkspaceHint: '该成员已在组织中，但没有加入任何工作空间，暂时无法使用工作台功能。',
+      assignWorkspace: '分配工作空间',
       status: '状态',
       actions: '操作',
       active: '正常',
@@ -996,6 +1003,10 @@ const messages: DashboardMessages = {
       disband: '解散',
       people: '人',
       noWorkspaces: '暂无工作空间',
+      assignMemberBannerTitle: '为 {member} 分配工作空间',
+      assignMemberBannerDescription:
+        '请选择一个目标工作空间。进入详情后会自动打开添加成员弹窗，并用该成员邮箱进行搜索。',
+      assignMemberBackToContacts: '返回通讯录',
       loadError: '加载工作空间列表失败',
       deleteSuccess: '工作空间解散成功',
       deleteError: '解散工作空间失败',
@@ -1069,6 +1080,9 @@ const messages: DashboardMessages = {
         roleOwner: '负责人',
         roleAdmin: '管理员',
         roleMember: '成员',
+        assignMemberBannerTitle: '正在将 {member} 加入当前工作空间',
+        assignMemberBannerDescription:
+          '添加成员弹窗已按该邮箱预填搜索。选择成员和工作空间角色后即可完成分配。',
         addMemberModal: {
           title: '添加成员',
           titleWithWorkspace: '添加成员至 {workspaceName}',

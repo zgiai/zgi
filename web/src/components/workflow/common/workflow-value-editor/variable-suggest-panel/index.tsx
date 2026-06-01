@@ -1,8 +1,8 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import FloatingPanel from '@/components/ui/floating-panel';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import { ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 type FloatingPanelPortalRoot = React.ComponentProps<typeof FloatingPanel>['portalRoot'];
 
@@ -11,7 +11,9 @@ export interface VarOption {
   sourceId: string;
   sourceTitle: string;
   key: string;
+  insertKey?: string;
   type: string;
+  showType?: boolean;
   /** Pre-resolved description text for tooltip (caller should translate if needed) */
   description?: string;
   hasChildren?: boolean;
@@ -57,48 +59,39 @@ export default function VariableSuggestPanel(props: VariableSuggestPanelProps) {
   const hasActive = activeGroupIndex >= 0 && activeItemIndex >= 0;
   const activeKey = hasActive ? `g${activeGroupIndex}-i${activeItemIndex}` : '';
   const { labels } = props;
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const pathKey = suggestPath.join('\0');
+  const groupKey = useMemo(
+    () =>
+      groups
+        .map(group => `${group.title}:${group.items.map(item => item.key).join(',')}`)
+        .join('|'),
+    [groups]
+  );
+
+  useEffect(() => {
+    if (!open) return;
+    if (listRef.current) {
+      listRef.current.scrollTop = 0;
+    }
+  }, [open, pathKey, groupKey]);
 
   // Ensure the active item is scrolled into view when using keyboard navigation
   useEffect(() => {
     if (!open || !hasActive) return;
     try {
-      // Find the current active suggestion item within the open suggest container
-      const container = document.querySelector(
-        'div[data-wf-suggest="open"]'
-      ) as HTMLDivElement | null;
+      const container = listRef.current;
       const activeEl = container?.querySelector(
         '[data-wf-suggest-item][data-active="true"]'
       ) as HTMLElement | null;
-      if (!activeEl) return;
+      if (!container || !activeEl) return;
 
-      // Find nearest scrollable ancestor (prefer FloatingPanel root)
-      const getScrollContainer = (el: HTMLElement | null): HTMLElement | null => {
-        let cur: HTMLElement | null = el;
-        while (cur && cur !== document.body) {
-          const style = getComputedStyle(cur);
-          const overflowY = style.overflowY || style.overflow;
-          const canScroll = /(auto|scroll)/.test(overflowY);
-          if (canScroll && cur.scrollHeight > cur.clientHeight) return cur;
-          cur = cur.parentElement as HTMLElement | null;
-        }
-        return null;
-      };
-
-      const scrollContainer =
-        getScrollContainer(activeEl) ||
-        (activeEl.closest('[data-slot="floating-panel"]') as HTMLElement | null);
-      if (scrollContainer) {
-        const cRect = scrollContainer.getBoundingClientRect();
-        const iRect = activeEl.getBoundingClientRect();
-        // Scroll up or down only as needed to keep the active element fully visible
-        if (iRect.top < cRect.top) {
-          scrollContainer.scrollTop -= cRect.top - iRect.top + 4; // small head margin
-        } else if (iRect.bottom > cRect.bottom) {
-          scrollContainer.scrollTop += iRect.bottom - cRect.bottom + 4; // small tail margin
-        }
-      } else {
-        // Fallback to native behavior if no explicit container was found
-        activeEl.scrollIntoView({ block: 'nearest' });
+      const cRect = container.getBoundingClientRect();
+      const iRect = activeEl.getBoundingClientRect();
+      if (iRect.top < cRect.top) {
+        container.scrollTop -= cRect.top - iRect.top + 4;
+      } else if (iRect.bottom > cRect.bottom) {
+        container.scrollTop += iRect.bottom - cRect.bottom + 4;
       }
     } catch (err) {
       console.error('Failed to keep active suggestion visible:', err);
@@ -113,42 +106,54 @@ export default function VariableSuggestPanel(props: VariableSuggestPanelProps) {
       x={x}
       y={y}
       portalRoot={portalRoot}
-      className="w-[360px] max-h-[260px] overflow-y-auto"
+      maxWidth={420}
+      maxHeight={280}
+      className="overflow-hidden p-0"
       role="tooltip"
     >
-      <div data-wf-suggest="open" className="flex flex-col h-full">
+      <div data-wf-suggest="open" className="flex h-full min-h-0 flex-col">
         {/* Header/Breadcrumb (Hide if only sourceId is present) */}
         {suggestPath.length > 1 && (
-          <div className="flex items-center gap-1 p-2 border-b bg-muted/30 sticky top-0 z-10">
+          <div className="sticky top-0 z-10 flex items-center gap-2 border-b bg-popover/95 p-2 backdrop-blur">
             <button
               onClick={e => {
                 e.preventDefault();
                 e.stopPropagation();
                 onBack?.();
               }}
-              className="p-1 hover:bg-accent rounded-md transition-colors"
+              className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              aria-label="Back"
             >
-              <ChevronRight className="size-3 rotate-180" />
+              <ChevronLeft className="size-3.5" />
             </button>
-            <div className="flex items-center gap-1 text-[10px] text-muted-foreground truncate font-medium">
+            <div className="flex min-w-0 items-center gap-1 truncate text-xs font-medium text-muted-foreground">
               <span>{suggestPath[0]}</span>
               {suggestPath.length > 1 && (
-                <span className="text-highlight">({suggestPath.slice(1).join('.')})</span>
+                <>
+                  <ChevronRight className="size-3 shrink-0 text-muted-foreground/60" />
+                  <span className="truncate text-foreground">{suggestPath.at(-1)}</span>
+                </>
               )}
             </div>
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto">
+        <div
+          ref={listRef}
+          data-wf-suggest-list="true"
+          className="min-h-0 flex-1 overflow-y-auto p-1"
+        >
           {groups.length === 0 || groups.every(g => g.items.length === 0) ? (
             <div className="px-2 py-6 text-center text-xs text-muted-foreground">
               {labels.empty}
             </div>
           ) : (
             groups.map((g, gi) => (
-              <div key={g.title} className="mt-1 space-y-1">
+              <div key={g.title} className="space-y-1">
                 {g.title && (
-                  <div className="px-2 py-1 text-xs text-muted-foreground font-bold">{g.title}</div>
+                  <div className="sticky top-0 z-10 bg-popover/95 px-2 py-1 text-xs font-semibold text-muted-foreground backdrop-blur">
+                    {g.title}
+                  </div>
                 )}
                 {g.items.map((it, ii) => {
                   const key = `g${gi}-i${ii}`;
@@ -161,7 +166,7 @@ export default function VariableSuggestPanel(props: VariableSuggestPanelProps) {
                       aria-selected={isActive}
                       data-active={isActive}
                       className={cn(
-                        'flex cursor-pointer items-center rounded-sm text-sm outline-none overflow-hidden pr-1',
+                        'flex cursor-pointer items-stretch rounded-sm text-sm outline-none overflow-hidden pr-1',
                         isActive
                           ? 'bg-accent text-accent-foreground'
                           : 'hover:bg-accent hover:text-accent-foreground'
@@ -171,8 +176,8 @@ export default function VariableSuggestPanel(props: VariableSuggestPanelProps) {
                       {/* Left: Select Area */}
                       <div
                         className={cn(
-                          'flex-1 flex items-center gap-2 py-1 truncate min-w-0',
-                          it.hasChildren ? 'px-2' : 'pl-2'
+                          'flex-1 flex min-w-0 items-start gap-2 py-2',
+                          it.hasChildren ? 'px-2' : 'pl-2 pr-2'
                         )}
                         onMouseDown={e => {
                           e.preventDefault();
@@ -180,22 +185,35 @@ export default function VariableSuggestPanel(props: VariableSuggestPanelProps) {
                           onSelect(it);
                         }}
                       >
-                        <span className="font-medium truncate">{it.displayKey || it.key}</span>
-                        <span className="ml-auto text-[10px] uppercase text-muted-foreground shrink-0 tabular-nums">
-                          {it.type}
-                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <span className="truncate text-[13px] font-medium leading-4">
+                              {it.displayKey || it.key}
+                            </span>
+                            {it.showType === false ? null : (
+                              <span className="ml-auto shrink-0 text-[10px] uppercase text-muted-foreground tabular-nums">
+                                {it.type}
+                              </span>
+                            )}
+                          </div>
+                          {it.description ? (
+                            <div className="mt-0.5 truncate text-xs leading-4 text-muted-foreground">
+                              {it.description}
+                            </div>
+                          ) : null}
+                        </div>
                       </div>
 
                       {/* Right: Expand Area (if has children) */}
                       {it.hasChildren && (
                         <div
-                          className="p-1 hover:bg-black/5 dark:hover:bg-white/10 rounded-sm ml-px shrink-0 transition-colors"
+                          className="ml-px flex w-8 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-black/5 hover:text-foreground dark:hover:bg-white/10"
                           onMouseDown={e => {
                             e.preventDefault();
                             e.stopPropagation();
                             onExpand?.(it);
                           }}
-                          title="Expand fields"
+                          title="Enter"
                         >
                           <ChevronRight className="size-3 text-muted-foreground" />
                         </div>

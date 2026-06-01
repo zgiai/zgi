@@ -61,6 +61,7 @@ func TestToolManager_InvokeBuiltinTool(t *testing.T) {
 		"test-tenant",
 		tools.ToolInvokeFromWorkflow,
 		"",
+		nil,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, tool)
@@ -260,6 +261,7 @@ func TestToolManager_GetToolRuntimeInjectsRuntime(t *testing.T) {
 		"workspace-123",
 		tools.ToolInvokeFromWorkflow,
 		"",
+		nil,
 	)
 	require.NoError(t, err)
 

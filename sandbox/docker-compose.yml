@@ -9,6 +9,8 @@ services:
     image: zgi-sandbox:local
     env_file:
       - .env
+    environment:
+      ZGI_SANDBOX_DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in sandbox/.env or your environment}@sandbox-postgres:5432/${POSTGRES_DB:-zgi_sandbox}?sslmode=disable
     networks:
       default:
       zgi-network:
@@ -27,7 +29,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "python3 -c \"import os, sys, urllib.request; port=os.environ.get('ZGI_SANDBOX_SERVER_PORT', '2660'); sys.exit(0 if urllib.request.urlopen(f'http://127.0.0.1:{port}/health').getcode() == 200 else 1)\"",
+          "python3 -c \"import json, os, sys, urllib.request; port=os.environ.get('ZGI_SANDBOX_SERVER_PORT', '2660'); res=urllib.request.urlopen(f'http://127.0.0.1:{port}/ready', timeout=3); body=json.load(res); sys.exit(0 if res.getcode() == 200 and body.get('ready') is True else 1)\"",
         ]
       interval: 15s
       timeout: 5s
@@ -39,6 +41,8 @@ services:
     image: postgres:16-alpine
     env_file:
       - .env
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in sandbox/.env or your environment}
     networks:
       default:
         aliases:

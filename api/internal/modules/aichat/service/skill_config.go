@@ -227,7 +227,7 @@ func defaultEnabledSkillIDs(catalog []skills.SkillDiscoveryMetadata) []string {
 func visibleSkillMetadata(metadata []skills.SkillDiscoveryMetadata) []skills.SkillDiscoveryMetadata {
 	out := make([]skills.SkillDiscoveryMetadata, 0, len(metadata))
 	for _, item := range metadata {
-		if strings.EqualFold(strings.TrimSpace(item.ID), userMemorySkillID()) {
+		if skills.IsHiddenSystemSkill(item.ID) {
 			continue
 		}
 		out = append(out, item)

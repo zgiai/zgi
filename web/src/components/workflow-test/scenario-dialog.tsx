@@ -48,9 +48,12 @@ export function ScenarioDialog({ agentId, scenarios, open, onOpenChange }: Scena
   const commonT = useT('agents.workflowTest.common');
   const saveScenarios = useSaveWorkflowTestScenarios(agentId);
   const [items, setItems] = React.useState<EditableScenario[]>([]);
+  const [invalidNameClientId, setInvalidNameClientId] = React.useState<string | null>(null);
+  const nameInputRefs = React.useRef(new Map<string, HTMLInputElement>());
 
   React.useEffect(() => {
     if (open) {
+      setInvalidNameClientId(null);
       setItems(
         scenarios.length > 0
           ? scenarios.map(scenario => ({
@@ -67,17 +70,60 @@ export function ScenarioDialog({ agentId, scenarios, open, onOpenChange }: Scena
 
   const updateItem = (clientId: string, patch: Partial<EditableScenario>) => {
     setItems(prev => prev.map(item => (item.clientId === clientId ? { ...item, ...patch } : item)));
+    if (patch.name !== undefined && patch.name.trim() && invalidNameClientId === clientId) {
+      setInvalidNameClientId(null);
+    }
   };
 
   const removeItem = (clientId: string) => {
     setItems(prev => prev.filter(item => item.clientId !== clientId));
+    if (invalidNameClientId === clientId) {
+      setInvalidNameClientId(null);
+    }
   };
 
-  const canSubmit = items.some(item => item.name.trim()) && !saveScenarios.isPending;
+  const hasClearedAllScenarios = scenarios.length > 0 && items.length === 0;
+  const canSubmit = (items.length > 0 || hasClearedAllScenarios) && !saveScenarios.isPending;
+
+  const setNameInputRef = React.useCallback(
+    (clientId: string) => (node: HTMLInputElement | null) => {
+      if (node) {
+        nameInputRefs.current.set(clientId, node);
+      } else {
+        nameInputRefs.current.delete(clientId);
+      }
+    },
+    []
+  );
+
+  const handleSubmit = () => {
+    const invalidItem = items.find(item => !item.name.trim());
+    if (invalidItem) {
+      setInvalidNameClientId(invalidItem.clientId);
+      requestAnimationFrame(() => {
+        nameInputRefs.current.get(invalidItem.clientId)?.focus();
+      });
+      return;
+    }
+    saveScenarios.mutate(
+      {
+        scenarios: items.map(item => ({
+          id: item.id,
+          name: item.name.trim(),
+          description: item.description.trim(),
+        })),
+      },
+      { onSuccess: () => onOpenChange(false) }
+    );
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent size="xl" className="max-h-[88vh] max-w-[960px] overflow-hidden rounded-2xl">
+      <DialogContent
+        size="xl"
+        className="max-h-[88vh] max-w-[960px] overflow-hidden rounded-2xl"
+        onInteractOutside={event => event.preventDefault()}
+      >
         <DialogHeader>
           <DialogTitle>{t('title')}</DialogTitle>
           <DialogDescription>{t('description')}</DialogDescription>
@@ -105,12 +151,24 @@ export function ScenarioDialog({ agentId, scenarios, open, onOpenChange }: Scena
               </div>
               <div className="mt-4 grid gap-4 md:grid-cols-[0.8fr_1.2fr]">
                 <div className="space-y-2">
-                  <Label>{t('nameLabel')}</Label>
+                  <Label>
+                    {t('nameLabel')}
+                    <span className="ml-0.5 text-red-500">*</span>
+                  </Label>
                   <Input
+                    ref={setNameInputRef(item.clientId)}
                     value={item.name}
                     onChange={event => updateItem(item.clientId, { name: event.target.value })}
                     placeholder={t('namePlaceholder')}
+                    aria-invalid={invalidNameClientId === item.clientId ? 'true' : 'false'}
+                    className={cn(
+                      invalidNameClientId === item.clientId &&
+                        'border-red-300 focus-visible:ring-red-200'
+                    )}
                   />
+                  {invalidNameClientId === item.clientId ? (
+                    <p className="text-xs font-medium text-red-600">{t('nameRequired')}</p>
+                  ) : null}
                 </div>
                 <div className="space-y-2">
                   <Label>{t('descriptionLabel')}</Label>
@@ -139,20 +197,7 @@ export function ScenarioDialog({ agentId, scenarios, open, onOpenChange }: Scena
           </Button>
           <Button
             disabled={!canSubmit}
-            onClick={() => {
-              saveScenarios.mutate(
-                {
-                  scenarios: items
-                    .filter(item => item.name.trim())
-                    .map(item => ({
-                      id: item.id,
-                      name: item.name,
-                      description: item.description,
-                    })),
-                },
-                { onSuccess: () => onOpenChange(false) }
-              );
-            }}
+            onClick={handleSubmit}
           >
             {t('submit')}
           </Button>

@@ -120,6 +120,26 @@ const messages = {
     loading: 'Loading...',
     noResults: 'No matching workspaces found',
     noWorkspaces: 'No workspaces available',
+    noWorkspacesMember: 'You are not assigned to a workspace yet.',
+    noWorkspacesAdmin: 'No workspaces are assigned or available yet.',
+  },
+
+  workspaceRequired: {
+    title: 'Select a workspace to continue',
+    description:
+      'The workbench runs inside a specific workspace. Select a workspace before starting chats, apps, image generation, or tasks.',
+    noWorkspacesTitle: 'No workspace is available',
+    memberNoWorkspacesDescription:
+      'You have joined the organization, but you have not been assigned to any workspace yet.',
+    adminNoWorkspacesDescription:
+      'The workbench needs a concrete workspace before chats, apps, image generation, or tasks can be used.',
+    memberNoWorkspacesHint:
+      'Ask an organization administrator to add you to a workspace before using the workbench.',
+    adminNoWorkspacesHint:
+      'Create a workspace or assign members in workspace management, then return to the workbench.',
+    loadingWorkspaces: 'Loading workspaces...',
+    manageWorkspaces: 'Manage workspaces',
+    refreshWorkspaces: 'Refresh workspaces',
   },
 
   assetMove: {

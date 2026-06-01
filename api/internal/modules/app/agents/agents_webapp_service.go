@@ -132,6 +132,9 @@ func (s *agentsService) ensureCanManageAgent(ctx context.Context, ag *Agent, acc
 		return fmt.Errorf("permission denied")
 	}
 
+	if s.accountService == nil {
+		return nil
+	}
 	isEditor, err := s.accountService.IsEditor(ctx, accountID)
 	if err != nil {
 		return err

@@ -72,6 +72,7 @@ type GenerateRequest struct {
 	WorkspaceID    string
 	OrganizationID string
 	AccountID      string
+	AppType        string
 }
 
 // GenerateResult is returned by Generator.

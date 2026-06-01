@@ -30,6 +30,7 @@ export { useEventBus } from './use-event-bus';
 export { useHitTestingHistory } from './dataset/use-hit-testing-history';
 export { useLocale } from './use-locale';
 export { useIsMobile } from './use-mobile';
+export { useMediaQuery } from './use-media-query';
 
 // Organization & Workspace hooks
 export { useManagedWorkspaces } from './workspace/use-managed-workspaces';
@@ -166,8 +167,12 @@ export {
   useDeleteAIChatSkill,
   useAIChatSkill,
   useAIChatSkillConfig,
+  useAIChatSkillPreference,
   useAIChatSkills,
+  useOrganizationSkillPolicy,
+  useSkillCatalog,
   useUpdateAIChatSkillConfig,
+  useUpdateAIChatSkillPreference,
 } from './aichat/use-aichat-skills';
 
 // Hook-specific types

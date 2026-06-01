@@ -10,11 +10,13 @@ import (
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/infra/platform"
 	"github.com/zgiai/zgi/api/internal/infra/platform/console"
+	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/diagnosis"
 	workflow_file "github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
 	workflowruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/runtime"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
+	workflowtest "github.com/zgiai/zgi/api/internal/modules/app/workflowtest"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	automationdefinition "github.com/zgiai/zgi/api/internal/modules/automation/service/definition"
 	datalibrarymodule "github.com/zgiai/zgi/api/internal/modules/datalibrary"
@@ -63,6 +65,8 @@ import (
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/memory"
+	database_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/database"
+	knowledge_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/knowledge"
 	helper "github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/queue"
@@ -194,7 +198,11 @@ type ServiceContainer struct {
 	toolEngine *tools.ToolEngine
 
 	// Account memory
-	memoryService *memory.Service
+	memoryService      *memory.Service
+	agentMemoryService *agentmemory.Service
+
+	// Knowledge retrieval for builtin knowledge tools
+	knowledgeRetrievalService *dataset_service.KnowledgeRetrievalService
 
 	// Platform container
 	platformContainer *platform.Container
@@ -213,6 +221,7 @@ type ServiceContainer struct {
 
 	// Workflow engine factory
 	workflowEngineFactory *graph_engine.EngineFactory
+	workflowTestService   *workflowtest.Service
 
 	// Workflow Diagnoser
 	workflowDiagnoser *diagnosis.Diagnoser
@@ -263,6 +272,13 @@ func (c *ServiceContainer) GetTaskHandlerRegistry() *TaskHandlerRegistrar {
 		c.taskHandlerRegistry = NewTaskHandlerRegistrar()
 	}
 	return c.taskHandlerRegistry
+}
+
+func (c *ServiceContainer) GetWorkflowTestService() *workflowtest.Service {
+	if c.workflowTestService == nil {
+		c.workflowTestService = workflowtest.NewService(workflowtest.NewRepository(c.db))
+	}
+	return c.workflowTestService
 }
 
 func (c *ServiceContainer) GetTenantService() interfaces.WorkspaceManagementService {
@@ -773,7 +789,8 @@ func (c *ServiceContainer) GetToolManager() *tools.ToolManager {
 
 		// Register builtin tool providers
 		c.toolManager.RegisterBuiltinProviders(getBuiltinToolProviders())
-		_ = c.toolManager.RegisterProvider(memory.NewProvider(c.GetMemoryService()))
+		_ = c.toolManager.RegisterProvider(knowledge_tools.NewProvider(c.GetKnowledgeRetrievalService()))
+		_ = c.toolManager.RegisterProvider(database_tools.NewProvider(c.GetDataSourceService(), c.GetOrganizationService()))
 
 		logger.Info("ToolManager initialized with builtin providers")
 	}
@@ -793,6 +810,26 @@ func (c *ServiceContainer) GetMemoryService() *memory.Service {
 		c.memoryService = memory.NewService(c.db)
 	}
 	return c.memoryService
+}
+
+func (c *ServiceContainer) GetKnowledgeRetrievalService() *dataset_service.KnowledgeRetrievalService {
+	if c.knowledgeRetrievalService == nil {
+		c.knowledgeRetrievalService = dataset_service.NewKnowledgeRetrievalService(
+			c.db,
+			c.config,
+			c.GetLLMClient(),
+			c.GetDefaultModelService(),
+			c.GetGraphFlowService(),
+		)
+	}
+	return c.knowledgeRetrievalService
+}
+
+func (c *ServiceContainer) GetAgentMemoryService() *agentmemory.Service {
+	if c.agentMemoryService == nil {
+		c.agentMemoryService = agentmemory.NewService(c.db)
+	}
+	return c.agentMemoryService
 }
 
 func (c *ServiceContainer) GetConsoleProvider() console.ConsoleProvider {

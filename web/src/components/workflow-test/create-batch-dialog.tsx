@@ -58,7 +58,7 @@ export function CreateBatchDialog({ agentId, cases, open, onOpenChange }: Create
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent size="lg">
+      <DialogContent size="lg" onInteractOutside={event => event.preventDefault()}>
         <DialogHeader>
           <DialogTitle>{t('title')}</DialogTitle>
           <DialogDescription>{t('description')}</DialogDescription>

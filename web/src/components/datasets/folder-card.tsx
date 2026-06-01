@@ -87,7 +87,7 @@ function FolderCard({ folder }: FolderCardProps) {
       )}
       {/* Delete confirmation dialog */}
       <ConfirmDialog
-        variant="warning"
+        variant="danger"
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
         title={t('deleteConfirmTitle', { name: folder.name })}

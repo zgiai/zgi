@@ -1,10 +1,19 @@
 'use client';
 
-import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  createElement,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { useStore } from 'zustand';
-import { ArrowDown } from 'lucide-react';
+import { ArrowDown, MessageSquarePlus, PanelLeft, Settings2 } from 'lucide-react';
 import type { ModelSelectorValue } from '@/components/common/model-selector';
 import type { AIChatController } from '@/components/chat/controllers/aichat-controller';
 import type { ConversationSummary } from '@/components/chat/controllers/types';
@@ -22,10 +31,15 @@ import {
 import { Sidebar } from '@/components/chat/variants/common/sidebar';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
-import { useAIChatSkills } from '@/hooks/aichat/use-aichat-skills';
+import {
+  useAIChatSkillPreference,
+  useAIChatSkills,
+  useUpdateAIChatSkillPreference,
+} from '@/hooks/aichat/use-aichat-skills';
 import { useLocale } from '@/hooks/use-locale';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useT } from '@/i18n/translations';
+import { cn } from '@/lib/utils';
 import { useWorkspaceStore } from '@/store/workspace-store';
 import type { AIChatMessage, AIChatMessageFile } from '@/services/types/aichat';
 import {
@@ -35,9 +49,16 @@ import {
 } from '@/components/chat/utils/message-tree';
 import { AIChatHeader } from '@/components/chat/variants/aichat/chat-header';
 import { AIChatHomeView } from '@/components/chat/variants/aichat/home-view';
-import { AIChatInputArea } from '@/components/chat/variants/aichat/input-area';
+import {
+  AIChatInputArea,
+  type AIChatUploadScope,
+} from '@/components/chat/variants/aichat/input-area';
 import { AIChatMessageList } from '@/components/chat/variants/aichat/message-list';
-import { buildAIChatSkillDisplayMap } from '@/components/chat/variants/aichat/skill-display';
+import {
+  buildAIChatSkillDisplayMap,
+  isHiddenSystemSkill,
+} from '@/components/chat/variants/aichat/skill-display';
+import { AIChatSkillPreferenceDialog } from '@/components/chat/variants/aichat/skill-preference-dialog';
 import { useAIChatScroll } from '@/components/chat/variants/aichat/use-aichat-scroll';
 import {
   getAIChatMessageErrorInput,
@@ -60,7 +81,58 @@ export type { AIChatModelValue } from '@/components/chat/variants/aichat/types';
 interface AIChatShellProps {
   controller: AIChatController;
   modelSelectorValue: AIChatModelValue;
+  isModelInitializing?: boolean;
   onModelChange: (value: ModelSelectorValue) => void;
+  variant?: 'full' | 'embedded';
+  showModelSelector?: boolean;
+  requireModel?: boolean;
+  showMemoryToggle?: boolean;
+  forcedUseMemory?: boolean;
+  enableUpload?: boolean;
+  uploadScope?: AIChatUploadScope;
+  showFileLibraryPicker?: boolean;
+  allowWorkspaceSwitch?: boolean;
+  homeBrand?: React.ReactNode;
+  homeTitle?: string;
+  homeDescription?: string;
+  suggestions?: string[];
+  inputPlaceholder?: string;
+  embeddedConversationMode?: 'none' | 'drawer';
+  embeddedConversationControlsMode?: 'internal' | 'external';
+  embeddedConversationControlsClassName?: string;
+  embeddedConversationControlsPortalId?: string;
+  renderEmbeddedConversationControls?: (controls: {
+    openConversations: () => void;
+    startNewConversation: () => void;
+    isHome: boolean;
+  }) => React.ReactNode;
+  onSelectConversation?: (id: string) => void;
+  onStartNewConversation?: () => void;
+  showAssistantModelMeta?: boolean;
+  surface?: 'aichat' | 'agent-draft' | 'agent-webapp';
+  themeColor?: string;
+}
+
+const CHAT_THEME_PRIMARY: Record<string, string> = {
+  blue: '217 91% 60%',
+  emerald: '160 84% 39%',
+  violet: '262 83% 58%',
+  rose: '346 77% 50%',
+  amber: '38 92% 50%',
+  slate: '215 20% 45%',
+};
+
+function normalizeSkillIds(skillIds: string[]) {
+  return Array.from(new Set(skillIds.filter(Boolean))).sort();
+}
+
+function areSkillIdsEqual(left: string[], right: string[]) {
+  const normalizedLeft = normalizeSkillIds(left);
+  const normalizedRight = normalizeSkillIds(right);
+  return (
+    normalizedLeft.length === normalizedRight.length &&
+    normalizedLeft.every((skillId, index) => skillId === normalizedRight[index])
+  );
 }
 
 /**
@@ -75,18 +147,52 @@ interface AIChatShellProps {
 export function AIChatShell({
   controller,
   modelSelectorValue,
+  isModelInitializing = false,
   onModelChange,
+  variant = 'full',
+  showModelSelector = true,
+  requireModel = true,
+  showMemoryToggle = true,
+  forcedUseMemory,
+  enableUpload = true,
+  uploadScope,
+  showFileLibraryPicker = true,
+  allowWorkspaceSwitch = false,
+  homeBrand,
+  homeTitle,
+  homeDescription,
+  suggestions: configuredSuggestions,
+  inputPlaceholder,
+  embeddedConversationMode = 'none',
+  embeddedConversationControlsMode = 'internal',
+  embeddedConversationControlsClassName,
+  embeddedConversationControlsPortalId,
+  renderEmbeddedConversationControls,
+  onSelectConversation,
+  onStartNewConversation,
+  showAssistantModelMeta = true,
+  surface = 'aichat',
+  themeColor,
 }: AIChatShellProps) {
   const router = useRouter();
   const t = useT('webapp');
   const tGlobal = useT();
   const { locale } = useLocale();
   const isMobile = useIsMobile();
+  const isEmbedded = variant === 'embedded';
+  const showEmbeddedConversationDrawer = isEmbedded && embeddedConversationMode === 'drawer';
+  const themeStyle = useMemo<CSSProperties | undefined>(() => {
+    const primary = themeColor ? CHAT_THEME_PRIMARY[themeColor] : undefined;
+    return primary ? ({ '--primary': primary } as CSSProperties) : undefined;
+  }, [themeColor]);
   const [input, setInput] = useState('');
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingQuery, setEditingQuery] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [externalControlsPortal, setExternalControlsPortal] = useState<HTMLElement | null>(null);
+  const [skillPreferenceOpen, setSkillPreferenceOpen] = useState(false);
+  const [draftSkillPreferenceIds, setDraftSkillPreferenceIds] = useState<string[]>([]);
   const [inputAreaHeight, setInputAreaHeight] = useState(160);
   const topologyRef = useRef<{ key: string; topology: ChatMessageTopology } | null>(null);
   const lastErrorToastRef = useRef<string | null>(null);
@@ -106,10 +212,39 @@ export function AIChatShell({
   const currentWorkspace = useWorkspaceStore.use.currentWorkspace();
   const organizationRole = useWorkspaceStore.use.permissionState().organizationRole;
   const isBillingAdmin = organizationRole === 'owner' || organizationRole === 'admin';
-  const { data: availableSkills = [] } = useAIChatSkills();
+  const enableAIChatSkillPreference =
+    !isEmbedded && surface !== 'agent-draft' && surface !== 'agent-webapp';
+  const { data: availableSkills = [] } = useAIChatSkills({ enabled: enableAIChatSkillPreference });
+  const { data: skillPreference, isLoading: isLoadingSkillPreference } = useAIChatSkillPreference({
+    enabled: enableAIChatSkillPreference,
+  });
+  const updateSkillPreference = useUpdateAIChatSkillPreference();
   const skillDisplayById = useMemo(
     () => buildAIChatSkillDisplayMap(availableSkills, locale),
     [availableSkills, locale]
+  );
+  const aichatConfigurableSkills = useMemo(
+    () =>
+      availableSkills.filter(skill => {
+        if (!skill.enabled || skill.status === 'invalid') return false;
+        if (isHiddenSystemSkill(skill.skill_id)) return false;
+        const callers = skill.supported_callers ?? [];
+        return callers.length === 0 || callers.includes('aichat');
+      }),
+    [availableSkills]
+  );
+
+  useEffect(() => {
+    if (!enableAIChatSkillPreference || !skillPreference) return;
+    setDraftSkillPreferenceIds(skillPreference.enabled_skill_ids ?? []);
+  }, [enableAIChatSkillPreference, skillPreference]);
+  const savedSkillPreferenceIds = useMemo(
+    () => skillPreference?.enabled_skill_ids ?? [],
+    [skillPreference?.enabled_skill_ids]
+  );
+  const hasSkillPreferenceChanges = useMemo(
+    () => !areSkillIdsEqual(draftSkillPreferenceIds, savedSkillPreferenceIds),
+    [draftSkillPreferenceIds, savedSkillPreferenceIds]
   );
 
   const messageTopologyKey = useMemo(
@@ -138,7 +273,7 @@ export function AIChatShell({
     [displayMessageIds, messageTopology]
   );
   const isHome = !activeConversationId && messages.length === 0 && !isSending;
-  const modelMissing = !modelSelectorValue.model;
+  const modelMissing = requireModel && !isModelInitializing && !modelSelectorValue.model;
   const {
     bottomRef,
     scrollViewportRef,
@@ -157,8 +292,7 @@ export function AIChatShell({
     () =>
       Object.values(streamingByMessageId).some(
         streaming =>
-          streaming.status === 'streaming' &&
-          streaming.conversation_id === activeConversationId
+          streaming.status === 'streaming' && streaming.conversation_id === activeConversationId
       ),
     [activeConversationId, streamingByMessageId]
   );
@@ -230,15 +364,22 @@ export function AIChatShell({
     [activeConversationId, conversations, isRecoveringMessages, isStopping]
   );
 
-  const suggestions = useMemo<AIChatSuggestion[]>(
-    () => [
+  const suggestions = useMemo<AIChatSuggestion[]>(() => {
+    if (configuredSuggestions) {
+      return configuredSuggestions
+        .map(text => text.trim())
+        .filter(Boolean)
+        .slice(0, 6)
+        .map((text, index) => ({ text, key: `configured-${index}` }));
+    }
+
+    return [
       { text: t('chat.suggestions.email'), key: 'email' },
       { text: t('chat.suggestions.meeting'), key: 'meeting' },
       { text: t('chat.suggestions.report'), key: 'report' },
       { text: t('chat.suggestions.polish'), key: 'polish' },
-    ],
-    [t]
-  );
+    ];
+  }, [configuredSuggestions, t]);
 
   const canReplaceRootMessage = useCallback(
     (message: AIChatMessage) => {
@@ -270,7 +411,7 @@ export function AIChatShell({
     (files: AIChatMessageFile[] = [], useMemory = false) => {
       const query = input.trim();
       if (!query || isSending) return;
-      if (!modelSelectorValue.model) {
+      if (requireModel && !modelSelectorValue.model) {
         toast.error(t('consoleChat.modelRequired'));
         return;
       }
@@ -284,10 +425,10 @@ export function AIChatShell({
           model: modelSelectorValue.model,
           parameters: modelSelectorValue.params,
         },
-        useMemory,
+        useMemory: forcedUseMemory ?? useMemory,
       });
     },
-    [controller, input, isSending, modelSelectorValue, t]
+    [controller, forcedUseMemory, input, isSending, modelSelectorValue, requireModel, t]
   );
 
   const handleRegenerate = useCallback(
@@ -295,7 +436,7 @@ export function AIChatShell({
       const branchCount = branchNavigationByMessageId.get(message.id)?.total ?? 1;
       const canReplaceRoot = canReplaceRootMessage(message);
       if (!canReplaceRoot && (!message.parent_id || branchCount >= MAX_AICHAT_BRANCHES)) return;
-      if (!modelSelectorValue.model) {
+      if (requireModel && !modelSelectorValue.model) {
         toast.error(t('consoleChat.modelRequired'));
         return;
       }
@@ -306,7 +447,14 @@ export function AIChatShell({
         parameters: modelSelectorValue.params,
       });
     },
-    [branchNavigationByMessageId, canReplaceRootMessage, controller, modelSelectorValue, t]
+    [
+      branchNavigationByMessageId,
+      canReplaceRootMessage,
+      controller,
+      modelSelectorValue,
+      requireModel,
+      t,
+    ]
   );
 
   const handleEditStart = useCallback(
@@ -337,7 +485,7 @@ export function AIChatShell({
       ) {
         return;
       }
-      if (!modelSelectorValue.model) {
+      if (requireModel && !modelSelectorValue.model) {
         toast.error(t('consoleChat.modelRequired'));
         return;
       }
@@ -375,6 +523,7 @@ export function AIChatShell({
       editingQuery,
       isSending,
       modelSelectorValue,
+      requireModel,
       t,
     ]
   );
@@ -394,16 +543,24 @@ export function AIChatShell({
       setMobileSidebarOpen(false);
       return;
     }
-    controller.startNew();
+    if (onStartNewConversation) {
+      onStartNewConversation();
+    } else {
+      controller.startNew();
+    }
     setMobileSidebarOpen(false);
-  }, [controller, isHome, t]);
+  }, [controller, isHome, onStartNewConversation, t]);
 
   const handleSelectConversation = useCallback(
     (id: string) => {
-      void controller.select(id);
+      if (onSelectConversation) {
+        onSelectConversation(id);
+      } else {
+        void controller.select(id);
+      }
       setMobileSidebarOpen(false);
     },
-    [controller]
+    [controller, onSelectConversation]
   );
 
   const handleDeleteConversation = useCallback(
@@ -421,30 +578,152 @@ export function AIChatShell({
     [controller]
   );
 
-  return (
-    <div className="flex h-full w-full overflow-hidden bg-background">
-      <div className="hidden md:block">
-        <Sidebar
-          activeId={activeConversationId}
-          conversations={conversationSummaries}
-          isOpen={sidebarOpen}
-          isHome={isHome}
-          onNewChat={handleNewChat}
-          onSelect={handleSelectConversation}
-          onDelete={handleDeleteConversation}
-          onRename={handleRenameConversation}
-          backgroundImage={AICHAT_SIDEBAR_BG_IMAGE}
-        />
+  const handleToggleSkillPreference = useCallback((skillId: string, checked: boolean) => {
+    setDraftSkillPreferenceIds(current =>
+      checked ? Array.from(new Set([...current, skillId])) : current.filter(id => id !== skillId)
+    );
+  }, []);
+
+  const handleSkillPreferenceOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open && updateSkillPreference.isPending) return;
+      setDraftSkillPreferenceIds(savedSkillPreferenceIds);
+      setSkillPreferenceOpen(open);
+    },
+    [savedSkillPreferenceIds, updateSkillPreference.isPending]
+  );
+
+  const handleSaveSkillPreference = useCallback(() => {
+    const requestedSkillIds = normalizeSkillIds(draftSkillPreferenceIds);
+    updateSkillPreference.mutate(
+      { payload: { enabled_skill_ids: requestedSkillIds } },
+      {
+        onSuccess: response => {
+          const savedSkillIds = normalizeSkillIds(
+            response.data?.enabled_skill_ids ?? requestedSkillIds
+          );
+          setDraftSkillPreferenceIds(savedSkillIds);
+          setSkillPreferenceOpen(false);
+          if (areSkillIdsEqual(requestedSkillIds, savedSkillIds)) {
+            toast.success(t('consoleChat.skillPreferences.saved'));
+          } else {
+            toast.warning(t('consoleChat.skillPreferences.savedWithChanges'));
+          }
+        },
+        onError: error => {
+          toast.error(
+            error instanceof Error ? error.message : t('consoleChat.skillPreferences.saveFailed')
+          );
+        },
+      }
+    );
+  }, [draftSkillPreferenceIds, t, updateSkillPreference]);
+
+  const embeddedConversationControls = useMemo(() => {
+    if (!showEmbeddedConversationDrawer) return null;
+    const controls = {
+      openConversations: () => setMobileSidebarOpen(true),
+      startNewConversation: handleNewChat,
+      isHome,
+    };
+    if (renderEmbeddedConversationControls) {
+      return renderEmbeddedConversationControls(controls);
+    }
+    return (
+      <div className="flex items-center gap-1 rounded-full border bg-background/90 p-1 shadow-sm backdrop-blur">
+        <Button
+          variant="ghost"
+          isIcon
+          className="size-8 text-muted-foreground"
+          onClick={controls.openConversations}
+          title={t('consoleChat.toggleSidebar')}
+        >
+          <PanelLeft className="size-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          isIcon
+          className="size-8 text-muted-foreground"
+          onClick={controls.startNewConversation}
+          title={t('chat.newConversation')}
+        >
+          <MessageSquarePlus className="size-4" />
+        </Button>
       </div>
+    );
+  }, [
+    handleNewChat,
+    isHome,
+    renderEmbeddedConversationControls,
+    showEmbeddedConversationDrawer,
+    t,
+  ]);
+
+  useEffect(() => {
+    if (
+      embeddedConversationControlsMode !== 'external' ||
+      !embeddedConversationControlsPortalId ||
+      typeof document === 'undefined'
+    ) {
+      setExternalControlsPortal(null);
+      return;
+    }
+    setExternalControlsPortal(document.getElementById(embeddedConversationControlsPortalId));
+  }, [embeddedConversationControlsMode, embeddedConversationControlsPortalId]);
+
+  return (
+    <div className="flex h-full w-full overflow-hidden bg-background" style={themeStyle}>
+      {!isEmbedded ? (
+        <div className="hidden md:block">
+          <Sidebar
+            activeId={activeConversationId}
+            conversations={conversationSummaries}
+            isOpen={sidebarOpen}
+            isHome={isHome}
+            onNewChat={handleNewChat}
+            onSelect={handleSelectConversation}
+            onDelete={handleDeleteConversation}
+            onRename={handleRenameConversation}
+            backgroundImage={AICHAT_SIDEBAR_BG_IMAGE}
+          />
+        </div>
+      ) : null}
 
       <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
-        <AIChatHeader
-          isMobile={isMobile}
-          isHome={isHome}
-          title={activeConversation?.title || t('consoleChat.title')}
-          onToggleSidebar={handleToggleSidebar}
-          onStartNew={handleNewChat}
-        />
+        {!isEmbedded ? (
+          <AIChatHeader
+            isMobile={isMobile}
+            isHome={isHome}
+            title={activeConversation?.title || t('consoleChat.title')}
+            onToggleSidebar={handleToggleSidebar}
+            onStartNew={handleNewChat}
+            rightAction={
+              enableAIChatSkillPreference ? (
+                <Button
+                  variant="ghost"
+                  isIcon
+                  className="size-8 text-muted-foreground"
+                  onClick={() => handleSkillPreferenceOpenChange(true)}
+                  title={t('consoleChat.skillPreferences.action')}
+                >
+                  <Settings2 className="size-4" />
+                </Button>
+              ) : undefined
+            }
+          />
+        ) : null}
+
+        {showEmbeddedConversationDrawer && embeddedConversationControlsMode === 'internal' ? (
+          <div
+            className={cn('absolute z-30', embeddedConversationControlsClassName ?? 'left-3 top-3')}
+          >
+            {embeddedConversationControls}
+          </div>
+        ) : null}
+
+        {externalControlsPortal && embeddedConversationControls
+          ? createPortal(embeddedConversationControls, externalControlsPortal)
+          : null}
 
         <AIChatMessageList
           messages={messages}
@@ -468,12 +747,20 @@ export function AIChatShell({
           onEditChange={setEditingQuery}
           onEditCancel={handleEditCancel}
           onEditSubmit={handleEditSubmit}
+          showAssistantModelMeta={showAssistantModelMeta}
+          layout={isEmbedded ? 'embedded' : 'full'}
+          showMemoryKey={surface !== 'agent-webapp'}
+          showSkillEventDetails={surface !== 'agent-webapp'}
         />
 
         <AIChatHomeView
           isVisible={isHome && !isLoadingMessages}
           suggestions={suggestions}
           onSelectSuggestion={setInput}
+          brand={homeBrand}
+          title={homeTitle}
+          description={homeDescription}
+          surface={surface}
         />
 
         {showResumeScrollButton ? (
@@ -495,6 +782,7 @@ export function AIChatShell({
           isLoadingMessages={isLoadingMessages}
           input={input}
           modelSelectorValue={modelSelectorValue}
+          isModelInitializing={isModelInitializing}
           modelMissing={modelMissing}
           isSending={isSending}
           isStopping={isStopping}
@@ -503,27 +791,52 @@ export function AIChatShell({
           onStop={controller.stop}
           onModelChange={onModelChange}
           onHeightChange={setInputAreaHeight}
+          showModelSelector={showModelSelector}
+          showMemoryToggle={showMemoryToggle}
+          enableUpload={enableUpload}
+          uploadScope={uploadScope}
+          showFileLibraryPicker={showFileLibraryPicker}
+          allowWorkspaceSwitch={allowWorkspaceSwitch}
+          inputPlaceholder={inputPlaceholder}
+          surface={surface}
         />
       </main>
 
-      <Sheet open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
-        <SheetContent side="left" className="max-w-none p-0 sm:max-w-sm" showClose={false}>
-          <SheetTitle className="sr-only">{t('chat.conversations')}</SheetTitle>
-          <Sidebar
-            activeId={activeConversationId}
-            conversations={conversationSummaries}
-            isOpen
-            isHome={isHome}
-            className="w-full border-r-0"
-            onNewChat={handleNewChat}
-            onSelect={handleSelectConversation}
-            onDelete={handleDeleteConversation}
-            onRename={handleRenameConversation}
-            backgroundImage={AICHAT_SIDEBAR_BG_IMAGE}
-            onClose={() => setMobileSidebarOpen(false)}
-          />
-        </SheetContent>
-      </Sheet>
+      {!isEmbedded || showEmbeddedConversationDrawer ? (
+        <Sheet open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
+          <SheetContent side="left" className="max-w-none p-0 sm:max-w-sm" showClose={false}>
+            <SheetTitle className="sr-only">{t('chat.conversations')}</SheetTitle>
+            <Sidebar
+              activeId={activeConversationId}
+              conversations={conversationSummaries}
+              isOpen
+              isHome={isHome}
+              className="w-full border-r-0"
+              onNewChat={handleNewChat}
+              onSelect={handleSelectConversation}
+              onDelete={handleDeleteConversation}
+              onRename={handleRenameConversation}
+              backgroundImage={AICHAT_SIDEBAR_BG_IMAGE}
+              onClose={() => setMobileSidebarOpen(false)}
+            />
+          </SheetContent>
+        </Sheet>
+      ) : null}
+
+      {enableAIChatSkillPreference ? (
+        <AIChatSkillPreferenceDialog
+          open={skillPreferenceOpen}
+          locale={locale}
+          skills={aichatConfigurableSkills}
+          selectedSkillIds={draftSkillPreferenceIds}
+          isLoading={isLoadingSkillPreference}
+          isSaving={updateSkillPreference.isPending}
+          hasChanges={hasSkillPreferenceChanges}
+          onOpenChange={handleSkillPreferenceOpenChange}
+          onToggleSkill={handleToggleSkillPreference}
+          onSave={handleSaveSkillPreference}
+        />
+      ) : null}
     </div>
   );
 }

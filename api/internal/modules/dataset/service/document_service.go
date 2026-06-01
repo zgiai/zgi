@@ -927,6 +927,11 @@ func defaultDocumentProcessRules() map[string]interface{} {
 			"max_tokens":    500,
 			"chunk_overlap": 50,
 		},
+		"subchunk_segmentation": map[string]interface{}{
+			"separator":     "\n",
+			"max_tokens":    100,
+			"chunk_overlap": 20,
+		},
 	}
 }
 

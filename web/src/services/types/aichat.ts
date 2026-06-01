@@ -27,7 +27,10 @@ export type AIChatSkillInvocationKind =
   | 'skill_load'
   | 'reference_read'
   | 'tool_call'
-  | 'intermediate_answer';
+  | 'intermediate_answer'
+  | 'memory_planner';
+
+export type AIChatMemoryMutationAction = 'create' | 'update' | 'delete' | 'clear';
 
 export interface AIChatConversationMetadata {
   [key: string]: unknown;
@@ -59,6 +62,8 @@ export interface AIChatSkillMetadata {
   timeout_seconds: number;
   status?: AIChatSkillStatus;
   validation_error?: string;
+  supported_callers?: Array<'aichat' | 'agent'>;
+  required_config?: string[];
 }
 
 export type AIChatSkillListResponse = ApiResponseData<AIChatSkillMetadata[]>;
@@ -69,6 +74,13 @@ export interface AIChatSkillOrganizationConfig {
 }
 
 export type AIChatSkillConfigResponse = ApiResponseData<AIChatSkillOrganizationConfig>;
+
+export interface AIChatSkillPreference {
+  enabled_skill_ids: string[];
+  defaulted?: boolean;
+}
+
+export type AIChatSkillPreferenceResponse = ApiResponseData<AIChatSkillPreference>;
 
 export interface AIChatDeleteSkillResponseData {
   deleted: boolean;
@@ -119,6 +131,7 @@ export interface AIChatExistingSkill {
 
 export interface AIChatSkillInvocation {
   kind?: AIChatSkillInvocationKind;
+  runtime_id?: string;
   answer_id?: string;
   skill_id: string;
   tool_name?: string;
@@ -231,7 +244,7 @@ export interface AIChatMessage {
   error?: string;
   model_provider?: string;
   model_name: string;
-  billing_reason_source?: 'aichat';
+  billing_reason_source?: 'aichat' | 'agent';
   model_parameters?: Record<string, unknown>;
   metadata?: AIChatMessageMetadata;
   source_message_id?: string;
@@ -359,6 +372,8 @@ export interface AIChatSkillReferenceReadEventData {
 export interface AIChatSkillCallStartEventData {
   conversation_id: string;
   message_id: string;
+  kind?: AIChatSkillInvocationKind;
+  runtime_id?: string;
   skill_id: string;
   tool_name: string;
   arguments?: Record<string, unknown>;
@@ -369,10 +384,12 @@ export interface AIChatSkillCallStartEventData {
 export interface AIChatSkillCallEndEventData {
   conversation_id: string;
   message_id: string;
+  kind?: AIChatSkillInvocationKind;
+  runtime_id?: string;
   skill_id: string;
   tool_name: string;
   duration_ms?: number;
-  status: 'success';
+  status?: AIChatSkillActivityStatus;
   message?: string;
   result?: Record<string, unknown> | null;
   created_at?: number;
@@ -381,6 +398,8 @@ export interface AIChatSkillCallEndEventData {
 export interface AIChatSkillCallErrorEventData {
   conversation_id: string;
   message_id: string;
+  kind?: AIChatSkillInvocationKind;
+  runtime_id?: string;
   skill_id: string;
   tool_name?: string;
   duration_ms?: number;
@@ -433,6 +452,21 @@ export interface AIChatIntermediateAnswerEventData {
   index?: number;
   done?: boolean;
   status?: 'streaming' | 'success';
+  created_at?: number;
+}
+
+export interface AIChatMemoryMutationEventData {
+  conversation_id: string;
+  message_id: string;
+  memory_scope?: 'account' | 'agent';
+  action: AIChatMemoryMutationAction;
+  entry_id?: string;
+  key?: string;
+  category?: string;
+  memory_type?: string;
+  status?: AIChatSkillActivityStatus;
+  content?: string;
+  content_preview?: string;
   created_at?: number;
 }
 
@@ -493,6 +527,10 @@ export type AIChatSseEventName =
   | 'skill_call_end'
   | 'skill_call_error'
   | 'skill_artifact_created'
+  | 'memory_create'
+  | 'memory_update'
+  | 'memory_delete'
+  | 'memory_clear'
   | 'file_parse_start'
   | 'file_parse_end'
   | 'file_parse_error'

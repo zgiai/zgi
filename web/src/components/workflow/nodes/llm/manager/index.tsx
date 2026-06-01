@@ -2987,7 +2987,7 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
         </DialogContent>
       </Dialog>
       <ConfirmDialog
-        variant="warning"
+        variant="danger"
         open={removeTarget !== null}
         onOpenChange={open => {
           if (!open) setRemoveTarget(null);

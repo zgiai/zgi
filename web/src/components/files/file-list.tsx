@@ -494,7 +494,7 @@ function FileListBase({
           cancelText={common('cancel')}
           onConfirm={handleBulkDeleteConfirm}
           loading={isDeleting}
-          variant="warning"
+          variant="danger"
         />
 
         <FilePreviewDialog
@@ -797,7 +797,7 @@ function FileListBase({
         cancelText={common('cancel')}
         onConfirm={handleBulkDeleteConfirm}
         loading={isDeleting}
-        variant="warning"
+        variant="danger"
       />
 
       <FilePreviewDialog

@@ -75,7 +75,7 @@ workflow:
         text: |-
           Run guide
 
-          Ready. Requires: OpenAI gpt-5.5 model. Enter a business request; the parameter extractor returns account and priority fields.
+          Ready. Requires: OpenAI GPT-4o model. Enter a business request; the parameter extractor returns account and priority fields.
 
           Suggested test input:
           The Start node fields are prefilled. Open Debug and run the defaults directly.
@@ -124,7 +124,7 @@ workflow:
         - input
         model:
           provider: openai
-          name: gpt-5.5
+          name: gpt-4o
           mode: chat
           completion_params: {}
         reasoning_mode: prompt

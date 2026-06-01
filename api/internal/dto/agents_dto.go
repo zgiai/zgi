@@ -149,3 +149,203 @@ type WebAppStatusResponse struct {
 	WebAppStatus string `json:"web_app_status"`
 	UpdatedAt    int64  `json:"updated_at"`
 }
+
+type AgentRuntimeModeConfig struct {
+	EnabledSkillIDs           []string                `json:"enabled_skill_ids"`
+	UseMemory                 bool                    `json:"use_memory"`
+	AgentMemoryEnabled        bool                    `json:"agent_memory_enabled"`
+	AgentMemorySlots          []AgentMemorySlotConfig `json:"agent_memory_slots,omitempty"`
+	FileUploadEnabled         bool                    `json:"file_upload_enabled"`
+	HomeTitle                 string                  `json:"home_title"`
+	InputPlaceholder          string                  `json:"input_placeholder"`
+	ThemeColor                string                  `json:"theme_color"`
+	SuggestedQuestions        []string                `json:"suggested_questions"`
+	KnowledgeDatasetIDs       []string                `json:"knowledge_dataset_ids"`
+	KnowledgeBoundByAccountID string                  `json:"knowledge_bound_by_account_id,omitempty"`
+	KnowledgeBoundAtUnix      int64                   `json:"knowledge_bound_at_unix,omitempty"`
+	KnowledgeRetrievalConfig  map[string]interface{}  `json:"knowledge_retrieval_config"`
+	DatabaseBindings          []AgentDatabaseBinding  `json:"database_bindings,omitempty"`
+	DatabaseBoundByAccountID  string                  `json:"database_bound_by_account_id,omitempty"`
+	DatabaseBoundAtUnix       int64                   `json:"database_bound_at_unix,omitempty"`
+}
+
+type AgentDatabaseBinding struct {
+	DataSourceID     string   `json:"data_source_id"`
+	TableIDs         []string `json:"table_ids"`
+	WritableTableIDs []string `json:"writable_table_ids,omitempty"`
+}
+
+type AgentMemorySlotConfig struct {
+	ID               string `json:"id,omitempty"`
+	Key              string `json:"key"`
+	Description      string `json:"description"`
+	MaxChars         int    `json:"max_chars"`
+	Enabled          bool   `json:"enabled"`
+	SortOrder        int    `json:"sort_order"`
+	CreatedAt        int64  `json:"created_at,omitempty"`
+	UpdatedAt        int64  `json:"updated_at,omitempty"`
+	CreatedAtUnix    int64  `json:"created_at_unix,omitempty"`
+	UpdatedAtUnix    int64  `json:"updated_at_unix,omitempty"`
+	CreatedAtISO     string `json:"created_at_iso,omitempty"`
+	UpdatedAtISO     string `json:"updated_at_iso,omitempty"`
+	CreatedAtDisplay string `json:"created_at_display,omitempty"`
+	UpdatedAtDisplay string `json:"updated_at_display,omitempty"`
+}
+
+type AgentMemoryValueResponse struct {
+	AgentMemorySlotConfig
+	Content string `json:"content"`
+}
+
+type AgentMemoryValuesResponse struct {
+	UserScope string                     `json:"user_scope"`
+	UserID    string                     `json:"user_id"`
+	Values    []AgentMemoryValueResponse `json:"values"`
+}
+
+type UpdateAgentMemoryValueRequest struct {
+	UserScope string `json:"user_scope,omitempty"`
+	UserID    string `json:"user_id,omitempty"`
+	Key       string `json:"key" binding:"required"`
+	Content   string `json:"content"`
+}
+
+type AgentConfigRequest struct {
+	SystemPrompt              string                 `json:"system_prompt"`
+	ModelProvider             string                 `json:"model_provider"`
+	Model                     string                 `json:"model"`
+	ModelParameters           map[string]interface{} `json:"model_parameters"`
+	EnabledSkillIDs           []string               `json:"enabled_skill_ids"`
+	UseMemory                 bool                   `json:"use_memory"`
+	AgentMemoryEnabled        bool                   `json:"agent_memory_enabled"`
+	FileUpload                bool                   `json:"file_upload_enabled"`
+	HomeTitle                 string                 `json:"home_title"`
+	InputPlaceholder          string                 `json:"input_placeholder"`
+	ThemeColor                string                 `json:"theme_color"`
+	SuggestedQuestions        []string               `json:"suggested_questions"`
+	KnowledgeDatasetIDs       []string               `json:"knowledge_dataset_ids"`
+	KnowledgeBoundByAccountID string                 `json:"-"`
+	KnowledgeBoundAtUnix      int64                  `json:"-"`
+	KnowledgeRetrievalConfig  map[string]interface{} `json:"knowledge_retrieval_config"`
+	DatabaseBindings          []AgentDatabaseBinding `json:"database_bindings"`
+	DatabaseBoundByAccountID  string                 `json:"-"`
+	DatabaseBoundAtUnix       int64                  `json:"-"`
+}
+
+type AgentConfigResponse struct {
+	AgentID                   string                  `json:"agent_id"`
+	SystemPrompt              string                  `json:"system_prompt"`
+	ModelProvider             string                  `json:"model_provider"`
+	Model                     string                  `json:"model"`
+	ModelParameters           map[string]interface{}  `json:"model_parameters"`
+	EnabledSkillIDs           []string                `json:"enabled_skill_ids"`
+	UseMemory                 bool                    `json:"use_memory"`
+	AgentMemoryEnabled        bool                    `json:"agent_memory_enabled"`
+	AgentMemorySlots          []AgentMemorySlotConfig `json:"agent_memory_slots"`
+	FileUpload                bool                    `json:"file_upload_enabled"`
+	HomeTitle                 string                  `json:"home_title"`
+	InputPlaceholder          string                  `json:"input_placeholder"`
+	ThemeColor                string                  `json:"theme_color"`
+	SuggestedQuestions        []string                `json:"suggested_questions"`
+	UpdatedAt                 int64                   `json:"updated_at"`
+	KnowledgeDatasetIDs       []string                `json:"knowledge_dataset_ids"`
+	KnowledgeBoundByAccountID string                  `json:"-"`
+	KnowledgeBoundAtUnix      int64                   `json:"-"`
+	KnowledgeRetrievalConfig  map[string]interface{}  `json:"knowledge_retrieval_config"`
+	DatabaseBindings          []AgentDatabaseBinding  `json:"database_bindings"`
+	DatabaseBoundByAccountID  string                  `json:"-"`
+	DatabaseBoundAtUnix       int64                   `json:"-"`
+}
+
+type AgentDraftRuntimeConfigResponse struct {
+	AgentID     string              `json:"agent_id"`
+	WorkspaceID string              `json:"workspace_id"`
+	Config      AgentConfigResponse `json:"config"`
+}
+
+type AgentSuggestedQuestionSkillContext struct {
+	ID          string `json:"id,omitempty"`
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+type GenerateAgentSuggestedQuestionsRequest struct {
+	Locale            string                               `json:"locale,omitempty"`
+	Count             int                                  `json:"count,omitempty" validate:"omitempty,min=1,max=6"`
+	Provider          string                               `json:"provider,omitempty"`
+	Model             string                               `json:"model,omitempty"`
+	SystemPrompt      string                               `json:"system_prompt,omitempty"`
+	HomeTitle         string                               `json:"home_title,omitempty"`
+	ExistingQuestions []string                             `json:"existing_questions,omitempty"`
+	Skills            []AgentSuggestedQuestionSkillContext `json:"skills,omitempty"`
+	KnowledgeRefs     []string                             `json:"knowledge_refs,omitempty"`
+}
+
+type PublishAgentRequest struct {
+	Description string `json:"description"`
+}
+
+type PublishAgentResponse struct {
+	AgentID     string `json:"agent_id"`
+	VersionUUID string `json:"version_uuid"`
+	Version     string `json:"version"`
+	WebAppID    string `json:"web_app_id"`
+	PublishedAt int64  `json:"published_at"`
+}
+
+type AgentPublishedVersionResponse struct {
+	ID             string              `json:"id"`
+	AgentID        string              `json:"agent_id"`
+	VersionUUID    string              `json:"version_uuid"`
+	Version        string              `json:"version"`
+	Description    string              `json:"description"`
+	ConfigSnapshot AgentConfigResponse `json:"config_snapshot"`
+	IsCurrent      bool                `json:"is_current"`
+	CreatedAt      int64               `json:"created_at"`
+}
+
+type AgentPublishedVersionsResponse struct {
+	Data    []AgentPublishedVersionResponse `json:"data"`
+	Page    int                             `json:"page"`
+	Limit   int                             `json:"limit"`
+	Total   int64                           `json:"total"`
+	HasMore bool                            `json:"has_more"`
+}
+
+type RollbackAgentPublishedVersionRequest struct {
+	VersionID string `json:"version_id" binding:"required"`
+}
+
+type AgentWebAppRuntimeConfigResponse struct {
+	AgentID        string              `json:"agent_id"`
+	WebAppID       string              `json:"web_app_id"`
+	WorkspaceID    string              `json:"workspace_id"`
+	OrganizationID string              `json:"organization_id"`
+	AgentType      string              `json:"agent_type"`
+	Name           string              `json:"name"`
+	Description    string              `json:"description"`
+	Icon           string              `json:"icon"`
+	IconType       string              `json:"icon_type"`
+	IconURL        string              `json:"icon_url"`
+	Version        string              `json:"version"`
+	VersionUUID    string              `json:"version_uuid"`
+	Config         AgentConfigResponse `json:"config"`
+}
+
+type AgentPublicWebAppConfigResponse struct {
+	AgentID            string   `json:"agent_id"`
+	WebAppID           string   `json:"web_app_id"`
+	AgentType          string   `json:"agent_type"`
+	Name               string   `json:"name"`
+	Description        string   `json:"description"`
+	Icon               string   `json:"icon"`
+	IconType           string   `json:"icon_type"`
+	IconURL            string   `json:"icon_url"`
+	HomeTitle          string   `json:"home_title"`
+	InputPlaceholder   string   `json:"input_placeholder"`
+	SuggestedQuestions []string `json:"suggested_questions"`
+	FileUpload         bool     `json:"file_upload_enabled"`
+	AgentMemoryEnabled bool     `json:"agent_memory_enabled"`
+	Version            string   `json:"version"`
+	VersionUUID        string   `json:"version_uuid"`
+}

@@ -1,3 +1,4 @@
 .zgi-sandbox-data/
 internal/executor/.zgi-sandbox-data/
+.profile-build/
 .env

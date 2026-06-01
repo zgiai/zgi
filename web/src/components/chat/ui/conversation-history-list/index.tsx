@@ -27,6 +27,7 @@ interface ConversationHistoryListProps {
   className?: string;
   backgroundImage?: string;
   onCreateWhileDraft?: () => void;
+  onActionComplete?: () => void;
 }
 
 const ConversationHistoryList: React.FC<ConversationHistoryListProps> = ({
@@ -34,6 +35,7 @@ const ConversationHistoryList: React.FC<ConversationHistoryListProps> = ({
   className,
   backgroundImage,
   onCreateWhileDraft,
+  onActionComplete,
 }) => {
   const activeId = useStore(controller.store, s => s.activeId);
   const conversations = useStore(controller.store, s => s.conversations);
@@ -50,17 +52,20 @@ const ConversationHistoryList: React.FC<ConversationHistoryListProps> = ({
     if (isActiveDraft) {
       toast.info(t('webapp.chat.alreadyInDraft'));
       onCreateWhileDraft?.();
+      onActionComplete?.();
       return;
     }
     const draft = controller.createDraft(t('webapp.chat.newConversation'));
     controller.select(draft.id);
-  }, [controller, isActiveDraft, onCreateWhileDraft, t]);
+    onActionComplete?.();
+  }, [controller, isActiveDraft, onActionComplete, onCreateWhileDraft, t]);
 
   const handleSelect = useCallback(
     (id: string) => {
       controller.select(id);
+      onActionComplete?.();
     },
-    [controller]
+    [controller, onActionComplete]
   );
 
   const handleRemove = useCallback(
@@ -152,7 +157,7 @@ const ConversationHistoryList: React.FC<ConversationHistoryListProps> = ({
             </div>
             <div onClick={e => e.stopPropagation()}>
               <ConfirmDialog
-                variant="warning"
+                variant="danger"
                 title={t('webapp.chat.deleteTitle')}
                 description={t('webapp.chat.deleteDescription', {
                   conversationTitle: displayTitle,

@@ -75,7 +75,7 @@ workflow:
         text: |-
           运行说明
 
-          可运行。依赖：OpenAI GPT gpt-5.5 模型。输入一条服务请求，流程会判断紧急或标准路径。
+          可运行。依赖：OpenAI GPT-4o 模型。输入一条服务请求，流程会判断紧急或标准路径。
 
           调试输入：
           可在右侧调试窗口直接输入：
@@ -115,7 +115,7 @@ workflow:
         variables: []
         model:
           provider: openai
-          name: gpt-5.5
+          name: gpt-4o
           mode: chat
           completion_params:
             response_format: json_object

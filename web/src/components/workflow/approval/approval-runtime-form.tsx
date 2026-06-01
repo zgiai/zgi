@@ -104,7 +104,7 @@ export function ApprovalRuntimeForm({
       </div>
 
       <div className="rounded-lg border bg-background p-3">
-        <MarkdownViewer content={form.content || ''} className="md-viewer break-words" />
+        <MarkdownViewer content={form.content || ''} className="md-viewer break-words whitespace-pre-wrap" />
       </div>
 
       <div className="space-y-4">

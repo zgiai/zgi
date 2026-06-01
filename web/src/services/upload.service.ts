@@ -1,4 +1,5 @@
 import { BaseService } from '@/lib/http/services';
+import { webappHttp } from '@/lib/http';
 import type { ApiResponseData } from './types/common';
 
 // File upload response types - updated to match API response format
@@ -79,6 +80,38 @@ export class UploadService extends BaseService {
     }
   }
 
+  async uploadWebAppSingle(
+    webAppId: string,
+    file: File,
+    options: {
+      onProgress?: (progress: number) => void;
+    } = {}
+  ): Promise<UploadResponse> {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('is_temporary', 'true');
+
+    const response = await webappHttp.post<ApiResponseData<UploadResponse>>(
+      `/console/api/webapps/${webAppId}/files/upload`,
+      formData,
+      {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        onUploadProgress: options.onProgress
+          ? progressEvent => {
+              const progress = Math.round((progressEvent.loaded * 98) / (progressEvent.total || 1));
+              options.onProgress?.(progress);
+            }
+          : undefined,
+      }
+    );
+    if (response.code === '0' && response.data) {
+      return response.data;
+    }
+    throw new Error(response.message || 'Failed to upload file');
+  }
+
   // Get upload configuration
   async getConfig(): Promise<UploadConfig> {
     try {
@@ -91,6 +124,16 @@ export class UploadService extends BaseService {
       console.error('Get upload config failed:', error);
       throw error;
     }
+  }
+
+  async getWebAppConfig(webAppId: string): Promise<UploadConfig> {
+    const response = await webappHttp.get<ApiResponseData<UploadConfig>>(
+      `/console/api/webapps/${webAppId}/files/upload`
+    );
+    if (response.code === '0' && response.data) {
+      return response.data;
+    }
+    throw new Error(response.message || 'Failed to get upload config');
   }
 
   // Multiple file upload

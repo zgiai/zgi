@@ -14,6 +14,12 @@ export interface AIChatSkillDisplayInfo {
 export type AIChatSkillDisplayMap = Record<string, AIChatSkillDisplayInfo>;
 
 const USER_MEMORY_SKILL_ID = 'user-memory';
+const AGENT_KNOWLEDGE_SKILL_ID = 'agent-knowledge';
+
+export function isHiddenSystemSkill(skillId: string): boolean {
+  const normalized = skillId.trim().toLowerCase();
+  return normalized === USER_MEMORY_SKILL_ID || normalized === AGENT_KNOWLEDGE_SKILL_ID;
+}
 
 const SYSTEM_SKILL_DISPLAY: Record<string, {
   label: Record<string, string>;
@@ -96,6 +102,7 @@ const USER_MEMORY_TOOL_RESULT_TEXT: Record<string, Record<string, string>> = {
     zh_Hans: '已查看 {count} 条临时记忆',
   },
 };
+
 
 function toDisplayLocale(locale: Locale | string): string {
   if (locale === 'en-US') return 'en_US';
@@ -225,10 +232,49 @@ function numberFromRecord(source: Record<string, unknown>, keys: string[]): numb
   return null;
 }
 
-function compactMemoryContent(content: string): string {
+function compactMemoryContent(content: string, maxLength = 120): string {
   const normalized = content.replace(/\s+/g, ' ').trim();
-  if (normalized.length <= 120) return normalized;
-  return `${normalized.slice(0, 117)}...`;
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, Math.max(0, maxLength - 3))}...`;
+}
+
+export function getAIChatUserMemoryMutationTitle(
+  action: string | undefined,
+  locale: Locale | string,
+  options: { content?: string; entryId?: string } = {}
+): string {
+  const content = compactMemoryContent(options.content ?? '', 80);
+  const entryId = options.entryId ?? '';
+  switch (action) {
+    case 'create':
+      return content
+        ? formatMemoryToolResult('add_user_memory', locale, { content })
+        : pickLocalizedText(USER_MEMORY_TOOL_RESULT_TEXT.add_user_memory, locale, 'Saved memory');
+    case 'update':
+      return content
+        ? formatMemoryToolResult('update_user_memory', locale, { content })
+        : formatMemoryToolResult('update_user_memory_without_content', locale, { entryId }).trim();
+    case 'delete':
+      return formatMemoryToolResult('delete_user_memory', locale, { entryId }).trim();
+    case 'clear':
+      return pickLocalizedText(
+        {
+          en_US: 'Cleared memory',
+          zh_Hans: '已清空记忆',
+        },
+        locale,
+        'Cleared memory'
+      );
+    default:
+      return pickLocalizedText(
+        {
+          en_US: 'Updated memory',
+          zh_Hans: '已更新记忆',
+        },
+        locale,
+        'Updated memory'
+      );
+  }
 }
 
 function formatMemoryToolResult(
@@ -247,13 +293,18 @@ export function getAIChatSkillResultDisplay(
   invocation: AIChatSkillInvocation,
   locale: Locale | string
 ): string | null {
-  if (invocation.skill_id !== USER_MEMORY_SKILL_ID || invocation.status !== 'success') {
+  if (invocation.status !== 'success') {
     return null;
   }
 
   const toolName = invocation.tool_name?.trim();
   const result = isRecord(invocation.result) ? invocation.result : {};
   const args = isRecord(invocation.arguments) ? invocation.arguments : {};
+
+  if (invocation.skill_id !== USER_MEMORY_SKILL_ID) {
+    return null;
+  }
+
   const content = compactMemoryContent(
     stringFromRecord(result, ['content', 'memory', 'text']) ||
       stringFromRecord(args, ['content', 'memory', 'text'])

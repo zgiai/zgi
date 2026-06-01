@@ -279,7 +279,7 @@ export default function PermissionsPage() {
         cancelText={t('deleteConfirm.cancel')}
         loading={isDeleting}
         onConfirm={handleConfirmDelete}
-        variant="warning"
+        variant="danger"
       />
 
       {roleToEdit && (

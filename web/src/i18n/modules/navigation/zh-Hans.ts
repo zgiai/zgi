@@ -40,6 +40,7 @@ const messages: NavigationMessages = {
   image: '绘图',
   resources: '资产',
   developer: '开发者',
+  tools: '创作工具',
   fileRecognition: '文件识别',
   management: '设置',
 };

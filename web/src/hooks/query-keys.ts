@@ -55,6 +55,7 @@ export const AGENT_KEYS = {
   list: (params: unknown) => [...AGENT_KEYS.lists(), params] as const,
   details: () => [...AGENT_KEYS.all, 'detail'] as const,
   detail: (id: string) => [...AGENT_KEYS.details(), id] as const,
+  config: (id: string) => [...AGENT_KEYS.detail(id), 'config'] as const,
   runnable: (workspaceId?: string | null) =>
     [...AGENT_KEYS.all, 'runnable-webapps', workspaceId || 'all'] as const,
 } as const;
@@ -160,6 +161,7 @@ export const AICHAT_KEYS = {
   skills: () => [...AICHAT_KEYS.all, 'skills'] as const,
   skill: (id: string) => [...AICHAT_KEYS.skills(), id] as const,
   skillConfig: () => [...AICHAT_KEYS.skills(), 'config'] as const,
+  skillPreference: () => [...AICHAT_KEYS.skills(), 'preference', 'me'] as const,
 } as const;
 
 export const MEMORY_KEYS = {

@@ -1,0 +1,135 @@
+package runner
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestRootFSSelectorUsesDefaultWhenProfileRootDirIsUnset(t *testing.T) {
+	defaultRoot := testRootFSDir(t, "default")
+
+	selected, err := rootFSSelector{defaultRootFS: defaultRoot}.resolve("workflow-safe", "")
+	if err != nil {
+		t.Fatalf("resolve rootfs: %v", err)
+	}
+	if selected != defaultRoot {
+		t.Fatalf("expected default rootfs, got %s", selected)
+	}
+}
+
+func TestRootFSSelectorUsesDependencyProfileRootFS(t *testing.T) {
+	defaultRoot := testRootFSDir(t, "default")
+	profileRoot := t.TempDir()
+	expected := filepath.Join(profileRoot, "workflow-safe")
+	if err := os.Mkdir(expected, 0o755); err != nil {
+		t.Fatalf("create profile rootfs: %v", err)
+	}
+
+	selected, err := rootFSSelector{
+		defaultRootFS:       defaultRoot,
+		dependencyRootFSDir: profileRoot,
+	}.resolve("workflow-safe", "")
+	if err != nil {
+		t.Fatalf("resolve profile rootfs: %v", err)
+	}
+	if selected != expected {
+		t.Fatalf("expected profile rootfs %s, got %s", expected, selected)
+	}
+}
+
+func TestRootFSSelectorRejectsUnsafeDependencyProfileName(t *testing.T) {
+	defaultRoot := testRootFSDir(t, "default")
+
+	_, err := rootFSSelector{
+		defaultRootFS:       defaultRoot,
+		dependencyRootFSDir: t.TempDir(),
+	}.resolve("../workflow-safe", "")
+	if err == nil || !strings.Contains(err.Error(), "not safe") {
+		t.Fatalf("expected unsafe profile rejection, got %v", err)
+	}
+}
+
+func TestRootFSSelectorRejectsMissingDependencyProfileRootFS(t *testing.T) {
+	defaultRoot := testRootFSDir(t, "default")
+
+	_, err := rootFSSelector{
+		defaultRootFS:       defaultRoot,
+		dependencyRootFSDir: t.TempDir(),
+	}.resolve("workflow-safe", "")
+	if err == nil || !strings.Contains(err.Error(), "not usable") {
+		t.Fatalf("expected missing profile rootfs rejection, got %v", err)
+	}
+}
+
+func TestRootFSSelectorRejectsWorldWritableDependencyProfileRootFS(t *testing.T) {
+	defaultRoot := testRootFSDir(t, "default")
+	profileRoot := t.TempDir()
+	unsafeRoot := filepath.Join(profileRoot, "workflow-safe")
+	if err := os.Mkdir(unsafeRoot, 0o777); err != nil {
+		t.Fatalf("create profile rootfs: %v", err)
+	}
+	if err := os.Chmod(unsafeRoot, 0o777); err != nil {
+		t.Fatalf("chmod profile rootfs: %v", err)
+	}
+
+	_, err := rootFSSelector{
+		defaultRootFS:       defaultRoot,
+		dependencyRootFSDir: profileRoot,
+	}.resolve("workflow-safe", "")
+	if err == nil || !strings.Contains(err.Error(), "world-writable") {
+		t.Fatalf("expected world-writable profile rootfs rejection, got %v", err)
+	}
+}
+
+func TestRootFSSelectorUsesDependencyArtifactRootFS(t *testing.T) {
+	defaultRoot := testRootFSDir(t, "default")
+	profileRoot := t.TempDir()
+	checksum := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	expected := filepath.Join(profileRoot, "sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	if err := os.Mkdir(expected, 0o755); err != nil {
+		t.Fatalf("create artifact rootfs: %v", err)
+	}
+
+	selected, err := rootFSSelector{
+		defaultRootFS:       defaultRoot,
+		dependencyRootFSDir: profileRoot,
+	}.resolve("team-data", checksum)
+	if err != nil {
+		t.Fatalf("resolve artifact rootfs: %v", err)
+	}
+	if selected != expected {
+		t.Fatalf("expected artifact rootfs %s, got %s", expected, selected)
+	}
+}
+
+func TestRootFSSelectorFallsBackToDependencyProfileRootFSWhenArtifactRootFSIsMissing(t *testing.T) {
+	defaultRoot := testRootFSDir(t, "default")
+	profileRoot := t.TempDir()
+	expected := filepath.Join(profileRoot, "workflow-safe")
+	if err := os.Mkdir(expected, 0o755); err != nil {
+		t.Fatalf("create profile rootfs: %v", err)
+	}
+	checksum := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+	selected, err := rootFSSelector{
+		defaultRootFS:       defaultRoot,
+		dependencyRootFSDir: profileRoot,
+	}.resolve("workflow-safe", checksum)
+	if err != nil {
+		t.Fatalf("resolve profile fallback rootfs: %v", err)
+	}
+	if selected != expected {
+		t.Fatalf("expected profile rootfs %s, got %s", expected, selected)
+	}
+}
+
+func testRootFSDir(t *testing.T, name string) string {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), name)
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatalf("create rootfs dir: %v", err)
+	}
+	return root
+}

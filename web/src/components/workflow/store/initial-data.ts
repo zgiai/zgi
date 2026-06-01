@@ -12,6 +12,7 @@ export const initialWorkflowData: WorkflowData = {
   },
   features: {
     opening_statement_type: 'slogan',
+    opening_guide_version: 2,
     opening_slogan: '',
     opening_statement: '',
     opening_statement_enabled: false,

@@ -23,6 +23,7 @@ import {
 import { useT } from '@/i18n';
 import type { FileItem } from '@/services/types/file';
 import type { WorkflowTestAttachment, WorkflowTestCase } from '@/services/types/workflow-test';
+import { QUESTION_TYPE_OPTIONS } from './question-type';
 
 interface CaseDialogProps {
   agentId: string;
@@ -138,7 +139,7 @@ export function CaseDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent size="lg">
+        <DialogContent size="lg" onInteractOutside={event => event.preventDefault()}>
           <DialogHeader>
             <DialogTitle>{title}</DialogTitle>
             <DialogDescription>{t('description')}</DialogDescription>
@@ -167,9 +168,11 @@ export function CaseDialog({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="core">{typeT('core')}</SelectItem>
-                    <SelectItem value="extension">{typeT('extension')}</SelectItem>
-                    <SelectItem value="fuzzy">{typeT('fuzzy')}</SelectItem>
+                    {QUESTION_TYPE_OPTIONS.map(item => (
+                      <SelectItem key={item.value} value={item.value}>
+                        {typeT(item.labelKey)}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>

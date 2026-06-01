@@ -261,7 +261,7 @@ export function Sidebar({
                         ) : null}
                         {!isEditing ? (
                           <ConfirmDialog
-                            variant="warning"
+                            variant="danger"
                             title={t('webapp.chat.deleteTitle')}
                             description={t('webapp.chat.deleteDescription', {
                               conversationTitle: conv.title || t('webapp.chat.newConversation'),
@@ -309,13 +309,13 @@ export function Sidebar({
         </div>
       </ScrollArea>
       <ConfirmDialog
+        variant="danger"
         open={deleteTarget !== null}
         onOpenChange={open => {
           if (!open) {
             setDeleteTarget(null);
           }
         }}
-        variant="warning"
         title={t('webapp.chat.deleteTitle')}
         description={t('webapp.chat.deleteDescription', {
           conversationTitle: deleteTarget?.title || t('webapp.chat.newConversation'),

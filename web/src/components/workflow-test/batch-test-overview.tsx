@@ -51,6 +51,8 @@ import { ScenarioDialog } from './scenario-dialog';
 import { RecognizeScenariosDialog } from './recognize-scenarios-dialog';
 import {
   useCancelWorkflowTestBatch,
+  useCancelWorkflowTestGenerationTask,
+  useCancelWorkflowTestScenarioRecognitionTask,
   useDeleteWorkflowTestCases,
   useExecuteWorkflowTestBatch,
   useLatestWorkflowTestScenarioRecognitionTask,
@@ -66,8 +68,9 @@ import { WORKFLOW_TEST_KEYS } from '@/hooks/query-keys';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { workflowTestService } from '@/services/workflow-test.service';
+import type { WorkflowTestBatch } from '@/services/types/workflow-test';
 import type { WorkflowNode } from '@/components/workflow/store';
-import { formatQuestionTypeLabel } from './question-type';
+import { QUESTION_TYPE_OPTIONS, formatQuestionTypeLabel } from './question-type';
 
 interface BatchTestOverviewProps {
   agentId: string;
@@ -183,6 +186,8 @@ export function BatchTestOverview({
   );
   const [editingCaseId, setEditingCaseId] = React.useState<string | null>(null);
   const [deletingCaseIds, setDeletingCaseIds] = React.useState<string[]>([]);
+  const [retestingBatch, setRetestingBatch] = React.useState<WorkflowTestBatch | null>(null);
+  const [expandedCaseIds, setExpandedCaseIds] = React.useState<string[]>([]);
   const [selectedCaseIds, setSelectedCaseIds] = React.useState<string[]>([]);
   const [caseSearch, setCaseSearch] = React.useState('');
   const [caseScenarioFilter, setCaseScenarioFilter] = React.useState('all');
@@ -198,11 +203,17 @@ export function BatchTestOverview({
   const { data: workflowDraft } = useWorkflowDraft(agentId);
   const executeBatch = useExecuteWorkflowTestBatch(agentId);
   const cancelBatch = useCancelWorkflowTestBatch(agentId);
+  const cancelGenerationTask = useCancelWorkflowTestGenerationTask(agentId);
+  const cancelScenarioRecognitionTask = useCancelWorkflowTestScenarioRecognitionTask(agentId);
   const retestBatch = useRetestWorkflowTestBatch(agentId);
   const updateCase = useUpdateWorkflowTestCase(agentId);
   const deleteCases = useDeleteWorkflowTestCases(agentId);
   const cases = React.useMemo(() => casesData?.data?.items ?? [], [casesData]);
   const scenarios = React.useMemo(() => scenariosData?.data?.items ?? [], [scenariosData]);
+  const scenarioOptions = React.useMemo(
+    () => scenarios.map(scene => ({ id: scene.id, name: scene.name })),
+    [scenarios]
+  );
   const batches = React.useMemo(() => batchesData?.data?.items ?? [], [batchesData]);
   const generationTask = latestGenerationTaskData?.data?.task ?? null;
   const scenarioRecognitionTask = latestScenarioRecognitionTaskData?.data?.task ?? null;
@@ -214,6 +225,11 @@ export function BatchTestOverview({
     generationTask?.status === 'queued' ||
     generationTask?.status === 'running' ||
     generationTask?.status === 'canceling';
+  const canCancelScenarioRecognition =
+    scenarioRecognitionTask?.id &&
+    (scenarioRecognitionTask.status === 'queued' || scenarioRecognitionTask.status === 'running');
+  const canCancelGeneration =
+    generationTask?.id && (generationTask.status === 'queued' || generationTask.status === 'running');
   const isGenerationPendingLocally = pendingGenerationCount !== null && !isGenerationActive;
   const displayedGenerationStatus = isGenerationPendingLocally ? 'running' : generationTask?.status;
   const isGenerationCompleted =
@@ -222,6 +238,7 @@ export function BatchTestOverview({
     view === 'case-library' &&
     (isGenerationActive ||
       isGenerationCompleted ||
+      displayedGenerationStatus === 'canceled' ||
       displayedGenerationStatus === 'failed' ||
       pendingGenerationCount !== null);
   const generationBannerRequested = isGenerationPendingLocally
@@ -238,7 +255,7 @@ export function BatchTestOverview({
           title: 'text-red-700',
           description: 'text-red-700',
         }
-      : isGenerationCompleted
+      : isGenerationCompleted || displayedGenerationStatus === 'canceled'
         ? {
             wrapper: 'border-emerald-200 bg-emerald-50',
             icon: 'bg-white text-emerald-600',
@@ -283,6 +300,7 @@ export function BatchTestOverview({
     filteredCases.length > 0 && filteredCases.every(item => selectedCaseIds.includes(item.id));
   React.useEffect(() => {
     setSelectedCaseIds(prev => prev.filter(id => cases.some(item => item.id === id)));
+    setExpandedCaseIds(prev => prev.filter(id => cases.some(item => item.id === id)));
   }, [cases]);
 
   React.useEffect(() => {
@@ -384,13 +402,45 @@ export function BatchTestOverview({
       {
         onSuccess: () => {
           setSelectedCaseIds(prev => prev.filter(id => !ids.includes(id)));
+          setExpandedCaseIds(prev => prev.filter(id => !ids.includes(id)));
           setDeletingCaseIds([]);
         },
       }
     );
   };
 
-  const buildRetestName = (batchName: string) => t('batches.retestName', { name: batchName });
+  const toggleCaseExpanded = (caseId: string) => {
+    setExpandedCaseIds(prev =>
+      prev.includes(caseId) ? prev.filter(id => id !== caseId) : [...prev, caseId]
+    );
+  };
+
+  const buildRetestName = React.useCallback(
+    (batchName: string) => {
+      const baseName = batchName.replace(/\s+重新测试\d*$/u, '').trim() || batchName;
+      const escapedBaseName = baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const pattern = new RegExp(`^${escapedBaseName}\\s+重新测试(\\d*)$`, 'u');
+      const maxIndex = batches.reduce((max, item) => {
+        const match = item.name.match(pattern);
+        if (!match) return max;
+        const value = match[1] ? Number(match[1]) : 1;
+        return Number.isFinite(value) ? Math.max(max, value) : max;
+      }, 1);
+      return t('batches.retestName', { name: baseName, index: maxIndex + 1 });
+    },
+    [batches, t]
+  );
+
+  const confirmRetestBatch = () => {
+    if (!retestingBatch) return;
+    retestBatch.mutate(
+      {
+        batchId: retestingBatch.id,
+        data: { name: buildRetestName(retestingBatch.name) },
+      },
+      { onSuccess: () => setRetestingBatch(null) }
+    );
+  };
   const pageDescription =
     view === 'batches' ? t('batches.description') : agentDescription || t('descriptionFallback');
   const defaultRecognitionContext = [agentName, agentDescription].filter(Boolean).join('\n');
@@ -421,8 +471,6 @@ export function BatchTestOverview({
               <p className="mt-2 max-w-3xl text-sm text-slate-600">{pageDescription}</p>
               <div className="mt-4 flex items-center gap-2 text-sm text-slate-500">
                 <Badge variant="outline">{commonT('chatWorkflow')}</Badge>
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                <span>{commonT('currentDraftSnapshot')}</span>
               </div>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-2">
@@ -499,6 +547,18 @@ export function BatchTestOverview({
                         : t('actions.rerecognizeScenarios')}
                     </Button>
                   ) : null}
+                  {canCancelScenarioRecognition ? (
+                    <Button
+                      variant="outline"
+                      disabled={cancelScenarioRecognitionTask.isPending}
+                      onClick={() =>
+                        cancelScenarioRecognitionTask.mutate(scenarioRecognitionTask.id)
+                      }
+                    >
+                      <Ban className="mr-2 size-4" />
+                      {t('actions.cancelRecognition')}
+                    </Button>
+                  ) : null}
                   <Button variant="outline" onClick={() => setScenarioDialogOpen(true)}>
                     <SquarePen className="mr-2 size-4" />
                     {t('actions.editScenarios')}
@@ -534,13 +594,43 @@ export function BatchTestOverview({
                         ? t('actions.recognizingScenarios')
                         : t('actions.recognizeScenarios')}
                     </Button>
+                    {canCancelScenarioRecognition ? (
+                      <Button
+                        className="mt-3"
+                        variant="outline"
+                        disabled={cancelScenarioRecognitionTask.isPending}
+                        onClick={() =>
+                          cancelScenarioRecognitionTask.mutate(scenarioRecognitionTask.id)
+                        }
+                      >
+                        <Ban className="mr-2 size-4" />
+                        {t('actions.cancelRecognition')}
+                      </Button>
+                    ) : null}
                   </div>
                 ) : (
                   <>
                     {isScenarioRecognitionActive ? (
-                      <p className="mb-4 text-sm font-medium text-blue-600">
-                        {t('scenarios.recognizingDescription')}
-                      </p>
+                      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                        <p className="text-sm font-medium text-blue-600">
+                          {scenarioRecognitionTask?.status === 'canceling'
+                            ? t('scenarios.cancelingDescription')
+                            : t('scenarios.recognizingDescription')}
+                        </p>
+                        {canCancelScenarioRecognition ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={cancelScenarioRecognitionTask.isPending}
+                            onClick={() =>
+                              cancelScenarioRecognitionTask.mutate(scenarioRecognitionTask.id)
+                            }
+                          >
+                            <Ban className="mr-2 size-4" />
+                            {t('actions.cancelRecognition')}
+                          </Button>
+                        ) : null}
+                      </div>
                     ) : null}
                     <div className="scrollbar-thin flex gap-4 overflow-x-auto pb-2">
                       {sceneCards.map(scene => (
@@ -597,9 +687,15 @@ export function BatchTestOverview({
                     >
                       <WandSparkles className="size-4" />
                     </div>
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div className={`text-sm font-semibold ${generationBannerTone.title}`}>
-                        {displayedGenerationStatus === 'failed'
+                        {displayedGenerationStatus === 'canceling'
+                          ? t('cases.generationCancelingTitle')
+                          : displayedGenerationStatus === 'canceled'
+                            ? t('cases.generationCanceledTitle', {
+                                count: generationBannerCreated,
+                              })
+                            : displayedGenerationStatus === 'failed'
                           ? t('cases.generationFailedTitle', {
                               count: generationBannerRequested,
                             })
@@ -612,7 +708,13 @@ export function BatchTestOverview({
                               })}
                       </div>
                       <div className={`mt-1 text-sm ${generationBannerTone.description}`}>
-                        {displayedGenerationStatus === 'failed'
+                        {displayedGenerationStatus === 'canceling'
+                          ? t('cases.generationCancelingDescription')
+                          : displayedGenerationStatus === 'canceled'
+                            ? t('cases.generationCanceledDescription', {
+                                created: generationBannerCreated,
+                              })
+                            : displayedGenerationStatus === 'failed'
                           ? t('cases.generationFailedDescription', {
                               created: generationBannerCreated,
                               error: generationTask?.error || commonT('none'),
@@ -622,6 +724,17 @@ export function BatchTestOverview({
                             : t('cases.generatingTaskDescription')}
                       </div>
                     </div>
+                    {canCancelGeneration ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={cancelGenerationTask.isPending}
+                        onClick={() => cancelGenerationTask.mutate(generationTask.id)}
+                      >
+                        <Ban className="mr-2 size-4" />
+                        {t('actions.cancelGeneration')}
+                      </Button>
+                    ) : null}
                   </div>
                 ) : null}
                 <div className="sticky top-0 z-10 grid grid-cols-1 gap-3 border-y border-slate-200 bg-white p-4 md:grid-cols-4">
@@ -649,9 +762,11 @@ export function BatchTestOverview({
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">{t('cases.typeAll')}</SelectItem>
-                      <SelectItem value="core">{typeT('core')}</SelectItem>
-                      <SelectItem value="extension">{typeT('extension')}</SelectItem>
-                      <SelectItem value="fuzzy">{typeT('fuzzy')}</SelectItem>
+                      {QUESTION_TYPE_OPTIONS.map(item => (
+                        <SelectItem key={item.value} value={item.value}>
+                          {typeT(item.labelKey)}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                   <Select value={caseStatusFilter} onValueChange={setCaseStatusFilter}>
@@ -666,10 +781,10 @@ export function BatchTestOverview({
                   </Select>
                 </div>
                 <div className="max-h-[560px] overflow-auto">
-                  <Table className="table-fixed">
-                    <TableHeader>
+                  <Table className="table-fixed" containerClassName="overflow-visible">
+                    <TableHeader className="bg-white">
                       <TableRow>
-                        <TableHead className="w-12">
+                        <TableHead className="sticky top-0 z-20 w-12 bg-white shadow-[inset_0_-1px_0_rgba(148,163,184,0.28)]">
                           <Checkbox
                             checked={allCasesSelected}
                             onCheckedChange={checked => {
@@ -682,12 +797,22 @@ export function BatchTestOverview({
                             }}
                           />
                         </TableHead>
-                        <TableHead className="w-[44%]">{t('table.questionContent')}</TableHead>
-                        <TableHead className="w-[15%]">{t('table.businessScenario')}</TableHead>
-                        <TableHead className="w-[11%]">{t('table.questionType')}</TableHead>
-                        <TableHead className="w-[10%]">{t('table.status')}</TableHead>
-                        <TableHead className="w-[13%]">{t('table.updatedAt')}</TableHead>
-                        <TableHead className="w-[150px] text-right">
+                        <TableHead className="sticky top-0 z-20 w-[44%] bg-white shadow-[inset_0_-1px_0_rgba(148,163,184,0.28)]">
+                          {t('table.questionContent')}
+                        </TableHead>
+                        <TableHead className="sticky top-0 z-20 w-[15%] bg-white shadow-[inset_0_-1px_0_rgba(148,163,184,0.28)]">
+                          {t('table.businessScenario')}
+                        </TableHead>
+                        <TableHead className="sticky top-0 z-20 w-[11%] bg-white shadow-[inset_0_-1px_0_rgba(148,163,184,0.28)]">
+                          {t('table.questionType')}
+                        </TableHead>
+                        <TableHead className="sticky top-0 z-20 w-[10%] bg-white shadow-[inset_0_-1px_0_rgba(148,163,184,0.28)]">
+                          {t('table.status')}
+                        </TableHead>
+                        <TableHead className="sticky top-0 z-20 w-[13%] bg-white shadow-[inset_0_-1px_0_rgba(148,163,184,0.28)]">
+                          {t('table.updatedAt')}
+                        </TableHead>
+                        <TableHead className="sticky top-0 z-20 w-[150px] bg-white text-right shadow-[inset_0_-1px_0_rgba(148,163,184,0.28)]">
                           {t('table.operations')}
                         </TableHead>
                       </TableRow>
@@ -712,9 +837,14 @@ export function BatchTestOverview({
                           </TableCell>
                         </TableRow>
                       ) : (
-                        filteredCases.map(item => (
+                        filteredCases.map(item => {
+                          const turns = item.turns ?? [];
+                          const hasMultipleTurns = turns.length > 1;
+                          const isExpanded = expandedCaseIds.includes(item.id);
+
+                          return (
                           <TableRow key={item.id}>
-                            <TableCell>
+                            <TableCell className="py-4">
                               <Checkbox
                                 checked={selectedCaseIds.includes(item.id)}
                                 onCheckedChange={checked => {
@@ -726,14 +856,41 @@ export function BatchTestOverview({
                                 }}
                               />
                             </TableCell>
-                            <TableCell className="min-w-0 align-top">
+                            <TableCell className="min-w-0 whitespace-normal py-4 align-top">
                               <div className="line-clamp-2 break-words font-medium text-slate-950">
                                 {item.content}
                               </div>
-                              {item.turns?.length > 1 ? (
-                                <div className="mt-1 text-xs text-slate-500">
-                                  共 {item.turns.length} 轮对话
-                                </div>
+                              {hasMultipleTurns ? (
+                                <>
+                                  <div className="mt-1 text-xs text-slate-500">
+                                    {t('cases.turnCount', { count: turns.length })}
+                                    <button
+                                      type="button"
+                                      className="ml-1 font-medium text-blue-600 hover:text-blue-700 hover:underline"
+                                      onClick={() => toggleCaseExpanded(item.id)}
+                                    >
+                                      {isExpanded ? t('cases.collapseTurns') : t('cases.expandTurns')}
+                                    </button>
+                                  </div>
+                                  {isExpanded ? (
+                                    <div className="mt-3 min-w-0 space-y-3 border-l border-slate-200 pl-4 text-sm text-slate-700">
+                                      {turns.slice(1).map((turn, index) => (
+                                        <div
+                                          key={`${item.id}-turn-${index + 2}`}
+                                          className="relative min-w-0"
+                                        >
+                                          <span className="absolute -left-[19px] top-2 h-2 w-2 rounded-full border border-slate-300 bg-white" />
+                                          <div className="flex min-w-0 items-baseline gap-1">
+                                            <span className="shrink-0 whitespace-nowrap font-medium text-slate-600">
+                                              {t('cases.turnTitle', { index: index + 2 })}
+                                            </span>
+                                            <span className="min-w-0 truncate">{turn.content}</span>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : null}
+                                </>
                               ) : null}
                               {item.turns?.some(turn => turn.attachments?.length) ? (
                                 <div className="mt-1 text-xs text-slate-500">
@@ -741,17 +898,17 @@ export function BatchTestOverview({
                                 </div>
                               ) : null}
                             </TableCell>
-                            <TableCell className="align-top">
+                            <TableCell className="py-4 align-top">
                               <div className="line-clamp-2 break-words">
                                 {item.scenario_id
                                   ? scenariosById.get(item.scenario_id) || commonT('none')
                                   : commonT('none')}
                               </div>
                             </TableCell>
-                            <TableCell className="align-top">
+                            <TableCell className="py-4 align-top">
                               {formatQuestionTypeLabel(item.question_type, typeT)}
                             </TableCell>
-                            <TableCell className="align-top">
+                            <TableCell className="py-4 align-top">
                               <Badge
                                 className={
                                   item.status === 'enabled'
@@ -762,10 +919,10 @@ export function BatchTestOverview({
                                 {statusLabel(item.status, commonT)}
                               </Badge>
                             </TableCell>
-                            <TableCell className="align-top text-xs text-slate-600">
+                            <TableCell className="py-4 align-top text-xs text-slate-600">
                               {new Date(item.updated_at).toLocaleString()}
                             </TableCell>
-                            <TableCell className="text-right align-top">
+                            <TableCell className="py-3 text-right align-top">
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -811,7 +968,8 @@ export function BatchTestOverview({
                               </DropdownMenu>
                             </TableCell>
                           </TableRow>
-                        ))
+                          );
+                        })
                       )}
                     </TableBody>
                   </Table>
@@ -975,78 +1133,77 @@ export function BatchTestOverview({
                           {t('scenarios.caseCount', { count: batch.case_count })}
                         </TableCell>
                         <TableCell>{batchResultText(batch, batchResultT)}</TableCell>
-                        <TableCell className="text-right">
-                          {batch.status === 'queued' ? (
-                            <Button
-                              variant="link"
-                              size="sm"
-                              disabled={executeBatch.isPending}
-                              onClick={() => executeBatch.mutate(batch.id)}
-                            >
-                              {t('batchActions.start')}
-                            </Button>
-                          ) : null}
-                          {batch.status === 'queued' ? (
-                            <Button variant="link" size="sm" asChild>
-                              <Link href={`/console/agents/${agentId}/batch-test/${batch.id}`}>
-                                {t('batchActions.viewDetail')}
-                              </Link>
-                            </Button>
-                          ) : null}
-                          {batch.status === 'running' ? (
-                            <Button variant="link" size="sm" asChild>
-                              <Link href={`/console/agents/${agentId}/batch-test/${batch.id}`}>
-                                {t('batchActions.viewProgress')}
-                              </Link>
-                            </Button>
-                          ) : null}
-                          {batch.status === 'queued' || batch.status === 'running' ? (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              disabled={cancelBatch.isPending}
-                              onClick={() => cancelBatch.mutate(batch.id)}
-                            >
-                              <Ban className="mr-1 size-4" />
-                              {commonT('cancel')}
-                            </Button>
-                          ) : batch.status !== 'queued' ? (
-                            <Button variant="link" size="sm" asChild>
-                              <Link href={`/console/agents/${agentId}/batch-test/${batch.id}`}>
-                                {t('batchActions.viewResult')}
-                              </Link>
-                            </Button>
-                          ) : null}
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                                <MoreHorizontal className="size-4" />
+                        <TableCell>
+                          <div className="flex items-center justify-end gap-2">
+                            {batch.status === 'queued' ? (
+                              <Button
+                                variant="link"
+                                size="sm"
+                                className="h-8 px-2"
+                                disabled={executeBatch.isPending}
+                                onClick={() => executeBatch.mutate(batch.id)}
+                              >
+                                {t('batchActions.start')}
                               </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              {batch.status === 'queued' || batch.status === 'running' ? (
-                                <DropdownMenuItem
-                                  className="text-red-600"
-                                  disabled={cancelBatch.isPending}
-                                  onSelect={() => cancelBatch.mutate(batch.id)}
-                                >
-                                  {commonT('cancelTest')}
-                                </DropdownMenuItem>
-                              ) : (
-                                <DropdownMenuItem
-                                  disabled={retestBatch.isPending}
-                                  onSelect={() =>
-                                    retestBatch.mutate({
-                                      batchId: batch.id,
-                                      data: { name: buildRetestName(batch.name) },
-                                    })
-                                  }
-                                >
-                                  {commonT('retest')}
-                                </DropdownMenuItem>
-                              )}
-                            </DropdownMenuContent>
-                          </DropdownMenu>
+                            ) : null}
+                            {batch.status === 'queued' ? (
+                              <Button variant="link" size="sm" className="h-8 px-2" asChild>
+                                <Link href={`/console/agents/${agentId}/batch-test/${batch.id}`}>
+                                  {t('batchActions.viewDetail')}
+                                </Link>
+                              </Button>
+                            ) : null}
+                            {batch.status === 'running' ? (
+                              <Button variant="link" size="sm" className="h-8 px-2" asChild>
+                                <Link href={`/console/agents/${agentId}/batch-test/${batch.id}`}>
+                                  {t('batchActions.viewProgress')}
+                                </Link>
+                              </Button>
+                            ) : null}
+                            {batch.status === 'queued' || batch.status === 'running' ? (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 px-2"
+                                disabled={cancelBatch.isPending}
+                                onClick={() => cancelBatch.mutate(batch.id)}
+                              >
+                                <Ban className="size-4" />
+                                {commonT('cancel')}
+                              </Button>
+                            ) : batch.status !== 'queued' ? (
+                              <Button variant="link" size="sm" className="h-8 px-2" asChild>
+                                <Link href={`/console/agents/${agentId}/batch-test/${batch.id}`}>
+                                  {t('batchActions.viewResult')}
+                                </Link>
+                              </Button>
+                            ) : null}
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                                  <MoreHorizontal className="size-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                {batch.status === 'queued' || batch.status === 'running' ? (
+                                  <DropdownMenuItem
+                                    className="text-red-600"
+                                    disabled={cancelBatch.isPending}
+                                    onSelect={() => cancelBatch.mutate(batch.id)}
+                                  >
+                                    {commonT('cancelTest')}
+                                  </DropdownMenuItem>
+                                ) : (
+                                  <DropdownMenuItem
+                                    disabled={retestBatch.isPending}
+                                    onSelect={() => setRetestingBatch(batch)}
+                                  >
+                                    {commonT('retest')}
+                                  </DropdownMenuItem>
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))
@@ -1077,14 +1234,14 @@ export function BatchTestOverview({
       />
       <CaseDialog
         agentId={agentId}
-        scenarios={scenarios.map(scene => ({ id: scene.id, name: scene.name }))}
+        scenarios={scenarioOptions}
         open={caseDialogOpen}
         onOpenChange={setCaseDialogOpen}
         supportsAttachments={supportsAttachments}
       />
       <CaseDialog
         agentId={agentId}
-        scenarios={scenarios.map(scene => ({ id: scene.id, name: scene.name }))}
+        scenarios={scenarioOptions}
         caseItem={editingCase}
         open={!!editingCaseId}
         onOpenChange={open => {
@@ -1094,13 +1251,14 @@ export function BatchTestOverview({
       />
       <GenerateCasesDialog
         agentId={agentId}
-        scenarios={scenarios.map(scene => ({ id: scene.id, name: scene.name }))}
+        scenarios={scenarioOptions}
         open={generateDialogOpen}
         onOpenChange={setGenerateDialogOpen}
         onGenerationStart={setPendingGenerationCount}
         onGenerationCreateFailed={() => setPendingGenerationCount(null)}
       />
       <ConfirmDialog
+        variant="danger"
         open={deletingCaseIds.length > 0}
         onOpenChange={open => {
           if (!open && !deleteCases.isPending) setDeletingCaseIds([]);
@@ -1118,8 +1276,30 @@ export function BatchTestOverview({
         confirmText={commonT('delete')}
         cancelText={commonT('cancel')}
         loading={deleteCases.isPending}
-        variant="warning"
         onConfirm={confirmDeleteCases}
+      />
+      <ConfirmDialog
+        open={Boolean(retestingBatch)}
+        onOpenChange={open => {
+          if (!open && !retestBatch.isPending) setRetestingBatch(null);
+        }}
+        title={t('batches.retestConfirmTitle')}
+        description={
+          retestingBatch
+            ? t('batches.retestConfirmDescription', {
+                name: retestingBatch.name,
+                count: retestingBatch.case_count,
+              })
+            : ''
+        }
+        confirmText={t('batches.retestConfirmButton')}
+        cancelText={commonT('cancel')}
+        loading={retestBatch.isPending}
+        contentClassName="max-w-2xl rounded-2xl"
+        footerClassName="justify-end bg-white px-8 py-6"
+        cancelClassName="border border-slate-200 bg-white hover:bg-slate-50"
+        confirmClassName="bg-slate-950 text-white hover:bg-slate-800"
+        onConfirm={confirmRetestBatch}
       />
     </div>
   );

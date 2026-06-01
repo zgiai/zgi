@@ -835,6 +835,28 @@ func TestLoadFallsBackToEnvironmentWhenEnvFileMissing(t *testing.T) {
 	}
 }
 
+func TestLoadWorkflowTestTaskBackend(t *testing.T) {
+	restoreGlobalConfig(t)
+	chdirToTempDir(t)
+
+	t.Setenv("SERVER_MODE", "release")
+	t.Setenv("ENV", "production")
+	t.Setenv("SECRET_KEY", "env-secret")
+	t.Setenv("EMAIL_MAIL_DEFAULT_SEND_FROM", "noreply@example.com")
+	t.Setenv("EMAIL_RESEND_API_KEY", "test-api-key")
+	t.Setenv("API_KEY_ENCRYPTION_KEY", "test-api-key-encryption-key-32!!")
+	t.Setenv("WORKFLOW_TEST_TASK_BACKEND", "asynq")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("config.Load() error = %v, want nil", err)
+	}
+
+	if got := cfg.TaskQueue.WorkflowTestTaskBackend; got != "asynq" {
+		t.Fatalf("cfg.TaskQueue.WorkflowTestTaskBackend = %q, want asynq", got)
+	}
+}
+
 func TestLoadPrefersEnvFileOverEnvironment(t *testing.T) {
 	restoreGlobalConfig(t)
 

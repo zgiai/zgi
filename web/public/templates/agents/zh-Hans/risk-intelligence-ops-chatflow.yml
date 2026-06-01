@@ -99,7 +99,7 @@ workflow:
         text: |-
           运行说明
 
-          需配置。依赖：OpenAI GPT gpt-5.5 模型、文件输入、知识库、数据库。这是企业级编排示例：先绑定知识库和数据库，再用真实案例运行。
+          需配置。依赖：OpenAI GPT-4o 模型、文件输入、知识库、数据库。这是企业级编排示例：先绑定知识库和数据库，再用真实案例运行。
 
           调试输入：
           可在右侧调试窗口直接输入：
@@ -140,7 +140,7 @@ workflow:
         variables: []
         model:
           provider: openai
-          name: gpt-5.5
+          name: gpt-4o
           mode: chat
           completion_params:
             response_format: json_object
@@ -292,7 +292,7 @@ workflow:
         variables: []
         model:
           provider: openai
-          name: gpt-5.5
+          name: gpt-4o
           mode: chat
           completion_params:
             response_format: json_object
@@ -491,7 +491,7 @@ workflow:
         variables: []
         model:
           provider: openai
-          name: gpt-5.5
+          name: gpt-4o
           mode: chat
           completion_params: {}
         prompt_template:

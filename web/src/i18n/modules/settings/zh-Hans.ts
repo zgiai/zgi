@@ -100,7 +100,7 @@ const messages: SettingsMessages = {
     quickSwitch: '快速切换',
     quickSwitchDesc: '快速切换常用主题',
     // Theme names and descriptions
-    light: 'ZGI 蓝',
+    light: '亮色',
     lightDesc: '高辨识度亮蓝主色，保持白色背景与克制的操作色',
     dark: '深色',
     darkDesc: '护眼舒适的暗色模式',
@@ -110,10 +110,10 @@ const messages: SettingsMessages = {
     'graphite-cyanDesc': '低饱和青色，适合长时间后台操作',
     emerald: '翡翠绿',
     emeraldDesc: '清爽绿色，只强调关键操作与状态',
-    'ai-young': '灵漾紫',
-    'ai-youngDesc': '保留紫色识别，但降低页面干扰',
-    'whale-orange': '鲸智橙',
-    'whale-orangeDesc': '保留橙色活力，用于偏运营和提醒场景',
+    violet: '柔紫',
+    violetDesc: '以紫色作为强调色，并保持界面克制',
+    'warm-orange': '暖橙',
+    'warm-orangeDesc': '以暖橙色强调运营和提醒场景',
     // Theme switcher
     toggleTheme: '切换主题',
     chooseTheme: '选择主题',

@@ -166,6 +166,16 @@ class WorkflowTestService extends BaseService {
     return this.request('get', `/agents/${agentId}/workflow-tests/scenarios/recognition-tasks`);
   }
 
+  cancelScenarioRecognitionTask(
+    agentId: string,
+    taskId: string
+  ): Promise<ApiResponseData<WorkflowTestScenarioRecognitionTaskResponse>> {
+    return this.request(
+      'post',
+      `/agents/${agentId}/workflow-tests/scenarios/recognition-tasks/${taskId}/cancel`
+    );
+  }
+
   getGenerationTask(
     agentId: string,
     taskId: string

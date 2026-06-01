@@ -6,17 +6,20 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	runtimerepo "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
+	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	agentsHandlerPkg "github.com/zgiai/zgi/api/internal/modules/app/agents"
 	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
 	workflowHandlerPkg "github.com/zgiai/zgi/api/internal/modules/app/workflow"
 	announcementruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/announcement"
 	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/diagnosis"
+	workflow_file "github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	automationdefinition "github.com/zgiai/zgi/api/internal/modules/automation/service/definition"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
-	"github.com/zgiai/zgi/api/internal/modules/llm/client"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/middleware"
@@ -28,23 +31,38 @@ type automationWorkflowRunnerSetter interface {
 	SetAutomationWorkflowRunner(runner automationaction.AutomationWorkflowRunner)
 }
 
+type WorkflowRouteDeps struct {
+	DB                          *gorm.DB
+	AccountService              interfaces.AccountService
+	FileService                 interfaces.FileService
+	ContentExtractor            workflow_file.ContentExtractor
+	QuotaService                interfaces.QuotaService
+	OrganizationService         interfaces.OrganizationService
+	LLMClient                   interface{}
+	ToolEngine                  interface{}
+	GraphFlowService            *graphflow.Service
+	PromptResolver              promptservice.PromptService
+	AutomationDefinitionService automationdefinition.Service
+	TaskManager                 *queue.TaskManager
+	TaskRegistry                approvalTaskRegistry
+	Scheduler                   *pkgscheduler.Scheduler
+	EngineFactory               *graph_engine.EngineFactory
+	AutomationRunnerSetter      automationWorkflowRunnerSetter
+}
+
 // RegisterWorkflowRoutes now uses modular services.
-func RegisterWorkflowRoutes(router *gin.RouterGroup, accountService interfaces.AccountService, _ interfaces.WorkspaceManagementService, fileService interfaces.FileService, db *gorm.DB, contentExtractor interface{}, quotaService interfaces.QuotaService, enterpriseService interfaces.OrganizationService, llmClient interface{}, toolEngine interface{}, graphFlowService *graphflow.Service, promptResolver promptservice.PromptService, automationDefinitionService automationdefinition.Service, taskManager *queue.TaskManager, taskRegistry approvalTaskRegistry, scheduler *pkgscheduler.Scheduler, engineFactory *graph_engine.EngineFactory, automationRunnerSetter automationWorkflowRunnerSetter) {
-	if taskManager == nil {
-		panic("workflow approval task manager is required")
-	}
-	if taskRegistry == nil {
-		panic("workflow approval task registry is required")
-	}
+func RegisterWorkflowRoutes(router *gin.RouterGroup, deps WorkflowRouteDeps) {
+	validateWorkflowRouteDeps(deps)
+
 	// Initialize workflow repository
-	workflowRepo := workflowHandlerPkg.NewWorkflowRepository(db)
-	workflowRunLogRepo := workflowHandlerPkg.NewWorkflowRunLogRepository(db)
-	workflowNodeRuntimeLogRepo := workflowHandlerPkg.NewWorkflowNodeRuntimeLogRepository(db)
-	conversationRepo := conversation.NewAgentConversationRepository(db)
-	messageRepo := conversation.NewAgentMessageRepository(db)
+	workflowRepo := workflowHandlerPkg.NewWorkflowRepository(deps.DB)
+	workflowRunLogRepo := workflowHandlerPkg.NewWorkflowRunLogRepository(deps.DB)
+	workflowNodeRuntimeLogRepo := workflowHandlerPkg.NewWorkflowNodeRuntimeLogRepository(deps.DB)
+	conversationRepo := conversation.NewAgentConversationRepository(deps.DB)
+	messageRepo := conversation.NewAgentMessageRepository(deps.DB)
 
 	// Initialize agents repository
-	agentsRepo := agentsHandlerPkg.NewAgentsRepository(db)
+	agentsRepo := agentsHandlerPkg.NewAgentsRepository(deps.DB)
 
 	// Initialize workflow service with ContentExtractor, QuotaService, EnterpriseService, and LLMClient
 	workflowService := workflowHandlerPkg.NewWorkflowServiceWithContentExtractor(
@@ -52,28 +70,26 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, accountService interfaces.A
 		agentsRepo,
 		workflowRunLogRepo,
 		workflowNodeRuntimeLogRepo,
-		accountService,
-		fileService,
-		contentExtractor,
-		quotaService,
-		enterpriseService,
-		llmClient,
-		toolEngine,
-		graphFlowService,
-		promptResolver,
-		automationDefinitionService,
-		engineFactory,
+		deps.AccountService,
+		deps.FileService,
+		deps.ContentExtractor,
+		deps.QuotaService,
+		deps.OrganizationService,
+		deps.LLMClient,
+		deps.ToolEngine,
+		deps.GraphFlowService,
+		deps.PromptResolver,
+		deps.AutomationDefinitionService,
+		deps.EngineFactory,
 	)
-	if automationRunnerSetter != nil {
-		automationRunnerSetter.SetAutomationWorkflowRunner(workflowService)
-	}
+	deps.AutomationRunnerSetter.SetAutomationWorkflowRunner(workflowService)
 
 	// Initialize user migration service
 	userMigrationService := workflowHandlerPkg.NewUserMigrationServiceFromDB()
 
 	// Initialize workflow handler with proper dependencies
-	handler := workflowHandlerPkg.NewWorkflowHandler(workflowService, accountService, fileService, userMigrationService, enterpriseService)
-	if llmClientTyped, ok := llmClient.(client.LLMClient); ok {
+	handler := workflowHandlerPkg.NewWorkflowHandler(workflowService, deps.AccountService, deps.FileService, userMigrationService, deps.OrganizationService)
+	if llmClientTyped, ok := deps.LLMClient.(llmclient.LLMClient); ok {
 		diag := diagnosis.NewDiagnoser(context.Background(), llmClientTyped)
 		handler.SetDiagnoser(diag)
 		workflowService.SetDiagnoser(diag)
@@ -83,12 +99,27 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, accountService interfaces.A
 		conversation.NewAgentConversationService(conversationRepo, messageRepo),
 		conversation.NewAgentMessageService(messageRepo, conversationRepo),
 	)
+	runtimeLogHandler := workflowHandlerPkg.NewRuntimeLogHandler(workflowRunLogRepo, workflowNodeRuntimeLogRepo)
+	agentHistoryDispatchHandler := workflowHandlerPkg.NewAgentHistoryDispatchHandler(
+		agentsRepo,
+		agentHistoryHandler,
+		runtimeLogHandler,
+		runtimeservice.NewServiceWithDependencies(
+			runtimerepo.NewRepositories(deps.DB),
+			nil,
+			nil,
+			nil,
+			nil,
+			nil,
+			deps.OrganizationService,
+		),
+	)
 
 	apps := router.Group("/agents")
 	// Add middleware for workflow routes
 	apps.Use(middleware.SetupRequired())
-	apps.Use(middleware.JWTWithOrganizationAndService(accountService))
-	apps.Use(middleware.SetAccountService(accountService))
+	apps.Use(middleware.JWTWithOrganizationAndService(deps.AccountService))
+	apps.Use(middleware.SetAccountService(deps.AccountService))
 
 	apps.GET("/:agent_id/workflows/draft", handler.GetDraftWorkflow)
 	apps.POST("/:agent_id/workflows/draft", handler.SyncDraftWorkflow)
@@ -110,9 +141,9 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, accountService interfaces.A
 	apps.GET("/:agent_id/workflow-runs/:run_id", handler.GetWorkflowRunDetail)
 	apps.GET("/:agent_id/workflow-runs/:run_id/node-executions", handler.GetWorkflowRunNodeExecutions)
 	apps.POST("/:agent_id/workflow-runs/:run_id/nodes/:node_log_id/diagnose", handler.ManualDiagnoseNode)
-	apps.GET("/:agent_id/conversations", agentHistoryHandler.GetConversations)
-	apps.GET("/:agent_id/conversations/:conversation_id", agentHistoryHandler.GetConversationDetail)
-	apps.GET("/:agent_id/chat-messages", agentHistoryHandler.GetChatMessages)
+	apps.GET("/:agent_id/conversations", agentHistoryDispatchHandler.GetConversations)
+	apps.GET("/:agent_id/conversations/:conversation_id", agentHistoryDispatchHandler.GetConversationDetail)
+	apps.GET("/:agent_id/chat-messages", agentHistoryDispatchHandler.GetChatMessages)
 
 	// Get latest version
 	apps.GET("/:agent_id/workflows/published-versions", handler.GetPublishedWorkflowVersions)
@@ -123,23 +154,22 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, accountService interfaces.A
 	apps.POST("/workflows/import", handler.ImportWorkflow)
 
 	// Runtime log handler (still use agent_id for internal management)
-	runtimeLogHandler := workflowHandlerPkg.NewRuntimeLogHandler(workflowRunLogRepo, workflowNodeRuntimeLogRepo)
-	apps.POST("/:agent_id/runtime-logs", runtimeLogHandler.GetRuntimeLogs)
+	apps.POST("/:agent_id/runtime-logs", agentHistoryDispatchHandler.GetRuntimeLogs)
 	apps.GET("/:agent_id/workflow-runs/:run_id/nodes", runtimeLogHandler.GetWorkflowRunNodeLogs)
 
-	approvalService := approvalruntime.NewService(db)
-	registerApprovalTaskHandlers(taskRegistry, taskManager, approvalService, handler)
-	registerApprovalScheduledTasks(scheduler, approvalService, handler)
+	approvalService := approvalruntime.NewService(deps.DB)
+	registerApprovalTaskHandlers(deps.TaskRegistry, deps.TaskManager, approvalService, handler)
+	registerApprovalScheduledTasks(deps.Scheduler, approvalService, handler)
 
-	approvalHandler := approvalruntime.NewHandler(approvalService, taskManager)
+	approvalHandler := approvalruntime.NewHandler(approvalService, deps.TaskManager)
 	approvalRoutes := router.Group("/approval")
 	approvalRoutes.Use(middleware.SetupRequired())
 	approvalRoutes.GET("/forms/:token", approvalHandler.GetForm)
 	approvalRoutes.GET("/forms/:token/events", approvalHandler.GetRunEvents)
 	approvalRoutes.POST("/forms/:token/submit", approvalHandler.SubmitForm)
 
-	announcementService := announcementruntime.NewService(db)
-	registerAnnouncementScheduledTasks(scheduler, announcementService)
+	announcementService := announcementruntime.NewService(deps.DB)
+	registerAnnouncementScheduledTasks(deps.Scheduler, announcementService)
 	announcementHandler := announcementruntime.NewHandler(announcementService)
 	announcementRoutes := router.Group("/announcements")
 	announcementRoutes.Use(middleware.SetupRequired())
@@ -147,8 +177,8 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, accountService interfaces.A
 
 	workflowRunEvents := router.Group("/workflow-runs")
 	workflowRunEvents.Use(middleware.SetupRequired())
-	workflowRunEvents.Use(middleware.JWTWithOrganizationAndService(accountService))
-	workflowRunEvents.Use(middleware.SetAccountService(accountService))
+	workflowRunEvents.Use(middleware.JWTWithOrganizationAndService(deps.AccountService))
+	workflowRunEvents.Use(middleware.SetAccountService(deps.AccountService))
 	workflowRunEvents.GET("/:workflow_run_id/events", handler.GetWorkflowRunEvents)
 
 	// Web app workflow configuration is public, but still requires the system to be initialized.
@@ -162,7 +192,7 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, accountService interfaces.A
 	// Web app workflow execution and conversation management by web_app_id
 	protectedWorkflows := router.Group("/workflows")
 	protectedWorkflows.Use(middleware.SetupRequired())
-	protectedWorkflows.Use(middleware.SetAccountService(accountService))
+	protectedWorkflows.Use(middleware.SetAccountService(deps.AccountService))
 	protectedWorkflows.Use(middleware.WebAppAuthMiddleware()) // Use new dual-header authentication middleware
 
 	// Workflow execution - now uses WebAppAuthMiddleware for dual-header authentication
@@ -183,11 +213,62 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, accountService interfaces.A
 	builtInWorkflows.Use(middleware.SetupRequired())
 
 	// Initialize built-in workflow repository and service
-	builtInRepo := workflowHandlerPkg.NewBuiltInWorkflowRepository(db)
+	builtInRepo := workflowHandlerPkg.NewBuiltInWorkflowRepository(deps.DB)
 	builtInService := workflowHandlerPkg.NewBuiltInWorkflowService(builtInRepo)
 	builtInHandler := workflowHandlerPkg.NewBuiltInWorkflowHandler(builtInService)
 
 	// Register built-in workflow routes
 	builtInWorkflows.GET("", builtInHandler.GetBuiltInWorkflows)
 	builtInWorkflows.GET("/:scenario", builtInHandler.GetBuiltInWorkflowByScenario)
+}
+
+func validateWorkflowRouteDeps(deps WorkflowRouteDeps) {
+	if deps.DB == nil {
+		panic("workflow routes require db")
+	}
+	if deps.AccountService == nil {
+		panic("workflow routes require account service")
+	}
+	if deps.FileService == nil {
+		panic("workflow routes require file service")
+	}
+	if deps.ContentExtractor == nil {
+		panic("workflow routes require content extractor")
+	}
+	if deps.QuotaService == nil {
+		panic("workflow routes require quota service")
+	}
+	if deps.OrganizationService == nil {
+		panic("workflow routes require organization service")
+	}
+	if deps.LLMClient == nil {
+		panic("workflow routes require llm client")
+	}
+	if deps.ToolEngine == nil {
+		panic("workflow routes require tool engine")
+	}
+	if deps.GraphFlowService == nil {
+		panic("workflow routes require graph flow service")
+	}
+	if deps.PromptResolver == nil {
+		panic("workflow routes require prompt resolver")
+	}
+	if deps.AutomationDefinitionService == nil {
+		panic("workflow routes require automation definition service")
+	}
+	if deps.TaskManager == nil {
+		panic("workflow routes require task manager")
+	}
+	if deps.TaskRegistry == nil {
+		panic("workflow routes require task registry")
+	}
+	if deps.Scheduler == nil {
+		panic("workflow routes require scheduler")
+	}
+	if deps.EngineFactory == nil {
+		panic("workflow routes require workflow engine factory")
+	}
+	if deps.AutomationRunnerSetter == nil {
+		panic("workflow routes require automation runner setter")
+	}
 }
