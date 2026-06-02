@@ -597,10 +597,12 @@ export interface Document {
    * Data source information object. The structure may vary depending on the data_source_type.
    */
   data_source_info?: {
-    upload_file_id: string;
+    upload_file_id?: string;
+    source_file_id?: string;
     /** Allow additional dynamic keys returned by the API */
     [key: string]: unknown;
   };
+  file_id?: string;
 
   /**
    * Dataset process rule identifier associated with this document.

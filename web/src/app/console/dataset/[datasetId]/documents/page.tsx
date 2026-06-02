@@ -183,9 +183,13 @@ export default function DatasetDocumentsPage() {
       try {
         switch (action) {
           case 'download':
-            if (document.data_source_info?.upload_file_id) {
+            const sourceFileId =
+              document.data_source_info?.upload_file_id ||
+              document.data_source_info?.source_file_id ||
+              document.file_id;
+            if (sourceFileId) {
               await downloadMutation.mutateAsync({
-                fileId: document.data_source_info.upload_file_id,
+                fileId: sourceFileId,
                 filename: document.name,
               });
             } else {
