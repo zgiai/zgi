@@ -223,20 +223,80 @@ func TestKnowledgeBaseFileRefServiceListsRefsWithAssetAndFileState(t *testing.T)
 	}
 }
 
+func TestKnowledgeBaseFileRefServiceRetriesRef(t *testing.T) {
+	assetID := uuid.New()
+	refID := uuid.New()
+	oldSyncRunID := uuid.New()
+	provider := "openai"
+	embeddingModel := "text-embedding-3-small"
+	deps := &fakeKnowledgeBaseFileRefDeps{
+		dataset: &datasetModel.Dataset{
+			ID:                     "dataset-1",
+			OrganizationID:         "org-1",
+			EmbeddingModelProvider: &provider,
+			EmbeddingModel:         &embeddingModel,
+		},
+		assets: []*datalibModel.DocumentAsset{
+			{
+				ID:                assetID,
+				OrganizationID:    "org-1",
+				SourceFileID:      "file-1",
+				ProductStatus:     datalibModel.DocumentAssetProductStatusReady,
+				VectorStatus:      datalibModel.DocumentAssetVectorStatusReady,
+				GenerationNo:      7,
+				EmbeddingProvider: &provider,
+				EmbeddingModel:    &embeddingModel,
+			},
+		},
+		refs: []*datalibModel.KnowledgeBaseAssetRef{
+			{
+				ID:             refID,
+				OrganizationID: "org-1",
+				DatasetID:      "dataset-1",
+				AssetID:        assetID,
+				SyncStatus:     datalibModel.KnowledgeBaseAssetRefSyncStatusFailed,
+				SyncRunID:      &oldSyncRunID,
+			},
+		},
+		chunkCount:     1,
+		embeddingCount: 1,
+	}
+	svc := newKnowledgeBaseFileRefTestService(deps)
+
+	result, err := svc.RetryRef(context.Background(), KnowledgeBaseFileRefRetryRequest{
+		OrganizationID: "org-1",
+		DatasetID:      "dataset-1",
+		RefID:          refID,
+	})
+	if err != nil {
+		t.Fatalf("RetryRef: %v", err)
+	}
+	if result == nil ||
+		!result.Success ||
+		result.SyncRunID == nil ||
+		*result.SyncRunID == uuid.Nil ||
+		*result.SyncRunID == oldSyncRunID ||
+		result.GenerationNo != 7 ||
+		deps.pendingSyncRunID == uuid.Nil {
+		t.Fatalf("result=%+v pending=%s", result, deps.pendingSyncRunID)
+	}
+}
+
 type fakeKnowledgeBaseFileRefDeps struct {
-	dataset        *datasetModel.Dataset
-	assets         []*datalibModel.DocumentAsset
-	existingRef    *datalibModel.KnowledgeBaseAssetRef
-	refs           []*datalibModel.KnowledgeBaseAssetRef
-	files          map[string]*fileModel.UploadFile
-	chunkCount     int64
-	embeddingCount int64
-	created        *datalibModel.KnowledgeBaseAssetRef
-	lastRefFilter  datalibRepo.KnowledgeBaseAssetRefListFilter
+	dataset          *datasetModel.Dataset
+	assets           []*datalibModel.DocumentAsset
+	existingRef      *datalibModel.KnowledgeBaseAssetRef
+	refs             []*datalibModel.KnowledgeBaseAssetRef
+	files            map[string]*fileModel.UploadFile
+	chunkCount       int64
+	embeddingCount   int64
+	created          *datalibModel.KnowledgeBaseAssetRef
+	lastRefFilter    datalibRepo.KnowledgeBaseAssetRefListFilter
+	pendingSyncRunID uuid.UUID
 }
 
 func newKnowledgeBaseFileRefTestService(deps *fakeKnowledgeBaseFileRefDeps) KnowledgeBaseFileRefService {
-	return NewKnowledgeBaseFileRefService(deps, deps, deps, deps, deps, deps)
+	return NewKnowledgeBaseFileRefService(deps, deps, deps, fakeKnowledgeBaseFileRefStore{deps: deps}, deps, deps)
 }
 
 func (f *fakeKnowledgeBaseFileRefDeps) GetAssetByID(ctx context.Context, id uuid.UUID) (*datalibModel.DocumentAsset, error) {
@@ -280,4 +340,47 @@ func (f *fakeKnowledgeBaseFileRefDeps) ListByTenantAndIDs(ctx context.Context, t
 
 func (f *fakeKnowledgeBaseFileRefDeps) GetByID(ctx context.Context, id string) (*datasetModel.Dataset, error) {
 	return f.dataset, nil
+}
+
+type fakeKnowledgeBaseFileRefStore struct {
+	deps *fakeKnowledgeBaseFileRefDeps
+}
+
+func (f fakeKnowledgeBaseFileRefStore) Create(ctx context.Context, item *datalibModel.KnowledgeBaseAssetRef) error {
+	f.deps.created = item
+	return nil
+}
+
+func (f fakeKnowledgeBaseFileRefStore) GetByID(ctx context.Context, id uuid.UUID) (*datalibModel.KnowledgeBaseAssetRef, error) {
+	for _, ref := range f.deps.refs {
+		if ref.ID == id {
+			return ref, nil
+		}
+	}
+	if f.deps.created != nil && f.deps.created.ID == id {
+		return f.deps.created, nil
+	}
+	return nil, nil
+}
+
+func (f fakeKnowledgeBaseFileRefStore) FindActiveByAsset(ctx context.Context, organizationID string, datasetID string, assetID uuid.UUID) (*datalibModel.KnowledgeBaseAssetRef, error) {
+	return f.deps.existingRef, nil
+}
+
+func (f fakeKnowledgeBaseFileRefStore) List(ctx context.Context, filter datalibRepo.KnowledgeBaseAssetRefListFilter) ([]*datalibModel.KnowledgeBaseAssetRef, int64, error) {
+	f.deps.lastRefFilter = filter
+	return f.deps.refs, int64(len(f.deps.refs)), nil
+}
+
+func (f fakeKnowledgeBaseFileRefStore) MarkPending(ctx context.Context, organizationID string, id uuid.UUID, syncRunID uuid.UUID, errorCode, errorMessage *string) (*datalibModel.KnowledgeBaseAssetRef, error) {
+	ref, err := f.GetByID(ctx, id)
+	if err != nil || ref == nil {
+		return ref, err
+	}
+	ref.SyncStatus = datalibModel.KnowledgeBaseAssetRefSyncStatusPending
+	ref.SyncRunID = &syncRunID
+	ref.SyncErrorCode = errorCode
+	ref.SyncErrorMessage = errorMessage
+	f.deps.pendingSyncRunID = syncRunID
+	return ref, nil
 }

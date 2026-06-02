@@ -40,8 +40,10 @@ type knowledgeBaseFileEmbeddingReader interface {
 
 type knowledgeBaseFileRefStore interface {
 	Create(ctx context.Context, item *datalibModel.KnowledgeBaseAssetRef) error
+	GetByID(ctx context.Context, id uuid.UUID) (*datalibModel.KnowledgeBaseAssetRef, error)
 	FindActiveByAsset(ctx context.Context, organizationID string, datasetID string, assetID uuid.UUID) (*datalibModel.KnowledgeBaseAssetRef, error)
 	List(ctx context.Context, filter datalibRepo.KnowledgeBaseAssetRefListFilter) ([]*datalibModel.KnowledgeBaseAssetRef, int64, error)
+	MarkPending(ctx context.Context, organizationID string, id uuid.UUID, syncRunID uuid.UUID, errorCode, errorMessage *string) (*datalibModel.KnowledgeBaseAssetRef, error)
 }
 
 type knowledgeBaseFileFileReader interface {
@@ -56,6 +58,7 @@ type KnowledgeBaseFileRefService interface {
 	ListCandidates(ctx context.Context, req KnowledgeBaseFileCandidateRequest) (*KnowledgeBaseFileCandidateResult, error)
 	ListRefs(ctx context.Context, req KnowledgeBaseFileRefListRequest) (*KnowledgeBaseFileRefListResult, error)
 	CreateRefs(ctx context.Context, req KnowledgeBaseFileRefCreateRequest) (*KnowledgeBaseFileRefCreateResult, error)
+	RetryRef(ctx context.Context, req KnowledgeBaseFileRefRetryRequest) (*KnowledgeBaseFileRefCreateItem, error)
 }
 
 type KnowledgeBaseFileCandidateRequest struct {
@@ -103,6 +106,13 @@ type KnowledgeBaseFileRefListRequest struct {
 	SyncStatus     string
 	Limit          int
 	Offset         int
+}
+
+type KnowledgeBaseFileRefRetryRequest struct {
+	OrganizationID string
+	WorkspaceID    *string
+	DatasetID      string
+	RefID          uuid.UUID
 }
 
 type KnowledgeBaseFileRefListResult struct {
@@ -337,6 +347,61 @@ func (s *knowledgeBaseFileRefService) CreateRefs(ctx context.Context, req Knowle
 	return result, nil
 }
 
+func (s *knowledgeBaseFileRefService) RetryRef(ctx context.Context, req KnowledgeBaseFileRefRetryRequest) (*KnowledgeBaseFileRefCreateItem, error) {
+	if err := validateKnowledgeBaseFileRefScope(req.OrganizationID, req.DatasetID); err != nil {
+		return nil, err
+	}
+	if req.RefID == uuid.Nil {
+		return nil, ErrKnowledgeBaseFileRefNotFound
+	}
+	dataset, err := s.datasets.GetByID(ctx, req.DatasetID)
+	if err != nil {
+		return nil, err
+	}
+	if dataset == nil || dataset.OrganizationID != req.OrganizationID {
+		return nil, ErrDatasetNotFound
+	}
+	ref, err := s.refs.GetByID(ctx, req.RefID)
+	if err != nil {
+		return nil, err
+	}
+	if ref == nil || ref.OrganizationID != req.OrganizationID || ref.DatasetID != req.DatasetID {
+		return nil, ErrKnowledgeBaseFileRefNotFound
+	}
+	asset, err := s.assets.GetAssetByID(ctx, ref.AssetID)
+	if err != nil {
+		return nil, err
+	}
+	if asset == nil || asset.OrganizationID != req.OrganizationID {
+		return &KnowledgeBaseFileRefCreateItem{AssetID: ref.AssetID, Success: false, Reason: FileCandidateReasonNotReady}, nil
+	}
+	if req.WorkspaceID != nil && (asset.WorkspaceID == nil || *asset.WorkspaceID != *req.WorkspaceID) {
+		return nil, ErrKnowledgeBaseFileRefNotFound
+	}
+	reason, generationNo, err := s.evaluateAssetSyncReadiness(ctx, dataset, asset)
+	if err != nil {
+		return nil, err
+	}
+	if reason != "" {
+		return &KnowledgeBaseFileRefCreateItem{AssetID: asset.ID, Ref: newKnowledgeBaseAssetRefView(ref), Success: false, Reason: reason, GenerationNo: generationNo}, nil
+	}
+	syncRunID := uuid.New()
+	ref, err = s.refs.MarkPending(ctx, req.OrganizationID, ref.ID, syncRunID, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	if ref == nil {
+		return nil, ErrKnowledgeBaseFileRefNotFound
+	}
+	return &KnowledgeBaseFileRefCreateItem{
+		AssetID:      asset.ID,
+		Ref:          newKnowledgeBaseAssetRefView(ref),
+		SyncRunID:    &syncRunID,
+		GenerationNo: generationNo,
+		Success:      true,
+	}, nil
+}
+
 func (s *knowledgeBaseFileRefService) createOneRef(ctx context.Context, dataset *datasetModel.Dataset, req KnowledgeBaseFileRefCreateRequest, assetID uuid.UUID) (*datalibModel.KnowledgeBaseAssetRef, uuid.UUID, int64, string, error) {
 	if assetID == uuid.Nil {
 		return nil, uuid.Nil, 0, FileCandidateReasonNotReady, nil
@@ -376,6 +441,23 @@ func (s *knowledgeBaseFileRefService) createOneRef(ctx context.Context, dataset 
 		return nil, uuid.Nil, 0, "", err
 	}
 	return ref, syncRunID, asset.GenerationNo, "", nil
+}
+
+func (s *knowledgeBaseFileRefService) evaluateAssetSyncReadiness(ctx context.Context, dataset *datasetModel.Dataset, asset *datalibModel.DocumentAsset) (string, int64, error) {
+	chunkCount, err := s.chunks.CountByAssetGenerationAndTypes(ctx, asset.OrganizationID, asset.ID, asset.GenerationNo, []string{
+		datalibModel.DocumentChunkTypeChild,
+		datalibModel.DocumentChunkTypeAuto,
+		datalibModel.DocumentChunkTypeManual,
+	})
+	if err != nil {
+		return "", asset.GenerationNo, err
+	}
+	embeddingCount, err := s.embeddings.CountReadyByAssetGeneration(ctx, asset.OrganizationID, asset.ID, asset.GenerationNo)
+	if err != nil {
+		return "", asset.GenerationNo, err
+	}
+	reason := evaluateFileCandidateReason(dataset, asset, false, chunkCount, embeddingCount)
+	return reason, asset.GenerationNo, nil
 }
 
 func (s *knowledgeBaseFileRefService) buildCandidate(ctx context.Context, dataset *datasetModel.Dataset, asset *datalibModel.DocumentAsset, file *fileModel.UploadFile) (*KnowledgeBaseFileCandidate, error) {
@@ -456,3 +538,4 @@ func candidateMatchesKeyword(file *fileModel.UploadFile, keyword string) bool {
 }
 
 var ErrDatasetNotFound = errors.New("dataset not found")
+var ErrKnowledgeBaseFileRefNotFound = errors.New("knowledge base file ref not found")

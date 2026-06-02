@@ -29,6 +29,7 @@ func (h *KnowledgeBaseFileRefHandler) RegisterDatasetRoutes(router *gin.RouterGr
 	group.GET("/file-candidates", h.ListFileCandidates)
 	group.GET("/file-refs", h.ListFileRefs)
 	group.POST("/file-refs", h.CreateFileRefs)
+	group.POST("/file-refs/:ref_id/retry", h.RetryFileRef)
 }
 
 func (h *KnowledgeBaseFileRefHandler) ListFileCandidates(c *gin.Context) {
@@ -113,6 +114,36 @@ func (h *KnowledgeBaseFileRefHandler) CreateFileRefs(c *gin.Context) {
 			continue
 		}
 		if err := h.dispatcher.EnqueueDatasetRefSync(c.Request.Context(), item.Ref.ID, item.AssetID, item.Ref.DatasetID, item.GenerationNo, *item.SyncRunID); err != nil {
+			response.FailWithMessage(c, response.ErrSystemError, err.Error())
+			return
+		}
+	}
+	response.Success(c, result)
+}
+
+func (h *KnowledgeBaseFileRefHandler) RetryFileRef(c *gin.Context) {
+	organizationID := util.GetOrganizationID(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	refID, err := uuid.Parse(c.Param("ref_id"))
+	if err != nil || refID == uuid.Nil {
+		response.Fail(c, response.ErrInvalidParams)
+		return
+	}
+	result, err := h.service.RetryRef(c.Request.Context(), datalibService.KnowledgeBaseFileRefRetryRequest{
+		OrganizationID: organizationID,
+		WorkspaceID:    optionalString(util.GetWorkspaceID(c)),
+		DatasetID:      c.Param("dataset_id"),
+		RefID:          refID,
+	})
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+	if result.Success && result.Ref != nil && result.SyncRunID != nil {
+		if err := h.dispatcher.EnqueueDatasetRefSync(c.Request.Context(), result.Ref.ID, result.AssetID, result.Ref.DatasetID, result.GenerationNo, *result.SyncRunID); err != nil {
 			response.FailWithMessage(c, response.ErrSystemError, err.Error())
 			return
 		}
