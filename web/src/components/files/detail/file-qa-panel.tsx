@@ -2,10 +2,21 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { AlertCircle, Bot, Layers3, Loader2, MessageSquareText, Send, User } from 'lucide-react';
+import {
+  AlertCircle,
+  Bot,
+  ChevronDown,
+  ChevronRight,
+  Layers3,
+  Loader2,
+  MessageSquareText,
+  Send,
+  User,
+} from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Textarea } from '@/components/ui/textarea';
 import { useT } from '@/i18n';
 import { fileManageService } from '@/services/file-manage.service';
@@ -305,6 +316,7 @@ export function FileQAPanel({
 
 function SourceList({ result }: { result: AskFileQuestionResponse }) {
   const t = useT('files');
+  const [open, setOpen] = useState(false);
   if (!result.sources.length) {
     return (
       <div className="mt-4 rounded-md border border-dashed border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
@@ -313,44 +325,42 @@ function SourceList({ result }: { result: AskFileQuestionResponse }) {
     );
   }
   return (
-    <div className="mt-4 space-y-2">
-      <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-        <Layers3 className="h-4 w-4 text-muted-foreground" />
-        {t('detail.qa.sources', { count: result.sources.length })}
-      </div>
-      {result.sources.map(source => (
-        <div
-          key={source.primary_chunk_id}
-          className="rounded-md border border-border bg-muted/20 p-3"
+    <Collapsible open={open} onOpenChange={setOpen} className="mt-4 space-y-2">
+      <CollapsibleTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-8 gap-2 px-0 text-sm font-medium text-foreground hover:bg-transparent"
         >
-          <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-foreground">
-            <span>#{source.position + 1}</span>
-            <Badge variant="subtle">{t('detail.chunks.primary')}</Badge>
-            {typeof source.distance === 'number' ? (
-              <span className="text-xs text-muted-foreground">
-                {t('detail.qa.distance', { value: source.distance.toFixed(3) })}
-              </span>
-            ) : null}
-          </div>
-          <p className="mt-2 text-sm leading-6 text-muted-foreground">{source.snippet}</p>
-          {source.children.length ? (
-            <div className="mt-3 space-y-2">
-              {source.children.map(child => (
-                <div
-                  key={child.chunk_id}
-                  className="rounded-md border border-border bg-background px-3 py-2 text-sm"
-                >
-                  <div className="mb-1 flex items-center gap-2">
-                    <span className="font-mono text-success">#S-{child.position + 1}</span>
-                    <Badge variant="outline">{t('detail.chunks.secondary')}</Badge>
-                  </div>
-                  <p className="leading-6 text-muted-foreground">{child.snippet}</p>
-                </div>
-              ))}
+          {open ? (
+            <ChevronDown className="h-4 w-4 text-muted-foreground" />
+          ) : (
+            <ChevronRight className="h-4 w-4 text-muted-foreground" />
+          )}
+          <Layers3 className="h-4 w-4 text-muted-foreground" />
+          {t('detail.qa.sources', { count: result.sources.length })}
+        </Button>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="space-y-2">
+        {result.sources.map(source => (
+          <div
+            key={source.primary_chunk_id}
+            className="rounded-md border border-border bg-muted/20 p-3"
+          >
+            <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-foreground">
+              <span>#{source.position + 1}</span>
+              <Badge variant="subtle">{t('detail.chunks.primary')}</Badge>
+              {typeof source.distance === 'number' ? (
+                <span className="text-xs text-muted-foreground">
+                  {t('detail.qa.distance', { value: source.distance.toFixed(3) })}
+                </span>
+              ) : null}
             </div>
-          ) : null}
-        </div>
-      ))}
-    </div>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">{source.snippet}</p>
+          </div>
+        ))}
+      </CollapsibleContent>
+    </Collapsible>
   );
 }

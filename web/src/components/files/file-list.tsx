@@ -138,11 +138,6 @@ function FileProcessingStatus({ file, compact = false }: { file: FileItem; compa
           {embeddingCount > 0 ? (
             <span>{t('fileList.embeddingCount', { count: embeddingCount })}</span>
           ) : null}
-          {file.last_error_message ? (
-            <span className="max-w-[220px] truncate text-destructive">
-              {file.last_error_message}
-            </span>
-          ) : null}
         </div>
       ) : null}
     </div>
@@ -720,16 +715,16 @@ function FileListBase({
           </div>
         ) : null}
       </div>
-      <Table className="table-fixed" containerClassName="overflow-y-auto flex-1 relative">
+      <Table className="min-w-[1024px] table-fixed" containerClassName="overflow-auto flex-1">
         <colgroup>
           <col style={{ width: 44 }} />
-          <col style={{ width: 260 }} />
-          <col style={{ width: 90 }} />
-          <col style={{ width: 100 }} />
-          <col style={{ width: 240 }} />
-          <col style={{ width: 140 }} />
-          <col style={{ width: 160 }} />
-          {hasAnyAction ? <col style={{ width: 170 }} /> : null}
+          <col style={{ width: 220 }} />
+          <col style={{ width: 66 }} />
+          <col style={{ width: 80 }} />
+          <col style={{ width: 188 }} />
+          <col style={{ width: 116 }} />
+          <col style={{ width: 150 }} />
+          {hasAnyAction ? <col style={{ width: 160 }} /> : null}
         </colgroup>
         <TableHeader className="sticky top-0 z-10 bg-muted/30 backdrop-blur">
           <TableRow className="h-11 hover:bg-muted/30">

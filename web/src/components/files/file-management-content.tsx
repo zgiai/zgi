@@ -523,6 +523,23 @@ const FileManagementContent = ({
     activeCategory === 'needs_action' || processingStatusFilter !== 'all'
       ? displayedFiles.length
       : total;
+  const loadedNeedsActionCount = scopeFilteredFiles.filter(file =>
+    fileMatchesProcessingStatusFilter(file, 'needs_action')
+  ).length;
+  const loadedReadyCount = scopeFilteredFiles.filter(file =>
+    fileMatchesProcessingStatusFilter(file, 'ready')
+  ).length;
+  const loadedActiveProcessingCount = scopeFilteredFiles.filter(file => {
+    const status = getFileProcessingStatus(file);
+    return status === 'parsing' || status === 'generating';
+  }).length;
+  const derivedStoredOnlyCount =
+    activeCategory === 'needs_action'
+      ? 0
+      : Math.max(
+          total - loadedNeedsActionCount - loadedReadyCount - loadedActiveProcessingCount,
+          0
+        );
   const processingStatusFilterCounts = FILE_PROCESSING_STATUS_FILTERS.reduce(
     (acc, filter) => {
       acc[filter.id] =
@@ -530,8 +547,10 @@ const FileManagementContent = ({
           ? activeCategory === 'needs_action'
             ? scopeFilteredFiles.length
             : total
-          : scopeFilteredFiles.filter(file => fileMatchesProcessingStatusFilter(file, filter.id))
-              .length;
+          : filter.id === 'stored_only'
+            ? derivedStoredOnlyCount
+            : scopeFilteredFiles.filter(file => fileMatchesProcessingStatusFilter(file, filter.id))
+                .length;
       return acc;
     },
     {} as Record<FileProcessingStatusFilter, number>
