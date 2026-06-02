@@ -304,10 +304,13 @@ const messages: FilesMessages = {
       manageSecondary: '管理二级切片',
       viewOriginal: '查看原文',
       edit: '编辑',
+      editSecondaryTitle: '编辑二级切片',
+      editSecondaryDescription: '当前二级切片 {count} 字符，保存后会重建该切片向量。',
       delete: '删除',
       characters: '{count} 字符',
       enabled: '启用',
       disabled: '停用',
+      cancel: '取消',
       save: '保存',
       toasts: {
         updated: '切片已更新',

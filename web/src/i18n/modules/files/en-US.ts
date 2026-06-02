@@ -314,10 +314,14 @@ const messages = {
       manageSecondary: 'Manage secondary chunks',
       viewOriginal: 'View source',
       edit: 'Edit',
+      editSecondaryTitle: 'Edit Secondary Chunk',
+      editSecondaryDescription:
+        'This secondary chunk has {count} characters. Saving will rebuild its vector.',
       delete: 'Delete',
       characters: '{count} characters',
       enabled: 'Enabled',
       disabled: 'Disabled',
+      cancel: 'Cancel',
       save: 'Save',
       toasts: {
         updated: 'Chunk updated',

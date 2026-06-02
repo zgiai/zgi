@@ -19,6 +19,15 @@ import {
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
@@ -51,7 +60,8 @@ function ChunkSkeleton() {
 
 export function FileChunksPanel({ fileId, enabled }: FileChunksPanelProps) {
   const t = useT('files');
-  const [draftByChunk, setDraftByChunk] = useState<Record<string, string>>({});
+  const [editingSecondaryChunk, setEditingSecondaryChunk] = useState<FileDocumentChunk | null>(null);
+  const [secondaryDraft, setSecondaryDraft] = useState('');
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<ChunkFilter>('all');
@@ -80,18 +90,19 @@ export function FileChunksPanel({ fileId, enabled }: FileChunksPanelProps) {
 
   const allExpanded = visibleChunks.length > 0 && visibleChunks.every(chunk => expandedIds[chunk.id] ?? true);
 
-  const updateDraft = (chunkId: string, value: string) => {
-    setDraftByChunk(current => ({ ...current, [chunkId]: value }));
+  const startEditSecondary = (chunk: FileDocumentChunk) => {
+    setEditingSecondaryChunk(chunk);
+    setSecondaryDraft(chunk.content);
   };
 
-  const saveChunkContent = async (chunk: FileDocumentChunk) => {
-    const content = draftByChunk[chunk.id] ?? chunk.content;
-    await updateChunk.mutateAsync({ chunkId: chunk.id, data: { content } });
-    setDraftByChunk(current => {
-      const next = { ...current };
-      delete next[chunk.id];
-      return next;
+  const saveSecondaryChunkContent = async () => {
+    if (!editingSecondaryChunk) return;
+    await updateChunk.mutateAsync({
+      chunkId: editingSecondaryChunk.id,
+      data: { content: secondaryDraft },
     });
+    setEditingSecondaryChunk(null);
+    setSecondaryDraft('');
   };
 
   const toggleChunkEnabled = async (chunk: FileDocumentChunk, checked: boolean) => {
@@ -209,16 +220,74 @@ export function FileChunksPanel({ fileId, enabled }: FileChunksPanelProps) {
               key={chunk.id}
               chunk={chunk}
               expanded={expandedIds[chunk.id] ?? true}
-              draftByChunk={draftByChunk}
               disabled={updateChunk.isPending}
-              onDraftChange={updateDraft}
-              onSave={saveChunkContent}
+              onEditSecondary={startEditSecondary}
               onToggleEnabled={toggleChunkEnabled}
               onToggleExpanded={toggleExpanded}
             />
           ))}
         </div>
       )}
+
+      <Dialog
+        open={Boolean(editingSecondaryChunk)}
+        onOpenChange={open => {
+          if (!open) {
+            setEditingSecondaryChunk(null);
+            setSecondaryDraft('');
+          }
+        }}
+      >
+        <DialogContent size="xl">
+          <DialogHeader>
+            <DialogTitle>{t('detail.chunks.editSecondaryTitle')}</DialogTitle>
+            <DialogDescription>
+              {editingSecondaryChunk
+                ? t('detail.chunks.editSecondaryDescription', {
+                    count: editingSecondaryChunk.content.length,
+                  })
+                : null}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogBody>
+            <Textarea
+              value={secondaryDraft}
+              onChange={event => setSecondaryDraft(event.target.value)}
+              className="min-h-[360px] resize-y text-sm leading-6"
+              disabled={updateChunk.isPending}
+            />
+          </DialogBody>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setEditingSecondaryChunk(null);
+                setSecondaryDraft('');
+              }}
+              disabled={updateChunk.isPending}
+            >
+              {t('detail.chunks.cancel')}
+            </Button>
+            <Button
+              className="gap-2"
+              onClick={() => void saveSecondaryChunkContent()}
+              disabled={
+                updateChunk.isPending ||
+                !editingSecondaryChunk ||
+                secondaryDraft.trim() === '' ||
+                secondaryDraft === editingSecondaryChunk.content
+              }
+            >
+              {updateChunk.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Save className="h-4 w-4" />
+              )}
+              {t('detail.chunks.save')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -226,19 +295,15 @@ export function FileChunksPanel({ fileId, enabled }: FileChunksPanelProps) {
 function PrimaryChunkCard({
   chunk,
   expanded,
-  draftByChunk,
   disabled,
-  onDraftChange,
-  onSave,
+  onEditSecondary,
   onToggleEnabled,
   onToggleExpanded,
 }: {
   chunk: FileDocumentChunk;
   expanded: boolean;
-  draftByChunk: Record<string, string>;
   disabled: boolean;
-  onDraftChange: (chunkId: string, value: string) => void;
-  onSave: (chunk: FileDocumentChunk) => Promise<void>;
+  onEditSecondary: (chunk: FileDocumentChunk) => void;
   onToggleEnabled: (chunk: FileDocumentChunk, checked: boolean) => Promise<void>;
   onToggleExpanded: (chunkId: string) => void;
 }) {
@@ -306,10 +371,8 @@ function PrimaryChunkCard({
               key={child.id}
               chunk={child}
               index={index}
-              draft={draftByChunk[child.id] ?? child.content}
               disabled={disabled}
-              onDraftChange={onDraftChange}
-              onSave={onSave}
+              onEdit={onEditSecondary}
               onToggleEnabled={onToggleEnabled}
             />
           ))}
@@ -322,22 +385,17 @@ function PrimaryChunkCard({
 function SecondaryChunkRow({
   chunk,
   index,
-  draft,
   disabled,
-  onDraftChange,
-  onSave,
+  onEdit,
   onToggleEnabled,
 }: {
   chunk: FileDocumentChunk;
   index: number;
-  draft: string;
   disabled: boolean;
-  onDraftChange: (chunkId: string, value: string) => void;
-  onSave: (chunk: FileDocumentChunk) => Promise<void>;
+  onEdit: (chunk: FileDocumentChunk) => void;
   onToggleEnabled: (chunk: FileDocumentChunk, checked: boolean) => Promise<void>;
 }) {
   const t = useT('files');
-  const dirty = draft !== chunk.content;
 
   return (
     <div className="rounded-lg border border-border bg-muted/20 p-4">
@@ -360,22 +418,19 @@ function SecondaryChunkRow({
           />
         </div>
       </div>
-      <Textarea
-        value={draft}
-        onChange={event => onDraftChange(chunk.id, event.target.value)}
-        className="mt-3 min-h-24 resize-y bg-background text-sm leading-6"
-        disabled={disabled}
-      />
-      <div className="mt-3 flex justify-end">
+      <div className="mt-3 flex gap-3 rounded-lg border border-border bg-background p-3 shadow-sm">
+        <p className="max-h-24 min-w-0 flex-1 overflow-hidden whitespace-pre-wrap text-sm leading-6 text-foreground">
+          {chunk.content}
+        </p>
         <Button
           size="sm"
           variant="outline"
-          className="gap-2 rounded-lg"
-          onClick={() => void onSave(chunk)}
-          disabled={disabled || !dirty || draft.trim() === ''}
+          className="shrink-0 gap-2 rounded-lg"
+          onClick={() => onEdit(chunk)}
+          disabled={disabled}
         >
-          {disabled ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-          {t('detail.chunks.save')}
+          <Edit3 className="h-4 w-4" />
+          {t('detail.chunks.edit')}
         </Button>
       </div>
     </div>
