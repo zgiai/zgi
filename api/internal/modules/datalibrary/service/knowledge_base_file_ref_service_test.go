@@ -232,8 +232,9 @@ func TestKnowledgeBaseFileRefServiceListsRefsWithAssetAndFileState(t *testing.T)
 		},
 		documents: []*datasetModel.Document{
 			{
-				ID:      documentID.String(),
-				Enabled: false,
+				ID:           documentID.String(),
+				Enabled:      false,
+				SegmentCount: 24,
 			},
 		},
 	}
@@ -260,7 +261,9 @@ func TestKnowledgeBaseFileRefServiceListsRefsWithAssetAndFileState(t *testing.T)
 		item.SyncedGenerationNo == nil ||
 		*item.SyncedGenerationNo != syncedGeneration ||
 		item.DatasetDocumentEnabled == nil ||
-		*item.DatasetDocumentEnabled {
+		*item.DatasetDocumentEnabled ||
+		item.DatasetDocumentSegmentCount == nil ||
+		*item.DatasetDocumentSegmentCount != 24 {
 		t.Fatalf("item=%+v", item)
 	}
 	if deps.lastRefFilter.SyncStatus != datalibModel.KnowledgeBaseAssetRefSyncStatusSynced {

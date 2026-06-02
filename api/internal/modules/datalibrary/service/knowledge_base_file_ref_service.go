@@ -147,20 +147,21 @@ type KnowledgeBaseFileRefListResult struct {
 }
 
 type KnowledgeBaseFileRefItem struct {
-	ID                     uuid.UUID  `json:"id"`
-	DatasetID              string     `json:"dataset_id"`
-	AssetID                uuid.UUID  `json:"asset_id"`
-	FileID                 string     `json:"file_id"`
-	FileName               string     `json:"file_name"`
-	ProcessingStatus       string     `json:"processing_status"`
-	GenerationNo           int64      `json:"generation_no"`
-	DatasetDocumentID      *uuid.UUID `json:"dataset_document_id,omitempty"`
-	DatasetDocumentEnabled *bool      `json:"dataset_document_enabled,omitempty"`
-	SyncStatus             string     `json:"sync_status"`
-	SyncedGenerationNo     *int64     `json:"synced_generation_no,omitempty"`
-	LastSyncedAt           *time.Time `json:"last_synced_at,omitempty"`
-	SyncErrorCode          *string    `json:"sync_error_code,omitempty"`
-	SyncErrorMessage       *string    `json:"sync_error_message,omitempty"`
+	ID                          uuid.UUID  `json:"id"`
+	DatasetID                   string     `json:"dataset_id"`
+	AssetID                     uuid.UUID  `json:"asset_id"`
+	FileID                      string     `json:"file_id"`
+	FileName                    string     `json:"file_name"`
+	ProcessingStatus            string     `json:"processing_status"`
+	GenerationNo                int64      `json:"generation_no"`
+	DatasetDocumentID           *uuid.UUID `json:"dataset_document_id,omitempty"`
+	DatasetDocumentEnabled      *bool      `json:"dataset_document_enabled,omitempty"`
+	DatasetDocumentSegmentCount *int       `json:"dataset_document_segment_count,omitempty"`
+	SyncStatus                  string     `json:"sync_status"`
+	SyncedGenerationNo          *int64     `json:"synced_generation_no,omitempty"`
+	LastSyncedAt                *time.Time `json:"last_synced_at,omitempty"`
+	SyncErrorCode               *string    `json:"sync_error_code,omitempty"`
+	SyncErrorMessage            *string    `json:"sync_error_message,omitempty"`
 }
 
 type KnowledgeBaseFileRefCreateResult struct {
@@ -334,27 +335,31 @@ func (s *knowledgeBaseFileRefService) ListRefs(ctx context.Context, req Knowledg
 			fileName = file.Name
 		}
 		var documentEnabled *bool
+		var documentSegmentCount *int
 		if ref.DatasetDocumentID != nil {
 			if document := documentsByID[ref.DatasetDocumentID.String()]; document != nil {
 				enabled := document.Enabled
 				documentEnabled = &enabled
+				segmentCount := document.SegmentCount
+				documentSegmentCount = &segmentCount
 			}
 		}
 		items = append(items, &KnowledgeBaseFileRefItem{
-			ID:                     ref.ID,
-			DatasetID:              ref.DatasetID,
-			AssetID:                ref.AssetID,
-			FileID:                 asset.SourceFileID,
-			FileName:               fileName,
-			ProcessingStatus:       asset.ProductStatus,
-			GenerationNo:           asset.GenerationNo,
-			DatasetDocumentID:      ref.DatasetDocumentID,
-			DatasetDocumentEnabled: documentEnabled,
-			SyncStatus:             ref.SyncStatus,
-			SyncedGenerationNo:     ref.SyncedGenerationNo,
-			LastSyncedAt:           ref.LastSyncedAt,
-			SyncErrorCode:          ref.SyncErrorCode,
-			SyncErrorMessage:       ref.SyncErrorMessage,
+			ID:                          ref.ID,
+			DatasetID:                   ref.DatasetID,
+			AssetID:                     ref.AssetID,
+			FileID:                      asset.SourceFileID,
+			FileName:                    fileName,
+			ProcessingStatus:            asset.ProductStatus,
+			GenerationNo:                asset.GenerationNo,
+			DatasetDocumentID:           ref.DatasetDocumentID,
+			DatasetDocumentEnabled:      documentEnabled,
+			DatasetDocumentSegmentCount: documentSegmentCount,
+			SyncStatus:                  ref.SyncStatus,
+			SyncedGenerationNo:          ref.SyncedGenerationNo,
+			LastSyncedAt:                ref.LastSyncedAt,
+			SyncErrorCode:               ref.SyncErrorCode,
+			SyncErrorMessage:            ref.SyncErrorMessage,
 		})
 	}
 	return &KnowledgeBaseFileRefListResult{Items: items, Total: total}, nil
