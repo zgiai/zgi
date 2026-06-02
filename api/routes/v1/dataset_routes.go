@@ -139,8 +139,13 @@ func RegisterDatasetRoutes(router *gin.RouterGroup, deps DatasetRouteDeps) {
 	dataLibraryTaskDispatcher := datalibWorker.NewFileProcessTaskDispatcher(deps.TaskManager)
 	dataLibraryFileRefHandler := datalibHandler.NewKnowledgeBaseFileRefHandler(dataLibraryFileRefService, dataLibraryTaskDispatcher, deps.AccountService)
 	dataLibraryDatasetRefSyncRunner := datalibWorker.NewDatasetRefSyncRunner(datalibWorker.DatasetRefSyncRunnerDeps{
-		Refs:   dataLibraryKBRefRepo,
-		Assets: dataLibraryAssetRepo,
+		Refs:       dataLibraryKBRefRepo,
+		Assets:     dataLibraryAssetRepo,
+		Datasets:   datasetRepoObj,
+		Documents:  documentRepoObj,
+		Chunks:     dataLibraryChunkRepo,
+		Embeddings: dataLibraryEmbeddingRepo,
+		VectorDB:   vectorClient,
 	})
 
 	// Create BatchHitTestingTaskRepository instance
