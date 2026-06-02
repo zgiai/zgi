@@ -29,6 +29,22 @@ func TestFileAssetDeletionServiceBlocksReferencedAsset(t *testing.T) {
 	}
 }
 
+func TestFileAssetDeletionServiceIgnoresRemovedRefs(t *testing.T) {
+	db := newFileAssetDeletionTestDB(t)
+	assetID := uuid.New()
+	execFileAssetDeletionSQL(t, db, "INSERT INTO data_library_document_assets (id, organization_id, title, source_file_id, generation_no, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)", assetID.String(), "org-1", "doc.md", "file-1", 1)
+	execFileAssetDeletionSQL(t, db, "INSERT INTO data_library_knowledge_base_asset_refs (id, organization_id, dataset_id, asset_id, version_id, status, deleted_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)", uuid.New().String(), "org-1", uuid.New().String(), assetID.String(), uuid.New().String(), model.KnowledgeBaseAssetRefStatusActive)
+
+	vectorIndex := &fileAssetDeletionVectorIndex{}
+	svc := NewFileAssetDeletionService(db, vectorIndex)
+	if err := svc.DeleteBySourceFile(context.Background(), "org-1", "file-1"); err != nil {
+		t.Fatalf("DeleteBySourceFile: %v", err)
+	}
+	if !vectorIndex.deleted {
+		t.Fatalf("vector index should be deleted when only removed refs exist")
+	}
+}
+
 func TestFileAssetDeletionServiceDeletesAssetRowsAndVectorIndex(t *testing.T) {
 	db := newFileAssetDeletionTestDB(t)
 	assetID := uuid.New()

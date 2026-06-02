@@ -96,7 +96,7 @@ func (s *fileAssetDeletionService) countBlockingRefs(ctx context.Context, asset 
 	var kbRefCount int64
 	if err := s.db.WithContext(ctx).
 		Model(&model.KnowledgeBaseAssetRef{}).
-		Where("organization_id = ? AND asset_id = ?", asset.OrganizationID, asset.ID).
+		Where("organization_id = ? AND asset_id = ? AND deleted_at IS NULL", asset.OrganizationID, asset.ID).
 		Count(&kbRefCount).Error; err != nil {
 		return 0, 0, err
 	}
@@ -104,7 +104,7 @@ func (s *fileAssetDeletionService) countBlockingRefs(ctx context.Context, asset 
 	var dbRefCount int64
 	if err := s.db.WithContext(ctx).
 		Model(&model.DatabaseAssetRef{}).
-		Where("organization_id = ? AND asset_id = ?", asset.OrganizationID, asset.ID).
+		Where("organization_id = ? AND asset_id = ? AND deleted_at IS NULL", asset.OrganizationID, asset.ID).
 		Count(&dbRefCount).Error; err != nil {
 		return 0, 0, err
 	}
