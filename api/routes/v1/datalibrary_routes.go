@@ -56,6 +56,9 @@ func RegisterDataLibraryRoutes(v1 *gin.RouterGroup, deps DataLibraryRouteDeps) {
 	if deps.DataLibraryModule.FileProcessRunner != nil {
 		deps.DataLibraryModule.FileProcessRunner.SetGenerateCurrentResultEnqueuer(dispatcher)
 	}
+	if deps.DataLibraryModule.GenerateCurrentResultRunner != nil {
+		deps.DataLibraryModule.GenerateCurrentResultRunner.SetDatasetRefSyncEnqueuer(dispatcher)
+	}
 	datalibraryworker.RegisterFileProcessTaskHandler(deps.TaskRegistry, deps.DataLibraryModule.FileProcessRunner, deps.TaskManager)
 	datalibraryworker.RegisterGenerateCurrentResultTaskHandler(deps.TaskRegistry, deps.DataLibraryModule.GenerateCurrentResultRunner, deps.TaskManager)
 }

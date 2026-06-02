@@ -153,6 +153,7 @@ func NewModuleWithRuntime(
 		ChunkGeneration:     documentChunkGenerationService,
 		Embedding:           documentChunkEmbeddingService,
 		ProcessingService:   processingRequestService,
+		Refs:                knowledgeBaseAssetRefRepo,
 	})
 
 	return &Module{

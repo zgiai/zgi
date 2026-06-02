@@ -98,6 +98,49 @@ func TestGenerateCurrentResultRunnerStaleGenerationFailureDoesNotMutateCurrentAs
 	}
 }
 
+func TestGenerateCurrentResultRunnerEnqueuesDatasetRefSyncs(t *testing.T) {
+	ctx := context.Background()
+	assetID := uuid.New()
+	refID := uuid.New()
+	refStore := &fakeGenerateCurrentResultRefStore{
+		refs: []*model.KnowledgeBaseAssetRef{
+			{
+				ID:             refID,
+				OrganizationID: "org-1",
+				DatasetID:      "dataset-1",
+				AssetID:        assetID,
+				SyncStatus:     model.KnowledgeBaseAssetRefSyncStatusSynced,
+			},
+		},
+	}
+	enqueuer := &fakeGenerateCurrentResultDatasetRefSyncEnqueuer{}
+	runner := NewGenerateCurrentResultRunner(GenerateCurrentResultRunnerDeps{
+		Refs:           refStore,
+		DatasetRefSync: enqueuer,
+	})
+	asset := &model.DocumentAsset{
+		ID:             assetID,
+		OrganizationID: "org-1",
+		GenerationNo:   9,
+	}
+
+	err := runner.enqueueDatasetRefSyncs(ctx, asset, asset.GenerationNo)
+	if err != nil {
+		t.Fatalf("enqueueDatasetRefSyncs: %v", err)
+	}
+	if refStore.pendingRefID != refID || refStore.pendingSyncRunID == uuid.Nil {
+		t.Fatalf("pending_ref=%s sync_run=%s", refStore.pendingRefID, refStore.pendingSyncRunID)
+	}
+	if len(enqueuer.items) != 1 ||
+		enqueuer.items[0].refID != refID ||
+		enqueuer.items[0].assetID != assetID ||
+		enqueuer.items[0].datasetID != "dataset-1" ||
+		enqueuer.items[0].generationNo != 9 ||
+		enqueuer.items[0].syncRunID != refStore.pendingSyncRunID {
+		t.Fatalf("items=%+v pending_sync=%s", enqueuer.items, refStore.pendingSyncRunID)
+	}
+}
+
 type singleActiveAssetRepo struct {
 	asset *model.DocumentAsset
 }
@@ -156,6 +199,58 @@ func (r *singleActiveAssetRepo) CreateVersion(ctx context.Context, item *model.D
 
 func (r *singleActiveAssetRepo) GetVersionByID(ctx context.Context, id uuid.UUID) (*model.DocumentVersion, error) {
 	return nil, nil
+}
+
+type fakeGenerateCurrentResultRefStore struct {
+	refs             []*model.KnowledgeBaseAssetRef
+	pendingRefID     uuid.UUID
+	pendingSyncRunID uuid.UUID
+}
+
+func (r *fakeGenerateCurrentResultRefStore) ListActiveByAsset(ctx context.Context, organizationID string, assetID uuid.UUID) ([]*model.KnowledgeBaseAssetRef, error) {
+	var out []*model.KnowledgeBaseAssetRef
+	for _, ref := range r.refs {
+		if ref.OrganizationID == organizationID && ref.AssetID == assetID {
+			out = append(out, ref)
+		}
+	}
+	return out, nil
+}
+
+func (r *fakeGenerateCurrentResultRefStore) MarkPending(ctx context.Context, organizationID string, id uuid.UUID, syncRunID uuid.UUID, errorCode, errorMessage *string) (*model.KnowledgeBaseAssetRef, error) {
+	r.pendingRefID = id
+	r.pendingSyncRunID = syncRunID
+	for _, ref := range r.refs {
+		if ref.ID == id && ref.OrganizationID == organizationID {
+			ref.SyncStatus = model.KnowledgeBaseAssetRefSyncStatusPending
+			ref.SyncRunID = &syncRunID
+			return ref, nil
+		}
+	}
+	return nil, nil
+}
+
+type fakeGenerateCurrentResultDatasetRefSyncEnqueuer struct {
+	items []fakeGenerateCurrentResultDatasetRefSyncItem
+}
+
+type fakeGenerateCurrentResultDatasetRefSyncItem struct {
+	refID        uuid.UUID
+	assetID      uuid.UUID
+	datasetID    string
+	generationNo int64
+	syncRunID    uuid.UUID
+}
+
+func (e *fakeGenerateCurrentResultDatasetRefSyncEnqueuer) EnqueueDatasetRefSync(ctx context.Context, refID uuid.UUID, assetID uuid.UUID, datasetID string, generationNo int64, syncRunID uuid.UUID) error {
+	e.items = append(e.items, fakeGenerateCurrentResultDatasetRefSyncItem{
+		refID:        refID,
+		assetID:      assetID,
+		datasetID:    datasetID,
+		generationNo: generationNo,
+		syncRunID:    syncRunID,
+	})
+	return nil
 }
 
 func (r *singleActiveAssetRepo) ListVersionsByAssetID(ctx context.Context, assetID uuid.UUID) ([]*model.DocumentVersion, error) {

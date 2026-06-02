@@ -25,6 +25,8 @@ type GenerateCurrentResultRunner struct {
 	chunkGeneration     datalibraryservice.DocumentChunkGenerationService
 	embedding           datalibraryservice.DocumentChunkEmbeddingService
 	processingService   datalibraryservice.ProcessingRequestService
+	refs                generateCurrentResultRefStore
+	datasetRefSync      generateCurrentResultDatasetRefSyncEnqueuer
 }
 
 type GenerateCurrentResultRunnerDeps struct {
@@ -37,6 +39,17 @@ type GenerateCurrentResultRunnerDeps struct {
 	ChunkGeneration     datalibraryservice.DocumentChunkGenerationService
 	Embedding           datalibraryservice.DocumentChunkEmbeddingService
 	ProcessingService   datalibraryservice.ProcessingRequestService
+	Refs                generateCurrentResultRefStore
+	DatasetRefSync      generateCurrentResultDatasetRefSyncEnqueuer
+}
+
+type generateCurrentResultRefStore interface {
+	ListActiveByAsset(ctx context.Context, organizationID string, assetID uuid.UUID) ([]*model.KnowledgeBaseAssetRef, error)
+	MarkPending(ctx context.Context, organizationID string, id uuid.UUID, syncRunID uuid.UUID, errorCode, errorMessage *string) (*model.KnowledgeBaseAssetRef, error)
+}
+
+type generateCurrentResultDatasetRefSyncEnqueuer interface {
+	EnqueueDatasetRefSync(ctx context.Context, refID uuid.UUID, assetID uuid.UUID, datasetID string, generationNo int64, syncRunID uuid.UUID) error
 }
 
 func NewGenerateCurrentResultRunner(deps GenerateCurrentResultRunnerDeps) *GenerateCurrentResultRunner {
@@ -50,7 +63,16 @@ func NewGenerateCurrentResultRunner(deps GenerateCurrentResultRunnerDeps) *Gener
 		chunkGeneration:     deps.ChunkGeneration,
 		embedding:           deps.Embedding,
 		processingService:   deps.ProcessingService,
+		refs:                deps.Refs,
+		datasetRefSync:      deps.DatasetRefSync,
 	}
+}
+
+func (r *GenerateCurrentResultRunner) SetDatasetRefSyncEnqueuer(enqueuer generateCurrentResultDatasetRefSyncEnqueuer) {
+	if r == nil {
+		return
+	}
+	r.datasetRefSync = enqueuer
 }
 
 func (r *GenerateCurrentResultRunner) Run(ctx context.Context, processingRequestID uuid.UUID) error {
@@ -187,7 +209,10 @@ func (r *GenerateCurrentResultRunner) Run(ctx context.Context, processingRequest
 		"next_product_status":   ready.ProductStatus,
 		"next_vector_status":    ready.VectorStatus,
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	return r.enqueueDatasetRefSyncs(ctx, ready, generationNo)
 }
 
 func (r *GenerateCurrentResultRunner) failRequest(ctx context.Context, request *model.ProcessingRequest, asset *model.DocumentAsset, code string, cause error) error {
@@ -216,6 +241,29 @@ func (r *GenerateCurrentResultRunner) failRequest(ctx context.Context, request *
 		})
 	}
 	return cause
+}
+
+func (r *GenerateCurrentResultRunner) enqueueDatasetRefSyncs(ctx context.Context, asset *model.DocumentAsset, generationNo int64) error {
+	if r == nil || r.refs == nil || r.datasetRefSync == nil || asset == nil {
+		return nil
+	}
+	refs, err := r.refs.ListActiveByAsset(ctx, asset.OrganizationID, asset.ID)
+	if err != nil {
+		return err
+	}
+	for _, ref := range refs {
+		if ref == nil || ref.DatasetID == "" {
+			continue
+		}
+		syncRunID := uuid.New()
+		if _, err := r.refs.MarkPending(ctx, asset.OrganizationID, ref.ID, syncRunID, nil, nil); err != nil {
+			return err
+		}
+		if err := r.datasetRefSync.EnqueueDatasetRefSync(ctx, ref.ID, asset.ID, ref.DatasetID, generationNo, syncRunID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func strictGenerationRequestRun(request *model.ProcessingRequest) (uuid.UUID, int64, bool) {
