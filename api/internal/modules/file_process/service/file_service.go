@@ -18,6 +18,7 @@ import (
 
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/dto"
+	datalibraryservice "github.com/zgiai/zgi/api/internal/modules/datalibrary/service"
 	dataset_model "github.com/zgiai/zgi/api/internal/modules/dataset/model"
 	"github.com/zgiai/zgi/api/internal/modules/file_process/model"
 	"github.com/zgiai/zgi/api/internal/modules/file_process/repository"
@@ -41,6 +42,7 @@ type fileService struct {
 	quotaService      interfaces.QuotaService
 	enterpriseService interfaces.OrganizationService
 	extractGroup      singleflight.Group
+	assetDeletion     datalibraryservice.FileAssetDeletionService
 }
 
 type UploadFileOptions struct {
@@ -82,6 +84,10 @@ func NewFileServiceWithVision(
 		quotaService:      quotaService,
 		enterpriseService: enterpriseService,
 	}
+}
+
+func (s *fileService) SetFileAssetDeletionService(assetDeletion datalibraryservice.FileAssetDeletionService) {
+	s.assetDeletion = assetDeletion
 }
 
 // GetUploadConfig gets file upload configuration
@@ -777,6 +783,15 @@ func (s *fileService) DeleteFiles(ctx context.Context, fileIDs []string) error {
 
 		if isUsed {
 			return fmt.Errorf("file %s is used by documents and cannot be deleted", fileID)
+		}
+
+		if s.assetDeletion != nil {
+			if err := s.assetDeletion.DeleteBySourceFile(ctx, file.OrganizationID, fileID); err != nil {
+				if errors.Is(err, datalibraryservice.ErrFileAssetDeletionBlocked) {
+					return fmt.Errorf("file %s is used by documents and cannot be deleted: %w", fileID, err)
+				}
+				return fmt.Errorf("failed to delete file %s asset data: %w", fileID, err)
+			}
 		}
 
 		// Get groupID from tenantID for quota recording

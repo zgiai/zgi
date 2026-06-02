@@ -7,6 +7,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
 	toolfilescheduler "github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file/scheduler"
 	datalibrarymodule "github.com/zgiai/zgi/api/internal/modules/datalibrary"
+	datalibraryservice "github.com/zgiai/zgi/api/internal/modules/datalibrary/service"
 	datalibraryworker "github.com/zgiai/zgi/api/internal/modules/datalibrary/worker"
 	dataset_repo "github.com/zgiai/zgi/api/internal/modules/dataset/repository"
 	fileProcessHandler "github.com/zgiai/zgi/api/internal/modules/file_process/handler"
@@ -47,6 +48,11 @@ func registerFileRoutesLegacy(v1 *gin.RouterGroup, deps FileRouteDeps) {
 	datasetRepo := dataset_repo.NewDatasetRepository(deps.DB)
 
 	fileService := fileProcessService.NewFileServiceWithVision(fileRepo, deps.Storage, deps.DB, deps.QuotaService, deps.OrganizationService, deps.LLMClient, deps.DefaultModelService)
+	if configurable, ok := fileService.(interface {
+		SetFileAssetDeletionService(deletionService datalibraryservice.FileAssetDeletionService)
+	}); ok {
+		configurable.SetFileAssetDeletionService(deps.DataLibraryModule.FileAssetDeletionService)
+	}
 	fileFolderService := fileProcessService.NewFileResourceService(fileFolderRepo, fileRepo, documentRepo, datasetRepo, deps.AccountService)
 	fileFavoriteService := fileProcessService.NewFileFavoriteService(fileFavoriteRepo, fileRepo)
 

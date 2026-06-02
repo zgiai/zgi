@@ -16,9 +16,14 @@ const fileAssetVectorIndexPageSize = 500
 type FileAssetVectorIndexService interface {
 	EnsureAssetIndexed(ctx context.Context, asset *model.DocumentAsset) error
 	IndexChunkEmbeddings(ctx context.Context, asset *model.DocumentAsset, chunks []*model.DocumentChunk, embeddings []*model.DocumentChunkEmbedding, resetAsset bool) error
+	DeleteAssetIndex(ctx context.Context, asset *model.DocumentAsset) error
 	DeleteChunkVector(ctx context.Context, asset *model.DocumentAsset, chunkID uuid.UUID) error
 	DeleteChildVectorsByParent(ctx context.Context, asset *model.DocumentAsset, parentChunkID uuid.UUID) error
 	Search(ctx context.Context, asset *model.DocumentAsset, queryVector []float64, limit int) ([]map[string]interface{}, error)
+}
+
+type vectorClassDeleter interface {
+	DeleteClass(ctx context.Context, className string) error
 }
 
 type fileAssetVectorIndexService struct {
@@ -168,6 +173,20 @@ func (s *fileAssetVectorIndexService) DeleteChunkVector(ctx context.Context, ass
 		return err
 	}
 	return s.vectorDB.DeleteVector(ctx, chunkID.String(), FileAssetVectorCollectionName(asset.ID))
+}
+
+func (s *fileAssetVectorIndexService) DeleteAssetIndex(ctx context.Context, asset *model.DocumentAsset) error {
+	if asset == nil {
+		return nil
+	}
+	if err := s.ensureConfigured(); err != nil {
+		return err
+	}
+	className := FileAssetVectorCollectionName(asset.ID)
+	if deleter, ok := s.vectorDB.(vectorClassDeleter); ok {
+		return deleter.DeleteClass(ctx, className)
+	}
+	return s.deleteAssetVectors(ctx, asset)
 }
 
 func (s *fileAssetVectorIndexService) DeleteChildVectorsByParent(ctx context.Context, asset *model.DocumentAsset, parentChunkID uuid.UUID) error {
