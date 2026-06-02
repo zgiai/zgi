@@ -9,6 +9,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/datalibrary/repository"
 	"github.com/zgiai/zgi/api/internal/modules/datalibrary/service"
 	"github.com/zgiai/zgi/api/internal/modules/datalibrary/worker"
+	datasetRepository "github.com/zgiai/zgi/api/internal/modules/dataset/repository"
 	fileRepository "github.com/zgiai/zgi/api/internal/modules/file_process/repository"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
@@ -91,11 +92,12 @@ func NewModuleWithRuntime(
 	extractionArtifactRepo := repository.NewExtractionArtifactRepository(db)
 	knowledgeBaseAssetRefRepo := repository.NewKnowledgeBaseAssetRefRepository(db)
 	databaseAssetRefRepo := repository.NewDatabaseAssetRefRepository(db)
+	datasetDocumentRepo := datasetRepository.NewDocumentRepository(db)
 	contentParseArtifactRepo := contentParseRepository.NewArtifactRepository(db)
 	fileRepo := fileRepository.NewFileRepository(db)
 	documentAssetService := service.NewDocumentAssetServiceWithDownstreamRefs(documentAssetRepo, reuseEventRepo, processingRequestRepo, vectorArtifactRepo, knowledgeBaseAssetRefRepo, databaseAssetRefRepo, extractionArtifactRepo)
 	processingRequestService := service.NewProcessingRequestService(processingRequestRepo)
-	fileAssetProcessingStateService := service.NewFileAssetProcessingStateService(documentAssetRepo, processingRequestRepo)
+	fileAssetProcessingStateService := service.NewFileAssetProcessingStateServiceWithDatasetRefs(documentAssetRepo, processingRequestRepo, knowledgeBaseAssetRefRepo, datasetDocumentRepo)
 	parseArtifactPersistenceService := service.NewParseArtifactPersistenceService(documentAssetRepo, contentParseArtifactRepo, artifactStorage)
 	parseArtifactQualityService := service.NewParseArtifactQualityService(parseConfirmationItemRepo)
 	parsePreviewService := service.NewParsePreviewService(documentAssetRepo, contentParseArtifactRepo, parseArtifactPersistenceService, parseConfirmationItemRepo)

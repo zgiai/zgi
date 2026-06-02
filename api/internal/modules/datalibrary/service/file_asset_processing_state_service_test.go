@@ -174,6 +174,54 @@ func TestFileAssetProcessingStateServiceReparseBeginsNewGeneration(t *testing.T)
 	}
 }
 
+func TestFileAssetProcessingStateServiceInvalidatesDatasetRefsOnBegin(t *testing.T) {
+	assetID := uuid.New()
+	refID := uuid.New()
+	documentID := uuid.New()
+	assetRepo := &fileAssetStateAssetRepo{
+		asset: &model.DocumentAsset{
+			ID:             assetID,
+			OrganizationID: "org-1",
+			SourceFileID:   "file-1",
+			ProductStatus:  model.DocumentAssetProductStatusReady,
+			VectorStatus:   model.DocumentAssetVectorStatusReady,
+			GenerationNo:   3,
+		},
+	}
+	refStore := &fileAssetStateRefStore{refs: []*model.KnowledgeBaseAssetRef{
+		{
+			ID:                refID,
+			OrganizationID:    "org-1",
+			DatasetID:         "dataset-1",
+			AssetID:           assetID,
+			DatasetDocumentID: &documentID,
+			SyncStatus:        model.KnowledgeBaseAssetRefSyncStatusSynced,
+		},
+	}}
+	documentStore := &fileAssetStateDocumentStore{}
+	svc := NewFileAssetProcessingStateServiceWithDatasetRefs(assetRepo, &fileAssetStateProcessingRequestRepo{}, refStore, documentStore)
+
+	_, err := svc.BeginProcessingRequest(context.Background(), BeginProcessingRequestInput{
+		OrganizationID: "org-1",
+		AssetID:        assetID,
+		TargetLevel:    model.DocumentProcessingLevelVectorize,
+		RequestedBy:    "user-1",
+		IncrementRun:   true,
+	})
+	if err != nil {
+		t.Fatalf("BeginProcessingRequest: %v", err)
+	}
+	if len(documentStore.disabledIDs) != 1 || documentStore.disabledIDs[0] != documentID.String() || documentStore.disabledBy != "user-1" {
+		t.Fatalf("disabled_ids=%v disabled_by=%s", documentStore.disabledIDs, documentStore.disabledBy)
+	}
+	if refStore.pendingRefID != refID || refStore.pendingSyncRunID == uuid.Nil {
+		t.Fatalf("pending_ref=%s sync_run=%s", refStore.pendingRefID, refStore.pendingSyncRunID)
+	}
+	if refStore.refs[0].SyncStatus != model.KnowledgeBaseAssetRefSyncStatusPending {
+		t.Fatalf("ref status=%s", refStore.refs[0].SyncStatus)
+	}
+}
+
 type fileAssetStateAssetRepo struct {
 	asset *model.DocumentAsset
 }
@@ -334,4 +382,46 @@ func cloneAsset(item *model.DocumentAsset) *model.DocumentAsset {
 	}
 	cloned := *item
 	return &cloned
+}
+
+type fileAssetStateRefStore struct {
+	refs             []*model.KnowledgeBaseAssetRef
+	pendingRefID     uuid.UUID
+	pendingSyncRunID uuid.UUID
+}
+
+func (s *fileAssetStateRefStore) ListActiveByAsset(ctx context.Context, organizationID string, assetID uuid.UUID) ([]*model.KnowledgeBaseAssetRef, error) {
+	var out []*model.KnowledgeBaseAssetRef
+	for _, ref := range s.refs {
+		if ref.OrganizationID == organizationID && ref.AssetID == assetID {
+			out = append(out, ref)
+		}
+	}
+	return out, nil
+}
+
+func (s *fileAssetStateRefStore) MarkPending(ctx context.Context, organizationID string, id uuid.UUID, syncRunID uuid.UUID, errorCode, errorMessage *string) (*model.KnowledgeBaseAssetRef, error) {
+	s.pendingRefID = id
+	s.pendingSyncRunID = syncRunID
+	for _, ref := range s.refs {
+		if ref.OrganizationID == organizationID && ref.ID == id {
+			ref.SyncStatus = model.KnowledgeBaseAssetRefSyncStatusPending
+			ref.SyncRunID = &syncRunID
+			ref.SyncErrorCode = errorCode
+			ref.SyncErrorMessage = errorMessage
+			return ref, nil
+		}
+	}
+	return nil, nil
+}
+
+type fileAssetStateDocumentStore struct {
+	disabledIDs []string
+	disabledBy  string
+}
+
+func (s *fileAssetStateDocumentStore) DisableDocuments(ctx context.Context, datasetID string, documentIDs []string, accountID string) error {
+	s.disabledIDs = append(s.disabledIDs, documentIDs...)
+	s.disabledBy = accountID
+	return nil
 }

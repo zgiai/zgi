@@ -79,6 +79,8 @@ type FailedStateInput struct {
 type fileAssetProcessingStateService struct {
 	assets             repository.DocumentAssetRepository
 	processingRequests repository.ProcessingRequestRepository
+	refs               fileAssetProcessingRefStore
+	documents          fileAssetProcessingDocumentStore
 }
 
 func NewFileAssetProcessingStateService(assets repository.DocumentAssetRepository, processingRequests repository.ProcessingRequestRepository) FileAssetProcessingStateService {
@@ -86,6 +88,29 @@ func NewFileAssetProcessingStateService(assets repository.DocumentAssetRepositor
 		assets:             assets,
 		processingRequests: processingRequests,
 	}
+}
+
+func NewFileAssetProcessingStateServiceWithDatasetRefs(
+	assets repository.DocumentAssetRepository,
+	processingRequests repository.ProcessingRequestRepository,
+	refs fileAssetProcessingRefStore,
+	documents fileAssetProcessingDocumentStore,
+) FileAssetProcessingStateService {
+	return &fileAssetProcessingStateService{
+		assets:             assets,
+		processingRequests: processingRequests,
+		refs:               refs,
+		documents:          documents,
+	}
+}
+
+type fileAssetProcessingRefStore interface {
+	ListActiveByAsset(ctx context.Context, organizationID string, assetID uuid.UUID) ([]*model.KnowledgeBaseAssetRef, error)
+	MarkPending(ctx context.Context, organizationID string, id uuid.UUID, syncRunID uuid.UUID, errorCode, errorMessage *string) (*model.KnowledgeBaseAssetRef, error)
+}
+
+type fileAssetProcessingDocumentStore interface {
+	DisableDocuments(ctx context.Context, datasetID string, documentIDs []string, accountID string) error
 }
 
 func (s *fileAssetProcessingStateService) CreateOrReuseStoredAsset(ctx context.Context, input FileAssetCreateInput) (*model.DocumentAsset, bool, error) {
@@ -193,6 +218,9 @@ func (s *fileAssetProcessingStateService) BeginProcessingRequest(ctx context.Con
 	}
 	if updated == nil || updated.ProcessingRunID == nil || *updated.ProcessingRunID != runID || updated.GenerationNo != generationNo {
 		return nil, ErrProcessingRunMismatch
+	}
+	if err := s.invalidateDatasetRefsForAssetEdit(ctx, updated, input.RequestedBy); err != nil {
+		return nil, err
 	}
 	return &BeginProcessingRequestResult{
 		Asset:             updated,
@@ -308,6 +336,31 @@ func (s *fileAssetProcessingStateService) updateRunState(ctx context.Context, in
 		return nil, ErrProcessingRunMismatch
 	}
 	return updated, nil
+}
+
+func (s *fileAssetProcessingStateService) invalidateDatasetRefsForAssetEdit(ctx context.Context, asset *model.DocumentAsset, accountID string) error {
+	if s == nil || s.refs == nil || s.documents == nil || asset == nil {
+		return nil
+	}
+	refs, err := s.refs.ListActiveByAsset(ctx, asset.OrganizationID, asset.ID)
+	if err != nil {
+		return err
+	}
+	for _, ref := range refs {
+		if ref == nil {
+			continue
+		}
+		if ref.DatasetDocumentID != nil && *ref.DatasetDocumentID != uuid.Nil {
+			if err := s.documents.DisableDocuments(ctx, ref.DatasetID, []string{ref.DatasetDocumentID.String()}, accountID); err != nil {
+				return err
+			}
+		}
+		syncRunID := uuid.New()
+		if _, err := s.refs.MarkPending(ctx, asset.OrganizationID, ref.ID, syncRunID, nil, nil); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func normalizedProgress(value int, fallback int) int {
