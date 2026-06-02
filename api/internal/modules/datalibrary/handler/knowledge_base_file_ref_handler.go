@@ -30,6 +30,7 @@ func (h *KnowledgeBaseFileRefHandler) RegisterDatasetRoutes(router *gin.RouterGr
 	group.GET("/file-refs", h.ListFileRefs)
 	group.POST("/file-refs", h.CreateFileRefs)
 	group.POST("/file-refs/:ref_id/retry", h.RetryFileRef)
+	group.POST("/file-refs/:ref_id/sync/retry", h.RetryFileRef)
 }
 
 func (h *KnowledgeBaseFileRefHandler) ListFileCandidates(c *gin.Context) {
