@@ -5,36 +5,43 @@ import { useRouter } from 'next/navigation';
 import {
   AlertCircle,
   ArrowLeft,
+  CheckCircle2,
+  Circle,
   Download,
-  Eye,
+  FileDown,
   FileIcon,
   FileText,
   Layers3,
   Loader2,
   MessageSquareText,
   RefreshCw,
+  Sparkles,
+  TriangleAlert,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { FilePreviewDialog } from '@/components/files/file-preview-dialog';
 import { FileOriginalPreviewPanel } from '@/components/files/detail/file-original-preview-panel';
 import { FileParseReviewPanel } from '@/components/files/detail/file-parse-review-panel';
 import { FileChunksPanel } from '@/components/files/detail/file-chunks-panel';
 import { FileQAPanel } from '@/components/files/detail/file-qa-panel';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
-import type { FileAssetProductStatus, FileAssetVectorStatus, FileItem } from '@/services/types/file';
+import { fileManageService } from '@/services/file-manage.service';
+import type {
+  FileAssetProductStatus,
+  FileItem,
+  FileParsePreviewElement,
+} from '@/services/types/file';
 import { useDownloadFile } from '@/hooks/use-files';
 import { useFileDetail } from '@/hooks/file/use-file-detail';
 import { useCreateFileProcessingRequest } from '@/hooks/file/use-file-processing-request';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { formatDate, formatFileSize } from '@/utils/format';
-import { isOriginalPreviewSupported } from '@/utils/file-helpers';
 
 interface FileDetailShellProps {
   fileId: string;
@@ -60,21 +67,14 @@ function getProcessingBadgeVariant(status: string) {
   }
 }
 
-function getVectorBadgeVariant(status?: string) {
-  switch (status) {
-    case 'ready':
-      return 'success' as const;
-    case 'indexing':
-      return 'info' as const;
-    case 'failed':
-      return 'destructive' as const;
-    case 'none':
-    default:
-      return 'subtle' as const;
-  }
-}
+type WorkbenchStepState = 'done' | 'active' | 'attention' | 'failed' | 'blocked' | 'pending';
 
-function getWorkbenchStepStates(status: string, pendingCount: number, embeddingCount: number) {
+function getWorkbenchStepStates(
+  status: string,
+  pendingCount: number,
+  embeddingCount: number,
+  vectorStatus?: string
+): Array<{ key: string; state: WorkbenchStepState; count?: number }> {
   return [
     { key: 'uploaded', state: 'done' },
     {
@@ -114,9 +114,9 @@ function getWorkbenchStepStates(status: string, pendingCount: number, embeddingC
     {
       key: 'index',
       state:
-        status === 'ready'
+        status === 'ready' && vectorStatus === 'ready'
           ? 'done'
-          : status === 'generating' || embeddingCount > 0
+          : status === 'generating' || status === 'ready' || embeddingCount > 0
             ? 'active'
             : status === 'parse_failed'
               ? 'blocked'
@@ -124,91 +124,191 @@ function getWorkbenchStepStates(status: string, pendingCount: number, embeddingC
     },
     {
       key: 'ready',
-      state: status === 'ready' ? 'done' : status === 'parse_failed' ? 'blocked' : 'pending',
+      state:
+        status === 'ready' && vectorStatus === 'ready'
+          ? 'done'
+          : status === 'parse_failed'
+            ? 'blocked'
+            : 'pending',
     },
   ];
 }
 
-function getWorkbenchStepTone(state: string) {
+function getWorkbenchStepTone(state: WorkbenchStepState) {
   switch (state) {
     case 'done':
-      return 'border-success/30 bg-success/10 text-success';
+      return 'text-success';
     case 'active':
-      return 'border-primary/30 bg-primary/10 text-primary';
+      return 'text-primary';
     case 'attention':
-      return 'border-warning/40 bg-warning/10 text-warning';
+      return 'text-warning';
     case 'failed':
-      return 'border-destructive/30 bg-destructive/10 text-destructive';
+      return 'text-destructive';
     case 'blocked':
-      return 'border-border bg-muted text-muted-foreground';
+      return 'text-muted-foreground';
     case 'pending':
     default:
-      return 'border-border bg-background text-muted-foreground';
+      return 'text-muted-foreground';
   }
+}
+
+function getWorkbenchBannerTone(status: string) {
+  if (status === 'confirming') {
+    return {
+      icon: TriangleAlert,
+      className: 'border-warning/40 bg-warning/5',
+      iconClassName: 'bg-warning/10 text-warning',
+      titleKey: 'detail.workbench.banners.confirming.title',
+      descriptionKey: 'detail.workbench.banners.confirming.description',
+    };
+  }
+  if (status === 'parse_failed') {
+    return {
+      icon: AlertCircle,
+      className: 'border-destructive/40 bg-destructive/5',
+      iconClassName: 'bg-destructive/10 text-destructive',
+      titleKey: 'detail.workbench.banners.failed.title',
+      descriptionKey: 'detail.workbench.banners.failed.description',
+    };
+  }
+  if (status === 'ready') {
+    return {
+      icon: CheckCircle2,
+      className: 'border-success/30 bg-success/5',
+      iconClassName: 'bg-success/10 text-success',
+      titleKey: 'detail.workbench.banners.ready.title',
+      descriptionKey: 'detail.workbench.banners.ready.description',
+    };
+  }
+  if (status === 'parsing' || status === 'generating') {
+    return {
+      icon: Loader2,
+      className: 'border-primary/30 bg-primary/5',
+      iconClassName: 'bg-primary/10 text-primary',
+      titleKey: 'detail.workbench.banners.processing.title',
+      descriptionKey: 'detail.workbench.banners.processing.description',
+    };
+  }
+  return {
+    icon: FileIcon,
+    className: 'border-border bg-muted/20',
+    iconClassName: 'bg-muted text-muted-foreground',
+    titleKey: 'detail.workbench.banners.storedOnly.title',
+    descriptionKey: 'detail.workbench.banners.storedOnly.description',
+  };
 }
 
 function ProcessingWorkbenchOverview({
   status,
-  progress,
   pendingCount,
   chunkCount,
   embeddingCount,
+  vectorStatus,
 }: {
   status: string;
-  progress: number;
   pendingCount: number;
   chunkCount: number;
   embeddingCount: number;
+  vectorStatus?: string;
 }) {
   const t = useT('files');
-  const steps = getWorkbenchStepStates(status, pendingCount, embeddingCount);
+  const steps = getWorkbenchStepStates(status, pendingCount, embeddingCount, vectorStatus);
+  const banner = getWorkbenchBannerTone(status);
+  const BannerIcon = banner.icon;
 
   return (
-    <section className="rounded-md border border-border bg-background p-4">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0">
-          <h2 className="text-base font-semibold text-foreground">
-            {t('detail.workbench.title')}
-          </h2>
+    <section className={cn('rounded-lg border px-5 py-4', banner.className)}>
+      <div className="flex gap-4">
+        <div
+          className={cn(
+            'mt-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-lg',
+            banner.iconClassName
+          )}
+        >
+          <BannerIcon className={cn('h-5 w-5', status === 'parsing' || status === 'generating' ? 'animate-spin' : '')} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <h2 className="text-base font-semibold text-foreground">{t(banner.titleKey as never)}</h2>
           <p className="mt-1 text-sm leading-6 text-muted-foreground">
-            {t('detail.workbench.description', {
+            {t(banner.descriptionKey as never, {
               pending: pendingCount,
               chunks: chunkCount,
               embeddings: embeddingCount,
             })}
           </p>
-        </div>
-        <div className="min-w-[220px]">
-          <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>{t('detail.processing')}</span>
-            <span>{progress}%</span>
-          </div>
-          <Progress className="mt-2 h-2" value={progress} />
-        </div>
-      </div>
 
-      <div className="mt-4 grid gap-2 sm:grid-cols-3 xl:grid-cols-6">
-        {steps.map(step => (
-          <div
-            key={step.key}
-            className={cn(
-              'min-h-[72px] rounded-md border px-3 py-2',
-              getWorkbenchStepTone(step.state)
-            )}
-          >
-            <div className="text-xs font-medium">
-              {t(`detail.workbench.steps.${step.key}` as never)}
-            </div>
-            <div className="mt-2 text-[11px] text-current/75">
-              {step.key === 'quality' && pendingCount > 0
-                ? t('detail.workbench.pendingHint', { count: pendingCount })
-                : t(`detail.workbench.stepStates.${step.state}` as never)}
-            </div>
+          <div className="mt-5 flex min-w-0 flex-wrap items-center gap-x-0 gap-y-3">
+            {steps.map((step, index) => {
+              const isActive = step.state === 'active' || step.state === 'attention';
+              const StepIcon =
+                step.state === 'done'
+                  ? CheckCircle2
+                  : step.state === 'failed' || step.state === 'attention'
+                    ? TriangleAlert
+                    : Circle;
+              return (
+                <div key={step.key} className="flex items-center">
+                  <div className={cn('flex items-center gap-2 font-medium', getWorkbenchStepTone(step.state))}>
+                    <span
+                      className={cn(
+                        'flex h-7 w-7 items-center justify-center rounded-full border bg-background',
+                        step.state === 'done' && 'border-success/30 bg-success/10',
+                        isActive && 'border-current bg-current/10',
+                        step.state === 'failed' && 'border-destructive/30 bg-destructive/10',
+                        step.state === 'pending' && 'border-border',
+                        step.state === 'blocked' && 'border-border bg-muted'
+                      )}
+                    >
+                      <StepIcon className="h-4 w-4" />
+                    </span>
+                    <span className="text-sm">{t(`detail.workbench.steps.${step.key}` as never)}</span>
+                  </div>
+                  {index < steps.length - 1 ? (
+                    <span
+                      className={cn(
+                        'mx-3 h-px w-12 bg-border sm:w-20',
+                        step.state === 'done' && 'bg-success/50',
+                        isActive && 'bg-current'
+                      )}
+                    />
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
-        ))}
+        </div>
       </div>
     </section>
   );
+}
+
+function buildParsedContent(elements: FileParsePreviewElement[]) {
+  return elements
+    .slice()
+    .sort((a, b) => a.ordinal - b.ordinal)
+    .map(element => {
+      const title = [
+        element.page ? `Page ${element.page}` : null,
+        element.type,
+        element.subtype,
+      ]
+        .filter(Boolean)
+        .join(' / ');
+      return `## ${title}\n\n${element.content || ''}`;
+    })
+    .join('\n\n');
+}
+
+function triggerTextDownload(filename: string, content: string) {
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
 
 function FileDetailLoading() {
@@ -239,9 +339,9 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   const { hasPermission } = useAccountPermissions();
   const canDownload = hasPermission('file.download');
   const { downloadFile, isDownloading } = useDownloadFile();
-  const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
   const [activeTab, setActiveTab] = useState('preview');
   const [reparseConfirmOpen, setReparseConfirmOpen] = useState(false);
+  const [isExportingParsed, setIsExportingParsed] = useState(false);
   const { data, isLoading, isFetching, error, refetch } = useFileDetail(fileId, {
     pollProcessingStatus: true,
   });
@@ -254,17 +354,16 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   const artifactState = detail?.artifact_state;
   const summary = processing?.summary;
   const status = getProcessingStatus(file, summary?.product_status ?? asset?.product_status);
-  const progress = summary?.processing_progress ?? asset?.processing_progress ?? file?.processing_progress ?? 0;
   const vectorStatus = summary?.vector_status ?? asset?.vector_status ?? artifactState?.vector_status ?? file?.vector_status;
   const pendingCount =
     processing?.pending_confirmation_count ?? summary?.pending_confirmation_count ?? file?.pending_confirmation_count ?? 0;
   const chunkCount =
     processing?.chunk_count ?? summary?.chunk_count ?? asset?.chunk_count ?? file?.chunk_count ?? artifactState?.chunk_count ?? 0;
   const embeddingCount = processing?.embedding_count ?? file?.embedding_count ?? 0;
-  const hasPreview = file ? isOriginalPreviewSupported(file.extension, file.mime_type) : false;
   const parseReviewEnabled = status !== 'stored_only' && status !== 'parsing';
   const chunksEnabled = status === 'ready';
   const qaEnabled = status === 'ready' && vectorStatus === 'ready' && embeddingCount > 0;
+  const parsedExportEnabled = parseReviewEnabled && status !== 'parse_failed';
   const canRequestProcessing =
     hasPermission('file.manage') || hasPermission('file.upload_create') || canDownload;
   const canReparse = canRequestProcessing && (status === 'ready' || status === 'parse_failed');
@@ -287,23 +386,28 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
     }
   }, [status, t]);
 
-  const vectorStatusLabel = useMemo(() => {
-    switch (vectorStatus as FileAssetVectorStatus | string | undefined) {
-      case 'indexing':
-        return t('detail.vectorStatus.indexing');
-      case 'ready':
-        return t('detail.vectorStatus.ready');
-      case 'failed':
-        return t('detail.vectorStatus.failed');
-      case 'none':
-      default:
-        return t('detail.vectorStatus.none');
-    }
-  }, [t, vectorStatus]);
-
   const handleDownload = async () => {
     if (!file) return;
     await downloadFile(file.id, file.name);
+  };
+  const handleExportParsedContent = async () => {
+    if (!file || !parsedExportEnabled) return;
+    setIsExportingParsed(true);
+    try {
+      const response = await fileManageService.getParsePreview(file.id);
+      const content = buildParsedContent(response.data.elements);
+      const baseName = file.name.replace(/\.[^.]+$/, '') || file.name;
+      triggerTextDownload(`${baseName}-parsed-content.txt`, content);
+      toast.success(t('detail.exportParsedContentSuccess'));
+    } catch (exportError) {
+      toast.error(
+        exportError instanceof Error
+          ? exportError.message
+          : t('detail.exportParsedContentFailed')
+      );
+    } finally {
+      setIsExportingParsed(false);
+    }
   };
   const handleReparse = () => {
     void createProcessingRequest.mutateAsync({
@@ -343,17 +447,38 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-y-auto bg-bg-canvas">
-      <div className="border-b bg-background px-4 py-4 sm:px-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <Button variant="ghost" className="gap-2 px-2" onClick={() => router.push('/console/files')}>
-            <ArrowLeft className="h-4 w-4" />
-            {t('detail.backToFiles')}
-          </Button>
+    <div className="flex h-full min-h-0 flex-col overflow-y-auto bg-background">
+      <div className="border-b bg-background px-4 py-5 sm:px-6">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+          <div className="min-w-0">
+            <div className="flex min-w-0 flex-wrap items-center gap-3">
+              <Button
+                variant="ghost"
+                className="h-auto gap-2 px-0 py-0 text-base font-medium text-muted-foreground hover:bg-transparent hover:text-foreground"
+                onClick={() => router.push('/console/files')}
+              >
+                <ArrowLeft className="h-5 w-5" />
+                {t('detail.fileBreadcrumb')}
+              </Button>
+              <span className="text-xl text-muted-foreground">/</span>
+              <h1 className="min-w-0 max-w-[min(720px,100%)] truncate text-2xl font-semibold leading-tight text-foreground">
+                {file.name}
+              </h1>
+              <Badge variant={getProcessingBadgeVariant(status)} className="px-3 py-1 text-sm">
+                {statusLabel}
+              </Badge>
+            </div>
+            <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-muted-foreground">
+              <span>{t('detail.fileType', { extension: file.extension.toUpperCase() })}</span>
+              <span>{formatFileSize(file.size)}</span>
+              <span>{t('detail.createdAt', { time: formatDate(file.created_at) })}</span>
+            </div>
+          </div>
+
           <div className="flex flex-wrap items-center gap-2">
             <Button
               variant="outline"
-              className="gap-2"
+              className="h-11 gap-2 rounded-lg px-4"
               onClick={() => void refetch()}
               disabled={isFetching}
             >
@@ -364,26 +489,39 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
               )}
               {common('refresh')}
             </Button>
-            {hasPreview ? (
-              <Button variant="outline" className="gap-2" onClick={() => setPreviewFile(file)}>
-                <Eye className="h-4 w-4" />
-                {t('detail.previewOriginal')}
-              </Button>
-            ) : null}
             {canDownload ? (
-              <Button className="gap-2" onClick={handleDownload} disabled={isDownloading}>
+              <Button
+                variant="outline"
+                className="h-11 gap-2 rounded-lg px-4"
+                onClick={handleDownload}
+                disabled={isDownloading}
+              >
                 {isDownloading ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <Download className="h-4 w-4" />
                 )}
-                {t('actions.downloadFile')}
+                {t('detail.downloadOriginal')}
               </Button>
             ) : null}
+            <Button
+              variant="outline"
+              className="h-11 gap-2 rounded-lg px-4"
+              onClick={() => void handleExportParsedContent()}
+              disabled={!parsedExportEnabled || isExportingParsed}
+              title={!parsedExportEnabled ? t('detail.exportParsedContentUnavailable') : undefined}
+            >
+              {isExportingParsed ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <FileDown className="h-4 w-4" />
+              )}
+              {t('detail.exportParsedContent')}
+            </Button>
             {canReparse ? (
               <Button
-                variant="destructive"
-                className="gap-2"
+                variant="outline"
+                className="h-11 gap-2 rounded-lg px-4"
                 onClick={() => setReparseConfirmOpen(true)}
                 disabled={createProcessingRequest.isPending}
               >
@@ -395,42 +533,6 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
                 {t('detail.reparse.action')}
               </Button>
             ) : null}
-          </div>
-        </div>
-
-        <div className="mt-5 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div className="min-w-0 flex items-start gap-4">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-              <FileIcon className="h-6 w-6" />
-            </div>
-            <div className="min-w-0">
-              <div className="flex min-w-0 flex-wrap items-center gap-2">
-                <h1 className="min-w-0 truncate text-2xl font-semibold text-foreground">
-                  {file.name}
-                </h1>
-                <Badge variant="outline">{file.extension}</Badge>
-                <Badge variant={getProcessingBadgeVariant(status)}>{statusLabel}</Badge>
-              </div>
-              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
-                <span>{formatFileSize(file.size)}</span>
-                <span>{file.mime_type || '-'}</span>
-                <span>{t('detail.createdAt', { time: formatDate(file.created_at) })}</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="min-w-[240px] rounded-md border border-border bg-background p-3">
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-sm font-medium text-foreground">{t('detail.processing')}</span>
-              <span className="text-sm text-muted-foreground">{progress}%</span>
-            </div>
-            <Progress className="mt-3 h-2" value={progress} />
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Badge variant={getVectorBadgeVariant(vectorStatus)}>{vectorStatusLabel}</Badge>
-              {summary?.processing_stage ? (
-                <Badge variant="outline">{summary.processing_stage}</Badge>
-              ) : null}
-            </div>
           </div>
         </div>
       </div>
@@ -470,74 +572,120 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
         </div>
       ) : null}
 
-      <div className="space-y-4 p-4 sm:p-6">
+      <div className="border-b px-4 py-4 sm:px-6">
         <ProcessingWorkbenchOverview
           status={status}
-          progress={progress}
           pendingCount={pendingCount}
           chunkCount={chunkCount}
           embeddingCount={embeddingCount}
+          vectorStatus={vectorStatus}
         />
-
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="min-w-0">
-          <TabsList className="flex h-auto w-full justify-start overflow-x-auto rounded-md sm:inline-flex sm:w-auto">
-            <TabsTrigger value="preview" className="gap-2">
-              <FileText className="h-4 w-4" />
-              {t('detail.tabs.preview')}
-            </TabsTrigger>
-            <TabsTrigger value="chunks" disabled={!chunksEnabled}>
-              <Layers3 className="mr-2 h-4 w-4" />
-              {t('detail.tabs.chunks')}
-              {chunkCount > 0 ? (
-                <Badge variant="subtle" className="ml-2 px-1.5 py-0 text-[10px]">
-                  {chunkCount}
-                </Badge>
-              ) : null}
-            </TabsTrigger>
-            <TabsTrigger value="qa" disabled={!qaEnabled}>
-              <MessageSquareText className="mr-2 h-4 w-4" />
-              {t('detail.tabs.qa')}
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="preview" className="mt-4">
-            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.9fr)]">
-              <FileOriginalPreviewPanel
-                file={file}
-                onDownload={canDownload ? () => void handleDownload() : undefined}
-                isDownloading={isDownloading}
-              />
-              <FileParseReviewPanel fileId={file.id} enabled={parseReviewEnabled} />
-            </div>
-          </TabsContent>
-
-          <TabsContent value="chunks" className="mt-4">
-            <FileChunksPanel fileId={file.id} enabled={chunksEnabled} />
-          </TabsContent>
-
-          <TabsContent value="qa" className="mt-4">
-            <FileQAPanel
-              fileId={file.id}
-              artifactState={artifactState}
-              processing={processing}
-              vectorStatus={vectorStatus}
-              enabled={qaEnabled}
-            />
-          </TabsContent>
-        </Tabs>
       </div>
 
-      <FilePreviewDialog
-        open={Boolean(previewFile)}
-        onOpenChange={open => {
-          if (!open) setPreviewFile(null);
-        }}
-        file={previewFile}
-        onDownload={() => {
-          void handleDownload();
-        }}
-        isDownloading={isDownloading}
-      />
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="min-w-0">
+        <TabsList className="grid h-auto w-full grid-cols-3 overflow-hidden rounded-none border-x-0 border-t-0 bg-background p-0 text-foreground">
+          <TabsTrigger
+            value="preview"
+            className="min-h-[84px] justify-start gap-3 rounded-none border-0 border-r border-border px-5 text-left shadow-none data-[state=active]:border-x-0 data-[state=active]:border-b-2 data-[state=active]:border-b-primary data-[state=active]:bg-background data-[state=active]:shadow-none"
+          >
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-warning/10 text-warning">
+              <FileText className="h-5 w-5" />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-base font-semibold">{t('detail.tabs.preview')}</span>
+            </span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="chunks"
+            disabled={!chunksEnabled}
+            className="min-h-[84px] justify-start gap-3 rounded-none border-0 border-r border-border px-5 text-left shadow-none data-[state=active]:border-x-0 data-[state=active]:border-b-2 data-[state=active]:border-b-primary data-[state=active]:bg-background data-[state=active]:shadow-none"
+          >
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+              <Layers3 className="h-5 w-5" />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-base font-semibold">{t('detail.tabs.chunks')}</span>
+              <span className="mt-1 block truncate text-sm font-normal text-muted-foreground">
+                {chunksEnabled
+                  ? t('detail.tabHints.chunksReady', { count: chunkCount })
+                  : t('detail.tabHints.chunksWaiting')}
+              </span>
+            </span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="qa"
+            disabled={!qaEnabled}
+            className="min-h-[84px] justify-start gap-3 rounded-none border-0 px-5 text-left shadow-none data-[state=active]:border-x-0 data-[state=active]:border-b-2 data-[state=active]:border-b-primary data-[state=active]:bg-background data-[state=active]:shadow-none"
+          >
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+              <MessageSquareText className="h-5 w-5" />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-base font-semibold">{t('detail.tabs.qa')}</span>
+              <span className="mt-1 block truncate text-sm font-normal text-muted-foreground">
+                {qaEnabled ? t('detail.tabHints.qaReady') : t('detail.tabHints.qaWaiting')}
+              </span>
+            </span>
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="preview" className="mt-0">
+          <section>
+            <div className="border-b px-4 py-5 sm:px-6">
+              <h2 className="text-xl font-semibold text-foreground">{t('detail.tabs.preview')}</h2>
+              <p className="mt-2 text-sm text-muted-foreground">
+                {t('detail.previewWorkspaceDescription')}
+              </p>
+            </div>
+            <div className="grid min-h-[620px] xl:grid-cols-[minmax(0,1fr)_minmax(420px,0.95fr)]">
+              <FileOriginalPreviewPanel
+                file={file}
+                isDownloading={isDownloading}
+              />
+              <div className="min-w-0 border-t bg-background xl:border-l xl:border-t-0">
+                <div className="flex min-h-16 flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
+                  <Badge variant="subtle" className="px-4 py-2 text-sm font-semibold text-foreground">
+                    {t('detail.workbench.steps.parsed')}
+                  </Badge>
+                  {canReparse ? (
+                    <Button
+                      variant="outline"
+                      className="h-10 gap-2 rounded-lg"
+                      onClick={() => setReparseConfirmOpen(true)}
+                      disabled={createProcessingRequest.isPending}
+                    >
+                      {createProcessingRequest.isPending ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Sparkles className="h-4 w-4" />
+                      )}
+                      {t('detail.reparse.action')}
+                    </Button>
+                  ) : null}
+                </div>
+                <div className="max-h-[calc(100vh-430px)] min-h-[560px] overflow-y-auto p-4">
+                  <FileParseReviewPanel fileId={file.id} enabled={parseReviewEnabled} compact />
+                </div>
+              </div>
+            </div>
+          </section>
+        </TabsContent>
+
+        <TabsContent value="chunks" className="mt-0 bg-bg-canvas p-4 sm:p-6">
+          <FileChunksPanel fileId={file.id} enabled={chunksEnabled} />
+        </TabsContent>
+
+        <TabsContent value="qa" className="mt-0 bg-bg-canvas p-4 sm:p-6">
+          <FileQAPanel
+            fileId={file.id}
+            artifactState={artifactState}
+            processing={processing}
+            vectorStatus={vectorStatus}
+            enabled={qaEnabled}
+          />
+        </TabsContent>
+      </Tabs>
+
       <ConfirmDialog
         open={reparseConfirmOpen}
         onOpenChange={setReparseConfirmOpen}

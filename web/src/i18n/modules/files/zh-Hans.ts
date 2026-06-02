@@ -146,9 +146,17 @@ const messages: FilesMessages = {
 
   detail: {
     backToFiles: '返回文件列表',
+    fileBreadcrumb: '文件',
     previewOriginal: '预览原文件',
+    downloadOriginal: '下载原文件',
+    exportParsedContent: '导出解析内容',
+    exportParsedContentUnavailable: '解析内容尚未就绪，暂不能导出。',
+    exportParsedContentSuccess: '解析内容已导出',
+    exportParsedContentFailed: '解析内容导出失败',
     processing: '处理进度',
+    fileType: '{extension} 文件',
     createdAt: '上传于 {time}',
+    previewWorkspaceDescription: '核对原文件与解析内容，需处理标记项。',
     loadErrorTitle: '文件详情加载失败',
     loadErrorDescription: '文件可能已被删除，或当前账号没有访问权限。',
     processingError: '处理失败',
@@ -190,6 +198,28 @@ const messages: FilesMessages = {
       title: '处理进度',
       description: '质量检查待确认 {pending} 项，已生成 {chunks} 个切片和 {embeddings} 个向量。',
       pendingHint: '{count} 项待确认',
+      banners: {
+        confirming: {
+          title: '质量检查发现标记内容',
+          description: '质量检查发现 {pending} 处需要处理。',
+        },
+        failed: {
+          title: '处理失败',
+          description: '处理流程中断。请查看错误信息，确认后重新解析。',
+        },
+        ready: {
+          title: '文档资产已就绪',
+          description: '已生成 {chunks} 个一级切片和 {embeddings} 个向量，可用于文档问答。',
+        },
+        processing: {
+          title: '正在处理文档',
+          description: '系统正在解析内容、生成切片或建立问答索引。',
+        },
+        storedOnly: {
+          title: '文件仅存储',
+          description: '原文件已保存，发起解析后才会生成切片和向量。',
+        },
+      },
       steps: {
         uploaded: '已上传',
         parsed: '解析内容',
@@ -206,6 +236,12 @@ const messages: FilesMessages = {
         blocked: '等待前置步骤',
         pending: '未开始',
       },
+    },
+    tabHints: {
+      chunksReady: '已生成 {count} 个切片',
+      chunksWaiting: '等待确认完成',
+      qaReady: '可对本文档提问',
+      qaWaiting: '确认完成后可用',
     },
     parseReview: {
       title: '解析确认',

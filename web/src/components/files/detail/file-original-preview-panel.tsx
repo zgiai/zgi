@@ -26,13 +26,12 @@ export function FileOriginalPreviewPanel({
   });
 
   return (
-    <div className="min-h-[560px] overflow-hidden rounded-md border border-border bg-background">
-      <div className="flex min-h-12 flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
+    <div className="min-h-[620px] overflow-hidden bg-muted/20">
+      <div className="flex min-h-16 flex-wrap items-center justify-between gap-3 border-b bg-background px-4 py-3">
         <div className="min-w-0">
-          <div className="truncate text-sm font-medium text-foreground">{file.name}</div>
-          <div className="mt-0.5 text-xs text-muted-foreground">
-            {t('preview.fileMeta', { extension: file.extension.toUpperCase() })}
-          </div>
+          <span className="inline-flex rounded-full bg-muted px-4 py-2 text-sm font-semibold text-foreground">
+            {t('detail.tabs.originalPreview')}
+          </span>
         </div>
         {onDownload ? (
           <Button
@@ -51,7 +50,7 @@ export function FileOriginalPreviewPanel({
           </Button>
         ) : null}
       </div>
-      <div className="h-[calc(100vh-360px)] min-h-[500px] overflow-hidden">
+      <div className="h-[calc(100vh-430px)] min-h-[560px] overflow-hidden">
         <UniversalFilePreviewContent
           file={{
             id: file.id,

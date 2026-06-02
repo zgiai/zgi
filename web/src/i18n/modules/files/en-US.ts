@@ -152,9 +152,18 @@ const messages = {
 
   detail: {
     backToFiles: 'Back to Files',
+    fileBreadcrumb: 'Files',
     previewOriginal: 'Preview Original',
+    downloadOriginal: 'Download Original',
+    exportParsedContent: 'Export Parsed Content',
+    exportParsedContentUnavailable: 'Parsed content is not ready yet.',
+    exportParsedContentSuccess: 'Parsed content exported',
+    exportParsedContentFailed: 'Failed to export parsed content',
     processing: 'Processing',
+    fileType: '{extension} File',
     createdAt: 'Uploaded {time}',
+    previewWorkspaceDescription:
+      'Review the original file and parsed content, then resolve marked items.',
     loadErrorTitle: 'Failed to load file details',
     loadErrorDescription: 'The file may have been removed or you may not have access.',
     processingError: 'Processing failed',
@@ -197,6 +206,29 @@ const messages = {
       description:
         '{pending} pending reviews, {chunks} chunks, and {embeddings} vectors generated.',
       pendingHint: '{count} pending',
+      banners: {
+        confirming: {
+          title: 'Quality check found marked content',
+          description: 'Quality check found {pending} items that need review.',
+        },
+        failed: {
+          title: 'Processing failed',
+          description: 'The processing flow stopped. Review the error and reparse when ready.',
+        },
+        ready: {
+          title: 'Document asset ready',
+          description:
+            '{chunks} primary chunks and {embeddings} vectors are ready for document Q&A.',
+        },
+        processing: {
+          title: 'Processing document',
+          description: 'The system is parsing content, generating chunks, or building the Q&A index.',
+        },
+        storedOnly: {
+          title: 'File stored only',
+          description: 'The original file is saved. Parse it to generate chunks and vectors.',
+        },
+      },
       steps: {
         uploaded: 'Uploaded',
         parsed: 'Parse content',
@@ -213,6 +245,12 @@ const messages = {
         blocked: 'Waiting',
         pending: 'Not started',
       },
+    },
+    tabHints: {
+      chunksReady: '{count} chunks generated',
+      chunksWaiting: 'Waiting for review',
+      qaReady: 'Ready for questions',
+      qaWaiting: 'Available after review',
     },
     parseReview: {
       title: 'Parse Review',

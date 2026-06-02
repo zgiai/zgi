@@ -21,6 +21,7 @@ import { cn } from '@/lib/utils';
 interface FileParseReviewPanelProps {
   fileId: string;
   enabled: boolean;
+  compact?: boolean;
 }
 
 function getConfirmationStatusVariant(status?: string) {
@@ -74,7 +75,7 @@ function ParseReviewSkeleton() {
   );
 }
 
-export function FileParseReviewPanel({ fileId, enabled }: FileParseReviewPanelProps) {
+export function FileParseReviewPanel({ fileId, enabled, compact = false }: FileParseReviewPanelProps) {
   const t = useT('files');
   const [editedContentByItem, setEditedContentByItem] = useState<Record<string, string>>({});
   const { data, isLoading, error } = useFileParsePreview(fileId, { enabled });
@@ -135,41 +136,55 @@ export function FileParseReviewPanel({ fileId, enabled }: FileParseReviewPanelPr
     );
   }
 
-  return (
+  const content = (
     <div className="space-y-4">
-      <div className="rounded-md border border-border bg-background p-4">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="min-w-0">
-            <h2 className="text-base font-semibold text-foreground">
-              {t('detail.parseReview.title')}
-            </h2>
-            <div className="mt-2 flex flex-wrap gap-2 text-sm text-muted-foreground">
-              <Badge variant="outline">
-                {t('detail.parseReview.elementCount', { count: elements.length })}
-              </Badge>
-              <Badge variant={pendingItems.length > 0 ? 'warning' : 'success'}>
-                {t('detail.parseReview.pendingCount', {
-                  count: preview.pending_confirmation_count,
-                })}
-              </Badge>
-              {preview.engine_used ? <Badge variant="subtle">{preview.engine_used}</Badge> : null}
+      {!compact ? (
+        <div className="rounded-md border border-border bg-background p-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <h2 className="text-base font-semibold text-foreground">
+                {t('detail.parseReview.title')}
+              </h2>
+              <div className="mt-2 flex flex-wrap gap-2 text-sm text-muted-foreground">
+                <Badge variant="outline">
+                  {t('detail.parseReview.elementCount', { count: elements.length })}
+                </Badge>
+                <Badge variant={pendingItems.length > 0 ? 'warning' : 'success'}>
+                  {t('detail.parseReview.pendingCount', {
+                    count: preview.pending_confirmation_count,
+                  })}
+                </Badge>
+                {preview.engine_used ? <Badge variant="subtle">{preview.engine_used}</Badge> : null}
+              </div>
             </div>
+            <Button
+              variant="outline"
+              className="gap-2"
+              onClick={() => batchIgnoreConfirmations({})}
+              disabled={pendingItems.length === 0 || isMutating}
+            >
+              {isBatchIgnoring ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <ShieldCheck className="h-4 w-4" />
+              )}
+              {t('detail.parseReview.batchIgnore')}
+            </Button>
           </div>
-          <Button
-            variant="outline"
-            className="gap-2"
-            onClick={() => batchIgnoreConfirmations({})}
-            disabled={pendingItems.length === 0 || isMutating}
-          >
-            {isBatchIgnoring ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <ShieldCheck className="h-4 w-4" />
-            )}
-            {t('detail.parseReview.batchIgnore')}
-          </Button>
         </div>
-      </div>
+      ) : (
+        <div className="flex flex-wrap gap-2 text-sm text-muted-foreground">
+          <Badge variant="outline">
+            {t('detail.parseReview.elementCount', { count: elements.length })}
+          </Badge>
+          <Badge variant={pendingItems.length > 0 ? 'warning' : 'success'}>
+            {t('detail.parseReview.pendingCount', {
+              count: preview.pending_confirmation_count,
+            })}
+          </Badge>
+          {preview.engine_used ? <Badge variant="subtle">{preview.engine_used}</Badge> : null}
+        </div>
+      )}
 
       {elements.length === 0 ? (
         <div className="flex min-h-[280px] items-center justify-center rounded-md border border-dashed border-border bg-background p-6 text-center">
@@ -199,6 +214,8 @@ export function FileParseReviewPanel({ fileId, enabled }: FileParseReviewPanelPr
       )}
     </div>
   );
+
+  return content;
 }
 
 function ParseReviewElement({
