@@ -71,6 +71,86 @@ export interface DocumentExtractionStrategyStatus {
   reason?: string;
 }
 
+export type DatasetFileRefSyncStatus = 'pending' | 'syncing' | 'synced' | 'failed';
+
+export type DatasetFileCandidateFilter = 'addable' | 'added' | 'all';
+
+export type DatasetFileCandidateReason =
+  | 'not_ready'
+  | 'already_added'
+  | 'embedding_model_mismatch'
+  | 'missing_chunks'
+  | 'missing_embedding';
+
+export interface DatasetFileCandidate {
+  file_id: string;
+  asset_id: string;
+  name: string;
+  processing_status: string;
+  generation_no: number;
+  addable: boolean;
+  reason?: DatasetFileCandidateReason | string;
+  embedding_provider?: string;
+  embedding_model?: string;
+  already_added: boolean;
+  chunk_count: number;
+  embedding_count: number;
+}
+
+export interface DatasetFileCandidateList {
+  items: DatasetFileCandidate[];
+  total: number;
+}
+
+export interface DatasetFileRef {
+  id: string;
+  dataset_id: string;
+  asset_id: string;
+  file_id: string;
+  file_name: string;
+  processing_status: string;
+  generation_no: number;
+  dataset_document_id?: string;
+  sync_status: DatasetFileRefSyncStatus | string;
+  synced_generation_no?: number;
+  last_synced_at?: string;
+  sync_error_code?: string;
+  sync_error_message?: string;
+}
+
+export interface DatasetFileRefList {
+  items: DatasetFileRef[];
+  total: number;
+}
+
+export interface DatasetFileRefView {
+  id: string;
+  organization_id: string;
+  workspace_id?: string;
+  dataset_id: string;
+  asset_id: string;
+  dataset_document_id?: string;
+  sync_status: DatasetFileRefSyncStatus | string;
+  synced_generation_no?: number;
+  sync_run_id?: string;
+  last_synced_at?: string;
+  sync_error_code?: string;
+  sync_error_message?: string;
+}
+
+export interface DatasetFileRefCreateItem {
+  asset_id: string;
+  ref?: DatasetFileRefView;
+  sync_run_id?: string;
+  generation_no?: number;
+  success: boolean;
+  reason?: DatasetFileCandidateReason | string;
+}
+
+export interface DatasetFileRefCreateResult {
+  items: DatasetFileRefCreateItem[];
+}
+
 export interface DocumentExtractionAttempt {
   strategy: DocumentExtractionStrategy;
   etl_type?: string;

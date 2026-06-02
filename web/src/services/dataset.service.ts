@@ -34,6 +34,11 @@ import type {
   UpdateDatasetRequest,
   DocumentExtractionStrategiesResponse,
   DocumentExtractionStrategy,
+  DatasetFileCandidateFilter,
+  DatasetFileCandidateList,
+  DatasetFileRefCreateResult,
+  DatasetFileRefList,
+  DatasetFileRefView,
 } from './types/dataset';
 import type { ApiResponseData } from './types/common';
 
@@ -130,6 +135,70 @@ class DatasetService extends BaseService {
     }
   ): Promise<ApiResponseData<unknown>> {
     return this.request('post', `/datasets/${datasetId}/documents`, data);
+  }
+
+  /**
+   * List file assets that can be copied into a dataset.
+   * GET /console/api/datasets/{dataset_id}/file-candidates
+   */
+  getDatasetFileCandidates(
+    datasetId: string,
+    params?: {
+      filter?: DatasetFileCandidateFilter;
+      keyword?: string;
+      page?: number;
+      limit?: number;
+    }
+  ): Promise<ApiResponseData<DatasetFileCandidateList>> {
+    return this.request('get', `/datasets/${datasetId}/file-candidates`, undefined, { params });
+  }
+
+  /**
+   * List file asset sync refs for a dataset.
+   * GET /console/api/datasets/{dataset_id}/file-refs
+   */
+  getDatasetFileRefs(
+    datasetId: string,
+    params?: {
+      sync_status?: string;
+      page?: number;
+      limit?: number;
+    }
+  ): Promise<ApiResponseData<DatasetFileRefList>> {
+    return this.request('get', `/datasets/${datasetId}/file-refs`, undefined, { params });
+  }
+
+  /**
+   * Copy selected file assets into a dataset by creating sync refs.
+   * POST /console/api/datasets/{dataset_id}/file-refs
+   */
+  createDatasetFileRefs(
+    datasetId: string,
+    assetIds: string[]
+  ): Promise<ApiResponseData<DatasetFileRefCreateResult>> {
+    return this.request('post', `/datasets/${datasetId}/file-refs`, { asset_ids: assetIds });
+  }
+
+  /**
+   * Retry a failed or pending file asset sync ref.
+   * POST /console/api/datasets/{dataset_id}/file-refs/{ref_id}/sync/retry
+   */
+  retryDatasetFileRefSync(
+    datasetId: string,
+    refId: string
+  ): Promise<ApiResponseData<DatasetFileRefCreateResult['items'][number]>> {
+    return this.request('post', `/datasets/${datasetId}/file-refs/${refId}/sync/retry`);
+  }
+
+  /**
+   * Remove a file asset ref and its current dataset document.
+   * DELETE /console/api/datasets/{dataset_id}/file-refs/{ref_id}
+   */
+  deleteDatasetFileRef(
+    datasetId: string,
+    refId: string
+  ): Promise<ApiResponseData<DatasetFileRefView>> {
+    return this.request('delete', `/datasets/${datasetId}/file-refs/${refId}`);
   }
 
   /**
