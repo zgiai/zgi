@@ -6,7 +6,6 @@ import { useT } from '@/i18n';
 import { Plus, RefreshCcw, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
 import { useDataset } from '@/hooks/dataset/use-datasets';
 import {
@@ -16,11 +15,7 @@ import {
   useBulkEnableDocuments,
   useBulkDisableDocuments,
   useDownloadDocument,
-  useCreateDocumentsInDataset,
-  useDocumentExtractionStrategies,
-  getPreferredDocumentExtractionStrategy,
 } from '@/hooks/dataset/use-documents';
-import { useSupportedFileTypes } from '@/hooks';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import type { Document, DocumentIndexingStatus, DocumentStatus } from '@/services/types/dataset';
 import { DocumentTable } from '@/components/datasets/document/document-table';
@@ -29,15 +24,8 @@ import { DocumentListSkeleton } from '@/components/datasets/document/document-li
 import { IndexFailedBanner } from '@/components/datasets/document/index-failed';
 import { useErrorDocs, useRetryErrorDocs } from '@/hooks/dataset/use-error-docs';
 import { DocumentEmptyState } from '@/components/datasets/document/document-empty-state';
-import FileSelectorDialog from '@/components/files/file-selector-dialog';
-import type { FileItem } from '@/services/types/file';
-import { saveSelectedFileItems, loadSelectedFileItems } from '@/utils/dataset/selected-files';
+import { DatasetFileAssetDialog } from '@/components/datasets/document/dataset-file-asset-dialog';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
-import type { DocumentExtractionStrategy } from '@/services/types/dataset';
-import {
-  ExtractionStrategySelect,
-  extractionStrategyLabelKey,
-} from '@/components/datasets/document/extraction-strategy-select';
 
 // New: data source union shared with child components
 export type DataSourceType = 'file' | 'notion' | 'web' | 'api';
@@ -328,77 +316,11 @@ export default function DatasetDocumentsPage() {
     }
   }, [datasetId, selectedIds, refetch, t, bulkDisableMutation]);
 
-  // Add Document directly opens file selector
+  // Add Document directly opens file asset selector
   const openAddDialog = useCallback(() => setFileSelectorOpen(true), []);
 
-  // Supported file types for selector
-  const { supportedTypes } = useSupportedFileTypes({ enabled: true });
-  const acceptExtensions: string[] = Array.isArray(supportedTypes?.allowed_extensions)
-    ? supportedTypes.allowed_extensions
-    : [];
-  const MAX_COUNT = 100;
-
-  // File selector dialog state and confirm handler
+  // File asset selector dialog state
   const [fileSelectorOpen, setFileSelectorOpen] = useState(false);
-  const createDocumentsMutation = useCreateDocumentsInDataset(datasetId);
-  const { data: extractionStrategyConfig, isLoading: isLoadingExtractionStrategies } =
-    useDocumentExtractionStrategies();
-  const extractionStrategies = useMemo(
-    () => extractionStrategyConfig?.strategies ?? [],
-    [extractionStrategyConfig?.strategies]
-  );
-  const extractionStrategyItems = useMemo(
-    () => extractionStrategyConfig?.items ?? [],
-    [extractionStrategyConfig?.items]
-  );
-  const recommendedExtractionStrategy = extractionStrategyConfig?.recommended_strategy;
-  const [extractionStrategy, setExtractionStrategy] = useState<
-    DocumentExtractionStrategy | undefined
-  >();
-  const [extractionFallbackEnabled, setExtractionFallbackEnabled] = useState(true);
-  const selectedStrategyLabelKey = extractionStrategyLabelKey(extractionStrategy);
-  const selectedStrategyLabel = selectedStrategyLabelKey ? t(selectedStrategyLabelKey) : '';
-  const isSelectedRecommendedStrategy =
-    !!recommendedExtractionStrategy && extractionStrategy === recommendedExtractionStrategy;
-  const hasUnavailableExtractionStrategy = extractionStrategyItems.some(item => !item.available);
-
-  useEffect(() => {
-    if (extractionStrategies.length === 0) {
-      setExtractionStrategy(undefined);
-      return;
-    }
-    setExtractionStrategy(current =>
-      current && extractionStrategies.includes(current)
-        ? current
-        : getPreferredDocumentExtractionStrategy(
-            extractionStrategies,
-            recommendedExtractionStrategy
-          )
-    );
-  }, [extractionStrategies, recommendedExtractionStrategy]);
-
-  const handleConfirmFiles = useCallback(
-    async (selectedFiles: FileItem[]) => {
-      if (selectedFiles.length === 0 || !extractionStrategy) return;
-
-      try {
-        const payload = {
-          type: 'upload_file',
-          file_ids: selectedFiles.map(f => f.id),
-          extraction_strategy: extractionStrategy,
-          extraction_fallback_enabled: extractionFallbackEnabled,
-        };
-
-        await createDocumentsMutation.mutateAsync(payload);
-        setFileSelectorOpen(false);
-        saveSelectedFileItems(datasetId, []);
-        refetch();
-      } catch (error) {
-        console.error('Upload failed:', error);
-      }
-    },
-    [datasetId, createDocumentsMutation, refetch, extractionStrategy, extractionFallbackEnabled]
-  );
 
   /* ---------------------------------------------------------------------- */
   return (
@@ -553,50 +475,12 @@ export default function DatasetDocumentsPage() {
         loading={isBatchDeleting}
       />
 
-      {/* Add Document Dialog */}
-      {/* File selector dialog for choosing files before navigating to upload */}
-      <FileSelectorDialog
+      {/* Add file assets to dataset */}
+      <DatasetFileAssetDialog
+        datasetId={datasetId}
         open={fileSelectorOpen}
         onOpenChange={setFileSelectorOpen}
-        onConfirm={handleConfirmFiles}
-        initSelectedFiles={loadSelectedFileItems(datasetId)}
-        maxCount={MAX_COUNT}
-        acceptExt={acceptExtensions}
-        confirmDisabled={!extractionStrategy || isLoadingExtractionStrategies}
-        footerExtra={
-          <div className="flex flex-wrap items-center gap-4">
-            <ExtractionStrategySelect
-              value={extractionStrategy}
-              strategies={extractionStrategies}
-              items={extractionStrategyItems}
-              recommendedStrategy={recommendedExtractionStrategy}
-              loading={isLoadingExtractionStrategies}
-              onChange={setExtractionStrategy}
-            />
-            <label className="flex items-center gap-2 text-sm text-muted-foreground">
-              <span className="whitespace-nowrap">
-                {t('datasets.documents.extractionStrategy.autoFallback')}
-              </span>
-              <Switch
-                checked={extractionFallbackEnabled}
-                onCheckedChange={setExtractionFallbackEnabled}
-                aria-label={t('datasets.documents.extractionStrategy.autoFallback')}
-              />
-            </label>
-            {isSelectedRecommendedStrategy && selectedStrategyLabel ? (
-              <span className="text-xs text-muted-foreground">
-                {t('datasets.documents.extractionStrategy.autoSelectedHint', {
-                  strategy: selectedStrategyLabel,
-                })}
-              </span>
-            ) : null}
-            {hasUnavailableExtractionStrategy ? (
-              <span className="text-xs text-muted-foreground">
-                {t('datasets.documents.extractionStrategy.unavailableHint')}
-              </span>
-            ) : null}
-          </div>
-        }
+        onSubmitted={() => refetch()}
       />
     </div>
   );
