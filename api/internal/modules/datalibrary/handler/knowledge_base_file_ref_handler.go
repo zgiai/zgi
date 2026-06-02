@@ -25,6 +25,7 @@ func (h *KnowledgeBaseFileRefHandler) RegisterDatasetRoutes(router *gin.RouterGr
 	auth := router.Group("", middleware.JWTWithOrganizationAndService(h.accountService))
 	group := auth.Group("/datasets/:dataset_id")
 	group.GET("/file-candidates", h.ListFileCandidates)
+	group.GET("/file-refs", h.ListFileRefs)
 	group.POST("/file-refs", h.CreateFileRefs)
 }
 
@@ -41,6 +42,28 @@ func (h *KnowledgeBaseFileRefHandler) ListFileCandidates(c *gin.Context) {
 		DatasetID:      c.Param("dataset_id"),
 		Filter:         c.DefaultQuery("filter", datalibService.FileCandidateFilterAddable),
 		Keyword:        c.Query("keyword"),
+		Limit:          limit,
+		Offset:         offset,
+	})
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *KnowledgeBaseFileRefHandler) ListFileRefs(c *gin.Context) {
+	organizationID := util.GetOrganizationID(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	limit, offset := parseLimitOffset(c, 20, 100)
+	result, err := h.service.ListRefs(c.Request.Context(), datalibService.KnowledgeBaseFileRefListRequest{
+		OrganizationID: organizationID,
+		WorkspaceID:    optionalString(util.GetWorkspaceID(c)),
+		DatasetID:      c.Param("dataset_id"),
+		SyncStatus:     c.Query("sync_status"),
 		Limit:          limit,
 		Offset:         offset,
 	})

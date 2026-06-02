@@ -155,14 +155,80 @@ func TestKnowledgeBaseFileRefServiceCreatesPendingRefs(t *testing.T) {
 	}
 }
 
+func TestKnowledgeBaseFileRefServiceListsRefsWithAssetAndFileState(t *testing.T) {
+	assetID := uuid.New()
+	refID := uuid.New()
+	documentID := uuid.New()
+	syncedGeneration := int64(3)
+	deps := &fakeKnowledgeBaseFileRefDeps{
+		dataset: &datasetModel.Dataset{
+			ID:             "dataset-1",
+			OrganizationID: "org-1",
+		},
+		assets: []*datalibModel.DocumentAsset{
+			{
+				ID:             assetID,
+				OrganizationID: "org-1",
+				SourceFileID:   "file-1",
+				Title:          "Asset title",
+				ProductStatus:  datalibModel.DocumentAssetProductStatusReady,
+				GenerationNo:   3,
+			},
+		},
+		files: map[string]*fileModel.UploadFile{
+			"file-1": {ID: "file-1", Name: "handbook.pdf"},
+		},
+		refs: []*datalibModel.KnowledgeBaseAssetRef{
+			{
+				ID:                 refID,
+				OrganizationID:     "org-1",
+				DatasetID:          "dataset-1",
+				AssetID:            assetID,
+				DatasetDocumentID:  &documentID,
+				SyncStatus:         datalibModel.KnowledgeBaseAssetRefSyncStatusSynced,
+				SyncedGenerationNo: &syncedGeneration,
+			},
+		},
+	}
+	svc := newKnowledgeBaseFileRefTestService(deps)
+
+	result, err := svc.ListRefs(context.Background(), KnowledgeBaseFileRefListRequest{
+		OrganizationID: "org-1",
+		DatasetID:      "dataset-1",
+		SyncStatus:     datalibModel.KnowledgeBaseAssetRefSyncStatusSynced,
+	})
+	if err != nil {
+		t.Fatalf("ListRefs: %v", err)
+	}
+	if result.Total != 1 || len(result.Items) != 1 {
+		t.Fatalf("result=%+v", result)
+	}
+	item := result.Items[0]
+	if item.ID != refID ||
+		item.AssetID != assetID ||
+		item.DatasetDocumentID == nil ||
+		*item.DatasetDocumentID != documentID ||
+		item.FileName != "handbook.pdf" ||
+		item.SyncStatus != datalibModel.KnowledgeBaseAssetRefSyncStatusSynced ||
+		item.SyncedGenerationNo == nil ||
+		*item.SyncedGenerationNo != syncedGeneration {
+		t.Fatalf("item=%+v", item)
+	}
+	if deps.lastRefFilter.SyncStatus != datalibModel.KnowledgeBaseAssetRefSyncStatusSynced {
+		t.Fatalf("filter=%+v", deps.lastRefFilter)
+	}
+}
+
 type fakeKnowledgeBaseFileRefDeps struct {
 	dataset        *datasetModel.Dataset
 	assets         []*datalibModel.DocumentAsset
 	existingRef    *datalibModel.KnowledgeBaseAssetRef
+	refs           []*datalibModel.KnowledgeBaseAssetRef
 	files          map[string]*fileModel.UploadFile
 	chunkCount     int64
 	embeddingCount int64
 	created        *datalibModel.KnowledgeBaseAssetRef
+	lastRefFilter  datalibRepo.KnowledgeBaseAssetRefListFilter
 }
 
 func newKnowledgeBaseFileRefTestService(deps *fakeKnowledgeBaseFileRefDeps) KnowledgeBaseFileRefService {
@@ -197,6 +263,11 @@ func (f *fakeKnowledgeBaseFileRefDeps) Create(ctx context.Context, item *datalib
 
 func (f *fakeKnowledgeBaseFileRefDeps) FindActiveByAsset(ctx context.Context, organizationID string, datasetID string, assetID uuid.UUID) (*datalibModel.KnowledgeBaseAssetRef, error) {
 	return f.existingRef, nil
+}
+
+func (f *fakeKnowledgeBaseFileRefDeps) List(ctx context.Context, filter datalibRepo.KnowledgeBaseAssetRefListFilter) ([]*datalibModel.KnowledgeBaseAssetRef, int64, error) {
+	f.lastRefFilter = filter
+	return f.refs, int64(len(f.refs)), nil
 }
 
 func (f *fakeKnowledgeBaseFileRefDeps) ListByTenantAndIDs(ctx context.Context, tenantID string, ids []string) (map[string]*fileModel.UploadFile, error) {

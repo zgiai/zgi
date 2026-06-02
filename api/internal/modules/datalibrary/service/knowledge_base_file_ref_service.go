@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	datalibModel "github.com/zgiai/zgi/api/internal/modules/datalibrary/model"
@@ -40,6 +41,7 @@ type knowledgeBaseFileEmbeddingReader interface {
 type knowledgeBaseFileRefStore interface {
 	Create(ctx context.Context, item *datalibModel.KnowledgeBaseAssetRef) error
 	FindActiveByAsset(ctx context.Context, organizationID string, datasetID string, assetID uuid.UUID) (*datalibModel.KnowledgeBaseAssetRef, error)
+	List(ctx context.Context, filter datalibRepo.KnowledgeBaseAssetRefListFilter) ([]*datalibModel.KnowledgeBaseAssetRef, int64, error)
 }
 
 type knowledgeBaseFileFileReader interface {
@@ -52,6 +54,7 @@ type knowledgeBaseFileDatasetReader interface {
 
 type KnowledgeBaseFileRefService interface {
 	ListCandidates(ctx context.Context, req KnowledgeBaseFileCandidateRequest) (*KnowledgeBaseFileCandidateResult, error)
+	ListRefs(ctx context.Context, req KnowledgeBaseFileRefListRequest) (*KnowledgeBaseFileRefListResult, error)
 	CreateRefs(ctx context.Context, req KnowledgeBaseFileRefCreateRequest) (*KnowledgeBaseFileRefCreateResult, error)
 }
 
@@ -91,6 +94,36 @@ type KnowledgeBaseFileRefCreateRequest struct {
 	DatasetID      string
 	AssetIDs       []uuid.UUID
 	CreatedBy      string
+}
+
+type KnowledgeBaseFileRefListRequest struct {
+	OrganizationID string
+	WorkspaceID    *string
+	DatasetID      string
+	SyncStatus     string
+	Limit          int
+	Offset         int
+}
+
+type KnowledgeBaseFileRefListResult struct {
+	Items []*KnowledgeBaseFileRefItem `json:"items"`
+	Total int64                       `json:"total"`
+}
+
+type KnowledgeBaseFileRefItem struct {
+	ID                 uuid.UUID  `json:"id"`
+	DatasetID          string     `json:"dataset_id"`
+	AssetID            uuid.UUID  `json:"asset_id"`
+	FileID             string     `json:"file_id"`
+	FileName           string     `json:"file_name"`
+	ProcessingStatus   string     `json:"processing_status"`
+	GenerationNo       int64      `json:"generation_no"`
+	DatasetDocumentID  *uuid.UUID `json:"dataset_document_id,omitempty"`
+	SyncStatus         string     `json:"sync_status"`
+	SyncedGenerationNo *int64     `json:"synced_generation_no,omitempty"`
+	LastSyncedAt       *time.Time `json:"last_synced_at,omitempty"`
+	SyncErrorCode      *string    `json:"sync_error_code,omitempty"`
+	SyncErrorMessage   *string    `json:"sync_error_message,omitempty"`
 }
 
 type KnowledgeBaseFileRefCreateResult struct {
@@ -197,6 +230,77 @@ func (s *knowledgeBaseFileRefService) ListCandidates(ctx context.Context, req Kn
 		items = append(items, candidate)
 	}
 	return &KnowledgeBaseFileCandidateResult{Items: items, Total: total}, nil
+}
+
+func (s *knowledgeBaseFileRefService) ListRefs(ctx context.Context, req KnowledgeBaseFileRefListRequest) (*KnowledgeBaseFileRefListResult, error) {
+	if err := validateKnowledgeBaseFileRefScope(req.OrganizationID, req.DatasetID); err != nil {
+		return nil, err
+	}
+	dataset, err := s.datasets.GetByID(ctx, req.DatasetID)
+	if err != nil {
+		return nil, err
+	}
+	if dataset == nil || dataset.OrganizationID != req.OrganizationID {
+		return nil, ErrDatasetNotFound
+	}
+	refs, total, err := s.refs.List(ctx, datalibRepo.KnowledgeBaseAssetRefListFilter{
+		OrganizationID: req.OrganizationID,
+		DatasetID:      req.DatasetID,
+		SyncStatus:     req.SyncStatus,
+		Limit:          req.Limit,
+		Offset:         req.Offset,
+	})
+	if err != nil {
+		return nil, err
+	}
+	assetByID := make(map[uuid.UUID]*datalibModel.DocumentAsset, len(refs))
+	fileIDs := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		asset, err := s.assets.GetAssetByID(ctx, ref.AssetID)
+		if err != nil {
+			return nil, err
+		}
+		if asset == nil {
+			continue
+		}
+		assetByID[ref.AssetID] = asset
+		fileIDs = append(fileIDs, asset.SourceFileID)
+	}
+	filesByID, err := s.files.ListByTenantAndIDs(ctx, req.OrganizationID, fileIDs)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]*KnowledgeBaseFileRefItem, 0, len(refs))
+	for _, ref := range refs {
+		asset := assetByID[ref.AssetID]
+		if asset == nil {
+			continue
+		}
+		if req.WorkspaceID != nil && (asset.WorkspaceID == nil || *asset.WorkspaceID != *req.WorkspaceID) {
+			continue
+		}
+		file := filesByID[asset.SourceFileID]
+		fileName := asset.Title
+		if file != nil && file.Name != "" {
+			fileName = file.Name
+		}
+		items = append(items, &KnowledgeBaseFileRefItem{
+			ID:                 ref.ID,
+			DatasetID:          ref.DatasetID,
+			AssetID:            ref.AssetID,
+			FileID:             asset.SourceFileID,
+			FileName:           fileName,
+			ProcessingStatus:   asset.ProductStatus,
+			GenerationNo:       asset.GenerationNo,
+			DatasetDocumentID:  ref.DatasetDocumentID,
+			SyncStatus:         ref.SyncStatus,
+			SyncedGenerationNo: ref.SyncedGenerationNo,
+			LastSyncedAt:       ref.LastSyncedAt,
+			SyncErrorCode:      ref.SyncErrorCode,
+			SyncErrorMessage:   ref.SyncErrorMessage,
+		})
+	}
+	return &KnowledgeBaseFileRefListResult{Items: items, Total: total}, nil
 }
 
 func (s *knowledgeBaseFileRefService) CreateRefs(ctx context.Context, req KnowledgeBaseFileRefCreateRequest) (*KnowledgeBaseFileRefCreateResult, error) {
