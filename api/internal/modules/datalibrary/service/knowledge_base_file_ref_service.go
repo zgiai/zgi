@@ -43,6 +43,7 @@ type knowledgeBaseFileRefStore interface {
 	GetByID(ctx context.Context, id uuid.UUID) (*datalibModel.KnowledgeBaseAssetRef, error)
 	FindActiveByAsset(ctx context.Context, organizationID string, datasetID string, assetID uuid.UUID) (*datalibModel.KnowledgeBaseAssetRef, error)
 	List(ctx context.Context, filter datalibRepo.KnowledgeBaseAssetRefListFilter) ([]*datalibModel.KnowledgeBaseAssetRef, int64, error)
+	CountActiveByAssetID(ctx context.Context, organizationID string, assetID uuid.UUID) (int64, error)
 	MarkPending(ctx context.Context, organizationID string, id uuid.UUID, syncRunID uuid.UUID, errorCode, errorMessage *string) (*datalibModel.KnowledgeBaseAssetRef, error)
 	MarkFailed(ctx context.Context, organizationID string, id uuid.UUID, syncRunID uuid.UUID, errorCode, errorMessage string) (*datalibModel.KnowledgeBaseAssetRef, error)
 	SoftDelete(ctx context.Context, organizationID string, id uuid.UUID) (*datalibModel.KnowledgeBaseAssetRef, error)
@@ -89,6 +90,9 @@ type KnowledgeBaseFileCandidate struct {
 	FileID            string    `json:"file_id"`
 	AssetID           uuid.UUID `json:"asset_id"`
 	Name              string    `json:"name"`
+	FileExtension     string    `json:"file_extension,omitempty"`
+	FileSize          *int64    `json:"file_size,omitempty"`
+	UpdatedAt         time.Time `json:"updated_at"`
 	ProcessingStatus  string    `json:"processing_status"`
 	GenerationNo      int64     `json:"generation_no"`
 	Addable           bool      `json:"addable"`
@@ -96,6 +100,7 @@ type KnowledgeBaseFileCandidate struct {
 	EmbeddingProvider *string   `json:"embedding_provider,omitempty"`
 	EmbeddingModel    *string   `json:"embedding_model,omitempty"`
 	AlreadyAdded      bool      `json:"already_added"`
+	ReferenceCount    int64     `json:"reference_count"`
 	ChunkCount        int64     `json:"chunk_count"`
 	EmbeddingCount    int64     `json:"embedding_count"`
 }
@@ -643,19 +648,34 @@ func (s *knowledgeBaseFileRefService) buildCandidate(ctx context.Context, datase
 	if err != nil {
 		return nil, err
 	}
+	referenceCount, err := s.refs.CountActiveByAssetID(ctx, asset.OrganizationID, asset.ID)
+	if err != nil {
+		return nil, err
+	}
 	name := asset.Title
+	fileExtension := ""
+	var fileSize *int64
 	if file != nil && file.Name != "" {
 		name = file.Name
+	}
+	if file != nil {
+		fileExtension = file.Extension
+		size := file.Size
+		fileSize = &size
 	}
 	candidate := &KnowledgeBaseFileCandidate{
 		FileID:            asset.SourceFileID,
 		AssetID:           asset.ID,
 		Name:              name,
+		FileExtension:     fileExtension,
+		FileSize:          fileSize,
+		UpdatedAt:         asset.UpdatedAt,
 		ProcessingStatus:  asset.ProductStatus,
 		GenerationNo:      asset.GenerationNo,
 		EmbeddingProvider: asset.EmbeddingProvider,
 		EmbeddingModel:    asset.EmbeddingModel,
 		AlreadyAdded:      existing != nil,
+		ReferenceCount:    referenceCount,
 		ChunkCount:        chunkCount,
 		EmbeddingCount:    embeddingCount,
 	}

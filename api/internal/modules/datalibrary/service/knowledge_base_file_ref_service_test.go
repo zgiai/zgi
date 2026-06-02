@@ -36,8 +36,9 @@ func TestKnowledgeBaseFileRefServiceListsAddableCandidates(t *testing.T) {
 			},
 		},
 		files: map[string]*fileModel.UploadFile{
-			"file-1": {ID: "file-1", Name: "handbook.pdf"},
+			"file-1": {ID: "file-1", Name: "handbook.pdf", Extension: "pdf", Size: 2048},
 		},
+		referenceCount: 2,
 		chunkCount:     3,
 		embeddingCount: 3,
 	})
@@ -55,7 +56,16 @@ func TestKnowledgeBaseFileRefServiceListsAddableCandidates(t *testing.T) {
 		t.Fatalf("result=%+v", result)
 	}
 	item := result.Items[0]
-	if !item.Addable || item.Reason != "" || item.Name != "handbook.pdf" || item.AssetID != assetID || item.ChunkCount != 3 || item.EmbeddingCount != 3 {
+	if !item.Addable ||
+		item.Reason != "" ||
+		item.Name != "handbook.pdf" ||
+		item.FileExtension != "pdf" ||
+		item.FileSize == nil ||
+		*item.FileSize != 2048 ||
+		item.ReferenceCount != 2 ||
+		item.AssetID != assetID ||
+		item.ChunkCount != 3 ||
+		item.EmbeddingCount != 3 {
 		t.Fatalf("candidate=%+v", item)
 	}
 }
@@ -416,6 +426,7 @@ type fakeKnowledgeBaseFileRefDeps struct {
 	refs             []*datalibModel.KnowledgeBaseAssetRef
 	documents        []*datasetModel.Document
 	files            map[string]*fileModel.UploadFile
+	referenceCount   int64
 	chunkCount       int64
 	embeddingCount   int64
 	created          *datalibModel.KnowledgeBaseAssetRef
@@ -514,6 +525,10 @@ func (f fakeKnowledgeBaseFileRefStore) FindActiveByAsset(ctx context.Context, or
 func (f fakeKnowledgeBaseFileRefStore) List(ctx context.Context, filter datalibRepo.KnowledgeBaseAssetRefListFilter) ([]*datalibModel.KnowledgeBaseAssetRef, int64, error) {
 	f.deps.lastRefFilter = filter
 	return f.deps.refs, int64(len(f.deps.refs)), nil
+}
+
+func (f fakeKnowledgeBaseFileRefStore) CountActiveByAssetID(ctx context.Context, organizationID string, assetID uuid.UUID) (int64, error) {
+	return f.deps.referenceCount, nil
 }
 
 func (f fakeKnowledgeBaseFileRefStore) MarkPending(ctx context.Context, organizationID string, id uuid.UUID, syncRunID uuid.UUID, errorCode, errorMessage *string) (*datalibModel.KnowledgeBaseAssetRef, error) {
