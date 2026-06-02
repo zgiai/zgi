@@ -4,7 +4,7 @@ import * as React from 'react';
 import { useParams, usePathname } from 'next/navigation';
 import { useDataset } from '@/hooks/dataset/use-datasets';
 import { useT } from '@/i18n';
-import { Database, Search, Cog, ShieldAlert, Network, Pencil } from 'lucide-react';
+import { FileText, Search, Cog, ShieldAlert, Network, Pencil } from 'lucide-react';
 import { getSidebarCollapsed, saveSidebarCollapsed } from '@/utils/ui-local';
 import { useAvailableModels } from '@/hooks/model/use-model';
 import { useIsInitialized } from '@/store/auth-store';
@@ -68,7 +68,7 @@ export default function DatasetDetailLayout({ children }: { children: React.Reac
       {
         title: t('datasets.documentsTitle'),
         href: `/console/dataset/${datasetId}/documents`,
-        icon: Database,
+        icon: FileText,
       },
       {
         title: t('datasets.hitTestingTitle'),

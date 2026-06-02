@@ -86,6 +86,9 @@ export interface DatasetFileCandidate {
   file_id: string;
   asset_id: string;
   name: string;
+  file_extension?: string;
+  file_size?: number;
+  updated_at?: string;
   processing_status: string;
   generation_no: number;
   addable: boolean;
@@ -93,6 +96,7 @@ export interface DatasetFileCandidate {
   embedding_provider?: string;
   embedding_model?: string;
   already_added: boolean;
+  reference_count?: number;
   chunk_count: number;
   embedding_count: number;
 }
@@ -112,6 +116,7 @@ export interface DatasetFileRef {
   generation_no: number;
   dataset_document_id?: string;
   dataset_document_enabled?: boolean;
+  dataset_document_segment_count?: number;
   sync_status: DatasetFileRefSyncStatus | string;
   synced_generation_no?: number;
   last_synced_at?: string;
@@ -132,6 +137,7 @@ export interface DatasetFileRefView {
   asset_id: string;
   dataset_document_id?: string;
   dataset_document_enabled?: boolean;
+  dataset_document_segment_count?: number;
   sync_status: DatasetFileRefSyncStatus | string;
   synced_generation_no?: number;
   sync_run_id?: string;
