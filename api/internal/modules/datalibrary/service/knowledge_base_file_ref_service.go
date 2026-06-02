@@ -131,12 +131,13 @@ type KnowledgeBaseFileRefCreateResult struct {
 }
 
 type KnowledgeBaseFileRefCreateItem struct {
-	AssetID   uuid.UUID                                  `json:"asset_id"`
-	Ref       *KnowledgeBaseAssetRefView                 `json:"ref,omitempty"`
-	SyncRunID *uuid.UUID                                 `json:"sync_run_id,omitempty"`
-	Success   bool                                       `json:"success"`
-	Reason    string                                     `json:"reason,omitempty"`
-	Errors    map[string]KnowledgeBaseFileRefCreateError `json:"errors,omitempty"`
+	AssetID      uuid.UUID                                  `json:"asset_id"`
+	Ref          *KnowledgeBaseAssetRefView                 `json:"ref,omitempty"`
+	SyncRunID    *uuid.UUID                                 `json:"sync_run_id,omitempty"`
+	GenerationNo int64                                      `json:"generation_no,omitempty"`
+	Success      bool                                       `json:"success"`
+	Reason       string                                     `json:"reason,omitempty"`
+	Errors       map[string]KnowledgeBaseFileRefCreateError `json:"errors,omitempty"`
 }
 
 type KnowledgeBaseFileRefCreateError struct {
@@ -317,7 +318,7 @@ func (s *knowledgeBaseFileRefService) CreateRefs(ctx context.Context, req Knowle
 	result := &KnowledgeBaseFileRefCreateResult{Items: make([]*KnowledgeBaseFileRefCreateItem, 0, len(req.AssetIDs))}
 	for _, assetID := range req.AssetIDs {
 		item := &KnowledgeBaseFileRefCreateItem{AssetID: assetID}
-		ref, syncRunID, reason, err := s.createOneRef(ctx, dataset, req, assetID)
+		ref, syncRunID, generationNo, reason, err := s.createOneRef(ctx, dataset, req, assetID)
 		if err != nil {
 			return nil, err
 		}
@@ -330,31 +331,32 @@ func (s *knowledgeBaseFileRefService) CreateRefs(ctx context.Context, req Knowle
 		item.Success = true
 		item.Ref = newKnowledgeBaseAssetRefView(ref)
 		item.SyncRunID = &syncRunID
+		item.GenerationNo = generationNo
 		result.Items = append(result.Items, item)
 	}
 	return result, nil
 }
 
-func (s *knowledgeBaseFileRefService) createOneRef(ctx context.Context, dataset *datasetModel.Dataset, req KnowledgeBaseFileRefCreateRequest, assetID uuid.UUID) (*datalibModel.KnowledgeBaseAssetRef, uuid.UUID, string, error) {
+func (s *knowledgeBaseFileRefService) createOneRef(ctx context.Context, dataset *datasetModel.Dataset, req KnowledgeBaseFileRefCreateRequest, assetID uuid.UUID) (*datalibModel.KnowledgeBaseAssetRef, uuid.UUID, int64, string, error) {
 	if assetID == uuid.Nil {
-		return nil, uuid.Nil, FileCandidateReasonNotReady, nil
+		return nil, uuid.Nil, 0, FileCandidateReasonNotReady, nil
 	}
 	asset, err := s.assets.GetAssetByID(ctx, assetID)
 	if err != nil {
-		return nil, uuid.Nil, "", err
+		return nil, uuid.Nil, 0, "", err
 	}
 	if asset == nil || asset.OrganizationID != req.OrganizationID {
-		return nil, uuid.Nil, FileCandidateReasonNotReady, nil
+		return nil, uuid.Nil, 0, FileCandidateReasonNotReady, nil
 	}
 	if req.WorkspaceID != nil && (asset.WorkspaceID == nil || *asset.WorkspaceID != *req.WorkspaceID) {
-		return nil, uuid.Nil, FileCandidateReasonNotReady, nil
+		return nil, uuid.Nil, 0, FileCandidateReasonNotReady, nil
 	}
 	candidate, err := s.buildCandidate(ctx, dataset, asset, nil)
 	if err != nil {
-		return nil, uuid.Nil, "", err
+		return nil, uuid.Nil, 0, "", err
 	}
 	if !candidate.Addable {
-		return nil, uuid.Nil, candidate.Reason, nil
+		return nil, uuid.Nil, 0, candidate.Reason, nil
 	}
 	syncRunID := uuid.New()
 	ref := &datalibModel.KnowledgeBaseAssetRef{
@@ -366,13 +368,14 @@ func (s *knowledgeBaseFileRefService) createOneRef(ctx context.Context, dataset 
 		SyncRunID:      &syncRunID,
 		CreatedBy:      req.CreatedBy,
 		MetadataJSON: map[string]any{
-			"source": "file_asset_sync",
+			"source":        "file_asset_sync",
+			"generation_no": asset.GenerationNo,
 		},
 	}
 	if err := s.refs.Create(ctx, ref); err != nil {
-		return nil, uuid.Nil, "", err
+		return nil, uuid.Nil, 0, "", err
 	}
-	return ref, syncRunID, "", nil
+	return ref, syncRunID, asset.GenerationNo, "", nil
 }
 
 func (s *knowledgeBaseFileRefService) buildCandidate(ctx context.Context, dataset *datasetModel.Dataset, asset *datalibModel.DocumentAsset, file *fileModel.UploadFile) (*KnowledgeBaseFileCandidate, error) {

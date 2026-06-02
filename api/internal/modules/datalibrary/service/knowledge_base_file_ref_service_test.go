@@ -142,7 +142,11 @@ func TestKnowledgeBaseFileRefServiceCreatesPendingRefs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateRefs: %v", err)
 	}
-	if len(result.Items) != 1 || !result.Items[0].Success || result.Items[0].SyncRunID == nil || *result.Items[0].SyncRunID == uuid.Nil {
+	if len(result.Items) != 1 ||
+		!result.Items[0].Success ||
+		result.Items[0].SyncRunID == nil ||
+		*result.Items[0].SyncRunID == uuid.Nil ||
+		result.Items[0].GenerationNo != 1 {
 		t.Fatalf("result=%+v", result)
 	}
 	if deps.created == nil ||

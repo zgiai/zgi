@@ -16,6 +16,7 @@ import (
 	datalibHandler "github.com/zgiai/zgi/api/internal/modules/datalibrary/handler"
 	datalibRepo "github.com/zgiai/zgi/api/internal/modules/datalibrary/repository"
 	datalibService "github.com/zgiai/zgi/api/internal/modules/datalibrary/service"
+	datalibWorker "github.com/zgiai/zgi/api/internal/modules/datalibrary/worker"
 	graphflow "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	graphflow_model "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/model"
 	graphflow_repo "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/repository"
@@ -135,7 +136,8 @@ func RegisterDatasetRoutes(router *gin.RouterGroup, deps DatasetRouteDeps) {
 		fileRepo,
 		datasetRepoObj,
 	)
-	dataLibraryFileRefHandler := datalibHandler.NewKnowledgeBaseFileRefHandler(dataLibraryFileRefService, deps.AccountService)
+	dataLibraryTaskDispatcher := datalibWorker.NewFileProcessTaskDispatcher(deps.TaskManager)
+	dataLibraryFileRefHandler := datalibHandler.NewKnowledgeBaseFileRefHandler(dataLibraryFileRefService, dataLibraryTaskDispatcher, deps.AccountService)
 
 	// Create BatchHitTestingTaskRepository instance
 	batchHitTestingTaskRepo := datasetRepo.NewBatchHitTestingTaskRepository(deps.DB)

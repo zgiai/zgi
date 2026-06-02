@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	datalibService "github.com/zgiai/zgi/api/internal/modules/datalibrary/service"
+	datalibWorker "github.com/zgiai/zgi/api/internal/modules/datalibrary/worker"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/middleware"
@@ -14,11 +15,12 @@ import (
 
 type KnowledgeBaseFileRefHandler struct {
 	service        datalibService.KnowledgeBaseFileRefService
+	dispatcher     *datalibWorker.FileProcessTaskDispatcher
 	accountService interfaces.AccountService
 }
 
-func NewKnowledgeBaseFileRefHandler(service datalibService.KnowledgeBaseFileRefService, accountService interfaces.AccountService) *KnowledgeBaseFileRefHandler {
-	return &KnowledgeBaseFileRefHandler{service: service, accountService: accountService}
+func NewKnowledgeBaseFileRefHandler(service datalibService.KnowledgeBaseFileRefService, dispatcher *datalibWorker.FileProcessTaskDispatcher, accountService interfaces.AccountService) *KnowledgeBaseFileRefHandler {
+	return &KnowledgeBaseFileRefHandler{service: service, dispatcher: dispatcher, accountService: accountService}
 }
 
 func (h *KnowledgeBaseFileRefHandler) RegisterDatasetRoutes(router *gin.RouterGroup) {
@@ -105,6 +107,15 @@ func (h *KnowledgeBaseFileRefHandler) CreateFileRefs(c *gin.Context) {
 	if err != nil {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
+	}
+	for _, item := range result.Items {
+		if !item.Success || item.Ref == nil || item.SyncRunID == nil {
+			continue
+		}
+		if err := h.dispatcher.EnqueueDatasetRefSync(c.Request.Context(), item.Ref.ID, item.AssetID, item.Ref.DatasetID, item.GenerationNo, *item.SyncRunID); err != nil {
+			response.FailWithMessage(c, response.ErrSystemError, err.Error())
+			return
+		}
 	}
 	response.Success(c, result)
 }
