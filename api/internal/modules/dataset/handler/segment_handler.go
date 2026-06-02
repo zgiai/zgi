@@ -39,6 +39,10 @@ func NewSegmentHandler(
 	}
 }
 
+func rejectDatasetSegmentMutation(c *gin.Context) {
+	response.FailWithMessage(c, response.ErrSegmentUpdateFailed, "dataset segments must be edited from file management")
+}
+
 // GetDocumentSegments handles GET /datasets/{dataset_id}/documents/{document_id}/segments
 func (h *SegmentHandler) GetDocumentSegments(c *gin.Context) {
 	datasetID := c.Param("dataset_id")
@@ -109,6 +113,9 @@ func (h *SegmentHandler) GetDocumentSegments(c *gin.Context) {
 
 // DeleteDocumentSegments handles DELETE /datasets/{dataset_id}/documents/{document_id}/segments
 func (h *SegmentHandler) DeleteDocumentSegments(c *gin.Context) {
+	rejectDatasetSegmentMutation(c)
+	return
+
 	datasetID := c.Param("dataset_id")
 	documentID := c.Param("document_id")
 
@@ -190,6 +197,9 @@ func (h *SegmentHandler) DeleteDocumentSegments(c *gin.Context) {
 
 // CreateDocumentSegment handles POST /datasets/{dataset_id}/documents/{document_id}/segments
 func (h *SegmentHandler) CreateDocumentSegment(c *gin.Context) {
+	rejectDatasetSegmentMutation(c)
+	return
+
 	datasetID := c.Param("dataset_id")
 	documentID := c.Param("document_id")
 
@@ -264,6 +274,9 @@ func (h *SegmentHandler) CreateDocumentSegment(c *gin.Context) {
 
 // UpdateDocumentSegment handles PATCH /datasets/{dataset_id}/documents/{document_id}/segments/{segment_id}
 func (h *SegmentHandler) UpdateDocumentSegment(c *gin.Context) {
+	rejectDatasetSegmentMutation(c)
+	return
+
 	datasetID := c.Param("dataset_id")
 	documentID := c.Param("document_id")
 	segmentID := c.Param("segment_id")
@@ -373,6 +386,9 @@ func (h *SegmentHandler) UpdateDocumentSegment(c *gin.Context) {
 
 // DeleteDocumentSegment handles DELETE /datasets/{dataset_id}/documents/{document_id}/segments/{segment_id}
 func (h *SegmentHandler) DeleteDocumentSegment(c *gin.Context) {
+	rejectDatasetSegmentMutation(c)
+	return
+
 	datasetID := c.Param("dataset_id")
 	documentID := c.Param("document_id")
 	segmentID := c.Param("segment_id")
@@ -473,6 +489,9 @@ func (h *SegmentHandler) DeleteDocumentSegment(c *gin.Context) {
 
 // UpdateDocumentSegmentStatus handles PATCH /datasets/{dataset_id}/documents/{document_id}/segment/{action}
 func (h *SegmentHandler) UpdateDocumentSegmentStatus(c *gin.Context) {
+	rejectDatasetSegmentMutation(c)
+	return
+
 	datasetID := c.Param("dataset_id")
 	documentID := c.Param("document_id")
 	action := c.Param("action")
@@ -546,6 +565,9 @@ func (h *SegmentHandler) UpdateDocumentSegmentStatus(c *gin.Context) {
 
 // CreateChildChunk handles POST /datasets/{dataset_id}/documents/{document_id}/segments/{segment_id}/child_chunks
 func (h *SegmentHandler) CreateChildChunk(c *gin.Context) {
+	rejectDatasetSegmentMutation(c)
+	return
+
 	datasetID := c.Param("dataset_id")
 	documentID := c.Param("document_id")
 	segmentID := c.Param("segment_id")
@@ -769,6 +791,9 @@ func (h *SegmentHandler) GetChildChunk(c *gin.Context) {
 
 // UpdateChildChunk handles PATCH /datasets/{dataset_id}/documents/{document_id}/segments/{segment_id}/child_chunks/{child_chunk_id}
 func (h *SegmentHandler) UpdateChildChunk(c *gin.Context) {
+	rejectDatasetSegmentMutation(c)
+	return
+
 	datasetID := c.Param("dataset_id")
 	documentID := c.Param("document_id")
 	segmentID := c.Param("segment_id")
@@ -859,6 +884,9 @@ func (h *SegmentHandler) UpdateChildChunk(c *gin.Context) {
 
 // DeleteChildChunk handles DELETE /datasets/{dataset_id}/documents/{document_id}/segments/{segment_id}/child_chunks/{child_chunk_id}
 func (h *SegmentHandler) DeleteChildChunk(c *gin.Context) {
+	rejectDatasetSegmentMutation(c)
+	return
+
 	datasetID := c.Param("dataset_id")
 	documentID := c.Param("document_id")
 	segmentID := c.Param("segment_id")
