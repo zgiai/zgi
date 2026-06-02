@@ -615,3 +615,12 @@ export interface AskFileQuestionResponse {
   sources: FileQuestionAnswerSource[];
   retrieval: FileQuestionAnswerRetrieval;
 }
+
+export interface FileQuestionStreamEvent {
+  type: 'retrieval' | 'delta' | 'done' | 'error';
+  delta?: string;
+  answer?: string;
+  sources?: FileQuestionAnswerSource[];
+  retrieval?: FileQuestionAnswerRetrieval;
+  error?: string;
+}

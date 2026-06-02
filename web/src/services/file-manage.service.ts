@@ -36,8 +36,17 @@ import type {
   UpdateFileChunkResponse,
   AskFileQuestionRequest,
   AskFileQuestionResponse,
+  FileQuestionStreamEvent,
 } from './types/file';
 import { BaseService } from '@/lib/http/services';
+import type { SseMessage } from '@/lib/http/client';
+
+interface StreamFileQuestionCallbacks {
+  onEvent: (event: FileQuestionStreamEvent) => void;
+  onError?: (error: Error) => void;
+  onClose?: () => void;
+  abortSignal?: AbortSignal;
+}
 
 class FileManageService extends BaseService {
   /**
@@ -177,6 +186,29 @@ class FileManageService extends BaseService {
     data: AskFileQuestionRequest
   ): Promise<ApiResponseData<AskFileQuestionResponse>> {
     return this.request('post', `/console/api/files/${fileId}/qa`, data);
+  }
+
+  async streamFileQuestion(
+    fileId: string,
+    data: AskFileQuestionRequest,
+    callbacks: StreamFileQuestionCallbacks
+  ): Promise<{ close: () => void }> {
+    return this.client.sse<FileQuestionStreamEvent, AskFileQuestionRequest>(
+      `/console/api/files/${fileId}/qa/stream`,
+      {
+        method: 'POST',
+        body: data,
+        abortSignal: callbacks.abortSignal,
+        skipErrorHandling: true,
+        isTerminalMessage: (message: SseMessage<unknown>) =>
+          message.event === 'done' || message.event === 'error',
+        onMessage: message => {
+          callbacks.onEvent(message.data);
+        },
+        onError: callbacks.onError,
+        onClose: callbacks.onClose,
+      }
+    );
   }
 
   async getFilesMetadata(fileIds: string[]): Promise<ApiResponseData<FileMetadataResponse>> {

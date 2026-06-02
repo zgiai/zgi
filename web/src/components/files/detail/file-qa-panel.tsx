@@ -1,19 +1,20 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { AlertCircle, Bot, Layers3, Loader2, MessageSquareText, Send, User } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { useAskFileQuestion } from '@/hooks/file/use-file-qa';
 import { useT } from '@/i18n';
+import { fileManageService } from '@/services/file-manage.service';
 import type {
   AskFileQuestionResponse,
   FileAssetArtifactState,
   FileAssetVectorStatus,
   FileDetailProcessing,
+  FileQuestionStreamEvent,
 } from '@/services/types/file';
 
 interface FileQAPanelProps {
@@ -28,6 +29,7 @@ interface FileQAExchange {
   id: string;
   question: string;
   result: AskFileQuestionResponse;
+  streaming?: boolean;
 }
 
 function getVectorBadgeVariant(status?: string) {
@@ -54,7 +56,10 @@ export function FileQAPanel({
   const t = useT('files');
   const [question, setQuestion] = useState('');
   const [exchanges, setExchanges] = useState<FileQAExchange[]>([]);
-  const askFileQuestion = useAskFileQuestion(fileId);
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [qaError, setQaError] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const closeRef = useRef<(() => void) | null>(null);
   const resolvedVectorStatus = vectorStatus || artifactState?.vector_status || 'none';
   const vectorStatusLabel = (() => {
     switch (resolvedVectorStatus as FileAssetVectorStatus | string | undefined) {
@@ -71,27 +76,122 @@ export function FileQAPanel({
   })();
   const embeddingCount = processing?.embedding_count ?? 0;
   const chunkCount = processing?.chunk_count ?? artifactState?.chunk_count ?? 0;
-  const canSubmit = enabled && question.trim().length > 0 && !askFileQuestion.isPending;
+  const canSubmit = enabled && question.trim().length > 0 && !isStreaming;
+
+  useEffect(() => {
+    return () => {
+      closeRef.current?.();
+      abortRef.current?.abort();
+    };
+  }, []);
+
+  const updateExchange = (id: string, updater: (exchange: FileQAExchange) => FileQAExchange) => {
+    setExchanges(prev => prev.map(exchange => (exchange.id === id ? updater(exchange) : exchange)));
+  };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const trimmed = question.trim();
     if (!trimmed || !enabled) return;
-    try {
-      const response = await askFileQuestion.mutateAsync({ question: trimmed, top_k: 6 });
-      if (response.data) {
-        setExchanges(prev => [
-          ...prev,
-          {
-            id: `${Date.now()}-${prev.length}`,
-            question: trimmed,
-            result: response.data,
+    const exchangeId = `${Date.now()}-${exchanges.length}`;
+    const controller = new AbortController();
+    abortRef.current?.abort();
+    closeRef.current?.();
+    abortRef.current = controller;
+    closeRef.current = null;
+    setQaError(null);
+    setIsStreaming(true);
+    setExchanges(prev => [
+      ...prev,
+      {
+        id: exchangeId,
+        question: trimmed,
+        streaming: true,
+        result: {
+          answer: '',
+          sources: [],
+          retrieval: {
+            top_k: 6,
+            hit_count: 0,
+            primary_hit_count: 0,
           },
-        ]);
-        setQuestion('');
+        },
+      },
+    ]);
+
+    const handleStreamEvent = (payload: FileQuestionStreamEvent) => {
+      if (payload.type === 'retrieval') {
+        updateExchange(exchangeId, exchange => ({
+          ...exchange,
+          result: {
+            ...exchange.result,
+            sources: payload.sources ?? exchange.result.sources,
+            retrieval: payload.retrieval ?? exchange.result.retrieval,
+          },
+        }));
+        return;
       }
-    } catch {
-      // The mutation error is rendered below the conversation area.
+      if (payload.type === 'delta') {
+        updateExchange(exchangeId, exchange => ({
+          ...exchange,
+          result: {
+            ...exchange.result,
+            answer: `${exchange.result.answer}${payload.delta ?? ''}`,
+          },
+        }));
+        return;
+      }
+      if (payload.type === 'done') {
+        updateExchange(exchangeId, exchange => ({
+          ...exchange,
+          streaming: false,
+          result: {
+            answer: payload.answer ?? exchange.result.answer,
+            sources: payload.sources ?? exchange.result.sources,
+            retrieval: payload.retrieval ?? exchange.result.retrieval,
+          },
+        }));
+        setQuestion('');
+        setIsStreaming(false);
+        closeRef.current = null;
+        abortRef.current = null;
+        return;
+      }
+      if (payload.type === 'error') {
+        const message = payload.error || t('detail.qa.askFailed');
+        setQaError(message);
+        updateExchange(exchangeId, exchange => ({ ...exchange, streaming: false }));
+        setIsStreaming(false);
+        closeRef.current = null;
+        abortRef.current = null;
+      }
+    };
+
+    try {
+      const stream = await fileManageService.streamFileQuestion(
+        fileId,
+        { question: trimmed, top_k: 6 },
+        {
+          abortSignal: controller.signal,
+          onEvent: handleStreamEvent,
+          onError: error => {
+            const message = error.message || t('detail.qa.askFailed');
+            setQaError(message);
+            updateExchange(exchangeId, exchange => ({ ...exchange, streaming: false }));
+            setIsStreaming(false);
+          },
+          onClose: () => {
+            closeRef.current = null;
+            abortRef.current = null;
+          },
+        }
+      );
+      closeRef.current = stream.close;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : t('detail.qa.askFailed');
+      setQaError(message);
+      updateExchange(exchangeId, exchange => ({ ...exchange, streaming: false }));
+      setIsStreaming(false);
     }
   };
 
@@ -152,20 +252,30 @@ export function FileQAPanel({
                   {t('detail.qa.answer')}
                 </div>
                 <div className="whitespace-pre-wrap text-sm leading-7 text-foreground">
-                  {exchange.result.answer}
+                  {exchange.result.answer || exchange.streaming ? (
+                    <>
+                      {exchange.result.answer}
+                      {exchange.streaming ? (
+                        <span className="ml-2 inline-flex items-center gap-1 text-muted-foreground">
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          {t('detail.qa.generating')}
+                        </span>
+                      ) : null}
+                    </>
+                  ) : (
+                    t('detail.qa.askFailed')
+                  )}
                 </div>
                 <SourceList result={exchange.result} />
               </div>
             </div>
           ))
         )}
-        {askFileQuestion.error ? (
+        {qaError ? (
           <Alert variant="destructive">
             <AlertCircle className="h-4 w-4" />
             <AlertTitle>{t('detail.qa.askFailedTitle')}</AlertTitle>
-            <AlertDescription>
-              {(askFileQuestion.error as { message?: string }).message || t('detail.qa.askFailed')}
-            </AlertDescription>
+            <AlertDescription>{qaError}</AlertDescription>
           </Alert>
         ) : null}
       </div>
@@ -177,10 +287,10 @@ export function FileQAPanel({
             value={question}
             onChange={event => setQuestion(event.target.value)}
             placeholder={t('detail.qa.placeholder')}
-            disabled={askFileQuestion.isPending}
+            disabled={isStreaming}
           />
           <Button type="submit" className="gap-2 sm:h-[84px]" disabled={!canSubmit}>
-            {askFileQuestion.isPending ? (
+            {isStreaming ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <Send className="h-4 w-4" />

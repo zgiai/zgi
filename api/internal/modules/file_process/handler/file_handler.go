@@ -2,8 +2,11 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"path/filepath"
 	"strconv"
@@ -762,6 +765,68 @@ func (h *FileHandler) AskFileQuestion(c *gin.Context) {
 		return
 	}
 	response.Success(c, result)
+}
+
+// StreamFileQuestion answers one question using SSE.
+// POST /files/:file_id/qa/stream
+func (h *FileHandler) StreamFileQuestion(c *gin.Context) {
+	if h.fileAssetQAService == nil {
+		h.businessErrorWithMessage(c, response.ErrSystemError, "file asset qa service is not available")
+		return
+	}
+	organizationID, uploadFile, ok := h.authorizeDocumentFile(c)
+	if !ok {
+		return
+	}
+	var req fileQARequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.businessError(c, response.ErrInvalidParams)
+		return
+	}
+	events, err := h.fileAssetQAService.StreamCurrentFile(c.Request.Context(), datalibraryservice.FileAssetQAInput{
+		OrganizationID: organizationID,
+		SourceFileID:   uploadFile.ID,
+		Question:       req.Question,
+		TopK:           req.TopK,
+		AccountID:      c.GetString("account_id"),
+	})
+	if err != nil {
+		h.handleFileAssetQAError(c, err)
+		return
+	}
+
+	writer := c.Writer
+	header := writer.Header()
+	header.Set("Content-Type", "text/event-stream")
+	header.Set("Cache-Control", "no-cache")
+	header.Set("Connection", "keep-alive")
+	header.Set("X-Accel-Buffering", "no")
+	c.Status(http.StatusOK)
+
+	for event := range events {
+		if err := writeFileQASSEvent(writer, event.Type, event); err != nil {
+			logger.WarnContext(c.Request.Context(), "failed to write file qa stream event", err)
+			return
+		}
+		if flusher, ok := writer.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		if event.Type == "done" || event.Type == "error" {
+			return
+		}
+	}
+}
+
+func writeFileQASSEvent(w io.Writer, eventName string, payload datalibraryservice.FileAssetQAStreamEvent) error {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	if eventName == "" {
+		eventName = "message"
+	}
+	_, err = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventName, data)
+	return err
 }
 
 func (h *FileHandler) handleFileAssetQAError(c *gin.Context, err error) {

@@ -297,6 +297,7 @@ const messages: FilesMessages = {
       answer: '回答',
       placeholder: '输入关于这篇文档的问题...',
       send: '发送',
+      generating: '生成中...',
       askFailedTitle: '问答失败',
       askFailed: '问题提交失败',
       noSources: '未在文档中找到相关引用。',

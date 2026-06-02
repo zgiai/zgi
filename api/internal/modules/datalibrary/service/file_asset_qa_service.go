@@ -24,6 +24,7 @@ var (
 
 type FileAssetQAService interface {
 	AskCurrentFile(ctx context.Context, input FileAssetQAInput) (*FileAssetQAResult, error)
+	StreamCurrentFile(ctx context.Context, input FileAssetQAInput) (<-chan FileAssetQAStreamEvent, error)
 }
 
 type FileAssetQAInput struct {
@@ -38,6 +39,15 @@ type FileAssetQAResult struct {
 	Answer    string               `json:"answer"`
 	Sources   []*FileAssetQASource `json:"sources"`
 	Retrieval FileAssetQARetrieval `json:"retrieval"`
+}
+
+type FileAssetQAStreamEvent struct {
+	Type      string                `json:"type"`
+	Delta     string                `json:"delta,omitempty"`
+	Answer    string                `json:"answer,omitempty"`
+	Sources   []*FileAssetQASource  `json:"sources,omitempty"`
+	Retrieval *FileAssetQARetrieval `json:"retrieval,omitempty"`
+	Error     string                `json:"error,omitempty"`
 }
 
 type FileAssetQARetrieval struct {
@@ -77,6 +87,14 @@ type fileAssetQAService struct {
 	defaultModelSvc llmdefaultservice.DefaultModelService
 }
 
+type preparedFileAssetQA struct {
+	Asset     *model.DocumentAsset
+	Question  string
+	Sources   []*FileAssetQASource
+	Retrieval FileAssetQARetrieval
+	AccountID string
+}
+
 func NewFileAssetQAService(
 	assets repository.DocumentAssetRepository,
 	chunks repository.DocumentChunkRepository,
@@ -96,6 +114,103 @@ func NewFileAssetQAService(
 }
 
 func (s *fileAssetQAService) AskCurrentFile(ctx context.Context, input FileAssetQAInput) (*FileAssetQAResult, error) {
+	prepared, err := s.prepareCurrentFileQA(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	if len(prepared.Sources) == 0 {
+		return &FileAssetQAResult{
+			Answer:    "未在文档中找到相关信息。",
+			Sources:   []*FileAssetQASource{},
+			Retrieval: prepared.Retrieval,
+		}, nil
+	}
+	answerModel, answer, err := s.generateAnswer(ctx, prepared.Asset, prepared.Question, prepared.Sources, prepared.AccountID)
+	if err != nil {
+		return nil, err
+	}
+	prepared.Retrieval.AnswerModel = answerModel
+	return &FileAssetQAResult{
+		Answer:    answer,
+		Sources:   prepared.Sources,
+		Retrieval: prepared.Retrieval,
+	}, nil
+}
+
+func (s *fileAssetQAService) StreamCurrentFile(ctx context.Context, input FileAssetQAInput) (<-chan FileAssetQAStreamEvent, error) {
+	prepared, err := s.prepareCurrentFileQA(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+
+	answerModel := ""
+	var req *llmadapter.ChatRequest
+	if len(prepared.Sources) > 0 {
+		answerModel, req, err = s.buildAnswerRequest(ctx, prepared.Asset, prepared.Question, prepared.Sources, prepared.AccountID)
+		if err != nil {
+			return nil, err
+		}
+		prepared.Retrieval.AnswerModel = answerModel
+	}
+
+	out := make(chan FileAssetQAStreamEvent, 16)
+	go func() {
+		defer close(out)
+		out <- FileAssetQAStreamEvent{
+			Type:      "retrieval",
+			Sources:   prepared.Sources,
+			Retrieval: &prepared.Retrieval,
+		}
+
+		if len(prepared.Sources) == 0 {
+			out <- FileAssetQAStreamEvent{
+				Type:      "done",
+				Answer:    "未在文档中找到相关信息。",
+				Sources:   []*FileAssetQASource{},
+				Retrieval: &prepared.Retrieval,
+			}
+			return
+		}
+
+		stream, streamErr := s.llmClient.AppChatStream(ctx, qaAppContext(prepared.Asset, qaAccountID(prepared.Asset, prepared.AccountID)), req)
+		if streamErr != nil {
+			out <- FileAssetQAStreamEvent{Type: "error", Error: fmt.Sprintf("generate qa answer stream: %v", streamErr)}
+			return
+		}
+
+		var answer strings.Builder
+		for event := range stream {
+			if event.Error != nil {
+				out <- FileAssetQAStreamEvent{Type: "error", Error: event.Error.Error()}
+				return
+			}
+			for _, choice := range event.Choices {
+				delta := extractStreamDelta(choice.Delta.Content)
+				if delta == "" {
+					continue
+				}
+				answer.WriteString(delta)
+				out <- FileAssetQAStreamEvent{Type: "delta", Delta: delta}
+			}
+			if event.Done {
+				break
+			}
+		}
+		finalAnswer := strings.TrimSpace(answer.String())
+		if finalAnswer == "" {
+			finalAnswer = "未在文档中找到相关信息。"
+		}
+		out <- FileAssetQAStreamEvent{
+			Type:      "done",
+			Answer:    finalAnswer,
+			Sources:   prepared.Sources,
+			Retrieval: &prepared.Retrieval,
+		}
+	}()
+	return out, nil
+}
+
+func (s *fileAssetQAService) prepareCurrentFileQA(ctx context.Context, input FileAssetQAInput) (*preparedFileAssetQA, error) {
 	if strings.TrimSpace(input.OrganizationID) == "" {
 		return nil, ErrOrganizationIDRequired
 	}
@@ -153,22 +268,12 @@ func (s *fileAssetQAService) AskCurrentFile(ctx context.Context, input FileAsset
 		EmbeddingProvider: embeddingProvider,
 		EmbeddingModel:    embeddingModel,
 	}
-	if len(sources) == 0 {
-		return &FileAssetQAResult{
-			Answer:    "未在文档中找到相关信息。",
-			Sources:   []*FileAssetQASource{},
-			Retrieval: retrieval,
-		}, nil
-	}
-	answerModel, answer, err := s.generateAnswer(ctx, asset, question, sources, input.AccountID)
-	if err != nil {
-		return nil, err
-	}
-	retrieval.AnswerModel = answerModel
-	return &FileAssetQAResult{
-		Answer:    answer,
+	return &preparedFileAssetQA{
+		Asset:     asset,
+		Question:  question,
 		Sources:   sources,
 		Retrieval: retrieval,
+		AccountID: input.AccountID,
 	}, nil
 }
 
@@ -315,12 +420,28 @@ func (s *fileAssetQAService) buildSources(ctx context.Context, asset *model.Docu
 }
 
 func (s *fileAssetQAService) generateAnswer(ctx context.Context, asset *model.DocumentAsset, question string, sources []*FileAssetQASource, accountID string) (string, string, error) {
+	answerModel, req, err := s.buildAnswerRequest(ctx, asset, question, sources, accountID)
+	if err != nil {
+		return answerModel, "", err
+	}
+	resp, err := s.llmClient.AppChat(ctx, qaAppContext(asset, qaAccountID(asset, accountID)), req)
+	if err != nil {
+		return answerModel, "", fmt.Errorf("generate qa answer: %w", err)
+	}
+	answer := extractChatAnswer(resp)
+	if answer == "" {
+		answer = "未在文档中找到相关信息。"
+	}
+	return answerModel, answer, nil
+}
+
+func (s *fileAssetQAService) buildAnswerRequest(ctx context.Context, asset *model.DocumentAsset, question string, sources []*FileAssetQASource, accountID string) (string, *llmadapter.ChatRequest, error) {
 	if s.defaultModelSvc == nil {
-		return "", "", ErrEmbeddingServiceRequired
+		return "", nil, ErrEmbeddingServiceRequired
 	}
 	resolved, err := llmruntime.NewModelResolver(s.defaultModelSvc).ResolveDefault(ctx, asset.OrganizationID, sharedmodel.ModelTypeLLM)
 	if err != nil {
-		return "", "", fmt.Errorf("resolve qa answer model: %w", err)
+		return "", nil, fmt.Errorf("resolve qa answer model: %w", err)
 	}
 	temperature := 0.2
 	maxTokens := 900
@@ -341,15 +462,7 @@ func (s *fileAssetQAService) generateAnswer(ctx context.Context, asset *model.Do
 		},
 		User: qaAccountID(asset, accountID),
 	}
-	resp, err := s.llmClient.AppChat(ctx, qaAppContext(asset, qaAccountID(asset, accountID)), req)
-	if err != nil {
-		return resolved.Model, "", fmt.Errorf("generate qa answer: %w", err)
-	}
-	answer := extractChatAnswer(resp)
-	if answer == "" {
-		answer = "未在文档中找到相关信息。"
-	}
-	return resolved.Model, answer, nil
+	return resolved.Model, req, nil
 }
 
 type fileQAHit struct {
@@ -489,6 +602,23 @@ func extractChatAnswer(resp *llmadapter.ChatResponse) string {
 			}
 		}
 		return strings.TrimSpace(strings.Join(parts, "\n"))
+	default:
+		return ""
+	}
+}
+
+func extractStreamDelta(content interface{}) string {
+	switch value := content.(type) {
+	case string:
+		return value
+	case []llmadapter.MessageContentPart:
+		parts := make([]string, 0, len(value))
+		for _, part := range value {
+			if part.Text != "" {
+				parts = append(parts, part.Text)
+			}
+		}
+		return strings.Join(parts, "")
 	default:
 		return ""
 	}

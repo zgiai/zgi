@@ -310,6 +310,7 @@ const messages = {
       answer: 'Answer',
       placeholder: 'Ask a question about this document...',
       send: 'Send',
+      generating: 'Generating...',
       askFailedTitle: 'Q&A failed',
       askFailed: 'Failed to submit question',
       noSources: 'No related source was found in this document.',
