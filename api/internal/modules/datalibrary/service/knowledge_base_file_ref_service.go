@@ -44,6 +44,7 @@ type knowledgeBaseFileRefStore interface {
 	FindActiveByAsset(ctx context.Context, organizationID string, datasetID string, assetID uuid.UUID) (*datalibModel.KnowledgeBaseAssetRef, error)
 	List(ctx context.Context, filter datalibRepo.KnowledgeBaseAssetRefListFilter) ([]*datalibModel.KnowledgeBaseAssetRef, int64, error)
 	MarkPending(ctx context.Context, organizationID string, id uuid.UUID, syncRunID uuid.UUID, errorCode, errorMessage *string) (*datalibModel.KnowledgeBaseAssetRef, error)
+	MarkFailed(ctx context.Context, organizationID string, id uuid.UUID, syncRunID uuid.UUID, errorCode, errorMessage string) (*datalibModel.KnowledgeBaseAssetRef, error)
 	SoftDelete(ctx context.Context, organizationID string, id uuid.UUID) (*datalibModel.KnowledgeBaseAssetRef, error)
 }
 
@@ -55,12 +56,17 @@ type knowledgeBaseFileDatasetReader interface {
 	GetByID(ctx context.Context, id string) (*datasetModel.Dataset, error)
 }
 
+type knowledgeBaseFileDocumentReader interface {
+	GetDocumentsByIDs(ctx context.Context, ids []string) ([]*datasetModel.Document, error)
+}
+
 type KnowledgeBaseFileRefService interface {
 	ListCandidates(ctx context.Context, req KnowledgeBaseFileCandidateRequest) (*KnowledgeBaseFileCandidateResult, error)
 	ListRefs(ctx context.Context, req KnowledgeBaseFileRefListRequest) (*KnowledgeBaseFileRefListResult, error)
 	CreateRefs(ctx context.Context, req KnowledgeBaseFileRefCreateRequest) (*KnowledgeBaseFileRefCreateResult, error)
 	GetRef(ctx context.Context, req KnowledgeBaseFileRefGetRequest) (*KnowledgeBaseAssetRefView, error)
 	RetryRef(ctx context.Context, req KnowledgeBaseFileRefRetryRequest) (*KnowledgeBaseFileRefCreateItem, error)
+	MarkRefSyncFailed(ctx context.Context, req KnowledgeBaseFileRefSyncFailureRequest) (*KnowledgeBaseAssetRefView, error)
 	RemoveRef(ctx context.Context, req KnowledgeBaseFileRefGetRequest) (*KnowledgeBaseAssetRefView, error)
 }
 
@@ -125,25 +131,36 @@ type KnowledgeBaseFileRefGetRequest struct {
 	RefID          uuid.UUID
 }
 
+type KnowledgeBaseFileRefSyncFailureRequest struct {
+	OrganizationID string
+	WorkspaceID    *string
+	DatasetID      string
+	RefID          uuid.UUID
+	SyncRunID      uuid.UUID
+	ErrorCode      string
+	ErrorMessage   string
+}
+
 type KnowledgeBaseFileRefListResult struct {
 	Items []*KnowledgeBaseFileRefItem `json:"items"`
 	Total int64                       `json:"total"`
 }
 
 type KnowledgeBaseFileRefItem struct {
-	ID                 uuid.UUID  `json:"id"`
-	DatasetID          string     `json:"dataset_id"`
-	AssetID            uuid.UUID  `json:"asset_id"`
-	FileID             string     `json:"file_id"`
-	FileName           string     `json:"file_name"`
-	ProcessingStatus   string     `json:"processing_status"`
-	GenerationNo       int64      `json:"generation_no"`
-	DatasetDocumentID  *uuid.UUID `json:"dataset_document_id,omitempty"`
-	SyncStatus         string     `json:"sync_status"`
-	SyncedGenerationNo *int64     `json:"synced_generation_no,omitempty"`
-	LastSyncedAt       *time.Time `json:"last_synced_at,omitempty"`
-	SyncErrorCode      *string    `json:"sync_error_code,omitempty"`
-	SyncErrorMessage   *string    `json:"sync_error_message,omitempty"`
+	ID                     uuid.UUID  `json:"id"`
+	DatasetID              string     `json:"dataset_id"`
+	AssetID                uuid.UUID  `json:"asset_id"`
+	FileID                 string     `json:"file_id"`
+	FileName               string     `json:"file_name"`
+	ProcessingStatus       string     `json:"processing_status"`
+	GenerationNo           int64      `json:"generation_no"`
+	DatasetDocumentID      *uuid.UUID `json:"dataset_document_id,omitempty"`
+	DatasetDocumentEnabled *bool      `json:"dataset_document_enabled,omitempty"`
+	SyncStatus             string     `json:"sync_status"`
+	SyncedGenerationNo     *int64     `json:"synced_generation_no,omitempty"`
+	LastSyncedAt           *time.Time `json:"last_synced_at,omitempty"`
+	SyncErrorCode          *string    `json:"sync_error_code,omitempty"`
+	SyncErrorMessage       *string    `json:"sync_error_message,omitempty"`
 }
 
 type KnowledgeBaseFileRefCreateResult struct {
@@ -172,6 +189,7 @@ type knowledgeBaseFileRefService struct {
 	refs       knowledgeBaseFileRefStore
 	files      knowledgeBaseFileFileReader
 	datasets   knowledgeBaseFileDatasetReader
+	documents  knowledgeBaseFileDocumentReader
 }
 
 func NewKnowledgeBaseFileRefService(
@@ -181,7 +199,12 @@ func NewKnowledgeBaseFileRefService(
 	refs knowledgeBaseFileRefStore,
 	files knowledgeBaseFileFileReader,
 	datasets knowledgeBaseFileDatasetReader,
+	documents ...knowledgeBaseFileDocumentReader,
 ) KnowledgeBaseFileRefService {
+	var documentReader knowledgeBaseFileDocumentReader
+	if len(documents) > 0 {
+		documentReader = documents[0]
+	}
 	return &knowledgeBaseFileRefService{
 		assets:     assets,
 		chunks:     chunks,
@@ -189,6 +212,7 @@ func NewKnowledgeBaseFileRefService(
 		refs:       refs,
 		files:      files,
 		datasets:   datasets,
+		documents:  documentReader,
 	}
 }
 
@@ -230,7 +254,7 @@ func (s *knowledgeBaseFileRefService) ListCandidates(ctx context.Context, req Kn
 	items := make([]*KnowledgeBaseFileCandidate, 0, len(assets))
 	for _, asset := range assets {
 		file := filesByID[asset.SourceFileID]
-		if keyword := strings.TrimSpace(req.Keyword); keyword != "" && !candidateMatchesKeyword(file, keyword) {
+		if keyword := strings.TrimSpace(req.Keyword); keyword != "" && !candidateMatchesKeyword(asset, file, keyword) {
 			continue
 		}
 		candidate, err := s.buildCandidate(ctx, dataset, asset, file)
@@ -291,6 +315,10 @@ func (s *knowledgeBaseFileRefService) ListRefs(ctx context.Context, req Knowledg
 	if err != nil {
 		return nil, err
 	}
+	documentsByID, err := s.loadRefDocuments(ctx, refs)
+	if err != nil {
+		return nil, err
+	}
 	items := make([]*KnowledgeBaseFileRefItem, 0, len(refs))
 	for _, ref := range refs {
 		asset := assetByID[ref.AssetID]
@@ -305,23 +333,64 @@ func (s *knowledgeBaseFileRefService) ListRefs(ctx context.Context, req Knowledg
 		if file != nil && file.Name != "" {
 			fileName = file.Name
 		}
+		var documentEnabled *bool
+		if ref.DatasetDocumentID != nil {
+			if document := documentsByID[ref.DatasetDocumentID.String()]; document != nil {
+				enabled := document.Enabled
+				documentEnabled = &enabled
+			}
+		}
 		items = append(items, &KnowledgeBaseFileRefItem{
-			ID:                 ref.ID,
-			DatasetID:          ref.DatasetID,
-			AssetID:            ref.AssetID,
-			FileID:             asset.SourceFileID,
-			FileName:           fileName,
-			ProcessingStatus:   asset.ProductStatus,
-			GenerationNo:       asset.GenerationNo,
-			DatasetDocumentID:  ref.DatasetDocumentID,
-			SyncStatus:         ref.SyncStatus,
-			SyncedGenerationNo: ref.SyncedGenerationNo,
-			LastSyncedAt:       ref.LastSyncedAt,
-			SyncErrorCode:      ref.SyncErrorCode,
-			SyncErrorMessage:   ref.SyncErrorMessage,
+			ID:                     ref.ID,
+			DatasetID:              ref.DatasetID,
+			AssetID:                ref.AssetID,
+			FileID:                 asset.SourceFileID,
+			FileName:               fileName,
+			ProcessingStatus:       asset.ProductStatus,
+			GenerationNo:           asset.GenerationNo,
+			DatasetDocumentID:      ref.DatasetDocumentID,
+			DatasetDocumentEnabled: documentEnabled,
+			SyncStatus:             ref.SyncStatus,
+			SyncedGenerationNo:     ref.SyncedGenerationNo,
+			LastSyncedAt:           ref.LastSyncedAt,
+			SyncErrorCode:          ref.SyncErrorCode,
+			SyncErrorMessage:       ref.SyncErrorMessage,
 		})
 	}
 	return &KnowledgeBaseFileRefListResult{Items: items, Total: total}, nil
+}
+
+func (s *knowledgeBaseFileRefService) loadRefDocuments(ctx context.Context, refs []*datalibModel.KnowledgeBaseAssetRef) (map[string]*datasetModel.Document, error) {
+	documentsByID := map[string]*datasetModel.Document{}
+	if s.documents == nil {
+		return documentsByID, nil
+	}
+	documentIDs := make([]string, 0, len(refs))
+	seen := map[string]struct{}{}
+	for _, ref := range refs {
+		if ref.DatasetDocumentID == nil {
+			continue
+		}
+		id := ref.DatasetDocumentID.String()
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		documentIDs = append(documentIDs, id)
+	}
+	if len(documentIDs) == 0 {
+		return documentsByID, nil
+	}
+	documents, err := s.documents.GetDocumentsByIDs(ctx, documentIDs)
+	if err != nil {
+		return nil, err
+	}
+	for _, document := range documents {
+		if document != nil {
+			documentsByID[document.ID] = document
+		}
+	}
+	return documentsByID, nil
 }
 
 func (s *knowledgeBaseFileRefService) CreateRefs(ctx context.Context, req KnowledgeBaseFileRefCreateRequest) (*KnowledgeBaseFileRefCreateResult, error) {
@@ -418,6 +487,32 @@ func (s *knowledgeBaseFileRefService) RetryRef(ctx context.Context, req Knowledg
 		GenerationNo: generationNo,
 		Success:      true,
 	}, nil
+}
+
+func (s *knowledgeBaseFileRefService) MarkRefSyncFailed(ctx context.Context, req KnowledgeBaseFileRefSyncFailureRequest) (*KnowledgeBaseAssetRefView, error) {
+	if req.SyncRunID == uuid.Nil {
+		return nil, errors.New("sync_run_id is required")
+	}
+	if strings.TrimSpace(req.ErrorCode) == "" {
+		return nil, errors.New("sync_error_code is required")
+	}
+	ref, err := s.getScopedRef(ctx, KnowledgeBaseFileRefGetRequest{
+		OrganizationID: req.OrganizationID,
+		WorkspaceID:    req.WorkspaceID,
+		DatasetID:      req.DatasetID,
+		RefID:          req.RefID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	updated, err := s.refs.MarkFailed(ctx, req.OrganizationID, ref.ID, req.SyncRunID, req.ErrorCode, req.ErrorMessage)
+	if err != nil {
+		return nil, err
+	}
+	if updated == nil {
+		return nil, ErrKnowledgeBaseFileRefNotFound
+	}
+	return newKnowledgeBaseAssetRefView(updated), nil
 }
 
 func (s *knowledgeBaseFileRefService) RemoveRef(ctx context.Context, req KnowledgeBaseFileRefGetRequest) (*KnowledgeBaseAssetRefView, error) {
@@ -596,11 +691,15 @@ func validateKnowledgeBaseFileRefScope(organizationID string, datasetID string) 
 	return nil
 }
 
-func candidateMatchesKeyword(file *fileModel.UploadFile, keyword string) bool {
-	if file == nil {
-		return false
+func candidateMatchesKeyword(asset *datalibModel.DocumentAsset, file *fileModel.UploadFile, keyword string) bool {
+	normalizedKeyword := strings.ToLower(strings.TrimSpace(keyword))
+	if normalizedKeyword == "" {
+		return true
 	}
-	return strings.Contains(strings.ToLower(file.Name), strings.ToLower(keyword))
+	if file != nil && strings.Contains(strings.ToLower(file.Name), normalizedKeyword) {
+		return true
+	}
+	return asset != nil && strings.Contains(strings.ToLower(asset.Title), normalizedKeyword)
 }
 
 var ErrDatasetNotFound = errors.New("dataset not found")

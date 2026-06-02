@@ -7,7 +7,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	datalibService "github.com/zgiai/zgi/api/internal/modules/datalibrary/service"
-	datalibWorker "github.com/zgiai/zgi/api/internal/modules/datalibrary/worker"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/middleware"
@@ -16,7 +15,7 @@ import (
 
 type KnowledgeBaseFileRefHandler struct {
 	service        datalibService.KnowledgeBaseFileRefService
-	dispatcher     *datalibWorker.FileProcessTaskDispatcher
+	dispatcher     datasetFileRefSyncEnqueuer
 	accountService interfaces.AccountService
 	documents      datasetFileRefDocumentManager
 }
@@ -25,7 +24,11 @@ type datasetFileRefDocumentManager interface {
 	DeleteDocuments(ctx context.Context, datasetID string, documentIDs []string) error
 }
 
-func NewKnowledgeBaseFileRefHandler(service datalibService.KnowledgeBaseFileRefService, dispatcher *datalibWorker.FileProcessTaskDispatcher, accountService interfaces.AccountService, documents datasetFileRefDocumentManager) *KnowledgeBaseFileRefHandler {
+type datasetFileRefSyncEnqueuer interface {
+	EnqueueDatasetRefSync(ctx context.Context, refID uuid.UUID, assetID uuid.UUID, datasetID string, generationNo int64, syncRunID uuid.UUID) error
+}
+
+func NewKnowledgeBaseFileRefHandler(service datalibService.KnowledgeBaseFileRefService, dispatcher datasetFileRefSyncEnqueuer, accountService interfaces.AccountService, documents datasetFileRefDocumentManager) *KnowledgeBaseFileRefHandler {
 	return &KnowledgeBaseFileRefHandler{service: service, dispatcher: dispatcher, accountService: accountService, documents: documents}
 }
 
@@ -121,7 +124,7 @@ func (h *KnowledgeBaseFileRefHandler) CreateFileRefs(c *gin.Context) {
 		if !item.Success || item.Ref == nil || item.SyncRunID == nil {
 			continue
 		}
-		if err := h.dispatcher.EnqueueDatasetRefSync(c.Request.Context(), item.Ref.ID, item.AssetID, item.Ref.DatasetID, item.GenerationNo, *item.SyncRunID); err != nil {
+		if err := h.enqueueDatasetRefSync(c.Request.Context(), organizationID, optionalString(util.GetWorkspaceID(c)), item.Ref.ID, item.AssetID, item.Ref.DatasetID, item.GenerationNo, *item.SyncRunID); err != nil {
 			response.FailWithMessage(c, response.ErrSystemError, err.Error())
 			return
 		}
@@ -151,7 +154,7 @@ func (h *KnowledgeBaseFileRefHandler) RetryFileRef(c *gin.Context) {
 		return
 	}
 	if result.Success && result.Ref != nil && result.SyncRunID != nil {
-		if err := h.dispatcher.EnqueueDatasetRefSync(c.Request.Context(), result.Ref.ID, result.AssetID, result.Ref.DatasetID, result.GenerationNo, *result.SyncRunID); err != nil {
+		if err := h.enqueueDatasetRefSync(c.Request.Context(), organizationID, optionalString(util.GetWorkspaceID(c)), result.Ref.ID, result.AssetID, result.Ref.DatasetID, result.GenerationNo, *result.SyncRunID); err != nil {
 			response.FailWithMessage(c, response.ErrSystemError, err.Error())
 			return
 		}
@@ -193,6 +196,25 @@ func (h *KnowledgeBaseFileRefHandler) RemoveFileRef(c *gin.Context) {
 		return
 	}
 	response.Success(c, removed)
+}
+
+func (h *KnowledgeBaseFileRefHandler) enqueueDatasetRefSync(ctx context.Context, organizationID string, workspaceID *string, refID uuid.UUID, assetID uuid.UUID, datasetID string, generationNo int64, syncRunID uuid.UUID) error {
+	if h.dispatcher == nil {
+		return nil
+	}
+	if err := h.dispatcher.EnqueueDatasetRefSync(ctx, refID, assetID, datasetID, generationNo, syncRunID); err != nil {
+		_, _ = h.service.MarkRefSyncFailed(ctx, datalibService.KnowledgeBaseFileRefSyncFailureRequest{
+			OrganizationID: organizationID,
+			WorkspaceID:    workspaceID,
+			DatasetID:      datasetID,
+			RefID:          refID,
+			SyncRunID:      syncRunID,
+			ErrorCode:      "enqueue_failed",
+			ErrorMessage:   err.Error(),
+		})
+		return err
+	}
+	return nil
 }
 
 func parseAssetIDs(raw []string) ([]uuid.UUID, bool) {

@@ -106,9 +106,13 @@ export function DatasetFileAssetDialog({
 
   const handleConfirm = useCallback(async () => {
     if (selectedAssetIds.length === 0) return;
-    await createRefsMutation.mutateAsync(selectedAssetIds);
-    onSubmitted?.();
-    onOpenChange(false);
+    try {
+      await createRefsMutation.mutateAsync(selectedAssetIds);
+      onSubmitted?.();
+      onOpenChange(false);
+    } catch {
+      // The mutation hook already shows the API error toast. Keep the dialog open for retry.
+    }
   }, [createRefsMutation, onOpenChange, onSubmitted, selectedAssetIds]);
 
   return (

@@ -121,6 +121,7 @@ data_library_knowledge_base_asset_refs
 | `dataset_id` | uuid | 知识库 id |
 | `asset_id` | uuid | 文件资产 id |
 | `dataset_document_id` | uuid null | 当前同步成功或当前保留的知识库 document id |
+| `dataset_document_enabled` | bool response-only | ref 列表接口返回字段，表示当前 `dataset_document_id` 对应 document 是否启用，避免前端用分页 document 列表推断状态 |
 | `sync_status` | varchar(32) | `pending/syncing/synced/failed` |
 | `synced_generation_no` | bigint null | 当前 `dataset_document_id` 对应的 asset generation |
 | `sync_run_id` | uuid null | 当前同步任务标识，用于防旧任务回写 |
@@ -291,12 +292,14 @@ POST /datasets/:dataset_id/file-refs
    - `synced_generation_no=null`
    - `sync_run_id=new uuid`
 3. 投递 `dataset_ref:sync`。
-4. 返回逐项结果，允许部分失败。
+4. 如果队列投递失败，必须立即把该 ref 标记为 `sync_status=failed`，`sync_error_code=enqueue_failed`，`sync_error_message` 记录投递错误，避免前端长期显示 pending 但后台没有任务。
+5. 返回逐项结果，允许部分失败。
 
 重复添加：
 
 - 同一 dataset 下同一 asset 只能存在一个未删除 ref。
 - 如果已有 ref 且 `sync_status=failed`，前端应展示“重新同步”，而不是重复添加。
+- 重新同步时同样遵守队列投递失败即标记 failed 的规则。
 
 ## 9. 文档同步 worker
 

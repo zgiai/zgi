@@ -111,6 +111,7 @@ export interface DatasetFileRef {
   processing_status: string;
   generation_no: number;
   dataset_document_id?: string;
+  dataset_document_enabled?: boolean;
   sync_status: DatasetFileRefSyncStatus | string;
   synced_generation_no?: number;
   last_synced_at?: string;
@@ -130,6 +131,7 @@ export interface DatasetFileRefView {
   dataset_id: string;
   asset_id: string;
   dataset_document_id?: string;
+  dataset_document_enabled?: boolean;
   sync_status: DatasetFileRefSyncStatus | string;
   synced_generation_no?: number;
   sync_run_id?: string;

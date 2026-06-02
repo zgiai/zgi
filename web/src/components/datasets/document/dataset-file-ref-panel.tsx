@@ -96,6 +96,9 @@ export function DatasetFileRefPanel({
             const document = ref.dataset_document_id
               ? documentsById.get(ref.dataset_document_id)
               : undefined;
+            const documentEnabled = ref.dataset_document_enabled ?? document?.enabled;
+            const hasDatasetDocument =
+              Boolean(ref.dataset_document_id) && typeof documentEnabled === 'boolean';
             const isSynced = ref.sync_status === 'synced';
             const isFailed = ref.sync_status === 'failed';
             return (
@@ -116,9 +119,9 @@ export function DatasetFileRefPanel({
                   </Badge>
                 </TableCell>
                 <TableCell>
-                  {document ? (
-                    <Badge variant={document.enabled && isSynced ? 'success' : 'subtle'}>
-                      {document.enabled && isSynced
+                  {hasDatasetDocument ? (
+                    <Badge variant={documentEnabled && isSynced ? 'success' : 'subtle'}>
+                      {documentEnabled && isSynced
                         ? t('documents.fileRefs.documentEnabled')
                         : t('documents.fileRefs.documentDisabled')}
                     </Badge>
