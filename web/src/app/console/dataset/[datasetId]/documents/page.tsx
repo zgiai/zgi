@@ -10,8 +10,6 @@ import { toast } from 'sonner';
 import { useDataset } from '@/hooks/dataset/use-datasets';
 import {
   useDocuments,
-  useDeleteDocument,
-  useBulkDeleteDocuments,
   useBulkEnableDocuments,
   useBulkDisableDocuments,
   useDownloadDocument,
@@ -47,17 +45,8 @@ export default function DatasetDocumentsPage() {
   /* -------------------------------- state -------------------------------- */
   const sentinelRef = useRef<HTMLDivElement>(null);
 
-  // Delete confirmation state
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [documentToDelete, setDocumentToDelete] = useState<Document | null>(null);
   const [refToRemove, setRefToRemove] = useState<DatasetFileRef | null>(null);
 
-  // Delete document mutation
-  const deleteDocumentMutation = useDeleteDocument();
-  // Batch delete confirmation state
-  const [batchDeleteDialogOpen, setBatchDeleteDialogOpen] = useState(false);
-  const [isBatchDeleting, setIsBatchDeleting] = useState(false);
-  const bulkDeleteMutation = useBulkDeleteDocuments(datasetId);
   const bulkEnableMutation = useBulkEnableDocuments(datasetId);
   const bulkDisableMutation = useBulkDisableDocuments(datasetId);
 
@@ -187,35 +176,12 @@ export default function DatasetDocumentsPage() {
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   /* ---------------------------- doc actions ----------------------------- */
-  const handleDeleteDocument = useCallback(async (document: Document) => {
-    setDocumentToDelete(document);
-    setDeleteDialogOpen(true);
-  }, []);
-
-  const confirmDeleteDocument = useCallback(async () => {
-    if (!documentToDelete) return;
-
-    try {
-      await deleteDocumentMutation.mutateAsync({ datasetId, documentId: documentToDelete.id });
-      // React Query invalidation will refetch; ensure UI sync
-      await refetch();
-      setDeleteDialogOpen(false);
-      setDocumentToDelete(null);
-    } catch (error) {
-      // Error handling is already done in the mutation hook
-      console.error('Delete document failed:', error);
-    }
-  }, [documentToDelete, datasetId, deleteDocumentMutation, refetch]);
-
   const downloadMutation = useDownloadDocument();
 
   const handleDocumentAction = useCallback(
-    async (document: Document, action: 'delete' | 'download' | 'reprocess') => {
+    async (document: Document, action: 'download' | 'reprocess') => {
       try {
         switch (action) {
-          case 'delete':
-            handleDeleteDocument(document);
-            break;
           case 'download':
             if (document.data_source_info?.upload_file_id) {
               await downloadMutation.mutateAsync({
@@ -237,7 +203,7 @@ export default function DatasetDocumentsPage() {
         toast.error(t('datasets.messages.actionFailed'));
       }
     },
-    [t, handleDeleteDocument, refetch, downloadMutation]
+    [t, refetch, downloadMutation]
   );
 
   // Refresh entire documents list
@@ -266,23 +232,6 @@ export default function DatasetDocumentsPage() {
     setRefToRemove(null);
     await Promise.all([refetch(), refetchFileRefs()]);
   }, [deleteFileRefMutation, refToRemove, refetch, refetchFileRefs]);
-
-  // Confirm batch delete
-  const confirmBatchDelete = useCallback(async () => {
-    if (!datasetId || selectedIds.length === 0) return;
-    try {
-      setIsBatchDeleting(true);
-      await bulkDeleteMutation.mutateAsync({ documentIds: selectedIds });
-      setSelectedIds([]);
-      await refetch();
-      setBatchDeleteDialogOpen(false);
-    } catch (error) {
-      toast.error(t('datasets.messages.actionFailed'));
-      console.error('batch delete failed', error);
-    } finally {
-      setIsBatchDeleting(false);
-    }
-  }, [datasetId, selectedIds, refetch, t, bulkDeleteMutation]);
 
   // Toggle selection
   const handleToggleSelect = useCallback((id: string) => {
@@ -451,7 +400,6 @@ export default function DatasetDocumentsPage() {
         <DocumentTable
           documents={visibleDocuments}
           datasetId={datasetId}
-          onDelete={doc => handleDocumentAction(doc, 'delete')}
           onDownload={doc => handleDocumentAction(doc, 'download')}
           onReprocess={doc => handleDocumentAction(doc, 'reprocess')}
           selectedIds={selectedIds}
@@ -478,19 +426,6 @@ export default function DatasetDocumentsPage() {
       <div ref={sentinelRef} className="h-10" />
 
       {isFetchingNextPage && <DocumentListSkeleton rows={3} />}
-
-      {/* Delete confirmation dialog */}
-      <ConfirmDialog
-        variant="danger"
-        open={deleteDialogOpen}
-        onOpenChange={setDeleteDialogOpen}
-        title={t('datasets.messages.confirmDelete', { name: documentToDelete?.name || '' })}
-        description={t('datasets.messages.confirmDeleteDescription')}
-        confirmText={t('datasets.actions.delete')}
-        cancelText={t('datasets.actions.cancel')}
-        onConfirm={confirmDeleteDocument}
-        loading={deleteDocumentMutation.isPending}
-      />
 
       <ConfirmDialog
         variant="warning"
@@ -531,29 +466,9 @@ export default function DatasetDocumentsPage() {
             >
               {t('datasets.actions.disable')}
             </Button>
-            <Button
-              variant="destructive"
-              onClick={() => setBatchDeleteDialogOpen(true)}
-              disabled={isMutatingEnabled.length > 0 || isBatchDeleting}
-            >
-              {t('datasets.actions.delete')}
-            </Button>
           </div>
         </div>
       )}
-
-      {/* Batch delete confirmation dialog */}
-      <ConfirmDialog
-        variant="danger"
-        open={batchDeleteDialogOpen}
-        onOpenChange={setBatchDeleteDialogOpen}
-        title={t('datasets.messages.batchDeleteDocuments', { count: selectedIds.length })}
-        description={t('datasets.messages.batchDeleteDescription')}
-        confirmText={t('datasets.actions.delete')}
-        cancelText={t('datasets.actions.cancel')}
-        onConfirm={confirmBatchDelete}
-        loading={isBatchDeleting}
-      />
 
       {/* Add file assets to dataset */}
       <DatasetFileAssetDialog
