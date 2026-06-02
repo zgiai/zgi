@@ -104,6 +104,20 @@ func (r *documentChunkGenerationChunkRepo) GetByID(ctx context.Context, id uuid.
 	return nil, nil
 }
 
+func (r *documentChunkGenerationChunkRepo) ListByIDs(ctx context.Context, organizationID string, ids []uuid.UUID) ([]*model.DocumentChunk, error) {
+	allowed := map[uuid.UUID]struct{}{}
+	for _, id := range ids {
+		allowed[id] = struct{}{}
+	}
+	items := make([]*model.DocumentChunk, 0, len(ids))
+	for _, item := range r.items {
+		if _, ok := allowed[item.ID]; ok && item.OrganizationID == organizationID {
+			items = append(items, item)
+		}
+	}
+	return items, nil
+}
+
 func (r *documentChunkGenerationChunkRepo) List(ctx context.Context, filter repository.DocumentChunkListFilter) ([]*model.DocumentChunk, int64, error) {
 	return r.items, int64(len(r.items)), nil
 }

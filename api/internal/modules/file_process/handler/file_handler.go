@@ -44,6 +44,7 @@ type FileHandler struct {
 	fileAssetDetailService           datalibraryservice.FileAssetDetailService
 	fileAssetChunkService            datalibraryservice.FileAssetChunkService
 	fileAssetChunkEditService        datalibraryservice.FileAssetChunkEditService
+	fileAssetQAService               datalibraryservice.FileAssetQAService
 	taskEnqueuer                     FileProcessingTaskEnqueuer
 	validator                        *validator.Validate
 }
@@ -57,6 +58,7 @@ type FileAssetProcessingServices struct {
 	FileAssetDetailService           datalibraryservice.FileAssetDetailService
 	FileAssetChunkService            datalibraryservice.FileAssetChunkService
 	FileAssetChunkEditService        datalibraryservice.FileAssetChunkEditService
+	FileAssetQAService               datalibraryservice.FileAssetQAService
 	TaskEnqueuer                     FileProcessingTaskEnqueuer
 }
 
@@ -115,6 +117,11 @@ type fileChunkUpdateRequest struct {
 	Enabled *bool   `json:"enabled"`
 }
 
+type fileQARequest struct {
+	Question string `json:"question"`
+	TopK     int    `json:"top_k"`
+}
+
 type queuedFileProcessingRequest struct {
 	Asset             *datalibrarymodel.DocumentAsset
 	ProcessingRequest *datalibraryservice.ProcessingRequestView
@@ -155,6 +162,7 @@ func NewFileHandler(
 	var fileAssetDetailService datalibraryservice.FileAssetDetailService
 	var fileAssetChunkService datalibraryservice.FileAssetChunkService
 	var fileAssetChunkEditService datalibraryservice.FileAssetChunkEditService
+	var fileAssetQAService datalibraryservice.FileAssetQAService
 	var taskEnqueuer FileProcessingTaskEnqueuer
 	if len(assetProcessingServices) > 0 {
 		assetStateService = assetProcessingServices[0].StateService
@@ -165,6 +173,7 @@ func NewFileHandler(
 		fileAssetDetailService = assetProcessingServices[0].FileAssetDetailService
 		fileAssetChunkService = assetProcessingServices[0].FileAssetChunkService
 		fileAssetChunkEditService = assetProcessingServices[0].FileAssetChunkEditService
+		fileAssetQAService = assetProcessingServices[0].FileAssetQAService
 		taskEnqueuer = assetProcessingServices[0].TaskEnqueuer
 	}
 	return &FileHandler{
@@ -181,6 +190,7 @@ func NewFileHandler(
 		fileAssetDetailService:           fileAssetDetailService,
 		fileAssetChunkService:            fileAssetChunkService,
 		fileAssetChunkEditService:        fileAssetChunkEditService,
+		fileAssetQAService:               fileAssetQAService,
 		taskEnqueuer:                     taskEnqueuer,
 		validator:                        validator.New(),
 	}
@@ -720,6 +730,52 @@ func (h *FileHandler) handleFileAssetChunkError(c *gin.Context, err error) {
 		h.businessError(c, response.ErrInvalidParams)
 	default:
 		logger.WarnContext(c.Request.Context(), "failed to list file asset chunks", err)
+		h.businessError(c, response.ErrSystemError)
+	}
+}
+
+// AskFileQuestion answers one question using the current file's chunk index.
+// POST /files/:file_id/qa
+func (h *FileHandler) AskFileQuestion(c *gin.Context) {
+	if h.fileAssetQAService == nil {
+		h.businessErrorWithMessage(c, response.ErrSystemError, "file asset qa service is not available")
+		return
+	}
+	organizationID, uploadFile, ok := h.authorizeDocumentFile(c)
+	if !ok {
+		return
+	}
+	var req fileQARequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.businessError(c, response.ErrInvalidParams)
+		return
+	}
+	result, err := h.fileAssetQAService.AskCurrentFile(c.Request.Context(), datalibraryservice.FileAssetQAInput{
+		OrganizationID: organizationID,
+		SourceFileID:   uploadFile.ID,
+		Question:       req.Question,
+		TopK:           req.TopK,
+		AccountID:      c.GetString("account_id"),
+	})
+	if err != nil {
+		h.handleFileAssetQAError(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *FileHandler) handleFileAssetQAError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, datalibraryservice.ErrDocumentAssetNotFound):
+		h.businessError(c, response.ErrNotFound)
+	case errors.Is(err, datalibraryservice.ErrFileAssetQAQuestionRequired),
+		errors.Is(err, datalibraryservice.ErrOrganizationIDRequired),
+		errors.Is(err, datalibraryservice.ErrSourceFileIDRequired):
+		h.businessErrorWithMessage(c, response.ErrInvalidParams, err.Error())
+	case errors.Is(err, datalibraryservice.ErrFileAssetQAIndexNotReady):
+		h.businessErrorWithMessage(c, response.ErrInvalidParams, "文档索引尚未完成")
+	default:
+		logger.WarnContext(c.Request.Context(), "failed to answer file question", err)
 		h.businessError(c, response.ErrSystemError)
 	}
 }

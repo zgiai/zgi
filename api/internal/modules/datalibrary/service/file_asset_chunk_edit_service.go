@@ -37,10 +37,11 @@ type FileAssetChunkEditResult struct {
 }
 
 type fileAssetChunkEditService struct {
-	assets     repository.DocumentAssetRepository
-	chunks     repository.DocumentChunkRepository
-	embeddings repository.DocumentChunkEmbeddingRepository
-	chunkEmbed DocumentChunkEmbeddingService
+	assets      repository.DocumentAssetRepository
+	chunks      repository.DocumentChunkRepository
+	embeddings  repository.DocumentChunkEmbeddingRepository
+	chunkEmbed  DocumentChunkEmbeddingService
+	vectorIndex FileAssetVectorIndexService
 }
 
 func NewFileAssetChunkEditService(
@@ -48,12 +49,18 @@ func NewFileAssetChunkEditService(
 	chunks repository.DocumentChunkRepository,
 	embeddings repository.DocumentChunkEmbeddingRepository,
 	chunkEmbed DocumentChunkEmbeddingService,
+	vectorIndex ...FileAssetVectorIndexService,
 ) FileAssetChunkEditService {
+	var vectorIndexService FileAssetVectorIndexService
+	if len(vectorIndex) > 0 {
+		vectorIndexService = vectorIndex[0]
+	}
 	return &fileAssetChunkEditService{
-		assets:     assets,
-		chunks:     chunks,
-		embeddings: embeddings,
-		chunkEmbed: chunkEmbed,
+		assets:      assets,
+		chunks:      chunks,
+		embeddings:  embeddings,
+		chunkEmbed:  chunkEmbed,
+		vectorIndex: vectorIndexService,
 	}
 }
 
@@ -108,10 +115,52 @@ func (s *fileAssetChunkEditService) UpdateCurrentFileChunk(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	var embeddingResult *model.DocumentChunkEmbedding
-	embeddingReady := false
-	if input.Content != nil && s.chunkEmbed != nil {
-		embeddingResult, err = s.chunkEmbed.GenerateChunkEmbedding(ctx, GenerateDocumentChunkEmbeddingInput{
+	embeddingResult, embeddingReady, err := s.syncEditedChunkEmbedding(ctx, asset, updatedChunk, input)
+	if err != nil {
+		return nil, err
+	}
+	return &FileAssetChunkEditResult{
+		Asset:          asset,
+		Chunk:          updatedChunk,
+		Embedding:      embeddingResult,
+		EmbeddingReady: embeddingReady,
+	}, nil
+}
+
+func (s *fileAssetChunkEditService) syncEditedChunkEmbedding(ctx context.Context, asset *model.DocumentAsset, updatedChunk *model.DocumentChunk, input FileAssetChunkEditInput) (*model.DocumentChunkEmbedding, bool, error) {
+	if updatedChunk == nil {
+		return nil, false, nil
+	}
+	if updatedChunk.ChunkType == model.DocumentChunkTypeParent {
+		if s.vectorIndex == nil || input.Enabled == nil {
+			return nil, false, nil
+		}
+		if updatedChunk.Enabled {
+			return nil, false, s.vectorIndex.EnsureAssetIndexed(ctx, asset)
+		}
+		return nil, false, s.vectorIndex.DeleteChildVectorsByParent(ctx, asset, updatedChunk.ID)
+	}
+	if !updatedChunk.Enabled || updatedChunk.Status != model.DocumentChunkStatusReady {
+		if s.vectorIndex != nil {
+			if err := s.vectorIndex.DeleteChunkVector(ctx, asset, updatedChunk.ID); err != nil {
+				return nil, false, err
+			}
+		}
+		if s.embeddings != nil {
+			if err := s.embeddings.DeleteByChunkID(ctx, input.OrganizationID, updatedChunk.ID); err != nil {
+				return nil, false, err
+			}
+		}
+		return nil, false, nil
+	}
+	if input.Content == nil {
+		if s.vectorIndex != nil && input.Enabled != nil && updatedChunk.Enabled {
+			return nil, false, s.vectorIndex.EnsureAssetIndexed(ctx, asset)
+		}
+		return nil, false, nil
+	}
+	if s.chunkEmbed != nil {
+		embeddingResult, err := s.chunkEmbed.GenerateChunkEmbedding(ctx, GenerateDocumentChunkEmbeddingInput{
 			OrganizationID:    input.OrganizationID,
 			AssetID:           asset.ID,
 			ProcessingRunID:   *asset.ProcessingRunID,
@@ -122,16 +171,11 @@ func (s *fileAssetChunkEditService) UpdateCurrentFileChunk(ctx context.Context, 
 			Chunk:             updatedChunk,
 		})
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
-		embeddingReady = true
+		return embeddingResult, true, nil
 	}
-	return &FileAssetChunkEditResult{
-		Asset:          asset,
-		Chunk:          updatedChunk,
-		Embedding:      embeddingResult,
-		EmbeddingReady: embeddingReady,
-	}, nil
+	return nil, false, nil
 }
 
 func isEditableChunkUpdateAllowed(chunk *model.DocumentChunk, input FileAssetChunkEditInput) bool {

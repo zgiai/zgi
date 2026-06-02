@@ -38,6 +38,7 @@ type DocumentChunkRepository interface {
 	Create(ctx context.Context, item *model.DocumentChunk) error
 	CreateBatch(ctx context.Context, items []*model.DocumentChunk) error
 	GetByID(ctx context.Context, id uuid.UUID) (*model.DocumentChunk, error)
+	ListByIDs(ctx context.Context, organizationID string, ids []uuid.UUID) ([]*model.DocumentChunk, error)
 	List(ctx context.Context, filter DocumentChunkListFilter) ([]*model.DocumentChunk, int64, error)
 	CountByAssetGeneration(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64) (int64, error)
 	CountByAssetGenerationAndTypes(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64, chunkTypes []string) (int64, error)
@@ -74,6 +75,21 @@ func (r *documentChunkRepository) GetByID(ctx context.Context, id uuid.UUID) (*m
 		return nil, err
 	}
 	return &item, nil
+}
+
+func (r *documentChunkRepository) ListByIDs(ctx context.Context, organizationID string, ids []uuid.UUID) ([]*model.DocumentChunk, error) {
+	if organizationID == "" || len(ids) == 0 {
+		return []*model.DocumentChunk{}, nil
+	}
+	var items []*model.DocumentChunk
+	if err := r.db.WithContext(ctx).
+		Where("organization_id = ?", organizationID).
+		Where("id IN ?", ids).
+		Where("deleted_at IS NULL").
+		Find(&items).Error; err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 func (r *documentChunkRepository) List(ctx context.Context, filter DocumentChunkListFilter) ([]*model.DocumentChunk, int64, error) {

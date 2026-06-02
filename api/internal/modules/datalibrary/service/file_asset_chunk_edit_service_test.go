@@ -53,7 +53,7 @@ func TestFileAssetChunkEditServiceUpdatesLeafChunkAndRegeneratesOnlyThatEmbeddin
 	chunkEmbed := &fileAssetChunkEditEmbeddingService{}
 	svc := NewFileAssetChunkEditService(assetRepo, chunkRepo, nil, chunkEmbed)
 	content := "updated content"
-	enabled := false
+	enabled := true
 
 	result, err := svc.UpdateCurrentFileChunk(context.Background(), FileAssetChunkEditInput{
 		OrganizationID:    "org-1",
@@ -70,7 +70,7 @@ func TestFileAssetChunkEditServiceUpdatesLeafChunkAndRegeneratesOnlyThatEmbeddin
 	}
 	if result.Chunk.Content != content ||
 		result.Chunk.ContentHash != documentChunkContentHash(content) ||
-		result.Chunk.Enabled ||
+		!result.Chunk.Enabled ||
 		result.Chunk.UpdatedBy != "user-1" {
 		t.Fatalf("updated chunk=%+v", result.Chunk)
 	}
@@ -212,6 +212,22 @@ func (r *fileAssetChunkEditChunkRepo) GetByID(ctx context.Context, id uuid.UUID)
 	}
 	cloned := *item
 	return &cloned, nil
+}
+
+func (r *fileAssetChunkEditChunkRepo) ListByIDs(ctx context.Context, organizationID string, ids []uuid.UUID) ([]*model.DocumentChunk, error) {
+	allowed := map[uuid.UUID]struct{}{}
+	for _, id := range ids {
+		allowed[id] = struct{}{}
+	}
+	items := make([]*model.DocumentChunk, 0, len(ids))
+	for _, item := range r.items {
+		if _, ok := allowed[item.ID]; !ok || item.OrganizationID != organizationID {
+			continue
+		}
+		cloned := *item
+		items = append(items, &cloned)
+	}
+	return items, nil
 }
 
 func (r *fileAssetChunkEditChunkRepo) List(ctx context.Context, filter repository.DocumentChunkListFilter) ([]*model.DocumentChunk, int64, error) {

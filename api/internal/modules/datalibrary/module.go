@@ -1,6 +1,7 @@
 package datalibrary
 
 import (
+	"github.com/zgiai/zgi/api/config"
 	contentParseCap "github.com/zgiai/zgi/api/internal/capabilities/contentparse"
 	"github.com/zgiai/zgi/api/internal/contracts"
 	contentParseRepository "github.com/zgiai/zgi/api/internal/modules/contentparse/repository"
@@ -12,6 +13,7 @@ import (
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	"github.com/zgiai/zgi/api/pkg/storage"
+	"github.com/zgiai/zgi/api/pkg/vectordb"
 	"gorm.io/gorm"
 )
 
@@ -41,6 +43,8 @@ type Module struct {
 	FileAssetSummaryService            service.FileAssetSummaryService
 	FileAssetChunkService              service.FileAssetChunkService
 	FileAssetChunkEditService          service.FileAssetChunkEditService
+	FileAssetVectorIndexService        service.FileAssetVectorIndexService
+	FileAssetQAService                 service.FileAssetQAService
 	ProcessingExecutorRegistry         *service.ProcessingExecutorRegistry
 	VectorArtifactService              service.VectorArtifactService
 	ExtractionArtifactService          service.ExtractionArtifactService
@@ -98,11 +102,28 @@ func NewModuleWithRuntime(
 	parseArtifactConfirmationService := service.NewParseArtifactConfirmationService(documentAssetRepo, contentParseArtifactRepo, parseArtifactPersistenceService, parseConfirmationItemRepo)
 	parseArtifactChunkTransformService := service.NewParseArtifactChunkTransformService(artifactStorage, nil, defaultModelSvc, llmClient)
 	documentChunkGenerationService := service.NewDocumentChunkGenerationService(documentAssetRepo, documentChunkRepo)
-	documentChunkEmbeddingService := service.NewDocumentChunkEmbeddingService(documentAssetRepo, documentChunkEmbeddingRepo, llmClient, defaultModelSvc)
+	var vectorDB vectordb.VectorDB
+	if config.GlobalConfig != nil {
+		if db, err := vectordb.NewVectorDB(&config.GlobalConfig.VectorStore); err == nil {
+			vectorDB = db
+		}
+	}
+	var fileAssetVectorIndexService service.FileAssetVectorIndexService
+	if vectorDB != nil {
+		fileAssetVectorIndexService = service.NewFileAssetVectorIndexService(documentChunkRepo, documentChunkEmbeddingRepo, vectorDB)
+	}
+	documentChunkEmbeddingService := service.NewDocumentChunkEmbeddingService(
+		documentAssetRepo,
+		documentChunkEmbeddingRepo,
+		llmClient,
+		defaultModelSvc,
+		service.WithDocumentChunkVectorIndex(fileAssetVectorIndexService),
+	)
 	fileAssetDetailService := service.NewFileAssetDetailService(documentAssetRepo, processingRequestRepo, parseConfirmationItemRepo, documentChunkRepo, documentChunkEmbeddingRepo)
 	fileAssetSummaryService := service.NewFileAssetSummaryService(documentAssetRepo, parseConfirmationItemRepo, documentChunkRepo, documentChunkEmbeddingRepo)
 	fileAssetChunkService := service.NewFileAssetChunkService(documentAssetRepo, documentChunkRepo, documentChunkEmbeddingRepo)
-	fileAssetChunkEditService := service.NewFileAssetChunkEditService(documentAssetRepo, documentChunkRepo, documentChunkEmbeddingRepo, documentChunkEmbeddingService)
+	fileAssetChunkEditService := service.NewFileAssetChunkEditService(documentAssetRepo, documentChunkRepo, documentChunkEmbeddingRepo, documentChunkEmbeddingService, fileAssetVectorIndexService)
+	fileAssetQAService := service.NewFileAssetQAService(documentAssetRepo, documentChunkRepo, documentChunkEmbeddingRepo, fileAssetVectorIndexService, llmClient, defaultModelSvc)
 	processingExecutorRegistry := service.NewDefaultProcessingExecutorRegistry()
 	vectorArtifactService := service.NewVectorArtifactService(vectorArtifactRepo)
 	extractionArtifactService := service.NewExtractionArtifactService(extractionArtifactRepo)
@@ -158,6 +179,8 @@ func NewModuleWithRuntime(
 		FileAssetSummaryService:            fileAssetSummaryService,
 		FileAssetChunkService:              fileAssetChunkService,
 		FileAssetChunkEditService:          fileAssetChunkEditService,
+		FileAssetVectorIndexService:        fileAssetVectorIndexService,
+		FileAssetQAService:                 fileAssetQAService,
 		ProcessingExecutorRegistry:         processingExecutorRegistry,
 		VectorArtifactService:              vectorArtifactService,
 		ExtractionArtifactService:          extractionArtifactService,

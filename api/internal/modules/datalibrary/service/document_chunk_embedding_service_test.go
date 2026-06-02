@@ -347,6 +347,18 @@ func (r *documentChunkEmbeddingRepo) CountReadyByAssetGeneration(ctx context.Con
 	return count, nil
 }
 
+func (r *documentChunkEmbeddingRepo) DeleteByChunkID(ctx context.Context, organizationID string, chunkID uuid.UUID) error {
+	filtered := r.items[:0]
+	for _, item := range r.items {
+		if item.OrganizationID == organizationID && item.ChunkID == chunkID {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	r.items = filtered
+	return nil
+}
+
 func (r *documentChunkEmbeddingRepo) DeleteByAssetGeneration(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64) error {
 	r.deletedCalls++
 	r.items = nil

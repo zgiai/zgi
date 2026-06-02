@@ -576,3 +576,42 @@ export interface UpdateFileChunkResponse {
   embedding?: FileDocumentChunkEmbedding;
   embedding_ready: boolean;
 }
+
+export interface AskFileQuestionRequest {
+  question: string;
+  top_k?: number;
+}
+
+export interface FileQuestionAnswerChildSource {
+  chunk_id: string;
+  position: number;
+  content: string;
+  snippet: string;
+  score?: number;
+  distance?: number;
+}
+
+export interface FileQuestionAnswerSource {
+  primary_chunk_id: string;
+  position: number;
+  content: string;
+  snippet: string;
+  score?: number;
+  distance?: number;
+  children: FileQuestionAnswerChildSource[];
+}
+
+export interface FileQuestionAnswerRetrieval {
+  top_k: number;
+  hit_count: number;
+  primary_hit_count: number;
+  embedding_provider?: string;
+  embedding_model?: string;
+  answer_model?: string;
+}
+
+export interface AskFileQuestionResponse {
+  answer: string;
+  sources: FileQuestionAnswerSource[];
+  retrieval: FileQuestionAnswerRetrieval;
+}

@@ -71,6 +71,7 @@ type documentChunkEmbeddingService struct {
 	llmClient        llmclient.LLMClient
 	defaultModelSvc  llmdefaultservice.DefaultModelService
 	embeddingFactory DocumentChunkEmbeddingFactory
+	vectorIndex      FileAssetVectorIndexService
 }
 
 func NewDocumentChunkEmbeddingService(
@@ -97,6 +98,12 @@ func NewDocumentChunkEmbeddingService(
 func WithDocumentChunkEmbeddingFactory(factory DocumentChunkEmbeddingFactory) DocumentChunkEmbeddingServiceOption {
 	return func(s *documentChunkEmbeddingService) {
 		s.embeddingFactory = factory
+	}
+}
+
+func WithDocumentChunkVectorIndex(vectorIndex FileAssetVectorIndexService) DocumentChunkEmbeddingServiceOption {
+	return func(s *documentChunkEmbeddingService) {
+		s.vectorIndex = vectorIndex
 	}
 }
 
@@ -218,6 +225,11 @@ func (s *documentChunkEmbeddingService) generateEmbeddings(ctx context.Context, 
 			return nil, err
 		}
 		items = append(items, item)
+	}
+	if s.vectorIndex != nil {
+		if err := s.vectorIndex.IndexChunkEmbeddings(ctx, asset, leafChunks, items, clearExisting); err != nil {
+			return nil, fmt.Errorf("index document chunk vectors: %w", err)
+		}
 	}
 
 	return &GenerateDocumentChunkEmbeddingsResult{

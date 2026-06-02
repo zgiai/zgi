@@ -294,6 +294,28 @@ const messages = {
       notReadyDescription:
         'Index metadata becomes available after chunking and embedding generation starts.',
     },
+    qa: {
+      title: 'Document Q&A',
+      description:
+        'Retrieves secondary chunks, expands to primary chunks, and answers only from this document.',
+      notReadyTitle: 'Document Q&A is not ready',
+      notReadyDescription:
+        'Ask questions after parsing finishes and secondary chunk vectors are available.',
+      chunkSummary: '{count} chunks',
+      vectorSummary: '{count} vectors',
+      emptyTitle: 'Ask this document',
+      emptyDescription:
+        'After you ask, the system retrieves related secondary chunks and uses their primary chunks as context.',
+      question: 'Question',
+      answer: 'Answer',
+      placeholder: 'Ask a question about this document...',
+      send: 'Send',
+      askFailedTitle: 'Q&A failed',
+      askFailed: 'Failed to submit question',
+      noSources: 'No related source was found in this document.',
+      sources: 'Sources ({count})',
+      distance: 'Distance {value}',
+    },
     reparse: {
       action: 'Reparse',
       reparsing: 'Submitting...',

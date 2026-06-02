@@ -34,6 +34,8 @@ import type {
   ListFileChunksResponse,
   UpdateFileChunkRequest,
   UpdateFileChunkResponse,
+  AskFileQuestionRequest,
+  AskFileQuestionResponse,
 } from './types/file';
 import { BaseService } from '@/lib/http/services';
 
@@ -168,6 +170,13 @@ class FileManageService extends BaseService {
     data: UpdateFileChunkRequest
   ): Promise<ApiResponseData<UpdateFileChunkResponse>> {
     return this.request('patch', `/console/api/files/${fileId}/chunks/${chunkId}`, data);
+  }
+
+  async askFileQuestion(
+    fileId: string,
+    data: AskFileQuestionRequest
+  ): Promise<ApiResponseData<AskFileQuestionResponse>> {
+    return this.request('post', `/console/api/files/${fileId}/qa`, data);
   }
 
   async getFilesMetadata(fileIds: string[]): Promise<ApiResponseData<FileMetadataResponse>> {

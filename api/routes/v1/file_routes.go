@@ -65,6 +65,7 @@ func registerFileRoutesLegacy(v1 *gin.RouterGroup, deps FileRouteDeps) {
 			FileAssetDetailService:           deps.DataLibraryModule.FileAssetDetailService,
 			FileAssetChunkService:            deps.DataLibraryModule.FileAssetChunkService,
 			FileAssetChunkEditService:        deps.DataLibraryModule.FileAssetChunkEditService,
+			FileAssetQAService:               deps.DataLibraryModule.FileAssetQAService,
 			TaskEnqueuer:                     datalibraryworker.NewFileProcessTaskDispatcher(deps.TaskManager),
 		},
 	)
@@ -93,6 +94,7 @@ func registerFileRoutesLegacy(v1 *gin.RouterGroup, deps FileRouteDeps) {
 
 		files.GET("/:file_id/chunks", fileHandler.ListFileChunks)
 		files.PATCH("/:file_id/chunks/:chunk_id", fileHandler.UpdateFileChunk)
+		files.POST("/:file_id/qa", fileHandler.AskFileQuestion)
 
 		files.GET("/:file_id/parse-preview", fileHandler.GetFileParsePreview)
 

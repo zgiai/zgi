@@ -25,7 +25,7 @@ import { FilePreviewDialog } from '@/components/files/file-preview-dialog';
 import { FileOriginalPreviewPanel } from '@/components/files/detail/file-original-preview-panel';
 import { FileParseReviewPanel } from '@/components/files/detail/file-parse-review-panel';
 import { FileChunksPanel } from '@/components/files/detail/file-chunks-panel';
-import { FileIndexInfoPanel } from '@/components/files/detail/file-index-info-panel';
+import { FileQAPanel } from '@/components/files/detail/file-qa-panel';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type { FileAssetProductStatus, FileAssetVectorStatus, FileItem } from '@/services/types/file';
@@ -264,7 +264,7 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   const hasPreview = file ? isOriginalPreviewSupported(file.extension, file.mime_type) : false;
   const parseReviewEnabled = status !== 'stored_only' && status !== 'parsing';
   const chunksEnabled = status === 'ready';
-  const qaEnabled = status === 'ready' || status === 'generating' || embeddingCount > 0;
+  const qaEnabled = status === 'ready' && vectorStatus === 'ready' && embeddingCount > 0;
   const canRequestProcessing =
     hasPermission('file.manage') || hasPermission('file.upload_create') || canDownload;
   const canReparse = canRequestProcessing && (status === 'ready' || status === 'parse_failed');
@@ -516,7 +516,8 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
           </TabsContent>
 
           <TabsContent value="qa" className="mt-4">
-            <FileIndexInfoPanel
+            <FileQAPanel
+              fileId={file.id}
               artifactState={artifactState}
               processing={processing}
               vectorStatus={vectorStatus}
