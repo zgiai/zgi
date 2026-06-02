@@ -25,6 +25,7 @@ func TestDatasetRefSyncRunnerCopiesReadyAssetToDataset(t *testing.T) {
 			DatasetID:      "dataset-1",
 			AssetID:        assetID,
 			SyncRunID:      &syncRunID,
+			SyncStatus:     datalibModel.KnowledgeBaseAssetRefSyncStatusPending,
 			CreatedBy:      "user-1",
 		},
 	}
@@ -96,6 +97,14 @@ func TestDatasetRefSyncRunnerCopiesReadyAssetToDataset(t *testing.T) {
 	if len(vectorStore.storedIDs) != 1 || len(vectorStore.storedVectors[0]) != 3 {
 		t.Fatalf("stored vectors ids=%v vectors=%v", vectorStore.storedIDs, vectorStore.storedVectors)
 	}
+	properties := vectorStore.storedProperties[0]
+	if properties["asset_id"] != assetID.String() ||
+		properties["ref_id"] != refID.String() ||
+		properties["source_file_id"] != "file-1" ||
+		properties["source_chunk_id"] != chunkID.String() ||
+		properties["generation_no"] != int64(5) {
+		t.Fatalf("stored properties = %#v", properties)
+	}
 }
 
 func TestDatasetRefSyncRunnerSkipsStaleSyncRun(t *testing.T) {
@@ -110,6 +119,7 @@ func TestDatasetRefSyncRunnerSkipsStaleSyncRun(t *testing.T) {
 			DatasetID:      "dataset-1",
 			AssetID:        assetID,
 			SyncRunID:      &currentSyncRunID,
+			SyncStatus:     datalibModel.KnowledgeBaseAssetRefSyncStatusPending,
 		},
 	}
 	runner := NewDatasetRefSyncRunner(DatasetRefSyncRunnerDeps{Refs: refStore, Assets: &fakeDatasetRefSyncAssetStore{}})
@@ -140,6 +150,7 @@ func TestDatasetRefSyncRunnerMarksFailedWhenAssetNotReady(t *testing.T) {
 			DatasetID:      "dataset-1",
 			AssetID:        assetID,
 			SyncRunID:      &syncRunID,
+			SyncStatus:     datalibModel.KnowledgeBaseAssetRefSyncStatusPending,
 		},
 	}
 	assetStore := &fakeDatasetRefSyncAssetStore{
@@ -168,6 +179,37 @@ func TestDatasetRefSyncRunnerMarksFailedWhenAssetNotReady(t *testing.T) {
 	}
 }
 
+func TestDatasetRefSyncRunnerSkipsNonRunnableRefStatus(t *testing.T) {
+	refID := uuid.New()
+	assetID := uuid.New()
+	syncRunID := uuid.New()
+	refStore := &fakeDatasetRefSyncRefStore{
+		ref: &datalibModel.KnowledgeBaseAssetRef{
+			ID:             refID,
+			OrganizationID: "org-1",
+			DatasetID:      "dataset-1",
+			AssetID:        assetID,
+			SyncRunID:      &syncRunID,
+			SyncStatus:     datalibModel.KnowledgeBaseAssetRefSyncStatusFailed,
+		},
+	}
+	runner := NewDatasetRefSyncRunner(DatasetRefSyncRunnerDeps{Refs: refStore, Assets: &fakeDatasetRefSyncAssetStore{}})
+
+	err := runner.Run(context.Background(), DatasetRefSyncPayload{
+		RefID:        refID.String(),
+		AssetID:      assetID.String(),
+		DatasetID:    "dataset-1",
+		GenerationNo: 5,
+		SyncRunID:    syncRunID.String(),
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if refStore.markSyncingID != uuid.Nil || refStore.failedCode != "" {
+		t.Fatalf("unexpected writes syncing=%s failed=%s", refStore.markSyncingID, refStore.failedCode)
+	}
+}
+
 type fakeDatasetRefSyncRefStore struct {
 	ref              *datalibModel.KnowledgeBaseAssetRef
 	markSyncingID    uuid.UUID
@@ -188,12 +230,18 @@ func (f *fakeDatasetRefSyncRefStore) GetByID(ctx context.Context, id uuid.UUID) 
 func (f *fakeDatasetRefSyncRefStore) MarkSyncing(ctx context.Context, organizationID string, id uuid.UUID, syncRunID uuid.UUID) (*datalibModel.KnowledgeBaseAssetRef, error) {
 	f.markSyncingID = id
 	f.markSyncingRunID = syncRunID
+	if f.ref != nil {
+		f.ref.SyncStatus = datalibModel.KnowledgeBaseAssetRefSyncStatusSyncing
+	}
 	return f.ref, nil
 }
 
 func (f *fakeDatasetRefSyncRefStore) MarkSynced(ctx context.Context, organizationID string, id uuid.UUID, syncRunID uuid.UUID, datasetDocumentID uuid.UUID, generationNo int64, syncedAt time.Time) (*datalibModel.KnowledgeBaseAssetRef, error) {
 	f.syncedDocumentID = datasetDocumentID
 	f.syncedGeneration = generationNo
+	if f.ref != nil {
+		f.ref.SyncStatus = datalibModel.KnowledgeBaseAssetRefSyncStatusSynced
+	}
 	return f.ref, nil
 }
 
@@ -342,15 +390,17 @@ func (f *fakeDatasetRefSyncEmbeddingStore) List(ctx context.Context, filter data
 }
 
 type fakeDatasetRefSyncVectorStore struct {
-	storedIDs      []string
-	storedVectors  [][]float64
-	deletedIDs     []string
-	createdClasses []string
+	storedIDs        []string
+	storedVectors    [][]float64
+	storedProperties []map[string]interface{}
+	deletedIDs       []string
+	createdClasses   []string
 }
 
 func (f *fakeDatasetRefSyncVectorStore) StoreVector(ctx context.Context, id, className string, properties map[string]interface{}, vector []float64) error {
 	f.storedIDs = append(f.storedIDs, id)
 	f.storedVectors = append(f.storedVectors, vector)
+	f.storedProperties = append(f.storedProperties, properties)
 	return nil
 }
 

@@ -115,6 +115,9 @@ func (r *DatasetRefSyncRunner) Run(ctx context.Context, payload DatasetRefSyncPa
 	if ref.SyncRunID == nil || *ref.SyncRunID != syncRunID {
 		return nil
 	}
+	if !isRunnableDatasetRefSyncStatus(ref.SyncStatus) {
+		return nil
+	}
 	if ref.AssetID != assetID || ref.DatasetID != payload.DatasetID {
 		_, markErr := r.refs.MarkFailed(ctx, ref.OrganizationID, ref.ID, syncRunID, "ref_payload_mismatch", "sync task payload does not match ref")
 		return markErr
@@ -257,25 +260,33 @@ func (r *DatasetRefSyncRunner) createDatasetDocument(ctx context.Context, ref *d
 		docForm = "hierarchical_model"
 	}
 	document := &datasetModel.Document{
-		ID:                  documentID,
-		OrganizationID:      ref.OrganizationID,
-		DatasetID:           ref.DatasetID,
-		Position:            position,
-		DataSourceType:      "file_asset",
-		DataSourceInfo:      stringPtr(string(dataSourceInfo)),
-		Batch:               ref.ID.String(),
-		Name:                asset.Title,
-		CreatedFrom:         "data_library",
-		CreatedBy:           createdBy,
-		CreatedAt:           now,
-		FileID:              stringPtr(asset.SourceFileID),
-		WordCount:           &wordCount,
-		Tokens:              &wordCount,
-		IndexingStatus:      datasetModel.DocumentStatusIndexing,
-		Enabled:             false,
-		UpdatedAt:           now,
-		DocForm:             docForm,
-		DocMetadata:         datasetModel.JSONMap{"asset_id": asset.ID.String(), "generation_no": asset.GenerationNo},
+		ID:             documentID,
+		OrganizationID: ref.OrganizationID,
+		DatasetID:      ref.DatasetID,
+		Position:       position,
+		DataSourceType: "file_asset",
+		DataSourceInfo: stringPtr(string(dataSourceInfo)),
+		Batch:          ref.ID.String(),
+		Name:           asset.Title,
+		CreatedFrom:    "data_library",
+		CreatedBy:      createdBy,
+		CreatedAt:      now,
+		FileID:         stringPtr(asset.SourceFileID),
+		WordCount:      &wordCount,
+		Tokens:         &wordCount,
+		IndexingStatus: datasetModel.DocumentStatusIndexing,
+		Enabled:        false,
+		UpdatedAt:      now,
+		DocForm:        docForm,
+		DocMetadata: datasetModel.JSONMap{
+			"source_file_id":      asset.SourceFileID,
+			"asset_id":            asset.ID.String(),
+			"ref_id":              ref.ID.String(),
+			"generation_no":       asset.GenerationNo,
+			"embedding_provider":  stringPtrValue(asset.EmbeddingProvider),
+			"embedding_model":     stringPtrValue(asset.EmbeddingModel),
+			"embedding_dimension": intPtrValue(asset.EmbeddingDimension),
+		},
 		ProcessingStartedAt: &now,
 	}
 	if err := r.documents.Create(ctx, document); err != nil {
@@ -331,7 +342,20 @@ func (r *DatasetRefSyncRunner) copyChunksToDataset(ctx context.Context, dataset 
 			if embedding == nil {
 				return fmt.Errorf("missing embedding for chunk %s", chunk.ID)
 			}
-			if err := r.storeVector(ctx, className, indexNodeID, document.ID, document.DatasetID, chunk.Content, indexNodeHash, embedding); err != nil {
+			if err := r.storeVector(ctx, className, datasetRefSyncVectorSource{
+				IndexNodeID:   indexNodeID,
+				DocumentID:    document.ID,
+				DatasetID:     document.DatasetID,
+				SegmentID:     segment.ID,
+				Content:       chunk.Content,
+				Hash:          indexNodeHash,
+				RefID:         document.Batch,
+				AssetID:       chunk.AssetID.String(),
+				SourceFileID:  documentFileID(document),
+				SourceChunkID: chunk.ID.String(),
+				GenerationNo:  chunk.GenerationNo,
+				ContentHash:   sourceContentHash(chunk),
+			}, embedding); err != nil {
 				return err
 			}
 			continue
@@ -362,7 +386,21 @@ func (r *DatasetRefSyncRunner) copyChunksToDataset(ctx context.Context, dataset 
 			if err := r.documents.CreateChildChunk(ctx, childChunk); err != nil {
 				return fmt.Errorf("create child chunk: %w", err)
 			}
-			if err := r.storeVector(ctx, className, childIndexNodeID, document.ID, document.DatasetID, child.Content, childIndexNodeHash, embedding); err != nil {
+			if err := r.storeVector(ctx, className, datasetRefSyncVectorSource{
+				IndexNodeID:   childIndexNodeID,
+				DocumentID:    document.ID,
+				DatasetID:     document.DatasetID,
+				SegmentID:     segment.ID,
+				ChildChunkID:  childChunk.ID,
+				Content:       child.Content,
+				Hash:          childIndexNodeHash,
+				RefID:         document.Batch,
+				AssetID:       child.AssetID.String(),
+				SourceFileID:  documentFileID(document),
+				SourceChunkID: child.ID.String(),
+				GenerationNo:  child.GenerationNo,
+				ContentHash:   sourceContentHash(child),
+			}, embedding); err != nil {
 				return err
 			}
 		}
@@ -373,7 +411,23 @@ func (r *DatasetRefSyncRunner) copyChunksToDataset(ctx context.Context, dataset 
 	return nil
 }
 
-func (r *DatasetRefSyncRunner) storeVector(ctx context.Context, className, indexNodeID, documentID, datasetID, content, hash string, embedding *datalibModel.DocumentChunkEmbedding) error {
+type datasetRefSyncVectorSource struct {
+	IndexNodeID   string
+	DocumentID    string
+	DatasetID     string
+	SegmentID     string
+	ChildChunkID  string
+	Content       string
+	Hash          string
+	RefID         string
+	AssetID       string
+	SourceFileID  string
+	SourceChunkID string
+	GenerationNo  int64
+	ContentHash   string
+}
+
+func (r *DatasetRefSyncRunner) storeVector(ctx context.Context, className string, source datasetRefSyncVectorSource, embedding *datalibModel.DocumentChunkEmbedding) error {
 	vector := make([]float64, 0, len(embedding.EmbeddingVector))
 	for _, item := range embedding.EmbeddingVector {
 		vector = append(vector, float64(item))
@@ -382,14 +436,25 @@ func (r *DatasetRefSyncRunner) storeVector(ctx context.Context, className, index
 		return fmt.Errorf("empty embedding vector for chunk %s", embedding.ChunkID)
 	}
 	properties := map[string]interface{}{
-		"text":        content,
-		"doc_id":      indexNodeID,
-		"doc_hash":    hash,
-		"document_id": documentID,
-		"dataset_id":  datasetID,
+		"text":                source.Content,
+		"doc_id":              source.IndexNodeID,
+		"doc_hash":            source.Hash,
+		"document_id":         source.DocumentID,
+		"dataset_id":          source.DatasetID,
+		"segment_id":          source.SegmentID,
+		"child_chunk_id":      source.ChildChunkID,
+		"asset_id":            source.AssetID,
+		"ref_id":              source.RefID,
+		"source_file_id":      source.SourceFileID,
+		"source_chunk_id":     source.SourceChunkID,
+		"generation_no":       source.GenerationNo,
+		"content_hash":        source.ContentHash,
+		"embedding_provider":  embedding.EmbeddingProvider,
+		"embedding_model":     embedding.EmbeddingModel,
+		"embedding_dimension": embedding.EmbeddingDimension,
 	}
-	if err := r.vectorDB.StoreVector(ctx, indexNodeID, className, properties, vector); err != nil {
-		return fmt.Errorf("store vector %s: %w", indexNodeID, err)
+	if err := r.vectorDB.StoreVector(ctx, source.IndexNodeID, className, properties, vector); err != nil {
+		return fmt.Errorf("store vector %s: %w", source.IndexNodeID, err)
 	}
 	return nil
 }
@@ -530,6 +595,28 @@ func refDatasetDocumentID(ref *datalibModel.KnowledgeBaseAssetRef) string {
 	return ref.DatasetDocumentID.String()
 }
 
+func isRunnableDatasetRefSyncStatus(status string) bool {
+	return status == datalibModel.KnowledgeBaseAssetRefSyncStatusPending ||
+		status == datalibModel.KnowledgeBaseAssetRefSyncStatusSyncing
+}
+
+func documentFileID(document *datasetModel.Document) string {
+	if document == nil || document.FileID == nil {
+		return ""
+	}
+	return *document.FileID
+}
+
+func sourceContentHash(chunk *datalibModel.DocumentChunk) string {
+	if chunk == nil {
+		return ""
+	}
+	if chunk.ContentHash != "" {
+		return chunk.ContentHash
+	}
+	return contentHash(chunk.Content)
+}
+
 func contentHash(content string) string {
 	h := sha256.New()
 	h.Write([]byte(content))
@@ -544,6 +631,20 @@ func defaultDatasetRefSyncVectorClassProperties() []map[string]interface{} {
 
 func stringPtr(value string) *string {
 	return &value
+}
+
+func stringPtrValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func intPtrValue(value *int) int {
+	if value == nil {
+		return 0
+	}
+	return *value
 }
 
 func boolPtr(value bool) *bool {
