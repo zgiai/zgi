@@ -825,6 +825,8 @@ ref 本身不提供 enabled 字段。
 - 文件资产详情页编辑二级切片成功后，页面显示新内容。
 - 修复前，二级切片编辑只更新 asset chunk/embedding，没有触发 ref pending 和 `dataset_ref:sync` 入队，知识库 document 不会重建。
 - 修复后，服务层测试覆盖：二级切片编辑成功后禁用旧 document、ref 进入 pending、生成新 `sync_run_id`，并以当前 `generation_no` 入队。
+- 重新解析 `语文课程介绍.docx` 后，asset `generation_no` 从 1 递增到 2，ref 从 `synced_generation_no=1` 更新为 2，并指向新 document。
+- 重新解析成功后，旧 document 被删除，当前知识库仅保留新 document；文件详情页回到“已就绪”，知识库文件同步面板显示 `2 / 2` 且状态为“已同步”。
 
 ## 20. 关键风险与处理
 
