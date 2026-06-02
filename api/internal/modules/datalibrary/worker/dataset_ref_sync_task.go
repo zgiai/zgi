@@ -65,3 +65,27 @@ func NewDatasetRefSyncTask(refID uuid.UUID, assetID uuid.UUID, datasetID string,
 	}
 	return asynq.NewTask(taskType, payload, asynq.Queue("chunking"), asynq.MaxRetry(0), asynq.Timeout(60*time.Minute)), nil
 }
+
+func RegisterDatasetRefSyncTaskHandler(registry TaskHandlerRegistry, runner *DatasetRefSyncRunner, taskManager *queue.TaskManager) {
+	if registry == nil || runner == nil {
+		return
+	}
+	taskType := TypeDataLibraryDatasetRefSync
+	if taskManager != nil {
+		taskType = taskManager.GetTaskTypeWithPrefix(taskType)
+	}
+	registry.Register(taskType, NewDatasetRefSyncTaskHandler(runner))
+}
+
+func NewDatasetRefSyncTaskHandler(runner *DatasetRefSyncRunner) func(context.Context, *asynq.Task) error {
+	return func(ctx context.Context, task *asynq.Task) error {
+		if runner == nil {
+			return fmt.Errorf("dataset ref sync runner is not configured: %w", asynq.SkipRetry)
+		}
+		var payload DatasetRefSyncPayload
+		if err := json.Unmarshal(task.Payload(), &payload); err != nil {
+			return fmt.Errorf("unmarshal dataset ref sync task payload: %v: %w", err, asynq.SkipRetry)
+		}
+		return runner.Run(ctx, payload)
+	}
+}
