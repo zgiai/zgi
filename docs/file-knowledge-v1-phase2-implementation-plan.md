@@ -553,6 +553,15 @@ flowchart TD
 
 虽然 `generation_no` 不变，但 `sync_run_id` 会变化，可以防止同 generation 下旧同步任务回写。
 
+当前实现约束：
+
+- 文件资产二级切片 PATCH 成功后，会先更新 asset chunk 和对应 embedding。
+- 更新成功后，后端立即查询所有未删除知识库 ref。
+- 对每条 ref 禁用当前 `dataset_document_id` 对应 document。
+- ref 标记为 `pending`，生成新的 `sync_run_id`。
+- 使用当前 `asset.generation_no` 投递 `dataset_ref:sync`，worker 会复制最新的当前 generation chunks/embeddings。
+- 如果投递同步任务失败，本次 PATCH 返回失败，避免 ref 长时间停留在无任务执行的 pending 状态。
+
 ### 10.4 启停二级切片
 
 启停二级切片不需要重新 embedding。
@@ -806,6 +815,16 @@ ref 本身不提供 enabled 字段。
 | P2-QA-11 | 旧同步任务晚完成 | 因 sync_run_id 不一致不能覆盖新状态 |
 | P2-QA-12 | 移除引用 | 删除知识库 document 副本，不删除 asset |
 | P2-QA-13 | 删除源文件但仍有 ref | 删除被阻止，返回引用知识库列表 |
+
+### 19.1 Chrome 回归记录
+
+2026-06-02 在 Chrome 中测试 `codex_test` 知识库和 `语文课程介绍.docx` 文件资产：
+
+- 迁移补跑后，如果 API 服务仍保持旧连接，可能出现 PostgreSQL `cached plan must not change result type`。本地验证需要在迁移后重启 API。
+- 知识库文档页可正常展示 file refs，两条 ref 均为 `synced`。
+- 文件资产详情页编辑二级切片成功后，页面显示新内容。
+- 修复前，二级切片编辑只更新 asset chunk/embedding，没有触发 ref pending 和 `dataset_ref:sync` 入队，知识库 document 不会重建。
+- 修复后，服务层测试覆盖：二级切片编辑成功后禁用旧 document、ref 进入 pending、生成新 `sync_run_id`，并以当前 `generation_no` 入队。
 
 ## 20. 关键风险与处理
 

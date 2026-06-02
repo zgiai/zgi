@@ -91,6 +91,89 @@ func TestFileAssetChunkEditServiceUpdatesLeafChunkAndRegeneratesOnlyThatEmbeddin
 	}
 }
 
+func TestFileAssetChunkEditServiceEnqueuesDatasetRefSyncAfterEdit(t *testing.T) {
+	assetID := uuid.New()
+	runID := uuid.New()
+	chunkID := uuid.New()
+	refID := uuid.New()
+	documentID := uuid.New()
+	assetRepo := &fileAssetStateAssetRepo{
+		asset: &model.DocumentAsset{
+			ID:              assetID,
+			OrganizationID:  "org-1",
+			SourceFileID:    "file-1",
+			ProductStatus:   model.DocumentAssetProductStatusReady,
+			ProcessingRunID: &runID,
+			GenerationNo:    5,
+		},
+	}
+	chunkRepo := newFileAssetChunkEditChunkRepo([]*model.DocumentChunk{
+		{
+			ID:              chunkID,
+			OrganizationID:  "org-1",
+			AssetID:         assetID,
+			ProcessingRunID: runID,
+			GenerationNo:    5,
+			ChunkType:       model.DocumentChunkTypeChild,
+			Content:         "old content",
+			ContentHash:     documentChunkContentHash("old content"),
+			Enabled:         true,
+			Status:          model.DocumentChunkStatusReady,
+		},
+	})
+	refStore := &fileAssetStateRefStore{refs: []*model.KnowledgeBaseAssetRef{
+		{
+			ID:                refID,
+			OrganizationID:    "org-1",
+			DatasetID:         "dataset-1",
+			AssetID:           assetID,
+			DatasetDocumentID: &documentID,
+			SyncStatus:        model.KnowledgeBaseAssetRefSyncStatusSynced,
+		},
+	}}
+	documentStore := &fileAssetStateDocumentStore{}
+	enqueuer := &fileAssetChunkEditDatasetRefSyncEnqueuer{}
+	svc := NewFileAssetChunkEditServiceWithDatasetRefs(
+		assetRepo,
+		chunkRepo,
+		nil,
+		&fileAssetChunkEditEmbeddingService{},
+		nil,
+		refStore,
+		documentStore,
+		enqueuer,
+	)
+	content := "updated content"
+
+	_, err := svc.UpdateCurrentFileChunk(context.Background(), FileAssetChunkEditInput{
+		OrganizationID: "org-1",
+		SourceFileID:   "file-1",
+		ChunkID:        chunkID,
+		Content:        &content,
+		UpdatedBy:      "user-1",
+	})
+	if err != nil {
+		t.Fatalf("UpdateCurrentFileChunk: %v", err)
+	}
+	if len(documentStore.disabledIDs) != 1 || documentStore.disabledIDs[0] != documentID.String() || documentStore.disabledBy != "user-1" {
+		t.Fatalf("disabled_ids=%v disabled_by=%s", documentStore.disabledIDs, documentStore.disabledBy)
+	}
+	if refStore.pendingRefID != refID || refStore.pendingSyncRunID == uuid.Nil {
+		t.Fatalf("pending_ref=%s sync_run=%s", refStore.pendingRefID, refStore.pendingSyncRunID)
+	}
+	if len(enqueuer.items) != 1 {
+		t.Fatalf("enqueued=%d want 1", len(enqueuer.items))
+	}
+	item := enqueuer.items[0]
+	if item.refID != refID ||
+		item.assetID != assetID ||
+		item.datasetID != "dataset-1" ||
+		item.generationNo != 5 ||
+		item.syncRunID != refStore.pendingSyncRunID {
+		t.Fatalf("enqueued item=%+v pending_run=%s", item, refStore.pendingSyncRunID)
+	}
+}
+
 func TestFileAssetChunkEditServiceRejectsParentChunk(t *testing.T) {
 	assetID := uuid.New()
 	runID := uuid.New()
@@ -320,3 +403,28 @@ func (s *fileAssetChunkEditEmbeddingService) GenerateChunkEmbedding(ctx context.
 }
 
 var _ DocumentChunkEmbeddingService = (*fileAssetChunkEditEmbeddingService)(nil)
+
+type fileAssetChunkEditDatasetRefSyncEnqueuer struct {
+	items []fileAssetChunkEditDatasetRefSyncItem
+}
+
+type fileAssetChunkEditDatasetRefSyncItem struct {
+	refID        uuid.UUID
+	assetID      uuid.UUID
+	datasetID    string
+	generationNo int64
+	syncRunID    uuid.UUID
+}
+
+func (e *fileAssetChunkEditDatasetRefSyncEnqueuer) EnqueueDatasetRefSync(ctx context.Context, refID uuid.UUID, assetID uuid.UUID, datasetID string, generationNo int64, syncRunID uuid.UUID) error {
+	e.items = append(e.items, fileAssetChunkEditDatasetRefSyncItem{
+		refID:        refID,
+		assetID:      assetID,
+		datasetID:    datasetID,
+		generationNo: generationNo,
+		syncRunID:    syncRunID,
+	})
+	return nil
+}
+
+var _ FileAssetChunkEditDatasetRefSyncEnqueuer = (*fileAssetChunkEditDatasetRefSyncEnqueuer)(nil)

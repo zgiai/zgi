@@ -16,6 +16,7 @@ var (
 
 type FileAssetChunkEditService interface {
 	UpdateCurrentFileChunk(ctx context.Context, input FileAssetChunkEditInput) (*FileAssetChunkEditResult, error)
+	SetDatasetRefSyncEnqueuer(enqueuer FileAssetChunkEditDatasetRefSyncEnqueuer)
 }
 
 type FileAssetChunkEditInput struct {
@@ -42,6 +43,9 @@ type fileAssetChunkEditService struct {
 	embeddings  repository.DocumentChunkEmbeddingRepository
 	chunkEmbed  DocumentChunkEmbeddingService
 	vectorIndex FileAssetVectorIndexService
+	refs        fileAssetChunkEditRefStore
+	documents   fileAssetChunkEditDocumentStore
+	refSync     FileAssetChunkEditDatasetRefSyncEnqueuer
 }
 
 func NewFileAssetChunkEditService(
@@ -55,13 +59,62 @@ func NewFileAssetChunkEditService(
 	if len(vectorIndex) > 0 {
 		vectorIndexService = vectorIndex[0]
 	}
+	return newFileAssetChunkEditService(assets, chunks, embeddings, chunkEmbed, vectorIndexService, nil, nil, nil)
+}
+
+func NewFileAssetChunkEditServiceWithDatasetRefs(
+	assets repository.DocumentAssetRepository,
+	chunks repository.DocumentChunkRepository,
+	embeddings repository.DocumentChunkEmbeddingRepository,
+	chunkEmbed DocumentChunkEmbeddingService,
+	vectorIndex FileAssetVectorIndexService,
+	refs fileAssetChunkEditRefStore,
+	documents fileAssetChunkEditDocumentStore,
+	refSync FileAssetChunkEditDatasetRefSyncEnqueuer,
+) FileAssetChunkEditService {
+	return newFileAssetChunkEditService(assets, chunks, embeddings, chunkEmbed, vectorIndex, refs, documents, refSync)
+}
+
+func newFileAssetChunkEditService(
+	assets repository.DocumentAssetRepository,
+	chunks repository.DocumentChunkRepository,
+	embeddings repository.DocumentChunkEmbeddingRepository,
+	chunkEmbed DocumentChunkEmbeddingService,
+	vectorIndex FileAssetVectorIndexService,
+	refs fileAssetChunkEditRefStore,
+	documents fileAssetChunkEditDocumentStore,
+	refSync FileAssetChunkEditDatasetRefSyncEnqueuer,
+) FileAssetChunkEditService {
 	return &fileAssetChunkEditService{
 		assets:      assets,
 		chunks:      chunks,
 		embeddings:  embeddings,
 		chunkEmbed:  chunkEmbed,
-		vectorIndex: vectorIndexService,
+		vectorIndex: vectorIndex,
+		refs:        refs,
+		documents:   documents,
+		refSync:     refSync,
 	}
+}
+
+type fileAssetChunkEditRefStore interface {
+	ListActiveByAsset(ctx context.Context, organizationID string, assetID uuid.UUID) ([]*model.KnowledgeBaseAssetRef, error)
+	MarkPending(ctx context.Context, organizationID string, id uuid.UUID, syncRunID uuid.UUID, errorCode, errorMessage *string) (*model.KnowledgeBaseAssetRef, error)
+}
+
+type fileAssetChunkEditDocumentStore interface {
+	DisableDocuments(ctx context.Context, datasetID string, documentIDs []string, accountID string) error
+}
+
+type FileAssetChunkEditDatasetRefSyncEnqueuer interface {
+	EnqueueDatasetRefSync(ctx context.Context, refID uuid.UUID, assetID uuid.UUID, datasetID string, generationNo int64, syncRunID uuid.UUID) error
+}
+
+func (s *fileAssetChunkEditService) SetDatasetRefSyncEnqueuer(enqueuer FileAssetChunkEditDatasetRefSyncEnqueuer) {
+	if s == nil {
+		return
+	}
+	s.refSync = enqueuer
 }
 
 func (s *fileAssetChunkEditService) UpdateCurrentFileChunk(ctx context.Context, input FileAssetChunkEditInput) (*FileAssetChunkEditResult, error) {
@@ -117,6 +170,9 @@ func (s *fileAssetChunkEditService) UpdateCurrentFileChunk(ctx context.Context, 
 	}
 	embeddingResult, embeddingReady, err := s.syncEditedChunkEmbedding(ctx, asset, updatedChunk, input)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.enqueueDatasetRefSyncsForAssetEdit(ctx, asset, input.UpdatedBy); err != nil {
 		return nil, err
 	}
 	return &FileAssetChunkEditResult{
@@ -176,6 +232,34 @@ func (s *fileAssetChunkEditService) syncEditedChunkEmbedding(ctx context.Context
 		return embeddingResult, true, nil
 	}
 	return nil, false, nil
+}
+
+func (s *fileAssetChunkEditService) enqueueDatasetRefSyncsForAssetEdit(ctx context.Context, asset *model.DocumentAsset, accountID string) error {
+	if s == nil || s.refs == nil || s.documents == nil || s.refSync == nil || asset == nil {
+		return nil
+	}
+	refs, err := s.refs.ListActiveByAsset(ctx, asset.OrganizationID, asset.ID)
+	if err != nil {
+		return err
+	}
+	for _, ref := range refs {
+		if ref == nil {
+			continue
+		}
+		if ref.DatasetDocumentID != nil && *ref.DatasetDocumentID != uuid.Nil {
+			if err := s.documents.DisableDocuments(ctx, ref.DatasetID, []string{ref.DatasetDocumentID.String()}, accountID); err != nil {
+				return err
+			}
+		}
+		syncRunID := uuid.New()
+		if _, err := s.refs.MarkPending(ctx, asset.OrganizationID, ref.ID, syncRunID, nil, nil); err != nil {
+			return err
+		}
+		if err := s.refSync.EnqueueDatasetRefSync(ctx, ref.ID, asset.ID, ref.DatasetID, asset.GenerationNo, syncRunID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func isEditableChunkUpdateAllowed(chunk *model.DocumentChunk, input FileAssetChunkEditInput) bool {

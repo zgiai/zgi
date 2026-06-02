@@ -53,6 +53,10 @@ func registerFileRoutesLegacy(v1 *gin.RouterGroup, deps FileRouteDeps) {
 	}); ok {
 		configurable.SetFileAssetDeletionService(deps.DataLibraryModule.FileAssetDeletionService)
 	}
+	taskDispatcher := datalibraryworker.NewFileProcessTaskDispatcher(deps.TaskManager)
+	if deps.DataLibraryModule != nil && deps.DataLibraryModule.FileAssetChunkEditService != nil {
+		deps.DataLibraryModule.FileAssetChunkEditService.SetDatasetRefSyncEnqueuer(taskDispatcher)
+	}
 	fileFolderService := fileProcessService.NewFileResourceService(fileFolderRepo, fileRepo, documentRepo, datasetRepo, deps.AccountService)
 	fileFavoriteService := fileProcessService.NewFileFavoriteService(fileFavoriteRepo, fileRepo)
 
@@ -72,7 +76,7 @@ func registerFileRoutesLegacy(v1 *gin.RouterGroup, deps FileRouteDeps) {
 			FileAssetChunkService:            deps.DataLibraryModule.FileAssetChunkService,
 			FileAssetChunkEditService:        deps.DataLibraryModule.FileAssetChunkEditService,
 			FileAssetQAService:               deps.DataLibraryModule.FileAssetQAService,
-			TaskEnqueuer:                     datalibraryworker.NewFileProcessTaskDispatcher(deps.TaskManager),
+			TaskEnqueuer:                     taskDispatcher,
 		},
 	)
 	fileResourceHandler := fileProcessHandler.NewFileResourceHandler(fileFolderService, fileService, deps.AccountService, deps.OrganizationService, fileFavoriteService, deps.DataLibraryModule.FileAssetSummaryService)

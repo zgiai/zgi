@@ -125,7 +125,16 @@ func NewModuleWithRuntime(
 	fileAssetDetailService := service.NewFileAssetDetailService(documentAssetRepo, processingRequestRepo, parseConfirmationItemRepo, documentChunkRepo, documentChunkEmbeddingRepo)
 	fileAssetSummaryService := service.NewFileAssetSummaryService(documentAssetRepo, parseConfirmationItemRepo, documentChunkRepo, documentChunkEmbeddingRepo)
 	fileAssetChunkService := service.NewFileAssetChunkService(documentAssetRepo, documentChunkRepo, documentChunkEmbeddingRepo)
-	fileAssetChunkEditService := service.NewFileAssetChunkEditService(documentAssetRepo, documentChunkRepo, documentChunkEmbeddingRepo, documentChunkEmbeddingService, fileAssetVectorIndexService)
+	fileAssetChunkEditService := service.NewFileAssetChunkEditServiceWithDatasetRefs(
+		documentAssetRepo,
+		documentChunkRepo,
+		documentChunkEmbeddingRepo,
+		documentChunkEmbeddingService,
+		fileAssetVectorIndexService,
+		knowledgeBaseAssetRefRepo,
+		datasetDocumentRepo,
+		nil,
+	)
 	fileAssetQAService := service.NewFileAssetQAService(documentAssetRepo, documentChunkRepo, documentChunkEmbeddingRepo, fileAssetVectorIndexService, llmClient, defaultModelSvc)
 	fileAssetDeletionService := service.NewFileAssetDeletionService(db, fileAssetVectorIndexService)
 	processingExecutorRegistry := service.NewDefaultProcessingExecutorRegistry()
