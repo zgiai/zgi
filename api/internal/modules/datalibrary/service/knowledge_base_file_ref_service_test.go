@@ -224,6 +224,7 @@ func TestKnowledgeBaseFileRefServiceListsRefsWithAssetAndFileState(t *testing.T)
 				Title:          "Asset title",
 				ProductStatus:  datalibModel.DocumentAssetProductStatusReady,
 				GenerationNo:   3,
+				ChunkCount:     24,
 			},
 		},
 		files: map[string]*fileModel.UploadFile{
@@ -242,9 +243,8 @@ func TestKnowledgeBaseFileRefServiceListsRefsWithAssetAndFileState(t *testing.T)
 		},
 		documents: []*datasetModel.Document{
 			{
-				ID:           documentID.String(),
-				Enabled:      false,
-				SegmentCount: 24,
+				ID:      documentID.String(),
+				Enabled: false,
 			},
 		},
 	}

@@ -340,13 +340,11 @@ func (s *knowledgeBaseFileRefService) ListRefs(ctx context.Context, req Knowledg
 			fileName = file.Name
 		}
 		var documentEnabled *bool
-		var documentSegmentCount *int
+		documentSegmentCount := asset.ChunkCount
 		if ref.DatasetDocumentID != nil {
 			if document := documentsByID[ref.DatasetDocumentID.String()]; document != nil {
 				enabled := document.Enabled
 				documentEnabled = &enabled
-				segmentCount := document.SegmentCount
-				documentSegmentCount = &segmentCount
 			}
 		}
 		items = append(items, &KnowledgeBaseFileRefItem{
@@ -359,7 +357,7 @@ func (s *knowledgeBaseFileRefService) ListRefs(ctx context.Context, req Knowledg
 			GenerationNo:                asset.GenerationNo,
 			DatasetDocumentID:           ref.DatasetDocumentID,
 			DatasetDocumentEnabled:      documentEnabled,
-			DatasetDocumentSegmentCount: documentSegmentCount,
+			DatasetDocumentSegmentCount: &documentSegmentCount,
 			SyncStatus:                  ref.SyncStatus,
 			SyncedGenerationNo:          ref.SyncedGenerationNo,
 			LastSyncedAt:                ref.LastSyncedAt,
