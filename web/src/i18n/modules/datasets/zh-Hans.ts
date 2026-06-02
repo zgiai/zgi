@@ -171,6 +171,8 @@ const messages: DatasetMessages = {
       noDocument: '无文档',
       openFile: '打开文件',
       retry: '重试',
+      readOnlyTitle: '知识库中的切片只读',
+      readOnlyDescription: '请在文件管理中修改解析结果和切片，当前知识库会同步新的副本。',
       confirmRemoveTitle: '从当前知识库移除 "{name}" 吗？',
       confirmRemoveDescription: '这会移除文件资产引用，并删除已复制到知识库的文档。',
       status: {

@@ -172,6 +172,9 @@ const messages = {
       noDocument: 'No document',
       openFile: 'Open file',
       retry: 'Retry',
+      readOnlyTitle: 'Segments are read-only in datasets',
+      readOnlyDescription:
+        'Edit parsing results and chunks in file management, then this dataset will sync a fresh copy.',
       confirmRemoveTitle: 'Remove "{name}" from this dataset?',
       confirmRemoveDescription:
         'This removes the file asset reference and deletes its copied dataset document.',

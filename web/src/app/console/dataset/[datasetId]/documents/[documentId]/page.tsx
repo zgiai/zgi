@@ -2,7 +2,7 @@
 
 import { useParams, useRouter } from 'next/navigation';
 import { useT } from '@/i18n';
-import { ArrowLeft, AlertCircle, ShieldAlert } from 'lucide-react';
+import { ArrowLeft, AlertCircle, ExternalLink, ShieldAlert } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -36,6 +36,11 @@ export default function DocumentDetailPage() {
   const handleBack = () => {
     router.push(`/console/dataset/${datasetId}/documents`);
   };
+
+  const sourceFileId =
+    typeof metadata?.doc_metadata?.source_file_id === 'string'
+      ? metadata.doc_metadata.source_file_id
+      : undefined;
 
   // Loading state - wait for dataset first, then document if user has permission
   if (isDatasetLoading || (shouldFetchDocument && isLoading)) {
@@ -119,6 +124,21 @@ export default function DocumentDetailPage() {
       </div>
 
       <ExtractionFallbackNotice extraction={metadata?.doc_metadata?.extraction} variant="banner" />
+
+      <div className="flex flex-col gap-3 rounded-md border bg-muted/20 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="text-sm font-medium">{t('datasets.documents.fileRefs.readOnlyTitle')}</div>
+          <div className="text-sm text-muted-foreground">
+            {t('datasets.documents.fileRefs.readOnlyDescription')}
+          </div>
+        </div>
+        {sourceFileId && (
+          <Button variant="outline" onClick={() => router.push(`/console/files/${sourceFileId}`)}>
+            <ExternalLink className="h-4 w-4" />
+            {t('datasets.documents.fileRefs.openFile')}
+          </Button>
+        )}
+      </div>
 
       {!(document.indexing_status === 'completed') ? (
         <DocumentIndexingStatusView datasetId={datasetId} documentId={documentId} />
