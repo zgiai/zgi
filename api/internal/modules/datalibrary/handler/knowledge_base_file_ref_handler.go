@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -17,10 +18,15 @@ type KnowledgeBaseFileRefHandler struct {
 	service        datalibService.KnowledgeBaseFileRefService
 	dispatcher     *datalibWorker.FileProcessTaskDispatcher
 	accountService interfaces.AccountService
+	documents      datasetFileRefDocumentManager
 }
 
-func NewKnowledgeBaseFileRefHandler(service datalibService.KnowledgeBaseFileRefService, dispatcher *datalibWorker.FileProcessTaskDispatcher, accountService interfaces.AccountService) *KnowledgeBaseFileRefHandler {
-	return &KnowledgeBaseFileRefHandler{service: service, dispatcher: dispatcher, accountService: accountService}
+type datasetFileRefDocumentManager interface {
+	DeleteDocuments(ctx context.Context, datasetID string, documentIDs []string) error
+}
+
+func NewKnowledgeBaseFileRefHandler(service datalibService.KnowledgeBaseFileRefService, dispatcher *datalibWorker.FileProcessTaskDispatcher, accountService interfaces.AccountService, documents datasetFileRefDocumentManager) *KnowledgeBaseFileRefHandler {
+	return &KnowledgeBaseFileRefHandler{service: service, dispatcher: dispatcher, accountService: accountService, documents: documents}
 }
 
 func (h *KnowledgeBaseFileRefHandler) RegisterDatasetRoutes(router *gin.RouterGroup) {
@@ -29,6 +35,7 @@ func (h *KnowledgeBaseFileRefHandler) RegisterDatasetRoutes(router *gin.RouterGr
 	group.GET("/file-candidates", h.ListFileCandidates)
 	group.GET("/file-refs", h.ListFileRefs)
 	group.POST("/file-refs", h.CreateFileRefs)
+	group.DELETE("/file-refs/:ref_id", h.RemoveFileRef)
 	group.POST("/file-refs/:ref_id/retry", h.RetryFileRef)
 	group.POST("/file-refs/:ref_id/sync/retry", h.RetryFileRef)
 }
@@ -150,6 +157,42 @@ func (h *KnowledgeBaseFileRefHandler) RetryFileRef(c *gin.Context) {
 		}
 	}
 	response.Success(c, result)
+}
+
+func (h *KnowledgeBaseFileRefHandler) RemoveFileRef(c *gin.Context) {
+	organizationID := util.GetOrganizationID(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	refID, err := uuid.Parse(c.Param("ref_id"))
+	if err != nil || refID == uuid.Nil {
+		response.Fail(c, response.ErrInvalidParams)
+		return
+	}
+	req := datalibService.KnowledgeBaseFileRefGetRequest{
+		OrganizationID: organizationID,
+		WorkspaceID:    optionalString(util.GetWorkspaceID(c)),
+		DatasetID:      c.Param("dataset_id"),
+		RefID:          refID,
+	}
+	ref, err := h.service.GetRef(c.Request.Context(), req)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+	if h.documents != nil && ref != nil && ref.DatasetDocumentID != nil {
+		if err := h.documents.DeleteDocuments(c.Request.Context(), ref.DatasetID, []string{ref.DatasetDocumentID.String()}); err != nil {
+			response.FailWithMessage(c, response.ErrSystemError, err.Error())
+			return
+		}
+	}
+	removed, err := h.service.RemoveRef(c.Request.Context(), req)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+	response.Success(c, removed)
 }
 
 func parseAssetIDs(raw []string) ([]uuid.UUID, bool) {

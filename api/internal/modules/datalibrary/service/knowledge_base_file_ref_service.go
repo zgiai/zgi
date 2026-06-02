@@ -44,6 +44,7 @@ type knowledgeBaseFileRefStore interface {
 	FindActiveByAsset(ctx context.Context, organizationID string, datasetID string, assetID uuid.UUID) (*datalibModel.KnowledgeBaseAssetRef, error)
 	List(ctx context.Context, filter datalibRepo.KnowledgeBaseAssetRefListFilter) ([]*datalibModel.KnowledgeBaseAssetRef, int64, error)
 	MarkPending(ctx context.Context, organizationID string, id uuid.UUID, syncRunID uuid.UUID, errorCode, errorMessage *string) (*datalibModel.KnowledgeBaseAssetRef, error)
+	SoftDelete(ctx context.Context, organizationID string, id uuid.UUID) (*datalibModel.KnowledgeBaseAssetRef, error)
 }
 
 type knowledgeBaseFileFileReader interface {
@@ -58,7 +59,9 @@ type KnowledgeBaseFileRefService interface {
 	ListCandidates(ctx context.Context, req KnowledgeBaseFileCandidateRequest) (*KnowledgeBaseFileCandidateResult, error)
 	ListRefs(ctx context.Context, req KnowledgeBaseFileRefListRequest) (*KnowledgeBaseFileRefListResult, error)
 	CreateRefs(ctx context.Context, req KnowledgeBaseFileRefCreateRequest) (*KnowledgeBaseFileRefCreateResult, error)
+	GetRef(ctx context.Context, req KnowledgeBaseFileRefGetRequest) (*KnowledgeBaseAssetRefView, error)
 	RetryRef(ctx context.Context, req KnowledgeBaseFileRefRetryRequest) (*KnowledgeBaseFileRefCreateItem, error)
+	RemoveRef(ctx context.Context, req KnowledgeBaseFileRefGetRequest) (*KnowledgeBaseAssetRefView, error)
 }
 
 type KnowledgeBaseFileCandidateRequest struct {
@@ -109,6 +112,13 @@ type KnowledgeBaseFileRefListRequest struct {
 }
 
 type KnowledgeBaseFileRefRetryRequest struct {
+	OrganizationID string
+	WorkspaceID    *string
+	DatasetID      string
+	RefID          uuid.UUID
+}
+
+type KnowledgeBaseFileRefGetRequest struct {
 	OrganizationID string
 	WorkspaceID    *string
 	DatasetID      string
@@ -347,6 +357,14 @@ func (s *knowledgeBaseFileRefService) CreateRefs(ctx context.Context, req Knowle
 	return result, nil
 }
 
+func (s *knowledgeBaseFileRefService) GetRef(ctx context.Context, req KnowledgeBaseFileRefGetRequest) (*KnowledgeBaseAssetRefView, error) {
+	ref, err := s.getScopedRef(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return newKnowledgeBaseAssetRefView(ref), nil
+}
+
 func (s *knowledgeBaseFileRefService) RetryRef(ctx context.Context, req KnowledgeBaseFileRefRetryRequest) (*KnowledgeBaseFileRefCreateItem, error) {
 	if err := validateKnowledgeBaseFileRefScope(req.OrganizationID, req.DatasetID); err != nil {
 		return nil, err
@@ -400,6 +418,54 @@ func (s *knowledgeBaseFileRefService) RetryRef(ctx context.Context, req Knowledg
 		GenerationNo: generationNo,
 		Success:      true,
 	}, nil
+}
+
+func (s *knowledgeBaseFileRefService) RemoveRef(ctx context.Context, req KnowledgeBaseFileRefGetRequest) (*KnowledgeBaseAssetRefView, error) {
+	ref, err := s.getScopedRef(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	removed, err := s.refs.SoftDelete(ctx, req.OrganizationID, ref.ID)
+	if err != nil {
+		return nil, err
+	}
+	if removed == nil {
+		return nil, ErrKnowledgeBaseFileRefNotFound
+	}
+	return newKnowledgeBaseAssetRefView(removed), nil
+}
+
+func (s *knowledgeBaseFileRefService) getScopedRef(ctx context.Context, req KnowledgeBaseFileRefGetRequest) (*datalibModel.KnowledgeBaseAssetRef, error) {
+	if err := validateKnowledgeBaseFileRefScope(req.OrganizationID, req.DatasetID); err != nil {
+		return nil, err
+	}
+	if req.RefID == uuid.Nil {
+		return nil, ErrKnowledgeBaseFileRefNotFound
+	}
+	dataset, err := s.datasets.GetByID(ctx, req.DatasetID)
+	if err != nil {
+		return nil, err
+	}
+	if dataset == nil || dataset.OrganizationID != req.OrganizationID {
+		return nil, ErrDatasetNotFound
+	}
+	ref, err := s.refs.GetByID(ctx, req.RefID)
+	if err != nil {
+		return nil, err
+	}
+	if ref == nil || ref.OrganizationID != req.OrganizationID || ref.DatasetID != req.DatasetID {
+		return nil, ErrKnowledgeBaseFileRefNotFound
+	}
+	if req.WorkspaceID != nil {
+		asset, err := s.assets.GetAssetByID(ctx, ref.AssetID)
+		if err != nil {
+			return nil, err
+		}
+		if asset == nil || asset.WorkspaceID == nil || *asset.WorkspaceID != *req.WorkspaceID {
+			return nil, ErrKnowledgeBaseFileRefNotFound
+		}
+	}
+	return ref, nil
 }
 
 func (s *knowledgeBaseFileRefService) createOneRef(ctx context.Context, dataset *datasetModel.Dataset, req KnowledgeBaseFileRefCreateRequest, assetID uuid.UUID) (*datalibModel.KnowledgeBaseAssetRef, uuid.UUID, int64, string, error) {

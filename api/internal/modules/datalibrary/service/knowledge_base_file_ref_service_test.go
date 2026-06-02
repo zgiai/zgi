@@ -282,6 +282,39 @@ func TestKnowledgeBaseFileRefServiceRetriesRef(t *testing.T) {
 	}
 }
 
+func TestKnowledgeBaseFileRefServiceRemovesRef(t *testing.T) {
+	assetID := uuid.New()
+	refID := uuid.New()
+	deps := &fakeKnowledgeBaseFileRefDeps{
+		dataset: &datasetModel.Dataset{
+			ID:             "dataset-1",
+			OrganizationID: "org-1",
+		},
+		refs: []*datalibModel.KnowledgeBaseAssetRef{
+			{
+				ID:             refID,
+				OrganizationID: "org-1",
+				DatasetID:      "dataset-1",
+				AssetID:        assetID,
+				SyncStatus:     datalibModel.KnowledgeBaseAssetRefSyncStatusSynced,
+			},
+		},
+	}
+	svc := newKnowledgeBaseFileRefTestService(deps)
+
+	removed, err := svc.RemoveRef(context.Background(), KnowledgeBaseFileRefGetRequest{
+		OrganizationID: "org-1",
+		DatasetID:      "dataset-1",
+		RefID:          refID,
+	})
+	if err != nil {
+		t.Fatalf("RemoveRef: %v", err)
+	}
+	if removed == nil || removed.ID != refID || deps.removedRefID != refID {
+		t.Fatalf("removed=%+v removed_id=%s", removed, deps.removedRefID)
+	}
+}
+
 type fakeKnowledgeBaseFileRefDeps struct {
 	dataset          *datasetModel.Dataset
 	assets           []*datalibModel.DocumentAsset
@@ -293,6 +326,7 @@ type fakeKnowledgeBaseFileRefDeps struct {
 	created          *datalibModel.KnowledgeBaseAssetRef
 	lastRefFilter    datalibRepo.KnowledgeBaseAssetRefListFilter
 	pendingSyncRunID uuid.UUID
+	removedRefID     uuid.UUID
 }
 
 func newKnowledgeBaseFileRefTestService(deps *fakeKnowledgeBaseFileRefDeps) KnowledgeBaseFileRefService {
@@ -382,5 +416,14 @@ func (f fakeKnowledgeBaseFileRefStore) MarkPending(ctx context.Context, organiza
 	ref.SyncErrorCode = errorCode
 	ref.SyncErrorMessage = errorMessage
 	f.deps.pendingSyncRunID = syncRunID
+	return ref, nil
+}
+
+func (f fakeKnowledgeBaseFileRefStore) SoftDelete(ctx context.Context, organizationID string, id uuid.UUID) (*datalibModel.KnowledgeBaseAssetRef, error) {
+	ref, err := f.GetByID(ctx, id)
+	if err != nil || ref == nil || ref.OrganizationID != organizationID {
+		return ref, err
+	}
+	f.deps.removedRefID = id
 	return ref, nil
 }
