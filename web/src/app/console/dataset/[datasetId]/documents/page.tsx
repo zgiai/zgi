@@ -25,7 +25,14 @@ import { IndexFailedBanner } from '@/components/datasets/document/index-failed';
 import { useErrorDocs, useRetryErrorDocs } from '@/hooks/dataset/use-error-docs';
 import { DocumentEmptyState } from '@/components/datasets/document/document-empty-state';
 import { DatasetFileAssetDialog } from '@/components/datasets/document/dataset-file-asset-dialog';
+import { DatasetFileRefPanel } from '@/components/datasets/document/dataset-file-ref-panel';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
+import {
+  useDatasetFileRefs,
+  useDeleteDatasetFileRef,
+  useRetryDatasetFileRefSync,
+} from '@/hooks/dataset/use-dataset-file-refs';
+import type { DatasetFileRef } from '@/services/types/dataset';
 
 // New: data source union shared with child components
 export type DataSourceType = 'file' | 'notion' | 'web' | 'api';
@@ -43,6 +50,7 @@ export default function DatasetDocumentsPage() {
   // Delete confirmation state
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [documentToDelete, setDocumentToDelete] = useState<Document | null>(null);
+  const [refToRemove, setRefToRemove] = useState<DatasetFileRef | null>(null);
 
   // Delete document mutation
   const deleteDocumentMutation = useDeleteDocument();
@@ -73,6 +81,7 @@ export default function DatasetDocumentsPage() {
 
   // Conditional polling: auto-refresh when documents are still processing
   const [pollingEnabled, setPollingEnabled] = useState(false);
+  const [fileRefPollingEnabled, setFileRefPollingEnabled] = useState(false);
 
   const {
     documents,
@@ -91,6 +100,21 @@ export default function DatasetDocumentsPage() {
     { debounceDelay: 500, refetchInterval: pollingEnabled ? 5000 : false }
   );
 
+  const {
+    refs: fileRefs,
+    refetch: refetchFileRefs,
+    isFetching: isFetchingFileRefs,
+  } = useDatasetFileRefs(
+    datasetId,
+    { limit: 100 },
+    {
+      refetchInterval: pollingEnabled || fileRefPollingEnabled ? 5000 : false,
+      enabled: true,
+    }
+  );
+  const retryFileRefMutation = useRetryDatasetFileRefSync(datasetId);
+  const deleteFileRefMutation = useDeleteDatasetFileRef(datasetId);
+
   // Detect in-progress documents and toggle polling
   useEffect(() => {
     const hasInProgress = (documents ?? []).some(
@@ -98,6 +122,13 @@ export default function DatasetDocumentsPage() {
     );
     setPollingEnabled(hasInProgress);
   }, [documents]);
+
+  useEffect(() => {
+    const hasSyncInProgress = (fileRefs ?? []).some(ref =>
+      ['pending', 'syncing'].includes(ref.sync_status)
+    );
+    setFileRefPollingEnabled(hasSyncInProgress);
+  }, [fileRefs]);
 
   // Normalize status for display compatibility
   const visibleDocuments = useMemo(() => {
@@ -211,11 +242,30 @@ export default function DatasetDocumentsPage() {
 
   // Refresh entire documents list
   const handleRefresh = useCallback(async () => {
-    await refetch();
+    await Promise.all([refetch(), refetchFileRefs()]);
     if (canEdit) {
       await refetchErrorDocs();
     }
-  }, [refetch, refetchErrorDocs, canEdit]);
+  }, [refetch, refetchFileRefs, refetchErrorDocs, canEdit]);
+
+  const handleRetryFileRef = useCallback(
+    async (ref: DatasetFileRef) => {
+      await retryFileRefMutation.mutateAsync(ref.id);
+      await Promise.all([refetch(), refetchFileRefs()]);
+    },
+    [retryFileRefMutation, refetch, refetchFileRefs]
+  );
+
+  const handleRemoveFileRef = useCallback((ref: DatasetFileRef) => {
+    setRefToRemove(ref);
+  }, []);
+
+  const confirmRemoveFileRef = useCallback(async () => {
+    if (!refToRemove) return;
+    await deleteFileRefMutation.mutateAsync(refToRemove.id);
+    setRefToRemove(null);
+    await Promise.all([refetch(), refetchFileRefs()]);
+  }, [deleteFileRefMutation, refToRemove, refetch, refetchFileRefs]);
 
   // Confirm batch delete
   const confirmBatchDelete = useCallback(async () => {
@@ -339,11 +389,11 @@ export default function DatasetDocumentsPage() {
               variant="ghost"
               className="h-7 w-7 transition-all duration-200 hover:scale-105 active:scale-95"
               onClick={handleRefresh}
-              disabled={isFetching}
+              disabled={isFetching || isFetchingFileRefs}
             >
               <RefreshCcw
                 className={`h-4 w-4 transition-transform duration-500 ${
-                  isFetching ? 'animate-spin' : ''
+                  isFetching || isFetchingFileRefs ? 'animate-spin' : ''
                 }`}
               />
             </Button>
@@ -380,6 +430,20 @@ export default function DatasetDocumentsPage() {
           </div>
         </div>
       </div>
+
+      <DatasetFileRefPanel
+        refs={fileRefs}
+        documents={visibleDocuments}
+        canEdit={canEdit}
+        retryingRefId={
+          retryFileRefMutation.isPending ? retryFileRefMutation.variables : undefined
+        }
+        removingRefId={
+          deleteFileRefMutation.isPending ? deleteFileRefMutation.variables : undefined
+        }
+        onRetry={handleRetryFileRef}
+        onRemove={handleRemoveFileRef}
+      />
 
       {isLoading && <DocumentListSkeleton />}
 
@@ -426,6 +490,22 @@ export default function DatasetDocumentsPage() {
         cancelText={t('datasets.actions.cancel')}
         onConfirm={confirmDeleteDocument}
         loading={deleteDocumentMutation.isPending}
+      />
+
+      <ConfirmDialog
+        variant="warning"
+        open={!!refToRemove}
+        onOpenChange={open => {
+          if (!open) setRefToRemove(null);
+        }}
+        title={t('datasets.documents.fileRefs.confirmRemoveTitle', {
+          name: refToRemove?.file_name || '',
+        })}
+        description={t('datasets.documents.fileRefs.confirmRemoveDescription')}
+        confirmText={t('datasets.actions.delete')}
+        cancelText={t('datasets.actions.cancel')}
+        onConfirm={confirmRemoveFileRef}
+        loading={deleteFileRefMutation.isPending}
       />
 
       {/* Bottom floating batch actions toolbar - only show when user has edit permission */}
