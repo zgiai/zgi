@@ -15,6 +15,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/sql_base"
+	"github.com/zgiai/zgi/api/pkg/sql_base/audit"
 	"go.uber.org/zap"
 )
 
@@ -209,7 +210,21 @@ func (n *Node) executeRun(ctx context.Context) (*shared.NodeRunResult, error) {
 	}
 
 	start := time.Now()
-	result, attempts, execErr := n.executeWithRetry(execCtx, sqlText)
+	auditTableID, auditTableName := auditTableContext(n.NodeData.TableSelection)
+	auditCtx := &audit.Context{
+		OrganizationID: n.TenantID,
+		WorkspaceID:    n.TenantID,
+		DataSourceID:   n.NodeData.DataSource.ID,
+		DataSourceName: n.NodeData.DataSource.Name,
+		TableID:        auditTableID,
+		TableName:      auditTableName,
+		ClientType:     audit.ClientTypeWorkflow,
+		WorkflowRunID:  n.workflowRunID(),
+		NodeID:         n.NodeID,
+		CreatedBy:      n.UserID,
+		OperationType:  inferOperationType(sqlText),
+	}
+	result, attempts, execErr := n.executeWithRetry(execCtx, sqlText, auditCtx)
 	duration := time.Since(start)
 
 	processData := map[string]any{
@@ -280,7 +295,7 @@ func (n *Node) executeRun(ctx context.Context) (*shared.NodeRunResult, error) {
 	}, nil
 }
 
-func (n *Node) executeWithRetry(ctx context.Context, sqlText string) (*sql_base.QueryResult, int, error) {
+func (n *Node) executeWithRetry(ctx context.Context, sqlText string, auditCtx *audit.Context) (*sql_base.QueryResult, int, error) {
 	retryTimes := n.NodeData.Execution.MaxRetries
 	if retryTimes < 0 {
 		retryTimes = 0
@@ -289,7 +304,7 @@ func (n *Node) executeWithRetry(ctx context.Context, sqlText string) (*sql_base.
 
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
-		result, err := n.sqlClient.ExecuteSQL(ctx, sqlText, nil)
+		result, err := n.sqlClient.ExecuteSQL(ctx, sqlText, nil, auditCtx)
 		if err == nil {
 			return result, attempt, nil
 		}
@@ -314,6 +329,39 @@ func (n *Node) executeWithRetry(ctx context.Context, sqlText string) (*sql_base.
 	}
 
 	return nil, attempts, lastErr
+}
+
+func inferOperationType(sqlText string) string {
+	parts := strings.Fields(strings.TrimSpace(sqlText))
+	if len(parts) == 0 {
+		return "query"
+	}
+	switch strings.ToLower(parts[0]) {
+	case "select", "with", "show":
+		return "query"
+	case "insert":
+		return "create"
+	case "update":
+		return "update"
+	case "delete", "truncate":
+		return "delete"
+	case "create":
+		return "create"
+	default:
+		return "query"
+	}
+}
+
+func auditTableContext(tables []TableRef) (string, string) {
+	if len(tables) != 1 {
+		return "", ""
+	}
+	table := tables[0]
+	tableName := table.Label
+	if tableName == "" {
+		tableName = table.Name
+	}
+	return table.ID, tableName
 }
 
 func parseNodeDataFromConfig(config map[string]any) (NodeData, string, error) {
@@ -727,6 +775,12 @@ func parseCallDatabaseTablesList(tablesList []interface{}) []TableRef {
 			if name, ok := tableMap["name"].(string); ok {
 				table.Name = name
 			}
+			if label, ok := tableMap["label"].(string); ok {
+				table.Label = label
+			}
+			if id, ok := tableMap["id"].(string); ok {
+				table.ID = id
+			}
 			// Handle both float64 (from JSON) and int
 			if tableID, ok := tableMap["table_id"].(float64); ok {
 				table.TableID = int(tableID)
@@ -744,8 +798,8 @@ func parseCallDatabaseTablesList(tablesList []interface{}) []TableRef {
 				}
 			}
 
-			// Only add if at least name or table_id is present
-			if table.Name != "" || table.TableID > 0 {
+			// Only add if at least a display name or id is present
+			if table.Name != "" || table.ID != "" || table.TableID > 0 {
 				tables = append(tables, table)
 			}
 		}

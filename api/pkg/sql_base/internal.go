@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/samber/do/v2"
 
 	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/sql_base/audit"
 	"github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/driver"
 
 	"github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/catalog/columns"
@@ -27,9 +29,10 @@ type internalClient struct {
 	tablesService  metaService.TablesService
 	columnsService metaService.ColumnsService
 	queryService   metaService.QueryService
+	recorder       audit.Recorder
 }
 
-func NewInternalClient(host, port, user, password, dbname string) (SQLBase, error) {
+func NewInternalClient(host, port, user, password, dbname string, recorder audit.Recorder) (SQLBase, error) {
 	cfg := driver.Config{
 		DBHost: host,
 		DBPort: port,
@@ -79,6 +82,7 @@ func NewInternalClient(host, port, user, password, dbname string) (SQLBase, erro
 		tablesService:  tablesSvc,
 		columnsService: columnsSvc,
 		queryService:   querySvc,
+		recorder:       recorder,
 	}, nil
 }
 
@@ -664,7 +668,15 @@ func (c *internalClient) ListTypes(ctx context.Context) ([]Type, error) {
 }
 
 // Query operations
-func (c *internalClient) ExecuteSQL(ctx context.Context, query string, params []interface{}) (*QueryResult, error) {
+func (c *internalClient) ExecuteSQL(ctx context.Context, query string, params []interface{}, auditCtx *audit.Context) (*QueryResult, error) {
+	start := time.Now()
+	result, err := c.executeSQL(ctx, query, params)
+	end := time.Now()
+	c.recordAudit(ctx, auditCtx, query, params, result, err, start, end)
+	return result, err
+}
+
+func (c *internalClient) executeSQL(ctx context.Context, query string, params []interface{}) (*QueryResult, error) {
 	if c.queryService == nil {
 		return nil, errors.New("query service not initialized")
 	}
@@ -728,6 +740,37 @@ func (c *internalClient) ExecuteSQL(ctx context.Context, query string, params []
 	result.Rows = rows
 
 	return result, nil
+}
+
+func (c *internalClient) recordAudit(ctx context.Context, auditCtx *audit.Context, query string, params []interface{}, result *QueryResult, execErr error, start, end time.Time) {
+	if c.recorder == nil || auditCtx == nil {
+		return
+	}
+
+	record := audit.Record{
+		Context:      *auditCtx,
+		SQLStatement: query,
+		Params:       append([]any(nil), params...),
+		DurationMS:   end.Sub(start).Milliseconds(),
+		Status:       audit.StatusSuccess,
+		StartTime:    start,
+		EndTime:      end,
+		ExecutedAt:   start,
+	}
+	if record.ClientType == "" {
+		record.ClientType = audit.ClientTypeUnknown
+	}
+	if result != nil {
+		rowCount := result.RowsAffected
+		record.RowCount = &rowCount
+	}
+	if execErr != nil {
+		record.Status = audit.StatusFailed
+		record.RowCount = nil
+		record.ErrorMessage = execErr.Error()
+	}
+
+	c.recorder.Record(ctx, record)
 }
 
 func (c *internalClient) FormatQuery(ctx context.Context, req FormatQueryRequest) (string, error) {

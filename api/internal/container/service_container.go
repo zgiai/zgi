@@ -74,6 +74,8 @@ import (
 	"github.com/zgiai/zgi/api/pkg/queue"
 	redisPkg "github.com/zgiai/zgi/api/pkg/redis"
 	"github.com/zgiai/zgi/api/pkg/scheduler"
+	"github.com/zgiai/zgi/api/pkg/sql_base"
+	"github.com/zgiai/zgi/api/pkg/sql_base/audit"
 	"github.com/zgiai/zgi/api/pkg/storage"
 	"gorm.io/gorm"
 )
@@ -157,6 +159,8 @@ type ServiceContainer struct {
 
 	// DataSource service
 	dataSourceService service.DataSourceService
+	sqlAuditRecorder  audit.Recorder
+	sqlBase           sql_base.SQLBase
 	promptModule      *promptsmodule.Module
 
 	// Data Library module
@@ -611,6 +615,25 @@ func (c *ServiceContainer) GetDataSourceService() service.DataSourceService {
 	return c.dataSourceService
 }
 
+func (c *ServiceContainer) GetSQLAuditRecorder() audit.Recorder {
+	if c.sqlAuditRecorder == nil {
+		store := repository.NewPostgresSQLOperationRepository(c.db)
+		c.sqlAuditRecorder = audit.NewAsyncRecorder(store)
+	}
+	return c.sqlAuditRecorder
+}
+
+func (c *ServiceContainer) GetSQLBase() sql_base.SQLBase {
+	if c.sqlBase == nil {
+		client, err := sql_base.NewSQLBaseClient(sql_base.WithAuditRecorder(c.GetSQLAuditRecorder()))
+		if err != nil {
+			panic("failed to create sql base client: " + err.Error())
+		}
+		c.sqlBase = client
+	}
+	return c.sqlBase
+}
+
 func (c *ServiceContainer) GetDataLibraryModule() *datalibrarymodule.Module {
 	if c.dataLibraryModule == nil {
 		c.dataLibraryModule = datalibrarymodule.NewModule(c.db)
@@ -944,6 +967,7 @@ func (c *ServiceContainer) GetWorkflowEngineFactory() *graph_engine.EngineFactor
 			PromptResolver:              c.GetPromptService(),
 			AutomationDefinitionService: c.GetAutomationDefinitionService(),
 			NotificationSMSService:      c.GetNotificationSMSService(),
+			SQLBase:                     c.GetSQLBase(),
 		})
 		c.workflowEngineFactory = graph_engine.NewEngineFactory(10, nodeRunner)
 	}

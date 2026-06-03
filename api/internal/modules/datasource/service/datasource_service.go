@@ -32,6 +32,7 @@ import (
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
 	sql_base "github.com/zgiai/zgi/api/pkg/sql_base"
+	"github.com/zgiai/zgi/api/pkg/sql_base/audit"
 )
 
 // DataSourceService defines the interface for data source service
@@ -76,6 +77,9 @@ type DataSourceService interface {
 	CountOperationLogsByDataSourceID(ctx context.Context, organizationID, dataSourceID string) (int64, error)
 	ListOperationLogsByDataSourceIDWithFilters(ctx context.Context, organizationID, dataSourceID string, filters dto.SQLOperationFilter, limit, offset int) ([]*model.DataSourceSQLOperation, error)
 	CountOperationLogsByDataSourceIDWithFilters(ctx context.Context, organizationID, dataSourceID string, filters dto.SQLOperationFilter) (int64, error)
+	ListSQLAuditByWorkspace(ctx context.Context, organizationID, workspaceID string, filters dto.SQLAuditFilter, limit, offset int) ([]*model.DataSourceSQLOperation, error)
+	CountSQLAuditByWorkspace(ctx context.Context, organizationID, workspaceID string, filters dto.SQLAuditFilter) (int64, error)
+	GetSQLAuditDetail(ctx context.Context, organizationID, workspaceID, operationID string) (*model.DataSourceSQLOperation, error)
 
 	// Table template operations
 	GenerateTableTemplateExcel(ctx context.Context, organizationID, dataSourceID, tableID string) ([]byte, error)
@@ -105,7 +109,7 @@ type dataSourceService struct {
 
 // NewDataSourceService creates a new DataSourceService
 func NewDataSourceService(repo repository.DataSourceRepository, tableRepo repository.TableRepository, promptRepo repository.PromptRepository, sqlOperationRepo repository.SQLOperationRepository, accountService interfaces.AccountService, fileService interfaces.FileService, organizationService interfaces.OrganizationService, resourcePermissionService interfaces.ResourcePermissionService, quotaService interfaces.QuotaService, llmClient llmclient.LLMClient, db *gorm.DB) DataSourceService {
-	sqlBaseClient, err := sql_base.NewSQLBaseClient()
+	sqlBaseClient, err := sql_base.NewSQLBaseClient(sql_base.WithAuditRecorder(audit.NewAsyncRecorder(sqlOperationRepo)))
 	if err != nil {
 		panic("failed to create postgres meta client: " + err.Error())
 	}
@@ -250,6 +254,27 @@ func getStringValue(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+func sqlAuditContext(organizationID string, dataSource *model.DataSource, table *model.Table, accountID string, operationType string) *audit.Context {
+	if dataSource == nil {
+		return nil
+	}
+
+	auditCtx := &audit.Context{
+		OrganizationID: organizationID,
+		WorkspaceID:    getStringValue(dataSource.WorkspaceID),
+		DataSourceID:   dataSource.ID,
+		DataSourceName: dataSource.Name,
+		ClientType:     audit.ClientTypeAPI,
+		CreatedBy:      accountID,
+		OperationType:  operationType,
+	}
+	if table != nil {
+		auditCtx.TableID = table.ID
+		auditCtx.TableName = table.Name
+	}
+	return auditCtx
 }
 
 // GetDataSourceByName gets a specific data source by name
@@ -542,7 +567,7 @@ func (s *dataSourceService) generateRandomString(length int) string {
 func (s *dataSourceService) checkTableNameExists(ctx context.Context, tableName string) (bool, error) {
 	query := fmt.Sprintf("SELECT 1 FROM information_schema.tables WHERE table_name = '%s'",
 		strings.ReplaceAll(tableName, "'", "''"))
-	result, err := s.sqlBase.ExecuteSQL(ctx, query, nil)
+	result, err := s.sqlBase.ExecuteSQL(ctx, query, nil, nil)
 	if err != nil {
 		return false, err
 	}
@@ -623,7 +648,7 @@ func (s *dataSourceService) DeleteTable(ctx context.Context, organizationID, dat
 	// Query total row count before deletion
 	var totalRows int64
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s", quoteIdentifier(tableMetadata.PhysicalTableName))
-	countResult, err := s.sqlBase.ExecuteSQL(ctx, countQuery, nil)
+	countResult, err := s.sqlBase.ExecuteSQL(ctx, countQuery, nil, sqlAuditContext(organizationID, dataSource, tableMetadata, accountID, string(model.OperationTypeQuery)))
 	if err != nil {
 		// If count fails, log but continue with deletion
 		logger.WarnContext(ctx, "failed to count rows before table deletion", "table_id", tableID, "physical_table", tableMetadata.PhysicalTableName, err)
@@ -913,7 +938,7 @@ func (s *dataSourceService) UpdateTableColumns(ctx context.Context, organization
 					}
 
 					// Execute the update query to set NULL values to default values
-					_, err := s.sqlBase.ExecuteSQL(ctx, updateQuery, nil)
+					_, err := s.sqlBase.ExecuteSQL(ctx, updateQuery, nil, sqlAuditContext(organizationID, dataSource, tableMetadata, accountID, string(model.OperationTypeUpdate)))
 					if err != nil {
 						return fmt.Errorf("failed to update existing NULL values for column '%s': %w", col.Name, err)
 					}
@@ -1183,7 +1208,7 @@ func (s *dataSourceService) AddTableRecords(ctx context.Context, organizationID,
 	var affectedRows int64
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		// Perform batch insert
-		rows, err := s.batchInsertRecords(ctx, organizationID, dataSourceID, tableID, dataSource.Name, table.Name, accountID, table.PhysicalTableName, validRecords, columnMap)
+		rows, err := s.batchInsertRecords(ctx, organizationID, getStringValue(dataSource.WorkspaceID), dataSourceID, tableID, dataSource.Name, table.Name, accountID, table.PhysicalTableName, validRecords, columnMap)
 		if err != nil {
 			return fmt.Errorf("failed to insert records: %w", err)
 		}
@@ -1250,17 +1275,14 @@ func (s *dataSourceService) QueryTableRecords(ctx context.Context, organizationI
 		return dto.QueryRecordResponse{}, err
 	}
 
-	result, err := s.sqlBase.ExecuteSQL(ctx, query, nil)
+	result, err := s.sqlBase.ExecuteSQL(ctx, query, nil, sqlAuditContext(organizationID, dataSource, table, accountID, string(model.OperationTypeQuery)))
 	if err != nil {
 		return dto.QueryRecordResponse{}, fmt.Errorf("failed to execute query: %w", err)
 	}
 
-	// Log the SQL operation
-	s.logSQLOperation(ctx, organizationID, dataSourceID, tableID, dataSource.Name, table.Name, accountID, string(model.OperationTypeQuery), query)
-
 	// 3. Build total count query
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s", quoteIdentifier(table.PhysicalTableName))
-	countResult, err := s.sqlBase.ExecuteSQL(ctx, countQuery, nil)
+	countResult, err := s.sqlBase.ExecuteSQL(ctx, countQuery, nil, sqlAuditContext(organizationID, dataSource, table, accountID, string(model.OperationTypeQuery)))
 	if err != nil {
 		return dto.QueryRecordResponse{}, fmt.Errorf("failed to count records: %w", err)
 	}
@@ -1346,7 +1368,7 @@ func (s *dataSourceService) validateRecord(record map[string]interface{}, column
 }
 
 // batchInsertRecords performs batch insert operation
-func (s *dataSourceService) batchInsertRecords(ctx context.Context, organizationID, dataSourceID, tableID, dataSourceName, tableName, accountID, actualTableName string, records []map[string]interface{}, columnMap map[string]sql_base.Column) (int64, error) {
+func (s *dataSourceService) batchInsertRecords(ctx context.Context, organizationID, workspaceID, dataSourceID, tableID, dataSourceName, tableName, accountID, actualTableName string, records []map[string]interface{}, columnMap map[string]sql_base.Column) (int64, error) {
 	if len(records) == 0 {
 		return 0, nil
 	}
@@ -1381,40 +1403,17 @@ func (s *dataSourceService) batchInsertRecords(ctx context.Context, organization
 		strings.Join(placeholders, ", "),
 	)
 
-	// Log the SQL operation with actual values
-	logQuery := query
-	if len(values) > 0 {
-		// Replace placeholders with actual values for logging purposes
-		logQuery = query
-		for i := len(values) - 1; i >= 0; i-- {
-			placeholder := fmt.Sprintf("$%d", i+1)
-			value := values[i]
-			var valueStr string
-			if value == nil {
-				valueStr = "NULL"
-			} else {
-				switch v := value.(type) {
-				case string:
-					// Escape single quotes in string values
-					escapedValue := strings.ReplaceAll(v, "'", "''")
-					valueStr = fmt.Sprintf("'%s'", escapedValue)
-				case bool:
-					if v {
-						valueStr = "true"
-					} else {
-						valueStr = "false"
-					}
-				default:
-					valueStr = fmt.Sprintf("%v", v)
-				}
-			}
-			logQuery = strings.ReplaceAll(logQuery, placeholder, valueStr)
-		}
-	}
-
-	s.logSQLOperation(ctx, organizationID, dataSourceID, tableID, dataSourceName, tableName, accountID, string(model.OperationTypeCreate), logQuery)
-
-	result, err := s.sqlBase.ExecuteSQL(ctx, query, values)
+	result, err := s.sqlBase.ExecuteSQL(ctx, query, values, &audit.Context{
+		OrganizationID: organizationID,
+		WorkspaceID:    workspaceID,
+		DataSourceID:   dataSourceID,
+		DataSourceName: dataSourceName,
+		TableID:        tableID,
+		TableName:      tableName,
+		ClientType:     audit.ClientTypeAPI,
+		CreatedBy:      accountID,
+		OperationType:  string(model.OperationTypeCreate),
+	})
 	if err != nil {
 		return 0, err
 	}
@@ -1488,7 +1487,7 @@ func (s *dataSourceService) UpdateTableRecords(ctx context.Context, organization
 	}
 
 	// 5. Perform batch update
-	affectedRows, err := s.batchUpdateRecords(ctx, organizationID, dataSourceID, tableID, dataSource.Name, table.Name, accountID, table.PhysicalTableName, validRecords, columnMap)
+	affectedRows, err := s.batchUpdateRecords(ctx, organizationID, getStringValue(dataSource.WorkspaceID), dataSourceID, tableID, dataSource.Name, table.Name, accountID, table.PhysicalTableName, validRecords, columnMap)
 	if err != nil {
 		return dto.UpdateRecordResponse{}, fmt.Errorf("failed to update records: %w", err)
 	}
@@ -1536,7 +1535,7 @@ func (s *dataSourceService) validateUpdateRecord(record map[string]interface{}, 
 }
 
 // batchUpdateRecords performs batch update operation
-func (s *dataSourceService) batchUpdateRecords(ctx context.Context, organizationID, dataSourceID, tableID, dataSourceName, tableName, accountID, actualTableName string, records []map[string]interface{}, columnMap map[string]sql_base.Column) (int64, error) {
+func (s *dataSourceService) batchUpdateRecords(ctx context.Context, organizationID, workspaceID, dataSourceID, tableID, dataSourceName, tableName, accountID, actualTableName string, records []map[string]interface{}, columnMap map[string]sql_base.Column) (int64, error) {
 	if len(records) == 0 {
 		return 0, nil
 	}
@@ -1582,41 +1581,17 @@ func (s *dataSourceService) batchUpdateRecords(ctx context.Context, organization
 			whereClause,
 		)
 
-		// Log the SQL operation with actual values
-		logQuery := query
-		if len(values) > 0 {
-			// Replace placeholders with actual values for logging purposes
-			logQuery = query
-			for i := len(values) - 1; i >= 0; i-- {
-				placeholder := fmt.Sprintf("$%d", i+1)
-				value := values[i]
-				var valueStr string
-				if value == nil {
-					valueStr = "NULL"
-				} else {
-					switch v := value.(type) {
-					case string:
-						// Escape single quotes in string values
-						escapedValue := strings.ReplaceAll(v, "'", "''")
-						valueStr = fmt.Sprintf("'%s'", escapedValue)
-					case bool:
-						if v {
-							valueStr = "true"
-						} else {
-							valueStr = "false"
-						}
-					default:
-						valueStr = fmt.Sprintf("%v", v)
-					}
-				}
-				logQuery = strings.ReplaceAll(logQuery, placeholder, valueStr)
-			}
-		}
-
-		// Log the SQL operation
-		s.logSQLOperation(ctx, organizationID, dataSourceID, tableID, dataSourceName, tableName, accountID, string(model.OperationTypeUpdate), logQuery)
-
-		result, err := s.sqlBase.ExecuteSQL(ctx, query, values)
+		result, err := s.sqlBase.ExecuteSQL(ctx, query, values, &audit.Context{
+			OrganizationID: organizationID,
+			WorkspaceID:    workspaceID,
+			DataSourceID:   dataSourceID,
+			DataSourceName: dataSourceName,
+			TableID:        tableID,
+			TableName:      tableName,
+			ClientType:     audit.ClientTypeAPI,
+			CreatedBy:      accountID,
+			OperationType:  string(model.OperationTypeUpdate),
+		})
 		if err != nil {
 			return 0, err
 		}
@@ -1649,7 +1624,7 @@ func (s *dataSourceService) DeleteTableRecords(ctx context.Context, organization
 	var affectedRows int64
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		// Perform batch delete
-		rows, err := s.batchDeleteRecords(ctx, organizationID, dataSourceID, tableID, dataSource.Name, table.Name, accountID, table.PhysicalTableName, validRecords)
+		rows, err := s.batchDeleteRecords(ctx, organizationID, getStringValue(dataSource.WorkspaceID), dataSourceID, tableID, dataSource.Name, table.Name, accountID, table.PhysicalTableName, validRecords)
 		if err != nil {
 			return fmt.Errorf("failed to delete records: %w", err)
 		}
@@ -1717,7 +1692,7 @@ func (s *dataSourceService) validateDeleteRecord(record map[string]interface{}) 
 }
 
 // batchDeleteRecords performs batch delete operation
-func (s *dataSourceService) batchDeleteRecords(ctx context.Context, organizationID, dataSourceID, tableID, dataSourceName, tableName, accountID, actualTableName string, records []map[string]interface{}) (int64, error) {
+func (s *dataSourceService) batchDeleteRecords(ctx context.Context, organizationID, workspaceID, dataSourceID, tableID, dataSourceName, tableName, accountID, actualTableName string, records []map[string]interface{}) (int64, error) {
 	if len(records) == 0 {
 		return 0, nil
 	}
@@ -1732,41 +1707,17 @@ func (s *dataSourceService) batchDeleteRecords(ctx context.Context, organization
 		query := fmt.Sprintf("DELETE FROM %s WHERE %s = $1", quoteIdentifier(actualTableName), quoteIdentifier("id"))
 		values := []interface{}{id}
 
-		// Log the SQL operation with actual values
-		logQuery := query
-		if len(values) > 0 {
-			// Replace placeholders with actual values for logging purposes
-			logQuery = query
-			for i := len(values) - 1; i >= 0; i-- {
-				placeholder := fmt.Sprintf("$%d", i+1)
-				value := values[i]
-				var valueStr string
-				if value == nil {
-					valueStr = "NULL"
-				} else {
-					switch v := value.(type) {
-					case string:
-						// Escape single quotes in string values
-						escapedValue := strings.ReplaceAll(v, "'", "''")
-						valueStr = fmt.Sprintf("'%s'", escapedValue)
-					case bool:
-						if v {
-							valueStr = "true"
-						} else {
-							valueStr = "false"
-						}
-					default:
-						valueStr = fmt.Sprintf("%v", v)
-					}
-				}
-				logQuery = strings.ReplaceAll(logQuery, placeholder, valueStr)
-			}
-		}
-
-		// Log the SQL operation
-		s.logSQLOperation(ctx, organizationID, dataSourceID, tableID, dataSourceName, tableName, accountID, string(model.OperationTypeDelete), logQuery)
-
-		result, err := s.sqlBase.ExecuteSQL(ctx, query, values)
+		result, err := s.sqlBase.ExecuteSQL(ctx, query, values, &audit.Context{
+			OrganizationID: organizationID,
+			WorkspaceID:    workspaceID,
+			DataSourceID:   dataSourceID,
+			DataSourceName: dataSourceName,
+			TableID:        tableID,
+			TableName:      tableName,
+			ClientType:     audit.ClientTypeAPI,
+			CreatedBy:      accountID,
+			OperationType:  string(model.OperationTypeDelete),
+		})
 		if err != nil {
 			return 0, err
 		}
@@ -2673,6 +2624,30 @@ func (s *dataSourceService) CountOperationLogsByDataSourceID(ctx context.Context
 	}
 
 	return count, nil
+}
+
+func (s *dataSourceService) ListSQLAuditByWorkspace(ctx context.Context, organizationID, workspaceID string, filters dto.SQLAuditFilter, limit, offset int) ([]*model.DataSourceSQLOperation, error) {
+	logs, err := s.sqlOperationRepo.ListAuditByWorkspace(ctx, organizationID, workspaceID, filters, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list sql audit records: %w", err)
+	}
+	return logs, nil
+}
+
+func (s *dataSourceService) CountSQLAuditByWorkspace(ctx context.Context, organizationID, workspaceID string, filters dto.SQLAuditFilter) (int64, error) {
+	count, err := s.sqlOperationRepo.CountAuditByWorkspace(ctx, organizationID, workspaceID, filters)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count sql audit records: %w", err)
+	}
+	return count, nil
+}
+
+func (s *dataSourceService) GetSQLAuditDetail(ctx context.Context, organizationID, workspaceID, operationID string) (*model.DataSourceSQLOperation, error) {
+	record, err := s.sqlOperationRepo.FindAuditByWorkspaceAndID(ctx, organizationID, workspaceID, operationID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get sql audit record: %w", err)
+	}
+	return record, nil
 }
 
 // GenerateTableTemplateExcel generates an Excel template for a table

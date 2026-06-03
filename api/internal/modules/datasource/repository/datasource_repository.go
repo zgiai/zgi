@@ -3,10 +3,12 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"time"
 
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/datasource/model"
+	"github.com/zgiai/zgi/api/pkg/sql_base/audit"
 	"gorm.io/gorm"
 
 	"github.com/google/uuid"
@@ -28,12 +30,16 @@ type DataSourceRepository interface {
 // SQLOperationRepository defines the interface for SQL operation repository
 type SQLOperationRepository interface {
 	Create(ctx context.Context, log *model.DataSourceSQLOperation) error
+	Insert(ctx context.Context, records []audit.Record) error
 	ListByTableID(ctx context.Context, tableID string, limit, offset int) ([]*model.DataSourceSQLOperation, error)
 	ListByOrganizationID(ctx context.Context, organizationID string, limit, offset int) ([]*model.DataSourceSQLOperation, error)
 	ListByDataSourceID(ctx context.Context, dataSourceID string, limit, offset int) ([]*model.DataSourceSQLOperation, error)
 	CountByDataSourceID(ctx context.Context, dataSourceID string) (int64, error)
 	ListByDataSourceIDWithFilters(ctx context.Context, dataSourceID string, filters dto.SQLOperationFilter, limit, offset int) ([]*model.DataSourceSQLOperation, error)
 	CountByDataSourceIDWithFilters(ctx context.Context, dataSourceID string, filters dto.SQLOperationFilter) (int64, error)
+	ListAuditByWorkspace(ctx context.Context, organizationID, workspaceID string, filters dto.SQLAuditFilter, limit, offset int) ([]*model.DataSourceSQLOperation, error)
+	CountAuditByWorkspace(ctx context.Context, organizationID, workspaceID string, filters dto.SQLAuditFilter) (int64, error)
+	FindAuditByWorkspaceAndID(ctx context.Context, organizationID, workspaceID, operationID string) (*model.DataSourceSQLOperation, error)
 }
 
 // PostgresDataSourceRepository implements DataSourceRepository using postgres
@@ -354,19 +360,35 @@ func (r *PostgresSQLOperationRepository) Create(ctx context.Context, log *model.
 	}
 
 	query := `
-		INSERT INTO data_source_sql_operations (id, organization_id, data_source_id, table_id, table_name, data_source_name, sql_statement, operation_type, start_time, end_time, status, created_by, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO data_source_sql_operations (
+			id, organization_id, workspace_id, data_source_id, table_id, table_name, data_source_name,
+			sql_statement, operation_type, client_type, workflow_run_id, node_id, params_json, row_count,
+			duration_ms, error_code, error_message, executed_at, request_id, start_time, end_time,
+			status, created_by, created_at
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 	err := r.db.WithContext(ctx).Exec(
 		query,
 		log.ID,
 		log.OrganizationID,
+		log.WorkspaceID,
 		log.DataSourceID,
 		log.TableID,
 		log.TableName,
 		log.DataSourceName,
 		log.SqlStatement,
 		log.OperationType,
+		log.ClientType,
+		log.WorkflowRunID,
+		log.NodeID,
+		log.ParamsJSON,
+		log.RowCount,
+		log.DurationMS,
+		log.ErrorCode,
+		log.ErrorMessage,
+		log.ExecutedAt,
+		log.RequestID,
 		log.StartTime,
 		log.EndTime,
 		log.Status,
@@ -374,6 +396,58 @@ func (r *PostgresSQLOperationRepository) Create(ctx context.Context, log *model.
 		log.CreatedAt,
 	).Error
 	return err
+}
+
+func (r *PostgresSQLOperationRepository) Insert(ctx context.Context, records []audit.Record) error {
+	for _, record := range records {
+		paramsJSON, err := json.Marshal(record.Params)
+		if err != nil {
+			paramsJSON = nil
+		}
+
+		durationMS := record.DurationMS
+		executedAt := record.ExecutedAt
+		log := &model.DataSourceSQLOperation{
+			ID:             uuid.New().String(),
+			OrganizationID: record.OrganizationID,
+			WorkspaceID:    stringPtrOrNil(record.WorkspaceID),
+			DataSourceID:   record.DataSourceID,
+			TableID:        stringPtrOrNil(record.TableID),
+			TableName:      stringPtrOrNil(record.TableName),
+			DataSourceName: stringPtrOrNil(record.DataSourceName),
+			SqlStatement:   record.SQLStatement,
+			OperationType:  record.OperationType,
+			ClientType:     string(record.ClientType),
+			WorkflowRunID:  stringPtrOrNil(record.WorkflowRunID),
+			NodeID:         stringPtrOrNil(record.NodeID),
+			ParamsJSON:     paramsJSON,
+			RowCount:       record.RowCount,
+			DurationMS:     &durationMS,
+			ErrorCode:      stringPtrOrNil(record.ErrorCode),
+			ErrorMessage:   stringPtrOrNil(record.ErrorMessage),
+			ExecutedAt:     &executedAt,
+			RequestID:      stringPtrOrNil(record.RequestID),
+			StartTime:      record.StartTime,
+			EndTime:        record.EndTime,
+			Status:         string(record.Status),
+			CreatedBy:      record.CreatedBy,
+			CreatedAt:      time.Now(),
+		}
+		if log.ClientType == "" {
+			log.ClientType = string(audit.ClientTypeUnknown)
+		}
+		if err := r.Create(ctx, log); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func stringPtrOrNil(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 // ListByTableID lists operation logs for a specific table
@@ -668,4 +742,82 @@ func (r *PostgresSQLOperationRepository) CountByDataSourceIDWithFilters(ctx cont
 	}
 
 	return count, nil
+}
+
+func (r *PostgresSQLOperationRepository) ListAuditByWorkspace(ctx context.Context, organizationID, workspaceID string, filters dto.SQLAuditFilter, limit, offset int) ([]*model.DataSourceSQLOperation, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	var logs []*model.DataSourceSQLOperation
+	query := r.applySQLAuditFilters(
+		r.db.WithContext(ctx).Model(&model.DataSourceSQLOperation{}).
+			Where("organization_id = ? AND workspace_id = ?", organizationID, workspaceID),
+		filters,
+	)
+	err := query.Order("created_at DESC").Limit(limit).Offset(offset).Find(&logs).Error
+	return logs, err
+}
+
+func (r *PostgresSQLOperationRepository) CountAuditByWorkspace(ctx context.Context, organizationID, workspaceID string, filters dto.SQLAuditFilter) (int64, error) {
+	var count int64
+	query := r.applySQLAuditFilters(
+		r.db.WithContext(ctx).Model(&model.DataSourceSQLOperation{}).
+			Where("organization_id = ? AND workspace_id = ?", organizationID, workspaceID),
+		filters,
+	)
+	err := query.Count(&count).Error
+	return count, err
+}
+
+func (r *PostgresSQLOperationRepository) FindAuditByWorkspaceAndID(ctx context.Context, organizationID, workspaceID, operationID string) (*model.DataSourceSQLOperation, error) {
+	var log model.DataSourceSQLOperation
+	err := r.db.WithContext(ctx).
+		Model(&model.DataSourceSQLOperation{}).
+		Where("organization_id = ? AND workspace_id = ? AND id = ?", organizationID, workspaceID, operationID).
+		First(&log).Error
+	if err == gorm.ErrRecordNotFound {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &log, nil
+}
+
+func (r *PostgresSQLOperationRepository) applySQLAuditFilters(query *gorm.DB, filters dto.SQLAuditFilter) *gorm.DB {
+	if filters.DataSourceID != nil {
+		query = query.Where("data_source_id = ?", *filters.DataSourceID)
+	}
+	if filters.TableID != nil {
+		query = query.Where("table_id = ?", *filters.TableID)
+	}
+	if filters.ClientType != nil {
+		query = query.Where("client_type = ?", *filters.ClientType)
+	}
+	if filters.WorkflowRunID != nil {
+		query = query.Where("workflow_run_id = ?", *filters.WorkflowRunID)
+	}
+	if filters.NodeID != nil {
+		query = query.Where("node_id = ?", *filters.NodeID)
+	}
+	if filters.CreatedBy != nil {
+		query = query.Where("created_by = ?", *filters.CreatedBy)
+	}
+	if filters.OperationType != nil {
+		query = query.Where("operation_type = ?", *filters.OperationType)
+	}
+	if filters.Status != nil {
+		query = query.Where("status = ?", *filters.Status)
+	}
+	if filters.StartTime != nil {
+		query = query.Where("executed_at >= ?", *filters.StartTime)
+	}
+	if filters.EndTime != nil {
+		query = query.Where("executed_at <= ?", *filters.EndTime)
+	}
+	return query
 }
