@@ -20,6 +20,7 @@ Environment:
   CUSTOMER_REPO_PATH  Directory inside CUSTOMER_REPO, for example blue-ocean-agent.
   CUSTOMER_SLUG       Public asset slug, for example blue-ocean-agent.
   CUSTOMER_REQUIRED   true/false. When true, missing customization fails.
+  CUSTOMER_PRESERVE_GENERATED true/false. Reuse existing generated output when no source is configured.
 
 Examples:
   CUSTOMER_REPO=https://github.com/zgiai/zgi-customizations.git \
@@ -65,6 +66,7 @@ docker_args=(
   -e CUSTOMER_REPO_PATH
   -e CUSTOMER_SLUG
   -e CUSTOMER_REQUIRED
+  -e CUSTOMER_PRESERVE_GENERATED
 )
 
 container_customer_path=""

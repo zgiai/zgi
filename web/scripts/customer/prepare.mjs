@@ -17,6 +17,9 @@ const configuredPath = process.env.CUSTOMER_PATH?.trim();
 const required = ['1', 'true', 'yes'].includes(
   (process.env.CUSTOMER_REQUIRED || '').trim().toLowerCase()
 );
+const preserveGenerated = ['1', 'true', 'yes'].includes(
+  (process.env.CUSTOMER_PRESERVE_GENERATED || '').trim().toLowerCase()
+);
 
 function fail(message) {
   if (required) {
@@ -81,15 +84,14 @@ function resolveSourceDir() {
 
 const sourceDir = resolveSourceDir();
 if (!sourceDir) {
-  if (existsSync(generatedActive)) {
+  if (preserveGenerated && existsSync(generatedActive)) {
     console.log(
-      '[customer:prepare] No customer customization configured, using existing generated adapter.'
+      '[customer:prepare] No customer customization configured, preserving existing generated adapter.'
     );
     process.exit(0);
   }
-  console.log(
-    '[customer:prepare] No customer customization configured and no generated adapter found, using default adapter.'
-  );
+  fail('No customer customization configured');
+  console.log('[customer:prepare] Using default adapter.');
   writeDefaultActive();
   process.exit(0);
 }
