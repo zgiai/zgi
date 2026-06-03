@@ -14,7 +14,7 @@ import { useT } from '@/i18n';
 import { uploadService } from '@/services';
 import { UploadCloudIcon } from 'lucide-react';
 import type { UploadedFile } from '@/services/types/dataset';
-import type { FileUploadProcessingMode } from '@/services/types/file';
+import type { FileParseProviderKey, FileUploadProcessingMode } from '@/services/types/file';
 import {
   buildFileInputAcceptAttribute,
   filterLowercaseExtensions,
@@ -59,6 +59,8 @@ export interface ManualFileUploadProps {
   workspaceId?: string;
   /** File asset processing mode for uploaded documents */
   processingMode?: FileUploadProcessingMode;
+  /** Content parse provider for uploaded documents */
+  parseProvider?: FileParseProviderKey;
 }
 
 export interface ManualFileUploadRef {
@@ -105,6 +107,7 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
       folderId,
       workspaceId,
       processingMode,
+      parseProvider,
     },
     ref
   ) => {
@@ -162,6 +165,7 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
                     folder_id: folderId,
                     workspace_id: workspaceId,
                     processing_mode: processingMode,
+                    parse_provider: parseProvider,
                     onProgress: p =>
                       setItems(prev =>
                         prev.map(it => (it.id === item.id ? { ...it, progress: p } : it))
@@ -241,7 +245,7 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
           return isUploading || items.some(it => it.status === 'uploading');
         },
       }),
-      [items, folderId, workspaceId, processingMode, isUploading]
+      [items, folderId, workspaceId, processingMode, parseProvider, isUploading]
     );
 
     const inputRef = useRef<HTMLInputElement>(null);

@@ -2,8 +2,10 @@
  * File management service types
  */
 import type { Dataset } from './dataset';
+import type { ParseProviderKey } from './content-parse';
 
 export type FileUploadProcessingMode = 'store_only' | 'process_now';
+export type FileParseProviderKey = ParseProviderKey;
 
 export type FileAssetProductStatus =
   | 'stored_only'
@@ -128,6 +130,12 @@ export interface FileOriginalPreviewUrlResponse {
   mime_type: string;
 }
 
+export interface FileSourcePreviewPagesResponse {
+  engine: string;
+  page_count: number;
+  pages: string[];
+}
+
 export interface StorageUsage {
   used: number; // GB
   total: number; // GB
@@ -167,6 +175,7 @@ export interface UploadFileRequest {
   folder_id?: string;
   workspace_id?: string;
   processing_mode?: FileUploadProcessingMode;
+  parse_provider?: FileParseProviderKey;
 }
 
 /**
@@ -374,6 +383,7 @@ export interface CreateFileProcessingRequest {
   target_level?: FileProcessingTargetLevel;
   mode?: FileProcessingRequestMode;
   force?: boolean;
+  parse_provider?: FileParseProviderKey;
 }
 
 export interface CreateFileProcessingResponse {

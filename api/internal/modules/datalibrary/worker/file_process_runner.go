@@ -3,8 +3,11 @@ package worker
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
+	contentparsecap "github.com/zgiai/zgi/api/internal/capabilities/contentparse"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/routing"
 	"github.com/zgiai/zgi/api/internal/contracts"
 	contentparseservice "github.com/zgiai/zgi/api/internal/modules/contentparse/service"
 	"github.com/zgiai/zgi/api/internal/modules/datalibrary/model"
@@ -18,47 +21,59 @@ import (
 const FileProcessExecutorKey = "data-library-file-process"
 
 type FileProcessRunner struct {
-	processingRequests  repository.ProcessingRequestRepository
-	assets              repository.DocumentAssetRepository
-	files               filerepository.FileRepository
-	storage             storage.Storage
-	contentParse        contracts.ContentParseService
-	state               datalibraryservice.FileAssetProcessingStateService
-	artifactPersistence datalibraryservice.ParseArtifactPersistenceService
-	quality             datalibraryservice.ParseArtifactQualityService
-	processingService   datalibraryservice.ProcessingRequestService
-	taskEnqueuer        interface {
+	processingRequests       repository.ProcessingRequestRepository
+	assets                   repository.DocumentAssetRepository
+	files                    filerepository.FileRepository
+	storage                  storage.Storage
+	contentParse             contracts.ContentParseService
+	contentParseOrchestrator *contentparsecap.Orchestrator
+	contentParsePlanner      routing.Planner
+	providerCatalogs         contentparseservice.ProviderCatalogResolver
+	contentParseCatalog      *contracts.ParseProviderCatalog
+	state                    datalibraryservice.FileAssetProcessingStateService
+	artifactPersistence      datalibraryservice.ParseArtifactPersistenceService
+	quality                  datalibraryservice.ParseArtifactQualityService
+	processingService        datalibraryservice.ProcessingRequestService
+	taskEnqueuer             interface {
 		EnqueueGenerateCurrentResult(ctx context.Context, processingRequestID uuid.UUID) error
 	}
 }
 
 type FileProcessRunnerDeps struct {
-	ProcessingRequests  repository.ProcessingRequestRepository
-	Assets              repository.DocumentAssetRepository
-	Files               filerepository.FileRepository
-	Storage             storage.Storage
-	ContentParse        contracts.ContentParseService
-	State               datalibraryservice.FileAssetProcessingStateService
-	ArtifactPersistence datalibraryservice.ParseArtifactPersistenceService
-	Quality             datalibraryservice.ParseArtifactQualityService
-	ProcessingService   datalibraryservice.ProcessingRequestService
-	TaskEnqueuer        interface {
+	ProcessingRequests       repository.ProcessingRequestRepository
+	Assets                   repository.DocumentAssetRepository
+	Files                    filerepository.FileRepository
+	Storage                  storage.Storage
+	ContentParse             contracts.ContentParseService
+	ContentParseOrchestrator *contentparsecap.Orchestrator
+	ContentParsePlanner      routing.Planner
+	ProviderCatalogs         contentparseservice.ProviderCatalogResolver
+	ContentParseCatalog      *contracts.ParseProviderCatalog
+	State                    datalibraryservice.FileAssetProcessingStateService
+	ArtifactPersistence      datalibraryservice.ParseArtifactPersistenceService
+	Quality                  datalibraryservice.ParseArtifactQualityService
+	ProcessingService        datalibraryservice.ProcessingRequestService
+	TaskEnqueuer             interface {
 		EnqueueGenerateCurrentResult(ctx context.Context, processingRequestID uuid.UUID) error
 	}
 }
 
 func NewFileProcessRunner(deps FileProcessRunnerDeps) *FileProcessRunner {
 	return &FileProcessRunner{
-		processingRequests:  deps.ProcessingRequests,
-		assets:              deps.Assets,
-		files:               deps.Files,
-		storage:             deps.Storage,
-		contentParse:        deps.ContentParse,
-		state:               deps.State,
-		artifactPersistence: deps.ArtifactPersistence,
-		quality:             deps.Quality,
-		processingService:   deps.ProcessingService,
-		taskEnqueuer:        deps.TaskEnqueuer,
+		processingRequests:       deps.ProcessingRequests,
+		assets:                   deps.Assets,
+		files:                    deps.Files,
+		storage:                  deps.Storage,
+		contentParse:             deps.ContentParse,
+		contentParseOrchestrator: deps.ContentParseOrchestrator,
+		contentParsePlanner:      deps.ContentParsePlanner,
+		providerCatalogs:         deps.ProviderCatalogs,
+		contentParseCatalog:      deps.ContentParseCatalog,
+		state:                    deps.State,
+		artifactPersistence:      deps.ArtifactPersistence,
+		quality:                  deps.Quality,
+		processingService:        deps.ProcessingService,
+		taskEnqueuer:             deps.TaskEnqueuer,
 	}
 }
 
@@ -118,13 +133,16 @@ func (r *FileProcessRunner) Run(ctx context.Context, processingRequestID uuid.UU
 		return r.failRequest(ctx, request, asset, "source_load_failed", err)
 	}
 	parseRequest := buildFileParseRequest(asset, uploadFile, sourceBytes, request)
-	artifact, err := r.contentParse.Parse(ctx, parseRequest)
+	artifact, routePlan, err := r.parseFile(ctx, parseRequest, request)
 	if err != nil {
 		return r.failRequest(ctx, request, asset, "parse_failed", err)
 	}
 
 	summary := map[string]interface{}{
 		"source_content_hash": asset.ContentHash,
+	}
+	if routePlan != nil {
+		summary["route_plan"] = contentparseservice.RoutePlanSummary(routePlan)
 	}
 	contentparseservice.ApplyDatasetShadowArtifactSummary(summary, artifact)
 	persisted, err := r.artifactPersistence.PersistAssetParseArtifact(ctx, datalibraryservice.PersistAssetParseArtifactInput{
@@ -190,6 +208,7 @@ func (r *FileProcessRunner) Run(ctx context.Context, processingRequestID uuid.UU
 		"pending_confirmation_count": quality.PendingCount,
 		"next_product_status":        nextProductStatusAfterParse(quality.PendingCount),
 		"generation_no":              generationNo,
+		"parse_provider":             parseProviderFromRequest(request),
 	})
 	return err
 }
@@ -224,6 +243,162 @@ func (r *FileProcessRunner) queueGenerateCurrentResultRequest(ctx context.Contex
 		}
 	}
 	return queued, nil
+}
+
+func (r *FileProcessRunner) parseFile(ctx context.Context, req contracts.ParseRequest, request *model.ProcessingRequest) (*contracts.ParseArtifact, *routing.RoutePlan, error) {
+	if r.contentParse == nil {
+		return nil, nil, fmt.Errorf("content parse service is not configured")
+	}
+	if r.contentParsePlanner == nil || r.contentParseOrchestrator == nil {
+		artifact, err := r.contentParse.Parse(ctx, req)
+		return artifact, nil, err
+	}
+
+	catalog, err := r.resolveProviderCatalog(ctx, request)
+	if err != nil {
+		return nil, nil, err
+	}
+	health, err := r.contentParse.Health(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	plan, effectiveReq, err := r.planParseRequest(req, parseProviderFromRequest(request), catalog, health)
+	if err != nil {
+		return nil, nil, err
+	}
+	artifact, err := r.executeRoutePlan(ctx, effectiveReq, plan)
+	return artifact, plan, err
+}
+
+func (r *FileProcessRunner) resolveProviderCatalog(ctx context.Context, request *model.ProcessingRequest) (*contracts.ParseProviderCatalog, error) {
+	if r.providerCatalogs == nil {
+		if r.contentParseCatalog != nil {
+			return r.contentParseCatalog, nil
+		}
+		return nil, fmt.Errorf("content parse provider catalog is not configured")
+	}
+	var workspaceID *uuid.UUID
+	if request != nil && request.WorkspaceID != nil {
+		if parsed, err := uuid.Parse(strings.TrimSpace(*request.WorkspaceID)); err == nil {
+			workspaceID = &parsed
+		}
+	}
+	catalog, _, err := r.providerCatalogs.Resolve(ctx, workspaceID)
+	return catalog, err
+}
+
+func (r *FileProcessRunner) planParseRequest(req contracts.ParseRequest, provider string, catalog *contracts.ParseProviderCatalog, health *contracts.ParseHealth) (*routing.RoutePlan, contracts.ParseRequest, error) {
+	provider = strings.TrimSpace(strings.ToLower(provider))
+	if provider == "" || provider == "auto" {
+		plan, err := r.contentParsePlanner.Plan(req, catalog, health)
+		if err != nil {
+			return nil, req, err
+		}
+		if plan == nil || plan.Primary == nil {
+			return nil, req, fmt.Errorf("content parse route plan has no primary provider")
+		}
+		if plan.Primary.EngineName != "" {
+			req.EngineHint = plan.Primary.EngineName
+		}
+		return plan, req, nil
+	}
+
+	for _, item := range safeProviderCatalog(catalog).Providers {
+		if strings.ToLower(strings.TrimSpace(item.Name)) != provider {
+			continue
+		}
+		if !item.Enabled {
+			return nil, req, fmt.Errorf("content parse provider %q is not configured or enabled", provider)
+		}
+		if !adapterAvailable(health, item.Adapter) {
+			return nil, req, fmt.Errorf("content parse adapter %q for provider %q is unavailable", item.Adapter, provider)
+		}
+		if item.Engine != "" {
+			req.EngineHint = item.Engine
+		}
+		return forcedFileRoutePlan(req.Profile, item), req, nil
+	}
+	return nil, req, fmt.Errorf("unknown content parse provider %q", provider)
+}
+
+func (r *FileProcessRunner) executeRoutePlan(ctx context.Context, req contracts.ParseRequest, plan *routing.RoutePlan) (*contracts.ParseArtifact, error) {
+	if plan == nil || plan.Primary == nil {
+		return r.contentParse.Parse(ctx, req)
+	}
+	candidates := make([]routing.RouteCandidate, 0, len(plan.FallbackCandidates)+1)
+	candidates = append(candidates, *plan.Primary)
+	candidates = append(candidates, plan.FallbackCandidates...)
+	var lastErr error
+	attemptedProviders := make([]string, 0, len(candidates))
+	attemptedAdapters := make([]string, 0, len(candidates))
+	for index, candidate := range candidates {
+		adapterName := strings.TrimSpace(candidate.AdapterName)
+		if adapterName == "" {
+			continue
+		}
+		if providerKey := strings.TrimSpace(candidate.ProviderKey); providerKey != "" {
+			attemptedProviders = append(attemptedProviders, providerKey)
+		}
+		attemptedAdapters = append(attemptedAdapters, adapterName)
+		attemptReq := req
+		if candidate.EngineName != "" {
+			attemptReq.EngineHint = candidate.EngineName
+		}
+		artifact, err := r.contentParseOrchestrator.ParseWithAdapter(ctx, adapterName, attemptReq)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		contentparseservice.ApplyRouteExecutionMetadata(artifact, candidate, attemptedProviders, attemptedAdapters, index > 0)
+		return artifact, nil
+	}
+	if lastErr != nil {
+		return nil, fmt.Errorf("content parse route failed: %w", lastErr)
+	}
+	return nil, fmt.Errorf("content parse route has no executable provider")
+}
+
+func forcedFileRoutePlan(profile contracts.ParseProfile, provider contracts.ParseProviderConfig) *routing.RoutePlan {
+	return &routing.RoutePlan{
+		Mode:            profile,
+		RequestedEngine: provider.Engine,
+		Primary: &routing.RouteCandidate{
+			ProviderKey:  provider.Name,
+			AdapterName:  provider.Adapter,
+			EngineName:   provider.Engine,
+			Priority:     provider.Priority,
+			FallbackOnly: provider.FallbackOnly,
+			Reason: map[string]any{
+				"selection": "file_processing_forced_provider",
+			},
+		},
+		Metadata: map[string]any{
+			"forced_provider": true,
+		},
+	}
+}
+
+func safeProviderCatalog(catalog *contracts.ParseProviderCatalog) *contracts.ParseProviderCatalog {
+	if catalog != nil {
+		return catalog
+	}
+	return &contracts.ParseProviderCatalog{}
+}
+
+func adapterAvailable(health *contracts.ParseHealth, adapter string) bool {
+	adapter = strings.TrimSpace(adapter)
+	if adapter == "" {
+		return false
+	}
+	if health == nil {
+		return true
+	}
+	for _, item := range health.Adapters {
+		if item.Name == adapter {
+			return item.Available
+		}
+	}
+	return false
 }
 
 func (r *FileProcessRunner) loadSourceFile(ctx context.Context, asset *model.DocumentAsset) (*filemodel.UploadFile, []byte, error) {
@@ -267,6 +442,7 @@ func (r *FileProcessRunner) failRequest(ctx context.Context, request *model.Proc
 }
 
 func buildFileParseRequest(asset *model.DocumentAsset, uploadFile *filemodel.UploadFile, data []byte, request *model.ProcessingRequest) contracts.ParseRequest {
+	provider := parseProviderFromRequest(request)
 	return contracts.ParseRequest{
 		SourceType: contracts.ParseSourceTypeUploadFile,
 		SourceRef:  uploadFile.ID,
@@ -284,7 +460,40 @@ func buildFileParseRequest(asset *model.DocumentAsset, uploadFile *filemodel.Upl
 			"generation_no":         asset.GenerationNo,
 			"source_file_id":        asset.SourceFileID,
 			"source_content_hash":   asset.ContentHash,
+			"parse_provider":        provider,
 		},
+	}
+}
+
+func parseProviderFromRequest(request *model.ProcessingRequest) string {
+	if request == nil {
+		return "auto"
+	}
+	provider := metadataString(request.RequestMetadata, "parse_provider")
+	if provider == "" {
+		provider = metadataString(request.RequestMetadata, "provider")
+	}
+	if provider == "" {
+		return "auto"
+	}
+	return strings.ToLower(strings.TrimSpace(provider))
+}
+
+func metadataString(metadata map[string]any, key string) string {
+	if metadata == nil {
+		return ""
+	}
+	value, ok := metadata[key]
+	if !ok || value == nil {
+		return ""
+	}
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case contracts.ParseEngine:
+		return strings.TrimSpace(string(typed))
+	default:
+		return strings.TrimSpace(fmt.Sprintf("%v", typed))
 	}
 }
 

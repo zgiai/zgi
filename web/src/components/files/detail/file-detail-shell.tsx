@@ -15,7 +15,6 @@ import {
   Loader2,
   MessageSquareText,
   RefreshCw,
-  Sparkles,
   TriangleAlert,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -25,8 +24,7 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { FileOriginalPreviewPanel } from '@/components/files/detail/file-original-preview-panel';
-import { FileParseReviewPanel } from '@/components/files/detail/file-parse-review-panel';
+import { FileVisualParseReviewPanel } from '@/components/files/detail/file-visual-parse-review-panel';
 import { FileChunksPanel } from '@/components/files/detail/file-chunks-panel';
 import { FileQAPanel } from '@/components/files/detail/file-qa-panel';
 import { useT } from '@/i18n';
@@ -637,37 +635,13 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
                 {t('detail.previewWorkspaceDescription')}
               </p>
             </div>
-            <div className="grid min-h-[620px] xl:grid-cols-[minmax(0,1fr)_minmax(420px,0.95fr)]">
-              <FileOriginalPreviewPanel
-                file={file}
-                isDownloading={isDownloading}
-              />
-              <div className="min-w-0 border-t bg-background xl:border-l xl:border-t-0">
-                <div className="flex min-h-16 flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
-                  <Badge variant="subtle" className="px-4 py-2 text-sm font-semibold text-foreground">
-                    {t('detail.workbench.steps.parsed')}
-                  </Badge>
-                  {canReparse ? (
-                    <Button
-                      variant="outline"
-                      className="h-10 gap-2 rounded-lg"
-                      onClick={() => setReparseConfirmOpen(true)}
-                      disabled={createProcessingRequest.isPending}
-                    >
-                      {createProcessingRequest.isPending ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Sparkles className="h-4 w-4" />
-                      )}
-                      {t('detail.reparse.action')}
-                    </Button>
-                  ) : null}
-                </div>
-                <div className="max-h-[calc(100vh-430px)] min-h-[560px] overflow-y-auto p-4">
-                  <FileParseReviewPanel fileId={file.id} enabled={parseReviewEnabled} compact />
-                </div>
-              </div>
-            </div>
+            <FileVisualParseReviewPanel
+              file={file}
+              enabled={parseReviewEnabled}
+              canReparse={canReparse}
+              onReparse={() => setReparseConfirmOpen(true)}
+              isReparsing={createProcessingRequest.isPending}
+            />
           </section>
         </TabsContent>
 

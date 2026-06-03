@@ -119,6 +119,8 @@ func registerFileRoutesLegacy(v1 *gin.RouterGroup, deps FileRouteDeps) {
 
 		files.GET("/:file_id/preview-url", fileHandler.GetFileOriginalPreviewURL)
 
+		files.GET("/:file_id/source-preview", fileHandler.GetFileSourcePreviewPages)
+
 		files.GET("/:file_id/download", fileHandler.DownloadFile)
 
 		files.GET("/support-type", fileHandler.GetSupportedFileTypes)

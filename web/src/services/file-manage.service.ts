@@ -37,6 +37,7 @@ import type {
   AskFileQuestionRequest,
   AskFileQuestionResponse,
   FileQuestionStreamEvent,
+  FileSourcePreviewPagesResponse,
 } from './types/file';
 import { BaseService } from '@/lib/http/services';
 import type { SseMessage } from '@/lib/http/client';
@@ -115,6 +116,18 @@ class FileManageService extends BaseService {
     fileId: string
   ): Promise<ApiResponseData<FileOriginalPreviewUrlResponse>> {
     return this.request('get', `/console/api/files/${fileId}/preview-url`);
+  }
+
+  async getSourcePreviewPages(
+    fileId: string,
+    maxPages = 20
+  ): Promise<ApiResponseData<FileSourcePreviewPagesResponse>> {
+    return this.request(
+      'get',
+      `/console/api/files/${fileId}/source-preview?max_pages=${maxPages}`,
+      undefined,
+      { timeout: 120000 }
+    );
   }
 
   async getFileDetail(fileId: string): Promise<ApiResponseData<FileDetailResponse>> {
@@ -266,6 +279,9 @@ class FileManageService extends BaseService {
     }
     if (data.processing_mode) {
       formData.append('processing_mode', data.processing_mode);
+    }
+    if (data.parse_provider) {
+      formData.append('parse_provider', data.parse_provider);
     }
 
     return this.request('post', '/console/api/files/upload', formData, {

@@ -693,11 +693,14 @@ const FileManagementContent = ({
   const [selectedUploadWorkspaceId, setSelectedUploadWorkspaceId] = useState<string>('');
   const [selectedUploadProcessingMode, setSelectedUploadProcessingMode] =
     useState<UploadConfig['processingMode']>('process_now');
+  const [selectedUploadParseProvider, setSelectedUploadParseProvider] =
+    useState<UploadConfig['parseProvider']>('auto');
 
   const handleUploadConfirm = useCallback((config: UploadConfig) => {
     setAddDialogOpen(false);
     setSelectedUploadWorkspaceId(config.workspaceId);
     setSelectedUploadProcessingMode(config.processingMode);
+    setSelectedUploadParseProvider(config.parseProvider);
 
     if (config.mode === 'text') {
       setSelectedFolderId(config.folderId);
@@ -723,6 +726,7 @@ const FileManagementContent = ({
       setSelectedFolderId('');
       setSelectedUploadWorkspaceId('');
       setSelectedUploadProcessingMode('process_now');
+      setSelectedUploadParseProvider('auto');
       // Refresh file list after creating text file
       if (selectionMode) {
         goToPage(1);
@@ -735,6 +739,7 @@ const FileManagementContent = ({
     setSelectedFolderId('');
     setSelectedUploadWorkspaceId('');
     setSelectedUploadProcessingMode('process_now');
+    setSelectedUploadParseProvider('auto');
     reload();
     goToPage(1);
   }, [goToPage, reload]);
@@ -1221,6 +1226,7 @@ const FileManagementContent = ({
         folderId={selectedFolderId}
         workspaceId={selectedUploadWorkspaceId || workspaceId}
         processingMode={selectedUploadProcessingMode}
+        parseProvider={selectedUploadParseProvider}
         acceptExt={acceptExt}
         onUploadComplete={handleFileUploadComplete}
       />

@@ -35,7 +35,7 @@ import {
   getUploadedFileKeys,
   hasAnyFileKey,
 } from './file-dedup';
-import type { FileUploadProcessingMode } from '@/services/types/file';
+import type { FileParseProviderKey, FileUploadProcessingMode } from '@/services/types/file';
 
 const FileSelectorDialog = dynamic(() => import('@/components/files/file-selector-dialog'), {
   ssr: false,
@@ -72,6 +72,8 @@ export interface AutoFileUploadProps {
   workspaceId?: string;
   /** File asset processing mode for uploaded documents */
   processingMode?: FileUploadProcessingMode;
+  /** Content parse provider for uploaded documents */
+  parseProvider?: FileParseProviderKey;
   /** Whether to show the system file selector button */
   showSystemSelect?: boolean;
   /** Whether to mark files as temporary */
@@ -131,6 +133,7 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
       folderId,
       workspaceId,
       processingMode,
+      parseProvider,
       showSystemSelect = false,
       isTemporary = false,
       allowWorkspaceSwitch = false,
@@ -386,6 +389,7 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
           workspace_id: workspaceId,
           is_temporary: isTemporary,
           processing_mode: processingMode,
+          parse_provider: parseProvider,
           onProgress: p =>
             setItems(prev => {
               const next = prev.map(it => (it.id === item.id ? { ...it, progress: p } : it));
@@ -442,7 +446,7 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
             return next;
           });
         });
-    }, [folderId, isTemporary, processingMode, workspaceId]);
+    }, [folderId, isTemporary, processingMode, parseProvider, workspaceId]);
 
     const enqueueFiles = useCallback(
       async (files: FileList | File[]) => {

@@ -4,6 +4,8 @@ import (
 	"github.com/gin-gonic/gin"
 	contentparsecap "github.com/zgiai/zgi/api/internal/capabilities/contentparse"
 	systemvlm "github.com/zgiai/zgi/api/internal/capabilities/contentparse/adapters/system_vlm"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/routing"
+	"github.com/zgiai/zgi/api/internal/contracts"
 	"github.com/zgiai/zgi/api/internal/modules/contentparse/handler"
 	"github.com/zgiai/zgi/api/internal/modules/contentparse/repository"
 	"github.com/zgiai/zgi/api/internal/modules/contentparse/service"
@@ -30,6 +32,11 @@ type Module struct {
 	RunQueryService      service.RunQueryService
 	PlaygroundRunService service.PlaygroundRunService
 	ProviderCatalogs     service.ProviderCatalogResolver
+
+	ContentParseService contracts.ContentParseService
+	Orchestrator        *contentparsecap.Orchestrator
+	Planner             routing.Planner
+	Catalog             *contracts.ParseProviderCatalog
 
 	ProviderHandler   *handler.ProviderHandler
 	PolicyHandler     *handler.PolicyHandler
@@ -113,6 +120,11 @@ func NewModule(db *gorm.DB, options ...ModuleOption) *Module {
 		RunQueryService:      runQueryService,
 		PlaygroundRunService: playgroundRunService,
 		ProviderCatalogs:     providerCatalogs,
+
+		ContentParseService: capabilityModule.Service,
+		Orchestrator:        capabilityModule.Orchestrator,
+		Planner:             capabilityModule.Planner,
+		Catalog:             capabilityModule.Catalog,
 
 		ProviderHandler:   handler.NewProviderHandler(providerAdminService),
 		PolicyHandler:     handler.NewPolicyHandler(policyAdminService),

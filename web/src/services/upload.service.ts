@@ -1,7 +1,7 @@
 import { BaseService } from '@/lib/http/services';
 import { webappHttp } from '@/lib/http';
 import type { ApiResponseData } from './types/common';
-import type { FileUploadProcessingMode } from './types/file';
+import type { FileParseProviderKey, FileUploadProcessingMode } from './types/file';
 
 // File upload response types - updated to match API response format
 export interface UploadResponse {
@@ -51,6 +51,7 @@ export class UploadService extends BaseService {
       is_temporary?: boolean;
       is_icon?: boolean;
       processing_mode?: FileUploadProcessingMode;
+      parse_provider?: FileParseProviderKey;
       onProgress?: (progress: number) => void;
     } = {}
   ): Promise<UploadResponse> {
@@ -66,6 +67,7 @@ export class UploadService extends BaseService {
           ...(options.is_temporary !== undefined && { is_temporary: String(options.is_temporary) }),
           ...(options.is_icon !== undefined && { is_icon: String(options.is_icon) }),
           ...(options.processing_mode && { processing_mode: options.processing_mode }),
+          ...(options.parse_provider && { parse_provider: options.parse_provider }),
         },
       });
 
@@ -148,6 +150,7 @@ export class UploadService extends BaseService {
       workspace_id?: string;
       is_temporary?: boolean;
       processing_mode?: FileUploadProcessingMode;
+      parse_provider?: FileParseProviderKey;
       onProgress?: (progress: number) => void;
     } = {}
   ): Promise<MultipleUploadResponse> {
@@ -160,6 +163,7 @@ export class UploadService extends BaseService {
           workspace_id: options.workspace_id,
           is_temporary: options.is_temporary,
           processing_mode: options.processing_mode,
+          parse_provider: options.parse_provider,
         });
       });
 

@@ -22,6 +22,7 @@ import (
 	workflowtest "github.com/zgiai/zgi/api/internal/modules/app/workflowtest"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	automationdefinition "github.com/zgiai/zgi/api/internal/modules/automation/service/definition"
+	contentparsemodule "github.com/zgiai/zgi/api/internal/modules/contentparse"
 	datalibrarymodule "github.com/zgiai/zgi/api/internal/modules/datalibrary"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	dataset_repo "github.com/zgiai/zgi/api/internal/modules/dataset/repository"
@@ -696,11 +697,14 @@ func (c *ServiceContainer) GetSQLBase() sql_base.SQLBase {
 
 func (c *ServiceContainer) GetDataLibraryModule() *datalibrarymodule.Module {
 	if c.dataLibraryModule == nil {
-		contentParseModule := contentparsecap.NewModule()
-		c.dataLibraryModule = datalibrarymodule.NewModuleWithRuntime(
+		contentParseModule := contentparsemodule.NewModule(
+			c.db,
+			contentparsemodule.WithSystemVisionModel(c.GetLLMClient(), c.GetDefaultModelService()),
+		)
+		c.dataLibraryModule = datalibrarymodule.NewModuleWithContentParseModule(
 			c.db,
 			storage.GetStorage(),
-			contentParseModule.Service,
+			contentParseModule,
 			c.GetLLMClient(),
 			c.GetDefaultModelService(),
 		)

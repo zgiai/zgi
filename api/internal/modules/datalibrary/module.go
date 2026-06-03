@@ -3,8 +3,11 @@ package datalibrary
 import (
 	"github.com/zgiai/zgi/api/config"
 	contentParseCap "github.com/zgiai/zgi/api/internal/capabilities/contentparse"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/routing"
 	"github.com/zgiai/zgi/api/internal/contracts"
+	contentParseModule "github.com/zgiai/zgi/api/internal/modules/contentparse"
 	contentParseRepository "github.com/zgiai/zgi/api/internal/modules/contentparse/repository"
+	contentParseService "github.com/zgiai/zgi/api/internal/modules/contentparse/service"
 	"github.com/zgiai/zgi/api/internal/modules/datalibrary/handler"
 	"github.com/zgiai/zgi/api/internal/modules/datalibrary/repository"
 	"github.com/zgiai/zgi/api/internal/modules/datalibrary/service"
@@ -61,6 +64,14 @@ type Module struct {
 	ProcessingExecutorHandler          *handler.ProcessingExecutorHandler
 }
 
+type ContentParseRuntime struct {
+	Service         contracts.ContentParseService
+	Orchestrator    *contentParseCap.Orchestrator
+	Planner         routing.Planner
+	CatalogResolver contentParseService.ProviderCatalogResolver
+	Catalog         *contracts.ParseProviderCatalog
+}
+
 func NewModule(db *gorm.DB) *Module {
 	contentParseModule := contentParseCap.NewModule()
 	return NewModuleWithStorageAndContentParse(db, storage.GetStorage(), contentParseModule.Service)
@@ -82,6 +93,37 @@ func NewModuleWithRuntime(
 	llmClient llmclient.LLMClient,
 	defaultModelSvc llmdefaultservice.DefaultModelService,
 ) *Module {
+	return NewModuleWithContentParseRuntime(db, artifactStorage, ContentParseRuntime{Service: contentParseService}, llmClient, defaultModelSvc)
+}
+
+func NewModuleWithContentParseModule(
+	db *gorm.DB,
+	artifactStorage storage.Storage,
+	contentParse *contentParseModule.Module,
+	llmClient llmclient.LLMClient,
+	defaultModelSvc llmdefaultservice.DefaultModelService,
+) *Module {
+	runtime := ContentParseRuntime{}
+	if contentParse != nil {
+		runtime = ContentParseRuntime{
+			Service:         contentParse.ContentParseService,
+			Orchestrator:    contentParse.Orchestrator,
+			Planner:         contentParse.Planner,
+			CatalogResolver: contentParse.ProviderCatalogs,
+			Catalog:         contentParse.Catalog,
+		}
+	}
+	return NewModuleWithContentParseRuntime(db, artifactStorage, runtime, llmClient, defaultModelSvc)
+}
+
+func NewModuleWithContentParseRuntime(
+	db *gorm.DB,
+	artifactStorage storage.Storage,
+	contentParseRuntime ContentParseRuntime,
+	llmClient llmclient.LLMClient,
+	defaultModelSvc llmdefaultservice.DefaultModelService,
+) *Module {
+	contentParseService := contentParseRuntime.Service
 	documentAssetRepo := repository.NewDocumentAssetRepository(db)
 	reuseEventRepo := repository.NewReuseEventRepository(db)
 	processingRequestRepo := repository.NewProcessingRequestRepository(db)
@@ -144,15 +186,19 @@ func NewModuleWithRuntime(
 	knowledgeBaseRefService := service.NewKnowledgeBaseAssetRefService(knowledgeBaseAssetRefRepo, reuseEventRepo)
 	databaseRefService := service.NewDatabaseAssetRefService(databaseAssetRefRepo, reuseEventRepo)
 	fileProcessRunner := worker.NewFileProcessRunner(worker.FileProcessRunnerDeps{
-		ProcessingRequests:  processingRequestRepo,
-		Assets:              documentAssetRepo,
-		Files:               fileRepo,
-		Storage:             artifactStorage,
-		ContentParse:        contentParseService,
-		State:               fileAssetProcessingStateService,
-		ArtifactPersistence: parseArtifactPersistenceService,
-		Quality:             parseArtifactQualityService,
-		ProcessingService:   processingRequestService,
+		ProcessingRequests:       processingRequestRepo,
+		Assets:                   documentAssetRepo,
+		Files:                    fileRepo,
+		Storage:                  artifactStorage,
+		ContentParse:             contentParseService,
+		ContentParseOrchestrator: contentParseRuntime.Orchestrator,
+		ContentParsePlanner:      contentParseRuntime.Planner,
+		ProviderCatalogs:         contentParseRuntime.CatalogResolver,
+		ContentParseCatalog:      contentParseRuntime.Catalog,
+		State:                    fileAssetProcessingStateService,
+		ArtifactPersistence:      parseArtifactPersistenceService,
+		Quality:                  parseArtifactQualityService,
+		ProcessingService:        processingRequestService,
 	})
 	generateCurrentResultRunner := worker.NewGenerateCurrentResultRunner(worker.GenerateCurrentResultRunnerDeps{
 		ProcessingRequests:  processingRequestRepo,

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +18,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/zgiai/zgi/api/config"
+	hyperparseengine "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/hyperparse"
+	"github.com/zgiai/zgi/api/internal/contracts"
 	datalibrarymodel "github.com/zgiai/zgi/api/internal/modules/datalibrary/model"
 	datalibraryservice "github.com/zgiai/zgi/api/internal/modules/datalibrary/service"
 	"github.com/zgiai/zgi/api/internal/modules/file_process/service"
@@ -89,10 +92,17 @@ type fileServiceWithUploadOptions interface {
 	UploadFileWithOptions(ctx context.Context, filename string, content []byte, mimeType string, userID, organizationID string, userRole model.CreatedByRole, source *interfaces.FileSource, workspaceID *string, isTemporary bool, isIcon bool, options service.UploadFileOptions) (*dto.UploadFile, error)
 }
 
+type fileSourcePreviewPagesResponse struct {
+	Engine    string   `json:"engine"`
+	PageCount int      `json:"page_count"`
+	Pages     []string `json:"pages"`
+}
+
 type fileProcessingRequest struct {
-	TargetLevel string `json:"target_level"`
-	Mode        string `json:"mode"`
-	Force       bool   `json:"force"`
+	TargetLevel   string `json:"target_level"`
+	Mode          string `json:"mode"`
+	Force         bool   `json:"force"`
+	ParseProvider string `json:"parse_provider"`
 }
 
 type parseConfirmationResolveRequest struct {
@@ -237,6 +247,24 @@ func normalizeFileProcessingRequestMode(raw string) (string, bool) {
 	}
 }
 
+func normalizeFileParseProvider(raw string) (string, bool) {
+	provider := strings.ToLower(strings.TrimSpace(raw))
+	if provider == "" {
+		return "auto", true
+	}
+	switch provider {
+	case "auto",
+		string(contracts.ParseEngineLocal),
+		string(contracts.ParseEngineMineru),
+		string(contracts.ParseEngineReducto),
+		string(contracts.ParseEngineVLM),
+		"hyperparse_api":
+		return provider, true
+	default:
+		return "", false
+	}
+}
+
 func normalizeFileProcessingTargetLevel(raw string) string {
 	targetLevel := strings.TrimSpace(raw)
 	if targetLevel == "" {
@@ -322,6 +350,11 @@ func (h *FileHandler) UploadFile(c *gin.Context) {
 	isIcon := c.PostForm("is_icon") == "true"
 
 	processingMode, ok := normalizeUploadProcessingMode(c.PostForm("processing_mode"))
+	if !ok {
+		h.businessError(c, response.ErrInvalidParam)
+		return
+	}
+	parseProvider, ok := normalizeFileParseProvider(c.PostForm("parse_provider"))
 	if !ok {
 		h.businessError(c, response.ErrInvalidParam)
 		return
@@ -493,7 +526,7 @@ func (h *FileHandler) UploadFile(c *gin.Context) {
 		}
 	}
 
-	asset, err := h.attachAssetProcessing(c.Request.Context(), uploadFile, organizationID, accountID, processingMode, shouldUseAssetProcessing)
+	asset, err := h.attachAssetProcessing(c.Request.Context(), uploadFile, organizationID, accountID, processingMode, parseProvider, shouldUseAssetProcessing)
 	if err != nil {
 		logger.WarnContext(c.Request.Context(), "failed to attach file asset processing", "file_id", uploadFile.ID, "processing_mode", processingMode, err)
 		h.businessError(c, response.ErrSystemError)
@@ -561,8 +594,13 @@ func (h *FileHandler) CreateProcessingRequest(c *gin.Context) {
 		return
 	}
 	targetLevel := normalizeFileProcessingTargetLevel(req.TargetLevel)
+	parseProvider, ok := normalizeFileParseProvider(req.ParseProvider)
+	if !ok {
+		h.businessError(c, response.ErrInvalidParams)
+		return
+	}
 
-	result, err := h.createQueuedFileProcessingRequest(c.Request.Context(), uploadFile, organizationID, accountID, targetLevel, mode, req.Force)
+	result, err := h.createQueuedFileProcessingRequest(c.Request.Context(), uploadFile, organizationID, accountID, targetLevel, mode, req.Force, parseProvider)
 	if err != nil {
 		h.handleFileProcessingRequestError(c, err)
 		return
@@ -1262,7 +1300,7 @@ func (h *FileHandler) uploadFile(ctx context.Context, filename string, content [
 	)
 }
 
-func (h *FileHandler) attachAssetProcessing(ctx context.Context, uploadFile *dto.UploadFile, organizationID string, accountID string, processingMode string, useAssetProcessing bool) (*datalibrarymodel.DocumentAsset, error) {
+func (h *FileHandler) attachAssetProcessing(ctx context.Context, uploadFile *dto.UploadFile, organizationID string, accountID string, processingMode string, parseProvider string, useAssetProcessing bool) (*datalibrarymodel.DocumentAsset, error) {
 	if !useAssetProcessing || h.assetStateService == nil {
 		return nil, nil
 	}
@@ -1282,14 +1320,14 @@ func (h *FileHandler) attachAssetProcessing(ctx context.Context, uploadFile *dto
 		return asset, nil
 	}
 
-	result, err := h.beginAndQueueRunProcessingRequest(ctx, asset, uploadFile.ID, organizationID, accountID, datalibrarymodel.DocumentProcessingLevelVectorize, FileProcessingRequestModeParseNow, false)
+	result, err := h.beginAndQueueRunProcessingRequest(ctx, asset, uploadFile.ID, organizationID, accountID, datalibrarymodel.DocumentProcessingLevelVectorize, FileProcessingRequestModeParseNow, false, parseProvider)
 	if err != nil {
 		return nil, err
 	}
 	return result.Asset, nil
 }
 
-func (h *FileHandler) createQueuedFileProcessingRequest(ctx context.Context, uploadFile *dto.UploadFile, organizationID string, accountID string, targetLevel string, mode string, force bool) (*queuedFileProcessingRequest, error) {
+func (h *FileHandler) createQueuedFileProcessingRequest(ctx context.Context, uploadFile *dto.UploadFile, organizationID string, accountID string, targetLevel string, mode string, force bool, parseProvider string) (*queuedFileProcessingRequest, error) {
 	asset, _, err := h.assetStateService.CreateOrReuseStoredAsset(ctx, datalibraryservice.FileAssetCreateInput{
 		OrganizationID: organizationID,
 		WorkspaceID:    uploadFile.WorkspaceID,
@@ -1307,7 +1345,7 @@ func (h *FileHandler) createQueuedFileProcessingRequest(ctx context.Context, upl
 
 	switch mode {
 	case FileProcessingRequestModeParseNow, FileProcessingRequestModeReparse:
-		return h.beginAndQueueRunProcessingRequest(ctx, asset, uploadFile.ID, organizationID, accountID, targetLevel, mode, force)
+		return h.beginAndQueueRunProcessingRequest(ctx, asset, uploadFile.ID, organizationID, accountID, targetLevel, mode, force, parseProvider)
 	case FileProcessingRequestModeGenerateAfterConfirm:
 		return h.queueGenerateAfterConfirmRequest(ctx, asset, uploadFile.ID, organizationID, accountID, targetLevel, force)
 	default:
@@ -1315,7 +1353,7 @@ func (h *FileHandler) createQueuedFileProcessingRequest(ctx context.Context, upl
 	}
 }
 
-func (h *FileHandler) beginAndQueueRunProcessingRequest(ctx context.Context, asset *datalibrarymodel.DocumentAsset, uploadFileID string, organizationID string, accountID string, targetLevel string, mode string, force bool) (*queuedFileProcessingRequest, error) {
+func (h *FileHandler) beginAndQueueRunProcessingRequest(ctx context.Context, asset *datalibrarymodel.DocumentAsset, uploadFileID string, organizationID string, accountID string, targetLevel string, mode string, force bool, parseProvider string) (*queuedFileProcessingRequest, error) {
 	result, err := h.assetStateService.BeginProcessingRequest(ctx, datalibraryservice.BeginProcessingRequestInput{
 		OrganizationID: organizationID,
 		WorkspaceID:    asset.WorkspaceID,
@@ -1328,6 +1366,7 @@ func (h *FileHandler) beginAndQueueRunProcessingRequest(ctx context.Context, ass
 			"source":         "file_processing_request",
 			"mode":           mode,
 			"upload_file_id": uploadFileID,
+			"parse_provider": parseProvider,
 		},
 	})
 	if err != nil {
@@ -1474,6 +1513,108 @@ func (h *FileHandler) GetFileOriginalPreviewURL(c *gin.Context) {
 		Extension: uploadFile.Extension,
 		MimeType:  uploadFile.MimeType,
 	})
+}
+
+// GetFileSourcePreviewPages renders source pages for parse-review overlays.
+// GET /files/:file_id/source-preview
+func (h *FileHandler) GetFileSourcePreviewPages(c *gin.Context) {
+	fileID := c.Param("file_id")
+	if fileID == "" {
+		h.businessError(c, response.ErrFileIdRequired)
+		return
+	}
+
+	uploadFile, ok := h.getAuthorizedFileForDownload(c, fileID)
+	if !ok {
+		return
+	}
+
+	content, err := h.fileService.DownloadFile(c.Request.Context(), fileID)
+	if err != nil {
+		switch err {
+		case file_model.ErrFileNotFound:
+			h.businessError(c, response.ErrFileNotFound)
+		case file_model.ErrUnsupportedFileType:
+			h.businessError(c, response.ErrUnsupportedFileType)
+		default:
+			h.businessError(c, response.ErrFilePreviewFailed)
+		}
+		return
+	}
+
+	maxPages := parseFileSourcePreviewMaxPages(c.Query("max_pages"), content)
+	mimeType := strings.TrimSpace(uploadFile.MimeType)
+	if mimeType == "" {
+		mimeType = http.DetectContentType(content)
+	}
+
+	if isFileSourcePreviewPDF(uploadFile.Name, uploadFile.Extension, mimeType) {
+		pages, engine, err := hyperparseengine.RenderPDFPreviewPagesToDataURLs(content, maxPages)
+		if err != nil {
+			logger.WarnContext(c.Request.Context(), "failed to render file source preview pdf", err)
+			h.businessError(c, response.ErrFilePreviewFailed)
+			return
+		}
+		if len(pages) == 0 {
+			h.businessError(c, response.ErrFilePreviewFailed)
+			return
+		}
+		response.Success(c, fileSourcePreviewPagesResponse{
+			Engine:    engine,
+			PageCount: len(pages),
+			Pages:     pages,
+		})
+		return
+	}
+
+	if strings.HasPrefix(strings.ToLower(mimeType), "image/") {
+		response.Success(c, fileSourcePreviewPagesResponse{
+			Engine:    "stored_source_image",
+			PageCount: 1,
+			Pages:     []string{fileSourcePreviewDataURL(mimeType, content)},
+		})
+		return
+	}
+
+	h.businessError(c, response.ErrUnsupportedFileType)
+}
+
+func parseFileSourcePreviewMaxPages(raw string, content []byte) int {
+	maxPages := 0
+	if raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			maxPages = parsed
+		}
+	}
+	if maxPages <= 0 {
+		maxPages = hyperparseengine.PDFPageCountRelaxed(content)
+	}
+	if maxPages <= 0 {
+		maxPages = 20
+	}
+	if maxPages > 50 {
+		maxPages = 50
+	}
+	return maxPages
+}
+
+func isFileSourcePreviewPDF(fileName string, extension string, mimeType string) bool {
+	normalizedMIME := strings.ToLower(strings.TrimSpace(mimeType))
+	if normalizedMIME == "application/pdf" || strings.Contains(normalizedMIME, "/pdf") {
+		return true
+	}
+	normalizedExt := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(extension)), ".")
+	if normalizedExt == "pdf" {
+		return true
+	}
+	return strings.HasSuffix(strings.ToLower(strings.TrimSpace(fileName)), ".pdf")
+}
+
+func fileSourcePreviewDataURL(mimeType string, content []byte) string {
+	if strings.TrimSpace(mimeType) == "" {
+		mimeType = http.DetectContentType(content)
+	}
+	return fmt.Sprintf("data:%s;base64,%s", mimeType, base64.StdEncoding.EncodeToString(content))
 }
 
 // GetFilesMetadata returns authorized metadata for files by ID.

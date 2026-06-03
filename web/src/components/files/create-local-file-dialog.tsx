@@ -17,7 +17,7 @@ import { RefreshCw } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { FILES_QUERY_KEY } from '@/hooks/use-files';
 import { useUploadConfig } from '@/hooks/use-upload';
-import type { FileUploadProcessingMode } from '@/services/types/file';
+import type { FileParseProviderKey, FileUploadProcessingMode } from '@/services/types/file';
 
 export interface CreateLocalFileDialogProps {
   open: boolean;
@@ -27,6 +27,7 @@ export interface CreateLocalFileDialogProps {
   acceptExt?: string[];
   workspaceId?: string;
   processingMode?: FileUploadProcessingMode;
+  parseProvider?: FileParseProviderKey;
   /** Callback after successful upload */
   onUploadComplete?: () => void;
 }
@@ -42,6 +43,7 @@ const CreateLocalFileDialog = ({
   acceptExt = [],
   workspaceId,
   processingMode = 'process_now',
+  parseProvider = 'auto',
   onUploadComplete,
 }: CreateLocalFileDialogProps) => {
   const t = useT();
@@ -118,6 +120,7 @@ const CreateLocalFileDialog = ({
             folderId={folderId}
             workspaceId={workspaceId}
             processingMode={processingMode}
+            parseProvider={parseProvider}
             onFilesChange={handleFilesChange}
           />
         </DialogBody>
