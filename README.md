@@ -1,8 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="web/public/logo_dark.png" />
-    <img src="web/public/logo.png" alt="ZGI" width="360" />
-  </picture>
+  <img src="docs/assets/zgi-agent-runtime-readme.png" alt="ZGI Agent Runtime" width="100%" />
 </p>
 
 # ZGI
@@ -30,8 +27,6 @@
     <a href="#license">License</a>
   </sub>
 </p>
-
-![ZGI workflow editor](docs/assets/zgi-workflow-editor-api-enrichment.png)
 
 ## Why ZGI
 
