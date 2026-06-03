@@ -11,6 +11,7 @@ import {
   Eye,
   FileImage,
   FileText,
+  HelpCircle,
   Loader2,
 } from 'lucide-react';
 import MarkdownViewer from '@/components/common/markdown-viewer';
@@ -31,6 +32,7 @@ import type {
   AIChatGeneratedFile,
   AIChatMessage,
   AIChatMessageFile,
+  AIChatUserInputRequest,
 } from '@/services/types/aichat';
 import { isSensitiveOutputBlockedValue } from '@/utils/model-output-filter';
 import type { ChatBranchNavigation } from '@/components/chat/utils/message-tree';
@@ -66,6 +68,7 @@ interface AIChatMessageBubbleProps {
   onEditChange?: (value: string) => void;
   onEditCancel?: () => void;
   onEditSubmit?: (message: AIChatMessage) => void;
+  hideUserInputRequest?: boolean;
   showAssistantModelMeta?: boolean;
   showMemoryKey?: boolean;
   showSkillEventDetails?: boolean;
@@ -266,6 +269,58 @@ function AIChatGeneratedFileCard({ file }: AIChatGeneratedFileCardProps) {
   );
 }
 
+function AIChatUserInputRequestCard({
+  request,
+}: {
+  request: AIChatUserInputRequest;
+}) {
+  const t = useT('webapp');
+  const questions = (request.questions ?? []).filter(question => question.question?.trim());
+  if (questions.length === 0) return null;
+
+  return (
+    <div className="mt-3 max-w-2xl rounded-md border bg-background px-3 py-3 text-sm shadow-sm">
+      <div className="flex items-start gap-2">
+        <HelpCircle className="mt-0.5 size-4 shrink-0 text-primary" />
+        <div className="min-w-0 flex-1 space-y-3">
+          <div className="space-y-1">
+            <div className="font-medium text-foreground">
+              {t('consoleChat.userInputRequest.title')}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              {t('consoleChat.userInputRequest.description')}
+            </div>
+          </div>
+          {questions.map((question, index) => {
+            const options = (question.options ?? []).filter(option => option.label?.trim());
+            return (
+              <div key={question.id || `${index}-${question.question}`} className="min-w-0">
+                <div className="whitespace-pre-wrap break-words font-medium text-foreground">
+                  {questions.length > 1 ? `${index + 1}. ` : ''}
+                  {question.question}
+                </div>
+                {options.length > 0 ? (
+                  <div className="mt-2 flex flex-wrap gap-1.5 text-xs text-muted-foreground">
+                    {options.map(option => (
+                      <span
+                        key={option.label}
+                        className="max-w-full rounded-md border bg-muted/40 px-2 py-1"
+                        title={option.description || option.label}
+                      >
+                        {option.label}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /**
  * @component AIChatMessageBubble
  * @category Feature
@@ -291,6 +346,7 @@ export function AIChatMessageBubble({
   onEditChange,
   onEditCancel,
   onEditSubmit,
+  hideUserInputRequest = false,
   showAssistantModelMeta = true,
   showMemoryKey = true,
   showSkillEventDetails = true,
@@ -322,6 +378,7 @@ export function AIChatMessageBubble({
     : 'pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100';
   const files = message.metadata?.files ?? [];
   const generatedFiles = message.metadata?.generated_files ?? [];
+  const userInputRequest = hideUserInputRequest ? undefined : message.metadata?.user_input_request;
   const imageFiles = files.filter(file => file.kind === 'image');
   const documentFiles = files.filter(file => file.kind !== 'image');
   const historicalTimeline = useMemo<AIChatAgenticTimelineItem[]>(
@@ -515,14 +572,6 @@ export function AIChatMessageBubble({
             />
           ) : null}
 
-          {generatedFiles.length > 0 ? (
-            <div className="mb-3 flex flex-wrap gap-2">
-              {generatedFiles.map(file => (
-                <AIChatGeneratedFileCard key={file.file_id} file={file} />
-              ))}
-            </div>
-          ) : null}
-
           {answer ? (
             <div className="prose prose-sm min-w-0 max-w-full dark:prose-invert sm:pr-4 md:pr-6 lg:pr-8 xl:pr-9">
               <MarkdownViewer
@@ -531,20 +580,8 @@ export function AIChatMessageBubble({
                 isStreaming={isStreaming}
                 renderIdentity={message.id}
               />
-              {shouldHideAssistantToolbar ? null : (
-                <AssistantMessageToolbar
-                  answer={answer}
-                  canRegenerate={canRegenerateMessage}
-                  isDisabled={isSending || isStreaming}
-                  toolbarVisibility={toolbarVisibility}
-                  branchNavigation={branchNavigation}
-                  canSwitchBranch={canSwitchBranch}
-                  onRegenerate={() => onRegenerate?.(message)}
-                  onSwitchBranch={onSwitchBranch}
-                />
-              )}
             </div>
-          ) : isStreaming && !hasTimeline ? (
+          ) : isStreaming && !hasTimeline && !userInputRequest ? (
             <div className="space-y-2 pt-1">
               <Skeleton className="h-4 w-2/3" />
               <Skeleton className="h-4 w-1/2" />
@@ -552,6 +589,18 @@ export function AIChatMessageBubble({
             </div>
           ) : isStopped ? (
             <div className="text-sm text-muted-foreground">{t('consoleChat.stopped')}</div>
+          ) : null}
+
+          {generatedFiles.length > 0 ? (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {generatedFiles.map(file => (
+                <AIChatGeneratedFileCard key={file.file_id} file={file} />
+              ))}
+            </div>
+          ) : null}
+
+          {userInputRequest ? (
+            <AIChatUserInputRequestCard request={userInputRequest} />
           ) : null}
 
           {isError ? (
@@ -578,9 +627,9 @@ export function AIChatMessageBubble({
             </div>
           ) : null}
 
-          {!answer && (isError || isStopped) && canRegenerateMessage && !shouldHideAssistantToolbar ? (
+          {!shouldHideAssistantToolbar && (answer || canRegenerateMessage) ? (
             <AssistantMessageToolbar
-              answer=""
+              answer={answer}
               canRegenerate={canRegenerateMessage}
               isDisabled={isSending || isStreaming}
               toolbarVisibility={toolbarVisibility}

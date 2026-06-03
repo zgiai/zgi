@@ -18,6 +18,7 @@ import type {
   AIChatMessageStartEventData,
   AIChatMemoryMutationEventData,
   AIChatIntermediateAnswerEventData,
+  AIChatUserInputRequestedEventData,
   AIChatRegenerateMessageRequest,
   AIChatSkillCallEndEventData,
   AIChatSkillCallErrorEventData,
@@ -73,6 +74,10 @@ export interface AIChatStreamCallbacks {
   onAgentProgress: (payload: AIChatAgentProgressEventData, eventId?: string | null) => void;
   onIntermediateAnswer: (
     payload: AIChatIntermediateAnswerEventData,
+    eventId?: string | null
+  ) => void;
+  onUserInputRequested: (
+    payload: AIChatUserInputRequestedEventData,
     eventId?: string | null
   ) => void;
   onFileParseStart: (payload: AIChatFileParseStartEventData, eventId?: string | null) => void;
@@ -152,6 +157,9 @@ export function dispatchAIChatStreamEvent(
       break;
     case 'agent_intermediate_answer':
       callbacks.onIntermediateAnswer((data ?? {}) as AIChatIntermediateAnswerEventData, eventId);
+      break;
+    case 'user_input_requested':
+      callbacks.onUserInputRequested((data ?? {}) as AIChatUserInputRequestedEventData, eventId);
       break;
     case 'file_parse_start':
       callbacks.onFileParseStart((data ?? {}) as AIChatFileParseStartEventData, eventId);

@@ -193,6 +193,18 @@ const messages = {
     sendEdited: 'Send edited message',
     previousBranch: 'Previous branch',
     nextBranch: 'Next branch',
+    userInputRequest: {
+      title: 'More details needed',
+      description: 'Answer one question at a time. You can ignore this and return to normal input.',
+      freeAnswerPlaceholder: 'Type a custom answer',
+      progress: '{current}/{total}',
+      previous: 'Previous',
+      next: 'Next',
+      ignore: 'Ignore',
+      finish: 'Send',
+      answerPrefix: 'My answers:',
+      additionalInput: 'Additional note',
+    },
     skillPreferences: {
       action: 'My Skills',
       title: 'My AIChat Skills',

@@ -35,7 +35,11 @@ function normalizeSkillInvocation(invocation: AIChatSkillInvocation): AIChatSkil
 }
 
 function isVisibleSkillInvocation(invocation: AIChatSkillInvocation): boolean {
-  return invocation.kind !== 'metadata_exposed' && invocation.kind !== 'memory_planner';
+  return (
+    invocation.kind !== 'metadata_exposed' &&
+    invocation.kind !== 'memory_planner' &&
+    invocation.kind !== 'user_input_request'
+  );
 }
 
 export function hasRunningMessageState(

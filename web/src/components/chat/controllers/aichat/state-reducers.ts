@@ -23,6 +23,7 @@ import type {
   AIChatSkillLoadEndEventData,
   AIChatSkillLoadStartEventData,
   AIChatSkillReferenceReadEventData,
+  AIChatUserInputRequestedEventData,
 } from '@/services/types/aichat';
 import {
   SENSITIVE_OUTPUT_BLOCKED_FLAG,
@@ -97,6 +98,8 @@ function mergeMessageMetadata(
   const incomingGeneratedFiles = incomingMetadata?.generated_files ?? [];
   const generatedFiles =
     incomingGeneratedFiles.length > 0 ? incomingGeneratedFiles : existingGeneratedFiles;
+  const userInputRequest =
+    incomingMetadata?.user_input_request ?? existingMetadata?.user_input_request;
 
   return {
     ...(existingMetadata ?? {}),
@@ -111,6 +114,11 @@ function mergeMessageMetadata(
       ? {
           generated_file_count: generatedFiles.length,
           generated_files: generatedFiles,
+        }
+      : {}),
+    ...(userInputRequest
+      ? {
+          user_input_request: userInputRequest,
         }
       : {}),
   };
@@ -133,6 +141,7 @@ function clearRuntimeMessageMetadata(
   delete next.tool_names;
   delete next.generated_file_count;
   delete next.generated_files;
+  delete next.user_input_request;
   return next;
 }
 
@@ -545,6 +554,57 @@ export function applyIntermediateAnswerState(
       created_at: payload.created_at,
     }
   );
+}
+
+export function applyUserInputRequestedState(
+  current: AIChatControllerState,
+  payload: AIChatUserInputRequestedEventData,
+  eventId?: string | null
+): AIChatControllerState {
+  const questions = (payload.questions ?? []).filter(question => question.question?.trim());
+  if (!payload.conversation_id || !payload.message_id || questions.length === 0) {
+    return current;
+  }
+  const request = {
+    request_id: payload.request_id,
+    questions: questions.map(question => ({
+      ...question,
+      question: question.question.trim(),
+      options: question.options?.filter(option => option.label?.trim()),
+    })),
+    created_at: payload.created_at,
+  };
+  const messages = current.messagesByConversation[payload.conversation_id] ?? [];
+  const nextMessages = messages.map(message =>
+    message.id === payload.message_id
+      ? {
+          ...message,
+          metadata: {
+            ...(message.metadata ?? {}),
+            user_input_request: request,
+          },
+          updated_at: Math.floor(Date.now() / 1000),
+        }
+      : message
+  );
+  const previousStreaming = current.streamingByMessageId[payload.message_id];
+
+  return {
+    ...current,
+    messagesByConversation: {
+      ...current.messagesByConversation,
+      [payload.conversation_id]: nextMessages,
+    },
+    streamingByMessageId: previousStreaming
+      ? {
+          ...current.streamingByMessageId,
+          [payload.message_id]: {
+            ...previousStreaming,
+            last_event_id: eventId ?? previousStreaming.last_event_id,
+          },
+        }
+      : current.streamingByMessageId,
+  };
 }
 
 function inferExtension(filename: string): string {

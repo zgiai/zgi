@@ -49,6 +49,7 @@ export function clearStreamingRuntimeMessageMetadata(message: AIChatMessage): AI
   delete metadata.tool_names;
   delete metadata.generated_file_count;
   delete metadata.generated_files;
+  delete metadata.user_input_request;
 
   return {
     ...message,

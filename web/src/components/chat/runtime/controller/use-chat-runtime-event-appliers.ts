@@ -19,6 +19,7 @@ import type {
   AIChatSkillLoadEndEventData,
   AIChatSkillLoadStartEventData,
   AIChatSkillReferenceReadEventData,
+  AIChatUserInputRequestedEventData,
 } from '@/services/types/aichat';
 import type {
   AIChatControllerState,
@@ -33,6 +34,7 @@ import {
   applyFileParseErrorState,
   applyFileParseStartState,
   applyIntermediateAnswerState,
+  applyUserInputRequestedState,
   applyMessageChunkState,
   applyMessageEndState,
   applyMemoryMutationState,
@@ -252,6 +254,14 @@ export function useChatRuntimeEventAppliers({
     [setControllerState]
   );
 
+  const applyUserInputRequested = useCallback(
+    (payload: AIChatUserInputRequestedEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id || !payload.questions?.length) return;
+      setControllerState(current => applyUserInputRequestedState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
   const applyMemoryMutation = useCallback(
     (payload: AIChatMemoryMutationEventData, eventId?: string | null) => {
       if (!payload.conversation_id || !payload.message_id || !payload.action) return;
@@ -343,6 +353,7 @@ export function useChatRuntimeEventAppliers({
       applyMemoryMutation,
       applyAgentProgress,
       applyIntermediateAnswer,
+      applyUserInputRequested,
       applyMessageEnd,
       applyStreamError,
     }),
@@ -352,6 +363,7 @@ export function useChatRuntimeEventAppliers({
       applyFileParseError,
       applyFileParseStart,
       applyIntermediateAnswer,
+      applyUserInputRequested,
       applyMemoryMutation,
       applyMessageChunk,
       applyMessageEnd,
