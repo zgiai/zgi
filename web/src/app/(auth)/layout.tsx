@@ -32,6 +32,8 @@ import {
   shouldAutoRedirectToSingleSso,
 } from '@/utils/auth-sso';
 import { consumePendingLogoutRedirect } from '@/utils/logout-redirect';
+import { customerAdapter } from '@/customer';
+import type { CustomerAuthPageType, CustomerAuthShellProps } from '@/customer';
 
 /**
  * Shared layout for all authentication related pages
@@ -62,6 +64,7 @@ function AuthLayoutContent({ children }: PropsWithChildren) {
   const titleLine1 = isZh ? AUTH_TITLE_LINE1_ZH : AUTH_TITLE_LINE1_EN;
   const titleLine2 = isZh ? AUTH_TITLE_LINE2_ZH : AUTH_TITLE_LINE2_EN;
   const description = isZh ? AUTH_DESCRIPTION_ZH : AUTH_DESCRIPTION_EN;
+  const page = resolveAuthPage(pathname);
 
   useEffect(() => {
     setMounted(true);
@@ -127,125 +130,179 @@ function AuthLayoutContent({ children }: PropsWithChildren) {
     window.location.replace(singleSsoRedirectUrl);
   }, [singleSsoRedirectUrl]);
 
+  const brandPanel = (
+    <DefaultAuthBrandPanel
+      mounted={mounted}
+      titleLine1={titleLine1}
+      titleLine2={titleLine2}
+      description={description}
+    />
+  );
+  const form = (
+    <div
+      className={cn(
+        'w-full max-w-[400px]',
+        mounted ? 'animate-in fade-in slide-in-from-bottom-4 duration-700' : 'opacity-0'
+      )}
+    >
+      {singleSsoRedirectUrl ? (
+        <div className="glass-panel rounded-3xl border bg-card/85 px-8 py-10 text-center shadow-premium">
+          <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-primary/10 text-primary">
+            <Loader2 className="size-7 animate-spin" />
+          </div>
+          <p className="text-xl font-semibold">{t('signInWithSSO')}</p>
+          <p className="mt-3 text-sm text-muted-foreground">{t('ssoProcessing')}</p>
+        </div>
+      ) : (
+        children
+      )}
+    </div>
+  );
+  const footer = (
+    <div className="py-8 text-center text-xs text-muted-foreground opacity-60">
+      &copy; {new Date().getFullYear()} {APP_NAME}. All rights reserved.
+    </div>
+  );
+  const shellProps: CustomerAuthShellProps = {
+    page,
+    config: {
+      appName: APP_NAME,
+      brandName: APP_NAME,
+      titleLine1,
+      titleLine2,
+      description,
+      backgroundImageUrl: AUTH_BG_IMAGE || undefined,
+    },
+    slots: {
+      Logo: <Logo showName={false} routerToHome={false} />,
+      LanguageSwitcher: <LanguageSwitcher />,
+      BrandPanel: brandPanel,
+      Form: form,
+      Footer: footer,
+    },
+  };
+  const AuthShell = customerAdapter.AuthShell ?? DefaultAuthShell;
+
+  return <AuthShell {...shellProps} />;
+}
+
+function DefaultAuthShell({ config, slots }: CustomerAuthShellProps) {
   return (
     <div className="flex min-h-svh bg-background overflow-hidden">
-      {/* --- Left Art Panel (Desktop Only) --- */}
       <div
         className={cn(
           'relative overflow-hidden bg-muted/30 border-r',
           HIDE_AUTH_LEFT_PANEL ? 'hidden' : 'hidden lg:flex lg:w-1/2'
         )}
       >
-        {/* Custom Background Image or Generative Tech Background */}
-        {AUTH_BG_IMAGE ? (
+        {config.backgroundImageUrl ? (
           <div
             className="absolute inset-0 bg-cover bg-center bg-no-repeat"
-            style={{ backgroundImage: `url(${AUTH_BG_IMAGE})` }}
+            style={{ backgroundImage: `url(${config.backgroundImageUrl})` }}
           />
         ) : (
-          <div className="absolute inset-0 pointer-events-none overflow-hidden">
-            {/* Light Orbs */}
-            <div className="absolute top-[-10%] left-[-10%] w-[60%] h-[60%] rounded-full bg-primary/5 blur-[120px] animate-pulse-subtle" />
-            <div className="absolute bottom-[-15%] right-[-5%] w-[50%] h-[50%] rounded-full bg-primary/10 blur-[100px]" />
-            <div className="absolute top-[30%] left-[20%] w-[30%] h-[30%] rounded-full bg-primary/5 blur-[80px]" />
-
-            {/* Minimal Grid Overlay */}
-            <div
-              className="absolute inset-0 opacity-[0.03]"
-              style={{
-                backgroundImage: `linear-gradient(var(--border) 1px, transparent 1px), linear-gradient(90deg, var(--border) 1px, transparent 1px)`,
-                backgroundSize: '40px 40px',
-              }}
-            />
-
-            {/* Floating Accents */}
-            <div className="absolute top-[20%] right-[15%] w-1 h-20 bg-linear-to-b from-primary/20 to-transparent rounded-full" />
-            <div className="absolute bottom-[30%] left-[10%] w-20 h-1 bg-linear-to-r from-primary/20 to-transparent rounded-full" />
-          </div>
-        )}
-
-        {/* Content Container - Only show when no custom background image */}
-        {!AUTH_BG_IMAGE && (
-          <div className="relative z-10 flex flex-col justify-center h-full px-16 xl:px-24">
-            <div
-              className={cn(
-                'flex items-center gap-4 mb-12',
-                mounted ? 'animate-in fade-in slide-in-from-left-8 duration-700' : 'opacity-0'
-              )}
-            >
-              <div className="p-2 rounded-2xl bg-background shadow-premium border glass-panel">
-                <Logo showName={false} routerToHome={false} />
-              </div>
-            </div>
-
-            <div className="space-y-8">
-              <h1
-                className={cn(
-                  'text-4xl xl:text-5xl font-bold leading-tight tracking-tight',
-                  mounted
-                    ? 'animate-in fade-in slide-in-from-left-10 duration-700 delay-100'
-                    : 'opacity-0'
-                )}
-              >
-                {titleLine1} <br />
-                <span className="text-primary">{titleLine2}</span>
-              </h1>
-              <p
-                className={cn(
-                  'text-lg text-muted-foreground max-w-md leading-relaxed',
-                  mounted
-                    ? 'animate-in fade-in slide-in-from-left-12 duration-700 delay-200'
-                    : 'opacity-0'
-                )}
-              >
-                {description}
-              </p>
-            </div>
-          </div>
+          slots.BrandPanel
         )}
       </div>
 
-      {/* --- Right Panel (Form Area) --- */}
       <div className="flex-1 flex flex-col relative overflow-y-auto">
-        {/* Responsive Header (Logo on Mobile, Switcher on both) */}
         <div className="flex items-center justify-between p-8 z-20 shrink-0">
           <div
             className={cn('pointer-events-auto w-36', HIDE_AUTH_LEFT_PANEL ? 'block' : 'lg:hidden')}
           >
-            <Logo showName={false} routerToHome={false} />
+            {slots.Logo}
           </div>
-          <div className="pointer-events-auto ml-auto">
-            <LanguageSwitcher />
-          </div>
+          <div className="pointer-events-auto ml-auto">{slots.LanguageSwitcher}</div>
         </div>
 
-        {/* Form Container */}
         <div className="flex-1 flex flex-col items-center justify-center p-6 md:p-12">
-          <div
-            className={cn(
-              'w-full max-w-[400px]',
-              mounted ? 'animate-in fade-in slide-in-from-bottom-4 duration-700' : 'opacity-0'
-            )}
-          >
-            {singleSsoRedirectUrl ? (
-              <div className="glass-panel rounded-3xl border bg-card/85 px-8 py-10 text-center shadow-premium">
-                <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-primary/10 text-primary">
-                  <Loader2 className="size-7 animate-spin" />
-                </div>
-                <p className="text-xl font-semibold">{t('signInWithSSO')}</p>
-                <p className="mt-3 text-sm text-muted-foreground">{t('ssoProcessing')}</p>
-              </div>
-            ) : (
-              children
-            )}
-          </div>
+          {slots.Form}
         </div>
 
-        {/* Footer */}
-        <div className="py-8 text-center text-xs text-muted-foreground opacity-60">
-          &copy; {new Date().getFullYear()} {APP_NAME}. All rights reserved.
-        </div>
+        {slots.Footer}
       </div>
     </div>
   );
+}
+
+function DefaultAuthBrandPanel({
+  mounted,
+  titleLine1,
+  titleLine2,
+  description,
+}: {
+  mounted: boolean;
+  titleLine1: string;
+  titleLine2: string;
+  description: string;
+}) {
+  return (
+    <>
+      <div className="absolute inset-0 pointer-events-none overflow-hidden">
+        <div className="absolute top-[-10%] left-[-10%] w-[60%] h-[60%] rounded-full bg-primary/5 blur-[120px] animate-pulse-subtle" />
+        <div className="absolute bottom-[-15%] right-[-5%] w-[50%] h-[50%] rounded-full bg-primary/10 blur-[100px]" />
+        <div className="absolute top-[30%] left-[20%] w-[30%] h-[30%] rounded-full bg-primary/5 blur-[80px]" />
+
+        <div
+          className="absolute inset-0 opacity-[0.03]"
+          style={{
+            backgroundImage: `linear-gradient(var(--border) 1px, transparent 1px), linear-gradient(90deg, var(--border) 1px, transparent 1px)`,
+            backgroundSize: '40px 40px',
+          }}
+        />
+
+        <div className="absolute top-[20%] right-[15%] w-1 h-20 bg-linear-to-b from-primary/20 to-transparent rounded-full" />
+        <div className="absolute bottom-[30%] left-[10%] w-20 h-1 bg-linear-to-r from-primary/20 to-transparent rounded-full" />
+      </div>
+
+      <div className="relative z-10 flex flex-col justify-center h-full px-16 xl:px-24">
+        <div
+          className={cn(
+            'flex items-center gap-4 mb-12',
+            mounted ? 'animate-in fade-in slide-in-from-left-8 duration-700' : 'opacity-0'
+          )}
+        >
+          <div className="p-2 rounded-2xl bg-background shadow-premium border glass-panel">
+            <Logo showName={false} routerToHome={false} />
+          </div>
+        </div>
+
+        <div className="space-y-8">
+          <h1
+            className={cn(
+              'text-4xl xl:text-5xl font-bold leading-tight tracking-tight',
+              mounted
+                ? 'animate-in fade-in slide-in-from-left-10 duration-700 delay-100'
+                : 'opacity-0'
+            )}
+          >
+            {titleLine1} <br />
+            <span className="text-primary">{titleLine2}</span>
+          </h1>
+          <p
+            className={cn(
+              'text-lg text-muted-foreground max-w-md leading-relaxed',
+              mounted
+                ? 'animate-in fade-in slide-in-from-left-12 duration-700 delay-200'
+                : 'opacity-0'
+            )}
+          >
+            {description}
+          </p>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function resolveAuthPage(pathname: string): CustomerAuthPageType {
+  if (pathname.includes('/register')) return 'register';
+  if (pathname.includes('/forgot-password')) return 'forgot-password';
+  if (pathname.includes('/reset-password')) return 'reset-password';
+  if (pathname.includes('/init')) return 'init';
+  if (pathname.includes('/invite')) return 'invite';
+  if (pathname.includes('/activate')) return 'activate';
+  if (pathname.includes('/sso')) return 'sso-callback';
+  if (pathname.includes('/login')) return 'login';
+  return 'auth';
 }
