@@ -12,7 +12,7 @@ const publicCustomerRoot = resolve(webRoot, 'public/customer');
 const tmpRoot = resolve(webRoot, '.customer-tmp');
 
 const repo = process.env.CUSTOMER_REPO?.trim();
-const ref = process.env.CUSTOMER_REF?.trim() || 'main';
+const ref = process.env.CUSTOMER_REF?.trim();
 const configuredPath = process.env.CUSTOMER_PATH?.trim();
 const required = ['1', 'true', 'yes'].includes(
   (process.env.CUSTOMER_REQUIRED || '').trim().toLowerCase()
@@ -46,7 +46,7 @@ function writeDefaultActive() {
   rmSync(publicCustomerRoot, { recursive: true, force: true });
   writeFileSync(
     generatedActive,
-    "export { defaultCustomerAdapter as customerAdapter } from '../default';\n"
+    "export { customerAdapter } from '../active';\n"
   );
 }
 
@@ -56,8 +56,9 @@ function shouldCopySource(source) {
 }
 
 function copyAssets(sourceDir, slug) {
+  rmSync(publicCustomerRoot, { recursive: true, force: true });
+
   const targetDir = resolve(publicCustomerRoot, slug);
-  rmSync(targetDir, { recursive: true, force: true });
 
   const assetsDir = resolve(sourceDir, 'assets');
   if (!existsSync(assetsDir)) return;
@@ -76,7 +77,10 @@ function resolveSourceDir() {
   }
 
   rmSync(tmpRoot, { recursive: true, force: true });
-  run('git', ['clone', '--depth', '1', '--branch', ref, repo, tmpRoot], { cwd: webRoot });
+  run('git', ['clone', '--filter=blob:none', repo, tmpRoot], { cwd: webRoot });
+  if (ref) {
+    run('git', ['checkout', ref], { cwd: tmpRoot });
+  }
 
   const repoPath = process.env.CUSTOMER_REPO_PATH?.trim();
   return repoPath ? resolve(tmpRoot, repoPath) : tmpRoot;
