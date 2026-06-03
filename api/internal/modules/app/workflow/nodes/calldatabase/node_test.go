@@ -77,7 +77,8 @@ func TestWorkflowChainStartCallDatabaseEnd(t *testing.T) {
 	state.VariablePool.UserInputs["request"] = "fetch active users"
 
 	initParams := entities.GraphInitParams{
-		OrganizationID: "tenant-1",
+		TenantID:       "workspace-1",
+		OrganizationID: "organization-1",
 		AppID:          "app-1",
 		WorkflowType:   entities.WorkflowTypeWorkflow,
 		WorkflowID:     "workflow-1",
@@ -165,6 +166,12 @@ func TestWorkflowChainStartCallDatabaseEnd(t *testing.T) {
 	}
 	if mockClient.auditCtx.ClientType != audit.ClientTypeWorkflow {
 		t.Fatalf("client type = %s, want %s", mockClient.auditCtx.ClientType, audit.ClientTypeWorkflow)
+	}
+	if mockClient.auditCtx.OrganizationID != "organization-1" {
+		t.Fatalf("organization_id = %s, want organization-1", mockClient.auditCtx.OrganizationID)
+	}
+	if mockClient.auditCtx.WorkspaceID != "workspace-1" {
+		t.Fatalf("workspace_id = %s, want workspace-1", mockClient.auditCtx.WorkspaceID)
 	}
 	if mockClient.auditCtx.WorkflowRunID != state.VariablePool.SystemVariables.WorkflowRunID {
 		t.Fatalf("workflow_run_id = %s, want %s", mockClient.auditCtx.WorkflowRunID, state.VariablePool.SystemVariables.WorkflowRunID)

@@ -256,6 +256,13 @@ func getStringValue(s *string) string {
 	return *s
 }
 
+func auditWorkspaceID(organizationID string, workspaceID *string) string {
+	if workspaceID != nil && *workspaceID != "" {
+		return *workspaceID
+	}
+	return organizationID
+}
+
 func sqlAuditContext(organizationID string, dataSource *model.DataSource, table *model.Table, accountID string, operationType string) *audit.Context {
 	if dataSource == nil {
 		return nil
@@ -263,7 +270,7 @@ func sqlAuditContext(organizationID string, dataSource *model.DataSource, table 
 
 	auditCtx := &audit.Context{
 		OrganizationID: organizationID,
-		WorkspaceID:    getStringValue(dataSource.WorkspaceID),
+		WorkspaceID:    auditWorkspaceID(organizationID, dataSource.WorkspaceID),
 		DataSourceID:   dataSource.ID,
 		DataSourceName: dataSource.Name,
 		ClientType:     audit.ClientTypeAPI,
@@ -1208,7 +1215,7 @@ func (s *dataSourceService) AddTableRecords(ctx context.Context, organizationID,
 	var affectedRows int64
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		// Perform batch insert
-		rows, err := s.batchInsertRecords(ctx, organizationID, getStringValue(dataSource.WorkspaceID), dataSourceID, tableID, dataSource.Name, table.Name, accountID, table.PhysicalTableName, validRecords, columnMap)
+		rows, err := s.batchInsertRecords(ctx, organizationID, auditWorkspaceID(organizationID, dataSource.WorkspaceID), dataSourceID, tableID, dataSource.Name, table.Name, accountID, table.PhysicalTableName, validRecords, columnMap)
 		if err != nil {
 			return fmt.Errorf("failed to insert records: %w", err)
 		}
@@ -1487,7 +1494,7 @@ func (s *dataSourceService) UpdateTableRecords(ctx context.Context, organization
 	}
 
 	// 5. Perform batch update
-	affectedRows, err := s.batchUpdateRecords(ctx, organizationID, getStringValue(dataSource.WorkspaceID), dataSourceID, tableID, dataSource.Name, table.Name, accountID, table.PhysicalTableName, validRecords, columnMap)
+	affectedRows, err := s.batchUpdateRecords(ctx, organizationID, auditWorkspaceID(organizationID, dataSource.WorkspaceID), dataSourceID, tableID, dataSource.Name, table.Name, accountID, table.PhysicalTableName, validRecords, columnMap)
 	if err != nil {
 		return dto.UpdateRecordResponse{}, fmt.Errorf("failed to update records: %w", err)
 	}
@@ -1624,7 +1631,7 @@ func (s *dataSourceService) DeleteTableRecords(ctx context.Context, organization
 	var affectedRows int64
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		// Perform batch delete
-		rows, err := s.batchDeleteRecords(ctx, organizationID, getStringValue(dataSource.WorkspaceID), dataSourceID, tableID, dataSource.Name, table.Name, accountID, table.PhysicalTableName, validRecords)
+		rows, err := s.batchDeleteRecords(ctx, organizationID, auditWorkspaceID(organizationID, dataSource.WorkspaceID), dataSourceID, tableID, dataSource.Name, table.Name, accountID, table.PhysicalTableName, validRecords)
 		if err != nil {
 			return fmt.Errorf("failed to delete records: %w", err)
 		}

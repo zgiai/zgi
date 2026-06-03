@@ -72,6 +72,8 @@ func New(
 			APPID:             graphInitParams.AppID,
 			WorkflowType:      string(graphInitParams.WorkflowType),
 			WorkflowID:        graphInitParams.WorkflowID,
+			WorkspaceID:       graphInitParams.TenantID,
+			OrganizationID:    graphInitParams.OrganizationID,
 			UserFrom:          string(graphInitParams.UserFrom),
 			UserID:            graphInitParams.UserID,
 			GraphConfig:       graphInitParams.GraphConfig,
@@ -212,8 +214,8 @@ func (n *Node) executeRun(ctx context.Context) (*shared.NodeRunResult, error) {
 	start := time.Now()
 	auditTableID, auditTableName := auditTableContext(n.NodeData.TableSelection)
 	auditCtx := &audit.Context{
-		OrganizationID: n.TenantID,
-		WorkspaceID:    n.TenantID,
+		OrganizationID: n.OrganizationID,
+		WorkspaceID:    n.WorkspaceID,
 		DataSourceID:   n.NodeData.DataSource.ID,
 		DataSourceName: n.NodeData.DataSource.Name,
 		TableID:        auditTableID,
