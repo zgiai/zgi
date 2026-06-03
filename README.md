@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/zgiai/zgi-pre/stargazers"><img src="https://img.shields.io/github/stars/zgiai/zgi-pre?style=for-the-badge&logo=github&label=Stars&labelColor=111827&color=fbbf24" alt="GitHub stars" /></a>
+  <a href="https://github.com/zgiai/zgi/stargazers"><img src="https://img.shields.io/github/stars/zgiai/zgi?style=for-the-badge&logo=github&label=Stars&labelColor=111827&color=fbbf24" alt="GitHub stars" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-ZGI%20Community%20License-2563eb?style=for-the-badge&labelColor=111827" alt="ZGI Community License" /></a>
   <a href="#quick-start"><img src="https://img.shields.io/badge/Run-Docker%20Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white&labelColor=111827" alt="Run with Docker Compose" /></a>
   <a href="web"><img src="https://img.shields.io/badge/Frontend-Next.js-000000?style=for-the-badge&logo=nextdotjs&logoColor=white&labelColor=111827" alt="Next.js frontend" /></a>
@@ -32,16 +32,6 @@
 </p>
 
 ![ZGI workflow editor](docs/assets/zgi-workflow-editor-api-enrichment.png)
-
-<p align="center">
-  <a href="https://www.star-history.com/#zgiai/zgi-pre&Date">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=zgiai/zgi-pre&type=Date&theme=dark" />
-      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=zgiai/zgi-pre&type=Date" />
-      <img alt="ZGI star history" src="https://api.star-history.com/svg?repos=zgiai/zgi-pre&type=Date" />
-    </picture>
-  </a>
-</p>
 
 ## Why ZGI
 
@@ -189,6 +179,18 @@ Community expectations are documented in
 [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
 
 For security-sensitive reports, follow [`SECURITY.md`](SECURITY.md).
+
+## Star History
+
+<p align="center">
+  <a href="https://www.star-history.com/#zgiai/zgi&Date">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=zgiai/zgi&type=Date&theme=dark" />
+      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=zgiai/zgi&type=Date" />
+      <img alt="ZGI star history" src="https://api.star-history.com/svg?repos=zgiai/zgi&type=Date" />
+    </picture>
+  </a>
+</p>
 
 ## License
 
