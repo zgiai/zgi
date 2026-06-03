@@ -346,7 +346,7 @@ func countSkillActionInvocations(invocations []map[string]interface{}) int {
 
 func visibleSkillInvocationKind(kind string) bool {
 	switch strings.TrimSpace(kind) {
-	case "skill_load", "reference_read", "tool_call", "intermediate_answer", "guardrail":
+	case "skill_load", "reference_read", "tool_call", "intermediate_answer", "user_input_request", "guardrail":
 		return true
 	default:
 		return false

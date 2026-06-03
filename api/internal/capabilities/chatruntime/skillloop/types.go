@@ -15,6 +15,7 @@ const (
 	EventMessageRetract       = "message_retract"
 	EventAgentProgress        = "agent_progress"
 	EventIntermediateAnswer   = "agent_intermediate_answer"
+	EventUserInputRequested   = "user_input_requested"
 	EventSkillCallStart       = "skill_call_start"
 	EventSkillCallEnd         = "skill_call_end"
 	EventSkillCallError       = "skill_call_error"

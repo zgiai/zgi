@@ -50,6 +50,9 @@ func (s *service) runPreparedSkillStream(
 		SkillRuntime: s.skillRuntime,
 		AppContext:   newBillingAppContext(prepared),
 		OnEvent: func(event skillloop.Event) error {
+			if event.Type == skillloop.EventUserInputRequested {
+				s.persistUserInputRequestBestEffort(persistCtx, prepared, event.Payload)
+			}
 			timeline.RecordEvent(event.Type, event.Payload)
 			return nil
 		},

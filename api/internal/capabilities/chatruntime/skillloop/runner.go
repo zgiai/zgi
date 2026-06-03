@@ -25,9 +25,11 @@ const (
 type skillStepResult struct {
 	trace       skills.SkillTrace
 	toolMessage adapter.Message
+	answer      string
 	usedSkill   bool
 	usedTool    bool
 	recoverable bool
+	terminal    bool
 	fatalErr    error
 }
 
@@ -181,11 +183,38 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				toolCallCount++
 				incrementSkillToolCallCount(skillToolCallCounts, result.trace.SkillID)
 			}
+			if result.answer != "" {
+				appendAnswerText(&answerBuilder, result.answer)
+				r.emitAnswerChunk(ctx, prepared, result.answer, nil)
+			}
+			if result.terminal {
+				logger.DebugContext(ctx, "aichat skill planning requested user input",
+					"conversation_id", prepared.Conversation.ID.String(),
+					"message_id", prepared.Message.ID.String(),
+					"skill_step_count", stepCount,
+					"tool_call_count", toolCallCount,
+				)
+				return answerBuilder.String(), usage, nil
+			}
 			messages = append(messages, result.toolMessage)
 		}
 	}
 
 	return answerBuilder.String(), usage, fmt.Errorf("%w: too many skill planning rounds", ErrInvalidInput)
+}
+
+func appendAnswerText(builder *strings.Builder, text string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	if builder.Len() > 0 {
+		current := builder.String()
+		if !strings.HasSuffix(current, "\n") {
+			builder.WriteString("\n\n")
+		}
+	}
+	builder.WriteString(text)
 }
 
 func (r *Runner) runSkillPlanning(ctx context.Context, prepared *PreparedChat, planningReq *adapter.ChatRequest, round int, onChunk func(string) error) (planningResult, error) {
@@ -258,6 +287,10 @@ func agenticSkillLoopSystemMessage() adapter.Message {
 		"Examples of new deliverables that should use submit_intermediate_answer when followed by more tool/skill calls: novel outlines, long-form drafts, plans, tables, code sketches, analysis sections, or generated content the user asked for.",
 		"Do not call submit_intermediate_answer merely to repeat content that was already visible in an earlier assistant answer. For requests like exporting, saving, converting, or generating a file from existing content, pass the existing content directly to the file/tool call.",
 		"Do not skip submit_intermediate_answer by postponing or summarizing a new deliverable if the user explicitly asked for it as an intermediate phase.",
+		"When required information is missing or ambiguity blocks reliable progress, call request_user_input with a brief user-visible message plus a questions array containing one to five concise questions, then stop. The message should explain what you checked, why input is needed, and what you will do next. Prefer one to three questions. Do not call any other tools in the same turn after request_user_input.",
+		"When calling request_user_input, put the user-visible explanation only in the request_user_input message field. Do not also repeat that explanation in assistant text outside the tool call.",
+		"Each request_user_input question should ask one decision point. Include options only when each option is a concrete, directly usable answer. Do not include vague options such as free choice, freestyle, not sure, depends, any, or other; omit options for open-ended questions because the user can type freely.",
+		"Do not use request_user_input for information already confirmed in the conversation.",
 		"When no more tool or skill calls are needed, send a natural user-facing reply that is complete and self-contained. If you did not call submit_intermediate_answer for a new requested deliverable, that reply MUST include the deliverable in full, not a compressed summary.",
 		"Do not label the user-facing reply with protocol wording such as Final Answer, final result, or their Chinese equivalents unless the user explicitly asks for that wording.",
 		"When reusing existing conversation content, refer to it explicitly, for example as the previous outline or the current branch's draft; do not duplicate the full text unless the user asks to see it again.",
