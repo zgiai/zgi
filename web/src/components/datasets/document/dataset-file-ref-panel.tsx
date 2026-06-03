@@ -59,6 +59,39 @@ function syncStatusLabel(t: ReturnType<typeof useT<'datasets'>>, status: string)
   }
 }
 
+function processingStatusBadgeVariant(status: string) {
+  switch (status) {
+    case 'ready':
+      return 'success';
+    case 'parse_failed':
+      return 'destructive';
+    case 'parsing':
+    case 'generating':
+      return 'info';
+    default:
+      return 'warning';
+  }
+}
+
+function processingStatusLabel(t: ReturnType<typeof useT<'datasets'>>, status: string) {
+  switch (status) {
+    case 'ready':
+      return t('documents.fileAssets.processingStatus.ready');
+    case 'stored_only':
+      return t('documents.fileAssets.processingStatus.storedOnly');
+    case 'parsing':
+      return t('documents.fileAssets.processingStatus.parsing');
+    case 'confirming':
+      return t('documents.fileAssets.processingStatus.confirming');
+    case 'generating':
+      return t('documents.fileAssets.processingStatus.generating');
+    case 'parse_failed':
+      return t('documents.fileAssets.processingStatus.parseFailed');
+    default:
+      return status || '-';
+  }
+}
+
 export function DatasetFileRefPanel({
   refs,
   canEdit = true,
@@ -128,9 +161,9 @@ export function DatasetFileRefPanel({
                   </div>
                 </TableCell>
                 <TableCell>
-                  <Badge variant={syncStatusBadgeVariant(ref.sync_status)}>
-                    {isSynced ? <CheckCircle2 className="h-3 w-3" /> : null}
-                    {syncStatusLabel(t, ref.sync_status)}
+                  <Badge variant={processingStatusBadgeVariant(ref.processing_status)}>
+                    {ref.processing_status === 'ready' ? <CheckCircle2 className="h-3 w-3" /> : null}
+                    {processingStatusLabel(t, ref.processing_status)}
                   </Badge>
                 </TableCell>
                 <TableCell>

@@ -70,7 +70,7 @@ func TestKnowledgeBaseFileRefServiceListsAddableCandidates(t *testing.T) {
 	}
 }
 
-func TestKnowledgeBaseFileRefServiceSearchesCandidateAssetTitleWhenFileMissing(t *testing.T) {
+func TestKnowledgeBaseFileRefServiceSkipsCandidateWhenSourceFileMissing(t *testing.T) {
 	assetID := uuid.New()
 	svc := newKnowledgeBaseFileRefTestService(&fakeKnowledgeBaseFileRefDeps{
 		dataset: &datasetModel.Dataset{
@@ -102,8 +102,46 @@ func TestKnowledgeBaseFileRefServiceSearchesCandidateAssetTitleWhenFileMissing(t
 	if err != nil {
 		t.Fatalf("ListCandidates: %v", err)
 	}
-	if len(result.Items) != 1 || result.Items[0].AssetID != assetID || result.Items[0].Name != "Asset Fallback Title" {
-		t.Fatalf("items=%+v", result.Items)
+	if result.Total != 0 || len(result.Items) != 0 {
+		t.Fatalf("result=%+v", result)
+	}
+}
+
+func TestKnowledgeBaseFileRefServiceSkipsCandidateWhenSourceFileArchived(t *testing.T) {
+	assetID := uuid.New()
+	svc := newKnowledgeBaseFileRefTestService(&fakeKnowledgeBaseFileRefDeps{
+		dataset: &datasetModel.Dataset{
+			ID:             "dataset-1",
+			OrganizationID: "org-1",
+		},
+		assets: []*datalibModel.DocumentAsset{
+			{
+				ID:             assetID,
+				OrganizationID: "org-1",
+				SourceFileID:   "file-1",
+				Title:          "Archived File",
+				ProductStatus:  datalibModel.DocumentAssetProductStatusReady,
+				VectorStatus:   datalibModel.DocumentAssetVectorStatusReady,
+				GenerationNo:   1,
+			},
+		},
+		files: map[string]*fileModel.UploadFile{
+			"file-1": {ID: "file-1", Name: "archived.pdf", IsArchived: true},
+		},
+		chunkCount:     1,
+		embeddingCount: 1,
+	})
+
+	result, err := svc.ListCandidates(context.Background(), KnowledgeBaseFileCandidateRequest{
+		OrganizationID: "org-1",
+		DatasetID:      "dataset-1",
+		Filter:         FileCandidateFilterAll,
+	})
+	if err != nil {
+		t.Fatalf("ListCandidates: %v", err)
+	}
+	if result.Total != 0 || len(result.Items) != 0 {
+		t.Fatalf("result=%+v", result)
 	}
 }
 

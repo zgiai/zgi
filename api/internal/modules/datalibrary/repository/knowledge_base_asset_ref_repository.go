@@ -135,8 +135,10 @@ func (r *knowledgeBaseAssetRefRepository) FindActiveByAsset(ctx context.Context,
 func (r *knowledgeBaseAssetRefRepository) ListActiveByAsset(ctx context.Context, organizationID string, assetID uuid.UUID) ([]*model.KnowledgeBaseAssetRef, error) {
 	var items []*model.KnowledgeBaseAssetRef
 	err := r.db.WithContext(ctx).
-		Where("organization_id = ? AND asset_id = ?", organizationID, assetID).
-		Order("updated_at DESC").
+		Model(&model.KnowledgeBaseAssetRef{}).
+		Joins("JOIN datasets ON datasets.id = data_library_knowledge_base_asset_refs.dataset_id").
+		Where("data_library_knowledge_base_asset_refs.organization_id = ? AND data_library_knowledge_base_asset_refs.asset_id = ?", organizationID, assetID).
+		Order("data_library_knowledge_base_asset_refs.updated_at DESC").
 		Find(&items).Error
 	if err != nil {
 		return nil, err
@@ -147,7 +149,8 @@ func (r *knowledgeBaseAssetRefRepository) ListActiveByAsset(ctx context.Context,
 func (r *knowledgeBaseAssetRefRepository) CountActiveByAssetID(ctx context.Context, organizationID string, assetID uuid.UUID) (int64, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Model(&model.KnowledgeBaseAssetRef{}).
-		Where("organization_id = ? AND asset_id = ?", organizationID, assetID).
+		Joins("JOIN datasets ON datasets.id = data_library_knowledge_base_asset_refs.dataset_id").
+		Where("data_library_knowledge_base_asset_refs.organization_id = ? AND data_library_knowledge_base_asset_refs.asset_id = ?", organizationID, assetID).
 		Count(&count).Error
 	return count, err
 }

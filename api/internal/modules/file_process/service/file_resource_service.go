@@ -654,13 +654,14 @@ func (s *fileResourceService) ClearPartialWorkspaceList(ctx context.Context, fol
 
 // GetRelatedDocumentCount gets the count of documents associated with a file
 func (s *fileResourceService) GetRelatedDocumentCount(ctx context.Context, fileID string) (int, error) {
-	// Use the FileID field to query the count of associated documents, which can better utilize database indexes
-	// Need to create a corresponding index in the database:
-	// CREATE INDEX idx_documents_file_id ON documents (file_id);
 	var count int64
 	err := s.documentRepo.(*dataset_repo.DocumentRepositoryImpl).GetDB().WithContext(ctx).
-		Model(&dataset_model.Document{}).
-		Where("file_id = ?", fileID).
+		Table("data_library_document_assets AS assets").
+		Joins("JOIN data_library_knowledge_base_asset_refs AS refs ON refs.asset_id = assets.id AND refs.deleted_at IS NULL").
+		Joins("JOIN datasets ON datasets.id = refs.dataset_id").
+		Joins("JOIN documents ON documents.id = refs.dataset_document_id").
+		Where("assets.source_file_id = ? AND assets.deleted_at IS NULL", fileID).
+		Distinct("refs.dataset_document_id").
 		Count(&count).Error
 
 	if err != nil {
@@ -676,12 +677,13 @@ func (s *fileResourceService) GetRelatedDocumentCount(ctx context.Context, fileI
 
 // GetRelatedDatasetCount gets the count of datasets associated with a file through its documents
 func (s *fileResourceService) GetRelatedDatasetCount(ctx context.Context, fileID string) (int, error) {
-	// First get the count of distinct dataset IDs associated with the file through documents
 	var count int64
 	err := s.documentRepo.(*dataset_repo.DocumentRepositoryImpl).GetDB().WithContext(ctx).
-		Model(&dataset_model.Document{}).
-		Distinct("dataset_id").
-		Where("file_id = ?", fileID).
+		Table("data_library_document_assets AS assets").
+		Joins("JOIN data_library_knowledge_base_asset_refs AS refs ON refs.asset_id = assets.id AND refs.deleted_at IS NULL").
+		Joins("JOIN datasets ON datasets.id = refs.dataset_id").
+		Where("assets.source_file_id = ? AND assets.deleted_at IS NULL", fileID).
+		Distinct("refs.dataset_id").
 		Count(&count).Error
 
 	if err != nil {
@@ -697,13 +699,14 @@ func (s *fileResourceService) GetRelatedDatasetCount(ctx context.Context, fileID
 
 // GetRelatedDocuments gets information about documents associated with a file
 func (s *fileResourceService) GetRelatedDocuments(ctx context.Context, fileID string) ([]*dataset_model.Document, error) {
-	// Use the FileID field to query associated documents, which can better utilize database indexes
-	// Need to create a corresponding index in the database:
-	// CREATE INDEX idx_documents_file_id ON documents (file_id);
 	var documents []*dataset_model.Document
 	err := s.documentRepo.(*dataset_repo.DocumentRepositoryImpl).GetDB().WithContext(ctx).
-		Model(&dataset_model.Document{}).
-		Where("file_id = ?", fileID).
+		Table("documents").
+		Select("DISTINCT documents.*").
+		Joins("JOIN data_library_knowledge_base_asset_refs AS refs ON refs.dataset_document_id = documents.id AND refs.deleted_at IS NULL").
+		Joins("JOIN datasets ON datasets.id = refs.dataset_id").
+		Joins("JOIN data_library_document_assets AS assets ON assets.id = refs.asset_id AND assets.deleted_at IS NULL").
+		Where("assets.source_file_id = ?", fileID).
 		Find(&documents).Error
 
 	if err != nil {
@@ -739,20 +742,14 @@ func (s *fileResourceService) GetRelatedDocuments(ctx context.Context, fileID st
 
 // GetRelatedDatasets gets information about datasets associated with a file through its documents
 func (s *fileResourceService) GetRelatedDatasets(ctx context.Context, fileID string) ([]*dataset_model.Dataset, error) {
-	// First get the distinct dataset IDs associated with the file through documents
-	var datasetIDs []string
+	var datasets []*dataset_model.Dataset
 	err := s.documentRepo.(*dataset_repo.DocumentRepositoryImpl).GetDB().WithContext(ctx).
-		Model(&dataset_model.Document{}).
-		Where("file_id = ?", fileID).
-		Distinct("dataset_id").
-		Pluck("dataset_id", &datasetIDs).Error
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to get related dataset IDs: %w", err)
-	}
-
-	// Get the dataset information
-	datasets, err := s.datasetRepo.GetByIDs(ctx, datasetIDs)
+		Table("datasets").
+		Select("DISTINCT datasets.*").
+		Joins("JOIN data_library_knowledge_base_asset_refs AS refs ON refs.dataset_id = datasets.id AND refs.deleted_at IS NULL").
+		Joins("JOIN data_library_document_assets AS assets ON assets.id = refs.asset_id AND assets.deleted_at IS NULL").
+		Where("assets.source_file_id = ?", fileID).
+		Find(&datasets).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to get related datasets: %w", err)
 	}
@@ -810,7 +807,7 @@ func (s *fileResourceService) GetArchivedFileCount(ctx context.Context, tenantID
 	return s.fileFolderRepo.GetArchivedFileCount(ctx, tenantID)
 }
 
-// BatchGetRelatedDatasetCount gets the count of datasets associated with multiple files through their documents
+// BatchGetRelatedDatasetCount gets the count of datasets associated with multiple files through active knowledge-base asset refs.
 func (s *fileResourceService) BatchGetRelatedDatasetCount(ctx context.Context, fileIDs []string) (map[string]int, error) {
 	logger.DebugContext(ctx, "batch get related dataset count started",
 		zap.Int("file_count", len(fileIDs)),
@@ -828,13 +825,14 @@ func (s *fileResourceService) BatchGetRelatedDatasetCount(ctx context.Context, f
 		DatasetCount int
 	}
 
-	// Execute batch query to get dataset counts for all files
 	var results []result
 	err := s.documentRepo.(*dataset_repo.DocumentRepositoryImpl).GetDB().WithContext(ctx).
-		Model(&dataset_model.Document{}).
-		Select("file_id, COUNT(DISTINCT dataset_id) as dataset_count").
-		Where("file_id IN ?", fileIDs).
-		Group("file_id").
+		Table("data_library_document_assets AS assets").
+		Select("assets.source_file_id AS file_id, COUNT(DISTINCT refs.dataset_id) AS dataset_count").
+		Joins("JOIN data_library_knowledge_base_asset_refs AS refs ON refs.asset_id = assets.id AND refs.deleted_at IS NULL").
+		Joins("JOIN datasets ON datasets.id = refs.dataset_id").
+		Where("assets.source_file_id IN ? AND assets.deleted_at IS NULL", fileIDs).
+		Group("assets.source_file_id").
 		Scan(&results).Error
 
 	if err != nil {

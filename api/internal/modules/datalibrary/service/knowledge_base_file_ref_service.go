@@ -235,10 +235,11 @@ func (s *knowledgeBaseFileRefService) ListCandidates(ctx context.Context, req Kn
 	}
 
 	filter := datalibRepo.DocumentAssetListFilter{
-		OrganizationID: req.OrganizationID,
-		WorkspaceID:    req.WorkspaceID,
-		Limit:          req.Limit,
-		Offset:         req.Offset,
+		OrganizationID:       req.OrganizationID,
+		WorkspaceID:          req.WorkspaceID,
+		ActiveSourceFileOnly: true,
+		Limit:                req.Limit,
+		Offset:               req.Offset,
 	}
 	if req.Filter == "" || req.Filter == FileCandidateFilterAddable {
 		filter.ProductStatus = datalibModel.DocumentAssetProductStatusReady
@@ -258,8 +259,13 @@ func (s *knowledgeBaseFileRefService) ListCandidates(ctx context.Context, req Kn
 	}
 
 	items := make([]*KnowledgeBaseFileCandidate, 0, len(assets))
+	var skippedMissingSource int64
 	for _, asset := range assets {
 		file := filesByID[asset.SourceFileID]
+		if file == nil || file.IsArchived {
+			skippedMissingSource++
+			continue
+		}
 		if keyword := strings.TrimSpace(req.Keyword); keyword != "" && !candidateMatchesKeyword(asset, file, keyword) {
 			continue
 		}
@@ -279,6 +285,9 @@ func (s *knowledgeBaseFileRefService) ListCandidates(ctx context.Context, req Kn
 			}
 		}
 		items = append(items, candidate)
+	}
+	if skippedMissingSource > 0 && total >= skippedMissingSource {
+		total -= skippedMissingSource
 	}
 	return &KnowledgeBaseFileCandidateResult{Items: items, Total: total}, nil
 }

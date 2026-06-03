@@ -15,8 +15,10 @@ import (
 func TestFileAssetDeletionServiceBlocksReferencedAsset(t *testing.T) {
 	db := newFileAssetDeletionTestDB(t)
 	assetID := uuid.New()
+	datasetID := uuid.New()
+	execFileAssetDeletionSQL(t, db, "INSERT INTO datasets (id) VALUES (?)", datasetID.String())
 	execFileAssetDeletionSQL(t, db, "INSERT INTO data_library_document_assets (id, organization_id, title, source_file_id, generation_no, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)", assetID.String(), "org-1", "doc.md", "file-1", 1)
-	execFileAssetDeletionSQL(t, db, "INSERT INTO data_library_knowledge_base_asset_refs (id, organization_id, dataset_id, asset_id, version_id, status) VALUES (?, ?, ?, ?, ?, ?)", uuid.New().String(), "org-1", uuid.New().String(), assetID.String(), uuid.New().String(), model.KnowledgeBaseAssetRefStatusActive)
+	execFileAssetDeletionSQL(t, db, "INSERT INTO data_library_knowledge_base_asset_refs (id, organization_id, dataset_id, asset_id, version_id, status) VALUES (?, ?, ?, ?, ?, ?)", uuid.New().String(), "org-1", datasetID.String(), assetID.String(), uuid.New().String(), model.KnowledgeBaseAssetRefStatusActive)
 
 	vectorIndex := &fileAssetDeletionVectorIndex{}
 	svc := NewFileAssetDeletionService(db, vectorIndex)
@@ -26,6 +28,22 @@ func TestFileAssetDeletionServiceBlocksReferencedAsset(t *testing.T) {
 	}
 	if vectorIndex.deleted {
 		t.Fatalf("vector index should not be deleted when refs exist")
+	}
+}
+
+func TestFileAssetDeletionServiceIgnoresRefsForDeletedDatasets(t *testing.T) {
+	db := newFileAssetDeletionTestDB(t)
+	assetID := uuid.New()
+	execFileAssetDeletionSQL(t, db, "INSERT INTO data_library_document_assets (id, organization_id, title, source_file_id, generation_no, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)", assetID.String(), "org-1", "doc.md", "file-1", 1)
+	execFileAssetDeletionSQL(t, db, "INSERT INTO data_library_knowledge_base_asset_refs (id, organization_id, dataset_id, asset_id, version_id, status) VALUES (?, ?, ?, ?, ?, ?)", uuid.New().String(), "org-1", uuid.New().String(), assetID.String(), uuid.New().String(), model.KnowledgeBaseAssetRefStatusActive)
+
+	vectorIndex := &fileAssetDeletionVectorIndex{}
+	svc := NewFileAssetDeletionService(db, vectorIndex)
+	if err := svc.DeleteBySourceFile(context.Background(), "org-1", "file-1"); err != nil {
+		t.Fatalf("DeleteBySourceFile: %v", err)
+	}
+	if !vectorIndex.deleted {
+		t.Fatalf("vector index should be deleted when only deleted dataset refs exist")
 	}
 }
 
@@ -92,6 +110,7 @@ func newFileAssetDeletionTestDB(t *testing.T) *gorm.DB {
 	}
 	statements := []string{
 		`CREATE TABLE data_library_document_assets (id text primary key, organization_id text, title text, source_file_id text, current_version_id text, active_processing_request_id text, parse_artifact_id text, chunk_artifact_set_id text, generation_no integer, updated_at datetime, deleted_at datetime)`,
+		`CREATE TABLE datasets (id text primary key)`,
 		`CREATE TABLE data_library_document_versions (id text primary key, asset_id text, version_no integer, source_file_id text, parse_artifact_id text, chunk_artifact_set_id text, deleted_at datetime)`,
 		`CREATE TABLE data_library_document_chunks (id text primary key, organization_id text, asset_id text, processing_run_id text, generation_no integer, chunk_artifact_set_id text, chunk_type text, content text, content_hash text, enabled boolean, status text, deleted_at datetime)`,
 		`CREATE TABLE data_library_document_chunk_embeddings (id text primary key, organization_id text, asset_id text, chunk_id text, processing_run_id text, generation_no integer, embedding_provider text, embedding_model text, embedding_dimension integer, embedding_vector text, content_hash text, status text, deleted_at datetime)`,

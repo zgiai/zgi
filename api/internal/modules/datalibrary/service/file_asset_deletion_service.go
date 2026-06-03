@@ -96,7 +96,8 @@ func (s *fileAssetDeletionService) countBlockingRefs(ctx context.Context, asset 
 	var kbRefCount int64
 	if err := s.db.WithContext(ctx).
 		Model(&model.KnowledgeBaseAssetRef{}).
-		Where("organization_id = ? AND asset_id = ? AND deleted_at IS NULL", asset.OrganizationID, asset.ID).
+		Joins("JOIN datasets ON datasets.id = data_library_knowledge_base_asset_refs.dataset_id").
+		Where("data_library_knowledge_base_asset_refs.organization_id = ? AND data_library_knowledge_base_asset_refs.asset_id = ? AND data_library_knowledge_base_asset_refs.deleted_at IS NULL", asset.OrganizationID, asset.ID).
 		Count(&kbRefCount).Error; err != nil {
 		return 0, 0, err
 	}

@@ -10,12 +10,13 @@ import (
 )
 
 type DocumentAssetListFilter struct {
-	OrganizationID string
-	WorkspaceID    *string
-	Status         string
-	ProductStatus  string
-	Limit          int
-	Offset         int
+	OrganizationID       string
+	WorkspaceID          *string
+	Status               string
+	ProductStatus        string
+	ActiveSourceFileOnly bool
+	Limit                int
+	Offset               int
 }
 
 type DocumentAssetCurrentResultPatch struct {
@@ -127,15 +128,21 @@ func (r *documentAssetRepository) FindAssetsBySourceFileIDs(ctx context.Context,
 
 func (r *documentAssetRepository) ListAssets(ctx context.Context, filter DocumentAssetListFilter) ([]*model.DocumentAsset, int64, error) {
 	query := r.db.WithContext(ctx).Model(&model.DocumentAsset{}).
-		Where("organization_id = ?", filter.OrganizationID)
+		Where("data_library_document_assets.organization_id = ?", filter.OrganizationID)
+	if filter.ActiveSourceFileOnly {
+		query = query.Joins(
+			"JOIN upload_files ON CAST(upload_files.id AS TEXT) = data_library_document_assets.source_file_id AND CAST(upload_files.organization_id AS TEXT) = data_library_document_assets.organization_id AND upload_files.is_archived = ?",
+			false,
+		)
+	}
 	if filter.WorkspaceID != nil {
-		query = query.Where("workspace_id = ?", *filter.WorkspaceID)
+		query = query.Where("data_library_document_assets.workspace_id = ?", *filter.WorkspaceID)
 	}
 	if filter.Status != "" {
-		query = query.Where("status = ?", filter.Status)
+		query = query.Where("data_library_document_assets.status = ?", filter.Status)
 	}
 	if filter.ProductStatus != "" {
-		query = query.Where("product_status = ?", filter.ProductStatus)
+		query = query.Where("data_library_document_assets.product_status = ?", filter.ProductStatus)
 	}
 
 	var total int64

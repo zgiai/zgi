@@ -70,7 +70,7 @@ export default function DatasetDocumentsPage() {
     return {
       total: fileRefs.length,
       enabled: synced.filter(ref => ref.dataset_document_enabled).length,
-      ready: synced.length,
+      ready: fileRefs.filter(ref => ref.processing_status === 'ready').length,
     };
   }, [fileRefs]);
 

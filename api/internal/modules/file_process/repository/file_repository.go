@@ -369,13 +369,15 @@ func (r *fileRepository) Delete(ctx context.Context, id string) error {
 	})
 }
 
-// CheckIfFileIsUsed checks if a file is used by any documents
+// CheckIfFileIsUsed checks if a file is referenced by active knowledge-base asset refs.
 func (r *fileRepository) CheckIfFileIsUsed(ctx context.Context, id string) (bool, error) {
 	var count int64
 	err := r.db.WithContext(ctx).
-		Model(&file_model.UploadFile{}).
-		Where("upload_files.id = ?", id).
-		Joins("JOIN documents ON upload_files.id::text = documents.file_id").
+		Table("data_library_document_assets AS assets").
+		Joins("JOIN data_library_knowledge_base_asset_refs AS refs ON refs.asset_id = assets.id AND refs.deleted_at IS NULL").
+		Joins("JOIN datasets ON datasets.id = refs.dataset_id").
+		Where("assets.source_file_id = ? AND assets.deleted_at IS NULL", id).
+		Distinct("refs.dataset_id").
 		Count(&count).Error
 
 	if err != nil {
