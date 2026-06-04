@@ -1740,6 +1740,10 @@ func stringPtr(s string) *string {
 	return &s
 }
 
+func int64Ptr(value int64) *int64 {
+	return &value
+}
+
 func boolPtr(b bool) *bool {
 	return &b
 }
@@ -2511,20 +2515,32 @@ func (s *dataSourceService) getDefaultForType(colType string, isRequired bool) (
 
 // logSQLOperation logs the SQL statement for audit purposes
 func (s *dataSourceService) logSQLOperation(ctx context.Context, organizationID, dataSourceID, tableID, dataSourceName, tableName, accountID, operation, sqlStatement string) error {
+	now := time.Now()
+	workspaceID := organizationID
+	if dataSourceID != "" {
+		if dataSource, err := s.repo.FindByID(ctx, dataSourceID); err == nil && dataSource != nil {
+			workspaceID = auditWorkspaceID(organizationID, dataSource.WorkspaceID)
+		}
+	}
+
 	// Create operation log entry
 	log := &model.DataSourceSQLOperation{
 		OrganizationID: organizationID,
+		WorkspaceID:    &workspaceID,
 		DataSourceID:   dataSourceID,
 		TableID:        nil, // Initialize as nil
 		TableName:      nil, // Initialize as nil
 		DataSourceName: nil, // Initialize as nil
 		SqlStatement:   sqlStatement,
 		OperationType:  operation,
-		StartTime:      time.Now(),
-		EndTime:        time.Now(),
+		ClientType:     string(audit.ClientTypeAPI),
+		DurationMS:     int64Ptr(0),
+		ExecutedAt:     &now,
+		StartTime:      now,
+		EndTime:        now,
 		Status:         string(model.OperationStatusSuccess), // Assuming success for now
 		CreatedBy:      accountID,
-		CreatedAt:      time.Now(),
+		CreatedAt:      now,
 	}
 
 	// Only set TableID if it's not empty
