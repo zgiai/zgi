@@ -4,6 +4,10 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"strings"
@@ -73,7 +77,7 @@ func TestResolveFormatSupportsOfficeAndPDF(t *testing.T) {
 
 func TestRenderContentGeneratesValidOfficeAndPDF(t *testing.T) {
 	t.Run("docx", func(t *testing.T) {
-		data, err := renderContent("Hello\n中文", "docx", "Report")
+		data, err := renderContent("Hello\nCafé", "docx", "Report")
 		require.NoError(t, err)
 		requireZipEntries(t, data,
 			"[Content_Types].xml",
@@ -87,11 +91,11 @@ func TestRenderContentGeneratesValidOfficeAndPDF(t *testing.T) {
 			"word/theme/theme1.xml",
 		)
 		requireZipEntryContains(t, data, "word/document.xml", "Hello")
-		requireZipEntryContains(t, data, "word/document.xml", "中文")
+		requireZipEntryContains(t, data, "word/document.xml", "Café")
 	})
 
 	t.Run("xlsx", func(t *testing.T) {
-		data, err := renderContent("Name,Score\n中文,10\n", "xlsx", "Report")
+		data, err := renderContent("Name,Score\nCafé,10\n", "xlsx", "Report")
 		require.NoError(t, err)
 
 		workbook, err := excelize.OpenReader(bytes.NewReader(data))
@@ -100,14 +104,14 @@ func TestRenderContentGeneratesValidOfficeAndPDF(t *testing.T) {
 
 		rows, err := workbook.GetRows("Sheet1")
 		require.NoError(t, err)
-		require.Equal(t, [][]string{{"Name", "Score"}, {"中文", "10"}}, rows)
+		require.Equal(t, [][]string{{"Name", "Score"}, {"Café", "10"}}, rows)
 	})
 
 	t.Run("pdf", func(t *testing.T) {
-		data, err := renderContent("中文 PDF", "pdf", "报告")
+		data, err := renderContent("Café PDF", "pdf", "Report")
 		require.NoError(t, err)
 		require.True(t, bytes.HasPrefix(data, []byte("%PDF-")))
-		require.Contains(t, string(data), "4E2D6587")
+		require.Contains(t, string(data), "00430061006600E9")
 		require.NoError(t, api.Validate(bytes.NewReader(data), nil))
 	})
 }
@@ -132,6 +136,226 @@ func TestRenderContentGeneratesRunnableHTML(t *testing.T) {
 		require.Contains(t, html, "<main><h1>Hello</h1></main>")
 		require.NotContains(t, html, "&lt;main&gt;")
 	})
+}
+
+func TestRenderRichDocxGeneratesStyledDocument(t *testing.T) {
+	raw := `{
+  "page": {"size":"a4","orientation":"landscape","margins":{"top":36,"right":36,"bottom":36,"left":36}},
+  "default_style": {"font_family":"SimSun","font_size":12,"color":"333333"},
+  "blocks": [
+    {"type":"heading","level":1,"text":"Styled Report","style":{"font_family":"Microsoft YaHei","font_size":18,"bold":true,"alignment":"center"}},
+    {"type":"paragraph","style":{"alignment":"center","line_spacing":1.5,"space_after":12},"runs":[
+      {"text":"Total: "},
+      {"text":"113.47","bold":true,"underline":true,"color":"#C00000"}
+    ]},
+    {"type":"table","headers":["Item","Amount"],"rows":[["Electricity",{"text":"113.47","background_color":"FFF2CC","vertical_align":"center"}]],"table_style":{"alignment":"center","border_color":"000000"}},
+    {"type":"page_break"},
+    {"type":"paragraph","text":"Second page"}
+  ]
+}`
+	spec, err := parseDocxDocumentSpec(raw)
+	require.NoError(t, err)
+
+	data, err := renderRichDocx(spec)
+	require.NoError(t, err)
+	requireZipEntries(t, data,
+		"[Content_Types].xml",
+		"_rels/.rels",
+		"word/document.xml",
+		"word/styles.xml",
+	)
+	requireZipEntryContains(t, data, "word/document.xml", "Styled Report")
+	requireZipEntryContains(t, data, "word/document.xml", `w:jc w:val="center"`)
+	requireZipEntryContains(t, data, "word/document.xml", `w:rFonts w:ascii="Microsoft YaHei"`)
+	requireZipEntryContains(t, data, "word/document.xml", `w:sz w:val="36"`)
+	requireZipEntryContains(t, data, "word/document.xml", `w:color w:val="C00000"`)
+	requireZipEntryContains(t, data, "word/document.xml", `w:u w:val="single"`)
+	requireZipEntryContains(t, data, "word/document.xml", `w:after="240"`)
+	requireZipEntryContains(t, data, "word/document.xml", "<w:tbl>")
+	requireZipEntryContains(t, data, "word/document.xml", `w:fill="FFF2CC"`)
+	requireZipEntryContains(t, data, "word/document.xml", `w:type="page"`)
+	requireZipEntryContains(t, data, "word/document.xml", `w:pgSz w:w="16838" w:h="11906"`)
+}
+
+func TestParseDocxDocumentSpecCompactsEmptyRuns(t *testing.T) {
+	raw := `{
+  "blocks": [
+    {"type":"paragraph","runs":[
+      {"text":""},
+      {"text":"Visible text","bold":true},
+      {"text":"   "}
+    ]},
+    {"type":"table","headers":[{"runs":[{"text":""},{"text":"Header"}]}],"rows":[[{"runs":[{"text":"Cell"},{"text":""}]}]]}
+  ]
+}`
+	spec, err := parseDocxDocumentSpec(raw)
+	require.NoError(t, err)
+	require.Len(t, spec.Blocks[0].Runs, 1)
+	require.Equal(t, "Visible text", spec.Blocks[0].Runs[0].Text)
+	require.Len(t, spec.Blocks[1].Headers[0].Runs, 1)
+	require.Equal(t, "Header", spec.Blocks[1].Headers[0].Runs[0].Text)
+	require.Len(t, spec.Blocks[1].Rows[0][0].Runs, 1)
+	require.Equal(t, "Cell", spec.Blocks[1].Rows[0][0].Runs[0].Text)
+
+	data, err := renderRichDocx(spec)
+	require.NoError(t, err)
+	requireZipEntryContains(t, data, "word/document.xml", "Visible text")
+	requireZipEntryContains(t, data, "word/document.xml", "Header")
+	requireZipEntryContains(t, data, "word/document.xml", "Cell")
+}
+
+func TestParseDocxDocumentSpecRejectsInvalidInput(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "invalid json", raw: `not-json`, want: "document must be valid DOCX JSON"},
+		{name: "empty blocks", raw: `{"blocks":[]}`, want: "document.blocks must include at least one block"},
+		{name: "unknown block", raw: `{"blocks":[{"type":"chart","text":"x"}]}`, want: "unsupported DOCX block type"},
+		{name: "bad color", raw: `{"blocks":[{"type":"paragraph","text":"x","style":{"color":"red"}}]}`, want: "expected RRGGBB hex color"},
+		{name: "bad alignment", raw: `{"blocks":[{"type":"paragraph","text":"x","style":{"alignment":"middle"}}]}`, want: "unsupported alignment"},
+		{name: "only empty runs", raw: `{"blocks":[{"type":"paragraph","runs":[{"text":""},{"text":"   "}]}]}`, want: "paragraph requires text or non-empty runs"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := parseDocxDocumentSpec(tt.raw)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), tt.want)
+		})
+	}
+}
+
+func TestParsePPTXDocumentSpecNormalizesAndRejectsInvalidInput(t *testing.T) {
+	raw := `{
+  "layout": "wide",
+  "language": "EN-gb",
+  "default_style": {"font_family": "Microsoft YaHei", "font_size": 18, "color": "#111827"},
+  "slides": [
+    {"background_color": "#ffffff", "elements": [
+      {"type": "title", "text": "Deck", "line_spacing": 1.15, "style": {"align": "center", "font_weight": "700", "line_spacing": 1.2, "underline": true}, "ignored_by_future_schema": true},
+      {"type": "table", "headers": ["Metric", "Value"], "rows": [["Total", "113.47"]], "border_color": "#d1d5db", "header_fill_color": "#f3f4f6", "header_color": "#111827", "row_fill_color": "#ffffff", "column_widths": [3.2, 2.4]}
+    ]}
+  ]
+}`
+	spec, normalized, err := parsePPTXDocumentSpec(raw)
+	require.NoError(t, err)
+	require.Equal(t, "wide", spec.Layout)
+	require.Equal(t, "en-GB", spec.Language)
+	require.Equal(t, "Microsoft YaHei", spec.DefaultStyle.FontFace)
+	require.Equal(t, "FFFFFF", spec.Slides[0].BackgroundColor)
+	require.NotNil(t, spec.Slides[0].Elements[0].Style.Bold)
+	require.True(t, *spec.Slides[0].Elements[0].Style.Bold)
+	require.Contains(t, normalized, `"background_color":"FFFFFF"`)
+	require.Contains(t, normalized, `"language":"en-GB"`)
+	require.Contains(t, normalized, `"font_face":"Microsoft YaHei"`)
+	require.Contains(t, normalized, `"line_spacing":1.2`)
+	require.Contains(t, normalized, `"underline":true`)
+	require.Contains(t, normalized, `"border_color":"D1D5DB"`)
+	require.Contains(t, normalized, `"header_fill_color":"F3F4F6"`)
+	require.Contains(t, normalized, `"column_widths":[3.2,2.4]`)
+
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "invalid json", raw: `not-json`, want: "presentation must be valid PPTX JSON"},
+		{name: "empty slides", raw: `{"slides":[]}`, want: "presentation.slides must include at least one slide"},
+		{name: "unknown element", raw: `{"slides":[{"elements":[{"type":"video"}]}]}`, want: "unsupported PPTX element type"},
+		{name: "bad color", raw: `{"slides":[{"elements":[{"type":"text","text":"x","style":{"color":"red"}}]}]}`, want: "expected RRGGBB hex color"},
+		{name: "bad table", raw: `{"slides":[{"elements":[{"type":"table"}]}]}`, want: "table requires headers or rows"},
+		{name: "bad line spacing", raw: `{"slides":[{"elements":[{"type":"text","text":"x","style":{"line_spacing":4}}]}]}`, want: "line_spacing must be between 0.5 and 3"},
+		{name: "bad language", raw: `{"language":"not a language","slides":[{"elements":[{"type":"text","text":"x"}]}]}`, want: "presentation.language must be a valid BCP 47 language tag"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, err := parsePPTXDocumentSpec(tt.raw)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), tt.want)
+		})
+	}
+}
+
+func TestBuildHTMLPDFDocumentWrapsHTMLAndCSS(t *testing.T) {
+	document := buildHTMLPDFDocument("<main><h1>Hello</h1></main>", "@page { size: A4; }", "Report <Draft>")
+	require.Contains(t, document, `Content-Security-Policy`)
+	require.Contains(t, document, "<title>Report &lt;Draft&gt;</title>")
+	require.Contains(t, document, "<main><h1>Hello</h1></main>")
+	require.Contains(t, document, "@page { size: A4; }")
+	require.Contains(t, document, "script-src 'none'")
+}
+
+func TestBuildHTMLPDFDocumentBlocksCSSImportsCaseInsensitive(t *testing.T) {
+	document := buildHTMLPDFDocument("<main>Hello</main>", `@Import url("https://example.com/style.css");`, "")
+	require.Contains(t, document, "/* blocked import */")
+	require.NotContains(t, document, "@Import")
+}
+
+func TestBuildHTMLPDFDocumentInjectsFullHTMLHead(t *testing.T) {
+	document := buildHTMLPDFDocument("<!doctype html><html><head><title>Existing</title></head><body><main>Hello</main></body></html>", "h1 { color: red; }", "")
+	require.Contains(t, document, "<title>Existing</title>")
+	require.Contains(t, document, `Content-Security-Policy`)
+	require.Contains(t, document, "h1 { color: red; }")
+	require.Contains(t, document, "<main>Hello</main>")
+}
+
+func TestRenderHTMLToPDFUsesSandbox(t *testing.T) {
+	server := newFakeFileGeneratorSandbox(t)
+	data, err := renderHTMLToPDFInSandbox(
+		context.Background(),
+		&tools.ToolRuntime{TenantID: "tenant-1"},
+		"",
+		`<main><h1>Styled PDF</h1><table><thead><tr><th>Item</th><th>Amount</th></tr></thead><tbody><tr><td>Electricity</td><td>113.47</td></tr></tbody></table></main>`,
+		`@page { size: A4; margin: 18mm; } h1 { color: #c00000; text-align: center; }`,
+		"Styled PDF",
+	)
+	require.NoError(t, err)
+	require.NoError(t, api.Validate(bytes.NewReader(data), nil))
+	require.Equal(t, 1, server.profileRequests)
+	require.Equal(t, 1, server.createRequests)
+	require.Equal(t, 1, server.uploadRequests)
+	require.Equal(t, 1, server.commandRequests)
+	require.Equal(t, 1, server.downloadRequests)
+	require.Equal(t, 1, server.deleteRequests)
+	require.Contains(t, server.uploadedHTML, "Styled PDF")
+}
+
+func TestRenderPPTXUsesSandbox(t *testing.T) {
+	server := newFakeFileGeneratorSandbox(t)
+	_, normalized, err := parsePPTXDocumentSpec(`{"slides":[{"elements":[{"type":"title","text":"Styled Deck"}]}]}`)
+	require.NoError(t, err)
+
+	data, err := renderPPTXInSandbox(context.Background(), &tools.ToolRuntime{TenantID: "tenant-1"}, "", normalized)
+	require.NoError(t, err)
+	requireZipEntries(t, data, "[Content_Types].xml", "_rels/.rels", "ppt/presentation.xml")
+	require.Equal(t, 1, server.profileRequests)
+	require.Equal(t, 1, server.createRequests)
+	require.Equal(t, 2, server.uploadRequests)
+	require.Equal(t, 1, server.commandRequests)
+	require.Equal(t, 1, server.downloadRequests)
+	require.Equal(t, 1, server.deleteRequests)
+	require.Contains(t, server.uploadedFiles[fileGeneratorPPTXSpecPath], "Styled Deck")
+	require.Contains(t, server.uploadedFiles[fileGeneratorPPTXScriptPath], "pptxgenjs")
+	require.Contains(t, server.uploadedFiles[fileGeneratorPPTXScriptPath], "createRequire")
+	require.Contains(t, server.uploadedFiles[fileGeneratorPPTXScriptPath], `pptx.lang = spec.language || "en-US"`)
+	require.NotContains(t, server.uploadedFiles[fileGeneratorPPTXScriptPath], `pptx.lang = "zh-CN"`)
+	require.NotContains(t, server.uploadedFiles[fileGeneratorPPTXScriptPath], `import pptxgen from "pptxgenjs"`)
+}
+
+func TestRenderPPTXReportsSandboxErrorField(t *testing.T) {
+	server := newFakeFileGeneratorSandbox(t)
+	server.commandError = "Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'pptxgenjs'"
+	_, normalized, err := parsePPTXDocumentSpec(`{"slides":[{"elements":[{"type":"title","text":"Styled Deck"}]}]}`)
+	require.NoError(t, err)
+
+	_, err = renderPPTXInSandbox(context.Background(), &tools.ToolRuntime{TenantID: "tenant-1"}, "", normalized)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "ERR_MODULE_NOT_FOUND")
+	require.Equal(t, 1, server.commandRequests)
+	require.Equal(t, 1, server.deleteRequests)
 }
 
 func TestGenerateFileToolReturnsDownloadableOfficeFileMetadata(t *testing.T) {
@@ -200,8 +424,380 @@ func TestGenerateFileToolReturnsDownloadableOfficeFileMetadata(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestGenerateDocxToolReturnsDownloadableRichDocxMetadata(t *testing.T) {
+	db, mock, cleanup := openFileGeneratorMockDB(t)
+	defer cleanup()
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO "tool_files"`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	oldManager := workflowtoolfile.GlobalToolFileManager
+	oldSignature := workflowtoolfile.GlobalFileSignature
+	t.Cleanup(func() {
+		workflowtoolfile.GlobalToolFileManager = oldManager
+		workflowtoolfile.GlobalFileSignature = oldSignature
+	})
+
+	fileStorage := newMemoryStorage()
+	workflowtoolfile.GlobalToolFileManager = workflowtoolfile.NewToolFileManager(db, fileStorage)
+	workflowtoolfile.GlobalFileSignature = workflowtoolfile.NewFileSignature(&config.Config{
+		App: config.AppConfig{
+			SecretKey:          "test-secret-key",
+			FilesURL:           "http://files.example.test",
+			FilesAccessTimeout: 3600,
+		},
+	})
+
+	messages, err := NewGenerateDocxTool("tenant-1").Invoke(
+		context.Background(),
+		"user-1",
+		map[string]interface{}{
+			"document": `{"blocks":[{"type":"heading","text":"Report","style":{"font_size":18,"bold":true,"alignment":"center"}}]}`,
+			"filename": "styled-report",
+		},
+		nil,
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+	require.Len(t, messages, 2)
+	require.Equal(t, tools.ToolInvokeMessageTypeFile, messages[0].Type)
+
+	jsonPayload := messages[1].Data
+	require.Equal(t, "styled-report.docx", jsonPayload["filename"])
+	require.Equal(t, "docx", jsonPayload["format"])
+	require.Equal(t, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", jsonPayload["mime_type"])
+	require.NotEmpty(t, jsonPayload["file_id"])
+	require.NotEmpty(t, jsonPayload["download_url"])
+
+	data := fileStorage.onlyFileData(t)
+	requireZipEntryContains(t, data, "word/document.xml", "Report")
+	requireZipEntryContains(t, data, "word/document.xml", `w:sz w:val="36"`)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestGeneratePDFToolReturnsDownloadableHTMLPDFMetadata(t *testing.T) {
+	newFakeFileGeneratorSandbox(t)
+	db, mock, cleanup := openFileGeneratorMockDB(t)
+	defer cleanup()
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO "tool_files"`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	oldManager := workflowtoolfile.GlobalToolFileManager
+	oldSignature := workflowtoolfile.GlobalFileSignature
+	t.Cleanup(func() {
+		workflowtoolfile.GlobalToolFileManager = oldManager
+		workflowtoolfile.GlobalFileSignature = oldSignature
+	})
+
+	fileStorage := newMemoryStorage()
+	workflowtoolfile.GlobalToolFileManager = workflowtoolfile.NewToolFileManager(db, fileStorage)
+	workflowtoolfile.GlobalFileSignature = workflowtoolfile.NewFileSignature(&config.Config{
+		App: config.AppConfig{
+			SecretKey:          "test-secret-key",
+			FilesURL:           "http://files.example.test",
+			FilesAccessTimeout: 3600,
+		},
+	})
+
+	messages, err := NewGeneratePDFTool("tenant-1").Invoke(
+		context.Background(),
+		"user-1",
+		map[string]interface{}{
+			"html":     `<main><h1>Report</h1><p>Total: <strong>113.47</strong></p></main>`,
+			"css":      `@page { size: A4; margin: 18mm; } h1 { text-align: center; }`,
+			"filename": "styled-report",
+		},
+		nil,
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+	require.Len(t, messages, 2)
+	require.Equal(t, tools.ToolInvokeMessageTypeFile, messages[0].Type)
+
+	jsonPayload := messages[1].Data
+	require.Equal(t, "styled-report.pdf", jsonPayload["filename"])
+	require.Equal(t, "pdf", jsonPayload["format"])
+	require.Equal(t, "application/pdf", jsonPayload["mime_type"])
+	require.NotEmpty(t, jsonPayload["file_id"])
+	require.NotEmpty(t, jsonPayload["download_url"])
+
+	data := fileStorage.onlyFileData(t)
+	require.NoError(t, api.Validate(bytes.NewReader(data), nil))
+	require.Contains(t, string(data), "/Type /Page")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestGeneratePPTXToolReturnsDownloadablePresentationMetadata(t *testing.T) {
+	newFakeFileGeneratorSandbox(t)
+	db, mock, cleanup := openFileGeneratorMockDB(t)
+	defer cleanup()
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO "tool_files"`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	oldManager := workflowtoolfile.GlobalToolFileManager
+	oldSignature := workflowtoolfile.GlobalFileSignature
+	t.Cleanup(func() {
+		workflowtoolfile.GlobalToolFileManager = oldManager
+		workflowtoolfile.GlobalFileSignature = oldSignature
+	})
+
+	fileStorage := newMemoryStorage()
+	workflowtoolfile.GlobalToolFileManager = workflowtoolfile.NewToolFileManager(db, fileStorage)
+	workflowtoolfile.GlobalFileSignature = workflowtoolfile.NewFileSignature(&config.Config{
+		App: config.AppConfig{
+			SecretKey:          "test-secret-key",
+			FilesURL:           "http://files.example.test",
+			FilesAccessTimeout: 3600,
+		},
+	})
+
+	messages, err := NewGeneratePPTXTool("tenant-1").Invoke(
+		context.Background(),
+		"user-1",
+		map[string]interface{}{
+			"presentation": `{"slides":[{"elements":[{"type":"title","text":"Deck","style":{"align":"center","font_size":30}}]}]}`,
+			"filename":     "styled-deck",
+		},
+		nil,
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+	require.Len(t, messages, 2)
+	require.Equal(t, tools.ToolInvokeMessageTypeFile, messages[0].Type)
+
+	jsonPayload := messages[1].Data
+	require.Equal(t, "styled-deck.pptx", jsonPayload["filename"])
+	require.Equal(t, "pptx", jsonPayload["format"])
+	require.Equal(t, "application/vnd.openxmlformats-officedocument.presentationml.presentation", jsonPayload["mime_type"])
+	require.NotEmpty(t, jsonPayload["file_id"])
+	require.NotEmpty(t, jsonPayload["download_url"])
+
+	data := fileStorage.onlyFileData(t)
+	requireZipEntries(t, data, "[Content_Types].xml", "_rels/.rels", "ppt/presentation.xml")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestGenerateFileToolRejectsFormatOutsideRuntimePolicy(t *testing.T) {
+	tool := NewGenerateFileTool("tenant-1").ForkToolRuntime(&tools.ToolRuntime{
+		TenantID: "tenant-1",
+		RuntimeParameters: map[string]interface{}{
+			"file_generation_policies": []map[string]interface{}{
+				{
+					"source_skill_id": "custom-settlement",
+					"output_formats":  []string{"pdf", "docx"},
+				},
+			},
+		},
+	})
+
+	_, err := tool.Invoke(
+		context.Background(),
+		"user-1",
+		map[string]interface{}{
+			"content":  "Name,Score\nAlice,10\n",
+			"format":   "xlsx",
+			"filename": "report",
+		},
+		nil,
+		nil,
+		nil,
+	)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "format xlsx is not allowed by current Skill file policy")
+	require.Contains(t, err.Error(), "docx")
+	require.Contains(t, err.Error(), "pdf")
+}
+
+func TestRuntimeAllowedOutputFormatsNormalizesSkillPolicies(t *testing.T) {
+	allowed := runtimeAllowedOutputFormats(&tools.ToolRuntime{
+		RuntimeParameters: map[string]interface{}{
+			"file_generation_policies": []interface{}{
+				map[string]interface{}{
+					"output_formats":         []interface{}{"PDF", "word", "excel"},
+					"allowed_output_formats": []interface{}{"powerpoint"},
+				},
+			},
+		},
+	})
+
+	for _, format := range []string{"pdf", "docx", "xlsx", "pptx"} {
+		if _, ok := allowed[format]; !ok {
+			t.Fatalf("allowed formats = %#v, missing %s", allowed, format)
+		}
+	}
+}
+
 type memoryStorage struct {
 	files map[string][]byte
+}
+
+type fakeFileGeneratorSandbox struct {
+	server           *httptest.Server
+	profileRequests  int
+	createRequests   int
+	uploadRequests   int
+	commandRequests  int
+	downloadRequests int
+	deleteRequests   int
+	uploadedHTML     string
+	uploadedFiles    map[string]string
+	commandError     string
+}
+
+func newFakeFileGeneratorSandbox(t *testing.T) *fakeFileGeneratorSandbox {
+	t.Helper()
+	fake := &fakeFileGeneratorSandbox{uploadedFiles: make(map[string]string)}
+	pdfData, err := renderPDF("sandbox pdf", "Sandbox PDF")
+	require.NoError(t, err)
+	pptxData := minimalPPTXZip(t)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/sandbox/dependencies", func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodGet, r.Method)
+		fake.profileRequests++
+		writeFakeSandboxEnvelope(t, w, map[string]interface{}{
+			"profiles": []map[string]interface{}{
+				{
+					"name":    defaultSystemOfficeProfile,
+					"version": "2026.05.31",
+					"status":  "ready",
+					"enabled": true,
+				},
+			},
+		})
+	})
+	mux.HandleFunc("/v1/sandboxes", func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		fake.createRequests++
+		var req map[string]interface{}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		require.Equal(t, "session", req["runtime_profile"])
+		require.Equal(t, defaultSystemOfficeProfile, req["dependency_profile"])
+		require.Equal(t, "tenant-1", req["organization_id"])
+		writeFakeSandboxEnvelope(t, w, map[string]interface{}{"id": "sbx_pdf"})
+	})
+	mux.HandleFunc("/v1/files/upload", func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		fake.uploadRequests++
+		var req map[string]interface{}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		require.Equal(t, "sbx_pdf", req["sandbox_id"])
+		require.Equal(t, "base64", req["encoding"])
+		raw, err := base64.StdEncoding.DecodeString(req["content"].(string))
+		require.NoError(t, err)
+		path := req["path"].(string)
+		fake.uploadedFiles[path] = string(raw)
+		if path == fileGeneratorHTMLInputPath {
+			fake.uploadedHTML = string(raw)
+		}
+		writeFakeSandboxEnvelope(t, w, map[string]interface{}{"path": path, "size": len(raw)})
+	})
+	mux.HandleFunc("/v1/exec/command", func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		fake.commandRequests++
+		var req map[string]interface{}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		require.Equal(t, "sbx_pdf", req["sandbox_id"])
+		require.Equal(t, "skill-node", req["profile"])
+		args, ok := req["args"].([]interface{})
+		require.True(t, ok)
+		switch req["command"] {
+		case "sh":
+			require.Len(t, args, 2)
+			require.Contains(t, args[1].(string), "-env:UserInstallation=file://")
+			require.Contains(t, args[1].(string), "libreoffice")
+			require.Contains(t, args[1].(string), "--headless --convert-to pdf")
+		case "node":
+			require.Len(t, args, 1)
+			require.Equal(t, fileGeneratorPPTXScriptPath, args[0].(string))
+		default:
+			t.Fatalf("unexpected command: %v", req["command"])
+		}
+		if fake.commandError != "" {
+			writeFakeSandboxEnvelope(t, w, map[string]interface{}{"exit_code": 1, "stdout": "", "error": fake.commandError})
+			return
+		}
+		writeFakeSandboxEnvelope(t, w, map[string]interface{}{"exit_code": 0, "stdout": "ok", "stderr": ""})
+	})
+	mux.HandleFunc("/v1/files/download", func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodGet, r.Method)
+		fake.downloadRequests++
+		require.Equal(t, "sbx_pdf", r.URL.Query().Get("sandbox_id"))
+		require.Equal(t, "base64", r.URL.Query().Get("encoding"))
+		path := r.URL.Query().Get("path")
+		data := pdfData
+		if path == fileGeneratorPPTXOutputPath {
+			data = pptxData
+		} else {
+			require.Equal(t, fileGeneratorPDFOutputPath, path)
+		}
+		writeFakeSandboxEnvelope(t, w, map[string]interface{}{
+			"path":     path,
+			"encoding": "base64",
+			"content":  base64.StdEncoding.EncodeToString(data),
+			"size":     len(data),
+		})
+	})
+	mux.HandleFunc("/v1/sandboxes/sbx_pdf", func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodDelete, r.Method)
+		fake.deleteRequests++
+		writeFakeSandboxEnvelope(t, w, map[string]interface{}{"deleted": true})
+	})
+	fake.server = httptest.NewServer(mux)
+	t.Cleanup(fake.server.Close)
+
+	oldConfig := config.GlobalConfig
+	config.GlobalConfig = &config.Config{
+		CodeExec: config.CodeExecConfig{
+			Endpoint:                     fake.server.URL,
+			ConnectTimeoutSeconds:        1,
+			CreateTimeoutSeconds:         1,
+			UploadTimeoutSeconds:         1,
+			CommandTimeoutPaddingSeconds: 1,
+			ArtifactTimeoutSeconds:       1,
+			CleanupTimeoutSeconds:        1,
+		},
+	}
+	t.Cleanup(func() {
+		config.GlobalConfig = oldConfig
+	})
+	return fake
+}
+
+func writeFakeSandboxEnvelope(t *testing.T, w http.ResponseWriter, data map[string]interface{}) {
+	t.Helper()
+	w.Header().Set("Content-Type", "application/json")
+	require.NoError(t, json.NewEncoder(w).Encode(map[string]interface{}{
+		"code":    0,
+		"message": "ok",
+		"data":    data,
+	}))
+}
+
+func minimalPPTXZip(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for name, content := range map[string]string{
+		"[Content_Types].xml":  `<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/></Types>`,
+		"_rels/.rels":          `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/></Relationships>`,
+		"ppt/presentation.xml": `<?xml version="1.0" encoding="UTF-8"?><p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:sldIdLst/></p:presentation>`,
+	} {
+		w, err := zw.Create(name)
+		require.NoError(t, err)
+		_, err = w.Write([]byte(content))
+		require.NoError(t, err)
+	}
+	require.NoError(t, zw.Close())
+	return buf.Bytes()
 }
 
 func newMemoryStorage() *memoryStorage {

@@ -9,9 +9,9 @@ import (
 	"html"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
-	docx "github.com/fumiama/go-docx"
 	"github.com/xuri/excelize/v2"
 	workflowfile "github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
@@ -24,6 +24,7 @@ const (
 	maxGeneratedFileBytes    = 2 * 1024 * 1024
 	docxMimeType             = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 	xlsxMimeType             = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+	pptxMimeType             = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 	pdfMimeType              = "application/pdf"
 )
 
@@ -163,6 +164,9 @@ func (t *GenerateFileTool) Invoke(
 	if err != nil {
 		return nil, err
 	}
+	if err := t.enforceRuntimeFilePolicy(format); err != nil {
+		return nil, err
+	}
 
 	data, err := renderContent(content, format, rawStringParam(toolParameters, "title"))
 	if err != nil {
@@ -172,37 +176,60 @@ func (t *GenerateFileTool) Invoke(
 		return nil, fmt.Errorf("generated file exceeds %d bytes", maxGeneratedFileBytes)
 	}
 
-	tenantID := t.GetTenantID()
-	if tenantID == "" && t.runtime != nil {
-		tenantID = t.runtime.TenantID
-	}
-	if tenantID == "" {
-		return nil, fmt.Errorf("tenant id is required")
-	}
-	if strings.TrimSpace(userID) == "" {
-		return nil, fmt.Errorf("user id is required")
-	}
-
 	lifecycle, err := resolveToolFileLifecycle(rawStringParam(toolParameters, "lifecycle"))
 	if err != nil {
 		return nil, err
 	}
 
 	filename := buildFilename(rawStringParam(toolParameters, "filename"), spec.extension)
+	return createGeneratedFileForRuntime(ctx, t.GetTenantID(), t.runtime, generatedFileParams{
+		userID:         userID,
+		conversationID: conversationID,
+		data:           data,
+		mimeType:       spec.mimeType,
+		extension:      spec.extension,
+		filename:       filename,
+		lifecycle:      lifecycle,
+		format:         format,
+	})
+}
+
+type generatedFileParams struct {
+	userID         string
+	conversationID *string
+	data           []byte
+	mimeType       string
+	extension      string
+	filename       string
+	lifecycle      tool_file.ToolFileLifecycle
+	format         string
+}
+
+func createGeneratedFileForRuntime(ctx context.Context, tenantID string, runtime *tools.ToolRuntime, params generatedFileParams) ([]tools.ToolInvokeMessage, error) {
+	if tenantID == "" && runtime != nil {
+		tenantID = runtime.TenantID
+	}
+	if tenantID == "" {
+		return nil, fmt.Errorf("tenant id is required")
+	}
+	if strings.TrimSpace(params.userID) == "" {
+		return nil, fmt.Errorf("user id is required")
+	}
+
 	toolFile, err := tool_file.CreateFileByRawGlobal(ctx, tool_file.CreateFileByRawParams{
-		UserID:         userID,
+		UserID:         params.userID,
 		TenantID:       tenantID,
-		ConversationID: conversationID,
-		FileData:       data,
-		MimeType:       spec.mimeType,
-		Filename:       &filename,
-		Lifecycle:      lifecycle,
+		ConversationID: params.conversationID,
+		FileData:       params.data,
+		MimeType:       params.mimeType,
+		Filename:       &params.filename,
+		Lifecycle:      params.lifecycle,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create generated file: %w", err)
 	}
 
-	url, err := tool_file.SignToolFileGlobal(toolFile.ID, spec.extension)
+	url, err := tool_file.SignToolFileGlobal(toolFile.ID, params.extension)
 	if err != nil {
 		return nil, fmt.Errorf("failed to sign generated file: %w", err)
 	}
@@ -215,8 +242,8 @@ func (t *GenerateFileTool) Invoke(
 		workflowfile.WithID(toolFile.ID),
 		workflowfile.WithRelatedID(toolFile.ID),
 		workflowfile.WithFilename(toolFile.Name),
-		workflowfile.WithExtension(spec.extension),
-		workflowfile.WithMimeType(spec.mimeType),
+		workflowfile.WithExtension(params.extension),
+		workflowfile.WithMimeType(params.mimeType),
 		workflowfile.WithSize(int(toolFile.Size)),
 		workflowfile.WithURL(url),
 	)
@@ -235,13 +262,87 @@ func (t *GenerateFileTool) Invoke(
 		builtin.CreateJSONMessage(map[string]interface{}{
 			"file_id":      toolFile.ID,
 			"filename":     toolFile.Name,
-			"format":       format,
-			"mime_type":    spec.mimeType,
+			"format":       params.format,
+			"mime_type":    params.mimeType,
 			"size":         toolFile.Size,
 			"url":          url,
 			"download_url": downloadURL,
 		}),
 	}, nil
+}
+
+func (t *GenerateFileTool) enforceRuntimeFilePolicy(format string) error {
+	return enforceRuntimeFilePolicy(t.runtime, format)
+}
+
+func enforceRuntimeFilePolicy(runtime *tools.ToolRuntime, format string) error {
+	allowed := runtimeAllowedOutputFormats(runtime)
+	if len(allowed) == 0 {
+		return nil
+	}
+	if _, ok := allowed[format]; ok {
+		return nil
+	}
+	formats := make([]string, 0, len(allowed))
+	for value := range allowed {
+		formats = append(formats, value)
+	}
+	sort.Strings(formats)
+	return fmt.Errorf("format %s is not allowed by current Skill file policy; allowed formats: %s", format, strings.Join(formats, ", "))
+}
+
+func runtimeAllowedOutputFormats(runtime *tools.ToolRuntime) map[string]struct{} {
+	if runtime == nil || len(runtime.RuntimeParameters) == 0 {
+		return nil
+	}
+	allowed := map[string]struct{}{}
+	collectRuntimeOutputFormats(runtime.RuntimeParameters["file_generation_policies"], allowed)
+	if len(allowed) == 0 {
+		collectRuntimeOutputFormats(runtime.RuntimeParameters["file_generation_allowed_formats"], allowed)
+	}
+	if len(allowed) == 0 {
+		return nil
+	}
+	return allowed
+}
+
+func collectRuntimeOutputFormats(value interface{}, allowed map[string]struct{}) {
+	switch typed := value.(type) {
+	case []interface{}:
+		for _, item := range typed {
+			collectRuntimeOutputFormats(item, allowed)
+		}
+	case []map[string]interface{}:
+		for _, item := range typed {
+			collectRuntimeOutputFormats(item, allowed)
+		}
+	case []string:
+		for _, item := range typed {
+			addRuntimeOutputFormat(item, allowed)
+		}
+	case map[string]interface{}:
+		collectRuntimeOutputFormats(typed["output_formats"], allowed)
+		collectRuntimeOutputFormats(typed["allowed_output_formats"], allowed)
+		collectRuntimeOutputFormats(typed["policy"], allowed)
+	case string:
+		for _, item := range strings.Split(typed, ",") {
+			addRuntimeOutputFormat(item, allowed)
+		}
+	}
+}
+
+func addRuntimeOutputFormat(raw string, allowed map[string]struct{}) {
+	normalized := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(raw), "."))
+	switch normalized {
+	case "pptx", "ppt", "powerpoint", "presentation", "slides":
+		allowed["pptx"] = struct{}{}
+		return
+	}
+	format, _, err := resolveFormat(raw)
+	if err != nil || format == "" {
+		return
+	}
+	allowed[format] = struct{}{}
 }
 
 type formatSpec struct {
@@ -306,19 +407,6 @@ func renderContent(content string, format string, title string) ([]byte, error) 
 	default:
 		return []byte(content), nil
 	}
-}
-
-func renderDocx(content string) ([]byte, error) {
-	doc := docx.New().WithDefaultTheme()
-	for _, line := range splitDocumentLines(content) {
-		doc.AddParagraph().AddText(line)
-	}
-
-	var buf bytes.Buffer
-	if _, err := doc.WriteTo(&buf); err != nil {
-		return nil, fmt.Errorf("failed to render DOCX: %w", err)
-	}
-	return buf.Bytes(), nil
 }
 
 func renderXLSX(content string) ([]byte, error) {

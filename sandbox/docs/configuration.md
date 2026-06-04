@@ -24,6 +24,12 @@ the secure runtime resolves dependency profiles from child rootfs directories
 named after each profile. During startup, the service also scans those
 profile-specific rootfs directories for verified profile artifacts and loads
 them into the dependency catalog as ready, enabled profiles.
+The Docker image ships prebuilt system dependency profiles under
+`ZGI_SANDBOX_PREBUILT_DEPENDENCY_ROOTFS_DIR`; the container entrypoint copies
+or refreshes those artifacts into `ZGI_SANDBOX_DEPENDENCY_ROOTFS_DIR` before
+the service starts. This makes system profiles such as `skill-office`
+available after a sandbox image update without installing dependencies during
+user requests.
 When a sandbox selects a dependency profile, the secure Linux backend activates
 profile-local Python and Node paths under `/opt/zgi/profiles/<profile>`.
 Profile environment values are applied after request environment values so user
@@ -47,6 +53,8 @@ manifest and read-only binds `/opt/zgi/profiles/<profile>` before execution.
 | `ZGI_SANDBOX_DEPENDENCY_BUILD_COMMAND` | Optional administrator worker command for materializing queued dependency builds. | empty | Set to an operator-managed builder command when automatic dependency artifacts are enabled. |
 | `ZGI_SANDBOX_DEPENDENCY_BUILD_WORKER_ENABLED` | Enables the local background consumer for queued dependency builds when a build command and dependency rootfs directory are configured. | `true` | Disable when an external admin consumer calls the build run endpoint. |
 | `ZGI_SANDBOX_DEPENDENCY_BUILD_WORKER_INTERVAL_SECONDS` | Poll interval for the local dependency build worker when no queued build is available. | `2` | Keep low for interactive skill preparation; raise for low-cost batch deployments. |
+| `ZGI_SANDBOX_PREBUILT_DEPENDENCY_ROOTFS_DIR` | Read-only profile artifact directory bundled in the sandbox image and seeded into the writable dependency rootfs at container start. | `/opt/zgi/prebuilt-dependency-rootfs` | Keep image-managed and read-only. |
+| `ZGI_SANDBOX_REQUIRED_DEPENDENCY_PROFILES` | Comma-separated dependency profiles that must be ready for `/ready` to pass. | `skill-office` in Docker examples | Set to system profiles required by built-in platform tools. |
 | `ZGI_SANDBOX_EGRESS_PROXY_MAX_BODY_BYTES` | Maximum request body accepted and response body returned by the egress proxy. | `1048576` | Keep bounded for workflow use and auditability. |
 | `ZGI_SANDBOX_ENV` | Runtime environment name. | `local` | Use `production` or `prod` for production. |
 | `ZGI_SANDBOX_INTERACTIVE_TTL_SECONDS` | Interactive sandbox TTL. | `3600` | Keep bounded and align with cleanup policy. |
@@ -61,7 +69,7 @@ manifest and read-only binds `/opt/zgi/profiles/<profile>` before execution.
 | `ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS_PER_ORGANIZATION` | Optional concurrent execution limit per organization. | `0` disabled | Set for shared deployments. |
 | `ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS_PER_PROFILE` | Optional concurrent execution limit per command profile. | `0` disabled | Set when specific profiles are expensive. |
 | `ZGI_SANDBOX_MAX_DEPENDENCY_PROFILES_PER_ORGANIZATION` | Optional active dependency profile limit per organization. | `0` disabled | Set for shared deployments. |
-| `ZGI_SANDBOX_MAX_DEPENDENCY_PROFILE_SIZE_BYTES` | Maximum managed dependency profile size. | `536870912` | Tune to artifact storage and startup budget. |
+| `ZGI_SANDBOX_MAX_DEPENDENCY_PROFILE_SIZE_BYTES` | Maximum managed dependency profile size. | `1073741824` | Tune to artifact storage and startup budget. |
 | `ZGI_SANDBOX_MAX_EXECUTIONS_PER_MINUTE_PER_ORGANIZATION` | Optional execution rate limit per organization. | `0` disabled | Set for shared deployments. |
 | `ZGI_SANDBOX_MAX_FILE_SIZE_KB` | Maximum uploaded file size. | `256` | Keep aligned with API upload policy. |
 | `ZGI_SANDBOX_MAX_NETWORK_REQUESTS_PER_MINUTE_PER_ORGANIZATION` | Optional egress proxy request rate limit per organization. | `0` disabled | Set for shared deployments that enable network egress. |

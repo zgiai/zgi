@@ -330,6 +330,8 @@ const (
 	envCodeExecutionCleanupTimeout = "CODE_EXECUTION_CLEANUP_TIMEOUT_SECONDS"
 	// envCodeExecutionEnableNetwork toggles network access for the legacy /v1/sandbox/run workflow code path. Default: false.
 	envCodeExecutionEnableNetwork = "CODE_EXECUTION_ENABLE_NETWORK"
+	// envCodeExecutionSystemOfficeProfile sets the managed dependency profile used by system Office/PDF/PPTX file tools. Default: skill-office.
+	envCodeExecutionSystemOfficeProfile = "CODE_EXECUTION_SYSTEM_OFFICE_PROFILE"
 
 	// Code execution safety limits.
 	// envCodeMaxNumber sets the largest numeric value allowed in code execution. Default: 9223372036854775807.

@@ -33,6 +33,9 @@ func NewProvider() *Provider {
 		BuiltinProvider: builtin.NewBuiltinProvider(identity),
 	}
 	provider.RegisterTool(NewGenerateFileTool(""))
+	provider.RegisterTool(NewGenerateDocxTool(""))
+	provider.RegisterTool(NewGeneratePDFTool(""))
+	provider.RegisterTool(NewGeneratePPTXTool(""))
 	return provider
 }
 
