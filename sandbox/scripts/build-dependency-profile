@@ -120,6 +120,19 @@ def materialize_symlinks(root):
         shutil.copy2(target, path)
 
 
+def remove_venv_lib64_symlink(venv_dir):
+    lib64 = venv_dir / "lib64"
+    if not lib64.is_symlink():
+        return
+
+    expected = (venv_dir / "lib").resolve(strict=True)
+    actual = lib64.resolve(strict=True)
+    if actual != expected:
+        raise ValueError(f"unexpected virtualenv lib64 symlink target: {lib64.as_posix()} -> {actual.as_posix()}")
+
+    lib64.unlink()
+
+
 def build_python(output_dir, packages):
     python_packages = [pkg for pkg in packages if pkg.get("ecosystem") == "python3"]
     if not python_packages:
@@ -128,6 +141,7 @@ def build_python(output_dir, packages):
     run([sys.executable, "-m", "venv", "--copies", str(venv_dir)], output_dir)
     python = venv_dir / "bin" / "python"
     run([str(python), "-m", "pip", "install", "--disable-pip-version-check", "--no-cache-dir", *[python_package_spec(pkg) for pkg in python_packages]], output_dir)
+    remove_venv_lib64_symlink(venv_dir)
 
 
 def build_node(output_dir, packages):
