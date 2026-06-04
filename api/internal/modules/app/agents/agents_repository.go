@@ -185,6 +185,12 @@ func (r *agentsRepository) ListRunnableWebApps(ctx context.Context, workspaceIDs
 				WHERE workflows.agent_id = agents.id
 				  AND workflows.version != ?
 			)
+			OR EXISTS (
+				SELECT 1
+				FROM agent_published_versions
+				WHERE agent_published_versions.agent_id = agents.id
+				  AND agent_published_versions.deleted_at IS NULL
+			)
 		`, "draft")
 
 	if workspaceID != "" {
