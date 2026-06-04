@@ -70,3 +70,39 @@ func TestMapResultToExtractOutput_FallbackToMarkdown(t *testing.T) {
 		t.Fatalf("unexpected recognition source: %v", output.Elements[0].Metadata["recognition_source"])
 	}
 }
+
+func TestMapResultToExtractOutput_PreservesImageMetadata(t *testing.T) {
+	result := &extractcommon.DocumentResult{
+		DocID:    "doc-1",
+		FileName: "sample.pdf",
+		Chunks: []extractcommon.Chunk{
+			{
+				ID:       "figure-1",
+				Type:     "figure",
+				Page:     0,
+				Ordinal:  1,
+				Markdown: "![figure](/console/api/files/mineru-images?key=mineru%2Fimages%2Fdoc-1%2Fimg.jpg)",
+				Payload: map[string]any{
+					"image_key":         "mineru/images/doc-1/img.jpg",
+					"image_url":         "/console/api/files/mineru-images?key=mineru%2Fimages%2Fdoc-1%2Fimg.jpg",
+					"original_img_path": "images/img.jpg",
+				},
+			},
+		},
+	}
+
+	output := mapResultToExtractOutput(result, "/tmp/sample.pdf", "mineru")
+	if len(output.Elements) != 1 {
+		t.Fatalf("expected one element, got %d", len(output.Elements))
+	}
+	meta := output.Elements[0].Metadata
+	if meta["image_key"] != "mineru/images/doc-1/img.jpg" {
+		t.Fatalf("expected image_key metadata, got %#v", meta)
+	}
+	if meta["image_url"] == "" {
+		t.Fatalf("expected image_url metadata, got %#v", meta)
+	}
+	if payload, ok := meta["payload"].(map[string]any); !ok || payload["original_img_path"] != "images/img.jpg" {
+		t.Fatalf("expected payload metadata, got %#v", meta["payload"])
+	}
+}

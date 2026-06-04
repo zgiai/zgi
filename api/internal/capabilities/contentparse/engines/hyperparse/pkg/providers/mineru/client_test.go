@@ -59,6 +59,41 @@ func TestMineruToDocumentResult_Shape(t *testing.T) {
 	}
 }
 
+func TestMineruToDocumentResult_ImageAssetsAndChartFigure(t *testing.T) {
+	resp := &parseResponse{
+		TaskID:  "task-images",
+		Backend: "pipeline",
+		Results: map[string]fileResults{
+			"sample": {
+				MdContent:   "![](images/chart.jpg)",
+				ContentList: `[{"type":"chart","img_path":"images/chart.jpg","chart_caption":["Trend chart"],"bbox":[10,20,500,600],"page_idx":0}]`,
+				Images:      map[string]string{"chart.jpg": "data:image/jpeg;base64,aGVsbG8="},
+			},
+		},
+	}
+
+	doc, err := mineruToDocumentResult("sample.pdf", resp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if doc.ImageAssets["chart.jpg"] == "" {
+		t.Fatalf("expected mineru image asset, got %#v", doc.ImageAssets)
+	}
+	if len(doc.Chunks) != 1 {
+		t.Fatalf("expected 1 chunk, got %d", len(doc.Chunks))
+	}
+	chunk := doc.Chunks[0]
+	if chunk.Type != "figure" {
+		t.Fatalf("expected chart image to map to figure, got %q", chunk.Type)
+	}
+	if chunk.Markdown != "![Trend chart](images/chart.jpg)" {
+		t.Fatalf("unexpected figure markdown: %q", chunk.Markdown)
+	}
+	if chunk.Payload["chart_caption"] == nil {
+		t.Fatalf("expected chart caption payload, got %#v", chunk.Payload)
+	}
+}
+
 func TestOfficialReadZipArtifacts(t *testing.T) {
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)

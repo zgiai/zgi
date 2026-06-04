@@ -145,9 +145,10 @@ type parseResponse struct {
 }
 
 type fileResults struct {
-	MdContent   string `json:"md_content,omitempty"`
-	MiddleJSON  string `json:"middle_json,omitempty"`
-	ContentList string `json:"content_list,omitempty"`
+	MdContent   string            `json:"md_content,omitempty"`
+	MiddleJSON  string            `json:"middle_json,omitempty"`
+	ContentList string            `json:"content_list,omitempty"`
+	Images      map[string]string `json:"images,omitempty"`
 }
 
 type contentItem struct {
@@ -163,6 +164,8 @@ type contentItem struct {
 	TableFootnote any    `json:"table_footnote,omitempty"`
 	ImageCaption  any    `json:"image_caption,omitempty"`
 	ImageFootnote any    `json:"image_footnote,omitempty"`
+	ChartCaption  any    `json:"chart_caption,omitempty"`
+	ChartFootnote any    `json:"chart_footnote,omitempty"`
 }
 
 type contentItemV2 struct {
@@ -207,7 +210,7 @@ func callMineruParse(ctx context.Context, filename string, data []byte) (*parseR
 		"return_content_list": "true",
 		"return_middle_json":  "true",
 		"return_model_output": "false",
-		"return_images":       "false",
+		"return_images":       "true",
 		"response_format_zip": "false",
 	} {
 		if err := mw.WriteField(k, v); err != nil {
@@ -736,6 +739,7 @@ func mineruToDocumentResult(filename string, resp *parseResponse) (*extractcommo
 		Diagnostics: map[string]any{
 			"mineru_structure": buildStructureDiagnostics(items, chunks),
 		},
+		ImageAssets: fr.Images,
 	}, nil
 }
 
@@ -912,9 +916,23 @@ func buildChunks(items []contentItem) []extractcommon.Chunk {
 		if it.TableBody != "" {
 			ch.Markdown = it.TableBody
 		}
+		if strings.TrimSpace(it.ImgPath) != "" {
+			ch.Markdown = mineruImageMarkdown(it)
+		}
 		out = append(out, ch)
 	}
 	return out
+}
+
+func mineruImageMarkdown(it contentItem) string {
+	alt := strings.TrimSpace(firstString(it.ImageCaption))
+	if alt == "" {
+		alt = strings.TrimSpace(firstString(it.ChartCaption))
+	}
+	if alt == "" {
+		alt = "figure"
+	}
+	return fmt.Sprintf("![%s](%s)", alt, strings.TrimSpace(it.ImgPath))
 }
 
 func buildPayload(index int, it contentItem) map[string]any {
@@ -938,6 +956,8 @@ func buildPayload(index int, it contentItem) map[string]any {
 	addAny(payload, "table_footnote", it.TableFootnote)
 	addAny(payload, "image_caption", it.ImageCaption)
 	addAny(payload, "image_footnote", it.ImageFootnote)
+	addAny(payload, "chart_caption", it.ChartCaption)
+	addAny(payload, "chart_footnote", it.ChartFootnote)
 	return payload
 }
 
@@ -978,10 +998,10 @@ func buildStructureDiagnostics(items []contentItem, chunks []extractcommon.Chunk
 		if strings.TrimSpace(it.TableBody) != "" {
 			withTableBody++
 		}
-		if hasAny(it.TableCaption) || hasAny(it.ImageCaption) {
+		if hasAny(it.TableCaption) || hasAny(it.ImageCaption) || hasAny(it.ChartCaption) {
 			withCaption++
 		}
-		if hasAny(it.TableFootnote) || hasAny(it.ImageFootnote) {
+		if hasAny(it.TableFootnote) || hasAny(it.ImageFootnote) || hasAny(it.ChartFootnote) {
 			withFootnote++
 		}
 		if i < len(chunks) {
@@ -1023,6 +1043,10 @@ func hasAny(value any) bool {
 }
 
 func mapType(it contentItem) (string, string) {
+	if strings.TrimSpace(it.ImgPath) != "" {
+		return "figure", ""
+	}
+
 	switch it.Type {
 	case "text":
 		if it.TextLevel >= 1 {
@@ -1049,12 +1073,15 @@ func extractText(it contentItem) string {
 	if it.Type == "table" && strings.TrimSpace(it.TableBody) != "" {
 		return strings.TrimSpace(it.TableBody)
 	}
-	if it.Type == "image" {
+	if it.Type == "image" || it.Type == "chart" {
 		if caption := firstString(it.ImageCaption); caption != "" {
 			return caption
 		}
+		if caption := firstString(it.ChartCaption); caption != "" {
+			return caption
+		}
 	}
-	if it.Type == "image" && it.ImgPath != "" {
+	if it.ImgPath != "" {
 		return "[figure]"
 	}
 	if it.Type == "table" {

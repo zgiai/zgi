@@ -49,10 +49,18 @@ func (p *ExtractProcessor) processFigureElements(ctx context.Context, output *dt
 			continue
 		}
 
-		imageURL := buildMinerUImageURL(imagePath)
+		imageURL := metadataString(element.Metadata, "image_url")
+		if imageURL == "" {
+			imageURL = metadataNestedString(element.Metadata, "payload", "image_url")
+		}
+		if imageURL == "" {
+			imageURL = displayImageURL(imagePath)
+		}
 		summary, err := p.summarizeExtractedImage(ctx, imagePath, uploadFile)
 		if err != nil {
-			logger.WarnContext(ctx, "failed to summarize extracted figure image", "image_path", imagePath, err)
+			if isLocalFilePath(imagePath) {
+				logger.WarnContext(ctx, "failed to summarize extracted figure image", "image_path", imagePath, err)
+			}
 			summary = fallbackFigureSummary
 		}
 
@@ -144,6 +152,21 @@ func buildFigureContent(imageURL, summary string) string {
 	return fmt.Sprintf("![figure](%s)\n\nImage URL: %s\nImage summary: %s", imageURL, imageURL, summary)
 }
 
+func displayImageURL(imagePath string) string {
+	imagePath = strings.TrimSpace(imagePath)
+	if imagePath == "" {
+		return ""
+	}
+	lower := strings.ToLower(imagePath)
+	if strings.HasPrefix(lower, "http://") ||
+		strings.HasPrefix(lower, "https://") ||
+		strings.HasPrefix(lower, "data:") ||
+		strings.HasPrefix(imagePath, "/console/api/") {
+		return imagePath
+	}
+	return buildMinerUImageURL(imagePath)
+}
+
 func buildMinerUImageURL(imagePath string) string {
 	pathParam := url.QueryEscape(strings.TrimSpace(imagePath))
 	return "/console/api/files/mineru-images?path=" + pathParam
@@ -227,6 +250,39 @@ func metadataString(metadata map[string]any, key string) string {
 		return ""
 	}
 	return text
+}
+
+func metadataNestedString(metadata map[string]any, parentKey, childKey string) string {
+	if len(metadata) == 0 {
+		return ""
+	}
+	parent, ok := metadata[parentKey].(map[string]any)
+	if !ok {
+		return ""
+	}
+	return metadataString(parent, childKey)
+}
+
+func isLocalFilePath(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	lower := strings.ToLower(value)
+	if strings.HasPrefix(lower, "http://") ||
+		strings.HasPrefix(lower, "https://") ||
+		strings.HasPrefix(lower, "data:") ||
+		strings.HasPrefix(value, "/") && strings.HasPrefix(value, "/console/api/") {
+		return false
+	}
+	return filepath.IsAbs(value) || isWindowsAbsolutePath(value)
+}
+
+func isWindowsAbsolutePath(value string) bool {
+	return len(value) >= 3 &&
+		((value[0] >= 'A' && value[0] <= 'Z') || (value[0] >= 'a' && value[0] <= 'z')) &&
+		value[1] == ':' &&
+		(value[2] == '\\' || value[2] == '/')
 }
 
 func isSupportedImagePath(value string) bool {

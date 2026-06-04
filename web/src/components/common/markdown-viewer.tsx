@@ -93,6 +93,11 @@ function collectText(node: React.ReactNode): string {
   return '';
 }
 
+function containsMarkdownImageText(node: React.ReactNode): boolean {
+  const pattern = new RegExp(MARKDOWN_IMAGE_PATTERN.source);
+  return pattern.test(collectText(node));
+}
+
 // Escape special regex characters
 function escapeRegex(input: string): string {
   return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -386,13 +391,58 @@ const MarkdownViewer: React.FC<MarkdownViewerProps> = ({
     [regex]
   );
 
+  const renderTextWithFallbackMarkdownImages = React.useCallback(
+    (text: string, keyPrefix: string): React.ReactNode => {
+      const pattern = new RegExp(MARKDOWN_IMAGE_PATTERN.source, 'g');
+      const parts: React.ReactNode[] = [];
+      let lastIndex = 0;
+      let match: RegExpExecArray | null;
+
+      while ((match = pattern.exec(text)) !== null) {
+        const [raw, alt, rawSrc] = match;
+        const start = match.index;
+        const end = start + raw.length;
+        if (start > lastIndex) {
+          parts.push(
+            <React.Fragment key={`${keyPrefix}-text-${lastIndex}`}>
+              {renderHighlightedText(text.slice(lastIndex, start))}
+            </React.Fragment>
+          );
+        }
+        parts.push(
+          <MarkdownImage
+            key={`${keyPrefix}-image-${start}`}
+            src={normalizeMinerUImageSource(rawSrc)}
+            alt={alt}
+          />
+        );
+        lastIndex = end;
+      }
+
+      if (parts.length === 0) return renderHighlightedText(text);
+      if (lastIndex < text.length) {
+        parts.push(
+          <React.Fragment key={`${keyPrefix}-text-${lastIndex}`}>
+            {renderHighlightedText(text.slice(lastIndex))}
+          </React.Fragment>
+        );
+      }
+      return parts;
+    },
+    [renderHighlightedText]
+  );
+
   // Recursively apply highlight to children, preserving element structure
   const renderChildrenWithHighlights = React.useCallback(
     (children: React.ReactNode): React.ReactNode => {
       const arr = React.Children.toArray(children);
       return arr.map((child, idx) => {
         if (typeof child === 'string') {
-          return <React.Fragment key={`txt-${idx}`}>{renderHighlightedText(child)}</React.Fragment>;
+          return (
+            <React.Fragment key={`txt-${idx}`}>
+              {renderTextWithFallbackMarkdownImages(child, `txt-${idx}`)}
+            </React.Fragment>
+          );
         }
         if (React.isValidElement(child)) {
           if (isVoidElement(child.type)) {
@@ -408,7 +458,7 @@ const MarkdownViewer: React.FC<MarkdownViewerProps> = ({
         return child;
       });
     },
-    [renderHighlightedText]
+    [renderTextWithFallbackMarkdownImages]
   );
 
   const handleHashAnchorClick = React.useCallback(
@@ -562,9 +612,11 @@ const MarkdownViewer: React.FC<MarkdownViewerProps> = ({
           },
           img({ children: _c, ...rest }) {
             const { src, alt, className, ...props } = rest;
+            const normalizedSrc =
+              typeof src === 'string' ? normalizeMinerUImageSource(src) : src;
             return (
               <MarkdownImage
-                src={src as string}
+                src={normalizedSrc as string}
                 alt={alt as string}
                 className={className}
                 {...props}
@@ -673,7 +725,7 @@ const MarkdownViewer: React.FC<MarkdownViewerProps> = ({
               child => child.type === 'element' && child.tagName === 'img'
             );
 
-            if (hasImage) {
+            if (hasImage || containsMarkdownImageText(children)) {
               return (
                 <div {...rest} className={cn('relative my-4', rest.className)}>
                   {renderChildrenWithHighlights(children)}
