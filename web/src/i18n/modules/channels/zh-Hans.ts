@@ -149,7 +149,7 @@ const messages: ChannelsMessages = {
           strategy: '按 OpenAI 兼容接口检查或手动选择模型',
           headline: '按兼容接口接入',
           guidance:
-            '适合代理、自建网关或第三方兼容接口。请确认服务商确实支持 OpenAI 兼容的 /models 和调用接口。',
+            '适合代理、自建网关或第三方兼容接口。请确认服务商支持 OpenAI 兼容协议，且能返回可用模型并完成模型调用。',
         },
         local: {
           label: '本地服务',
@@ -266,8 +266,11 @@ const messages: ChannelsMessages = {
     testConnection: {
       title: '检测连接',
       description:
-        '可先用当前 API Key 检查服务商可用模型；选择一个代表模型后，再验证密钥、地址、协议和模型是否匹配。',
-      descriptionWithModel: '将使用 {model} 验证密钥、地址、协议和模型是否匹配。',
+        '检查模型列表只会向服务商读取可用模型；检测连接会验证一个代表模型，图片模型只做轻量检查，不会生成图片。',
+      descriptionWithModel:
+        '检测连接会验证 {model}；文本、Embedding、Rerank 模型会发起一次小请求，图片模型只做轻量检查，不会生成图片。',
+      descriptionWithModelCount:
+        '已选择 {count} 个模型；检测连接只验证第一个代表模型，创建时会尽量记录已选模型的列表检查结果。',
       button: '检测连接',
       apiBaseUrlHint: '请先填写 API 基础地址，再检测连接。',
       apiKeyHint: '请先填写 API 密钥，再检测连接。',
@@ -279,6 +282,14 @@ const messages: ChannelsMessages = {
         successFallback: '该模型已成功响应。',
         failedFallback: '请检查服务商、API 基础地址、API 密钥和模型是否匹配。',
         requestFailed: '连接检测请求失败',
+        imageModelFound: '已确认服务商账号中可以看到这个模型，本次没有生成图片。',
+        imageModelMetadataOnly:
+          '已确认平台中的模型配置，本次没有生成图片；该服务商暂不支持读取可用模型列表。',
+        imageModelMissing: '服务商返回的可用模型里没有这个模型，本次没有生成图片。',
+        apiKeyInvalid: 'API 密钥无效或已过期，请更新后再试。',
+        modelNotFound: '没有找到这个模型，或当前服务商接口不支持它。',
+        rateLimited: '服务商返回限流，请稍后再试。',
+        timeout: '请求超时，请稍后重试，或检查服务商连接是否正常。',
       },
       nextSteps: {
         success: '当前配置可用于创建渠道。',
@@ -294,16 +305,16 @@ const messages: ChannelsMessages = {
       },
       readiness: {
         verified: '已通过连接检测，可以创建渠道。',
-        failed: '检测未通过：仍可创建，但建议先修复上方问题。',
-        untested: '尚未检测连接，建议先验证代表模型。',
+        failed: '检测未通过：非密钥类问题仍可先保存配置；如果是明确的密钥错误，请先修复。',
+        untested: '创建时会记录模型列表检查结果；如需确认真实调用能力，可检测连接。',
         missingModel: '请选择至少一个代表模型后检测连接。',
       },
     },
     discoverModels: {
-      button: '检查可用模型',
+      button: '检查模型列表',
       messages: {
-        success: '服务商返回 {count} 个可用模型',
-        requestFailed: '检查可用模型失败',
+        success: '服务商模型列表返回 {count} 个模型',
+        requestFailed: '检查模型列表失败；非密钥类问题不影响先保存配置',
       },
     },
     protocolOptions: {
