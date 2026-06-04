@@ -290,6 +290,8 @@ const messages = {
       button: 'Test',
       apiBaseUrlHint: 'Enter the API base URL before testing.',
       apiKeyHint: 'Enter the API key before testing.',
+      checkModelListHint:
+        'Check the model list first. The list uses the local model catalog; only models also returned by this provider can be selected.',
       selectModelHint: 'Select at least one representative model on the right before testing.',
       latency: 'Latency: {ms} ms',
       messages: {
@@ -335,6 +337,10 @@ const messages = {
       button: 'Check Model List',
       messages: {
         success: 'Provider model list returned {count} models',
+        supportedOnly:
+          'The list uses the local model catalog. Only models also returned by this provider can be selected; other local models cannot be selected.',
+        unsupported:
+          'This service does not support model listing. Select registered models from the local model catalog.',
         requestFailed: 'Failed to check the model list. Non-key issues do not block saving the channel.',
       },
     },

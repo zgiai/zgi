@@ -1207,6 +1207,13 @@ func (s *channelService) DiscoverDraftChannelModels(ctx context.Context, req *dt
 
 	upstreamModels, err := adapterInstance.ListModels(ctx, req.APIKey)
 	if err != nil {
+		if adapter.IsCapabilityUnsupported(err) {
+			return &dto.DiscoverDraftChannelModelsResponse{
+				Models:           []dto.DiscoveredChannelModelView{},
+				Total:            0,
+				ListingSupported: false,
+			}, nil
+		}
 		return nil, fmt.Errorf("discover %s models: %w", spec.Name, err)
 	}
 
@@ -1241,8 +1248,9 @@ func (s *channelService) DiscoverDraftChannelModels(ctx context.Context, req *dt
 	}
 
 	return &dto.DiscoverDraftChannelModelsResponse{
-		Models: views,
-		Total:  len(views),
+		Models:           views,
+		Total:            len(views),
+		ListingSupported: true,
 	}, nil
 }
 

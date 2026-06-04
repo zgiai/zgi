@@ -1053,6 +1053,22 @@ func TestDiscoverOllamaModels_MapsUseCases(t *testing.T) {
 	require.Equal(t, "unsupported", result.Models[2].UseCase)
 }
 
+func TestDiscoverDraftChannelModels_ReturnsUnsupportedWhenListingIsUnsupported(t *testing.T) {
+	svc := &channelService{}
+
+	result, err := svc.DiscoverDraftChannelModels(context.Background(), &channeldto.DiscoverDraftChannelModelsRequest{
+		ChannelProvider: "openai-compatible",
+		APIKey:          "sk-test",
+		APIBaseURL:      "http://localhost:8080/v1/chat/completions#",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.False(t, result.ListingSupported)
+	require.Equal(t, 0, result.Total)
+	require.Empty(t, result.Models)
+}
+
 func TestDiscoverOllamaModels_RejectsExactBaseURL(t *testing.T) {
 	svc := &channelService{
 		ollamaModelLister: func(context.Context, string, string) ([]adapter.Model, error) {
