@@ -61,6 +61,20 @@ type DraftTestFailureKind =
   | 'protocol'
   | 'unknown';
 
+const DRAFT_TEST_MESSAGE_TRANSLATION_KEYS = {
+  'model is returned by upstream model list; real image generation was not run':
+    'dialog.testConnection.messages.imageModelFound',
+  'validated local model metadata; upstream model listing is unsupported; real image generation was not run':
+    'dialog.testConnection.messages.imageModelMetadataOnly',
+  'model is not returned by upstream model list; real image generation was not run':
+    'dialog.testConnection.messages.imageModelMissing',
+  'Private channel API key is invalid or expired. Update the API key and try again.':
+    'dialog.testConnection.messages.apiKeyInvalid',
+  'model not found or endpoint not available': 'dialog.testConnection.messages.modelNotFound',
+  'rate limit exceeded': 'dialog.testConnection.messages.rateLimited',
+  'request timeout': 'dialog.testConnection.messages.timeout',
+} as const;
+
 type ChannelSetupCategory = 'common' | 'aggregator' | 'advanced';
 type ChannelSetupKind = 'direct' | 'aggregator' | 'compatible' | 'local' | 'custom';
 
@@ -501,6 +515,7 @@ function ChannelForm({
   const [draftTestResult, setDraftTestResult] = React.useState<ChannelModelTestResult | null>(
     null
   );
+  const [draftTestIntent, setDraftTestIntent] = React.useState<'default' | null>(null);
   const draftTestRequestIdRef = React.useRef(0);
   const [discoveredModels, setDiscoveredModels] = React.useState<ModelItem[]>([]);
   const [discoverResult, setDiscoverResult] = React.useState<{
@@ -601,6 +616,29 @@ function ChannelForm({
     draftTestResult && !draftTestResult.success
       ? classifyDraftTestFailure(draftTestResult.message)
       : null;
+  const draftTestMessageKey = draftTestResult?.message
+    ? DRAFT_TEST_MESSAGE_TRANSLATION_KEYS[
+        draftTestResult.message as keyof typeof DRAFT_TEST_MESSAGE_TRANSLATION_KEYS
+      ]
+    : undefined;
+  const draftTestDisplayMessage = draftTestResult
+    ? draftTestMessageKey
+      ? t(draftTestMessageKey as never)
+      : draftTestResult.message ||
+        (draftTestResult.success
+          ? t('dialog.testConnection.messages.successFallback')
+          : t('dialog.testConnection.messages.failedFallback'))
+    : '';
+  const testConnectionDescription =
+    modelsSelected.length > 1
+      ? t('dialog.testConnection.descriptionWithModelCount', {
+          count: modelsSelected.length,
+        })
+      : representativeModel
+        ? t('dialog.testConnection.descriptionWithModel', {
+            model: representativeModel,
+          })
+        : t('dialog.testConnection.description');
   const createReadiness =
     mode !== 'create'
       ? null
@@ -627,6 +665,7 @@ function ChannelForm({
     const requestId = draftTestRequestIdRef.current + 1;
     draftTestRequestIdRef.current = requestId;
     setDraftTestResult(null);
+    setDraftTestIntent('default');
 
     const testedProvider = channelProvider.trim();
     const testedApiKey = apiKey.trim();
@@ -653,6 +692,10 @@ function ChannelForm({
     } catch {
       if (draftTestRequestIdRef.current === requestId) {
         setDraftTestResult(null);
+      }
+    } finally {
+      if (draftTestRequestIdRef.current === requestId) {
+        setDraftTestIntent(null);
       }
     }
   };
@@ -1017,22 +1060,20 @@ function ChannelForm({
                 <div className="min-w-0">
                   <div className="text-sm font-medium">{t('dialog.testConnection.title')}</div>
                   <div className="mt-1 text-xs leading-5 text-muted-foreground">
-                    {representativeModel
-                      ? t('dialog.testConnection.descriptionWithModel', {
-                          model: representativeModel,
-                        })
-                      : t('dialog.testConnection.description')}
+                    {testConnectionDescription}
                   </div>
                 </div>
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={onTestConnection}
+                  onClick={() => void onTestConnection()}
                   disabled={!canTestConnection || disabled}
                   className="shrink-0"
                 >
-                  {isTestingDraft && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+                  {isTestingDraft && draftTestIntent === 'default' && (
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  )}
                   {t('dialog.testConnection.button')}
                 </Button>
               </div>
@@ -1085,12 +1126,7 @@ function ChannelForm({
                         ? t('dialog.testConnection.messages.success')
                         : t('dialog.testConnection.messages.failed')}
                     </div>
-                    <div className="mt-0.5 break-words">
-                      {draftTestResult.message ||
-                        (draftTestResult.success
-                          ? t('dialog.testConnection.messages.successFallback')
-                          : t('dialog.testConnection.messages.failedFallback'))}
-                    </div>
+                    <div className="mt-0.5 break-words">{draftTestDisplayMessage}</div>
                     <div className="mt-1 font-medium">
                       {draftTestResult.success
                         ? t('dialog.testConnection.nextSteps.success')
