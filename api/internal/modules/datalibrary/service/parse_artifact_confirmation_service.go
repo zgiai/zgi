@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -170,6 +171,8 @@ func applyResolvedConfirmationItems(artifact *contracts.ParseArtifact, items []*
 		}
 	}
 	editedCount := 0
+	rebuildText := false
+	rebuildMarkdown := false
 	for _, item := range items {
 		if item.Status != model.ParseConfirmationItemStatusEdited {
 			continue
@@ -181,8 +184,14 @@ func applyResolvedConfirmationItems(artifact *contracts.ParseArtifact, items []*
 		if !ok || index < 0 || index >= len(artifact.Elements) {
 			return 0, ErrParseConfirmationPatchTargetNotFound
 		}
+		textPatched, markdownPatched := patchArtifactAggregateContent(artifact, item.OriginalContent, *item.FinalContent)
+		rebuildText = rebuildText || (artifact.Text != "" && !textPatched)
+		rebuildMarkdown = rebuildMarkdown || (artifact.Markdown != "" && !markdownPatched)
 		artifact.Elements[index].Content = *item.FinalContent
 		editedCount++
+	}
+	if editedCount > 0 {
+		ensureArtifactAggregateContent(artifact, rebuildText, rebuildMarkdown)
 	}
 	return editedCount, nil
 }
@@ -190,12 +199,67 @@ func applyResolvedConfirmationItems(artifact *contracts.ParseArtifact, items []*
 func confirmationItemElementIndex(item *model.ParseConfirmationItem, byID map[string]int) (int, bool) {
 	elementID := sourceLocatorString(item.SourceLocatorJSON, "artifact_element_id")
 	if elementID != "" {
-		index, ok := byID[elementID]
-		return index, ok
+		if index, ok := byID[elementID]; ok {
+			return index, true
+		}
 	}
 	elementIndex := sourceLocatorInt64(item.SourceLocatorJSON, "element_index")
 	if elementIndex == nil {
 		return 0, false
 	}
 	return int(*elementIndex), true
+}
+
+func patchArtifactAggregateContent(artifact *contracts.ParseArtifact, originalContent string, finalContent string) (bool, bool) {
+	original := strings.TrimSpace(originalContent)
+	if original == "" || artifact == nil {
+		return false, false
+	}
+	textPatched := false
+	if artifact.Text != "" {
+		artifact.Text, textPatched = replaceFirstContent(artifact.Text, originalContent, original, finalContent)
+	}
+	markdownPatched := false
+	if artifact.Markdown != "" {
+		artifact.Markdown, markdownPatched = replaceFirstContent(artifact.Markdown, originalContent, original, finalContent)
+	}
+	return textPatched, markdownPatched
+}
+
+func replaceFirstContent(input string, originalContent string, trimmedOriginal string, finalContent string) (string, bool) {
+	if strings.Contains(input, originalContent) {
+		return strings.Replace(input, originalContent, finalContent, 1), true
+	}
+	if originalContent != trimmedOriginal && strings.Contains(input, trimmedOriginal) {
+		return strings.Replace(input, trimmedOriginal, finalContent, 1), true
+	}
+	return input, false
+}
+
+func ensureArtifactAggregateContent(artifact *contracts.ParseArtifact, rebuildText bool, rebuildMarkdown bool) {
+	if artifact == nil {
+		return
+	}
+	text := strings.TrimSpace(artifact.Text)
+	markdown := strings.TrimSpace(artifact.Markdown)
+	if text != "" && markdown != "" && !rebuildText && !rebuildMarkdown {
+		return
+	}
+	contents := make([]string, 0, len(artifact.Elements))
+	for _, element := range artifact.Elements {
+		content := strings.TrimSpace(element.Content)
+		if content != "" {
+			contents = append(contents, content)
+		}
+	}
+	if len(contents) == 0 {
+		return
+	}
+	joined := strings.Join(contents, "\n")
+	if text == "" || rebuildText {
+		artifact.Text = joined
+	}
+	if markdown == "" || rebuildMarkdown {
+		artifact.Markdown = joined
+	}
 }
