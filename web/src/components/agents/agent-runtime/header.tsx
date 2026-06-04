@@ -1,6 +1,5 @@
 'use client';
 
-import Link from 'next/link';
 import { useState, type ReactNode } from 'react';
 import {
   Bot,
@@ -38,7 +37,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { useUpdateWebAppStatus } from '@/hooks/agent/use-agents';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useT } from '@/i18n';
-import { ENABLE_AGENT_RUNTIME_LOGS_PAGE } from '@/lib/config';
 import { cn } from '@/lib/utils';
 import type { WebAppStatus } from '@/services/types/agent';
 import type { AgentRuntimeAgent, AgentRuntimeSaveState } from './types';
@@ -120,6 +118,9 @@ export function AgentRuntimeHeader({
   };
 
   const handleWebAppStatusConfirm = () => {
+    if (disablePrimaryActions) {
+      return;
+    }
     if (nextWebAppStatus === 'inactive' && isOfflineReasonTooLong) {
       return;
     }
@@ -263,6 +264,7 @@ export function AgentRuntimeHeader({
                 size="sm"
                 className="flex items-center gap-1.5 rounded-md border border-primary/25 bg-primary/10 px-3.5 text-primary shadow-none transition-colors hover:border-primary/35 hover:bg-primary/15"
                 aria-label={isPublishing ? publishingLabel : publishLabel}
+                disabled={disablePrimaryActions || isPublishing || saveState === 'saving'}
               >
                 {isPublishing ? (
                   <Loader2 className="size-4 animate-spin" />
@@ -307,6 +309,7 @@ export function AgentRuntimeHeader({
               ) : null}
               {isPublished ? (
                 <DropdownMenuItem
+                  disabled={disablePrimaryActions}
                   onSelect={() => {
                     setWebAppStatusDialogOpen(true);
                   }}
@@ -329,14 +332,6 @@ export function AgentRuntimeHeader({
                 <Copy className="size-4" />
                 {t('header.copyWebAppLink')}
               </DropdownMenuItem>
-              {ENABLE_AGENT_RUNTIME_LOGS_PAGE ? (
-                <DropdownMenuItem asChild>
-                  <Link href={`/console/agents/${agentId}/logs`}>
-                    <History className="size-4" />
-                    {t('header.runtimeLogs')}
-                  </Link>
-                </DropdownMenuItem>
-              ) : null}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -392,7 +387,9 @@ export function AgentRuntimeHeader({
             <Button
               variant={isWebAppOffline ? 'default' : 'destructive'}
               onClick={handleWebAppStatusConfirm}
-              disabled={webAppStatusMutation.isPending || isOfflineReasonTooLong}
+              disabled={
+                disablePrimaryActions || webAppStatusMutation.isPending || isOfflineReasonTooLong
+              }
             >
               {webAppStatusMutation.isPending ? (
                 <Loader2 className="size-4 animate-spin" />
