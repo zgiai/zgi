@@ -222,6 +222,10 @@ export function useChatRuntimeStreamRecovery({
                 if (abortController.signal.aborted) return;
                 eventAppliers.applyIntermediateAnswer(payload, eventId);
               },
+              onUserInputRequested: (payload, eventId) => {
+                if (abortController.signal.aborted) return;
+                eventAppliers.applyUserInputRequested(payload, eventId);
+              },
               onFileParseStart: (payload, eventId) => {
                 if (abortController.signal.aborted) return;
                 eventAppliers.applyFileParseStart(payload, eventId);

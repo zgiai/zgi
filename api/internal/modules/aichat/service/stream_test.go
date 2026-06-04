@@ -262,7 +262,8 @@ Write concise briefs.
 			{
 				Choices: []adapter.Choice{{
 					Message: adapter.Message{
-						Role: "assistant",
+						Content: "I can help, but I need a few details first.",
+						Role:    "assistant",
 						ToolCalls: []adapter.ToolCall{{
 							ID:   "call_1",
 							Type: "function",
@@ -794,6 +795,134 @@ Write concise briefs.
 	last, _ := invocations[len(invocations)-1].(map[string]interface{})
 	if last["kind"] != "intermediate_answer" || last["message"] != "## Outline\n\nA useful draft." {
 		t.Fatalf("last invocation = %#v, want intermediate answer trace", last)
+	}
+}
+
+func TestRunPreparedSkillStreamRequestsUserInputAndStops(t *testing.T) {
+	catalogDir := t.TempDir()
+	writeTestSkill(t, catalogDir, "brief-writer", `---
+name: brief-writer
+description: Help draft short writing briefs.
+when_to_use: Use when writing a concise brief.
+---
+
+# Brief Writer
+
+Write concise briefs.
+`)
+	fakeLLM := &fakeAgenticLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_ask",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name: skills.MetaToolRequestUserInput,
+								Arguments: `{
+									"message":"I found multiple candidate sheets and need your choice before editing the file.",
+									"questions":[
+										{
+											"id":"sheet",
+											"question":"Which sheet should I process?",
+											"options":[
+												{"label":"Water"},
+												{"label":"Electricity","description":"Use the electricity sheet"}
+											]
+										},
+										{
+											"question":"Should I include a summary?",
+											"options":[{"label":"Yes"},{"label":"No"}]
+										}
+									]
+								}`,
+							},
+						}},
+					},
+				}},
+			},
+		},
+	}
+	svc := &service{
+		repos: &repository.Repositories{
+			Message:     &recordingMessageRepository{},
+			CustomSkill: &fakeCustomSkillRepository{items: map[string]*aichatmodel.CustomSkill{}},
+		},
+		llmClient:    fakeLLM,
+		events:       newStreamEventStore(nil),
+		skillRuntime: skills.NewRuntimeWithCatalog(tools.NewToolEngine(tools.NewToolManager(nil)), tools.NewToolManager(nil), catalogDir),
+	}
+	prepared := &PreparedChat{
+		Conversation: &aichatmodel.Conversation{
+			ID:             uuid.New(),
+			OrganizationID: uuid.New(),
+			AccountID:      uuid.New(),
+		},
+		Message: &aichatmodel.Message{
+			ID:       uuid.New(),
+			Metadata: map[string]interface{}{},
+		},
+		LLMRequest: &adapter.ChatRequest{
+			Messages: []adapter.Message{{Role: "user", Content: "process the sheet"}},
+		},
+		Scope: Scope{
+			OrganizationID: uuid.New(),
+			AccountID:      uuid.New(),
+		},
+		parts: &chatRequestParts{
+			SkillMode: skillModeRequired,
+			SkillIDs:  []string{"brief-writer"},
+		},
+	}
+	events := make([]StreamEvent, 0)
+
+	answer, _, err := svc.runPreparedSkillStream(context.Background(), context.Background(), prepared, nil, func(event StreamEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("runPreparedSkillStream() error = %v", err)
+	}
+	if answer != "I found multiple candidate sheets and need your choice before editing the file." {
+		t.Fatalf("answer = %q, want visible user input request message", answer)
+	}
+	var answerChunk string
+	var requestPayload map[string]interface{}
+	for _, event := range events {
+		if event.EventType == streamEventMessage {
+			answerChunk += stringFromAny(event.Payload["answer"])
+		}
+		if event.EventType == streamEventUserInputRequested {
+			requestPayload = event.Payload
+		}
+	}
+	if answerChunk != "I found multiple candidate sheets and need your choice before editing the file." {
+		t.Fatalf("message chunks = %q, want visible user input request message", answerChunk)
+	}
+	if requestPayload == nil {
+		t.Fatalf("user_input_requested event not emitted: %#v", events)
+	}
+	questions, _ := requestPayload["questions"].([]map[string]interface{})
+	if len(questions) != 2 || questions[0]["question"] != "Which sheet should I process?" {
+		t.Fatalf("request payload = %#v, want questions", requestPayload)
+	}
+	request, _ := prepared.Message.Metadata["user_input_request"].(map[string]interface{})
+	storedQuestions, _ := request["questions"].([]map[string]interface{})
+	if len(storedQuestions) != 2 || storedQuestions[0]["question"] != "Which sheet should I process?" {
+		t.Fatalf("metadata user_input_request = %#v, want persisted questions", request)
+	}
+	invocations, _ := prepared.Message.Metadata["skill_invocations"].([]interface{})
+	if len(invocations) == 0 {
+		t.Fatalf("skill_invocations is empty, want user input request trace")
+	}
+	last, _ := invocations[len(invocations)-1].(map[string]interface{})
+	if last["kind"] != "user_input_request" || last["message"] != "I found multiple candidate sheets and need your choice before editing the file." {
+		t.Fatalf("last invocation = %#v, want user input request trace", last)
+	}
+	if len(fakeLLM.appChatRequests) != 1 {
+		t.Fatalf("appChatRequests = %d, want one planning request before stopping", len(fakeLLM.appChatRequests))
 	}
 }
 

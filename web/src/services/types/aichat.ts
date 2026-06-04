@@ -28,6 +28,7 @@ export type AIChatSkillInvocationKind =
   | 'reference_read'
   | 'tool_call'
   | 'intermediate_answer'
+  | 'user_input_request'
   | 'memory_planner';
 
 export type AIChatMemoryMutationAction = 'create' | 'update' | 'delete' | 'clear';
@@ -211,8 +212,26 @@ export interface AIChatMessageMetadata {
   files?: AIChatMessageFile[];
   generated_file_count?: number;
   generated_files?: AIChatGeneratedFile[];
+  user_input_request?: AIChatUserInputRequest;
   context_control?: Record<string, unknown>;
   [key: string]: unknown;
+}
+
+export interface AIChatUserInputOption {
+  label: string;
+  description?: string;
+}
+
+export interface AIChatUserInputQuestion {
+  id?: string;
+  question: string;
+  options?: AIChatUserInputOption[];
+}
+
+export interface AIChatUserInputRequest {
+  request_id?: string;
+  questions: AIChatUserInputQuestion[];
+  created_at?: number;
 }
 
 export interface AIChatConversation {
@@ -455,6 +474,11 @@ export interface AIChatIntermediateAnswerEventData {
   created_at?: number;
 }
 
+export interface AIChatUserInputRequestedEventData extends AIChatUserInputRequest {
+  conversation_id: string;
+  message_id: string;
+}
+
 export interface AIChatMemoryMutationEventData {
   conversation_id: string;
   message_id: string;
@@ -520,6 +544,7 @@ export type AIChatSseEventName =
   | 'message_start'
   | 'agent_progress'
   | 'agent_intermediate_answer'
+  | 'user_input_requested'
   | 'skill_load_start'
   | 'skill_load_end'
   | 'skill_reference_read'

@@ -71,6 +71,7 @@ export function useChatRuntimeMessageActions({
     applyMemoryMutation,
     applyAgentProgress,
     applyIntermediateAnswer,
+    applyUserInputRequested,
     applyMessageEnd,
     applyStreamError,
   } = eventAppliers;
@@ -231,6 +232,10 @@ export function useChatRuntimeMessageActions({
               if (abortController.signal.aborted) return;
               applyIntermediateAnswer(payload, eventId);
             },
+            onUserInputRequested: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              applyUserInputRequested(payload, eventId);
+            },
             onFileParseStart: (payload, eventId) => {
               if (abortController.signal.aborted) return;
               applyFileParseStart(payload, eventId);
@@ -364,6 +369,7 @@ export function useChatRuntimeMessageActions({
     [
       applyAgentProgress,
       applyIntermediateAnswer,
+      applyUserInputRequested,
       applyFileParseEnd,
       applyFileParseError,
       applyFileParseStart,
@@ -541,6 +547,10 @@ export function useChatRuntimeMessageActions({
               if (abortController.signal.aborted) return;
               applyIntermediateAnswer(payload, eventId);
             },
+            onUserInputRequested: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              applyUserInputRequested(payload, eventId);
+            },
             onFileParseStart: (payload, eventId) => {
               if (abortController.signal.aborted) return;
               applyFileParseStart(payload, eventId);
@@ -654,6 +664,7 @@ export function useChatRuntimeMessageActions({
     [
       applyAgentProgress,
       applyIntermediateAnswer,
+      applyUserInputRequested,
       applyFileParseEnd,
       applyFileParseError,
       applyFileParseStart,

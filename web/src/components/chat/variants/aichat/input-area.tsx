@@ -16,19 +16,21 @@ import {
   type ModelSelectorModelProps,
   type ModelSelectorValue,
 } from '@/components/common/model-selector';
+import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { useUploadConfig } from '@/hooks/use-upload';
 import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import { uploadService } from '@/services/upload.service';
 import type { FileItem } from '@/services/types/file';
-import type { AIChatMessageFile } from '@/services/types/aichat';
+import type { AIChatMessageFile, AIChatUserInputRequest } from '@/services/types/aichat';
 import {
   IMAGE_EXTENSIONS,
   buildFileInputAcceptAttribute,
   filterLowercaseExtensions,
   formatExtensionsForDisplay,
 } from '@/utils/file-helpers';
+import { ChevronLeft, ChevronRight, HelpCircle } from 'lucide-react';
 import {
   AIChatAttachmentStrip,
   AIChatDragUploadOverlay,
@@ -115,7 +117,7 @@ function getPastedFiles(event: ClipboardEvent<HTMLTextAreaElement>): File[] {
     );
 }
 
-function isComposingEnterEvent(event: KeyboardEvent<HTMLTextAreaElement>): boolean {
+function isComposingEnterEvent(event: KeyboardEvent<HTMLElement>): boolean {
   const nativeEvent = event.nativeEvent as globalThis.KeyboardEvent & {
     isComposing?: boolean;
   };
@@ -134,6 +136,8 @@ interface AIChatInputAreaProps {
   isStopping: boolean;
   onInputChange: (value: string) => void;
   onSend: (files: AIChatMessageFile[], useMemory: boolean) => void;
+  activeUserInputRequest?: AIChatUserInputRequest | null;
+  onUserInputRequestSubmit?: (query: string, useMemory: boolean) => void;
   onStop: () => void;
   onModelChange: (value: ModelSelectorValue) => void;
   onHeightChange?: (height: number) => void;
@@ -167,6 +171,8 @@ export function AIChatInputArea({
   isStopping,
   onInputChange,
   onSend,
+  activeUserInputRequest,
+  onUserInputRequestSubmit,
   onStop,
   onModelChange,
   onHeightChange,
@@ -192,6 +198,9 @@ export function AIChatInputArea({
     null
   );
   const [useMemory, setUseMemory] = useState(false);
+  const [questionAnswers, setQuestionAnswers] = useState<Record<string, string>>({});
+  const [activeQuestionIndex, setActiveQuestionIndex] = useState(0);
+  const [ignoredUserInputRequestKey, setIgnoredUserInputRequestKey] = useState<string | null>(null);
   const { data: uploadConfig } = useUploadConfig({
     enabled: enableUpload,
     scope: uploadScope.type === 'webapp' ? uploadScope : undefined,
@@ -238,6 +247,156 @@ export function AIChatInputArea({
     !isModelInitializing &&
     !isUploading &&
     !hasUploadError;
+  const activeQuestions = useMemo(
+    () => (activeUserInputRequest?.questions ?? []).filter(question => question.question?.trim()),
+    [activeUserInputRequest?.questions]
+  );
+  const requestKey = useMemo(
+    () =>
+      activeUserInputRequest?.request_id ||
+      activeQuestions.map(question => question.id || question.question).join('|'),
+    [activeQuestions, activeUserInputRequest?.request_id]
+  );
+  const hasActiveUserInputRequest =
+    activeQuestions.length > 0 && ignoredUserInputRequestKey !== requestKey;
+  const activeQuestion = hasActiveUserInputRequest
+    ? activeQuestions[Math.min(activeQuestionIndex, activeQuestions.length - 1)]
+    : undefined;
+  const activeQuestionKey = activeQuestion
+    ? activeQuestion.id || `q${Math.min(activeQuestionIndex, activeQuestions.length - 1) + 1}`
+    : '';
+  const activeQuestionAnswer = activeQuestionKey ? (questionAnswers[activeQuestionKey] ?? '') : '';
+  const canSubmitCurrentQuestion =
+    Boolean(onUserInputRequestSubmit) &&
+    Boolean(activeQuestion) &&
+    Boolean(activeQuestionAnswer.trim()) &&
+    !modelMissing &&
+    !isModelInitializing &&
+    !isUploading &&
+    !hasUploadError &&
+    !isSending;
+
+  useEffect(() => {
+    setQuestionAnswers({});
+    setActiveQuestionIndex(0);
+    setIgnoredUserInputRequestKey(null);
+  }, [requestKey]);
+
+  const questionKeyForIndex = useCallback(
+    (index: number) => activeQuestions[index]?.id || `q${index + 1}`,
+    [activeQuestions]
+  );
+
+  const handleQuestionAnswerChange = useCallback(
+    (index: number, value: string) => {
+      const key = questionKeyForIndex(index);
+      setQuestionAnswers(current => ({
+        ...current,
+        [key]: value,
+      }));
+    },
+    [questionKeyForIndex]
+  );
+
+  const buildQuestionAnswersQuery = useCallback(
+    (answers: Record<string, string>) => {
+      const lines = activeQuestions
+        .map((question, index) => {
+          const answer = answers[questionKeyForIndex(index)]?.trim();
+          if (!answer) return '';
+          return `${index + 1}. ${question.question.trim()}: ${answer}`;
+        })
+        .filter(Boolean);
+      if (lines.length === 0) return '';
+      return [t('consoleChat.userInputRequest.answerPrefix'), ...lines]
+        .filter(Boolean)
+        .join('\n');
+    },
+    [activeQuestions, questionKeyForIndex, t]
+  );
+
+  const sendQuestionAnswers = useCallback(
+    (answers: Record<string, string>) => {
+      const query = buildQuestionAnswersQuery(answers);
+      if (!query.trim()) return;
+      setQuestionAnswers({});
+      setActiveQuestionIndex(0);
+      onUserInputRequestSubmit?.(query, useMemory);
+    },
+    [buildQuestionAnswersQuery, onUserInputRequestSubmit, useMemory]
+  );
+
+  const advanceQuestionOrSend = useCallback(
+    (answers: Record<string, string>) => {
+      if (activeQuestionIndex >= activeQuestions.length - 1) {
+        sendQuestionAnswers(answers);
+        return;
+      }
+      setActiveQuestionIndex(index => Math.min(index + 1, activeQuestions.length - 1));
+    },
+    [activeQuestionIndex, activeQuestions.length, sendQuestionAnswers]
+  );
+
+  const handleSubmitCurrentQuestion = useCallback(() => {
+    if (!canSubmitCurrentQuestion || !activeQuestion) return;
+    const index = Math.min(activeQuestionIndex, activeQuestions.length - 1);
+    const key = questionKeyForIndex(index);
+    const answer = activeQuestionAnswer.trim();
+    if (!answer) return;
+    const nextAnswers = {
+      ...questionAnswers,
+      [key]: answer,
+    };
+    setQuestionAnswers(nextAnswers);
+    advanceQuestionOrSend(nextAnswers);
+  }, [
+    activeQuestion,
+    activeQuestionAnswer,
+    activeQuestionIndex,
+    activeQuestions.length,
+    advanceQuestionOrSend,
+    canSubmitCurrentQuestion,
+    questionAnswers,
+    questionKeyForIndex,
+  ]);
+
+  const handleSelectQuestionOption = useCallback(
+    (value: string) => {
+      if (!activeQuestion || isSending) return;
+      const index = Math.min(activeQuestionIndex, activeQuestions.length - 1);
+      const key = questionKeyForIndex(index);
+      const answer = value.trim();
+      if (!answer) return;
+      const nextAnswers = {
+        ...questionAnswers,
+        [key]: answer,
+      };
+      setQuestionAnswers(nextAnswers);
+      advanceQuestionOrSend(nextAnswers);
+    },
+    [
+      activeQuestion,
+      activeQuestionIndex,
+      activeQuestions.length,
+      advanceQuestionOrSend,
+      isSending,
+      questionAnswers,
+      questionKeyForIndex,
+    ]
+  );
+
+  const handleIgnoreUserInputRequest = useCallback(() => {
+    setIgnoredUserInputRequestKey(requestKey);
+    setActiveQuestionIndex(0);
+  }, [requestKey]);
+
+  const handlePreviousQuestion = useCallback(() => {
+    setActiveQuestionIndex(index => Math.max(index - 1, 0));
+  }, []);
+
+  const handleNextQuestion = useCallback(() => {
+    setActiveQuestionIndex(index => Math.min(index + 1, activeQuestions.length - 1));
+  }, [activeQuestions.length]);
 
   const validateFile = useCallback(
     (file: File, kind: AIChatAttachmentUploadKind): string | null => {
@@ -622,32 +781,164 @@ export function AIChatInputArea({
             </div>
           ) : null}
           <div className="rounded-2xl border bg-background p-2 shadow-sm focus-within:border-primary/40">
-            <AIChatAttachmentStrip
-              attachments={attachments}
-              onRemove={handleRemoveAttachment}
-              onRetry={handleRetryAttachment}
-            />
-            <Textarea
-              value={input}
-              onChange={event => onInputChange(event.target.value)}
-              onPaste={handlePaste}
-              onCompositionStart={() => {
-                isComposingRef.current = true;
-              }}
-              onCompositionEnd={() => {
-                isComposingRef.current = false;
-              }}
-              onKeyDown={event => {
-                if (event.key === 'Enter' && !event.shiftKey) {
-                  if (isComposingRef.current || isComposingEnterEvent(event)) return;
-                  if (isSending || isModelInitializing || isUploading || hasUploadError) return;
-                  event.preventDefault();
-                  handleSend();
-                }
-              }}
-              placeholder={inputPlaceholder || t('chat.enterCommand')}
-              className="max-h-36 min-h-12 resize-none border-0 bg-transparent px-3 py-2 shadow-none focus-visible:ring-0"
-            />
+            {hasActiveUserInputRequest && activeQuestion ? (
+              <div className="mb-2 rounded-xl border bg-muted/30 px-3 py-3">
+                <div className="mb-3 flex items-start gap-2 text-sm">
+                  <HelpCircle className="mt-0.5 size-4 shrink-0 text-primary" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="font-medium text-foreground">
+                        {t('consoleChat.userInputRequest.title')}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {t('consoleChat.userInputRequest.progress', {
+                          current: Math.min(activeQuestionIndex + 1, activeQuestions.length),
+                          total: activeQuestions.length,
+                        })}
+                      </div>
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {t('consoleChat.userInputRequest.description')}
+                    </div>
+                  </div>
+                </div>
+                <div className="space-y-3">
+                  <div className="text-sm font-medium text-foreground">
+                    {activeQuestion.question}
+                  </div>
+                  {(activeQuestion.options ?? []).filter(option => option.label?.trim()).length >
+                  0 ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {(activeQuestion.options ?? [])
+                        .filter(option => option.label?.trim())
+                        .map(option => (
+                          <Button
+                            key={option.label}
+                            type="button"
+                            variant={
+                              activeQuestionAnswer.trim() === option.label ? 'default' : 'outline'
+                            }
+                            size="sm"
+                            className="h-auto max-w-full justify-start whitespace-normal rounded-md px-2.5 py-1.5 text-left text-xs"
+                            title={option.description || option.label}
+                            disabled={isSending}
+                            onClick={() => handleSelectQuestionOption(option.label)}
+                          >
+                            <span className="min-w-0">
+                              <span className="block break-words">{option.label}</span>
+                              {option.description ? (
+                                <span className="mt-0.5 block break-words opacity-80">
+                                  {option.description}
+                                </span>
+                              ) : null}
+                            </span>
+                          </Button>
+                        ))}
+                    </div>
+                  ) : null}
+                  <input
+                    type="text"
+                    value={activeQuestionAnswer}
+                    onChange={event =>
+                      handleQuestionAnswerChange(activeQuestionIndex, event.target.value)
+                    }
+                    onKeyDown={event => {
+                      if (event.key === 'Enter') {
+                        if (isComposingRef.current || isComposingEnterEvent(event)) return;
+                        event.preventDefault();
+                        handleSubmitCurrentQuestion();
+                      }
+                    }}
+                    onCompositionStart={() => {
+                      isComposingRef.current = true;
+                    }}
+                    onCompositionEnd={() => {
+                      isComposingRef.current = false;
+                    }}
+                    placeholder={t('consoleChat.userInputRequest.freeAnswerPlaceholder')}
+                    className="h-9 w-full rounded-md border bg-background px-2.5 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/50"
+                    disabled={isSending}
+                    autoFocus
+                  />
+                </div>
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-1">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      isIcon
+                      className="size-8"
+                      disabled={activeQuestionIndex <= 0}
+                      title={t('consoleChat.userInputRequest.previous')}
+                      onClick={handlePreviousQuestion}
+                    >
+                      <ChevronLeft className="size-4" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      isIcon
+                      className="size-8"
+                      disabled={activeQuestionIndex >= activeQuestions.length - 1}
+                      title={t('consoleChat.userInputRequest.next')}
+                      onClick={handleNextQuestion}
+                    >
+                      <ChevronRight className="size-4" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="rounded-md text-muted-foreground"
+                      onClick={handleIgnoreUserInputRequest}
+                    >
+                      {t('consoleChat.userInputRequest.ignore')}
+                    </Button>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="rounded-md"
+                    disabled={!canSubmitCurrentQuestion}
+                    onClick={handleSubmitCurrentQuestion}
+                  >
+                    {activeQuestionIndex >= activeQuestions.length - 1
+                      ? t('consoleChat.userInputRequest.finish')
+                      : t('consoleChat.userInputRequest.next')}
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+            {!hasActiveUserInputRequest ? (
+              <>
+                <AIChatAttachmentStrip
+                  attachments={attachments}
+                  onRemove={handleRemoveAttachment}
+                  onRetry={handleRetryAttachment}
+                />
+                <Textarea
+                  value={input}
+                  onChange={event => onInputChange(event.target.value)}
+                  onPaste={handlePaste}
+                  onCompositionStart={() => {
+                    isComposingRef.current = true;
+                  }}
+                  onCompositionEnd={() => {
+                    isComposingRef.current = false;
+                  }}
+                  onKeyDown={event => {
+                    if (event.key === 'Enter' && !event.shiftKey) {
+                      if (isComposingRef.current || isComposingEnterEvent(event)) return;
+                      if (isSending || isModelInitializing || isUploading || hasUploadError) return;
+                      event.preventDefault();
+                      handleSend();
+                    }
+                  }}
+                  placeholder={inputPlaceholder || t('chat.enterCommand')}
+                  className="max-h-36 min-h-12 resize-none border-0 bg-transparent px-3 py-2 shadow-none focus-visible:ring-0"
+                />
+              </>
+            ) : null}
             <input
               ref={fileInputRef}
               type="file"
@@ -673,7 +964,7 @@ export function AIChatInputArea({
               isSending={isSending}
               isUploading={isUploading}
               isStopping={isStopping}
-              canSend={canClickSend}
+              canSend={!hasActiveUserInputRequest && canClickSend}
               canUseImage={canUseImage}
               remainingSlots={remainingSlots}
               attachmentLimit={AICHAT_ATTACHMENT_LIMIT}
@@ -683,7 +974,7 @@ export function AIChatInputArea({
               imageExtensions={imageExtensions}
               showModelSelector={showModelSelector}
               showMemoryToggle={showMemoryToggle}
-              enableUpload={enableUpload}
+              enableUpload={!hasActiveUserInputRequest && enableUpload}
               showFileLibraryPicker={showFileLibraryPicker}
               onModelChange={onModelChange}
               onModelPropsChange={setSelectedModelProps}

@@ -183,6 +183,18 @@ const messages: WebappMessages = {
     sendEdited: '发送修改后的消息',
     previousBranch: '上一个分支',
     nextBranch: '下一个分支',
+    userInputRequest: {
+      title: '需要确认信息',
+      description: '一次回答一个问题。也可以忽略并回到普通输入。',
+      freeAnswerPlaceholder: '输入自定义回答',
+      progress: '{current}/{total}',
+      previous: '上一个',
+      next: '下一个',
+      ignore: '忽略',
+      finish: '发送',
+      answerPrefix: '我的回答：',
+      additionalInput: '补充说明',
+    },
     skillPreferences: {
       action: '我的 Skill',
       title: '我的 AIChat Skill',

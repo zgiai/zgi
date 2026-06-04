@@ -167,6 +167,34 @@ func TestCalculatorMetaToolArgumentsExposeRequiredExpressionSchema(t *testing.T)
 	}
 }
 
+func TestRequestUserInputMetaToolIsAlwaysExposed(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillCalculator})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	metaTools := MetaToolsForSkillState(resolved, map[string]struct{}{})
+	tool := findMetaTool(metaTools, MetaToolRequestUserInput)
+	if tool == nil {
+		t.Fatalf("request_user_input meta tool not found")
+	}
+	params, ok := tool.Function.Parameters.(map[string]interface{})
+	if !ok {
+		t.Fatalf("parameters type = %T, want map[string]interface{}", tool.Function.Parameters)
+	}
+	required, _ := params["required"].([]string)
+	if len(required) != 2 || required[0] != "message" || required[1] != "questions" {
+		t.Fatalf("required = %#v, want message and questions", params["required"])
+	}
+	properties, _ := params["properties"].(map[string]interface{})
+	if _, ok := properties["message"]; !ok {
+		t.Fatalf("message property missing from %#v", properties)
+	}
+	if _, ok := properties["questions"]; !ok {
+		t.Fatalf("questions property missing from %#v", properties)
+	}
+}
+
 func TestExpectedSkillToolArgumentsForCalculator(t *testing.T) {
 	expected := ExpectedSkillToolArguments(SkillCalculator, "evaluate_expression")
 	if expected == nil {

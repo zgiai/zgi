@@ -28,6 +28,7 @@ const (
 	MetaToolReadSkillReference = "read_skill_reference"
 	MetaToolCallSkillTool      = "call_skill_tool"
 	MetaToolIntermediateAnswer = "submit_intermediate_answer"
+	MetaToolRequestUserInput   = "request_user_input"
 )
 
 var ErrSkillNotFound = errors.New("skill not found")
@@ -442,6 +443,7 @@ func MetaToolsForSkillState(resolved *ResolvedSkills, loadedSkillIDs map[string]
 	loaded := normalizedLoadedSkillIDs(loadedSkillIDs)
 	tools := []llmadapter.Tool{
 		loadSkillMetaTool(resolvedSkillIDs(resolved)),
+		requestUserInputMetaTool(),
 		intermediateAnswerMetaTool(),
 	}
 	if referenceSkillIDs, referencePaths := loadedReferenceOptions(resolved, loaded); len(referenceSkillIDs) > 0 && len(referencePaths) > 0 {
@@ -457,6 +459,7 @@ func metaTools(includeToolCaller bool) []llmadapter.Tool {
 	tools := []llmadapter.Tool{
 		loadSkillMetaTool(nil),
 		readReferenceMetaTool(nil, nil),
+		requestUserInputMetaTool(),
 		intermediateAnswerMetaTool(),
 	}
 	if includeToolCaller {
@@ -495,6 +498,69 @@ func readReferenceMetaTool(skillIDs []string, paths []string) llmadapter.Tool {
 					"path":     stringSchema("Reference path relative to the skill references directory.", paths),
 				},
 				"required": []string{"skill_id", "path"},
+			},
+		},
+	}
+}
+
+func requestUserInputMetaTool() llmadapter.Tool {
+	return llmadapter.Tool{
+		Type: "function",
+		Function: llmadapter.Function{
+			Name:        MetaToolRequestUserInput,
+			Description: "Ask the user up to five concise questions and pause this turn until they answer. Provide options only when each option is a concrete, directly usable answer. Do not include vague options such as free choice, freestyle, not sure, depends, any, or other; the user can always type freely. Use this only when missing information or ambiguity blocks reliable progress.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"message": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional user-visible explanation shown as the assistant message alongside the questions. Use this to briefly explain what has been checked, why user input is needed, and what will happen next. Do not include internal tool names, JSON, IDs, or parameter names.",
+						"maxLength":   2000,
+					},
+					"questions": map[string]interface{}{
+						"type":        "array",
+						"description": "One to five user-visible questions. Prefer one to three questions, and only ask what blocks reliable progress.",
+						"maxItems":    5,
+						"items": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"id": map[string]interface{}{
+									"type":        "string",
+									"description": "Optional stable short identifier for the question. This is not shown to the user.",
+									"maxLength":   80,
+								},
+								"question": map[string]interface{}{
+									"type":        "string",
+									"description": "The natural-language question to show to the user.",
+									"maxLength":   1000,
+								},
+								"options": map[string]interface{}{
+									"type":        "array",
+									"description": "Optional concrete quick replies for this question. Every option must be a definite answer that can be used directly. Omit options for open-ended or uncertain questions.",
+									"maxItems":    5,
+									"items": map[string]interface{}{
+										"type": "object",
+										"properties": map[string]interface{}{
+											"label": map[string]interface{}{
+												"type":        "string",
+												"description": "Short user-visible option label containing a concrete answer, not a vague placeholder such as Other or Freestyle.",
+												"maxLength":   80,
+											},
+											"description": map[string]interface{}{
+												"type":        "string",
+												"description": "Optional short explanation for this option.",
+												"maxLength":   200,
+											},
+										},
+										"required": []string{"label"},
+									},
+								},
+							},
+							"required": []string{"question"},
+						},
+					},
+				},
+				"required": []string{"message", "questions"},
 			},
 		},
 	}

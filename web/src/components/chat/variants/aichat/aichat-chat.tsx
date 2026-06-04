@@ -296,6 +296,25 @@ export function AIChatShell({
       ),
     [activeConversationId, streamingByMessageId]
   );
+  const activeUserInputMessage = useMemo(() => {
+    if (
+      !activeConversation ||
+      activeConversation.runtime_status !== 'idle' ||
+      isSending ||
+      hasActiveStreamingMessage
+    ) {
+      return null;
+    }
+    const leafMessageId = activeConversation.current_leaf_message_id;
+    if (!leafMessageId) return null;
+    const leafMessage = activeMessages.find(message => message.id === leafMessageId) ?? null;
+    const request = leafMessage?.metadata?.user_input_request;
+    if (!request?.questions?.some(question => question.question?.trim())) {
+      return null;
+    }
+    return leafMessage;
+  }, [activeConversation, activeMessages, hasActiveStreamingMessage, isSending]);
+  const activeUserInputRequest = activeUserInputMessage?.metadata?.user_input_request ?? null;
   const showResumeScrollButton = isAutoFollowPaused && (isSending || hasActiveStreamingMessage);
 
   useEffect(() => {
@@ -429,6 +448,37 @@ export function AIChatShell({
       });
     },
     [controller, forcedUseMemory, input, isSending, modelSelectorValue, requireModel, t]
+  );
+
+  const handleUserInputRequestSubmit = useCallback(
+    (query: string, useMemory: boolean) => {
+      const trimmedQuery = query.trim();
+      if (!trimmedQuery || isSending || !activeUserInputMessage) return;
+      if (requireModel && !modelSelectorValue.model) {
+        toast.error(t('consoleChat.modelRequired'));
+        return;
+      }
+
+      void controller.send({
+        query: trimmedQuery,
+        parentId: activeUserInputMessage.id,
+        model: {
+          provider: modelSelectorValue.provider,
+          model: modelSelectorValue.model,
+          parameters: modelSelectorValue.params,
+        },
+        useMemory: forcedUseMemory ?? useMemory,
+      });
+    },
+    [
+      activeUserInputMessage,
+      controller,
+      forcedUseMemory,
+      isSending,
+      modelSelectorValue,
+      requireModel,
+      t,
+    ]
   );
 
   const handleRegenerate = useCallback(
@@ -788,6 +838,8 @@ export function AIChatShell({
           isStopping={isStopping}
           onInputChange={setInput}
           onSend={handleSend}
+          activeUserInputRequest={activeUserInputRequest}
+          onUserInputRequestSubmit={handleUserInputRequestSubmit}
           onStop={controller.stop}
           onModelChange={onModelChange}
           onHeightChange={setInputAreaHeight}

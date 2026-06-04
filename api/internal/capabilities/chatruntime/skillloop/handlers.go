@@ -59,13 +59,60 @@ func (r *Runner) handleProgressiveSkillCall(
 			return fatalSkillStep(trace, skills.ToolResultMessage(call.ID, errorPayload(err)), err)
 		}
 		return r.handleCallSkillTool(ctx, prepared, resolved, call.ID, args, execCtx, onEvent)
+	case skills.MetaToolRequestUserInput:
+		return r.handleRequestUserInputCall(ctx, prepared, call.ID, args, onEvent)
 	case skills.MetaToolIntermediateAnswer:
 		return r.handleIntermediateAnswerCall(ctx, prepared, call.ID, args, onEvent)
 	default:
 		err := fmt.Errorf("%w: unsupported skill meta tool %s", ErrInvalidInput, call.Function.Name)
 		trace := failedSkillTrace("meta_tool", call.Function.Name, err)
-		return recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, recoverableErrorPayload(err, "use one of load_skill, read_skill_reference, call_skill_tool, or submit_intermediate_answer")), false, false)
+		return recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, recoverableErrorPayload(err, "use one of load_skill, request_user_input, read_skill_reference, call_skill_tool, or submit_intermediate_answer")), false, false)
 	}
+}
+
+func (r *Runner) handleRequestUserInputCall(
+	ctx context.Context,
+	prepared *PreparedChat,
+	callID string,
+	args map[string]interface{},
+	onEvent func(Event) error,
+) skillStepResult {
+	questions, err := normalizeUserInputRequestArgs(args)
+	if err != nil {
+		trace := failedSkillTrace("user_input_request", "", err)
+		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "call request_user_input again with one to five non-empty questions and optional short options")), false, false)
+	}
+	visibleMessage := normalizeUserInputRequestMessage(args)
+	if visibleMessage == "" {
+		err := fmt.Errorf("%w: message is required", ErrInvalidInput)
+		trace := failedSkillTrace("user_input_request", "", err)
+		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "call request_user_input again with a brief user-visible message and one to five questions")), false, false)
+	}
+	firstQuestion := stringFromInterface(questions[0]["question"])
+	trace := skills.SkillTrace{
+		Kind:    "user_input_request",
+		Message: firstQuestion,
+		Status:  "success",
+		Arguments: map[string]interface{}{
+			"question_count": len(questions),
+			"questions":      userInputQuestionSummaries(questions),
+		},
+	}
+	if visibleMessage != "" {
+		trace.Message = visibleMessage
+	}
+	r.emitEvent(EventUserInputRequested, userInputRequestPayload(prepared, callID, questions))
+	logger.DebugContext(ctx, "aichat user input requested",
+		"conversation_id", prepared.Conversation.ID.String(),
+		"message_id", prepared.Message.ID.String(),
+		"question_count", len(questions),
+	)
+	result := terminalSkillStep(trace, skills.ToolResultMessage(callID, map[string]interface{}{
+		"status":      "waiting_for_user",
+		"instruction": "The question is visible to the user. Stop this turn and wait for the next user message.",
+	}), false, false)
+	result.answer = visibleMessage
+	return result
 }
 
 func (r *Runner) handleIntermediateAnswerCall(
@@ -282,6 +329,16 @@ func recoverableSkillStep(trace skills.SkillTrace, toolMessage adapter.Message, 
 		usedSkill:   usedSkill,
 		usedTool:    usedTool,
 		recoverable: true,
+	}
+}
+
+func terminalSkillStep(trace skills.SkillTrace, toolMessage adapter.Message, usedSkill bool, usedTool bool) skillStepResult {
+	return skillStepResult{
+		trace:       trace,
+		toolMessage: toolMessage,
+		usedSkill:   usedSkill,
+		usedTool:    usedTool,
+		terminal:    true,
 	}
 }
 

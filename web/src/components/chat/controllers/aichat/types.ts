@@ -3,6 +3,7 @@ import type {
   AIChatAgentProgressEventData,
   AIChatErrorEventData,
   AIChatIntermediateAnswerEventData,
+  AIChatUserInputRequestedEventData,
   AIChatFileParseEndEventData,
   AIChatFileParseErrorEventData,
   AIChatFileParseStartEventData,
@@ -133,6 +134,10 @@ export interface AIChatControllerStore extends AIChatControllerState {
   ) => void;
   applyIntermediateAnswer: (
     payload: AIChatIntermediateAnswerEventData,
+    eventId?: string | null
+  ) => void;
+  applyUserInputRequested: (
+    payload: AIChatUserInputRequestedEventData,
     eventId?: string | null
   ) => void;
   applyFileParseStart: (
