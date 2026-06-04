@@ -203,8 +203,9 @@ type DiscoveredChannelModelView struct {
 }
 
 type DiscoverDraftChannelModelsResponse struct {
-	Models []DiscoveredChannelModelView `json:"models"`
-	Total  int                          `json:"total"`
+	Models           []DiscoveredChannelModelView `json:"models"`
+	Total            int                          `json:"total"`
+	ListingSupported bool                         `json:"listing_supported"`
 }
 
 type DiscoverOllamaModelsRequest struct {

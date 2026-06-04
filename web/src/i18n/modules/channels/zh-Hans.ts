@@ -274,6 +274,7 @@ const messages: ChannelsMessages = {
       button: '检测连接',
       apiBaseUrlHint: '请先填写 API 基础地址，再检测连接。',
       apiKeyHint: '请先填写 API 密钥，再检测连接。',
+      checkModelListHint: '请先检查模型列表；列表以平台本地模型库为准，只有当前服务商也返回的模型可以选择。',
       selectModelHint: '请先在右侧选择至少一个代表模型，再检测连接。',
       latency: '耗时：{ms} ms',
       messages: {
@@ -314,6 +315,8 @@ const messages: ChannelsMessages = {
       button: '检查模型列表',
       messages: {
         success: '服务商模型列表返回 {count} 个模型',
+        supportedOnly: '列表以平台本地模型库为准；只有当前服务商也返回的模型可以选择，其他本地模型不可选择。',
+        unsupported: '当前服务不支持列出模型；请从平台本地模型库选择已注册模型。',
         requestFailed: '检查模型列表失败；非密钥类问题不影响先保存配置',
       },
     },

@@ -170,6 +170,7 @@ export interface DiscoveredChannelModel {
 export interface DiscoverDraftChannelModelsResponse {
   models: DiscoveredChannelModel[];
   total: number;
+  listing_supported?: boolean;
 }
 
 // Request to batch test multiple models in a channel (SSE)
