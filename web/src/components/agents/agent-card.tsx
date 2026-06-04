@@ -34,6 +34,7 @@ import { useExportWorkflow } from '@/hooks/workflow/use-workflow-import-export';
 import { ICON_BG, ICON_TEXT } from '@/lib/config';
 import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { WorkspaceAssetMoveDialog } from '@/components/common/workspace-asset-move-dialog';
+import { getAgentDetailEditHref } from '@/utils/agent-detail-routes';
 
 interface AgentCardProps {
   agent: Agent;
@@ -61,10 +62,7 @@ function AgentCard({ agent, onDeleted, pageIndex }: AgentCardProps) {
   const { hasPermission } = useAccountPermissions();
   const canManage = hasPermission('agent.manage');
   const canMoveAssets = ['owner', 'admin'].includes(currentOrganization?.organization_role ?? '');
-  const agentHref =
-    agent.agent_type === AgentType.AGENT
-      ? `/console/agents/${agent.id}/agent`
-      : `/console/agents/${agent.id}/workflow`;
+  const agentHref = getAgentDetailEditHref(agent.id, agent.agent_type);
   const modeText =
     agent.agent_type === AgentType.AGENT
       ? t('modes.agent')

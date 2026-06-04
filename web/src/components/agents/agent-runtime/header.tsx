@@ -1,6 +1,5 @@
 'use client';
 
-import Link from 'next/link';
 import { useState, type ReactNode } from 'react';
 import {
   Bot,
@@ -38,7 +37,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { useUpdateWebAppStatus } from '@/hooks/agent/use-agents';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useT } from '@/i18n';
-import { ENABLE_AGENT_RUNTIME_LOGS_PAGE } from '@/lib/config';
 import { cn } from '@/lib/utils';
 import type { WebAppStatus } from '@/services/types/agent';
 import type { AgentRuntimeAgent, AgentRuntimeSaveState } from './types';
@@ -329,14 +327,6 @@ export function AgentRuntimeHeader({
                 <Copy className="size-4" />
                 {t('header.copyWebAppLink')}
               </DropdownMenuItem>
-              {ENABLE_AGENT_RUNTIME_LOGS_PAGE ? (
-                <DropdownMenuItem asChild>
-                  <Link href={`/console/agents/${agentId}/logs`}>
-                    <History className="size-4" />
-                    {t('header.runtimeLogs')}
-                  </Link>
-                </DropdownMenuItem>
-              ) : null}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

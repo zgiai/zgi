@@ -5,13 +5,7 @@ import { usePathname, useParams } from 'next/navigation';
 import { BookOpen, History, KeyRound, PanelsTopLeft, RotateCcw, ScanSearch } from 'lucide-react';
 import { useAgent } from '@/hooks/agent/use-agents';
 import { useT } from '@/i18n';
-import {
-  ENABLE_AGENT_API_PAGE,
-  ENABLE_AGENT_BATCH_TEST_PAGE,
-  ENABLE_AGENT_RUNTIME_LOGS_PAGE,
-  ICON_BG,
-  ICON_TEXT,
-} from '@/lib/config';
+import { ICON_BG, ICON_TEXT } from '@/lib/config';
 import {
   ResourceSidebar,
   ResourceSidebarHeader,
@@ -21,6 +15,12 @@ import AgentDialog from '@/components/agents/agent-dialog';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useWorkflowDebugFocusMode } from '@/components/workflow/hooks/use-debug-focus-mode';
 import { usePersistentSidebarCollapse } from '@/hooks/use-persistent-sidebar-collapse';
+import {
+  canShowAgentApiKeys,
+  canShowAgentRuntimeLogs,
+  canShowWorkflowDetailPages,
+  getAgentDetailEditHref,
+} from '@/utils/agent-detail-routes';
 
 interface AgentSidebarProps {
   /** When true, hide navigation items (workspace mismatch mode) */
@@ -30,8 +30,7 @@ interface AgentSidebarProps {
 /**
  * AgentSidebar — collapsible agent-specific sidebar.
  * - Shows agent summary (icon, name, desc) on top; collapsed shows only icon (smaller size)
- * - First nav item is always Edit and links to /workflow
- * - Feature-gated unfinished Agent pages stay hidden until enabled
+ * - First nav item links to the editor for the current agent type.
  * - Collapsed state persisted to localStorage
  */
 export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
@@ -52,17 +51,15 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
 
   const toggleCollapse = () => setIsCollapsed(prev => !prev);
   const agentData = agent?.data;
-  const editHref =
-    agentData?.agent_type === 'AGENT'
-      ? `/console/agents/${agentId}/agent`
-      : `/console/agents/${agentId}/workflow`;
+  const editHref = getAgentDetailEditHref(agentId, agentData?.agent_type);
+  const showWorkflowPages = canShowWorkflowDetailPages(agentData?.agent_type);
 
   const navItems: ResourceSidebarNavItem[] = React.useMemo(() => {
     const items: ResourceSidebarNavItem[] = [
       { title: t('agents.actions.edit'), href: editHref, icon: PanelsTopLeft },
     ];
 
-    if (ENABLE_AGENT_RUNTIME_LOGS_PAGE && agentData?.is_published) {
+    if (canShowAgentRuntimeLogs(agentData?.agent_type) && agentData?.is_published) {
       items.push({
         title: t('agents.workflow.webappLogs'),
         href: `/console/agents/${agentId}/logs`,
@@ -70,7 +67,7 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
       });
     }
 
-    if (ENABLE_AGENT_API_PAGE) {
+    if (canShowAgentApiKeys(agentData?.agent_type)) {
       items.push({
         title: t('agents.apiKeys.navTitle'),
         href: `/console/agents/${agentId}/api`,
@@ -78,7 +75,7 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
       });
     }
 
-    if (ENABLE_AGENT_BATCH_TEST_PAGE) {
+    if (showWorkflowPages) {
       items.push({
         title: t('agents.workflowTest.navTitle'),
         href: `/console/agents/${agentId}/batch-test`,
@@ -104,7 +101,7 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
     }
 
     return items;
-  }, [agentData, agentId, editHref, t]);
+  }, [agentData, agentId, editHref, showWorkflowPages, t]);
 
   const iconType = agentData?.icon_type;
   let textIcon = agentData?.name?.slice(0, 2).toUpperCase() || ICON_TEXT;

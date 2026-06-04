@@ -18,6 +18,7 @@ import { useT } from '@/i18n/translations';
 import { AgentType } from '@/services/types/agent';
 import type { WorkflowChatMessageItem, WorkflowRunItem } from '@/services/types/workflow';
 import { formatDate, formatWorkflowElapsedMs } from '@/utils/format';
+import { canShowAgentRuntimeLogs } from '@/utils/agent-detail-routes';
 import { getErrorMessage } from '@/utils/error-notifications';
 import {
   buildWorkflowRunExecutionItems,
@@ -111,9 +112,7 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
   const { agent, isLoading: isAgentLoading, error: agentError } = useAgent(agentId);
   const agentDetail = agent?.data ?? null;
   const isPublished = agentDetail?.is_published === true;
-  const isWorkflowAgent =
-    agentDetail?.agent_type === AgentType.WORKFLOW ||
-    agentDetail?.agent_type === AgentType.CONVERSATIONAL_AGENT;
+  const isWorkflowAgent = canShowAgentRuntimeLogs(agentDetail?.agent_type);
   const isConversationWorkflow = agentDetail?.agent_type === AgentType.CONVERSATIONAL_AGENT;
 
   const { data: latest } = useLatestWorkflowVersion(

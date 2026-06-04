@@ -8,6 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { CreateBatchPage } from '@/components/workflow-test/create-batch-page';
 import { useAgent } from '@/hooks/agent/use-agents';
 import { useT } from '@/i18n';
+import { canShowWorkflowDetailPages } from '@/utils/agent-detail-routes';
 import { getErrorMessage } from '@/utils/error-notifications';
 
 interface NewBatchTestPageProps {
@@ -18,6 +19,7 @@ interface NewBatchTestPageProps {
 
 export default function NewBatchTestPage({ params }: NewBatchTestPageProps) {
   const t = useT('agents.workflowTest.page');
+  const tWebapp = useT('webapp');
   const { agentId } = use(params);
   const { agent, isLoading, error, refetch } = useAgent(agentId);
 
@@ -45,6 +47,24 @@ export default function NewBatchTestPage({ params }: NewBatchTestPageProps) {
             <RefreshCcw className="mr-2 size-4" />
             {t('retry')}
           </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!canShowWorkflowDetailPages(agent.data.agent_type)) {
+    return (
+      <div className="flex h-full w-full items-center justify-center p-6">
+        <div className="max-w-xl rounded-2xl border border-dashed bg-background p-8 text-center">
+          <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-full bg-muted">
+            <AlertCircle className="size-5 text-muted-foreground" />
+          </div>
+          <div className="text-lg font-semibold">
+            {tWebapp('appCenter.appUnavailableTitle')}
+          </div>
+          <div className="mt-2 text-sm text-muted-foreground">
+            {tWebapp('appCenter.appUnavailableDescription')}
+          </div>
         </div>
       </div>
     );
