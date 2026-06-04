@@ -16,13 +16,13 @@ import (
 )
 
 const (
-	defaultMaxSkillPlanningRounds            = 50
-	defaultMaxSkillStepsPerTurn              = 160
-	defaultMaxBusinessToolCallsPerSkill      = 20
-	defaultMaxRecoverableSkillFailures       = 20
-	defaultMaxConsecutiveRecoverableFailures = 5
-	intermediateAnswerChunkRunes             = 180
-	streamedIntermediateAnswerArg            = "_aichat_streamed_answer"
+	defaultMaxSkillPlanningRounds                 = 50
+	defaultMaxSkillStepsPerTurn                   = 160
+	defaultMaxBusinessToolCallsPerSkill           = 20
+	defaultMaxRecoverableFailureRounds            = 12
+	defaultMaxConsecutiveRecoverableFailureRounds = 5
+	intermediateAnswerChunkRunes                  = 180
+	streamedIntermediateAnswerArg                 = "_aichat_streamed_answer"
 )
 
 var skillPlanningFallbackProgressDelay = 800 * time.Millisecond
@@ -105,8 +105,9 @@ func (s *service) runPreparedSkillStream(
 
 	stepCount := 0
 	toolCallCount := 0
-	recoverableFailureCount := 0
-	consecutiveRecoverableFailures := 0
+	recoverableFailureRoundCount := 0
+	consecutiveRecoverableFailureRounds := 0
+	recoverableFailureCallCount := 0
 	skillToolCallCounts := map[string]int{}
 	skillUsed := false
 	loadedSkills := map[string]struct{}{}
@@ -171,6 +172,9 @@ func (s *service) runPreparedSkillStream(
 		planningMessage.ToolCalls = toolCalls
 		messages = append(messages, planningMessage)
 
+		roundHadRecoverableFailure := false
+		roundHadSuccess := false
+		var lastRecoverableTrace skills.SkillTrace
 		for _, call := range toolCalls {
 			stepCount++
 			result := s.handleProgressiveSkillCall(ctx, prepared, resolved, call, execCtx, toolCallCount, skillToolCallCounts, loadedSkills, onEvent)
@@ -179,19 +183,11 @@ func (s *service) runPreparedSkillStream(
 			s.logSkillTrace(ctx, prepared, result.trace)
 			if result.recoverable {
 				s.emitSkillError(ctx, prepared, result.trace, onEvent)
-				recoverableFailureCount++
-				consecutiveRecoverableFailures++
-				if recoverableFailureCount > defaultMaxRecoverableSkillFailures ||
-					consecutiveRecoverableFailures > defaultMaxConsecutiveRecoverableFailures {
-					err := fmt.Errorf("%w: too many failed skill calls", ErrInvalidInput)
-					trace := failedSkillTrace(result.trace.Kind, result.trace.ToolName, err)
-					trace.SkillID = result.trace.SkillID
-					trace.Arguments = result.trace.Arguments
-					s.emitSkillError(ctx, prepared, trace, onEvent)
-					return answerBuilder.String(), usage, err
-				}
+				roundHadRecoverableFailure = true
+				lastRecoverableTrace = result.trace
+				recoverableFailureCallCount++
 			} else {
-				consecutiveRecoverableFailures = 0
+				roundHadSuccess = true
 			}
 			if result.fatalErr != nil {
 				if !result.recoverable {
@@ -220,6 +216,32 @@ func (s *service) runPreparedSkillStream(
 				return answerBuilder.String(), usage, nil
 			}
 			messages = append(messages, result.toolMessage)
+		}
+		if roundHadRecoverableFailure {
+			recoverableFailureRoundCount++
+			if !roundHadSuccess {
+				consecutiveRecoverableFailureRounds++
+			} else {
+				consecutiveRecoverableFailureRounds = 0
+			}
+			logger.DebugContext(ctx, "aichat skill recoverable failures observed",
+				"conversation_id", prepared.Conversation.ID.String(),
+				"message_id", prepared.Message.ID.String(),
+				"failure_round_count", recoverableFailureRoundCount,
+				"consecutive_failure_rounds", consecutiveRecoverableFailureRounds,
+				"failure_call_count", recoverableFailureCallCount,
+			)
+			if recoverableFailureRoundCount > defaultMaxRecoverableFailureRounds ||
+				consecutiveRecoverableFailureRounds > defaultMaxConsecutiveRecoverableFailureRounds {
+				err := fmt.Errorf("%w: too many failed skill calls", ErrInvalidInput)
+				trace := failedSkillTrace(lastRecoverableTrace.Kind, lastRecoverableTrace.ToolName, err)
+				trace.SkillID = lastRecoverableTrace.SkillID
+				trace.Arguments = lastRecoverableTrace.Arguments
+				s.emitSkillError(ctx, prepared, trace, onEvent)
+				return answerBuilder.String(), usage, err
+			}
+		} else {
+			consecutiveRecoverableFailureRounds = 0
 		}
 	}
 
@@ -1054,6 +1076,8 @@ func agenticSkillLoopSystemMessage() adapter.Message {
 		Content: strings.Join([]string{
 			"When using skills or tools, briefly explain your next action to the user before calling a skill/tool.",
 			"After each skill/tool result, summarize what happened. If a tool call fails, explain the likely cause, fix the arguments, and retry when possible.",
+			"If a tool call fails, do not repeat the same tool with the same arguments. Re-plan from the error before retrying.",
+			"For deterministic batch work, prefer one suitable business tool call that handles the batch coherently over many small repeated tool calls.",
 			"Do not claim that you saved, remembered, updated, deleted, sent, created, changed, or completed any external action unless the corresponding skill/tool call succeeded in this turn.",
 			"Progress text sent together with tool calls is transient status text. Keep it short and do not place substantial user deliverables there.",
 			"If the current turn newly creates or substantially rewrites a user-facing deliverable before later tool/skill calls, call submit_intermediate_answer for that new deliverable before continuing.",

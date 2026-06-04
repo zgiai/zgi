@@ -43,9 +43,10 @@ Use this skill for exact arithmetic and percentage tasks.
 3. If a condition must be verified numerically first, use at most two expression calls: one for the condition value and one for the final result.
 4. Use `calculate` only when a single binary operation is clearer than a full expression.
 5. Use `percentage` only when the user asks specifically for percent-of, percentage change, or applying a percentage increase/decrease and a single expression would be less clear.
-6. Do not calculate mentally when the user expects an exact result.
-7. In the final answer, include a concise summary of the calculation process and the result.
-8. Mention rounding when a precision value affects the displayed result.
+6. Before calling `evaluate_expression`, convert the calculation into a pure numeric expression with ASCII operators. Remove units, natural-language notes, labels, thousands separators, and non-standard operators such as `×` or `÷`.
+7. Do not calculate mentally when the user expects an exact result.
+8. In the final answer, include a concise summary of the calculation process and the result.
+9. Mention rounding when a precision value affects the displayed result.
 
 ## Tool Usage
 
