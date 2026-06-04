@@ -16,7 +16,7 @@ func TestMineruToDocumentResult_Shape(t *testing.T) {
 			"sample": {
 				MdContent:   "# Title",
 				ContentList: `[{"type":"text","text_level":2,"text":"Title","bbox":[100,200,300,800],"page_idx":0},{"type":"table","table_body":"| A |\n|---|\n| 1 |","table_caption":["Table 1"],"bbox":[10,20,500,600],"page_idx":0}]`,
-				MiddleJSON:  `{"pdf_info":[{"page_idx":0,"page_size":[615,870]}]}`,
+				MiddleJSON:  `{"pdf_info":[{"page_idx":0,"page_size":[615,870],"preproc_blocks":[{"score":0.5058,"bbox":[100,200,300,800],"index":1,"type":"title"},{"score":0.93,"bbox":[10,20,500,600],"index":2,"type":"table"}]}]}`,
 			},
 		},
 	}
@@ -44,6 +44,12 @@ func TestMineruToDocumentResult_Shape(t *testing.T) {
 	if ch.Precision != "reliable" {
 		t.Fatalf("expected reliable precision, got %q", ch.Precision)
 	}
+	if ch.Confidence != 0.5058 {
+		t.Fatalf("expected mineru block score as confidence, got %f", ch.Confidence)
+	}
+	if ch.Payload["mineru_block_score"] != 0.5058 {
+		t.Fatalf("expected mineru block score in payload: %#v", ch.Payload)
+	}
 	if ch.Payload["mineru_type"] != "text" || ch.Payload["reading_order"] != 1 {
 		t.Fatalf("mineru payload mismatch: %#v", ch.Payload)
 	}
@@ -54,6 +60,16 @@ func TestMineruToDocumentResult_Shape(t *testing.T) {
 	}
 	if _, ok := table.Payload["table_caption"]; !ok {
 		t.Fatalf("expected table caption in payload: %#v", table.Payload)
+	}
+	if table.Confidence != 0.93 {
+		t.Fatalf("expected table confidence, got %f", table.Confidence)
+	}
+	enriched := extractcommon.EnrichStructuredOutput(doc)
+	if enriched.ExtractOutput == nil || len(enriched.ExtractOutput.Elements) != 2 {
+		t.Fatalf("missing enriched elements: %+v", enriched.ExtractOutput)
+	}
+	if enriched.ExtractOutput.Elements[0].Metadata["confidence"] != 0.5058 {
+		t.Fatalf("expected confidence metadata: %#v", enriched.ExtractOutput.Elements[0].Metadata)
 	}
 	diag, _ := doc.Diagnostics["mineru_structure"].(map[string]any)
 	if diag == nil || diag["content_items"] != 2 {

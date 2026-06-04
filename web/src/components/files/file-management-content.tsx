@@ -107,11 +107,18 @@ function getFileProcessingStatus(file: FileItem): FileAssetProductStatus | strin
   return file.processing_status || 'stored_only';
 }
 
+function getEffectiveFileProcessingStatus(file: FileItem): FileAssetProductStatus | string {
+  if ((file.pending_confirmation_count ?? 0) > 0) {
+    return 'confirming';
+  }
+  return getFileProcessingStatus(file);
+}
+
 function fileMatchesProcessingStatusFilter(
   file: FileItem,
   filter: FileProcessingStatusFilter
 ): boolean {
-  const status = getFileProcessingStatus(file);
+  const status = getEffectiveFileProcessingStatus(file);
 
   switch (filter) {
     case 'needs_action':
@@ -530,9 +537,13 @@ const FileManagementContent = ({
     fileMatchesProcessingStatusFilter(file, 'ready')
   ).length;
   const loadedActiveProcessingCount = scopeFilteredFiles.filter(file => {
-    const status = getFileProcessingStatus(file);
+    const status = getEffectiveFileProcessingStatus(file);
     return status === 'parsing' || status === 'generating';
   }).length;
+  const hasActiveProcessingFiles = files.some(file => {
+    const status = getEffectiveFileProcessingStatus(file);
+    return status === 'parsing' || status === 'generating';
+  });
   const derivedStoredOnlyCount =
     activeCategory === 'needs_action'
       ? 0
@@ -587,6 +598,18 @@ const FileManagementContent = ({
   }, [selectionMode, selectedFiles, onSelectionChange, displayedFiles]);
 
   const isRefreshPending = isRefreshing || isFetching;
+
+  useEffect(() => {
+    if (!hasActiveProcessingFiles) {
+      return undefined;
+    }
+
+    const interval = window.setInterval(() => {
+      void reload();
+    }, 2000);
+
+    return () => window.clearInterval(interval);
+  }, [hasActiveProcessingFiles, reload]);
 
   const handleRefresh = async () => {
     if (isRefreshing) return;

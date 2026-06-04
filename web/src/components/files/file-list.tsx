@@ -63,17 +63,27 @@ import { isOriginalPreviewSupported } from '@/utils/file-helpers';
 import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { WorkspaceAssetMoveDialog } from '@/components/common/workspace-asset-move-dialog';
 import { fileManageService } from '@/services/file-manage.service';
+import { StartFileParseDialog } from './start-file-parse-dialog';
+import type { FileParseProviderKey } from '@/services/types/file';
 
 function getProcessingStatus(file: FileItem): string {
   return file.processing_status || 'stored_only';
+}
+
+function getEffectiveProcessingStatus(file: FileItem): string {
+  if ((file.pending_confirmation_count ?? 0) > 0) {
+    return 'confirming';
+  }
+  return getProcessingStatus(file);
 }
 
 function getProcessingBadgeVariant(status: string) {
   switch (status) {
     case 'ready':
       return 'success' as const;
-    case 'parsing':
     case 'confirming':
+      return 'warning' as const;
+    case 'parsing':
     case 'generating':
       return 'info' as const;
     case 'parse_failed':
@@ -90,7 +100,7 @@ function isProcessingActive(status: string) {
 
 function FileProcessingStatus({ file, compact = false }: { file: FileItem; compact?: boolean }) {
   const { files: t } = useT();
-  const status = getProcessingStatus(file);
+  const status = getEffectiveProcessingStatus(file);
   const progress = file.processing_progress ?? 0;
   const pendingCount = file.pending_confirmation_count ?? 0;
   const chunkCount = file.chunk_count ?? 0;
@@ -127,7 +137,10 @@ function FileProcessingStatus({ file, compact = false }: { file: FileItem; compa
         ) : null}
       </div>
       {isProcessingActive(status) ? (
-        <Progress className="h-1.5 w-20 max-w-full" value={progress} />
+        <Progress
+          className={cn('h-1.5 w-20 max-w-full', status === 'confirming' && '[&>span]:bg-warning')}
+          value={progress}
+        />
       ) : null}
       {!compact ? (
         <div className="flex min-w-0 flex-wrap gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
@@ -238,6 +251,8 @@ function FileListBase({
   const { deleteFiles, isDeleting } = useDeleteFiles();
   const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
   const [workspaceMoveFile, setWorkspaceMoveFile] = useState<FileItem | null>(null);
+  const [startParseFile, setStartParseFile] = useState<FileItem | null>(null);
+  const [startingParseFileId, setStartingParseFileId] = useState<string | null>(null);
   const [reparsingFileId, setReparsingFileId] = useState<string | null>(null);
   const { currentOrganization } = useOrganizations();
 
@@ -248,7 +263,9 @@ function FileListBase({
   const canUpload = hasPermission('file.upload_create');
   const canMoveAssets = ['owner', 'admin'].includes(currentOrganization?.organization_role ?? '');
   const canViewDetail = !selectionMode;
-  const hasAnyAction = canViewDetail || canDownload || canManage || canMoveAssets;
+  const canRequestProcessing = !selectionMode && (canManage || canUpload || canDownload);
+  const hasAnyAction =
+    canViewDetail || canRequestProcessing || canDownload || canManage || canMoveAssets;
   const emptyDescription = mobileEmptyDescription
     ? mobileEmptyDescription
     : canUpload
@@ -318,6 +335,31 @@ function FileListBase({
 
   const handleOpenDetail = (file: FileItem) => {
     router.push(`/console/files/${file.id}`);
+  };
+
+  const handleOpenStartParse = (file: FileItem) => {
+    setStartParseFile(file);
+  };
+
+  const handleStartParse = async (file: FileItem, parseProvider: FileParseProviderKey) => {
+    try {
+      setStartingParseFileId(file.id);
+      await fileManageService.createProcessingRequest(file.id, {
+        mode: 'parse_now',
+        target_level: 'vectorize',
+        force: false,
+        parse_provider: parseProvider,
+      });
+      toast.success(t('fileList.startParseDialog.toasts.started'));
+      setStartParseFile(null);
+      await queryClient.invalidateQueries({ queryKey: [FILES_QUERY_KEY] });
+    } catch (error) {
+      toast.error(
+        (error as { message?: string }).message || t('fileList.startParseDialog.toasts.failed')
+      );
+    } finally {
+      setStartingParseFileId(null);
+    }
   };
 
   const handleReparse = async (file: FileItem) => {
@@ -490,6 +532,9 @@ function FileListBase({
               {files.map(file => {
                 const isSelected = selectedFiles.includes(file.id);
                 const { Icon, color } = getFileTypeConfig(file.extension);
+                const processingStatus = getEffectiveProcessingStatus(file);
+                const canStartParse = processingStatus === 'stored_only' && canRequestProcessing;
+                const canOpenFileDetail = canViewDetail && processingStatus !== 'stored_only';
 
                 return (
                   <div
@@ -535,7 +580,21 @@ function FileListBase({
                       </div>
 
                       <div className="flex shrink-0 items-center gap-2">
-                        {canViewDetail ? (
+                        {canStartParse ? (
+                          <Button
+                            isIcon
+                            type="button"
+                            variant="ghost"
+                            className="h-8 w-8 rounded-lg"
+                            onClick={e => {
+                              e.stopPropagation();
+                              handleOpenStartParse(file);
+                            }}
+                            aria-label={t('actions.startParse')}
+                          >
+                            <FileSearch className="h-4 w-4" />
+                          </Button>
+                        ) : canOpenFileDetail ? (
                           <Button
                             isIcon
                             type="button"
@@ -642,6 +701,18 @@ function FileListBase({
           onConfirm={handleBulkDeleteConfirm}
           loading={isDeleting}
           variant="danger"
+        />
+
+        <StartFileParseDialog
+          open={Boolean(startParseFile)}
+          onOpenChange={open => {
+            if (!open) setStartParseFile(null);
+          }}
+          file={startParseFile}
+          loading={Boolean(startParseFile && startingParseFileId === startParseFile.id)}
+          onConfirm={(file, parseProvider) => {
+            void handleStartParse(file, parseProvider);
+          }}
         />
 
         <FilePreviewDialog
@@ -822,7 +893,15 @@ function FileListBase({
             </TableRow>
           ) : (
             files.map(file => {
-              const processingStatus = getProcessingStatus(file);
+              const processingStatus = getEffectiveProcessingStatus(file);
+              const canStartParse = processingStatus === 'stored_only' && canRequestProcessing;
+              const canOpenFileDetail = canViewDetail && processingStatus !== 'stored_only';
+              const canPreviewOriginal =
+                canDownload && isOriginalPreviewSupported(file.extension, file.mime_type);
+              const canDeleteFile = canManage && !selectionMode;
+              const canMoveFile = canMoveAssets && !selectionMode;
+              const canShowActionsMenu =
+                canStartParse || canOpenFileDetail || canDownload || canDeleteFile || canMoveFile;
 
               return (
                 <TableRow
@@ -856,7 +935,7 @@ function FileListBase({
                         const { Icon, color } = getFileTypeConfig(file.extension);
                         return <Icon className={cn('h-5 w-5 flex-shrink-0', color)} />;
                       })()}
-                      {canViewDetail ? (
+                      {canOpenFileDetail ? (
                         <Link
                           href={`/console/files/${file.id}`}
                           className="truncate text-sm font-medium text-foreground underline-offset-4 hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
@@ -897,7 +976,7 @@ function FileListBase({
                   {hasAnyAction && (
                     <TableCell className="text-right">
                       <div className="flex min-w-0 items-center justify-end gap-1.5">
-                        {canViewDetail && processingStatus === 'confirming' ? (
+                        {canOpenFileDetail && processingStatus === 'confirming' ? (
                           <Button
                             asChild
                             variant="outline"
@@ -908,6 +987,23 @@ function FileListBase({
                             <Link href={`/console/files/${file.id}`}>
                               {t('actions.confirmParse')}
                             </Link>
+                          </Button>
+                        ) : null}
+                        {canStartParse ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 rounded-md px-3 text-xs"
+                            disabled={startingParseFileId === file.id}
+                            onClick={event => {
+                              event.stopPropagation();
+                              handleOpenStartParse(file);
+                            }}
+                          >
+                            {startingParseFileId === file.id
+                              ? t('actions.startParsing')
+                              : t('actions.startParse')}
                           </Button>
                         ) : null}
                         {processingStatus === 'parse_failed' ? (
@@ -927,57 +1023,68 @@ function FileListBase({
                               : t('detail.reparse.action')}
                           </Button>
                         ) : null}
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-8 w-8 p-0"
-                              onClick={e => e.stopPropagation()}
-                            >
-                              <MoreVertical className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            {canViewDetail ? (
-                              <DropdownMenuItem
-                                onClick={e => {
-                                  e.stopPropagation();
-                                  handleOpenDetail(file);
-                                }}
+                        {canShowActionsMenu ? (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 w-8 p-0"
+                                onClick={e => e.stopPropagation()}
                               >
-                                <Info className="h-4 w-4 mr-2" />
-                                {t('actions.viewDetails')}
-                              </DropdownMenuItem>
-                            ) : null}
-                            {canDownload && (
-                              <>
-                                {isOriginalPreviewSupported(file.extension, file.mime_type) ? (
-                                  <DropdownMenuItem
-                                    onClick={e => {
-                                      e.stopPropagation();
-                                      handlePreview(file);
-                                    }}
-                                  >
-                                    <Eye className="h-4 w-4 mr-2" />
-                                    {t('actions.preview')}
-                                  </DropdownMenuItem>
-                                ) : null}
-
+                                <MoreVertical className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              {canStartParse ? (
                                 <DropdownMenuItem
                                   onClick={e => {
                                     e.stopPropagation();
-                                    handleDownload(file);
+                                    handleOpenStartParse(file);
                                   }}
-                                  disabled={isDownloading}
                                 >
-                                  <Download className="h-4 w-4 mr-2" />
-                                  {t('actions.downloadFile')}
+                                  <FileSearch className="h-4 w-4 mr-2" />
+                                  {t('actions.startParse')}
                                 </DropdownMenuItem>
-                              </>
-                            )}
+                              ) : canOpenFileDetail ? (
+                                <DropdownMenuItem
+                                  onClick={e => {
+                                    e.stopPropagation();
+                                    handleOpenDetail(file);
+                                  }}
+                                >
+                                  <Info className="h-4 w-4 mr-2" />
+                                  {t('actions.viewDetails')}
+                                </DropdownMenuItem>
+                              ) : null}
+                              {canDownload && (
+                                <>
+                                  {canPreviewOriginal ? (
+                                    <DropdownMenuItem
+                                      onClick={e => {
+                                        e.stopPropagation();
+                                        handlePreview(file);
+                                      }}
+                                    >
+                                      <Eye className="h-4 w-4 mr-2" />
+                                      {t('actions.preview')}
+                                    </DropdownMenuItem>
+                                  ) : null}
 
-                            {/* TODO: Favorites feature temporarily disabled, may restore later
+                                  <DropdownMenuItem
+                                    onClick={e => {
+                                      e.stopPropagation();
+                                      handleDownload(file);
+                                    }}
+                                    disabled={isDownloading}
+                                  >
+                                    <Download className="h-4 w-4 mr-2" />
+                                    {t('actions.downloadFile')}
+                                  </DropdownMenuItem>
+                                </>
+                              )}
+
+                              {/* TODO: Favorites feature temporarily disabled, may restore later
                       {file.is_favorite ? (
                         <DropdownMenuItem
                           onClick={e => {
@@ -1003,32 +1110,33 @@ function FileListBase({
                       )}
                       */}
 
-                            {canManage && !selectionMode && (
-                              <DropdownMenuItem
-                                className="text-destructive"
-                                onClick={e => {
-                                  e.stopPropagation();
-                                  handleDelete(file);
-                                }}
-                                disabled={isDeleting}
-                              >
-                                <Trash2 className="h-4 w-4 mr-2 text-destructive" />
-                                {t('actions.delete')}
-                              </DropdownMenuItem>
-                            )}
-                            {canMoveAssets && !selectionMode && (
-                              <DropdownMenuItem
-                                onClick={e => {
-                                  e.stopPropagation();
-                                  setWorkspaceMoveFile(file);
-                                }}
-                              >
-                                <MoveRight className="h-4 w-4 mr-2" />
-                                {common('assetMove.title')}
-                              </DropdownMenuItem>
-                            )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
+                              {canDeleteFile ? (
+                                <DropdownMenuItem
+                                  className="text-destructive"
+                                  onClick={e => {
+                                    e.stopPropagation();
+                                    handleDelete(file);
+                                  }}
+                                  disabled={isDeleting}
+                                >
+                                  <Trash2 className="h-4 w-4 mr-2 text-destructive" />
+                                  {t('actions.delete')}
+                                </DropdownMenuItem>
+                              ) : null}
+                              {canMoveFile ? (
+                                <DropdownMenuItem
+                                  onClick={e => {
+                                    e.stopPropagation();
+                                    setWorkspaceMoveFile(file);
+                                  }}
+                                >
+                                  <MoveRight className="h-4 w-4 mr-2" />
+                                  {common('assetMove.title')}
+                                </DropdownMenuItem>
+                              ) : null}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        ) : null}
                       </div>
                     </TableCell>
                   )}
@@ -1069,6 +1177,17 @@ function FileListBase({
           void handleDownload(file);
         }}
         isDownloading={isDownloading}
+      />
+      <StartFileParseDialog
+        open={Boolean(startParseFile)}
+        onOpenChange={open => {
+          if (!open) setStartParseFile(null);
+        }}
+        file={startParseFile}
+        loading={Boolean(startParseFile && startingParseFileId === startParseFile.id)}
+        onConfirm={(file, parseProvider) => {
+          void handleStartParse(file, parseProvider);
+        }}
       />
       <WorkspaceAssetMoveDialog
         open={Boolean(workspaceMoveFile)}

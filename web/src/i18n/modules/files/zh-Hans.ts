@@ -25,7 +25,7 @@ const messages: FilesMessages = {
     fileName: '文件名称',
     fileType: '文件类型',
     fileSize: '文件大小',
-    processingStatus: '处理状态',
+    processingStatus: '文件状态',
     relatedStatus: '关联知识库',
     uploadDate: '上传时间',
     lastModified: '更新时间',
@@ -38,6 +38,15 @@ const messages: FilesMessages = {
     pendingCount: '{count} 项待确认',
     chunkCount: '{count} 个切片',
     embeddingCount: '{count} 个向量',
+    startParseDialog: {
+      title: '选择解析引擎',
+      description: '为「{name}」选择解析引擎。提交后文件会进入解析、确认和索引流程。',
+      providerHint: 'Auto 会按当前可用 provider 路由，也可以手动指定 MinerU 等解析引擎。',
+      toasts: {
+        started: '已提交解析请求',
+        failed: '解析请求提交失败',
+      },
+    },
   },
 
   // File statuses
@@ -79,6 +88,8 @@ const messages: FilesMessages = {
     batchUnavailable: '该批量能力需要后端接口支持，当前暂不可用。',
     deleting: '删除中...',
     confirmParse: '去确认',
+    startParse: '去解析',
+    startParsing: '提交中...',
   },
 
   preview: {

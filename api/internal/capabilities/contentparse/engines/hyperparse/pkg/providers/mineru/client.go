@@ -183,8 +183,16 @@ type middleJSON struct {
 }
 
 type middlePage struct {
-	PageIdx  int   `json:"page_idx"`
-	PageSize []int `json:"page_size"`
+	PageIdx       int                  `json:"page_idx"`
+	PageSize      []int                `json:"page_size"`
+	PreprocBlocks []middlePreprocBlock `json:"preproc_blocks,omitempty"`
+}
+
+type middlePreprocBlock struct {
+	Score *float64 `json:"score,omitempty"`
+	BBox  []int    `json:"bbox,omitempty"`
+	Index int      `json:"index,omitempty"`
+	Type  string   `json:"type,omitempty"`
 }
 
 func callMineruParse(ctx context.Context, filename string, data []byte) (*parseResponse, error) {
@@ -800,7 +808,7 @@ func mineruToDocumentResult(filename string, resp *parseResponse) (*extractcommo
 	}
 
 	pages := buildPages(middle, items)
-	chunks := buildChunks(items)
+	chunks := buildChunks(items, middle)
 
 	return &extractcommon.DocumentResult{
 		DocID:     coalesce(resp.TaskID, newID()),
@@ -972,10 +980,13 @@ func buildPages(middle middleJSON, items []contentItem) []extractcommon.Page {
 	return out
 }
 
-func buildChunks(items []contentItem) []extractcommon.Chunk {
+func buildChunks(items []contentItem, middle middleJSON) []extractcommon.Chunk {
+	scores := buildMineruBlockScoreLookup(middle)
 	out := make([]extractcommon.Chunk, 0, len(items))
+	pageOrder := map[int]int{}
 	for i, it := range items {
 		t, sub := mapType(it)
+		payload := buildPayload(i, it)
 		ch := extractcommon.Chunk{
 			ID:        fmt.Sprintf("mineru-%d", i),
 			Type:      t,
@@ -985,7 +996,13 @@ func buildChunks(items []contentItem) []extractcommon.Chunk {
 			Precision: "reliable",
 			BBox:      toBBox(it.BBox),
 			Text:      extractText(it),
-			Payload:   buildPayload(i, it),
+			Payload:   payload,
+		}
+		itemPageOrder := pageOrder[it.PageIdx]
+		pageOrder[it.PageIdx] = itemPageOrder + 1
+		if score, ok := scores.scoreFor(i, itemPageOrder, it); ok {
+			ch.Confidence = score
+			payload["mineru_block_score"] = score
 		}
 		if it.TableBody != "" {
 			ch.Markdown = it.TableBody
@@ -1007,6 +1024,82 @@ func mineruImageMarkdown(it contentItem) string {
 		alt = "figure"
 	}
 	return fmt.Sprintf("![%s](%s)", alt, strings.TrimSpace(it.ImgPath))
+}
+
+type mineruBlockScoreLookup struct {
+	byIndex map[int]float64
+	byBBox  map[string]float64
+	byOrder map[string]float64
+}
+
+func buildMineruBlockScoreLookup(middle middleJSON) mineruBlockScoreLookup {
+	lookup := mineruBlockScoreLookup{
+		byIndex: map[int]float64{},
+		byBBox:  map[string]float64{},
+		byOrder: map[string]float64{},
+	}
+	pageOrder := map[int]int{}
+	for _, page := range middle.PdfInfo {
+		for _, block := range page.PreprocBlocks {
+			score, ok := normalizeMineruScore(block.Score)
+			if !ok {
+				continue
+			}
+			if len(block.BBox) >= 4 {
+				lookup.byBBox[mineruBBoxKey(page.PageIdx, block.BBox)] = score
+			}
+			if block.Index > 0 {
+				lookup.byIndex[block.Index] = score
+			}
+			order := pageOrder[page.PageIdx]
+			lookup.byOrder[mineruOrderKey(page.PageIdx, order)] = score
+			pageOrder[page.PageIdx] = order + 1
+		}
+	}
+	return lookup
+}
+
+func (l mineruBlockScoreLookup) scoreFor(itemIndex, pageOrder int, item contentItem) (float64, bool) {
+	if len(l.byIndex) == 0 && len(l.byBBox) == 0 && len(l.byOrder) == 0 {
+		return 0, false
+	}
+	if len(item.BBox) >= 4 {
+		if score, ok := l.byBBox[mineruBBoxKey(item.PageIdx, item.BBox)]; ok {
+			return score, true
+		}
+	}
+	if score, ok := l.byIndex[itemIndex+1]; ok {
+		return score, true
+	}
+	if score, ok := l.byOrder[mineruOrderKey(item.PageIdx, pageOrder)]; ok {
+		return score, true
+	}
+	return 0, false
+}
+
+func normalizeMineruScore(score *float64) (float64, bool) {
+	if score == nil {
+		return 0, false
+	}
+	value := *score
+	if value < 0 {
+		return 0, false
+	}
+	if value > 1 {
+		value = 1
+	}
+	return value, true
+}
+
+func mineruBBoxKey(pageIdx int, bbox []int) string {
+	if len(bbox) < 4 {
+		return fmt.Sprintf("%d:", pageIdx)
+	}
+	return fmt.Sprintf("%d:%d,%d,%d,%d", pageIdx, bbox[0], bbox[1], bbox[2], bbox[3])
+}
+
+func mineruOrderKey(pageIdx, order int) string {
+	return fmt.Sprintf("%d:%d", pageIdx, order)
 }
 
 func buildPayload(index int, it contentItem) map[string]any {

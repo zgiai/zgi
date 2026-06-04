@@ -24,7 +24,7 @@ const messages = {
     fileName: 'File Name',
     fileType: 'File Type',
     fileSize: 'File Size',
-    processingStatus: 'Processing Status',
+    processingStatus: 'File Status',
     relatedStatus: 'Knowledge Base',
     uploadDate: 'Upload Time',
     lastModified: 'Last Modified',
@@ -37,6 +37,17 @@ const messages = {
     pendingCount: '{count} pending',
     chunkCount: '{count} chunks',
     embeddingCount: '{count} vectors',
+    startParseDialog: {
+      title: 'Choose Parse Engine',
+      description:
+        'Choose a parse engine for "{name}". After submitting, the file will go through parsing, review, and indexing.',
+      providerHint:
+        'Auto follows the current provider routing strategy. You can also choose MinerU or another engine manually.',
+      toasts: {
+        started: 'Parse request submitted',
+        failed: 'Failed to submit parse request',
+      },
+    },
   },
 
   // File statuses
@@ -79,6 +90,8 @@ const messages = {
       'This batch capability requires backend API support and is not available yet.',
     deleting: 'Deleting...',
     confirmParse: 'Review',
+    startParse: 'Parse',
+    startParsing: 'Submitting...',
   },
 
   preview: {
@@ -222,7 +235,8 @@ const messages = {
         },
         processing: {
           title: 'Processing document',
-          description: 'The system is parsing content, generating chunks, or building the Q&A index.',
+          description:
+            'The system is parsing content, generating chunks, or building the Q&A index.',
         },
         storedOnly: {
           title: 'File stored only',
