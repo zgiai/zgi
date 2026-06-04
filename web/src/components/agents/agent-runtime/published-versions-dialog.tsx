@@ -22,6 +22,7 @@ interface AgentRuntimeVersionPopoverProps {
   isLoading: boolean;
   isRollingBack: boolean;
   isPreviewing: boolean;
+  canRollback?: boolean;
   versions: AgentPublishedVersionListItem[];
   selectedVersionId: string;
   onOpenChange: (open: boolean) => void;
@@ -39,6 +40,7 @@ export function AgentRuntimeVersionPopover({
   isLoading,
   isRollingBack,
   isPreviewing,
+  canRollback = true,
   versions,
   selectedVersionId,
   onOpenChange,
@@ -139,7 +141,7 @@ export function AgentRuntimeVersionPopover({
           <Button
             size="sm"
             onClick={onConfirmRollback}
-            disabled={!selectedVersion || !isPreviewing || isRollingBack}
+            disabled={!canRollback || !selectedVersion || !isPreviewing || isRollingBack}
           >
             {isRollingBack ? (
               <Loader2 className="mr-1.5 size-4 animate-spin" />

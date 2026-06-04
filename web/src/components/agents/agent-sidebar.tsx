@@ -15,12 +15,7 @@ import AgentDialog from '@/components/agents/agent-dialog';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useWorkflowDebugFocusMode } from '@/components/workflow/hooks/use-debug-focus-mode';
 import { usePersistentSidebarCollapse } from '@/hooks/use-persistent-sidebar-collapse';
-import {
-  canShowAgentApiKeys,
-  canShowAgentRuntimeLogs,
-  canShowWorkflowDetailPages,
-  getAgentDetailEditHref,
-} from '@/utils/agent-detail-routes';
+import { getAgentDetailRouteAccess } from '@/utils/agent-detail-routes';
 
 interface AgentSidebarProps {
   /** When true, hide navigation items (workspace mismatch mode) */
@@ -40,6 +35,7 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
   const { agent, isLoading } = useAgent(agentId);
   const t = useT();
   const { hasPermission } = useAccountPermissions();
+  const canView = hasPermission('agent.view');
   const canManage = hasPermission('agent.manage');
   const [editOpen, setEditOpen] = React.useState(false);
   const isDebugFocusMode = useWorkflowDebugFocusMode();
@@ -51,15 +47,21 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
 
   const toggleCollapse = () => setIsCollapsed(prev => !prev);
   const agentData = agent?.data;
-  const editHref = getAgentDetailEditHref(agentId, agentData?.agent_type);
-  const showWorkflowPages = canShowWorkflowDetailPages(agentData?.agent_type);
+  const routeAccess = React.useMemo(
+    () =>
+      getAgentDetailRouteAccess(agentId, agentData?.agent_type, {
+        canView,
+        canManage,
+      }),
+    [agentData?.agent_type, agentId, canManage, canView]
+  );
 
   const navItems: ResourceSidebarNavItem[] = React.useMemo(() => {
     const items: ResourceSidebarNavItem[] = [
-      { title: t('agents.actions.edit'), href: editHref, icon: PanelsTopLeft },
+      { title: t('agents.actions.edit'), href: routeAccess.editHref, icon: PanelsTopLeft },
     ];
 
-    if (canShowAgentRuntimeLogs(agentData?.agent_type) && agentData?.is_published) {
+    if (routeAccess.canShowRuntimeLogs && agentData?.is_published) {
       items.push({
         title: t('agents.workflow.webappLogs'),
         href: `/console/agents/${agentId}/logs`,
@@ -67,7 +69,7 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
       });
     }
 
-    if (canShowAgentApiKeys(agentData?.agent_type)) {
+    if (routeAccess.canShowApiKeys) {
       items.push({
         title: t('agents.apiKeys.navTitle'),
         href: `/console/agents/${agentId}/api`,
@@ -75,7 +77,7 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
       });
     }
 
-    if (showWorkflowPages) {
+    if (routeAccess.canShowBatchTest) {
       items.push({
         title: t('agents.workflowTest.navTitle'),
         href: `/console/agents/${agentId}/batch-test`,
@@ -101,7 +103,7 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
     }
 
     return items;
-  }, [agentData, agentId, editHref, showWorkflowPages, t]);
+  }, [agentData?.is_published, agentId, routeAccess, t]);
 
   const iconType = agentData?.icon_type;
   let textIcon = agentData?.name?.slice(0, 2).toUpperCase() || ICON_TEXT;

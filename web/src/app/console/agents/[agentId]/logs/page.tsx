@@ -14,11 +14,12 @@ import { useWorkflowChatMessages } from '@/hooks/workflow/use-workflow-chat-mess
 import { useWorkflowRunDetail } from '@/hooks/workflow/use-workflow-run-detail';
 import { useWorkflowRunNodeExecutions } from '@/hooks/workflow/use-workflow-run-node-executions';
 import { useWorkflowRunsInfinite } from '@/hooks/workflow/use-workflow-runs';
+import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useT } from '@/i18n/translations';
 import { AgentType } from '@/services/types/agent';
 import type { WorkflowChatMessageItem, WorkflowRunItem } from '@/services/types/workflow';
 import { formatDate, formatWorkflowElapsedMs } from '@/utils/format';
-import { canShowAgentRuntimeLogs } from '@/utils/agent-detail-routes';
+import { canShowAgentRuntimeLogs, supportsWorkflowDetailPages } from '@/utils/agent-detail-routes';
 import { getErrorMessage } from '@/utils/error-notifications';
 import {
   buildWorkflowRunExecutionItems,
@@ -98,6 +99,7 @@ function LogTableSkeleton() {
 export default function AgentLogsPage({ params }: AgentLogsPageProps) {
   const t = useT('webapp');
   const tAgents = useT('agents');
+  const tRoot = useT();
   const { agentId } = use(params);
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -110,13 +112,19 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
   const [activeTab, setActiveTab] = useState<HistoryTab>('execution');
 
   const { agent, isLoading: isAgentLoading, error: agentError } = useAgent(agentId);
+  const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const canManage = hasPermission('agent.manage');
   const agentDetail = agent?.data ?? null;
   const isPublished = agentDetail?.is_published === true;
-  const isWorkflowAgent = canShowAgentRuntimeLogs(agentDetail?.agent_type);
+  const isWorkflowAgent = supportsWorkflowDetailPages(agentDetail?.agent_type);
+  const canAccessRuntimeLogs = canShowAgentRuntimeLogs(agentDetail?.agent_type, {
+    canView: true,
+    canManage,
+  });
   const isConversationWorkflow = agentDetail?.agent_type === AgentType.CONVERSATIONAL_AGENT;
 
   const { data: latest } = useLatestWorkflowVersion(
-    isWorkflowAgent && isPublished ? agentId : null
+    canAccessRuntimeLogs && isPublished ? agentId : null
   );
 
   const {
@@ -129,12 +137,12 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
     reload,
   } = useWorkflowRunsInfinite(
     {
-      agentId: isWorkflowAgent && isPublished ? agentId : null,
+      agentId: canAccessRuntimeLogs && isPublished ? agentId : null,
       limit: 50,
       query: { triggered_from: 'web-app' },
     },
     {
-      enabled: isWorkflowAgent && isPublished,
+      enabled: canAccessRuntimeLogs && isPublished,
       staleTime: 30_000,
       refetchOnWindowFocus: false,
     }
@@ -181,9 +189,9 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
     isLoading: isDetailLoading,
     error: detailError,
   } = useWorkflowRunDetail(
-    { agentId: isWorkflowAgent ? agentId : null, runId: effectiveRunId },
+    { agentId: canAccessRuntimeLogs ? agentId : null, runId: effectiveRunId },
     {
-      enabled: Boolean(isWorkflowAgent && isPublished && isDetailOpen && effectiveRunId),
+      enabled: Boolean(canAccessRuntimeLogs && isPublished && isDetailOpen && effectiveRunId),
       staleTime: 60_000,
       refetchOnWindowFocus: false,
       suppressErrorToast: Boolean(focusRunId),
@@ -195,9 +203,9 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
     isLoading: isNodeExecutionsLoading,
     error: nodeExecutionsError,
   } = useWorkflowRunNodeExecutions(
-    { agentId: isWorkflowAgent ? agentId : null, runId: effectiveRunId },
+    { agentId: canAccessRuntimeLogs ? agentId : null, runId: effectiveRunId },
     {
-      enabled: Boolean(isWorkflowAgent && isPublished && isDetailOpen && effectiveRunId),
+      enabled: Boolean(canAccessRuntimeLogs && isPublished && isDetailOpen && effectiveRunId),
       staleTime: 60_000,
       refetchOnWindowFocus: false,
     }
@@ -210,13 +218,19 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
     error: messagesError,
   } = useWorkflowChatMessages(
     {
-      agentId: isWorkflowAgent ? agentId : null,
+      agentId: canAccessRuntimeLogs ? agentId : null,
       conversationId,
       page: 1,
       limit: 100,
     },
     {
-      enabled: Boolean(isPublished && isConversationWorkflow && isDetailOpen && conversationId),
+      enabled: Boolean(
+        canAccessRuntimeLogs &&
+          isPublished &&
+          isConversationWorkflow &&
+          isDetailOpen &&
+          conversationId
+      ),
       staleTime: 60_000,
       refetchOnWindowFocus: false,
     }
@@ -260,8 +274,7 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
   );
   const effectiveSummary = summary ?? fallbackSummary;
   const detailLoading = isDetailLoading || isNodeExecutionsLoading;
-  const effectiveDetailError =
-    !detailLoading && !summary && fallbackSummary ? null : detailError;
+  const effectiveDetailError = !detailLoading && !summary && fallbackSummary ? null : detailError;
   const webAppId = latest?.data?.web_app_id;
   const webAppHref =
     webAppId && agentDetail
@@ -269,9 +282,25 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
       : null;
 
   useEffect(() => {
-    if (isAgentLoading || !agentDetail || isPublished) return;
+    if (
+      isAgentLoading ||
+      isPermissionsLoading ||
+      !agentDetail ||
+      !canAccessRuntimeLogs ||
+      isPublished
+    ) {
+      return;
+    }
     router.replace(`/console/agents/${agentId}/workflow`);
-  }, [agentDetail, agentId, isAgentLoading, isPublished, router]);
+  }, [
+    agentDetail,
+    agentId,
+    canAccessRuntimeLogs,
+    isAgentLoading,
+    isPermissionsLoading,
+    isPublished,
+    router,
+  ]);
 
   const handleSelectLog = (item: WorkflowRunItem) => {
     setSelectedLogId(item.id);
@@ -304,7 +333,7 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
     setActiveTab('execution');
   };
 
-  if (isAgentLoading) {
+  if (isAgentLoading || isPermissionsLoading) {
     return (
       <div className="h-full w-full p-6">
         <div className="space-y-4">
@@ -341,6 +370,22 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
           <div className="text-lg font-semibold">{t('appCenter.appUnavailableTitle')}</div>
           <div className="mt-2 text-sm text-muted-foreground">
             {t('appCenter.appUnavailableDescription')}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!canManage) {
+    return (
+      <div className="flex h-full w-full items-center justify-center p-6">
+        <div className="max-w-xl rounded-2xl border border-dashed bg-background p-8 text-center">
+          <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-full bg-muted">
+            <AlertCircle className="size-5 text-muted-foreground" />
+          </div>
+          <div className="text-lg font-semibold">{tRoot('common.accessDenied')}</div>
+          <div className="mt-2 text-sm text-muted-foreground">
+            {tRoot('common.unauthorizedDescription')}
           </div>
         </div>
       </div>
@@ -426,9 +471,7 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
                         disabled={isFetchingNextPage}
                         onClick={() => void fetchNextPage()}
                       >
-                        {isFetchingNextPage ? (
-                          <Loader2 className="size-4 animate-spin" />
-                        ) : null}
+                        {isFetchingNextPage ? <Loader2 className="size-4 animate-spin" /> : null}
                         {isFetchingNextPage ? t('appLogs.loadingMore') : t('appLogs.loadMore')}
                       </Button>
                     </div>

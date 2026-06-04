@@ -7,8 +7,9 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { BatchResultItemDetailPage } from '@/components/workflow-test/batch-result-item-detail-page';
 import { useAgent } from '@/hooks/agent/use-agents';
+import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useT } from '@/i18n';
-import { canShowWorkflowDetailPages } from '@/utils/agent-detail-routes';
+import { canShowAgentBatchTest, supportsWorkflowDetailPages } from '@/utils/agent-detail-routes';
 import { getErrorMessage } from '@/utils/error-notifications';
 
 interface BatchResultItemPageProps {
@@ -22,10 +23,13 @@ interface BatchResultItemPageProps {
 export default function BatchResultItemPage({ params }: BatchResultItemPageProps) {
   const t = useT('agents.workflowTest.page');
   const tWebapp = useT('webapp');
+  const tRoot = useT();
   const { agentId, batchId, itemId } = use(params);
   const { agent, isLoading, error, refetch } = useAgent(agentId);
+  const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const canManage = hasPermission('agent.manage');
 
-  if (isLoading) {
+  if (isLoading || isPermissionsLoading) {
     return (
       <div className="space-y-6 bg-slate-50 p-8">
         <Skeleton className="h-56 rounded-2xl" />
@@ -54,16 +58,14 @@ export default function BatchResultItemPage({ params }: BatchResultItemPageProps
     );
   }
 
-  if (!canShowWorkflowDetailPages(agent.data.agent_type)) {
+  if (!supportsWorkflowDetailPages(agent.data.agent_type)) {
     return (
       <div className="flex h-full w-full items-center justify-center p-6">
         <div className="max-w-xl rounded-2xl border border-dashed bg-background p-8 text-center">
           <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-full bg-muted">
             <AlertCircle className="size-5 text-muted-foreground" />
           </div>
-          <div className="text-lg font-semibold">
-            {tWebapp('appCenter.appUnavailableTitle')}
-          </div>
+          <div className="text-lg font-semibold">{tWebapp('appCenter.appUnavailableTitle')}</div>
           <div className="mt-2 text-sm text-muted-foreground">
             {tWebapp('appCenter.appUnavailableDescription')}
           </div>
@@ -72,5 +74,28 @@ export default function BatchResultItemPage({ params }: BatchResultItemPageProps
     );
   }
 
-  return <BatchResultItemDetailPage agentId={agentId} batchId={batchId} itemId={itemId} agentName={agent.data.name} />;
+  if (!canShowAgentBatchTest(agent.data.agent_type, { canView: true, canManage })) {
+    return (
+      <div className="flex h-full w-full items-center justify-center p-6">
+        <div className="max-w-xl rounded-2xl border border-dashed bg-background p-8 text-center">
+          <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-full bg-muted">
+            <AlertCircle className="size-5 text-muted-foreground" />
+          </div>
+          <div className="text-lg font-semibold">{tRoot('common.accessDenied')}</div>
+          <div className="mt-2 text-sm text-muted-foreground">
+            {tRoot('common.unauthorizedDescription')}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <BatchResultItemDetailPage
+      agentId={agentId}
+      batchId={batchId}
+      itemId={itemId}
+      agentName={agent.data.name}
+    />
+  );
 }

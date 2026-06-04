@@ -15,6 +15,7 @@ import type {
 import { useAgent, useAgentConfig, usePublishAgent } from '@/hooks/agent/use-agents';
 import { useAIChatSkills } from '@/hooks/aichat/use-aichat-skills';
 import { useDatasets } from '@/hooks/dataset/use-datasets';
+import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { AGENT_KEYS, DATASET_KEYS } from '@/hooks/query-keys';
 import { useLocale } from '@/hooks/use-locale';
@@ -127,7 +128,10 @@ export function useAgentRuntimePageModel(agentId: string) {
   const queryClient = useQueryClient();
   const { locale } = useLocale();
   const t = useT('agents.agentRuntime');
+  const tRoot = useT();
   const { agent, isLoading: isAgentLoading } = useAgent(agentId);
+  const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const canManageAgent = hasPermission('agent.manage');
   const { data: profile } = useAutoProfile({ staleTime: 1_800_000 });
   const { data: configResponse, isLoading: isConfigLoading } = useAgentConfig(agentId);
   const { data: allSkills = [], isLoading: isSkillsLoading } = useAIChatSkills();
@@ -471,7 +475,7 @@ export function useAgentRuntimePageModel(agentId: string) {
   } = useAgentRuntimeDraftPersistence({
     currentPayload,
     enabled: !isVersionPreviewing,
-    canSave: () => !hasAgentMemorySlotErrors && !isSystemPromptTooLong,
+    canSave: () => canManageAgent && !hasAgentMemorySlotErrors && !isSystemPromptTooLong,
     savePayload: saveRuntimePayload,
     onSaveCommitted: result => {
       setAgentMemorySlots(result.savedPayload.agent_memory_slots ?? []);
@@ -643,6 +647,10 @@ export function useAgentRuntimePageModel(agentId: string) {
   );
 
   const handleConfirmVersionRollback = useCallback(async () => {
+    if (!canManageAgent) {
+      toast.error(tRoot('common.unauthorizedDescription'));
+      return;
+    }
     if (!selectedPublishedVersionId || isRollingBackVersion) return;
     setIsRollingBackVersion(true);
     try {
@@ -666,12 +674,14 @@ export function useAgentRuntimePageModel(agentId: string) {
   }, [
     applyRuntimePayload,
     agentId,
+    canManageAgent,
     isRollingBackVersion,
     markServerSaved,
     payloadFromRuntimeConfig,
     queryClient,
     selectedPublishedVersionId,
     t,
+    tRoot,
   ]);
 
   const handleApplyOptimizedPrompt = useCallback((payload: { text: string }) => {
@@ -680,6 +690,10 @@ export function useAgentRuntimePageModel(agentId: string) {
   }, []);
 
   const handleManualSave = useCallback(async () => {
+    if (!canManageAgent) {
+      toast.error(tRoot('common.unauthorizedDescription'));
+      return;
+    }
     if (hasAgentMemorySlotErrors) {
       toast.error(t('toasts.fixMemorySlotsBeforeSave'));
       return;
@@ -694,9 +708,13 @@ export function useAgentRuntimePageModel(agentId: string) {
     if (saved) {
       toast.success(t('toasts.saveSuccess'));
     }
-  }, [hasAgentMemorySlotErrors, isSystemPromptTooLong, saveNow, t]);
+  }, [canManageAgent, hasAgentMemorySlotErrors, isSystemPromptTooLong, saveNow, t, tRoot]);
 
   const handlePublish = useCallback(async () => {
+    if (!canManageAgent) {
+      toast.error(tRoot('common.unauthorizedDescription'));
+      return;
+    }
     if (hasAgentMemorySlotErrors) {
       toast.error(t('toasts.fixMemorySlotsBeforePublish'));
       return;
@@ -715,9 +733,22 @@ export function useAgentRuntimePageModel(agentId: string) {
         // The mutation hook owns user-facing error feedback.
       }
     }
-  }, [agentId, hasAgentMemorySlotErrors, isSystemPromptTooLong, publishAgent, saveNow, t]);
+  }, [
+    agentId,
+    canManageAgent,
+    hasAgentMemorySlotErrors,
+    isSystemPromptTooLong,
+    publishAgent,
+    saveNow,
+    t,
+    tRoot,
+  ]);
 
   const handleSaveBeforeLeave = useCallback(() => {
+    if (!canManageAgent) {
+      toast.error(tRoot('common.unauthorizedDescription'));
+      return Promise.resolve(false);
+    }
     if (hasAgentMemorySlotErrors) {
       toast.error(t('toasts.fixMemorySlotsBeforeSave'));
       return Promise.resolve(false);
@@ -729,10 +760,10 @@ export function useAgentRuntimePageModel(agentId: string) {
       return Promise.resolve(false);
     }
     return saveNow({ silent: false, force: true });
-  }, [hasAgentMemorySlotErrors, isSystemPromptTooLong, saveNow, t]);
+  }, [canManageAgent, hasAgentMemorySlotErrors, isSystemPromptTooLong, saveNow, t, tRoot]);
 
   const leaveGuardNode = useAgentRuntimeLeaveGuard({
-    enabled: !isVersionPreviewing,
+    enabled: canManageAgent && !isVersionPreviewing,
     hasUnsavedChanges: isDirty,
     isSaving,
     onSave: handleSaveBeforeLeave,
@@ -744,7 +775,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     agentId,
     locale,
     t,
-    isLoading: isAgentLoading || isConfigLoading,
+    isLoading: isAgentLoading || isConfigLoading || isPermissionsLoading,
     leaveGuardNode,
     isTwoXlViewport,
     previewSheetOpen,
@@ -756,7 +787,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       saveText: getAgentRuntimeSaveText(t, saveState, lastSavedAt),
       isDirty,
       isPublishing: publishAgent.isPending,
-      disablePrimaryActions: isVersionPreviewing,
+      disablePrimaryActions: isVersionPreviewing || !canManageAgent,
       webAppUrl,
       showPreviewAction: true,
       isPreviewOpen: previewSheetOpen,
@@ -771,6 +802,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       isLoading: isLoadingVersions,
       isRollingBack: isRollingBackVersion,
       isPreviewing: isVersionPreviewing,
+      canRollback: canManageAgent,
       versions: publishedVersions,
       selectedVersionId: selectedPublishedVersionId,
       onOpenChange: handlePublishedVersionsOpenChange,

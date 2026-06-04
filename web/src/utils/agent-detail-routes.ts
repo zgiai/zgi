@@ -2,6 +2,11 @@ import { AgentType } from '@/services/types/agent';
 
 export type AgentDetailType = AgentType | string | null | undefined;
 
+export interface AgentDetailRoutePermissions {
+  canView: boolean;
+  canManage: boolean;
+}
+
 function normalizeAgentType(agentType: AgentDetailType): string {
   return String(agentType ?? '')
     .trim()
@@ -27,14 +32,54 @@ export function getAgentDetailEditHref(agentId: string, agentType: AgentDetailTy
   return `/console/agents/${agentId}/${editor}`;
 }
 
-export function canShowWorkflowDetailPages(agentType: AgentDetailType): boolean {
+export function supportsWorkflowDetailPages(agentType: AgentDetailType): boolean {
   return isWorkflowRuntimeType(agentType);
 }
 
-export function canShowAgentApiKeys(agentType: AgentDetailType): boolean {
-  return isWorkflowRuntimeType(agentType);
+export function canShowWorkflowDetailPages(
+  agentType: AgentDetailType,
+  permissions: AgentDetailRoutePermissions
+): boolean {
+  return supportsWorkflowDetailPages(agentType) && permissions.canManage;
 }
 
-export function canShowAgentRuntimeLogs(agentType: AgentDetailType): boolean {
-  return isWorkflowRuntimeType(agentType);
+export function canShowAgentApiKeys(
+  agentType: AgentDetailType,
+  permissions: AgentDetailRoutePermissions
+): boolean {
+  return canShowWorkflowDetailPages(agentType, permissions);
+}
+
+export function canShowAgentRuntimeLogs(
+  agentType: AgentDetailType,
+  permissions: AgentDetailRoutePermissions
+): boolean {
+  return canShowWorkflowDetailPages(agentType, permissions);
+}
+
+export function canShowAgentBatchTest(
+  agentType: AgentDetailType,
+  permissions: AgentDetailRoutePermissions
+): boolean {
+  return canShowWorkflowDetailPages(agentType, permissions);
+}
+
+export function getAgentDetailRouteAccess(
+  agentId: string,
+  agentType: AgentDetailType,
+  permissions: AgentDetailRoutePermissions
+) {
+  const supportsWorkflowPages = supportsWorkflowDetailPages(agentType);
+  const canManageWorkflowPages = supportsWorkflowPages && permissions.canManage;
+
+  return {
+    editHref: getAgentDetailEditHref(agentId, agentType),
+    canView: permissions.canView,
+    canManage: permissions.canManage,
+    canEditRuntime: permissions.canManage,
+    supportsWorkflowPages,
+    canShowApiKeys: canManageWorkflowPages,
+    canShowRuntimeLogs: canManageWorkflowPages,
+    canShowBatchTest: canManageWorkflowPages,
+  };
 }
