@@ -36,6 +36,8 @@ import {
   useFileParsePreview,
 } from '@/hooks/file/use-file-parse-preview';
 import { useFileSourcePreviewPages } from '@/hooks/file/use-file-source-preview-pages';
+import { useFileOriginalPreviewUrl } from '@/hooks/file/use-file-original-preview-url';
+import { UniversalFilePreviewContent } from '@/components/files/universal-file-preview-dialog';
 
 interface FileVisualParseReviewPanelProps {
   file: FileItem;
@@ -87,6 +89,20 @@ function pageBaseForElements(elements: FileParsePreviewElement[], renderedPageCo
 
 function pageIndexForElement(elementPage: number, pageBase: number) {
   return Math.max(elementPage - pageBase, 0);
+}
+
+function displayPageNumberForElement(
+  element: FileParsePreviewElement,
+  pageBase: number,
+  hasVisualSourcePreview: boolean
+) {
+  if (hasVisualSourcePreview) {
+    return pageIndexForElement(element.page, pageBase) + 1;
+  }
+  if (!Number.isFinite(element.page)) {
+    return 1;
+  }
+  return Math.max(element.page, 1);
 }
 
 function buildPages(
@@ -176,6 +192,14 @@ export function FileVisualParseReviewPanel({
   } = useFileParseConfirmationActions(file.id);
 
   const preview = data?.data;
+  const renderedSourcePages = sourcePreview.data?.data.preview_pages;
+  const renderedSourcePageCount = renderedSourcePages?.length ?? 0;
+  const isSourcePreviewLoading = sourcePreview.isLoading && renderedSourcePageCount === 0;
+  const hasVisualSourcePreview = !sourcePreview.error && renderedSourcePageCount > 0;
+  const shouldUseOriginalPreviewFallback = !isSourcePreviewLoading && !hasVisualSourcePreview;
+  const originalPreview = useFileOriginalPreviewUrl(file.id, {
+    enabled: enabled && shouldUseOriginalPreviewFallback,
+  });
   const elements = useMemo(
     () => (preview?.elements ?? []).slice().sort((a, b) => a.ordinal - b.ordinal),
     [preview?.elements]
@@ -189,8 +213,11 @@ export function FileVisualParseReviewPanel({
     [elements, sourcePreview.data?.data.preview_pages.length]
   );
   const pages = useMemo(
-    () => buildPages(sourcePreview.data?.data.preview_pages ?? [], elements, pageBase),
-    [elements, pageBase, sourcePreview.data?.data.preview_pages]
+    () =>
+      hasVisualSourcePreview
+        ? buildPages(renderedSourcePages ?? [], elements, pageBase)
+        : [],
+    [elements, hasVisualSourcePreview, pageBase, renderedSourcePages]
   );
   const selectedElement = useMemo(
     () => elements.find(element => documentPreviewElementKey(element) === selectedElementId),
@@ -328,22 +355,53 @@ export function FileVisualParseReviewPanel({
             {t('detail.tabs.originalPreview')}
           </Badge>
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            {sourcePreview.isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            {isSourcePreviewLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
             <span>
-              {t('detail.parseReview.sourcePageCount', {
-                count: pages.length,
-              })}
+              {hasVisualSourcePreview
+                ? t('detail.parseReview.sourcePageCount', {
+                    count: pages.length,
+                  })
+                : t('detail.parseReview.sourcePreviewFallback')}
             </span>
           </div>
         </div>
-        <div className="h-[calc(100vh-430px)] min-h-[560px] overflow-y-auto p-4">
-          {sourcePreview.error ? (
-            <div className="mb-4 rounded-md border border-warning/30 bg-warning/10 p-3 text-sm text-warning">
-              {t('detail.parseReview.sourcePreviewUnavailable')}
+        <div
+          className={cn(
+            'h-[calc(100vh-430px)] min-h-[560px]',
+            hasVisualSourcePreview ? 'overflow-y-auto p-4' : 'overflow-hidden'
+          )}
+        >
+          {isSourcePreviewLoading ? (
+            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              {t('preview.loading')}
             </div>
-          ) : null}
-          {elements.length === 0 ? (
-            <EmptyPreviewState />
+          ) : shouldUseOriginalPreviewFallback ? (
+            <div className="flex h-full min-h-0 flex-col">
+              {sourcePreview.error ? (
+                <div className="shrink-0 border-b border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
+                  {t('detail.parseReview.sourcePreviewUnavailable')}
+                </div>
+              ) : null}
+              <div className="min-h-0 flex-1">
+                <UniversalFilePreviewContent
+                  file={{
+                    id: file.id,
+                    name: file.name,
+                    extension: file.extension,
+                    mimeType: file.mime_type,
+                    size: file.size,
+                  }}
+                  previewUrl={originalPreview.previewUrl}
+                  isLoading={originalPreview.isLoading}
+                  error={originalPreview.error}
+                />
+              </div>
+            </div>
+          ) : elements.length === 0 ? (
+            <div className="p-4">
+              <EmptyPreviewState />
+            </div>
           ) : (
             <div className="space-y-6">
               {pages.map(page => {
@@ -445,7 +503,11 @@ export function FileVisualParseReviewPanel({
                   <div key={key} ref={setElementCardRef(key)}>
                     <VisualReviewCard
                       element={element}
-                      pageNumber={pageIndexForElement(element.page, pageBase) + 1}
+                      pageNumber={displayPageNumberForElement(
+                        element,
+                        pageBase,
+                        hasVisualSourcePreview
+                      )}
                       selected={key === selectedElementId}
                       editedContent={editedContentByItem[element.confirmation?.id ?? '']}
                       onEditContent={updateEditedContent}

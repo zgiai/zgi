@@ -285,8 +285,9 @@ const messages = {
       boxes: '{count} boxes',
       confidence: 'Confidence {value}',
       hasLocation: 'Located',
+      sourcePreviewFallback: 'Standard preview',
       sourcePreviewUnavailable:
-        'Original page rendering is unavailable. Layout boxes can still be reviewed.',
+        'Original page rendering is unavailable. Showing a standard document preview instead.',
       emptyContent: 'No text content',
       suggestedContent: 'Suggested content',
       keep: 'Keep',

@@ -61,7 +61,7 @@
 
 如果用户对知识库中的切片不满意，需要跳转到文件管理修改源 asset。修改完成后，系统自动同步所有引用该 asset 的知识库 document。
 
-知识库文件页的产品呈现以 ref 为主：列表展示文件名称、同步状态、启用开关、切片数、最近同步时间和“查看文件”操作；“查看文件”只能跳转到文件管理详情。历史 `/datasets/:dataset_id/documents/:document_id` 入口如果被直接访问，也应重定向到对应文件管理详情，不再展示知识库内切片列表。
+知识库文件页的产品呈现以 ref 为主：列表展示文件名称、文件状态、启用开关、切片数、最近同步时间和“查看文件”操作；其中“文件状态”显示 asset 的 `processing_status`（例如已就绪、解析中、待确认、解析失败），ref 的 `sync_status` 只用于“最近同步”列、重试入口和同步流程判断；“查看文件”只能跳转到文件管理详情。历史 `/datasets/:dataset_id/documents/:document_id` 入口如果被直接访问，也应重定向到对应文件管理详情，不再展示知识库内切片列表。
 
 ## 3. 核心数据关系
 
@@ -246,11 +246,12 @@ flowchart TD
 GET /datasets/:dataset_id/file-candidates
 ```
 
-只返回文件管理中的资产。
+只返回文件管理中当前有效源文件对应的资产。asset 必须能关联到同组织下未归档的 `upload_files` 记录；如果源文件已删除、已归档，或只剩孤儿 asset，不能出现在知识库添加文件弹窗中。
 
 可添加条件：
 
 - asset 属于当前组织和 workspace。
+- asset `source_file_id` 对应的源文件存在且未归档。
 - asset `product_status='ready'`。
 - asset `vector_status='ready'`。
 - asset 当前 `generation_no` 下有 enabled、ready 的二级 chunk。
@@ -653,13 +654,31 @@ PATCH /datasets/:dataset_id/file-refs/:ref_id/document
 
 移除后，文件管理中的源文件仍可继续被其他知识库引用。
 
-## 14. 源文件删除保护
+## 14. 删除整个知识库
+
+用户删除整个知识库时，必须把该知识库下由文件资产投影出来的关系和产物一起清理。
+
+流程：
+
+1. 软删除该 `dataset_id` 下所有未删除 ref：写入 `deleted_at`。
+2. 删除该知识库下的 `child_chunks`。
+3. 删除该知识库下的 `document_segment_questions`。
+4. 软删除该知识库下的 `document_segments`，并把 segment 状态标记为 deleted。
+5. 删除该知识库下的 `documents`。
+6. 删除 `datasets` 本身。
+7. 不删除源文件。
+8. 不删除 asset。
+9. 不删除 asset chunks 和 embeddings。
+
+文件管理的“关联知识库”展示、源文件删除保护、批量删除保护都必须以未删除 ref 且对应 dataset 仍存在为准。不能只通过历史 `documents.file_id` 统计，否则删除知识库后会出现“已关联 1 条”但弹层无资源，或列表显示未关联但删除仍提示占用的残留状态。
+
+## 15. 源文件删除保护
 
 删除源文件或 asset 时，必须检查 ref 表。
 
 规则：
 
-- 只要存在未软删 ref，就阻止删除源文件。
+- 只要存在未软删 ref 且对应 dataset 仍存在，就阻止删除源文件。
 - 即使 ref `sync_status=failed`，也要阻止删除，因为该知识库仍然声明要使用这个 asset。
 - 用户必须先到对应知识库移除引用，再删除源文件。
 
@@ -678,7 +697,7 @@ PATCH /datasets/:dataset_id/file-refs/:ref_id/document
 }
 ```
 
-## 15. 召回保护
+## 16. 召回保护
 
 每个知识库有自己的 vector collection，因此召回不需要用 ref 表过滤“不属于当前知识库”的资产。
 
@@ -728,17 +747,17 @@ flowchart TD
 }
 ```
 
-## 16. 接口清单
+## 17. 接口清单
 
-### 16.1 候选文件
+### 17.1 候选文件
 
 ```text
 GET /datasets/:dataset_id/file-candidates
 ```
 
-返回可添加资产及不可添加原因。
+返回文件管理中当前有效源文件对应的可添加资产及不可添加原因。已删除源文件、已归档源文件和孤儿 asset 不返回。
 
-### 16.2 知识库文件列表
+### 17.2 知识库文件列表
 
 ```text
 GET /datasets/:dataset_id/file-refs
@@ -746,7 +765,7 @@ GET /datasets/:dataset_id/file-refs
 
 返回 ref、asset、当前 document、同步状态、错误信息。
 
-### 16.3 添加文件
+### 17.3 添加文件
 
 ```text
 POST /datasets/:dataset_id/file-refs
@@ -754,7 +773,7 @@ POST /datasets/:dataset_id/file-refs
 
 创建 ref 并投递同步任务。
 
-### 16.4 重新同步
+### 17.4 重新同步
 
 ```text
 POST /datasets/:dataset_id/file-refs/:ref_id/sync/retry
@@ -762,7 +781,7 @@ POST /datasets/:dataset_id/file-refs/:ref_id/sync/retry
 
 失败或用户手动触发时重新同步。
 
-### 16.5 移除引用
+### 17.5 移除引用
 
 ```text
 DELETE /datasets/:dataset_id/file-refs/:ref_id
@@ -770,13 +789,13 @@ DELETE /datasets/:dataset_id/file-refs/:ref_id
 
 软删 ref，删除知识库 document 副本和向量，不删除 asset。
 
-### 16.6 启停 document
+### 17.6 启停 document
 
 可沿用原 document 启停接口，也可通过 file refs 页面代理到 document 启停。
 
 ref 本身不提供 enabled 字段。
 
-## 17. 后端任务拆分
+## 18. 后端任务拆分
 
 | 编号 | 任务 | 验收 |
 | --- | --- | --- |
@@ -789,9 +808,10 @@ ref 本身不提供 enabled 字段。
 | P2-BE-07 | asset 修改触发同步 | 重新解析、chunk 编辑、chunk 启停后批量标记 refs pending 并入队 |
 | P2-BE-08 | 召回保护 | 召回结果必须校验 document/ref/asset 状态 |
 | P2-BE-09 | 删除保护 | 源文件删除检查未软删 refs |
-| P2-BE-10 | 后端测试 | 幂等、失败、旧任务回写、重试、清理、删除保护 |
+| P2-BE-10 | 删除知识库清理 | 删除 dataset 时软删 refs，清理 document tree，文件管理关联数不再统计已删除 dataset |
+| P2-BE-11 | 后端测试 | 幂等、失败、旧任务回写、重试、清理、删除保护 |
 
-## 18. 前端任务拆分
+## 19. 前端任务拆分
 
 | 编号 | 任务 | 验收 |
 | --- | --- | --- |
@@ -804,7 +824,7 @@ ref 本身不提供 enabled 字段。
 | P2-FE-07 | 移除引用 | 删除 ref 和知识库 document 副本，不删除源文件 |
 | P2-FE-08 | 召回结果来源 | 展示 asset/document/chunk 来源并可跳转 |
 
-## 19. 验收场景
+## 20. 验收场景
 
 | 编号 | 场景 | 预期 |
 | --- | --- | --- |
@@ -834,9 +854,9 @@ ref 本身不提供 enabled 字段。
 - 重新解析 `语文课程介绍.docx` 后，asset `generation_no` 从 1 递增到 2，ref 从 `synced_generation_no=1` 更新为 2，并指向新 document。
 - 重新解析成功后，旧 document 被删除，当前知识库仅保留新 document；文件详情页回到“已就绪”，知识库文件同步面板显示 `2 / 2` 且状态为“已同步”。
 
-## 20. 关键风险与处理
+## 21. 关键风险与处理
 
-### 20.1 旧 document 残留干扰召回
+### 21.1 旧 document 残留干扰召回
 
 处理：
 
@@ -844,7 +864,7 @@ ref 本身不提供 enabled 字段。
 - 新 document 成功后立即删除旧 document tree 和向量。
 - 召回阶段额外校验 ref `dataset_document_id = document.id`。
 
-### 20.2 同 generation 下旧同步任务回写
+### 21.2 同 generation 下旧同步任务回写
 
 局部编辑 chunk 不递增 `generation_no`，所以必须使用 `sync_run_id`。
 
@@ -853,7 +873,7 @@ ref 本身不提供 enabled 字段。
 - 每次触发同步都生成新的 `sync_run_id`。
 - worker 开始和成功提交前都校验 `sync_run_id`。
 
-### 20.3 同步失败后没有可召回内容
+### 21.3 同步失败后没有可召回内容
 
 这是预期行为。asset 已修改后，旧 document 不应继续召回。
 
@@ -862,7 +882,7 @@ ref 本身不提供 enabled 字段。
 - failed 状态下旧 document 保持禁用。
 - 前端展示同步失败和重试入口。
 
-### 20.4 向量清理失败
+### 21.4 向量清理失败
 
 如果旧 document PG 删除成功但向量残留，可能污染召回。
 
@@ -872,7 +892,7 @@ ref 本身不提供 enabled 字段。
 - 清理向量失败时记录清理错误并重试 cleanup。
 - 召回阶段通过 ref `dataset_document_id = document.id` 过滤，即使向量残留也不会返回有效结果。
 
-### 20.5 data_source_type 清理影响旧功能
+### 21.5 data_source_type 清理影响旧功能
 
 阶段二目标是知识库 document 只来自文件资产同步，但旧代码可能仍依赖 `data_source_type`。
 
