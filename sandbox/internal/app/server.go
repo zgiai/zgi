@@ -67,19 +67,20 @@ func NewServer(cfg config.Config) (*Server, error) {
 	}
 
 	policyService := policy.NewService(cfg)
+	artifactProfiles, err := loadDependencyProfileArtifacts(cfg.DependencyRootFSDir)
+	if err != nil {
+		_ = store.Close()
+		return nil, err
+	}
 	cachedProfiles, err := store.ListDependencyProfiles()
 	if err != nil {
 		_ = store.Close()
 		return nil, fmt.Errorf("load dependency profile cache: %w", err)
 	}
+	cachedProfiles = filterCachedDependencyProfilesWithLocalArtifacts(cachedProfiles, artifactProfiles, cfg.DependencyRootFSDir)
 	if err := policyService.LoadDependencyProfiles(cachedProfiles); err != nil {
 		_ = store.Close()
 		return nil, fmt.Errorf("load dependency profile cache: %w", err)
-	}
-	artifactProfiles, err := loadDependencyProfileArtifacts(cfg.DependencyRootFSDir)
-	if err != nil {
-		_ = store.Close()
-		return nil, err
 	}
 	if err := policyService.LoadDependencyProfiles(artifactProfiles); err != nil {
 		_ = store.Close()
@@ -150,6 +151,28 @@ func loadDependencyProfileArtifacts(root string) ([]policy.DependencyProfile, er
 		})
 	}
 	return profiles, nil
+}
+
+func filterCachedDependencyProfilesWithLocalArtifacts(cachedProfiles []policy.DependencyProfile, artifactProfiles []policy.DependencyProfile, dependencyRootFSDir string) []policy.DependencyProfile {
+	if strings.TrimSpace(dependencyRootFSDir) == "" {
+		return append([]policy.DependencyProfile(nil), cachedProfiles...)
+	}
+
+	availableArtifacts := make(map[string]bool, len(artifactProfiles))
+	for _, profile := range artifactProfiles {
+		if checksum := strings.TrimSpace(profile.ArtifactChecksum); checksum != "" {
+			availableArtifacts[checksum] = true
+		}
+	}
+
+	filtered := make([]policy.DependencyProfile, 0, len(cachedProfiles))
+	for _, profile := range cachedProfiles {
+		checksum := strings.TrimSpace(profile.ArtifactChecksum)
+		if checksum == "" || availableArtifacts[checksum] {
+			filtered = append(filtered, profile)
+		}
+	}
+	return filtered
 }
 
 func (s *Server) registerRoutes() {
@@ -457,6 +480,11 @@ func (s *Server) handleDependencyBuildCreate(w http.ResponseWriter, r *http.Requ
 	}
 	organizationID := requestOrganizationID(r, req.OrganizationID)
 	record, err := s.store.UpsertDependencyBuildRequest(newDependencyBuildRecord(prepare, organizationID))
+	if err != nil {
+		writeKnownError(w, err)
+		return
+	}
+	record, err = s.refreshStaleDependencyBuildRecord(record)
 	if err != nil {
 		writeKnownError(w, err)
 		return

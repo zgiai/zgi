@@ -1318,6 +1318,128 @@ func TestDependencyBuildRunMaterializesReusableProfile(t *testing.T) {
 	}
 }
 
+func TestDependencyBuildCreateRequeuesStaleReadyRecordWhenArtifactIsMissing(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.APIKey = "build-test-key"
+	cfg.DependencyRootFSDir = t.TempDir()
+	cfg.DependencyBuildCommand = "python3 " + writeDependencyBuildStubCommand(t)
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"archive_base64": testZipBase64(t, map[string]string{
+			"SKILL.md":         "Skill package\n",
+			"requirements.txt": "pandas==2.2.3\n",
+			"scripts/run.py":   "import pandas as pd\nprint('ok')\n",
+		}),
+		"format":       "zip",
+		"base_runtime": "linux-secure",
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	queueReq := httptest.NewRequest(http.MethodPost, "/v1/sandbox/dependencies/builds", bytes.NewReader(payload))
+	queueReq.Header.Set("Content-Type", "application/json")
+	queueReq.Header.Set("X-API-Key", "build-test-key")
+	queueRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(queueRes, queueReq)
+	if queueRes.Code != http.StatusOK {
+		t.Fatalf("expected dependency build queue to return 200, got %d body=%s", queueRes.Code, queueRes.Body.String())
+	}
+	var queued struct {
+		Data struct {
+			Fingerprint string `json:"fingerprint"`
+			ProfileName string `json:"profile_name"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(queueRes.Body.Bytes(), &queued); err != nil {
+		t.Fatalf("decode queued build: %v", err)
+	}
+
+	runReq := httptest.NewRequest(http.MethodPost, "/v1/sandbox/dependencies/builds/"+queued.Data.Fingerprint+"/run", nil)
+	runReq.Header.Set("X-API-Key", "build-test-key")
+	runRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(runRes, runReq)
+	if runRes.Code != http.StatusOK || !strings.Contains(runRes.Body.String(), `"status":"ready"`) {
+		t.Fatalf("expected dependency build run to return ready, got %d body=%s", runRes.Code, runRes.Body.String())
+	}
+	if err := os.RemoveAll(filepath.Join(cfg.DependencyRootFSDir, queued.Data.ProfileName)); err != nil {
+		t.Fatalf("remove dependency artifact: %v", err)
+	}
+
+	requeueReq := httptest.NewRequest(http.MethodPost, "/v1/sandbox/dependencies/builds", bytes.NewReader(payload))
+	requeueReq.Header.Set("Content-Type", "application/json")
+	requeueReq.Header.Set("X-API-Key", "build-test-key")
+	requeueRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(requeueRes, requeueReq)
+	if requeueRes.Code != http.StatusOK {
+		t.Fatalf("expected stale dependency build create to return 200, got %d body=%s", requeueRes.Code, requeueRes.Body.String())
+	}
+	var requeued struct {
+		Data struct {
+			Status           string `json:"status"`
+			ArtifactChecksum string `json:"artifact_checksum"`
+			SizeBytes        int64  `json:"size_bytes"`
+			NextAction       string `json:"next_action"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(requeueRes.Body.Bytes(), &requeued); err != nil {
+		t.Fatalf("decode requeued build: %v", err)
+	}
+	if requeued.Data.Status != "queued" || requeued.Data.NextAction != "wait_for_dependency_build" || requeued.Data.ArtifactChecksum != "" || requeued.Data.SizeBytes != 0 {
+		t.Fatalf("expected stale ready build to be requeued, got %#v", requeued.Data)
+	}
+
+	if !server.runOneQueuedDependencyBuild(context.Background()) {
+		t.Fatal("expected dependency build worker to rebuild stale artifact")
+	}
+	rebuilt, err := server.store.GetDependencyBuildRequest(queued.Data.Fingerprint)
+	if err != nil {
+		t.Fatalf("get rebuilt dependency build: %v", err)
+	}
+	if rebuilt.Status != "ready" || rebuilt.ArtifactChecksum == "" || rebuilt.SizeBytes <= 0 {
+		t.Fatalf("expected rebuilt ready dependency build, got %+v", rebuilt)
+	}
+}
+
+func TestFilterCachedDependencyProfilesKeepsOnlyProfilesWithLocalArtifacts(t *testing.T) {
+	cached := []policy.DependencyProfile{
+		{Name: "stdlib", Status: "ready", Enabled: true},
+		{Name: "auto-present", Status: "ready", Enabled: true, ArtifactChecksum: "sha256:present"},
+		{Name: "auto-missing", Status: "ready", Enabled: true, ArtifactChecksum: "sha256:missing"},
+	}
+	artifacts := []policy.DependencyProfile{
+		{Name: "auto-present", Status: "ready", Enabled: true, ArtifactChecksum: "sha256:present"},
+	}
+
+	filtered := filterCachedDependencyProfilesWithLocalArtifacts(cached, artifacts, t.TempDir())
+	names := make([]string, 0, len(filtered))
+	for _, profile := range filtered {
+		names = append(names, profile.Name)
+	}
+	if strings.Join(names, ",") != "stdlib,auto-present" {
+		t.Fatalf("expected stdlib and available artifact profile, got %v", names)
+	}
+}
+
+func TestFilterCachedDependencyProfilesKeepsCachedProfilesWithoutRootFSDir(t *testing.T) {
+	cached := []policy.DependencyProfile{
+		{Name: "stdlib", Status: "ready", Enabled: true},
+		{Name: "office-safe", Status: "ready", Enabled: true, ArtifactChecksum: "sha256:office-safe"},
+	}
+
+	filtered := filterCachedDependencyProfilesWithLocalArtifacts(cached, nil, "")
+	names := make([]string, 0, len(filtered))
+	for _, profile := range filtered {
+		names = append(names, profile.Name)
+	}
+	if strings.Join(names, ",") != "stdlib,office-safe" {
+		t.Fatalf("expected cached profiles to remain without dependency rootfs dir, got %v", names)
+	}
+}
+
 func TestDependencyBuildWorkerMaterializesQueuedProfile(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.APIKey = "build-test-key"

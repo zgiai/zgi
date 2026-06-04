@@ -174,6 +174,42 @@ func (s *Server) runDependencyBuildCommand(ctx context.Context, record *storage.
 	return updated, nil
 }
 
+func (s *Server) refreshStaleDependencyBuildRecord(record *storage.DependencyBuildRequestRecord) (*storage.DependencyBuildRequestRecord, error) {
+	if record == nil || record.Status != "ready" || strings.TrimSpace(record.ArtifactChecksum) == "" {
+		return record, nil
+	}
+	available, err := s.dependencyBuildArtifactAvailable(record.ArtifactChecksum)
+	if err != nil {
+		return record, err
+	}
+	if available {
+		return record, nil
+	}
+
+	s.policy.RemoveDependencyProfileRef(policy.DependencyProfile{
+		Name:  record.ProfileName,
+		Scope: "global",
+	})
+	return s.store.UpdateDependencyBuildRequestStatus(record.Fingerprint, "queued", "", 0, "")
+}
+
+func (s *Server) dependencyBuildArtifactAvailable(artifactChecksum string) (bool, error) {
+	artifactChecksum = strings.TrimSpace(artifactChecksum)
+	if artifactChecksum == "" || strings.TrimSpace(s.config.DependencyRootFSDir) == "" {
+		return true, nil
+	}
+	artifacts, err := runner.ListDependencyProfileArtifacts(s.config.DependencyRootFSDir)
+	if err != nil {
+		return false, err
+	}
+	for _, artifact := range artifacts {
+		if artifact.Checksum == artifactChecksum {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func dependencyBuildWorkerInputFromRecord(record *storage.DependencyBuildRequestRecord, root string) (dependencyBuildWorkerInput, error) {
 	if record == nil {
 		return dependencyBuildWorkerInput{}, errors.New("dependency build request not found")
