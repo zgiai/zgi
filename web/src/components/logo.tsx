@@ -11,7 +11,7 @@ function LogoContent({ showName = true }) {
       <img
         src={isDark ? DARK_LOGO_URL : LOGO_URL}
         alt={APP_NAME}
-        className="max-h-10 max-w-40"
+        className="max-h-10 max-w-32"
         loading="lazy"
       />
       {showName && <span>{APP_NAME}</span>}
