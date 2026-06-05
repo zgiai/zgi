@@ -22,6 +22,8 @@ function readPublicSentryEnv(key: string): string | undefined {
       return process.env.NEXT_PUBLIC_DEPLOY_ENV;
     case 'NEXT_PUBLIC_SENTRY_REPLAY_ENABLED':
       return process.env.NEXT_PUBLIC_SENTRY_REPLAY_ENABLED;
+    case 'NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE':
+      return process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE;
     case 'NEXT_PUBLIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE':
       return process.env.NEXT_PUBLIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE;
     case 'NEXT_PUBLIC_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE':
@@ -62,6 +64,7 @@ async function loadSentry(): Promise<SentryModule | null> {
               readPublicSentryEnv('NEXT_PUBLIC_DEPLOY_ENV') ||
               process.env.NODE_ENV,
             replayEnabled: isEnabled(readPublicSentryEnv('NEXT_PUBLIC_SENTRY_REPLAY_ENABLED')),
+            tracesSampleRate: readSampleRate('NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE'),
             replaysSessionSampleRate: readSampleRate(
               'NEXT_PUBLIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE'
             ),
