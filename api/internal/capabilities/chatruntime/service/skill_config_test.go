@@ -467,6 +467,91 @@ func TestProcessTimelineRecorderAggregatesIntermediateAnswerChunks(t *testing.T)
 	}
 }
 
+func TestProcessTimelineRecorderPersistsWorkflowRunEvents(t *testing.T) {
+	prepared := preparedTimelineTestChat()
+	recorder := newProcessTimelineRecorder(context.Background(), context.Background(), &service{}, prepared, nil)
+
+	recorder.RecordEvent("workflow_started", map[string]interface{}{
+		"conversation_id": prepared.Conversation.ID.String(),
+		"message_id":      prepared.Message.ID.String(),
+		"workflow_run_id": "run-1",
+		"workflow_id":     "workflow-1",
+		"status":          "running",
+		"created_at":      10,
+	})
+	recorder.RecordEvent("node_started", map[string]interface{}{
+		"conversation_id": prepared.Conversation.ID.String(),
+		"message_id":      prepared.Message.ID.String(),
+		"workflow_run_id": "run-1",
+		"node_id":         "node-1",
+		"node_type":       "answer",
+		"node_title":      "Answer",
+		"inputs":          map[string]interface{}{"query": "hello"},
+		"status":          "running",
+		"created_at":      11,
+	})
+	recorder.RecordEvent("node_finished", map[string]interface{}{
+		"conversation_id": prepared.Conversation.ID.String(),
+		"message_id":      prepared.Message.ID.String(),
+		"workflow_run_id": "run-1",
+		"node_id":         "node-1",
+		"node_type":       "answer",
+		"node_title":      "Answer",
+		"outputs":         map[string]interface{}{"answer": "done"},
+		"status":          "succeeded",
+		"elapsed_time":    0.2,
+		"created_at":      12,
+	})
+	recorder.RecordEvent("workflow_finished", map[string]interface{}{
+		"conversation_id": prepared.Conversation.ID.String(),
+		"message_id":      prepared.Message.ID.String(),
+		"workflow_run_id": "run-1",
+		"status":          "succeeded",
+		"outputs":         map[string]interface{}{"answer": "done"},
+		"elapsed_time":    0.3,
+		"created_at":      13,
+	})
+
+	runs, ok := prepared.Message.Metadata["workflow_runs"].([]interface{})
+	if !ok || len(runs) != 1 {
+		t.Fatalf("workflow_runs = %#v, want one persisted run", prepared.Message.Metadata["workflow_runs"])
+	}
+	run, _ := runs[0].(map[string]interface{})
+	if run["workflow_run_id"] != "run-1" || run["status"] != "succeeded" || run["outputs"] == nil {
+		t.Fatalf("run = %#v, want succeeded run with outputs", run)
+	}
+	nodes, ok := run["nodes"].([]interface{})
+	if !ok || len(nodes) != 1 {
+		t.Fatalf("nodes = %#v, want one merged node", run["nodes"])
+	}
+	node, _ := nodes[0].(map[string]interface{})
+	if node["status"] != "succeeded" || node["inputs"] == nil || node["outputs"] == nil {
+		t.Fatalf("node = %#v, want inputs and outputs preserved", node)
+	}
+}
+
+func TestMergeWorkflowRunMetadataStoresApprovalFields(t *testing.T) {
+	metadata := mergeWorkflowRunMetadata(nil, "workflow_paused", map[string]interface{}{
+		"workflow_run_id":  "run-approval",
+		"node_id":          "approval-node",
+		"node_type":        "approval",
+		"status":           "paused",
+		"approval_form_id": "form-1",
+		"approval_token":   "token-1",
+		"approval_url":     "https://example.test/approval",
+	})
+
+	runs, ok := metadata["workflow_runs"].([]interface{})
+	if !ok || len(runs) != 1 {
+		t.Fatalf("workflow_runs = %#v, want one run", metadata["workflow_runs"])
+	}
+	run, _ := runs[0].(map[string]interface{})
+	approval, _ := run["approval"].(map[string]interface{})
+	if run["status"] != "pending_approval" || approval["approval_form_id"] != "form-1" || approval["approval_token"] != "token-1" {
+		t.Fatalf("run = %#v, want pending approval with safe fields", run)
+	}
+}
+
 func preparedTimelineTestChat() *PreparedChat {
 	return &PreparedChat{
 		Conversation: &runtimemodel.Conversation{ID: uuid.New()},

@@ -34,6 +34,20 @@ func (s *service) persistGeneratedArtifactBestEffort(ctx context.Context, prepar
 	}
 }
 
+func (s *service) persistWorkflowRunEventBestEffort(ctx context.Context, prepared *PreparedChat, eventType string, payload map[string]interface{}) {
+	if prepared == nil || prepared.Message == nil || len(payload) == 0 {
+		return
+	}
+	metadata := mergeWorkflowRunMetadata(prepared.Message.Metadata, eventType, payload)
+	prepared.Message.Metadata = metadata
+	if s == nil || s.repos == nil || s.repos.Message == nil {
+		return
+	}
+	if err := s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata); err != nil {
+		logger.WarnContext(ctx, "failed to persist aichat workflow run metadata", "message_id", prepared.Message.ID.String(), err)
+	}
+}
+
 func mergeGeneratedArtifactMetadata(source map[string]interface{}, artifact map[string]interface{}) map[string]interface{} {
 	metadata := copyStringAnyMap(source)
 	if metadata == nil {
@@ -54,6 +68,286 @@ func mergeGeneratedArtifactMetadata(source map[string]interface{}, artifact map[
 	metadata["generated_files"] = files
 	metadata["generated_file_count"] = len(files)
 	return metadata
+}
+
+func mergeWorkflowRunMetadata(source map[string]interface{}, eventType string, payload map[string]interface{}) map[string]interface{} {
+	metadata := copyStringAnyMap(source)
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	run := workflowRunFromEvent(eventType, payload)
+	if len(run) == 0 {
+		return metadata
+	}
+	runs := workflowRunsFromMetadata(metadata["workflow_runs"])
+	runs = upsertWorkflowRun(runs, run)
+	metadata["has_trace"] = true
+	metadata["workflow_runs"] = workflowRunsToInterfaceSlice(runs)
+	metadata["workflow_run_count"] = len(runs)
+	return metadata
+}
+
+func workflowRunFromEvent(eventType string, payload map[string]interface{}) map[string]interface{} {
+	runID := firstNonEmptyString(payload["workflow_run_id"], payload["task_id"], payload["id"])
+	if runID == "" {
+		return nil
+	}
+	run := map[string]interface{}{
+		"workflow_run_id": runID,
+		"status":          workflowRunStatusFromEvent(eventType, payload),
+	}
+	copyWorkflowFields(run, payload, "workflow_id", "agent_id", "version", "inputs", "outputs", "elapsed_time", "error", "created_at")
+	if createdAt := workflowCreatedAt(payload); createdAt != nil {
+		run["created_at"] = createdAt
+	}
+	if approval := workflowApprovalFromEvent(payload); len(approval) > 0 {
+		run["approval"] = approval
+	}
+	switch strings.TrimSpace(eventType) {
+	case "node_started":
+		run["nodes"] = []interface{}{workflowNodeFromEvent(payload, false)}
+	case "node_finished":
+		run["nodes"] = []interface{}{workflowNodeFromEvent(payload, true)}
+	case "workflow_paused":
+		if node := workflowNodeFromEvent(payload, true); len(node) > 0 {
+			node["status"] = "paused"
+			run["nodes"] = []interface{}{node}
+		}
+	}
+	return compactWorkflowRun(run)
+}
+
+func workflowRunStatusFromEvent(eventType string, payload map[string]interface{}) string {
+	switch strings.TrimSpace(eventType) {
+	case "workflow_started":
+		return "running"
+	case "workflow_paused", "approval_requested":
+		return "pending_approval"
+	case "workflow_finished":
+		if status := firstNonEmptyString(payload["status"]); status != "" {
+			return status
+		}
+		return "completed"
+	case "workflow_failed":
+		return "error"
+	default:
+		if status := firstNonEmptyString(payload["status"]); status != "" {
+			return status
+		}
+		return "running"
+	}
+}
+
+func workflowNodeFromEvent(payload map[string]interface{}, finished bool) map[string]interface{} {
+	nodeID := firstNonEmptyString(payload["node_id"], payload["execution_id"])
+	nodeType := firstNonEmptyString(payload["node_type"], payload["type"])
+	title := firstNonEmptyString(payload["title"], payload["node_title"], payload["name"], payload["label"])
+	if nodeID == "" && nodeType == "" && title == "" {
+		return nil
+	}
+	status := firstNonEmptyString(payload["status"])
+	if status == "" {
+		if finished {
+			status = "succeeded"
+		} else {
+			status = "running"
+		}
+	}
+	node := map[string]interface{}{
+		"node_id":   nodeID,
+		"node_type": nodeType,
+		"title":     title,
+		"status":    status,
+	}
+	copyWorkflowFields(node, payload, "inputs", "outputs", "elapsed_time", "error", "created_at")
+	if createdAt := workflowCreatedAt(payload); createdAt != nil {
+		node["created_at"] = createdAt
+	}
+	return compactWorkflowRun(node)
+}
+
+func workflowApprovalFromEvent(payload map[string]interface{}) map[string]interface{} {
+	approval := map[string]interface{}{}
+	copyWorkflowFields(approval, payload, "approval_form_id", "approval_token", "approval_url", "approval_form")
+	return compactWorkflowRun(approval)
+}
+
+func copyWorkflowFields(target map[string]interface{}, source map[string]interface{}, keys ...string) {
+	for _, key := range keys {
+		value, ok := source[key]
+		if !ok || value == nil {
+			continue
+		}
+		if text, ok := value.(string); ok && strings.TrimSpace(text) == "" {
+			continue
+		}
+		target[key] = value
+	}
+}
+
+func workflowCreatedAt(payload map[string]interface{}) interface{} {
+	if createdAt := numericValueFromMap(payload, "created_at"); createdAt != nil {
+		return createdAt
+	}
+	return time.Now().Unix()
+}
+
+func workflowRunsFromMetadata(value interface{}) []map[string]interface{} {
+	switch typed := value.(type) {
+	case []map[string]interface{}:
+		out := make([]map[string]interface{}, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, copyStringAnyMap(item))
+		}
+		return out
+	case []interface{}:
+		out := make([]map[string]interface{}, 0, len(typed))
+		for _, item := range typed {
+			if run, ok := item.(map[string]interface{}); ok {
+				out = append(out, copyStringAnyMap(run))
+			}
+		}
+		return out
+	default:
+		return []map[string]interface{}{}
+	}
+}
+
+func workflowRunsToInterfaceSlice(runs []map[string]interface{}) []interface{} {
+	out := make([]interface{}, 0, len(runs))
+	for _, run := range runs {
+		out = append(out, run)
+	}
+	return out
+}
+
+func upsertWorkflowRun(current []map[string]interface{}, incoming map[string]interface{}) []map[string]interface{} {
+	runID := strings.TrimSpace(stringFromAny(incoming["workflow_run_id"]))
+	if runID == "" {
+		return current
+	}
+	for index, run := range current {
+		if strings.TrimSpace(stringFromAny(run["workflow_run_id"])) == runID {
+			current[index] = mergeWorkflowRun(run, incoming)
+			return current
+		}
+	}
+	return append(current, incoming)
+}
+
+func mergeWorkflowRun(existing map[string]interface{}, incoming map[string]interface{}) map[string]interface{} {
+	merged := copyStringAnyMap(existing)
+	if merged == nil {
+		merged = map[string]interface{}{}
+	}
+	for key, value := range incoming {
+		if value == nil {
+			continue
+		}
+		switch key {
+		case "nodes":
+			merged["nodes"] = mergeWorkflowNodes(workflowNodesFromMetadata(merged["nodes"]), workflowNodesFromMetadata(value))
+		case "approval":
+			merged["approval"] = mergeWorkflowMap(workflowRecordFromAny(merged["approval"]), workflowRecordFromAny(value))
+		default:
+			merged[key] = value
+		}
+	}
+	return compactWorkflowRun(merged)
+}
+
+func workflowRecordFromAny(value interface{}) map[string]interface{} {
+	if record, ok := value.(map[string]interface{}); ok {
+		return record
+	}
+	return map[string]interface{}{}
+}
+
+func workflowNodesFromMetadata(value interface{}) []map[string]interface{} {
+	switch typed := value.(type) {
+	case []map[string]interface{}:
+		out := make([]map[string]interface{}, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, copyStringAnyMap(item))
+		}
+		return out
+	case []interface{}:
+		out := make([]map[string]interface{}, 0, len(typed))
+		for _, item := range typed {
+			if node, ok := item.(map[string]interface{}); ok {
+				out = append(out, copyStringAnyMap(node))
+			}
+		}
+		return out
+	default:
+		return []map[string]interface{}{}
+	}
+}
+
+func mergeWorkflowNodes(current []map[string]interface{}, incoming []map[string]interface{}) []interface{} {
+	for _, node := range incoming {
+		if len(node) == 0 {
+			continue
+		}
+		key := workflowNodeIdentity(node)
+		matched := false
+		for index, existing := range current {
+			if workflowNodeIdentity(existing) == key {
+				current[index] = mergeWorkflowMap(existing, node)
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			current = append(current, node)
+		}
+	}
+	out := make([]interface{}, 0, len(current))
+	for _, node := range current {
+		out = append(out, compactWorkflowRun(node))
+	}
+	return out
+}
+
+func workflowNodeIdentity(node map[string]interface{}) string {
+	if nodeID := strings.TrimSpace(stringFromAny(node["node_id"])); nodeID != "" {
+		return "node:" + nodeID
+	}
+	return strings.Join([]string{
+		"type:" + strings.TrimSpace(stringFromAny(node["node_type"])),
+		"title:" + strings.TrimSpace(stringFromAny(node["title"])),
+	}, ":")
+}
+
+func mergeWorkflowMap(existing map[string]interface{}, incoming map[string]interface{}) map[string]interface{} {
+	merged := copyStringAnyMap(existing)
+	if merged == nil {
+		merged = map[string]interface{}{}
+	}
+	for key, value := range incoming {
+		if value == nil {
+			continue
+		}
+		if text, ok := value.(string); ok && strings.TrimSpace(text) == "" {
+			continue
+		}
+		merged[key] = value
+	}
+	return compactWorkflowRun(merged)
+}
+
+func compactWorkflowRun(values map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(values))
+	for key, value := range values {
+		if value == nil {
+			continue
+		}
+		if text, ok := value.(string); ok && strings.TrimSpace(text) == "" {
+			continue
+		}
+		out[key] = value
+	}
+	return out
 }
 
 func mergeSkillTraceMetadata(source map[string]interface{}, traces []skills.SkillTrace) map[string]interface{} {

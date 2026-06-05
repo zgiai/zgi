@@ -6,7 +6,12 @@ import { Separator } from '@/components/ui/separator';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type { AIChatSkillMetadata } from '@/services/types/aichat';
-import type { AgentDatabaseBinding, AgentMemorySlotConfig } from '@/services/types/agent';
+import type {
+  AgentDatabaseBinding,
+  AgentMemorySlotConfig,
+  AgentWorkflowBinding,
+  AgentWorkflowBindingCandidate,
+} from '@/services/types/agent';
 import type { Dataset } from '@/services/types/dataset';
 import { AgentRuntimeDatabaseSection } from './sections/database-section';
 import { AgentRuntimeExperienceSection } from './sections/experience-section';
@@ -15,6 +20,7 @@ import { AgentRuntimeKnowledgeSection } from './sections/knowledge-section';
 import { AgentRuntimeMemorySection } from './sections/memory-section';
 import { AgentRuntimeModelSection } from './sections/model-section';
 import { AgentRuntimeSkillSection } from './sections/skill-section';
+import { AgentRuntimeWorkflowSection } from './sections/workflow-section';
 import type { AgentConfigSection } from './types';
 import type { AgentMemorySlotValidationError } from './utils';
 
@@ -33,6 +39,9 @@ interface AgentRuntimeOrchestrationPanelProps {
   selectedKnowledgeDatasets: Dataset[];
   selectedKnowledgeDatasetIds: string[];
   databaseBindings: AgentDatabaseBinding[];
+  workflowBindings: AgentWorkflowBinding[];
+  workflowCandidatesByBindingID: Map<string, AgentWorkflowBindingCandidate>;
+  isWorkflowCandidatesLoading: boolean;
   suggestedQuestions: string[];
   isGeneratingSuggestions: boolean;
   systemPrompt: string;
@@ -51,9 +60,11 @@ interface AgentRuntimeOrchestrationPanelProps {
   onChangeInputPlaceholder: (value: string) => void;
   onOpenSkillDialog: () => void;
   onOpenKnowledgeDialog: () => void;
+  onOpenWorkflowDialog: () => void;
   onToggleSkill: (skillId: string, checked: boolean) => void;
   onToggleKnowledgeDataset: (datasetId: string, checked: boolean) => void;
   onChangeDatabaseBindings: (value: AgentDatabaseBinding[]) => void;
+  onChangeWorkflowBindings: (value: AgentWorkflowBinding[]) => void;
   onGenerateSuggestedQuestions: () => void;
   onChangeSuggestedQuestions: (value: string[]) => void;
   onChangeFileUploadEnabled: (value: boolean) => void;
@@ -76,6 +87,9 @@ export function AgentRuntimeOrchestrationPanel({
   selectedKnowledgeDatasets,
   selectedKnowledgeDatasetIds,
   databaseBindings,
+  workflowBindings,
+  workflowCandidatesByBindingID,
+  isWorkflowCandidatesLoading,
   suggestedQuestions,
   isGeneratingSuggestions,
   systemPrompt,
@@ -94,9 +108,11 @@ export function AgentRuntimeOrchestrationPanel({
   onChangeInputPlaceholder,
   onOpenSkillDialog,
   onOpenKnowledgeDialog,
+  onOpenWorkflowDialog,
   onToggleSkill,
   onToggleKnowledgeDataset,
   onChangeDatabaseBindings,
+  onChangeWorkflowBindings,
   onGenerateSuggestedQuestions,
   onChangeSuggestedQuestions,
   onChangeFileUploadEnabled,
@@ -161,6 +177,18 @@ export function AgentRuntimeOrchestrationPanel({
             bindings={databaseBindings}
             onToggleSection={onToggleSection}
             onChangeBindings={onChangeDatabaseBindings}
+          />
+
+          <Separator className="h-px" />
+
+          <AgentRuntimeWorkflowSection
+            open={openSections.workflows}
+            bindings={workflowBindings}
+            candidatesByBindingID={workflowCandidatesByBindingID}
+            isLoading={isWorkflowCandidatesLoading}
+            onToggleSection={onToggleSection}
+            onOpenWorkflowDialog={onOpenWorkflowDialog}
+            onChangeBindings={onChangeWorkflowBindings}
           />
 
           <Separator className="h-px" />

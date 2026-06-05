@@ -1056,7 +1056,7 @@ func workflowListContract() SkillToolArgumentContract {
 	return SkillToolArgumentContract{
 		SkillID:     SkillAgentWorkflow,
 		ToolName:    "list_agent_workflows",
-		Description: "List workflows bound to the current Agent.",
+		Description: "List workflows bound to the current Agent, including each binding's input_schema, required_inputs, and default_input_key.",
 		Schema:      objectSchema(map[string]interface{}{}, nil),
 		Example:     map[string]interface{}{},
 	}
@@ -1066,17 +1066,21 @@ func workflowRunContract() SkillToolArgumentContract {
 	return SkillToolArgumentContract{
 		SkillID:     SkillAgentWorkflow,
 		ToolName:    "run_agent_workflow",
-		Description: "Run an Agent-bound workflow by binding_id. Do not pass workflow_id directly.",
+		Description: "Run an Agent-bound workflow by binding_id. Do not pass workflow_id directly. Set inputs.query to the user's current request. After a succeeded run, final answers must use primary_output or outputs and must not invent workflow output.",
 		Schema: objectSchema(
 			map[string]interface{}{
 				"binding_id": stringValueSchema("Workflow binding ID returned by list_agent_workflows."),
 				"inputs": map[string]interface{}{
 					"type":                 "object",
-					"description":          "Optional workflow input object.",
+					"description":          "Workflow input object. Include query with the user's current request; the runtime also forwards it as sys.query.",
 					"additionalProperties": true,
+					"properties": map[string]interface{}{
+						"query": stringValueSchema("The user's current request or instruction to pass into the workflow."),
+					},
+					"required": []string{"query"},
 				},
 			},
-			[]string{"binding_id"},
+			[]string{"binding_id", "inputs"},
 		),
 		Example: map[string]interface{}{"binding_id": "approval-flow", "inputs": map[string]interface{}{"query": "Approve refund request #123"}},
 	}

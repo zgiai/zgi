@@ -11,6 +11,7 @@ import type {
   UpdateWebAppStatusRequest,
   UpdateWebAppStatusResponse,
   AgentRuntimeConfig,
+  AgentWorkflowBindingCandidatesResponse,
   UpdateAgentRuntimeConfigRequest,
   AgentMemorySlotConfig,
   AgentMemoryValuesResponse,
@@ -141,6 +142,14 @@ class AgentService extends BaseService {
     data: UpdateAgentRuntimeConfigRequest
   ): Promise<ApiResponseData<AgentRuntimeConfig>> {
     return this.request('put', `/agents/${agentId}/config`, data, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  getAgentWorkflowBindingCandidates(
+    agentId: string
+  ): Promise<ApiResponseData<AgentWorkflowBindingCandidatesResponse>> {
+    return this.request('get', `/agents/${agentId}/workflow-bindings/candidates`, undefined, {
       headers: { 'Content-Type': 'application/json' },
     });
   }

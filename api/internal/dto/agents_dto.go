@@ -189,6 +189,25 @@ type AgentWorkflowBinding struct {
 	TimeoutSeconds  int    `json:"timeout_seconds,omitempty"`
 }
 
+type AgentWorkflowBindingCandidate struct {
+	BindingID       string `json:"binding_id"`
+	Label           string `json:"label"`
+	Description     string `json:"description,omitempty"`
+	AgentID         string `json:"agent_id"`
+	WorkflowID      string `json:"workflow_id"`
+	VersionStrategy string `json:"version_strategy"`
+	VersionUUID     string `json:"version_uuid,omitempty"`
+	Version         string `json:"version,omitempty"`
+	Icon            string `json:"icon,omitempty"`
+	IconType        string `json:"icon_type,omitempty"`
+	IconURL         string `json:"icon_url,omitempty"`
+	UpdatedAt       int64  `json:"updated_at,omitempty"`
+}
+
+type AgentWorkflowBindingCandidatesResponse struct {
+	Data []AgentWorkflowBindingCandidate `json:"data"`
+}
+
 type AgentMemorySlotConfig struct {
 	ID               string `json:"id,omitempty"`
 	Key              string `json:"key"`

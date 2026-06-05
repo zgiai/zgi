@@ -4,11 +4,47 @@ import (
 	"testing"
 
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
 	workflowshared "github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 )
 
-func TestAutomationWorkflowOutputsMergesApprovalFieldsFromNodeExecutions(t *testing.T) {
+func TestAutomationWorkflowOutputsUsesRuntimeOutputs(t *testing.T) {
+	runtimeState := entities.NewGraphRuntimeState(entities.NewVariablePool())
+	runtimeState.UpdateOutputs(func(current map[string]any) map[string]any {
+		current["answer"] = "春风入纸"
+		current["extra"] = "visible"
+		return current
+	})
 	result := &WorkflowExecutionResult{
+		RuntimeState: runtimeState,
+		NodeResults: map[string]interface{}{
+			"answer-node": map[string]interface{}{
+				"status": "succeeded",
+			},
+		},
+	}
+
+	outputs := automationWorkflowOutputs(result)
+
+	if got := outputs["answer"]; got != "春风入纸" {
+		t.Fatalf("outputs[answer] = %#v, want 春风入纸", got)
+	}
+	if got := outputs["extra"]; got != "visible" {
+		t.Fatalf("outputs[extra] = %#v, want visible", got)
+	}
+	if _, ok := outputs["answer-node"]; ok {
+		t.Fatalf("outputs[answer-node] contains node status summary")
+	}
+}
+
+func TestAutomationWorkflowOutputsMergesApprovalFieldsFromNodeExecutions(t *testing.T) {
+	runtimeState := entities.NewGraphRuntimeState(entities.NewVariablePool())
+	runtimeState.UpdateOutputs(func(current map[string]any) map[string]any {
+		current["answer"] = "waiting"
+		return current
+	})
+	result := &WorkflowExecutionResult{
+		RuntimeState: runtimeState,
 		NodeResults: map[string]interface{}{
 			"approval": map[string]interface{}{
 				"status": "paused",
@@ -46,13 +82,19 @@ func TestAutomationWorkflowOutputsMergesApprovalFieldsFromNodeExecutions(t *test
 	if got := form["url"]; got != "/workflow/approval/form-1" {
 		t.Fatalf("outputs[__approval_form].url = %#v, want /workflow/approval/form-1", got)
 	}
-	if _, ok := outputs["approval"]; !ok {
-		t.Fatalf("outputs[approval] missing node status summary")
+	if _, ok := outputs["approval"]; ok {
+		t.Fatalf("outputs[approval] contains node status summary")
 	}
 }
 
 func TestAutomationWorkflowOutputsKeepsExistingApprovalFields(t *testing.T) {
+	runtimeState := entities.NewGraphRuntimeState(entities.NewVariablePool())
+	runtimeState.UpdateOutputs(func(current map[string]any) map[string]any {
+		current["__approval_form_id"] = "existing-form"
+		return current
+	})
 	result := &WorkflowExecutionResult{
+		RuntimeState: runtimeState,
 		NodeResults: map[string]interface{}{
 			"__approval_form_id": "existing-form",
 		},

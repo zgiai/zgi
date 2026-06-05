@@ -190,6 +190,7 @@ export interface AgentRuntimeConfig {
   knowledge_dataset_ids?: string[];
   knowledge_retrieval_config?: Record<string, unknown>;
   database_bindings?: AgentDatabaseBinding[];
+  workflow_bindings?: AgentWorkflowBinding[];
   updated_at: number;
 }
 
@@ -197,6 +198,31 @@ export interface AgentDatabaseBinding {
   data_source_id: string;
   table_ids: string[];
   writable_table_ids?: string[];
+}
+
+export type AgentWorkflowVersionStrategy = 'latest_published' | 'pinned';
+
+export interface AgentWorkflowBinding {
+  binding_id: string;
+  label: string;
+  description?: string;
+  agent_id: string;
+  workflow_id: string;
+  version_strategy: AgentWorkflowVersionStrategy;
+  version_uuid?: string;
+  timeout_seconds?: number;
+}
+
+export interface AgentWorkflowBindingCandidate extends AgentWorkflowBinding {
+  version?: string;
+  icon?: string;
+  icon_type?: AgentIconType | string;
+  icon_url?: string;
+  updated_at?: number;
+}
+
+export interface AgentWorkflowBindingCandidatesResponse {
+  data: AgentWorkflowBindingCandidate[];
 }
 
 export interface AgentMemorySlotConfig {
@@ -248,6 +274,7 @@ export interface UpdateAgentRuntimeConfigRequest {
   knowledge_dataset_ids?: string[];
   knowledge_retrieval_config?: Record<string, unknown>;
   database_bindings?: AgentDatabaseBinding[];
+  workflow_bindings?: AgentWorkflowBinding[];
 }
 
 export interface AgentSuggestedQuestionSkillContext {

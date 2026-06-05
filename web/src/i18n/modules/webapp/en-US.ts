@@ -205,6 +205,12 @@ const messages = {
       answerPrefix: 'My answers:',
       additionalInput: 'Additional note',
     },
+    workflow: {
+      approvalPending: 'Workflow is waiting for approval',
+      openApproval: 'Open approval',
+      formId: 'Form {id}',
+      token: 'Token {token}',
+    },
     skillPreferences: {
       action: 'My Skills',
       title: 'My AIChat Skills',

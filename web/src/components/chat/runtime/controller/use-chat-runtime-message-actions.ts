@@ -281,6 +281,34 @@ export function useChatRuntimeMessageActions({
               applyMemoryMutation(payload, eventId);
               refreshAccountMemoryAfterMemoryMutation(payload);
             },
+            onWorkflowStarted: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              eventAppliers.applyWorkflowStarted(payload, eventId);
+            },
+            onWorkflowNodeStarted: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              eventAppliers.applyWorkflowNodeStarted(payload, eventId);
+            },
+            onWorkflowNodeFinished: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              eventAppliers.applyWorkflowNodeFinished(payload, eventId);
+            },
+            onWorkflowPaused: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              eventAppliers.applyWorkflowPaused(payload, eventId);
+            },
+            onWorkflowApprovalRequested: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              eventAppliers.applyWorkflowApprovalRequested(payload, eventId);
+            },
+            onWorkflowFinished: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              eventAppliers.applyWorkflowFinished(payload, eventId);
+            },
+            onWorkflowFailed: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              eventAppliers.applyWorkflowFailed(payload, eventId);
+            },
             onMessageChunk: (payload, eventId) => {
               if (abortController.signal.aborted) return;
               applyMessageChunk(payload, eventId);
@@ -386,6 +414,7 @@ export function useChatRuntimeMessageActions({
       applySkillLoadStart,
       applySkillReferenceRead,
       applyStreamError,
+      eventAppliers,
       markSelectionTarget,
       pendingStreamAbortRef,
       requireModel,
@@ -596,6 +625,34 @@ export function useChatRuntimeMessageActions({
               applyMemoryMutation(payload, eventId);
               refreshAccountMemoryAfterMemoryMutation(payload);
             },
+            onWorkflowStarted: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              eventAppliers.applyWorkflowStarted(payload, eventId);
+            },
+            onWorkflowNodeStarted: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              eventAppliers.applyWorkflowNodeStarted(payload, eventId);
+            },
+            onWorkflowNodeFinished: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              eventAppliers.applyWorkflowNodeFinished(payload, eventId);
+            },
+            onWorkflowPaused: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              eventAppliers.applyWorkflowPaused(payload, eventId);
+            },
+            onWorkflowApprovalRequested: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              eventAppliers.applyWorkflowApprovalRequested(payload, eventId);
+            },
+            onWorkflowFinished: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              eventAppliers.applyWorkflowFinished(payload, eventId);
+            },
+            onWorkflowFailed: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              eventAppliers.applyWorkflowFailed(payload, eventId);
+            },
             onMessageChunk: (payload, eventId) => {
               if (abortController.signal.aborted) return;
               applyMessageChunk(payload, eventId);
@@ -681,6 +738,7 @@ export function useChatRuntimeMessageActions({
       applySkillLoadStart,
       applySkillReferenceRead,
       applyStreamError,
+      eventAppliers,
       markSelectionTarget,
       refreshAccountMemoryAfterMemoryMutation,
       setControllerState,

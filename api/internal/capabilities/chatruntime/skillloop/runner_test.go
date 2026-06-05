@@ -9,11 +9,13 @@ import (
 	"path/filepath"
 	"testing"
 
+	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"github.com/zgiai/zgi/api/internal/modules/tools/builtin/calculator"
+	workflowbuiltin "github.com/zgiai/zgi/api/internal/modules/tools/builtin/workflow"
 )
 
 func TestRunnerAllowsBatchRecoverableSkillToolFailures(t *testing.T) {
@@ -109,6 +111,150 @@ Use the calculator tool.
 	}
 }
 
+func TestRunnerForwardsAgentWorkflowEvents(t *testing.T) {
+	ctx := context.Background()
+	catalogDir := t.TempDir()
+	writeRunnerTestSkill(t, catalogDir, "agent-workflow", `---
+name: agent-workflow
+description: Run Agent-bound workflows.
+when_to_use: Use when testing Agent workflow event bridging.
+provider_type: builtin
+provider_id: workflow
+runtime_type: tool
+tools:
+  - run_agent_workflow
+---
+
+# Agent Workflow
+
+Use the workflow tool.
+`)
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_load",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolLoadSkill,
+								Arguments: `{"skill_id":"agent-workflow"}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{
+							runnerTestSkillToolCall("call_workflow", "agent-workflow", "run_agent_workflow", map[string]interface{}{
+								"binding_id": "approval-flow",
+								"inputs":     map[string]interface{}{"query": "run workflow"},
+							}),
+						},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{Role: "assistant", Content: "workflow done"},
+				}},
+			},
+		},
+	}
+	workflowRunner := &runnerTestWorkflowRunner{
+		events: []automationaction.WorkflowRunEvent{
+			{
+				Type: EventWorkflowStarted,
+				Payload: map[string]interface{}{
+					"workflow_run_id": "run-1",
+					"status":          "running",
+				},
+			},
+			{
+				Type: EventWorkflowNodeStarted,
+				Payload: map[string]interface{}{
+					"workflow_run_id": "run-1",
+					"node_id":         "node-1",
+					"status":          "running",
+				},
+			},
+		},
+	}
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(workflowbuiltin.NewProvider(func() automationaction.AutomationWorkflowRunner {
+		return workflowRunner
+	})); err != nil {
+		t.Fatalf("register workflow provider: %v", err)
+	}
+	runtime := skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
+	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{"agent-workflow"})
+	if err != nil {
+		t.Fatalf("resolve skills: %v", err)
+	}
+
+	var events []Event
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+		OnEvent: func(event Event) error {
+			events = append(events, event)
+			return nil
+		},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "run workflow"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: resolved,
+		ExecutionContext: skills.ExecutionContext{
+			OrganizationID: "org-1",
+			UserID:         "account-1",
+			ConversationID: "conv-1",
+			MessageID:      "msg-1",
+			InvokeFrom:     tools.ToolInvokeFromAgent,
+			RuntimeParameters: map[string]interface{}{
+				"organization_id": "org-1",
+				"workspace_id":    "workspace-1",
+				"workflow_bindings": []map[string]interface{}{
+					{
+						"binding_id":       "approval-flow",
+						"label":            "Approval flow",
+						"agent_id":         "agent-1",
+						"workflow_id":      "workflow-1",
+						"version_strategy": "latest_published",
+						"timeout_seconds":  60,
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "workflow done" {
+		t.Fatalf("answer = %q, want workflow done", answer)
+	}
+	workflowStarted := findRunnerTestEvent(events, EventWorkflowStarted)
+	if workflowStarted == nil {
+		t.Fatalf("events = %#v, want workflow_started", events)
+	}
+	if workflowStarted.Payload["conversation_id"] != "conv-1" || workflowStarted.Payload["message_id"] != "msg-1" {
+		t.Fatalf("workflow_started payload = %#v, want conversation/message ids", workflowStarted.Payload)
+	}
+	nodeStarted := findRunnerTestEvent(events, EventWorkflowNodeStarted)
+	if nodeStarted == nil || nodeStarted.Payload["node_id"] != "node-1" {
+		t.Fatalf("events = %#v, want node_started node-1", events)
+	}
+}
+
 func writeRunnerTestSkill(t *testing.T, catalogDir string, skillID string, content string) {
 	t.Helper()
 
@@ -140,6 +286,35 @@ func runnerTestSkillToolCall(callID string, skillID string, toolName string, arg
 type runnerTestLLMClient struct {
 	appChatResponses []*adapter.ChatResponse
 	appChatCalls     int
+}
+
+type runnerTestWorkflowRunner struct {
+	events []automationaction.WorkflowRunEvent
+}
+
+func (f *runnerTestWorkflowRunner) RunAutomationWorkflow(ctx context.Context, req automationaction.WorkflowRunRequest) (*automationaction.WorkflowRunResult, error) {
+	_ = ctx
+	for _, event := range f.events {
+		if req.EventSink != nil {
+			req.EventSink(event)
+		}
+	}
+	return &automationaction.WorkflowRunResult{
+		WorkflowRunID: "run-1",
+		WorkflowID:    req.WorkflowRef.WorkflowID,
+		AgentID:       req.WorkflowRef.AgentID,
+		Status:        "succeeded",
+		Outputs:       map[string]interface{}{},
+	}, nil
+}
+
+func findRunnerTestEvent(events []Event, eventType string) *Event {
+	for i := range events {
+		if events[i].Type == eventType {
+			return &events[i]
+		}
+	}
+	return nil
 }
 
 func (f *runnerTestLLMClient) Chat(ctx context.Context, organizationID string, req *adapter.ChatRequest) (*adapter.ChatResponse, error) {

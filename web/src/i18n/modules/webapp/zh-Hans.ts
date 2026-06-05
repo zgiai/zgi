@@ -195,6 +195,12 @@ const messages: WebappMessages = {
       answerPrefix: '我的回答：',
       additionalInput: '补充说明',
     },
+    workflow: {
+      approvalPending: '工作流正在等待审批',
+      openApproval: '打开审批',
+      formId: '表单 {id}',
+      token: '令牌 {token}',
+    },
     skillPreferences: {
       action: '我的 Skill',
       title: '我的 AIChat Skill',

@@ -23,6 +23,13 @@ const (
 	EventSkillLoadEnd         = "skill_load_end"
 	EventSkillReferenceRead   = "skill_reference_read"
 	EventSkillArtifactCreated = "skill_artifact_created"
+	EventWorkflowStarted      = "workflow_started"
+	EventWorkflowNodeStarted  = "node_started"
+	EventWorkflowNodeFinished = "node_finished"
+	EventWorkflowPaused       = "workflow_paused"
+	EventWorkflowApproval     = "approval_requested"
+	EventWorkflowFinished     = "workflow_finished"
+	EventWorkflowFailed       = "workflow_failed"
 )
 
 var ErrInvalidInput = errors.New("invalid input")

@@ -147,6 +147,48 @@ export interface AIChatSkillInvocation {
   created_at?: number;
 }
 
+export interface AIChatWorkflowRunNodeMetadata {
+  node_id?: string;
+  execution_id?: string;
+  id?: string;
+  node_type?: string;
+  type?: string;
+  title?: string;
+  node_title?: string;
+  name?: string;
+  label?: string;
+  status?: string;
+  inputs?: unknown;
+  outputs?: unknown;
+  elapsed_time?: number;
+  error?: string;
+  created_at?: number;
+}
+
+export interface AIChatWorkflowRunApprovalMetadata extends Record<string, unknown> {
+  approval_form_id?: string;
+  approval_token?: string;
+  approval_url?: string;
+  approval_form?: unknown;
+}
+
+export interface AIChatWorkflowRunMetadata {
+  workflow_run_id?: string;
+  task_id?: string;
+  id?: string;
+  workflow_id?: string;
+  agent_id?: string;
+  version?: string;
+  status?: string;
+  inputs?: unknown;
+  outputs?: unknown;
+  elapsed_time?: number;
+  error?: string;
+  approval?: AIChatWorkflowRunApprovalMetadata;
+  nodes?: AIChatWorkflowRunNodeMetadata[];
+  created_at?: number;
+}
+
 export type AIChatFileContentStatus =
   | 'pending'
   | 'extracted'
@@ -208,6 +250,8 @@ export interface AIChatMessageMetadata {
   tool_call_count?: number;
   tool_names?: string[];
   skill_invocations?: AIChatSkillInvocation[];
+  workflow_run_count?: number;
+  workflow_runs?: AIChatWorkflowRunMetadata[];
   file_count?: number;
   files?: AIChatMessageFile[];
   generated_file_count?: number;
@@ -492,6 +536,44 @@ export interface AIChatMemoryMutationEventData {
   content?: string;
   content_preview?: string;
   created_at?: number;
+}
+
+export interface AIChatWorkflowEventData extends Record<string, unknown> {
+  conversation_id: string;
+  message_id: string;
+  workflow_run_id?: string;
+  task_id?: string;
+  workflow_id?: string;
+  agent_id?: string;
+  status?: string;
+  elapsed_time?: number;
+  error?: string;
+  created_at?: number;
+}
+
+export interface AIChatWorkflowNodeEventData extends AIChatWorkflowEventData {
+  node_id?: string;
+  id?: string;
+  execution_id?: string;
+  node_type?: string;
+  type?: string;
+  title?: string;
+  node_title?: string;
+  name?: string;
+  label?: string;
+  inputs?: unknown;
+  outputs?: unknown;
+}
+
+export interface AIChatWorkflowPausedEventData extends AIChatWorkflowEventData {
+  node_id?: string;
+  node_ids?: string[];
+  node_type?: string;
+  title?: string;
+  approval_form_id?: string;
+  approval_token?: string;
+  approval_url?: string;
+  approval_form?: unknown;
 }
 
 export interface AIChatFileParseStartEventData {

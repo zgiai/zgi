@@ -8,6 +8,7 @@ import (
 
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
+	"github.com/zgiai/zgi/api/internal/modules/tools/workflowevents"
 )
 
 func TestListAgentWorkflowsReturnsRuntimeBindingsOnly(t *testing.T) {
@@ -26,6 +27,23 @@ func TestListAgentWorkflowsReturnsRuntimeBindingsOnly(t *testing.T) {
 	}
 	if workflows[0]["workflow_id"] != nil {
 		t.Fatalf("workflow_id leaked in list payload: %#v", workflows[0])
+	}
+	if workflows[0]["default_input_key"] != "query" {
+		t.Fatalf("default_input_key = %#v, want query", workflows[0]["default_input_key"])
+	}
+	if schema, ok := workflows[0]["input_schema"].(map[string]interface{}); !ok || schema["type"] != "object" {
+		t.Fatalf("input_schema = %#v, want object schema", workflows[0]["input_schema"])
+	}
+}
+
+func TestRunAgentWorkflowRejectsMissingQuery(t *testing.T) {
+	runtimeTool := workflowRuntimeTool(t, ToolRunAgentWorkflow, &fakeWorkflowRunner{})
+
+	_, err := runtimeTool.Invoke(context.Background(), "caller-1", map[string]interface{}{
+		"binding_id": "approval-flow",
+	}, nil, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "inputs.query is required") {
+		t.Fatalf("Invoke() error = %v, want missing query rejection", err)
 	}
 }
 
@@ -66,9 +84,15 @@ func TestRunAgentWorkflowReturnsSucceededOutputs(t *testing.T) {
 	if runner.lastReq.WorkflowRef.WorkflowID != "workflow-1" || runner.lastReq.WorkflowRef.AgentID != "agent-1" {
 		t.Fatalf("workflow ref = %#v, want bound workflow", runner.lastReq.WorkflowRef)
 	}
+	if runner.lastReq.Inputs["query"] != "approve" || runner.lastReq.Inputs["sys.query"] != "approve" {
+		t.Fatalf("workflow inputs = %#v, want query and sys.query", runner.lastReq.Inputs)
+	}
 	payload := messages[0].Data
 	if payload["status"] != "succeeded" || payload["workflow_run_id"] != "run-1" {
 		t.Fatalf("payload = %#v, want succeeded run-1", payload)
+	}
+	if payload["primary_output"] != "done" {
+		t.Fatalf("primary_output = %#v, want done", payload["primary_output"])
 	}
 	outputs, _ := payload["outputs"].(map[string]interface{})
 	if outputs["answer"] != "done" {
@@ -98,6 +122,7 @@ func TestRunAgentWorkflowReturnsPendingApprovalFields(t *testing.T) {
 
 	messages, err := runtimeTool.Invoke(context.Background(), "caller-1", map[string]interface{}{
 		"binding_id": "approval-flow",
+		"inputs":     map[string]interface{}{"query": "approval request"},
 	}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("Invoke() error = %v", err)
@@ -125,6 +150,7 @@ func TestRunAgentWorkflowReturnsFailedSummary(t *testing.T) {
 
 	messages, err := runtimeTool.Invoke(context.Background(), "caller-1", map[string]interface{}{
 		"binding_id": "approval-flow",
+		"inputs":     map[string]interface{}{"query": "fail this"},
 	}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("Invoke() error = %v", err)
@@ -132,6 +158,56 @@ func TestRunAgentWorkflowReturnsFailedSummary(t *testing.T) {
 	payload := messages[0].Data
 	if payload["status"] != "failed" || !strings.Contains(stringValue(payload, "error"), "node failed") {
 		t.Fatalf("payload = %#v, want failed summary", payload)
+	}
+}
+
+func TestRunAgentWorkflowForwardsWorkflowEvents(t *testing.T) {
+	runner := &fakeWorkflowRunner{
+		emitEvents: []automationaction.WorkflowRunEvent{
+			{
+				Type: "workflow_started",
+				Payload: map[string]interface{}{
+					"workflow_run_id": "run-event",
+					"status":          "running",
+				},
+			},
+			{
+				Type: "node_started",
+				Payload: map[string]interface{}{
+					"workflow_run_id": "run-event",
+					"node_id":         "node-1",
+					"status":          "running",
+				},
+			},
+		},
+		result: &automationaction.WorkflowRunResult{
+			WorkflowRunID: "run-event",
+			WorkflowID:    "workflow-1",
+			AgentID:       "agent-1",
+			Status:        "succeeded",
+		},
+	}
+	runtimeTool := workflowRuntimeTool(t, ToolRunAgentWorkflow, runner)
+	var events []workflowevents.Event
+	ctx := workflowevents.WithEmitter(context.Background(), func(event workflowevents.Event) {
+		events = append(events, event)
+	})
+
+	_, err := runtimeTool.Invoke(ctx, "caller-1", map[string]interface{}{
+		"binding_id": "approval-flow",
+		"inputs":     map[string]interface{}{"query": "emit events"},
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("events = %#v, want 2 forwarded events", events)
+	}
+	if events[0].Type != "workflow_started" || events[0].Payload["workflow_run_id"] != "run-event" {
+		t.Fatalf("first event = %#v, want workflow_started run-event", events[0])
+	}
+	if events[1].Type != "node_started" || events[1].Payload["node_id"] != "node-1" {
+		t.Fatalf("second event = %#v, want node_started node-1", events[1])
 	}
 }
 
@@ -217,11 +293,17 @@ type fakeWorkflowRunner struct {
 	statusErr     error
 	lastReq       automationaction.WorkflowRunRequest
 	lastStatusReq automationaction.WorkflowRunStatusRequest
+	emitEvents    []automationaction.WorkflowRunEvent
 }
 
 func (f *fakeWorkflowRunner) RunAutomationWorkflow(ctx context.Context, req automationaction.WorkflowRunRequest) (*automationaction.WorkflowRunResult, error) {
 	_ = ctx
 	f.lastReq = req
+	for _, event := range f.emitEvents {
+		if req.EventSink != nil {
+			req.EventSink(event)
+		}
+	}
 	if f.result != nil || f.err != nil {
 		return f.result, f.err
 	}

@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"github.com/zgiai/zgi/api/internal/modules/tools/builtin"
+	"github.com/zgiai/zgi/api/internal/modules/tools/workflowevents"
 )
 
 const (
@@ -21,6 +23,7 @@ const (
 	defaultTimeoutSeconds = 600
 	minTimeoutSeconds     = 30
 	maxTimeoutSeconds     = 1800
+	defaultInputKey       = "query"
 )
 
 type RunnerProvider func() automationaction.AutomationWorkflowRunner
@@ -151,6 +154,10 @@ func (t *workflowTool) runWorkflow(ctx context.Context, scope workflowScope, par
 	if err != nil {
 		return nil, err
 	}
+	inputs, err = normalizeWorkflowInputs(inputs)
+	if err != nil {
+		return nil, err
+	}
 	timeout := time.Duration(normalizeTimeoutSeconds(binding.TimeoutSeconds)) * time.Second
 	runReq := automationaction.WorkflowRunRequest{
 		OrganizationID: scope.OrganizationID,
@@ -165,6 +172,14 @@ func (t *workflowTool) runWorkflow(ctx context.Context, scope workflowScope, par
 		},
 		Inputs:  inputs,
 		Timeout: timeout,
+	}
+	if emitter := workflowevents.FromContext(ctx); emitter != nil {
+		runReq.EventSink = func(event automationaction.WorkflowRunEvent) {
+			emitter(workflowevents.Event{
+				Type:    event.Type,
+				Payload: event.Payload,
+			})
+		}
 	}
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -212,13 +227,16 @@ func (t *workflowTool) getWorkflowRunStatus(ctx context.Context, scope workflowS
 
 func workflowResultPayload(result *automationaction.WorkflowRunResult, runErr error) map[string]interface{} {
 	status := normalizeWorkflowStatus(result.Status)
+	outputs := safeOutputs(result.Outputs)
 	payload := map[string]interface{}{
 		"status":          status,
 		"workflow_run_id": result.WorkflowRunID,
 		"workflow_id":     result.WorkflowID,
 		"agent_id":        result.AgentID,
 		"version":         result.Version,
-		"outputs":         safeOutputs(result.Outputs),
+		"outputs":         outputs,
+		"primary_output":  primaryWorkflowOutput(outputs),
+		"output_keys":     workflowOutputKeys(outputs),
 		"elapsed_time":    result.ElapsedTime,
 	}
 	if status == "pending_approval" {
@@ -233,13 +251,16 @@ func workflowResultPayload(result *automationaction.WorkflowRunResult, runErr er
 
 func workflowStatusPayload(result *automationaction.WorkflowRunStatusResult) map[string]interface{} {
 	status := normalizeWorkflowStatus(result.Status)
+	outputs := safeOutputs(result.Outputs)
 	payload := map[string]interface{}{
 		"status":           status,
 		"workflow_run_id":  result.WorkflowRunID,
 		"workflow_id":      result.WorkflowID,
 		"agent_id":         result.AgentID,
 		"version":          result.Version,
-		"outputs":          safeOutputs(result.Outputs),
+		"outputs":          outputs,
+		"primary_output":   primaryWorkflowOutput(outputs),
+		"output_keys":      workflowOutputKeys(outputs),
 		"elapsed_time":     result.ElapsedTime,
 		"created_at_unix":  result.CreatedAtUnix,
 		"finished_at_unix": result.FinishedAtUnix,
@@ -259,6 +280,9 @@ func failedWorkflowPayload(workflowRunID, workflowID, agentID string, err error)
 		"workflow_run_id": strings.TrimSpace(workflowRunID),
 		"workflow_id":     strings.TrimSpace(workflowID),
 		"agent_id":        strings.TrimSpace(agentID),
+		"outputs":         map[string]interface{}{},
+		"primary_output":  "",
+		"output_keys":     []string{},
 	}
 	if err != nil {
 		payload["error"] = strings.TrimSpace(err.Error())
@@ -352,9 +376,78 @@ func safeOutputs(outputs map[string]interface{}) map[string]interface{} {
 	return outputs
 }
 
+func primaryWorkflowOutput(outputs map[string]interface{}) string {
+	if len(outputs) == 0 {
+		return ""
+	}
+	if answer := cleanOutputText(outputs["answer"]); answer != "" {
+		return answer
+	}
+	var found string
+	var walk func(interface{})
+	walk = func(value interface{}) {
+		if found != "" || value == nil {
+			return
+		}
+		switch typed := value.(type) {
+		case map[string]interface{}:
+			if answer := cleanOutputText(typed["answer"]); answer != "" {
+				found = answer
+				return
+			}
+			for _, child := range typed {
+				walk(child)
+				if found != "" {
+					return
+				}
+			}
+		case []interface{}:
+			for _, child := range typed {
+				walk(child)
+				if found != "" {
+					return
+				}
+			}
+		}
+	}
+	walk(outputs)
+	return found
+}
+
+func cleanOutputText(value interface{}) string {
+	if value == nil {
+		return ""
+	}
+	text := strings.TrimSpace(fmt.Sprint(value))
+	if text == "<nil>" {
+		return ""
+	}
+	return text
+}
+
+func workflowOutputKeys(outputs map[string]interface{}) []string {
+	if len(outputs) == 0 {
+		return []string{}
+	}
+	keys := make([]string, 0, len(outputs))
+	for key := range outputs {
+		if strings.TrimSpace(key) != "" {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 func workflowRunAllowed(result *automationaction.WorkflowRunStatusResult, bindings []workflowBinding) bool {
 	for _, binding := range bindings {
-		if strings.TrimSpace(binding.AgentID) == strings.TrimSpace(result.AgentID) && strings.TrimSpace(binding.WorkflowID) == strings.TrimSpace(result.WorkflowID) {
+		if strings.TrimSpace(binding.AgentID) != strings.TrimSpace(result.AgentID) {
+			continue
+		}
+		if binding.VersionStrategy == "" || binding.VersionStrategy == automationaction.WorkflowVersionStrategyLatestPublished {
+			return true
+		}
+		if strings.TrimSpace(binding.WorkflowID) == strings.TrimSpace(result.WorkflowID) {
 			return true
 		}
 	}
@@ -444,11 +537,14 @@ func workflowBindingList(bindings []workflowBinding) []map[string]interface{} {
 	out := make([]map[string]interface{}, 0, len(bindings))
 	for _, binding := range bindings {
 		out = append(out, map[string]interface{}{
-			"binding_id":       binding.BindingID,
-			"label":            binding.Label,
-			"description":      binding.Description,
-			"version_strategy": binding.VersionStrategy,
-			"timeout_seconds":  normalizeTimeoutSeconds(binding.TimeoutSeconds),
+			"binding_id":        binding.BindingID,
+			"label":             binding.Label,
+			"description":       binding.Description,
+			"version_strategy":  binding.VersionStrategy,
+			"timeout_seconds":   normalizeTimeoutSeconds(binding.TimeoutSeconds),
+			"input_schema":      workflowInputSchema(),
+			"required_inputs":   []string{defaultInputKey},
+			"default_input_key": defaultInputKey,
 		})
 	}
 	return out
@@ -491,6 +587,40 @@ func inputMap(params map[string]interface{}, key string) (map[string]interface{}
 	}
 }
 
+func normalizeWorkflowInputs(inputs map[string]interface{}) (map[string]interface{}, error) {
+	if inputs == nil {
+		inputs = map[string]interface{}{}
+	}
+	query := cleanOutputText(inputs[defaultInputKey])
+	if query == "" {
+		query = cleanOutputText(inputs["sys.query"])
+	}
+	if query == "" {
+		return nil, fmt.Errorf("workflow inputs.%s is required; retry with inputs.%s set to the user's current request", defaultInputKey, defaultInputKey)
+	}
+	normalized := make(map[string]interface{}, len(inputs)+1)
+	for key, value := range inputs {
+		normalized[key] = value
+	}
+	normalized[defaultInputKey] = query
+	normalized["sys.query"] = query
+	return normalized, nil
+}
+
+func workflowInputSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			defaultInputKey: map[string]interface{}{
+				"type":        "string",
+				"description": "The user's current request or instruction to pass into the workflow.",
+			},
+		},
+		"required":             []string{defaultInputKey},
+		"additionalProperties": true,
+	}
+}
+
 func normalizeTimeoutSeconds(value int) int {
 	if value <= 0 {
 		return defaultTimeoutSeconds
@@ -506,7 +636,7 @@ func normalizeTimeoutSeconds(value int) int {
 
 func workflowToolParameters(kind string) []tools.ToolParameter {
 	bindingID := stringParam("binding_id", "Binding ID", "Workflow binding ID returned by list_agent_workflows.", true)
-	inputs := jsonParam("inputs", "Inputs", "Optional workflow input object.", false)
+	inputs := jsonParam("inputs", "Inputs", "Workflow input object. Set inputs.query to the user's current request; it is also forwarded as sys.query.", true)
 	workflowRunID := stringParam("workflow_run_id", "Workflow run ID", "Workflow run ID returned by run_agent_workflow.", true)
 	switch kind {
 	case ToolListAgentWorkflows:
@@ -580,7 +710,7 @@ func workflowToolDescription(kind string) string {
 	case ToolListAgentWorkflows:
 		return "List workflows bound to the current Agent. Does not expose arbitrary workflow lookup."
 	case ToolRunAgentWorkflow:
-		return "Run a workflow bound to the current Agent by binding_id. Returns structured status and outputs."
+		return "Run a workflow bound to the current Agent by binding_id. Pass the user's current request in inputs.query. Returns structured status, outputs, primary_output, workflow_run_id, and output_keys. After a succeeded run, the final answer must be based on primary_output or outputs; do not claim workflow output that is not present. If succeeded with no primary_output or outputs, say the workflow ran but returned no displayable output and include workflow_run_id."
 	case ToolGetWorkflowRunStatus:
 		return "Query a previously started Agent-bound workflow run by workflow_run_id."
 	default:

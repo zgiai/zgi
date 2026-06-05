@@ -7,6 +7,7 @@ import (
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
+	"github.com/zgiai/zgi/api/internal/modules/tools/workflowevents"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
@@ -283,6 +284,24 @@ func (r *Runner) handleCallSkillTool(
 	toolArgs := mapArg(args, "arguments")
 	argumentSummary := summarizeSkillToolArguments(skillID, toolName, toolArgs)
 	r.emitEvent(EventSkillCallStart, skillCallStartPayload(prepared, skillID, toolName, argumentSummary))
+	if isAgentWorkflowRunTool(skillID, toolName) {
+		ctx = workflowevents.WithEmitter(ctx, func(event workflowevents.Event) {
+			if event.Type == "" {
+				return
+			}
+			payload := event.Payload
+			if payload == nil {
+				payload = map[string]interface{}{}
+			}
+			if prepared != nil && prepared.Conversation != nil {
+				payload["conversation_id"] = prepared.Conversation.ID.String()
+			}
+			if prepared != nil && prepared.Message != nil {
+				payload["message_id"] = prepared.Message.ID.String()
+			}
+			r.emitEvent(event.Type, payload)
+		})
+	}
 	invocation, err := r.SkillRuntime.CallSkillTool(ctx, resolved, skillID, toolName, toolArgs, execCtx, callID)
 	if invocation == nil {
 		if err == nil {
@@ -311,6 +330,11 @@ func (r *Runner) handleCallSkillTool(
 		r.emitEvent(EventSkillArtifactCreated, artifact)
 	}
 	return successfulSkillStep(invocation.Trace, invocation.ToolMessage, true, true)
+}
+
+func isAgentWorkflowRunTool(skillID string, toolName string) bool {
+	return strings.EqualFold(strings.TrimSpace(skillID), skills.SkillAgentWorkflow) &&
+		strings.EqualFold(strings.TrimSpace(toolName), "run_agent_workflow")
 }
 
 func successfulSkillStep(trace skills.SkillTrace, toolMessage adapter.Message, usedSkill bool, usedTool bool) skillStepResult {

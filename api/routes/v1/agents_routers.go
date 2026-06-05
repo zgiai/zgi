@@ -105,6 +105,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	appsGroup.GET("", appHandler.GetAgentsList)
 	appsGroup.GET("/runnable-webapps", appHandler.GetRunnableWebApps)
 	appsGroup.POST("", appHandler.CreateAgent)
+	appsGroup.GET("/:agent_id/workflow-bindings/candidates", appHandler.ListAgentWorkflowBindingCandidates)
 	appsGroup.GET("/:agent_id", appHandler.GetAgent)
 	appsGroup.GET("/:agent_id/config", appHandler.GetAgentConfig)
 	appsGroup.PUT("/:agent_id/config", appHandler.UpdateAgentConfig)

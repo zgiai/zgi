@@ -42,6 +42,16 @@ type WorkflowRunRequest struct {
 	WorkflowRef    WorkflowRef
 	Inputs         map[string]interface{}
 	Timeout        time.Duration
+	EventSink      WorkflowRunEventSink
+}
+
+// WorkflowRunEventSink receives normalized workflow run events during an automation-triggered run.
+type WorkflowRunEventSink func(WorkflowRunEvent)
+
+// WorkflowRunEvent is the event contract exposed by automation-triggered workflow runs.
+type WorkflowRunEvent struct {
+	Type    string
+	Payload map[string]interface{}
 }
 
 // WorkflowRef identifies the target workflow and version strategy.

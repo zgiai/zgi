@@ -29,6 +29,16 @@ const (
 	automationApprovalFormURLAliasKey = "approval_url"
 )
 
+const (
+	automationWorkflowEventStarted           = "workflow_started"
+	automationWorkflowEventNodeStarted       = "node_started"
+	automationWorkflowEventNodeFinished      = "node_finished"
+	automationWorkflowEventPaused            = "workflow_paused"
+	automationWorkflowEventApprovalRequested = "approval_requested"
+	automationWorkflowEventFinished          = "workflow_finished"
+	automationWorkflowEventFailed            = "workflow_failed"
+)
+
 // RunAutomationWorkflow executes a published workflow from an automation action.
 func (s *WorkflowService) RunAutomationWorkflow(ctx context.Context, req automationaction.WorkflowRunRequest) (*automationaction.WorkflowRunResult, error) {
 	if s == nil {
@@ -79,9 +89,21 @@ func (s *WorkflowService) RunAutomationWorkflow(ctx context.Context, req automat
 	}
 
 	inputs["sys.workflow_run_id"] = workflowRunLogID
+	nodeMetas := automationWorkflowNodeMetas(graphData)
+	emitAutomationWorkflowStarted(req.EventSink, req, target, workflowRunLogID)
 
 	startedAt := time.Now()
-	executionResult, execErr := s.executor.ExecuteSimpleWorkflowWithRunID(runCtx, workflowRunLogID, graphData, inputs)
+	executionResult, execErr := s.executor.ExecuteSimpleWorkflowWithRunIDAndCallbacks(runCtx, workflowRunLogID, graphData, inputs, graph_engine.EngineCallbacks{
+		NodeStarted: func(nodeID string, nodeType string, inputs map[string]any) {
+			meta := automationWorkflowEventNodeMeta(nodeMetas, nodeID, nodeType)
+			emitAutomationWorkflowNodeStarted(req.EventSink, req, target, workflowRunLogID, meta, inputs)
+		},
+		NodeFinished: func(nodeID string, nodeType string, status string, outputs map[string]any, edgeSourceHandle string, err error) {
+			_ = edgeSourceHandle
+			meta := automationWorkflowEventNodeMeta(nodeMetas, nodeID, nodeType)
+			emitAutomationWorkflowNodeFinished(req.EventSink, req, target, workflowRunLogID, meta, status, outputs, err)
+		},
+	})
 	elapsedTime := time.Since(startedAt).Seconds()
 	finalizeCtx, cancelFinalize := automationFinalizationContext(runCtx)
 	defer cancelFinalize()
@@ -117,10 +139,12 @@ func (s *WorkflowService) RunAutomationWorkflow(ctx context.Context, req automat
 		if err := s.PauseWorkflowRunLog(finalizeCtx, workflowRunLogID, outputs, elapsedTime, 0, totalSteps); err != nil {
 			return nil, fmt.Errorf("pause automation workflow run log: %w", err)
 		}
+		emitAutomationWorkflowPaused(req.EventSink, req, target, workflowRunLogID, executionResult, outputs, elapsedTime, nodeMetas)
 	} else if err := s.UpdateWorkflowRunLogStatus(finalizeCtx, workflowRunLogID, status, outputs, elapsedTime, 0, totalSteps, errorMessage); err != nil {
 		return nil, fmt.Errorf("update automation workflow run log: %w", err)
 	}
 	if execErr != nil {
+		emitAutomationWorkflowFailed(req.EventSink, req, target, workflowRunLogID, outputs, elapsedTime, execErr)
 		return &automationaction.WorkflowRunResult{
 			WorkflowRunID: workflowRunLogID,
 			WorkflowID:    target.ID,
@@ -130,6 +154,9 @@ func (s *WorkflowService) RunAutomationWorkflow(ctx context.Context, req automat
 			Outputs:       outputs,
 			ElapsedTime:   elapsedTime,
 		}, fmt.Errorf("workflow execution failed: %w", execErr)
+	}
+	if status != string(dto.WorkflowRunStatusPaused) {
+		emitAutomationWorkflowFinished(req.EventSink, req, target, workflowRunLogID, outputs, elapsedTime)
 	}
 
 	return &automationaction.WorkflowRunResult{
@@ -141,6 +168,168 @@ func (s *WorkflowService) RunAutomationWorkflow(ctx context.Context, req automat
 		Outputs:       outputs,
 		ElapsedTime:   elapsedTime,
 	}, nil
+}
+
+func emitAutomationWorkflowStarted(sink automationaction.WorkflowRunEventSink, req automationaction.WorkflowRunRequest, workflow *Workflow, workflowRunID string) {
+	emitAutomationWorkflowEvent(sink, automationWorkflowEventStarted, automationWorkflowBasePayload(req, workflow, workflowRunID, map[string]interface{}{
+		"id":         workflowRunID,
+		"status":     "running",
+		"inputs":     copyWorkflowAnyMap(req.Inputs),
+		"created_at": time.Now().Unix(),
+	}))
+}
+
+func emitAutomationWorkflowNodeStarted(sink automationaction.WorkflowRunEventSink, req automationaction.WorkflowRunRequest, workflow *Workflow, workflowRunID string, meta automationWorkflowNodeMeta, inputs map[string]any) {
+	payload := automationWorkflowBasePayload(req, workflow, workflowRunID, automationWorkflowNodePayload(meta))
+	payload["status"] = "running"
+	payload["inputs"] = copyWorkflowAnyMap(inputs)
+	payload["created_at"] = time.Now().Unix()
+	emitAutomationWorkflowEvent(sink, automationWorkflowEventNodeStarted, payload)
+}
+
+func emitAutomationWorkflowNodeFinished(sink automationaction.WorkflowRunEventSink, req automationaction.WorkflowRunRequest, workflow *Workflow, workflowRunID string, meta automationWorkflowNodeMeta, status string, outputs map[string]any, err error) {
+	payload := automationWorkflowBasePayload(req, workflow, workflowRunID, automationWorkflowNodePayload(meta))
+	payload["status"] = strings.TrimSpace(status)
+	payload["outputs"] = copyWorkflowAnyMap(outputs)
+	payload["created_at"] = time.Now().Unix()
+	if err != nil {
+		payload["error"] = err.Error()
+	}
+	emitAutomationWorkflowEvent(sink, automationWorkflowEventNodeFinished, payload)
+}
+
+func emitAutomationWorkflowPaused(sink automationaction.WorkflowRunEventSink, req automationaction.WorkflowRunRequest, workflow *Workflow, workflowRunID string, result *WorkflowExecutionResult, outputs map[string]interface{}, elapsedTime float64, nodeMetas map[string]automationWorkflowNodeMeta) {
+	pausedSnapshots := workflowGraphPausedSnapshots(nil)
+	if result != nil {
+		pausedSnapshots = workflowGraphPausedSnapshots(result.NodeExecutions)
+	}
+	nodeIDs := make([]string, 0, len(pausedSnapshots))
+	for _, snapshot := range pausedSnapshots {
+		nodeIDs = append(nodeIDs, snapshot.NodeID)
+	}
+	payload := automationWorkflowBasePayload(req, workflow, workflowRunID, map[string]interface{}{
+		"status":       "pending_approval",
+		"node_ids":     nodeIDs,
+		"elapsed_time": elapsedTime,
+		"outputs":      copyWorkflowAnyMap(outputs),
+		"created_at":   time.Now().Unix(),
+	})
+	if len(pausedSnapshots) > 0 {
+		meta := automationWorkflowEventNodeMeta(nodeMetas, pausedSnapshots[0].NodeID, string(pausedSnapshots[0].NodeType))
+		for key, value := range automationWorkflowNodePayload(meta) {
+			payload[key] = value
+		}
+	}
+	emitAutomationWorkflowEvent(sink, automationWorkflowEventPaused, payload)
+	emitAutomationWorkflowApprovalRequested(sink, req, workflow, workflowRunID, outputs, elapsedTime, pausedSnapshots, nodeMetas)
+}
+
+func emitAutomationWorkflowApprovalRequested(sink automationaction.WorkflowRunEventSink, req automationaction.WorkflowRunRequest, workflow *Workflow, workflowRunID string, outputs map[string]interface{}, elapsedTime float64, pausedSnapshots []graph_engine.NodeExecutionSnapshot, nodeMetas map[string]automationWorkflowNodeMeta) {
+	payload := automationWorkflowBasePayload(req, workflow, workflowRunID, map[string]interface{}{
+		"status":       "pending_approval",
+		"elapsed_time": elapsedTime,
+		"created_at":   time.Now().Unix(),
+	})
+	for key, value := range automationApprovalEventFields(outputs) {
+		payload[key] = value
+	}
+	if len(pausedSnapshots) > 0 {
+		meta := automationWorkflowEventNodeMeta(nodeMetas, pausedSnapshots[0].NodeID, string(pausedSnapshots[0].NodeType))
+		for key, value := range automationWorkflowNodePayload(meta) {
+			payload[key] = value
+		}
+	}
+	emitAutomationWorkflowEvent(sink, automationWorkflowEventApprovalRequested, payload)
+}
+
+func emitAutomationWorkflowFinished(sink automationaction.WorkflowRunEventSink, req automationaction.WorkflowRunRequest, workflow *Workflow, workflowRunID string, outputs map[string]interface{}, elapsedTime float64) {
+	emitAutomationWorkflowEvent(sink, automationWorkflowEventFinished, automationWorkflowBasePayload(req, workflow, workflowRunID, map[string]interface{}{
+		"status":       "completed",
+		"outputs":      copyWorkflowAnyMap(outputs),
+		"elapsed_time": elapsedTime,
+		"created_at":   time.Now().Unix(),
+	}))
+}
+
+func emitAutomationWorkflowFailed(sink automationaction.WorkflowRunEventSink, req automationaction.WorkflowRunRequest, workflow *Workflow, workflowRunID string, outputs map[string]interface{}, elapsedTime float64, err error) {
+	payload := automationWorkflowBasePayload(req, workflow, workflowRunID, map[string]interface{}{
+		"status":       "failed",
+		"outputs":      copyWorkflowAnyMap(outputs),
+		"elapsed_time": elapsedTime,
+		"created_at":   time.Now().Unix(),
+	})
+	if err != nil {
+		payload["error"] = err.Error()
+	}
+	emitAutomationWorkflowEvent(sink, automationWorkflowEventFailed, payload)
+}
+
+func emitAutomationWorkflowEvent(sink automationaction.WorkflowRunEventSink, eventType string, payload map[string]interface{}) {
+	if sink == nil {
+		return
+	}
+	if payload == nil {
+		payload = map[string]interface{}{}
+	}
+	sink(automationaction.WorkflowRunEvent{Type: eventType, Payload: payload})
+}
+
+func automationWorkflowBasePayload(req automationaction.WorkflowRunRequest, workflow *Workflow, workflowRunID string, payload map[string]interface{}) map[string]interface{} {
+	if payload == nil {
+		payload = map[string]interface{}{}
+	}
+	payload["workflow_run_id"] = workflowRunID
+	payload["task_id"] = workflowRunID
+	payload["workflow_id"] = req.WorkflowRef.WorkflowID
+	payload["agent_id"] = req.WorkflowRef.AgentID
+	payload["version"] = req.WorkflowRef.VersionUUID
+	if workflow != nil {
+		payload["workflow_id"] = workflow.ID
+		payload["agent_id"] = workflow.AgentID
+		payload["version"] = workflow.Version
+	}
+	return payload
+}
+
+func automationWorkflowEventNodeMeta(nodeMetas map[string]automationWorkflowNodeMeta, nodeID string, nodeType string) automationWorkflowNodeMeta {
+	meta := nodeMetas[nodeID]
+	if meta.NodeID == "" {
+		meta.NodeID = nodeID
+	}
+	if meta.NodeType == "" {
+		meta.NodeType = nodeType
+	}
+	if meta.Title == "" {
+		meta.Title = meta.NodeID
+	}
+	return meta
+}
+
+func automationWorkflowNodePayload(meta automationWorkflowNodeMeta) map[string]interface{} {
+	payload := map[string]interface{}{
+		"id":        meta.NodeID,
+		"node_id":   meta.NodeID,
+		"node_type": meta.NodeType,
+		"title":     meta.Title,
+		"index":     meta.Index,
+	}
+	if meta.PredecessorNodeID != nil {
+		payload["predecessor_node_id"] = *meta.PredecessorNodeID
+	}
+	return payload
+}
+
+func automationApprovalEventFields(outputs map[string]interface{}) map[string]interface{} {
+	fields := map[string]interface{}{}
+	if outputs == nil {
+		return fields
+	}
+	copyAutomationApprovalField(fields, outputs, automationApprovalFormIDKey, automationApprovalFormIDAliasKey)
+	copyAutomationApprovalField(fields, outputs, automationApprovalTokenKey, automationApprovalTokenAliasKey)
+	copyAutomationApprovalField(fields, outputs, automationApprovalFormURLAliasKey, automationApprovalFormURLAliasKey)
+	copyAutomationApprovalField(fields, outputs, automationApprovalFormKey, automationApprovalFormAliasKey)
+	copyAutomationApprovalField(fields, outputs, automationApprovalFormAliasKey, automationApprovalFormAliasKey)
+	return fields
 }
 
 // GetAutomationWorkflowRunStatus returns a safe run summary for an automation-triggered workflow.
@@ -198,9 +387,9 @@ func automationWorkflowOutputs(result *WorkflowExecutionResult) map[string]inter
 	if result == nil {
 		return map[string]interface{}{}
 	}
-	outputs := make(map[string]interface{}, len(result.NodeResults)+4)
-	for key, value := range result.NodeResults {
-		outputs[key] = value
+	outputs := workflowExecutionOutputs(result)
+	if outputs == nil {
+		outputs = map[string]interface{}{}
 	}
 	mergeAutomationApprovalOutputs(outputs, result.NodeExecutions)
 	return outputs
@@ -275,7 +464,7 @@ func (s *WorkflowService) resolveAutomationWorkflowTarget(ctx context.Context, r
 		if workflow == nil {
 			return nil, fmt.Errorf("latest published workflow not found for agent %s", ref.AgentID)
 		}
-		if err := validateAutomationWorkflowTarget(workflow, ref); err != nil {
+		if err := validateAutomationWorkflowTarget(workflow, ref, false); err != nil {
 			return nil, err
 		}
 		return workflow, nil
@@ -287,7 +476,7 @@ func (s *WorkflowService) resolveAutomationWorkflowTarget(ctx context.Context, r
 		if err != nil {
 			return nil, fmt.Errorf("get pinned workflow version %s: %w", ref.VersionUUID, err)
 		}
-		if err := validateAutomationWorkflowTarget(workflow, ref); err != nil {
+		if err := validateAutomationWorkflowTarget(workflow, ref, true); err != nil {
 			return nil, err
 		}
 		return workflow, nil
@@ -296,14 +485,14 @@ func (s *WorkflowService) resolveAutomationWorkflowTarget(ctx context.Context, r
 	}
 }
 
-func validateAutomationWorkflowTarget(workflow *Workflow, ref automationaction.WorkflowRef) error {
+func validateAutomationWorkflowTarget(workflow *Workflow, ref automationaction.WorkflowRef, requireWorkflowID bool) error {
 	if workflow == nil {
 		return fmt.Errorf("workflow target is required")
 	}
 	if agentID := strings.TrimSpace(ref.AgentID); agentID != "" && workflow.AgentID != agentID {
 		return fmt.Errorf("workflow %s does not belong to agent %s", workflow.ID, agentID)
 	}
-	if workflowID := strings.TrimSpace(ref.WorkflowID); workflowID != "" && workflow.ID != workflowID {
+	if workflowID := strings.TrimSpace(ref.WorkflowID); requireWorkflowID && workflowID != "" && workflow.ID != workflowID {
 		return fmt.Errorf("workflow version %s does not belong to workflow %s", ref.VersionUUID, workflowID)
 	}
 	return nil

@@ -1568,6 +1568,7 @@ const messages = {
       skills: 'Skill',
       knowledge: 'Knowledge',
       databases: 'Databases',
+      workflows: 'Workflows',
       files: 'Files',
       memory: 'Memory',
     },
@@ -1677,6 +1678,28 @@ const messages = {
       clearWritableTables: 'Clear writable',
       removeTable: 'Remove {name}',
       idLabel: 'ID: {id}',
+    },
+    workflow: {
+      emptySelected: 'No workflow has been linked to this Agent yet.',
+      add: 'Add workflow',
+      remove: 'Remove {name}',
+      helpText:
+        'Bound workflows are available to the Agent as process tools. Only active workflows with a published version in the current workspace can be selected.',
+      dialogTitle: 'Add workflow',
+      dialogDescription:
+        'Select published workflows from the current workspace. Selected workflows run the latest published version by default.',
+      selectedCount: '{count} selected',
+      searchPlaceholder: 'Search workflows',
+      noWorkflows: 'No published workflow is available.',
+      noDescription: 'No description',
+      unnamedWorkflow: 'Unnamed workflow',
+      unavailableWorkflow: 'Workflow unavailable',
+      unavailableDescription:
+        'This workflow is no longer available. It will be removed after candidates refresh.',
+      latestPublished: 'Latest published',
+      versionLabel: 'Version {version}',
+      cancel: 'Cancel',
+      confirm: 'Confirm',
     },
     suggestions: {
       generate: 'Generate',

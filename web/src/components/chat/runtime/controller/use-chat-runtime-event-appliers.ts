@@ -20,6 +20,9 @@ import type {
   AIChatSkillLoadStartEventData,
   AIChatSkillReferenceReadEventData,
   AIChatUserInputRequestedEventData,
+  AIChatWorkflowEventData,
+  AIChatWorkflowNodeEventData,
+  AIChatWorkflowPausedEventData,
 } from '@/services/types/aichat';
 import type {
   AIChatControllerState,
@@ -48,6 +51,13 @@ import {
   applySkillLoadStartState,
   applySkillReferenceReadState,
   applyStreamErrorState,
+  applyWorkflowApprovalRequestedState,
+  applyWorkflowFailedState,
+  applyWorkflowFinishedState,
+  applyWorkflowNodeFinishedState,
+  applyWorkflowNodeStartedState,
+  applyWorkflowPausedState,
+  applyWorkflowStartedState,
 } from '@/components/chat/controllers/aichat/state-reducers';
 import { isDraftAIChatConversationId } from '@/components/chat/utils/aichat-message';
 
@@ -270,6 +280,64 @@ export function useChatRuntimeEventAppliers({
     [setControllerState]
   );
 
+  const applyWorkflowStarted = useCallback(
+    (payload: AIChatWorkflowEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id) return;
+      setControllerState(current => applyWorkflowStartedState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
+  const applyWorkflowNodeStarted = useCallback(
+    (payload: AIChatWorkflowNodeEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id) return;
+      setControllerState(current => applyWorkflowNodeStartedState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
+  const applyWorkflowNodeFinished = useCallback(
+    (payload: AIChatWorkflowNodeEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id) return;
+      setControllerState(current => applyWorkflowNodeFinishedState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
+  const applyWorkflowPaused = useCallback(
+    (payload: AIChatWorkflowPausedEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id) return;
+      setControllerState(current => applyWorkflowPausedState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
+  const applyWorkflowApprovalRequested = useCallback(
+    (payload: AIChatWorkflowPausedEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id) return;
+      setControllerState(current =>
+        applyWorkflowApprovalRequestedState(current, payload, eventId)
+      );
+    },
+    [setControllerState]
+  );
+
+  const applyWorkflowFinished = useCallback(
+    (payload: AIChatWorkflowEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id) return;
+      setControllerState(current => applyWorkflowFinishedState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
+  const applyWorkflowFailed = useCallback(
+    (payload: AIChatWorkflowEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id) return;
+      setControllerState(current => applyWorkflowFailedState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
   const applyMessageEnd = useCallback(
     (payload: AIChatMessageEndEventData, _eventId?: string | null) => {
       if (!payload.conversation_id || !payload.message_id) return;
@@ -351,6 +419,13 @@ export function useChatRuntimeEventAppliers({
       applySkillCallError,
       applySkillArtifactCreated,
       applyMemoryMutation,
+      applyWorkflowStarted,
+      applyWorkflowNodeStarted,
+      applyWorkflowNodeFinished,
+      applyWorkflowPaused,
+      applyWorkflowApprovalRequested,
+      applyWorkflowFinished,
+      applyWorkflowFailed,
       applyAgentProgress,
       applyIntermediateAnswer,
       applyUserInputRequested,
@@ -365,6 +440,13 @@ export function useChatRuntimeEventAppliers({
       applyIntermediateAnswer,
       applyUserInputRequested,
       applyMemoryMutation,
+      applyWorkflowApprovalRequested,
+      applyWorkflowFailed,
+      applyWorkflowFinished,
+      applyWorkflowNodeFinished,
+      applyWorkflowNodeStarted,
+      applyWorkflowPaused,
+      applyWorkflowStarted,
       applyMessageChunk,
       applyMessageEnd,
       applyMessageRetract,

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useQueries, useQueryClient } from '@tanstack/react-query';
+import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { createAgentDraftTransport, useAIChatController } from '@/components/chat';
 import {
@@ -28,6 +28,8 @@ import type {
   AgentDatabaseBinding,
   AgentMemorySlotConfig,
   AgentRuntimeConfig,
+  AgentWorkflowBinding,
+  AgentWorkflowBindingCandidate,
   UpdateAgentRuntimeConfigRequest,
 } from '@/services/types/agent';
 import type { AIChatSkillMetadata } from '@/services/types/aichat';
@@ -124,6 +126,46 @@ function normalizeAgentDatabaseBindings(bindings: AgentDatabaseBinding[]): Agent
     .sort((left, right) => left.data_source_id.localeCompare(right.data_source_id));
 }
 
+function normalizeAgentWorkflowBindings(bindings: AgentWorkflowBinding[]): AgentWorkflowBinding[] {
+  const byBindingID = new Map<string, AgentWorkflowBinding>();
+  bindings.forEach(binding => {
+    const bindingId = binding.binding_id.trim();
+    const agentId = binding.agent_id.trim();
+    const workflowId = binding.workflow_id.trim();
+    if (!bindingId || !agentId || !workflowId) return;
+    const versionStrategy = binding.version_strategy || 'latest_published';
+    if (versionStrategy !== 'latest_published' && versionStrategy !== 'pinned') return;
+    byBindingID.set(bindingId, {
+      binding_id: bindingId,
+      label: binding.label.trim(),
+      description: binding.description?.trim() || undefined,
+      agent_id: agentId,
+      workflow_id: workflowId,
+      version_strategy: versionStrategy,
+      version_uuid:
+        versionStrategy === 'pinned' ? binding.version_uuid?.trim() || undefined : undefined,
+      timeout_seconds: Math.max(0, binding.timeout_seconds ?? 0),
+    });
+  });
+  return Array.from(byBindingID.values()).sort((left, right) =>
+    left.binding_id.localeCompare(right.binding_id)
+  );
+}
+
+function workflowBindingFromCandidate(
+  candidate: AgentWorkflowBindingCandidate
+): AgentWorkflowBinding {
+  return {
+    binding_id: candidate.binding_id,
+    label: candidate.label,
+    description: candidate.description,
+    agent_id: candidate.agent_id,
+    workflow_id: candidate.workflow_id,
+    version_strategy: 'latest_published',
+    timeout_seconds: candidate.timeout_seconds ?? 600,
+  };
+}
+
 export function useAgentRuntimePageModel(agentId: string) {
   const queryClient = useQueryClient();
   const { locale } = useLocale();
@@ -135,8 +177,18 @@ export function useAgentRuntimePageModel(agentId: string) {
   const { data: profile } = useAutoProfile({ staleTime: 1_800_000 });
   const { data: configResponse, isLoading: isConfigLoading } = useAgentConfig(agentId);
   const { data: allSkills = [], isLoading: isSkillsLoading } = useAIChatSkills();
+  const { data: workflowCandidatesResponse, isLoading: isWorkflowCandidatesLoading } = useQuery({
+    queryKey: AGENT_KEYS.workflowBindingCandidates(agentId),
+    queryFn: () => agentService.getAgentWorkflowBindingCandidates(agentId),
+    enabled: Boolean(agentId),
+    staleTime: 60_000,
+  });
   const publishAgent = usePublishAgent();
   const config = configResponse?.data;
+  const workflowCandidates = useMemo(
+    () => workflowCandidatesResponse?.data.data ?? [],
+    [workflowCandidatesResponse?.data.data]
+  );
   const agentDetail = agent?.data;
   const defaultHomeTitle = agentDetail?.name?.trim() || t('defaultHomeTitle');
   const defaultInputPlaceholder = t('defaultInputPlaceholder');
@@ -160,8 +212,10 @@ export function useAgentRuntimePageModel(agentId: string) {
   const [suggestedQuestions, setSuggestedQuestions] = useState<string[]>([]);
   const [knowledgeDatasetIds, setKnowledgeDatasetIds] = useState<string[]>([]);
   const [databaseBindings, setDatabaseBindings] = useState<AgentDatabaseBinding[]>([]);
+  const [workflowBindings, setWorkflowBindings] = useState<AgentWorkflowBinding[]>([]);
   const [skillDialogOpen, setSkillDialogOpen] = useState(false);
   const [knowledgeDialogOpen, setKnowledgeDialogOpen] = useState(false);
+  const [workflowDialogOpen, setWorkflowDialogOpen] = useState(false);
   const [promptOptimizerOpen, setPromptOptimizerOpen] = useState(false);
   const [memoryValuesOpen, setMemoryValuesOpen] = useState(false);
   const [skillSearch, setSkillSearch] = useState('');
@@ -183,6 +237,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     skills: true,
     knowledge: true,
     databases: true,
+    workflows: true,
     files: true,
     memory: true,
   });
@@ -238,6 +293,10 @@ export function useAgentRuntimePageModel(agentId: string) {
     });
   }, [knowledgeDatasetIds, knowledgeDialogPages, selectedDatasetQueries, t]);
   const isSelectedDatasetsLoading = selectedDatasetQueries.some(query => query.isLoading);
+  const workflowCandidatesByBindingID = useMemo(
+    () => new Map(workflowCandidates.map(candidate => [candidate.binding_id, candidate])),
+    [workflowCandidates]
+  );
   const knowledgeDialogDatasets = useMemo(() => {
     const byID = new Map<string, Dataset>();
     selectedKnowledgeDatasets.forEach(dataset => byID.set(dataset.id, dataset));
@@ -339,6 +398,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       knowledge_dataset_ids: knowledgeDatasetIds,
       knowledge_retrieval_config: {},
       database_bindings: databaseBindings,
+      workflow_bindings: workflowBindings,
     }),
     [
       defaultHomeTitle,
@@ -353,6 +413,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       suggestedQuestions,
       knowledgeDatasetIds,
       databaseBindings,
+      workflowBindings,
       systemPrompt,
     ]
   );
@@ -393,6 +454,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     setSuggestedQuestions(payload.suggested_questions);
     setKnowledgeDatasetIds(payload.knowledge_dataset_ids ?? []);
     setDatabaseBindings(normalizeAgentDatabaseBindings(payload.database_bindings ?? []));
+    setWorkflowBindings(normalizeAgentWorkflowBindings(payload.workflow_bindings ?? []));
   }, []);
 
   const payloadFromRuntimeConfig = useCallback(
@@ -416,6 +478,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       knowledge_dataset_ids: runtimeConfig.knowledge_dataset_ids ?? [],
       knowledge_retrieval_config: runtimeConfig.knowledge_retrieval_config ?? {},
       database_bindings: normalizeAgentDatabaseBindings(runtimeConfig.database_bindings ?? []),
+      workflow_bindings: normalizeAgentWorkflowBindings(runtimeConfig.workflow_bindings ?? []),
     }),
     [defaultHomeTitle, defaultInputPlaceholder]
   );
@@ -497,6 +560,17 @@ export function useAgentRuntimePageModel(agentId: string) {
     markHydrated(nextPayload, config.updated_at ?? null);
   }, [agentDetail, agentId, applyRuntimePayload, config, markHydrated, payloadFromRuntimeConfig]);
 
+  useEffect(() => {
+    if (!workflowCandidatesResponse) return;
+    setWorkflowBindings(current => {
+      const pruned = current.filter(binding =>
+        workflowCandidatesByBindingID.has(binding.binding_id)
+      );
+      if (pruned.length === current.length) return current;
+      return pruned;
+    });
+  }, [workflowCandidatesByBindingID, workflowCandidatesResponse]);
+
   const handleModelChange = useCallback((value: ModelSelectorValue) => {
     setModelValue(current => ({
       provider: value.provider,
@@ -518,6 +592,20 @@ export function useAgentRuntimePageModel(agentId: string) {
         : current.filter(id => id !== datasetId)
     );
   }, []);
+
+  const handleConfirmWorkflows = useCallback(
+    (bindingIds: string[]) => {
+      const selected = new Set(bindingIds);
+      setWorkflowBindings(
+        normalizeAgentWorkflowBindings(
+          workflowCandidates
+            .filter(candidate => selected.has(candidate.binding_id))
+            .map(workflowBindingFromCandidate)
+        )
+      );
+    },
+    [workflowCandidates]
+  );
 
   const handleGenerateSuggestedQuestions = useCallback(async () => {
     if (isGeneratingSuggestions) return;
@@ -836,6 +924,9 @@ export function useAgentRuntimePageModel(agentId: string) {
       selectedKnowledgeDatasets,
       selectedKnowledgeDatasetIds: knowledgeDatasetIds,
       databaseBindings,
+      workflowBindings,
+      workflowCandidatesByBindingID,
+      isWorkflowCandidatesLoading,
       suggestedQuestions,
       isGeneratingSuggestions,
       systemPrompt,
@@ -852,9 +943,12 @@ export function useAgentRuntimePageModel(agentId: string) {
       onChangeInputPlaceholder: setInputPlaceholder,
       onOpenSkillDialog: () => setSkillDialogOpen(true),
       onOpenKnowledgeDialog: () => setKnowledgeDialogOpen(true),
+      onOpenWorkflowDialog: () => setWorkflowDialogOpen(true),
       onToggleSkill: handleToggleSkill,
       onToggleKnowledgeDataset: handleToggleKnowledgeDataset,
       onChangeDatabaseBindings: setDatabaseBindings,
+      onChangeWorkflowBindings: (value: AgentWorkflowBinding[]) =>
+        setWorkflowBindings(normalizeAgentWorkflowBindings(value)),
       onGenerateSuggestedQuestions: () => void handleGenerateSuggestedQuestions(),
       onChangeSuggestedQuestions: setSuggestedQuestions,
       onChangeFileUploadEnabled: setFileUploadEnabled,
@@ -915,6 +1009,14 @@ export function useAgentRuntimePageModel(agentId: string) {
         onChangeSearch: setKnowledgeSearch,
         onChangeShowSelectedOnly: setShowSelectedKnowledgeOnly,
         onToggleDataset: handleToggleKnowledgeDataset,
+      },
+      workflow: {
+        open: workflowDialogOpen,
+        bindings: workflowBindings,
+        candidates: workflowCandidates,
+        isLoading: isWorkflowCandidatesLoading,
+        onOpenChange: setWorkflowDialogOpen,
+        onConfirmWorkflows: handleConfirmWorkflows,
       },
       memoryValues: {
         agentId,

@@ -49,6 +49,17 @@ function runtimeTerminalMessage(message: { event: string | null; data: unknown }
   if (event === 'message_end' || event === 'error') {
     return true;
   }
+  if (
+    event === 'workflow_started' ||
+    event === 'node_started' ||
+    event === 'node_finished' ||
+    event === 'workflow_paused' ||
+    event === 'approval_requested' ||
+    event === 'workflow_finished' ||
+    event === 'workflow_failed'
+  ) {
+    return false;
+  }
   const data = record.data && typeof record.data === 'object' ? record.data : record;
   return (
     data &&
