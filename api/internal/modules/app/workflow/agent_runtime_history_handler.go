@@ -49,7 +49,7 @@ func NewAgentHistoryDispatchHandler(
 
 func (h *AgentHistoryDispatchHandler) GetWorkflowRuns(c *gin.Context) {
 	if h.isRuntimeAgent(c) {
-		h.getRuntimeWorkflowRuns(c)
+		response.Fail(c, response.ErrNotFound)
 		return
 	}
 	h.workflowRuns.GetWorkflowRuns(c)
@@ -57,7 +57,7 @@ func (h *AgentHistoryDispatchHandler) GetWorkflowRuns(c *gin.Context) {
 
 func (h *AgentHistoryDispatchHandler) GetWorkflowRunDetail(c *gin.Context) {
 	if h.isRuntimeAgent(c) {
-		h.getRuntimeWorkflowRunDetail(c)
+		response.Fail(c, response.ErrNotFound)
 		return
 	}
 	h.workflowRuns.GetWorkflowRunDetail(c)
@@ -65,7 +65,7 @@ func (h *AgentHistoryDispatchHandler) GetWorkflowRunDetail(c *gin.Context) {
 
 func (h *AgentHistoryDispatchHandler) GetWorkflowRunNodeExecutions(c *gin.Context) {
 	if h.isRuntimeAgent(c) {
-		h.getRuntimeWorkflowRunNodeExecutions(c)
+		response.Fail(c, response.ErrNotFound)
 		return
 	}
 	h.workflowRuns.GetWorkflowRunNodeExecutions(c)

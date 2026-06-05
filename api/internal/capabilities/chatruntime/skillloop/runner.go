@@ -251,11 +251,33 @@ func (r *Runner) runSkillPlanning(ctx context.Context, prepared *PreparedChat, p
 	}
 
 	planningReq.Stream = false
+	startedAt := time.Now()
 	planningResp, err := r.LLMClient.AppChat(ctx, r.AppContext, planningReq)
 	if err != nil {
+		r.recordModelInvocation(ModelInvocationTrace{
+			Phase:      "skill_planning",
+			Round:      round,
+			Streaming:  false,
+			StartedAt:  startedAt,
+			DurationMS: time.Since(startedAt).Milliseconds(),
+			Request:    planningReq,
+			Error:      err.Error(),
+		})
 		return planningResult{}, err
 	}
-	return planningResult{message: firstPlanningMessage(planningResp), usage: planningRespUsage(planningResp)}, nil
+	message := firstPlanningMessage(planningResp)
+	usage := planningRespUsage(planningResp)
+	r.recordModelInvocation(ModelInvocationTrace{
+		Phase:      "skill_planning",
+		Round:      round,
+		Streaming:  false,
+		StartedAt:  startedAt,
+		DurationMS: time.Since(startedAt).Milliseconds(),
+		Request:    planningReq,
+		Response:   &message,
+		Usage:      usage,
+	})
+	return planningResult{message: message, usage: usage}, nil
 }
 
 func (r *Runner) emitAnswerChunk(ctx context.Context, prepared *PreparedChat, text string, _ func(Event) error) {

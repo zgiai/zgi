@@ -7,6 +7,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,9 +21,9 @@ import (
 	"github.com/zgiai/zgi/api/internal/util"
 )
 
-func TestAgentRuntimeWorkflowRunsReturnsOnlyNewWebAppMessages(t *testing.T) {
+func TestAgentRuntimeRunsReturnsOnlyNewWebAppMessages(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	handler, service, ids := setupRuntimeHistoryHandler(t)
+	handler, service, ids := setupRuntimeLogsHandler(t)
 
 	webAppConversationID := uuid.New()
 	consoleConversationID := uuid.New()
@@ -96,9 +97,9 @@ func TestAgentRuntimeWorkflowRunsReturnsOnlyNewWebAppMessages(t *testing.T) {
 	ctx.Params = gin.Params{{Key: "agent_id", Value: ids.agentID.String()}}
 	ctx.Set("account_id", ids.accountID.String())
 	util.SetOrganizationID(ctx, ids.organizationID.String())
-	ctx.Request = httptest.NewRequest(http.MethodGet, "/agents/"+ids.agentID.String()+"/workflow-runs?triggered_from=web-app", nil)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/agents/"+ids.agentID.String()+"/runtime-runs?triggered_from=web-app", nil)
 
-	handler.GetWorkflowRuns(ctx)
+	handler.GetRuntimeRuns(ctx)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d, body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
@@ -110,14 +111,185 @@ func TestAgentRuntimeWorkflowRunsReturnsOnlyNewWebAppMessages(t *testing.T) {
 	if got := items[0]["id"]; got != webAppMessageID.String() {
 		t.Fatalf("id = %#v, want %s", got, webAppMessageID.String())
 	}
-	if got := items[0]["triggered_from"]; got != string(CreatedFromWebApp) {
-		t.Fatalf("triggered_from = %#v, want %s", got, CreatedFromWebApp)
+	if got := items[0]["source"]; got != runtimemodel.ConversationSourceWebApp {
+		t.Fatalf("source = %#v, want %s", got, runtimemodel.ConversationSourceWebApp)
+	}
+	if got := items[0]["query"]; got != "hello" {
+		t.Fatalf("query = %#v, want hello", got)
+	}
+	if got := items[0]["answer_preview"]; got != "world" {
+		t.Fatalf("answer_preview = %#v, want world", got)
 	}
 }
 
-func TestAgentRuntimeWorkflowRunDetailRejectsOtherAgentMessage(t *testing.T) {
+func TestAgentRuntimeRunsCanFilterByConversation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	handler, service, ids := setupRuntimeHistoryHandler(t)
+	handler, service, ids := setupRuntimeLogsHandler(t)
+
+	firstConversationID := uuid.New()
+	secondConversationID := uuid.New()
+	consoleConversationID := uuid.New()
+	webAppID := uuid.New()
+	for _, conversation := range []*runtimemodel.Conversation{
+		{
+			ID:             firstConversationID,
+			OrganizationID: ids.organizationID,
+			WorkspaceID:    &ids.workspaceID,
+			AccountID:      ids.accountID,
+			CallerType:     runtimemodel.ConversationCallerAgent,
+			CallerID:       &ids.agentID,
+			Source:         runtimemodel.ConversationSourceWebApp,
+			SourceWebAppID: &webAppID,
+		},
+		{
+			ID:             secondConversationID,
+			OrganizationID: ids.organizationID,
+			WorkspaceID:    &ids.workspaceID,
+			AccountID:      ids.accountID,
+			CallerType:     runtimemodel.ConversationCallerAgent,
+			CallerID:       &ids.agentID,
+			Source:         runtimemodel.ConversationSourceWebApp,
+			SourceWebAppID: &webAppID,
+		},
+		{
+			ID:             consoleConversationID,
+			OrganizationID: ids.organizationID,
+			WorkspaceID:    &ids.workspaceID,
+			AccountID:      ids.accountID,
+			CallerType:     runtimemodel.ConversationCallerAgent,
+			CallerID:       &ids.agentID,
+			Source:         runtimemodel.ConversationSourceConsole,
+		},
+	} {
+		service.addConversation(conversation)
+	}
+	firstMessageID := uuid.New()
+	secondMessageID := uuid.New()
+	service.addMessage(&runtimemodel.Message{
+		ID:             firstMessageID,
+		ConversationID: firstConversationID,
+		Query:          "first question",
+		Answer:         "first answer",
+		Status:         runtimemodel.MessageStatusCompleted,
+	})
+	service.addMessage(&runtimemodel.Message{
+		ID:             secondMessageID,
+		ConversationID: secondConversationID,
+		Query:          "second question",
+		Answer:         "second answer",
+		Status:         runtimemodel.MessageStatusCompleted,
+	})
+	service.addMessage(&runtimemodel.Message{
+		ID:             uuid.New(),
+		ConversationID: consoleConversationID,
+		Query:          "console question",
+		Answer:         "console answer",
+		Status:         runtimemodel.MessageStatusCompleted,
+	})
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "agent_id", Value: ids.agentID.String()}}
+	ctx.Set("account_id", ids.accountID.String())
+	util.SetOrganizationID(ctx, ids.organizationID.String())
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/agents/"+ids.agentID.String()+"/runtime-runs?triggered_from=web-app&conversation_id="+secondConversationID.String(), nil)
+
+	handler.GetRuntimeRuns(ctx)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	items := responseDataArray(t, recorder.Body.Bytes())
+	if len(items) != 1 {
+		t.Fatalf("items len = %d, want 1: %#v", len(items), items)
+	}
+	if got := items[0]["id"]; got != secondMessageID.String() {
+		t.Fatalf("id = %#v, want %s", got, secondMessageID.String())
+	}
+	if got := items[0]["conversation_id"]; got != secondConversationID.String() {
+		t.Fatalf("conversation_id = %#v, want %s", got, secondConversationID.String())
+	}
+	if got := items[0]["query"]; got != "second question" {
+		t.Fatalf("query = %#v, want second question", got)
+	}
+}
+
+func TestAgentRuntimeRunsCanFilterConsoleAndKeyword(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler, service, ids := setupRuntimeLogsHandler(t)
+
+	webAppConversationID := uuid.New()
+	consoleConversationID := uuid.New()
+	webAppID := uuid.New()
+	service.addConversation(&runtimemodel.Conversation{
+		ID:             webAppConversationID,
+		OrganizationID: ids.organizationID,
+		WorkspaceID:    &ids.workspaceID,
+		AccountID:      ids.accountID,
+		CallerType:     runtimemodel.ConversationCallerAgent,
+		CallerID:       &ids.agentID,
+		Source:         runtimemodel.ConversationSourceWebApp,
+		SourceWebAppID: &webAppID,
+	})
+	service.addConversation(&runtimemodel.Conversation{
+		ID:             consoleConversationID,
+		OrganizationID: ids.organizationID,
+		WorkspaceID:    &ids.workspaceID,
+		AccountID:      ids.accountID,
+		CallerType:     runtimemodel.ConversationCallerAgent,
+		CallerID:       &ids.agentID,
+		Source:         runtimemodel.ConversationSourceConsole,
+	})
+	consoleMessageID := uuid.New()
+	service.addMessage(&runtimemodel.Message{
+		ID:             uuid.New(),
+		ConversationID: webAppConversationID,
+		Query:          "deploy plan",
+		Answer:         "webapp answer",
+		Status:         runtimemodel.MessageStatusCompleted,
+	})
+	service.addMessage(&runtimemodel.Message{
+		ID:             consoleMessageID,
+		ConversationID: consoleConversationID,
+		Query:          "debug request",
+		Answer:         "contains special reply",
+		Status:         runtimemodel.MessageStatusCompleted,
+	})
+	service.addMessage(&runtimemodel.Message{
+		ID:             uuid.New(),
+		ConversationID: consoleConversationID,
+		Query:          "another debug",
+		Answer:         "ordinary answer",
+		Status:         runtimemodel.MessageStatusCompleted,
+	})
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "agent_id", Value: ids.agentID.String()}}
+	ctx.Set("account_id", ids.accountID.String())
+	util.SetOrganizationID(ctx, ids.organizationID.String())
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/agents/"+ids.agentID.String()+"/runtime-runs?source=console&q=special", nil)
+
+	handler.GetRuntimeRuns(ctx)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	items := responseDataArray(t, recorder.Body.Bytes())
+	if len(items) != 1 {
+		t.Fatalf("items len = %d, want 1: %#v", len(items), items)
+	}
+	if got := items[0]["id"]; got != consoleMessageID.String() {
+		t.Fatalf("id = %#v, want %s", got, consoleMessageID.String())
+	}
+	if got := items[0]["source"]; got != runtimemodel.ConversationSourceConsole {
+		t.Fatalf("source = %#v, want %s", got, runtimemodel.ConversationSourceConsole)
+	}
+}
+
+func TestAgentRuntimeRunDetailRejectsOtherAgentMessage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler, service, ids := setupRuntimeLogsHandler(t)
 
 	otherAgentID := uuid.New()
 	webAppID := uuid.New()
@@ -147,20 +319,20 @@ func TestAgentRuntimeWorkflowRunDetailRejectsOtherAgentMessage(t *testing.T) {
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Params = gin.Params{
 		{Key: "agent_id", Value: ids.agentID.String()},
-		{Key: "run_id", Value: messageID.String()},
+		{Key: "message_id", Value: messageID.String()},
 	}
 	ctx.Set("account_id", ids.accountID.String())
 	util.SetOrganizationID(ctx, ids.organizationID.String())
-	ctx.Request = httptest.NewRequest(http.MethodGet, "/agents/"+ids.agentID.String()+"/workflow-runs/"+messageID.String(), nil)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/agents/"+ids.agentID.String()+"/runtime-runs/"+messageID.String(), nil)
 
-	handler.GetWorkflowRunDetail(ctx)
+	handler.GetRuntimeRunDetail(ctx)
 
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d, body=%s", recorder.Code, http.StatusNotFound, recorder.Body.String())
 	}
 }
 
-func TestAgentRuntimeNodeExecutionsFromSkillInvocationsAndFinalAnswer(t *testing.T) {
+func TestAgentRuntimeStepsFromSkillInvocationsAndFinalAnswer(t *testing.T) {
 	messageID := uuid.New()
 	createdAt := time.Unix(1700000000, 0)
 	updatedAt := createdAt.Add(2 * time.Second)
@@ -173,6 +345,58 @@ func TestAgentRuntimeNodeExecutionsFromSkillInvocationsAndFinalAnswer(t *testing
 		ModelName:      "gpt-test",
 		Metadata: map[string]interface{}{
 			"usage": map[string]interface{}{"total_tokens": 12.0},
+			"model_invocations": []interface{}{
+				map[string]interface{}{
+					"kind":        "model_call",
+					"phase":       "skill_planning",
+					"round":       0.0,
+					"status":      "success",
+					"duration_ms": 40.0,
+					"request": map[string]interface{}{"model": "gpt-test", "messages": []interface{}{
+						map[string]interface{}{"role": "system", "content": "visible user prompt\n\nhidden agent runtime prompt"},
+						map[string]interface{}{"role": "system", "content": "hidden skill loop prompt"},
+						map[string]interface{}{"role": "user", "content": "calculate"},
+						map[string]interface{}{
+							"role":         "tool",
+							"tool_call_id": "call-load-skill",
+							"content":      `{"skill_id":"calculator","instructions":"hidden skill instructions","tools":["calculate"],"token":"secret-token"}`,
+						},
+						map[string]interface{}{
+							"role": "assistant",
+							"tool_calls": []interface{}{
+								map[string]interface{}{
+									"id": "call-sensitive",
+									"function": map[string]interface{}{
+										"name":      "call_skill_tool",
+										"arguments": `{"query":"select 1","password":"secret","headers":{"Authorization":"Bearer abc"}}`,
+									},
+								},
+							},
+						},
+					}},
+					"response":           map[string]interface{}{"message": map[string]interface{}{"role": "assistant", "tool_calls": []interface{}{map[string]interface{}{"id": "call-1"}}}},
+					"usage":              map[string]interface{}{"prompt_tokens": 8.0, "completion_tokens": 4.0, "total_tokens": 12.0},
+					"prompt_tokens":      8.0,
+					"completion_tokens":  4.0,
+					"total_tokens":       12.0,
+					"user_system_prompt": "visible user prompt",
+					"runtime_id":         "model_call:skill_planning:0:1",
+					"created_at":         1700000000.0,
+				},
+				map[string]interface{}{
+					"kind":        "model_call",
+					"phase":       "skill_planning",
+					"round":       1.0,
+					"status":      "success",
+					"duration_ms": 30.0,
+					"request": map[string]interface{}{"model": "gpt-test", "messages": []interface{}{
+						map[string]interface{}{"role": "user", "content": "calculate"},
+					}},
+					"response":   map[string]interface{}{"message": map[string]interface{}{"role": "assistant", "content": "done"}},
+					"runtime_id": "model_call:skill_planning:1:2",
+					"created_at": 1700000000.0,
+				},
+			},
 			"skill_invocations": []interface{}{
 				map[string]interface{}{
 					"kind":        "tool_call",
@@ -180,9 +404,14 @@ func TestAgentRuntimeNodeExecutionsFromSkillInvocationsAndFinalAnswer(t *testing
 					"tool_name":   "calculate",
 					"status":      "success",
 					"duration_ms": 25.0,
-					"arguments":   map[string]interface{}{"expression": "2+2"},
-					"result":      map[string]interface{}{"value": 4.0},
-					"runtime_id":  "tool_call:calculator:calculate#1",
+					"arguments": map[string]interface{}{
+						"expression": "2+2",
+						"api_key":    "secret-key",
+						"headers":    map[string]interface{}{"Authorization": "Bearer abc"},
+					},
+					"result":     map[string]interface{}{"value": 4.0, "instructions": "hidden skill instructions", "token": "secret-token"},
+					"runtime_id": "tool_call:calculator:calculate#1",
+					"created_at": 1700000000.0,
 				},
 			},
 		},
@@ -190,23 +419,102 @@ func TestAgentRuntimeNodeExecutionsFromSkillInvocationsAndFinalAnswer(t *testing
 		UpdatedAt: updatedAt,
 	}
 
-	items := buildRuntimeNodeExecutionResponses(message)
+	items := buildAgentRuntimeSteps(message)
 
-	if len(items) != 2 {
-		t.Fatalf("items len = %d, want 2", len(items))
+	if len(items) != 4 {
+		t.Fatalf("items len = %d, want 4", len(items))
 	}
-	if items[0].NodeType != "tool_call" || items[0].Title != "calculator / calculate" {
-		t.Fatalf("first item = %#v, want calculator tool call", items[0])
+	if items[0].Type != "model_call" || items[0].Title != "Model call: skill_planning" {
+		t.Fatalf("first item = %#v, want skill planning model call", items[0])
 	}
-	if items[0].Status != "succeeded" || items[0].ElapsedTime != 25 {
-		t.Fatalf("first item status/elapsed = %s/%v, want succeeded/25", items[0].Status, items[0].ElapsedTime)
+	if request, ok := items[0].Input.(map[string]interface{}); !ok || request["model"] != "gpt-test" {
+		t.Fatalf("first item input = %#v, want model request", items[0].Input)
 	}
-	if items[1].NodeType != "answer" || items[1].Outputs == nil {
-		t.Fatalf("final item = %#v, want final answer node", items[1])
+	request := items[0].Input.(map[string]interface{})
+	messages := request["messages"].([]interface{})
+	if len(messages) != 4 {
+		t.Fatalf("first item messages = %#v, want user system prompt plus user message", messages)
+	}
+	if messages[0].(map[string]interface{})["role"] != "system" || messages[0].(map[string]interface{})["content"] != "visible user prompt" {
+		t.Fatalf("first system message = %#v, want visible user prompt only", messages[0])
+	}
+	if messages[1].(map[string]interface{})["role"] != "user" {
+		t.Fatalf("second message = %#v, want user message", messages[1])
+	}
+	toolMessageContent := messages[2].(map[string]interface{})["content"].(string)
+	var toolMessage map[string]interface{}
+	if err := json.Unmarshal([]byte(toolMessageContent), &toolMessage); err != nil {
+		t.Fatalf("tool message content json = %v", err)
+	}
+	if toolMessage["instructions"] != agentRuntimeHiddenInstructionsPlaceholder || toolMessage["token"] != "[REDACTED]" {
+		t.Fatalf("tool message content = %#v, want instructions placeholder and token redacted", toolMessage)
+	}
+	assistantToolCall := messages[3].(map[string]interface{})["tool_calls"].([]interface{})[0].(map[string]interface{})
+	toolCallFn := assistantToolCall["function"].(map[string]interface{})
+	var toolCallArgs map[string]interface{}
+	if err := json.Unmarshal([]byte(toolCallFn["arguments"].(string)), &toolCallArgs); err != nil {
+		t.Fatalf("tool call arguments json = %v", err)
+	}
+	if toolCallArgs["password"] != "[REDACTED]" || toolCallArgs["query"] != "select 1" {
+		t.Fatalf("tool call arguments = %#v, want sensitive fields redacted only", toolCallArgs)
+	}
+	headers := toolCallArgs["headers"].(map[string]interface{})
+	if headers["Authorization"] != "[REDACTED]" {
+		t.Fatalf("tool call headers = %#v, want authorization redacted", headers)
+	}
+	rawEvent := items[0].Process["raw_event"].(map[string]interface{})
+	rawRequest := rawEvent["request"].(map[string]interface{})
+	rawMessages := rawRequest["messages"].([]interface{})
+	if len(rawMessages) != 4 || rawMessages[0].(map[string]interface{})["content"] != "visible user prompt" {
+		t.Fatalf("raw_event messages = %#v, want user system prompt only", rawMessages)
+	}
+	rawToolMessageContent := rawMessages[2].(map[string]interface{})["content"].(string)
+	var rawToolMessage map[string]interface{}
+	if err := json.Unmarshal([]byte(rawToolMessageContent), &rawToolMessage); err != nil {
+		t.Fatalf("raw tool message content json = %v", err)
+	}
+	if rawToolMessage["instructions"] != agentRuntimeHiddenInstructionsPlaceholder || rawToolMessage["token"] != "[REDACTED]" {
+		t.Fatalf("raw tool message content = %#v, want instructions placeholder and token redacted", rawToolMessage)
+	}
+	if items[0].Process["total_tokens"] != 12.0 || items[0].Process["prompt_tokens"] != 8.0 || items[0].Process["completion_tokens"] != 4.0 {
+		t.Fatalf("first item token process = %#v, want per-call token usage", items[0].Process)
+	}
+	if items[1].Type != "tool_call" || items[1].Title != "calculator / calculate" {
+		t.Fatalf("second item = %#v, want calculator tool call", items[1])
+	}
+	if items[1].Status != "succeeded" || items[1].ElapsedTime != 25 {
+		t.Fatalf("second item status/elapsed = %s/%v, want succeeded/25", items[1].Status, items[1].ElapsedTime)
+	}
+	toolInput := items[1].Input.(map[string]interface{})
+	if toolInput["api_key"] != "[REDACTED]" || toolInput["expression"] != "2+2" {
+		t.Fatalf("second item input = %#v, want sensitive fields redacted only", toolInput)
+	}
+	toolInputHeaders := toolInput["headers"].(map[string]interface{})
+	if toolInputHeaders["Authorization"] != "[REDACTED]" {
+		t.Fatalf("second item input headers = %#v, want authorization redacted", toolInputHeaders)
+	}
+	if raw, ok := items[1].Process["raw_event"].(map[string]interface{}); !ok || raw["runtime_id"] != "tool_call:calculator:calculate#1" {
+		t.Fatalf("second item raw_event = %#v, want persisted runtime event", items[1].Process["raw_event"])
+	}
+	rawTool := items[1].Process["raw_event"].(map[string]interface{})
+	rawArgs := rawTool["arguments"].(map[string]interface{})
+	if rawArgs["api_key"] != "[REDACTED]" {
+		t.Fatalf("second item raw_event arguments = %#v, want sensitive fields redacted", rawArgs)
+	}
+	output := items[1].Output.(map[string]interface{})
+	result := output["result"].(map[string]interface{})
+	if result["instructions"] != agentRuntimeHiddenInstructionsPlaceholder || result["token"] != "[REDACTED]" {
+		t.Fatalf("second item output = %#v, want instructions placeholder and token redacted", output)
+	}
+	if items[2].Type != "model_call" || items[2].Title != "Model call: skill_planning" {
+		t.Fatalf("third item = %#v, want second model call after tool event", items[2])
+	}
+	if items[3].Type != "model_answer" || items[3].Output == nil {
+		t.Fatalf("final item = %#v, want model answer step", items[3])
 	}
 }
 
-func TestAgentRuntimeNodeExecutionsWithoutTraceKeepsFinalAnswer(t *testing.T) {
+func TestAgentRuntimeStepsWithoutTraceKeepsFinalAnswer(t *testing.T) {
 	message := &runtimemodel.Message{
 		ID:             uuid.New(),
 		ConversationID: uuid.New(),
@@ -218,13 +526,31 @@ func TestAgentRuntimeNodeExecutionsWithoutTraceKeepsFinalAnswer(t *testing.T) {
 		UpdatedAt:      time.Unix(1700000001, 0),
 	}
 
-	items := buildRuntimeNodeExecutionResponses(message)
+	items := buildAgentRuntimeSteps(message)
 
 	if len(items) != 1 {
 		t.Fatalf("items len = %d, want 1", len(items))
 	}
-	if items[0].NodeType != "answer" {
-		t.Fatalf("node_type = %q, want answer", items[0].NodeType)
+	if items[0].Type != "model_answer" {
+		t.Fatalf("first type = %q, want model_answer", items[0].Type)
+	}
+}
+
+func TestAgentRuntimeWorkflowRunsNoLongerServeAgentMessages(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler, _, ids := setupRuntimeHistoryHandler(t)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "agent_id", Value: ids.agentID.String()}}
+	ctx.Set("account_id", ids.accountID.String())
+	util.SetOrganizationID(ctx, ids.organizationID.String())
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/agents/"+ids.agentID.String()+"/workflow-runs?triggered_from=web-app", nil)
+
+	handler.GetWorkflowRuns(ctx)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d, body=%s", recorder.Code, http.StatusNotFound, recorder.Body.String())
 	}
 }
 
@@ -255,6 +581,28 @@ func setupRuntimeHistoryHandler(t *testing.T) (*AgentHistoryDispatchHandler, *fa
 		nil,
 		nil,
 		nil,
+		service,
+	)
+	return handler, service, ids
+}
+
+func setupRuntimeLogsHandler(t *testing.T) (*AgentRuntimeLogsHandler, *fakeRuntimeHistoryService, runtimeHistoryIDs) {
+	t.Helper()
+	ids := runtimeHistoryIDs{
+		organizationID: uuid.New(),
+		workspaceID:    uuid.New(),
+		accountID:      uuid.New(),
+		agentID:        uuid.New(),
+	}
+	service := newFakeRuntimeHistoryService()
+	handler := NewAgentRuntimeLogsHandler(
+		&fakeRuntimeAgentRepo{agent: &agentspkg.Agent{
+			ID:         ids.agentID,
+			TenantID:   ids.workspaceID,
+			Name:       "agent",
+			AgentsType: "AGENT",
+			WebAppID:   uuid.New(),
+		}},
 		service,
 	)
 	return handler, service, ids
@@ -358,7 +706,32 @@ func (s *fakeRuntimeHistoryService) ListMessagesByCallerSource(ctx context.Conte
 		}
 		filtered = append(filtered, message)
 	}
-	return filtered, int64(len(filtered)), nil
+	return paginateRuntimeMessages(filtered, page, limit)
+}
+
+func (s *fakeRuntimeHistoryService) ListMessagesByCallerLogFilters(ctx context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, source string, conversationID *uuid.UUID, queryText string, page, limit int) ([]*runtimemodel.Message, int64, error) {
+	var filtered []*runtimemodel.Message
+	keyword := strings.ToLower(strings.TrimSpace(queryText))
+	for _, message := range s.messages {
+		conversation := s.conversations[message.ConversationID]
+		if !fakeConversationMatches(scope, caller, conversation) {
+			continue
+		}
+		if source != "" && conversation.Source != source {
+			continue
+		}
+		if source == runtimemodel.ConversationSourceWebApp && conversation.SourceWebAppID == nil {
+			continue
+		}
+		if conversationID != nil && message.ConversationID != *conversationID {
+			continue
+		}
+		if keyword != "" && !strings.Contains(strings.ToLower(message.Query), keyword) && !strings.Contains(strings.ToLower(message.Answer), keyword) {
+			continue
+		}
+		filtered = append(filtered, message)
+	}
+	return paginateRuntimeMessages(filtered, page, limit)
 }
 
 func (s *fakeRuntimeHistoryService) GetMessageByCaller(ctx context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, id uuid.UUID) (*runtimemodel.Message, *runtimemodel.Conversation, error) {
@@ -412,7 +785,11 @@ func (s *fakeRuntimeHistoryService) GetConversation(ctx context.Context, scope r
 }
 
 func (s *fakeRuntimeHistoryService) GetConversationByCaller(ctx context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, id uuid.UUID) (*runtimemodel.Conversation, error) {
-	return nil, fmt.Errorf("not implemented")
+	conversation := s.conversations[id]
+	if !fakeConversationMatches(scope, caller, conversation) {
+		return nil, runtimeservice.ErrNotFound
+	}
+	return conversation, nil
 }
 
 func (s *fakeRuntimeHistoryService) UpdateConversation(ctx context.Context, scope runtimeservice.Scope, id uuid.UUID, req runtimedto.UpdateConversationRequest) (*runtimemodel.Conversation, error) {
@@ -424,11 +801,41 @@ func (s *fakeRuntimeHistoryService) DeleteConversation(ctx context.Context, scop
 }
 
 func (s *fakeRuntimeHistoryService) ListMessages(ctx context.Context, scope runtimeservice.Scope, conversationID uuid.UUID, page, limit int) ([]*runtimemodel.Message, int64, error) {
-	return nil, 0, fmt.Errorf("not implemented")
+	var filtered []*runtimemodel.Message
+	for _, message := range s.messages {
+		if message.ConversationID != conversationID {
+			continue
+		}
+		conversation := s.conversations[message.ConversationID]
+		if conversation == nil || conversation.OrganizationID != scope.OrganizationID || conversation.AccountID != scope.AccountID {
+			continue
+		}
+		filtered = append(filtered, message)
+	}
+	return paginateRuntimeMessages(filtered, page, limit)
 }
 
 func (s *fakeRuntimeHistoryService) ListMessagesByCaller(ctx context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, page, limit int) ([]*runtimemodel.Message, int64, error) {
 	return s.ListMessagesByCallerSource(ctx, scope, caller, "", page, limit)
+}
+
+func paginateRuntimeMessages(messages []*runtimemodel.Message, page, limit int) ([]*runtimemodel.Message, int64, error) {
+	if page <= 0 {
+		page = 1
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	start := (page - 1) * limit
+	total := int64(len(messages))
+	if start >= len(messages) {
+		return []*runtimemodel.Message{}, total, nil
+	}
+	end := start + limit
+	if end > len(messages) {
+		end = len(messages)
+	}
+	return messages[start:end], total, nil
 }
 
 func (s *fakeRuntimeHistoryService) DeleteMessage(ctx context.Context, scope runtimeservice.Scope, id uuid.UUID) error {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -39,6 +40,7 @@ type MessageRepository interface {
 	ListByConversationScoped(ctx context.Context, conversationID, organizationID, accountID uuid.UUID, limit, offset int) ([]*runtimemodel.Message, int64, error)
 	ListByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, limit, offset int) ([]*runtimemodel.Message, int64, error)
 	ListByCallerSourceScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string, limit, offset int) ([]*runtimemodel.Message, int64, error)
+	ListByCallerLogFilterScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string, conversationID *uuid.UUID, queryText string, limit, offset int) ([]*runtimemodel.Message, int64, error)
 	ListBranch(ctx context.Context, leafID uuid.UUID, maxDepth int) ([]*runtimemodel.Message, error)
 	CountByConversation(ctx context.Context, conversationID uuid.UUID) (int64, error)
 	ReplaceRootForStreaming(ctx context.Context, message *runtimemodel.Message) error
@@ -497,6 +499,38 @@ func (r *messageRepository) ListByCallerSourceScoped(ctx context.Context, organi
 	}
 	if err := query.Select("m.*").Order("m.created_at DESC, m.updated_at DESC").Limit(limit).Offset(offset).Find(&messages).Error; err != nil {
 		return nil, 0, fmt.Errorf("failed to list chat runtime messages by source: %w", err)
+	}
+	return messages, total, nil
+}
+
+func (r *messageRepository) ListByCallerLogFilterScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string, conversationID *uuid.UUID, queryText string, limit, offset int) ([]*runtimemodel.Message, int64, error) {
+	var messages []*runtimemodel.Message
+	var total int64
+	query := applyCallerFilter(r.db.WithContext(ctx).Table("chat_runtime_messages AS m").
+		Joins("JOIN chat_runtime_conversations AS c ON c.id = m.conversation_id").
+		Where("c.organization_id = ? AND c.account_id = ? AND m.deleted_at IS NULL AND c.deleted_at IS NULL", organizationID, accountID), callerType, callerID)
+
+	switch strings.TrimSpace(source) {
+	case runtimemodel.ConversationSourceWebApp:
+		query = query.Where("c.source = ? AND c.source_web_app_id IS NOT NULL", runtimemodel.ConversationSourceWebApp)
+	case runtimemodel.ConversationSourceConsole:
+		query = query.Where("c.source = ?", runtimemodel.ConversationSourceConsole)
+	case "":
+	default:
+		query = query.Where("c.source = ?", source)
+	}
+	if conversationID != nil && *conversationID != uuid.Nil {
+		query = query.Where("m.conversation_id = ?", *conversationID)
+	}
+	if keyword := strings.TrimSpace(queryText); keyword != "" {
+		pattern := "%" + strings.ToLower(keyword) + "%"
+		query = query.Where("(LOWER(COALESCE(m.query, '')) LIKE ? OR LOWER(COALESCE(m.answer, '')) LIKE ?)", pattern, pattern)
+	}
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("failed to count chat runtime messages by log filters: %w", err)
+	}
+	if err := query.Select("m.*").Order("m.created_at DESC, m.updated_at DESC").Limit(limit).Offset(offset).Find(&messages).Error; err != nil {
+		return nil, 0, fmt.Errorf("failed to list chat runtime messages by log filters: %w", err)
 	}
 	return messages, total, nil
 }

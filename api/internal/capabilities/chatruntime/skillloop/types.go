@@ -33,13 +33,14 @@ type Event struct {
 }
 
 type Runner struct {
-	LLMClient     llmclient.LLMClient
-	SkillRuntime  *skills.Runtime
-	AppContext    *llmclient.AppContext
-	OnEvent       func(Event) error
-	OnTrace       func([]skills.SkillTrace, skills.SkillTrace)
-	OnArtifact    func(map[string]interface{})
-	FallbackDelay time.Duration
+	LLMClient         llmclient.LLMClient
+	SkillRuntime      *skills.Runtime
+	AppContext        *llmclient.AppContext
+	OnEvent           func(Event) error
+	OnTrace           func([]skills.SkillTrace, skills.SkillTrace)
+	OnArtifact        func(map[string]interface{})
+	OnModelInvocation func(ModelInvocationTrace)
+	FallbackDelay     time.Duration
 }
 
 type RunRequest struct {
@@ -47,6 +48,18 @@ type RunRequest struct {
 	Resolved         *skills.ResolvedSkills
 	ExecutionContext skills.ExecutionContext
 	OnChunk          func(string) error
+}
+
+type ModelInvocationTrace struct {
+	Phase      string
+	Round      int
+	Streaming  bool
+	StartedAt  time.Time
+	DurationMS int64
+	Request    *adapter.ChatRequest
+	Response   *adapter.Message
+	Usage      *adapter.Usage
+	Error      string
 }
 
 type PreparedChat struct {
@@ -101,6 +114,28 @@ func (r *Runner) recordArtifact(artifact map[string]interface{}) {
 		return
 	}
 	r.OnArtifact(artifact)
+}
+
+func (r *Runner) recordModelInvocation(trace ModelInvocationTrace) {
+	if r == nil || r.OnModelInvocation == nil {
+		return
+	}
+	if trace.StartedAt.IsZero() {
+		trace.StartedAt = time.Now()
+	}
+	if trace.Request != nil {
+		trace.Request = cloneChatRequest(trace.Request)
+	}
+	if trace.Response != nil {
+		cloned := *trace.Response
+		cloned.ToolCalls = append([]adapter.ToolCall{}, trace.Response.ToolCalls...)
+		trace.Response = &cloned
+	}
+	if trace.Usage != nil {
+		cloned := *trace.Usage
+		trace.Usage = &cloned
+	}
+	r.OnModelInvocation(trace)
 }
 
 func (r *Runner) fallbackDelay() time.Duration {

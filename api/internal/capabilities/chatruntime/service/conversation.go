@@ -361,6 +361,20 @@ func (s *service) ListMessagesByCallerSource(ctx context.Context, scope Scope, c
 	return messages, total, nil
 }
 
+func (s *service) ListMessagesByCallerLogFilters(ctx context.Context, scope Scope, caller Caller, source string, conversationID *uuid.UUID, queryText string, page, limit int) ([]*runtimemodel.Message, int64, error) {
+	if err := s.ensureMember(ctx, scope); err != nil {
+		return nil, 0, err
+	}
+	limit = clampLimit(limit, 50, 200)
+	offset := pageOffset(page, limit)
+	messages, total, err := s.repos.Message.ListByCallerLogFilterScoped(ctx, scope.OrganizationID, scope.AccountID, normalizeCallerType(caller.Type), normalizeCallerID(caller.ID), strings.TrimSpace(source), conversationID, strings.TrimSpace(queryText), limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	hydrateMessagesGeneratedFileURLs(messages)
+	return messages, total, nil
+}
+
 func (s *service) GetMessageByCaller(ctx context.Context, scope Scope, caller Caller, id uuid.UUID) (*runtimemodel.Message, *runtimemodel.Conversation, error) {
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, nil, err

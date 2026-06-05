@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
@@ -90,8 +91,18 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage}, nil
 	}
 
+	finalCallStartedAt := time.Now()
 	stream, err := s.openChatStream(runCtx, prepared)
 	if err != nil {
+		s.persistModelInvocationBestEffort(persistCtx, prepared, skillloop.ModelInvocationTrace{
+			Phase:      "final_answer",
+			Round:      -1,
+			Streaming:  true,
+			StartedAt:  finalCallStartedAt,
+			DurationMS: time.Since(finalCallStartedAt).Milliseconds(),
+			Request:    prepared.LLMRequest,
+			Error:      err.Error(),
+		})
 		if s.isStoppedContext(runCtx, prepared.Message.ID) {
 			_ = s.persistStoppedAnswer(persistCtx, prepared, "", nil)
 			return nil, ErrMessageStopped
@@ -99,9 +110,20 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
 		return nil, newFinalizedStreamError(err)
 	}
-	answer, usage, err := s.collectStreamAnswer(runCtx, prepared, stream, onChunk)
-	usage = mergeUsage(preflightUsage, usage)
+	answer, callUsage, err := s.collectStreamAnswer(runCtx, prepared, stream, onChunk)
+	usage := mergeUsage(preflightUsage, callUsage)
 	if err != nil {
+		s.persistModelInvocationBestEffort(persistCtx, prepared, skillloop.ModelInvocationTrace{
+			Phase:      "final_answer",
+			Round:      -1,
+			Streaming:  true,
+			StartedAt:  finalCallStartedAt,
+			DurationMS: time.Since(finalCallStartedAt).Milliseconds(),
+			Request:    prepared.LLMRequest,
+			Response:   &adapter.Message{Role: "assistant", Content: answer},
+			Usage:      callUsage,
+			Error:      err.Error(),
+		})
 		if errors.Is(err, ErrMessageStopped) {
 			_ = s.clearPreparedRuntime(persistCtx, prepared)
 			return nil, err
@@ -109,6 +131,16 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
 		return nil, newFinalizedStreamError(err)
 	}
+	s.persistModelInvocationBestEffort(persistCtx, prepared, skillloop.ModelInvocationTrace{
+		Phase:      "final_answer",
+		Round:      -1,
+		Streaming:  true,
+		StartedAt:  finalCallStartedAt,
+		DurationMS: time.Since(finalCallStartedAt).Milliseconds(),
+		Request:    prepared.LLMRequest,
+		Response:   &adapter.Message{Role: "assistant", Content: answer},
+		Usage:      callUsage,
+	})
 	if s.streams.IsStopped(prepared.Message.ID) {
 		_ = s.persistStoppedAnswer(persistCtx, prepared, answer, usage)
 		return nil, ErrMessageStopped

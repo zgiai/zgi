@@ -62,6 +62,9 @@ func (s *service) runPreparedSkillStream(
 		OnArtifact: func(artifact map[string]interface{}) {
 			s.persistGeneratedArtifactBestEffort(ctx, prepared, artifact)
 		},
+		OnModelInvocation: func(trace skillloop.ModelInvocationTrace) {
+			s.persistModelInvocationBestEffort(persistCtx, prepared, trace)
+		},
 	}
 	return runner.Run(ctx, skillloop.RunRequest{
 		Prepared: skillloop.NewPreparedChat(
