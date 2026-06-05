@@ -5,8 +5,13 @@ import (
 	workflow_file "github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
+	datasetservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
+	datasourceservice "github.com/zgiai/zgi/api/internal/modules/datasource/service"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	"github.com/zgiai/zgi/api/internal/modules/memory"
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"gorm.io/gorm"
 )
 
@@ -17,10 +22,15 @@ type ExternalRouteDeps struct {
 	ContentExtractor      workflow_file.ContentExtractor
 	QuotaService          interfaces.QuotaService
 	OrganizationService   interfaces.OrganizationService
-	LLMClient             interface{}
-	ToolEngine            interface{}
+	LLMClient             llmclient.LLMClient
+	ToolEngine            *tools.ToolEngine
+	ToolManager           *tools.ToolManager
+	MemoryService         *memory.Service
 	GraphFlowService      *graphflow.Service
 	PromptResolver        promptservice.PromptService
+	DataSourceService     datasourceservice.DataSourceService
+	KnowledgeService      *datasetservice.KnowledgeRetrievalService
+	ResourcePermission    interfaces.ResourcePermissionService
 	WorkflowEngineFactory *graph_engine.EngineFactory
 }
 
@@ -45,8 +55,13 @@ func RegisterExternalRoutes(r *gin.Engine, deps ExternalRouteDeps) {
 			deps.OrganizationService,
 			deps.LLMClient,
 			deps.ToolEngine,
+			deps.ToolManager,
+			deps.MemoryService,
 			deps.GraphFlowService,
 			deps.PromptResolver,
+			deps.DataSourceService,
+			deps.KnowledgeService,
+			deps.ResourcePermission,
 			deps.WorkflowEngineFactory,
 		)
 	}
@@ -79,6 +94,9 @@ func validateExternalRouteDeps(deps ExternalRouteDeps) {
 	}
 	if deps.ToolEngine == nil {
 		panic("external routes require tool engine")
+	}
+	if deps.ToolManager == nil {
+		panic("external routes require tool manager")
 	}
 	if deps.GraphFlowService == nil {
 		panic("external routes require graph flow service")

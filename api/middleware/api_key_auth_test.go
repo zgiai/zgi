@@ -1,10 +1,12 @@
 package middleware
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -85,11 +87,11 @@ func TestValidateAPIKeyWithoutRetiredQuotaColumns(t *testing.T) {
 	}
 }
 
-func TestUpdateLastUsedWithoutRetiredQuotaColumns(t *testing.T) {
+func TestUpdateLastUsedOnlyTouchesLastUsedAt(t *testing.T) {
 	db, mock, cleanup := openAgentAPIKeyRuntimeMockDB(t)
 	defer cleanup()
 
-	updateSQL := `UPDATE "agent_api_keys" SET ("last_used_at"=\$1,"usage_count"=usage_count \+ 1,"updated_at"=\$2|"last_used_at"=\$1,"updated_at"=\$2,"usage_count"=usage_count \+ 1) WHERE id = \$3`
+	updateSQL := `UPDATE "agent_api_keys" SET "last_used_at"=\$1,"updated_at"=\$2 WHERE id = \$3`
 	mock.ExpectExec(updateSQL).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
@@ -175,7 +177,7 @@ func TestAPIKeyAuthMiddlewareDoesNotLogSensitiveAPIKeyOnSuccess(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "agent_api_keys" WHERE (key_hash = $1 AND status = 'active') AND (expires_at IS NULL OR expires_at > $2) ORDER BY "agent_api_keys"."id" LIMIT $3`)).
 		WithArgs(keyHash, sqlmock.AnyArg(), 1).
 		WillReturnRows(rows)
-	mock.ExpectExec(`UPDATE "agent_api_keys" SET ("last_used_at"=\$1,"usage_count"=usage_count \+ 1,"updated_at"=\$2|"last_used_at"=\$1,"updated_at"=\$2,"usage_count"=usage_count \+ 1) WHERE id = \$3`).
+	mock.ExpectExec(`UPDATE "agent_api_keys" SET "last_used_at"=\$1,"updated_at"=\$2 WHERE id = \$3`).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	output := captureProcessOutput(t, func() {
@@ -207,6 +209,173 @@ func TestAPIKeyAuthMiddlewareDoesNotLogSensitiveAPIKeyOnSuccess(t *testing.T) {
 		tenantID.String(),
 		"secret success key",
 	)
+}
+
+func TestAPIKeyAuthMiddlewareAcceptsXAPIKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db, mock, cleanup := openAgentAPIKeyRuntimeMockDB(t)
+	defer cleanup()
+
+	rawKey, keyHash := hashTestAPIKey("zgi_test_x_header")
+	keyID := uuid.New()
+	agentID := uuid.New()
+	tenantID := uuid.New()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	rows := sqlmock.NewRows([]string{
+		"id",
+		"agent_id",
+		"tenant_id",
+		"key_hash",
+		"key_prefix",
+		"name",
+		"status",
+		"expires_at",
+		"usage_count",
+		"last_used_at",
+		"created_at",
+		"updated_at",
+	}).AddRow(
+		keyID.String(),
+		agentID.String(),
+		tenantID.String(),
+		keyHash,
+		"zgi_test_x",
+		"x header key",
+		"active",
+		nil,
+		int64(0),
+		nil,
+		now,
+		now,
+	)
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "agent_api_keys" WHERE (key_hash = $1 AND status = 'active') AND (expires_at IS NULL OR expires_at > $2) ORDER BY "agent_api_keys"."id" LIMIT $3`)).
+		WithArgs(keyHash, sqlmock.AnyArg(), 1).
+		WillReturnRows(rows)
+	mock.ExpectExec(`UPDATE "agent_api_keys" SET "last_used_at"=\$1,"updated_at"=\$2 WHERE id = \$3`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	router := gin.New()
+	router.Use(APIKeyAuthMiddleware(db))
+	router.GET("/protected", func(c *gin.Context) {
+		if c.GetString("agent_id") != agentID.String() {
+			t.Fatalf("agent_id = %q, want %q", c.GetString("agent_id"), agentID.String())
+		}
+		c.Status(http.StatusNoContent)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req.Header.Set("X-API-Key", rawKey)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusNoContent)
+	}
+	waitForSQLExpectations(t, mock)
+}
+
+func TestAPIKeyAuthMiddlewareBearerTakesPrecedenceOverXAPIKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db, mock, cleanup := openAgentAPIKeyRuntimeMockDB(t)
+	defer cleanup()
+
+	rawBearer, bearerHash := hashTestAPIKey("zgi_test_bearer")
+	rawXKey, _ := hashTestAPIKey("zgi_test_x_ignored")
+	keyID := uuid.New()
+	agentID := uuid.New()
+	tenantID := uuid.New()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	rows := sqlmock.NewRows([]string{
+		"id",
+		"agent_id",
+		"tenant_id",
+		"key_hash",
+		"key_prefix",
+		"name",
+		"status",
+		"expires_at",
+		"usage_count",
+		"last_used_at",
+		"created_at",
+		"updated_at",
+	}).AddRow(
+		keyID.String(),
+		agentID.String(),
+		tenantID.String(),
+		bearerHash,
+		"zgi_bearer",
+		"bearer key",
+		"active",
+		nil,
+		int64(0),
+		nil,
+		now,
+		now,
+	)
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "agent_api_keys" WHERE (key_hash = $1 AND status = 'active') AND (expires_at IS NULL OR expires_at > $2) ORDER BY "agent_api_keys"."id" LIMIT $3`)).
+		WithArgs(bearerHash, sqlmock.AnyArg(), 1).
+		WillReturnRows(rows)
+	mock.ExpectExec(`UPDATE "agent_api_keys" SET "last_used_at"=\$1,"updated_at"=\$2 WHERE id = \$3`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	router := gin.New()
+	router.Use(APIKeyAuthMiddleware(db))
+	router.GET("/protected", func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req.Header.Set("Authorization", "Bearer "+rawBearer)
+	req.Header.Set("X-API-Key", rawXKey)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusNoContent)
+	}
+	waitForSQLExpectations(t, mock)
+}
+
+func TestAPIKeyUsageResponseWriterCapsCapturedBody(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	writer := &responseWriter{
+		ResponseWriter: gin.ResponseWriter(&testGinResponseWriter{ResponseWriter: recorder}),
+		body:           &bytes.Buffer{},
+		statusCode:     http.StatusOK,
+	}
+
+	chunk := strings.Repeat("x", apiKeyUsageMaxCapturedResponseBytes+1024)
+	if _, err := writer.Write([]byte(chunk)); err != nil {
+		t.Fatalf("write response: %v", err)
+	}
+
+	if writer.body.Len() != apiKeyUsageMaxCapturedResponseBytes {
+		t.Fatalf("captured body len = %d, want %d", writer.body.Len(), apiKeyUsageMaxCapturedResponseBytes)
+	}
+	if recorder.Body.Len() != len(chunk) {
+		t.Fatalf("forwarded body len = %d, want %d", recorder.Body.Len(), len(chunk))
+	}
+}
+
+type testGinResponseWriter struct {
+	http.ResponseWriter
+}
+
+func (w *testGinResponseWriter) Status() int                       { return http.StatusOK }
+func (w *testGinResponseWriter) Size() int                         { return 0 }
+func (w *testGinResponseWriter) Written() bool                     { return false }
+func (w *testGinResponseWriter) WriteHeaderNow()                   {}
+func (w *testGinResponseWriter) WriteString(s string) (int, error) { return w.Write([]byte(s)) }
+func (w *testGinResponseWriter) Pusher() http.Pusher               { return nil }
+func (w *testGinResponseWriter) Flush()                            {}
+func (w *testGinResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return nil, nil, http.ErrNotSupported
+}
+func (w *testGinResponseWriter) CloseNotify() <-chan bool {
+	ch := make(chan bool)
+	return ch
 }
 
 func openAgentAPIKeyRuntimeMockDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock, func()) {

@@ -276,6 +276,10 @@ func (s *stubWebAppStatusHandlerService) GetPublishedAgentWebAppConfig(context.C
 	return nil, s.err
 }
 
+func (s *stubWebAppStatusHandlerService) GetPublishedAgentRuntimeConfig(context.Context, string) (*dto.AgentWebAppRuntimeConfigResponse, error) {
+	return nil, s.err
+}
+
 func (s *stubWebAppStatusHandlerService) UpdateWebAppStatus(ctx context.Context, agentID string, req dto.UpdateWebAppStatusRequest) (*dto.WebAppStatusResponse, error) {
 	s.called = true
 	s.agentID = agentID

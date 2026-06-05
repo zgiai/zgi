@@ -461,11 +461,26 @@ func (s *agentsService) GetPublishedAgentWebAppConfig(ctx context.Context, webAp
 	if err != nil {
 		return nil, err
 	}
-	if NormalizeAgentWebAppStatus(ag.WebAppStatus) != AgentWebAppStatusActive {
+	return s.publishedAgentRuntimeConfig(ctx, ag, true)
+}
+
+func (s *agentsService) GetPublishedAgentRuntimeConfig(ctx context.Context, agentID string) (*dto.AgentWebAppRuntimeConfigResponse, error) {
+	ag, err := s.agentsRepo.GetByID(ctx, agentID)
+	if err != nil {
+		return nil, err
+	}
+	return s.publishedAgentRuntimeConfig(ctx, ag, false)
+}
+
+func (s *agentsService) publishedAgentRuntimeConfig(ctx context.Context, ag *Agent, requireActiveWebApp bool) (*dto.AgentWebAppRuntimeConfigResponse, error) {
+	if ag == nil {
+		return nil, fmt.Errorf("agent not found")
+	}
+	if requireActiveWebApp && NormalizeAgentWebAppStatus(ag.WebAppStatus) != AgentWebAppStatusActive {
 		return nil, errAgentWebAppOffline
 	}
 	if ag.AgentsType != "AGENT" {
-		return nil, fmt.Errorf("web app is not an AGENT runtime")
+		return nil, fmt.Errorf("agent is not an AGENT runtime")
 	}
 	version, err := s.agentsRepo.GetLatestAgentPublishedVersion(ctx, ag.ID.String())
 	if err != nil {

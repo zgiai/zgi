@@ -1,11 +1,15 @@
 package agents
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
@@ -23,6 +27,104 @@ func TestNormalizeAgentEnabledSkillIDsRemovesRuntimeManagedSkills(t *testing.T) 
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("normalizeAgentEnabledSkillIDs() = %#v, want %#v", got, want)
 	}
+}
+
+func TestGetPublishedAgentRuntimeConfigByAgentID(t *testing.T) {
+	agentID := uuid.New()
+	workspaceID := uuid.New()
+	versionUUID := uuid.New()
+	repo := &publishedRuntimeRepo{
+		agent: &Agent{
+			ID:           agentID,
+			TenantID:     workspaceID,
+			Name:         "Published Agent",
+			AgentsType:   "AGENT",
+			WebAppID:     uuid.New(),
+			WebAppStatus: AgentWebAppStatusInactive,
+		},
+		version: &AgentPublishedVersion{
+			ID:          uuid.New(),
+			AgentID:     agentID,
+			WorkspaceID: workspaceID,
+			Version:     "v1",
+			VersionUUID: versionUUID,
+			ConfigSnapshot: map[string]interface{}{
+				"system_prompt":     "answer carefully",
+				"model_provider":    "openai",
+				"model":             "gpt-test",
+				"enabled_skill_ids": []string{"time"},
+			},
+			CreatedAt: time.Now(),
+		},
+	}
+	service := &agentsService{agentsRepo: repo}
+
+	got, err := service.GetPublishedAgentRuntimeConfig(context.Background(), agentID.String())
+	if err != nil {
+		t.Fatalf("GetPublishedAgentRuntimeConfig() error = %v", err)
+	}
+	if got.AgentID != agentID.String() || got.WorkspaceID != workspaceID.String() || got.OrganizationID != workspaceID.String() {
+		t.Fatalf("scope fields = agent:%q workspace:%q organization:%q", got.AgentID, got.WorkspaceID, got.OrganizationID)
+	}
+	if got.Version != "v1" || got.VersionUUID != versionUUID.String() {
+		t.Fatalf("version fields = %q/%q, want v1/%s", got.Version, got.VersionUUID, versionUUID)
+	}
+	if got.Config.Model != "gpt-test" || got.Config.SystemPrompt != "answer carefully" {
+		t.Fatalf("config = %#v", got.Config)
+	}
+}
+
+func TestGetPublishedAgentRuntimeConfigRejectsNonAgentRuntime(t *testing.T) {
+	agentID := uuid.New()
+	service := &agentsService{agentsRepo: &publishedRuntimeRepo{
+		agent: &Agent{
+			ID:         agentID,
+			TenantID:   uuid.New(),
+			Name:       "Workflow App",
+			AgentsType: "workflow",
+			WebAppID:   uuid.New(),
+		},
+	}}
+
+	_, err := service.GetPublishedAgentRuntimeConfig(context.Background(), agentID.String())
+	if err == nil || !strings.Contains(err.Error(), "not an AGENT runtime") {
+		t.Fatalf("error = %v, want non-agent runtime error", err)
+	}
+}
+
+func TestGetPublishedAgentRuntimeConfigRejectsUnpublishedAgent(t *testing.T) {
+	agentID := uuid.New()
+	service := &agentsService{agentsRepo: &publishedRuntimeRepo{
+		agent: &Agent{
+			ID:         agentID,
+			TenantID:   uuid.New(),
+			Name:       "Draft Only Agent",
+			AgentsType: "AGENT",
+			WebAppID:   uuid.New(),
+		},
+	}}
+
+	_, err := service.GetPublishedAgentRuntimeConfig(context.Background(), agentID.String())
+	if !errors.Is(err, errAgentWebAppNotPublished) {
+		t.Fatalf("error = %v, want errAgentWebAppNotPublished", err)
+	}
+}
+
+type publishedRuntimeRepo struct {
+	AgentsRepository
+	agent   *Agent
+	version *AgentPublishedVersion
+}
+
+func (r *publishedRuntimeRepo) GetByID(_ context.Context, id string) (*Agent, error) {
+	if r.agent == nil || r.agent.ID.String() != id {
+		return nil, errors.New("agent not found")
+	}
+	return r.agent, nil
+}
+
+func (r *publishedRuntimeRepo) GetLatestAgentPublishedVersion(context.Context, string) (*AgentPublishedVersion, error) {
+	return r.version, nil
 }
 
 func TestAgentMemoryReplaceRequestPreservesInvalidRowsForValidation(t *testing.T) {

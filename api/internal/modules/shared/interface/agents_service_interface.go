@@ -29,6 +29,7 @@ type AgentsService interface {
 	ListAgentPublishedVersions(ctx context.Context, agentID, accountID string, page, limit int) (*dto.AgentPublishedVersionsResponse, error)
 	RollbackAgentPublishedVersion(ctx context.Context, agentID, accountID string, req dto.RollbackAgentPublishedVersionRequest) (*dto.AgentConfigResponse, error)
 	GetPublishedAgentWebAppConfig(ctx context.Context, webAppID string) (*dto.AgentWebAppRuntimeConfigResponse, error)
+	GetPublishedAgentRuntimeConfig(ctx context.Context, agentID string) (*dto.AgentWebAppRuntimeConfigResponse, error)
 	UpdateWebAppStatus(ctx context.Context, agentID string, req dto.UpdateWebAppStatusRequest) (*dto.WebAppStatusResponse, error)
 	DeleteAgent(ctx context.Context, agentID string) error
 }
