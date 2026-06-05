@@ -28,16 +28,23 @@ export function FaviconSync({ faviconUrl }: FaviconSyncProps) {
     ];
 
     for (const { rel, id } of links) {
-      let link = document.head.querySelector<HTMLLinkElement>(`#${id}`);
+      const selector = `link[rel="${rel}"]`;
+      let link =
+        document.head.querySelector<HTMLLinkElement>(`#${id}`) ||
+        document.head.querySelector<HTMLLinkElement>(selector);
 
       if (!link) {
         link = document.createElement('link');
-        link.id = id;
         link.rel = rel;
         document.head.appendChild(link);
       }
 
+      link.id = id;
       link.href = resolvedFaviconUrl;
+
+      document.head.querySelectorAll<HTMLLinkElement>(selector).forEach((candidate) => {
+        if (candidate !== link) candidate.remove();
+      });
     }
   }, [faviconUrl]);
 
