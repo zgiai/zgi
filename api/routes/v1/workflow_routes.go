@@ -102,6 +102,7 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, deps WorkflowRouteDeps) {
 	runtimeLogHandler := workflowHandlerPkg.NewRuntimeLogHandler(workflowRunLogRepo, workflowNodeRuntimeLogRepo)
 	agentHistoryDispatchHandler := workflowHandlerPkg.NewAgentHistoryDispatchHandler(
 		agentsRepo,
+		handler,
 		agentHistoryHandler,
 		runtimeLogHandler,
 		runtimeservice.NewServiceWithDependencies(
@@ -137,9 +138,9 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, deps WorkflowRouteDeps) {
 
 	apps.POST("/:agent_id/workflows/precheck", handler.PrecheckPublishedWorkflow)
 	apps.POST("/:agent_id/workflows/run", handler.RunPublishedWorkflow)
-	apps.GET("/:agent_id/workflow-runs", handler.GetWorkflowRuns)
-	apps.GET("/:agent_id/workflow-runs/:run_id", handler.GetWorkflowRunDetail)
-	apps.GET("/:agent_id/workflow-runs/:run_id/node-executions", handler.GetWorkflowRunNodeExecutions)
+	apps.GET("/:agent_id/workflow-runs", agentHistoryDispatchHandler.GetWorkflowRuns)
+	apps.GET("/:agent_id/workflow-runs/:run_id", agentHistoryDispatchHandler.GetWorkflowRunDetail)
+	apps.GET("/:agent_id/workflow-runs/:run_id/node-executions", agentHistoryDispatchHandler.GetWorkflowRunNodeExecutions)
 	apps.POST("/:agent_id/workflow-runs/:run_id/nodes/:node_log_id/diagnose", handler.ManualDiagnoseNode)
 	apps.GET("/:agent_id/conversations", agentHistoryDispatchHandler.GetConversations)
 	apps.GET("/:agent_id/conversations/:conversation_id", agentHistoryDispatchHandler.GetConversationDetail)

@@ -26,6 +26,11 @@ func (s *service) CreateConversationForCaller(ctx context.Context, scope Scope, 
 		return nil, err
 	}
 	title = normalizeTitle(title, defaultConversationTitle)
+	source := normalizeConversationSource(caller.Source)
+	sourceWebAppID := normalizeCallerID(caller.SourceWebAppID)
+	if source == runtimemodel.ConversationSourceWebApp && sourceWebAppID == nil {
+		return nil, fmt.Errorf("%w: source_web_app_id is required for webapp conversations", ErrInvalidInput)
+	}
 	conversation := &runtimemodel.Conversation{
 		OrganizationID: scope.OrganizationID,
 		WorkspaceID:    workspaceID,
@@ -34,8 +39,8 @@ func (s *service) CreateConversationForCaller(ctx context.Context, scope Scope, 
 		CallerID:       normalizeCallerID(caller.ID),
 		Title:          title,
 		Status:         runtimemodel.ConversationStatusNormal,
-		Source:         normalizeConversationSource(caller.Source),
-		SourceWebAppID: normalizeCallerID(caller.SourceWebAppID),
+		Source:         source,
+		SourceWebAppID: sourceWebAppID,
 	}
 	if err := s.repos.Conversation.Create(ctx, conversation); err != nil {
 		return nil, err
@@ -336,6 +341,40 @@ func (s *service) ListMessagesByCaller(ctx context.Context, scope Scope, caller 
 	}
 	hydrateMessagesGeneratedFileURLs(messages)
 	return messages, total, nil
+}
+
+func (s *service) ListMessagesByCallerSource(ctx context.Context, scope Scope, caller Caller, source string, page, limit int) ([]*runtimemodel.Message, int64, error) {
+	if err := s.ensureMember(ctx, scope); err != nil {
+		return nil, 0, err
+	}
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return s.ListMessagesByCaller(ctx, scope, caller, page, limit)
+	}
+	limit = clampLimit(limit, 50, 200)
+	offset := pageOffset(page, limit)
+	messages, total, err := s.repos.Message.ListByCallerSourceScoped(ctx, scope.OrganizationID, scope.AccountID, normalizeCallerType(caller.Type), normalizeCallerID(caller.ID), source, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	hydrateMessagesGeneratedFileURLs(messages)
+	return messages, total, nil
+}
+
+func (s *service) GetMessageByCaller(ctx context.Context, scope Scope, caller Caller, id uuid.UUID) (*runtimemodel.Message, *runtimemodel.Conversation, error) {
+	if err := s.ensureMember(ctx, scope); err != nil {
+		return nil, nil, err
+	}
+	message, err := s.repos.Message.GetScoped(ctx, id, scope.OrganizationID, scope.AccountID)
+	if err != nil {
+		return nil, nil, mapRepoError(err)
+	}
+	conversation, err := s.GetConversationByCaller(ctx, scope, caller, message.ConversationID)
+	if err != nil {
+		return nil, nil, err
+	}
+	hydrateMessageGeneratedFileURLs(message)
+	return message, conversation, nil
 }
 
 func (s *service) DeleteMessage(ctx context.Context, scope Scope, id uuid.UUID) error {
