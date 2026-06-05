@@ -167,12 +167,26 @@ type AgentRuntimeModeConfig struct {
 	DatabaseBindings          []AgentDatabaseBinding  `json:"database_bindings,omitempty"`
 	DatabaseBoundByAccountID  string                  `json:"database_bound_by_account_id,omitempty"`
 	DatabaseBoundAtUnix       int64                   `json:"database_bound_at_unix,omitempty"`
+	WorkflowBindings          []AgentWorkflowBinding  `json:"workflow_bindings,omitempty"`
+	WorkflowBoundByAccountID  string                  `json:"workflow_bound_by_account_id,omitempty"`
+	WorkflowBoundAtUnix       int64                   `json:"workflow_bound_at_unix,omitempty"`
 }
 
 type AgentDatabaseBinding struct {
 	DataSourceID     string   `json:"data_source_id"`
 	TableIDs         []string `json:"table_ids"`
 	WritableTableIDs []string `json:"writable_table_ids,omitempty"`
+}
+
+type AgentWorkflowBinding struct {
+	BindingID       string `json:"binding_id"`
+	Label           string `json:"label"`
+	Description     string `json:"description,omitempty"`
+	AgentID         string `json:"agent_id"`
+	WorkflowID      string `json:"workflow_id"`
+	VersionStrategy string `json:"version_strategy"`
+	VersionUUID     string `json:"version_uuid,omitempty"`
+	TimeoutSeconds  int    `json:"timeout_seconds,omitempty"`
 }
 
 type AgentMemorySlotConfig struct {
@@ -230,6 +244,9 @@ type AgentConfigRequest struct {
 	DatabaseBindings          []AgentDatabaseBinding `json:"database_bindings"`
 	DatabaseBoundByAccountID  string                 `json:"-"`
 	DatabaseBoundAtUnix       int64                  `json:"-"`
+	WorkflowBindings          []AgentWorkflowBinding `json:"workflow_bindings"`
+	WorkflowBoundByAccountID  string                 `json:"-"`
+	WorkflowBoundAtUnix       int64                  `json:"-"`
 }
 
 type AgentConfigResponse struct {
@@ -255,6 +272,9 @@ type AgentConfigResponse struct {
 	DatabaseBindings          []AgentDatabaseBinding  `json:"database_bindings"`
 	DatabaseBoundByAccountID  string                  `json:"-"`
 	DatabaseBoundAtUnix       int64                   `json:"-"`
+	WorkflowBindings          []AgentWorkflowBinding  `json:"workflow_bindings"`
+	WorkflowBoundByAccountID  string                  `json:"-"`
+	WorkflowBoundAtUnix       int64                   `json:"-"`
 }
 
 type AgentDraftRuntimeConfigResponse struct {

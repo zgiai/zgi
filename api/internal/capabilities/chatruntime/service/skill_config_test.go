@@ -80,6 +80,40 @@ func TestEffectiveAgentSkillIDsSkipsDatabaseWithoutBindings(t *testing.T) {
 	}
 }
 
+func TestEffectiveAgentSkillIDsAutoAddsHiddenWorkflow(t *testing.T) {
+	catalog := []skills.SkillDiscoveryMetadata{
+		{ID: skills.SkillCalculator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAgent}},
+		{ID: skills.SkillAgentWorkflow, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAgent}, RequiredConfig: []string{skills.SkillRequiredConfigAgentWorkflow}},
+	}
+
+	got := effectiveAgentSkillIDs(
+		[]string{skills.SkillCalculator},
+		catalog,
+		&RunConfig{WorkflowBindings: []AgentWorkflowBinding{{BindingID: "approval-flow", AgentID: "agent-1", WorkflowID: "workflow-1"}}},
+	)
+	want := []string{skills.SkillAgentWorkflow, skills.SkillCalculator}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("effectiveAgentSkillIDs() = %#v, want %#v", got, want)
+	}
+}
+
+func TestEffectiveAgentSkillIDsSkipsWorkflowWithoutBindings(t *testing.T) {
+	catalog := []skills.SkillDiscoveryMetadata{
+		{ID: skills.SkillCalculator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAgent}},
+		{ID: skills.SkillAgentWorkflow, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAgent}, RequiredConfig: []string{skills.SkillRequiredConfigAgentWorkflow}},
+	}
+
+	got := effectiveAgentSkillIDs(
+		[]string{skills.SkillCalculator, skills.SkillAgentWorkflow},
+		catalog,
+		&RunConfig{},
+	)
+	want := []string{skills.SkillCalculator}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("effectiveAgentSkillIDs() = %#v, want %#v", got, want)
+	}
+}
+
 func TestEffectiveAgentSkillIDsDoesNotAutoAddHiddenAgentMemory(t *testing.T) {
 	catalog := []skills.SkillDiscoveryMetadata{
 		{ID: skills.SkillAgentMemory, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAgent}},
@@ -145,6 +179,9 @@ func TestSkillRuntimeParametersUseCapabilityConfig(t *testing.T) {
 		DatabaseBindings:          []AgentDatabaseBinding{{DataSourceID: "db-1", TableIDs: []string{"table-1"}}},
 		DatabaseBoundByAccountID:  "database-binder",
 		DatabaseBoundAtUnix:       456,
+		WorkflowBindings:          []AgentWorkflowBinding{{BindingID: "approval-flow", AgentID: "agent-1", WorkflowID: "workflow-1"}},
+		WorkflowBoundByAccountID:  "workflow-binder",
+		WorkflowBoundAtUnix:       789,
 	})
 
 	if params["organization_id"] != organizationID.String() || params["workspace_id"] != workspaceID.String() {
@@ -159,6 +196,12 @@ func TestSkillRuntimeParametersUseCapabilityConfig(t *testing.T) {
 	if params["database_binding_grant"] != true || params["database_bound_by_account_id"] != "database-binder" || params["database_bound_at_unix"] != int64(456) {
 		t.Fatalf("database grant params = %#v", params)
 	}
+	if params["workflow_binding_grant"] != true || params["workflow_bound_by_account_id"] != "workflow-binder" || params["workflow_bound_at_unix"] != int64(789) {
+		t.Fatalf("workflow grant params = %#v", params)
+	}
+	if bindings, ok := params["workflow_bindings"].([]AgentWorkflowBinding); !ok || len(bindings) != 1 || bindings[0].BindingID != "approval-flow" {
+		t.Fatalf("workflow bindings param = %#v", params["workflow_bindings"])
+	}
 }
 
 func TestVisibleSkillMetadataHidesRuntimeManagedSkills(t *testing.T) {
@@ -166,6 +209,7 @@ func TestVisibleSkillMetadataHidesRuntimeManagedSkills(t *testing.T) {
 		{ID: skills.SkillInternalKnowledge},
 		{ID: skills.SkillAgentKnowledge},
 		{ID: skills.SkillAgentDatabase},
+		{ID: skills.SkillAgentWorkflow},
 		{ID: skills.SkillAgentMemory},
 		{ID: skills.SkillUserMemory},
 		{ID: skills.SkillCalculator},

@@ -9,6 +9,7 @@ import (
 
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
+	workflowshared "github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
@@ -17,6 +18,16 @@ import (
 const automationTriggeredFrom = string(InvokeFromAutomation)
 
 const automationFinalizationTimeout = 30 * time.Second
+
+const (
+	automationApprovalFormIDKey       = "__approval_form_id"
+	automationApprovalTokenKey        = "__approval_token"
+	automationApprovalFormKey         = "__approval_form"
+	automationApprovalFormAliasKey    = "approval_form"
+	automationApprovalFormIDAliasKey  = "approval_form_id"
+	automationApprovalTokenAliasKey   = "approval_token"
+	automationApprovalFormURLAliasKey = "approval_url"
+)
 
 // RunAutomationWorkflow executes a published workflow from an automation action.
 func (s *WorkflowService) RunAutomationWorkflow(ctx context.Context, req automationaction.WorkflowRunRequest) (*automationaction.WorkflowRunResult, error) {
@@ -78,7 +89,7 @@ func (s *WorkflowService) RunAutomationWorkflow(ctx context.Context, req automat
 	outputs := map[string]interface{}{}
 	totalSteps := 0
 	if executionResult != nil {
-		outputs = executionResult.NodeResults
+		outputs = automationWorkflowOutputs(executionResult)
 		totalSteps = len(executionResult.NodeResults)
 		if executionResult.ExecutionTime > 0 {
 			elapsedTime = executionResult.ExecutionTime.Seconds()
@@ -98,9 +109,15 @@ func (s *WorkflowService) RunAutomationWorkflow(ctx context.Context, req automat
 	if execErr != nil {
 		status = string(dto.WorkflowRunStatusFailed)
 		errorMessage = execErr.Error()
+	} else if executionResult != nil && strings.EqualFold(strings.TrimSpace(executionResult.Status), string(dto.WorkflowRunStatusPaused)) {
+		status = string(dto.WorkflowRunStatusPaused)
 	}
 
-	if err := s.UpdateWorkflowRunLogStatus(finalizeCtx, workflowRunLogID, status, outputs, elapsedTime, 0, totalSteps, errorMessage); err != nil {
+	if status == string(dto.WorkflowRunStatusPaused) {
+		if err := s.PauseWorkflowRunLog(finalizeCtx, workflowRunLogID, outputs, elapsedTime, 0, totalSteps); err != nil {
+			return nil, fmt.Errorf("pause automation workflow run log: %w", err)
+		}
+	} else if err := s.UpdateWorkflowRunLogStatus(finalizeCtx, workflowRunLogID, status, outputs, elapsedTime, 0, totalSteps, errorMessage); err != nil {
 		return nil, fmt.Errorf("update automation workflow run log: %w", err)
 	}
 	if execErr != nil {
@@ -124,6 +141,124 @@ func (s *WorkflowService) RunAutomationWorkflow(ctx context.Context, req automat
 		Outputs:       outputs,
 		ElapsedTime:   elapsedTime,
 	}, nil
+}
+
+// GetAutomationWorkflowRunStatus returns a safe run summary for an automation-triggered workflow.
+func (s *WorkflowService) GetAutomationWorkflowRunStatus(ctx context.Context, req automationaction.WorkflowRunStatusRequest) (*automationaction.WorkflowRunStatusResult, error) {
+	if s == nil {
+		return nil, fmt.Errorf("workflow service is not configured")
+	}
+	if s.workflowRunLogRepo == nil {
+		return nil, fmt.Errorf("workflow run log repository is not configured")
+	}
+	workflowRunID := strings.TrimSpace(req.WorkflowRunID)
+	if workflowRunID == "" {
+		return nil, fmt.Errorf("workflow_run_id is required")
+	}
+	run, err := s.workflowRunLogRepo.GetByID(ctx, workflowRunID)
+	if err != nil {
+		return nil, err
+	}
+	if run == nil {
+		return nil, fmt.Errorf("workflow run not found")
+	}
+	if workspaceID := strings.TrimSpace(req.WorkspaceID); workspaceID != "" && strings.TrimSpace(run.TenantID) != workspaceID {
+		return nil, fmt.Errorf("workflow run %s does not belong to workspace %s", workflowRunID, workspaceID)
+	}
+	if agentID := strings.TrimSpace(req.AgentID); agentID != "" && strings.TrimSpace(run.AgentID) != agentID {
+		return nil, fmt.Errorf("workflow run %s does not belong to agent %s", workflowRunID, agentID)
+	}
+	if accountID := strings.TrimSpace(req.AccountID); accountID != "" && strings.TrimSpace(run.CreatedBy) != accountID {
+		return nil, fmt.Errorf("workflow run %s is not owned by account %s", workflowRunID, accountID)
+	}
+
+	outputs := run.GetOutputsDict()
+	errorMessage := ""
+	if run.Error != nil {
+		errorMessage = strings.TrimSpace(*run.Error)
+	}
+	result := &automationaction.WorkflowRunStatusResult{
+		WorkflowRunID: workflowRunID,
+		WorkflowID:    run.WorkflowID,
+		AgentID:       run.AgentID,
+		Version:       run.Version,
+		Status:        string(run.Status),
+		Outputs:       outputs,
+		Error:         errorMessage,
+		ElapsedTime:   run.ElapsedTime,
+		CreatedAtUnix: run.CreatedAt.Unix(),
+	}
+	if run.FinishedAt != nil {
+		result.FinishedAtUnix = run.FinishedAt.Unix()
+	}
+	return result, nil
+}
+
+func automationWorkflowOutputs(result *WorkflowExecutionResult) map[string]interface{} {
+	if result == nil {
+		return map[string]interface{}{}
+	}
+	outputs := make(map[string]interface{}, len(result.NodeResults)+4)
+	for key, value := range result.NodeResults {
+		outputs[key] = value
+	}
+	mergeAutomationApprovalOutputs(outputs, result.NodeExecutions)
+	return outputs
+}
+
+func mergeAutomationApprovalOutputs(outputs map[string]interface{}, snapshots []graph_engine.NodeExecutionSnapshot) {
+	if outputs == nil {
+		return
+	}
+	for _, snapshot := range snapshots {
+		if len(snapshot.Outputs) == 0 || !isAutomationApprovalSnapshot(snapshot) {
+			continue
+		}
+		copyAutomationApprovalField(outputs, snapshot.Outputs, automationApprovalFormIDKey, automationApprovalFormIDKey)
+		copyAutomationApprovalField(outputs, snapshot.Outputs, automationApprovalTokenKey, automationApprovalTokenKey)
+		copyAutomationApprovalField(outputs, snapshot.Outputs, automationApprovalFormKey, automationApprovalFormKey)
+		copyAutomationApprovalField(outputs, snapshot.Outputs, automationApprovalFormAliasKey, automationApprovalFormAliasKey)
+		copyAutomationApprovalField(outputs, snapshot.Outputs, automationApprovalFormIDAliasKey, automationApprovalFormIDAliasKey)
+		copyAutomationApprovalField(outputs, snapshot.Outputs, automationApprovalTokenAliasKey, automationApprovalTokenAliasKey)
+		copyAutomationApprovalField(outputs, snapshot.Outputs, automationApprovalFormURLAliasKey, automationApprovalFormURLAliasKey)
+	}
+}
+
+func isAutomationApprovalSnapshot(snapshot graph_engine.NodeExecutionSnapshot) bool {
+	if snapshot.NodeType == workflowshared.Approval {
+		return true
+	}
+	if _, ok := snapshot.Outputs[automationApprovalFormIDKey]; ok {
+		return true
+	}
+	if _, ok := snapshot.Outputs[automationApprovalTokenKey]; ok {
+		return true
+	}
+	if _, ok := snapshot.Outputs[automationApprovalFormKey]; ok {
+		return true
+	}
+	return false
+}
+
+func copyAutomationApprovalField(target, source map[string]interface{}, sourceKey, targetKey string) {
+	value, ok := source[sourceKey]
+	if !ok || isEmptyAutomationApprovalValue(value) {
+		return
+	}
+	if existing, exists := target[targetKey]; exists && !isEmptyAutomationApprovalValue(existing) {
+		return
+	}
+	target[targetKey] = value
+}
+
+func isEmptyAutomationApprovalValue(value interface{}) bool {
+	if value == nil {
+		return true
+	}
+	if typed, ok := value.(string); ok {
+		return strings.TrimSpace(typed) == ""
+	}
+	return false
 }
 
 func (s *WorkflowService) resolveAutomationWorkflowTarget(ctx context.Context, ref automationaction.WorkflowRef) (*Workflow, error) {

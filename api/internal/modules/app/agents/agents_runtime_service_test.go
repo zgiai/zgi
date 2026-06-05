@@ -13,6 +13,7 @@ import (
 func TestNormalizeAgentEnabledSkillIDsRemovesRuntimeManagedSkills(t *testing.T) {
 	got := normalizeAgentEnabledSkillIDs([]string{
 		skills.SkillAgentKnowledge,
+		skills.SkillAgentWorkflow,
 		skills.SkillUserMemory,
 		skills.SkillCalculator,
 		skills.SkillCalculator,
@@ -22,6 +23,53 @@ func TestNormalizeAgentEnabledSkillIDsRemovesRuntimeManagedSkills(t *testing.T) 
 	want := []string{skills.SkillCalculator, skills.SkillTime}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("normalizeAgentEnabledSkillIDs() = %#v, want %#v", got, want)
+	}
+}
+
+func TestApplyAgentConfigRequestPersistsWorkflowBindings(t *testing.T) {
+	cfg := &AgentsConfig{}
+	applied, err := applyAgentConfigRequestToDraft(cfg, dto.AgentConfigRequest{
+		WorkflowBindings: []dto.AgentWorkflowBinding{
+			{BindingID: " Approval-Flow ", Label: " Approval ", Description: " Needs approval ", AgentID: " Agent-1 ", WorkflowID: " Workflow-1 ", VersionStrategy: "latest_published", TimeoutSeconds: 5},
+			{BindingID: "approval-flow", Label: "Approval v2", AgentID: "agent-1", WorkflowID: "workflow-1", VersionStrategy: "pinned", VersionUUID: " Version-1 "},
+			{BindingID: "missing-agent", WorkflowID: "workflow-2"},
+		},
+	}, "binder-1")
+	if err != nil {
+		t.Fatalf("applyAgentConfigRequestToDraft() error = %v", err)
+	}
+	want := []dto.AgentWorkflowBinding{{
+		BindingID:       "approval-flow",
+		Label:           "Approval v2",
+		AgentID:         "agent-1",
+		WorkflowID:      "workflow-1",
+		VersionStrategy: "pinned",
+		VersionUUID:     "version-1",
+	}}
+	if !reflect.DeepEqual(applied.WorkflowBindings, want) {
+		t.Fatalf("applied WorkflowBindings = %#v, want %#v", applied.WorkflowBindings, want)
+	}
+	var mode dto.AgentRuntimeModeConfig
+	if err := json.Unmarshal([]byte(*cfg.AgentMode), &mode); err != nil {
+		t.Fatalf("unmarshal AgentMode error = %v", err)
+	}
+	if !reflect.DeepEqual(mode.WorkflowBindings, want) {
+		t.Fatalf("mode WorkflowBindings = %#v, want %#v", mode.WorkflowBindings, want)
+	}
+	if mode.WorkflowBoundByAccountID != "binder-1" || mode.WorkflowBoundAtUnix <= 0 {
+		t.Fatalf("workflow grant = %q/%d, want binder-1 with timestamp", mode.WorkflowBoundByAccountID, mode.WorkflowBoundAtUnix)
+	}
+	resp := agentConfigResponse("agent-1", cfg)
+	if !reflect.DeepEqual(resp.WorkflowBindings, want) {
+		t.Fatalf("response WorkflowBindings = %#v, want %#v", resp.WorkflowBindings, want)
+	}
+	snapshot := agentConfigSnapshot("agent-1", cfg)
+	fromSnapshot := agentConfigResponseFromSnapshot("agent-1", snapshot)
+	if !reflect.DeepEqual(fromSnapshot.WorkflowBindings, want) {
+		t.Fatalf("snapshot WorkflowBindings = %#v, want %#v", fromSnapshot.WorkflowBindings, want)
+	}
+	if fromSnapshot.WorkflowBoundByAccountID != "binder-1" || fromSnapshot.WorkflowBoundAtUnix <= 0 {
+		t.Fatalf("snapshot workflow grant = %q/%d, want binder-1 with timestamp", fromSnapshot.WorkflowBoundByAccountID, fromSnapshot.WorkflowBoundAtUnix)
 	}
 }
 

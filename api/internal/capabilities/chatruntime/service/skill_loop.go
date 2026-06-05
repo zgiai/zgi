@@ -116,6 +116,26 @@ func copyAgentDatabaseBindings(input []AgentDatabaseBinding) []AgentDatabaseBind
 	return out
 }
 
+func copyAgentWorkflowBindings(input []AgentWorkflowBinding) []AgentWorkflowBinding {
+	out := make([]AgentWorkflowBinding, 0, len(input))
+	for _, binding := range input {
+		if strings.TrimSpace(binding.BindingID) == "" || strings.TrimSpace(binding.AgentID) == "" || strings.TrimSpace(binding.WorkflowID) == "" {
+			continue
+		}
+		out = append(out, AgentWorkflowBinding{
+			BindingID:       strings.TrimSpace(binding.BindingID),
+			Label:           strings.TrimSpace(binding.Label),
+			Description:     strings.TrimSpace(binding.Description),
+			AgentID:         strings.TrimSpace(binding.AgentID),
+			WorkflowID:      strings.TrimSpace(binding.WorkflowID),
+			VersionStrategy: strings.TrimSpace(binding.VersionStrategy),
+			VersionUUID:     strings.TrimSpace(binding.VersionUUID),
+			TimeoutSeconds:  binding.TimeoutSeconds,
+		})
+	}
+	return out
+}
+
 func mergeUsage(current *adapter.Usage, next *adapter.Usage) *adapter.Usage {
 	if next == nil {
 		return current

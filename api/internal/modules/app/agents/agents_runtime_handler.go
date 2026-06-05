@@ -277,6 +277,9 @@ func agentRunConfig(agentID, systemPromptVersion string, cfg dto.AgentConfigResp
 		DatabaseBindings:          agentDatabaseRuntimeBindings(cfg.DatabaseBindings),
 		DatabaseBoundByAccountID:  cfg.DatabaseBoundByAccountID,
 		DatabaseBoundAtUnix:       cfg.DatabaseBoundAtUnix,
+		WorkflowBindings:          agentWorkflowRuntimeBindings(cfg.WorkflowBindings),
+		WorkflowBoundByAccountID:  cfg.WorkflowBoundByAccountID,
+		WorkflowBoundAtUnix:       cfg.WorkflowBoundAtUnix,
 		UseMemory:                 false,
 		AgentMemoryEnabled:        cfg.AgentMemoryEnabled,
 		AgentMemorySlots:          agentMemoryRuntimeSlots(cfg.AgentMemorySlots),
@@ -296,6 +299,26 @@ func agentDatabaseRuntimeBindings(bindings []dto.AgentDatabaseBinding) []runtime
 			DataSourceID:     strings.TrimSpace(binding.DataSourceID),
 			TableIDs:         append([]string(nil), binding.TableIDs...),
 			WritableTableIDs: append([]string(nil), binding.WritableTableIDs...),
+		})
+	}
+	return out
+}
+
+func agentWorkflowRuntimeBindings(bindings []dto.AgentWorkflowBinding) []runtimeservice.AgentWorkflowBinding {
+	out := make([]runtimeservice.AgentWorkflowBinding, 0, len(bindings))
+	for _, binding := range bindings {
+		if strings.TrimSpace(binding.BindingID) == "" || strings.TrimSpace(binding.AgentID) == "" || strings.TrimSpace(binding.WorkflowID) == "" {
+			continue
+		}
+		out = append(out, runtimeservice.AgentWorkflowBinding{
+			BindingID:       strings.TrimSpace(binding.BindingID),
+			Label:           strings.TrimSpace(binding.Label),
+			Description:     strings.TrimSpace(binding.Description),
+			AgentID:         strings.TrimSpace(binding.AgentID),
+			WorkflowID:      strings.TrimSpace(binding.WorkflowID),
+			VersionStrategy: strings.TrimSpace(binding.VersionStrategy),
+			VersionUUID:     strings.TrimSpace(binding.VersionUUID),
+			TimeoutSeconds:  binding.TimeoutSeconds,
 		})
 	}
 	return out

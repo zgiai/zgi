@@ -90,6 +90,9 @@ type RunConfig struct {
 	DatabaseBindings          []AgentDatabaseBinding
 	DatabaseBoundByAccountID  string
 	DatabaseBoundAtUnix       int64
+	WorkflowBindings          []AgentWorkflowBinding
+	WorkflowBoundByAccountID  string
+	WorkflowBoundAtUnix       int64
 	UseMemory                 bool
 	AgentMemoryEnabled        bool
 	AgentMemorySlots          []AgentMemorySlotConfig
@@ -103,6 +106,16 @@ type AgentDatabaseBinding struct {
 	DataSourceID     string   `json:"data_source_id"`
 	TableIDs         []string `json:"table_ids"`
 	WritableTableIDs []string `json:"writable_table_ids,omitempty"`
+}
+type AgentWorkflowBinding struct {
+	BindingID       string `json:"binding_id"`
+	Label           string `json:"label"`
+	Description     string `json:"description,omitempty"`
+	AgentID         string `json:"agent_id"`
+	WorkflowID      string `json:"workflow_id"`
+	VersionStrategy string `json:"version_strategy"`
+	VersionUUID     string `json:"version_uuid,omitempty"`
+	TimeoutSeconds  int    `json:"timeout_seconds,omitempty"`
 }
 type AgentMemoryRuntimeState = agentmemoryruntime.State
 type AgentMemoryPlannerDecision = agentmemoryruntime.Decision
