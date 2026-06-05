@@ -58,6 +58,12 @@ export const AGENT_KEYS = {
   config: (id: string) => [...AGENT_KEYS.detail(id), 'config'] as const,
   runnable: (workspaceId?: string | null) =>
     [...AGENT_KEYS.all, 'runnable-webapps', workspaceId || 'all'] as const,
+  runtimeRuns: (agentId: string, params: unknown) =>
+    [...AGENT_KEYS.detail(agentId), 'runtime-runs', params] as const,
+  runtimeRunDetail: (agentId: string, messageId: string) =>
+    [...AGENT_KEYS.detail(agentId), 'runtime-run-detail', messageId] as const,
+  runtimeRunSteps: (agentId: string, messageId: string) =>
+    [...AGENT_KEYS.detail(agentId), 'runtime-run-steps', messageId] as const,
 } as const;
 
 export const PROMPT_KEYS = {

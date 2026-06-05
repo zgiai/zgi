@@ -36,6 +36,10 @@ export function supportsWorkflowDetailPages(agentType: AgentDetailType): boolean
   return isWorkflowRuntimeType(agentType);
 }
 
+export function supportsAgentRuntimeLogs(agentType: AgentDetailType): boolean {
+  return isWorkflowRuntimeType(agentType) || isAgentRuntimeType(agentType);
+}
+
 export function canShowWorkflowDetailPages(
   agentType: AgentDetailType,
   permissions: AgentDetailRoutePermissions
@@ -54,7 +58,7 @@ export function canShowAgentRuntimeLogs(
   agentType: AgentDetailType,
   permissions: AgentDetailRoutePermissions
 ): boolean {
-  return canShowWorkflowDetailPages(agentType, permissions);
+  return supportsAgentRuntimeLogs(agentType) && permissions.canManage;
 }
 
 export function canShowAgentBatchTest(
@@ -71,6 +75,7 @@ export function getAgentDetailRouteAccess(
 ) {
   const supportsWorkflowPages = supportsWorkflowDetailPages(agentType);
   const canManageWorkflowPages = supportsWorkflowPages && permissions.canManage;
+  const canManageRuntimeLogs = supportsAgentRuntimeLogs(agentType) && permissions.canManage;
 
   return {
     editHref: getAgentDetailEditHref(agentId, agentType),
@@ -79,7 +84,13 @@ export function getAgentDetailRouteAccess(
     canEditRuntime: permissions.canManage,
     supportsWorkflowPages,
     canShowApiKeys: canManageWorkflowPages,
-    canShowRuntimeLogs: canManageWorkflowPages,
+    canShowRuntimeLogs: canManageRuntimeLogs,
     canShowBatchTest: canManageWorkflowPages,
   };
+}
+
+export function getWebAppRunHref(webAppId: string, agentType: AgentDetailType): string {
+  const type = normalizeAgentType(agentType);
+  const mode = type === AgentType.AGENT || type === AgentType.CONVERSATIONAL_AGENT ? 'chat' : 'run';
+  return `/webapp/${webAppId}/${mode}`;
 }
