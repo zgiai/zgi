@@ -3,6 +3,7 @@ package skillloop
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
@@ -33,6 +34,21 @@ const (
 )
 
 var ErrInvalidInput = errors.New("invalid input")
+
+type WorkflowApprovalPendingError struct {
+	Payload map[string]interface{}
+}
+
+func (e *WorkflowApprovalPendingError) Error() string {
+	if e == nil {
+		return "workflow approval is pending"
+	}
+	workflowRunID := stringFromInterface(e.Payload["workflow_run_id"])
+	if workflowRunID == "" {
+		return "workflow approval is pending"
+	}
+	return fmt.Sprintf("workflow approval is pending for run %s", workflowRunID)
+}
 
 type Event struct {
 	Type    string

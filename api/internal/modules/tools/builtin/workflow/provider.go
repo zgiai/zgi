@@ -154,10 +154,11 @@ func (t *workflowTool) runWorkflow(ctx context.Context, scope workflowScope, par
 	if err != nil {
 		return nil, err
 	}
-	inputs, err = normalizeWorkflowInputs(inputs)
+	inputs, err = normalizeWorkflowInputs(inputs, binding)
 	if err != nil {
 		return nil, err
 	}
+	injectWorkflowContext(inputs, t.Runtime())
 	timeout := time.Duration(normalizeTimeoutSeconds(binding.TimeoutSeconds)) * time.Second
 	runReq := automationaction.WorkflowRunRequest{
 		OrganizationID: scope.OrganizationID,
@@ -190,7 +191,7 @@ func (t *workflowTool) runWorkflow(ctx context.Context, scope workflowScope, par
 		}
 		return jsonMessages(failedWorkflowPayload("", "", "", fmt.Errorf("workflow returned empty result")))
 	}
-	payload := workflowResultPayload(result, runErr)
+	payload := workflowResultPayload(result, runErr, binding)
 	return jsonMessages(payload)
 }
 
@@ -225,7 +226,7 @@ func (t *workflowTool) getWorkflowRunStatus(ctx context.Context, scope workflowS
 	return jsonMessages(workflowStatusPayload(result))
 }
 
-func workflowResultPayload(result *automationaction.WorkflowRunResult, runErr error) map[string]interface{} {
+func workflowResultPayload(result *automationaction.WorkflowRunResult, runErr error, binding workflowBinding) map[string]interface{} {
 	status := normalizeWorkflowStatus(result.Status)
 	outputs := safeOutputs(result.Outputs)
 	payload := map[string]interface{}{
@@ -233,6 +234,8 @@ func workflowResultPayload(result *automationaction.WorkflowRunResult, runErr er
 		"workflow_run_id": result.WorkflowRunID,
 		"workflow_id":     result.WorkflowID,
 		"agent_id":        result.AgentID,
+		"agent_type":      strings.TrimSpace(binding.AgentType),
+		"binding_id":      strings.TrimSpace(binding.BindingID),
 		"version":         result.Version,
 		"outputs":         outputs,
 		"primary_output":  primaryWorkflowOutput(outputs),
@@ -487,14 +490,25 @@ func workflowScopeFromRuntime(runtime *tools.ToolRuntime, userID string) (workfl
 }
 
 type workflowBinding struct {
-	BindingID       string `json:"binding_id"`
-	Label           string `json:"label"`
-	Description     string `json:"description,omitempty"`
-	AgentID         string `json:"agent_id"`
-	WorkflowID      string `json:"workflow_id"`
-	VersionStrategy string `json:"version_strategy"`
-	VersionUUID     string `json:"version_uuid,omitempty"`
-	TimeoutSeconds  int    `json:"timeout_seconds,omitempty"`
+	BindingID       string               `json:"binding_id"`
+	Label           string               `json:"label"`
+	Description     string               `json:"description,omitempty"`
+	AgentID         string               `json:"agent_id"`
+	WorkflowID      string               `json:"workflow_id"`
+	AgentType       string               `json:"agent_type,omitempty"`
+	VersionStrategy string               `json:"version_strategy"`
+	VersionUUID     string               `json:"version_uuid,omitempty"`
+	TimeoutSeconds  int                  `json:"timeout_seconds,omitempty"`
+	StartInputs     []workflowStartInput `json:"start_inputs,omitempty"`
+	RequiredInputs  []string             `json:"required_inputs,omitempty"`
+	DefaultInputKey string               `json:"default_input_key,omitempty"`
+}
+
+type workflowStartInput struct {
+	Variable string `json:"variable"`
+	Label    string `json:"label,omitempty"`
+	Type     string `json:"type,omitempty"`
+	Required bool   `json:"required,omitempty"`
 }
 
 func workflowBindingsFromRuntime(runtime *tools.ToolRuntime) ([]workflowBinding, error) {
@@ -516,11 +530,15 @@ func workflowBindingsFromRuntime(runtime *tools.ToolRuntime) ([]workflowBinding,
 		binding.BindingID = strings.TrimSpace(binding.BindingID)
 		binding.AgentID = strings.TrimSpace(binding.AgentID)
 		binding.WorkflowID = strings.TrimSpace(binding.WorkflowID)
+		binding.AgentType = strings.TrimSpace(binding.AgentType)
 		binding.VersionStrategy = strings.TrimSpace(binding.VersionStrategy)
 		if binding.VersionStrategy == "" {
 			binding.VersionStrategy = automationaction.WorkflowVersionStrategyLatestPublished
 		}
 		binding.VersionUUID = strings.TrimSpace(binding.VersionUUID)
+		binding.StartInputs = normalizeWorkflowStartInputs(binding.StartInputs)
+		binding.RequiredInputs = normalizeWorkflowRequiredInputs(binding.RequiredInputs, binding.StartInputs)
+		binding.DefaultInputKey = normalizeWorkflowDefaultInputKey(binding.DefaultInputKey, binding.StartInputs)
 		if binding.BindingID == "" || binding.AgentID == "" || binding.WorkflowID == "" {
 			continue
 		}
@@ -536,15 +554,19 @@ func workflowBindingsFromRuntime(runtime *tools.ToolRuntime) ([]workflowBinding,
 func workflowBindingList(bindings []workflowBinding) []map[string]interface{} {
 	out := make([]map[string]interface{}, 0, len(bindings))
 	for _, binding := range bindings {
+		defaultInputKey := bindingDefaultInputKey(binding)
+		requiredInputs := bindingRequiredInputs(binding)
 		out = append(out, map[string]interface{}{
 			"binding_id":        binding.BindingID,
 			"label":             binding.Label,
 			"description":       binding.Description,
+			"agent_type":        binding.AgentType,
 			"version_strategy":  binding.VersionStrategy,
 			"timeout_seconds":   normalizeTimeoutSeconds(binding.TimeoutSeconds),
-			"input_schema":      workflowInputSchema(),
-			"required_inputs":   []string{defaultInputKey},
+			"input_schema":      workflowInputSchema(binding),
+			"required_inputs":   requiredInputs,
 			"default_input_key": defaultInputKey,
+			"start_inputs":      binding.StartInputs,
 		})
 	}
 	return out
@@ -587,7 +609,7 @@ func inputMap(params map[string]interface{}, key string) (map[string]interface{}
 	}
 }
 
-func normalizeWorkflowInputs(inputs map[string]interface{}) (map[string]interface{}, error) {
+func normalizeWorkflowInputs(inputs map[string]interface{}, binding workflowBinding) (map[string]interface{}, error) {
 	if inputs == nil {
 		inputs = map[string]interface{}{}
 	}
@@ -595,19 +617,223 @@ func normalizeWorkflowInputs(inputs map[string]interface{}) (map[string]interfac
 	if query == "" {
 		query = cleanOutputText(inputs["sys.query"])
 	}
-	if query == "" {
-		return nil, fmt.Errorf("workflow inputs.%s is required; retry with inputs.%s set to the user's current request", defaultInputKey, defaultInputKey)
-	}
-	normalized := make(map[string]interface{}, len(inputs)+1)
+	normalized := make(map[string]interface{}, len(inputs)+2)
 	for key, value := range inputs {
 		normalized[key] = value
 	}
-	normalized[defaultInputKey] = query
-	normalized["sys.query"] = query
+	startInputs := binding.StartInputs
+	if len(startInputs) == 0 || strings.EqualFold(strings.TrimSpace(binding.AgentType), "CONVERSATIONAL_WORKFLOW") {
+		if query == "" {
+			return nil, fmt.Errorf("workflow inputs.%s is required; retry with inputs.%s set to the user's current request", defaultInputKey, defaultInputKey)
+		}
+		normalized[defaultInputKey] = query
+		normalized["sys.query"] = query
+		return normalized, nil
+	}
+	if query != "" {
+		normalized["sys.query"] = query
+		if !workflowStartInputExists(startInputs, defaultInputKey) {
+			delete(normalized, defaultInputKey)
+		}
+	}
+	defaultKey := bindingDefaultInputKey(binding)
+	if defaultKey != "" && cleanOutputText(normalized[defaultKey]) == "" && query != "" {
+		normalized[defaultKey] = query
+	}
+	missing := missingWorkflowInputs(normalized, bindingRequiredInputs(binding))
+	if len(missing) > 0 {
+		if query == "" && len(missing) == 1 {
+			return nil, fmt.Errorf("workflow inputs.%s is required; retry with inputs.%s set to the user's current task input", missing[0], missing[0])
+		}
+		return nil, fmt.Errorf("workflow start inputs are missing required fields: %s; retry with inputs matching list_agent_workflows.required_inputs", strings.Join(missing, ", "))
+	}
 	return normalized, nil
 }
 
-func workflowInputSchema() map[string]interface{} {
+func injectWorkflowContext(inputs map[string]interface{}, runtime *tools.ToolRuntime) {
+	if inputs == nil || runtime == nil || runtime.RuntimeParameters == nil {
+		return
+	}
+	if _, exists := inputs["sys.conversation_history"]; exists {
+		return
+	}
+	contextMap, ok := runtime.RuntimeParameters["workflow_context"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	history, ok := contextMap["conversation_history"]
+	if !ok || history == nil {
+		return
+	}
+	inputs["sys.conversation_history"] = history
+}
+
+func normalizeWorkflowStartInputs(inputs []workflowStartInput) []workflowStartInput {
+	out := make([]workflowStartInput, 0, len(inputs))
+	seen := map[string]struct{}{}
+	for _, input := range inputs {
+		variable := strings.TrimSpace(input.Variable)
+		if variable == "" {
+			continue
+		}
+		if _, exists := seen[variable]; exists {
+			continue
+		}
+		seen[variable] = struct{}{}
+		out = append(out, workflowStartInput{
+			Variable: variable,
+			Label:    strings.TrimSpace(input.Label),
+			Type:     strings.TrimSpace(input.Type),
+			Required: input.Required,
+		})
+	}
+	return out
+}
+
+func normalizeWorkflowRequiredInputs(required []string, startInputs []workflowStartInput) []string {
+	if len(required) == 0 {
+		out := make([]string, 0, len(startInputs))
+		for _, input := range startInputs {
+			if input.Required && strings.TrimSpace(input.Variable) != "" {
+				out = append(out, strings.TrimSpace(input.Variable))
+			}
+		}
+		return out
+	}
+	allowed := map[string]struct{}{}
+	for _, input := range startInputs {
+		if variable := strings.TrimSpace(input.Variable); variable != "" {
+			allowed[variable] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(required))
+	seen := map[string]struct{}{}
+	for _, item := range required {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if len(allowed) > 0 {
+			if _, ok := allowed[item]; !ok {
+				continue
+			}
+		}
+		if _, exists := seen[item]; exists {
+			continue
+		}
+		seen[item] = struct{}{}
+		out = append(out, item)
+	}
+	return out
+}
+
+func normalizeWorkflowDefaultInputKey(key string, startInputs []workflowStartInput) string {
+	key = strings.TrimSpace(key)
+	if key != "" && workflowStartInputExists(startInputs, key) {
+		return key
+	}
+	required := normalizeWorkflowRequiredInputs(nil, startInputs)
+	if len(required) == 1 {
+		return required[0]
+	}
+	if workflowStartInputExists(startInputs, defaultInputKey) {
+		return defaultInputKey
+	}
+	if len(startInputs) == 1 {
+		return strings.TrimSpace(startInputs[0].Variable)
+	}
+	if len(startInputs) == 0 {
+		return defaultInputKey
+	}
+	return ""
+}
+
+func bindingRequiredInputs(binding workflowBinding) []string {
+	required := normalizeWorkflowRequiredInputs(binding.RequiredInputs, binding.StartInputs)
+	if len(required) > 0 {
+		return required
+	}
+	if len(binding.StartInputs) == 0 {
+		return []string{defaultInputKey}
+	}
+	return []string{}
+}
+
+func bindingDefaultInputKey(binding workflowBinding) string {
+	key := normalizeWorkflowDefaultInputKey(binding.DefaultInputKey, binding.StartInputs)
+	if key != "" {
+		return key
+	}
+	return defaultInputKey
+}
+
+func workflowStartInputExists(inputs []workflowStartInput, key string) bool {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return false
+	}
+	for _, input := range inputs {
+		if strings.TrimSpace(input.Variable) == key {
+			return true
+		}
+	}
+	return false
+}
+
+func missingWorkflowInputs(inputs map[string]interface{}, required []string) []string {
+	missing := make([]string, 0, len(required))
+	for _, key := range required {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if cleanOutputText(inputs[key]) == "" {
+			missing = append(missing, key)
+		}
+	}
+	return missing
+}
+
+func workflowJSONSchemaType(inputType string) string {
+	switch strings.ToLower(strings.TrimSpace(inputType)) {
+	case "number", "integer":
+		return "number"
+	case "boolean", "bool":
+		return "boolean"
+	case "object":
+		return "object"
+	case "array":
+		return "array"
+	default:
+		return "string"
+	}
+}
+
+func workflowInputSchema(binding workflowBinding) map[string]interface{} {
+	startInputs := binding.StartInputs
+	if len(startInputs) > 0 {
+		properties := map[string]interface{}{}
+		for _, input := range startInputs {
+			variable := strings.TrimSpace(input.Variable)
+			if variable == "" {
+				continue
+			}
+			description := strings.TrimSpace(input.Label)
+			if description == "" {
+				description = "Workflow start input."
+			}
+			properties[variable] = map[string]interface{}{
+				"type":        workflowJSONSchemaType(input.Type),
+				"description": description,
+			}
+		}
+		return map[string]interface{}{
+			"type":                 "object",
+			"properties":           properties,
+			"required":             bindingRequiredInputs(binding),
+			"additionalProperties": true,
+		}
+	}
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
@@ -636,7 +862,7 @@ func normalizeTimeoutSeconds(value int) int {
 
 func workflowToolParameters(kind string) []tools.ToolParameter {
 	bindingID := stringParam("binding_id", "Binding ID", "Workflow binding ID returned by list_agent_workflows.", true)
-	inputs := jsonParam("inputs", "Inputs", "Workflow input object. Set inputs.query to the user's current request; it is also forwarded as sys.query.", true)
+	inputs := jsonParam("inputs", "Inputs", "Workflow input object. Use list_agent_workflows.input_schema and required_inputs. For single-input workflows, inputs.query may be used as the user's current request and will be mapped to the start input and sys.query.", true)
 	workflowRunID := stringParam("workflow_run_id", "Workflow run ID", "Workflow run ID returned by run_agent_workflow.", true)
 	switch kind {
 	case ToolListAgentWorkflows:

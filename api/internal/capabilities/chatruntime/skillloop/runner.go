@@ -23,14 +23,15 @@ const (
 )
 
 type skillStepResult struct {
-	trace       skills.SkillTrace
-	toolMessage adapter.Message
-	answer      string
-	usedSkill   bool
-	usedTool    bool
-	recoverable bool
-	terminal    bool
-	fatalErr    error
+	trace           skills.SkillTrace
+	toolMessage     adapter.Message
+	answer          string
+	usedSkill       bool
+	usedTool        bool
+	recoverable     bool
+	terminal        bool
+	pendingApproval map[string]interface{}
+	fatalErr        error
 }
 
 type planningResult struct {
@@ -178,6 +179,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			if result.usedTool {
 				toolCallCount++
 				incrementSkillToolCallCount(skillToolCallCounts, result.trace.SkillID)
+			}
+			if result.pendingApproval != nil {
+				return answerBuilder.String(), usage, &WorkflowApprovalPendingError{Payload: result.pendingApproval}
 			}
 			if result.answer != "" {
 				appendAnswerText(&answerBuilder, result.answer)

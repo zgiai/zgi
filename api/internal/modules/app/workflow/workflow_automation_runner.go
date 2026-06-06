@@ -9,8 +9,11 @@ import (
 
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
+	graph_entities "github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
+	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 	workflowshared "github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
+	"github.com/zgiai/zgi/api/pkg/database"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
 )
@@ -139,6 +142,9 @@ func (s *WorkflowService) RunAutomationWorkflow(ctx context.Context, req automat
 		if err := s.PauseWorkflowRunLog(finalizeCtx, workflowRunLogID, outputs, elapsedTime, 0, totalSteps); err != nil {
 			return nil, fmt.Errorf("pause automation workflow run log: %w", err)
 		}
+		if err := persistAutomationWorkflowPause(finalizeCtx, req, target, workflowRunLogID, executionResult, inputs, outputs, totalSteps); err != nil {
+			return nil, fmt.Errorf("save automation workflow pause: %w", err)
+		}
 		emitAutomationWorkflowPaused(req.EventSink, req, target, workflowRunLogID, executionResult, outputs, elapsedTime, nodeMetas)
 	} else if err := s.UpdateWorkflowRunLogStatus(finalizeCtx, workflowRunLogID, status, outputs, elapsedTime, 0, totalSteps, errorMessage); err != nil {
 		return nil, fmt.Errorf("update automation workflow run log: %w", err)
@@ -262,6 +268,121 @@ func emitAutomationWorkflowFailed(sink automationaction.WorkflowRunEventSink, re
 		payload["error"] = err.Error()
 	}
 	emitAutomationWorkflowEvent(sink, automationWorkflowEventFailed, payload)
+}
+
+func persistAutomationWorkflowPause(ctx context.Context, req automationaction.WorkflowRunRequest, workflow *Workflow, workflowRunID string, result *WorkflowExecutionResult, inputs map[string]interface{}, outputs map[string]interface{}, totalSteps int) error {
+	if result == nil {
+		return nil
+	}
+	pausedSnapshots := workflowGraphPausedSnapshots(result.NodeExecutions)
+	if len(pausedSnapshots) == 0 {
+		return nil
+	}
+	pausedNodeIDs := make([]string, 0, len(pausedSnapshots))
+	reasons := make([]workflowpause.Reason, 0, len(pausedSnapshots))
+	for _, snapshot := range pausedSnapshots {
+		if snapshot.NodeID == "" {
+			continue
+		}
+		pausedNodeIDs = append(pausedNodeIDs, snapshot.NodeID)
+		reasons = append(reasons, workflowpause.Reason{
+			Type:   workflowpause.ReasonTypeApprovalRequired,
+			NodeID: snapshot.NodeID,
+			FormID: automationApprovalFormID(snapshot.Outputs, outputs),
+		})
+	}
+	if len(pausedNodeIDs) == 0 {
+		return nil
+	}
+	nodeQueue, completedNodes, failedNodes, executionOutputs := workflowGraphPauseExecutorState(result.NodeExecutions, pausedNodeIDs)
+
+	var variablePool *graph_entities.VariablePool
+	if result.RuntimeState != nil {
+		variablePool = result.RuntimeState.VariablePool
+	}
+	appID := req.WorkflowRef.AgentID
+	workflowID := req.WorkflowRef.WorkflowID
+	runType := "WORKFLOW"
+	if workflow != nil {
+		if workflow.AgentID != "" {
+			appID = workflow.AgentID
+		}
+		if workflow.ID != "" {
+			workflowID = workflow.ID
+		}
+		runType = automationWorkflowPauseRunType(workflow)
+	}
+	pauseState := workflowpause.State{
+		Version:       workflowpause.StateVersion,
+		WorkflowRunID: workflowRunID,
+		WorkflowID:    workflowID,
+		AppID:         appID,
+		TenantID:      req.WorkspaceID,
+		RunType:       runType,
+		TriggeredFrom: automationTriggeredFrom,
+		Request: workflowpause.RequestState{
+			Inputs:       copyWorkflowAnyMap(inputs),
+			ResponseMode: "streaming",
+		},
+		ExecutorState: workflowpause.ExecutorState{
+			PausedNodeID:     pausedNodeIDs[0],
+			PausedNodeIDs:    append([]string(nil), pausedNodeIDs...),
+			NodeQueue:        append([]string(nil), nodeQueue...),
+			CompletedNodes:   copyWorkflowBoolMap(completedNodes),
+			FailedNodes:      copyWorkflowStringMap(failedNodes),
+			ExecutionOutputs: copyWorkflowNestedMap(executionOutputs),
+			AllNodeOutputs:   copyWorkflowAnyMap(outputs),
+			NodeIndex:        totalSteps,
+			TotalTokens:      0,
+		},
+		VariablePool: workflowpause.SnapshotVariablePool(variablePool),
+	}
+	service := workflowpause.NewService(database.GetDB())
+	_, err := service.Save(ctx, workflowpause.SaveParams{
+		TenantID:       req.WorkspaceID,
+		AppID:          appID,
+		WorkflowRunID:  workflowRunID,
+		NodeID:         pausedNodeIDs[0],
+		Reason:         workflowpause.ReasonTypeApprovalRequired,
+		ConversationID: automationWorkflowConversationID(inputs),
+		State:          pauseState,
+		Reasons:        reasons,
+	})
+	return err
+}
+
+func automationWorkflowPauseRunType(workflow *Workflow) string {
+	if workflow != nil && workflow.Type == dto.WorkflowTypeChat {
+		return "CONVERSATION_WORKFLOW"
+	}
+	return "WORKFLOW"
+}
+
+func automationApprovalFormID(values ...map[string]interface{}) string {
+	for _, value := range values {
+		if value == nil {
+			continue
+		}
+		if formID, ok := value[automationApprovalFormIDKey].(string); ok && strings.TrimSpace(formID) != "" {
+			return strings.TrimSpace(formID)
+		}
+		if form, ok := value[automationApprovalFormKey].(map[string]interface{}); ok {
+			if formID, ok := form["id"].(string); ok && strings.TrimSpace(formID) != "" {
+				return strings.TrimSpace(formID)
+			}
+		}
+	}
+	return ""
+}
+
+func automationWorkflowConversationID(inputs map[string]interface{}) string {
+	if inputs == nil {
+		return ""
+	}
+	if conversationID, ok := inputs["sys.conversation_id"].(string); ok {
+		return strings.TrimSpace(conversationID)
+	}
+	return ""
 }
 
 func emitAutomationWorkflowEvent(sink automationaction.WorkflowRunEventSink, eventType string, payload map[string]interface{}) {

@@ -100,6 +100,80 @@ func TestRunAgentWorkflowReturnsSucceededOutputs(t *testing.T) {
 	}
 }
 
+func TestRunAgentWorkflowMapsQueryToTaskWorkflowStartInput(t *testing.T) {
+	runner := &fakeWorkflowRunner{
+		result: &automationaction.WorkflowRunResult{
+			WorkflowRunID: "run-1",
+			WorkflowID:    "workflow-1",
+			AgentID:       "agent-1",
+			Status:        "succeeded",
+			Outputs:       map[string]interface{}{"output": "done"},
+		},
+	}
+	runtimeTool := workflowRuntimeToolWithBinding(t, ToolRunAgentWorkflow, runner, map[string]interface{}{
+		"binding_id":        "task-flow",
+		"label":             "Task flow",
+		"agent_id":          "agent-1",
+		"workflow_id":       "workflow-1",
+		"agent_type":        "WORKFLOW",
+		"version_strategy":  "latest_published",
+		"timeout_seconds":   60,
+		"required_inputs":   []string{"input"},
+		"default_input_key": "input",
+		"start_inputs": []map[string]interface{}{
+			{"variable": "input", "label": "用户输入", "type": "paragraph", "required": true},
+		},
+	})
+
+	_, err := runtimeTool.Invoke(context.Background(), "caller-1", map[string]interface{}{
+		"binding_id": "task-flow",
+		"inputs":     map[string]interface{}{"query": "write a summer poem"},
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if runner.lastReq.Inputs["input"] != "write a summer poem" || runner.lastReq.Inputs["sys.query"] != "write a summer poem" {
+		t.Fatalf("workflow inputs = %#v, want input and sys.query", runner.lastReq.Inputs)
+	}
+	if _, exists := runner.lastReq.Inputs["query"]; exists {
+		t.Fatalf("workflow inputs kept undeclared query key: %#v", runner.lastReq.Inputs)
+	}
+}
+
+func TestListAgentWorkflowsReturnsStartInputSchema(t *testing.T) {
+	runtimeTool := workflowRuntimeToolWithBinding(t, ToolListAgentWorkflows, &fakeWorkflowRunner{}, map[string]interface{}{
+		"binding_id":        "task-flow",
+		"label":             "Task flow",
+		"agent_id":          "agent-1",
+		"workflow_id":       "workflow-1",
+		"agent_type":        "WORKFLOW",
+		"version_strategy":  "latest_published",
+		"required_inputs":   []string{"input"},
+		"default_input_key": "input",
+		"start_inputs": []map[string]interface{}{
+			{"variable": "input", "label": "用户输入", "type": "paragraph", "required": true},
+		},
+	})
+
+	messages, err := runtimeTool.Invoke(context.Background(), "caller-1", nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	workflows := messages[0].Data["workflows"].([]map[string]interface{})
+	if workflows[0]["default_input_key"] != "input" {
+		t.Fatalf("default_input_key = %#v, want input", workflows[0]["default_input_key"])
+	}
+	required, ok := workflows[0]["required_inputs"].([]string)
+	if !ok || len(required) != 1 || required[0] != "input" {
+		t.Fatalf("required_inputs = %#v, want [input]", workflows[0]["required_inputs"])
+	}
+	schema := workflows[0]["input_schema"].(map[string]interface{})
+	properties := schema["properties"].(map[string]interface{})
+	if _, ok := properties["input"]; !ok {
+		t.Fatalf("input_schema properties = %#v, want input", properties)
+	}
+}
+
 func TestRunAgentWorkflowReturnsPendingApprovalFields(t *testing.T) {
 	runner := &fakeWorkflowRunner{
 		result: &automationaction.WorkflowRunResult{
@@ -258,6 +332,18 @@ func TestGetWorkflowRunStatusRejectsUnboundRun(t *testing.T) {
 }
 
 func workflowRuntimeTool(t *testing.T, name string, runner *fakeWorkflowRunner) tools.Tool {
+	return workflowRuntimeToolWithBinding(t, name, runner, map[string]interface{}{
+		"binding_id":       "approval-flow",
+		"label":            "Approval flow",
+		"description":      "Approves work",
+		"agent_id":         "agent-1",
+		"workflow_id":      "workflow-1",
+		"version_strategy": "latest_published",
+		"timeout_seconds":  60,
+	})
+}
+
+func workflowRuntimeToolWithBinding(t *testing.T, name string, runner *fakeWorkflowRunner, binding map[string]interface{}) tools.Tool {
 	t.Helper()
 	provider := NewProvider(func() automationaction.AutomationWorkflowRunner { return runner })
 	tool, err := provider.GetTool(name)
@@ -272,15 +358,7 @@ func workflowRuntimeTool(t *testing.T, name string, runner *fakeWorkflowRunner) 
 			"workspace_id":                 "workspace-1",
 			"workflow_bound_by_account_id": "binder-1",
 			"workflow_bindings": []map[string]interface{}{
-				{
-					"binding_id":       "approval-flow",
-					"label":            "Approval flow",
-					"description":      "Approves work",
-					"agent_id":         "agent-1",
-					"workflow_id":      "workflow-1",
-					"version_strategy": "latest_published",
-					"timeout_seconds":  60,
-				},
+				binding,
 			},
 		},
 	})

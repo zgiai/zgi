@@ -108,14 +108,24 @@ type AgentDatabaseBinding struct {
 	WritableTableIDs []string `json:"writable_table_ids,omitempty"`
 }
 type AgentWorkflowBinding struct {
-	BindingID       string `json:"binding_id"`
-	Label           string `json:"label"`
-	Description     string `json:"description,omitempty"`
-	AgentID         string `json:"agent_id"`
-	WorkflowID      string `json:"workflow_id"`
-	VersionStrategy string `json:"version_strategy"`
-	VersionUUID     string `json:"version_uuid,omitempty"`
-	TimeoutSeconds  int    `json:"timeout_seconds,omitempty"`
+	BindingID       string                    `json:"binding_id"`
+	Label           string                    `json:"label"`
+	Description     string                    `json:"description,omitempty"`
+	AgentID         string                    `json:"agent_id"`
+	WorkflowID      string                    `json:"workflow_id"`
+	AgentType       string                    `json:"agent_type,omitempty"`
+	VersionStrategy string                    `json:"version_strategy"`
+	VersionUUID     string                    `json:"version_uuid,omitempty"`
+	TimeoutSeconds  int                       `json:"timeout_seconds,omitempty"`
+	StartInputs     []AgentWorkflowStartInput `json:"start_inputs,omitempty"`
+	RequiredInputs  []string                  `json:"required_inputs,omitempty"`
+	DefaultInputKey string                    `json:"default_input_key,omitempty"`
+}
+type AgentWorkflowStartInput struct {
+	Variable string `json:"variable"`
+	Label    string `json:"label,omitempty"`
+	Type     string `json:"type,omitempty"`
+	Required bool   `json:"required,omitempty"`
 }
 type AgentMemoryRuntimeState = agentmemoryruntime.State
 type AgentMemoryPlannerDecision = agentmemoryruntime.Decision
@@ -142,6 +152,11 @@ type Service interface {
 	PrepareConfiguredRootRegeneration(ctx context.Context, scope Scope, caller Caller, config RunConfig, id uuid.UUID, req runtimedto.RegenerateMessageRequest) (*PreparedChat, error)
 	RunPreparedStream(ctx context.Context, prepared *PreparedChat, onChunk func(string) error, onEvent ...func(StreamEvent) error) (*ChatResult, error)
 	StreamConversationEvents(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, afterID string, onEvent func(StreamEvent) error) error
+	BeginWorkflowApprovalContinuation(ctx context.Context, scope Scope, caller Caller, conversationID, messageID uuid.UUID) (*WorkflowApprovalContinuation, error)
+	RecordWorkflowApprovalContinuationEvent(ctx context.Context, continuation *WorkflowApprovalContinuation, eventType string, payload map[string]interface{}) (map[string]interface{}, error)
+	UpdateWorkflowApprovalContinuationStatus(ctx context.Context, continuation *WorkflowApprovalContinuation, status string) (map[string]interface{}, error)
+	SummarizeWorkflowApprovalContinuation(ctx context.Context, scope Scope, continuation *WorkflowApprovalContinuation, req WorkflowContinuationSummaryRequest, onChunk func(string) error) (*ChatResult, error)
+	CompleteWorkflowApprovalContinuation(ctx context.Context, continuation *WorkflowApprovalContinuation, answer string, status string) (map[string]interface{}, error)
 	ListSkills(ctx context.Context, scope Scope) ([]skills.SkillDiscoveryMetadata, error)
 	GetSkill(ctx context.Context, scope Scope, skillID string) (*skills.SkillDiscoveryMetadata, error)
 	GetSkillConfig(ctx context.Context, scope Scope) (*SkillConfig, error)

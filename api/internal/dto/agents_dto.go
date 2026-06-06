@@ -179,33 +179,48 @@ type AgentDatabaseBinding struct {
 }
 
 type AgentWorkflowBinding struct {
-	BindingID       string `json:"binding_id"`
-	Label           string `json:"label"`
-	Description     string `json:"description,omitempty"`
-	AgentID         string `json:"agent_id"`
-	WorkflowID      string `json:"workflow_id"`
-	VersionStrategy string `json:"version_strategy"`
-	VersionUUID     string `json:"version_uuid,omitempty"`
-	TimeoutSeconds  int    `json:"timeout_seconds,omitempty"`
+	BindingID       string                    `json:"binding_id"`
+	Label           string                    `json:"label"`
+	Description     string                    `json:"description,omitempty"`
+	AgentID         string                    `json:"agent_id"`
+	WorkflowID      string                    `json:"workflow_id"`
+	AgentType       string                    `json:"agent_type,omitempty"`
+	VersionStrategy string                    `json:"version_strategy"`
+	VersionUUID     string                    `json:"version_uuid,omitempty"`
+	TimeoutSeconds  int                       `json:"timeout_seconds,omitempty"`
+	StartInputs     []AgentWorkflowStartInput `json:"start_inputs,omitempty"`
+	RequiredInputs  []string                  `json:"required_inputs,omitempty"`
+	DefaultInputKey string                    `json:"default_input_key,omitempty"`
 }
 
 type AgentWorkflowBindingCandidate struct {
-	BindingID       string `json:"binding_id"`
-	Label           string `json:"label"`
-	Description     string `json:"description,omitempty"`
-	AgentID         string `json:"agent_id"`
-	WorkflowID      string `json:"workflow_id"`
-	VersionStrategy string `json:"version_strategy"`
-	VersionUUID     string `json:"version_uuid,omitempty"`
-	Version         string `json:"version,omitempty"`
-	Icon            string `json:"icon,omitempty"`
-	IconType        string `json:"icon_type,omitempty"`
-	IconURL         string `json:"icon_url,omitempty"`
-	UpdatedAt       int64  `json:"updated_at,omitempty"`
+	BindingID       string                    `json:"binding_id"`
+	Label           string                    `json:"label"`
+	Description     string                    `json:"description,omitempty"`
+	AgentID         string                    `json:"agent_id"`
+	WorkflowID      string                    `json:"workflow_id"`
+	AgentType       string                    `json:"agent_type,omitempty"`
+	VersionStrategy string                    `json:"version_strategy"`
+	VersionUUID     string                    `json:"version_uuid,omitempty"`
+	Version         string                    `json:"version,omitempty"`
+	Icon            string                    `json:"icon,omitempty"`
+	IconType        string                    `json:"icon_type,omitempty"`
+	IconURL         string                    `json:"icon_url,omitempty"`
+	UpdatedAt       int64                     `json:"updated_at,omitempty"`
+	StartInputs     []AgentWorkflowStartInput `json:"start_inputs,omitempty"`
+	RequiredInputs  []string                  `json:"required_inputs,omitempty"`
+	DefaultInputKey string                    `json:"default_input_key,omitempty"`
 }
 
 type AgentWorkflowBindingCandidatesResponse struct {
 	Data []AgentWorkflowBindingCandidate `json:"data"`
+}
+
+type AgentWorkflowStartInput struct {
+	Variable string `json:"variable"`
+	Label    string `json:"label,omitempty"`
+	Type     string `json:"type,omitempty"`
+	Required bool   `json:"required,omitempty"`
 }
 
 type AgentMemorySlotConfig struct {
