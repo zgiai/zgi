@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -201,6 +202,50 @@ func TestSkillRuntimeParametersUseCapabilityConfig(t *testing.T) {
 	}
 	if bindings, ok := params["workflow_bindings"].([]AgentWorkflowBinding); !ok || len(bindings) != 1 || bindings[0].BindingID != "approval-flow" {
 		t.Fatalf("workflow bindings param = %#v", params["workflow_bindings"])
+	}
+}
+
+func TestAgentWorkflowAvailableBindingsMessageInjectsSafeContext(t *testing.T) {
+	message, ok := agentWorkflowAvailableBindingsMessage([]AgentWorkflowBinding{{
+		BindingID:       "task-flow",
+		Label:           "Task flow",
+		Description:     "Runs a task workflow",
+		AgentID:         "agent-1",
+		WorkflowID:      "workflow-1",
+		AgentType:       "WORKFLOW",
+		VersionStrategy: "latest_published",
+		TimeoutSeconds:  10,
+		StartInputs: []AgentWorkflowStartInput{{
+			Variable: "task",
+			Label:    "Task",
+			Type:     "string",
+			Required: true,
+		}},
+	}})
+
+	if !ok {
+		t.Fatal("agentWorkflowAvailableBindingsMessage() returned no message")
+	}
+	content, ok := message.Content.(string)
+	if !ok {
+		t.Fatalf("message content type = %T, want string", message.Content)
+	}
+	for _, want := range []string{
+		"available_workflows",
+		`"binding_id":"task-flow"`,
+		`"label":"Task flow"`,
+		`"agent_type":"WORKFLOW"`,
+		`"default_input_key":"task"`,
+		`"required_inputs":["task"]`,
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("message content missing %q: %s", want, content)
+		}
+	}
+	for _, forbidden := range []string{"workflow-1", "agent-1"} {
+		if strings.Contains(content, forbidden) {
+			t.Fatalf("message content exposed %q: %s", forbidden, content)
+		}
 	}
 }
 

@@ -37,4 +37,6 @@ Workflow calls are tool-mode calls. They do not take over the conversation strea
 - `pending_approval`: tell the user approval is waiting and include the safe approval entry details from the tool result when useful.
 - `failed`: summarize the error and decide whether to retry or ask for corrected input.
 
-Do not invent workflow IDs. First call `list_agent_workflows` when you need to choose a binding. The list returns each binding's `input_schema`, `required_inputs`, and `default_input_key`. Call `run_agent_workflow` only with a listed `binding_id`, and pass the user's current request as `inputs.query` unless the binding explicitly says otherwise. After approval resumes, use `get_workflow_run_status` with the returned `workflow_run_id` to query the result.
+Do not invent workflow IDs. The Agent runtime injects an `available_workflows` JSON list when workflows are bound. Use that injected list first to choose a binding. Call `list_agent_workflows` only if the injected list is missing, ambiguous, or stale.
+
+Call `run_agent_workflow` only with a `binding_id` from `available_workflows` or the fallback list result. Pass the user's current request as `inputs.query` unless the binding's `input_schema`, `required_inputs`, or `default_input_key` explicitly says otherwise. After approval resumes, use `get_workflow_run_status` with the returned `workflow_run_id` to query the result.

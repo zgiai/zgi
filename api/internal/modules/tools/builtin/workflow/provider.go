@@ -645,7 +645,7 @@ func normalizeWorkflowInputs(inputs map[string]interface{}, binding workflowBind
 		if query == "" && len(missing) == 1 {
 			return nil, fmt.Errorf("workflow inputs.%s is required; retry with inputs.%s set to the user's current task input", missing[0], missing[0])
 		}
-		return nil, fmt.Errorf("workflow start inputs are missing required fields: %s; retry with inputs matching list_agent_workflows.required_inputs", strings.Join(missing, ", "))
+		return nil, fmt.Errorf("workflow start inputs are missing required fields: %s; retry with inputs matching the binding's required_inputs from available_workflows or list_agent_workflows", strings.Join(missing, ", "))
 	}
 	return normalized, nil
 }
@@ -861,8 +861,8 @@ func normalizeTimeoutSeconds(value int) int {
 }
 
 func workflowToolParameters(kind string) []tools.ToolParameter {
-	bindingID := stringParam("binding_id", "Binding ID", "Workflow binding ID returned by list_agent_workflows.", true)
-	inputs := jsonParam("inputs", "Inputs", "Workflow input object. Use list_agent_workflows.input_schema and required_inputs. For single-input workflows, inputs.query may be used as the user's current request and will be mapped to the start input and sys.query.", true)
+	bindingID := stringParam("binding_id", "Binding ID", "Workflow binding ID from injected available_workflows, or from list_agent_workflows if the injected list is missing or ambiguous.", true)
+	inputs := jsonParam("inputs", "Inputs", "Workflow input object. Use the binding's input_schema and required_inputs from available_workflows or list_agent_workflows. For single-input workflows, inputs.query may be used as the user's current request and will be mapped to the start input and sys.query.", true)
 	workflowRunID := stringParam("workflow_run_id", "Workflow run ID", "Workflow run ID returned by run_agent_workflow.", true)
 	switch kind {
 	case ToolListAgentWorkflows:

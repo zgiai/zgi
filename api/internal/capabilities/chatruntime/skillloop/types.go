@@ -66,10 +66,11 @@ type Runner struct {
 }
 
 type RunRequest struct {
-	Prepared         *PreparedChat
-	Resolved         *skills.ResolvedSkills
-	ExecutionContext skills.ExecutionContext
-	OnChunk          func(string) error
+	Prepared                 *PreparedChat
+	Resolved                 *skills.ResolvedSkills
+	ExecutionContext         skills.ExecutionContext
+	AdditionalSystemMessages []adapter.Message
+	OnChunk                  func(string) error
 }
 
 type PreparedChat struct {
