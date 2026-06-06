@@ -1071,6 +1071,10 @@ func (s *agentsService) resolveAgentSuggestedQuestionsModel(ctx context.Context,
 	if model != "" {
 		return provider, model, nil
 	}
+	return s.resolveDefaultLLMModel(ctx, organizationID, "suggested questions")
+}
+
+func (s *agentsService) resolveDefaultLLMModel(ctx context.Context, organizationID, scope string) (string, string, error) {
 	if s.defaultModelResolver == nil || strings.TrimSpace(organizationID) == "" {
 		return "", "", suggestedquestions.ErrModelNotConfigured
 	}
