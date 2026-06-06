@@ -5,7 +5,9 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
@@ -71,6 +73,74 @@ func TestApplyAgentConfigRequestPersistsWorkflowBindings(t *testing.T) {
 	if fromSnapshot.WorkflowBoundByAccountID != "binder-1" || fromSnapshot.WorkflowBoundAtUnix <= 0 {
 		t.Fatalf("snapshot workflow grant = %q/%d, want binder-1 with timestamp", fromSnapshot.WorkflowBoundByAccountID, fromSnapshot.WorkflowBoundAtUnix)
 	}
+}
+
+func TestHydrateAgentWorkflowBindingRuntimeInputsUsesPinnedVersionSchema(t *testing.T) {
+	db, mock := newRunnableWebAppsMockDB(t)
+	service := &agentsService{db: db}
+	workspaceID := "11111111-1111-1111-1111-111111111111"
+	agentID := "22222222-2222-2222-2222-222222222222"
+	latestWorkflowID := "33333333-3333-3333-3333-333333333333"
+	pinnedWorkflowID := "44444444-4444-4444-4444-444444444444"
+	pinnedVersionUUID := "55555555-5555-5555-5555-555555555555"
+
+	columns := []string{"agent_id", "workflow_id", "agent_type", "version_uuid", "version", "graph", "label", "description", "icon", "icon_type", "updated_at"}
+	mock.ExpectQuery(`(?s)SELECT .* FROM "workflows" JOIN agents ON agents.id = workflows.agent_id WHERE .*workflows\.tenant_id.*workflows\.version !=.*agents\.deleted_at IS NULL.*ORDER BY workflows\.agent_id ASC, workflows\.created_at DESC`).
+		WithArgs(workspaceID, "draft", AgentWebAppStatusActive, "WORKFLOW", "CONVERSATIONAL_WORKFLOW").
+		WillReturnRows(sqlmock.NewRows(columns).AddRow(
+			agentID,
+			latestWorkflowID,
+			"WORKFLOW",
+			"latest-version",
+			"v2",
+			workflowGraphWithStartInput("new_input"),
+			"Task workflow",
+			"description",
+			nil,
+			nil,
+			time.Now(),
+		))
+	mock.ExpectQuery(`(?s)SELECT .* FROM "workflows" JOIN agents ON agents.id = workflows.agent_id WHERE .*workflows\.tenant_id.*workflows\.agent_id.*workflows\.id.*workflows\.version_uuid.*LIMIT`).
+		WithArgs(workspaceID, agentID, pinnedWorkflowID, pinnedVersionUUID, "draft", AgentWebAppStatusActive, "WORKFLOW", "CONVERSATIONAL_WORKFLOW", 1).
+		WillReturnRows(sqlmock.NewRows(columns).AddRow(
+			agentID,
+			pinnedWorkflowID,
+			"WORKFLOW",
+			pinnedVersionUUID,
+			"v1",
+			workflowGraphWithStartInput("old_input"),
+			"Task workflow",
+			"description",
+			nil,
+			nil,
+			time.Now().Add(-time.Hour),
+		))
+
+	hydrated := service.hydrateAgentWorkflowBindingRuntimeInputs(t.Context(), workspaceID, []dto.AgentWorkflowBinding{{
+		BindingID:       agentID,
+		Label:           "Task workflow",
+		AgentID:         agentID,
+		WorkflowID:      pinnedWorkflowID,
+		VersionStrategy: "pinned",
+		VersionUUID:     pinnedVersionUUID,
+	}})
+
+	if len(hydrated) != 1 || len(hydrated[0].StartInputs) != 1 {
+		t.Fatalf("hydrated bindings = %#v, want one start input", hydrated)
+	}
+	if got := hydrated[0].StartInputs[0].Variable; got != "old_input" {
+		t.Fatalf("hydrated start input = %q, want pinned old_input", got)
+	}
+	if got := hydrated[0].DefaultInputKey; got != "old_input" {
+		t.Fatalf("default input key = %q, want old_input", got)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
+func workflowGraphWithStartInput(variable string) string {
+	return `{"nodes":[{"data":{"type":"start","variables":[{"variable":"` + variable + `","label":"` + variable + `","type":"string","required":true}]}}]}`
 }
 
 func TestAgentMemoryReplaceRequestPreservesInvalidRowsForValidation(t *testing.T) {

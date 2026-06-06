@@ -215,17 +215,22 @@ func (s *agentsService) validateWorkflowBindingGrant(ctx context.Context, worksp
 		byBindingID[strings.TrimSpace(candidate.BindingID)] = candidate
 	}
 	for _, binding := range bindings {
-		candidate, ok := byBindingID[strings.TrimSpace(binding.BindingID)]
-		if !ok || strings.TrimSpace(candidate.AgentID) != strings.TrimSpace(binding.AgentID) {
-			return fmt.Errorf("workflow binding %s is not available", binding.BindingID)
-		}
 		if binding.VersionStrategy == automationaction.WorkflowVersionStrategyPinned {
 			if strings.TrimSpace(binding.VersionUUID) == "" {
 				return fmt.Errorf("workflow binding %s requires version_uuid", binding.BindingID)
 			}
-			if strings.TrimSpace(binding.WorkflowID) != strings.TrimSpace(candidate.WorkflowID) || strings.TrimSpace(binding.VersionUUID) != strings.TrimSpace(candidate.VersionUUID) {
+			candidate, ok, err := s.getPinnedAgentWorkflowBindingCandidate(ctx, workspaceID, binding)
+			if err != nil {
+				return fmt.Errorf("load pinned workflow binding %s: %w", binding.BindingID, err)
+			}
+			if !ok || strings.TrimSpace(candidate.AgentID) != strings.TrimSpace(binding.AgentID) {
 				return fmt.Errorf("workflow binding %s pinned version is not available", binding.BindingID)
 			}
+			continue
+		}
+		candidate, ok := byBindingID[strings.TrimSpace(binding.BindingID)]
+		if !ok || strings.TrimSpace(candidate.AgentID) != strings.TrimSpace(binding.AgentID) {
+			return fmt.Errorf("workflow binding %s is not available", binding.BindingID)
 		}
 	}
 	return nil
@@ -273,18 +278,46 @@ func (s *agentsService) hydrateAgentWorkflowBindingRuntimeInputs(ctx context.Con
 		}
 	}
 	for idx := range bindings {
-		candidate, ok := byBindingID[bindings[idx].BindingID]
-		if !ok {
+		if bindings[idx].VersionStrategy == automationaction.WorkflowVersionStrategyPinned {
+			pinned, pinnedOK, err := s.getPinnedAgentWorkflowBindingCandidate(ctx, workspaceID, bindings[idx])
+			if err != nil || !pinnedOK {
+				continue
+			}
+			applyAgentWorkflowBindingRuntimeInputs(&bindings[idx], pinned)
 			continue
 		}
-		if strings.TrimSpace(bindings[idx].AgentType) == "" {
-			bindings[idx].AgentType = strings.TrimSpace(candidate.AgentType)
+		candidate, ok := byBindingID[bindings[idx].BindingID]
+		if ok {
+			applyAgentWorkflowBindingRuntimeInputs(&bindings[idx], candidate)
 		}
-		bindings[idx].StartInputs = cloneWorkflowStartInputs(candidate.StartInputs)
-		bindings[idx].RequiredInputs = append([]string(nil), candidate.RequiredInputs...)
-		bindings[idx].DefaultInputKey = strings.TrimSpace(candidate.DefaultInputKey)
 	}
 	return bindings
+}
+
+func applyAgentWorkflowBindingRuntimeInputs(binding *dto.AgentWorkflowBinding, candidate dto.AgentWorkflowBindingCandidate) {
+	if binding == nil {
+		return
+	}
+	if strings.TrimSpace(binding.AgentType) == "" {
+		binding.AgentType = strings.TrimSpace(candidate.AgentType)
+	}
+	binding.StartInputs = cloneWorkflowStartInputs(candidate.StartInputs)
+	binding.RequiredInputs = append([]string(nil), candidate.RequiredInputs...)
+	binding.DefaultInputKey = strings.TrimSpace(candidate.DefaultInputKey)
+}
+
+type agentWorkflowCandidateRow struct {
+	AgentID     string  `gorm:"column:agent_id"`
+	WorkflowID  string  `gorm:"column:workflow_id"`
+	AgentType   string  `gorm:"column:agent_type"`
+	VersionUUID string  `gorm:"column:version_uuid"`
+	Version     string  `gorm:"column:version"`
+	Graph       string  `gorm:"column:graph"`
+	Label       string  `gorm:"column:label"`
+	Description string  `gorm:"column:description"`
+	Icon        *string `gorm:"column:icon"`
+	IconType    *string `gorm:"column:icon_type"`
+	UpdatedAt   time.Time
 }
 
 func (s *agentsService) ListAgentWorkflowBindingCandidates(ctx context.Context, agentID, accountID string) (*dto.AgentWorkflowBindingCandidatesResponse, error) {
@@ -308,21 +341,7 @@ func (s *agentsService) listAgentWorkflowBindingCandidatesForWorkspace(ctx conte
 		return []dto.AgentWorkflowBindingCandidate{}, nil
 	}
 
-	type workflowCandidateRow struct {
-		AgentID     string  `gorm:"column:agent_id"`
-		WorkflowID  string  `gorm:"column:workflow_id"`
-		AgentType   string  `gorm:"column:agent_type"`
-		VersionUUID string  `gorm:"column:version_uuid"`
-		Version     string  `gorm:"column:version"`
-		Graph       string  `gorm:"column:graph"`
-		Label       string  `gorm:"column:label"`
-		Description string  `gorm:"column:description"`
-		Icon        *string `gorm:"column:icon"`
-		IconType    *string `gorm:"column:icon_type"`
-		UpdatedAt   time.Time
-	}
-
-	var rows []workflowCandidateRow
+	var rows []agentWorkflowCandidateRow
 	if err := s.db.WithContext(ctx).
 		Table("workflows").
 		Select("workflows.agent_id AS agent_id, workflows.id AS workflow_id, agents.agent_type AS agent_type, workflows.version_uuid AS version_uuid, workflows.version AS version, workflows.graph AS graph, agents.name AS label, agents.description AS description, agents.icon AS icon, agents.icon_type AS icon_type, workflows.created_at AS updated_at").
@@ -346,33 +365,7 @@ func (s *agentsService) listAgentWorkflowBindingCandidatesForWorkspace(ctx conte
 			continue
 		}
 		seen[agentID] = struct{}{}
-		icon := stringPtrValue(row.Icon)
-		iconType := stringPtrValue(row.IconType)
-		iconURL := ""
-		if iconType == "image" && icon != "" && s.fileService != nil {
-			if fileURL, err := s.fileService.GetFileURL(ctx, icon); err == nil {
-				iconURL = fileURL
-			}
-		}
-		startInputs := workflowStartInputsFromGraph(row.Graph)
-		items = append(items, dto.AgentWorkflowBindingCandidate{
-			BindingID:       agentID,
-			Label:           strings.TrimSpace(row.Label),
-			Description:     strings.TrimSpace(row.Description),
-			AgentID:         agentID,
-			WorkflowID:      strings.ToLower(strings.TrimSpace(row.WorkflowID)),
-			AgentType:       strings.TrimSpace(row.AgentType),
-			VersionStrategy: automationaction.WorkflowVersionStrategyLatestPublished,
-			VersionUUID:     strings.ToLower(strings.TrimSpace(row.VersionUUID)),
-			Version:         strings.TrimSpace(row.Version),
-			Icon:            icon,
-			IconType:        iconType,
-			IconURL:         iconURL,
-			UpdatedAt:       row.UpdatedAt.Unix(),
-			StartInputs:     startInputs,
-			RequiredInputs:  requiredWorkflowStartInputNames(startInputs),
-			DefaultInputKey: defaultWorkflowStartInputKey(startInputs),
-		})
+		items = append(items, s.agentWorkflowBindingCandidateFromRow(ctx, row))
 	}
 	sort.SliceStable(items, func(i, j int) bool {
 		if items[i].Label != items[j].Label {
@@ -381,6 +374,67 @@ func (s *agentsService) listAgentWorkflowBindingCandidatesForWorkspace(ctx conte
 		return items[i].AgentID < items[j].AgentID
 	})
 	return items, nil
+}
+
+func (s *agentsService) getPinnedAgentWorkflowBindingCandidate(ctx context.Context, workspaceID string, binding dto.AgentWorkflowBinding) (dto.AgentWorkflowBindingCandidate, bool, error) {
+	if s.db == nil {
+		return dto.AgentWorkflowBindingCandidate{}, false, fmt.Errorf("database is required")
+	}
+	workspaceID = strings.TrimSpace(workspaceID)
+	agentID := strings.TrimSpace(binding.AgentID)
+	workflowID := strings.TrimSpace(binding.WorkflowID)
+	versionUUID := strings.TrimSpace(binding.VersionUUID)
+	if workspaceID == "" || agentID == "" || workflowID == "" || versionUUID == "" {
+		return dto.AgentWorkflowBindingCandidate{}, false, nil
+	}
+	var row agentWorkflowCandidateRow
+	err := s.db.WithContext(ctx).
+		Table("workflows").
+		Select("workflows.agent_id AS agent_id, workflows.id AS workflow_id, agents.agent_type AS agent_type, workflows.version_uuid AS version_uuid, workflows.version AS version, workflows.graph AS graph, agents.name AS label, agents.description AS description, agents.icon AS icon, agents.icon_type AS icon_type, workflows.created_at AS updated_at").
+		Joins("JOIN agents ON agents.id = workflows.agent_id").
+		Where("workflows.tenant_id = ? AND workflows.agent_id = ? AND workflows.id = ? AND workflows.version_uuid = ?", workspaceID, agentID, workflowID, versionUUID).
+		Where("workflows.version != ?", "draft").
+		Where("agents.deleted_at IS NULL AND agents.web_app_status = ?", AgentWebAppStatusActive).
+		Where("agents.agent_type IN ?", []string{"WORKFLOW", "CONVERSATIONAL_WORKFLOW"}).
+		Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return dto.AgentWorkflowBindingCandidate{}, false, nil
+	}
+	if err != nil {
+		return dto.AgentWorkflowBindingCandidate{}, false, err
+	}
+	return s.agentWorkflowBindingCandidateFromRow(ctx, row), true, nil
+}
+
+func (s *agentsService) agentWorkflowBindingCandidateFromRow(ctx context.Context, row agentWorkflowCandidateRow) dto.AgentWorkflowBindingCandidate {
+	icon := stringPtrValue(row.Icon)
+	iconType := stringPtrValue(row.IconType)
+	iconURL := ""
+	if iconType == "image" && icon != "" && s.fileService != nil {
+		if fileURL, err := s.fileService.GetFileURL(ctx, icon); err == nil {
+			iconURL = fileURL
+		}
+	}
+	startInputs := workflowStartInputsFromGraph(row.Graph)
+	agentID := strings.ToLower(strings.TrimSpace(row.AgentID))
+	return dto.AgentWorkflowBindingCandidate{
+		BindingID:       agentID,
+		Label:           strings.TrimSpace(row.Label),
+		Description:     strings.TrimSpace(row.Description),
+		AgentID:         agentID,
+		WorkflowID:      strings.ToLower(strings.TrimSpace(row.WorkflowID)),
+		AgentType:       strings.TrimSpace(row.AgentType),
+		VersionStrategy: automationaction.WorkflowVersionStrategyLatestPublished,
+		VersionUUID:     strings.ToLower(strings.TrimSpace(row.VersionUUID)),
+		Version:         strings.TrimSpace(row.Version),
+		Icon:            icon,
+		IconType:        iconType,
+		IconURL:         iconURL,
+		UpdatedAt:       row.UpdatedAt.Unix(),
+		StartInputs:     startInputs,
+		RequiredInputs:  requiredWorkflowStartInputNames(startInputs),
+		DefaultInputKey: defaultWorkflowStartInputKey(startInputs),
+	}
 }
 
 func (s *agentsService) PublishAgent(ctx context.Context, agentID, accountID string, req dto.PublishAgentRequest) (*dto.PublishAgentResponse, error) {

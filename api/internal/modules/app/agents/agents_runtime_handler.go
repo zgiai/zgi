@@ -562,7 +562,8 @@ func (h *AgentsHandler) streamWorkflowApprovalContinuation(c *gin.Context, scope
 		_ = writeAgentSSE(c, "error", gin.H{"message": "database is not available"})
 		return
 	}
-	run, err := h.loadAgentWorkflowRunLog(c.Request.Context(), continuation.WorkflowRunID)
+	workCtx := context.WithoutCancel(c.Request.Context())
+	run, err := h.loadAgentWorkflowRunLog(workCtx, continuation.WorkflowRunID)
 	if err != nil {
 		_ = writeAgentSSE(c, "error", gin.H{"message": err.Error()})
 		return
@@ -572,24 +573,52 @@ func (h *AgentsHandler) streamWorkflowApprovalContinuation(c *gin.Context, scope
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
-		terminal, nextSequence := h.drainAgentWorkflowContinuationEvents(c, continuation, pauseService, run.TenantID, lastSequence)
+		terminal, nextSequence := h.drainAgentWorkflowContinuationEvents(workCtx, continuation, pauseService, run.TenantID, lastSequence, func(eventType string, payload gin.H) error {
+			return writeAgentSSE(c, eventType, payload)
+		})
 		lastSequence = nextSequence
 		if terminal {
-			h.finishAgentWorkflowContinuation(c, scope, continuation)
+			h.finishAgentWorkflowContinuation(workCtx, scope, continuation, func(eventType string, payload gin.H) error {
+				_ = writeAgentSSE(c, eventType, payload)
+				return nil
+			})
 			return
 		}
 		select {
 		case <-c.Request.Context().Done():
+			h.startWorkflowApprovalContinuationBackground(workCtx, scope, continuation, run.TenantID, lastSequence)
 			return
 		case <-ticker.C:
 		}
 	}
 }
 
-func (h *AgentsHandler) drainAgentWorkflowContinuationEvents(c *gin.Context, continuation *runtimeservice.WorkflowApprovalContinuation, pauseService *workflowpause.Service, tenantID string, afterSequence int) (bool, int) {
-	payload, err := pauseService.ListEvents(c.Request.Context(), tenantID, continuation.WorkflowRunID, afterSequence, 100)
+func (h *AgentsHandler) startWorkflowApprovalContinuationBackground(ctx context.Context, scope runtimeservice.Scope, continuation *runtimeservice.WorkflowApprovalContinuation, tenantID string, afterSequence int) {
+	go func() {
+		pauseService := workflowpause.NewService(h.db)
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		lastSequence := afterSequence
+		for {
+			terminal, nextSequence := h.drainAgentWorkflowContinuationEvents(ctx, continuation, pauseService, tenantID, lastSequence, nil)
+			lastSequence = nextSequence
+			if terminal {
+				h.finishAgentWorkflowContinuation(ctx, scope, continuation, nil)
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+}
+
+func (h *AgentsHandler) drainAgentWorkflowContinuationEvents(ctx context.Context, continuation *runtimeservice.WorkflowApprovalContinuation, pauseService *workflowpause.Service, tenantID string, afterSequence int, emit func(string, gin.H) error) (bool, int) {
+	payload, err := pauseService.ListEvents(ctx, tenantID, continuation.WorkflowRunID, afterSequence, 100)
 	if err != nil {
-		logger.WarnContext(c.Request.Context(), "failed to list workflow continuation events", "workflow_run_id", continuation.WorkflowRunID, err)
+		logger.WarnContext(ctx, "failed to list workflow continuation events", "workflow_run_id", continuation.WorkflowRunID, err)
 		return false, afterSequence
 	}
 	lastSequence := afterSequence
@@ -604,14 +633,16 @@ func (h *AgentsHandler) drainAgentWorkflowContinuationEvents(c *gin.Context, con
 		data["workflow_run_id"] = continuation.WorkflowRunID
 		data["conversation_id"] = continuation.ConversationID.String()
 		data["message_id"] = continuation.MessageID.String()
-		persistedPayload, persistErr := h.chatRuntimeService.RecordWorkflowApprovalContinuationEvent(c.Request.Context(), continuation, eventType, data)
+		persistedPayload, persistErr := h.chatRuntimeService.RecordWorkflowApprovalContinuationEvent(ctx, continuation, eventType, data)
 		if persistErr != nil {
-			logger.WarnContext(c.Request.Context(), "failed to persist workflow continuation event", "workflow_run_id", continuation.WorkflowRunID, "event_type", eventType, persistErr)
+			logger.WarnContext(ctx, "failed to persist workflow continuation event", "workflow_run_id", continuation.WorkflowRunID, "event_type", eventType, persistErr)
 		}
 		if persistedPayload != nil {
 			data = persistedPayload
 		}
-		_ = writeAgentSSE(c, eventType, data)
+		if emit != nil {
+			_ = emit(eventType, data)
+		}
 		if eventType == "workflow_finished" || eventType == "workflow_failed" {
 			terminal = true
 		}
@@ -619,10 +650,10 @@ func (h *AgentsHandler) drainAgentWorkflowContinuationEvents(c *gin.Context, con
 	return terminal, lastSequence
 }
 
-func (h *AgentsHandler) finishAgentWorkflowContinuation(c *gin.Context, scope runtimeservice.Scope, continuation *runtimeservice.WorkflowApprovalContinuation) {
-	run, err := h.loadAgentWorkflowRunLog(c.Request.Context(), continuation.WorkflowRunID)
+func (h *AgentsHandler) finishAgentWorkflowContinuation(ctx context.Context, scope runtimeservice.Scope, continuation *runtimeservice.WorkflowApprovalContinuation, emit func(string, gin.H) error) {
+	run, err := h.loadAgentWorkflowRunLog(ctx, continuation.WorkflowRunID)
 	if err != nil {
-		_ = writeAgentSSE(c, "error", gin.H{"message": err.Error()})
+		emitAgentWorkflowContinuationError(emit, err)
 		return
 	}
 	outputs := run.OutputsMap()
@@ -631,27 +662,28 @@ func (h *AgentsHandler) finishAgentWorkflowContinuation(c *gin.Context, scope ru
 		if run.Error != nil {
 			errorMessage = *run.Error
 		}
-		result, summaryErr := h.chatRuntimeService.SummarizeWorkflowApprovalContinuation(c.Request.Context(), scope, continuation, runtimeservice.WorkflowContinuationSummaryRequest{
+		result, summaryErr := h.chatRuntimeService.SummarizeWorkflowApprovalContinuation(ctx, scope, continuation, runtimeservice.WorkflowContinuationSummaryRequest{
 			WorkflowRunID: continuation.WorkflowRunID,
 			Status:        run.Status,
 			Outputs:       outputs,
 			Error:         errorMessage,
 		}, func(chunk string) error {
-			return writeAgentSSE(c, "message", gin.H{
+			emitAgentWorkflowContinuationEvent(emit, "message", gin.H{
 				"conversation_id": continuation.ConversationID.String(),
 				"message_id":      continuation.MessageID.String(),
 				"answer":          chunk,
 			})
+			return nil
 		})
 		if summaryErr != nil {
-			_ = writeAgentSSE(c, "error", gin.H{"message": summaryErr.Error()})
+			emitAgentWorkflowContinuationError(emit, summaryErr)
 			return
 		}
 		metadata := map[string]interface{}{}
 		if result != nil {
 			metadata = result.Metadata
 		}
-		_ = writeAgentSSE(c, "message_end", gin.H{
+		emitAgentWorkflowContinuationEvent(emit, "message_end", gin.H{
 			"conversation_id": continuation.ConversationID.String(),
 			"message_id":      continuation.MessageID.String(),
 			"status":          runtimemodel.MessageStatusCompleted,
@@ -663,29 +695,43 @@ func (h *AgentsHandler) finishAgentWorkflowContinuation(c *gin.Context, scope ru
 	if strings.EqualFold(strings.TrimSpace(run.Status), "failed") {
 		status = "failed"
 	}
-	if _, err := h.chatRuntimeService.UpdateWorkflowApprovalContinuationStatus(c.Request.Context(), continuation, status); err != nil {
-		_ = writeAgentSSE(c, "error", gin.H{"message": err.Error()})
+	if _, err := h.chatRuntimeService.UpdateWorkflowApprovalContinuationStatus(ctx, continuation, status); err != nil {
+		emitAgentWorkflowContinuationError(emit, err)
 		return
 	}
 	answer := agentWorkflowContinuationAnswer(continuation.AgentType, continuation.WorkflowRunID, run.Status, outputs, run.Error)
 	if strings.TrimSpace(answer) != "" {
-		_ = writeAgentSSE(c, "message", gin.H{
+		emitAgentWorkflowContinuationEvent(emit, "message", gin.H{
 			"conversation_id": continuation.ConversationID.String(),
 			"message_id":      continuation.MessageID.String(),
 			"answer":          answer,
 		})
 	}
-	metadata, err := h.chatRuntimeService.CompleteWorkflowApprovalContinuation(c.Request.Context(), continuation, answer, completionContinuationStatus(run.Status))
+	metadata, err := h.chatRuntimeService.CompleteWorkflowApprovalContinuation(ctx, continuation, answer, completionContinuationStatus(run.Status))
 	if err != nil {
-		_ = writeAgentSSE(c, "error", gin.H{"message": err.Error()})
+		emitAgentWorkflowContinuationError(emit, err)
 		return
 	}
-	_ = writeAgentSSE(c, "message_end", gin.H{
+	emitAgentWorkflowContinuationEvent(emit, "message_end", gin.H{
 		"conversation_id": continuation.ConversationID.String(),
 		"message_id":      continuation.MessageID.String(),
 		"status":          runtimemodel.MessageStatusCompleted,
 		"metadata":        metadata,
 	})
+}
+
+func emitAgentWorkflowContinuationEvent(emit func(string, gin.H) error, eventType string, payload gin.H) {
+	if emit == nil {
+		return
+	}
+	_ = emit(eventType, payload)
+}
+
+func emitAgentWorkflowContinuationError(emit func(string, gin.H) error, err error) {
+	if err == nil {
+		return
+	}
+	emitAgentWorkflowContinuationEvent(emit, "error", gin.H{"message": err.Error()})
 }
 
 func shouldSummarizeAgentWorkflowContinuation(agentType, status string, outputs map[string]interface{}) bool {
