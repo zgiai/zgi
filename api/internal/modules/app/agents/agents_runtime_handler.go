@@ -1,10 +1,13 @@
 package agents
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -13,6 +16,7 @@ import (
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
+	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -316,9 +320,30 @@ func agentWorkflowRuntimeBindings(bindings []dto.AgentWorkflowBinding) []runtime
 			Description:     strings.TrimSpace(binding.Description),
 			AgentID:         strings.TrimSpace(binding.AgentID),
 			WorkflowID:      strings.TrimSpace(binding.WorkflowID),
+			AgentType:       strings.TrimSpace(binding.AgentType),
 			VersionStrategy: strings.TrimSpace(binding.VersionStrategy),
 			VersionUUID:     strings.TrimSpace(binding.VersionUUID),
 			TimeoutSeconds:  binding.TimeoutSeconds,
+			StartInputs:     agentWorkflowRuntimeStartInputs(binding.StartInputs),
+			RequiredInputs:  append([]string(nil), binding.RequiredInputs...),
+			DefaultInputKey: strings.TrimSpace(binding.DefaultInputKey),
+		})
+	}
+	return out
+}
+
+func agentWorkflowRuntimeStartInputs(inputs []dto.AgentWorkflowStartInput) []runtimeservice.AgentWorkflowStartInput {
+	out := make([]runtimeservice.AgentWorkflowStartInput, 0, len(inputs))
+	for _, input := range inputs {
+		variable := strings.TrimSpace(input.Variable)
+		if variable == "" {
+			continue
+		}
+		out = append(out, runtimeservice.AgentWorkflowStartInput{
+			Variable: variable,
+			Label:    strings.TrimSpace(input.Label),
+			Type:     strings.TrimSpace(input.Type),
+			Required: input.Required,
 		})
 	}
 	return out
@@ -494,6 +519,301 @@ func (h *AgentsHandler) streamRuntimeEvents(c *gin.Context, runtimeCtx agentRunt
 	}
 }
 
+func (h *AgentsHandler) ContinueAgentRuntimeWorkflowApproval(c *gin.Context) {
+	runtimeCtx, ok := h.agentRuntimeContext(c)
+	if !ok {
+		return
+	}
+	conversationID, ok := uuidParam(c, "conversation_id")
+	if !ok {
+		return
+	}
+	messageID, ok := uuidParam(c, "message_id")
+	if !ok {
+		return
+	}
+	continuation, err := h.chatRuntimeService.BeginWorkflowApprovalContinuation(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID, messageID)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	setupAgentSSE(c)
+	_ = writeAgentSSE(c, "message_start", gin.H{
+		"conversation_id": conversationID.String(),
+		"message_id":      messageID.String(),
+		"workflow_run_id": continuation.WorkflowRunID,
+		"created_at":      time.Now().Unix(),
+		"continuation":    true,
+	})
+	if continuation.Completed {
+		_ = writeAgentSSE(c, "message_end", gin.H{
+			"conversation_id": conversationID.String(),
+			"message_id":      messageID.String(),
+			"status":          runtimemodel.MessageStatusCompleted,
+			"metadata":        continuation.Metadata,
+		})
+		return
+	}
+	h.streamWorkflowApprovalContinuation(c, runtimeCtx.Scope, continuation)
+}
+
+func (h *AgentsHandler) streamWorkflowApprovalContinuation(c *gin.Context, scope runtimeservice.Scope, continuation *runtimeservice.WorkflowApprovalContinuation) {
+	if h.db == nil {
+		_ = writeAgentSSE(c, "error", gin.H{"message": "database is not available"})
+		return
+	}
+	run, err := h.loadAgentWorkflowRunLog(c.Request.Context(), continuation.WorkflowRunID)
+	if err != nil {
+		_ = writeAgentSSE(c, "error", gin.H{"message": err.Error()})
+		return
+	}
+	pauseService := workflowpause.NewService(h.db)
+	lastSequence := 0
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		terminal, nextSequence := h.drainAgentWorkflowContinuationEvents(c, continuation, pauseService, run.TenantID, lastSequence)
+		lastSequence = nextSequence
+		if terminal {
+			h.finishAgentWorkflowContinuation(c, scope, continuation)
+			return
+		}
+		select {
+		case <-c.Request.Context().Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (h *AgentsHandler) drainAgentWorkflowContinuationEvents(c *gin.Context, continuation *runtimeservice.WorkflowApprovalContinuation, pauseService *workflowpause.Service, tenantID string, afterSequence int) (bool, int) {
+	payload, err := pauseService.ListEvents(c.Request.Context(), tenantID, continuation.WorkflowRunID, afterSequence, 100)
+	if err != nil {
+		logger.WarnContext(c.Request.Context(), "failed to list workflow continuation events", "workflow_run_id", continuation.WorkflowRunID, err)
+		return false, afterSequence
+	}
+	lastSequence := afterSequence
+	terminal := false
+	for _, event := range payload.Events {
+		lastSequence = event.Sequence
+		eventType := agentWorkflowContinuationEventType(event.Event)
+		if eventType == "" {
+			continue
+		}
+		data := copyMapForAgentWorkflowContinuation(event.Data)
+		data["workflow_run_id"] = continuation.WorkflowRunID
+		data["conversation_id"] = continuation.ConversationID.String()
+		data["message_id"] = continuation.MessageID.String()
+		persistedPayload, persistErr := h.chatRuntimeService.RecordWorkflowApprovalContinuationEvent(c.Request.Context(), continuation, eventType, data)
+		if persistErr != nil {
+			logger.WarnContext(c.Request.Context(), "failed to persist workflow continuation event", "workflow_run_id", continuation.WorkflowRunID, "event_type", eventType, persistErr)
+		}
+		if persistedPayload != nil {
+			data = persistedPayload
+		}
+		_ = writeAgentSSE(c, eventType, data)
+		if eventType == "workflow_finished" || eventType == "workflow_failed" {
+			terminal = true
+		}
+	}
+	return terminal, lastSequence
+}
+
+func (h *AgentsHandler) finishAgentWorkflowContinuation(c *gin.Context, scope runtimeservice.Scope, continuation *runtimeservice.WorkflowApprovalContinuation) {
+	run, err := h.loadAgentWorkflowRunLog(c.Request.Context(), continuation.WorkflowRunID)
+	if err != nil {
+		_ = writeAgentSSE(c, "error", gin.H{"message": err.Error()})
+		return
+	}
+	outputs := run.OutputsMap()
+	if shouldSummarizeAgentWorkflowContinuation(continuation.AgentType, run.Status, outputs) {
+		errorMessage := ""
+		if run.Error != nil {
+			errorMessage = *run.Error
+		}
+		result, summaryErr := h.chatRuntimeService.SummarizeWorkflowApprovalContinuation(c.Request.Context(), scope, continuation, runtimeservice.WorkflowContinuationSummaryRequest{
+			WorkflowRunID: continuation.WorkflowRunID,
+			Status:        run.Status,
+			Outputs:       outputs,
+			Error:         errorMessage,
+		}, func(chunk string) error {
+			return writeAgentSSE(c, "message", gin.H{
+				"conversation_id": continuation.ConversationID.String(),
+				"message_id":      continuation.MessageID.String(),
+				"answer":          chunk,
+			})
+		})
+		if summaryErr != nil {
+			_ = writeAgentSSE(c, "error", gin.H{"message": summaryErr.Error()})
+			return
+		}
+		metadata := map[string]interface{}{}
+		if result != nil {
+			metadata = result.Metadata
+		}
+		_ = writeAgentSSE(c, "message_end", gin.H{
+			"conversation_id": continuation.ConversationID.String(),
+			"message_id":      continuation.MessageID.String(),
+			"status":          runtimemodel.MessageStatusCompleted,
+			"metadata":        metadata,
+		})
+		return
+	}
+	status := "direct_output"
+	if strings.EqualFold(strings.TrimSpace(run.Status), "failed") {
+		status = "failed"
+	}
+	if _, err := h.chatRuntimeService.UpdateWorkflowApprovalContinuationStatus(c.Request.Context(), continuation, status); err != nil {
+		_ = writeAgentSSE(c, "error", gin.H{"message": err.Error()})
+		return
+	}
+	answer := agentWorkflowContinuationAnswer(continuation.AgentType, continuation.WorkflowRunID, run.Status, outputs, run.Error)
+	if strings.TrimSpace(answer) != "" {
+		_ = writeAgentSSE(c, "message", gin.H{
+			"conversation_id": continuation.ConversationID.String(),
+			"message_id":      continuation.MessageID.String(),
+			"answer":          answer,
+		})
+	}
+	metadata, err := h.chatRuntimeService.CompleteWorkflowApprovalContinuation(c.Request.Context(), continuation, answer, completionContinuationStatus(run.Status))
+	if err != nil {
+		_ = writeAgentSSE(c, "error", gin.H{"message": err.Error()})
+		return
+	}
+	_ = writeAgentSSE(c, "message_end", gin.H{
+		"conversation_id": continuation.ConversationID.String(),
+		"message_id":      continuation.MessageID.String(),
+		"status":          runtimemodel.MessageStatusCompleted,
+		"metadata":        metadata,
+	})
+}
+
+func shouldSummarizeAgentWorkflowContinuation(agentType, status string, outputs map[string]interface{}) bool {
+	if !strings.EqualFold(strings.TrimSpace(agentType), "WORKFLOW") {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(status), "failed") {
+		return false
+	}
+	return len(outputs) > 0
+}
+
+func completionContinuationStatus(status string) string {
+	if strings.EqualFold(strings.TrimSpace(status), "failed") {
+		return "failed"
+	}
+	return "completed"
+}
+
+type agentWorkflowRunLogRow struct {
+	ID          string
+	TenantID    string
+	Status      string
+	Outputs     *string
+	Error       *string
+	ElapsedTime float64
+}
+
+func (h *AgentsHandler) loadAgentWorkflowRunLog(ctx context.Context, workflowRunID string) (*agentWorkflowRunLogRow, error) {
+	if strings.TrimSpace(workflowRunID) == "" {
+		return nil, fmt.Errorf("workflow_run_id is required")
+	}
+	var row agentWorkflowRunLogRow
+	err := h.db.WithContext(ctx).
+		Table("workflow_run_logs").
+		Select("id, tenant_id, status, outputs, error, elapsed_time").
+		Where("id = ? AND deleted_at IS NULL", strings.TrimSpace(workflowRunID)).
+		Take(&row).Error
+	if err != nil {
+		return nil, fmt.Errorf("load workflow run log: %w", err)
+	}
+	return &row, nil
+}
+
+func (r *agentWorkflowRunLogRow) OutputsMap() map[string]interface{} {
+	if r == nil || r.Outputs == nil || strings.TrimSpace(*r.Outputs) == "" {
+		return map[string]interface{}{}
+	}
+	var out map[string]interface{}
+	if err := json.Unmarshal([]byte(*r.Outputs), &out); err != nil || out == nil {
+		return map[string]interface{}{}
+	}
+	return out
+}
+
+func agentWorkflowContinuationEventType(eventType string) string {
+	switch strings.TrimSpace(eventType) {
+	case workflowpause.EventWorkflowStarted:
+		return "workflow_started"
+	case workflowpause.EventNodeStarted:
+		return "node_started"
+	case workflowpause.EventNodeFinished:
+		return "node_finished"
+	case workflowpause.EventWorkflowPaused:
+		return "workflow_paused"
+	case workflowpause.EventApprovalRequested:
+		return "approval_requested"
+	case workflowpause.EventWorkflowFinished:
+		return "workflow_finished"
+	case workflowpause.EventError:
+		return "workflow_failed"
+	default:
+		return ""
+	}
+}
+
+func copyMapForAgentWorkflowContinuation(input map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(input)+2)
+	for key, value := range input {
+		out[key] = value
+	}
+	return out
+}
+
+func agentWorkflowContinuationAnswer(agentType, workflowRunID, status string, outputs map[string]interface{}, errorMessage *string) string {
+	if strings.EqualFold(strings.TrimSpace(status), "failed") {
+		message := ""
+		if errorMessage != nil {
+			message = strings.TrimSpace(*errorMessage)
+		}
+		if message == "" {
+			message = "unknown error"
+		}
+		return fmt.Sprintf("Workflow run failed. workflow_run_id: %s\n\nError: %s", workflowRunID, message)
+	}
+	primary := primaryAgentWorkflowOutput(outputs)
+	if strings.EqualFold(strings.TrimSpace(agentType), "CONVERSATIONAL_WORKFLOW") {
+		if primary != "" {
+			return primary
+		}
+		return fmt.Sprintf("Workflow run completed, but no displayable output was returned. workflow_run_id: %s", workflowRunID)
+	}
+	if primary != "" {
+		return primary
+	}
+	if len(outputs) == 0 {
+		return fmt.Sprintf("Workflow run completed, but no displayable output was returned. workflow_run_id: %s", workflowRunID)
+	}
+	data, err := json.MarshalIndent(outputs, "", "  ")
+	if err != nil {
+		return fmt.Sprintf("Workflow run completed. workflow_run_id: %s", workflowRunID)
+	}
+	return fmt.Sprintf("Workflow run completed. Outputs:\n\n```json\n%s\n```", string(data))
+}
+
+func primaryAgentWorkflowOutput(outputs map[string]interface{}) string {
+	if len(outputs) == 0 {
+		return ""
+	}
+	if answer := strings.TrimSpace(fmt.Sprint(outputs["answer"])); answer != "" && answer != "<nil>" {
+		return answer
+	}
+	if output := strings.TrimSpace(fmt.Sprint(outputs["output"])); output != "" && output != "<nil>" {
+		return output
+	}
+	return ""
+}
+
 func (h *AgentsHandler) regenerateRuntimeMessage(c *gin.Context, runtimeCtx agentRuntimeContext) {
 	messageID, ok := uuidParam(c, "message_id")
 	if !ok {
@@ -549,6 +869,9 @@ func (h *AgentsHandler) runPreparedAgentStream(c *gin.Context, prepared *runtime
 		})
 		return
 	}
+	if agentWorkflowContinuationWaiting(result.Metadata) {
+		return
+	}
 	_ = writeAgentSSE(c, "message_end", gin.H{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
@@ -557,6 +880,14 @@ func (h *AgentsHandler) runPreparedAgentStream(c *gin.Context, prepared *runtime
 			"usage": result.Metadata["usage"],
 		},
 	})
+}
+
+func agentWorkflowContinuationWaiting(metadata map[string]interface{}) bool {
+	state, ok := metadata["agent_workflow_continuation"].(map[string]interface{})
+	if !ok {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(fmt.Sprint(state["status"])), "waiting_approval")
 }
 
 func (h *AgentsHandler) validateAgentRuntimeSkills(c *gin.Context, req dto.AgentConfigRequest) error {
@@ -643,6 +974,8 @@ func (h *AgentsHandler) failRuntime(c *gin.Context, err error) {
 	case errors.Is(err, runtimeservice.ErrNotFound):
 		response.Fail(c, response.ErrNotFound)
 	case errors.Is(err, runtimeservice.ErrInvalidInput):
+		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+	case errors.Is(err, runtimeservice.ErrConversationWaitingApproval):
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 	case errors.Is(err, agentmemory.ErrInvalidInput):
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())

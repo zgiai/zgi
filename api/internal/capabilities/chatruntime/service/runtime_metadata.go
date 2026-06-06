@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
@@ -46,6 +47,43 @@ func (s *service) persistWorkflowRunEventBestEffort(ctx context.Context, prepare
 	if err := s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata); err != nil {
 		logger.WarnContext(ctx, "failed to persist aichat workflow run metadata", "message_id", prepared.Message.ID.String(), err)
 	}
+}
+
+func (s *service) persistWorkflowApprovalPending(ctx context.Context, prepared *PreparedChat, payload map[string]interface{}, usage *adapter.Usage) map[string]interface{} {
+	if prepared == nil || prepared.Message == nil || prepared.Conversation == nil {
+		return map[string]interface{}{}
+	}
+	pendingPayload := copyStringAnyMap(payload)
+	if pendingPayload == nil {
+		pendingPayload = map[string]interface{}{}
+	}
+	pendingPayload["conversation_id"] = prepared.Conversation.ID.String()
+	pendingPayload["message_id"] = prepared.Message.ID.String()
+	metadata := mergeWorkflowRunMetadata(prepared.Message.Metadata, "approval_requested", pendingPayload)
+	metadata = preparedResultMetadata(metadata, usage)
+	metadata["agent_workflow_continuation"] = compactWorkflowRun(map[string]interface{}{
+		"status":          "waiting_approval",
+		"workflow_run_id": firstNonEmptyString(pendingPayload["workflow_run_id"]),
+		"workflow_id":     firstNonEmptyString(pendingPayload["workflow_id"]),
+		"agent_id":        firstNonEmptyString(pendingPayload["agent_id"]),
+		"agent_type":      firstNonEmptyString(pendingPayload["agent_type"]),
+		"binding_id":      firstNonEmptyString(pendingPayload["binding_id"]),
+		"original_query":  prepared.Message.Query,
+		"approval_token":  firstNonEmptyString(pendingPayload["approval_token"]),
+		"approval_url":    firstNonEmptyString(pendingPayload["approval_url"]),
+		"resume_policy":   "same_message",
+	})
+	prepared.Message.Metadata = metadata
+	if s == nil || s.repos == nil || s.repos.Message == nil || s.repos.Conversation == nil {
+		return metadata
+	}
+	if err := s.repos.Message.UpdateWaitingApproval(ctx, prepared.Message.ID, metadata); err != nil {
+		logger.WarnContext(ctx, "failed to mark aichat workflow approval pending", "message_id", prepared.Message.ID.String(), err)
+	}
+	if err := s.repos.Conversation.FinishWaitingApprovalMessage(ctx, prepared.Conversation.ID, prepared.Message.ID); err != nil {
+		logger.WarnContext(ctx, "failed to finish aichat workflow approval pending message", "conversation_id", prepared.Conversation.ID.String(), err)
+	}
+	return metadata
 }
 
 func mergeGeneratedArtifactMetadata(source map[string]interface{}, artifact map[string]interface{}) map[string]interface{} {

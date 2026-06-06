@@ -26,6 +26,8 @@ type ConversationRepository interface {
 	StartStreaming(ctx context.Context, id, organizationID, accountID, messageID uuid.UUID) error
 	ClearActiveMessage(ctx context.Context, id, messageID uuid.UUID) error
 	FinishActiveMessage(ctx context.Context, id, messageID uuid.UUID) error
+	FinishWaitingApprovalMessage(ctx context.Context, id, messageID uuid.UUID) error
+	FinishContinuationMessage(ctx context.Context, id, messageID uuid.UUID) error
 	ClearActiveMessages(ctx context.Context, messageIDs []uuid.UUID) error
 	CompleteRootReplacement(ctx context.Context, id, messageID uuid.UUID) error
 	UpdateAfterMessage(ctx context.Context, id uuid.UUID, leafMessageID uuid.UUID) error
@@ -43,6 +45,7 @@ type MessageRepository interface {
 	ReplaceRootForStreaming(ctx context.Context, message *runtimemodel.Message) error
 	UpdateCompleted(ctx context.Context, id uuid.UUID, answer string, metadata map[string]interface{}) error
 	UpdateMetadata(ctx context.Context, id uuid.UUID, metadata map[string]interface{}) error
+	UpdateWaitingApproval(ctx context.Context, id uuid.UUID, metadata map[string]interface{}) error
 	UpdateError(ctx context.Context, id uuid.UUID, message string) error
 	MarkStopped(ctx context.Context, id uuid.UUID) error
 	UpdateStoppedAnswer(ctx context.Context, id uuid.UUID, answer string, metadata map[string]interface{}) error
@@ -304,6 +307,43 @@ func (r *conversationRepository) FinishActiveMessage(ctx context.Context, id, me
 		})
 	if result.Error != nil {
 		return fmt.Errorf("failed to finish aichat conversation active message: %w", result.Error)
+	}
+	return nil
+}
+
+func (r *conversationRepository) FinishWaitingApprovalMessage(ctx context.Context, id, messageID uuid.UUID) error {
+	result := r.db.WithContext(ctx).Model(&runtimemodel.Conversation{}).
+		Where("id = ? AND active_message_id = ? AND deleted_at IS NULL", id, messageID).
+		UpdateColumns(map[string]interface{}{
+			"current_leaf_message_id": messageID,
+			"runtime_status":          runtimemodel.ConversationRuntimeStatusIdle,
+			"active_message_id":       nil,
+			"dialogue_count":          gorm.Expr("dialogue_count + 1"),
+			"updated_at":              time.Now(),
+		})
+	if result.Error != nil {
+		return fmt.Errorf("failed to finish waiting approval aichat message: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+func (r *conversationRepository) FinishContinuationMessage(ctx context.Context, id, messageID uuid.UUID) error {
+	result := r.db.WithContext(ctx).Model(&runtimemodel.Conversation{}).
+		Where("id = ? AND active_message_id = ? AND deleted_at IS NULL", id, messageID).
+		UpdateColumns(map[string]interface{}{
+			"current_leaf_message_id": messageID,
+			"runtime_status":          runtimemodel.ConversationRuntimeStatusIdle,
+			"active_message_id":       nil,
+			"updated_at":              time.Now(),
+		})
+	if result.Error != nil {
+		return fmt.Errorf("failed to finish aichat continuation message: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
 	}
 	return nil
 }
@@ -576,7 +616,7 @@ func (r *messageRepository) UpdateCompleted(ctx context.Context, id uuid.UUID, a
 		return fmt.Errorf("failed to marshal aichat message metadata: %w", err)
 	}
 	result := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
-		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, activeMessageStatuses()).
+		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, completableMessageStatuses()).
 		Updates(map[string]interface{}{
 			"answer":     answer,
 			"status":     runtimemodel.MessageStatusCompleted,
@@ -602,13 +642,38 @@ func (r *messageRepository) UpdateMetadata(ctx context.Context, id uuid.UUID, me
 		return fmt.Errorf("failed to marshal aichat message metadata: %w", err)
 	}
 	result := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
-		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, activeMessageStatuses()).
+		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, mutableMessageStatuses()).
 		Updates(map[string]interface{}{
 			"metadata":   datatypes.JSON(metadataJSON),
 			"updated_at": time.Now(),
 		})
 	if result.Error != nil {
 		return fmt.Errorf("failed to update aichat message metadata: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+func (r *messageRepository) UpdateWaitingApproval(ctx context.Context, id uuid.UUID, metadata map[string]interface{}) error {
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal waiting approval aichat message metadata: %w", err)
+	}
+	result := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
+		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, activeMessageStatuses()).
+		Updates(map[string]interface{}{
+			"status":     runtimemodel.MessageStatusWaitingApproval,
+			"error":      nil,
+			"metadata":   datatypes.JSON(metadataJSON),
+			"updated_at": time.Now(),
+		})
+	if result.Error != nil {
+		return fmt.Errorf("failed to mark aichat message waiting approval: %w", result.Error)
 	}
 	if result.RowsAffected == 0 {
 		return gorm.ErrRecordNotFound
@@ -774,6 +839,14 @@ func (r *accessRepository) GetCurrentWorkspaceID(ctx context.Context, accountID 
 
 func activeMessageStatuses() []string {
 	return []string{runtimemodel.MessageStatusPending, runtimemodel.MessageStatusStreaming}
+}
+
+func mutableMessageStatuses() []string {
+	return []string{runtimemodel.MessageStatusPending, runtimemodel.MessageStatusStreaming, runtimemodel.MessageStatusWaitingApproval}
+}
+
+func completableMessageStatuses() []string {
+	return mutableMessageStatuses()
 }
 
 func wrapNotFound(err error, name string) error {

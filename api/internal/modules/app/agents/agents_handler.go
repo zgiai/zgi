@@ -599,6 +599,9 @@ func (h *AgentsHandler) ChatAgent(c *gin.Context) {
 		})
 		return
 	}
+	if agentWorkflowContinuationWaiting(result.Metadata) {
+		return
+	}
 	_ = writeAgentSSE(c, "message_end", gin.H{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
@@ -918,6 +921,9 @@ func (h *AgentsHandler) ChatWebAppAgent(c *gin.Context) {
 			"status":          status,
 			"metadata":        gin.H{},
 		})
+		return
+	}
+	if agentWorkflowContinuationWaiting(result.Metadata) {
 		return
 	}
 	_ = writeAgentSSE(c, "message_end", gin.H{
