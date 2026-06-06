@@ -2,7 +2,6 @@ package migrations
 
 import (
 	"fmt"
-	"strings"
 
 	mschema "github.com/zgiai/zgi/api/internal/migrations/schema"
 )
@@ -501,18 +500,25 @@ func upCreateDataLibraryFoundationTables(schema *mschema.Builder) error {
 		WHERE deleted_at IS NULL
 		`,
 		`
-		ALTER TABLE data_library_database_asset_refs
-		ADD CONSTRAINT fk_data_library_db_asset_refs_extraction_artifact
-		FOREIGN KEY (extraction_artifact_id)
-		REFERENCES data_library_extraction_artifacts(id)
-		ON DELETE SET NULL
+		DO $$
+		BEGIN
+			IF NOT EXISTS (
+				SELECT 1
+				FROM pg_constraint
+				WHERE conname = 'fk_data_library_db_asset_refs_extraction_artifact'
+				  AND conrelid = 'public.data_library_database_asset_refs'::regclass
+			) THEN
+				ALTER TABLE data_library_database_asset_refs
+					ADD CONSTRAINT fk_data_library_db_asset_refs_extraction_artifact
+					FOREIGN KEY (extraction_artifact_id)
+					REFERENCES data_library_extraction_artifacts(id)
+					ON DELETE SET NULL;
+			END IF;
+		END $$;
 		`,
 	}
 	for _, statement := range statements {
 		if err := schema.Raw(statement); err != nil {
-			if isDataLibraryDuplicateConstraintError(err) {
-				continue
-			}
 			return fmt.Errorf("create data library foundation tables: %w", err)
 		}
 	}
@@ -521,9 +527,4 @@ func upCreateDataLibraryFoundationTables(schema *mschema.Builder) error {
 
 func downCreateDataLibraryFoundationTables(schema *mschema.Builder) error {
 	return fmt.Errorf("rollback for migration %s is not supported", migration202605231629280827ID)
-}
-
-func isDataLibraryDuplicateConstraintError(err error) bool {
-	message := err.Error()
-	return strings.Contains(message, "SQLSTATE 42710") || strings.Contains(message, "already exists")
 }

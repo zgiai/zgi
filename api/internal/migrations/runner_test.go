@@ -365,6 +365,25 @@ func TestLegacyBridgePostRunVerifiesPublicMigrationRecords(t *testing.T) {
 	}
 }
 
+func TestDataLibraryFoundationMigrationGuardsExtractionArtifactConstraint(t *testing.T) {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve caller path")
+	}
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(filename), migration202605231629280827ID+".go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+
+	if !strings.Contains(text, "pg_constraint") {
+		t.Fatal("data library extraction artifact foreign key must be guarded before ALTER TABLE")
+	}
+	if strings.Contains(text, "isDataLibraryDuplicateConstraintError") {
+		t.Fatal("migration must not suppress duplicate constraint errors after executing ALTER TABLE")
+	}
+}
+
 func TestLegacyBridgeDoesNotHardcodeClosedSourceMigrationIDs(t *testing.T) {
 	_, filename, _, ok := runtime.Caller(0)
 	if !ok {
