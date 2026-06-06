@@ -168,6 +168,61 @@ function workflowBindingFromCandidate(
   };
 }
 
+function compactSuggestedQuestionContextRef(value: string, maxLength = 180): string {
+  const text = value.replace(/\s+/g, ' ').trim();
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength).trim()}...`;
+}
+
+function buildSuggestedQuestionContextRefs(params: {
+  selectedKnowledgeDatasets: AgentKnowledgeDataset[];
+  databaseBindings: AgentDatabaseBinding[];
+  workflowBindings: AgentWorkflowBinding[];
+  workflowCandidatesByBindingID: Map<string, AgentWorkflowBindingCandidate>;
+  fileUploadEnabled: boolean;
+  agentMemoryEnabled: boolean;
+}): string[] {
+  const refs: string[] = [];
+  params.selectedKnowledgeDatasets.forEach(dataset => {
+    const name = dataset.name?.trim();
+    if (!name) return;
+    refs.push(
+      compactSuggestedQuestionContextRef(
+        `Knowledge: ${name}${dataset.description ? ` - ${dataset.description}` : ''}`
+      )
+    );
+  });
+  params.databaseBindings.forEach(binding => {
+    const dataSourceID = binding.data_source_id.trim();
+    if (!dataSourceID || binding.table_ids.length === 0) return;
+    refs.push(
+      compactSuggestedQuestionContextRef(
+        `Database: ${dataSourceID} (${binding.table_ids.length} selected tables${
+          (binding.writable_table_ids ?? []).length > 0 ? ', writable tables enabled' : ''
+        })`
+      )
+    );
+  });
+  params.workflowBindings.forEach(binding => {
+    const candidate = params.workflowCandidatesByBindingID.get(binding.binding_id);
+    const label = binding.label || candidate?.label || binding.binding_id;
+    const description = binding.description || candidate?.description || '';
+    if (!label.trim()) return;
+    refs.push(
+      compactSuggestedQuestionContextRef(
+        `Workflow: ${label}${description ? ` - ${description}` : ''}`
+      )
+    );
+  });
+  if (params.fileUploadEnabled) {
+    refs.push('File upload: enabled');
+  }
+  if (params.agentMemoryEnabled) {
+    refs.push('Memory: enabled');
+  }
+  return Array.from(new Set(refs)).slice(0, 12);
+}
+
 export function useAgentRuntimePageModel(agentId: string) {
   const queryClient = useQueryClient();
   const { locale } = useLocale();
@@ -630,7 +685,14 @@ export function useAgentRuntimePageModel(agentId: string) {
         home_title: homeTitle,
         existing_questions: currentPayload.suggested_questions,
         skills,
-        knowledge_refs: [],
+        knowledge_refs: buildSuggestedQuestionContextRefs({
+          selectedKnowledgeDatasets,
+          databaseBindings,
+          workflowBindings,
+          workflowCandidatesByBindingID,
+          fileUploadEnabled,
+          agentMemoryEnabled,
+        }),
       });
       const generated = (response.data.questions ?? [])
         .map(item => item.text.trim())
@@ -650,14 +712,20 @@ export function useAgentRuntimePageModel(agentId: string) {
   }, [
     agentId,
     currentPayload.suggested_questions,
+    databaseBindings,
+    fileUploadEnabled,
+    agentMemoryEnabled,
     homeTitle,
     isGeneratingSuggestions,
     locale,
     modelValue.model,
     modelValue.provider,
     selectedSkills,
+    selectedKnowledgeDatasets,
     systemPrompt,
     t,
+    workflowBindings,
+    workflowCandidatesByBindingID,
   ]);
 
   const handleCopyWebAppUrl = useCallback(async () => {
@@ -931,7 +999,6 @@ export function useAgentRuntimePageModel(agentId: string) {
       isWorkflowCandidatesLoading,
       suggestedQuestions,
       isGeneratingSuggestions,
-      systemPrompt,
       fileUploadEnabled,
       agentMemoryEnabled,
       agentMemorySlots,

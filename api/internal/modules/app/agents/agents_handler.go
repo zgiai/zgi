@@ -501,6 +501,7 @@ func (h *AgentsHandler) GenerateAgentSuggestedQuestions(c *gin.Context) {
 	ctx := agentRuntimeRequestContext(c, accountID)
 	result, err := h.appService.GenerateAgentSuggestedQuestions(ctx, c.Param("agent_id"), accountID, &req)
 	if err != nil {
+		logger.ErrorContext(c.Request.Context(), "failed to generate agent suggested questions", "agent_id", c.Param("agent_id"), err)
 		if isAgentSuggestedQuestionsConfigurationError(err) {
 			response.FailWithMessage(c, response.ErrConfigError, "Please configure a default LLM model before generating suggested questions.")
 			return

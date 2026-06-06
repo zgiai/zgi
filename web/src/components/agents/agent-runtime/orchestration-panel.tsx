@@ -44,7 +44,6 @@ interface AgentRuntimeOrchestrationPanelProps {
   isWorkflowCandidatesLoading: boolean;
   suggestedQuestions: string[];
   isGeneratingSuggestions: boolean;
-  systemPrompt: string;
   fileUploadEnabled: boolean;
   agentMemoryEnabled: boolean;
   agentMemorySlots: AgentMemorySlotConfig[];
@@ -92,7 +91,6 @@ export function AgentRuntimeOrchestrationPanel({
   isWorkflowCandidatesLoading,
   suggestedQuestions,
   isGeneratingSuggestions,
-  systemPrompt,
   fileUploadEnabled,
   agentMemoryEnabled,
   agentMemorySlots,
@@ -220,8 +218,6 @@ export function AgentRuntimeOrchestrationPanel({
             inputPlaceholder={inputPlaceholder}
             suggestedQuestions={suggestedQuestions}
             isGeneratingSuggestions={isGeneratingSuggestions}
-            systemPrompt={systemPrompt}
-            modelValue={modelValue}
             defaultHomeTitle={defaultHomeTitle}
             defaultInputPlaceholder={defaultInputPlaceholder}
             onToggleSection={onToggleSection}

@@ -20,6 +20,7 @@ import (
 	sharedmodel "github.com/zgiai/zgi/api/internal/modules/shared/model"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/gorm"
 )
 
@@ -1336,19 +1337,53 @@ func (s *agentsService) resolveAgentSuggestedQuestionsModel(ctx context.Context,
 	provider := strings.TrimSpace(explicitProvider)
 	model := strings.TrimSpace(explicitModel)
 	if model != "" {
+		if fallbackProvider, fallbackModel := s.resolveSuggestedQuestionsDefaultModel(ctx, organizationID); fallbackModel != "" && isReasoningSuggestedQuestionsModel(model) && !isReasoningSuggestedQuestionsModel(fallbackModel) {
+			return fallbackProvider, fallbackModel, nil
+		}
 		return provider, model, nil
 	}
+	if fallbackProvider, fallbackModel := s.resolveSuggestedQuestionsDefaultModel(ctx, organizationID); fallbackModel != "" {
+		return fallbackProvider, fallbackModel, nil
+	}
+	return "", "", suggestedquestions.ErrModelNotConfigured
+}
+
+func (s *agentsService) resolveSuggestedQuestionsDefaultModel(ctx context.Context, organizationID string) (string, string) {
 	if s.defaultModelResolver == nil || strings.TrimSpace(organizationID) == "" {
-		return "", "", suggestedquestions.ErrModelNotConfigured
+		return "", ""
 	}
 	resolved, err := s.defaultModelResolver.ResolveModelType(ctx, organizationID, nil, nil, sharedmodel.ModelTypeLLM)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to resolve default LLM model: %w", err)
+		logger.WarnContext(ctx, "failed to resolve default LLM model for suggested questions", "organization_id", organizationID, err)
+		return "", ""
 	}
 	if resolved == nil || strings.TrimSpace(resolved.Model) == "" {
-		return "", "", suggestedquestions.ErrModelNotConfigured
+		return "", ""
 	}
-	return strings.TrimSpace(resolved.Provider), strings.TrimSpace(resolved.Model), nil
+	return strings.TrimSpace(resolved.Provider), strings.TrimSpace(resolved.Model)
+}
+
+func isReasoningSuggestedQuestionsModel(model string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(model))
+	if normalized == "" {
+		return false
+	}
+	reasoningMarkers := []string{
+		"reasoning",
+		"reasoner",
+		"thinking",
+		"think",
+		"deepseek-r1",
+		"deepseek-reasoner",
+		"qwq",
+		"kimi-k2-thinking",
+	}
+	for _, marker := range reasoningMarkers {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func isAgentSuggestedQuestionsConfigurationError(err error) bool {
