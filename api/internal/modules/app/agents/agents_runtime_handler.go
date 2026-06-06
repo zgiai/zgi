@@ -29,6 +29,8 @@ type agentRuntimeContext struct {
 	RunConfig runtimeservice.RunConfig
 }
 
+const agentWorkflowContinuationMaxDuration = 35 * time.Minute
+
 func (h *AgentsHandler) ListAgentRuntimeConversations(c *gin.Context) {
 	runtimeCtx, ok := h.agentRuntimeContext(c)
 	if !ok {
@@ -562,7 +564,9 @@ func (h *AgentsHandler) streamWorkflowApprovalContinuation(c *gin.Context, scope
 		_ = writeAgentSSE(c, "error", gin.H{"message": "database is not available"})
 		return
 	}
-	workCtx := context.WithoutCancel(c.Request.Context())
+	workBaseCtx := context.WithoutCancel(c.Request.Context())
+	workCtx, cancelWork := context.WithTimeout(workBaseCtx, agentWorkflowContinuationMaxDuration)
+	defer cancelWork()
 	run, err := h.loadAgentWorkflowRunLog(workCtx, continuation.WorkflowRunID)
 	if err != nil {
 		_ = writeAgentSSE(c, "error", gin.H{"message": err.Error()})
@@ -584,9 +588,21 @@ func (h *AgentsHandler) streamWorkflowApprovalContinuation(c *gin.Context, scope
 			})
 			return
 		}
+		if h.finishAgentWorkflowContinuationIfRunTerminal(workCtx, scope, continuation, func(eventType string, payload gin.H) error {
+			_ = writeAgentSSE(c, eventType, payload)
+			return nil
+		}) {
+			return
+		}
 		select {
 		case <-c.Request.Context().Done():
-			h.startWorkflowApprovalContinuationBackground(workCtx, scope, continuation, run.TenantID, lastSequence)
+			h.startWorkflowApprovalContinuationBackground(workBaseCtx, scope, continuation, run.TenantID, lastSequence)
+			return
+		case <-workCtx.Done():
+			h.failAgentWorkflowContinuation(context.WithoutCancel(c.Request.Context()), continuation, workCtx.Err(), func(eventType string, payload gin.H) error {
+				_ = writeAgentSSE(c, eventType, payload)
+				return nil
+			})
 			return
 		case <-ticker.C:
 		}
@@ -595,6 +611,8 @@ func (h *AgentsHandler) streamWorkflowApprovalContinuation(c *gin.Context, scope
 
 func (h *AgentsHandler) startWorkflowApprovalContinuationBackground(ctx context.Context, scope runtimeservice.Scope, continuation *runtimeservice.WorkflowApprovalContinuation, tenantID string, afterSequence int) {
 	go func() {
+		ctx, cancel := context.WithTimeout(ctx, agentWorkflowContinuationMaxDuration)
+		defer cancel()
 		pauseService := workflowpause.NewService(h.db)
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
@@ -606,8 +624,12 @@ func (h *AgentsHandler) startWorkflowApprovalContinuationBackground(ctx context.
 				h.finishAgentWorkflowContinuation(ctx, scope, continuation, nil)
 				return
 			}
+			if h.finishAgentWorkflowContinuationIfRunTerminal(ctx, scope, continuation, nil) {
+				return
+			}
 			select {
 			case <-ctx.Done():
+				h.failAgentWorkflowContinuation(context.WithoutCancel(ctx), continuation, ctx.Err(), nil)
 				return
 			case <-ticker.C:
 			}
@@ -648,6 +670,19 @@ func (h *AgentsHandler) drainAgentWorkflowContinuationEvents(ctx context.Context
 		}
 	}
 	return terminal, lastSequence
+}
+
+func (h *AgentsHandler) finishAgentWorkflowContinuationIfRunTerminal(ctx context.Context, scope runtimeservice.Scope, continuation *runtimeservice.WorkflowApprovalContinuation, emit func(string, gin.H) error) bool {
+	run, err := h.loadAgentWorkflowRunLog(ctx, continuation.WorkflowRunID)
+	if err != nil {
+		logger.WarnContext(ctx, "failed to load workflow continuation run status", "workflow_run_id", continuation.WorkflowRunID, err)
+		return false
+	}
+	if !agentWorkflowRunLogTerminal(run.Status) {
+		return false
+	}
+	h.finishAgentWorkflowContinuation(ctx, scope, continuation, emit)
+	return true
 }
 
 func (h *AgentsHandler) finishAgentWorkflowContinuation(ctx context.Context, scope runtimeservice.Scope, continuation *runtimeservice.WorkflowApprovalContinuation, emit func(string, gin.H) error) {
@@ -720,6 +755,31 @@ func (h *AgentsHandler) finishAgentWorkflowContinuation(ctx context.Context, sco
 	})
 }
 
+func (h *AgentsHandler) failAgentWorkflowContinuation(ctx context.Context, continuation *runtimeservice.WorkflowApprovalContinuation, cause error, emit func(string, gin.H) error) {
+	message := "workflow continuation timed out before completion"
+	if cause != nil && !errors.Is(cause, context.DeadlineExceeded) {
+		message = fmt.Sprintf("workflow continuation stopped before completion: %v", cause)
+	}
+	answer := fmt.Sprintf("工作流审批续跑未能在限定时间内完成。workflow_run_id: %s", continuation.WorkflowRunID)
+	metadata, err := h.chatRuntimeService.CompleteWorkflowApprovalContinuation(ctx, continuation, answer, "failed")
+	if err != nil {
+		emitAgentWorkflowContinuationError(emit, err)
+		return
+	}
+	emitAgentWorkflowContinuationEvent(emit, "error", gin.H{"message": message})
+	emitAgentWorkflowContinuationEvent(emit, "message", gin.H{
+		"conversation_id": continuation.ConversationID.String(),
+		"message_id":      continuation.MessageID.String(),
+		"answer":          answer,
+	})
+	emitAgentWorkflowContinuationEvent(emit, "message_end", gin.H{
+		"conversation_id": continuation.ConversationID.String(),
+		"message_id":      continuation.MessageID.String(),
+		"status":          runtimemodel.MessageStatusCompleted,
+		"metadata":        metadata,
+	})
+}
+
 func emitAgentWorkflowContinuationEvent(emit func(string, gin.H) error, eventType string, payload gin.H) {
 	if emit == nil {
 		return
@@ -738,17 +798,35 @@ func shouldSummarizeAgentWorkflowContinuation(agentType, status string, outputs 
 	if !strings.EqualFold(strings.TrimSpace(agentType), "WORKFLOW") {
 		return false
 	}
-	if strings.EqualFold(strings.TrimSpace(status), "failed") {
+	if agentWorkflowRunLogFailed(status) {
 		return false
 	}
 	return len(outputs) > 0
 }
 
 func completionContinuationStatus(status string) string {
-	if strings.EqualFold(strings.TrimSpace(status), "failed") {
+	if agentWorkflowRunLogFailed(status) {
 		return "failed"
 	}
 	return "completed"
+}
+
+func agentWorkflowRunLogTerminal(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "succeeded", "failed", "stopped", "partial-succeeded":
+		return true
+	default:
+		return false
+	}
+}
+
+func agentWorkflowRunLogFailed(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "failed", "stopped":
+		return true
+	default:
+		return false
+	}
 }
 
 type agentWorkflowRunLogRow struct {

@@ -38,6 +38,13 @@ func TestShouldSummarizeAgentWorkflowContinuation(t *testing.T) {
 			outputs:   map[string]interface{}{"answer": "partial"},
 			want:      false,
 		},
+		{
+			name:      "stopped task workflow direct failure answer",
+			agentType: "WORKFLOW",
+			status:    "stopped",
+			outputs:   map[string]interface{}{"answer": "partial"},
+			want:      false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -54,7 +61,23 @@ func TestCompletionContinuationStatus(t *testing.T) {
 	if got := completionContinuationStatus("failed"); got != "failed" {
 		t.Fatalf("completionContinuationStatus(failed) = %q, want failed", got)
 	}
+	if got := completionContinuationStatus("stopped"); got != "failed" {
+		t.Fatalf("completionContinuationStatus(stopped) = %q, want failed", got)
+	}
 	if got := completionContinuationStatus("succeeded"); got != "completed" {
 		t.Fatalf("completionContinuationStatus(succeeded) = %q, want completed", got)
+	}
+}
+
+func TestAgentWorkflowRunLogTerminal(t *testing.T) {
+	for _, status := range []string{"succeeded", "failed", "stopped", "partial-succeeded"} {
+		if !agentWorkflowRunLogTerminal(status) {
+			t.Fatalf("agentWorkflowRunLogTerminal(%q) = false, want true", status)
+		}
+	}
+	for _, status := range []string{"", "running", "paused"} {
+		if agentWorkflowRunLogTerminal(status) {
+			t.Fatalf("agentWorkflowRunLogTerminal(%q) = true, want false", status)
+		}
 	}
 }
