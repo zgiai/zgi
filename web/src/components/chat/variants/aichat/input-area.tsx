@@ -135,6 +135,7 @@ interface AIChatInputAreaProps {
   isLoadingMessages: boolean;
   input: string;
   modelSelectorValue: AIChatModelValue;
+  modelProps?: ModelSelectorModelProps | null;
   isModelInitializing?: boolean;
   modelMissing: boolean;
   isSending: boolean;
@@ -172,6 +173,7 @@ export function AIChatInputArea({
   isLoadingMessages,
   input,
   modelSelectorValue,
+  modelProps,
   isModelInitializing = false,
   modelMissing,
   isSending,
@@ -249,7 +251,8 @@ export function AIChatInputArea({
   const isUploading = attachments.some(attachment => attachment.status === 'uploading');
   const hasUploadError = attachments.some(attachment => attachment.status === 'error');
   const hasImageAttachment = attachments.some(attachment => attachment.kind === 'image');
-  const canUseImage = isVisionModel(selectedModelProps);
+  const effectiveModelProps = modelProps ?? selectedModelProps;
+  const canUseImage = isVisionModel(effectiveModelProps);
   const modelCapabilityFilter = useMemo(
     () => (hasImageAttachment ? { features_vision: true } : undefined),
     [hasImageAttachment]

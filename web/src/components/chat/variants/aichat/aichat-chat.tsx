@@ -14,7 +14,10 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { useStore } from 'zustand';
 import { ArrowDown, MessageSquarePlus, PanelLeft, Settings2 } from 'lucide-react';
-import type { ModelSelectorValue } from '@/components/common/model-selector';
+import type {
+  ModelSelectorModelProps,
+  ModelSelectorValue,
+} from '@/components/common/model-selector';
 import type { AIChatController } from '@/components/chat/controllers/aichat-controller';
 import type { ConversationSummary } from '@/components/chat/controllers/types';
 import {
@@ -83,6 +86,7 @@ export type { AIChatModelValue } from '@/components/chat/variants/aichat/types';
 interface AIChatShellProps {
   controller: AIChatController;
   modelSelectorValue: AIChatModelValue;
+  modelProps?: ModelSelectorModelProps | null;
   isModelInitializing?: boolean;
   onModelChange: (value: ModelSelectorValue) => void;
   variant?: 'full' | 'embedded';
@@ -149,6 +153,7 @@ function areSkillIdsEqual(left: string[], right: string[]) {
 export function AIChatShell({
   controller,
   modelSelectorValue,
+  modelProps,
   isModelInitializing = false,
   onModelChange,
   variant = 'full',
@@ -873,6 +878,7 @@ export function AIChatShell({
           isLoadingMessages={isLoadingMessages}
           input={input}
           modelSelectorValue={modelSelectorValue}
+          modelProps={modelProps}
           isModelInitializing={isModelInitializing}
           modelMissing={modelMissing}
           isSending={isSending}

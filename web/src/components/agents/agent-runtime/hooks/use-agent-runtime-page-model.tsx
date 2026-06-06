@@ -4,17 +4,20 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { createAgentDraftTransport, useAIChatController } from '@/components/chat';
+import { findAIChatModelProps } from '@/components/chat/variants/aichat/model-props';
 import {
   getAIChatSkillDisplayInfo,
   isHiddenSystemSkill,
 } from '@/components/chat/variants/aichat/skill-display';
 import type {
+  ModelSelectorModelProps,
   ModelSelectorParameterValue,
   ModelSelectorValue,
 } from '@/components/common/model-selector';
 import { useAgent, useAgentConfig, usePublishAgent } from '@/hooks/agent/use-agents';
 import { useAIChatSkills } from '@/hooks/aichat/use-aichat-skills';
 import { useDatasets } from '@/hooks/dataset/use-datasets';
+import { useAvailableModels } from '@/hooks/model/use-model';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { AGENT_KEYS, DATASET_KEYS } from '@/hooks/query-keys';
@@ -246,6 +249,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     () => workflowCandidatesResponse?.data.data ?? [],
     [workflowCandidatesResponse?.data.data]
   );
+  const { models: availableChatModels } = useAvailableModels({ use_case: 'text-chat' });
   const agentDetail = agent?.data;
   const defaultHomeTitle = agentDetail?.name?.trim() || t('defaultHomeTitle');
   const defaultInputPlaceholder = t('defaultInputPlaceholder');
@@ -428,6 +432,10 @@ export function useAgentRuntimePageModel(agentId: string) {
       params: modelValue.params,
     }),
     [modelValue]
+  );
+  const selectedModelProps = useMemo<ModelSelectorModelProps | null>(
+    () => findAIChatModelProps(availableChatModels, modelSelectorValue),
+    [availableChatModels, modelSelectorValue]
   );
   const currentPayload = useMemo<UpdateAgentRuntimeConfigRequest>(
     () => ({
@@ -920,6 +928,28 @@ export function useAgentRuntimePageModel(agentId: string) {
     return saveNow({ silent: false, force: true });
   }, [canManageAgent, hasAgentMemorySlotErrors, isSystemPromptTooLong, saveNow, t, tRoot]);
 
+  const handlePreviewSheetOpenChange = useCallback(
+    async (open: boolean) => {
+      if (!open) {
+        setPreviewSheetOpen(false);
+        return;
+      }
+      if (!canManageAgent || isVersionPreviewing) {
+        setPreviewSheetOpen(true);
+        return;
+      }
+      if (hasAgentMemorySlotErrors || isSystemPromptTooLong) {
+        setPreviewSheetOpen(false);
+        return;
+      }
+      const saved = await saveNow({ silent: true, force: true });
+      if (saved) {
+        setPreviewSheetOpen(true);
+      }
+    },
+    [canManageAgent, hasAgentMemorySlotErrors, isSystemPromptTooLong, isVersionPreviewing, saveNow]
+  );
+
   const leaveGuardNode = useAgentRuntimeLeaveGuard({
     enabled: canManageAgent && !isVersionPreviewing,
     hasUnsavedChanges: isDirty,
@@ -937,7 +967,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     leaveGuardNode,
     isTwoXlViewport,
     previewSheetOpen,
-    setPreviewSheetOpen,
+    setPreviewSheetOpen: handlePreviewSheetOpenChange,
     header: {
       agentId,
       agent: agentDetail,
@@ -952,7 +982,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       onSave: handleManualSave,
       onPublish: handlePublish,
       onCopyWebAppUrl: handleCopyWebAppUrl,
-      onTogglePreview: () => setPreviewSheetOpen(current => !current),
+      onTogglePreview: () => void handlePreviewSheetOpenChange(!previewSheetOpen),
       onOpenPublishedVersions: handleOpenPublishedVersions,
     },
     version: {
@@ -1027,6 +1057,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     preview: {
       controller: chatController,
       modelSelectorValue,
+      modelProps: selectedModelProps,
       useMemory: false,
       fileUploadEnabled,
       suggestions: currentPayload.suggested_questions,
@@ -1035,7 +1066,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       homeTitle: currentPayload.home_title || defaultHomeTitle,
       onOpenMemoryValues: () => setMemoryValuesOpen(true),
       onModelChange: handleModelChange,
-      onClose: () => setPreviewSheetOpen(false),
+      onClose: () => void handlePreviewSheetOpenChange(false),
     },
     dialogs: {
       promptOptimizer: {

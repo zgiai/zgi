@@ -1349,12 +1349,16 @@ func (s *agentsService) resolveAgentSuggestedQuestionsModel(ctx context.Context,
 }
 
 func (s *agentsService) resolveSuggestedQuestionsDefaultModel(ctx context.Context, organizationID string) (string, string) {
+	return s.resolveDefaultLLMModel(ctx, organizationID, "suggested questions")
+}
+
+func (s *agentsService) resolveDefaultLLMModel(ctx context.Context, organizationID, scope string) (string, string) {
 	if s.defaultModelResolver == nil || strings.TrimSpace(organizationID) == "" {
 		return "", ""
 	}
 	resolved, err := s.defaultModelResolver.ResolveModelType(ctx, organizationID, nil, nil, sharedmodel.ModelTypeLLM)
 	if err != nil {
-		logger.WarnContext(ctx, "failed to resolve default LLM model for suggested questions", "organization_id", organizationID, err)
+		logger.WarnContext(ctx, "failed to resolve default LLM model", "organization_id", organizationID, "scope", scope, err)
 		return "", ""
 	}
 	if resolved == nil || strings.TrimSpace(resolved.Model) == "" {

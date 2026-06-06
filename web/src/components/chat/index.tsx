@@ -13,7 +13,10 @@ import type { OpeningGuideConfig } from '@/utils/webapp/opening-statement';
 
 import { SysChat, type SysChatProps } from './variants/sys/sys-chat';
 import { ImgChat } from './variants/img/img-chat';
-import { type ModelSelectorValue } from '../common/model-selector/model-selector';
+import {
+  type ModelSelectorModelProps,
+  type ModelSelectorValue,
+} from '../common/model-selector/model-selector';
 import { AIChatShell, type AIChatModelValue } from '@/components/chat/variants/aichat/aichat-chat';
 import type { AIChatUploadScope } from '@/components/chat/variants/aichat/input-area';
 import type { AIChatController } from '@/components/chat/controllers/aichat-controller';
@@ -113,6 +116,7 @@ interface AIChatVariantProps {
   mode: 'aichat';
   controller: AIChatController;
   modelSelectorValue: AIChatModelValue;
+  modelProps?: ModelSelectorModelProps | null;
   isModelInitializing?: boolean;
   onModelChange: (value: ModelSelectorValue) => void;
   variant?: 'full' | 'embedded';

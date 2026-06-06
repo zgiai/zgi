@@ -4,12 +4,17 @@ import { useId, type ReactNode } from 'react';
 import { Eye, MessageSquarePlus, PanelLeft, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import Chat, { type AIChatController } from '@/components/chat';
-import type { ModelSelectorParameterValue, ModelSelectorValue } from '@/components/common/model-selector';
+import type {
+  ModelSelectorModelProps,
+  ModelSelectorParameterValue,
+  ModelSelectorValue,
+} from '@/components/common/model-selector';
 import { useT } from '@/i18n';
 
 interface AgentRuntimePreviewPanelProps {
   controller: AIChatController;
   modelSelectorValue: ModelSelectorParameterValue;
+  modelProps?: ModelSelectorModelProps | null;
   useMemory: boolean;
   fileUploadEnabled: boolean;
   suggestions: string[];
@@ -25,6 +30,7 @@ interface AgentRuntimePreviewPanelProps {
 export function AgentRuntimePreviewPanel({
   controller,
   modelSelectorValue,
+  modelProps,
   useMemory,
   fileUploadEnabled,
   suggestions,
@@ -84,6 +90,7 @@ export function AgentRuntimePreviewPanel({
           mode="aichat"
           controller={controller}
           modelSelectorValue={modelSelectorValue}
+          modelProps={modelProps}
           onModelChange={onModelChange}
           variant="embedded"
           showModelSelector={false}
