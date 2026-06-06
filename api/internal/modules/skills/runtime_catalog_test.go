@@ -79,6 +79,34 @@ func TestDatabaseSystemSkillsExposeExpectedTools(t *testing.T) {
 	}
 }
 
+func TestAgentWorkflowSystemSkillExposeExpectedTools(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillAgentWorkflow})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	agent, ok := resolved.Get(SkillAgentWorkflow)
+	if !ok {
+		t.Fatalf("agent workflow skill was not resolved")
+	}
+	expectedTools := []string{"get_workflow_run_status", "list_agent_workflows", "run_agent_workflow"}
+	if got := toolNames(agent.Tools); !sameStrings(got, expectedTools) {
+		t.Fatalf("agent workflow tools = %v", got)
+	}
+	if !sameStrings(agent.Metadata.SupportedCallers, []string{SkillCallerAgent}) {
+		t.Fatalf("supported callers = %#v, want agent", agent.Metadata.SupportedCallers)
+	}
+	if !sameStrings(agent.Metadata.RequiredConfig, []string{SkillRequiredConfigAgentWorkflow}) {
+		t.Fatalf("required config = %#v, want agent_workflow", agent.Metadata.RequiredConfig)
+	}
+	if !IsHiddenSystemSkill(SkillAgentWorkflow) {
+		t.Fatal("agent-workflow should be hidden")
+	}
+	if got := ExpectedSkillToolArguments(SkillAgentWorkflow, "run_agent_workflow"); got == nil {
+		t.Fatal("run_agent_workflow contract missing")
+	}
+}
+
 func TestAgentMemorySystemSkillIsNotLoadable(t *testing.T) {
 	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
 	_, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillAgentMemory})

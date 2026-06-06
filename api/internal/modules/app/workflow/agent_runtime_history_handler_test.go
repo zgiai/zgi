@@ -536,6 +536,77 @@ func TestAgentRuntimeStepsWithoutTraceKeepsFinalAnswer(t *testing.T) {
 	}
 }
 
+func TestAgentRuntimeStepsIncludeWorkflowRunEvents(t *testing.T) {
+	message := &runtimemodel.Message{
+		ID:             uuid.New(),
+		ConversationID: uuid.New(),
+		Query:          "run workflow",
+		Answer:         "done",
+		Status:         runtimemodel.MessageStatusCompleted,
+		ModelName:      "gpt-test",
+		Metadata: map[string]interface{}{
+			"workflow_runs": []interface{}{
+				map[string]interface{}{
+					"workflow_run_id": "run-1",
+					"workflow_id":     "workflow-1",
+					"status":          "pending_approval",
+					"created_at":      1700000000.0,
+					"elapsed_time":    1500.0,
+					"inputs":          map[string]interface{}{"query": "run workflow", "api_key": "secret"},
+					"outputs":         map[string]interface{}{"answer": "workflow output"},
+					"approval": map[string]interface{}{
+						"approval_form_id": "form-1",
+						"approval_url":     "https://example.test/approve",
+						"approval_form":    map[string]interface{}{"title": "Approve"},
+					},
+					"nodes": []interface{}{
+						map[string]interface{}{
+							"node_id":      "node-1",
+							"node_type":    "llm",
+							"title":        "Generate",
+							"status":       "succeeded",
+							"elapsed_time": 500.0,
+							"inputs":       map[string]interface{}{"prompt": "hello"},
+							"outputs":      map[string]interface{}{"text": "world", "token": "secret-token"},
+						},
+					},
+				},
+			},
+		},
+		CreatedAt: time.Unix(1700000000, 0),
+		UpdatedAt: time.Unix(1700000002, 0),
+	}
+
+	items := buildAgentRuntimeSteps(message)
+
+	if len(items) != 4 {
+		t.Fatalf("items len = %d, want 4", len(items))
+	}
+	if items[0].Type != "workflow_run" || items[0].Title != "Workflow run: workflow-1" {
+		t.Fatalf("first item = %#v, want workflow run event", items[0])
+	}
+	runInput := items[0].Input.(map[string]interface{})
+	if runInput["api_key"] != "[REDACTED]" || runInput["query"] != "run workflow" {
+		t.Fatalf("workflow run input = %#v, want sensitive fields redacted only", runInput)
+	}
+	if items[1].Type != "workflow_node" || items[1].Title != "Workflow node: Generate" {
+		t.Fatalf("second item = %#v, want workflow node event", items[1])
+	}
+	nodeOutput := items[1].Output.(map[string]interface{})
+	if nodeOutput["token"] != "[REDACTED]" || nodeOutput["text"] != "world" {
+		t.Fatalf("workflow node output = %#v, want sensitive fields redacted only", nodeOutput)
+	}
+	if items[2].Type != "workflow_approval" || items[2].Status != "pending_approval" {
+		t.Fatalf("third item = %#v, want workflow approval event", items[2])
+	}
+	if items[2].Process["workflow_run_id"] != "run-1" || items[2].Process["approval_form_id"] != "form-1" {
+		t.Fatalf("workflow approval process = %#v, want workflow and approval ids", items[2].Process)
+	}
+	if items[3].Type != "model_answer" {
+		t.Fatalf("final item = %#v, want model answer", items[3])
+	}
+}
+
 func TestAgentRuntimeWorkflowRunsNoLongerServeAgentMessages(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	handler, _, ids := setupRuntimeHistoryHandler(t)
@@ -872,6 +943,30 @@ func (s *fakeRuntimeHistoryService) RunPreparedStream(ctx context.Context, prepa
 
 func (s *fakeRuntimeHistoryService) StreamConversationEvents(ctx context.Context, scope runtimeservice.Scope, conversationID, messageID uuid.UUID, afterID string, onEvent func(runtimeservice.StreamEvent) error) error {
 	return fmt.Errorf("not implemented")
+}
+
+func (s *fakeRuntimeHistoryService) BeginWorkflowApprovalContinuation(ctx context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, conversationID, messageID uuid.UUID) (*runtimeservice.WorkflowApprovalContinuation, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (s *fakeRuntimeHistoryService) RecordWorkflowApprovalContinuationEvent(ctx context.Context, continuation *runtimeservice.WorkflowApprovalContinuation, eventType string, payload map[string]interface{}) (map[string]interface{}, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (s *fakeRuntimeHistoryService) UpdateWorkflowApprovalContinuationStatus(ctx context.Context, continuation *runtimeservice.WorkflowApprovalContinuation, status string) (map[string]interface{}, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (s *fakeRuntimeHistoryService) SummarizeWorkflowApprovalContinuation(ctx context.Context, scope runtimeservice.Scope, continuation *runtimeservice.WorkflowApprovalContinuation, req runtimeservice.WorkflowContinuationSummaryRequest, onChunk func(string) error) (*runtimeservice.ChatResult, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (s *fakeRuntimeHistoryService) CompleteWorkflowApprovalContinuation(ctx context.Context, continuation *runtimeservice.WorkflowApprovalContinuation, answer string, status string) (map[string]interface{}, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (s *fakeRuntimeHistoryService) FailWorkflowApprovalContinuation(ctx context.Context, continuation *runtimeservice.WorkflowApprovalContinuation, message string) (map[string]interface{}, error) {
+	return nil, fmt.Errorf("not implemented")
 }
 
 func (s *fakeRuntimeHistoryService) ListSkills(ctx context.Context, scope runtimeservice.Scope) ([]skills.SkillDiscoveryMetadata, error) {

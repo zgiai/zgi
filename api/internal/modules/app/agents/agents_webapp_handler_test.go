@@ -236,6 +236,10 @@ func (s *stubWebAppStatusHandlerService) UpdateAgentConfig(context.Context, stri
 	return nil, nil
 }
 
+func (s *stubWebAppStatusHandlerService) ListAgentWorkflowBindingCandidates(context.Context, string, string) (*dto.AgentWorkflowBindingCandidatesResponse, error) {
+	return nil, nil
+}
+
 func (s *stubWebAppStatusHandlerService) ListAgentMemorySlots(context.Context, string, string) ([]dto.AgentMemorySlotConfig, error) {
 	return nil, nil
 }

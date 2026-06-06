@@ -10,3 +10,12 @@ export interface AIChatSuggestion {
   key: string;
   text: string;
 }
+
+export interface AIChatWorkflowApprovalRequest {
+  conversationId: string;
+  messageId: string;
+  workflowRunId?: string;
+  approvalToken: string;
+  approvalUrl?: string;
+  approvalFormId?: string;
+}

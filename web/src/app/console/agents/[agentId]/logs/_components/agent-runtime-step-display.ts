@@ -155,6 +155,39 @@ export function getAgentRuntimeStepDisplay(
         title: translate(t, 'appLogs.runtimeEventTitles.guardrail'),
         subtitle: rawTitle || type,
       };
+    case 'workflow_run':
+      return {
+        title: translate(t, 'appLogs.runtimeEventTitles.workflowRun'),
+        subtitle:
+          stringValue(process.workflow_id) ||
+          stringValue(process.workflow_run_id) ||
+          rawTitle ||
+          type,
+      };
+    case 'workflow_node':
+      return {
+        title: translate(t, 'appLogs.runtimeEventTitles.workflowNode', {
+          name:
+            stringValue(process.node_type) ||
+            stringValue(process.node_id) ||
+            rawTitle ||
+            translate(t, 'appLogs.runtimeFallbacks.workflowNode'),
+        }),
+        subtitle:
+          stringValue(process.workflow_id) ||
+          stringValue(process.workflow_run_id) ||
+          rawTitle ||
+          type,
+      };
+    case 'workflow_approval':
+      return {
+        title: translate(t, 'appLogs.runtimeEventTitles.workflowApproval'),
+        subtitle:
+          stringValue(process.workflow_run_id) ||
+          stringValue(process.approval_form_id) ||
+          rawTitle ||
+          type,
+      };
     case 'model_answer':
       return {
         title: translate(t, 'appLogs.runtimeEventTitles.finalAnswer'),

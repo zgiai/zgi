@@ -67,6 +67,12 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		answer, usage, err := s.runPreparedSkillStream(runCtx, persistCtx, prepared, onChunk, eventCallback)
 		usage = mergeUsage(preflightUsage, usage)
 		if err != nil {
+			var pendingApproval *skillloop.WorkflowApprovalPendingError
+			if errors.As(err, &pendingApproval) {
+				metadata := s.persistWorkflowApprovalPending(persistCtx, prepared, pendingApproval.Payload, usage)
+				s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval), eventCallback)
+				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage}, nil
+			}
 			if errors.Is(err, ErrMessageStopped) {
 				_ = s.clearPreparedRuntime(persistCtx, prepared)
 				return nil, err
@@ -588,10 +594,14 @@ func baseFileParsePayload(prepared *PreparedChat, file attachmentFile, index, to
 }
 
 func messageEndPayload(prepared *PreparedChat, metadata map[string]interface{}) map[string]interface{} {
+	return messageEndPayloadWithStatus(prepared, metadata, completedStatusFromMetadata(metadata))
+}
+
+func messageEndPayloadWithStatus(prepared *PreparedChat, metadata map[string]interface{}, status string) map[string]interface{} {
 	return map[string]interface{}{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
-		"status":          completedStatusFromMetadata(metadata),
+		"status":          strings.TrimSpace(status),
 		"metadata":        copyStringAnyMap(metadata),
 	}
 }

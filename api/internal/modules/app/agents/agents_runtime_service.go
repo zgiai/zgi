@@ -15,6 +15,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/suggestedquestions"
+	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	datasetservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
 	sharedmodel "github.com/zgiai/zgi/api/internal/modules/shared/model"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
@@ -34,6 +35,7 @@ func (s *agentsService) GetAgentConfig(ctx context.Context, agentID, accountID s
 		return nil, err
 	}
 	resp := agentConfigResponse(ag.ID.String(), cfg)
+	resp.WorkflowBindings = s.hydrateAgentWorkflowBindingRuntimeInputs(ctx, ag.TenantID.String(), resp.WorkflowBindings)
 	resp.AgentMemorySlots = s.agentMemorySlotsForDraft(ctx, ag.ID)
 	return resp, nil
 }
@@ -44,6 +46,7 @@ func (s *agentsService) GetAgentDraftRuntimeConfig(ctx context.Context, agentID,
 		return nil, err
 	}
 	resp := agentConfigResponse(ag.ID.String(), cfg)
+	resp.WorkflowBindings = s.hydrateAgentWorkflowBindingRuntimeInputs(ctx, ag.TenantID.String(), resp.WorkflowBindings)
 	resp.AgentMemorySlots = s.agentMemorySlotsForDraft(ctx, ag.ID)
 	return &dto.AgentDraftRuntimeConfigResponse{
 		AgentID:     ag.ID.String(),
@@ -58,6 +61,7 @@ func (s *agentsService) UpdateAgentConfig(ctx context.Context, agentID, accountI
 		return nil, err
 	}
 	runtimeReq := normalizeAgentConfigRequest(req)
+	runtimeReq.WorkflowBindings = s.hydrateAgentWorkflowBindingTypes(ctx, ag.TenantID.String(), runtimeReq.WorkflowBindings)
 	if err := s.validateAgentBindingGrantChanges(ctx, ag, cfg, accountID, runtimeReq); err != nil {
 		return nil, err
 	}
@@ -98,6 +102,11 @@ func (s *agentsService) validateAgentBindingGrantChanges(ctx context.Context, ag
 	}
 	if databaseBindingGrantNeedsRefresh(previous.DatabaseBindings, previous.DatabaseBoundByAccountID, previous.DatabaseBoundAtUnix, req.DatabaseBindings) {
 		if err := s.validateDatabaseBindingGrant(ctx, organizationID, accountID, req.DatabaseBindings); err != nil {
+			return err
+		}
+	}
+	if workflowBindingGrantNeedsRefresh(previous.WorkflowBindings, previous.WorkflowBoundByAccountID, previous.WorkflowBoundAtUnix, req.WorkflowBindings) {
+		if err := s.validateWorkflowBindingGrant(ctx, workspaceID, req.WorkflowBindings); err != nil {
 			return err
 		}
 	}
@@ -190,6 +199,242 @@ func (s *agentsService) requireDatabaseWriteBindingPermission(ctx context.Contex
 		return fmt.Errorf("database data edit or manage permission is required")
 	}
 	return nil
+}
+
+func (s *agentsService) validateWorkflowBindingGrant(ctx context.Context, workspaceID string, bindings []dto.AgentWorkflowBinding) error {
+	bindings = normalizeAgentWorkflowBindings(bindings)
+	if len(bindings) == 0 {
+		return nil
+	}
+	candidates, err := s.listAgentWorkflowBindingCandidatesForWorkspace(ctx, workspaceID)
+	if err != nil {
+		return fmt.Errorf("load workflow binding candidates: %w", err)
+	}
+	byBindingID := make(map[string]dto.AgentWorkflowBindingCandidate, len(candidates))
+	for _, candidate := range candidates {
+		byBindingID[strings.TrimSpace(candidate.BindingID)] = candidate
+	}
+	for _, binding := range bindings {
+		if binding.VersionStrategy == automationaction.WorkflowVersionStrategyPinned {
+			if strings.TrimSpace(binding.VersionUUID) == "" {
+				return fmt.Errorf("workflow binding %s requires version_uuid", binding.BindingID)
+			}
+			candidate, ok, err := s.getPinnedAgentWorkflowBindingCandidate(ctx, workspaceID, binding)
+			if err != nil {
+				return fmt.Errorf("load pinned workflow binding %s: %w", binding.BindingID, err)
+			}
+			if !ok || strings.TrimSpace(candidate.AgentID) != strings.TrimSpace(binding.AgentID) {
+				return fmt.Errorf("workflow binding %s pinned version is not available", binding.BindingID)
+			}
+			continue
+		}
+		candidate, ok := byBindingID[strings.TrimSpace(binding.BindingID)]
+		if !ok || strings.TrimSpace(candidate.AgentID) != strings.TrimSpace(binding.AgentID) {
+			return fmt.Errorf("workflow binding %s is not available", binding.BindingID)
+		}
+	}
+	return nil
+}
+
+func (s *agentsService) hydrateAgentWorkflowBindingTypes(ctx context.Context, workspaceID string, bindings []dto.AgentWorkflowBinding) []dto.AgentWorkflowBinding {
+	bindings = normalizeAgentWorkflowBindings(bindings)
+	if len(bindings) == 0 {
+		return bindings
+	}
+	candidates, err := s.listAgentWorkflowBindingCandidatesForWorkspace(ctx, workspaceID)
+	if err != nil {
+		return bindings
+	}
+	typesByBindingID := make(map[string]string, len(candidates))
+	for _, candidate := range candidates {
+		if bindingID := strings.TrimSpace(candidate.BindingID); bindingID != "" {
+			typesByBindingID[bindingID] = strings.TrimSpace(candidate.AgentType)
+		}
+	}
+	for idx := range bindings {
+		if strings.TrimSpace(bindings[idx].AgentType) != "" {
+			continue
+		}
+		if agentType := typesByBindingID[bindings[idx].BindingID]; agentType != "" {
+			bindings[idx].AgentType = agentType
+		}
+	}
+	return bindings
+}
+
+func (s *agentsService) hydrateAgentWorkflowBindingRuntimeInputs(ctx context.Context, workspaceID string, bindings []dto.AgentWorkflowBinding) []dto.AgentWorkflowBinding {
+	bindings = normalizeAgentWorkflowBindings(bindings)
+	if len(bindings) == 0 {
+		return bindings
+	}
+	candidates, err := s.listAgentWorkflowBindingCandidatesForWorkspace(ctx, workspaceID)
+	if err != nil {
+		return bindings
+	}
+	byBindingID := make(map[string]dto.AgentWorkflowBindingCandidate, len(candidates))
+	for _, candidate := range candidates {
+		if bindingID := strings.TrimSpace(candidate.BindingID); bindingID != "" {
+			byBindingID[bindingID] = candidate
+		}
+	}
+	for idx := range bindings {
+		if bindings[idx].VersionStrategy == automationaction.WorkflowVersionStrategyPinned {
+			pinned, pinnedOK, err := s.getPinnedAgentWorkflowBindingCandidate(ctx, workspaceID, bindings[idx])
+			if err != nil || !pinnedOK {
+				continue
+			}
+			applyAgentWorkflowBindingRuntimeInputs(&bindings[idx], pinned)
+			continue
+		}
+		candidate, ok := byBindingID[bindings[idx].BindingID]
+		if ok {
+			applyAgentWorkflowBindingRuntimeInputs(&bindings[idx], candidate)
+		}
+	}
+	return bindings
+}
+
+func applyAgentWorkflowBindingRuntimeInputs(binding *dto.AgentWorkflowBinding, candidate dto.AgentWorkflowBindingCandidate) {
+	if binding == nil {
+		return
+	}
+	if strings.TrimSpace(binding.AgentType) == "" {
+		binding.AgentType = strings.TrimSpace(candidate.AgentType)
+	}
+	binding.StartInputs = cloneWorkflowStartInputs(candidate.StartInputs)
+	binding.RequiredInputs = append([]string(nil), candidate.RequiredInputs...)
+	binding.DefaultInputKey = strings.TrimSpace(candidate.DefaultInputKey)
+}
+
+type agentWorkflowCandidateRow struct {
+	AgentID     string  `gorm:"column:agent_id"`
+	WorkflowID  string  `gorm:"column:workflow_id"`
+	AgentType   string  `gorm:"column:agent_type"`
+	VersionUUID string  `gorm:"column:version_uuid"`
+	Version     string  `gorm:"column:version"`
+	Graph       string  `gorm:"column:graph"`
+	Label       string  `gorm:"column:label"`
+	Description string  `gorm:"column:description"`
+	Icon        *string `gorm:"column:icon"`
+	IconType    *string `gorm:"column:icon_type"`
+	UpdatedAt   time.Time
+}
+
+func (s *agentsService) ListAgentWorkflowBindingCandidates(ctx context.Context, agentID, accountID string) (*dto.AgentWorkflowBindingCandidatesResponse, error) {
+	ag, _, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, false)
+	if err != nil {
+		return nil, err
+	}
+	items, err := s.listAgentWorkflowBindingCandidatesForWorkspace(ctx, ag.TenantID.String())
+	if err != nil {
+		return nil, err
+	}
+	return &dto.AgentWorkflowBindingCandidatesResponse{Data: items}, nil
+}
+
+func (s *agentsService) listAgentWorkflowBindingCandidatesForWorkspace(ctx context.Context, workspaceID string) ([]dto.AgentWorkflowBindingCandidate, error) {
+	if s.db == nil {
+		return nil, fmt.Errorf("database is required")
+	}
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		return []dto.AgentWorkflowBindingCandidate{}, nil
+	}
+
+	var rows []agentWorkflowCandidateRow
+	if err := s.db.WithContext(ctx).
+		Table("workflows").
+		Select("workflows.agent_id AS agent_id, workflows.id AS workflow_id, agents.agent_type AS agent_type, workflows.version_uuid AS version_uuid, workflows.version AS version, workflows.graph AS graph, agents.name AS label, agents.description AS description, agents.icon AS icon, agents.icon_type AS icon_type, workflows.created_at AS updated_at").
+		Joins("JOIN agents ON agents.id = workflows.agent_id").
+		Where("workflows.tenant_id = ? AND workflows.version != ?", workspaceID, "draft").
+		Where("agents.deleted_at IS NULL AND agents.web_app_status = ?", AgentWebAppStatusActive).
+		Where("agents.agent_type IN ?", []string{"WORKFLOW", "CONVERSATIONAL_WORKFLOW"}).
+		Order("workflows.agent_id ASC, workflows.created_at DESC").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	items := make([]dto.AgentWorkflowBindingCandidate, 0, len(rows))
+	seen := map[string]struct{}{}
+	for _, row := range rows {
+		agentID := strings.ToLower(strings.TrimSpace(row.AgentID))
+		if agentID == "" {
+			continue
+		}
+		if _, ok := seen[agentID]; ok {
+			continue
+		}
+		seen[agentID] = struct{}{}
+		items = append(items, s.agentWorkflowBindingCandidateFromRow(ctx, row))
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].Label != items[j].Label {
+			return items[i].Label < items[j].Label
+		}
+		return items[i].AgentID < items[j].AgentID
+	})
+	return items, nil
+}
+
+func (s *agentsService) getPinnedAgentWorkflowBindingCandidate(ctx context.Context, workspaceID string, binding dto.AgentWorkflowBinding) (dto.AgentWorkflowBindingCandidate, bool, error) {
+	if s.db == nil {
+		return dto.AgentWorkflowBindingCandidate{}, false, fmt.Errorf("database is required")
+	}
+	workspaceID = strings.TrimSpace(workspaceID)
+	agentID := strings.TrimSpace(binding.AgentID)
+	workflowID := strings.TrimSpace(binding.WorkflowID)
+	versionUUID := strings.TrimSpace(binding.VersionUUID)
+	if workspaceID == "" || agentID == "" || workflowID == "" || versionUUID == "" {
+		return dto.AgentWorkflowBindingCandidate{}, false, nil
+	}
+	var row agentWorkflowCandidateRow
+	err := s.db.WithContext(ctx).
+		Table("workflows").
+		Select("workflows.agent_id AS agent_id, workflows.id AS workflow_id, agents.agent_type AS agent_type, workflows.version_uuid AS version_uuid, workflows.version AS version, workflows.graph AS graph, agents.name AS label, agents.description AS description, agents.icon AS icon, agents.icon_type AS icon_type, workflows.created_at AS updated_at").
+		Joins("JOIN agents ON agents.id = workflows.agent_id").
+		Where("workflows.tenant_id = ? AND workflows.agent_id = ? AND workflows.id = ? AND workflows.version_uuid = ?", workspaceID, agentID, workflowID, versionUUID).
+		Where("workflows.version != ?", "draft").
+		Where("agents.deleted_at IS NULL AND agents.web_app_status = ?", AgentWebAppStatusActive).
+		Where("agents.agent_type IN ?", []string{"WORKFLOW", "CONVERSATIONAL_WORKFLOW"}).
+		Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return dto.AgentWorkflowBindingCandidate{}, false, nil
+	}
+	if err != nil {
+		return dto.AgentWorkflowBindingCandidate{}, false, err
+	}
+	return s.agentWorkflowBindingCandidateFromRow(ctx, row), true, nil
+}
+
+func (s *agentsService) agentWorkflowBindingCandidateFromRow(ctx context.Context, row agentWorkflowCandidateRow) dto.AgentWorkflowBindingCandidate {
+	icon := stringPtrValue(row.Icon)
+	iconType := stringPtrValue(row.IconType)
+	iconURL := ""
+	if iconType == "image" && icon != "" && s.fileService != nil {
+		if fileURL, err := s.fileService.GetFileURL(ctx, icon); err == nil {
+			iconURL = fileURL
+		}
+	}
+	startInputs := workflowStartInputsFromGraph(row.Graph)
+	agentID := strings.ToLower(strings.TrimSpace(row.AgentID))
+	return dto.AgentWorkflowBindingCandidate{
+		BindingID:       agentID,
+		Label:           strings.TrimSpace(row.Label),
+		Description:     strings.TrimSpace(row.Description),
+		AgentID:         agentID,
+		WorkflowID:      strings.ToLower(strings.TrimSpace(row.WorkflowID)),
+		AgentType:       strings.TrimSpace(row.AgentType),
+		VersionStrategy: automationaction.WorkflowVersionStrategyLatestPublished,
+		VersionUUID:     strings.ToLower(strings.TrimSpace(row.VersionUUID)),
+		Version:         strings.TrimSpace(row.Version),
+		Icon:            icon,
+		IconType:        iconType,
+		IconURL:         iconURL,
+		UpdatedAt:       row.UpdatedAt.Unix(),
+		StartInputs:     startInputs,
+		RequiredInputs:  requiredWorkflowStartInputNames(startInputs),
+		DefaultInputKey: defaultWorkflowStartInputKey(startInputs),
+	}
 }
 
 func (s *agentsService) PublishAgent(ctx context.Context, agentID, accountID string, req dto.PublishAgentRequest) (*dto.PublishAgentResponse, error) {
@@ -340,6 +585,9 @@ func (s *agentsService) RollbackAgentPublishedVersion(ctx context.Context, agent
 		DatabaseBindings:          snapshot.DatabaseBindings,
 		DatabaseBoundByAccountID:  snapshot.DatabaseBoundByAccountID,
 		DatabaseBoundAtUnix:       snapshot.DatabaseBoundAtUnix,
+		WorkflowBindings:          snapshot.WorkflowBindings,
+		WorkflowBoundByAccountID:  snapshot.WorkflowBoundByAccountID,
+		WorkflowBoundAtUnix:       snapshot.WorkflowBoundAtUnix,
 	}, accountID)
 	if err != nil {
 		return nil, err
@@ -486,6 +734,7 @@ func (s *agentsService) GetPublishedAgentWebAppConfig(ctx context.Context, webAp
 		}
 	}
 	cfg := agentConfigResponseFromSnapshot(ag.ID.String(), version.ConfigSnapshot)
+	cfg.WorkflowBindings = s.hydrateAgentWorkflowBindingRuntimeInputs(ctx, workspaceID, cfg.WorkflowBindings)
 	iconURL := ""
 	if ag.IconType != nil && *ag.IconType == "image" && ag.Icon != nil && *ag.Icon != "" && s.fileService != nil {
 		if fileURL, err := s.fileService.GetFileURL(ctx, *ag.Icon); err == nil {
@@ -599,6 +848,7 @@ func normalizeAgentConfigRequest(req dto.AgentConfigRequest) dto.AgentConfigRequ
 		req.KnowledgeRetrievalConfig = map[string]interface{}{}
 	}
 	req.DatabaseBindings = normalizeAgentDatabaseBindings(req.DatabaseBindings)
+	req.WorkflowBindings = normalizeAgentWorkflowBindings(req.WorkflowBindings)
 	return req
 }
 
@@ -618,6 +868,7 @@ func applyAgentConfigRequestToDraft(cfg *AgentsConfig, req dto.AgentConfigReques
 	nowUnix := time.Now().Unix()
 	knowledgeBoundByAccountID, knowledgeBoundAtUnix := bindingGrantForStringIDs(previousMode.KnowledgeDatasetIDs, previousMode.KnowledgeBoundByAccountID, previousMode.KnowledgeBoundAtUnix, runtimeCfg.KnowledgeDatasetIDs, actorAccountID, nowUnix)
 	databaseBoundByAccountID, databaseBoundAtUnix := bindingGrantForDatabaseBindings(previousMode.DatabaseBindings, previousMode.DatabaseBoundByAccountID, previousMode.DatabaseBoundAtUnix, runtimeCfg.DatabaseBindings, actorAccountID, nowUnix)
+	workflowBoundByAccountID, workflowBoundAtUnix := bindingGrantForWorkflowBindings(previousMode.WorkflowBindings, previousMode.WorkflowBoundByAccountID, previousMode.WorkflowBoundAtUnix, runtimeCfg.WorkflowBindings, actorAccountID, nowUnix)
 	if strings.TrimSpace(runtimeCfg.KnowledgeBoundByAccountID) != "" && runtimeCfg.KnowledgeBoundAtUnix > 0 {
 		knowledgeBoundByAccountID = strings.TrimSpace(runtimeCfg.KnowledgeBoundByAccountID)
 		knowledgeBoundAtUnix = runtimeCfg.KnowledgeBoundAtUnix
@@ -625,6 +876,10 @@ func applyAgentConfigRequestToDraft(cfg *AgentsConfig, req dto.AgentConfigReques
 	if strings.TrimSpace(runtimeCfg.DatabaseBoundByAccountID) != "" && runtimeCfg.DatabaseBoundAtUnix > 0 {
 		databaseBoundByAccountID = strings.TrimSpace(runtimeCfg.DatabaseBoundByAccountID)
 		databaseBoundAtUnix = runtimeCfg.DatabaseBoundAtUnix
+	}
+	if strings.TrimSpace(runtimeCfg.WorkflowBoundByAccountID) != "" && runtimeCfg.WorkflowBoundAtUnix > 0 {
+		workflowBoundByAccountID = strings.TrimSpace(runtimeCfg.WorkflowBoundByAccountID)
+		workflowBoundAtUnix = runtimeCfg.WorkflowBoundAtUnix
 	}
 	cfg.PrePrompt = stringPtr(runtimeCfg.SystemPrompt)
 	cfg.ModelProvider = nullableStringPtr(runtimeCfg.ModelProvider)
@@ -651,6 +906,9 @@ func applyAgentConfigRequestToDraft(cfg *AgentsConfig, req dto.AgentConfigReques
 		DatabaseBindings:          runtimeCfg.DatabaseBindings,
 		DatabaseBoundByAccountID:  databaseBoundByAccountID,
 		DatabaseBoundAtUnix:       databaseBoundAtUnix,
+		WorkflowBindings:          runtimeCfg.WorkflowBindings,
+		WorkflowBoundByAccountID:  workflowBoundByAccountID,
+		WorkflowBoundAtUnix:       workflowBoundAtUnix,
 	})
 	if err != nil {
 		return dto.AgentConfigRequest{}, fmt.Errorf("failed to marshal agent mode: %w", err)
@@ -685,6 +943,9 @@ func agentConfigResponse(agentID string, cfg *AgentsConfig) *dto.AgentConfigResp
 		DatabaseBindings:          normalizeAgentDatabaseBindings(mode.DatabaseBindings),
 		DatabaseBoundByAccountID:  strings.TrimSpace(mode.DatabaseBoundByAccountID),
 		DatabaseBoundAtUnix:       mode.DatabaseBoundAtUnix,
+		WorkflowBindings:          normalizeAgentWorkflowBindings(mode.WorkflowBindings),
+		WorkflowBoundByAccountID:  strings.TrimSpace(mode.WorkflowBoundByAccountID),
+		WorkflowBoundAtUnix:       mode.WorkflowBoundAtUnix,
 	}
 	if cfg != nil {
 		resp.SystemPrompt = stringPtrValue(cfg.PrePrompt)
@@ -719,6 +980,9 @@ func agentConfigSnapshot(agentID string, cfg *AgentsConfig) map[string]interface
 		"database_bindings":             normalizeAgentDatabaseBindings(resp.DatabaseBindings),
 		"database_bound_by_account_id":  resp.DatabaseBoundByAccountID,
 		"database_bound_at_unix":        resp.DatabaseBoundAtUnix,
+		"workflow_bindings":             normalizeAgentWorkflowBindings(resp.WorkflowBindings),
+		"workflow_bound_by_account_id":  resp.WorkflowBoundByAccountID,
+		"workflow_bound_at_unix":        resp.WorkflowBoundAtUnix,
 	}
 }
 
@@ -759,6 +1023,9 @@ func agentConfigResponseFromSnapshot(agentID string, snapshot map[string]interfa
 	resp.DatabaseBindings = agentDatabaseBindingsFromSnapshot(snapshot["database_bindings"])
 	resp.DatabaseBoundByAccountID = strings.TrimSpace(stringFromSnapshot(snapshot, "database_bound_by_account_id"))
 	resp.DatabaseBoundAtUnix = int64FromSnapshot(snapshot["database_bound_at_unix"])
+	resp.WorkflowBindings = agentWorkflowBindingsFromSnapshot(snapshot["workflow_bindings"])
+	resp.WorkflowBoundByAccountID = strings.TrimSpace(stringFromSnapshot(snapshot, "workflow_bound_by_account_id"))
+	resp.WorkflowBoundAtUnix = int64FromSnapshot(snapshot["workflow_bound_at_unix"])
 	return resp
 }
 
@@ -1214,6 +1481,179 @@ func normalizeAgentDatabaseBindings(input []dto.AgentDatabaseBinding) []dto.Agen
 	return out
 }
 
+func normalizeAgentWorkflowBindings(input []dto.AgentWorkflowBinding) []dto.AgentWorkflowBinding {
+	byBindingID := map[string]dto.AgentWorkflowBinding{}
+	for _, binding := range input {
+		bindingID := strings.ToLower(strings.TrimSpace(binding.BindingID))
+		if bindingID == "" {
+			continue
+		}
+		agentID := strings.ToLower(strings.TrimSpace(binding.AgentID))
+		workflowID := strings.ToLower(strings.TrimSpace(binding.WorkflowID))
+		if agentID == "" || workflowID == "" {
+			continue
+		}
+		versionStrategy := strings.TrimSpace(binding.VersionStrategy)
+		if versionStrategy == "" {
+			versionStrategy = automationaction.WorkflowVersionStrategyLatestPublished
+		}
+		if versionStrategy != automationaction.WorkflowVersionStrategyLatestPublished && versionStrategy != automationaction.WorkflowVersionStrategyPinned {
+			continue
+		}
+		versionUUID := strings.ToLower(strings.TrimSpace(binding.VersionUUID))
+		if versionStrategy != automationaction.WorkflowVersionStrategyPinned {
+			versionUUID = ""
+		}
+		timeoutSeconds := binding.TimeoutSeconds
+		if timeoutSeconds < 0 {
+			timeoutSeconds = 0
+		}
+		byBindingID[bindingID] = dto.AgentWorkflowBinding{
+			BindingID:       bindingID,
+			Label:           strings.TrimSpace(binding.Label),
+			Description:     strings.TrimSpace(binding.Description),
+			AgentID:         agentID,
+			WorkflowID:      workflowID,
+			AgentType:       strings.TrimSpace(binding.AgentType),
+			VersionStrategy: versionStrategy,
+			VersionUUID:     versionUUID,
+			TimeoutSeconds:  timeoutSeconds,
+		}
+	}
+	ids := make([]string, 0, len(byBindingID))
+	for id := range byBindingID {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	out := make([]dto.AgentWorkflowBinding, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, byBindingID[id])
+	}
+	return out
+}
+
+func workflowStartInputsFromGraph(graph string) []dto.AgentWorkflowStartInput {
+	graph = strings.TrimSpace(graph)
+	if graph == "" {
+		return nil
+	}
+	var payload struct {
+		Nodes []struct {
+			Data map[string]interface{} `json:"data"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(graph), &payload); err != nil {
+		return nil
+	}
+	for _, node := range payload.Nodes {
+		if !strings.EqualFold(strings.TrimSpace(stringFromMap(node.Data, "type")), "start") {
+			continue
+		}
+		rawVariables, ok := node.Data["variables"].([]interface{})
+		if !ok {
+			return nil
+		}
+		inputs := make([]dto.AgentWorkflowStartInput, 0, len(rawVariables))
+		seen := map[string]struct{}{}
+		for _, raw := range rawVariables {
+			varMap, ok := raw.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			variable := strings.TrimSpace(stringFromMap(varMap, "variable"))
+			if variable == "" {
+				continue
+			}
+			if _, exists := seen[variable]; exists {
+				continue
+			}
+			seen[variable] = struct{}{}
+			inputs = append(inputs, dto.AgentWorkflowStartInput{
+				Variable: variable,
+				Label:    strings.TrimSpace(stringFromMap(varMap, "label")),
+				Type:     strings.TrimSpace(stringFromMap(varMap, "type")),
+				Required: boolFromMap(varMap, "required"),
+			})
+		}
+		return inputs
+	}
+	return nil
+}
+
+func requiredWorkflowStartInputNames(inputs []dto.AgentWorkflowStartInput) []string {
+	out := make([]string, 0, len(inputs))
+	for _, input := range inputs {
+		variable := strings.TrimSpace(input.Variable)
+		if variable == "" || !input.Required {
+			continue
+		}
+		out = append(out, variable)
+	}
+	return out
+}
+
+func defaultWorkflowStartInputKey(inputs []dto.AgentWorkflowStartInput) string {
+	if len(inputs) == 0 {
+		return "query"
+	}
+	required := requiredWorkflowStartInputNames(inputs)
+	if len(required) == 1 {
+		return required[0]
+	}
+	for _, input := range inputs {
+		if strings.EqualFold(strings.TrimSpace(input.Variable), "query") {
+			return "query"
+		}
+	}
+	if len(inputs) == 1 {
+		return strings.TrimSpace(inputs[0].Variable)
+	}
+	return ""
+}
+
+func cloneWorkflowStartInputs(inputs []dto.AgentWorkflowStartInput) []dto.AgentWorkflowStartInput {
+	if len(inputs) == 0 {
+		return nil
+	}
+	out := make([]dto.AgentWorkflowStartInput, len(inputs))
+	copy(out, inputs)
+	return out
+}
+
+func stringFromMap(values map[string]interface{}, key string) string {
+	if values == nil {
+		return ""
+	}
+	value, ok := values[key]
+	if !ok || value == nil {
+		return ""
+	}
+	switch typed := value.(type) {
+	case string:
+		return typed
+	default:
+		return fmt.Sprint(typed)
+	}
+}
+
+func boolFromMap(values map[string]interface{}, key string) bool {
+	if values == nil {
+		return false
+	}
+	value, ok := values[key]
+	if !ok || value == nil {
+		return false
+	}
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		return strings.EqualFold(strings.TrimSpace(typed), "true")
+	default:
+		return false
+	}
+}
+
 func agentRuntimeModeFromConfig(cfg *AgentsConfig) dto.AgentRuntimeModeConfig {
 	mode := dto.AgentRuntimeModeConfig{}
 	if cfg == nil || cfg.AgentMode == nil || strings.TrimSpace(*cfg.AgentMode) == "" {
@@ -1245,6 +1685,17 @@ func databaseBindingGrantNeedsRefresh(previous []dto.AgentDatabaseBinding, previ
 	return !databaseBindingsEqual(normalizeAgentDatabaseBindings(previous), current)
 }
 
+func workflowBindingGrantNeedsRefresh(previous []dto.AgentWorkflowBinding, previousActor string, previousAtUnix int64, current []dto.AgentWorkflowBinding) bool {
+	current = normalizeAgentWorkflowBindings(current)
+	if len(current) == 0 {
+		return false
+	}
+	if strings.TrimSpace(previousActor) == "" || previousAtUnix <= 0 {
+		return true
+	}
+	return !workflowBindingsEqual(normalizeAgentWorkflowBindings(previous), current)
+}
+
 func bindingGrantForStringIDs(previous []string, previousActor string, previousAtUnix int64, current []string, actorAccountID string, nowUnix int64) (string, int64) {
 	current = normalizeStringIDs(current)
 	previous = normalizeStringIDs(previous)
@@ -1265,6 +1716,19 @@ func bindingGrantForDatabaseBindings(previous []dto.AgentDatabaseBinding, previo
 		runtimeservice.NewBoundResourceGrant(previousActor, previousAtUnix),
 		len(current) > 0,
 		databaseBindingsEqual(previous, current),
+		actorAccountID,
+		nowUnix,
+	)
+	return grant.BoundByAccountID, grant.BoundAtUnix
+}
+
+func bindingGrantForWorkflowBindings(previous []dto.AgentWorkflowBinding, previousActor string, previousAtUnix int64, current []dto.AgentWorkflowBinding, actorAccountID string, nowUnix int64) (string, int64) {
+	current = normalizeAgentWorkflowBindings(current)
+	previous = normalizeAgentWorkflowBindings(previous)
+	grant := runtimeservice.ResolveBoundResourceGrant(
+		runtimeservice.NewBoundResourceGrant(previousActor, previousAtUnix),
+		len(current) > 0,
+		workflowBindingsEqual(previous, current),
 		actorAccountID,
 		nowUnix,
 	)
@@ -1295,6 +1759,26 @@ func databaseBindingsEqual(left []dto.AgentDatabaseBinding, right []dto.AgentDat
 	return true
 }
 
+func workflowBindingsEqual(left []dto.AgentWorkflowBinding, right []dto.AgentWorkflowBinding) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i].BindingID != right[i].BindingID ||
+			left[i].Label != right[i].Label ||
+			left[i].Description != right[i].Description ||
+			left[i].AgentID != right[i].AgentID ||
+			left[i].WorkflowID != right[i].WorkflowID ||
+			left[i].AgentType != right[i].AgentType ||
+			left[i].VersionStrategy != right[i].VersionStrategy ||
+			left[i].VersionUUID != right[i].VersionUUID ||
+			left[i].TimeoutSeconds != right[i].TimeoutSeconds {
+			return false
+		}
+	}
+	return true
+}
+
 func agentDatabaseBindingsFromSnapshot(value interface{}) []dto.AgentDatabaseBinding {
 	payload, err := json.Marshal(value)
 	if err != nil {
@@ -1305,6 +1789,18 @@ func agentDatabaseBindingsFromSnapshot(value interface{}) []dto.AgentDatabaseBin
 		return []dto.AgentDatabaseBinding{}
 	}
 	return normalizeAgentDatabaseBindings(bindings)
+}
+
+func agentWorkflowBindingsFromSnapshot(value interface{}) []dto.AgentWorkflowBinding {
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return []dto.AgentWorkflowBinding{}
+	}
+	var bindings []dto.AgentWorkflowBinding
+	if err := json.Unmarshal(payload, &bindings); err != nil {
+		return []dto.AgentWorkflowBinding{}
+	}
+	return normalizeAgentWorkflowBindings(bindings)
 }
 
 func normalizeAgentEnabledSkillIDs(input []string) []string {

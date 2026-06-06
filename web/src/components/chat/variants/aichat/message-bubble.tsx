@@ -15,12 +15,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import MarkdownViewer from '@/components/common/markdown-viewer';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
@@ -269,11 +264,7 @@ function AIChatGeneratedFileCard({ file }: AIChatGeneratedFileCardProps) {
   );
 }
 
-function AIChatUserInputRequestCard({
-  request,
-}: {
-  request: AIChatUserInputRequest;
-}) {
+function AIChatUserInputRequestCard({ request }: { request: AIChatUserInputRequest }) {
   const t = useT('webapp');
   const questions = (request.questions ?? []).filter(question => question.question?.trim());
   if (questions.length === 0) return null;
@@ -452,8 +443,7 @@ export function AIChatMessageBubble({
                         {documentFiles.map(file => {
                           const isFileParsing =
                             file.parse_status === 'parsing' ||
-                            (file.content_status === 'pending' &&
-                              file.parse_status !== 'error');
+                            (file.content_status === 'pending' && file.parse_status !== 'error');
                           const isFileError = file.parse_status === 'error';
                           const isFileEmpty = file.content_status === 'empty' && !isFileError;
                           const isFileExtracted =
@@ -502,9 +492,7 @@ export function AIChatMessageBubble({
                               ) : (
                                 <FileText className="size-3.5 shrink-0" />
                               )}
-                              <span className="max-w-40 truncate text-foreground">
-                                {file.name}
-                              </span>
+                              <span className="max-w-40 truncate text-foreground">{file.name}</span>
                               <span className="shrink-0">{formatFileSize(file.size)}</span>
                               <span className="shrink-0">{label}</span>
                             </div>
@@ -542,7 +530,9 @@ export function AIChatMessageBubble({
         </div>
         <div className="min-w-0 flex-1">
           <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            {showAssistantModelMeta && message.model_name ? <span>{message.model_name}</span> : null}
+            {showAssistantModelMeta && message.model_name ? (
+              <span>{message.model_name}</span>
+            ) : null}
             {message.created_at ? <span>{formatAIChatTime(message.created_at)}</span> : null}
             {isStreaming ? (
               <span className="inline-flex items-center gap-1">
@@ -599,9 +589,7 @@ export function AIChatMessageBubble({
             </div>
           ) : null}
 
-          {userInputRequest ? (
-            <AIChatUserInputRequestCard request={userInputRequest} />
-          ) : null}
+          {userInputRequest ? <AIChatUserInputRequestCard request={userInputRequest} /> : null}
 
           {isError ? (
             <div

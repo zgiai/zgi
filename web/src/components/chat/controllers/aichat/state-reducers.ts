@@ -24,7 +24,11 @@ import type {
   AIChatSkillLoadStartEventData,
   AIChatSkillReferenceReadEventData,
   AIChatUserInputRequestedEventData,
+  AIChatWorkflowEventData,
+  AIChatWorkflowNodeEventData,
+  AIChatWorkflowPausedEventData,
 } from '@/services/types/aichat';
+import type { NodeInfo, RunStatus } from '@/components/chat/types';
 import {
   SENSITIVE_OUTPUT_BLOCKED_FLAG,
   SENSITIVE_OUTPUT_BLOCKED_TOKEN,
@@ -98,6 +102,10 @@ function mergeMessageMetadata(
   const incomingGeneratedFiles = incomingMetadata?.generated_files ?? [];
   const generatedFiles =
     incomingGeneratedFiles.length > 0 ? incomingGeneratedFiles : existingGeneratedFiles;
+  const existingWorkflowRuns = existingMetadata?.workflow_runs ?? [];
+  const incomingWorkflowRuns = incomingMetadata?.workflow_runs ?? [];
+  const workflowRuns =
+    incomingWorkflowRuns.length > 0 ? incomingWorkflowRuns : existingWorkflowRuns;
   const userInputRequest =
     incomingMetadata?.user_input_request ?? existingMetadata?.user_input_request;
 
@@ -114,6 +122,12 @@ function mergeMessageMetadata(
       ? {
           generated_file_count: generatedFiles.length,
           generated_files: generatedFiles,
+        }
+      : {}),
+    ...(workflowRuns.length > 0
+      ? {
+          workflow_run_count: workflowRuns.length,
+          workflow_runs: workflowRuns,
         }
       : {}),
     ...(userInputRequest
@@ -141,6 +155,8 @@ function clearRuntimeMessageMetadata(
   delete next.tool_names;
   delete next.generated_file_count;
   delete next.generated_files;
+  delete next.workflow_run_count;
+  delete next.workflow_runs;
   delete next.user_input_request;
   return next;
 }
@@ -236,6 +252,192 @@ function removeTransientProgressItems(
   timeline: AIChatAgenticTimelineItem[] | undefined
 ): AIChatAgenticTimelineItem[] {
   return (timeline ?? []).filter(item => !isTransientProgressItem(item));
+}
+
+function workflowString(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.trim()) return value.trim();
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return undefined;
+}
+
+function workflowRunId(payload: AIChatWorkflowEventData): string {
+  return (
+    workflowString(payload.workflow_run_id) ??
+    workflowString(payload.task_id) ??
+    workflowString(payload.id) ??
+    ''
+  );
+}
+
+function workflowElapsedMs(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? value * 1000
+    : undefined;
+}
+
+function normalizeWorkflowRunTimelineStatus(status: unknown, fallback: RunStatus): RunStatus {
+  switch (String(status ?? '').toLowerCase()) {
+    case 'running':
+      return 'running';
+    case 'paused':
+    case 'pending_approval':
+      return 'pending_approval';
+    case 'pending_question':
+      return 'pending_question';
+    case 'succeeded':
+    case 'success':
+    case 'completed':
+      return 'completed';
+    case 'stopped':
+      return 'stopped';
+    case 'expired':
+      return 'expired';
+    case 'failed':
+    case 'error':
+      return 'error';
+    default:
+      return fallback;
+  }
+}
+
+function normalizeWorkflowNodeTimelineStatus(
+  status: unknown,
+  finished: boolean
+): NodeInfo['status'] {
+  switch (String(status ?? '').toLowerCase()) {
+    case 'failed':
+    case 'error':
+    case 'exception':
+      return 'failed';
+    case 'paused':
+    case 'pending_approval':
+      return 'paused';
+    case 'success':
+    case 'succeeded':
+    case 'completed':
+      return 'success';
+    case 'stopped':
+      return 'stopped';
+    case 'partial-succeeded':
+      return 'partial-succeeded';
+    default:
+      return finished ? 'success' : 'running';
+  }
+}
+
+function normalizeWorkflowNodeType(value: unknown): string | undefined {
+  const raw = workflowString(value);
+  if (!raw) return undefined;
+  const hyphen = raw.replace(/_/g, '-').toLowerCase();
+  switch (hyphen) {
+    case 'database':
+      return 'call-database';
+    case 'http':
+    case 'http-request':
+      return 'http-request';
+    case 'assign':
+    case 'assigner':
+      return 'assigner';
+    default:
+      return hyphen;
+  }
+}
+
+function mapWorkflowNodeTimelineItem(
+  payload: AIChatWorkflowNodeEventData | AIChatWorkflowPausedEventData,
+  finished: boolean
+): NodeInfo {
+  const nodeId =
+    workflowString(payload.node_id) ??
+    workflowString(payload.execution_id) ??
+    workflowString(payload.id);
+  const nodeType = normalizeWorkflowNodeType(payload.node_type ?? payload.type);
+  const title =
+    workflowString(payload.title) ??
+    workflowString(payload.node_title) ??
+    workflowString(payload.name) ??
+    workflowString(payload.label) ??
+    nodeType ??
+    nodeId;
+  const error = workflowString(payload.error);
+  return {
+    status: normalizeWorkflowNodeTimelineStatus(payload.status, finished),
+    error,
+    elapsedTime: workflowElapsedMs(payload.elapsed_time),
+    nodeId,
+    nodeType,
+    title,
+    data: {
+      input: 'inputs' in payload ? payload.inputs : undefined,
+      output: finished && 'outputs' in payload ? payload.outputs : undefined,
+    },
+  };
+}
+
+function upsertWorkflowNode(nodes: NodeInfo[], incoming: NodeInfo): NodeInfo[] {
+  const key = incoming.nodeId || `${incoming.nodeType ?? ''}:${incoming.title ?? ''}`;
+  const index = nodes.findIndex(
+    node => (node.nodeId || `${node.nodeType ?? ''}:${node.title ?? ''}`) === key
+  );
+  if (index < 0) return [...nodes, incoming];
+  const next = nodes.slice();
+  const previous = next[index];
+  next[index] = {
+    ...previous,
+    ...incoming,
+    data: {
+      input: incoming.data?.input ?? previous.data?.input,
+      output: incoming.data?.output ?? previous.data?.output,
+      modelInput: incoming.data?.modelInput ?? previous.data?.modelInput,
+    },
+  };
+  return next;
+}
+
+function upsertWorkflowTimelineItem(
+  timeline: AIChatAgenticTimelineItem[] | undefined,
+  payload: AIChatWorkflowEventData,
+  eventId: string | null | undefined,
+  nextStatus: RunStatus,
+  node?: NodeInfo,
+  approval?: Partial<AIChatWorkflowPausedEventData>
+): AIChatAgenticTimelineItem[] {
+  const baseTimeline = removeTransientProgressItems(timeline);
+  const runId = workflowRunId(payload);
+  if (!runId) return baseTimeline;
+  const index = baseTimeline.findIndex(
+    item => item.type === 'workflow_run' && item.workflowRunId === runId
+  );
+  if (index < 0) {
+    return [
+      ...baseTimeline,
+      {
+        id: eventId ?? `workflow-${runId}`,
+        type: 'workflow_run',
+        workflowRunId: runId,
+        status: nextStatus,
+        elapsedTime: workflowElapsedMs(payload.elapsed_time),
+        error: workflowString(payload.error),
+        nodes: node ? [node] : [],
+        approval,
+        created_at: payload.created_at,
+        event_id: eventId ?? null,
+      },
+    ];
+  }
+  const next = baseTimeline.slice();
+  const previous = next[index];
+  if (previous.type !== 'workflow_run') return baseTimeline;
+  next[index] = {
+    ...previous,
+    status: nextStatus,
+    elapsedTime: workflowElapsedMs(payload.elapsed_time) ?? previous.elapsedTime,
+    error: workflowString(payload.error) ?? previous.error,
+    nodes: node ? upsertWorkflowNode(previous.nodes, node) : previous.nodes,
+    approval: approval ? { ...(previous.approval ?? {}), ...approval } : previous.approval,
+    event_id: eventId ?? previous.event_id,
+  };
+  return next;
 }
 
 function upsertMemoryTimelineItem(
@@ -781,6 +983,121 @@ export function applyMemoryMutationState(
       },
     },
   };
+}
+
+function applyWorkflowTimelineState(
+  current: AIChatControllerState,
+  payload: AIChatWorkflowEventData,
+  eventId: string | null | undefined,
+  status: RunStatus,
+  node?: NodeInfo,
+  approval?: Partial<AIChatWorkflowPausedEventData>
+): AIChatControllerState {
+  if (!payload.conversation_id || !payload.message_id || !workflowRunId(payload)) {
+    return current;
+  }
+  const previousStreaming = current.streamingByMessageId[payload.message_id];
+  if (!previousStreaming) {
+    return current;
+  }
+  return {
+    ...current,
+    streamingByMessageId: {
+      ...current.streamingByMessageId,
+      [payload.message_id]: {
+        ...previousStreaming,
+        timeline: upsertWorkflowTimelineItem(
+          previousStreaming.timeline,
+          payload,
+          eventId,
+          status,
+          node,
+          approval
+        ),
+        last_event_id: eventId ?? previousStreaming.last_event_id,
+      },
+    },
+  };
+}
+
+export function applyWorkflowStartedState(
+  current: AIChatControllerState,
+  payload: AIChatWorkflowEventData,
+  eventId?: string | null
+): AIChatControllerState {
+  return applyWorkflowTimelineState(current, payload, eventId, 'running');
+}
+
+export function applyWorkflowNodeStartedState(
+  current: AIChatControllerState,
+  payload: AIChatWorkflowNodeEventData,
+  eventId?: string | null
+): AIChatControllerState {
+  return applyWorkflowTimelineState(
+    current,
+    payload,
+    eventId,
+    'running',
+    mapWorkflowNodeTimelineItem(payload, false)
+  );
+}
+
+export function applyWorkflowNodeFinishedState(
+  current: AIChatControllerState,
+  payload: AIChatWorkflowNodeEventData,
+  eventId?: string | null
+): AIChatControllerState {
+  const node = mapWorkflowNodeTimelineItem(payload, true);
+  const status = node.status === 'failed' ? 'error' : 'running';
+  return applyWorkflowTimelineState(current, payload, eventId, status, node);
+}
+
+export function applyWorkflowPausedState(
+  current: AIChatControllerState,
+  payload: AIChatWorkflowPausedEventData,
+  eventId?: string | null
+): AIChatControllerState {
+  return applyWorkflowTimelineState(
+    current,
+    payload,
+    eventId,
+    'pending_approval',
+    mapWorkflowNodeTimelineItem({ ...payload, status: 'paused' }, true)
+  );
+}
+
+export function applyWorkflowApprovalRequestedState(
+  current: AIChatControllerState,
+  payload: AIChatWorkflowPausedEventData,
+  eventId?: string | null
+): AIChatControllerState {
+  return applyWorkflowTimelineState(current, payload, eventId, 'pending_approval', undefined, {
+    approval_form_id: payload.approval_form_id,
+    approval_token: payload.approval_token,
+    approval_url: payload.approval_url,
+    approval_form: payload.approval_form,
+  });
+}
+
+export function applyWorkflowFinishedState(
+  current: AIChatControllerState,
+  payload: AIChatWorkflowEventData,
+  eventId?: string | null
+): AIChatControllerState {
+  return applyWorkflowTimelineState(
+    current,
+    payload,
+    eventId,
+    normalizeWorkflowRunTimelineStatus(payload.status, 'completed')
+  );
+}
+
+export function applyWorkflowFailedState(
+  current: AIChatControllerState,
+  payload: AIChatWorkflowEventData,
+  eventId?: string | null
+): AIChatControllerState {
+  return applyWorkflowTimelineState(current, payload, eventId, 'error');
 }
 
 export function applySkillArtifactCreatedState(

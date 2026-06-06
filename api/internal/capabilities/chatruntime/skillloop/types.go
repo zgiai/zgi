@@ -3,6 +3,7 @@ package skillloop
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
@@ -23,9 +24,31 @@ const (
 	EventSkillLoadEnd         = "skill_load_end"
 	EventSkillReferenceRead   = "skill_reference_read"
 	EventSkillArtifactCreated = "skill_artifact_created"
+	EventWorkflowStarted      = "workflow_started"
+	EventWorkflowNodeStarted  = "node_started"
+	EventWorkflowNodeFinished = "node_finished"
+	EventWorkflowPaused       = "workflow_paused"
+	EventWorkflowApproval     = "approval_requested"
+	EventWorkflowFinished     = "workflow_finished"
+	EventWorkflowFailed       = "workflow_failed"
 )
 
 var ErrInvalidInput = errors.New("invalid input")
+
+type WorkflowApprovalPendingError struct {
+	Payload map[string]interface{}
+}
+
+func (e *WorkflowApprovalPendingError) Error() string {
+	if e == nil {
+		return "workflow approval is pending"
+	}
+	workflowRunID := stringFromInterface(e.Payload["workflow_run_id"])
+	if workflowRunID == "" {
+		return "workflow approval is pending"
+	}
+	return fmt.Sprintf("workflow approval is pending for run %s", workflowRunID)
+}
 
 type Event struct {
 	Type    string
@@ -44,10 +67,11 @@ type Runner struct {
 }
 
 type RunRequest struct {
-	Prepared         *PreparedChat
-	Resolved         *skills.ResolvedSkills
-	ExecutionContext skills.ExecutionContext
-	OnChunk          func(string) error
+	Prepared                 *PreparedChat
+	Resolved                 *skills.ResolvedSkills
+	ExecutionContext         skills.ExecutionContext
+	AdditionalSystemMessages []adapter.Message
+	OnChunk                  func(string) error
 }
 
 type ModelInvocationTrace struct {

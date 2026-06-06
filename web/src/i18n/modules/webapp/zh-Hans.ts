@@ -195,6 +195,16 @@ const messages: WebappMessages = {
       answerPrefix: '我的回答：',
       additionalInput: '补充说明',
     },
+    workflow: {
+      approvalPending: '工作流正在等待审批',
+      openApproval: '打开审批',
+      formId: '表单 {id}',
+      token: '令牌 {token}',
+      loadingApprovalForm: '正在加载审批表单...',
+      approvalFormLoadFailed: '审批表单加载失败',
+      approvalInputLocked: '请先完成这个工作流审批，再继续当前会话。',
+      approvalSubmitFailed: '审批提交失败',
+    },
     skillPreferences: {
       action: '我的 Skill',
       title: '我的 AIChat Skill',
@@ -429,6 +439,9 @@ const messages: WebappMessages = {
       intermediateAnswer: '中间回答',
       userInputRequest: '请求用户输入',
       guardrail: '安全检查',
+      workflowRun: '工作流运行',
+      workflowNode: '工作流节点：{name}',
+      workflowApproval: '工作流审批',
     },
     runtimeModelPhases: {
       final_answer: '最终回答生成',
@@ -443,6 +456,7 @@ const messages: WebappMessages = {
       model: '模型',
       tool: '工具',
       reference: '参考资料',
+      workflowNode: '工作流节点',
       event: '运行事件',
     },
     builtinSkills: {

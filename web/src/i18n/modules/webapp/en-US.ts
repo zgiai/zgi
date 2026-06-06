@@ -205,6 +205,16 @@ const messages = {
       answerPrefix: 'My answers:',
       additionalInput: 'Additional note',
     },
+    workflow: {
+      approvalPending: 'Workflow is waiting for approval',
+      openApproval: 'Open approval',
+      formId: 'Form {id}',
+      token: 'Token {token}',
+      loadingApprovalForm: 'Loading approval form...',
+      approvalFormLoadFailed: 'Failed to load approval form',
+      approvalInputLocked: 'Complete this workflow approval to continue this conversation.',
+      approvalSubmitFailed: 'Failed to submit approval',
+    },
     skillPreferences: {
       action: 'My Skills',
       title: 'My AIChat Skills',
@@ -442,6 +452,9 @@ const messages = {
       intermediateAnswer: 'Intermediate Answer',
       userInputRequest: 'User Input Request',
       guardrail: 'Guardrail',
+      workflowRun: 'Workflow run',
+      workflowNode: 'Workflow node: {name}',
+      workflowApproval: 'Workflow approval',
     },
     runtimeModelPhases: {
       final_answer: 'Final answer generation',
@@ -456,6 +469,7 @@ const messages = {
       model: 'model',
       tool: 'tool',
       reference: 'reference',
+      workflowNode: 'workflow node',
       event: 'runtime event',
     },
     builtinSkills: {

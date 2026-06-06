@@ -56,6 +56,8 @@ export const AGENT_KEYS = {
   details: () => [...AGENT_KEYS.all, 'detail'] as const,
   detail: (id: string) => [...AGENT_KEYS.details(), id] as const,
   config: (id: string) => [...AGENT_KEYS.detail(id), 'config'] as const,
+  workflowBindingCandidates: (id: string) =>
+    [...AGENT_KEYS.detail(id), 'workflow-binding-candidates'] as const,
   runnable: (workspaceId?: string | null) =>
     [...AGENT_KEYS.all, 'runnable-webapps', workspaceId || 'all'] as const,
   runtimeRuns: (agentId: string, params: unknown) =>

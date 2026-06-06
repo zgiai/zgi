@@ -16,6 +16,8 @@ export function normalizeAIChatStatus(status: unknown): AIChatMessageStatus {
       return 'pending';
     case 'streaming':
       return 'streaming';
+    case 'waiting_approval':
+      return 'waiting_approval';
     case 'completed':
       return 'completed';
     case 'stopped':

@@ -49,6 +49,17 @@ function runtimeTerminalMessage(message: { event: string | null; data: unknown }
   if (event === 'message_end' || event === 'error') {
     return true;
   }
+  if (
+    event === 'workflow_started' ||
+    event === 'node_started' ||
+    event === 'node_finished' ||
+    event === 'workflow_paused' ||
+    event === 'approval_requested' ||
+    event === 'workflow_finished' ||
+    event === 'workflow_failed'
+  ) {
+    return false;
+  }
   const data = record.data && typeof record.data === 'object' ? record.data : record;
   return (
     data &&
@@ -227,6 +238,32 @@ export class AgentRuntimeTransport implements AIChatRuntimeTransport {
           message_id: params.messageId,
           after_id: params.afterId,
         },
+        abortSignal,
+        isTerminalMessage: runtimeTerminalMessage,
+        onMessage: message =>
+          dispatchAIChatStreamEvent(
+            String((message.data as AIChatSseEnvelope | undefined)?.event ?? message.event ?? ''),
+            (message.data as AIChatSseEnvelope | undefined)?.data ?? message.data,
+            message.id,
+            callbacks
+          ),
+        onError: callbacks.onRequestError,
+        onClose: callbacks.onClose,
+      }
+    );
+  }
+
+  continueWorkflowApproval(
+    conversationId: string,
+    messageId: string,
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ) {
+    return this.client.sse<AIChatSseEnvelope, Record<string, never>>(
+      `${this.runtimeBasePath}/conversations/${conversationId}/messages/${messageId}/workflow-continuation`,
+      {
+        method: 'POST',
+        body: {},
         abortSignal,
         isTerminalMessage: runtimeTerminalMessage,
         onMessage: message =>

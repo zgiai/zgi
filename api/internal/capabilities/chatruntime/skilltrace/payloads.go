@@ -145,6 +145,7 @@ var resultSummaryBuilders = map[string]resultSummaryBuilder{
 	skills.SkillInternalKnowledge: summarizeInternalKnowledgeResult,
 	skills.SkillInternalDatabase:  summarizeDatabaseResult,
 	skills.SkillAgentDatabase:     summarizeDatabaseResult,
+	skills.SkillAgentWorkflow:     summarizeWorkflowResult,
 }
 
 // SummarizeToolResult returns the compact trace-visible result for known skill tools.
@@ -181,6 +182,22 @@ func summarizeInternalKnowledgeResult(toolName string, payload map[string]interf
 
 func summarizeDatabaseResult(toolName string, payload map[string]interface{}) map[string]interface{} {
 	return compactDatabaseResult(toolName, payload)
+}
+
+func summarizeWorkflowResult(toolName string, payload map[string]interface{}) map[string]interface{} {
+	if len(payload) == 0 {
+		return nil
+	}
+	switch strings.TrimSpace(toolName) {
+	case "list_agent_workflows":
+		result := compactFields(payload, "status")
+		result["workflows_count"] = collectionLen(payload["workflows"])
+		return result
+	case "run_agent_workflow", "get_workflow_run_status":
+		return compactFields(payload, "status", "workflow_run_id", "elapsed_time", "output_keys", "primary_output", "error")
+	default:
+		return nil
+	}
 }
 
 func compactKnowledgeRetrieveResult(payload map[string]interface{}) map[string]interface{} {

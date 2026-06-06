@@ -14,6 +14,7 @@ import {
   ShieldAlert,
   Sparkles,
   Wrench,
+  Workflow,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -253,6 +254,9 @@ function stepIcon(type: string) {
   if (type === 'model_answer') return Bot;
   if (type === 'tool_call' || type === 'tool') return Wrench;
   if (type === 'skill_load' || type === 'skill') return Sparkles;
+  if (type === 'workflow_run' || type === 'workflow_node' || type === 'workflow_approval') {
+    return Workflow;
+  }
   if (type === 'reference_read') return BookOpenText;
   if (type === 'guardrail') return ShieldAlert;
   return Hash;

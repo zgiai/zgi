@@ -327,12 +327,131 @@ func agentRuntimeTotalSteps(metadata map[string]interface{}) int {
 
 func agentRuntimeEvents(metadata map[string]interface{}) []map[string]interface{} {
 	modelEvents := sortAgentRuntimeEventsStable(runtimeSkillInvocations(metadata["model_invocations"]))
-	skillEvents := sortAgentRuntimeEventsStable(runtimeSkillInvocations(metadata["skill_invocations"]))
-	if len(modelEvents) > 0 && len(skillEvents) > 0 {
-		return interleaveAgentRuntimeEvents(modelEvents, skillEvents)
+	activityEvents := sortAgentRuntimeEventsStable(append(
+		runtimeSkillInvocations(metadata["skill_invocations"]),
+		runtimeWorkflowRunEvents(metadata["workflow_runs"])...,
+	))
+	if len(modelEvents) > 0 && len(activityEvents) > 0 {
+		return interleaveAgentRuntimeEvents(modelEvents, activityEvents)
 	}
-	events := append(modelEvents, skillEvents...)
+	events := append(modelEvents, activityEvents...)
 	return sortAgentRuntimeEventsStable(events)
+}
+
+func runtimeWorkflowRunEvents(value interface{}) []map[string]interface{} {
+	runs := runtimeSkillInvocations(value)
+	events := make([]map[string]interface{}, 0, len(runs))
+	for runIndex, run := range runs {
+		events = append(events, runtimeWorkflowRunEvent(run, runIndex))
+		for nodeIndex, node := range runtimeSkillInvocations(run["nodes"]) {
+			events = append(events, runtimeWorkflowNodeEvent(run, node, runIndex, nodeIndex))
+		}
+		if approval := runtimeMap(run["approval"]); len(approval) > 0 {
+			events = append(events, runtimeWorkflowApprovalEvent(run, approval, runIndex))
+		}
+	}
+	return events
+}
+
+func runtimeWorkflowRunEvent(run map[string]interface{}, runIndex int) map[string]interface{} {
+	event := compactAgentRuntimeMap(map[string]interface{}{
+		"kind":            "workflow_run",
+		"title":           workflowRunTitle(run),
+		"status":          runtimeString(run["status"]),
+		"duration_ms":     metadataNumber(run, "elapsed_time"),
+		"created_at":      run["created_at"],
+		"workflow_run_id": runtimeString(run["workflow_run_id"]),
+		"workflow_id":     runtimeString(run["workflow_id"]),
+		"agent_id":        runtimeString(run["agent_id"]),
+		"binding_id":      runtimeString(run["binding_id"]),
+		"version":         run["version"],
+		"inputs":          run["inputs"],
+		"outputs":         run["outputs"],
+		"error":           runtimeString(run["error"]),
+		"runtime_id":      workflowRuntimeID("workflow_run", run, nil, runIndex, 0),
+	})
+	return event
+}
+
+func runtimeWorkflowNodeEvent(run map[string]interface{}, node map[string]interface{}, runIndex, nodeIndex int) map[string]interface{} {
+	event := compactAgentRuntimeMap(map[string]interface{}{
+		"kind":            "workflow_node",
+		"title":           agentRuntimeWorkflowNodeTitle(node),
+		"status":          runtimeString(node["status"]),
+		"duration_ms":     metadataNumber(node, "elapsed_time"),
+		"created_at":      firstRuntimeValue(node["created_at"], run["created_at"]),
+		"workflow_run_id": runtimeString(run["workflow_run_id"]),
+		"workflow_id":     runtimeString(run["workflow_id"]),
+		"node_id":         runtimeString(node["node_id"]),
+		"node_type":       runtimeString(node["node_type"]),
+		"inputs":          node["inputs"],
+		"outputs":         node["outputs"],
+		"error":           runtimeString(node["error"]),
+		"runtime_id":      workflowRuntimeID("workflow_node", run, node, runIndex, nodeIndex),
+	})
+	return event
+}
+
+func runtimeWorkflowApprovalEvent(run map[string]interface{}, approval map[string]interface{}, runIndex int) map[string]interface{} {
+	event := compactAgentRuntimeMap(map[string]interface{}{
+		"kind":             "workflow_approval",
+		"title":            "Workflow approval",
+		"status":           "pending_approval",
+		"created_at":       run["created_at"],
+		"workflow_run_id":  runtimeString(run["workflow_run_id"]),
+		"workflow_id":      runtimeString(run["workflow_id"]),
+		"approval_form_id": runtimeString(approval["approval_form_id"]),
+		"approval_url":     runtimeString(approval["approval_url"]),
+		"approval_form":    approval["approval_form"],
+		"runtime_id":       workflowRuntimeID("workflow_approval", run, approval, runIndex, 0),
+	})
+	return event
+}
+
+func workflowRuntimeID(kind string, run map[string]interface{}, item map[string]interface{}, runIndex, itemIndex int) string {
+	parts := []string{
+		kind,
+		runtimeString(run["workflow_run_id"]),
+		runtimeString(run["workflow_id"]),
+		runtimeString(item["node_id"]),
+		runtimeString(item["node_type"]),
+		strconv.Itoa(runIndex),
+		strconv.Itoa(itemIndex),
+	}
+	return strings.Join(parts, ":")
+}
+
+func workflowRunTitle(run map[string]interface{}) string {
+	if workflowID := runtimeString(run["workflow_id"]); workflowID != "" {
+		return "Workflow run: " + workflowID
+	}
+	if runID := runtimeString(run["workflow_run_id"]); runID != "" {
+		return "Workflow run: " + runID
+	}
+	return "Workflow run"
+}
+
+func agentRuntimeWorkflowNodeTitle(node map[string]interface{}) string {
+	if title := runtimeString(node["title"]); title != "" {
+		return "Workflow node: " + title
+	}
+	if nodeType := runtimeString(node["node_type"]); nodeType != "" {
+		return "Workflow node: " + nodeType
+	}
+	return "Workflow node"
+}
+
+func firstRuntimeValue(values ...interface{}) interface{} {
+	for _, value := range values {
+		if value == nil {
+			continue
+		}
+		if text, ok := value.(string); ok && strings.TrimSpace(text) == "" {
+			continue
+		}
+		return value
+	}
+	return nil
 }
 
 func sortAgentRuntimeEventsStable(events []map[string]interface{}) []map[string]interface{} {
@@ -423,6 +542,12 @@ func agentRuntimeEventType(event map[string]interface{}) string {
 		return "user_input_request"
 	case "guardrail":
 		return "guardrail"
+	case "workflow_run":
+		return "workflow_run"
+	case "workflow_node":
+		return "workflow_node"
+	case "workflow_approval":
+		return "workflow_approval"
 	case "":
 		return "agent_event"
 	default:
@@ -458,6 +583,12 @@ func agentRuntimeEventTitle(event map[string]interface{}) string {
 		return "User input requested"
 	case "guardrail":
 		return "Guardrail"
+	case "workflow_run":
+		return workflowRunTitle(event)
+	case "workflow_node":
+		return agentRuntimeWorkflowNodeTitle(event)
+	case "workflow_approval":
+		return "Workflow approval"
 	default:
 		return runtimeInvocationTitle(event)
 	}
@@ -478,6 +609,12 @@ func agentRuntimeEventInput(event map[string]interface{}) interface{} {
 		}
 	case "intermediate_answer":
 		return map[string]interface{}{"answer_id": runtimeString(event["answer_id"])}
+	case "workflow_run":
+		return sanitizeAgentRuntimeSensitiveValue(runtimeMap(event["inputs"]))
+	case "workflow_node":
+		return sanitizeAgentRuntimeSensitiveValue(runtimeMap(event["inputs"]))
+	case "workflow_approval":
+		return sanitizeAgentRuntimeSensitiveValue(runtimeMap(event["approval_form"]))
 	default:
 		if arguments := runtimeMap(event["arguments"]); len(arguments) > 0 {
 			return sanitizeAgentRuntimeToolArguments(arguments)
@@ -498,6 +635,20 @@ func agentRuntimeEventOutput(event map[string]interface{}) interface{} {
 			output["status"] = runtimeString(event["status"])
 		}
 		return output
+	}
+	if agentRuntimeEventType(event) == "workflow_run" || agentRuntimeEventType(event) == "workflow_node" {
+		output := runtimeMap(event["outputs"])
+		if len(output) == 0 {
+			output["status"] = runtimeString(event["status"])
+		}
+		return sanitizeAgentRuntimeResultValue(output)
+	}
+	if agentRuntimeEventType(event) == "workflow_approval" {
+		return sanitizeAgentRuntimeResultValue(compactAgentRuntimeMap(map[string]interface{}{
+			"approval_form_id": runtimeString(event["approval_form_id"]),
+			"approval_url":     runtimeString(event["approval_url"]),
+			"status":           runtimeString(event["status"]),
+		}))
 	}
 	output := map[string]interface{}{}
 	if result := runtimeMap(event["result"]); len(result) > 0 {
@@ -533,6 +684,14 @@ func agentRuntimeEventProcess(event map[string]interface{}) map[string]interface
 		"tool_name":         runtimeString(event["tool_name"]),
 		"path":              runtimeString(event["path"]),
 		"answer_id":         runtimeString(event["answer_id"]),
+		"workflow_run_id":   runtimeString(event["workflow_run_id"]),
+		"workflow_id":       runtimeString(event["workflow_id"]),
+		"binding_id":        runtimeString(event["binding_id"]),
+		"node_id":           runtimeString(event["node_id"]),
+		"node_type":         runtimeString(event["node_type"]),
+		"approval_form_id":  runtimeString(event["approval_form_id"]),
+		"approval_url":      runtimeString(event["approval_url"]),
+		"version":           event["version"],
 		"raw_event":         sanitizeAgentRuntimeRawEvent(event),
 	})
 }

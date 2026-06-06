@@ -358,6 +358,21 @@ func (h *AgentsHandler) UpdateAgentConfig(c *gin.Context) {
 	response.Success(c, result)
 }
 
+func (h *AgentsHandler) ListAgentWorkflowBindingCandidates(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	ctx := agentRuntimeRequestContext(c, accountID)
+	result, err := h.appService.ListAgentWorkflowBindingCandidates(ctx, c.Param("agent_id"), accountID)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
 func (h *AgentsHandler) ListAgentMemorySlots(c *gin.Context) {
 	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))
 	if err != nil {
@@ -582,6 +597,9 @@ func (h *AgentsHandler) ChatAgent(c *gin.Context) {
 			"status":          status,
 			"metadata":        gin.H{},
 		})
+		return
+	}
+	if agentWorkflowContinuationWaiting(result.Metadata) {
 		return
 	}
 	_ = writeAgentSSE(c, "message_end", gin.H{
@@ -903,6 +921,9 @@ func (h *AgentsHandler) ChatWebAppAgent(c *gin.Context) {
 			"status":          status,
 			"metadata":        gin.H{},
 		})
+		return
+	}
+	if agentWorkflowContinuationWaiting(result.Metadata) {
 		return
 	}
 	_ = writeAgentSSE(c, "message_end", gin.H{

@@ -23,14 +23,15 @@ const (
 )
 
 type skillStepResult struct {
-	trace       skills.SkillTrace
-	toolMessage adapter.Message
-	answer      string
-	usedSkill   bool
-	usedTool    bool
-	recoverable bool
-	terminal    bool
-	fatalErr    error
+	trace           skills.SkillTrace
+	toolMessage     adapter.Message
+	answer          string
+	usedSkill       bool
+	usedTool        bool
+	recoverable     bool
+	terminal        bool
+	pendingApproval map[string]interface{}
+	fatalErr        error
 }
 
 type planningResult struct {
@@ -70,6 +71,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		skills.DefaultSkillMetadataPromptBudgetChars,
 	)
 	messages = append(messages, metadataMessage)
+	messages = append(messages, validAdditionalSystemMessages(req.AdditionalSystemMessages)...)
 	messages = append(messages, agenticSkillLoopSystemMessage())
 	traces := []skills.SkillTrace{metadataExposedTrace(resolved.SkillIDs(), metadataStats)}
 	r.recordTrace(traces, traces[0])
@@ -179,6 +181,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				toolCallCount++
 				incrementSkillToolCallCount(skillToolCallCounts, result.trace.SkillID)
 			}
+			if result.pendingApproval != nil {
+				return answerBuilder.String(), usage, &WorkflowApprovalPendingError{Payload: result.pendingApproval}
+			}
 			if result.answer != "" {
 				appendAnswerText(&answerBuilder, result.answer)
 				r.emitAnswerChunk(ctx, prepared, result.answer, nil)
@@ -223,6 +228,30 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 	}
 
 	return answerBuilder.String(), usage, fmt.Errorf("%w: too many skill planning rounds", ErrInvalidInput)
+}
+
+func validAdditionalSystemMessages(input []adapter.Message) []adapter.Message {
+	out := make([]adapter.Message, 0, len(input))
+	for _, message := range input {
+		content := strings.TrimSpace(messageContent(message.Content))
+		if content == "" {
+			continue
+		}
+		message.Role = "system"
+		message.Content = content
+		message.ToolCalls = nil
+		out = append(out, message)
+	}
+	return out
+}
+
+func messageContent(content interface{}) string {
+	switch typed := content.(type) {
+	case string:
+		return typed
+	default:
+		return strings.TrimSpace(fmt.Sprint(typed))
+	}
 }
 
 func appendAnswerText(builder *strings.Builder, text string) {

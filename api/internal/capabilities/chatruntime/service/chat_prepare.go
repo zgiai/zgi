@@ -49,6 +49,9 @@ func (s *service) PrepareConfiguredChat(ctx context.Context, scope Scope, caller
 	if err != nil {
 		return nil, err
 	}
+	if err := s.ensureConversationAllowsNewTurn(ctx, scope, conversation); err != nil {
+		return nil, err
+	}
 	parentID, err := s.resolveParentMessage(ctx, scope, conversation, strings.TrimSpace(req.ParentID))
 	if err != nil {
 		return nil, err
@@ -122,6 +125,9 @@ func (s *service) prepareRootRegeneration(ctx context.Context, scope Scope, call
 		if err != nil {
 			return nil, err
 		}
+	}
+	if err := s.ensureConversationAllowsNewTurn(ctx, scope, conversation); err != nil {
+		return nil, err
 	}
 	req = applyRunConfigToRegenerateRequest(config, req)
 	parts, err := normalizeRegenerateRequest(req, message)
@@ -205,6 +211,23 @@ func (s *service) resolveWorkspaceID(ctx context.Context, scope Scope) (*uuid.UU
 		return scope.WorkspaceID, nil
 	}
 	return s.repos.Access.GetCurrentWorkspaceID(ctx, scope.AccountID)
+}
+
+func (s *service) ensureConversationAllowsNewTurn(ctx context.Context, scope Scope, conversation *runtimemodel.Conversation) error {
+	if conversation == nil || conversation.CurrentLeafMessageID == nil {
+		return nil
+	}
+	if conversation.RuntimeStatus != runtimemodel.ConversationRuntimeStatusIdle {
+		return nil
+	}
+	leafMessage, err := s.repos.Message.GetScoped(ctx, *conversation.CurrentLeafMessageID, scope.OrganizationID, scope.AccountID)
+	if err != nil {
+		return mapRepoError(err)
+	}
+	if leafMessage.Status == runtimemodel.MessageStatusWaitingApproval {
+		return ErrConversationWaitingApproval
+	}
+	return nil
 }
 
 func (s *service) getConversation(ctx context.Context, scope Scope, id uuid.UUID) (*runtimemodel.Conversation, error) {

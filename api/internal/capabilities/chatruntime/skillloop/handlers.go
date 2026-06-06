@@ -7,6 +7,8 @@ import (
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
+	"github.com/zgiai/zgi/api/internal/modules/tools"
+	"github.com/zgiai/zgi/api/internal/modules/tools/workflowevents"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
@@ -283,6 +285,24 @@ func (r *Runner) handleCallSkillTool(
 	toolArgs := mapArg(args, "arguments")
 	argumentSummary := summarizeSkillToolArguments(skillID, toolName, toolArgs)
 	r.emitEvent(EventSkillCallStart, skillCallStartPayload(prepared, skillID, toolName, argumentSummary))
+	if isAgentWorkflowRunTool(skillID, toolName) {
+		ctx = workflowevents.WithEmitter(ctx, func(event workflowevents.Event) {
+			if event.Type == "" {
+				return
+			}
+			payload := event.Payload
+			if payload == nil {
+				payload = map[string]interface{}{}
+			}
+			if prepared != nil && prepared.Conversation != nil {
+				payload["conversation_id"] = prepared.Conversation.ID.String()
+			}
+			if prepared != nil && prepared.Message != nil {
+				payload["message_id"] = prepared.Message.ID.String()
+			}
+			r.emitEvent(event.Type, payload)
+		})
+	}
 	invocation, err := r.SkillRuntime.CallSkillTool(ctx, resolved, skillID, toolName, toolArgs, execCtx, callID)
 	if invocation == nil {
 		if err == nil {
@@ -310,7 +330,40 @@ func (r *Runner) handleCallSkillTool(
 		r.recordArtifact(artifact)
 		r.emitEvent(EventSkillArtifactCreated, artifact)
 	}
+	if isAgentWorkflowRunTool(invocation.Trace.SkillID, invocation.Trace.ToolName) {
+		if payload := agentWorkflowResultPayload(invocation.Messages); len(payload) > 0 {
+			if strings.EqualFold(stringFromInterface(payload["status"]), "pending_approval") {
+				result := successfulSkillStep(invocation.Trace, invocation.ToolMessage, true, true)
+				result.pendingApproval = payload
+				return result
+			}
+			if strings.EqualFold(stringFromInterface(payload["agent_type"]), "CONVERSATIONAL_WORKFLOW") &&
+				strings.EqualFold(stringFromInterface(payload["status"]), "succeeded") {
+				answer := strings.TrimSpace(stringFromInterface(payload["primary_output"]))
+				if answer == "" {
+					answer = "工作流已运行，但未返回可展示输出。workflow_run_id: " + stringFromInterface(payload["workflow_run_id"])
+				}
+				result := terminalSkillStep(invocation.Trace, invocation.ToolMessage, true, true)
+				result.answer = answer
+				return result
+			}
+		}
+	}
 	return successfulSkillStep(invocation.Trace, invocation.ToolMessage, true, true)
+}
+
+func isAgentWorkflowRunTool(skillID string, toolName string) bool {
+	return strings.EqualFold(strings.TrimSpace(skillID), skills.SkillAgentWorkflow) &&
+		strings.EqualFold(strings.TrimSpace(toolName), "run_agent_workflow")
+}
+
+func agentWorkflowResultPayload(messages []tools.ToolInvokeMessage) map[string]interface{} {
+	for _, message := range messages {
+		if message.Type == tools.ToolInvokeMessageTypeJSON && len(message.Data) > 0 {
+			return message.Data
+		}
+	}
+	return nil
 }
 
 func successfulSkillStep(trace skills.SkillTrace, toolMessage adapter.Message, usedSkill bool, usedTool bool) skillStepResult {
