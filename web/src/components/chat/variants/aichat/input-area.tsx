@@ -211,10 +211,12 @@ export function AIChatInputArea({
   const [activeQuestionIndex, setActiveQuestionIndex] = useState(0);
   const [ignoredUserInputRequestKey, setIgnoredUserInputRequestKey] = useState<string | null>(null);
   const [submittedApprovalAction, setSubmittedApprovalAction] = useState<string | null>(null);
+  const activeApprovalForm = activeWorkflowApprovalRequest?.approvalForm ?? null;
   const approvalFormQuery = useApprovalForm(
     activeWorkflowApprovalRequest?.approvalToken,
-    Boolean(activeWorkflowApprovalRequest?.approvalToken)
+    Boolean(activeWorkflowApprovalRequest?.approvalToken && !activeApprovalForm)
   );
+  const approvalForm = activeApprovalForm ?? approvalFormQuery.data ?? null;
   const approvalSubmitMutation = useSubmitApprovalForm(
     activeWorkflowApprovalRequest?.approvalToken
   );
@@ -851,9 +853,9 @@ export function AIChatInputArea({
                     <Loader2 className="size-3.5 animate-spin" />
                     <span>{t('consoleChat.workflow.loadingApprovalForm')}</span>
                   </div>
-                ) : approvalFormQuery.data ? (
+                ) : approvalForm ? (
                   <ApprovalRuntimeForm
-                    form={approvalFormQuery.data}
+                    form={approvalForm}
                     className="[&_h2]:text-sm [&_.md-viewer]:text-xs"
                     isSubmitting={approvalSubmitMutation.isPending || isSending}
                     submittedAction={submittedApprovalAction}

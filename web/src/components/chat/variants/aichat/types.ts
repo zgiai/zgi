@@ -1,4 +1,5 @@
 import type { ModelSelectorValue } from '@/components/common/model-selector';
+import type { ApprovalRuntimeForm } from '@/services/approval.service';
 
 export const MAX_AICHAT_BRANCHES = 5;
 
@@ -18,4 +19,5 @@ export interface AIChatWorkflowApprovalRequest {
   approvalToken: string;
   approvalUrl?: string;
   approvalFormId?: string;
+  approvalForm?: ApprovalRuntimeForm | null;
 }

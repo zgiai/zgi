@@ -159,6 +159,14 @@ func (h *AgentsHandler) RegenerateWebAppAgentRuntimeMessage(c *gin.Context) {
 	h.regenerateRuntimeMessage(c, runtimeCtx)
 }
 
+func (h *AgentsHandler) ContinueWebAppAgentRuntimeWorkflowApproval(c *gin.Context) {
+	runtimeCtx, ok := h.webAppAgentRuntimeContext(c)
+	if !ok {
+		return
+	}
+	h.continueRuntimeWorkflowApproval(c, runtimeCtx)
+}
+
 func (h *AgentsHandler) agentRuntimeContext(c *gin.Context) (agentRuntimeContext, bool) {
 	if h.chatRuntimeService == nil {
 		response.Fail(c, response.ErrSystemError)
@@ -526,6 +534,10 @@ func (h *AgentsHandler) ContinueAgentRuntimeWorkflowApproval(c *gin.Context) {
 	if !ok {
 		return
 	}
+	h.continueRuntimeWorkflowApproval(c, runtimeCtx)
+}
+
+func (h *AgentsHandler) continueRuntimeWorkflowApproval(c *gin.Context, runtimeCtx agentRuntimeContext) {
 	conversationID, ok := uuidParam(c, "conversation_id")
 	if !ok {
 		return

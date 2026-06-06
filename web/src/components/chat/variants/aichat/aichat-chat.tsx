@@ -68,6 +68,7 @@ import {
   WorkflowBillingToastAction,
   workflowBillingToastClassNames,
 } from '@/components/workflow/common/workflow-billing-toast-action';
+import { normalizeApprovalRuntimeForm } from '@/components/workflow/approval/runtime-events';
 import { AICHAT_SIDEBAR_BG_IMAGE } from '@/lib/config';
 import {
   MAX_AICHAT_BRANCHES,
@@ -318,7 +319,7 @@ export function AIChatShell({
   const activeUserInputRequest = activeUserInputMessage?.metadata?.user_input_request ?? null;
   const activeWorkflowApprovalRequest = useMemo(
     () =>
-      surface === 'agent-draft'
+      surface === 'agent-draft' || surface === 'agent-webapp'
         ? resolveActiveWorkflowApprovalRequest(
             activeConversation,
             activeMessages,
@@ -957,9 +958,13 @@ function resolveActiveWorkflowApprovalRequest(
   const workflowRuns = leafMessage.metadata?.workflow_runs ?? [];
   const runWithApproval = [...workflowRuns]
     .reverse()
-    .find(run => typeof run.approval?.approval_token === 'string');
+    .find(run => Boolean(resolveApprovalToken(run.approval)));
   const approval = runWithApproval?.approval;
-  const approvalToken = stringFromUnknown(approval?.approval_token);
+  const inlineApprovalForm = normalizeApprovalRuntimeForm(approval?.approval_form);
+  const approvalToken =
+    resolveApprovalToken(approval) ||
+    stringFromRecord(continuation, 'approval_token') ||
+    stringFromUnknown(inlineApprovalForm?.token);
   if (!approvalToken) return null;
   return {
     conversationId: conversation.id,
@@ -969,12 +974,26 @@ function resolveActiveWorkflowApprovalRequest(
       stringFromRecord(continuation, 'workflow_run_id'),
     approvalToken,
     approvalUrl: stringFromUnknown(approval?.approval_url),
-    approvalFormId: stringFromUnknown(approval?.approval_form_id),
+    approvalFormId:
+      stringFromUnknown(approval?.approval_form_id) ||
+      stringFromUnknown(inlineApprovalForm?.id),
+    approvalForm: inlineApprovalForm,
   };
 }
 
 function stringFromUnknown(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function resolveApprovalToken(approval: unknown): string {
+  if (!approval || typeof approval !== 'object') return '';
+  const record = approval as Record<string, unknown>;
+  const inlineForm = normalizeApprovalRuntimeForm(record.approval_form);
+  return (
+    stringFromRecord(record, 'approval_token') ||
+    stringFromRecord(record, 'token') ||
+    stringFromUnknown(inlineForm?.token)
+  );
 }
 
 function stringFromRecord(value: unknown, key: string): string {

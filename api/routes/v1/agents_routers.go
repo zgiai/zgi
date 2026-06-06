@@ -150,6 +150,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	protectedWebApps.GET("/:web_app_id/runtime/conversations/:conversation_id/messages", appHandler.ListWebAppAgentRuntimeMessages)
 	protectedWebApps.POST("/:web_app_id/runtime/conversations/:conversation_id/stop", appHandler.StopWebAppAgentRuntimeConversation)
 	protectedWebApps.GET("/:web_app_id/runtime/conversations/:conversation_id/events", appHandler.StreamWebAppAgentRuntimeEvents)
+	protectedWebApps.POST("/:web_app_id/runtime/conversations/:conversation_id/messages/:message_id/workflow-continuation", appHandler.ContinueWebAppAgentRuntimeWorkflowApproval)
 	protectedWebApps.POST("/:web_app_id/runtime/messages/:message_id/regenerate", appHandler.RegenerateWebAppAgentRuntimeMessage)
 
 	workflowTests := appsGroup.Group("/:agent_id/workflow-tests")
