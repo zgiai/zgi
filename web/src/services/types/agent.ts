@@ -208,6 +208,7 @@ export interface AgentWorkflowBinding {
   description?: string;
   agent_id: string;
   workflow_id: string;
+  agent_type?: AgentType | string;
   version_strategy: AgentWorkflowVersionStrategy;
   version_uuid?: string;
   timeout_seconds?: number;

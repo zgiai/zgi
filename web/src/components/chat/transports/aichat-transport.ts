@@ -153,6 +153,12 @@ export interface AIChatRuntimeTransport {
     callbacks: AIChatStreamCallbacks,
     abortSignal?: AbortSignal
   ): Promise<{ close: () => void }>;
+  continueWorkflowApproval?(
+    conversationId: string,
+    messageId: string,
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ): Promise<{ close: () => void }>;
 }
 
 export function dispatchAIChatStreamEvent(

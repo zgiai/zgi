@@ -134,18 +134,9 @@ export interface AIChatControllerStore extends AIChatControllerState {
     context?: AIChatMessageStartContext,
     eventId?: string | null
   ) => void;
-  applyMessageChunk: (
-    payload: AIChatMessageChunkEventData,
-    eventId?: string | null
-  ) => void;
-  applyMessageRetract: (
-    payload: AIChatMessageRetractEventData,
-    eventId?: string | null
-  ) => void;
-  applyAgentProgress: (
-    payload: AIChatAgentProgressEventData,
-    eventId?: string | null
-  ) => void;
+  applyMessageChunk: (payload: AIChatMessageChunkEventData, eventId?: string | null) => void;
+  applyMessageRetract: (payload: AIChatMessageRetractEventData, eventId?: string | null) => void;
+  applyAgentProgress: (payload: AIChatAgentProgressEventData, eventId?: string | null) => void;
   applyIntermediateAnswer: (
     payload: AIChatIntermediateAnswerEventData,
     eventId?: string | null
@@ -154,23 +145,11 @@ export interface AIChatControllerStore extends AIChatControllerState {
     payload: AIChatUserInputRequestedEventData,
     eventId?: string | null
   ) => void;
-  applyFileParseStart: (
-    payload: AIChatFileParseStartEventData,
-    eventId?: string | null
-  ) => void;
-  applyFileParseEnd: (
-    payload: AIChatFileParseEndEventData,
-    eventId?: string | null
-  ) => void;
-  applyFileParseError: (
-    payload: AIChatFileParseErrorEventData,
-    eventId?: string | null
-  ) => void;
+  applyFileParseStart: (payload: AIChatFileParseStartEventData, eventId?: string | null) => void;
+  applyFileParseEnd: (payload: AIChatFileParseEndEventData, eventId?: string | null) => void;
+  applyFileParseError: (payload: AIChatFileParseErrorEventData, eventId?: string | null) => void;
   applyMessageEnd: (payload: AIChatMessageEndEventData) => void;
-  applyStreamError: (
-    payload: AIChatErrorEventData,
-    fallbackConversationId: string | null
-  ) => void;
+  applyStreamError: (payload: AIChatErrorEventData, fallbackConversationId: string | null) => void;
   mergeMessages: (conversationId: string, messages: AIChatMessage[]) => void;
   setActiveConversationId: (conversationId: string | null) => void;
   setConversationRunningState: (
@@ -224,6 +203,7 @@ export interface AIChatController {
     query?: string;
     model?: AIChatModelSelection;
   }) => Promise<void>;
+  continueWorkflowApproval?: (conversationId: string, messageId: string) => Promise<void>;
   switchBranch: (messageId: string) => void;
 }
 

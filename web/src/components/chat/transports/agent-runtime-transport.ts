@@ -252,6 +252,32 @@ export class AgentRuntimeTransport implements AIChatRuntimeTransport {
       }
     );
   }
+
+  continueWorkflowApproval(
+    conversationId: string,
+    messageId: string,
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ) {
+    return this.client.sse<AIChatSseEnvelope, Record<string, never>>(
+      `${this.runtimeBasePath}/conversations/${conversationId}/messages/${messageId}/workflow-continuation`,
+      {
+        method: 'POST',
+        body: {},
+        abortSignal,
+        isTerminalMessage: runtimeTerminalMessage,
+        onMessage: message =>
+          dispatchAIChatStreamEvent(
+            String((message.data as AIChatSseEnvelope | undefined)?.event ?? message.event ?? ''),
+            (message.data as AIChatSseEnvelope | undefined)?.data ?? message.data,
+            message.id,
+            callbacks
+          ),
+        onError: callbacks.onRequestError,
+        onClose: callbacks.onClose,
+      }
+    );
+  }
 }
 
 export function createAgentDraftTransport(agentId: string): AgentRuntimeTransport {

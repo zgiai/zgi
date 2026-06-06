@@ -200,6 +200,10 @@ const messages: WebappMessages = {
       openApproval: '打开审批',
       formId: '表单 {id}',
       token: '令牌 {token}',
+      loadingApprovalForm: '正在加载审批表单...',
+      approvalFormLoadFailed: '审批表单加载失败',
+      approvalInputLocked: '请先完成这个工作流审批，再继续当前会话。',
+      approvalSubmitFailed: '审批提交失败',
     },
     skillPreferences: {
       action: '我的 Skill',
@@ -407,7 +411,8 @@ const messages: WebappMessages = {
     noLogsDescription: '当前 WebApp 还没有产生工作流运行记录。',
     selectRunTitle: '请选择日志',
     selectRunDescription: '选择一条运行记录以查看详情。',
-    deepLinkedRunHint: '这个运行是通过直达链接打开的，不在当前 WebApp 日志列表里，所以这里只展示可用的执行证据。',
+    deepLinkedRunHint:
+      '这个运行是通过直达链接打开的，不在当前 WebApp 日志列表里，所以这里只展示可用的执行证据。',
     noMessagesTitle: '暂无对话消息',
     noMessagesDescription: '当前会话没有查到已持久化的消息记录。',
     messageNotFoundTitle: '当前页未找到对应消息',

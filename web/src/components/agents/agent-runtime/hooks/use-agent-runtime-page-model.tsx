@@ -141,6 +141,7 @@ function normalizeAgentWorkflowBindings(bindings: AgentWorkflowBinding[]): Agent
       description: binding.description?.trim() || undefined,
       agent_id: agentId,
       workflow_id: workflowId,
+      agent_type: binding.agent_type,
       version_strategy: versionStrategy,
       version_uuid:
         versionStrategy === 'pinned' ? binding.version_uuid?.trim() || undefined : undefined,
@@ -161,6 +162,7 @@ function workflowBindingFromCandidate(
     description: candidate.description,
     agent_id: candidate.agent_id,
     workflow_id: candidate.workflow_id,
+    agent_type: candidate.agent_type,
     version_strategy: 'latest_published',
     timeout_seconds: candidate.timeout_seconds ?? 600,
   };

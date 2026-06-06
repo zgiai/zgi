@@ -3,7 +3,13 @@ import type { ApiResponseData } from './common';
 export type AIChatConversationStatus = 'normal' | 'archived';
 export type AIChatConversationSource = 'console' | 'webapp' | 'migration';
 export type AIChatConversationRuntimeStatus = 'idle' | 'streaming';
-export type AIChatMessageStatus = 'pending' | 'streaming' | 'completed' | 'error' | 'stopped';
+export type AIChatMessageStatus =
+  | 'pending'
+  | 'streaming'
+  | 'waiting_approval'
+  | 'completed'
+  | 'error'
+  | 'stopped';
 
 export interface AIChatUsage {
   prompt_tokens?: number;

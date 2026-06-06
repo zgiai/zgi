@@ -210,6 +210,10 @@ const messages = {
       openApproval: 'Open approval',
       formId: 'Form {id}',
       token: 'Token {token}',
+      loadingApprovalForm: 'Loading approval form...',
+      approvalFormLoadFailed: 'Failed to load approval form',
+      approvalInputLocked: 'Complete this workflow approval to continue this conversation.',
+      approvalSubmitFailed: 'Failed to submit approval',
     },
     skillPreferences: {
       action: 'My Skills',
@@ -309,7 +313,8 @@ const messages = {
       saveFailed: 'Failed to save memory',
       deleteFailed: 'Failed to delete memory',
       deleteConfirmTitle: 'Delete memory?',
-      deleteConfirmDescription: 'This memory will be permanently removed and will no longer be used in future conversations.',
+      deleteConfirmDescription:
+        'This memory will be permanently removed and will no longer be used in future conversations.',
       empty: 'No memories yet',
       placeholder: 'Add a durable memory...',
       expiresAt: 'Expires at',

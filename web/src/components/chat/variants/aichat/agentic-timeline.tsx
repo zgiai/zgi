@@ -2,11 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, ChevronDown, ExternalLink, Loader2 } from 'lucide-react';
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Button } from '@/components/ui/button';
 import MarkdownViewer from '@/components/common/markdown-viewer';
 import { useT } from '@/i18n/translations';
@@ -255,7 +251,11 @@ function memoryEventContent(item: MemoryTimelineItem): string {
   return (item.event.content ?? item.event.content_preview ?? '').trim();
 }
 
-function memoryEventTitle(item: MemoryTimelineItem, locale: string, showMemoryKey: boolean): string {
+function memoryEventTitle(
+  item: MemoryTimelineItem,
+  locale: string,
+  showMemoryKey: boolean
+): string {
   return getAIChatUserMemoryMutationTitle(item.event.action, locale, {
     content: item.event.content_preview || item.event.content,
     entryId: item.event.entry_id ?? (showMemoryKey ? item.event.key : undefined),
@@ -273,10 +273,7 @@ function MemoryTimelineRow({
   const [isOpen, setIsOpen] = useState(false);
   const content = memoryEventContent(item);
   const canExpand = Boolean(
-    content ||
-      (showMemoryKey && item.event.key) ||
-      item.event.category ||
-      item.event.memory_type
+    content || (showMemoryKey && item.event.key) || item.event.category || item.event.memory_type
   );
 
   return (
@@ -333,8 +330,57 @@ function MemoryTimelineRow({
   );
 }
 
-function WorkflowTimelineRow({ item }: { item: WorkflowTimelineItem }) {
+function WorkflowApprovalPanel({
+  approvalToken,
+  approvalUrl,
+  approvalFormId,
+}: {
+  approvalToken: string;
+  approvalUrl: string;
+  approvalFormId: string;
+}) {
   const t = useT('webapp');
+
+  return (
+    <div className="mt-2 max-w-3xl rounded-md border bg-warning/10 px-3 py-2 text-xs text-muted-foreground">
+      <div className="font-medium text-foreground">{t('consoleChat.workflow.approvalPending')}</div>
+      <div className="mt-1 flex flex-wrap items-center gap-2">
+        {approvalUrl ? (
+          <a
+            className="inline-flex items-center gap-1 text-primary underline-offset-2 hover:underline"
+            href={approvalUrl}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {t('consoleChat.workflow.openApproval')}
+            <ExternalLink className="size-3" />
+          </a>
+        ) : null}
+        {approvalFormId ? (
+          <span title={approvalFormId}>
+            {t('consoleChat.workflow.formId', { id: approvalFormId })}
+          </span>
+        ) : null}
+        {approvalToken && !approvalUrl ? (
+          <span title={approvalToken}>
+            {t('consoleChat.workflow.token', { token: approvalToken })}
+          </span>
+        ) : null}
+      </div>
+      {approvalToken ? (
+        <div className="mt-2 text-[11px] text-muted-foreground">
+          {t('consoleChat.workflow.approvalInputLocked')}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function WorkflowTimelineRow({
+  item,
+}: {
+  item: WorkflowTimelineItem;
+}) {
   const nodes: WorkflowRunNodeListItem[] = item.nodes.map((node, index) => ({
     title: node.title ?? node.nodeId ?? node.nodeType ?? '',
     nodeId: node.nodeId ?? `workflow-node-${index}`,
@@ -342,7 +388,8 @@ function WorkflowTimelineRow({ item }: { item: WorkflowTimelineItem }) {
     createdAtMs: node.createdAtMs,
     receivedOrder: node.receivedOrder,
     nodeType: node.nodeType ?? 'custom',
-    status: node.status === 'success' || node.status === 'partial-succeeded' ? 'succeeded' : node.status,
+    status:
+      node.status === 'success' || node.status === 'partial-succeeded' ? 'succeeded' : node.status,
     nodeInput: node.data?.input,
     nodeOutput: node.data?.output,
     modelInput: node.data?.modelInput,
@@ -375,34 +422,11 @@ function WorkflowTimelineRow({ item }: { item: WorkflowTimelineItem }) {
         className="max-w-3xl rounded-md bg-background"
       />
       {item.status === 'pending_approval' && hasApproval ? (
-        <div className="mt-2 max-w-3xl rounded-md border bg-warning/10 px-3 py-2 text-xs text-muted-foreground">
-          <div className="font-medium text-foreground">
-            {t('consoleChat.workflow.approvalPending')}
-          </div>
-          <div className="mt-1 flex flex-wrap items-center gap-2">
-            {approvalUrl ? (
-              <a
-                className="inline-flex items-center gap-1 text-primary underline-offset-2 hover:underline"
-                href={approvalUrl}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {t('consoleChat.workflow.openApproval')}
-                <ExternalLink className="size-3" />
-              </a>
-            ) : null}
-            {approvalFormId ? (
-              <span title={approvalFormId}>
-                {t('consoleChat.workflow.formId', { id: approvalFormId })}
-              </span>
-            ) : null}
-            {approvalToken && !approvalUrl ? (
-              <span title={approvalToken}>
-                {t('consoleChat.workflow.token', { token: approvalToken })}
-              </span>
-            ) : null}
-          </div>
-        </div>
+        <WorkflowApprovalPanel
+          approvalToken={approvalToken}
+          approvalUrl={approvalUrl}
+          approvalFormId={approvalFormId}
+        />
       ) : null}
     </div>
   );
@@ -461,7 +485,7 @@ function buildProgressText(
   }
 
   const skill = item.skill_id
-    ? skillDisplayById[item.skill_id] ?? getFallbackAIChatSkillDisplayInfo(item.skill_id, locale)
+    ? (skillDisplayById[item.skill_id] ?? getFallbackAIChatSkillDisplayInfo(item.skill_id, locale))
     : null;
   const tool =
     item.skill_id && item.tool_name
