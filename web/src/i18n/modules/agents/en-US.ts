@@ -1696,7 +1696,8 @@ const messages = {
       unavailableWorkflow: 'Workflow unavailable',
       unavailableDescription:
         'This workflow is no longer available. It will be removed after candidates refresh.',
-      latestPublished: 'Latest published',
+      conversationalWorkflow: 'Chat workflow',
+      taskWorkflow: 'Task workflow',
       versionLabel: 'Version {version}',
       cancel: 'Cancel',
       confirm: 'Confirm',

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Check, Search, Workflow } from 'lucide-react';
+import { Check, Search } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -18,6 +18,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type { AgentWorkflowBinding, AgentWorkflowBindingCandidate } from '@/services/types/agent';
+import { AgentWorkflowTypeBadge, AgentWorkflowTypeIcon } from './workflow-type-display';
 
 interface AgentRuntimeWorkflowDialogProps {
   open: boolean;
@@ -157,15 +158,13 @@ function WorkflowOption({
     >
       <span className="flex items-start gap-3">
         <span className="flex size-10 shrink-0 items-center justify-center rounded-lg border bg-muted text-primary">
-          <Workflow className="size-5" />
+          <AgentWorkflowTypeIcon agentType={candidate.agent_type} className="size-5" />
         </span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-semibold">
             {candidate.label || t('workflow.unnamedWorkflow')}
           </span>
-          <span className="mt-1 inline-flex rounded border bg-muted/40 px-1.5 py-0.5 text-[11px] text-muted-foreground">
-            {t('workflow.latestPublished')}
-          </span>
+          <AgentWorkflowTypeBadge agentType={candidate.agent_type} className="mt-1" />
         </span>
         <span
           className={cn(

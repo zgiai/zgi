@@ -1,11 +1,12 @@
 'use client';
 
-import { AlertCircle, Trash2, Workflow } from 'lucide-react';
+import { AlertCircle, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useT } from '@/i18n';
 import type { AgentWorkflowBinding, AgentWorkflowBindingCandidate } from '@/services/types/agent';
 import { AgentRuntimeResourceCard, AgentRuntimeResourceSection } from '../resource-section';
 import type { AgentConfigSection } from '../types';
+import { AgentWorkflowTypeBadge, AgentWorkflowTypeIcon } from '../workflow-type-display';
 
 interface AgentRuntimeWorkflowSectionProps {
   open: boolean;
@@ -54,7 +55,14 @@ export function AgentRuntimeWorkflowSection({
             <AgentRuntimeResourceCard
               key={binding.binding_id}
               icon={
-                unavailable ? <AlertCircle className="size-4" /> : <Workflow className="size-4" />
+                unavailable ? (
+                  <AlertCircle className="size-4" />
+                ) : (
+                  <AgentWorkflowTypeIcon
+                    agentType={candidate?.agent_type || binding.agent_type}
+                    className="size-4"
+                  />
+                )
               }
               title={label}
               description={
@@ -78,9 +86,10 @@ export function AgentRuntimeWorkflowSection({
               }
             >
               {!unavailable ? (
-                <div className="mt-2 inline-flex rounded border bg-muted/40 px-1.5 py-0.5 text-[11px] text-muted-foreground">
-                  {t('workflow.latestPublished')}
-                </div>
+                <AgentWorkflowTypeBadge
+                  agentType={candidate?.agent_type || binding.agent_type}
+                  className="mt-2"
+                />
               ) : null}
             </AgentRuntimeResourceCard>
           );
