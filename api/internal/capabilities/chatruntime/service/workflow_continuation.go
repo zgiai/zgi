@@ -220,6 +220,31 @@ func (s *service) CompleteWorkflowApprovalContinuation(ctx context.Context, cont
 	return metadata, nil
 }
 
+func (s *service) FailWorkflowApprovalContinuation(ctx context.Context, continuation *WorkflowApprovalContinuation, message string) (map[string]interface{}, error) {
+	if continuation == nil || continuation.MessageID == uuid.Nil || continuation.ConversationID == uuid.Nil {
+		return nil, fmt.Errorf("%w: workflow continuation is required", ErrInvalidInput)
+	}
+	message = strings.TrimSpace(message)
+	if message == "" {
+		message = "workflow approval continuation failed"
+	}
+	metadata := workflowContinuationMetadataWithStatus(continuation.Metadata, workflowContinuationStatusFailed)
+	continuation.Metadata = metadata
+	if err := s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		txRepos := repository.NewRepositories(tx)
+		if err := txRepos.Message.UpdateMetadata(ctx, continuation.MessageID, metadata); err != nil {
+			return err
+		}
+		if err := txRepos.Message.UpdateError(ctx, continuation.MessageID, message); err != nil {
+			return err
+		}
+		return txRepos.Conversation.FinishContinuationMessage(ctx, continuation.ConversationID, continuation.MessageID)
+	}); err != nil {
+		return nil, err
+	}
+	return metadata, nil
+}
+
 func workflowApprovalContinuationFromMetadata(metadata map[string]interface{}) *WorkflowApprovalContinuation {
 	state := workflowRecordFromAny(metadata["agent_workflow_continuation"])
 	return &WorkflowApprovalContinuation{

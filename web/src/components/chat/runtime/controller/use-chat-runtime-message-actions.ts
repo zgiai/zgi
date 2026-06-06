@@ -1,6 +1,6 @@
 ﻿import { useCallback } from 'react';
 import type { MutableRefObject } from 'react';
-import type { AIChatMessage, AIChatMessageFile } from '@/services/types/aichat';
+import type { AIChatConversation, AIChatMessage, AIChatMessageFile } from '@/services/types/aichat';
 import type {
   AIChatControllerStore,
   AIChatModelSelection,
@@ -760,6 +760,35 @@ export function useChatRuntimeMessageActions({
       const messages = currentState.messagesByConversation[conversationId] ?? [];
       const sourceMessage = messages.find(message => message.id === messageId);
       if (!conversation || !sourceMessage) return;
+      const sourceConversation: AIChatConversation = conversation;
+      let streamStarted = false;
+
+      const restoreWorkflowApprovalContinuation = (errorMessage?: string) => {
+        setControllerState(current => {
+          const nextStreamingByMessageId = { ...current.streamingByMessageId };
+          delete nextStreamingByMessageId[messageId];
+
+          return {
+            ...current,
+            error:
+              errorMessage && current.activeConversationId === conversationId
+                ? errorMessage
+                : current.error,
+            isSending: getNextActiveSendingState(current, conversationId, false),
+            conversations: current.conversations.map(item =>
+              item.id === conversationId ? sourceConversation : item
+            ),
+            messagesByConversation: {
+              ...current.messagesByConversation,
+              [conversationId]: upsertAIChatMessage(
+                current.messagesByConversation[conversationId] ?? [],
+                sourceMessage
+              ),
+            },
+            streamingByMessageId: nextStreamingByMessageId,
+          };
+        });
+      };
 
       const abortController = new AbortController();
       streamAbortByConversationRef.current[conversationId]?.abort();
@@ -814,6 +843,7 @@ export function useChatRuntimeMessageActions({
           {
             onMessageStart: (payload, eventId) => {
               if (abortController.signal.aborted) return;
+              streamStarted = true;
               applyMessageStart(
                 payload,
                 {
@@ -926,6 +956,10 @@ export function useChatRuntimeMessageActions({
             },
             onRequestError: error => {
               if (isAbortError(error)) return;
+              if (!streamStarted) {
+                restoreWorkflowApprovalContinuation(error.message);
+                return;
+              }
               setControllerState(current => ({
                 ...current,
                 error:
@@ -941,6 +975,10 @@ export function useChatRuntimeMessageActions({
                 streamingMessageRef.current = null;
               }
               if (!abortController.signal.aborted) {
+                if (!streamStarted) {
+                  restoreWorkflowApprovalContinuation();
+                  return;
+                }
                 setControllerState(current => ({
                   ...current,
                   isSending: getNextActiveSendingState(current, conversationId, false),
@@ -952,6 +990,10 @@ export function useChatRuntimeMessageActions({
         );
       } catch (error) {
         if (!isAbortError(error)) {
+          if (!streamStarted) {
+            restoreWorkflowApprovalContinuation(getErrorMessage(error));
+            return;
+          }
           setControllerState(current => ({
             ...current,
             error:
